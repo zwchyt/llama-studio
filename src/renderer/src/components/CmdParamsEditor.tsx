@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
+import { shallow } from 'zustand/shallow'
 import { ChevronDown, ChevronRight, Copy, Check, Search, Lock } from 'lucide-react'
 import type { CommandParam, TemplateArgs } from '../../../shared/types'
 import { iconElements } from '../utils/iconMap'
@@ -14,7 +15,7 @@ interface Props {
   disabled?: boolean
 }
 export default function CmdParamsEditor({ templateId, args, onChange, modelPathFallback, serverPortFallback, disabled: disabledProp }: Props) {
-  const { commandsSchema, updateCard, cards } = useStore()
+  const { commandsSchema, updateCard, cards } = useStore(s => ({ commandsSchema: s.commandsSchema, updateCard: s.updateCard, cards: s.cards }), shallow)
   const [searchQuery, setSearchQuery] = useState('')
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set())
   const [hoveredParam, setHoveredParam] = useState<string | null>(null)

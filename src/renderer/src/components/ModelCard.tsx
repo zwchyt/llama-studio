@@ -7,8 +7,8 @@ import type { CardState } from '../../../shared/types'
 import ParamsModal from './ParamsModal'
 interface Props { card: CardState }
 export default function ModelCard({ card }: Props) {
-  const { updateCard, setCardStatus, removeCard, backends, activeBackend, commandsSchema, setShowCreateModal } = useStore(
-    s => ({ updateCard: s.updateCard, setCardStatus: s.setCardStatus, removeCard: s.removeCard, backends: s.backends, activeBackend: s.activeBackend, commandsSchema: s.commandsSchema, setShowCreateModal: s.setShowCreateModal }),
+  const { updateCard, setCardStatus, removeCard, backends, activeBackend, commandsSchema, setShowCreateModal, clearModelMetrics } = useStore(
+    s => ({ updateCard: s.updateCard, setCardStatus: s.setCardStatus, removeCard: s.removeCard, backends: s.backends, activeBackend: s.activeBackend, commandsSchema: s.commandsSchema, setShowCreateModal: s.setShowCreateModal, clearModelMetrics: s.clearModelMetrics }),
     shallow
   )
   const [showMenu, setShowMenu] = useState(false)
@@ -69,6 +69,7 @@ export default function ModelCard({ card }: Props) {
       const res = await window.api.stopModel(card.template.id)
       if (res.success) {
         setCardStatus(card.template.id, 'idle')
+        clearModelMetrics(card.template.id)
         const { activeChatPort, clearActiveChat } = useStore.getState()
         if (activeChatPort === card.template.serverPort) clearActiveChat()
       }
@@ -90,6 +91,7 @@ export default function ModelCard({ card }: Props) {
           const val = tArgs[cmd.arg]
           if (val !== undefined && val !== null && val !== '') {
             if (cmd.type === 'boolean') { if (val === true || val === 'true' || val === '1') args.push(cmd.arg) }
+            else if (cmd.type === 'select' && cmd.options && !cmd.options.includes(String(val))) continue
             else args.push(cmd.arg, String(val))
           }
         }

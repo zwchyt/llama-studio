@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react'
 import { useStore } from '../store/useStore'
+import { shallow } from 'zustand/shallow'
 import { X, Search, Copy, Check, Lock } from 'lucide-react'
 import type { CommandParam, TemplateArgs } from '../../../shared/types'
 import { iconElements } from '../utils/iconMap'
@@ -14,7 +15,7 @@ interface Props {
 }
 
 export default function ParamsModal({ templateId, args, onClose, cardName }: Props) {
-  const { commandsSchema, cards } = useStore()
+  const { commandsSchema, cards } = useStore(s => ({ commandsSchema: s.commandsSchema, cards: s.cards }), shallow)
   const updateCard = useStore(s => s.updateCard)
   const [activeTab, setActiveTab] = useState('主要设置')
   const [searchQuery, setSearchQuery] = useState('')

@@ -83,7 +83,9 @@ function MetricCard({ label, value, unit, icon, accentColor, history, barMax }: 
 
 // ── RunningCard ──────────────────────────────────────────────────────────────
 function RunningCard({ card, metrics }: { card: import('../../../shared/types').CardState; metrics: import('../../../shared/types').ModelMetrics | null }) {
-  const { toggleMonitorExpanded, removeCard } = useStore(s => ({ toggleMonitorExpanded: s.toggleMonitorExpanded, removeCard: s.removeCard }), shallow)
+  const { toggleMonitorExpanded, removeCard, setCardStatus, clearActiveChat } = useStore(s => ({
+    toggleMonitorExpanded: s.toggleMonitorExpanded, removeCard: s.removeCard, setCardStatus: s.setCardStatus, clearActiveChat: s.clearActiveChat
+  }), shallow)
   const isRunning = card.status === 'running'
   const statusInfo = card.status === 'running'
     ? { label: '运行中', color: 'var(--success)' }
@@ -103,6 +105,10 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
     try {
       const res = await window.api.stopModel(card.template.id)
       if (res.success) {
+        removeCard(card.template.id)
+      } else if (res.error === 'Not running') {
+        setCardStatus(card.template.id, 'idle')
+        if (card.template.serverPort === useStore.getState().activeChatPort) clearActiveChat()
         removeCard(card.template.id)
       } else {
         notify(`停止失败：${res.error}`, 'error')

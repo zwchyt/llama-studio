@@ -218,79 +218,108 @@ function AppMain() {
     return () => window.api.removeModelLogListener()
   }, [])
 
+  function sanitizeMetricsPayload(raw: Record<string, unknown>): Record<string, unknown> | null {
+    const id = raw.id
+    if (typeof id !== 'string' && typeof id !== 'number') return null
+    const out: Record<string, unknown> = { id }
+    if (raw.decodeTokS !== undefined) {
+      if (typeof raw.decodeTokS === 'number') out.decodeTokS = raw.decodeTokS
+      else if (Array.isArray(raw.decodeTokS) && raw.decodeTokS.every(v => typeof v === 'number')) out.decodeTokS = raw.decodeTokS
+    }
+    if (typeof raw.ttftMs === 'number') out.ttftMs = raw.ttftMs
+    if (typeof raw.prefillTokS === 'number') out.prefillTokS = raw.prefillTokS
+    if (raw.reqPerSec !== undefined) {
+      if (typeof raw.reqPerSec === 'number') out.reqPerSec = raw.reqPerSec
+      else if (Array.isArray(raw.reqPerSec) && raw.reqPerSec.every(v => typeof v === 'number')) out.reqPerSec = raw.reqPerSec
+    }
+    if (raw.cpuPct !== undefined && (typeof raw.cpuPct === 'number' || raw.cpuPct === null)) out.cpuPct = raw.cpuPct
+    if (raw.memRssMb !== undefined && (typeof raw.memRssMb === 'number' || raw.memRssMb === null)) out.memRssMb = raw.memRssMb
+    if (raw.vramUsedMb !== undefined && (typeof raw.vramUsedMb === 'number' || raw.vramUsedMb === null)) out.vramUsedMb = raw.vramUsedMb
+    if (typeof raw.vramTotalMb === 'number') out.vramTotalMb = raw.vramTotalMb
+    if (typeof raw.pid === 'number') out.pid = raw.pid
+    if (typeof raw.nPromptTokens === 'number') out.nPromptTokens = raw.nPromptTokens
+    if (typeof raw.nCtx === 'number') out.nCtx = raw.nCtx
+    if (typeof raw.nPromptTokensCache === 'number') out.nPromptTokensCache = raw.nPromptTokensCache
+    if (typeof raw.nPromptTokensProcessed === 'number') out.nPromptTokensProcessed = raw.nPromptTokensProcessed
+    if (typeof raw.nDecoded === 'number') out.nDecoded = raw.nDecoded
+    if (typeof raw.isProcessing === 'boolean') out.isProcessing = raw.isProcessing
+    if (typeof raw.nPredict === 'number') out.nPredict = raw.nPredict
+    if (typeof raw.lastUpdated === 'number') out.lastUpdated = raw.lastUpdated
+    return out
+  }
+
   useEffect(() => {
-    window.api.onMetricsUpdate(async (data: Record<string, unknown>) => {
-      try {
+    window.api.onMetricsUpdate(async (raw: Record<string, unknown>) => {
+      const data = sanitizeMetricsPayload(raw)
+      if (!data) return
 
-        const { updateModelMetric } = useStore.getState()
-        const mid = data.id as string
+      const { updateModelMetric } = useStore.getState()
+      const mid = String(data.id)
+      const d = data as Record<string, any>
 
-        if (data.decodeTokS !== undefined) {
-          const raw = data.decodeTokS
-          if (Array.isArray(raw)) {
-            if (raw.length > 0) {
-              updateModelMetric(mid, { decodeTokS: (raw as number[]).slice(-30) })
-            }
-          } else {
-            const existing = useStore.getState().modelMetrics[mid]
-            const hist = (existing?.decodeTokS as number[]) || []
-            updateModelMetric(mid, { decodeTokS: [...hist, raw as number].slice(-30) })
+      if (d.decodeTokS !== undefined) {
+        const rawVal = d.decodeTokS
+        if (Array.isArray(rawVal)) {
+          if (rawVal.length > 0) {
+            updateModelMetric(mid, { decodeTokS: rawVal.slice(-30) })
           }
+        } else {
+          const existing = useStore.getState().modelMetrics[mid]
+          const hist = (existing?.decodeTokS as number[]) || []
+          updateModelMetric(mid, { decodeTokS: [...hist, rawVal].slice(-30) })
         }
-        if (data.ttftMs !== undefined && data.ttftMs !== null) {
-          updateModelMetric(mid, { ttftMs: data.ttftMs as number })
+      }
+      if (d.ttftMs !== undefined) {
+        updateModelMetric(mid, { ttftMs: d.ttftMs as number })
+      }
+      if (d.prefillTokS !== undefined) {
+        updateModelMetric(mid, { prefillTokS: d.prefillTokS as number })
+      }
+      if (d.reqPerSec !== undefined) {
+        const rawVal = d.reqPerSec
+        if (Array.isArray(rawVal)) {
+          updateModelMetric(mid, { reqPerSec: rawVal.slice(-30) })
+        } else {
+          const existing = useStore.getState().modelMetrics[mid]
+          const hist = (existing?.reqPerSec as number[]) || []
+          updateModelMetric(mid, { reqPerSec: [...hist, rawVal].slice(-30) })
         }
-        if (data.prefillTokS !== undefined && data.prefillTokS !== null) {
-          updateModelMetric(mid, { prefillTokS: data.prefillTokS as number })
-        }
-        if (data.reqPerSec !== undefined) {
-          const raw = data.reqPerSec
-          if (Array.isArray(raw)) {
-            updateModelMetric(mid, { reqPerSec: (raw as number[]).slice(-30) })
-          } else {
-            const existing = useStore.getState().modelMetrics[mid]
-            const hist = (existing?.reqPerSec as number[]) || []
-            updateModelMetric(mid, { reqPerSec: [...hist, raw as number].slice(-30) })
-          }
-        }
-        if (data.cpuPct !== undefined) {
-          updateModelMetric(mid, { cpuPct: data.cpuPct as number | null })
-        }
-        if (data.memRssMb !== undefined) {
-          updateModelMetric(mid, { memRssMb: data.memRssMb as number | null })
-        }
-        if (data.vramUsedMb !== undefined) {
-          updateModelMetric(mid, { vramUsedMb: data.vramUsedMb as number | null })
-        }
-        if (data.vramTotalMb !== undefined) {
-          updateModelMetric(mid, { vramTotalMb: data.vramTotalMb as number })
-        }
-        if (data.pid !== undefined) {
-          updateModelMetric(mid, { pid: data.pid as number | undefined })
-        }
-        if (data.nPromptTokens !== undefined) {
-          updateModelMetric(mid, { nPromptTokens: data.nPromptTokens as number })
-        }
-        if (data.nCtx !== undefined) {
-          updateModelMetric(mid, { nCtx: data.nCtx as number })
-        }
-        if (data.nPromptTokensCache !== undefined) {
-          updateModelMetric(mid, { nPromptTokensCache: data.nPromptTokensCache as number })
-        }
-        if (data.nPromptTokensProcessed !== undefined) {
-          updateModelMetric(mid, { nPromptTokensProcessed: data.nPromptTokensProcessed as number })
-        }
-        if (data.nDecoded !== undefined) {
-          updateModelMetric(mid, { nDecoded: data.nDecoded as number })
-        }
-        if (data.isProcessing !== undefined) {
-          updateModelMetric(mid, { isProcessing: data.isProcessing as boolean })
-        }
-        if (data.nPredict !== undefined) {
-          updateModelMetric(mid, { nPredict: data.nPredict as number })
-        }
-      } catch (e) {
-        console.error('[MetricsUpdate error]', e)
+      }
+      if (d.cpuPct !== undefined) {
+        updateModelMetric(mid, { cpuPct: d.cpuPct as number | null })
+      }
+      if (d.memRssMb !== undefined) {
+        updateModelMetric(mid, { memRssMb: d.memRssMb as number | null })
+      }
+      if (d.vramUsedMb !== undefined) {
+        updateModelMetric(mid, { vramUsedMb: d.vramUsedMb as number | null })
+      }
+      if (d.vramTotalMb !== undefined) {
+        updateModelMetric(mid, { vramTotalMb: d.vramTotalMb as number })
+      }
+      if (d.pid !== undefined) {
+        updateModelMetric(mid, { pid: d.pid as number })
+      }
+      if (d.nPromptTokens !== undefined) {
+        updateModelMetric(mid, { nPromptTokens: d.nPromptTokens as number })
+      }
+      if (d.nCtx !== undefined) {
+        updateModelMetric(mid, { nCtx: d.nCtx as number })
+      }
+      if (d.nPromptTokensCache !== undefined) {
+        updateModelMetric(mid, { nPromptTokensCache: d.nPromptTokensCache as number })
+      }
+      if (d.nPromptTokensProcessed !== undefined) {
+        updateModelMetric(mid, { nPromptTokensProcessed: d.nPromptTokensProcessed as number })
+      }
+      if (d.nDecoded !== undefined) {
+        updateModelMetric(mid, { nDecoded: d.nDecoded as number })
+      }
+      if (d.isProcessing !== undefined) {
+        updateModelMetric(mid, { isProcessing: d.isProcessing as boolean })
+      }
+      if (d.nPredict !== undefined) {
+        updateModelMetric(mid, { nPredict: d.nPredict as number })
       }
     })
     const initMetrics = async () => {

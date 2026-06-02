@@ -185,7 +185,7 @@ export const useStore = create<AppStore>((set) => ({
   })),
   removeCard: (id) => set((s) => ({ cards: s.cards.filter(c => c.template.id !== id) })),
   setCardStatus: (id, status, pid) => set((s) => ({
-    cards: s.cards.map(c => c.template.id === id ? { ...c, status, pid: pid ?? c.pid } : c)
+    cards: s.cards.map(c => c.template.id === id ? { ...c, status, pid: pid ?? (status === 'idle' || status === 'error' ? undefined : c.pid) } : c)
   })),
   toggleCardExpanded: (id) => set((s) => ({
     cards: s.cards.map(c => c.template.id === id ? { ...c, expanded: !c.expanded } : c)

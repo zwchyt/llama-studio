@@ -3,9 +3,31 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { FolderOpen, ChevronDown, Terminal, Globe, Server } from 'lucide-react'
-import type { Template, TemplateArgs } from '../../../shared/types'
 import CmdParamsEditor from './CmdParamsEditor'
-function parseCommand(cmd: string): {
+import type { Template, TemplateArgs, CommandParam } from '../../../shared/types'
+
+const EXTRA_ALIASES: Record<string, string> = {
+  '-sm': '--split-mode',
+  '-mg': '--main-gpu',
+  '-sys': '--system-prompt',
+  '-j': '--json-schema',
+  '-ts': '--tensor-split',
+  '-dev': '--device',
+}
+
+function buildShortFlagAliases(schema: { categories: { commands: CommandParam[] }[] } | null): Record<string, string> {
+  const aliases: Record<string, string> = { ...EXTRA_ALIASES }
+  if (schema) {
+    for (const cat of schema.categories) {
+      for (const cmd of cat.commands) {
+        if (cmd.short) aliases[cmd.short] = cmd.arg
+      }
+    }
+  }
+  return aliases
+}
+
+function parseCommand(cmd: string, shortFlagAliases: Record<string, string>): {
   modelPath: string
   serverPort: number
   args: TemplateArgs
@@ -19,54 +41,20 @@ function parseCommand(cmd: string): {
   let modelPath = ''
   let serverPort = 8080
   const args: Record<string, string | number | boolean> = {}
-  // short-flag aliases that have a space-separated value (must be checked before generic '-' handler)
-  const SHORT_FLAG_ALIASES: Record<string, string> = {
-    '-m': '--model',
-    '-c': '--ctx-size',
-    '-n': '--n-predict',
-    '-t': '--threads',
-    '-tb': '--threads-batch',
-    '-b': '--batch-size',
-    '-ub': '--ubatch-size',
-    '-np': '--parallel',
-    '-s': '--seed',
-    '-ngl': '--gpu-layers',
-    '-sm': '--split-mode',
-    '-mg': '--main-gpu',
-    '-mm': '--mmproj',
-    '-hf': '--hf-repo',
-    '-hff': '--hf-file',
-    '-hft': '--hf-token',
-    '-mu': '--model-url',
-    '-sys': '--system-prompt',
-    '-j': '--json-schema',
-    '-rea': '--reasoning',
-    '-md': '--spec-draft-model',
-    '-ft': '--fit',
-    '-ngld': '--spec-draft-ngl',
-    '-cmoe': '--cpu-moe',
-    '-ctk': '--cache-type-k',
-    '-ctv': '--cache-type-v',
-    '-fa': '--flash-attn',
-    '-kvo': '--kv-offload',
-    '-lv': '--log-verbosity',
-    '-ts': '--tensor-split',
-    '-dev': '--device',
-  }
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i]
     if (p === '-m' || p === '--model') {
       modelPath = parts[++i] || ''
     } else if (p === '--port') {
       serverPort = parseInt(parts[++i] || '8080', 10)
-    } else if (SHORT_FLAG_ALIASES[p]) {
+    } else if (shortFlagAliases[p]) {
       const next = parts[i + 1]
       if (next && !next.startsWith('-')) {
         const numVal = Number(next)
-        args[SHORT_FLAG_ALIASES[p]] = isNaN(numVal) ? next : numVal
+        args[shortFlagAliases[p]] = isNaN(numVal) ? next : numVal
         i++
       } else {
-        args[SHORT_FLAG_ALIASES[p]] = true
+        args[shortFlagAliases[p]] = true
       }
     } else if (p.startsWith('--') || p.startsWith('-')) {
       const next = parts[i + 1]
@@ -82,8 +70,8 @@ function parseCommand(cmd: string): {
   return { modelPath, serverPort, args }
 }
 export default function CreateModal() {
-  const { setShowCreateModal, editingTemplate, backends, activeBackend, addCard, updateCard, models } = useStore(
-    s => ({ setShowCreateModal: s.setShowCreateModal, editingTemplate: s.editingTemplate, backends: s.backends, activeBackend: s.activeBackend, addCard: s.addCard, updateCard: s.updateCard, models: s.models }),
+  const { setShowCreateModal, editingTemplate, backends, activeBackend, addCard, updateCard, models, commandsSchema } = useStore(
+    s => ({ setShowCreateModal: s.setShowCreateModal, editingTemplate: s.editingTemplate, backends: s.backends, activeBackend: s.activeBackend, addCard: s.addCard, updateCard: s.updateCard, models: s.models, commandsSchema: s.commandsSchema }),
     shallow
   )
   const [name, setName] = useState('')
@@ -117,7 +105,8 @@ export default function CreateModal() {
   }
   function handleImportCmd() {
     if (!importCmd.trim()) return
-    const parsed = parseCommand(importCmd)
+    const aliases = buildShortFlagAliases(commandsSchema)
+    const parsed = parseCommand(importCmd, aliases)
     if (parsed.modelPath?.trim()) setModelPath(parsed.modelPath.trim())
     const port = Math.min(65535, Math.max(1024, parsed.serverPort || 8080))
     setServerPort(port)

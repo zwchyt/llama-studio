@@ -1085,8 +1085,8 @@ export function registerIpcHandlers(): void {
             lastDecodeCount.set(id, { count: prom['llamacpp:n_decode_total'], time: now })
           }
           if (prom['llamacpp:kv_cache_tokens'] !== undefined) payload.nPromptTokensCache = prom['llamacpp:kv_cache_tokens']
-          if (prom['llamacpp:kv_cache_usage_ratio'] !== undefined && prom['llamacpp:kv_cache_tokens'] !== undefined) {
-            payload.nCtx = Math.round(prom['llamacpp:kv_cache_tokens'] / (prom['llamacpp:kv_cache_usage_ratio'] || 0.01))
+          if (prom['llamacpp:kv_cache_usage_ratio'] !== undefined && prom['llamacpp:kv_cache_tokens'] !== undefined && prom['llamacpp:kv_cache_usage_ratio'] > 0) {
+            payload.nCtx = Math.round(prom['llamacpp:kv_cache_tokens'] / prom['llamacpp:kv_cache_usage_ratio'])
           }
         }
         if (gpuController) {
