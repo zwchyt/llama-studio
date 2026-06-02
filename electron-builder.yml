@@ -1,0 +1,37 @@
+appId: com.hexllama.app
+productName: Hexllama
+directories:
+  buildResources: build
+files:
+  - out/main/**/*
+  - out/preload/**/*
+  - out/renderer/**/*
+extraResources:
+  - from: pi-web
+    to: pi-web
+    filter:
+      - "**/*"
+      - "!.next/cache/**"
+      - "!.next/dev/**"
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  icon: assets/icon_256.png
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+mac:
+  target: dmg
+  icon: assets/icon_1024.png
+linux:
+  target: AppImage
+  icon: assets/icon_256.png

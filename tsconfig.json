@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,   // 红线：启用所有严格检查
+    "noImplicitAny": true,    // 红线：禁止隐式any
+    "strictNullChecks": true, // 红线：严格的null检查
+    "noUncheckedIndexedAccess": true, // 红线：数组索引可能undefined
+    "noImplicitReturns": true, // 红线：函数必须有返回值
+    "noFallthroughCasesInSwitch": true, // 红线：switch不能穿透
+    "exactOptionalPropertyTypes": true  // 红线：精确的可选属性
+  },
+  "files": [],
+  "references": [
+    {
+      "path": "./tsconfig.node.json"
+    },
+    {
+      "path": "./tsconfig.web.json"
+    }
+  ]
+}

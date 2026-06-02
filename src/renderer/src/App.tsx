@@ -1,0 +1,388 @@
+import React, { useEffect, useMemo } from 'react'
+import { useStore } from './store/useStore'
+import { notify } from './store/notificationStore'
+import Titlebar from './components/Titlebar'
+import Sidebar from './components/Sidebar'
+import CardsView from './components/CardsView'
+import SettingsView from './components/SettingsView'
+import HuggingFaceView from './components/HuggingFaceView'
+import ModelsView from './components/ModelsView'
+import ModelMonitoringView from './components/ModelMonitoringView'
+import AboutView from './components/AboutView'
+import WelcomeView from './components/WelcomeView'
+import CreateModal from './components/CreateModal'
+import UpdateBanner from './components/UpdateBanner'
+import ChatWindow from './components/ChatWindow'
+import PiWebView from './components/PiWebView'
+import LlamaChatView from './components/LlamaChatView'
+import { buildDefaultTemplate } from './utils/defaultTemplate'
+import type { Template } from '../../shared/types'
+
+const searchParams = new URLSearchParams(window.location.search)
+const initChatUrl = searchParams.get('chat_url')
+
+export default function App() {
+  const chatUrl = initChatUrl
+
+  if (chatUrl) {
+    return <ChatWindow url={chatUrl} />
+  }
+
+  return <AppMain />
+}
+
+function AppMain() {
+  const [loading, setLoading] = React.useState(true)
+  const processedHfDownloads = React.useRef(new Set<string>())
+  const processedModelDownloads = React.useRef(new Set<string>())
+  const timeoutsRef = React.useRef<ReturnType<typeof setTimeout>[]>([])
+
+  const view = useStore(s => s.view)
+  const showCreateModal = useStore(s => s.showCreateModal)
+  const activeBackend = useStore(s => s.activeBackend)
+  const activeChatUrl = useStore(s => s.activeChatUrl)
+  const setBackends = useStore(s => s.setBackends)
+  const setModels = useStore(s => s.setModels)
+  const setActiveBackend = useStore(s => s.setActiveBackend)
+  const setCommandsSchema = useStore(s => s.setCommandsSchema)
+  const setCards = useStore(s => s.setCards)
+  const setPaths = useStore(s => s.setPaths)
+  const setReleaseInfo = useStore(s => s.setReleaseInfo)
+  const setCheckingUpdate = useStore(s => s.setCheckingUpdate)
+  const setHfDownload = useStore(s => s.setHfDownload)
+  const removeHfDownload = useStore(s => s.removeHfDownload)
+  const upsertModelDownload = useStore(s => s.upsertModelDownload)
+  const removeModelDownload = useStore(s => s.removeModelDownload)
+  const setView = useStore(s => s.setView)
+
+  useEffect(() => {
+    async function init() {
+      try {
+        const [paths, backendsData, modelsData] = await Promise.all([
+          window.api.getPaths(),
+          window.api.listBackends(),
+          window.api.listModels()
+        ])
+        setPaths(paths)
+        setBackends(backendsData)
+        setModels(modelsData)
+        if (backendsData.length > 0) {
+          setActiveBackend(backendsData[0])
+          const cmds = await window.api.getCommands(backendsData[0].name)
+          if (cmds) setCommandsSchema(cmds)
+        } else {
+          const cmds = await window.api.getCommands('')
+          if (cmds) setCommandsSchema(cmds)
+        }
+        const templates = await window.api.listTemplates()
+        setCards(
+          (templates as Template[]).map((t) => ({
+            template: t,
+            status: 'idle',
+            expanded: false,
+            monitorExpanded: true
+          }))
+        )
+      } catch (e) {
+        console.error('Init error:', e)
+      } finally {
+        setLoading(false)
+      }
+      await checkUpdates()
+    }
+    init()
+    window.api.onModelError((data) => {
+      const s = useStore.getState()
+      s.setCardStatus(data.id, 'error')
+      const card = s.cards.find(c => c.template.id === data.id)
+      if (card && card.template.serverPort === s.activeChatPort) {
+        s.clearActiveChat()
+      }
+      notify(`Model error: ${data.error}`, 'error')
+    })
+    return () => window.api.removeModelErrorListener()
+  }, [])
+
+  useEffect(() => {
+    window.api.onHfDownloadProgress(async (data) => {
+      try {
+        upsertModelDownload({
+          id: data.id || data.filename,
+          url: '',
+          filename: data.filename,
+          destPath: data.destPath,
+          receivedBytes: data.receivedBytes,
+          totalBytes: data.totalBytes,
+          speed: data.speed,
+          percent: data.percent,
+          phase: data.phase,
+          repoId: data.repoId
+        })
+
+        if (data.phase === 'done') {
+          if (processedHfDownloads.current.has(data.filename)) return
+          processedHfDownloads.current.add(data.filename)
+          setHfDownload({ repoId: '', filename: data.filename, percent: 100, phase: 'saving' })
+
+          const models = await window.api.listModels()
+          useStore.getState().setModels(models)
+
+          setHfDownload({ repoId: '', filename: data.filename, percent: 100, phase: 'creating_template' })
+          const { cards, activeBackend: backend, addCard: add } = useStore.getState()
+          const template = buildDefaultTemplate(
+            data.filename,
+            data.destPath,
+            cards.map(c => c.template),
+            backend?.name || ''
+          )
+          const res = await window.api.saveTemplate(template)
+          if (res.success) add({ ...template, id: res.id })
+
+          setHfDownload({ repoId: '', filename: data.filename, percent: 100, phase: 'done' })
+          const hfTimeout = setTimeout(() => removeHfDownload(data.filename), 2500)
+          timeoutsRef.current.push(hfTimeout)
+        } else {
+          
+          setHfDownload({
+            repoId: '',
+            filename: data.filename,
+            percent: data.percent,
+            phase: data.phase,
+            speed: data.speed
+          })
+        }
+      } catch (e) {
+        console.error('[onHfDownloadProgress error]', e)
+      }
+    })
+    return () => {
+      window.api.removeHfDownloadListener()
+      timeoutsRef.current.forEach(clearTimeout)
+      timeoutsRef.current = []
+    }
+  }, [])
+
+  useEffect(() => {
+    window.api.onModelDownloadProgress(async (data) => {
+      
+      if (data.repoId) return
+      upsertModelDownload(data)
+      if (data.phase === 'done') {
+        if (processedModelDownloads.current.has(data.id)) return
+        processedModelDownloads.current.add(data.id)
+        const models = await window.api.listModels()
+        useStore.getState().setModels(models)
+        
+        const { cards, activeBackend: backend, addCard: add } = useStore.getState()
+        const template = buildDefaultTemplate(
+          data.filename,
+          data.destPath,
+          cards.map(c => c.template),
+          backend?.name || ''
+        )
+        const res = await window.api.saveTemplate(template)
+        if (res.success) add({ ...template, id: res.id })
+        const dlTimeout = setTimeout(() => removeModelDownload(data.id), 4000)
+        timeoutsRef.current.push(dlTimeout)
+      }
+    })
+    
+    window.api.listModelDownloads().then(list => {
+      list.forEach((dl) => upsertModelDownload(dl))
+    })
+    return () => window.api.removeModelDownloadListener()
+  }, [])
+
+  useEffect(() => {
+    if (!activeBackend) return
+    window.api.getCommands(activeBackend.name).then((cmds) => {
+      if (cmds) setCommandsSchema(cmds)
+    })
+  }, [activeBackend, setCommandsSchema])
+
+  useEffect(() => {
+    if (!activeChatUrl && view === 'llama') setView('welcome')
+  }, [activeChatUrl, view, setView])
+
+  useEffect(() => {
+    window.api.onDownloadProgress((data) => {
+      useStore.getState().setDownloadProgress(data)
+    })
+    return () => window.api.removeDownloadListener()
+  }, [])
+
+  useEffect(() => {
+    window.api.onModelLog((data) => {
+      useStore.getState().appendModelLog(data.id, data.stream, data.text)
+    })
+    return () => window.api.removeModelLogListener()
+  }, [])
+
+  useEffect(() => {
+    window.api.onMetricsUpdate(async (data: Record<string, unknown>) => {
+      try {
+
+        const { updateModelMetric } = useStore.getState()
+        const mid = data.id as string
+
+        if (data.decodeTokS !== undefined) {
+          const raw = data.decodeTokS
+          if (Array.isArray(raw)) {
+            if (raw.length > 0) {
+              updateModelMetric(mid, { decodeTokS: (raw as number[]).slice(-30) })
+            }
+          } else {
+            const existing = useStore.getState().modelMetrics[mid]
+            const hist = (existing?.decodeTokS as number[]) || []
+            updateModelMetric(mid, { decodeTokS: [...hist, raw as number].slice(-30) })
+          }
+        }
+        if (data.ttftMs !== undefined && data.ttftMs !== null) {
+          updateModelMetric(mid, { ttftMs: data.ttftMs as number })
+        }
+        if (data.prefillTokS !== undefined && data.prefillTokS !== null) {
+          updateModelMetric(mid, { prefillTokS: data.prefillTokS as number })
+        }
+        if (data.reqPerSec !== undefined) {
+          const raw = data.reqPerSec
+          if (Array.isArray(raw)) {
+            updateModelMetric(mid, { reqPerSec: (raw as number[]).slice(-30) })
+          } else {
+            const existing = useStore.getState().modelMetrics[mid]
+            const hist = (existing?.reqPerSec as number[]) || []
+            updateModelMetric(mid, { reqPerSec: [...hist, raw as number].slice(-30) })
+          }
+        }
+        if (data.cpuPct !== undefined) {
+          updateModelMetric(mid, { cpuPct: data.cpuPct as number | null })
+        }
+        if (data.memRssMb !== undefined) {
+          updateModelMetric(mid, { memRssMb: data.memRssMb as number | null })
+        }
+        if (data.vramUsedMb !== undefined) {
+          updateModelMetric(mid, { vramUsedMb: data.vramUsedMb as number | null })
+        }
+        if (data.vramTotalMb !== undefined) {
+          updateModelMetric(mid, { vramTotalMb: data.vramTotalMb as number })
+        }
+        if (data.pid !== undefined) {
+          updateModelMetric(mid, { pid: data.pid as number | undefined })
+        }
+        if (data.nPromptTokens !== undefined) {
+          updateModelMetric(mid, { nPromptTokens: data.nPromptTokens as number })
+        }
+        if (data.nCtx !== undefined) {
+          updateModelMetric(mid, { nCtx: data.nCtx as number })
+        }
+        if (data.nPromptTokensCache !== undefined) {
+          updateModelMetric(mid, { nPromptTokensCache: data.nPromptTokensCache as number })
+        }
+        if (data.nPromptTokensProcessed !== undefined) {
+          updateModelMetric(mid, { nPromptTokensProcessed: data.nPromptTokensProcessed as number })
+        }
+        if (data.nDecoded !== undefined) {
+          updateModelMetric(mid, { nDecoded: data.nDecoded as number })
+        }
+        if (data.isProcessing !== undefined) {
+          updateModelMetric(mid, { isProcessing: data.isProcessing as boolean })
+        }
+        if (data.nPredict !== undefined) {
+          updateModelMetric(mid, { nPredict: data.nPredict as number })
+        }
+      } catch (e) {
+        console.error('[MetricsUpdate error]', e)
+      }
+    })
+    const initMetrics = async () => {
+      try {
+        const res = await window.api.getMetrics()
+        if (res.metrics) {
+          Object.values(res.metrics).forEach((m) => { if (m.id) useStore.getState().updateModelMetric(m.id, m) })
+        }
+      } catch (e) { console.error('Failed to init metrics', e) }
+    }
+    initMetrics()
+    return () => window.api.removeMetricsUpdateListener()
+  }, [])
+
+  async function checkUpdates() {
+    setCheckingUpdate(true)
+    try {
+      const info = await window.api.checkUpdates()
+      setReleaseInfo(info)
+    } finally {
+      setCheckingUpdate(false)
+    }
+  }
+
+  const currentView = useMemo(() => {
+    switch (view) {
+      case 'hub': return <HuggingFaceView />
+      case 'settings': return <SettingsView />
+      case 'models': return <ModelsView />
+      case 'monitoring': return <ModelMonitoringView />
+      case 'about': return <AboutView />
+      case 'piweb': return <PiWebView />
+      case 'welcome': return <WelcomeView />
+      case 'llama': return <LlamaChatView />
+      default: return <CardsView />
+    }
+  }, [view])
+
+  if (loading) {
+    return (
+      <div style={{
+        position: 'fixed', inset: 0, background: 'var(--bg)', zIndex: 9999,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        color: 'var(--text)'
+      }}>
+        <img src="./icon.png" alt="Hexllama Icon" style={{ width: 128, height: 128, marginBottom: 24, imageRendering: 'crisp-edges' }} draggable={false} />
+        <h2 style={{ fontSize: 18, fontWeight: 600, letterSpacing: '0.5px' }}>All AI-Glory to the Llama.cpp</h2>
+      </div>
+    )
+  }
+
+  return (
+    <div className="app">
+      <Titlebar onCheckUpdates={checkUpdates} />
+      <UpdateBanner />
+      <div className="main-layout">
+        <Sidebar />
+        <main className="content" style={view === 'llama' || view === 'piweb' ? { display: 'none' } : {}}>
+          {currentView}
+        </main>
+        <div style={{ flex: view === 'llama' || view === 'piweb' ? 1 : 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: view === 'llama' ? 'flex' : 'none', flex: 1, overflow: 'hidden', flexDirection: 'column' }}>
+            <LlamaChatView />
+          </div>
+          <div style={{ display: view === 'piweb' ? 'flex' : 'none', flex: 1, overflow: 'hidden', flexDirection: 'column' }}>
+            <PiWebView />
+          </div>
+        </div>
+      </div>
+      {showCreateModal && <CreateModal />}
+
+      <div
+        style={{
+          position: 'fixed', bottom: 0, left: 220, right: 0, height: 80, zIndex: 998,
+          background: 'linear-gradient(to top, var(--surface) 20%, transparent)',
+          pointerEvents: 'none', display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end',
+          padding: '0 24px 24px 0'
+        }}
+      >
+        <div
+          onClick={() => window.api.openExternal('https://andercoder.com')}
+          style={{
+            cursor: 'pointer', opacity: 0.5, transition: 'opacity 0.2s',
+            pointerEvents: 'auto', filter: 'invert(1)'
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+          onMouseLeave={(e) => e.currentTarget.style.opacity = '0.5'}
+          title="AnderCoder"
+        >
+          <img src="./logo-stroke.svg" alt="AnderCoder" style={{ height: 24, display: 'block' }} draggable={false} />
+        </div>
+      </div>
+    </div>
+  )
+}

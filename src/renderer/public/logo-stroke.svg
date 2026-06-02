@@ -1,0 +1,51 @@
+<!--?xml version="1.0" encoding="utf-8"?-->
+<!-- Generator: Adobe Illustrator 26.0.0, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<svg version="1.1" id="Camada_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 55.1 59.9" style="" xml:space="preserve">
+<style type="text/css">
+	.st0{fill:none;stroke:#FFFFFF;stroke-width:9;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:10;}
+	.st1{fill:none;stroke:#FFFFFF;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:10;}
+</style>
+<script>//  &lt;-- For SVG support
+	if ('WebSocket' in window) {
+		(function () {
+			function refreshCSS() {
+				var sheets = [].slice.call(document.getElementsByTagName("link"));
+				var head = document.getElementsByTagName("head")[0];
+				for (var i = 0; i &lt; sheets.length; ++i) {
+					var elem = sheets[i];
+					var parent = elem.parentElement || head;
+					parent.removeChild(elem);
+					var rel = elem.rel;
+					if (elem.href &amp;&amp; typeof rel != "string" || rel.length == 0 || rel.toLowerCase() == "stylesheet") {
+						var url = elem.href.replace(/(&amp;|\?)_cacheOverride=\d+/, '');
+						elem.href = url + (url.indexOf('?') &gt;= 0 ? '&amp;' : '?') + '_cacheOverride=' + (new Date().valueOf());
+					}
+					parent.appendChild(elem);
+				}
+			}
+			var protocol = window.location.protocol === 'http:' ? 'ws://' : 'wss://';
+			var address = protocol + window.location.host + window.location.pathname + '/ws';
+			var socket = new WebSocket(address);
+			socket.onmessage = function (msg) {
+				if (msg.data == 'reload') window.location.reload();
+				else if (msg.data == 'refreshcss') refreshCSS();
+			};
+			if (sessionStorage &amp;&amp; !sessionStorage.getItem('IsThisFirstTime_Log_From_LiveServer')) {
+				console.log('Live reload enabled.');
+				sessionStorage.setItem('IsThisFirstTime_Log_From_LiveServer', true);
+			}
+		})();
+	}
+	else {
+		console.error('Upgrade your browser. This Browser is NOT supported WebSocket for Live-Reloading.');
+	}
+	// 
+	
+</script>
+<g>
+	<path class="st0 wywTSeYb_0" d="M15.2,52.4L15.3,10.4L47.1,39.9"></path>
+	<path class="st1 wywTSeYb_1" d="M5.4,40.8L40,15.1"></path>
+	<path class="st1 wywTSeYb_2" d="M7.8,44.6L42.4,18.5"></path>
+	<path class="st0 wywTSeYb_3" d="M24.4,53.3L41.5,17.8"></path>
+</g>
+<style data-made-with="vivus-instant">.wywTSeYb_0{stroke-dasharray:86 88;stroke-dashoffset:87;animation:wywTSeYb_draw_0 10720ms ease-in-out 0ms infinite,wywTSeYb_fade 10720ms linear 0ms infinite;}.wywTSeYb_1{stroke-dasharray:44 46;stroke-dashoffset:45;animation:wywTSeYb_draw_1 10720ms ease-in-out 0ms infinite,wywTSeYb_fade 10720ms linear 0ms infinite;}.wywTSeYb_2{stroke-dasharray:44 46;stroke-dashoffset:45;animation:wywTSeYb_draw_2 10720ms ease-in-out 0ms infinite,wywTSeYb_fade 10720ms linear 0ms infinite;}.wywTSeYb_3{stroke-dasharray:40 42;stroke-dashoffset:41;animation:wywTSeYb_draw_3 10720ms ease-in-out 0ms infinite,wywTSeYb_fade 10720ms linear 0ms infinite;}@keyframes wywTSeYb_draw{100%{stroke-dashoffset:0;}}@keyframes wywTSeYb_fade{0%{stroke-opacity:1;}99.90671641791045%{stroke-opacity:1;}100%{stroke-opacity:0;}}@keyframes wywTSeYb_draw_0{0.09328358208955223%{stroke-dashoffset: 87}4.446517412935323%{ stroke-dashoffset: 0;}100%{ stroke-dashoffset: 0;}}@keyframes wywTSeYb_draw_1{0.8188225538971808%{stroke-dashoffset: 45}5.172056384742952%{ stroke-dashoffset: 0;}100%{ stroke-dashoffset: 0;}}@keyframes wywTSeYb_draw_2{1.5443615257048093%{stroke-dashoffset: 45}5.89759535655058%{ stroke-dashoffset: 0;}100%{ stroke-dashoffset: 0;}}@keyframes wywTSeYb_draw_3{2.269900497512438%{stroke-dashoffset: 41}6.6231343283582085%{ stroke-dashoffset: 0;}100%{ stroke-dashoffset: 0;}}</style></svg>
