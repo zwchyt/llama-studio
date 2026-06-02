@@ -88,6 +88,24 @@ npm run build
 
 This project exists because of the incredible foundational work of Georgi Gerganov and the ggml-org community. Please consider supporting the development of [llama.cpp](https://github.com/ggerganov/llama.cpp).
 
+## Acknowledgements
+
+This project is built upon the following two open-source projects, and we would like to express our sincere gratitude to their original authors:
+
+- **[hexllama](https://github.com/andersondanieln/hexllama.git)**
+
+Original author: andersondanieln
+
+Provides the core framework.
+
+- **[pi-web](https://github.com/agegr/pi-web.git)**
+
+Original author: agegr
+
+Provides the web interface and related component support.
+
+This repository has integrated features, fixed bugs, and independently developed upon these projects.
+
 ## Privacy and Terms
 
 Hexllama is provided as is, without warranty of any kind. The developers assume no liability for damages or issues arising from the use of this software.
