@@ -31,8 +31,8 @@ function UrlDownloadModal({ onClose }: { onClose: () => void }) {
         const repoId = parseHfRepoId(url)
         if (!repoId) throw new Error('无法识别的 URL。请粘贴直接的 .gguf 链接或 HuggingFace 模型页面 URL。')
         const res = await window.api.hfGetFiles(repoId)
-        if ('error' in res) throw new Error((res as any).error)
-        setHfFiles(res as any)
+        if ('error' in res) throw new Error(res.error)
+        setHfFiles(res)
       }
     } catch (e: any) { setError(e.message) }
     finally { setLoading(false) }

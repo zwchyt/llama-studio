@@ -11,6 +11,34 @@ import { app } from 'electron'
 import extract from 'extract-zip'
 import pidusage from 'pidusage'
 import si from 'systeminformation'
+
+interface GitHubAsset { name: string; browser_download_url: string; size: number }
+interface GitHubRelease {
+  tag_name: string
+  name: string
+  html_url: string
+  published_at: string
+  assets: GitHubAsset[]
+}
+interface HfModelRaw {
+  id: string
+  author?: string
+  downloads?: number
+  likes?: number
+  tags?: string[]
+  lastModified?: string
+}
+interface HfFileRaw { type: string; path: string; size?: number }
+type GpuData = Awaited<ReturnType<typeof si.graphics>>
+function hasErrnoCode(err: unknown): err is NodeJS.ErrnoException {
+  return err instanceof Error && 'code' in err
+}
+interface BackendCommand { arg?: string; short?: string; type?: string }
+interface BackendCategory { commands?: BackendCommand[] }
+interface BackendSchema { categories?: BackendCategory[] }
+function isBackendSchema(v: unknown): v is BackendSchema {
+  return typeof v === 'object' && v !== null && 'categories' in v
+}
 const APP_ROOT = app.isPackaged ? join(app.getPath('userData')) : join(process.cwd())
 const MODELS_DIR = join(APP_ROOT, 'models')
 const TEMPLATES_DIR = join(APP_ROOT, 'templates')
@@ -28,16 +56,18 @@ const schemaCache = new Map<string, { allowed: Set<string>; boolean: Set<string>
 function loadSchemaArgs(backendPath: string): { allowed: Set<string>; boolean: Set<string> } {
   const cached = schemaCache.get(backendPath)
   if (cached) return cached
-  let schema: any = null
-  const commandsPath = join(backendPath, 'commands.json')
-  if (existsSync(commandsPath)) {
-    try { schema = JSON.parse(readFileSync(commandsPath, 'utf-8')) } catch { }
+  let schema: BackendSchema | null = null
+  const tryLoad = (p: string): BackendSchema | null => {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(p, 'utf-8'))
+      return isBackendSchema(parsed) ? parsed : null
+    } catch { return null }
   }
+  const commandsPath = join(backendPath, 'commands.json')
+  if (existsSync(commandsPath)) schema = tryLoad(commandsPath)
   if (!schema) {
     const defaultPath = join(APP_ROOT, 'resources', 'commands.json')
-    if (existsSync(defaultPath)) {
-      try { schema = JSON.parse(readFileSync(defaultPath, 'utf-8')) } catch { }
-    }
+    if (existsSync(defaultPath)) schema = tryLoad(defaultPath)
   }
   const allowed = new Set<string>()
   const boolean = new Set<string>()
@@ -609,9 +639,9 @@ export function registerIpcHandlers(): void {
           } catch { }
         }
       })
-      proc.on('error', (err: any) => {
+      proc.on('error', (err: unknown) => {
         let msg = String(err)
-        if (err.code === 'UNKNOWN' && opts.backendPath.toLowerCase().includes('arm64') && process.arch !== 'arm64') {
+        if (hasErrnoCode(err) && err.code === 'UNKNOWN' && opts.backendPath.toLowerCase().includes('arm64') && process.arch !== 'arm64') {
           msg = 'Architecture mismatch: You are trying to run an ARM64 backend on an x64 system. Please delete this backend in Settings and download the x64 version.'
         }
         console.error('[llama-server] spawn error:', msg)
@@ -645,8 +675,8 @@ export function registerIpcHandlers(): void {
         }, 2500)
       }
       return { success: true, pid: proc.pid }
-    } catch (err: any) {
-      if (err.code === 'UNKNOWN' && opts.backendPath.toLowerCase().includes('arm64') && process.arch !== 'arm64') {
+    } catch (err: unknown) {
+      if (hasErrnoCode(err) && err.code === 'UNKNOWN' && opts.backendPath.toLowerCase().includes('arm64') && process.arch !== 'arm64') {
         return { success: false, error: 'Architecture mismatch: You are trying to run an ARM64 backend on an x64 system. Please delete this backend in Settings and download the x64 version.' }
       }
       return { success: false, error: String(err) }
@@ -698,12 +728,12 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('check-updates', async () => {
     try {
-      const release = await fetchJson('https://api.github.com/repos/ggml-org/llama.cpp/releases/latest') as any
+      const release = await fetchJson('https://api.github.com/repos/ggml-org/llama.cpp/releases/latest') as GitHubRelease
       if (!release || !release.assets) return { error: 'Invalid response from GitHub' }
       const isMac = process.platform === 'darwin'
       const isLinux = process.platform === 'linux'
       const arch = process.arch
-      const platformAssets = release.assets.filter((a: any) => {
+      const platformAssets = release.assets.filter((a: GitHubAsset) => {
         const n = a.name.toLowerCase()
         if (n.startsWith('cudart-')) return false
         if (isMac) {
@@ -732,7 +762,7 @@ export function registerIpcHandlers(): void {
           if (parseInt(m[1], 10) >= latestNum || d.name.includes(release.tag_name)) { isNewer = false; break }
         }
       }
-      return { tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at, isNewer, assets: platformAssets.map((a: any) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size })) }
+      return { tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at, isNewer, assets: platformAssets.map((a: GitHubAsset) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size })) }
     } catch (err) { return { error: String(err) } }
   })
   ipcMain.handle('download-release', async (event, opts: { url: string; version: string; assetName: string }) => {
@@ -797,14 +827,14 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('hf-search', async (_e, query: string) => {
     try {
-      const data = await fetchJson(`https://huggingface.co/api/models?search=${encodeURIComponent(query)}&filter=gguf&limit=24&sort=downloads&direction=-1`) as any[]
+      const data = await fetchJson(`https://huggingface.co/api/models?search=${encodeURIComponent(query)}&filter=gguf&limit=24&sort=downloads&direction=-1`) as HfModelRaw[]
       return data.map(m => ({ id: m.id, author: m.author || m.id.split('/')[0] || '', name: m.id.split('/').pop() || m.id, downloads: m.downloads || 0, likes: m.likes || 0, tags: m.tags || [], lastModified: m.lastModified || '' }))
     } catch (err) { return { error: String(err) } }
   })
   ipcMain.handle('hf-get-files', async (_e, repoId: string) => {
     try {
-      const data = await fetchJson(`https://huggingface.co/api/models/${encodeURIComponent(repoId)}/tree/main`) as any[]
-      return data.filter((f: any) => f.type === 'file' && f.path.endsWith('.gguf')).map((f: any) => ({
+      const data = await fetchJson(`https://huggingface.co/api/models/${encodeURIComponent(repoId)}/tree/main`) as HfFileRaw[]
+      return data.filter((f: HfFileRaw) => f.type === 'file' && f.path.endsWith('.gguf')).map((f: HfFileRaw) => ({
         name: f.path,
         size: f.size || 0,
         downloadUrl: `https://huggingface.co/${encodeURIComponent(repoId)}/resolve/main/${encodeURIComponent(f.path)}`
@@ -1040,7 +1070,7 @@ export function registerIpcHandlers(): void {
   }
 
   async function broadcastMetrics(): Promise<void> {
-    let gpu: any
+    let gpu: GpuData | undefined
     try { gpu = await si.graphics() } catch { }
     const gpuController = gpu?.controllers?.[0]
     for (const [id, { proc, port }] of runningProcesses) {
@@ -1129,7 +1159,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('get-metrics', async () => {
     const result: Record<string, unknown> = {}
-    let gpu: any
+    let gpu: GpuData | undefined
     try { gpu = await si.graphics() } catch { }
     const gpuController = gpu?.controllers?.[0]
     for (const [id, { proc, port }] of runningProcesses) {

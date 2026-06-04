@@ -12,7 +12,6 @@
     "package": "electron-vite build && electron-builder"
   },
   "dependencies": {
-    "electron-updater": "^6.3.9",
     "extract-zip": "^2.0.1",
     "pidusage": "^4.0.1",
     "systeminformation": "^5.31.6",

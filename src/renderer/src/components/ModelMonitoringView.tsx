@@ -200,11 +200,10 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
               unit="tok/s"
               icon={<Gauge size={13} />}
               accentColor="#7c3aed"
-              history={metrics?.prefillTokS ? [metrics?.prefillTokS as number] : undefined}
             />
             <MetricCard
               label="REQ/s"
-              value={fmt(metrics?.reqPerSec?.[0])}
+              value={fmt(metrics?.reqPerSec?.[metrics.reqPerSec.length - 1])}
               unit="req/s"
               icon={<Play size={13} />}
               accentColor="var(--success)"

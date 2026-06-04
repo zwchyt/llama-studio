@@ -69,8 +69,8 @@ export default function HuggingFaceView() {
     setHubSelectedModelId(null)
     try {
       const res = await window.api.hfSearch(q.trim())
-      if ('error' in res) throw new Error((res as any).error)
-      setHubResults(res as HfModel[])
+      if ('error' in res) throw new Error(res.error)
+      setHubResults(res)
     } catch (e: any) {
       setError(e.message || '搜索失败')
     } finally {
@@ -83,8 +83,8 @@ export default function HuggingFaceView() {
     setFilesLoading(true)
     try {
       const res = await window.api.hfGetFiles(model.id)
-      if ('error' in res) throw new Error((res as any).error)
-      setFiles(res as HfFile[])
+      if ('error' in res) throw new Error(res.error)
+      setFiles(res)
     } catch (e: any) {
       setError(e.message || '获取文件失败')
     } finally {
