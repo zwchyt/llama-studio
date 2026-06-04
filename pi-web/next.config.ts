@@ -16,17 +16,6 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_APP_VERSION: version,
     NEXT_PUBLIC_PI_VERSION: piVersion,
   },
-  webpack: (config, { isServer }) => {
-    // 在服务端构建时，标记这些包为外部包以避免加载问题
-    if (isServer) {
-      config.externals = config.externals || [];
-      config.externals.push(
-        "@earendil-works/pi-coding-agent",
-        "@earendil-works/pi-ai"
-      );
-    }
-    return config;
-  },
   async headers() {
     return [
       {

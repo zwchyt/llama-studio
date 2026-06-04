@@ -259,13 +259,21 @@ function startDownload(
 
 let piWebProcess: ChildProcess | null = null
 let piWebUrl = ''
-let piWebState: 'idle' | 'starting' | 'running' | 'stopping' = 'idle'
+let piWebState: 'idle' | 'starting' | 'running' | 'stopping' | 'error' = 'idle'
+let piWebStopRequested = false
 let piWebWindow: BrowserWindow | null = null
 let metricsPollingEnabled = true
 let metricsInterval: ReturnType<typeof setInterval> | null = null
+let cachedGpuData: GpuData | null = null
+let lastGpuFetch = 0
+const GPU_CACHE_TTL = 30000
 
 export function cleanupRunningProcesses(): void {
   if (metricsInterval) { clearInterval(metricsInterval); metricsInterval = null }
+  for (const [, { proc }] of runningProcesses) {
+    killProcessTreeSync(proc)
+  }
+  runningProcesses.clear()
   if (piWebProcess) {
     killProcessTreeSync(piWebProcess)
     piWebProcess = null
@@ -720,9 +728,49 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('stop-model', (_e, id: string) => {
     const entry = runningProcesses.get(id)
-    if (!entry) return { success: false, error: 'Not running' }
-    killProcessTreeSync(entry.proc); runningProcesses.delete(id)
-    return { success: true }
+    if (entry) {
+      killProcessTreeSync(entry.proc)
+      runningProcesses.delete(id)
+    }
+    let killed = false
+    const killByPort = (port: number): void => {
+      try {
+        const r = spawnSync('netstat', ['-ano'], { timeout: 5000 })
+        const pids = new Set<string>()
+        for (const line of (r.stdout?.toString() || '').split('\n')) {
+          if (!line.includes(`:${port}`) || !line.includes('LISTENING')) continue
+          const pid = line.trim().split(/\s+/).filter(Boolean).pop()
+          if (pid && pid !== '0') pids.add(pid)
+        }
+        for (const pid of pids) {
+          spawnSync('taskkill', ['/F', '/PID', pid], { timeout: 3000 })
+          killed = true
+        }
+      } catch { }
+    }
+    const killByName = (): void => {
+      for (const name of ['llama-server.exe', 'llama-server', 'server.exe', 'main.exe']) {
+        try { spawnSync('taskkill', ['/F', '/IM', name], { timeout: 3000 }) } catch { }
+      }
+    }
+    killByName()
+    if (entry) {
+      if (entry.port) killByPort(entry.port)
+      return { success: true }
+    }
+    let port = 0
+    const templatesDir = join(APP_ROOT, 'templates')
+    if (existsSync(templatesDir)) {
+      for (const f of readdirSync(templatesDir)) {
+        if (!f.endsWith('.json')) continue
+        try {
+          const t = JSON.parse(readFileSync(join(templatesDir, f), 'utf-8'))
+          if (t.id === id && t.serverPort) { port = t.serverPort; break }
+        } catch { }
+      }
+    }
+    if (port) killByPort(port)
+    return { success: killed || !port, error: killed || !port ? undefined : 'Not running' }
   })
   let cancelBackendDl: (() => void) | null = null
 
@@ -919,6 +967,7 @@ export function registerIpcHandlers(): void {
       killProcessTreeSync(piWebProcess)
       piWebProcess = null
     }
+    piWebStopRequested = false
     piWebState = 'starting'
     piWebUrl = ''
     let nextBin: string
@@ -937,10 +986,25 @@ export function registerIpcHandlers(): void {
       const proc = spawn('node', [nextBin, nextMode, '-p', String(PI_WEB_PORT)], {
         cwd: PI_WEB_DIR,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, NODE_ENV: app.isPackaged ? 'production' : 'development' },
+        env: {
+          ...process.env,
+          NODE_ENV: app.isPackaged ? 'production' : 'development',
+          NEXT_DISABLE_TURBOPACK: '1',
+          NODE_OPTIONS: '--max-old-space-size=512',
+        },
         windowsHide: true,
       })
       let resolved = false
+      const startupTimeout = setTimeout(() => {
+        if (resolved) return
+        resolved = true
+        killProcessTreeSync(proc)
+        piWebProcess = null
+        piWebUrl = ''
+        piWebState = 'error'
+        reject(new Error('pi-web startup timed out after 60 seconds'))
+      }, 60000)
+      const cancelTimeout = () => clearTimeout(startupTimeout)
       proc.stdout?.on('data', (chunk: Buffer) => {
         const text = chunk.toString()
         if (!resolved && text.includes('Ready')) {
@@ -949,12 +1013,13 @@ export function registerIpcHandlers(): void {
           const checkUrl = piWebUrl
             ; (async () => {
               for (let i = 0; i < 30; i++) {
-                if (piWebState !== 'starting') return
+                if (piWebState !== 'starting') { cancelTimeout(); return }
                 try {
                   const r = await fetch(`${checkUrl}/api/models`)
                   if (r.ok) {
-                    if (piWebState !== 'starting') return
+                    if (piWebState !== 'starting') { cancelTimeout(); return }
                     piWebState = 'running'
+                    cancelTimeout()
                     resolve(piWebUrl)
                     return
                   }
@@ -962,7 +1027,8 @@ export function registerIpcHandlers(): void {
                 await new Promise(r => setTimeout(r, 1000))
               }
               if (piWebState === 'starting') {
-                piWebState = 'idle'
+                piWebState = 'error'
+                cancelTimeout()
                 reject(new Error('pi-web health check failed: server not responding'))
               }
             })()
@@ -972,15 +1038,21 @@ export function registerIpcHandlers(): void {
         console.error('[pi-web stderr]', chunk.toString())
       })
       proc.on('error', (err) => {
-        piWebState = 'idle'
+        cancelTimeout()
         piWebProcess = null
         piWebUrl = ''
+        if (!piWebStopRequested) piWebState = 'error'
         if (!resolved) { resolved = true; reject(err) }
       })
       proc.on('exit', (code) => {
+        cancelTimeout()
         piWebProcess = null
         piWebUrl = ''
-        if (piWebState !== 'stopping') piWebState = 'idle'
+        console.error(`[pi-web] process exited with code ${code} (state: ${piWebState})`)
+        if (!piWebStopRequested) {
+          piWebState = resolved ? 'idle' : 'error'
+        }
+        piWebStopRequested = false
         if (!resolved) { resolved = true; reject(new Error(`pi-web exited with code ${code}`)) }
       })
       piWebProcess = proc
@@ -989,6 +1061,7 @@ export function registerIpcHandlers(): void {
 
   function stopPiWeb(): void {
     piWebState = 'stopping'
+    piWebStopRequested = true
     if (piWebProcess) {
       killProcessTreeSync(piWebProcess)
       piWebProcess = null
@@ -1069,10 +1142,15 @@ export function registerIpcHandlers(): void {
     return result
   }
 
+  async function refreshGpuData(): Promise<void> {
+    const now = Date.now()
+    if (cachedGpuData && (now - lastGpuFetch) < GPU_CACHE_TTL) return
+    try { cachedGpuData = await si.graphics(); lastGpuFetch = now } catch { }
+  }
+
   async function broadcastMetrics(): Promise<void> {
-    let gpu: GpuData | undefined
-    try { gpu = await si.graphics() } catch { }
-    const gpuController = gpu?.controllers?.[0]
+    await refreshGpuData()
+    const gpuController = cachedGpuData?.controllers?.[0]
     for (const [id, { proc, port }] of runningProcesses) {
       if (proc.pid === undefined) continue
       try {
@@ -1159,9 +1237,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('get-metrics', async () => {
     const result: Record<string, unknown> = {}
-    let gpu: GpuData | undefined
-    try { gpu = await si.graphics() } catch { }
-    const gpuController = gpu?.controllers?.[0]
+    await refreshGpuData()
+    const gpuController = cachedGpuData?.controllers?.[0]
     for (const [id, { proc, port }] of runningProcesses) {
       if (proc.pid === undefined) continue
       try {
