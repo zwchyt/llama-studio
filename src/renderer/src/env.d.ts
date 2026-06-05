@@ -25,6 +25,7 @@ interface HfModelResult {
 interface HfFileResult { name: string; size: number; downloadUrl: string }
 interface LlamaCppApi {
   listModels: () => Promise<ModelFileInfo[]>
+  listModelsRefresh: () => Promise<ModelFileInfo[]>
   deleteModel: (filePath: string) => Promise<{ success: boolean; error?: string }>
   renameModel: (oldPath: string, newName: string) => Promise<{ success: boolean; newPath?: string; error?: string }>
   startModelDownload: (opts: { url: string; filename: string; repoId?: string; modelFolder?: string }) => Promise<{ success: boolean; id?: string; error?: string }>

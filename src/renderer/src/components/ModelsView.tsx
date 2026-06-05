@@ -240,7 +240,7 @@ export default function ModelsView() {
   }, [models, filter])
   const refresh = useCallback(async () => {
     setLoading(true)
-    const m = await window.api.listModels()
+    const m = await window.api.listModelsRefresh()
     setModels(m)
     setLoading(false)
   }, [setModels])

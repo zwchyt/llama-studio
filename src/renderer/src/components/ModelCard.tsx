@@ -143,11 +143,6 @@ export default function ModelCard({ card }: Props) {
     if (res.success) useStore.getState().addCard({ ...t, id: res.id })
     setShowMenu(false)
   }, [card.template])
-  function logClass(text: string, _stream: string): string {
-    if (/\berror\b/i.test(text)) return 'log-error'
-    if (/\bwarn(ing)?\b/i.test(text)) return 'log-warn'
-    return 'log-stdout'
-  }
   const setLaunchMode = useCallback(async (mode: 'chat' | 'api') => {
     const res = await window.api.saveTemplate({ ...card.template, launchMode: mode })
     if (res.success) {
@@ -271,7 +266,7 @@ export default function ModelCard({ card }: Props) {
           <div className="card-logs-body" ref={logsBodyRef}>
             <div className="card-logs-scroll">
               {logs?.map((entry, i) => (
-                <div key={i} className={`log-entry ${logClass(entry.text, entry.stream)}`}>
+                <div key={i} className={`log-entry ${entry.className}`}>
                   {entry.text}
                 </div>
               ))}

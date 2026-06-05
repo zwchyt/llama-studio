@@ -26,22 +26,15 @@ function fmtMem(mb: unknown): string {
   return `${Math.round(mb)} MB`
 }
 
-function sparklinePath(values: number[] | undefined, w = 120, h = 32): string {
-  if (!values || values.length < 2 || values.some(isNaN)) return ''
+function sparkline(values: number[] | undefined, w = 120, h = 32): { path: string; color: string } {
+  if (!values || values.length < 2) return { path: '', color: 'var(--accent)' }
   const safe = values.filter(v => !isNaN(v) && isFinite(v))
-  if (safe.length < 2) return ''
+  if (safe.length < 2) return { path: '', color: 'var(--accent)' }
   const max = Math.max(...safe, 1)
   const step = w / (safe.length - 1)
-  return safe.map((v, i) => `${i === 0 ? 'M' : 'L'} ${i * step} ${h - (v / max) * h}`).join(' ')
-}
-
-function sparklineColor(values: number[] | undefined): string {
-  if (!values || values.length < 2) return 'var(--accent)'
-  const safe = values.filter(v => !isNaN(v) && isFinite(v))
-  if (safe.length < 2) return 'var(--accent)'
-  const first = safe[0]
-  const last = safe[safe.length - 1]
-  return last >= first ? 'var(--success)' : 'var(--danger)'
+  const path = safe.map((v, i) => `${i === 0 ? 'M' : 'L'} ${i * step} ${h - (v / max) * h}`).join(' ')
+  const color = safe[safe.length - 1] >= safe[0] ? 'var(--success)' : 'var(--danger)'
+  return { path, color }
 }
 
 // ── MetricCard ───────────────────────────────────────────────────────────────
@@ -56,6 +49,7 @@ interface MetricCardProps {
 }
 
 function MetricCard({ label, value, unit, icon, accentColor, history, barMax }: MetricCardProps) {
+  const spark = history ? sparkline(history) : { path: '', color: 'var(--accent)' }
   return (
     <div className="metric-card">
       <div className="metric-card-header">
@@ -73,7 +67,7 @@ function MetricCard({ label, value, unit, icon, accentColor, history, barMax }: 
             </div>
           )}
           <svg className="metric-sparkline" width="100%" height="32" viewBox="0 0 120 32" preserveAspectRatio="none">
-            <path d={sparklinePath(history)} stroke={sparklineColor(history)} />
+            <path d={spark.path} stroke={spark.color} />
           </svg>
         </>
       )}

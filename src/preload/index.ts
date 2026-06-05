@@ -3,6 +3,7 @@ import { electronAPI } from '@electron-toolkit/preload'
 
 const fullApi = {
   listModels: () => ipcRenderer.invoke('list-models'),
+  listModelsRefresh: () => ipcRenderer.invoke('list-models-refresh'),
   deleteModel: (filePath: string) => ipcRenderer.invoke('delete-model', filePath),
   renameModel: (oldPath: string, newName: string) => ipcRenderer.invoke('rename-model', oldPath, newName),
   startModelDownload: (opts: object) => ipcRenderer.invoke('start-model-download', opts),

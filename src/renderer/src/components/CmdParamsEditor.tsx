@@ -87,8 +87,6 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
   }
   const filteredCategories = useMemo(() => {
     if (!commandsSchema) return []
-    let allCommands: CommandParam[] = []
-    commandsSchema.categories.forEach(cat => allCommands.push(...cat.commands))
     const q = searchQuery.toLowerCase()
     if (q) {
       return commandsSchema.categories.map(cat => ({
@@ -100,6 +98,8 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
         )
       })).filter(cat => cat.commands.length > 0)
     }
+    let allCommands: CommandParam[] = []
+    commandsSchema.categories.forEach(cat => allCommands.push(...cat.commands))
     const featuredCommands = allCommands.filter(c => FEATURED_ARGS.includes(c.arg))
     const cats = commandsSchema.categories.map(cat => ({
       ...cat,

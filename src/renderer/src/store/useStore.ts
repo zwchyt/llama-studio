@@ -17,6 +17,11 @@ export interface ModelDownloadInfo {
   percent: number; repoId?: string; speed?: number
 }
 export const MAX_LOG_LINES = 5000
+function logClass(text: string): string {
+  if (/\berror\b/i.test(text)) return 'log-error'
+  if (/\bwarn(ing)?\b/i.test(text)) return 'log-warn'
+  return 'log-stdout'
+}
 interface AppStore {
   cards: CardState[]
   backends: BackendVersion[]
@@ -37,7 +42,7 @@ interface AppStore {
   hubQuery: string
   hubResults: import('../../../shared/types').HubResultItem[]
   hubSelectedModelId: string | null
-  modelLogs: Record<string, { stream: string; text: string }[]>
+  modelLogs: Record<string, { stream: string; text: string; className: string }[]>
   modelMetrics: Record<string, ModelMetrics>
   appendModelLog: (id: string, stream: string, text: string) => void
   clearModelLogs: (id: string) => void
@@ -104,7 +109,7 @@ export const useStore = create<AppStore>((set) => ({
   setTemplateSearch: (q) => set({ templateSearch: q }),
   upsertModelDownload: (d) => set((s) => {
     const existing = s.modelDownloads[d.id]
-    if (existing && existing.percent === d.percent && existing.phase === d.phase && existing.receivedBytes === d.receivedBytes && existing.speed === d.speed) return s
+    if (existing && existing.percent === d.percent && existing.phase === d.phase) return s
     return { modelDownloads: { ...s.modelDownloads, [d.id]: d } }
   }),
   removeModelDownload: (id) => set((s) => {
@@ -130,7 +135,7 @@ export const useStore = create<AppStore>((set) => ({
     const lines = text.split('\n')
     const newEntries = lines
       .filter(line => line.length > 0 || lines.length === 1)
-      .map(line => ({ stream, text: line }))
+      .map(line => ({ stream, text: line, className: logClass(line) }))
     if (existing.length + newEntries.length <= MAX_LOG_LINES) {
       return { modelLogs: { ...s.modelLogs, [id]: [...existing, ...newEntries] } }
     }
@@ -143,36 +148,45 @@ export const useStore = create<AppStore>((set) => ({
   }),
   updateModelMetric: (id, partial) => set((s) => {
     const existing = s.modelMetrics[id]
-    const merged: ModelMetrics = existing
-      ? {
+    if (!existing) {
+      return { modelMetrics: { ...s.modelMetrics, [id]: {
+        id,
+        templateName: partial.templateName || id,
+        pid: partial.pid,
+        decodeTokS: partial.decodeTokS ?? [],
+        ttftMs: partial.ttftMs ?? null,
+        prefillTokS: partial.prefillTokS ?? null,
+        reqPerSec: partial.reqPerSec ?? [],
+        vramUsedMb: partial.vramUsedMb ?? null,
+        vramTotalMb: partial.vramTotalMb ?? 0,
+        cpuPct: partial.cpuPct ?? null,
+        memRssMb: partial.memRssMb ?? null,
+        nPromptTokens: partial.nPromptTokens ?? 0,
+        nPromptTokensCache: partial.nPromptTokensCache ?? 0,
+        nPromptTokensProcessed: partial.nPromptTokensProcessed ?? 0,
+        nDecoded: partial.nDecoded ?? 0,
+        isProcessing: partial.isProcessing ?? false,
+        nPredict: partial.nPredict ?? -1,
+        nCtx: partial.nCtx ?? 0,
+        lastUpdated: Date.now(),
+      } } }
+    }
+    for (const k in partial) {
+      const key = k as keyof ModelMetrics
+      const pv = partial[key]
+      const ev = existing[key]
+      const next = (key === 'nPromptTokensCache' || key === 'nPromptTokensProcessed') ? (pv ?? ev) : pv
+      if (next !== ev) {
+        return { modelMetrics: { ...s.modelMetrics, [id]: {
           ...existing,
           ...partial,
           nPromptTokensCache: partial.nPromptTokensCache ?? existing.nPromptTokensCache,
           nPromptTokensProcessed: partial.nPromptTokensProcessed ?? existing.nPromptTokensProcessed,
           lastUpdated: Date.now(),
-        }
-      : {
-          id,
-          templateName: partial.templateName || id,
-          pid: partial.pid,
-          decodeTokS: partial.decodeTokS ?? [],
-          ttftMs: partial.ttftMs ?? null,
-          prefillTokS: partial.prefillTokS ?? null,
-          reqPerSec: partial.reqPerSec ?? [],
-          vramUsedMb: partial.vramUsedMb ?? null,
-          vramTotalMb: partial.vramTotalMb ?? 0,
-          cpuPct: partial.cpuPct ?? null,
-          memRssMb: partial.memRssMb ?? null,
-          nPromptTokens: partial.nPromptTokens ?? 0,
-          nPromptTokensCache: partial.nPromptTokensCache ?? 0,
-          nPromptTokensProcessed: partial.nPromptTokensProcessed ?? 0,
-          nDecoded: partial.nDecoded ?? 0,
-          isProcessing: partial.isProcessing ?? false,
-          nPredict: partial.nPredict ?? -1,
-          nCtx: partial.nCtx ?? 0,
-          lastUpdated: Date.now(),
-        }
-    return { modelMetrics: { ...s.modelMetrics, [id]: merged } }
+        } } }
+      }
+    }
+    return s
   }),
   clearModelMetrics: (id) => set((s) => {
     const next = { ...s.modelMetrics }

@@ -37,7 +37,7 @@ export default function SettingsView() {
   }, [])
 
   async function refreshModels() {
-    const m = await window.api.listModels()
+    const m = await window.api.listModelsRefresh()
     setModels(m)
   }
   async function handleAddExtFolder() {

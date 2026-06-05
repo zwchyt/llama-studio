@@ -4,7 +4,7 @@ import {
   unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, promises as fsPromises
 } from 'fs'
 import { join, extname, basename, dirname, resolve } from 'path'
-import { spawn, spawnSync, ChildProcess } from 'child_process'
+import { spawn, ChildProcess } from 'child_process'
 import https from 'https'
 import http from 'http'
 import { app } from 'electron'
@@ -29,7 +29,9 @@ interface HfModelRaw {
   lastModified?: string
 }
 interface HfFileRaw { type: string; path: string; size?: number }
+type ModelFileInfo = { name: string; path: string; size: number; folder: string; external: boolean }
 type GpuData = Awaited<ReturnType<typeof si.graphics>>
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 16, keepAliveMsecs: 30000 })
 function hasErrnoCode(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error && 'code' in err
 }
@@ -109,14 +111,22 @@ function validateArgs(raw: string[], allowed: Set<string>, boolean: Set<string>)
   }
   return out
 }
-function killProcessTreeSync(proc: ChildProcess): void {
-  if (proc.pid === undefined) return
+function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
+  if (proc.pid === undefined) return Promise.resolve()
   if (process.platform === 'win32') {
-    try {
-      spawnSync('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { timeout: 5000 })
-    } catch { }
+    return new Promise((resolve) => {
+      let done = false
+      const finish = () => { if (!done) { done = true; resolve() } }
+      const timer = setTimeout(finish, 5000)
+      try {
+        const child = spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true })
+        child.on('exit', () => { clearTimeout(timer); finish() })
+        child.on('error', () => { clearTimeout(timer); finish() })
+      } catch { clearTimeout(timer); finish() }
+    })
   } else {
-    try { process.kill(-proc.pid, 'SIGKILL') } catch { process.kill(proc.pid, 'SIGKILL') }
+    try { process.kill(-proc.pid, 'SIGKILL') } catch { try { process.kill(proc.pid, 'SIGKILL') } catch { } }
+    return Promise.resolve()
   }
 }
 interface AppSettings { externalModelFolders: string[]; metricsPolling?: boolean }
@@ -137,6 +147,18 @@ async function saveSettings(s: AppSettings): Promise<void> {
   await fsPromises.writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2))
   settingsCache = s
 }
+function loadSettingsSync(): AppSettings {
+  if (settingsCache) return settingsCache
+  try {
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], metricsPolling: true }; return settingsCache }
+    const data = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'))
+    settingsCache = {
+      externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
+      metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true
+    }
+    return settingsCache
+  } catch { settingsCache = { externalModelFolders: [], metricsPolling: true }; return settingsCache }
+}
 interface RunningProcess { proc: ChildProcess; port: number }
 const runningProcesses = new Map<string, RunningProcess>()
 interface DownloadTask {
@@ -153,6 +175,7 @@ interface DownloadTask {
 }
 const downloadTasks = new Map<string, DownloadTask>()
 const broadcastTimes = new Map<string, number>()
+const lastSent = new Map<string, { percent: number; phase: string; speedBucket: number }>()
 const BROADCAST_THROTTLE_MS = 200
 function canBroadcast(id: string): boolean {
   const now = Date.now()
@@ -266,16 +289,21 @@ let metricsPollingEnabled = true
 let metricsInterval: ReturnType<typeof setInterval> | null = null
 let cachedGpuData: GpuData | null = null
 let lastGpuFetch = 0
+let gpuLoggedFail = false
 const GPU_CACHE_TTL = 30000
+let modelsCache: { ts: number; result: ModelFileInfo[] } | null = null
+let modelsScanPromise: Promise<ModelFileInfo[]> | null = null
+const MODELS_CACHE_TTL = 30000
+const MAX_MODELS_FILES = 5000
 
 export function cleanupRunningProcesses(): void {
   if (metricsInterval) { clearInterval(metricsInterval); metricsInterval = null }
   for (const [, { proc }] of runningProcesses) {
-    killProcessTreeSync(proc)
+    killProcessTreeAsync(proc)
   }
   runningProcesses.clear()
   if (piWebProcess) {
-    killProcessTreeSync(piWebProcess)
+    killProcessTreeAsync(piWebProcess)
     piWebProcess = null
   }
   piWebUrl = ''
@@ -287,38 +315,57 @@ export function cleanupRunningProcesses(): void {
 }
 
 export function registerIpcHandlers(): void {
-  ipcMain.handle('list-models', async () => {
-    const exts = ['.gguf', '.bin', '.ggml']
-    const results: { name: string; path: string; size: number; folder: string; external: boolean }[] = []
-    const seen = new Set<string>()
-    const visitedDirs = new Set<string>()
-    const scan = async (dir: string, external: boolean, depth = 0) => {
-      if (depth > 8) return
-      try {
-        const realDir = await fsPromises.realpath(dir)
-        if (visitedDirs.has(realDir)) return
-        visitedDirs.add(realDir)
-        const files = await fsPromises.readdir(dir, { withFileTypes: true })
-        for (const e of files) {
-          if (e.isDirectory()) await scan(join(dir, e.name), external, depth + 1)
-          else if (exts.includes(extname(e.name).toLowerCase()) && !e.name.endsWith('.tmp')) {
-            const fp = join(dir, e.name)
-            const key = resolve(fp)
-            if (seen.has(key)) continue
-            seen.add(key)
-            const st = await fsPromises.stat(fp)
-            results.push({ name: e.name, path: fp, size: st.size, folder: basename(dir), external })
+  loadSettingsSync()
+  function invalidateModelsCache(): void {
+    modelsCache = null
+    modelsScanPromise = null
+  }
+  async function scanModels(force: boolean): Promise<ModelFileInfo[]> {
+    if (!force && modelsCache && (Date.now() - modelsCache.ts) < MODELS_CACHE_TTL) {
+      return modelsCache.result
+    }
+    if (modelsScanPromise) return modelsScanPromise
+    modelsScanPromise = (async () => {
+      const exts = ['.gguf', '.bin', '.ggml']
+      const results: ModelFileInfo[] = []
+      const seen = new Set<string>()
+      const visitedDirs = new Set<string>()
+      const scan = async (dir: string, external: boolean, depth = 0): Promise<void> => {
+        if (depth > 8 || results.length >= MAX_MODELS_FILES) return
+        try {
+          const realDir = await fsPromises.realpath(dir)
+          if (visitedDirs.has(realDir)) return
+          visitedDirs.add(realDir)
+          const files = await fsPromises.readdir(dir, { withFileTypes: true })
+          for (const e of files) {
+            if (results.length >= MAX_MODELS_FILES) return
+            if (e.isDirectory()) await scan(join(dir, e.name), external, depth + 1)
+            else if (exts.includes(extname(e.name).toLowerCase()) && !e.name.endsWith('.tmp')) {
+              const fp = join(dir, e.name)
+              const key = resolve(fp)
+              if (seen.has(key)) continue
+              seen.add(key)
+              const st = await fsPromises.stat(fp)
+              results.push({ name: e.name, path: fp, size: st.size, folder: basename(dir), external })
+            }
           }
-        }
-      } catch { }
-    }
-    if (existsSync(MODELS_DIR)) await scan(MODELS_DIR, false)
-    const settings = await loadSettings()
-    for (const folder of settings.externalModelFolders) {
-      if (existsSync(folder)) await scan(folder, true)
-    }
-    return results
-  })
+        } catch { }
+      }
+      if (existsSync(MODELS_DIR)) await scan(MODELS_DIR, false)
+      const settings = await loadSettings()
+      for (const folder of settings.externalModelFolders) {
+        if (results.length >= MAX_MODELS_FILES) break
+        if (existsSync(folder)) await scan(folder, true)
+      }
+      modelsCache = { ts: Date.now(), result: results }
+      return results
+    })().finally(() => {
+      modelsScanPromise = null
+    })
+    return modelsScanPromise
+  }
+  ipcMain.handle('list-models', () => scanModels(false))
+  ipcMain.handle('list-models-refresh', () => scanModels(true))
   ipcMain.handle('list-external-model-folders', async () => (await loadSettings()).externalModelFolders)
   ipcMain.handle('add-external-model-folder', async () => {
     const r = await dialog.showOpenDialog({ title: 'Add External Model Folder', properties: ['openDirectory'] })
@@ -328,6 +375,7 @@ export function registerIpcHandlers(): void {
     if (!s.externalModelFolders.includes(folder)) {
       s.externalModelFolders.push(folder)
       await saveSettings(s)
+      invalidateModelsCache()
     }
     return { success: true, folders: s.externalModelFolders }
   })
@@ -335,6 +383,7 @@ export function registerIpcHandlers(): void {
     const s = await loadSettings()
     s.externalModelFolders = s.externalModelFolders.filter(f => f !== folder)
     await saveSettings(s)
+    invalidateModelsCache()
     return { success: true, folders: s.externalModelFolders }
   })
   ipcMain.handle('delete-model', (_e, filePath: string) => {
@@ -345,6 +394,7 @@ export function registerIpcHandlers(): void {
       if (dir !== MODELS_DIR) {
         try { if (readdirSync(dir).length === 0) rmdirSync(dir) } catch { }
       }
+      invalidateModelsCache()
       return { success: true }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -357,6 +407,7 @@ export function registerIpcHandlers(): void {
       const newPath = join(dir, newName + extname(oldPath))
       if (!isSafePath(MODELS_DIR, newPath)) return { success: false, error: 'Access denied' }
       renameSync(oldPath, newPath)
+      invalidateModelsCache()
       return { success: true, newPath }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -387,10 +438,16 @@ export function registerIpcHandlers(): void {
     }
     const broadcastProgress = (t: DownloadTask, force = false) => {
       if (!force && !canBroadcast(t.id)) return
+      const percent = t.totalBytes > 0 ? Math.round((t.receivedBytes / t.totalBytes) * 100) : 0
+      const speedBucket = Math.round(t.speed / (500 * 1024))
+      if (!force) {
+        const last = lastSent.get(t.id)
+        if (last && last.percent === percent && last.phase === t.phase && last.speedBucket === speedBucket) return
+      }
+      lastSent.set(t.id, { percent, phase: t.phase, speedBucket })
       const payload = {
         id: t.id, filename: t.filename,
-        percent: t.totalBytes > 0 ? Math.round((t.receivedBytes / t.totalBytes) * 100) : 0,
-        receivedBytes: t.receivedBytes, totalBytes: t.totalBytes,
+        percent, receivedBytes: t.receivedBytes, totalBytes: t.totalBytes,
         speed: t.speed, phase: t.phase, destPath: t.destPath,
         repoId: t.repoId
       }
@@ -404,7 +461,8 @@ export function registerIpcHandlers(): void {
       () => {
         try { renameSync(tmpPath, finalPath) } catch { }
         task.phase = 'done'; task.speed = 0; broadcastProgress(task, true)
-        setTimeout(() => { downloadTasks.delete(id); broadcastTimes.delete(id) }, 5000)
+        invalidateModelsCache()
+        setTimeout(() => { downloadTasks.delete(id); broadcastTimes.delete(id); lastSent.delete(id) }, 5000)
       },
       (err) => { task.phase = 'error'; task.speed = 0; broadcastProgress(task, true); console.error('Download error:', err) }
     )
@@ -420,6 +478,7 @@ export function registerIpcHandlers(): void {
     task.speed = 0
 
     broadcastTimes.delete(id)
+    lastSent.delete(id)
     const payload = {
       id, filename: task.filename, phase: 'paused', speed: 0,
       percent: task.totalBytes > 0 ? Math.round((task.receivedBytes / task.totalBytes) * 100) : 0,
@@ -463,7 +522,8 @@ export function registerIpcHandlers(): void {
       () => {
         try { renameSync(tmpPath, task.destPath) } catch { }
         task.phase = 'done'; task.speed = 0; broadcastProgress(task, true)
-        setTimeout(() => { downloadTasks.delete(id); broadcastTimes.delete(id) }, 5000)
+        invalidateModelsCache()
+        setTimeout(() => { downloadTasks.delete(id); broadcastTimes.delete(id); lastSent.delete(id) }, 5000)
       },
       (err) => { task.phase = 'error'; task.speed = 0; broadcastProgress(task, true); console.error('Resume error:', err) }
     )
@@ -654,9 +714,11 @@ export function registerIpcHandlers(): void {
         }
         console.error('[llama-server] spawn error:', msg)
         runningProcesses.delete(opts.id)
+        if (runningProcesses.size === 0) stopMetricsInterval()
         if (!_e.sender.isDestroyed()) _e.sender.send('model-error', { id: opts.id, error: msg })
       })
       runningProcesses.set(opts.id, { proc, port: opts.port })
+      if (metricsPollingEnabled) startMetricsInterval()
       // send initial metrics immediately
       if (proc.pid !== undefined) {
         try {
@@ -676,6 +738,7 @@ export function registerIpcHandlers(): void {
           })
         }
         runningProcesses.delete(opts.id)
+        if (runningProcesses.size === 0) stopMetricsInterval()
       })
       if (opts.openBrowser) {
         setTimeout(() => {
@@ -726,36 +789,51 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('open-chat-window', (_e, port: number) => {
     openChatWindow(port)
   })
-  ipcMain.handle('stop-model', (_e, id: string) => {
+  const killByPortAsync = (port: number): Promise<boolean> => {
+    if (process.platform !== 'win32') return Promise.resolve(false)
+    return new Promise((resolve) => {
+      let done = false
+      const finish = (killed: boolean) => { if (!done) { done = true; resolve(killed) } }
+      const netstatTimer = setTimeout(() => finish(false), 5000)
+      let buf = ''
+      try {
+        const c = spawn('netstat', ['-ano'], { windowsHide: true })
+        c.stdout?.on('data', (chunk: Buffer) => { buf += chunk.toString() })
+        c.on('exit', () => {
+          clearTimeout(netstatTimer)
+          const pids = new Set<string>()
+          for (const line of buf.split('\n')) {
+            if (!line.includes(`:${port}`) || !line.includes('LISTENING')) continue
+            const pid = line.trim().split(/\s+/).filter(Boolean).pop()
+            if (pid && pid !== '0') pids.add(pid)
+          }
+          if (pids.size === 0) { finish(false); return }
+          let remaining = pids.size
+          let anyKilled = false
+          const killOne = (pid: string) => {
+            const killTimer = setTimeout(() => {
+              if (--remaining === 0) finish(anyKilled)
+            }, 3000)
+            try {
+              const k = spawn('taskkill', ['/F', '/PID', pid], { windowsHide: true })
+              k.on('exit', () => { clearTimeout(killTimer); anyKilled = true; if (--remaining === 0) finish(anyKilled) })
+              k.on('error', () => { clearTimeout(killTimer); if (--remaining === 0) finish(anyKilled) })
+            } catch { clearTimeout(killTimer); if (--remaining === 0) finish(anyKilled) }
+          }
+          for (const pid of pids) killOne(pid)
+        })
+        c.on('error', () => { clearTimeout(netstatTimer); finish(false) })
+      } catch { clearTimeout(netstatTimer); finish(false) }
+    })
+  }
+  ipcMain.handle('stop-model', async (_e, id: string) => {
     const entry = runningProcesses.get(id)
     if (entry) {
-      killProcessTreeSync(entry.proc)
       runningProcesses.delete(id)
-    }
-    let killed = false
-    const killByPort = (port: number): void => {
-      try {
-        const r = spawnSync('netstat', ['-ano'], { timeout: 5000 })
-        const pids = new Set<string>()
-        for (const line of (r.stdout?.toString() || '').split('\n')) {
-          if (!line.includes(`:${port}`) || !line.includes('LISTENING')) continue
-          const pid = line.trim().split(/\s+/).filter(Boolean).pop()
-          if (pid && pid !== '0') pids.add(pid)
-        }
-        for (const pid of pids) {
-          spawnSync('taskkill', ['/F', '/PID', pid], { timeout: 3000 })
-          killed = true
-        }
-      } catch { }
-    }
-    const killByName = (): void => {
-      for (const name of ['llama-server.exe', 'llama-server', 'server.exe', 'main.exe']) {
-        try { spawnSync('taskkill', ['/F', '/IM', name], { timeout: 3000 }) } catch { }
-      }
-    }
-    killByName()
-    if (entry) {
-      if (entry.port) killByPort(entry.port)
+      if (runningProcesses.size === 0) stopMetricsInterval()
+      const tasks: Promise<unknown>[] = [killProcessTreeAsync(entry.proc)]
+      if (entry.port) tasks.push(killByPortAsync(entry.port))
+      await Promise.all(tasks)
       return { success: true }
     }
     let port = 0
@@ -769,7 +847,7 @@ export function registerIpcHandlers(): void {
         } catch { }
       }
     }
-    if (port) killByPort(port)
+    const killed = port ? await killByPortAsync(port) : false
     return { success: killed || !port, error: killed || !port ? undefined : 'Not running' }
   })
   let cancelBackendDl: (() => void) | null = null
@@ -906,7 +984,12 @@ export function registerIpcHandlers(): void {
     const broadcast = (force = false) => {
       if (!force && !canBroadcast(task.id)) return
       const percent = task.totalBytes > 0 ? Math.round(task.receivedBytes / task.totalBytes * 100) : 0
-
+      const speedBucket = Math.round(task.speed / (500 * 1024))
+      if (!force) {
+        const last = lastSent.get(task.id)
+        if (last && last.percent === percent && last.phase === task.phase && last.speedBucket === speedBucket) return
+      }
+      lastSent.set(task.id, { percent, phase: task.phase, speedBucket })
       const payload = {
         id: task.id, filename: task.filename, phase: task.phase,
         percent, speed: task.speed, destPath: task.destPath,
@@ -925,7 +1008,8 @@ export function registerIpcHandlers(): void {
       () => {
         try { renameSync(tmpPath, finalPath) } catch { }
         task.phase = 'done'; task.speed = 0; broadcast(true)
-        setTimeout(() => { downloadTasks.delete(id); broadcastTimes.delete(id) }, 10000)
+        invalidateModelsCache()
+        setTimeout(() => { downloadTasks.delete(id); broadcastTimes.delete(id); lastSent.delete(id) }, 10000)
       },
       (err) => { task.phase = 'error'; task.speed = 0; broadcast(true); console.error('HF download error:', err) }
     )
@@ -964,7 +1048,7 @@ export function registerIpcHandlers(): void {
       return piWebUrl
     }
     if (piWebProcess) {
-      killProcessTreeSync(piWebProcess)
+      killProcessTreeAsync(piWebProcess)
       piWebProcess = null
     }
     piWebStopRequested = false
@@ -998,7 +1082,7 @@ export function registerIpcHandlers(): void {
       const startupTimeout = setTimeout(() => {
         if (resolved) return
         resolved = true
-        killProcessTreeSync(proc)
+        killProcessTreeAsync(proc)
         piWebProcess = null
         piWebUrl = ''
         piWebState = 'error'
@@ -1063,7 +1147,7 @@ export function registerIpcHandlers(): void {
     piWebState = 'stopping'
     piWebStopRequested = true
     if (piWebProcess) {
-      killProcessTreeSync(piWebProcess)
+      killProcessTreeAsync(piWebProcess)
       piWebProcess = null
       piWebUrl = ''
     }
@@ -1114,7 +1198,7 @@ export function registerIpcHandlers(): void {
   // --- metrics ---
   async function httpGetText(url: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const req = http.get(url, (res) => {
+      const req = http.get(url, { agent: httpAgent }, (res) => {
         let body = ''
         res.on('data', (c) => { body += c.toString(); if (body.length > 1e6) { req.destroy(); reject(new Error('response too large')) } })
         res.on('end', () => resolve(body))
@@ -1145,12 +1229,14 @@ export function registerIpcHandlers(): void {
   async function refreshGpuData(): Promise<void> {
     const now = Date.now()
     if (cachedGpuData && (now - lastGpuFetch) < GPU_CACHE_TTL) return
-    try { cachedGpuData = await si.graphics(); lastGpuFetch = now } catch { }
+    try { cachedGpuData = await si.graphics(); lastGpuFetch = now; gpuLoggedFail = false } catch (err) {
+      if (!gpuLoggedFail) { console.warn('[gpu] si.graphics() failed:', err); gpuLoggedFail = true }
+    }
   }
 
   async function broadcastMetrics(): Promise<void> {
-    await refreshGpuData()
-    const gpuController = cachedGpuData?.controllers?.[0]
+    if (runningProcesses.size === 0) return
+    const gpuReady = refreshGpuData()
     for (const [id, { proc, port }] of runningProcesses) {
       if (proc.pid === undefined) continue
       try {
@@ -1159,6 +1245,8 @@ export function registerIpcHandlers(): void {
           httpGetText(`http://127.0.0.1:${port}/slots`).catch(() => ''),
           httpGetText(`http://127.0.0.1:${port}/metrics`).catch(() => ''),
         ])
+        await gpuReady
+        const gpuController = cachedGpuData?.controllers?.[0]
         const payload: Record<string, unknown> = { id, lastUpdated: Date.now() }
         if (stat) {
           payload.cpuPct = stat.cpu
@@ -1237,8 +1325,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('get-metrics', async () => {
     const result: Record<string, unknown> = {}
-    await refreshGpuData()
-    const gpuController = cachedGpuData?.controllers?.[0]
+    const gpuReady = refreshGpuData()
     for (const [id, { proc, port }] of runningProcesses) {
       if (proc.pid === undefined) continue
       try {
@@ -1247,6 +1334,8 @@ export function registerIpcHandlers(): void {
           httpGetText(`http://127.0.0.1:${port}/slots`).catch(() => ''),
           httpGetText(`http://127.0.0.1:${port}/metrics`).catch(() => ''),
         ])
+        await gpuReady
+        const gpuController = cachedGpuData?.controllers?.[0]
         const entry: Record<string, unknown> = { id, lastUpdated: Date.now() }
         if (stat) {
           entry.cpuPct = stat.cpu
@@ -1296,10 +1385,14 @@ export function registerIpcHandlers(): void {
       if (resolved) return true
       try {
         await new Promise<void>((resolve, reject) => {
-          const req = http.get(`http://127.0.0.1:${port}`, (res) => {
+          const req = http.get(`http://127.0.0.1:${port}/v1/models`, (res) => {
             res.resume()
-            resolved = true
-            resolve()
+            if (res.statusCode === 200) {
+              resolved = true
+              resolve()
+            } else {
+              reject(new Error(`status ${res.statusCode}`))
+            }
           })
           req.on('error', () => reject())
           req.setTimeout(1000, () => { req.destroy(); reject() })
@@ -1312,11 +1405,9 @@ export function registerIpcHandlers(): void {
     return false
   })
 
-  // load initial settings
-  loadSettings().then(s => {
-    metricsPollingEnabled = s.metricsPolling ?? true
-    if (metricsPollingEnabled) startMetricsInterval()
-  })
+  // load initial settings (cache is already populated synchronously above)
+  metricsPollingEnabled = settingsCache!.metricsPolling ?? true
+  if (metricsPollingEnabled) startMetricsInterval()
 
   ipcMain.handle('hf-open-models-dir', () => shell.openPath(MODELS_DIR))
   ipcMain.handle('onDownloadProgress', () => { })

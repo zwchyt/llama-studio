@@ -16,7 +16,7 @@ import ChatWindow from './components/ChatWindow'
 import PiWebView from './components/PiWebView'
 import LlamaChatView from './components/LlamaChatView'
 import { buildDefaultTemplate } from './utils/defaultTemplate'
-import type { Template } from '../../shared/types'
+import type { Template, ModelMetrics } from '../../shared/types'
 
 const searchParams = new URLSearchParams(window.location.search)
 const initChatUrl = searchParams.get('chat_url')
@@ -190,7 +190,11 @@ function AppMain() {
     window.api.listModelDownloads().then(list => {
       list.forEach((dl) => upsertModelDownload(dl))
     })
-    return () => window.api.removeModelDownloadListener()
+    return () => {
+      window.api.removeModelDownloadListener()
+      timeoutsRef.current.forEach(clearTimeout)
+      timeoutsRef.current = []
+    }
   }, [])
 
   useEffect(() => {
@@ -256,71 +260,48 @@ function AppMain() {
       const { updateModelMetric } = useStore.getState()
       const mid = String(data.id)
       const d = data as Record<string, any>
+      const partial: Partial<ModelMetrics> = {}
 
       if (d.decodeTokS !== undefined) {
         const rawVal = d.decodeTokS
         if (Array.isArray(rawVal)) {
           if (rawVal.length > 0) {
-            updateModelMetric(mid, { decodeTokS: rawVal.slice(-30) })
+            partial.decodeTokS = rawVal.slice(-30)
           }
         } else {
           const existing = useStore.getState().modelMetrics[mid]
           const hist = (existing?.decodeTokS as number[]) || []
-          updateModelMetric(mid, { decodeTokS: [...hist, rawVal].slice(-30) })
+          partial.decodeTokS = [...hist, rawVal].slice(-30)
         }
       }
-      if (d.ttftMs !== undefined) {
-        updateModelMetric(mid, { ttftMs: d.ttftMs as number })
-      }
-      if (d.prefillTokS !== undefined) {
-        updateModelMetric(mid, { prefillTokS: d.prefillTokS as number })
-      }
+      if (d.ttftMs !== undefined) partial.ttftMs = d.ttftMs as number
+      if (d.prefillTokS !== undefined) partial.prefillTokS = d.prefillTokS as number
       if (d.reqPerSec !== undefined) {
         const rawVal = d.reqPerSec
         if (Array.isArray(rawVal)) {
-          updateModelMetric(mid, { reqPerSec: rawVal.slice(-30) })
+          if (rawVal.length > 0) {
+            partial.reqPerSec = rawVal.slice(-30)
+          }
         } else {
           const existing = useStore.getState().modelMetrics[mid]
           const hist = (existing?.reqPerSec as number[]) || []
-          updateModelMetric(mid, { reqPerSec: [...hist, rawVal].slice(-30) })
+          partial.reqPerSec = [...hist, rawVal].slice(-30)
         }
       }
-      if (d.cpuPct !== undefined) {
-        updateModelMetric(mid, { cpuPct: d.cpuPct as number | null })
-      }
-      if (d.memRssMb !== undefined) {
-        updateModelMetric(mid, { memRssMb: d.memRssMb as number | null })
-      }
-      if (d.vramUsedMb !== undefined) {
-        updateModelMetric(mid, { vramUsedMb: d.vramUsedMb as number | null })
-      }
-      if (d.vramTotalMb !== undefined) {
-        updateModelMetric(mid, { vramTotalMb: d.vramTotalMb as number })
-      }
-      if (d.pid !== undefined) {
-        updateModelMetric(mid, { pid: d.pid as number })
-      }
-      if (d.nPromptTokens !== undefined) {
-        updateModelMetric(mid, { nPromptTokens: d.nPromptTokens as number })
-      }
-      if (d.nCtx !== undefined) {
-        updateModelMetric(mid, { nCtx: d.nCtx as number })
-      }
-      if (d.nPromptTokensCache !== undefined) {
-        updateModelMetric(mid, { nPromptTokensCache: d.nPromptTokensCache as number })
-      }
-      if (d.nPromptTokensProcessed !== undefined) {
-        updateModelMetric(mid, { nPromptTokensProcessed: d.nPromptTokensProcessed as number })
-      }
-      if (d.nDecoded !== undefined) {
-        updateModelMetric(mid, { nDecoded: d.nDecoded as number })
-      }
-      if (d.isProcessing !== undefined) {
-        updateModelMetric(mid, { isProcessing: d.isProcessing as boolean })
-      }
-      if (d.nPredict !== undefined) {
-        updateModelMetric(mid, { nPredict: d.nPredict as number })
-      }
+      if (d.cpuPct !== undefined) partial.cpuPct = d.cpuPct as number | null
+      if (d.memRssMb !== undefined) partial.memRssMb = d.memRssMb as number | null
+      if (d.vramUsedMb !== undefined) partial.vramUsedMb = d.vramUsedMb as number | null
+      if (d.vramTotalMb !== undefined) partial.vramTotalMb = d.vramTotalMb as number
+      if (d.pid !== undefined) partial.pid = d.pid as number
+      if (d.nPromptTokens !== undefined) partial.nPromptTokens = d.nPromptTokens as number
+      if (d.nCtx !== undefined) partial.nCtx = d.nCtx as number
+      if (d.nPromptTokensCache !== undefined) partial.nPromptTokensCache = d.nPromptTokensCache as number
+      if (d.nPromptTokensProcessed !== undefined) partial.nPromptTokensProcessed = d.nPromptTokensProcessed as number
+      if (d.nDecoded !== undefined) partial.nDecoded = d.nDecoded as number
+      if (d.isProcessing !== undefined) partial.isProcessing = d.isProcessing as boolean
+      if (d.nPredict !== undefined) partial.nPredict = d.nPredict as number
+
+      if (Object.keys(partial).length > 0) updateModelMetric(mid, partial)
     })
     const initMetrics = async () => {
       try {
