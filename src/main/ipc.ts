@@ -10,7 +10,7 @@ import http from 'http'
 import { app } from 'electron'
 import extract from 'extract-zip'
 import pidusage from 'pidusage'
-import si from 'systeminformation'
+import { graphics } from 'systeminformation/lib/graphics'
 
 interface GitHubAsset { name: string; browser_download_url: string; size: number }
 interface GitHubRelease {
@@ -30,7 +30,7 @@ interface HfModelRaw {
 }
 interface HfFileRaw { type: string; path: string; size?: number }
 type ModelFileInfo = { name: string; path: string; size: number; folder: string; external: boolean }
-type GpuData = Awaited<ReturnType<typeof si.graphics>>
+type GpuData = Awaited<ReturnType<typeof graphics>>
 const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 16, keepAliveMsecs: 30000 })
 function hasErrnoCode(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error && 'code' in err
@@ -555,12 +555,12 @@ export function registerIpcHandlers(): void {
       percent: t.totalBytes > 0 ? Math.round((t.receivedBytes / t.totalBytes) * 100) : 0
     }))
   })
-  ipcMain.handle('list-backends', () => {
+  ipcMain.handle('list-backends', async () => {
     if (!existsSync(BACKEND_DIR)) return []
-    const findExecutable = (dir: string, depth = 0): string | null => {
+    const findExecutable = async (dir: string, depth = 0): Promise<string | null> => {
       if (depth > 3) return null
       try {
-        const files = readdirSync(dir, { withFileTypes: true })
+        const files = await fsPromises.readdir(dir, { withFileTypes: true })
         const names = process.platform === 'win32'
           ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server']
           : ['llama-server', 'main', 'server']
@@ -569,20 +569,26 @@ export function registerIpcHandlers(): void {
         }
         for (const f of files) {
           if (f.isDirectory()) {
-            const sub = findExecutable(join(dir, f.name), depth + 1)
+            const sub = await findExecutable(join(dir, f.name), depth + 1)
             if (sub) return join(f.name, sub)
           }
         }
       } catch { }
       return null
     }
-    const backends = readdirSync(BACKEND_DIR, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => {
+    const entries = await fsPromises.readdir(BACKEND_DIR, { withFileTypes: true })
+    const backends = await Promise.all(
+      entries.filter(d => d.isDirectory()).map(async (d) => {
         const commandsPath = join(BACKEND_DIR, d.name, 'commands.json')
         const basePath = join(BACKEND_DIR, d.name)
-        return { name: d.name, path: basePath, hasCommands: existsSync(commandsPath), exe: findExecutable(basePath) }
+        return {
+          name: d.name,
+          path: basePath,
+          hasCommands: existsSync(commandsPath),
+          exe: await findExecutable(basePath)
+        }
       })
+    )
     backends.sort((a, b) => {
       const n = (s: string) => parseInt((s.match(/(\d{3,6})/) || ['0', '0'])[1], 10)
       return n(b.name) - n(a.name)
@@ -606,12 +612,16 @@ export function registerIpcHandlers(): void {
       return { success: false, error: String(err) }
     }
   })
-  ipcMain.handle('get-commands', (_e, backendName: string) => {
+  ipcMain.handle('get-commands', async (_e, backendName: string) => {
     const commandsPath = join(BACKEND_DIR, backendName, 'commands.json')
     if (!isSafePath(BACKEND_DIR, commandsPath)) return null
-    if (existsSync(commandsPath)) return JSON.parse(readFileSync(commandsPath, 'utf-8'))
+    try {
+      if (existsSync(commandsPath)) return JSON.parse(await fsPromises.readFile(commandsPath, 'utf-8'))
+    } catch { }
     const defaultPath = join(APP_ROOT, 'resources', 'commands.json')
-    if (existsSync(defaultPath)) return JSON.parse(readFileSync(defaultPath, 'utf-8'))
+    try {
+      if (existsSync(defaultPath)) return JSON.parse(await fsPromises.readFile(defaultPath, 'utf-8'))
+    } catch { }
     return null
   })
   ipcMain.handle('save-backend-commands', (_e, backendName: string, schema: unknown) => {
@@ -625,15 +635,18 @@ export function registerIpcHandlers(): void {
       return { success: false, error: String(err) }
     }
   })
-  ipcMain.handle('list-templates', () => {
+  ipcMain.handle('list-templates', async () => {
     if (!existsSync(TEMPLATES_DIR)) return []
-    return readdirSync(TEMPLATES_DIR)
-      .filter(f => f.endsWith('.json'))
-      .map(f => {
-        try { return { ...JSON.parse(readFileSync(join(TEMPLATES_DIR, f), 'utf-8')), _file: f } }
-        catch { return null }
+    const files = await fsPromises.readdir(TEMPLATES_DIR)
+    const results = await Promise.all(
+      files.filter(f => f.endsWith('.json')).map(async (f) => {
+        try {
+          const text = await fsPromises.readFile(join(TEMPLATES_DIR, f), 'utf-8')
+          return { ...JSON.parse(text), _file: f }
+        } catch { return null }
       })
-      .filter(Boolean)
+    )
+    return results.filter(Boolean)
   })
   ipcMain.handle('save-template', async (_e, template: Record<string, unknown>) => {
     try {
@@ -1229,8 +1242,8 @@ export function registerIpcHandlers(): void {
   async function refreshGpuData(): Promise<void> {
     const now = Date.now()
     if (cachedGpuData && (now - lastGpuFetch) < GPU_CACHE_TTL) return
-    try { cachedGpuData = await si.graphics(); lastGpuFetch = now; gpuLoggedFail = false } catch (err) {
-      if (!gpuLoggedFail) { console.warn('[gpu] si.graphics() failed:', err); gpuLoggedFail = true }
+    try { cachedGpuData = await graphics(); lastGpuFetch = now; gpuLoggedFail = false } catch (err) {
+      if (!gpuLoggedFail) { console.warn('[gpu] graphics() failed:', err); gpuLoggedFail = true }
     }
   }
 

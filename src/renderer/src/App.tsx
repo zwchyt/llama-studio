@@ -56,25 +56,27 @@ function AppMain() {
   const setView = useStore(s => s.setView)
 
   useEffect(() => {
-    async function init() {
+    // Stage 2: Default schema (activeBackend watcher at line 200 will re-fetch on backend change)
+    window.api.getCommands('').then((cmds) => {
+      if (cmds) setCommandsSchema(cmds)
+    }).catch(() => {})
+
+    // Stage 1.5: models — CardsView (default) doesn't need it; ModelsView has own loading state
+    window.api.listModels()
+      .then((m) => setModels(m))
+      .catch((e) => console.error('[listModels]', e))
+
+    // Stage 1: First-paint critical — fetch 3 IPC calls in parallel
+    ;(async () => {
       try {
-        const [paths, backendsData, modelsData] = await Promise.all([
+        const [paths, backendsData, templates] = await Promise.all([
           window.api.getPaths(),
           window.api.listBackends(),
-          window.api.listModels()
+          window.api.listTemplates()
         ])
         setPaths(paths)
         setBackends(backendsData)
-        setModels(modelsData)
-        if (backendsData.length > 0) {
-          setActiveBackend(backendsData[0])
-          const cmds = await window.api.getCommands(backendsData[0].name)
-          if (cmds) setCommandsSchema(cmds)
-        } else {
-          const cmds = await window.api.getCommands('')
-          if (cmds) setCommandsSchema(cmds)
-        }
-        const templates = await window.api.listTemplates()
+        if (backendsData.length > 0) setActiveBackend(backendsData[0])
         setCards(
           (templates as Template[]).map((t) => ({
             template: t,
@@ -88,9 +90,11 @@ function AppMain() {
       } finally {
         setLoading(false)
       }
-      await checkUpdates()
-    }
-    init()
+    })()
+
+    // Stage 3: Low priority — defer to next microtask so it overlaps with UI render
+    queueMicrotask(() => { checkUpdates() })
+
     window.api.onModelError((data) => {
       const s = useStore.getState()
       s.setCardStatus(data.id, 'error')
