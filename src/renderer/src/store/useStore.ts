@@ -159,8 +159,6 @@ export const useStore = create<AppStore>((set) => ({
         reqPerSec: partial.reqPerSec ?? [],
         vramUsedMb: partial.vramUsedMb ?? null,
         vramTotalMb: partial.vramTotalMb ?? 0,
-        cpuPct: partial.cpuPct ?? null,
-        memRssMb: partial.memRssMb ?? null,
         nPromptTokens: partial.nPromptTokens ?? 0,
         nPromptTokensCache: partial.nPromptTokensCache ?? 0,
         nPromptTokensProcessed: partial.nPromptTokensProcessed ?? 0,

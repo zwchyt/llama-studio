@@ -66,10 +66,8 @@ export interface ModelMetrics {
   ttftMs: number | null         // time-to-first-token (ms), null until first token arrives
   prefillTokS: number | null    // prompt-eval tok/s read from timing log
   reqPerSec: number[]           // rolling window of req/s samples
-  vramUsedMb: number | null     // GPU memory used (pidusage.memory)
+  vramUsedMb: number | null     // GPU memory used
   vramTotalMb: number           // total adapter VRAM (si.gpu memorySize)
-  cpuPct: number | null         // pidusage.cpu
-  memRssMb: number | null       // pidusage.memory.rss
   nPromptTokens: number         // current request prompt tokens from /slots
   nPromptTokensCache: number    // cached prompt tokens from /slots (computed: n_prompt_tokens - n_prompt_tokens_processed)
   nPromptTokensProcessed: number // processed prompt tokens from /slots (n_prompt_tokens_processed)

@@ -66,14 +66,13 @@ export default function ModelCard({ card }: Props) {
   }, [])
   async function handleRunToggle() {
     if (isRunning) {
+      // optimistic update: update UI immediately for zero-latency
+      setCardStatus(card.template.id, 'idle')
+      clearModelMetrics(card.template.id)
+      const { activeChatPort, clearActiveChat } = useStore.getState()
+      if (activeChatPort === card.template.serverPort) clearActiveChat()
       const res = await window.api.stopModel(card.template.id)
-      if (res.success) {
-        setCardStatus(card.template.id, 'idle')
-        clearModelMetrics(card.template.id)
-        const { activeChatPort, clearActiveChat } = useStore.getState()
-        if (activeChatPort === card.template.serverPort) clearActiveChat()
-      }
-      else notify(`停止失败：${res.error}`, 'error')
+      if (!res.success) notify(`停止失败：${res.error}`, 'error')
       return
     }
     let targetBackend = backends.find(b => b.name === card.template.backendVersion)

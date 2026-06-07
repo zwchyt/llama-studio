@@ -54,14 +54,14 @@ export default function LlamaChatView() {
     const s = useStore.getState()
     const card = s.cards.find(c => c.template.serverPort === activeChatPort && c.status === 'running')
     if (!card) return
-    const res = await window.api.stopModel(card.template.id)
-    if (res.success) {
-      s.setCardStatus(card.template.id, 'idle')
-      clearActiveChat()
-      setView('cards')
-    } else {
-      notify(`停止失败：${res.error}`, 'error')
-    }
+    // optimistic update: update UI immediately for zero-latency
+    s.setCardStatus(card.template.id, 'idle')
+    clearActiveChat()
+    setView('cards')
+    try {
+      const res = await window.api.stopModel(card.template.id)
+      if (!res.success) notify(`停止失败：${res.error}`, 'error')
+    } catch (e) { console.error('Failed to stop model', e) }
   }
 
   const handleClose = () => {

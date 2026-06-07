@@ -314,6 +314,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // Listen for directory selection result from parent via postMessage
   useEffect(() => {
     const handler = (e: MessageEvent) => {
+      if (e.source !== window.parent) return;
       if (e.data?.type !== "DIRECTORY_SELECTION_RESULT") return;
       const path: string | null = e.data.path;
       if (path) {

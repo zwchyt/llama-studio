@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, Component } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
-import { Activity, Database, HardDrive, Square, Cpu, HardDrive as MemIcon, Zap, Clock, Gauge, Play, MessageSquare } from 'lucide-react'
+import { Activity, Database, HardDrive, Square, HardDrive as MemIcon, Zap, Clock, Gauge, Play, MessageSquare } from 'lucide-react'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function fmt(n: unknown, digits = 1): string {
@@ -77,8 +77,8 @@ function MetricCard({ label, value, unit, icon, accentColor, history, barMax }: 
 
 // ── RunningCard ──────────────────────────────────────────────────────────────
 function RunningCard({ card, metrics }: { card: import('../../../shared/types').CardState; metrics: import('../../../shared/types').ModelMetrics | null }) {
-  const { toggleMonitorExpanded, removeCard, setCardStatus, clearActiveChat } = useStore(s => ({
-    toggleMonitorExpanded: s.toggleMonitorExpanded, removeCard: s.removeCard, setCardStatus: s.setCardStatus, clearActiveChat: s.clearActiveChat
+  const { toggleMonitorExpanded, setCardStatus, clearActiveChat } = useStore(s => ({
+    toggleMonitorExpanded: s.toggleMonitorExpanded, setCardStatus: s.setCardStatus, clearActiveChat: s.clearActiveChat
   }), shallow)
   const isRunning = card.status === 'running'
   const statusInfo = card.status === 'running'
@@ -96,15 +96,12 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
   }, [isRunning])
 
   async function handleStop() {
+    // optimistic update: update UI immediately for zero-latency
+    if (card.template.serverPort === useStore.getState().activeChatPort) clearActiveChat()
+    setCardStatus(card.template.id, 'idle')
     try {
       const res = await window.api.stopModel(card.template.id)
-      if (res.success) {
-        removeCard(card.template.id)
-      } else if (res.error === 'Not running') {
-        setCardStatus(card.template.id, 'idle')
-        if (card.template.serverPort === useStore.getState().activeChatPort) clearActiveChat()
-        removeCard(card.template.id)
-      } else {
+      if (!res.success && res.error !== 'Not running') {
         notify(`停止失败：${res.error}`, 'error')
       }
     } catch (e) { console.error('Failed to stop model', e) }
@@ -179,7 +176,6 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
               unit="tok/s"
               icon={<Zap size={13} />}
               accentColor="var(--accent)"
-              history={metrics?.decodeTokS}
             />
             <MetricCard
               label="TTFT"
@@ -201,7 +197,6 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
               unit="req/s"
               icon={<Play size={13} />}
               accentColor="var(--success)"
-              history={metrics?.reqPerSec}
             />
             <MetricCard
               label="VRAM"
@@ -262,17 +257,7 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
               )}
             </div>
           </div>
-          {/* CPU / MEM mini-row */}
-          <div style={{ display: 'flex', gap: 10, marginTop: 8, padding: '8px 12px', background: 'var(--bg)', borderRadius: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}>
-              <Cpu size={12} />
-              <span>CPU</span> <b style={{ color: 'var(--text)', fontFamily: 'monospace' }}>{fmt(metrics?.cpuPct)}%</b>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}>
-              <MemIcon size={12} />
-              <span>RSS</span> <b style={{ color: 'var(--text)', fontFamily: 'monospace' }}>{fmtMem(metrics?.memRssMb)}</b>
-            </div>
-          </div>
+
         </div>
       </div>
     )}

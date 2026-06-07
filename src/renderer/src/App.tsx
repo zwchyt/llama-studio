@@ -240,8 +240,6 @@ function AppMain() {
       if (typeof raw.reqPerSec === 'number') out.reqPerSec = raw.reqPerSec
       else if (Array.isArray(raw.reqPerSec) && raw.reqPerSec.every(v => typeof v === 'number')) out.reqPerSec = raw.reqPerSec
     }
-    if (raw.cpuPct !== undefined && (typeof raw.cpuPct === 'number' || raw.cpuPct === null)) out.cpuPct = raw.cpuPct
-    if (raw.memRssMb !== undefined && (typeof raw.memRssMb === 'number' || raw.memRssMb === null)) out.memRssMb = raw.memRssMb
     if (raw.vramUsedMb !== undefined && (typeof raw.vramUsedMb === 'number' || raw.vramUsedMb === null)) out.vramUsedMb = raw.vramUsedMb
     if (typeof raw.vramTotalMb === 'number') out.vramTotalMb = raw.vramTotalMb
     if (typeof raw.pid === 'number') out.pid = raw.pid
@@ -292,8 +290,6 @@ function AppMain() {
           partial.reqPerSec = [...hist, rawVal].slice(-30)
         }
       }
-      if (d.cpuPct !== undefined) partial.cpuPct = d.cpuPct as number | null
-      if (d.memRssMb !== undefined) partial.memRssMb = d.memRssMb as number | null
       if (d.vramUsedMb !== undefined) partial.vramUsedMb = d.vramUsedMb as number | null
       if (d.vramTotalMb !== undefined) partial.vramTotalMb = d.vramTotalMb as number
       if (d.pid !== undefined) partial.pid = d.pid as number

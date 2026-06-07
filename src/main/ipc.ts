@@ -3,13 +3,12 @@ import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
   unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, promises as fsPromises
 } from 'fs'
-import { join, extname, basename, dirname, resolve } from 'path'
+import { join, extname, basename, dirname, resolve, sep } from 'path'
 import { spawn, ChildProcess } from 'child_process'
 import https from 'https'
 import http from 'http'
 import { app } from 'electron'
 import extract from 'extract-zip'
-import pidusage from 'pidusage'
 import { graphics } from 'systeminformation/lib/graphics'
 
 interface GitHubAsset { name: string; browser_download_url: string; size: number }
@@ -51,7 +50,9 @@ for (const dir of [MODELS_DIR, TEMPLATES_DIR, BACKEND_DIR]) {
 }
 // isSafePath 函数用于防止路径遍历攻击（Path Traversal Attack），也称为目录遍历攻击。
 function isSafePath(base: string, target: string): boolean {
-  return resolve(target).startsWith(resolve(base))
+  const rBase = resolve(base)
+  const rTarget = resolve(target)
+  return rTarget === rBase || rTarget.startsWith(rBase + sep)
 }
 // 下面的代码实现了一个简单的命令行参数验证机制，确保只有在 commands.json 中定义的参数才会被传递给后端执行的模型运行命令。这有助于防止恶意用户通过 IPC 传递危险的参数来执行未授权的操作。
 const schemaCache = new Map<string, { allowed: Set<string>; boolean: Set<string> }>()
@@ -188,7 +189,7 @@ function fetchJson(url: string, depth = 0): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const opts = { headers: { 'User-Agent': 'llamabox/1.0.0', Accept: 'application/json' } }
     const get = url.startsWith('https') ? https.get : http.get
-    get(url, opts, (res) => {
+    const req = get(url, opts, (res) => {
       if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location) {
         res.destroy()
         const loc = res.headers.location
@@ -196,10 +197,21 @@ function fetchJson(url: string, depth = 0): Promise<unknown> {
         fetchJson(loc, depth + 1).then(resolve).catch(reject)
         return
       }
+      const MAX = 5 * 1024 * 1024
+      let size = 0
       let data = ''
-      res.on('data', (c) => (data += c))
+      res.on('data', (c) => {
+        size += c.length
+        if (size > MAX) {
+          res.destroy()
+          return reject(new Error('Response too large'))
+        }
+        data += c
+      })
       res.on('end', () => { try { resolve(JSON.parse(data)) } catch (e) { reject(e) } })
-    }).on('error', reject)
+    })
+    req.setTimeout(10000, () => req.destroy(new Error('Request timeout')))
+    req.on('error', reject)
   })
 }
 function startDownload(
@@ -224,6 +236,9 @@ function startDownload(
     const get = currentUrl.startsWith('https') ? https.get : http.get
     const headers: Record<string, string> = { 'User-Agent': 'hexllama/1.0' }
     if (startByte > 0) headers['Range'] = `bytes=${startByte}-`
+    let lastDataTime = Date.now()
+    let stallCheck: ReturnType<typeof setInterval> | null = null
+    const clearStall = () => { if (stallCheck) { clearInterval(stallCheck); stallCheck = null } }
     currentReq = get(currentUrl, { headers }, (res) => {
       if (destroyed) { res.destroy(); return }
       if (res.statusCode === 301 || res.statusCode === 302) {
@@ -240,11 +255,23 @@ function startDownload(
       const totalBytes = contentLength + startByte
       let receivedBytes = startByte
 
+      lastDataTime = Date.now()
+      clearStall()
+      stallCheck = setInterval(() => {
+        if (destroyed) { clearStall(); return }
+        if (Date.now() - lastDataTime > 30000) {
+          clearStall()
+          res.destroy()
+          if (!destroyed) onError(new Error('Download stalled'))
+        }
+      }, 5000)
+
       res.on('data', (chunk: Buffer) => {
         if (destroyed) return
         file.write(chunk)
         receivedBytes += chunk.length
         speedBytes += chunk.length
+        lastDataTime = Date.now()
 
         const now = Date.now()
         const elapsed = (now - lastSpeedCheck) / 1000
@@ -256,17 +283,17 @@ function startDownload(
         onProgress(receivedBytes, totalBytes, currentSpeed)
       })
 
-      res.on('end', () => {
-        if (destroyed) return
-        file.end(() => {
-          if (!destroyed) onDone()
-        })
-      })
-
-      res.on('error', (err) => {
-        if (!destroyed) { file.destroy(); onError(err) }
-      })
-    }).on('error', (err) => {
+      res.on('end', () => { clearStall(); if (!destroyed) file.end(() => { if (!destroyed) onDone() }) })
+      res.on('error', (err) => { clearStall(); if (!destroyed) { file.destroy(); onError(err) } })
+      res.on('close', () => { clearStall() })
+    })
+    currentReq.setTimeout(15000, () => {
+      if (destroyed) return
+      try { currentReq?.destroy() } catch {}
+      if (!destroyed) onError(new Error('Connection timeout'))
+    })
+    currentReq.on('error', (err) => {
+      clearStall()
       if (!destroyed) { file.destroy(); onError(err) }
     })
   }
@@ -533,6 +560,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('cancel-model-download', (_event, id: string) => {
     const task = downloadTasks.get(id)
     if (!task) return { success: false, error: 'Not found' }
+    if (task.phase === 'done') return { success: true }
     task.cancelFn?.()
     task.phase = 'cancelled'
 
@@ -651,6 +679,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('save-template', async (_e, template: Record<string, unknown>) => {
     try {
       const id = (template.id as string) || crypto.randomUUID()
+      if (/[\\/]/.test(id) || id.includes('..')) return { success: false, error: 'Invalid template ID' }
       writeFileSync(join(TEMPLATES_DIR, `${id}.json`), JSON.stringify({ ...template, id }, null, 2))
       return { success: true, id }
     } catch (err) { return { success: false, error: String(err) } }
@@ -732,16 +761,12 @@ export function registerIpcHandlers(): void {
       })
       runningProcesses.set(opts.id, { proc, port: opts.port })
       if (metricsPollingEnabled) startMetricsInterval()
-      // send initial metrics immediately
+      // send initial pid metric immediately
       if (proc.pid !== undefined) {
-        try {
-          pidusage(proc.pid).then(stat => {
-            const payload = { id: opts.id, cpuPct: stat.cpu, memRssMb: Math.round(stat.memory / 1024 / 1024), pid: proc.pid, lastUpdated: Date.now() }
-            BrowserWindow.getAllWindows().forEach(win => {
-              if (!win.isDestroyed()) win.webContents.send('metrics-update', payload)
-            })
-          }).catch(() => { })
-        } catch { }
+        const payload = { id: opts.id, pid: proc.pid, lastUpdated: Date.now() }
+        BrowserWindow.getAllWindows().forEach(win => {
+          if (!win.isDestroyed()) win.webContents.send('metrics-update', payload)
+        })
       }
       proc.on('exit', (code) => {
         if (code !== 0 && runningProcesses.has(opts.id)) {
@@ -1061,8 +1086,15 @@ export function registerIpcHandlers(): void {
       return piWebUrl
     }
     if (piWebProcess) {
-      killProcessTreeAsync(piWebProcess)
+      const old = piWebProcess
       piWebProcess = null
+      await new Promise<void>((resolve) => {
+        let done = false
+        const finish = () => { if (!done) { done = true; resolve() } }
+        old.once('exit', finish)
+        killProcessTreeAsync(old).then(finish, finish)
+        setTimeout(finish, 3000)
+      })
     }
     piWebStopRequested = false
     piWebState = 'starting'
@@ -1247,65 +1279,65 @@ export function registerIpcHandlers(): void {
     }
   }
 
+  async function collectMetrics(id: string, port: number): Promise<Record<string, unknown>> {
+    const [rawSlots, rawMetrics] = await Promise.all([
+      httpGetText(`http://127.0.0.1:${port}/slots`).catch(() => ''),
+      httpGetText(`http://127.0.0.1:${port}/metrics`).catch(() => ''),
+    ])
+    const gpuController = cachedGpuData?.controllers?.[0]
+    const payload: Record<string, unknown> = { id, lastUpdated: Date.now() }
+    const slots = rawSlots ? tryParseJson(rawSlots) : null
+    if (slots && Array.isArray(slots) && slots.length > 0) {
+      const s = slots[0]
+      if (s.n_ctx !== undefined) payload.nCtx = s.n_ctx
+      if (s.n_prompt_tokens !== undefined) payload.nPromptTokens = s.n_prompt_tokens
+      if (s.n_prompt_tokens_processed !== undefined) payload.nPromptTokensProcessed = s.n_prompt_tokens_processed
+      if (s.n_prompt_tokens_cache !== undefined) payload.nPromptTokensCache = s.n_prompt_tokens_cache
+      if (s.next_token?.[0]?.n_decoded !== undefined) payload.nDecoded = s.next_token[0].n_decoded
+      if (s.is_processing !== undefined) payload.isProcessing = s.is_processing
+      if (s.params?.n_predict !== undefined) payload.nPredict = s.params.n_predict
+    }
+    if (rawMetrics) {
+      const prom = parsePrometheusMetrics(rawMetrics)
+      if (prom['llamacpp:predicted_tokens_seconds'] !== undefined) payload.decodeTokS = prom['llamacpp:predicted_tokens_seconds']
+      if (prom['llamacpp:prompt_tokens_seconds'] !== undefined) payload.prefillTokS = prom['llamacpp:prompt_tokens_seconds']
+      if (prom['llamacpp:n_decode_total'] !== undefined) {
+        const prev = lastDecodeCount.get(id)
+        const now = Date.now()
+        if (prev && prev.count >= 0) {
+          const dt = (now - prev.time) / 1000
+          if (dt > 0) {
+            const delta = prom['llamacpp:n_decode_total'] - prev.count
+            if (delta >= 0) payload.reqPerSec = delta / dt
+          }
+        }
+        lastDecodeCount.set(id, { count: prom['llamacpp:n_decode_total'], time: now })
+      }
+      if (prom['llamacpp:kv_cache_tokens'] !== undefined) payload.nPromptTokensCache = prom['llamacpp:kv_cache_tokens']
+      if (prom['llamacpp:kv_cache_usage_ratio'] !== undefined && prom['llamacpp:kv_cache_tokens'] !== undefined && prom['llamacpp:kv_cache_usage_ratio'] > 0) {
+        payload.nCtx = Math.round(prom['llamacpp:kv_cache_tokens'] / prom['llamacpp:kv_cache_usage_ratio'])
+      }
+    }
+    if (gpuController) {
+      payload.vramTotalMb = gpuController.memoryTotal || 0
+      payload.vramUsedMb = gpuController.memoryUsed ?? null
+    }
+    if (typeof payload.nPromptTokens === 'number' && payload.nPromptTokens > 0 &&
+      typeof payload.prefillTokS === 'number' && payload.prefillTokS > 0) {
+      payload.ttftMs = Math.round((payload.nPromptTokens / payload.prefillTokS) * 1000)
+    }
+    return payload
+  }
+
   async function broadcastMetrics(): Promise<void> {
     if (runningProcesses.size === 0) return
     const gpuReady = refreshGpuData()
     for (const [id, { proc, port }] of runningProcesses) {
       if (proc.pid === undefined) continue
       try {
-        const [stat, rawSlots, rawMetrics] = await Promise.all([
-          pidusage(proc.pid).catch(() => null),
-          httpGetText(`http://127.0.0.1:${port}/slots`).catch(() => ''),
-          httpGetText(`http://127.0.0.1:${port}/metrics`).catch(() => ''),
-        ])
         await gpuReady
-        const gpuController = cachedGpuData?.controllers?.[0]
-        const payload: Record<string, unknown> = { id, lastUpdated: Date.now() }
-        if (stat) {
-          payload.cpuPct = stat.cpu
-          payload.memRssMb = Math.round(stat.memory / 1024 / 1024)
-          payload.pid = proc.pid
-        }
-        const slots = rawSlots ? tryParseJson(rawSlots) : null
-        if (slots && Array.isArray(slots) && slots.length > 0) {
-          const s = slots[0]
-          if (s.n_ctx !== undefined) payload.nCtx = s.n_ctx
-          if (s.n_prompt_tokens !== undefined) payload.nPromptTokens = s.n_prompt_tokens
-          if (s.n_prompt_tokens_processed !== undefined) payload.nPromptTokensProcessed = s.n_prompt_tokens_processed
-          if (s.n_prompt_tokens_cache !== undefined) payload.nPromptTokensCache = s.n_prompt_tokens_cache
-          if (s.next_token?.[0]?.n_decoded !== undefined) payload.nDecoded = s.next_token[0].n_decoded
-          if (s.is_processing !== undefined) payload.isProcessing = s.is_processing
-          if (s.params?.n_predict !== undefined) payload.nPredict = s.params.n_predict
-        }
-        if (rawMetrics) {
-          const prom = parsePrometheusMetrics(rawMetrics)
-          if (prom['llamacpp:predicted_tokens_seconds'] !== undefined) payload.decodeTokS = prom['llamacpp:predicted_tokens_seconds']
-          if (prom['llamacpp:prompt_tokens_seconds'] !== undefined) payload.prefillTokS = prom['llamacpp:prompt_tokens_seconds']
-          if (prom['llamacpp:n_decode_total'] !== undefined) {
-            const prev = lastDecodeCount.get(id)
-            const now = Date.now()
-            if (prev && prev.count >= 0) {
-              const dt = (now - prev.time) / 1000
-              if (dt > 0) {
-                const delta = prom['llamacpp:n_decode_total'] - prev.count
-                if (delta >= 0) payload.reqPerSec = delta / dt
-              }
-            }
-            lastDecodeCount.set(id, { count: prom['llamacpp:n_decode_total'], time: now })
-          }
-          if (prom['llamacpp:kv_cache_tokens'] !== undefined) payload.nPromptTokensCache = prom['llamacpp:kv_cache_tokens']
-          if (prom['llamacpp:kv_cache_usage_ratio'] !== undefined && prom['llamacpp:kv_cache_tokens'] !== undefined && prom['llamacpp:kv_cache_usage_ratio'] > 0) {
-            payload.nCtx = Math.round(prom['llamacpp:kv_cache_tokens'] / prom['llamacpp:kv_cache_usage_ratio'])
-          }
-        }
-        if (gpuController) {
-          payload.vramTotalMb = gpuController.memoryTotal || 0
-          payload.vramUsedMb = gpuController.memoryUsed ?? null
-        }
-        if (typeof payload.nPromptTokens === 'number' && payload.nPromptTokens > 0 &&
-          typeof payload.prefillTokS === 'number' && payload.prefillTokS > 0) {
-          payload.ttftMs = Math.round((payload.nPromptTokens / payload.prefillTokS) * 1000)
-        }
+        const payload = await collectMetrics(id, port)
+        payload.pid = proc.pid
         BrowserWindow.getAllWindows().forEach(win => {
           if (!win.isDestroyed()) win.webContents.send('metrics-update', payload)
         })
@@ -1338,51 +1370,12 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('get-metrics', async () => {
     const result: Record<string, unknown> = {}
-    const gpuReady = refreshGpuData()
+    await refreshGpuData()
     for (const [id, { proc, port }] of runningProcesses) {
       if (proc.pid === undefined) continue
       try {
-        const [stat, rawSlots, rawMetrics] = await Promise.all([
-          pidusage(proc.pid).catch(() => null),
-          httpGetText(`http://127.0.0.1:${port}/slots`).catch(() => ''),
-          httpGetText(`http://127.0.0.1:${port}/metrics`).catch(() => ''),
-        ])
-        await gpuReady
-        const gpuController = cachedGpuData?.controllers?.[0]
-        const entry: Record<string, unknown> = { id, lastUpdated: Date.now() }
-        if (stat) {
-          entry.cpuPct = stat.cpu
-          entry.memRssMb = Math.round(stat.memory / 1024 / 1024)
-          entry.pid = proc.pid
-        }
-        const slots = rawSlots ? tryParseJson(rawSlots) : null
-        if (slots && Array.isArray(slots) && slots.length > 0) {
-          const s = slots[0]
-          if (s.n_ctx !== undefined) entry.nCtx = s.n_ctx
-          if (s.n_prompt_tokens !== undefined) entry.nPromptTokens = s.n_prompt_tokens
-          if (s.n_prompt_tokens_processed !== undefined) entry.nPromptTokensProcessed = s.n_prompt_tokens_processed
-          if (s.n_prompt_tokens_cache !== undefined) entry.nPromptTokensCache = s.n_prompt_tokens_cache
-          if (s.next_token?.[0]?.n_decoded !== undefined) entry.nDecoded = s.next_token[0].n_decoded
-          if (s.is_processing !== undefined) entry.isProcessing = s.is_processing
-          if (s.params?.n_predict !== undefined) entry.nPredict = s.params.n_predict
-        }
-        if (rawMetrics) {
-          const prom = parsePrometheusMetrics(rawMetrics)
-          if (prom['llamacpp:predicted_tokens_seconds'] !== undefined) entry.decodeTokS = [prom['llamacpp:predicted_tokens_seconds']]
-          if (prom['llamacpp:prompt_tokens_seconds'] !== undefined) entry.prefillTokS = prom['llamacpp:prompt_tokens_seconds']
-          if (prom['llamacpp:kv_cache_tokens'] !== undefined) entry.nPromptTokensCache = prom['llamacpp:kv_cache_tokens']
-          if (prom['llamacpp:kv_cache_usage_ratio'] !== undefined && prom['llamacpp:kv_cache_tokens'] !== undefined) {
-            entry.nCtx = Math.round(prom['llamacpp:kv_cache_tokens'] / (prom['llamacpp:kv_cache_usage_ratio'] || 0.01))
-          }
-        }
-        if (gpuController) {
-          entry.vramTotalMb = gpuController.memoryTotal || 0
-          entry.vramUsedMb = gpuController.memoryUsed ?? null
-        }
-        if (typeof entry.nPromptTokens === 'number' && entry.nPromptTokens > 0 &&
-          typeof entry.prefillTokS === 'number' && entry.prefillTokS > 0) {
-          entry.ttftMs = Math.round((entry.nPromptTokens / entry.prefillTokS) * 1000)
-        }
+        const entry = await collectMetrics(id, port)
+        entry.pid = proc.pid
         result[id] = entry
       } catch { }
     }
