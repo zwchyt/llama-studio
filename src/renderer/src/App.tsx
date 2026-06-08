@@ -371,28 +371,6 @@ function AppMain() {
         </div>
       </div>
       {showCreateModal && <CreateModal />}
-
-      <div
-        style={{
-          position: 'fixed', bottom: 0, left: 220, right: 0, height: 80, zIndex: 998,
-          background: 'linear-gradient(to top, var(--surface) 20%, transparent)',
-          pointerEvents: 'none', display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end',
-          padding: '0 24px 24px 0'
-        }}
-      >
-        <div
-          onClick={() => window.api.openExternal('https://andercoder.com')}
-          style={{
-            cursor: 'pointer', opacity: 0.5, transition: 'opacity 0.2s',
-            pointerEvents: 'auto', filter: 'invert(1)'
-          }}
-          onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
-          onMouseLeave={(e) => e.currentTarget.style.opacity = '0.5'}
-          title="AnderCoder"
-        >
-          <img src="./logo-stroke.svg" alt="AnderCoder" style={{ height: 24, display: 'block' }} draggable={false} />
-        </div>
-      </div>
     </div>
   )
 }
