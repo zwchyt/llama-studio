@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, Component } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
-import { Activity, Database, HardDrive, Square, HardDrive as MemIcon, Zap, Clock, Gauge, Play, MessageSquare } from 'lucide-react'
+import { Activity, Database, HardDrive, Square, HardDrive as MemIcon, Zap, Clock, Gauge, Play, MessageSquare, Thermometer, Cpu } from 'lucide-react'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function fmt(n: unknown, digits = 1): string {
@@ -206,6 +206,20 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
               accentColor="#0891b2"
               barMax={vramTotal || undefined}
             />
+            <MetricCard
+              label="GPU 温度"
+              value={metrics?.gpuTemperature != null ? String(metrics.gpuTemperature) : '—'}
+              unit={metrics?.gpuTemperature != null ? '°C' : ''}
+              icon={<Thermometer size={13} />}
+              accentColor="#ef4444"
+            />
+            <MetricCard
+              label="GPU 利用率"
+              value={metrics?.gpuUtilization != null ? String(metrics.gpuUtilization) : '—'}
+              unit={metrics?.gpuUtilization != null ? '%' : ''}
+              icon={<Cpu size={13} />}
+              accentColor="#8b5cf6"
+            />
             <div className="metric-card" style={{ gridColumn: '1 / -1' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div className="metric-icon" style={{ background: '#06b6d418', color: '#06b6d4' }}>
@@ -213,7 +227,7 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
                 </div>
                 <span className="metric-label">缓存命中</span>
                 <span className="metric-value" style={{ color: '#06b6d4', fontSize: 16, marginLeft: 'auto' }}>
-                  {fmtInt(metrics?.nPromptTokensCache ?? 0)}<span className="metric-unit"> / {fmtInt(metrics?.nPromptTokens ?? 0)} tokens ({fmt((((metrics?.nPromptTokensCache ?? 0) / (metrics?.nPromptTokens || 1)) * 100), 0)}%)</span>
+                  {fmtInt(metrics?.nPromptTokensCache ?? 0)}<span className="metric-unit"> / {fmtInt(metrics?.nPromptTokens ?? 0)} tokens ({fmt(Math.min(100, ((metrics?.nPromptTokensCache ?? 0) / (metrics?.nPromptTokens || 1)) * 100), 0)}%)</span>
                 </span>
               </div>
               <div className="metric-bar-wrap" style={{ marginTop: 4 }}>

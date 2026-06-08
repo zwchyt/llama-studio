@@ -3,8 +3,8 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Globe, Server } from 'lucide-react'
 export default function Sidebar() {
-  const { view, setView, backends, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, piWebUrl } = useStore(
-    s => ({ view: s.view, setView: s.setView, backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, piWebUrl: s.piWebUrl }),
+  const { view, setView, backends, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, piWebUrl, hasRunningModels } = useStore(
+    s => ({ view: s.view, setView: s.setView, backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, piWebUrl: s.piWebUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
     shallow
   )
 
@@ -45,9 +45,11 @@ export default function Sidebar() {
       <button
         className={`nav-item ${view === 'monitoring' ? 'active' : ''}`}
         onClick={() => setView('monitoring')}
+        style={hasRunningModels ? { color: 'var(--success)' } : {}}
       >
         <Activity size={16} />
         模型运行数据
+        {hasRunningModels && <span className="nav-dot" />}
       </button>
       <button
         className={`nav-item ${view === 'hub' ? 'active' : ''}`}

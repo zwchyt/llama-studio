@@ -9,7 +9,6 @@ import https from 'https'
 import http from 'http'
 import { app } from 'electron'
 import extract from 'extract-zip'
-import { graphics } from 'systeminformation/lib/graphics'
 
 interface GitHubAsset { name: string; browser_download_url: string; size: number }
 interface GitHubRelease {
@@ -29,7 +28,14 @@ interface HfModelRaw {
 }
 interface HfFileRaw { type: string; path: string; size?: number }
 type ModelFileInfo = { name: string; path: string; size: number; folder: string; external: boolean }
-type GpuData = Awaited<ReturnType<typeof graphics>>
+interface GpuInfo {
+  name: string
+  temperatureGpu: number | null
+  utilizationGpu: number | null
+  memoryUsed: number | null
+  memoryTotal: number | null
+  powerDraw: number | null
+}
 const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 16, keepAliveMsecs: 30000 })
 function hasErrnoCode(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error && 'code' in err
@@ -314,10 +320,25 @@ let piWebStopRequested = false
 let piWebWindow: BrowserWindow | null = null
 let metricsPollingEnabled = true
 let metricsInterval: ReturnType<typeof setInterval> | null = null
-let cachedGpuData: GpuData | null = null
+let cachedGpuData: GpuInfo | null = null
 let lastGpuFetch = 0
 let gpuLoggedFail = false
-const GPU_CACHE_TTL = 30000
+const GPU_CACHE_TTL = 5000
+let nvidiaSmiPath: string | undefined = undefined
+
+function findNvidiaSmi(): string | null {
+  if (nvidiaSmiPath !== undefined) return nvidiaSmiPath || null
+  const candidates = [
+    'C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe',
+    'C:\\Windows\\System32\\nvidia-smi.exe',
+  ]
+  for (const p of candidates) {
+    if (existsSync(p)) { nvidiaSmiPath = p; return p }
+  }
+  // fallback: try bare command (relies on PATH)
+  nvidiaSmiPath = 'nvidia-smi'
+  return 'nvidia-smi'
+}
 let modelsCache: { ts: number; result: ModelFileInfo[] } | null = null
 let modelsScanPromise: Promise<ModelFileInfo[]> | null = null
 const MODELS_CACHE_TTL = 30000
@@ -991,17 +1012,26 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('hf-search', async (_e, query: string) => {
     try {
-      const data = await fetchJson(`https://huggingface.co/api/models?search=${encodeURIComponent(query)}&filter=gguf&limit=24&sort=downloads&direction=-1`) as HfModelRaw[]
-      return data.map(m => ({ id: m.id, author: m.author || m.id.split('/')[0] || '', name: m.id.split('/').pop() || m.id, downloads: m.downloads || 0, likes: m.likes || 0, tags: m.tags || [], lastModified: m.lastModified || '' }))
+      const data = await fetchJson(`https://huggingface.co/api/models?search=${encodeURIComponent(query)}&filter=gguf&limit=24&sort=downloads&direction=-1`)
+      if (!Array.isArray(data)) return { error: 'API 返回格式异常' }
+      return data.map((m: HfModelRaw) => ({ id: m.id, author: m.author || m.id.split('/')[0] || '', name: m.id.split('/').pop() || m.id, downloads: m.downloads || 0, likes: m.likes || 0, tags: m.tags || [], lastModified: m.lastModified || '' }))
     } catch (err) { return { error: String(err) } }
   })
   ipcMain.handle('hf-get-files', async (_e, repoId: string) => {
     try {
-      const data = await fetchJson(`https://huggingface.co/api/models/${encodeURIComponent(repoId)}/tree/main`) as HfFileRaw[]
-      return data.filter((f: HfFileRaw) => f.type === 'file' && f.path.endsWith('.gguf')).map((f: HfFileRaw) => ({
+      // repoId 格式为 "owner/repo"，斜杠是路径分隔符不能被编码
+      const safeRepoId = repoId.split('/').map(s => encodeURIComponent(s)).join('/')
+      const data = await fetchJson(`https://huggingface.co/api/models/${safeRepoId}/tree/main?recursive=true`)
+      if (!Array.isArray(data)) {
+        const errMsg = typeof data === 'object' && data !== null && 'error' in data ? String((data as any).error) : 'API 返回异常'
+        return { error: errMsg }
+      }
+      const ggufFiles = data.filter((f: HfFileRaw) => f.type === 'file' && f.path.endsWith('.gguf'))
+      if (ggufFiles.length === 0) return { error: '该仓库中没有找到 .gguf 文件' }
+      return ggufFiles.map((f: HfFileRaw) => ({
         name: f.path,
         size: f.size || 0,
-        downloadUrl: `https://huggingface.co/${encodeURIComponent(repoId)}/resolve/main/${encodeURIComponent(f.path)}`
+        downloadUrl: `https://huggingface.co/${safeRepoId}/resolve/main/${f.path.split('/').map(s => encodeURIComponent(s)).join('/')}`
       }))
     } catch (err) { return { error: String(err) } }
   })
@@ -1079,6 +1109,7 @@ export function registerIpcHandlers(): void {
   const PI_WEB_DIR = app.isPackaged ? join(process.resourcesPath, 'pi-web') : join(APP_ROOT, 'pi-web')
   const PI_WEB_PORT = 30141
   const lastDecodeCount = new Map<string, { count: number; time: number }>()
+  const lastCacheHit = new Map<string, { cached: number; total: number }>()
 
   async function startPiWeb(): Promise<string> {
     if (piWebState === 'starting' || piWebState === 'running') {
@@ -1274,8 +1305,48 @@ export function registerIpcHandlers(): void {
   async function refreshGpuData(): Promise<void> {
     const now = Date.now()
     if (cachedGpuData && (now - lastGpuFetch) < GPU_CACHE_TTL) return
-    try { cachedGpuData = await graphics(); lastGpuFetch = now; gpuLoggedFail = false } catch (err) {
-      if (!gpuLoggedFail) { console.warn('[gpu] graphics() failed:', err); gpuLoggedFail = true }
+    const smiPath = findNvidiaSmi()
+    if (!smiPath) {
+      if (!gpuLoggedFail) { console.warn('[gpu] nvidia-smi not found in any known path'); gpuLoggedFail = true }
+      return
+    }
+    try {
+      const result = await new Promise<string>((resolve, reject) => {
+        const proc = spawn(smiPath, [
+          '--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name,power.draw',
+          '--format=csv,noheader,nounits'
+        ], { windowsHide: true, shell: process.platform === 'win32' })
+        let stdout = '', stderr = ''
+        proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+        proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+        proc.on('error', reject)
+        proc.on('close', (code) => {
+          if (code === 0) resolve(stdout.trim())
+          else reject(new Error(`nvidia-smi exit ${code}: ${stderr.trim()}`))
+        })
+      })
+      // output: "32, 8192, 24576, 45, NVIDIA GeForce RTX 4090, 150.50"
+      const parts = result.split(',').map(s => s.trim())
+      if (parts.length >= 4) {
+        const util = parseInt(parts[0], 10)
+        const memUsed = parseInt(parts[1], 10)
+        const memTotal = parseInt(parts[2], 10)
+        const temp = parseInt(parts[3], 10)
+        const name = parts[4] || ''
+        const power = parts[5] ? parseFloat(parts[5]) : NaN
+        cachedGpuData = {
+          name: name || 'Unknown GPU',
+          temperatureGpu: isNaN(temp) ? null : temp,
+          utilizationGpu: isNaN(util) ? null : util,
+          memoryUsed: isNaN(memUsed) ? null : memUsed,
+          memoryTotal: isNaN(memTotal) ? null : memTotal,
+          powerDraw: isNaN(power) ? null : power,
+        }
+        lastGpuFetch = now
+        gpuLoggedFail = false
+      }
+    } catch (err) {
+      if (!gpuLoggedFail) { console.warn('[gpu] nvidia-smi failed:', err); gpuLoggedFail = true }
     }
   }
 
@@ -1284,7 +1355,7 @@ export function registerIpcHandlers(): void {
       httpGetText(`http://127.0.0.1:${port}/slots`).catch(() => ''),
       httpGetText(`http://127.0.0.1:${port}/metrics`).catch(() => ''),
     ])
-    const gpuController = cachedGpuData?.controllers?.[0]
+    const gpu = cachedGpuData
     const payload: Record<string, unknown> = { id, lastUpdated: Date.now() }
     const slots = rawSlots ? tryParseJson(rawSlots) : null
     if (slots && Array.isArray(slots) && slots.length > 0) {
@@ -1292,7 +1363,17 @@ export function registerIpcHandlers(): void {
       if (s.n_ctx !== undefined) payload.nCtx = s.n_ctx
       if (s.n_prompt_tokens !== undefined) payload.nPromptTokens = s.n_prompt_tokens
       if (s.n_prompt_tokens_processed !== undefined) payload.nPromptTokensProcessed = s.n_prompt_tokens_processed
-      if (s.n_prompt_tokens_cache !== undefined) payload.nPromptTokensCache = s.n_prompt_tokens_cache
+      if (s.n_prompt_tokens_cache !== undefined && s.n_prompt_tokens_cache > 0) {
+        payload.nPromptTokensCache = s.n_prompt_tokens_cache
+        lastCacheHit.set(id, { cached: s.n_prompt_tokens_cache, total: s.n_prompt_tokens ?? 0 })
+      } else {
+        // 请求完成后保持最后一次有效缓存快照
+        const snap = lastCacheHit.get(id)
+        if (snap) {
+          payload.nPromptTokensCache = snap.cached
+          payload.nPromptTokens = snap.total || (s.n_prompt_tokens ?? 0)
+        }
+      }
       if (s.next_token?.[0]?.n_decoded !== undefined) payload.nDecoded = s.next_token[0].n_decoded
       if (s.is_processing !== undefined) payload.isProcessing = s.is_processing
       if (s.params?.n_predict !== undefined) payload.nPredict = s.params.n_predict
@@ -1313,14 +1394,19 @@ export function registerIpcHandlers(): void {
         }
         lastDecodeCount.set(id, { count: prom['llamacpp:n_decode_total'], time: now })
       }
-      if (prom['llamacpp:kv_cache_tokens'] !== undefined) payload.nPromptTokensCache = prom['llamacpp:kv_cache_tokens']
+      // 不覆盖 nPromptTokensCache：slots API 的 n_prompt_tokens_cache 是真正的缓存命中数
+      // kv_cache_tokens 是全局 KV cache 占用量，语义不同，仅用于推算 nCtx
       if (prom['llamacpp:kv_cache_usage_ratio'] !== undefined && prom['llamacpp:kv_cache_tokens'] !== undefined && prom['llamacpp:kv_cache_usage_ratio'] > 0) {
         payload.nCtx = Math.round(prom['llamacpp:kv_cache_tokens'] / prom['llamacpp:kv_cache_usage_ratio'])
       }
     }
-    if (gpuController) {
-      payload.vramTotalMb = gpuController.memoryTotal || 0
-      payload.vramUsedMb = gpuController.memoryUsed ?? null
+    if (gpu) {
+      payload.vramTotalMb = gpu.memoryTotal || 0
+      payload.vramUsedMb = gpu.memoryUsed ?? null
+      payload.gpuTemperature = gpu.temperatureGpu ?? null
+      payload.gpuUtilization = gpu.utilizationGpu ?? null
+      payload.gpuName = gpu.name || ''
+      payload.gpuPowerDraw = gpu.powerDraw ?? null
     }
     if (typeof payload.nPromptTokens === 'number' && payload.nPromptTokens > 0 &&
       typeof payload.prefillTokS === 'number' && payload.prefillTokS > 0) {

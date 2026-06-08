@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "extract-zip": "^2.0.1",
-    "systeminformation": "^5.31.6",
     "zustand": "^4.5.2"
   },
   "devDependencies": {

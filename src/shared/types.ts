@@ -67,7 +67,11 @@ export interface ModelMetrics {
   prefillTokS: number | null    // prompt-eval tok/s read from timing log
   reqPerSec: number[]           // rolling window of req/s samples
   vramUsedMb: number | null     // GPU memory used
-  vramTotalMb: number           // total adapter VRAM (si.gpu memorySize)
+  vramTotalMb: number           // total adapter VRAM
+  gpuTemperature: number | null // GPU temperature (°C)
+  gpuUtilization: number | null // GPU utilization (%)
+  gpuName: string               // GPU name (e.g. NVIDIA RTX 4090)
+  gpuPowerDraw: number | null   // GPU power draw (W)
   nPromptTokens: number         // current request prompt tokens from /slots
   nPromptTokensCache: number    // cached prompt tokens from /slots (computed: n_prompt_tokens - n_prompt_tokens_processed)
   nPromptTokensProcessed: number // processed prompt tokens from /slots (n_prompt_tokens_processed)
