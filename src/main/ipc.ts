@@ -1497,6 +1497,20 @@ export function registerIpcHandlers(): void {
     return false
   })
 
+  // --- fetch-server-endpoint ---
+  ipcMain.handle('fetch-server-endpoint', (_e, port: number, endpoint: string): Promise<{ ok: boolean; status?: number; text?: string; error?: string }> => {
+    return new Promise((resolve) => {
+      const url = `http://127.0.0.1:${port}/${endpoint}`
+      const req = http.get(url, (res) => {
+        let body = ''
+        res.on('data', (c: Buffer) => { body += c.toString() })
+        res.on('end', () => resolve({ ok: (res.statusCode ?? 500) < 400, status: res.statusCode, text: body }))
+      })
+      req.on('error', (e) => resolve({ ok: false, error: e.message }))
+      req.setTimeout(5000, () => { req.destroy(); resolve({ ok: false, error: 'timeout' }) })
+    })
+  })
+
   // load initial settings (cache is already populated synchronously above)
   metricsPollingEnabled = settingsCache!.metricsPolling ?? true
   if (metricsPollingEnabled) startMetricsInterval()

@@ -78,6 +78,7 @@ interface LlamaCppApi {
   getPiWebStatus: () => Promise<{ running: boolean; url: string }>
   openChatWindow: (port: number) => Promise<void>
   waitForServer: (port: number) => Promise<boolean>
+  fetchServerEndpoint: (port: number, endpoint: string) => Promise<{ ok: boolean; status?: number; text?: string; error?: string }>
   onModelLog: (cb: (data: { id: string; stream: string; text: string }) => void) => void
   removeModelLogListener: () => void
   getMetrics: () => Promise<{ metrics: Record<string, Partial<ModelMetrics>> }>

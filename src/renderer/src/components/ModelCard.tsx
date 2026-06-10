@@ -106,9 +106,6 @@ export default function ModelCard({ card }: Props) {
     if (!args.includes('--port') && card.template.serverPort) {
       args.push('--port', String(card.template.serverPort))
     }
-    if (launchMode === 'api' && !args.includes('--no-webui')) {
-      args.push('--no-webui')
-    }
     const port = card.template.serverPort || 8080
     const res = await window.api.runModel({
       id: card.template.id,
@@ -215,12 +212,12 @@ export default function ModelCard({ card }: Props) {
           className={`btn card-run-btn ${isRunning ? 'btn-danger' : 'btn-primary'}`}
           onClick={handleRunToggle}
           disabled={!isRunning && !modelExists}
-          style={isRunning && launchMode === 'chat' ? { flex: 0.5 } : {}}
+          style={isRunning ? { flex: 0.5 } : {}}
           title={!isRunning && !modelExists ? '无法启动：模型文件缺失' : ''}
         >
           {isRunning ? <><Square size={14} /> 停止</> : <><Play size={14} /> 启动</>}
         </button>
-        {isRunning && launchMode === 'chat' && (
+        {isRunning && (
           <button
             className="btn card-run-btn"
             style={{ flex: 0.5, background: 'var(--accent)', color: 'var(--accent-fg)' }}

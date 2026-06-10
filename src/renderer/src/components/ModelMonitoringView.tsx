@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo, Component } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, Component } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
-import { Activity, Database, HardDrive, Square, HardDrive as MemIcon, Zap, Clock, Gauge, Play, MessageSquare, Thermometer, Cpu } from 'lucide-react'
+import { Activity, Database, HardDrive, Square, HardDrive as MemIcon, Zap, Clock, Gauge, Play, MessageSquare, Thermometer, Cpu, RefreshCw, ExternalLink, Copy, Check, ChevronDown } from 'lucide-react'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function fmt(n: unknown, digits = 1): string {
@@ -273,9 +273,113 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
           </div>
 
         </div>
+
+        {/* ── API endpoints ── */}
+        {isRunning && (
+          <ApiEndpoints port={card.template.serverPort || 8080} />
+        )}
       </div>
     )}
   </div>
+  )
+}
+
+// ── ApiEndpoints ─────────────────────────────────────────────────────────────
+type ApiTab = 'metrics' | 'props' | 'slots'
+
+function ApiEndpoints({ port }: { port: number }) {
+  const [tab, setTab] = useState<ApiTab>('props')
+  const [data, setData] = useState<Record<ApiTab, string | null>>({ metrics: null, props: null, slots: null })
+  const [loading, setLoading] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
+
+  const fetchData = useCallback(async (t: ApiTab) => {
+    setLoading(true)
+    try {
+      const res = await window.api.fetchServerEndpoint(port, t)
+      if (!res.ok) throw new Error(res.error || `status ${res.status}`)
+      const text = res.text || ''
+      // Try to format JSON
+      try {
+        const json = JSON.parse(text)
+        setData(prev => ({ ...prev, [t]: JSON.stringify(json, null, 2) }))
+      } catch {
+        setData(prev => ({ ...prev, [t]: text }))
+      }
+    } catch (e: any) {
+      setData(prev => ({ ...prev, [t]: `请求失败: ${e.message || e}` }))
+    } finally {
+      setLoading(false)
+    }
+  }, [port])
+
+  useEffect(() => {
+    fetchData(tab)
+  }, [tab, fetchData])
+
+  const handleRefresh = () => fetchData(tab)
+
+  const handleCopy = () => {
+    if (!data[tab]) return
+    navigator.clipboard.writeText(data[tab])
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const handleOpenBrowser = () => {
+    window.api.openExternal(`http://127.0.0.1:${port}/${tab}`)
+  }
+
+  const tabs: { key: ApiTab; label: string }[] = [
+    { key: 'props', label: '/props' },
+    { key: 'slots', label: '/slots' },
+    { key: 'metrics', label: '/metrics' },
+  ]
+
+  return (
+    <div className="api-endpoints-section">
+      <div className="monitoring-metrics-title api-endpoints-header" onClick={() => setCollapsed(!collapsed)}>
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <Database size={12} style={{ marginRight: 5 }} />
+          API 端点
+        </div>
+        <ChevronDown size={13} className={`api-endpoints-chevron ${collapsed ? '' : 'open'}`} />
+      </div>
+      {!collapsed && (
+        <>
+          <div className="api-endpoints-tabs">
+            {tabs.map(t => (
+              <button
+                key={t.key}
+                className={`api-tab ${tab === t.key ? 'active' : ''}`}
+                onClick={() => setTab(t.key)}
+              >
+                {t.label}
+              </button>
+            ))}
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+              <button className="api-tab-btn" onClick={handleRefresh} title="刷新" disabled={loading}>
+                <RefreshCw size={12} className={loading ? 'spin' : ''} />
+              </button>
+              <button className="api-tab-btn" onClick={handleCopy} title="复制" disabled={!data[tab]}>
+                {copied ? <Check size={12} /> : <Copy size={12} />}
+              </button>
+              <button className="api-tab-btn" onClick={handleOpenBrowser} title="在浏览器打开">
+                <ExternalLink size={12} />
+              </button>
+            </div>
+          </div>
+          <div className="api-endpoints-body">
+            {loading && !data[tab] ? (
+              <div className="api-endpoints-loading">加载中…</div>
+            ) : (
+              <pre className="api-endpoints-pre">{data[tab] || '—'}</pre>
+            )}
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 

@@ -66,6 +66,7 @@ const fullApi = {
   setMetricsPolling: (enabled: boolean) => ipcRenderer.invoke('set-metrics-polling', enabled),
   openChatWindow: (port: number) => ipcRenderer.invoke('open-chat-window', port),
   waitForServer: (port: number) => ipcRenderer.invoke('wait-for-server', port),
+  fetchServerEndpoint: (port: number, endpoint: string) => ipcRenderer.invoke('fetch-server-endpoint', port, endpoint),
   onModelLog: (cb: (data: { id: string; stream: string; text: string }) => void) => {
     ipcRenderer.removeAllListeners('model-log')
     ipcRenderer.on('model-log', (_e, data) => cb(data))
