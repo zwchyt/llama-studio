@@ -9,6 +9,7 @@ import HuggingFaceView from './components/HuggingFaceView'
 import ModelsView from './components/ModelsView'
 import ModelMonitoringView from './components/ModelMonitoringView'
 import AboutView from './components/AboutView'
+import AgentsView from './components/AgentsView'
 import WelcomeView from './components/WelcomeView'
 import CreateModal from './components/CreateModal'
 import UpdateBanner from './components/UpdateBanner'
@@ -340,6 +341,7 @@ function AppMain() {
       case 'models': return <ModelsView />
       case 'monitoring': return <ModelMonitoringView />
       case 'about': return <AboutView />
+      case 'agents': return <AgentsView />
       case 'piweb': return <PiWebView />
       case 'welcome': return <WelcomeView />
       case 'llama': return <LlamaChatView />

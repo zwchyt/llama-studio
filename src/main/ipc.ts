@@ -1518,4 +1518,189 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('hf-open-models-dir', () => shell.openPath(MODELS_DIR))
   ipcMain.handle('onDownloadProgress', () => { })
   ipcMain.handle('removeDownloadListener', () => { })
+
+  // --- AI Agent detection ---
+  const KNOWN_AGENTS: { name: string; pkg: string; cmd: string }[] = [
+    { name: 'OpenCode',          pkg: 'opencode-ai',                     cmd: 'opencode' },
+    { name: 'Codex',             pkg: '@openai/codex',                   cmd: 'codex' },
+    { name: 'Qwen Code',         pkg: '@qwen-code/qwen-code',            cmd: 'qwen' },
+    { name: 'Droid',             pkg: 'droid',                            cmd: 'droid' },
+    { name: 'Pi Coding Agent',   pkg: '@earendil-works/pi-coding-agent', cmd: 'pi' },
+    { name: 'GitHub Copilot',    pkg: '@github/copilot',                 cmd: 'copilot' },
+    { name: 'KiloCode',          pkg: '@kilocode/cli',                   cmd: 'kilo' },
+    { name: 'Mimo AI',           pkg: '@mimo-ai/cli',                    cmd: 'mimo' },
+    { name: 'Command Code',      pkg: 'command-code',                    cmd: 'command-code' },
+    { name: 'OpenClaude',        pkg: '@gitlawb/openclaude',             cmd: 'openclaude' },
+    { name: 'Crush',             pkg: '@charmland/crush',                cmd: 'crush' },
+  ]
+  // Special update commands — agents not updated via npm install -g
+  const AGENT_UPDATE_OVERRIDES: Record<string, { exe: string; args: string[] }> = {
+    '@earendil-works/pi-coding-agent': { exe: 'pi', args: ['update'] },
+  }
+  let agentsCache: { ts: number; result: { name: string; pkg: string; cmd: string; installed: boolean; version: string | null }[] } | null = null
+  const AGENTS_CACHE_TTL = 30000
+
+  function findNpmCmd(): string {
+    if (process.platform === 'win32') {
+      const npmCmd = process.env.APPDATA ? join(process.env.APPDATA, 'npm', 'npm.cmd') : 'npm.cmd'
+      if (existsSync(npmCmd)) return npmCmd
+    }
+    return 'npm'
+  }
+  function npmGlobalEnv(): Record<string, string | undefined> {
+    const npmBinDir = process.env.APPDATA ? join(process.env.APPDATA, 'npm') : ''
+    return npmBinDir
+      ? { ...process.env, PATH: `${npmBinDir};${process.env.PATH || ''}` }
+      : { ...process.env }
+  }
+
+  ipcMain.handle('list-global-agents', async () => {
+    if (agentsCache && (Date.now() - agentsCache.ts) < AGENTS_CACHE_TTL) {
+      return agentsCache.result
+    }
+    return new Promise((resolve) => {
+      const npmCmd = findNpmCmd()
+      const proc = spawn(npmCmd, ['list', '-g', '--depth=0', '--json'], { windowsHide: true, shell: process.platform === 'win32' })
+      let stdout = ''
+      let stderr = ''
+      proc.stdout?.on('data', (d: Buffer) => { stdout += d.toString() })
+      proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
+      const timeout = setTimeout(() => {
+        try { proc.kill() } catch {}
+        const fallback = KNOWN_AGENTS.map(a => ({ ...a, installed: false, version: null }))
+        resolve(fallback)
+      }, 15000)
+      proc.on('close', () => {
+        clearTimeout(timeout)
+        try {
+          const data = JSON.parse(stdout)
+          const deps = data.dependencies || {}
+          const result = KNOWN_AGENTS.map(a => {
+            const entry = deps[a.pkg]
+            return {
+              name: a.name,
+              pkg: a.pkg,
+              cmd: a.cmd,
+              installed: !!entry,
+              version: entry?.version ?? null
+            }
+          })
+          agentsCache = { ts: Date.now(), result }
+          resolve(result)
+        } catch {
+          const fallback = KNOWN_AGENTS.map(a => ({ ...a, installed: false, version: null }))
+          resolve(fallback)
+        }
+      })
+      proc.on('error', () => {
+        clearTimeout(timeout)
+        const fallback = KNOWN_AGENTS.map(a => ({ ...a, installed: false, version: null }))
+        resolve(fallback)
+      })
+    })
+  })
+
+  ipcMain.handle('check-agent-updates', async (_e, installed: { pkg: string; version: string }[]) => {
+    const results: Record<string, { latest: string }> = {}
+    const checks = installed.map(async (agent) => {
+      try {
+        // npm registry API: scoped packages use @scope%2Fname
+        const encodedPkg = agent.pkg.startsWith('@')
+          ? agent.pkg.replace('/', '%2F')
+          : agent.pkg
+        const data = await fetchJson(`https://registry.npmjs.org/${encodedPkg}/latest`) as { version?: string }
+        if (data?.version && data.version !== agent.version) {
+          results[agent.pkg] = { latest: data.version }
+        }
+      } catch {
+        // silently skip failed queries
+      }
+    })
+    await Promise.all(checks)
+    return results
+  })
+
+  ipcMain.handle('update-agent', async (_e, opts: { pkg: string }) => {
+    if (!opts.pkg) return { success: false, error: 'Missing pkg' }
+    const known = KNOWN_AGENTS.find(a => a.pkg === opts.pkg)
+    if (!known) return { success: false, error: `Unknown agent: ${opts.pkg}` }
+    try {
+      const override = AGENT_UPDATE_OVERRIDES[opts.pkg]
+      let exe: string, args: string[], env: Record<string, string | undefined> | undefined
+      if (override) {
+        exe = override.exe
+        args = override.args
+        env = npmGlobalEnv()
+      } else {
+        exe = findNpmCmd()
+        args = ['install', '-g', `${opts.pkg}@latest`]
+        env = undefined
+      }
+      if (process.platform === 'win32') {
+        const cmdLine = [exe, ...args].map(a => a.includes(' ') ? `"${a}"` : a).join(' ')
+        spawn('cmd.exe', ['/c', 'start', 'cmd', '/k', cmdLine], {
+          detached: true, stdio: 'ignore', env: env || npmGlobalEnv()
+        }).unref()
+      } else if (process.platform === 'darwin') {
+        const fullCmd = [exe, ...args].join(' ')
+        spawn('open', ['-a', 'Terminal', '.'], { detached: true, stdio: 'ignore' }).unref()
+        setTimeout(() => {
+          spawn('osascript', ['-e', `tell application "Terminal" to do script "${fullCmd}" in front window`], {
+            detached: true, stdio: 'ignore', env
+          }).unref()
+        }, 500)
+      } else {
+        const fullCmd = [exe, ...args].join(' ')
+        const terminals = ['x-terminal-emulator', 'gnome-terminal', 'xterm']
+        for (const term of terminals) {
+          try {
+            spawn(term, ['-e', fullCmd], { detached: true, stdio: 'ignore', env }).unref()
+            return { success: true }
+          } catch { /* try next */ }
+        }
+        return { success: false, error: 'No terminal emulator found' }
+      }
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('launch-agent', async (_e, opts: { cmd: string; cwd: string }) => {
+    if (!opts.cmd || !opts.cwd) return { success: false, error: 'Missing cmd or cwd' }
+    const known = KNOWN_AGENTS.find(a => a.cmd === opts.cmd)
+    if (!known) return { success: false, error: `Unknown agent command: ${opts.cmd}` }
+    if (!existsSync(opts.cwd)) return { success: false, error: `Directory not found: ${opts.cwd}` }
+    try {
+      if (process.platform === 'win32') {
+        // Do NOT set windowsHide: true — the new cmd window must be visible
+        spawn('cmd.exe', ['/c', 'start', 'cmd', '/k', opts.cmd], {
+          cwd: opts.cwd, detached: true, stdio: 'ignore', env: npmGlobalEnv()
+        }).unref()
+      } else if (process.platform === 'darwin') {
+        spawn('open', ['-a', 'Terminal', opts.cwd], {
+          detached: true, stdio: 'ignore'
+        }).unref()
+        setTimeout(() => {
+          spawn('osascript', ['-e', `tell application "Terminal" to do script "${opts.cmd}" in front window`], {
+            detached: true, stdio: 'ignore'
+          }).unref()
+        }, 500)
+      } else {
+        const terminals = ['x-terminal-emulator', 'gnome-terminal', 'xterm']
+        for (const term of terminals) {
+          try {
+            spawn(term, ['-e', opts.cmd], {
+              cwd: opts.cwd, detached: true, stdio: 'ignore'
+            }).unref()
+            return { success: true }
+          } catch { /* try next */ }
+        }
+        return { success: false, error: 'No terminal emulator found' }
+      }
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
 }

@@ -16,6 +16,13 @@ export interface ModelDownloadInfo {
   phase: 'downloading' | 'paused' | 'done' | 'error' | 'cancelled'
   percent: number; repoId?: string; speed?: number
 }
+export interface AgentStatus {
+  name: string
+  pkg: string
+  cmd: string
+  installed: boolean
+  version: string | null
+}
 export const MAX_LOG_LINES = 5000
 function logClass(text: string): string {
   if (/\berror\b/i.test(text)) return 'log-error'
@@ -30,7 +37,7 @@ interface AppStore {
   commandsSchema: CommandsSchema | null
   releaseInfo: ReleaseInfo | null
   paths: { models: string; templates: string; backend: string } | null
-  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'piweb' | 'llama'
+  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'piweb' | 'llama' | 'agents'
   showCreateModal: boolean
   editingTemplate: Template | null
   updateDismissed: boolean
@@ -81,6 +88,16 @@ interface AppStore {
   clearActiveChat: () => void
   piWebUrl: string | null
   setPiWebUrl: (url: string | null) => void
+  agentStatuses: AgentStatus[]
+  agentsLoading: boolean
+  agentCwd: string | null
+  agentUpdates: Record<string, { latest: string }>
+  agentUpdatesLoading: boolean
+  setAgentStatuses: (a: AgentStatus[]) => void
+  setAgentsLoading: (v: boolean) => void
+  setAgentCwd: (cwd: string | null) => void
+  setAgentUpdates: (u: Record<string, { latest: string }>) => void
+  setAgentUpdatesLoading: (v: boolean) => void
 }
 export const useStore = create<AppStore>((set) => ({
   cards: [], backends: [], models: [], activeBackend: null,
@@ -94,7 +111,17 @@ export const useStore = create<AppStore>((set) => ({
   activeChatUrl: null,
   activeChatPort: null,
   piWebUrl: null,
+  agentStatuses: [],
+  agentsLoading: false,
+  agentCwd: null,
+  agentUpdates: {},
+  agentUpdatesLoading: false,
   setView: (v) => set({ view: v }),
+  setAgentStatuses: (a) => set({ agentStatuses: a }),
+  setAgentsLoading: (v) => set({ agentsLoading: v }),
+  setAgentCwd: (cwd) => set({ agentCwd: cwd }),
+  setAgentUpdates: (u) => set({ agentUpdates: u }),
+  setAgentUpdatesLoading: (v) => set({ agentUpdatesLoading: v }),
   setShowCreateModal: (show, template = null) => set({ showCreateModal: show, editingTemplate: template }),
   setActiveBackend: (b) => set({ activeBackend: b }),
   setCommandsSchema: (s) => set({ commandsSchema: s }),
