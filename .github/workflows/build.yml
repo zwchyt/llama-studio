@@ -21,6 +21,7 @@ jobs:
         id: bump_version
         run: |
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "previous_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
           if [ -z "$LATEST_TAG" ]; then
             NEW_TAG="v1.0.0"
           else
@@ -34,13 +35,33 @@ jobs:
           fi
           echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
 
+      - name: Generate Release Notes from Commits
+        id: release_notes
+        run: |
+          LATEST_TAG="${{ steps.bump_version.outputs.previous_tag }}"
+          if [ -z "$LATEST_TAG" ]; then
+            NOTES=$(git log --pretty=format:"- %s ([%h](https://github.com/${{ github.repository }}/commit/%H)) - @%an" HEAD)
+          else
+            NOTES=$(git log ${LATEST_TAG}..HEAD --pretty=format:"- %s ([%h](https://github.com/${{ github.repository }}/commit/%H)) - @%an")
+          fi
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.bump_version.outputs.new_tag }}
           name: Release ${{ steps.bump_version.outputs.new_tag }}
+          body: |
+            ![Hexllama Logo](https://github.com/${{ github.repository }}/raw/main/assets/github-logo-hexllama.png)
+
+            ### What's Changed:
+            ${{ steps.release_notes.outputs.notes }}
+
+            ---
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ steps.bump_version.outputs.previous_tag }}...${{ steps.bump_version.outputs.new_tag }}
           draft: false
           prerelease: false
-          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
