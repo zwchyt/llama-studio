@@ -39,7 +39,7 @@ jobs:
         id: release_notes
         run: |
           LATEST_TAG="${{ steps.bump_version.outputs.previous_tag }}"
-          FORMAT='- **%s** ([`%h`](https://github.com/${{ github.repository }}/commit/%H)) - @%an%w(0,2,2)%b'
+          FORMAT='- **%s** ([`%h`](https://github.com/${{ github.repository }}/commit/%H)) - @%an%n%b'
           if [ -z "$LATEST_TAG" ]; then
             NOTES=$(git log --pretty=format:"$FORMAT" HEAD)
           else
