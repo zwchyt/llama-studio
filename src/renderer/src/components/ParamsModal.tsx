@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { X, Search, Copy, Check, Lock } from 'lucide-react'
@@ -26,7 +26,24 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   const isRunning = card?.status === 'running'
   const disabled = isRunning
 
-  const handleUpdate = (argName: string, value: any) => {
+  // debounce save: 合并高频写入，400ms 内只触发一次 IPC
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingArgsRef = useRef<TemplateArgs | null>(null)
+
+  const flushSave = useCallback(() => {
+    if (pendingArgsRef.current === null) return
+    const { cards } = useStore.getState()
+    const card = cards.find(c => c.template.id === templateId)
+    if (card) {
+      window.api.saveTemplate({ ...card.template, args: pendingArgsRef.current })
+    }
+    pendingArgsRef.current = null
+  }, [templateId])
+
+  // 组件卸载或关闭时确保落盘
+  useEffect(() => () => { flushSave() }, [flushSave])
+
+  const handleUpdate = useCallback((argName: string, value: any) => {
     const { cards } = useStore.getState()
     const card = cards.find(c => c.template.id === templateId)
     const latestArgs = card?.template.args || {}
@@ -37,7 +54,12 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
       newArgs[argName] = value
     }
     updateCard(templateId, { args: newArgs })
-  }
+
+    // debounce 持久化
+    pendingArgsRef.current = newArgs
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(flushSave, 400)
+  }, [templateId, updateCard, flushSave])
 
   const tabs = useMemo(() => {
     if (!commandsSchema) return []
