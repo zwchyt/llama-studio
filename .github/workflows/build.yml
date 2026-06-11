@@ -39,12 +39,32 @@ jobs:
         id: release_notes
         run: |
           LATEST_TAG="${{ steps.bump_version.outputs.previous_tag }}"
-          FORMAT='- **%s** ([`%h`](https://github.com/${{ github.repository }}/commit/%H)) - @%an%n%b'
+          NOTES=""
           if [ -z "$LATEST_TAG" ]; then
-            NOTES=$(git log --pretty=format:"$FORMAT" HEAD)
+            RANGE="HEAD"
           else
-            NOTES=$(git log ${LATEST_TAG}..HEAD --pretty=format:"$FORMAT")
+            RANGE="${LATEST_TAG}..HEAD"
           fi
+          git log $RANGE --pretty=format:'COMMIT_START%n%s%n%h%n%H%n%an%n%b%nCOMMIT_END' | \
+          awk -v repo="${{ github.repository }}" '
+            /^COMMIT_START$/ { s=""; h=""; H=""; a=""; b=""; next }
+            /^COMMIT_END$/ {
+              printf "- **%s** ([`%s`](https://github.com/%s/commit/%s)) - @%s\n", s, h, repo, H, a
+              if (b != "") {
+                n = split(b, lines, "\n")
+                for (i = 1; i <= n; i++) {
+                  if (lines[i] != "") printf "  %s\n", lines[i]
+                }
+              }
+              next
+            }
+            s=="" { s=$0; next }
+            h=="" { h=$0; next }
+            H=="" { H=$0; next }
+            a=="" { a=$0; next }
+            { b = (b=="" ? $0 : b "\n" $0) }
+          ' > /tmp/notes.txt
+          NOTES=$(cat /tmp/notes.txt)
           echo "notes<<EOF" >> $GITHUB_OUTPUT
           echo "$NOTES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
