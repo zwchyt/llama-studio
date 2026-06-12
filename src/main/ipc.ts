@@ -1520,26 +1520,31 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('removeDownloadListener', () => { })
 
   // --- AI Agent detection ---
-  const KNOWN_AGENTS: { name: string; pkg: string; cmd: string; nonNpm?: boolean; logo?: string }[] = [
-    { name: 'OpenCode',          pkg: 'opencode-ai',                     cmd: 'opencode',    logo: './agent-logos/OpenCode.png' },
-    { name: 'Codex',             pkg: '@openai/codex',                   cmd: 'codex',       logo: './agent-logos/Codex.png' },
-    { name: 'Qwen Code',         pkg: '@qwen-code/qwen-code',            cmd: 'qwen',        logo: './agent-logos/QwenCode.png' },
-    { name: 'Droid',             pkg: 'droid',                            cmd: 'droid',       logo: './agent-logos/Droid.png' },
-    { name: 'Pi Coding Agent',   pkg: '@earendil-works/pi-coding-agent', cmd: 'pi',          logo: './agent-logos/Pi.png' },
-    { name: 'GitHub Copilot',    pkg: '@github/copilot',                 cmd: 'copilot',     logo: './agent-logos/Copilot.png' },
-    { name: 'KiloCode',          pkg: '@kilocode/cli',                   cmd: 'kilo',        logo: './agent-logos/KiloCode.png' },
-    { name: 'Mimo AI',           pkg: '@mimo-ai/cli',                    cmd: 'mimo',        logo: './agent-logos/MiMoCode .png' },
+  const KNOWN_AGENTS: { name: string; pkg: string; cmd: string; nonNpm?: boolean; logo?: string; website?: string }[] = [
+    { name: 'OpenCode',          pkg: 'opencode-ai',                     cmd: 'opencode',    logo: './agent-logos/OpenCode.png',      website: 'https://opencode.ai' },
+    { name: 'Codex',             pkg: '@openai/codex',                   cmd: 'codex',       logo: './agent-logos/Codex.png',         website: 'https://developers.openai.com/codex/cli' },
+    { name: 'Qwen Code',         pkg: '@qwen-code/qwen-code',            cmd: 'qwen',        logo: './agent-logos/QwenCode.png',      website: 'https://qwen.ai/qwencode' },
+    { name: 'Droid',             pkg: 'droid',                            cmd: 'droid',       logo: './agent-logos/Droid.png',         website: 'https://factory.ai/' },
+    { name: 'Pi Coding Agent',   pkg: '@earendil-works/pi-coding-agent', cmd: 'pi',          logo: './agent-logos/Pi.png',            website: 'https://pi.dev/' },
+    { name: 'GitHub Copilot',    pkg: '@github/copilot',                 cmd: 'copilot',     logo: './agent-logos/Copilot.png',       website: 'https://github.com/features/copilot/cli' },
+    { name: 'KiloCode',          pkg: '@kilocode/cli',                   cmd: 'kilo',        logo: './agent-logos/KiloCode.png',      website: 'https://kilo.ai/cli' },
+    { name: 'Mimo AI',           pkg: '@mimo-ai/cli',                    cmd: 'mimo',        logo: './agent-logos/MiMoCode .png',     website: 'https://mimo.xiaomi.com/mimocode/install' },
     { name: 'Command Code',      pkg: 'command-code',                    cmd: 'command-code',logo: './agent-logos/Command Code.png' },
-    { name: 'OpenClaude',        pkg: '@gitlawb/openclaude',             cmd: 'openclaude',  logo: './agent-logos/OpenClaude.png' },
-    { name: 'Crush',             pkg: '@charmland/crush',                cmd: 'crush',       logo: './agent-logos/Cursh.png' },
-    { name: 'CodeWhale',         pkg: 'codewhale',                        cmd: 'codewhale',   logo: './agent-logos/CodeWhale.jpg' },
-    { name: 'Kimi',              pkg: 'kimi',                             cmd: 'kimi', nonNpm: true, logo: './agent-logos/KimiCode.jpg' },
+    { name: 'OpenClaude',        pkg: '@gitlawb/openclaude',             cmd: 'openclaude',  logo: './agent-logos/OpenClaude.png',    website: 'https://openclaude.gitlawb.com/' },
+    { name: 'Crush',             pkg: '@charmland/crush',                cmd: 'crush',       logo: './agent-logos/Cursh.png',         website: 'https://github.com/charmbracelet/crush' },
+    { name: 'CodeWhale',         pkg: 'codewhale',                        cmd: 'codewhale',   logo: './agent-logos/CodeWhale.jpg',     website: 'https://github.com/Hmbown/CodeWhale' },
+    { name: 'Kimi',              pkg: 'kimi',                             cmd: 'kimi', nonNpm: true, logo: './agent-logos/KimiCode.jpg', website: 'https://www.kimi.com/code' },
   ]
   // Special update commands — agents not updated via npm install -g
   const AGENT_UPDATE_OVERRIDES: Record<string, { exe: string; args: string[] }> = {
     '@earendil-works/pi-coding-agent': { exe: 'pi', args: ['update'] },
     'codewhale': { exe: 'codewhale', args: ['update'] },
     'kimi': { exe: 'kimi', args: ['upgrade'] },
+  }
+  // Install commands per agent — non-npm agents use custom exe/args
+  const INSTALL_OVERRIDES: Record<string, { exe: string; args: string[] }> = {
+    '@earendil-works/pi-coding-agent': { exe: 'npm', args: ['install', '-g', '--ignore-scripts', '@earendil-works/pi-coding-agent'] },
+    'kimi': { exe: 'powershell', args: ['-ExecutionPolicy', 'Bypass', '-Command', 'irm https://code.kimi.com/kimi-code/install.ps1 | iex'] },
   }
   let agentsCache: { ts: number; result: { name: string; pkg: string; cmd: string; installed: boolean; version: string | null; logo?: string }[] } | null = null
   const AGENTS_CACHE_TTL = 30000
@@ -1622,7 +1627,8 @@ export function registerIpcHandlers(): void {
               cmd: a.cmd,
               installed: !!entry,
               version: entry?.version ?? null,
-              logo: a.logo
+              logo: a.logo,
+              website: a.website
             }
           })
           resolve(r)
@@ -1686,6 +1692,51 @@ export function registerIpcHandlers(): void {
         const cmdLine = [exe, ...args].map(a => a.includes(' ') ? `"${a}"` : a).join(' ')
         spawn('cmd.exe', ['/c', 'start', 'cmd', '/k', cmdLine], {
           detached: true, stdio: 'ignore', env: env || npmGlobalEnv()
+        }).unref()
+      } else if (process.platform === 'darwin') {
+        const fullCmd = [exe, ...args].join(' ')
+        spawn('open', ['-a', 'Terminal', '.'], { detached: true, stdio: 'ignore' }).unref()
+        setTimeout(() => {
+          spawn('osascript', ['-e', `tell application "Terminal" to do script "${fullCmd}" in front window`], {
+            detached: true, stdio: 'ignore', env
+          }).unref()
+        }, 500)
+      } else {
+        const fullCmd = [exe, ...args].join(' ')
+        const terminals = ['x-terminal-emulator', 'gnome-terminal', 'xterm']
+        for (const term of terminals) {
+          try {
+            spawn(term, ['-e', fullCmd], { detached: true, stdio: 'ignore', env }).unref()
+            return { success: true }
+          } catch { /* try next */ }
+        }
+        return { success: false, error: 'No terminal emulator found' }
+      }
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('install-agent', async (_e, opts: { pkg: string }) => {
+    if (!opts.pkg) return { success: false, error: 'Missing pkg' }
+    const known = KNOWN_AGENTS.find(a => a.pkg === opts.pkg)
+    if (!known) return { success: false, error: `Unknown agent: ${opts.pkg}` }
+    try {
+      const override = INSTALL_OVERRIDES[opts.pkg]
+      let exe: string, args: string[]
+      if (override) {
+        exe = override.exe
+        args = override.args
+      } else {
+        exe = findNpmCmd()
+        args = ['install', '-g', opts.pkg]
+      }
+      const env = npmGlobalEnv()
+      if (process.platform === 'win32') {
+        const cmdLine = [exe, ...args].map(a => a.includes(' ') ? `"${a}"` : a).join(' ')
+        spawn('cmd.exe', ['/c', 'start', 'cmd', '/k', cmdLine], {
+          detached: true, stdio: 'ignore', env
         }).unref()
       } else if (process.platform === 'darwin') {
         const fullCmd = [exe, ...args].join(' ')

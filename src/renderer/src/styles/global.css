@@ -1359,6 +1359,11 @@ select {
   animation: spin 1s linear infinite;
 }
 
+/* Agent website hover badge */
+div[style*="cursor: pointer"]:hover .agent-website-badge {
+  opacity: 1 !important;
+}
+
 .mono {
   font-family: 'SF Mono', 'Fira Code', monospace;
 }

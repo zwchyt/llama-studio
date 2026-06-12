@@ -80,6 +80,7 @@ const fullApi = {
   removeMetricsUpdateListener: () => ipcRenderer.removeAllListeners('metrics-update'),
   listGlobalAgents: () => ipcRenderer.invoke('list-global-agents'),
   launchAgent: (cmd: string, cwd: string) => ipcRenderer.invoke('launch-agent', { cmd, cwd }),
+  installAgent: (pkg: string) => ipcRenderer.invoke('install-agent', { pkg }),
   updateAgent: (pkg: string) => ipcRenderer.invoke('update-agent', { pkg }),
   checkAgentUpdates: (installed: { pkg: string; version: string }[]) => ipcRenderer.invoke('check-agent-updates', installed),
 }

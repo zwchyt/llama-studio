@@ -1,6 +1,6 @@
-import React, { useEffect, useCallback, useState } from 'react'
+import React, { useEffect, useCallback, useState, useRef } from 'react'
 import { useStore } from '../store/useStore'
-import { RefreshCw, CheckCircle2, XCircle, FolderOpen, Play, Download, ArrowUpCircle } from 'lucide-react'
+import { RefreshCw, CheckCircle2, XCircle, FolderOpen, Play, Download, ArrowUpCircle, PackagePlus, ExternalLink } from 'lucide-react'
 import type { AgentStatus } from '../store/useStore'
 
 export default function AgentsView() {
@@ -155,7 +155,7 @@ export default function AgentsView() {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {agentStatuses.map((agent) => (
-            <AgentRow key={agent.pkg} agent={agent} cwd={agentCwd} latestVersion={agentUpdates[agent.pkg]?.latest ?? null} />
+            <AgentRow key={agent.pkg} agent={agent} cwd={agentCwd} latestVersion={agentUpdates[agent.pkg]?.latest ?? null} onInstalled={fetchAgents} />
           ))}
         </div>
       )}
@@ -173,10 +173,48 @@ export default function AgentsView() {
   )
 }
 
-function AgentRow({ agent, cwd, latestVersion }: { agent: AgentStatus; cwd: string | null; latestVersion: string | null }) {
+function AgentRow({ agent, cwd, latestVersion, onInstalled }: { agent: AgentStatus; cwd: string | null; latestVersion: string | null; onInstalled: () => void }) {
   const [launching, setLaunching] = useState(false)
   const [updating, setUpdating] = useState(false)
+  const [installing, setInstalling] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const hasUpdate = !!latestVersion
+
+  async function handleInstall() {
+    if (!agent.pkg) return
+    setInstalling(true)
+    try {
+      const result = await window.api.installAgent(agent.pkg)
+      if (!result.success) {
+        console.error('[install-agent]', result.error)
+        setInstalling(false)
+        return
+      }
+      // Poll for installation completion (agent appears as installed)
+      let attempts = 0
+      pollRef.current = setInterval(async () => {
+        attempts++
+        try {
+          const list = await window.api.listGlobalAgents() as AgentStatus[]
+          const found = list.find(a => a.pkg === agent.pkg)
+          if (found?.installed) {
+            if (pollRef.current) clearInterval(pollRef.current)
+            pollRef.current = null
+            setInstalling(false)
+            onInstalled()
+          } else if (attempts >= 60) {
+            // Stop polling after ~5 minutes
+            if (pollRef.current) clearInterval(pollRef.current)
+            pollRef.current = null
+            setInstalling(false)
+          }
+        } catch { /* ignore */ }
+      }, 5000)
+    } catch (e) {
+      console.error('[install-agent]', e)
+      setInstalling(false)
+    }
+  }
 
   async function handleLaunch() {
     if (!cwd || !agent.cmd) return
@@ -218,7 +256,11 @@ function AgentRow({ agent, cwd, latestVersion }: { agent: AgentStatus; cwd: stri
       transition: 'border-color var(--transition)',
     }}>
       {/* Agent logo */}
-      <div style={{ position: 'relative', flexShrink: 0, width: 28, height: 28 }}>
+      <div
+        style={{ position: 'relative', flexShrink: 0, width: 28, height: 28, cursor: agent.website ? 'pointer' : 'default' }}
+        title={agent.website ? `访问官网：${agent.website}` : undefined}
+        onClick={() => agent.website && window.api.openExternal(agent.website)}
+      >
         {agent.logo ? (
           <img
             src={agent.logo}
@@ -251,6 +293,19 @@ function AgentRow({ agent, cwd, latestVersion }: { agent: AgentStatus; cwd: stri
           opacity: agent.installed ? 1 : 0.35,
           border: '2px solid var(--surface)',
         }} />
+        {/* External link badge */}
+        {agent.website && (
+          <span style={{
+            position: 'absolute', top: -4, right: -6,
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 4, padding: '1px 2px',
+            display: 'flex', alignItems: 'center',
+            opacity: 0,
+            transition: 'opacity var(--transition)',
+          }} className="agent-website-badge">
+            <ExternalLink size={8} style={{ color: 'var(--text-muted)' }} />
+          </span>
+        )}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
@@ -293,13 +348,32 @@ function AgentRow({ agent, cwd, latestVersion }: { agent: AgentStatus; cwd: stri
           v{latestVersion}
         </span>
       )}
-      {!agent.installed && (
-        <span style={{
-          fontSize: 11, color: 'var(--text-muted)', opacity: 0.6, flexShrink: 0
-        }}>
-          未安装
-        </span>
-      )}
+      {/* Install button — always visible, disabled when installed or installing */}
+      <button
+        onClick={handleInstall}
+        disabled={installing || agent.installed}
+        title={installing ? '安装中，请在新终端窗口中等待完成…' : agent.installed ? `${agent.name} 已安装` : `安装 ${agent.name}`}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 4,
+          padding: '4px 12px', fontSize: 12, fontWeight: 600,
+          background: agent.installed ? 'var(--bg)' : installing ? 'var(--bg)' : 'var(--accent)',
+          color: agent.installed ? 'var(--success)' : installing ? 'var(--text-muted)' : 'var(--accent-fg)',
+          border: agent.installed ? '1px solid var(--success)' : '1px solid var(--border)',
+          borderRadius: 'var(--radius-sm)',
+          cursor: (installing || agent.installed) ? 'default' : 'pointer',
+          opacity: (installing && !agent.installed) ? 0.7 : 1,
+          flexShrink: 0,
+          transition: 'all var(--transition)',
+        }}
+      >
+        {agent.installed ? (
+          <><CheckCircle2 size={12} /> 已安装</>
+        ) : installing ? (
+          <><RefreshCw size={12} className="spin" /> 安装中…</>
+        ) : (
+          <><PackagePlus size={12} /> 安装</>
+        )}
+      </button>
       {agent.installed && (
         <>
           <button
