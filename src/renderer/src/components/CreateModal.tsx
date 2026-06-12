@@ -101,7 +101,12 @@ export default function CreateModal() {
   }, [editingTemplate, activeBackend])
   async function handlePickModel() {
     const file = await window.api.pickModelFile()
-    if (file) setModelPath(file.path)
+    if (file) {
+      setModelPath(file.path)
+      const filename = file.path.split(/[/\\]/).pop() || ''
+      const stripped = filename.replace(/\.(gguf|ggml|bin)$/i, '')
+      if (stripped) setName(stripped)
+    }
   }
   function handleImportCmd() {
     if (!importCmd.trim()) return
@@ -269,7 +274,15 @@ export default function CreateModal() {
                 <select
                   className="form-select mono text-sm flex-1"
                   value={modelPath}
-                  onChange={e => setModelPath(e.target.value)}
+                  onChange={e => {
+                    const path = e.target.value
+                    setModelPath(path)
+                    if (path) {
+                      const filename = path.split(/[/\\]/).pop() || ''
+                      const stripped = filename.replace(/\.(gguf|ggml|bin)$/i, '')
+                      if (stripped) setName(stripped)
+                    }
+                  }}
                   aria-label="模型文件"
                 >
                   <option value="">-- 选择模型 --</option>

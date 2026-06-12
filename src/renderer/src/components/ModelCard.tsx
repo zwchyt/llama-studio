@@ -5,6 +5,7 @@ import { notify } from '../store/notificationStore'
 import { Play, Square, Settings, ChevronDown, MoreVertical, Copy, Trash, Download, Globe, Server, Terminal, Check } from 'lucide-react'
 import type { CardState } from '../../../shared/types'
 import ParamsModal from './ParamsModal'
+import ConfirmModal from './ConfirmModal'
 interface Props { card: CardState }
 export default function ModelCard({ card }: Props) {
   const { updateCard, setCardStatus, removeCard, backends, activeBackend, commandsSchema, setShowCreateModal, clearModelMetrics } = useStore(
@@ -13,6 +14,7 @@ export default function ModelCard({ card }: Props) {
   )
   const [showMenu, setShowMenu] = useState(false)
   const [showParamsModal, setShowParamsModal] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const isRunning = card.status === 'running'
   const launchMode = card.template.launchMode || 'chat'
@@ -126,11 +128,14 @@ export default function ModelCard({ card }: Props) {
   }
   const handleDelete = useCallback(async () => {
     if (isRunning) { notify('请先停止模型再删除。', 'error'); return }
-    if (confirm('确定删除此模板？')) {
-      await window.api.deleteTemplate(card.template.id)
-      removeCard(card.template.id)
-    }
-  }, [isRunning, card.template.id, removeCard])
+    setShowMenu(false)
+    setShowDeleteConfirm(true)
+  }, [isRunning])
+  const confirmDelete = useCallback(async () => {
+    await window.api.deleteTemplate(card.template.id)
+    removeCard(card.template.id)
+    setShowDeleteConfirm(false)
+  }, [card.template.id, removeCard])
   const handleExport = useCallback(async () => { await window.api.exportTemplate(card.template); setShowMenu(false) }, [card.template])
   const handleEdit = useCallback(() => { setShowCreateModal(true, card.template); setShowMenu(false) }, [card.template, setShowCreateModal])
   const handleDuplicate = useCallback(async () => {
@@ -279,6 +284,15 @@ export default function ModelCard({ card }: Props) {
           cardName={card.template.name}
         />
       )}
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="删除模板"
+        message={`确定要删除「${card.template.name}」吗？此操作不可撤销。`}
+        confirmLabel="删除"
+        danger
+        onConfirm={confirmDelete}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   )
 }
