@@ -1520,7 +1520,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('removeDownloadListener', () => { })
 
   // --- AI Agent detection ---
-  const KNOWN_AGENTS: { name: string; pkg: string; cmd: string }[] = [
+  const KNOWN_AGENTS: { name: string; pkg: string; cmd: string; nonNpm?: boolean }[] = [
     { name: 'OpenCode',          pkg: 'opencode-ai',                     cmd: 'opencode' },
     { name: 'Codex',             pkg: '@openai/codex',                   cmd: 'codex' },
     { name: 'Qwen Code',         pkg: '@qwen-code/qwen-code',            cmd: 'qwen' },
@@ -1532,13 +1532,52 @@ export function registerIpcHandlers(): void {
     { name: 'Command Code',      pkg: 'command-code',                    cmd: 'command-code' },
     { name: 'OpenClaude',        pkg: '@gitlawb/openclaude',             cmd: 'openclaude' },
     { name: 'Crush',             pkg: '@charmland/crush',                cmd: 'crush' },
+    { name: 'CodeWhale',         pkg: 'codewhale',                        cmd: 'codewhale' },
+    { name: 'Kimi',              pkg: 'kimi',                             cmd: 'kimi', nonNpm: true },
   ]
   // Special update commands — agents not updated via npm install -g
   const AGENT_UPDATE_OVERRIDES: Record<string, { exe: string; args: string[] }> = {
     '@earendil-works/pi-coding-agent': { exe: 'pi', args: ['update'] },
+    'codewhale': { exe: 'codewhale', args: ['update'] },
+    'kimi': { exe: 'kimi', args: ['upgrade'] },
   }
   let agentsCache: { ts: number; result: { name: string; pkg: string; cmd: string; installed: boolean; version: string | null }[] } | null = null
   const AGENTS_CACHE_TTL = 30000
+
+  /** Detect non-npm agents by checking if the binary exists in PATH */
+  async function detectNonNpmAgents(results: { name: string; pkg: string; cmd: string; installed: boolean; version: string | null }[]): Promise<void> {
+    const nonNpmAgents = KNOWN_AGENTS.filter(a => a.nonNpm)
+    const checks = nonNpmAgents.map(async (agent) => {
+      const idx = results.findIndex(r => r.pkg === agent.pkg)
+      if (idx === -1) return
+      try {
+        // Check if binary exists in PATH
+        const whereCmd = process.platform === 'win32' ? 'where' : 'which'
+        await new Promise<void>((resolve, reject) => {
+          const p = spawn(whereCmd, [agent.cmd], { windowsHide: true, stdio: 'ignore' })
+          p.on('close', (code) => code === 0 ? resolve() : reject(new Error('not found')))
+          p.on('error', reject)
+        })
+        // Binary exists, get version
+        const version = await new Promise<string | null>((resolve) => {
+          const vp = spawn(agent.cmd, ['--version'], { windowsHide: true, shell: process.platform === 'win32' })
+          let out = ''
+          vp.stdout?.on('data', (d: Buffer) => { out += d.toString() })
+          const t = setTimeout(() => { try { vp.kill() } catch {} resolve(null) }, 5000)
+          vp.on('close', () => {
+            clearTimeout(t)
+            const v = out.trim().match(/(\d+\.\d+\.\d+)/)
+            resolve(v ? v[1] : out.trim() || null)
+          })
+          vp.on('error', () => { clearTimeout(t); resolve(null) })
+        })
+        results[idx] = { ...results[idx], installed: true, version }
+      } catch {
+        // not found, keep as not installed
+      }
+    })
+    await Promise.all(checks)
+  }
 
   function findNpmCmd(): string {
     if (process.platform === 'win32') {
@@ -1558,7 +1597,7 @@ export function registerIpcHandlers(): void {
     if (agentsCache && (Date.now() - agentsCache.ts) < AGENTS_CACHE_TTL) {
       return agentsCache.result
     }
-    return new Promise((resolve) => {
+    const result = await new Promise<{ name: string; pkg: string; cmd: string; installed: boolean; version: string | null }[]>((resolve) => {
       const npmCmd = findNpmCmd()
       const proc = spawn(npmCmd, ['list', '-g', '--depth=0', '--json'], { windowsHide: true, shell: process.platform === 'win32' })
       let stdout = ''
@@ -1575,7 +1614,7 @@ export function registerIpcHandlers(): void {
         try {
           const data = JSON.parse(stdout)
           const deps = data.dependencies || {}
-          const result = KNOWN_AGENTS.map(a => {
+          const r = KNOWN_AGENTS.map(a => {
             const entry = deps[a.pkg]
             return {
               name: a.name,
@@ -1585,8 +1624,7 @@ export function registerIpcHandlers(): void {
               version: entry?.version ?? null
             }
           })
-          agentsCache = { ts: Date.now(), result }
-          resolve(result)
+          resolve(r)
         } catch {
           const fallback = KNOWN_AGENTS.map(a => ({ ...a, installed: false, version: null }))
           resolve(fallback)
@@ -1598,11 +1636,18 @@ export function registerIpcHandlers(): void {
         resolve(fallback)
       })
     })
+    // Detect non-npm agents (e.g. kimi installed via PowerShell script)
+    await detectNonNpmAgents(result)
+    agentsCache = { ts: Date.now(), result }
+    return result
   })
 
   ipcMain.handle('check-agent-updates', async (_e, installed: { pkg: string; version: string }[]) => {
     const results: Record<string, { latest: string }> = {}
-    const checks = installed.map(async (agent) => {
+    // Skip non-npm agents — they can't be checked via npm registry
+    const nonNpmPkgs = new Set(KNOWN_AGENTS.filter(a => a.nonNpm).map(a => a.pkg))
+    const npmAgents = installed.filter(a => !nonNpmPkgs.has(a.pkg))
+    const checks = npmAgents.map(async (agent) => {
       try {
         // npm registry API: scoped packages use @scope%2Fname
         const encodedPkg = agent.pkg.startsWith('@')
