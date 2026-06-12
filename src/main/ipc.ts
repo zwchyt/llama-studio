@@ -1520,20 +1520,20 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('removeDownloadListener', () => { })
 
   // --- AI Agent detection ---
-  const KNOWN_AGENTS: { name: string; pkg: string; cmd: string; nonNpm?: boolean }[] = [
-    { name: 'OpenCode',          pkg: 'opencode-ai',                     cmd: 'opencode' },
-    { name: 'Codex',             pkg: '@openai/codex',                   cmd: 'codex' },
-    { name: 'Qwen Code',         pkg: '@qwen-code/qwen-code',            cmd: 'qwen' },
-    { name: 'Droid',             pkg: 'droid',                            cmd: 'droid' },
-    { name: 'Pi Coding Agent',   pkg: '@earendil-works/pi-coding-agent', cmd: 'pi' },
-    { name: 'GitHub Copilot',    pkg: '@github/copilot',                 cmd: 'copilot' },
-    { name: 'KiloCode',          pkg: '@kilocode/cli',                   cmd: 'kilo' },
-    { name: 'Mimo AI',           pkg: '@mimo-ai/cli',                    cmd: 'mimo' },
-    { name: 'Command Code',      pkg: 'command-code',                    cmd: 'command-code' },
-    { name: 'OpenClaude',        pkg: '@gitlawb/openclaude',             cmd: 'openclaude' },
-    { name: 'Crush',             pkg: '@charmland/crush',                cmd: 'crush' },
-    { name: 'CodeWhale',         pkg: 'codewhale',                        cmd: 'codewhale' },
-    { name: 'Kimi',              pkg: 'kimi',                             cmd: 'kimi', nonNpm: true },
+  const KNOWN_AGENTS: { name: string; pkg: string; cmd: string; nonNpm?: boolean; logo?: string }[] = [
+    { name: 'OpenCode',          pkg: 'opencode-ai',                     cmd: 'opencode',    logo: './agent-logos/OpenCode.png' },
+    { name: 'Codex',             pkg: '@openai/codex',                   cmd: 'codex',       logo: './agent-logos/Codex.png' },
+    { name: 'Qwen Code',         pkg: '@qwen-code/qwen-code',            cmd: 'qwen',        logo: './agent-logos/QwenCode.png' },
+    { name: 'Droid',             pkg: 'droid',                            cmd: 'droid',       logo: './agent-logos/Droid.png' },
+    { name: 'Pi Coding Agent',   pkg: '@earendil-works/pi-coding-agent', cmd: 'pi',          logo: './agent-logos/Pi.png' },
+    { name: 'GitHub Copilot',    pkg: '@github/copilot',                 cmd: 'copilot',     logo: './agent-logos/Copilot.png' },
+    { name: 'KiloCode',          pkg: '@kilocode/cli',                   cmd: 'kilo',        logo: './agent-logos/KiloCode.png' },
+    { name: 'Mimo AI',           pkg: '@mimo-ai/cli',                    cmd: 'mimo',        logo: './agent-logos/MiMoCode .png' },
+    { name: 'Command Code',      pkg: 'command-code',                    cmd: 'command-code',logo: './agent-logos/Command Code.png' },
+    { name: 'OpenClaude',        pkg: '@gitlawb/openclaude',             cmd: 'openclaude',  logo: './agent-logos/OpenClaude.png' },
+    { name: 'Crush',             pkg: '@charmland/crush',                cmd: 'crush',       logo: './agent-logos/Cursh.png' },
+    { name: 'CodeWhale',         pkg: 'codewhale',                        cmd: 'codewhale',   logo: './agent-logos/CodeWhale.jpg' },
+    { name: 'Kimi',              pkg: 'kimi',                             cmd: 'kimi', nonNpm: true, logo: './agent-logos/KimiCode.jpg' },
   ]
   // Special update commands — agents not updated via npm install -g
   const AGENT_UPDATE_OVERRIDES: Record<string, { exe: string; args: string[] }> = {
@@ -1541,11 +1541,11 @@ export function registerIpcHandlers(): void {
     'codewhale': { exe: 'codewhale', args: ['update'] },
     'kimi': { exe: 'kimi', args: ['upgrade'] },
   }
-  let agentsCache: { ts: number; result: { name: string; pkg: string; cmd: string; installed: boolean; version: string | null }[] } | null = null
+  let agentsCache: { ts: number; result: { name: string; pkg: string; cmd: string; installed: boolean; version: string | null; logo?: string }[] } | null = null
   const AGENTS_CACHE_TTL = 30000
 
   /** Detect non-npm agents by checking if the binary exists in PATH */
-  async function detectNonNpmAgents(results: { name: string; pkg: string; cmd: string; installed: boolean; version: string | null }[]): Promise<void> {
+  async function detectNonNpmAgents(results: { name: string; pkg: string; cmd: string; installed: boolean; version: string | null; logo?: string }[]): Promise<void> {
     const nonNpmAgents = KNOWN_AGENTS.filter(a => a.nonNpm)
     const checks = nonNpmAgents.map(async (agent) => {
       const idx = results.findIndex(r => r.pkg === agent.pkg)
@@ -1621,7 +1621,8 @@ export function registerIpcHandlers(): void {
               pkg: a.pkg,
               cmd: a.cmd,
               installed: !!entry,
-              version: entry?.version ?? null
+              version: entry?.version ?? null,
+              logo: a.logo
             }
           })
           resolve(r)

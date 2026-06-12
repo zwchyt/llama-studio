@@ -217,11 +217,41 @@ function AgentRow({ agent, cwd, latestVersion }: { agent: AgentStatus; cwd: stri
       border: hasUpdate ? '1px solid #f5d6a8' : '1px solid var(--border)',
       transition: 'border-color var(--transition)',
     }}>
-      {agent.installed ? (
-        <CheckCircle2 size={18} style={{ color: 'var(--success)', flexShrink: 0 }} />
-      ) : (
-        <XCircle size={18} style={{ color: 'var(--text-muted)', opacity: 0.4, flexShrink: 0 }} />
-      )}
+      {/* Agent logo */}
+      <div style={{ position: 'relative', flexShrink: 0, width: 28, height: 28 }}>
+        {agent.logo ? (
+          <img
+            src={agent.logo}
+            alt={agent.name}
+            style={{
+              width: 28, height: 28, borderRadius: 6,
+              objectFit: 'cover',
+              opacity: agent.installed ? 1 : 0.4,
+            }}
+          />
+        ) : (
+          <div style={{
+            width: 28, height: 28, borderRadius: 6,
+            background: 'var(--bg)', border: '1px solid var(--border)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            opacity: agent.installed ? 1 : 0.4,
+          }}>
+            {agent.installed ? (
+              <CheckCircle2 size={16} style={{ color: 'var(--success)' }} />
+            ) : (
+              <XCircle size={16} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
+            )}
+          </div>
+        )}
+        {/* Status dot */}
+        <span style={{
+          position: 'absolute', bottom: -2, right: -2,
+          width: 10, height: 10, borderRadius: '50%',
+          background: agent.installed ? 'var(--success)' : 'var(--text-muted)',
+          opacity: agent.installed ? 1 : 0.35,
+          border: '2px solid var(--surface)',
+        }} />
+      </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
           fontSize: 14, fontWeight: 600,

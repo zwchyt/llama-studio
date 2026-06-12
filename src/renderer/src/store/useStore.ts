@@ -22,6 +22,7 @@ export interface AgentStatus {
   cmd: string
   installed: boolean
   version: string | null
+  logo?: string
 }
 export const MAX_LOG_LINES = 5000
 function logClass(text: string): string {
