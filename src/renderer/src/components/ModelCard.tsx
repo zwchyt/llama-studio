@@ -165,7 +165,7 @@ export default function ModelCard({ card }: Props) {
           )}
         </div>
         <div className="card-info">
-          <h3 className="card-name" title={card.template.name}>{card.template.name}</h3>
+          <h3 className="card-name" title={card.template.name} style={isRunning ? { color: 'var(--success)' } : {}}>{card.template.name}</h3>
           <p className="card-desc" title={card.template.description}>{card.template.description || '暂无描述'}</p>
         </div>
         <div className="card-menu-btn" ref={menuRef} style={{ position: 'relative', zIndex: 10 }}>

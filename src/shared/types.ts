@@ -79,6 +79,7 @@ export interface ModelMetrics {
   nCtx: number                  // total context window size from /slots
   nDecoded: number              // tokens decoded so far from /slots (n_decoded)
   isProcessing: boolean         // whether slot is actively generating
+  prefillProgress: number | null // prefill progress 0..1 from stderr log, null when not in prefill
   nPredict: number              // max tokens to predict from /slots (-1 = unlimited)
   lastUpdated: number           // timestamp of last update ms
 }

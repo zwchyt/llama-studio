@@ -198,6 +198,7 @@ export const useStore = create<AppStore>((set) => ({
         nPromptTokensProcessed: partial.nPromptTokensProcessed ?? 0,
         nDecoded: partial.nDecoded ?? 0,
         isProcessing: partial.isProcessing ?? false,
+        prefillProgress: partial.prefillProgress ?? null,
         nPredict: partial.nPredict ?? -1,
         nCtx: partial.nCtx ?? 0,
         lastUpdated: Date.now(),

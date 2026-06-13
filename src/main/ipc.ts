@@ -861,12 +861,43 @@ export function registerIpcHandlers(): void {
       const { allowed, boolean } = loadSchemaArgs(opts.backendPath)
       const safeArgs = validateArgs(opts.args, allowed, boolean)
       const proc = spawn(exePath, safeArgs, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: false })
+      let prefillResetTimer: ReturnType<typeof setTimeout> | null = null
+      let stderrBuf = ''
+      const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
       proc.stderr?.on('data', (d) => {
         const text = d.toString()
         console.error('[llama-server]', text)
         BrowserWindow.getAllWindows().forEach(win => {
           if (!win.isDestroyed()) win.webContents.send('model-log', { id: opts.id, stream: 'stderr', text })
         })
+        // Buffer stderr and process complete lines to handle chunked data
+        stderrBuf += text
+        const lines = stderrBuf.split('\n')
+        stderrBuf = lines.pop() || '' // keep incomplete last line in buffer
+        // Parse prefill progress: "progress = 0.57, t = 3.02 s / 2035.72 tokens per second"
+        for (const raw of lines) {
+          const line = stripAnsi(raw.trim())
+          if (!line) continue
+          const m = line.match(/progress\s*=\s*([\d.]+)/)
+          if (m) {
+            const progress = parseFloat(m[1])
+            if (!isNaN(progress) && progress >= 0 && progress <= 1) {
+              if (prefillResetTimer) { clearTimeout(prefillResetTimer); prefillResetTimer = null }
+              const update: Record<string, unknown> = { id: opts.id, prefillProgress: progress }
+              BrowserWindow.getAllWindows().forEach(win => {
+                if (!win.isDestroyed()) win.webContents.send('metrics-update', update)
+              })
+              // Clear prefillProgress 2s after completion so UI shows 100% briefly then resets
+              if (progress >= 1) {
+                prefillResetTimer = setTimeout(() => {
+                  BrowserWindow.getAllWindows().forEach(win => {
+                    if (!win.isDestroyed()) win.webContents.send('metrics-update', { id: opts.id, prefillProgress: null })
+                  })
+                }, 2000)
+              }
+            }
+          }
+        }
       })
       proc.stdout?.on('data', (d) => {
         const text = d.toString()
@@ -1508,7 +1539,7 @@ export function registerIpcHandlers(): void {
           const dt = (now - prev.time) / 1000
           if (dt > 0) {
             const delta = prom['llamacpp:n_decode_total'] - prev.count
-            if (delta >= 0) payload.reqPerSec = delta / dt
+            if (delta > 0) payload.reqPerSec = delta / dt
           }
         }
         lastDecodeCount.set(id, { count: prom['llamacpp:n_decode_total'], time: now })
@@ -1527,6 +1558,7 @@ export function registerIpcHandlers(): void {
       payload.gpuName = gpu.name || ''
       payload.gpuPowerDraw = gpu.powerDraw ?? null
     }
+    // Estimate TTFT from prompt token count and prefill speed
     if (typeof payload.nPromptTokens === 'number' && payload.nPromptTokens > 0 &&
       typeof payload.prefillTokS === 'number' && payload.prefillTokS > 0) {
       payload.ttftMs = Math.round((payload.nPromptTokens / payload.prefillTokS) * 1000)

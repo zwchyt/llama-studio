@@ -21,9 +21,11 @@ export default function Sidebar() {
       <button
         className={`nav-item ${view === 'cards' ? 'active' : ''}`}
         onClick={() => setView('cards')}
+        style={hasRunningModels ? { color: 'var(--success)' } : {}}
       >
         <LayoutGrid size={16} />
         我的模板
+        {hasRunningModels && <span className="nav-dot" />}
       </button>
       <button
         className={`nav-item ${view === 'llama' ? 'active' : ''}`}

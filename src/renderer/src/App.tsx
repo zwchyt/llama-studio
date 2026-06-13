@@ -235,8 +235,8 @@ function AppMain() {
       if (typeof raw.decodeTokS === 'number') out.decodeTokS = raw.decodeTokS
       else if (Array.isArray(raw.decodeTokS) && raw.decodeTokS.every(v => typeof v === 'number')) out.decodeTokS = raw.decodeTokS
     }
-    // TTFT sanity check: llama.cpp real measurements are typically < 60s; computed values can spike when prefillTokS has expired data
-    if (typeof raw.ttftMs === 'number' && raw.ttftMs > 0 && raw.ttftMs <= 60000) out.ttftMs = raw.ttftMs
+    // TTFT: accept any positive number (estimated from nPromptTokens / prefillTokS)
+    if (typeof raw.ttftMs === 'number' && raw.ttftMs > 0) out.ttftMs = raw.ttftMs
     if (typeof raw.prefillTokS === 'number') out.prefillTokS = raw.prefillTokS
     if (raw.reqPerSec !== undefined) {
       if (typeof raw.reqPerSec === 'number') out.reqPerSec = raw.reqPerSec
@@ -256,6 +256,7 @@ function AppMain() {
     if (typeof raw.nPromptTokensProcessed === 'number') out.nPromptTokensProcessed = raw.nPromptTokensProcessed
     if (typeof raw.nDecoded === 'number') out.nDecoded = raw.nDecoded
     if (typeof raw.isProcessing === 'boolean') out.isProcessing = raw.isProcessing
+    if (raw.prefillProgress !== undefined && (typeof raw.prefillProgress === 'number' || raw.prefillProgress === null)) out.prefillProgress = raw.prefillProgress
     if (typeof raw.nPredict === 'number') out.nPredict = raw.nPredict
     if (typeof raw.lastUpdated === 'number') out.lastUpdated = raw.lastUpdated
     return out
@@ -311,6 +312,7 @@ function AppMain() {
       if (d.nPromptTokensProcessed !== undefined) partial.nPromptTokensProcessed = d.nPromptTokensProcessed as number
       if (d.nDecoded !== undefined) partial.nDecoded = d.nDecoded as number
       if (d.isProcessing !== undefined) partial.isProcessing = d.isProcessing as boolean
+      if (d.prefillProgress !== undefined) partial.prefillProgress = d.prefillProgress as number | null
       if (d.nPredict !== undefined) partial.nPredict = d.nPredict as number
 
       if (Object.keys(partial).length > 0) updateModelMetric(mid, partial)

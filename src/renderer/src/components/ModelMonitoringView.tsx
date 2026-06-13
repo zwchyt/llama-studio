@@ -126,7 +126,7 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
         <HardDrive size={16} style={{ color: isRunning ? 'var(--success)' : 'var(--text-muted)' }} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="monitoring-card-name">{card.template.name}</div>
+        <div className="monitoring-card-name" style={isRunning ? { color: 'var(--success)' } : {}}>{card.template.name}</div>
         <div className="monitoring-card-meta">Port {card.template.serverPort} · {card.template.backendVersion || '默认后端'}</div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -177,19 +177,13 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
               icon={<Zap size={13} />}
               accentColor="var(--accent)"
             />
-            {(() => {
-              const ttftVal = metrics?.ttftMs
-              const isElevated = ttftVal != null && ttftVal > 5000 // warn if TTFT > 5s (likely stale prefillTokS)
-              return (
-                <MetricCard
-                  label="TTFT"
-                  value={isElevated ? '—' : fmtMs(ttftVal)}
-                  unit="ms"
-                  icon={<Clock size={13} />}
-                  accentColor={isElevated ? '#f97316' : 'var(--warning)'}
-                />
-              )
-            })()}
+            <MetricCard
+              label="TTFT"
+              value={fmtMs(metrics?.ttftMs)}
+              unit="ms"
+              icon={<Clock size={13} />}
+              accentColor="var(--warning)"
+            />
             <MetricCard
               label="Prefill"
               value={fmtInt(metrics?.prefillTokS)}
@@ -263,6 +257,36 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
                 </div>
               </div>
             )}
+            {(() => {
+              const pp = metrics?.prefillProgress ?? null
+              const isActive = pp !== null && pp < 1
+              const isDone = pp !== null && pp >= 1
+              const pct = pp !== null ? Math.min(100, pp * 100) : 0
+              const accentColor = isDone ? '#22c55e' : '#7c3aed'
+              return (
+                <div className="metric-card" style={{ gridColumn: '1 / -1' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div className="metric-icon" style={{ background: isActive ? '#7c3aed18' : isDone ? '#22c55e18' : '#64748b18', color: accentColor }}>
+                      <Timer size={13} />
+                    </div>
+                    <span className="metric-label">Prefill 进度</span>
+                    <span className="metric-value" style={{ color: isActive ? '#7c3aed' : isDone ? '#22c55e' : 'var(--text-muted)', fontSize: 16, marginLeft: 'auto' }}>
+                      {isActive
+                        ? <>{fmt(pct, 0)}<span className="metric-unit">%</span></>
+                        : isDone
+                          ? <><span className="metric-unit">100% 完成</span></>
+                          : <><span className="metric-unit">等待中</span></>
+                      }
+                    </span>
+                  </div>
+                  {isActive && (
+                    <div className="metric-bar-wrap" style={{ marginTop: 4 }}>
+                      <div className="metric-bar-fill" style={{ width: `${pct}%`, background: '#7c3aed', opacity: 0.6 }} />
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
             <div className="metric-card" style={{ gridColumn: '1 / -1' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div className="metric-icon" style={{ background: metrics?.isProcessing ? '#3b82f618' : '#22c55e18', color: metrics?.isProcessing ? '#3b82f6' : '#22c55e' }}>
