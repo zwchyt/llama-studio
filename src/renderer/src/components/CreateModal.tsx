@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
@@ -70,35 +70,24 @@ function parseCommand(cmd: string, shortFlagAliases: Record<string, string>): {
   return { modelPath, serverPort, args }
 }
 export default function CreateModal() {
-  const { setShowCreateModal, editingTemplate, backends, activeBackend, addCard, updateCard, models, commandsSchema } = useStore(
-    s => ({ setShowCreateModal: s.setShowCreateModal, editingTemplate: s.editingTemplate, backends: s.backends, activeBackend: s.activeBackend, addCard: s.addCard, updateCard: s.updateCard, models: s.models, commandsSchema: s.commandsSchema }),
+  const editingTemplate = useStore(s => s.editingTemplate)
+  const { setShowCreateModal, backends, activeBackend, addCard, updateCard, models, commandsSchema } = useStore(
+    s => ({ setShowCreateModal: s.setShowCreateModal, backends: s.backends, activeBackend: s.activeBackend, addCard: s.addCard, updateCard: s.updateCard, models: s.models, commandsSchema: s.commandsSchema }),
     shallow
   )
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [backendVersion, setBackendVersion] = useState('')
-  const [modelPath, setModelPath] = useState('')
-  const [serverPort, setServerPort] = useState(8080)
-  const [args, setArgs] = useState<TemplateArgs>({})
-  const [launchMode, setLaunchMode] = useState<'chat' | 'api'>('chat')
+  // Initialize form fields directly from editingTemplate — no useEffect needed.
+  // Component always mounts fresh via {showCreateModal && <CreateModal />},
+  // so initial values are always correct.
+  const [name, setName] = useState(editingTemplate?.name ?? '')
+  const [description, setDescription] = useState(editingTemplate?.description ?? '')
+  const [backendVersion, setBackendVersion] = useState(editingTemplate?.backendVersion ?? activeBackend?.name ?? '')
+  const [modelPath, setModelPath] = useState(editingTemplate?.modelPath ?? '')
+  const [serverPort, setServerPort] = useState(editingTemplate?.serverPort ?? 8080)
+  const [args, setArgs] = useState<TemplateArgs>(editingTemplate?.args ?? {})
+  const [launchMode, setLaunchMode] = useState<'chat' | 'api'>(editingTemplate?.launchMode ?? 'chat')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [importCmd, setImportCmd] = useState('')
-  useEffect(() => {
-    if (editingTemplate) {
-      setName(editingTemplate.name)
-      setDescription(editingTemplate.description || '')
-      setBackendVersion(editingTemplate.backendVersion || '')
-      setModelPath(editingTemplate.modelPath || '')
-      setServerPort(editingTemplate.serverPort || 8080)
-      setArgs(editingTemplate.args || {})
-      setLaunchMode(editingTemplate.launchMode || 'chat')
-    } else {
-      if (activeBackend) setBackendVersion(activeBackend.name)
-      setArgs({})
-      setLaunchMode('chat')
-    }
-  }, [editingTemplate, activeBackend])
   async function handlePickModel() {
     const file = await window.api.pickModelFile()
     if (file) {
@@ -132,9 +121,10 @@ export default function CreateModal() {
       launchMode
     }
     if (editingTemplate) {
-      const res = await window.api.saveTemplate({ ...editingTemplate, ...templateData })
+      const updated = { ...editingTemplate, ...templateData, updatedAt: new Date().toISOString() }
+      const res = await window.api.saveTemplate(updated)
       if (res.success) {
-        updateCard(editingTemplate.id, templateData)
+        updateCard(editingTemplate.id, { ...templateData, updatedAt: updated.updatedAt })
         setShowCreateModal(false)
       }
     } else {

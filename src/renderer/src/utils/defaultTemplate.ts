@@ -112,7 +112,7 @@ export function buildDefaultTemplate(
     '--repeat-penalty': settings.repeatPenalty
   }
   return {
-    id: crypto.randomUUID(),
+    id: String(Date.now()),
     name: cleanName(filename) || filename,
     description: settings.description,
     modelPath,

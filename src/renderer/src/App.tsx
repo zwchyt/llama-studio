@@ -235,7 +235,8 @@ function AppMain() {
       if (typeof raw.decodeTokS === 'number') out.decodeTokS = raw.decodeTokS
       else if (Array.isArray(raw.decodeTokS) && raw.decodeTokS.every(v => typeof v === 'number')) out.decodeTokS = raw.decodeTokS
     }
-    if (typeof raw.ttftMs === 'number') out.ttftMs = raw.ttftMs
+    // TTFT sanity check: llama.cpp real measurements are typically < 60s; computed values can spike when prefillTokS has expired data
+    if (typeof raw.ttftMs === 'number' && raw.ttftMs > 0 && raw.ttftMs <= 60000) out.ttftMs = raw.ttftMs
     if (typeof raw.prefillTokS === 'number') out.prefillTokS = raw.prefillTokS
     if (raw.reqPerSec !== undefined) {
       if (typeof raw.reqPerSec === 'number') out.reqPerSec = raw.reqPerSec

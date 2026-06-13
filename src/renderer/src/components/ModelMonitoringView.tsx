@@ -177,13 +177,19 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
               icon={<Zap size={13} />}
               accentColor="var(--accent)"
             />
-            <MetricCard
-              label="TTFT"
-              value={fmtMs(metrics?.ttftMs)}
-              unit="ms"
-              icon={<Clock size={13} />}
-              accentColor="var(--warning)"
-            />
+            {(() => {
+              const ttftVal = metrics?.ttftMs
+              const isElevated = ttftVal != null && ttftVal > 5000 // warn if TTFT > 5s (likely stale prefillTokS)
+              return (
+                <MetricCard
+                  label="TTFT"
+                  value={isElevated ? '—' : fmtMs(ttftVal)}
+                  unit="ms"
+                  icon={<Clock size={13} />}
+                  accentColor={isElevated ? '#f97316' : 'var(--warning)'}
+                />
+              )
+            })()}
             <MetricCard
               label="Prefill"
               value={fmtInt(metrics?.prefillTokS)}

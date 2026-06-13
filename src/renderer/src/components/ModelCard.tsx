@@ -139,7 +139,7 @@ export default function ModelCard({ card }: Props) {
   const handleExport = useCallback(async () => { await window.api.exportTemplate(card.template); setShowMenu(false) }, [card.template])
   const handleEdit = useCallback(() => { setShowCreateModal(true, card.template); setShowMenu(false) }, [card.template, setShowCreateModal])
   const handleDuplicate = useCallback(async () => {
-    const t = { ...card.template, id: crypto.randomUUID(), name: `${card.template.name} (Copy)` }
+    const t = { ...card.template, id: String(Date.now()), name: `${card.template.name} (Copy)` }
     const res = await window.api.saveTemplate(t)
     if (res.success) useStore.getState().addCard({ ...t, id: res.id })
     setShowMenu(false)

@@ -818,7 +818,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('save-template', async (_e, template: Record<string, unknown>) => {
     try {
-      const id = (template.id as string) || crypto.randomUUID()
+      const id = (template.id as string) || String(Date.now())
       if (/[\\/]/.test(id) || id.includes('..')) return { success: false, error: 'Invalid template ID' }
       writeFileSync(join(TEMPLATES_DIR, `${id}.json`), JSON.stringify({ ...template, id }, null, 2))
       return { success: true, id }
@@ -835,7 +835,7 @@ export function registerIpcHandlers(): void {
       const r = await dialog.showOpenDialog({ title: 'Import Template', filters: [{ name: 'JSON Template', extensions: ['json'] }], properties: ['openFile'] })
       if (r.canceled || !r.filePaths.length) return null
       const data = JSON.parse(readFileSync(r.filePaths[0], 'utf-8'))
-      const id = crypto.randomUUID(); data.id = id
+      const id = String(Date.now()); data.id = id
       writeFileSync(join(TEMPLATES_DIR, `${id}.json`), JSON.stringify(data, null, 2))
       return data
     } catch { return null }
