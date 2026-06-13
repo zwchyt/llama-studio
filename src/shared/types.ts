@@ -72,6 +72,7 @@ export interface ModelMetrics {
   gpuUtilization: number | null // GPU utilization (%)
   gpuName: string               // GPU name (e.g. NVIDIA RTX 4090)
   gpuPowerDraw: number | null   // GPU power draw (W)
+  cpuUsage: number | null        // process CPU usage (%)
   nPromptTokens: number         // current request prompt tokens from /slots
   nPromptTokensCache: number    // cached prompt tokens from /slots (computed: n_prompt_tokens - n_prompt_tokens_processed)
   nPromptTokensProcessed: number // processed prompt tokens from /slots (n_prompt_tokens_processed)

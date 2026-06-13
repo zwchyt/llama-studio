@@ -192,6 +192,7 @@ export const useStore = create<AppStore>((set) => ({
         gpuUtilization: partial.gpuUtilization ?? null,
         gpuName: partial.gpuName ?? '',
         gpuPowerDraw: partial.gpuPowerDraw ?? null,
+        cpuUsage: partial.cpuUsage ?? null,
         nPromptTokens: partial.nPromptTokens ?? 0,
         nPromptTokensCache: partial.nPromptTokensCache ?? 0,
         nPromptTokensProcessed: partial.nPromptTokensProcessed ?? 0,

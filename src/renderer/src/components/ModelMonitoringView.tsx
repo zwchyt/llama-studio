@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, Component } from 'rea
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
-import { Activity, Database, HardDrive, Square, HardDrive as MemIcon, Zap, Clock, Gauge, Play, MessageSquare, Thermometer, Cpu, RefreshCw, ExternalLink, Copy, Check, ChevronDown } from 'lucide-react'
+import { Activity, Database, HardDrive, Square, HardDrive as MemIcon, Zap, Clock, Gauge, Play, MessageSquare, Thermometer, Cpu, RefreshCw, ExternalLink, Copy, Check, ChevronDown, Timer } from 'lucide-react'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function fmt(n: unknown, digits = 1): string {
@@ -188,7 +188,7 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
               label="Prefill"
               value={fmtInt(metrics?.prefillTokS)}
               unit="tok/s"
-              icon={<Gauge size={13} />}
+              icon={<Timer size={13} />}
               accentColor="#7c3aed"
             />
             <MetricCard
@@ -217,8 +217,15 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
               label="GPU 利用率"
               value={metrics?.gpuUtilization != null ? String(metrics.gpuUtilization) : '—'}
               unit={metrics?.gpuUtilization != null ? '%' : ''}
-              icon={<Cpu size={13} />}
+              icon={<Gauge size={13} />}
               accentColor="#8b5cf6"
+            />
+            <MetricCard
+              label="CPU 利用率"
+              value={metrics?.cpuUsage != null ? String(metrics.cpuUsage) : '—'}
+              unit={metrics?.cpuUsage != null ? '%' : ''}
+              icon={<Cpu size={13} />}
+              accentColor="#f97316"
             />
             <div className="metric-card" style={{ gridColumn: '1 / -1' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

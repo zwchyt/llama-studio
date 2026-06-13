@@ -247,6 +247,7 @@ function AppMain() {
     if (raw.gpuUtilization !== undefined && (typeof raw.gpuUtilization === 'number' || raw.gpuUtilization === null)) out.gpuUtilization = raw.gpuUtilization
     if (typeof raw.gpuName === 'string') out.gpuName = raw.gpuName
     if (raw.gpuPowerDraw !== undefined && (typeof raw.gpuPowerDraw === 'number' || raw.gpuPowerDraw === null)) out.gpuPowerDraw = raw.gpuPowerDraw
+    if (raw.cpuUsage !== undefined && (typeof raw.cpuUsage === 'number' || raw.cpuUsage === null)) out.cpuUsage = raw.cpuUsage
     if (typeof raw.pid === 'number') out.pid = raw.pid
     if (typeof raw.nPromptTokens === 'number') out.nPromptTokens = raw.nPromptTokens
     if (typeof raw.nCtx === 'number') out.nCtx = raw.nCtx
@@ -301,6 +302,7 @@ function AppMain() {
       if (d.gpuUtilization !== undefined) partial.gpuUtilization = d.gpuUtilization as number | null
       if (d.gpuName !== undefined) partial.gpuName = d.gpuName as string
       if (d.gpuPowerDraw !== undefined) partial.gpuPowerDraw = d.gpuPowerDraw as number | null
+      if (d.cpuUsage !== undefined) partial.cpuUsage = d.cpuUsage as number | null
       if (d.pid !== undefined) partial.pid = d.pid as number
       if (d.nPromptTokens !== undefined) partial.nPromptTokens = d.nPromptTokens as number
       if (d.nCtx !== undefined) partial.nCtx = d.nCtx as number

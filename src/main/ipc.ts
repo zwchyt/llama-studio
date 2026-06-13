@@ -326,6 +326,125 @@ let gpuLoggedFail = false
 const GPU_CACHE_TTL = 5000
 let nvidiaSmiPath: string | undefined = undefined
 
+// ── CPU usage (system-wide, typeperf 性能计数器与任务管理器同源) ────
+let cachedCpuPct: number | null = null
+let lastCpuFetch = 0
+const CPU_CACHE_TTL = 3000
+let cpuCounterName: string | null = null  // 缓存已发现的计数器名称
+
+// 从注册表发现本地化计数器名称（中文Windows名称与英文不同）
+function discoverCpuCounterName(): Promise<string | null> {
+  return new Promise((resolve) => {
+    const proc = spawn('reg', [
+      'query', 'HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Perflib\\CurrentLanguage',
+      '/v', 'Counter'
+    ], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+    let stdout = ''
+    proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+    proc.on('error', () => resolve(null))
+    proc.on('close', () => {
+      // 查找 "Processor Information" 对象和 "% Processor Utility" 计数器
+      const lines = stdout.split('\n')
+      let objName: string | null = null
+      let counterName: string | null = null
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i].trim()
+        if (l.toLowerCase() === 'processor information') {
+          if (i > 0) objName = lines[i - 1].trim()
+        }
+        if (l.toLowerCase() === '% processor utility') {
+          if (i > 0) counterName = lines[i - 1].trim()
+        }
+      }
+      if (objName && counterName) {
+        const name = `\\${objName}(_Total)\\${counterName}`
+        resolve(name)
+      } else {
+        resolve(null)
+      }
+    })
+    setTimeout(() => { try { proc.kill() } catch {} resolve(null) }, 3000)
+  })
+}
+
+// typeperf 解析：取第二个样本（第一个样本可能不准）
+function parseTypeperfOutput(stdout: string): number | null {
+  const lines = stdout.split('\n').filter(l => l.startsWith('"'))
+  if (lines.length >= 2) {
+    const m = lines[1].match(/"[^"]*","([^"]+)"/)
+    if (m) {
+      const v = parseFloat(m[1])
+      if (!isNaN(v) && isFinite(v)) return Math.round(Math.max(0, Math.min(100, v)))
+    }
+  }
+  return null
+}
+
+function typeperfQuery(counterName: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const proc = spawn('typeperf', [counterName, '-sc', '2', '-si', '1'],
+      { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+    let stdout = ''
+    proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+    proc.on('error', () => resolve(null))
+    proc.on('close', () => resolve(parseTypeperfOutput(stdout)))
+    setTimeout(() => { try { proc.kill() } catch {} resolve(null) }, 5000)
+  })
+}
+
+function wmiFallback(): Promise<number | null> {
+  return new Promise((resolve) => {
+    const proc = spawn('powershell.exe', [
+      '-NoProfile', '-Command',
+      `(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average`
+    ], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+    let stdout = ''
+    proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+    proc.on('error', () => resolve(null))
+    proc.on('close', (code) => {
+      if (code !== 0) { resolve(null); return }
+      const v = parseFloat(stdout.trim())
+      resolve(isNaN(v) ? null : Math.round(v))
+    })
+    setTimeout(() => { try { proc.kill() } catch {} resolve(null) }, 4000)
+  })
+}
+
+async function getCpuUsage(): Promise<number | null> {
+  if (process.platform !== 'win32') return null
+  const now = Date.now()
+  if (cachedCpuPct !== null && (now - lastCpuFetch) < CPU_CACHE_TTL) return cachedCpuPct
+  // 首次调用时从注册表发现本地化计数器名
+  if (cpuCounterName === null) {
+    cpuCounterName = await discoverCpuCounterName() ?? 'NOT_AVAILABLE'
+  }
+  // 尝试链：注册表发现名 → 英文 → 中文 → WMI 兑底
+  let result: number | null = null
+  let usedSource = ''
+  if (cpuCounterName !== 'NOT_AVAILABLE') {
+    result = await typeperfQuery(cpuCounterName!)
+    if (result !== null) usedSource = `registry:${cpuCounterName}`
+  }
+  if (result === null) {
+    result = await typeperfQuery('\\Processor Information(_Total)\\% Processor Utility')
+    if (result !== null) usedSource = 'english-counter'
+  }
+  if (result === null) {
+    result = await typeperfQuery('\\处理器信息(_total)\\% 处理器实用工具')
+    if (result !== null) usedSource = 'chinese-counter'
+  }
+  if (result === null) {
+    result = await wmiFallback()
+    if (result !== null) usedSource = 'wmi-fallback'
+  }
+  if (result !== null) {
+    cachedCpuPct = result
+    lastCpuFetch = Date.now()
+    console.log(`[cpu] ${result}% via ${usedSource}`)
+  }
+  return cachedCpuPct
+}
+
 function findNvidiaSmi(): string | null {
   if (nvidiaSmiPath !== undefined) return nvidiaSmiPath || null
   const candidates = [
@@ -1350,7 +1469,7 @@ export function registerIpcHandlers(): void {
     }
   }
 
-  async function collectMetrics(id: string, port: number): Promise<Record<string, unknown>> {
+  async function collectMetrics(id: string, port: number, pid?: number): Promise<Record<string, unknown>> {
     const [rawSlots, rawMetrics] = await Promise.all([
       httpGetText(`http://127.0.0.1:${port}/slots`).catch(() => ''),
       httpGetText(`http://127.0.0.1:${port}/metrics`).catch(() => ''),
@@ -1412,6 +1531,9 @@ export function registerIpcHandlers(): void {
       typeof payload.prefillTokS === 'number' && payload.prefillTokS > 0) {
       payload.ttftMs = Math.round((payload.nPromptTokens / payload.prefillTokS) * 1000)
     }
+    if (pid !== undefined) {
+      payload.cpuUsage = await getCpuUsage()
+    }
     return payload
   }
 
@@ -1422,7 +1544,7 @@ export function registerIpcHandlers(): void {
       if (proc.pid === undefined) continue
       try {
         await gpuReady
-        const payload = await collectMetrics(id, port)
+        const payload = await collectMetrics(id, port, proc.pid)
         payload.pid = proc.pid
         BrowserWindow.getAllWindows().forEach(win => {
           if (!win.isDestroyed()) win.webContents.send('metrics-update', payload)
@@ -1460,7 +1582,7 @@ export function registerIpcHandlers(): void {
     for (const [id, { proc, port }] of runningProcesses) {
       if (proc.pid === undefined) continue
       try {
-        const entry = await collectMetrics(id, port)
+        const entry = await collectMetrics(id, port, proc.pid)
         entry.pid = proc.pid
         result[id] = entry
       } catch { }
