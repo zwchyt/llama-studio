@@ -677,6 +677,8 @@ select {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  margin-top: -24px;
+  margin-bottom: -24px;
 }
 
 .cmd-row {
@@ -689,10 +691,12 @@ select {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   transition: border-color var(--transition);
+  position: relative;
 }
 
 .cmd-row:hover {
   border-color: var(--border-strong);
+  z-index: 10;
 }
 
 .cmd-row.active-param {
@@ -898,6 +902,7 @@ select {
   max-height: 85vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   animation: slideUp 200ms cubic-bezier(.4, 0, .2, 1);
 }
 
@@ -1272,9 +1277,8 @@ select {
 
 .tooltip {
   position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
+  top: calc(100% + 4px);
+  right: 0;
   background: var(--accent);
   color: var(--accent-fg);
   padding: 5px 10px;
@@ -1993,7 +1997,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 .param-content {
-  padding: 4px 20px 16px;
+  padding: 32px 20px 32px;
   overflow-y: auto;
   flex: 1;
   min-height: 0;

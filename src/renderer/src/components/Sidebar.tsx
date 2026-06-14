@@ -17,6 +17,7 @@ export default function Sidebar() {
   }
   return (
     <nav className="sidebar">
+      {/* ── 导航 ── */}
       <span className="nav-section-label">导航</span>
       <button
         className={`nav-item ${view === 'cards' ? 'active' : ''}`}
@@ -28,6 +29,23 @@ export default function Sidebar() {
         {hasRunningModels && <span className="nav-dot" />}
       </button>
       <button
+        className={`nav-item ${view === 'models' ? 'active' : ''}`}
+        onClick={() => setView('models')}
+      >
+        <HardDrive size={16} />
+        模型
+      </button>
+      <button
+        className={`nav-item ${view === 'hub' ? 'active' : ''}`}
+        onClick={() => setView('hub')}
+      >
+        <Search size={16} />
+        模型中心
+      </button>
+
+      {/* ── 服务 ── */}
+      <span className="nav-section-label" style={{ marginTop: 12 }}>服务</span>
+      <button
         className={`nav-item ${view === 'llama' ? 'active' : ''}`}
         onClick={() => setView('llama')}
         title={activeChatUrl ? '打开聊天界面' : '暂无活跃会话'}
@@ -36,13 +54,6 @@ export default function Sidebar() {
         <Server size={16} />
         llama-server
         {activeChatUrl && <span className="nav-dot" />}
-      </button>
-      <button
-        className={`nav-item ${view === 'models' ? 'active' : ''}`}
-        onClick={() => setView('models')}
-      >
-        <HardDrive size={16} />
-        模型
       </button>
       <button
         className={`nav-item ${view === 'monitoring' ? 'active' : ''}`}
@@ -54,20 +65,6 @@ export default function Sidebar() {
         {hasRunningModels && <span className="nav-dot" />}
       </button>
       <button
-        className={`nav-item ${view === 'hub' ? 'active' : ''}`}
-        onClick={() => setView('hub')}
-      >
-        <Search size={16} />
-        模型中心
-      </button>
-      <button
-        className={`nav-item ${view === 'settings' ? 'active' : ''}`}
-        onClick={() => setView('settings')}
-      >
-        <Settings size={16} />
-        设置
-      </button>
-      <button
         className={`nav-item ${view === 'piweb' ? 'active' : ''}`}
         onClick={() => setView('piweb')}
         title={piWebUrl ? '打开 pi-web' : '暂无运行中的 pi-web'}
@@ -77,12 +74,22 @@ export default function Sidebar() {
         pi-web
         {piWebUrl && <span className="nav-dot" />}
       </button>
+
+      {/* ── 系统 ── */}
+      <span className="nav-section-label" style={{ marginTop: 12 }}>系统</span>
       <button
         className={`nav-item ${view === 'agents' ? 'active' : ''}`}
         onClick={() => setView('agents')}
       >
         <Bot size={16} />
         AI Agent
+      </button>
+      <button
+        className={`nav-item ${view === 'settings' ? 'active' : ''}`}
+        onClick={() => setView('settings')}
+      >
+        <Settings size={16} />
+        设置
       </button>
       <button
         className={`nav-item ${view === 'about' ? 'active' : ''}`}
