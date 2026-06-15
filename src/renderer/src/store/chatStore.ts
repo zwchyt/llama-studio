@@ -42,6 +42,7 @@ interface ChatStore {
 
   // 会话管理
   createSession: (templateId: string, port: number, templateName?: string) => string
+  createEmptySession: () => string
   selectSession: (id: string) => void
   renameSession: (id: string, title: string) => void
   deleteSession: (id: string) => Promise<void>
@@ -98,6 +99,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       title: '新对话',
       templateId,
       port,
+      systemPrompt: '',
+      params: { ...DEFAULT_PARAMS },
+      messages: [],
+      createdAt: now,
+      updatedAt: now
+    }
+    set((s) => ({ sessions: [session, ...s.sessions], activeSessionId: id }))
+    get().persist(id)
+    return id
+  },
+
+  createEmptySession: () => {
+    const id = newId()
+    const now = new Date().toISOString()
+    const session: ChatSession = {
+      id,
+      title: '新对话',
+      templateId: '',
+      port: 0,
       systemPrompt: '',
       params: { ...DEFAULT_PARAMS },
       messages: [],

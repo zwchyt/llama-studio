@@ -2,15 +2,16 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
-  Plus, Send, Square, Trash2, Pencil, MessageSquare, Settings2,
+  Plus, Send, Square, Trash2, Pencil, MessageSquare,
   ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain, RefreshCw,
-  Copy, Check, RotateCcw, ArrowDown, X
+  Copy, Check, RotateCcw, ArrowDown
 } from 'lucide-react'
 import { useChatStore, buildOpenAiMessages } from '../store/chatStore'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
 import type { ChatSession, ChatMessage } from '../../../shared/types'
 import CodeBlock from './CodeBlock'
+import ConfirmModal from './ConfirmModal'
 
 // ── Markdown code 组件 ─────────────────────────────────────
 // react-markdown v10 不再传 inline prop，用 className 是否含 language- 区分块级/行内
@@ -136,7 +137,7 @@ function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate }: {
               <ThinkBlock value="" closed={false} isStreaming={true} autoExpand={false} />
             </div>
           )}
-        </div>
+      </div>
       </div>
     )
   }
@@ -200,13 +201,13 @@ function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate }: {
 }
 
 // ── 左栏：会话列表 ─────────────────────────────────────────
-function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDelete, runningModels }: {
+function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRequest, runningModels }: {
   sessions: ChatSession[]
   activeId: string | null
   onSelect: (id: string) => void
   onNew: () => void
   onRename: (id: string, title: string) => void
-  onDelete: (id: string) => void
+  onDeleteRequest: (session: ChatSession) => void
   runningModels: Array<{ id: string; name: string; port: number }>
 }) {
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -228,8 +229,7 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDelete, 
         <button
           className="btn btn-primary btn-sm"
           onClick={onNew}
-          disabled={runningModels.length === 0}
-          title={runningModels.length === 0 ? '请先启动一个模型' : '新建对话'}
+          title="新建对话"
         >
           <Plus size={13} /> 新建
         </button>
@@ -237,9 +237,7 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDelete, 
       <div className="chat-session-list">
         {sessions.length === 0 ? (
           <div className="chat-session-empty">
-            {runningModels.length === 0
-              ? '先在「我的模板」启动一个模型，再来这里对话。'
-              : '点击「新建」开始第一个对话。'}
+            '点击「新建」开始第一个对话。'
           </div>
         ) : sessions.map((s) => {
           const model = runningModels.find((m) => m.id === s.templateId)
@@ -264,12 +262,6 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDelete, 
                 <>
                   <div className="chat-session-main">
                     <div className="chat-session-name">{s.title}</div>
-                    <div className="chat-session-meta">
-                      <span className={`chat-session-model ${model ? '' : 'stale'}`}>
-                        {model ? model.name : '模型未运行'}
-                      </span>
-                      <span>· 端口 {s.port}</span>
-                    </div>
                   </div>
                   <div className="chat-session-actions">
                     <button
@@ -281,7 +273,7 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDelete, 
                     </button>
                     <button
                       className="chat-session-btn danger"
-                      onClick={(e) => { e.stopPropagation(); if (confirm(`删除会话「${s.title}」？`)) onDelete(s.id) }}
+                      onClick={(e) => { e.stopPropagation(); onDeleteRequest(s) }}
                       title="删除"
                     >
                       <Trash2 size={12} />
@@ -297,114 +289,18 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDelete, 
   )
 }
 
-// ── 右栏：参数抽屉 ─────────────────────────────────────────
-function ParamsDrawer({ session, onUpdate, open, onClose }: {
-  session: ChatSession
-  onUpdate: (params: Partial<typeof session.params>, systemPrompt?: string) => void
-  open: boolean
-  onClose: () => void
-}) {
-  const [localPrompt, setLocalPrompt] = useState(session.systemPrompt || '')
-  const p = session.params
-
-  useEffect(() => { setLocalPrompt(session.systemPrompt || '') }, [session.id, session.systemPrompt])
-
-  const commitPrompt = () => {
-    if (localPrompt !== (session.systemPrompt || '')) onUpdate({}, localPrompt)
-  }
-
-  return (
-    <>
-      {/* 背景遮罩 */}
-      {open && <div className="chat-drawer-backdrop" onClick={onClose} />}
-      {/* 抽屉面板 */}
-      <div className={`chat-params-drawer ${open ? 'open' : ''}`}>
-        <div className="chat-drawer-header">
-          <span className="chat-drawer-title">采样参数</span>
-          <button className="chat-drawer-close" onClick={onClose} title="关闭">
-            <X size={15} />
-          </button>
-        </div>
-        <div className="chat-drawer-body">
-          <div className="chat-param-row">
-            <label className="chat-param-label">
-              Temperature <span className="chat-param-value">{p.temperature ?? '—'}</span>
-            </label>
-            <input
-              type="range" min={0} max={2} step={0.05}
-              value={p.temperature ?? 0.8}
-              onChange={(e) => onUpdate({ temperature: parseFloat(e.target.value) })}
-            />
-          </div>
-          <div className="chat-param-row">
-            <label className="chat-param-label">
-              Top P <span className="chat-param-value">{p.top_p ?? '—'}</span>
-            </label>
-            <input
-              type="range" min={0} max={1} step={0.01}
-              value={p.top_p ?? 0.95}
-              onChange={(e) => onUpdate({ top_p: parseFloat(e.target.value) })}
-            />
-          </div>
-          <div className="chat-param-row">
-            <label className="chat-param-label">
-              Top K <span className="chat-param-value">{p.top_k ?? '—'}</span>
-            </label>
-            <input
-              type="range" min={0} max={200} step={1}
-              value={p.top_k ?? 40}
-              onChange={(e) => onUpdate({ top_k: parseInt(e.target.value) })}
-            />
-          </div>
-          <div className="chat-param-row">
-            <label className="chat-param-label">
-              Max tokens <span className="chat-param-value">{(p.max_tokens ?? -1) === -1 ? '∞' : p.max_tokens}</span>
-            </label>
-            <input
-              type="number" min={-1} step={16}
-              value={p.max_tokens ?? -1}
-              onChange={(e) => onUpdate({ max_tokens: parseInt(e.target.value) })}
-            />
-          </div>
-          <div className="chat-param-row">
-            <label className="chat-param-label">
-              Repeat penalty <span className="chat-param-value">{p.repeat_penalty ?? '—'}</span>
-            </label>
-            <input
-              type="range" min={1} max={2} step={0.01}
-              value={p.repeat_penalty ?? 1.1}
-              onChange={(e) => onUpdate({ repeat_penalty: parseFloat(e.target.value) })}
-            />
-          </div>
-          <div className="chat-param-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-            <label className="chat-param-label">System Prompt</label>
-            <textarea
-              className="form-input chat-param-textarea"
-              placeholder="设定模型的角色或行为（可选）"
-              value={localPrompt}
-              onChange={(e) => setLocalPrompt(e.target.value)}
-              onBlur={commitPrompt}
-              rows={4}
-            />
-          </div>
-        </div>
-      </div>
-    </>
-  )
-}
-
 // ── 主视图 ─────────────────────────────────────────────────
 export default function ChatView() {
   const sessions = useChatStore((s) => s.sessions)
   const activeSessionId = useChatStore((s) => s.activeSessionId)
   const streamingId = useChatStore((s) => s.streamingId)
+  const loaded = useChatStore((s) => s.loaded)
   const loadSessions = useChatStore((s) => s.loadSessions)
   const createSession = useChatStore((s) => s.createSession)
+  const createEmptySession = useChatStore((s) => s.createEmptySession)
   const selectSession = useChatStore((s) => s.selectSession)
   const renameSession = useChatStore((s) => s.renameSession)
   const deleteSession = useChatStore((s) => s.deleteSession)
-  const setSystemPrompt = useChatStore((s) => s.setSystemPrompt)
-  const setParams = useChatStore((s) => s.setParams)
   const setSessionModel = useChatStore((s) => s.setSessionModel)
   const appendUserMessage = useChatStore((s) => s.appendUserMessage)
   const appendMessage = useChatStore((s) => s.appendMessage)
@@ -414,6 +310,7 @@ export default function ChatView() {
   const truncateAfter = useChatStore((s) => s.truncateAfter)
 
   const cards = useStore((s) => s.cards)
+  const setView = useStore((s) => s.setView)
   const runningModels = useMemo(
     () => cards.filter((c) => c.status === 'running')
       .map((c) => ({ id: c.template.id, name: c.template.name, port: c.template.serverPort || 8080 })),
@@ -426,7 +323,7 @@ export default function ChatView() {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [paramsOpen, setParamsOpen] = useState(false)
+  const [deletingSession, setDeletingSession] = useState<ChatSession | null>(null)
   // 看门狗：防止流卡住导致输入框永久冻结
   const streamWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const firstChunkReceivedRef = useRef(false)
@@ -439,6 +336,15 @@ export default function ChatView() {
 
   // 首次加载会话
   useEffect(() => { loadSessions() }, [loadSessions])
+
+  // 加载完成后若无任何会话且模型运行中，自动创建首个会话
+  useEffect(() => {
+    if (!loaded) return
+    if (sessions.length > 0) return
+    if (runningModels.length === 0) return
+    const m = runningModels[0]
+    createSession(m.id, m.port, m.name)
+  }, [loaded, sessions.length, runningModels, createSession])
 
   // 全局监听流式 chunk
   useEffect(() => {
@@ -499,15 +405,14 @@ export default function ChatView() {
 
   // 新建会话
   const handleNew = useCallback(() => {
-    if (runningModels.length === 0) {
-      notify('请先在「我的模板」启动一个模型', 'error')
-      return
+    if (runningModels.length > 0) {
+      const m = runningModels[0]
+      createSession(m.id, m.port, m.name)
+    } else {
+      createEmptySession()
     }
-    // 若只有一个运行模型直接用；多个则用第一个（用户可后续在面板切换）
-    const m = runningModels[0]
-    createSession(m.id, m.port, m.name)
     setInput('')
-  }, [runningModels, createSession])
+  }, [runningModels, createSession, createEmptySession])
 
   // 发送消息（发起流）
   const handleSend = useCallback(async () => {
@@ -612,13 +517,6 @@ export default function ChatView() {
     if (m) setSessionModel(activeSessionId, m.id, m.port)
   }, [activeSessionId, runningModels, setSessionModel])
 
-  // 参数更新
-  const handleParamsUpdate = useCallback((params: Partial<ChatSession['params']>, systemPrompt?: string) => {
-    if (!activeSessionId) return
-    if (Object.keys(params).length > 0) setParams(activeSessionId, params)
-    if (systemPrompt !== undefined) setSystemPrompt(activeSessionId, systemPrompt)
-  }, [activeSessionId, setParams, setSystemPrompt])
-
   // textarea 自适应高度 + Enter 发送
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value)
@@ -644,7 +542,7 @@ export default function ChatView() {
 
   // 重新生成：找到该助手消息前面的用户消息，截断后重新发送（失败自动回滚）
   const handleRegenerate = useCallback(async (assistantMsgId: string) => {
-    if (!activeSessionId || streamingId) return
+    if (!activeSessionId || streamingId || runningModels.length === 0) return
     const session = useChatStore.getState().sessions.find((s) => s.id === activeSessionId)
     if (!session) return
     const idx = session.messages.findIndex((m) => m.id === assistantMsgId)
@@ -703,161 +601,163 @@ export default function ChatView() {
       st.setStreamingId(null)
       notify(`重新生成失败：${e?.message || '请求失败'}，已恢复原回复`, 'error')
     }
-  }, [activeSessionId, streamingId, truncateAfter, appendMessage, setStreamingId])
-
-  // ── 空状态：无运行模型 ──
-  if (runningModels.length === 0) {
-    return (
-      <div className="chat-empty">
-        <MessageSquare size={48} style={{ opacity: 0.3 }} />
-        <h3>没有正在运行的模型</h3>
-        <p>原生聊天界面通过 llama-server 的 API 工作。<br />请先在「我的模板」启动一个模型，再回到这里对话。</p>
-      </div>
-    )
-  }
+  }, [activeSessionId, streamingId, truncateAfter, appendMessage, setStreamingId, runningModels])
 
   return (
     <div className={`chat-layout ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-      {!sidebarCollapsed && (
+      <div className="chat-sidebar-collapser" style={{ display: sidebarCollapsed ? 'none' : undefined }}>
         <SessionList
           sessions={sessions}
           activeId={activeSessionId}
           onSelect={selectSession}
           onNew={handleNew}
           onRename={renameSession}
-          onDelete={deleteSession}
+          onDeleteRequest={(s) => setDeletingSession(s)}
           runningModels={runningModels}
         />
-      )}
+      </div>
 
       <div className="chat-main">
-        {activeSession ? (
-          <>
-            <div className="chat-header">
-              <button
-                className="chat-collapse-btn"
-                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                title={sidebarCollapsed ? '展开会话列表' : '折叠会话列表'}
-              >
-                {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-              </button>
-              <div className="chat-header-info">
-                <span className="chat-header-title">{activeSession.title}</span>
-                <select
-                  className="chat-model-select"
-                  value={activeSession.templateId}
-                  onChange={(e) => handleSwitchModel(e.target.value)}
-                  title="切换本会话使用的模型"
-                >
-                  {runningModels.map((m) => (
-                    <option key={m.id} value={m.id}>{m.name} (:{m.port})</option>
-                  ))}
-                </select>
+        <div className="chat-header">
+          <button
+            className="chat-collapse-btn"
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            title={sidebarCollapsed ? '展开会话列表' : '折叠会话列表'}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
+          <div className="chat-header-info">
+            <span className="chat-header-title">{activeSession?.title || '聊天'}</span>
+            <select
+              className="chat-model-select"
+              value={activeSession && runningModels.length > 0 ? activeSession.templateId : ''}
+              onChange={(e) => handleSwitchModel(e.target.value)}
+              title={runningModels.length === 0 ? '请先启动模型' : '切换本会话使用的模型'}
+              disabled={runningModels.length === 0}
+            >
+              {runningModels.length === 0 ? (
+                <option value="">模型未运行</option>
+              ) : runningModels.map((m) => (
+                <option key={m.id} value={m.id}>{m.name} (:{m.port})</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="chat-messages" ref={messagesContainerRef} onScroll={handleScroll}>
+          {activeSession ? (
+            activeMessages.length === 0 ? (
+              <div className="chat-welcome">
+                <Bot size={40} style={{ opacity: 0.3 }} />
+                {activeModel ? (
+                  <p>向 {activeModel.name} 提个问题吧</p>
+                ) : (
+                  <div>
+                    <p>该会话的模型未运行，无法发送消息</p>
+                    <button className="btn btn-sm" style={{ marginTop: 8 }} onClick={() => setView('cards')}>
+                      前往「我的模板」启动模型
+                    </button>
+                  </div>
+                )}
               </div>
-              <button
-                className={`chat-params-toggle ${paramsOpen ? 'active' : ''}`}
-                onClick={() => setParamsOpen(!paramsOpen)}
-                title="采样参数"
-              >
-                <Settings2 size={14} />
-                <span>参数</span>
-              </button>
-            </div>
-
-            <div className="chat-messages" ref={messagesContainerRef} onScroll={handleScroll}>
-              {activeMessages.length === 0 ? (
-                <div className="chat-welcome">
-                  <Bot size={40} style={{ opacity: 0.3 }} />
-                  <p>向 {activeModel?.name || '模型'} 提个问题吧</p>
-                </div>
-              ) : (
-                activeMessages.map((m) => (
-                  <MessageBubble
-                    key={m.id}
-                    msg={m}
-                    isStreaming={streamingId === m.id}
-                    onEdit={m.role === 'user' ? () => handleEditMessage(m.id, m.content) : undefined}
-                    onRegenerate={m.role === 'assistant' ? () => handleRegenerate(m.id) : undefined}
-                  />
-                ))
-              )}
-              <div ref={messagesEndRef} />
-              {/* 回到底部浮动按钮 */}
-              {!autoScroll && activeMessages.length > 0 && (
-                <button
-                  className="chat-scroll-bottom-btn"
-                  onClick={() => {
-                    setAutoScroll(true)
-                    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-                  }}
-                  title="回到底部"
-                >
-                  <ArrowDown size={16} />
-                </button>
-              )}
-            </div>
-
-            <div className={`chat-input-wrap${streamingId ? ' streaming' : ''}`}>
-              <textarea
-                ref={inputRef}
-                className="chat-input"
-                placeholder={
-                  streamingId
-                    ? '正在生成，可发送新消息（将自动停止当前流）…'
-                    : `给 ${activeModel?.name || '模型'} 发消息（Enter 发送，Shift+Enter 换行）`
-                }
-                value={input}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                rows={1}
-              />
-              {streamingId ? (
-                <>
-                  <button className="btn btn-danger chat-send-btn" onClick={handleStop} title="停止生成">
-                    <Square size={15} />
-                  </button>
-                </>
-              ) : (
-                <button
-                  className="btn btn-primary chat-send-btn"
-                  onClick={handleSend}
-                  disabled={!input.trim()}
-                  title="发送"
-                >
-                  <Send size={15} />
-                </button>
-              )}
-            </div>
-
-            {/* 参数抽屉 */}
-            <ParamsDrawer
-              session={activeSession}
-              onUpdate={handleParamsUpdate}
-              open={paramsOpen}
-              onClose={() => setParamsOpen(false)}
-            />
-          </>
-        ) : (
-          <>
-            <div className="chat-header">
-              <button
-                className="chat-collapse-btn"
-                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                title={sidebarCollapsed ? '展开会话列表' : '折叠会话列表'}
-              >
-                {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-              </button>
-            </div>
+            ) : (
+              activeMessages.map((m) => (
+                <MessageBubble
+                  key={m.id}
+                  msg={m}
+                  isStreaming={streamingId === m.id}
+                  onEdit={m.role === 'user' ? () => handleEditMessage(m.id, m.content) : undefined}
+                  onRegenerate={m.role === 'assistant' ? () => handleRegenerate(m.id) : undefined}
+                />
+              ))
+            )
+          ) : (
             <div className="chat-welcome">
-              <MessageSquare size={48} style={{ opacity: 0.3 }} />
-              <h3>选择左侧的会话，或点击「新建」开始</h3>
-              <button className="btn btn-primary" onClick={handleNew}>
-                <Plus size={15} /> 新建对话
-              </button>
+              <div className="chat-welcome-brand">
+                <MessageSquare size={56} strokeWidth={1.2} />
+              </div>
+              <h2 className="chat-welcome-title">开始对话</h2>
+              <p className="chat-welcome-subtitle">
+                从左侧选择一个已有会话，或点击「新建」开始新的对话。
+              </p>
+              <div className="chat-welcome-tips">
+                <div className="chat-welcome-tip">
+                  <Plus size={16} />
+                  <span>点击「新建」创建会话</span>
+                </div>
+                <div className="chat-welcome-tip">
+                  <Pencil size={16} />
+                  <span>双击会话名可重命名</span>
+                </div>
+                <div className="chat-welcome-tip">
+                  <Trash2 size={16} />
+                  <span>删除不需要的会话</span>
+                </div>
+              </div>
             </div>
-          </>
-        )}
+          )}
+          <div ref={messagesEndRef} />
+          {!autoScroll && activeMessages.length > 0 && (
+            <button
+              className="chat-scroll-bottom-btn"
+              onClick={() => {
+                setAutoScroll(true)
+                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+              }}
+              title="回到底部"
+            >
+              <ArrowDown size={16} />
+            </button>
+          )}
+        </div>
+
+        <div className={`chat-input-wrap${streamingId ? ' streaming' : ''}`}>
+          <textarea
+            ref={inputRef}
+            className="chat-input"
+            placeholder={
+              streamingId
+                ? '正在生成，可发送新消息（将自动停止当前流）…'
+                : activeModel
+                  ? `给 ${activeModel.name} 发消息（Enter 发送，Shift+Enter 换行）`
+                  : '请先启动模型后再发送消息'
+            }
+            value={input}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            rows={1}
+            disabled={!activeModel}
+          />
+          {streamingId ? (
+            <button className="btn btn-danger chat-send-btn" onClick={handleStop} title="停止生成">
+              <Square size={15} />
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary chat-send-btn"
+              onClick={handleSend}
+              disabled={!input.trim() || !activeModel}
+              title={!activeModel ? '请先启动模型' : '发送'}
+            >
+              <Send size={15} />
+            </button>
+          )}
+        </div>
+
       </div>
+
+      <ConfirmModal
+        open={deletingSession !== null}
+        title="删除会话"
+        message={deletingSession ? `确定删除会话「${deletingSession.title}」？此操作不可撤销。` : ''}
+        confirmLabel="删除"
+        danger
+        onConfirm={() => {
+          if (deletingSession) deleteSession(deletingSession.id)
+          setDeletingSession(null)
+        }}
+        onCancel={() => setDeletingSession(null)}
+      />
     </div>
   )
 }
