@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, ChatStreamChunk } from '../../shared/types'
 interface ModelFileInfo {
   name: string
   path: string
@@ -67,7 +67,7 @@ interface LlamaCppApi {
   }) => void) => void
   removeHfDownloadListener: () => void
   openFolder: (path: string) => Promise<void>
-  getPaths: () => Promise<{ models: string; templates: string; backend: string }>
+  getPaths: () => Promise<{ models: string; templates: string; backend: string; chats: string }>
   listExternalModelFolders: () => Promise<string[]>
   addExternalModelFolder: () => Promise<{ success: boolean; folders?: string[] }>
   removeExternalModelFolder: (folder: string) => Promise<{ success: boolean; folders: string[] }>
@@ -91,6 +91,14 @@ interface LlamaCppApi {
   installAgent: (pkg: string) => Promise<{ success: boolean; error?: string }>
   updateAgent: (pkg: string) => Promise<{ success: boolean; error?: string }>
   checkAgentUpdates: (installed: { pkg: string; version: string }[]) => Promise<Record<string, { latest: string }>>
+  // ── 原生聊天 ──
+  listChatSessions: () => Promise<ChatSession[]>
+  saveChatSession: (session: object) => Promise<{ success: boolean; id?: string; error?: string }>
+  deleteChatSession: (id: string) => Promise<{ success: boolean }>
+  chatStream: (opts: { streamId: string; port: number; body: object }) => Promise<{ success: boolean; error?: string }>
+  abortChatStream: (streamId: string) => Promise<{ success: boolean }>
+  onChatStreamChunk: (cb: (data: ChatStreamChunk) => void) => void
+  removeChatStreamListener: () => void
 }
 declare global {
   interface Window { api: LlamaCppApi }

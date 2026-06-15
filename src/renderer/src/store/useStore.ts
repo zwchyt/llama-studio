@@ -1,4 +1,5 @@
-import { create } from 'zustand'
+import { createWithEqualityFn } from 'zustand/traditional'
+import { shallow } from 'zustand/shallow'
 import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, RunningStatus, ModelMetrics } from '../../../shared/types'
 interface CardState {
   template: Template
@@ -39,7 +40,7 @@ interface AppStore {
   commandsSchema: CommandsSchema | null
   releaseInfo: ReleaseInfo | null
   paths: { models: string; templates: string; backend: string } | null
-  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'piweb' | 'llama' | 'agents'
+  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'piweb' | 'llama' | 'agents' | 'chat'
   showCreateModal: boolean
   editingTemplate: Template | null
   updateDismissed: boolean
@@ -101,7 +102,9 @@ interface AppStore {
   setAgentUpdates: (u: Record<string, { latest: string }>) => void
   setAgentUpdatesLoading: (v: boolean) => void
 }
-export const useStore = create<AppStore>((set) => ({
+// createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
+// 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
+export const useStore = createWithEqualityFn<AppStore>((set) => ({
   cards: [], backends: [], models: [], activeBackend: null,
   commandsSchema: null, releaseInfo: null, paths: null,
   view: 'welcome', showCreateModal: false, editingTemplate: null,
@@ -244,4 +247,4 @@ export const useStore = create<AppStore>((set) => ({
   setActiveChat: (url, port) => set({ activeChatUrl: url, activeChatPort: port }),
   clearActiveChat: () => set({ activeChatUrl: null, activeChatPort: null }),
   setPiWebUrl: (url) => set({ piWebUrl: url })
-}))
+}), shallow)

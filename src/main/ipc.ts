@@ -50,10 +50,15 @@ const APP_ROOT = app.isPackaged ? join(app.getPath('userData')) : join(process.c
 const MODELS_DIR = join(APP_ROOT, 'models')
 const TEMPLATES_DIR = join(APP_ROOT, 'templates')
 const BACKEND_DIR = join(APP_ROOT, 'backend')
+const CHATS_DIR = join(APP_ROOT, 'chats')
 const SETTINGS_PATH = join(APP_ROOT, 'settings.json')
-for (const dir of [MODELS_DIR, TEMPLATES_DIR, BACKEND_DIR]) {
+for (const dir of [MODELS_DIR, TEMPLATES_DIR, BACKEND_DIR, CHATS_DIR]) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
+// 活跃的聊天流式请求，按 streamId 索引，支持中止
+const activeChatStreams = new Map<string, http.ClientRequest>()
+// 每个流的「是否正在 reasoning」状态，用于把 reasoning_content 包裹成 <think> 标签
+const chatStreamInReasoning = new Map<string, boolean>()
 // isSafePath 函数用于防止路径遍历攻击（Path Traversal Attack），也称为目录遍历攻击。
 function isSafePath(base: string, target: string): boolean {
   const rBase = resolve(base)
@@ -479,6 +484,11 @@ export function cleanupRunningProcesses(): void {
     piWebWindow.close()
     piWebWindow = null
   }
+  // 清理所有进行中的聊天流式请求
+  for (const [, req] of activeChatStreams) {
+    try { req.destroy() } catch { /* ignore */ }
+  }
+  activeChatStreams.clear()
 }
 
 export function registerIpcHandlers(): void {
@@ -830,6 +840,36 @@ export function registerIpcHandlers(): void {
     try { if (existsSync(fp)) unlinkSync(fp) } catch { }
     return { success: true }
   })
+  // ── 原生聊天会话 CRUD（与 templates 同模式） ──
+  ipcMain.handle('list-chat-sessions', async () => {
+    if (!existsSync(CHATS_DIR)) return []
+    const files = await fsPromises.readdir(CHATS_DIR)
+    const results = await Promise.all(
+      files.filter(f => f.endsWith('.json')).map(async (f) => {
+        try {
+          const text = await fsPromises.readFile(join(CHATS_DIR, f), 'utf-8')
+          return JSON.parse(text)
+        } catch { return null }
+      })
+    )
+    return results.filter(Boolean)
+  })
+  ipcMain.handle('save-chat-session', async (_e, session: Record<string, unknown>) => {
+    try {
+      const id = (session.id as string) || String(Date.now())
+      if (/[\\/]/.test(id) || id.includes('..')) return { success: false, error: 'Invalid session ID' }
+      const fp = join(CHATS_DIR, `${id}.json`)
+      if (!isSafePath(CHATS_DIR, fp)) return { success: false, error: 'Access denied' }
+      writeFileSync(fp, JSON.stringify({ ...session, id }, null, 2))
+      return { success: true, id }
+    } catch (err) { return { success: false, error: String(err) } }
+  })
+  ipcMain.handle('delete-chat-session', (_e, id: string) => {
+    const fp = join(CHATS_DIR, `${id}.json`)
+    if (!isSafePath(CHATS_DIR, fp)) return { success: false, error: 'Access denied' }
+    try { if (existsSync(fp)) unlinkSync(fp) } catch { }
+    return { success: true }
+  })
   ipcMain.handle('import-template', async () => {
     try {
       const r = await dialog.showOpenDialog({ title: 'Import Template', filters: [{ name: 'JSON Template', extensions: ['json'] }], properties: ['openFile'] })
@@ -1151,7 +1191,7 @@ export function registerIpcHandlers(): void {
     if (!allowedBases.some(base => isSafePath(base, folderPath))) return
     shell.openPath(folderPath)
   })
-  ipcMain.handle('get-paths', () => ({ models: MODELS_DIR, templates: TEMPLATES_DIR, backend: BACKEND_DIR }))
+  ipcMain.handle('get-paths', () => ({ models: MODELS_DIR, templates: TEMPLATES_DIR, backend: BACKEND_DIR, chats: CHATS_DIR }))
   ipcMain.handle('open-external', (_e, url: string) => {
     try {
       const parsed = new URL(url)
@@ -1663,6 +1703,104 @@ export function registerIpcHandlers(): void {
       req.on('error', (e) => resolve({ ok: false, error: e.message }))
       req.setTimeout(5000, () => { req.destroy(); resolve({ ok: false, error: 'timeout' }) })
     })
+  })
+
+  // --- chat-completion-stream (流式聊天代理：POST /v1/chat/completions，SSE 转发) ---
+  ipcMain.handle('chat-completion-stream', (e, opts: {
+    streamId: string; port: number; body: Record<string, unknown>
+  }): Promise<{ success: boolean; error?: string }> => {
+    return new Promise((resolve) => {
+      const { streamId, port, body } = opts
+      const bodyStr = JSON.stringify({ ...body, stream: true })
+      const req = http.request(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
+        agent: httpAgent
+      }, (res) => {
+        if (res.statusCode && res.statusCode >= 400) {
+          let errBody = ''
+          res.on('data', (c: Buffer) => { errBody += c.toString() })
+          res.on('end', () => {
+            activeChatStreams.delete(streamId)
+            e.sender.send('chat-stream-chunk', { streamId, done: true, error: `HTTP ${res.statusCode}: ${errBody.slice(0, 500)}` })
+            resolve({ success: false, error: `HTTP ${res.statusCode}` })
+          })
+          return
+        }
+        let buf = ''
+        res.on('data', (chunk: Buffer) => {
+          buf += chunk.toString()
+          let idx: number
+          // SSE 事件以空行(\n\n)分隔，逐个解析
+          while ((idx = buf.indexOf('\n\n')) >= 0) {
+            const raw = buf.slice(0, idx)
+            buf = buf.slice(idx + 2)
+            const line = raw.split('\n').find(l => l.startsWith('data: '))
+            if (!line) continue
+            const payload = line.slice(6).trim()
+            if (payload === '[DONE]') {
+              e.sender.send('chat-stream-chunk', { streamId, done: true })
+              chatStreamInReasoning.delete(streamId)
+              return
+            }
+            try {
+              const parsed = JSON.parse(payload)
+              const choice = parsed?.choices?.[0]
+              const content = choice?.delta?.content
+              const reasoning = choice?.delta?.reasoning_content
+              const inReasoning = chatStreamInReasoning.get(streamId) ?? false
+
+              // reasoning_content → 包裹在 <think> 标签中，以便前端折叠显示
+              if (reasoning) {
+                const delta = (inReasoning ? '' : '<think>') + reasoning
+                e.sender.send('chat-stream-chunk', { streamId, delta, done: false })
+                chatStreamInReasoning.set(streamId, true)
+              }
+              if (content) {
+                const prefix = inReasoning || (chatStreamInReasoning.get(streamId) ?? false) ? '</think>\n' : ''
+                if (prefix) chatStreamInReasoning.set(streamId, false)
+                e.sender.send('chat-stream-chunk', { streamId, delta: prefix + content, done: false })
+              }
+            } catch { /* 忽略心跳/keepalive/不完整 JSON */ }
+          }
+        })
+        res.on('end', () => {
+          // 如果流结束时 <think> 尚未闭合，补上闭合标签
+          const wasInReasoning = chatStreamInReasoning.get(streamId) ?? false
+          if (wasInReasoning) {
+            e.sender.send('chat-stream-chunk', { streamId, delta: '</think>', done: false })
+          }
+          chatStreamInReasoning.delete(streamId)
+          e.sender.send('chat-stream-chunk', { streamId, done: true })
+          activeChatStreams.delete(streamId)
+          resolve({ success: true })
+        })
+      })
+      req.on('error', (err) => {
+        chatStreamInReasoning.delete(streamId)
+        e.sender.send('chat-stream-chunk', { streamId, done: true, error: err.message })
+        activeChatStreams.delete(streamId)
+        resolve({ success: false, error: err.message })
+      })
+      // 流式生成可能很久，给一个较长的超时（5 分钟），超时则中止
+      req.setTimeout(300000, () => {
+        req.destroy()
+        chatStreamInReasoning.delete(streamId)
+        e.sender.send('chat-stream-chunk', { streamId, done: true, error: 'timeout' })
+        activeChatStreams.delete(streamId)
+        resolve({ success: false, error: 'timeout' })
+      })
+      activeChatStreams.set(streamId, req)
+      req.write(bodyStr)
+      req.end()
+    })
+  })
+
+  // --- chat-stream-abort (中止一个进行中的聊天流) ---
+  ipcMain.handle('chat-stream-abort', (_e, streamId: string) => {
+    const req = activeChatStreams.get(streamId)
+    if (req) { req.destroy(); activeChatStreams.delete(streamId) }
+    return { success: true }
   })
 
   // load initial settings (cache is already populated synchronously above)

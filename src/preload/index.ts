@@ -83,6 +83,17 @@ const fullApi = {
   installAgent: (pkg: string) => ipcRenderer.invoke('install-agent', { pkg }),
   updateAgent: (pkg: string) => ipcRenderer.invoke('update-agent', { pkg }),
   checkAgentUpdates: (installed: { pkg: string; version: string }[]) => ipcRenderer.invoke('check-agent-updates', installed),
+  // ── 原生聊天 ──
+  listChatSessions: () => ipcRenderer.invoke('list-chat-sessions'),
+  saveChatSession: (session: object) => ipcRenderer.invoke('save-chat-session', session),
+  deleteChatSession: (id: string) => ipcRenderer.invoke('delete-chat-session', id),
+  chatStream: (opts: { streamId: string; port: number; body: object }) => ipcRenderer.invoke('chat-completion-stream', opts),
+  abortChatStream: (streamId: string) => ipcRenderer.invoke('chat-stream-abort', streamId),
+  onChatStreamChunk: (callback: (data: { streamId: string; delta?: string; done: boolean; error?: string }) => void) => {
+    ipcRenderer.removeAllListeners('chat-stream-chunk')
+    ipcRenderer.on('chat-stream-chunk', (_event, data) => callback(data))
+  },
+  removeChatStreamListener: () => ipcRenderer.removeAllListeners('chat-stream-chunk'),
 }
 
 const chatApi = {

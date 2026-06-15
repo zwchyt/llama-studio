@@ -11,6 +11,7 @@ import ModelMonitoringView from './components/ModelMonitoringView'
 import AboutView from './components/AboutView'
 import AgentsView from './components/AgentsView'
 import WelcomeView from './components/WelcomeView'
+import ChatView from './components/ChatView'
 import CreateModal from './components/CreateModal'
 import UpdateBanner from './components/UpdateBanner'
 import ChatWindow from './components/ChatWindow'
@@ -347,6 +348,7 @@ function AppMain() {
       case 'monitoring': return <ModelMonitoringView />
       case 'about': return <AboutView />
       case 'agents': return <AgentsView />
+      case 'chat': return <ChatView />
       case 'piweb': return <PiWebView />
       case 'welcome': return <WelcomeView />
       case 'llama': return <LlamaChatView />

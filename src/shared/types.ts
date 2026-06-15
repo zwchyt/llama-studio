@@ -100,3 +100,41 @@ export interface CardState {
   expanded: boolean
   monitorExpanded?: boolean
 }
+
+// ── 原生聊天 ───────────────────────────────────────────────
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  createdAt: string
+  // 仅 assistant 消息的推理统计（可选，流式结束后填充）
+  tokensDecoded?: number
+  msFirstToken?: number
+  error?: boolean
+}
+export interface ChatParams {
+  temperature?: number
+  top_p?: number
+  top_k?: number
+  max_tokens?: number
+  repeat_penalty?: number
+  stream?: boolean
+}
+export interface ChatSession {
+  id: string
+  title: string
+  templateId: string   // 关联的模板（模型）
+  port: number         // llama-server 端口
+  systemPrompt?: string
+  params: ChatParams
+  messages: ChatMessage[]
+  createdAt: string
+  updatedAt: string
+}
+// 主进程流式代理推送到渲染层的 chunk
+export interface ChatStreamChunk {
+  streamId: string
+  delta?: string        // 增量文本（生成中）
+  done: boolean         // 是否结束
+  error?: string        // 出错时的错误信息
+}
