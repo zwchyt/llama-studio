@@ -28,6 +28,31 @@
   --shadow-lg: 0 10px 32px rgba(0, 0, 0, .14), 0 4px 8px rgba(0, 0, 0, .08);
   --transition: 180ms cubic-bezier(.4, 0, .2, 1);
   --font: 'Inter', system-ui, sans-serif;
+
+  /* 代码块配色（浅色） */
+  --code-bg: #f6f8fa;
+  --code-header-bg: #f0f2f5;
+  --code-text: #24292e;
+  --code-comment: #6a737d;
+  --code-keyword: #d73a49;
+  --code-string: #032f62;
+  --code-number: #005cc5;
+  --code-attr: #6f42c1;
+  --code-deletion: #b31d28;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --code-bg: #161b22;
+    --code-header-bg: #1c2128;
+    --code-text: #e6edf3;
+    --code-comment: #8b949e;
+    --code-keyword: #ff7b72;
+    --code-string: #a5d6ff;
+    --code-number: #79c0ff;
+    --code-attr: #d2a8ff;
+    --code-deletion: #ffa198;
+  }
 }
 
 html,
@@ -3056,6 +3081,24 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   box-shadow: inset 0 0 0 1.5px var(--border-strong);
 }
 
+/* ── 会话状态指示条 ── */
+.chat-session-indicator {
+  width: 3px;
+  align-self: stretch;
+  border-radius: 3px;
+  flex-shrink: 0;
+  transition: background var(--transition);
+}
+
+.chat-session-indicator.running {
+  background: var(--success);
+  box-shadow: 0 0 6px rgba(22, 163, 74, .4);
+}
+
+.chat-session-indicator.stopped {
+  background: var(--border-strong);
+}
+
 .chat-session-main {
   flex: 1;
   min-width: 0;
@@ -3182,9 +3225,10 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 18px 0;
+  padding: 18px 0 8px;
   min-height: 0;
   scroll-behavior: smooth;
+  position: relative;
 }
 
 .chat-welcome {
@@ -3197,6 +3241,40 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   color: var(--text-muted);
   text-align: center;
   padding: 40px;
+}
+
+/* ── 回到底部浮动按钮 ── */
+.chat-scroll-bottom-btn {
+  position: sticky;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: all var(--transition);
+  animation: chatScrollBtnIn .25s ease-out;
+  z-index: 10;
+}
+
+.chat-scroll-bottom-btn:hover {
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  transform: translateX(-50%) scale(1.08);
+}
+
+@keyframes chatScrollBtnIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
 .chat-welcome h3 {
@@ -3213,12 +3291,17 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 /* ── 消息气泡 ── */
 .chat-msg {
   display: flex;
-  gap: 12px;
-  padding: 6px 18px;
+  gap: 10px;
+  padding: 5px 18px;
   max-width: 860px;
   margin: 0 auto;
   width: 100%;
   box-sizing: border-box;
+}
+
+/* 用户消息：右对齐 */
+.chat-msg-user {
+  flex-direction: row-reverse;
 }
 
 .chat-msg-avatar {
@@ -3233,7 +3316,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   font-weight: 700;
 }
 
-.chat-msg-user .chat-msg-avatar {
+.chat-msg-avatar-user {
   background: var(--accent);
   color: var(--accent-fg);
 }
@@ -3247,14 +3330,28 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   flex: 1;
   min-width: 0;
   padding-top: 3px;
+  display: flex;
+  flex-direction: column;
 }
 
-.chat-msg-text {
+/* 用户消息：body 右对齐 */
+.chat-msg-user .chat-msg-body {
+  align-items: flex-end;
+}
+
+/* 用户气泡 */
+.chat-msg-bubble-user {
   font-size: 14px;
   line-height: 1.65;
-  color: var(--text);
+  color: var(--accent-fg);
+  background: var(--accent);
   white-space: pre-wrap;
   word-wrap: break-word;
+  padding: 10px 14px;
+  border-radius: var(--radius) var(--radius) 4px var(--radius);
+  max-width: 80%;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .chat-msg-placeholder {
@@ -3274,6 +3371,46 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   padding: 8px 12px;
   white-space: pre-wrap;
   word-wrap: break-word;
+  max-width: 85%;
+}
+
+/* ── 消息悬停操作栏 ── */
+.chat-msg-actions {
+  display: flex;
+  gap: 2px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+.chat-msg:hover .chat-msg-actions {
+  opacity: 1;
+}
+
+.chat-msg-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: var(--surface);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+}
+
+.chat-msg-action-btn:hover {
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+/* 用户气泡上的操作栏：右对齐 */
+.chat-msg-user .chat-msg-actions {
+  justify-content: flex-end;
 }
 
 /* 思考中动画 */
@@ -3316,6 +3453,12 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   line-height: 1.7;
   color: var(--text);
   word-wrap: break-word;
+  background: var(--surface);
+  border-radius: 4px var(--radius) var(--radius) var(--radius);
+  padding: 12px 16px;
+  max-width: 85%;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .chat-msg-markdown > *:first-child { margin-top: 0; }
@@ -3388,10 +3531,10 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 .chat-code-inline {
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 12.5px;
-  background: var(--border);
+  background: var(--code-bg);
   padding: 1.5px 5px;
   border-radius: 4px;
-  color: var(--text);
+  color: var(--code-keyword);
 }
 
 /* ── 代码块 ── */
@@ -3400,7 +3543,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   overflow: hidden;
-  background: #fafafa;
+  background: var(--code-bg);
 }
 
 .chat-code-header {
@@ -3408,7 +3551,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   align-items: center;
   justify-content: space-between;
   padding: 5px 10px;
-  background: var(--bg);
+  background: var(--code-header-bg);
   border-bottom: 1px solid var(--border);
   font-size: 11px;
 }
@@ -3460,30 +3603,60 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   display: flex;
   align-items: flex-end;
   gap: 10px;
-  padding: 12px 18px 16px;
-  border-top: 1px solid var(--border);
+  margin: 0 20px 18px;
+  padding: 8px 10px 8px 14px;
   background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--shadow-md);
   flex-shrink: 0;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.chat-input-wrap:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-md), 0 0 0 2px rgba(10, 10, 10, .06);
+}
+
+/* 流式生成中脉冲动画 */
+.chat-input-wrap.streaming {
+  border-color: var(--accent);
+  animation: chatInputPulse 2.4s ease-in-out infinite;
+}
+
+@keyframes chatInputPulse {
+  0%, 100% {
+    box-shadow: var(--shadow-md), 0 0 0 0 rgba(10, 10, 10, .08);
+    border-color: var(--accent);
+  }
+  50% {
+    box-shadow: var(--shadow-md), 0 0 0 5px rgba(10, 10, 10, .04);
+    border-color: var(--border-strong);
+  }
 }
 
 .chat-input {
   flex: 1;
   resize: none;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
+  border: none;
+  border-radius: 0;
+  padding: 8px 0;
   font-size: 14px;
   font-family: var(--font);
-  background: var(--bg);
+  background: transparent;
   color: var(--text);
   line-height: 1.5;
   max-height: 200px;
-  transition: border-color var(--transition);
+  min-height: 24px;
 }
 
 .chat-input:focus {
   outline: none;
-  border-color: var(--accent);
+}
+
+.chat-input::placeholder {
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 .chat-input:disabled {
@@ -3493,23 +3666,16 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 
 .chat-send-btn {
   flex-shrink: 0;
-  height: 42px;
-  width: 42px;
+  height: 36px;
+  width: 36px;
   padding: 0;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-/* ── 右栏：参数面板（嵌入 header 右侧） ── */
-.chat-params-panel {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  flex-shrink: 0;
-  position: relative;
-}
-
+/* ── 参数抽屉（右侧滑入） ── */
 .chat-params-toggle {
   display: flex;
   align-items: center;
@@ -3524,27 +3690,93 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   cursor: pointer;
   transition: all var(--transition);
   font-family: var(--font);
+  flex-shrink: 0;
 }
 
-.chat-params-toggle:hover {
+.chat-params-toggle:hover,
+.chat-params-toggle.active {
   border-color: var(--border-strong);
+  color: var(--text);
+  background: var(--surface);
+}
+
+.chat-params-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 300px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform .28s cubic-bezier(.4, 0, .2, 1);
+  pointer-events: none;
+}
+
+.chat-params-drawer.open {
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.chat-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .18);
+  z-index: 199;
+  animation: drawerBackdropIn .2s ease-out;
+}
+
+@keyframes drawerBackdropIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.chat-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.chat-drawer-title {
+  font-size: 14px;
+  font-weight: 700;
   color: var(--text);
 }
 
-.chat-params-body {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  width: 260px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-lg);
-  padding: 14px;
-  z-index: 50;
+.chat-drawer-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.chat-drawer-close:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.chat-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
+  min-height: 0;
 }
 
 .chat-param-row {
@@ -3623,41 +3855,41 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   max-width: 360px;
 }
 
-/* ── highlight.js 极简高亮（适配浅色主题） ── */
+/* ── highlight.js 语法高亮（通过 CSS 变量适配浅色/暗色主题） ── */
 .hljs {
-  color: #24292e;
+  color: var(--code-text);
   background: transparent;
 }
 
 .hljs-comment, .hljs-quote {
-  color: #6a737d;
+  color: var(--code-comment);
   font-style: italic;
 }
 
 .hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-name, .hljs-tag {
-  color: #d73a49;
+  color: var(--code-keyword);
 }
 
 .hljs-string, .hljs-title, .hljs-section, .hljs-attribute, .hljs-literal,
 .hljs-template-tag, .hljs-template-variable, .hljs-type, .hljs-addition {
-  color: #032f62;
+  color: var(--code-string);
 }
 
 .hljs-number, .hljs-symbol, .hljs-bullet, .hljs-link, .hljs-meta,
 .hljs-selector-id, .hljs-selector-class {
-  color: #005cc5;
+  color: var(--code-number);
 }
 
 .hljs-string .hljs-attr {
-  color: #032f62;
+  color: var(--code-string);
 }
 
 .hljs-attr, .hljs-variable, .hljs-property {
-  color: #6f42c1;
+  color: var(--code-attr);
 }
 
 .hljs-deletion {
-  color: #b31d28;
+  color: var(--code-deletion);
 }
 
 /* ── 会话侧边栏折叠 ── */
@@ -3688,14 +3920,29 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 .chat-think {
   margin: 0 0 10px;
   border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface);
   overflow: hidden;
+  transition: border-color var(--transition), background var(--transition);
 }
 
 .chat-think.thinking {
-  border-color: rgba(124, 58, 237, .35);
-  background: rgba(124, 58, 237, .04);
+  border-color: rgba(124, 58, 237, .2);
+  border-left-color: #7c3aed;
+  background: rgba(124, 58, 237, .03);
+  animation: thinkBorderPulse 2.4s ease-in-out infinite;
+}
+
+@keyframes thinkBorderPulse {
+  0%, 100% {
+    border-left-color: rgba(124, 58, 237, .45);
+    background: rgba(124, 58, 237, .02);
+  }
+  50% {
+    border-left-color: #7c3aed;
+    background: rgba(124, 58, 237, .06);
+  }
 }
 
 .chat-think-toggle {
@@ -3712,7 +3959,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 .chat-think-toggle:hover {
-  background: var(--bg);
+  background: rgba(124, 58, 237, .04);
 }
 
 .chat-think-status {
@@ -3726,6 +3973,12 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 
 .chat-think.thinking .chat-think-status {
   color: #7c3aed;
+  animation: thinkTextPulse 2s ease-in-out infinite;
+}
+
+@keyframes thinkTextPulse {
+  0%, 100% { opacity: .7; }
+  50% { opacity: 1; }
 }
 
 .chat-think-chevron {

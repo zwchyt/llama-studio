@@ -3,7 +3,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   Plus, Send, Square, Trash2, Pencil, MessageSquare, Settings2,
-  ChevronDown, ChevronUp, Bot, PanelLeftClose, PanelLeftOpen, Brain, RefreshCw
+  ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain, RefreshCw,
+  Copy, Check, RotateCcw, ArrowDown, X
 } from 'lucide-react'
 import { useChatStore, buildOpenAiMessages } from '../store/chatStore'
 import { useStore } from '../store/useStore'
@@ -85,37 +86,79 @@ function ThinkBlock({ value, closed, isStreaming, autoExpand }: { value: string;
 }
 
 // ── 单条消息 ───────────────────────────────────────────────
-function MessageBubble({ msg, isStreaming }: { msg: ChatMessage; isStreaming?: boolean }) {
+function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate }: {
+  msg: ChatMessage
+  isStreaming?: boolean
+  onCopy?: () => void
+  onEdit?: () => void
+  onRegenerate?: () => void
+}) {
   const isUser = msg.role === 'user'
+  const [copied, setCopied] = useState(false)
   // 助手消息解析思考链片段（含 <think>...</think>）
   const segments = useMemo(
     () => (!isUser ? parseThinkSegments(msg.content) : []),
     [isUser, msg.content]
   )
 
+  const handleCopy = () => {
+    navigator.clipboard.writeText(msg.content)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+    onCopy?.()
+  }
+
+  // 流式中不显示操作栏
+  if (isStreaming) {
+    return (
+      <div className="chat-msg chat-msg-assistant">
+        <div className="chat-msg-avatar"><Bot size={14} /></div>
+        <div className="chat-msg-body">
+          {msg.content ? (
+            <>
+              {segments.map((seg, i) => {
+                if (seg.type === 'think') {
+                  const thinkStreaming = true
+                  return <ThinkBlock key={i} value={seg.value} closed={seg.closed} isStreaming={thinkStreaming && !seg.closed} />
+                }
+                return (
+                  <div key={i} className="chat-msg-markdown">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any }}>
+                      {seg.value}
+                    </ReactMarkdown>
+                  </div>
+                )
+              })}
+              {segments.length > 0 && segments[segments.length - 1].type === 'text' && <span className="chat-cursor" />}
+            </>
+          ) : (
+            <div className="chat-msg-placeholder">
+              <ThinkBlock value="" closed={false} isStreaming={true} autoExpand={false} />
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-assistant'}`}>
-      <div className="chat-msg-avatar">
-        {isUser ? (
-          <span style={{ fontSize: 12, fontWeight: 700 }}>我</span>
-        ) : (
+      {!isUser && (
+        <div className="chat-msg-avatar">
           <Bot size={14} />
-        )}
-      </div>
+        </div>
+      )}
       <div className="chat-msg-body">
         {isUser ? (
-          <div className="chat-msg-text">{msg.content}</div>
+          <div className="chat-msg-bubble chat-msg-bubble-user">{msg.content}</div>
         ) : msg.error ? (
           <div className="chat-msg-error">{msg.content}</div>
         ) : msg.content ? (
           <>
             {segments.map((seg, i) => {
               if (seg.type === 'think') {
-                // 思考片段：只有这条消息正在流式 且 该思考块尚未闭合时，显示「思考中」动画
-                const thinkStreaming = isStreaming && !seg.closed
-                return <ThinkBlock key={i} value={seg.value} closed={seg.closed} isStreaming={thinkStreaming} />
+                return <ThinkBlock key={i} value={seg.value} closed={seg.closed} isStreaming={false} />
               }
-              // 文本片段：正常 Markdown 渲染
               return (
                 <div key={i} className="chat-msg-markdown">
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any }}>
@@ -124,19 +167,34 @@ function MessageBubble({ msg, isStreaming }: { msg: ChatMessage; isStreaming?: b
                 </div>
               )
             })}
-            {/* 光标：仅当最后一段是文本、且无未闭合思考块、且正在流式时显示 */}
-            {isStreaming && segments.length > 0 &&
-              segments[segments.length - 1].type === 'text' &&
-              <span className="chat-cursor" />}
           </>
         ) : (
-          <div className="chat-msg-placeholder">
-            {isStreaming ? (
-              <ThinkBlock value="" closed={false} isStreaming={true} autoExpand={false} />
-            ) : '（空回复）'}
+          <div className="chat-msg-placeholder">（空回复）</div>
+        )}
+        {/* 悬停操作栏 */}
+        {msg.content && !msg.error && (
+          <div className="chat-msg-actions">
+            <button className="chat-msg-action-btn" onClick={handleCopy} title="复制">
+              {copied ? <Check size={13} /> : <Copy size={13} />}
+            </button>
+            {isUser && onEdit && (
+              <button className="chat-msg-action-btn" onClick={onEdit} title="编辑">
+                <Pencil size={13} />
+              </button>
+            )}
+            {!isUser && onRegenerate && (
+              <button className="chat-msg-action-btn" onClick={onRegenerate} title="重新生成">
+                <RotateCcw size={13} />
+              </button>
+            )}
           </div>
         )}
       </div>
+      {isUser && (
+        <div className="chat-msg-avatar chat-msg-avatar-user">
+          <span style={{ fontSize: 12, fontWeight: 700 }}>我</span>
+        </div>
+      )}
     </div>
   )
 }
@@ -188,9 +246,10 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDelete, 
           return (
             <div
               key={s.id}
-              className={`chat-session-item ${activeId === s.id ? 'active' : ''}`}
+              className={`chat-session-item ${activeId === s.id ? 'active' : ''} ${model ? 'running' : 'stopped'}`}
               onClick={() => onSelect(s.id)}
             >
+              <div className={`chat-session-indicator ${model ? 'running' : 'stopped'}`} />
               {editingId === s.id ? (
                 <input
                   className="chat-session-edit"
@@ -238,12 +297,13 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDelete, 
   )
 }
 
-// ── 右栏：参数面板 ─────────────────────────────────────────
-function ParamsPanel({ session, onUpdate }: {
+// ── 右栏：参数抽屉 ─────────────────────────────────────────
+function ParamsDrawer({ session, onUpdate, open, onClose }: {
   session: ChatSession
   onUpdate: (params: Partial<typeof session.params>, systemPrompt?: string) => void
+  open: boolean
+  onClose: () => void
 }) {
-  const [expanded, setExpanded] = useState(false)
   const [localPrompt, setLocalPrompt] = useState(session.systemPrompt || '')
   const p = session.params
 
@@ -254,14 +314,18 @@ function ParamsPanel({ session, onUpdate }: {
   }
 
   return (
-    <div className="chat-params-panel">
-      <button className="chat-params-toggle" onClick={() => setExpanded(!expanded)}>
-        <Settings2 size={14} />
-        <span>采样参数</span>
-        {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-      </button>
-      {expanded && (
-        <div className="chat-params-body">
+    <>
+      {/* 背景遮罩 */}
+      {open && <div className="chat-drawer-backdrop" onClick={onClose} />}
+      {/* 抽屉面板 */}
+      <div className={`chat-params-drawer ${open ? 'open' : ''}`}>
+        <div className="chat-drawer-header">
+          <span className="chat-drawer-title">采样参数</span>
+          <button className="chat-drawer-close" onClick={onClose} title="关闭">
+            <X size={15} />
+          </button>
+        </div>
+        <div className="chat-drawer-body">
           <div className="chat-param-row">
             <label className="chat-param-label">
               Temperature <span className="chat-param-value">{p.temperature ?? '—'}</span>
@@ -324,8 +388,8 @@ function ParamsPanel({ session, onUpdate }: {
             />
           </div>
         </div>
-      )}
-    </div>
+      </div>
+    </>
   )
 }
 
@@ -347,6 +411,7 @@ export default function ChatView() {
   const markLastMessageError = useChatStore((s) => s.markLastMessageError)
   const setStreamingId = useChatStore((s) => s.setStreamingId)
   const persist = useChatStore((s) => s.persist)
+  const truncateAfter = useChatStore((s) => s.truncateAfter)
 
   const cards = useStore((s) => s.cards)
   const runningModels = useMemo(
@@ -361,9 +426,12 @@ export default function ChatView() {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [paramsOpen, setParamsOpen] = useState(false)
   // 看门狗：防止流卡住导致输入框永久冻结
   const streamWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const firstChunkReceivedRef = useRef(false)
+  // 重新生成回滚备份：失败时恢复旧消息
+  const regenerateRollbackRef = useRef<{ sessionId: string; messages: ChatMessage[]; streamId: string } | null>(null)
 
   const activeSession = sessions.find((s) => s.id === activeSessionId) || null
   const activeMessages = activeSession?.messages || []
@@ -390,7 +458,19 @@ export default function ChatView() {
         if (streamWatchdogRef.current) { clearTimeout(streamWatchdogRef.current); streamWatchdogRef.current = null }
         firstChunkReceivedRef.current = false
         if (data.error) {
-          st.markLastMessageError(targetSession.id, data.error)
+          // 如果是重新生成失败，回滚恢复旧消息
+          const rollback = regenerateRollbackRef.current
+          if (rollback && rollback.streamId === data.streamId) {
+            const st = useChatStore.getState()
+            st.replaceMessages(rollback.sessionId, rollback.messages)
+            regenerateRollbackRef.current = null
+            notify(`重新生成失败：${data.error}，已恢复原回复`, 'error')
+          } else {
+            st.markLastMessageError(targetSession.id, data.error)
+          }
+        } else {
+          // 成功：清除回滚备份
+          regenerateRollbackRef.current = null
         }
         st.persist(targetSession.id)
         if (st.streamingId === data.streamId) st.setStreamingId(null)
@@ -553,6 +633,78 @@ export default function ChatView() {
     }
   }
 
+  // 编辑用户消息：将内容回填到输入框，截断该消息及之后的所有消息
+  const handleEditMessage = useCallback((msgId: string, content: string) => {
+    if (!activeSessionId) return
+    setInput(content)
+    truncateAfter(activeSessionId, msgId)
+    persist(activeSessionId)
+    inputRef.current?.focus()
+  }, [activeSessionId, truncateAfter, persist])
+
+  // 重新生成：找到该助手消息前面的用户消息，截断后重新发送（失败自动回滚）
+  const handleRegenerate = useCallback(async (assistantMsgId: string) => {
+    if (!activeSessionId || streamingId) return
+    const session = useChatStore.getState().sessions.find((s) => s.id === activeSessionId)
+    if (!session) return
+    const idx = session.messages.findIndex((m) => m.id === assistantMsgId)
+    if (idx <= 0) return
+    // 找到前一条用户消息
+    let userMsgIdx = idx - 1
+    while (userMsgIdx >= 0 && session.messages[userMsgIdx].role !== 'user') userMsgIdx--
+    if (userMsgIdx < 0) return
+    const userMsg = session.messages[userMsgIdx]
+
+    // 备份旧消息（用于失败回滚）
+    const savedMessages = [...session.messages]
+
+    // 截断：从该用户消息之后全部删除
+    truncateAfter(activeSessionId, userMsg.id)
+    // 重新走发送流程
+    setInput('')
+    setAutoScroll(true)
+    const streamId = (crypto as any).randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2))
+
+    // 设置回滚备份
+    regenerateRollbackRef.current = { sessionId: activeSessionId, messages: savedMessages, streamId }
+
+    const assistantMsg: ChatMessage = {
+      id: streamId,
+      role: 'assistant',
+      content: '',
+      createdAt: new Date().toISOString()
+    }
+    appendMessage(activeSessionId, assistantMsg)
+    setStreamingId(streamId)
+
+    const updatedSession = { ...useChatStore.getState().sessions.find((s) => s.id === activeSessionId)! }
+    updatedSession.messages = [...updatedSession.messages]
+    const messages = buildOpenAiMessages(updatedSession)
+
+    try {
+      await window.api.chatStream({
+        streamId,
+        port: session.port,
+        body: {
+          messages,
+          temperature: session.params.temperature,
+          top_p: session.params.top_p,
+          top_k: session.params.top_k,
+          max_tokens: session.params.max_tokens,
+          repeat_penalty: session.params.repeat_penalty,
+          stream: true
+        }
+      })
+    } catch (e: any) {
+      // 请求异常：回滚恢复旧消息
+      regenerateRollbackRef.current = null
+      const st = useChatStore.getState()
+      st.replaceMessages(activeSessionId, savedMessages)
+      st.setStreamingId(null)
+      notify(`重新生成失败：${e?.message || '请求失败'}，已恢复原回复`, 'error')
+    }
+  }, [activeSessionId, streamingId, truncateAfter, appendMessage, setStreamingId])
+
   // ── 空状态：无运行模型 ──
   if (runningModels.length === 0) {
     return (
@@ -602,7 +754,14 @@ export default function ChatView() {
                   ))}
                 </select>
               </div>
-              <ParamsPanel session={activeSession} onUpdate={handleParamsUpdate} />
+              <button
+                className={`chat-params-toggle ${paramsOpen ? 'active' : ''}`}
+                onClick={() => setParamsOpen(!paramsOpen)}
+                title="采样参数"
+              >
+                <Settings2 size={14} />
+                <span>参数</span>
+              </button>
             </div>
 
             <div className="chat-messages" ref={messagesContainerRef} onScroll={handleScroll}>
@@ -617,13 +776,28 @@ export default function ChatView() {
                     key={m.id}
                     msg={m}
                     isStreaming={streamingId === m.id}
+                    onEdit={m.role === 'user' ? () => handleEditMessage(m.id, m.content) : undefined}
+                    onRegenerate={m.role === 'assistant' ? () => handleRegenerate(m.id) : undefined}
                   />
                 ))
               )}
               <div ref={messagesEndRef} />
+              {/* 回到底部浮动按钮 */}
+              {!autoScroll && activeMessages.length > 0 && (
+                <button
+                  className="chat-scroll-bottom-btn"
+                  onClick={() => {
+                    setAutoScroll(true)
+                    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+                  }}
+                  title="回到底部"
+                >
+                  <ArrowDown size={16} />
+                </button>
+              )}
             </div>
 
-            <div className="chat-input-wrap">
+            <div className={`chat-input-wrap${streamingId ? ' streaming' : ''}`}>
               <textarea
                 ref={inputRef}
                 className="chat-input"
@@ -654,6 +828,14 @@ export default function ChatView() {
                 </button>
               )}
             </div>
+
+            {/* 参数抽屉 */}
+            <ParamsDrawer
+              session={activeSession}
+              onUpdate={handleParamsUpdate}
+              open={paramsOpen}
+              onClose={() => setParamsOpen(false)}
+            />
           </>
         ) : (
           <>

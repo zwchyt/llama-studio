@@ -58,6 +58,8 @@ interface ChatStore {
   markLastMessageError: (sessionId: string, error: string) => void
   // 删除从某条消息开始到末尾的所有消息（用于重试/编辑）
   truncateAfter: (sessionId: string, messageId: string) => void
+  // 替换会话的所有消息（用于回滚）
+  replaceMessages: (sessionId: string, messages: ChatMessage[]) => void
 
   // 流状态
   setStreamingId: (id: string | null) => void
@@ -228,6 +230,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (idx < 0) return x
         return { ...x, messages: x.messages.slice(0, idx) }
       })
+    }))
+    get().persist(sessionId)
+  },
+
+  replaceMessages: (sessionId, messages) => {
+    set((s) => ({
+      sessions: s.sessions.map((x) =>
+        x.id === sessionId ? { ...x, messages, updatedAt: new Date().toISOString() } : x
+      )
     }))
     get().persist(sessionId)
   },
