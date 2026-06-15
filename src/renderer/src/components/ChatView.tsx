@@ -346,8 +346,23 @@ export default function ChatView() {
     createSession(m.id, m.port, m.name)
   }, [loaded, sessions.length, runningModels, createSession])
 
+  // 选中会话时，若其模型未运行但存在其他运行中模型，自动切换
+  useEffect(() => {
+    if (!activeSessionId || !loaded) return
+    if (activeModel) return
+    if (runningModels.length === 0) return
+    const m = runningModels[0]
+    setSessionModel(activeSessionId, m.id, m.port)
+  }, [activeSessionId, activeModel, runningModels, setSessionModel, loaded])
+
   // 全局监听流式 chunk
   useEffect(() => {
+    // 清除可能残留的 streamingId（ChatView unmount 时流未结束导致卡死）
+    const initSt = useChatStore.getState()
+    if (initSt.streamingId) {
+      initSt.setStreamingId(null)
+    }
+
     window.api.onChatStreamChunk((data) => {
       const st = useChatStore.getState()
       // chunk 通过 streamId 关联到会话：发起流时把 streamId 记在会话最后一条 assistant 消息上
@@ -425,7 +440,11 @@ export default function ChatView() {
       if (streamWatchdogRef.current) { clearTimeout(streamWatchdogRef.current); streamWatchdogRef.current = null }
       window.api.abortChatStream(streamingId)
       const prevSt = useChatStore.getState()
-      prevSt.persist(activeSessionId!)
+      // 找到实际在流的会话进行落盘（而非 activeSessionId，后者可能已切换）
+      const streamingSession = prevSt.sessions.find((s) =>
+        s.messages.some((m) => m.id === streamingId)
+      )
+      if (streamingSession) prevSt.persist(streamingSession.id)
       prevSt.setStreamingId(null)
     }
 
@@ -505,7 +524,11 @@ export default function ChatView() {
       if (streamWatchdogRef.current) { clearTimeout(streamWatchdogRef.current); streamWatchdogRef.current = null }
       window.api.abortChatStream(streamingId)
       const st = useChatStore.getState()
-      st.persist(activeSessionId!) // 落盘已生成部分
+      // 找到实际在流的会话进行落盘
+      const streamingSession = st.sessions.find((s) =>
+        s.messages.some((m) => m.id === streamingId)
+      )
+      if (streamingSession) st.persist(streamingSession.id)
       setStreamingId(null)
     }
   }, [streamingId, activeSessionId, setStreamingId, persist])
@@ -558,6 +581,8 @@ export default function ChatView() {
 
     // 截断：从该用户消息之后全部删除
     truncateAfter(activeSessionId, userMsg.id)
+    // 重新添加用户消息（truncateAfter 删掉了它）
+    appendMessage(activeSessionId, userMsg)
     // 重新走发送流程
     setInput('')
     setAutoScroll(true)
