@@ -8,7 +8,7 @@ interface PendingWrite { data: string[]; timer: ReturnType<typeof setTimeout> | 
 const registry = new Map<string, Entry>()
 const pendingWrites = new Map<string, PendingWrite>()
 
-function flushWrite(id: string, pw: PendingWrite, e: Entry): void {
+function flushWrite(_id: string, pw: PendingWrite, e: Entry): void {
   if (pw.timer) { clearTimeout(pw.timer); pw.timer = null }
   if (pw.raf) { cancelAnimationFrame(pw.raf); pw.raf = null }
   if (pw.data.length === 0) return

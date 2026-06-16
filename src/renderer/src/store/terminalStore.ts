@@ -40,14 +40,14 @@ function persistSessions(sessions: TerminalMeta[]): void {
 }
 
 export const useTerminalStore = createWithEqualityFn<TerminalStore>(
-  (set, get) => ({
+  (set) => ({
     sessions: loadPersistedSessions(),
     activeId: null,
 
     open: async (cwd?: string) => {
       const result = await window.api.terminalCreate({ cwd })
       if (!result.success) return
-      const id = result.id
+      const id = result.id!
       const meta: TerminalMeta = { id, title: '终端', cwd: cwd || '', exited: false }
       set((s) => {
         const sessions = [...s.sessions, meta]

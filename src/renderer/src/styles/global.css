@@ -192,6 +192,70 @@ select {
   min-height: 0;
 }
 
+.terminal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.terminal-cwd-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: Consolas, monospace;
+  padding: 5px 8px;
+  outline: none;
+  min-width: 0;
+}
+
+.terminal-cwd-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+  font-family: inherit;
+}
+
+.terminal-cwd-input:focus {
+  border-color: var(--accent);
+}
+
+.terminal-toolbar-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 5px 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.terminal-toolbar-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.terminal-toolbar-open {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg, #fff);
+}
+
+.terminal-toolbar-open:hover {
+  opacity: 0.9;
+  color: var(--accent-fg, #fff);
+}
+
 .terminal-tabbar {
   display: flex;
   background: var(--surface);
