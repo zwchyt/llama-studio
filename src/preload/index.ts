@@ -94,6 +94,24 @@ const fullApi = {
     ipcRenderer.on('chat-stream-chunk', (_event, data) => callback(data))
   },
   removeChatStreamListener: () => ipcRenderer.removeAllListeners('chat-stream-chunk'),
+
+  // ── 终端控制台 ──
+  terminalCreate: (opts: { cwd?: string; cols?: number; rows?: number }) => ipcRenderer.invoke('terminal:create', opts),
+  terminalInput: (id: string, data: string) => ipcRenderer.invoke('terminal:input', { id, data }),
+  terminalResize: (id: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', { id, cols, rows }),
+  terminalKill: (id: string) => ipcRenderer.invoke('terminal:kill', { id }),
+  onTerminalData: (cb: (d: { id: string; data: string }) => void) => {
+    ipcRenderer.removeAllListeners('terminal:data')
+    ipcRenderer.on('terminal:data', (_e, d) => cb(d))
+  },
+  onTerminalExited: (cb: (d: { id: string; exitCode: number }) => void) => {
+    ipcRenderer.removeAllListeners('terminal:exited')
+    ipcRenderer.on('terminal:exited', (_e, d) => cb(d))
+  },
+  removeTerminalListeners: () => {
+    ipcRenderer.removeAllListeners('terminal:data')
+    ipcRenderer.removeAllListeners('terminal:exited')
+  },
 }
 
 const chatApi = {

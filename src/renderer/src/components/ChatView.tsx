@@ -60,7 +60,7 @@ function parseThinkSegments(content: string): ContentSegment[] {
 }
 
 // 思考块：可折叠
-function ThinkBlock({ value, closed, isStreaming, autoExpand }: { value: string; closed: boolean; isStreaming?: boolean; autoExpand?: boolean }) {
+const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, autoExpand }: { value: string; closed: boolean; isStreaming?: boolean; autoExpand?: boolean }) {
   const [expanded, setExpanded] = useState(autoExpand ?? false)
   const thinking = !closed || isStreaming
   return (
@@ -84,7 +84,7 @@ function ThinkBlock({ value, closed, isStreaming, autoExpand }: { value: string;
       )}
     </div>
   )
-}
+})
 
 // ── 单条消息 ───────────────────────────────────────────────
 function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate }: {

@@ -17,7 +17,10 @@ import UpdateBanner from './components/UpdateBanner'
 import ChatWindow from './components/ChatWindow'
 import PiWebView from './components/PiWebView'
 import LlamaChatView from './components/LlamaChatView'
-import { buildDefaultTemplate } from './utils/defaultTemplate'
+import TerminalView from './components/TerminalView'
+  import { buildDefaultTemplate } from './utils/defaultTemplate'
+import { writeToTerminal } from './utils/terminalRegistry'
+import { useTerminalStore } from './store/terminalStore'
 import type { Template, ModelMetrics } from '../../shared/types'
 
 const searchParams = new URLSearchParams(window.location.search)
@@ -107,6 +110,19 @@ function AppMain() {
       notify(`Model error: ${data.error}`, 'error')
     })
     return () => window.api.removeModelErrorListener()
+  }, [])
+
+  useEffect(() => {
+    window.api.onTerminalData(({ id, data }) => writeToTerminal(id, data))
+    window.api.onTerminalExited(({ id }) => {
+      const { markExited, sessions, activeId } = useTerminalStore.getState()
+      markExited(id)
+      if (id === activeId && sessions.length > 1) {
+        const remaining = sessions.filter(s => s.id !== id)
+        if (remaining.length > 0) useTerminalStore.getState().setActive(remaining[remaining.length - 1].id)
+      }
+    })
+    return () => window.api.removeTerminalListeners()
   }, [])
 
   useEffect(() => {
@@ -351,6 +367,7 @@ function AppMain() {
       case 'chat': return <ChatView />
       case 'piweb': return <PiWebView />
       case 'welcome': return <WelcomeView />
+      case 'terminal': return <TerminalView />
       case 'llama': return <LlamaChatView />
       default: return <CardsView />
     }

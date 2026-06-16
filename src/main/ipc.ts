@@ -9,6 +9,44 @@ import https from 'https'
 import http from 'http'
 import { app } from 'electron'
 import extract from 'extract-zip'
+import * as pty from 'node-pty'
+
+interface TerminalSession {
+  id: string
+  pty: pty.IPty
+  cols: number
+  rows: number
+  cwd: string
+  shell: string
+  title: string
+  pendingData: string[]
+  flushTimer: NodeJS.Timeout | null
+  paused: boolean
+}
+const sessions = new Map<string, TerminalSession>()
+
+const terminalSend = (channel: string, payload: unknown): void => {
+  BrowserWindow.getAllWindows().forEach(w => { if (!w.isDestroyed()) w.webContents.send(channel, payload) })
+}
+
+function flushTerminalData(id: string): void {
+  const s = sessions.get(id)
+  if (!s) return
+  s.flushTimer = null
+  if (s.pendingData.length === 0) return
+  const merged = s.pendingData.join('')
+  s.pendingData = []
+  const buf = Buffer.from(merged, 'utf-8')
+  const MAX_CHUNK = 128 * 1024
+  for (let i = 0; i < buf.length; i += MAX_CHUNK) {
+    const chunk = buf.slice(i, i + MAX_CHUNK).toString('utf-8')
+    terminalSend('terminal:data', { id, data: chunk })
+  }
+  if (s.paused) {
+    try { s.pty.resume() } catch {}
+    s.paused = false
+  }
+}
 
 interface GitHubAsset { name: string; browser_download_url: string; size: number }
 interface GitHubRelease {
@@ -489,6 +527,11 @@ export function cleanupRunningProcesses(): void {
     try { req.destroy() } catch { /* ignore */ }
   }
   activeChatStreams.clear()
+  for (const [, s] of sessions) {
+    if (s.flushTimer) { clearTimeout(s.flushTimer); s.flushTimer = null }
+    try { s.pty.kill() } catch {}
+  }
+  sessions.clear()
 }
 
 export function registerIpcHandlers(): void {
@@ -2091,5 +2134,61 @@ export function registerIpcHandlers(): void {
     } catch (err) {
       return { success: false, error: String(err) }
     }
+  })
+
+  // ── 终端控制台 ──
+  ipcMain.handle('terminal:create', (_e, opts: { cwd?: string; cols?: number; rows?: number }) => {
+    const id = `term_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const cols = opts.cols ?? 80
+    const rows = opts.rows ?? 24
+    const cwd = opts.cwd && existsSync(opts.cwd) ? opts.cwd : app.getPath('home')
+    try {
+      const shell = process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : (process.env.SHELL || '/bin/bash')
+      const p = pty.spawn(shell, [], {
+        name: 'xterm-color',
+        cols, rows, cwd,
+        env: { ...process.env, TERM: 'xterm-256color' } as any,
+      })
+      p.onData((data) => {
+        const s = sessions.get(id)
+        if (!s) return
+        s.pendingData.push(data)
+        const totalBytes = s.pendingData.reduce((sum, d) => sum + Buffer.byteLength(d, 'utf-8'), 0)
+        if (totalBytes > 1024 * 1024 && !s.paused) {
+          try { s.pty.pause() } catch {}
+          s.paused = true
+        }
+        if (!s.flushTimer) {
+          s.flushTimer = setTimeout(() => flushTerminalData(id), 16)
+        }
+      })
+      p.onExit(({ exitCode }) => {
+        const s = sessions.get(id)
+        if (s?.flushTimer) {
+          clearTimeout(s.flushTimer)
+          s.flushTimer = null
+        }
+        flushTerminalData(id)
+        terminalSend('terminal:exited', { id, exitCode })
+        sessions.delete(id)
+      })
+      sessions.set(id, { id, pty: p, cols, rows, cwd, shell, title: shell, pendingData: [], flushTimer: null, paused: false })
+      return { success: true, id }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('terminal:input', (_e, { id, data }: { id: string; data: string }) => {
+    sessions.get(id)?.pty.write(data)
+  })
+
+  ipcMain.handle('terminal:resize', (_e, { id, cols, rows }: { id: string; cols: number; rows: number }) => {
+    try { sessions.get(id)?.pty.resize(cols, rows) } catch {}
+  })
+
+  ipcMain.handle('terminal:kill', (_e, { id }: { id: string }) => {
+    try { sessions.get(id)?.pty.kill() } catch {}
+    sessions.delete(id)
   })
 }

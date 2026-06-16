@@ -99,6 +99,14 @@ interface LlamaCppApi {
   abortChatStream: (streamId: string) => Promise<{ success: boolean }>
   onChatStreamChunk: (cb: (data: ChatStreamChunk) => void) => void
   removeChatStreamListener: () => void
+  // ── 终端控制台 ──
+  terminalCreate: (opts: { cwd?: string; cols?: number; rows?: number }) => Promise<{ success: boolean; id?: string; error?: string }>
+  terminalInput: (id: string, data: string) => Promise<void>
+  terminalResize: (id: string, cols: number, rows: number) => Promise<void>
+  terminalKill: (id: string) => Promise<void>
+  onTerminalData: (cb: (d: { id: string; data: string }) => void) => void
+  onTerminalExited: (cb: (d: { id: string; exitCode: number }) => void) => void
+  removeTerminalListeners: () => void
 }
 declare global {
   interface Window { api: LlamaCppApi }

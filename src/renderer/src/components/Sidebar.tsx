@@ -1,7 +1,7 @@
 import React from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Globe, Server, Bot, MessageSquare } from 'lucide-react'
+import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Globe, Server, Bot, MessageSquare, Terminal } from 'lucide-react'
 export default function Sidebar() {
   const { view, setView, backends, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, piWebUrl, hasRunningModels } = useStore(
     s => ({ view: s.view, setView: s.setView, backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, piWebUrl: s.piWebUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
@@ -83,6 +83,14 @@ export default function Sidebar() {
         <Globe size={16} />
         pi-web
         {piWebUrl && <span className="nav-dot" />}
+      </button>
+      <button
+        className={`nav-item ${view === 'terminal' ? 'active' : ''}`}
+        onClick={() => setView('terminal')}
+        title="终端控制台"
+      >
+        <Terminal size={16} />
+        终端
       </button>
 
       {/* ── 系统 ── */}
