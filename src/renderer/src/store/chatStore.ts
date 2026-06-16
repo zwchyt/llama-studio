@@ -34,6 +34,7 @@ interface ChatStore {
   sessions: ChatSession[]
   activeSessionId: string | null
   streamingId: string | null      // 当前正在生成的流 ID；null 表示空闲
+  streamingSessionIds: string[]  // 正在流式生成的会话 ID 集合
   loaded: boolean
   errorStreamId: string | null    // 最近一次出错的流（用于 UI 提示）
 
@@ -57,6 +58,8 @@ interface ChatStore {
   appendDeltaToLast: (sessionId: string, delta: string) => void
   // 标记最后一条 assistant 消息出错
   markLastMessageError: (sessionId: string, error: string) => void
+  // 标记最后一条 assistant 消息被用户手动停止
+  markLastMessageStopped: (sessionId: string) => void
   // 删除从某条消息开始到末尾的所有消息（用于重试/编辑）
   truncateAfter: (sessionId: string, messageId: string) => void
   // 替换会话的所有消息（用于回滚）
@@ -64,6 +67,7 @@ interface ChatStore {
 
   // 流状态
   setStreamingId: (id: string | null) => void
+  setSessionStreaming: (sessionId: string, streaming: boolean) => void
   setErrorStreamId: (id: string | null) => void
 
   // 持久化
@@ -74,6 +78,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   sessions: [],
   activeSessionId: null,
   streamingId: null,
+  streamingSessionIds: [],
   loaded: false,
   errorStreamId: null,
 
@@ -242,6 +247,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     get().persist(sessionId)
   },
 
+  markLastMessageStopped: (sessionId) => {
+    set((s) => ({
+      sessions: s.sessions.map((x) => {
+        if (x.id !== sessionId) return x
+        const msgs = [...x.messages]
+        const last = msgs[msgs.length - 1]
+        if (last && last.role === 'assistant') {
+          msgs[msgs.length - 1] = { ...last, stopped: true }
+        }
+        return { ...x, messages: msgs, updatedAt: new Date().toISOString() }
+      })
+    }))
+  },
+
   truncateAfter: (sessionId, messageId) => {
     set((s) => ({
       sessions: s.sessions.map((x) => {
@@ -264,6 +283,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   setStreamingId: (id) => set({ streamingId: id }),
+
+  setSessionStreaming: (sessionId, streaming) => set((s) => ({
+    streamingSessionIds: streaming
+      ? s.streamingSessionIds.includes(sessionId)
+        ? s.streamingSessionIds
+        : [...s.streamingSessionIds, sessionId]
+      : s.streamingSessionIds.filter((id) => id !== sessionId)
+  })),
 
   setErrorStreamId: (id) => set({ errorStreamId: id }),
 

@@ -3288,8 +3288,19 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   box-shadow: 0 0 6px rgba(22, 163, 74, .4);
 }
 
+.chat-session-indicator.streaming {
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(59, 130, 246, .6);
+  animation: session-streaming-pulse 1.6s ease-in-out infinite;
+}
+
 .chat-session-indicator.stopped {
   background: var(--border-strong);
+}
+
+@keyframes session-streaming-pulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(59, 130, 246, .4); opacity: .75; }
+  50%       { box-shadow: 0 0 12px rgba(59, 130, 246, .9); opacity: 1; }
 }
 
 .chat-session-main {
@@ -3573,13 +3584,32 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   line-height: 1.65;
   color: var(--accent-fg);
   background: var(--accent);
-  white-space: pre-wrap;
   word-wrap: break-word;
   padding: 10px 14px;
   border-radius: var(--radius) var(--radius) 4px var(--radius);
   max-width: 80%;
   user-select: text;
   -webkit-user-select: text;
+}
+
+/* 用户消息纯文本片段（保留换行） */
+.user-text {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* 用户气泡内代码块视觉适配 */
+.chat-msg-bubble-user .chat-code-block {
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.chat-msg-bubble-user .chat-code-block:first-child {
+  margin-top: 0;
+}
+
+.chat-msg-bubble-user .chat-code-block:last-child {
+  margin-bottom: 0;
 }
 
 .chat-msg-placeholder {
@@ -3600,6 +3630,21 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   white-space: pre-wrap;
   word-wrap: break-word;
   max-width: 85%;
+}
+
+/* ── 已停止生成徽章 ── */
+.chat-msg-stopped-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  opacity: .7;
 }
 
 /* ── 消息悬停操作栏 ── */

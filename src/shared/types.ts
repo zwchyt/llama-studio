@@ -111,6 +111,7 @@ export interface ChatMessage {
   tokensDecoded?: number
   msFirstToken?: number
   error?: boolean
+  stopped?: boolean  // 用户手动停止生成，消息内容不完整
 }
 export interface ChatParams {
   temperature?: number
