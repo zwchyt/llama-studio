@@ -894,11 +894,9 @@ select {
 }
 
 .cmd-grid {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 10px;
-  margin-top: -24px;
-  margin-bottom: -24px;
 }
 
 .cmd-row {
@@ -912,6 +910,7 @@ select {
   border-radius: var(--radius-sm);
   transition: border-color var(--transition);
   position: relative;
+  grid-column: span 1;
 }
 
 .cmd-row:hover {
@@ -1047,6 +1046,7 @@ select {
 
 .cmd-row-full {
   grid-template-columns: 1fr;
+  grid-column: 1 / -1;
 }
 
 .num-input-wrap {
@@ -1496,20 +1496,24 @@ select {
 }
 
 .tooltip {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
+  position: fixed;
   background: var(--accent);
   color: var(--accent-fg);
   padding: 5px 10px;
   border-radius: 6px;
   font-size: 11px;
   font-weight: 500;
-  white-space: nowrap;
+  white-space: normal;
+  max-width: 260px;
+  line-height: 1.4;
   opacity: 0;
-  transition: opacity 150ms ease;
   pointer-events: none;
-  z-index: 300;
+  z-index: 10000;
+  transition: opacity 150ms ease;
+}
+
+.tooltip.visible {
+  opacity: 1;
 }
 
 .tab-bar {
@@ -2136,7 +2140,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 .modal-params {
-  width: 600px;
+  width: 720px;
   max-width: 95vw;
   max-height: 90vh;
 }
@@ -2152,7 +2156,9 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   display: flex;
   flex-direction: column;
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
+  min-height: 0;
+  flex: 1;
 }
 
 .param-locked-banner {
@@ -2175,10 +2181,8 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   gap: 4px;
   padding: 0 20px 12px;
   flex-shrink: 0;
-  position: sticky;
-  top: 0;
-  z-index: 10;
   background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
 .param-tab {
@@ -2217,7 +2221,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 .param-content {
-  padding: 32px 20px 32px;
+  padding: 20px;
   overflow-y: auto;
   flex: 1;
   min-height: 0;
@@ -4002,14 +4006,25 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   background: var(--surface);
   overflow: hidden;
   transition: border-color var(--transition), background var(--transition);
+  max-width: 85%;
 }
 
-.chat-think.thinking {
+.chat-think.thinking:not(.expanded) {
   border-color: rgba(124, 58, 237, .2);
   border-left-color: #7c3aed;
   background: rgba(124, 58, 237, .03);
   animation: thinkBorderPulse 2.4s ease-in-out infinite;
   animation-delay: 0.1s;
+}
+
+.chat-think.thinking.expanded {
+  border-color: rgba(124, 58, 237, .2);
+  border-left-color: #7c3aed;
+  background: rgba(124, 58, 237, .02);
+}
+
+.chat-think.thinking.expanded .chat-think-status {
+  color: #7c3aed;
 }
 
 @keyframes thinkBorderPulse {
@@ -4049,7 +4064,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   color: var(--text-secondary);
 }
 
-.chat-think.thinking .chat-think-status {
+.chat-think.thinking:not(.expanded) .chat-think-status {
   color: #7c3aed;
   animation: thinkTextPulse 2s ease-in-out infinite;
   animation-delay: 0.1s;
@@ -4079,4 +4094,5 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   border-top: 1px solid var(--border);
   max-height: 400px;
   overflow-y: auto;
+  contain: content;
 }

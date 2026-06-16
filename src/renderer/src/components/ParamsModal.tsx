@@ -20,6 +20,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   const [activeTab, setActiveTab] = useState('主要设置')
   const [searchQuery, setSearchQuery] = useState('')
   const [hoveredParam, setHoveredParam] = useState<string | null>(null)
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
   const [copiedParam, setCopiedParam] = useState<string | null>(null)
 
   const card = cards.find(c => c.template.id === templateId)
@@ -151,12 +152,22 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
     const val = rawVal ?? (cmd.type === 'boolean' ? false : '')
     const displayVal: string | number = val === false || val === null || val === true ? '' : val
     return (
-      <div key={cmd.arg} className={`cmd-row ${isActive ? 'active-param' : ''} ${cmd.type === 'text' ? 'cmd-row-full' : ''}`}>
-        <div className="cmd-label-group tooltip-wrap">
-          <div className="cmd-label">{cmd.label}</div>
-          <div className="cmd-arg">{cmd.short ? `${cmd.short}, ` : ''}{cmd.arg}</div>
-          <span className="tooltip">{cmd.description}</span>
-        </div>
+      <div
+          key={cmd.arg}
+          className={`cmd-row ${isActive ? 'active-param' : ''} ${cmd.type === 'text' ? 'cmd-row-full' : ''}`}
+        >
+          <div
+            className="cmd-label-group"
+            onMouseEnter={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect()
+              setHoveredParam(cmd.arg)
+              setTooltipPos({ x: rect.left, y: rect.bottom + 4 })
+            }}
+            onMouseLeave={() => { setHoveredParam(null); setTooltipPos(null) }}
+          >
+            <div className="cmd-label">{cmd.label}</div>
+            <div className="cmd-arg">{cmd.short ? `${cmd.short}, ` : ''}{cmd.arg}</div>
+          </div>
         <div className="cmd-input-group">
           {cmd.type === 'boolean' && (
             <div className="toggle-wrap">
@@ -237,7 +248,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
             </div>
           )}
 
-          <div className="params-search-box" style={{ margin: '0 20px 8px' }}>
+          <div className="params-search-box" style={{ margin: '0 20px 16px' }}>
             <Search size={16} style={{ color: 'var(--text-muted)' }} />
             <input
               type="text"
@@ -310,6 +321,17 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
               </span>
             ))}
           </div>
+          {hoveredParam && tooltipPos && (() => {
+            const desc = currentCommands.find(c => c.arg === hoveredParam)?.description
+            return desc ? (
+              <div
+                className="tooltip visible"
+                style={{ position: 'fixed', left: tooltipPos.x, top: tooltipPos.y, zIndex: 10000 }}
+              >
+                {desc}
+              </div>
+            ) : null
+          })()}
         </div>
       </div>
     </div>

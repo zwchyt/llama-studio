@@ -19,6 +19,7 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
   const [searchQuery, setSearchQuery] = useState('')
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set())
   const [hoveredParam, setHoveredParam] = useState<string | null>(null)
+  const [descTooltip, setDescTooltip] = useState<{ text: string; x: number; y: number } | null>(null)
   const [copiedParam, setCopiedParam] = useState<string | null>(null)
   const initialSchemaRef = useRef(true)
 
@@ -163,12 +164,18 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
     const isActive = args[cmd.arg] !== undefined && args[cmd.arg] !== false && args[cmd.arg] !== ''
     return (
       <div key={cmd.arg} className={`cmd-row ${isActive ? 'active-param' : ''} ${cmd.type === 'text' ? 'cmd-row-full' : ''}`}>
-          <div className="cmd-label-group tooltip-wrap">
+          <div
+            className="cmd-label-group"
+            onMouseEnter={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect()
+              setDescTooltip({ text: cmd.description, x: rect.left, y: rect.bottom + 4 })
+            }}
+            onMouseLeave={() => setDescTooltip(null)}
+          >
             <div className="cmd-label">
               {cmd.label}
             </div>
             <div className="cmd-arg">{cmd.short ? `${cmd.short}, ` : ''}{cmd.arg}</div>
-            <span className="tooltip">{cmd.description}</span>
           </div>
         <div className="cmd-input-group">
           {cmd.type === 'boolean' && (
@@ -301,6 +308,14 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
           </div>
         </div>
       </div>
+      {descTooltip && (
+        <div
+          className="tooltip visible"
+          style={{ position: 'fixed', left: descTooltip.x, top: descTooltip.y, zIndex: 10000 }}
+        >
+          {descTooltip.text}
+        </div>
+      )}
     </div>
   )
 }

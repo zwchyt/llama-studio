@@ -59,13 +59,58 @@ function parseThinkSegments(content: string): ContentSegment[] {
   return segments
 }
 
-// 思考块：可折叠
+// 思考块：可折叠（流式时自动展开，完成后自动折叠）
+const THINK_THROTTLE_MS = 120 // 流式文本节流间隔，避免每个 delta 都重渲染长文本
+
 const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, autoExpand }: { value: string; closed: boolean; isStreaming?: boolean; autoExpand?: boolean }) {
   const [expanded, setExpanded] = useState(autoExpand ?? false)
+  const userToggledRef = useRef(false)
   const thinking = !closed || isStreaming
+  const bodyRef = useRef<HTMLDivElement>(null)
+
+  // 节流显示文本：流式时按固定间隔更新，避免每个 token 都触发长文本重排
+  const [displayValue, setDisplayValue] = useState(value)
+  useEffect(() => {
+    if (!thinking) {
+      setDisplayValue(value)
+      return
+    }
+    setDisplayValue(value)
+    const timer = setInterval(() => {
+      setDisplayValue(value)
+    }, THINK_THROTTLE_MS)
+    return () => clearInterval(timer)
+  }, [value, thinking])
+
+  // 流式思考时自动滚动到底部
+  useEffect(() => {
+    if (thinking && expanded && bodyRef.current) {
+      bodyRef.current.scrollTop = bodyRef.current.scrollHeight
+    }
+  }, [displayValue, thinking, expanded])
+
+  useEffect(() => {
+    if (userToggledRef.current) return
+    setExpanded(!!thinking)
+  }, [thinking])
+
+  // 思考阶段结束时重置手动标记，下次可再次自动展开
+  const prevThinkingRef = useRef(thinking)
+  useEffect(() => {
+    if (prevThinkingRef.current && !thinking) {
+      userToggledRef.current = false
+    }
+    prevThinkingRef.current = thinking
+  }, [thinking])
+
+  const handleToggle = () => {
+    userToggledRef.current = true
+    setExpanded(v => !v)
+  }
+
   return (
     <div className={`chat-think ${thinking ? 'thinking' : ''} ${expanded ? 'expanded' : ''}`}>
-      <button className="chat-think-toggle" onClick={() => setExpanded(!expanded)}>
+      <button className="chat-think-toggle" onClick={handleToggle}>
         {thinking ? (
           <span className="chat-think-status">
             <RefreshCw size={12} className="spin" />
@@ -80,14 +125,14 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
         <ChevronDown size={13} className={`chat-think-chevron ${expanded ? 'open' : ''}`} />
       </button>
       {expanded && (
-        <div className="chat-think-body">{value || '（空）'}</div>
+        <div className="chat-think-body" ref={bodyRef}>{displayValue || '（空）'}</div>
       )}
     </div>
   )
 })
 
 // ── 单条消息 ───────────────────────────────────────────────
-function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate }: {
+const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate }: {
   msg: ChatMessage
   isStreaming?: boolean
   onCopy?: () => void
@@ -198,7 +243,7 @@ function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate }: {
       )}
     </div>
   )
-}
+})
 
 // ── 左栏：会话列表 ─────────────────────────────────────────
 function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRequest, runningModels }: {
@@ -322,7 +367,7 @@ export default function ChatView() {
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
   const [deletingSession, setDeletingSession] = useState<ChatSession | null>(null)
   // 看门狗：防止流卡住导致输入框永久冻结
   const streamWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
