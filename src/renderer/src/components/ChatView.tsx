@@ -4,12 +4,12 @@ import remarkGfm from 'remark-gfm'
 import {
   Plus, Send, Square, Trash2, Pencil, MessageSquare,
   ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain, RefreshCw,
-  Copy, Check, RotateCcw, ArrowDown, X, Eye
+  Copy, Check, RotateCcw, ArrowDown, X, Eye, SlidersHorizontal
 } from 'lucide-react'
-import { useChatStore, buildOpenAiMessages } from '../store/chatStore'
+import { useChatStore, buildOpenAiMessages, DEFAULT_PARAMS } from '../store/chatStore'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
-import type { ChatSession, ChatMessage } from '../../../shared/types'
+import type { ChatSession, ChatMessage, ChatParams } from '../../../shared/types'
 import CodeBlock from './CodeBlock'
 import ConfirmModal from './ConfirmModal'
 
@@ -341,16 +341,16 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
         {/* 悬停操作栏 */}
         {msg.content && !msg.error && (
           <div className="chat-msg-actions">
-            <button className="chat-msg-action-btn" onClick={handleCopy} title="复制">
+            <button className="chat-msg-action-btn" onClick={handleCopy}>
               {copied ? <Check size={13} /> : <Copy size={13} />}
             </button>
             {isUser && onEdit && (
-              <button className="chat-msg-action-btn" onClick={onEdit} title="编辑">
+              <button className="chat-msg-action-btn" onClick={onEdit}>
                 <Pencil size={13} />
               </button>
             )}
             {!isUser && onRegenerate && (
-              <button className="chat-msg-action-btn" onClick={onRegenerate} title="重新生成">
+              <button className="chat-msg-action-btn" onClick={onRegenerate}>
                 <RotateCcw size={13} />
               </button>
             )}
@@ -396,7 +396,6 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRe
         <button
           className="btn btn-primary btn-sm"
           onClick={onNew}
-          title="新建对话"
         >
           <Plus size={13} /> 新建
         </button>
@@ -404,7 +403,7 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRe
       <div className="chat-session-list">
         {sessions.length === 0 ? (
           <div className="chat-session-empty">
-            '点击「新建」开始第一个对话。'
+            点击「新建」开始第一个对话。
           </div>
         ) : sessions.map((s) => {
           const model = runningModels.find((m) => m.id === s.templateId)
@@ -436,14 +435,12 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRe
                     <button
                       className="chat-session-btn"
                       onClick={(e) => { e.stopPropagation(); startEdit(s) }}
-                      title="重命名"
                     >
                       <Pencil size={12} />
                     </button>
                     <button
                       className="chat-session-btn danger"
                       onClick={(e) => { e.stopPropagation(); onDeleteRequest(s) }}
-                      title="删除"
                     >
                       <Trash2 size={12} />
                     </button>
@@ -454,6 +451,144 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRe
           )
         })}
       </div>
+    </div>
+  )
+}
+
+// ── 参数/系统提示词设置弹窗 ───────────────────────────────
+const PARAM_CONFIG: Array<{
+  key: keyof ChatParams
+  label: string
+  min: number
+  max: number
+  step: number
+  defaultVal: number
+}> = [
+  { key: 'temperature', label: 'Temperature', min: 0, max: 2, step: 0.1, defaultVal: DEFAULT_PARAMS.temperature ?? 0.8 },
+  { key: 'top_p', label: 'Top P', min: 0, max: 1, step: 0.05, defaultVal: DEFAULT_PARAMS.top_p ?? 0.95 },
+  { key: 'top_k', label: 'Top K', min: 0, max: 200, step: 1, defaultVal: DEFAULT_PARAMS.top_k ?? 40 },
+  { key: 'max_tokens', label: 'Max Tokens', min: -1, max: 8192, step: 1, defaultVal: DEFAULT_PARAMS.max_tokens ?? -1 },
+  { key: 'repeat_penalty', label: 'Repeat Penalty', min: 0, max: 2, step: 0.1, defaultVal: DEFAULT_PARAMS.repeat_penalty ?? 1.1 },
+]
+
+function ChatSettingsCard({ session, anchorRect, onClose, onSetSystemPrompt, onSetParams }: {
+  session: ChatSession | null
+  anchorRect: DOMRect | null
+  onClose: () => void
+  onSetSystemPrompt: (prompt: string) => void
+  onSetParams: (params: Partial<ChatParams>) => void
+}) {
+  const [sysPrompt, setSysPrompt] = useState(session?.systemPrompt || '')
+  const [params, setLocalParams] = useState<ChatParams>(session ? { ...session.params } : { ...DEFAULT_PARAMS })
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  const handleSysPromptBlur = () => {
+    if (!session) return
+    if (sysPrompt !== (session.systemPrompt || '')) {
+      onSetSystemPrompt(sysPrompt)
+    }
+  }
+
+  const handleParamChange = (key: keyof ChatParams, val: number) => {
+    if (!session) return
+    const next = { ...params, [key]: val }
+    setLocalParams(next)
+    onSetParams({ [key]: val })
+  }
+
+  const handleReset = () => {
+    if (!session) return
+    setLocalParams({ ...DEFAULT_PARAMS })
+    onSetParams(DEFAULT_PARAMS)
+  }
+
+  const sysPromptRef = useRef(sysPrompt)
+  useEffect(() => { sysPromptRef.current = sysPrompt }, [sysPrompt])
+
+  const handleClose = useCallback(() => {
+    if (session && sysPromptRef.current !== (session.systemPrompt || '')) {
+      onSetSystemPrompt(sysPromptRef.current)
+    }
+    onClose()
+  }, [session, onSetSystemPrompt, onClose])
+
+  // 点击外部关闭
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (cardRef.current && !cardRef.current.contains(e.target as Node)) {
+        handleClose()
+      }
+    }
+    // 延迟注册避免触发当前 click
+    const timer = setTimeout(() => document.addEventListener('mousedown', handler), 0)
+    return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler) }
+  }, [handleClose])
+
+  // ESC 关闭
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') handleClose() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [handleClose])
+
+  // 计算卡片位置：在按钮下方，右对齐
+  const style: React.CSSProperties = { position: 'fixed', zIndex: 1100 }
+  if (anchorRect) {
+    style.top = anchorRect.bottom + 6
+    style.right = window.innerWidth - anchorRect.right
+  }
+
+  return (
+    <div className="chat-settings-card" ref={cardRef} style={style}>
+      {!session ? (
+        <div className="chat-settings-empty">
+          <SlidersHorizontal size={24} strokeWidth={1.2} style={{ opacity: 0.3 }} />
+          <p>请先选择或创建一个会话</p>
+        </div>
+      ) : (
+        <>
+          <div className="chat-settings-card-header">
+            <span className="chat-settings-card-title">会话参数</span>
+            <button className="chat-settings-card-reset" onClick={handleReset}>恢复默认</button>
+          </div>
+
+          {/* System Prompt */}
+          <div className="chat-settings-section">
+            <label className="chat-settings-label">System Prompt</label>
+            <textarea
+              className="chat-settings-textarea"
+              value={sysPrompt}
+              onChange={(e) => setSysPrompt(e.target.value)}
+              onBlur={handleSysPromptBlur}
+              placeholder="设置系统提示词…"
+              rows={3}
+            />
+          </div>
+
+          {/* 参数滑块 */}
+          {PARAM_CONFIG.map(({ key, label, min, max, step, defaultVal }) => {
+            const val = (params[key] ?? defaultVal) as number
+            return (
+              <div className="chat-settings-param" key={String(key)}>
+                <div className="chat-settings-param-header">
+                  <span className="chat-settings-param-name">{label}</span>
+                  <span className="chat-settings-param-value">{val}</span>
+                </div>
+                <input
+                  type="range"
+                  min={min}
+                  max={max}
+                  step={step}
+                  value={val}
+                  onChange={(e) => handleParamChange(key, parseFloat(e.target.value))}
+                />
+              </div>
+            )
+          })}
+
+          <div className="chat-settings-hint">参数在下次发送消息时生效，无需重启模型</div>
+        </>
+      )}
     </div>
   )
 }
@@ -479,6 +614,8 @@ export default function ChatView() {
   const persist = useChatStore((s) => s.persist)
   const truncateAfter = useChatStore((s) => s.truncateAfter)
 
+  const setSystemPrompt = useChatStore((s) => s.setSystemPrompt)
+  const setParams = useChatStore((s) => s.setParams)
   const cards = useStore((s) => s.cards)
   const setView = useStore((s) => s.setView)
   const runningModels = useMemo(
@@ -497,6 +634,9 @@ export default function ChatView() {
   const [deletingSession, setDeletingSession] = useState<ChatSession | null>(null)
   // 输入框代码预览：用户手动关闭后，任意输入变化即可重新触发
   const [inputPreviewDismissed, setInputPreviewDismissed] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const settingsBtnRef = useRef<HTMLButtonElement>(null)
+  const [settingsAnchor, setSettingsAnchor] = useState<DOMRect | null>(null)
 
   // 只有实际存在代码块时才显示预览（避免空壳子）
   const hasCodeBlocks = useMemo(() => {
@@ -865,7 +1005,6 @@ export default function ChatView() {
           <button
             className="chat-collapse-btn"
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            title={sidebarCollapsed ? '展开会话列表' : '折叠会话列表'}
           >
             {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           </button>
@@ -875,7 +1014,6 @@ export default function ChatView() {
               className="chat-model-select"
               value={activeSession && runningModels.length > 0 ? activeSession.templateId : ''}
               onChange={(e) => handleSwitchModel(e.target.value)}
-              title={runningModels.length === 0 ? '请先启动模型' : '切换本会话使用的模型'}
               disabled={runningModels.length === 0}
             >
               {runningModels.length === 0 ? (
@@ -885,6 +1023,18 @@ export default function ChatView() {
               ))}
             </select>
           </div>
+          <button
+            ref={settingsBtnRef}
+            className="chat-settings-btn"
+            onClick={() => {
+              if (settingsBtnRef.current) {
+                setSettingsAnchor(settingsBtnRef.current.getBoundingClientRect())
+              }
+              setShowSettings((v) => !v)
+            }}
+          >
+            <SlidersHorizontal size={16} />
+          </button>
         </div>
 
         <div className="chat-messages" ref={messagesContainerRef} onScroll={handleScroll}>
@@ -893,7 +1043,28 @@ export default function ChatView() {
               <div className="chat-welcome">
                 <Bot size={40} style={{ opacity: 0.3 }} />
                 {activeModel ? (
-                  <p>向 {activeModel.name} 提个问题吧</p>
+                  <>
+                    <p>向 {activeModel.name} 提个问题吧</p>
+                    <div className="chat-welcome-suggestions">
+                      <span className="chat-welcome-suggestions-label">试试这些提问</span>
+                      <div className="chat-welcome-suggestions-grid">
+                        {[
+                          '用简单的语言解释一下量子计算',
+                          '帮我写一段 Python 快速排序',
+                          '给我讲一个有趣的冷知识',
+                          '帮我总结今天的要点',
+                        ].map((q) => (
+                          <button
+                            key={q}
+                            className="chat-welcome-suggestion-btn"
+                            onClick={() => { setInput(q); inputRef.current?.focus() }}
+                          >
+                            {q}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </>
                 ) : (
                   <div>
                     <p>该会话的模型未运行，无法发送消息</p>
@@ -930,13 +1101,34 @@ export default function ChatView() {
                 </div>
                 <div className="chat-welcome-tip">
                   <Pencil size={16} />
-                  <span>双击会话名可重命名</span>
+                  <span>点铅笔图标可重命名</span>
                 </div>
                 <div className="chat-welcome-tip">
                   <Trash2 size={16} />
-                  <span>删除不需要的会话</span>
+                  <span>悬停会话可删除</span>
                 </div>
               </div>
+              {runningModels.length > 0 && (
+                <div className="chat-welcome-suggestions">
+                  <span className="chat-welcome-suggestions-label">试试这些提问</span>
+                  <div className="chat-welcome-suggestions-grid">
+                    {[
+                      '用简单的语言解释一下量子计算',
+                      '帮我写一段 Python 快速排序',
+                      '给我讲一个有趣的冷知识',
+                      '帮我总结今天的要点',
+                    ].map((q) => (
+                      <button
+                        key={q}
+                        className="chat-welcome-suggestion-btn"
+                        onClick={() => { setInput(q); inputRef.current?.focus() }}
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           <div ref={messagesEndRef} />
@@ -947,7 +1139,6 @@ export default function ChatView() {
                 setAutoScroll(true)
                 messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
               }}
-              title="回到底部"
             >
               <ArrowDown size={16} />
             </button>
@@ -963,7 +1154,6 @@ export default function ChatView() {
               <button
                 className="chat-input-preview-close"
                 onClick={() => setInputPreviewDismissed(true)}
-                title="关闭预览"
               >
                 <X size={12} />
               </button>
@@ -978,6 +1168,9 @@ export default function ChatView() {
           <textarea
             ref={inputRef}
             className="chat-input"
+            spellCheck={false}
+            autoComplete="off"
+            autoCorrect="off"
             placeholder={
               streamingId
                 ? '正在生成，可发送新消息（将自动停止当前流）…'
@@ -992,7 +1185,7 @@ export default function ChatView() {
             disabled={!activeModel}
           />
           {streamingId ? (
-            <button className="btn btn-danger chat-send-btn" onClick={handleStop} title="停止生成">
+            <button className="btn btn-danger chat-send-btn" onClick={handleStop}>
               <Square size={15} />
             </button>
           ) : (
@@ -1000,7 +1193,6 @@ export default function ChatView() {
               className="btn btn-primary chat-send-btn"
               onClick={handleSend}
               disabled={!input.trim() || !activeModel}
-              title={!activeModel ? '请先启动模型' : '发送'}
             >
               <Send size={15} />
             </button>
@@ -1008,6 +1200,17 @@ export default function ChatView() {
         </div>
 
       </div>
+
+      {/* 参数/系统提示词设置卡片 */}
+      {showSettings && (
+        <ChatSettingsCard
+          session={activeSession}
+          anchorRect={settingsAnchor}
+          onClose={() => setShowSettings(false)}
+          onSetSystemPrompt={(prompt) => activeSession && setSystemPrompt(activeSession.id, prompt)}
+          onSetParams={(params) => activeSession && setParams(activeSession.id, params)}
+        />
+      )}
 
       <ConfirmModal
         open={deletingSession !== null}
