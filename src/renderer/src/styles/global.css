@@ -3418,7 +3418,6 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   overflow-y: auto;
   padding: 18px 0 8px;
   min-height: 0;
-  scroll-behavior: smooth;
   position: relative;
 }
 
@@ -3874,6 +3873,77 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 /* ── 输入框 ── */
+
+/* 输入代码预览面板 */
+.chat-input-preview {
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto 8px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.chat-input-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  background: var(--surface-hover);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.chat-input-preview-header span {
+  flex: 1;
+}
+
+.chat-input-preview-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  transition: background var(--transition), color var(--transition);
+}
+
+.chat-input-preview-close:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.chat-input-preview-body {
+  padding: 10px 14px;
+  max-height: 280px;
+  overflow-y: auto;
+  font-size: 14px;
+  line-height: 1.65;
+  word-wrap: break-word;
+}
+
+.chat-input-preview-body .user-text {
+  white-space: pre-wrap;
+}
+
+.chat-input-preview-body .chat-code-block {
+  margin: 8px 0;
+}
+
+.chat-input-preview-body .chat-code-block:first-child {
+  margin-top: 0;
+}
+
+.chat-input-preview-body .chat-code-block:last-child {
+  margin-bottom: 0;
+}
+
 .chat-input-wrap {
   display: flex;
   align-items: flex-end;

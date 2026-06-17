@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   Plus, Send, Square, Trash2, Pencil, MessageSquare,
   ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain, RefreshCw,
-  Copy, Check, RotateCcw, ArrowDown
+  Copy, Check, RotateCcw, ArrowDown, X, Eye
 } from 'lucide-react'
 import { useChatStore, buildOpenAiMessages } from '../store/chatStore'
 import { useStore } from '../store/useStore'
@@ -136,23 +136,85 @@ type UserBlock =
   | { type: 'code'; lang: string; code: string }
   | { type: 'text'; text: string }
 
-function parseUserContent(content: string): UserBlock[] {
+// 缩进代码块检测：连续 2+ 行以 4 空格或 Tab 开头，自动识别为代码块
+function parseIndentedBlocks(text: string): UserBlock[] {
+  const lines = text.split('\n')
   const blocks: UserBlock[] = []
-  // 匹配围栏代码块：```lang?\n...\n```
-  const fenceRe = /```(\w*)\n([\s\S]*?)```/g
+  let textBuf: string[] = []
+  let codeBuf: string[] = []
+  let inCode = false
+
+  const flushText = () => {
+    if (textBuf.length > 0) {
+      blocks.push({ type: 'text', text: textBuf.join('\n') })
+      textBuf = []
+    }
+  }
+  const flushCode = () => {
+    if (codeBuf.length > 0) {
+      const code = codeBuf.map(l => l.replace(/^( {4}|\t)/, '')).join('\n').replace(/^\n+|\n+$/g, '')
+      blocks.push({ type: 'code', lang: '', code })
+      codeBuf = []
+    }
+    inCode = false
+  }
+
+  for (const line of lines) {
+    const indented = /^( {4,}|\t)/.test(line)
+    if (indented) {
+      codeBuf.push(line)
+      if (!inCode && codeBuf.length >= 2) {
+        flushText()
+        inCode = true
+      }
+    } else {
+      if (inCode) {
+        flushCode()
+      } else {
+        // 未确认代码块前，缩进行先归入文本缓冲区
+        if (codeBuf.length > 0) {
+          textBuf.push(...codeBuf)
+          codeBuf = []
+        }
+        textBuf.push(line)
+      }
+    }
+  }
+  if (inCode) flushCode()
+  else {
+    if (codeBuf.length > 0) textBuf.push(...codeBuf)
+    flushText()
+  }
+  return blocks
+}
+
+function parseUserContent(content: string): UserBlock[] {
+  // 第一步：用围栏代码块（```）切分
+  const fenceRe = /```(\w*)\s*\r?\n([\s\S]*?)```/g
+  const rawSegments: UserBlock[] = []
   let lastIdx = 0
   let m: RegExpExecArray | null
   while ((m = fenceRe.exec(content)) !== null) {
     if (m.index > lastIdx) {
-      blocks.push({ type: 'text', text: content.slice(lastIdx, m.index) })
+      rawSegments.push({ type: 'text', text: content.slice(lastIdx, m.index) })
     }
-    blocks.push({ type: 'code', lang: m[1] || '', code: m[2] })
+    rawSegments.push({ type: 'code', lang: m[1] || '', code: m[2] })
     lastIdx = m.index + m[0].length
   }
   if (lastIdx < content.length) {
-    blocks.push({ type: 'text', text: content.slice(lastIdx) })
+    rawSegments.push({ type: 'text', text: content.slice(lastIdx) })
   }
-  return blocks
+
+  // 第二步：在每个纯文本片段内检测缩进代码块
+  const result: UserBlock[] = []
+  for (const seg of rawSegments) {
+    if (seg.type === 'code') {
+      result.push(seg)
+    } else {
+      result.push(...parseIndentedBlocks(seg.text))
+    }
+  }
+  return result
 }
 
 // 将纯文本片段切分为「普通文本 / 行内代码」序列
@@ -429,9 +491,28 @@ export default function ChatView() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const lastScrollSessionRef = useRef<string | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
   const [deletingSession, setDeletingSession] = useState<ChatSession | null>(null)
+  // 输入框代码预览：用户手动关闭后，任意输入变化即可重新触发
+  const [inputPreviewDismissed, setInputPreviewDismissed] = useState(false)
+
+  // 只有实际存在代码块时才显示预览（避免空壳子）
+  const hasCodeBlocks = useMemo(() => {
+    return /```(\w*)\s*\r?\n[\s\S]*?```/.test(input) ||
+      (() => {
+        const lines = input.split('\n')
+        let run = 0
+        for (const line of lines) {
+          run = /^( {4,}|\t)/.test(line) ? run + 1 : 0
+          if (run >= 2) return true
+        }
+        return false
+      })()
+  }, [input])
+
+  const showInputPreview = hasCodeBlocks && !inputPreviewDismissed
   // 看门狗：防止流卡住导致输入框永久冻结
   const streamWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const firstChunkReceivedRef = useRef(false)
@@ -513,12 +594,20 @@ export default function ChatView() {
     }
   }, [])
 
-  // 自动滚动到底部
-  useEffect(() => {
-    if (autoScroll && messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
+  // 自动滚动到底部（切换会话时在绘制前同步跳转，消除闪烁）
+  useLayoutEffect(() => {
+    const container = messagesContainerRef.current
+    if (!autoScroll || !container || !activeSessionId) return
+    if (lastScrollSessionRef.current !== activeSessionId) {
+      // 切换会话：直接将滚动条拉到底部，无动画
+      lastScrollSessionRef.current = activeSessionId
+      container.scrollTop = container.scrollHeight
+    } else {
+      // 同一会话新消息：平滑滚动到底部
+      const target = container.scrollHeight
+      container.scrollTo({ top: target, behavior: 'smooth' })
     }
-  }, [activeMessages.length, activeMessages[activeMessages.length - 1]?.content, autoScroll])
+  }, [activeSessionId, activeMessages.length, activeMessages[activeMessages.length - 1]?.content, autoScroll])
 
   // 监听滚动：用户上滚则暂停自动滚动
   const handleScroll = useCallback(() => {
@@ -667,6 +756,8 @@ export default function ChatView() {
   // textarea 自适应高度 + Enter 发送
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value)
+    // 任意输入变化（包括空格）均可重新触发代码预览
+    setInputPreviewDismissed(false)
     const el = e.target
     el.style.height = 'auto'
     el.style.height = Math.min(el.scrollHeight, 200) + 'px'
@@ -862,6 +953,26 @@ export default function ChatView() {
             </button>
           )}
         </div>
+
+        {/* 输入代码预览：独立于输入框，置于其上方 */}
+        {showInputPreview && (
+          <div className="chat-input-preview">
+            <div className="chat-input-preview-header">
+              <Eye size={12} />
+              <span>代码预览</span>
+              <button
+                className="chat-input-preview-close"
+                onClick={() => setInputPreviewDismissed(true)}
+                title="关闭预览"
+              >
+                <X size={12} />
+              </button>
+            </div>
+            <div className="chat-input-preview-body">
+              <UserMessageContent content={input} />
+            </div>
+          </div>
+        )}
 
         <div className={`chat-input-wrap${streamingId ? ' streaming' : ''}`}>
           <textarea
