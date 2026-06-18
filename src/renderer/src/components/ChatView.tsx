@@ -471,12 +471,14 @@ const PARAM_CONFIG: Array<{
   { key: 'repeat_penalty', label: 'Repeat Penalty', min: 0, max: 2, step: 0.1, defaultVal: DEFAULT_PARAMS.repeat_penalty ?? 1.1 },
 ]
 
-function ChatSettingsCard({ session, anchorRect, onClose, onSetSystemPrompt, onSetParams }: {
+function ChatSettingsCard({ session, anchorRect, onClose, onSetSystemPrompt, onSetParams, onMouseEnter, onMouseLeave }: {
   session: ChatSession | null
   anchorRect: DOMRect | null
   onClose: () => void
   onSetSystemPrompt: (prompt: string) => void
   onSetParams: (params: Partial<ChatParams>) => void
+  onMouseEnter?: () => void
+  onMouseLeave?: () => void
 }) {
   const [sysPrompt, setSysPrompt] = useState(session?.systemPrompt || '')
   const [params, setLocalParams] = useState<ChatParams>(session ? { ...session.params } : { ...DEFAULT_PARAMS })
@@ -539,7 +541,7 @@ function ChatSettingsCard({ session, anchorRect, onClose, onSetSystemPrompt, onS
   }
 
   return (
-    <div className="chat-settings-card" ref={cardRef} style={style}>
+    <div className="chat-settings-card" ref={cardRef} style={style} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
       {!session ? (
         <div className="chat-settings-empty">
           <SlidersHorizontal size={24} strokeWidth={1.2} style={{ opacity: 0.3 }} />
@@ -637,6 +639,37 @@ export default function ChatView() {
   const [showSettings, setShowSettings] = useState(false)
   const settingsBtnRef = useRef<HTMLButtonElement>(null)
   const [settingsAnchor, setSettingsAnchor] = useState<DOMRect | null>(null)
+  const settingsHoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
+
+  useEffect(() => {
+    return () => {
+      if (settingsHoverTimeoutRef.current) clearTimeout(settingsHoverTimeoutRef.current)
+    }
+  }, [])
+
+  function handleSettingsEnter(): void {
+    if (settingsHoverTimeoutRef.current) clearTimeout(settingsHoverTimeoutRef.current)
+    if (settingsBtnRef.current) {
+      setSettingsAnchor(settingsBtnRef.current.getBoundingClientRect())
+    }
+    setShowSettings(true)
+  }
+
+  function handleSettingsLeave(): void {
+    settingsHoverTimeoutRef.current = setTimeout(() => {
+      setShowSettings(false)
+    }, 300)
+  }
+
+  function handleSettingsCardEnter(): void {
+    if (settingsHoverTimeoutRef.current) clearTimeout(settingsHoverTimeoutRef.current)
+  }
+
+  function handleSettingsCardLeave(): void {
+    settingsHoverTimeoutRef.current = setTimeout(() => {
+      setShowSettings(false)
+    }, 300)
+  }
 
   // 只有实际存在代码块时才显示预览（避免空壳子）
   const hasCodeBlocks = useMemo(() => {
@@ -1032,6 +1065,8 @@ export default function ChatView() {
               }
               setShowSettings((v) => !v)
             }}
+            onMouseEnter={handleSettingsEnter}
+            onMouseLeave={handleSettingsLeave}
           >
             <SlidersHorizontal size={16} />
           </button>
@@ -1209,6 +1244,8 @@ export default function ChatView() {
           onClose={() => setShowSettings(false)}
           onSetSystemPrompt={(prompt) => activeSession && setSystemPrompt(activeSession.id, prompt)}
           onSetParams={(params) => activeSession && setParams(activeSession.id, params)}
+          onMouseEnter={handleSettingsCardEnter}
+          onMouseLeave={handleSettingsCardLeave}
         />
       )}
 

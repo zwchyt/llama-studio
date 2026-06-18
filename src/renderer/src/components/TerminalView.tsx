@@ -11,10 +11,14 @@ function NewTerminalPopover({
   anchorRef,
   onOpen,
   onClose,
+  onMouseEnter,
+  onMouseLeave,
 }: {
   anchorRef: React.RefObject<HTMLButtonElement | null>
   onOpen: (cwd?: string) => void
   onClose: () => void
+  onMouseEnter?: () => void
+  onMouseLeave?: () => void
 }): JSX.Element {
   const [cwd, setCwd] = useState(() => localStorage.getItem(CWD_KEY) || '')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -61,7 +65,7 @@ function NewTerminalPopover({
   }
 
   return (
-    <div className="terminal-new-popover">
+    <div className="terminal-new-popover" onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
       <div className="terminal-popover-header">
         <span>新建终端</span>
         <button className="terminal-popover-close" onClick={onClose}>
@@ -97,11 +101,16 @@ function NewTerminalPopover({
 function TerminalTabBar(): JSX.Element {
   const { sessions, activeId, setActive, close, open } = useTerminalStore()
   const [showPopover, setShowPopover] = useState(false)
-  const addBtnRef = useRef<HTMLButtonElement>(null)
+  const dropdownRef = useRef<HTMLButtonElement>(null)
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
 
-  // 快速新建：默认目录直接打开
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
+    }
+  }, [])
+
   function handleQuickNew(e: React.MouseEvent): void {
-    // 如果按住 Shift 或弹出层已显示，则切换弹出层
     if (e.shiftKey) {
       setShowPopover(v => !v)
       return
@@ -110,6 +119,27 @@ function TerminalTabBar(): JSX.Element {
   }
 
   const handleClosePopover = useCallback(() => setShowPopover(false), [])
+
+  function handleDropdownEnter(): void {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
+    setShowPopover(true)
+  }
+
+  function handleDropdownLeave(): void {
+    hoverTimeoutRef.current = setTimeout(() => {
+      setShowPopover(false)
+    }, 300)
+  }
+
+  function handlePopoverEnter(): void {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
+  }
+
+  function handlePopoverLeave(): void {
+    hoverTimeoutRef.current = setTimeout(() => {
+      setShowPopover(false)
+    }, 300)
+  }
 
   return (
     <div className="terminal-tabbar">
@@ -132,7 +162,6 @@ function TerminalTabBar(): JSX.Element {
       </div>
       <div className="terminal-tabbar-actions">
         <button
-          ref={addBtnRef}
           className={`terminal-tab-add ${showPopover ? 'active' : ''}`}
           onClick={handleQuickNew}
           title="新建终端（Shift+点击指定目录）"
@@ -140,17 +169,22 @@ function TerminalTabBar(): JSX.Element {
           <Plus size={15} strokeWidth={2} />
         </button>
         <button
+          ref={dropdownRef}
           className={`terminal-tab-dropdown-toggle ${showPopover ? 'active' : ''}`}
           onClick={() => setShowPopover(v => !v)}
+          onMouseEnter={handleDropdownEnter}
+          onMouseLeave={handleDropdownLeave}
           title="指定工作目录新建终端"
         >
           <ChevronDown size={12} strokeWidth={2} />
         </button>
         {showPopover && (
           <NewTerminalPopover
-            anchorRef={addBtnRef}
+            anchorRef={dropdownRef}
             onOpen={open}
             onClose={handleClosePopover}
+            onMouseEnter={handlePopoverEnter}
+            onMouseLeave={handlePopoverLeave}
           />
         )}
       </div>
