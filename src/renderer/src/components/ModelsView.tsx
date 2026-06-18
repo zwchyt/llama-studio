@@ -5,8 +5,10 @@ import {
   HardDrive, Download, Trash, Pause, Play, X, Link, FolderOpen,
   Pencil, Check, AlertCircle, Loader2, RefreshCw, Search
 } from 'lucide-react'
-import { formatBytes, formatSpeed } from '../utils/format'
+import { formatBytes } from '../utils/format'
+import { formatDownloadStatus } from '../utils/downloadFormat'
 import { notify } from '../store/notificationStore'
+import { safeCall } from '../utils/safeCall'
 function UrlDownloadModal({ onClose }: { onClose: () => void }) {
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
@@ -85,7 +87,7 @@ function UrlDownloadModal({ onClose }: { onClose: () => void }) {
   )
 }
 function DownloadRow({ dl }: { dl: ModelDownloadInfo }) {
-  const { removeModelDownload } = useStore()
+  const removeModelDownload = useStore(s => s.removeModelDownload)
   const isPaused = dl.phase === 'paused'
   const isDone = dl.phase === 'done'
   const isErr = dl.phase === 'error'
@@ -96,10 +98,12 @@ function DownloadRow({ dl }: { dl: ModelDownloadInfo }) {
   async function togglePause() {
     if (isPaused) {
       setPending('resuming')
-      await window.api.resumeModelDownload(dl.id)
+      const ok = await safeCall(() => window.api.resumeModelDownload(dl.id), '继续下载失败')
+      if (ok === null) { setPending(null); return }
     } else {
       setPending('pausing')
-      await window.api.pauseModelDownload(dl.id)
+      const ok = await safeCall(() => window.api.pauseModelDownload(dl.id), '暂停下载失败')
+      if (ok === null) { setPending(null); return }
     }
     
     clearTimeout(pendingTimerRef.current)
@@ -110,7 +114,8 @@ function DownloadRow({ dl }: { dl: ModelDownloadInfo }) {
     return () => clearTimeout(pendingTimerRef.current)
   }, [])
   async function cancel() {
-    await window.api.cancelModelDownload(dl.id)
+    const ok = await safeCall(() => window.api.cancelModelDownload(dl.id), '取消下载失败')
+    if (ok === null) return
     removeModelDownload(dl.id)
   }
 
@@ -119,15 +124,7 @@ function DownloadRow({ dl }: { dl: ModelDownloadInfo }) {
     ? '暂停中…'
     : pending === 'resuming'
     ? '恢复中…'
-    : isPaused
-    ? '已暂停'
-    : isErr
-    ? '错误'
-    : isDone
-    ? '已完成'
-    : showSpeed
-    ? formatSpeed(dl.speed)
-    : `${dl.percent}%`
+    : formatDownloadStatus({ phase: dl.phase, percent: dl.percent, speed: showSpeed ? dl.speed : undefined })
 
   return (
     <div className={`models-dl-row ${isDone ? 'done' : ''} ${isErr ? 'error' : ''}`}>
@@ -183,13 +180,15 @@ function ModelFileRow({ model, onDeleted }: { model: ModelFileInfo; onDeleted: (
   }, [model.name])
   async function handleDelete() {
     if (!confirm(`确定删除 "${model.name}"？此操作不可撤销。`)) return
-    const res = await window.api.deleteModel(model.path)
+    const res = await safeCall(() => window.api.deleteModel(model.path), '删除模型失败')
+    if (res === null) return
     if (res.success) onDeleted()
     else notify('删除失败：' + res.error, 'error')
   }
   async function handleRename() {
     if (!newName.trim() || newName === model.name.replace(/\.[^.]+$/, '')) { setEditing(false); return }
-    const res = await window.api.renameModel(model.path, newName.trim())
+    const res = await safeCall(() => window.api.renameModel(model.path, newName.trim()), '重命名模型失败')
+    if (res === null) return
     if (res.success) { setEditing(false); onDeleted()  }
     else notify('重命名失败：' + res.error, 'error')
   }
@@ -240,8 +239,8 @@ export default function ModelsView() {
   }, [models, filter])
   const refresh = useCallback(async () => {
     setLoading(true)
-    const m = await window.api.listModelsRefresh()
-    setModels(m)
+    const m = await safeCall(() => window.api.listModelsRefresh(), '刷新模型列表失败')
+    if (m) setModels(m)
     setLoading(false)
   }, [setModels])
 
@@ -250,7 +249,7 @@ export default function ModelsView() {
 
     window.api.listModelDownloads().then((list: any[]) => {
       list.forEach(dl => upsertModelDownload(dl))
-    })
+    }).catch((e) => console.error('[listModelDownloads]', e))
   }, [])
   const downloads = Object.values(modelDownloads)
   const activeDownloads = downloads.filter(d => d.phase !== 'cancelled')
@@ -276,7 +275,6 @@ export default function ModelsView() {
           </button>
         </div>
       </div>
-      {}
       {activeDownloads.length > 0 && (
         <div className="models-section">
           <div className="models-section-title">
@@ -285,7 +283,6 @@ export default function ModelsView() {
           {activeDownloads.map(dl => <DownloadRow key={dl.id} dl={dl} />)}
         </div>
       )}
-      {}
       <div className="models-section">
         <div className="models-section-title">
           <HardDrive size={13} /> 已安装的模型

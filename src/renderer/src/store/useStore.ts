@@ -1,6 +1,6 @@
 import { createWithEqualityFn } from 'zustand/traditional'
 import { shallow } from 'zustand/shallow'
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, RunningStatus, ModelMetrics } from '../../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, RunningStatus, ModelMetrics, ModelDownloadPhase, HfDownloadPhase } from '../../../shared/types'
 interface CardState {
   template: Template
   status: RunningStatus
@@ -14,7 +14,7 @@ export interface ModelFileInfo {
 export interface ModelDownloadInfo {
   id: string; url: string; filename: string; destPath: string
   receivedBytes: number; totalBytes: number
-  phase: 'downloading' | 'paused' | 'done' | 'error' | 'cancelled'
+  phase: ModelDownloadPhase
   percent: number; repoId?: string; speed?: number
 }
 export interface AgentStatus {
@@ -48,7 +48,7 @@ interface AppStore {
   downloadProgress: { percent: number; phase: string } | null
   templateSearch: string
   modelDownloads: Record<string, ModelDownloadInfo>
-  hfDownloads: { repoId: string; filename: string; percent: number; phase: 'downloading' | 'paused' | 'saving' | 'creating_template' | 'done' | 'error' | 'starting' | 'cancelled'; speed?: number }[]
+  hfDownloads: { repoId: string; filename: string; percent: number; phase: HfDownloadPhase; speed?: number }[]
   hubQuery: string
   hubResults: import('../../../shared/types').HubResultItem[]
   hubSelectedModelId: string | null
@@ -73,7 +73,7 @@ interface AppStore {
   setTemplateSearch: (q: string) => void
   upsertModelDownload: (d: ModelDownloadInfo) => void
   removeModelDownload: (id: string) => void
-  setHfDownload: (d: { repoId: string; filename: string; percent: number; phase: 'downloading' | 'paused' | 'saving' | 'creating_template' | 'done' | 'error' | 'starting' | 'cancelled'; speed?: number }) => void
+  setHfDownload: (d: { repoId: string; filename: string; percent: number; phase: HfDownloadPhase; speed?: number }) => void
   removeHfDownload: (filename: string) => void
   setHubQuery: (q: string) => void
   setHubResults: (r: import('../../../shared/types').HubResultItem[]) => void

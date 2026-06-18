@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
+import { safeCall } from '../utils/safeCall'
 import { Play, Square, Settings, ChevronDown, MoreVertical, Copy, Trash, Download, Globe, Server, Terminal, Check } from 'lucide-react'
 import type { CardState } from '../../../shared/types'
 import ParamsModal from './ParamsModal'
@@ -43,10 +44,13 @@ export default function ModelCard({ card }: Props) {
   }, [cardLogsExpanded])
   function handleCopyLogs() {
     const text = (logs ?? []).map(e => e.text).join('\n')
-    navigator.clipboard.writeText(text)
-    setLogCopied(true)
-    clearTimeout(logCopiedTimeoutRef.current)
-    logCopiedTimeoutRef.current = setTimeout(() => setLogCopied(false), 2000)
+    safeCall(() => navigator.clipboard.writeText(text), '复制失败').then((ok) => {
+      if (ok !== null) {
+        setLogCopied(true)
+        clearTimeout(logCopiedTimeoutRef.current)
+        logCopiedTimeoutRef.current = setTimeout(() => setLogCopied(false), 2000)
+      }
+    })
   }
   function handleClearLogs() {
     clearModelLogs(card.template.id)
@@ -54,7 +58,7 @@ export default function ModelCard({ card }: Props) {
   const [modelExists, setModelExists] = useState(true)
   useEffect(() => {
     if (!card.template.modelPath) { setModelExists(true); return }
-    window.api.checkFileExists(card.template.modelPath).then(setModelExists)
+    window.api.checkFileExists(card.template.modelPath).then(setModelExists).catch(() => setModelExists(false))
   }, [card.template.modelPath])
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -73,7 +77,8 @@ export default function ModelCard({ card }: Props) {
       clearModelMetrics(card.template.id)
       const { activeChatPort, clearActiveChat } = useStore.getState()
       if (activeChatPort === card.template.serverPort) clearActiveChat()
-      const res = await window.api.stopModel(card.template.id)
+      const res = await safeCall(() => window.api.stopModel(card.template.id), '停止模型失败')
+      if (res === null) { setCardStatus(card.template.id, 'running'); return }
       if (!res.success) notify(`停止失败：${res.error}`, 'error')
       return
     }
@@ -109,14 +114,17 @@ export default function ModelCard({ card }: Props) {
       args.push('--port', String(card.template.serverPort))
     }
     const port = card.template.serverPort || 8080
-    const res = await window.api.runModel({
+    const backendPath = targetBackend.path
+    const exe = targetBackend.exe!
+    const res = await safeCall(() => window.api.runModel({
       id: card.template.id,
-      backendPath: targetBackend.path,
-      exe: targetBackend.exe,
+      backendPath,
+      exe,
       args,
       openBrowser: false,
       port
-    })
+    }), '启动模型失败')
+    if (res === null) { setCardStatus(card.template.id, 'error'); return }
     if (res.success) {
       clearModelLogs(card.template.id)
       setCardStatus(card.template.id, 'running', res.pid)
@@ -132,21 +140,22 @@ export default function ModelCard({ card }: Props) {
     setShowDeleteConfirm(true)
   }, [isRunning])
   const confirmDelete = useCallback(async () => {
-    await window.api.deleteTemplate(card.template.id)
+    const ok = await safeCall(() => window.api.deleteTemplate(card.template.id), '删除模板失败')
+    if (ok === null) return
     removeCard(card.template.id)
     setShowDeleteConfirm(false)
   }, [card.template.id, removeCard])
-  const handleExport = useCallback(async () => { await window.api.exportTemplate(card.template); setShowMenu(false) }, [card.template])
+  const handleExport = useCallback(async () => { await safeCall(() => window.api.exportTemplate(card.template), '导出模板失败'); setShowMenu(false) }, [card.template])
   const handleEdit = useCallback(() => { setShowCreateModal(true, card.template); setShowMenu(false) }, [card.template, setShowCreateModal])
   const handleDuplicate = useCallback(async () => {
-    const t = { ...card.template, id: String(Date.now()), name: `${card.template.name} (Copy)` }
-    const res = await window.api.saveTemplate(t)
-    if (res.success) useStore.getState().addCard({ ...t, id: res.id })
+    const t = { ...card.template, id: crypto.randomUUID(), name: `${card.template.name} (Copy)` }
+    const res = await safeCall(() => window.api.saveTemplate(t), '复制模板失败')
+    if (res && res.success) useStore.getState().addCard({ ...t, id: res.id })
     setShowMenu(false)
   }, [card.template])
   const setLaunchMode = useCallback(async (mode: 'chat' | 'api') => {
-    const res = await window.api.saveTemplate({ ...card.template, launchMode: mode })
-    if (res.success) {
+    const res = await safeCall(() => window.api.saveTemplate({ ...card.template, launchMode: mode }), '设置启动模式失败')
+    if (res && res.success) {
       updateCard(card.template.id, { launchMode: mode })
     }
   }, [card.template.id, updateCard])
@@ -193,7 +202,6 @@ export default function ModelCard({ card }: Props) {
           {isRunning ? `端口 ${card.template.serverPort}` : '就绪'}
         </span>
       </div>
-      {}
       <div className="card-launch-mode">
         <button
           className={`launch-mode-btn ${launchMode === 'chat' ? 'active' : ''}`}

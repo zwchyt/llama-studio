@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { Globe, ExternalLink, Loader, AlertTriangle, Play, Square, RefreshCw } from 'lucide-react'
+import { safeCall } from '../utils/safeCall'
 
 export default function PiWebView() {
   const { piWebUrl, setPiWebUrl } = useStore(s => ({ piWebUrl: s.piWebUrl, setPiWebUrl: s.setPiWebUrl }), shallow)
@@ -21,7 +22,7 @@ export default function PiWebView() {
           setLocalStatus('ready')
           setPiWebUrl(res.url)
         }
-      })
+      }).catch((e) => console.error('[getPiWebStatus]', e))
     }
     return () => { cancelled = true }
   }, [])
@@ -31,8 +32,8 @@ export default function PiWebView() {
       if (e.data?.type !== 'REQUEST_DIRECTORY_SELECTION') return
       if (e.source !== iframeRef.current?.contentWindow) return
       if (!piWebUrl || e.origin !== new URL(piWebUrl).origin) return
-      const result = await window.api.selectDirectory()
-      e.source?.postMessage({ type: 'DIRECTORY_SELECTION_RESULT', path: result.path }, { targetOrigin: piWebUrl })
+      const result = await safeCall(() => window.api.selectDirectory(), '选择目录失败')
+      e.source?.postMessage({ type: 'DIRECTORY_SELECTION_RESULT', path: result?.path ?? null }, { targetOrigin: piWebUrl })
     }
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
@@ -41,18 +42,22 @@ export default function PiWebView() {
   const handleStart = async () => {
     setLocalStatus('starting')
     setError('')
-    const res = await window.api.startPiWeb()
-    if (res.success) {
+    const res = await safeCall(() => window.api.startPiWeb(), '启动 pi-web 失败')
+    if (res && res.success) {
       setLocalStatus('ready')
       setPiWebUrl(res.url)
-    } else {
+    } else if (res) {
       setLocalStatus('error')
       setError(res.error || 'Failed to start pi-web')
+    } else {
+      setLocalStatus('error')
+      setError('启动 pi-web 失败')
     }
   }
 
   const handleStop = async () => {
-    await window.api.stopPiWeb()
+    const ok = await safeCall(() => window.api.stopPiWeb(), '停止 pi-web 失败')
+    if (ok === null) return
     setLocalStatus('idle')
     setPiWebUrl(null)
     setError('')

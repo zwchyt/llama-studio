@@ -1,7 +1,8 @@
 import React from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Globe, Server, Bot, MessageSquare, Terminal } from 'lucide-react'
+import { safeCall } from '../utils/safeCall'
+import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Globe, Server, Bot, MessageSquare, Terminal, Info } from 'lucide-react'
 export default function Sidebar() {
   const { view, setView, backends, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, piWebUrl, hasRunningModels } = useStore(
     s => ({ view: s.view, setView: s.setView, backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, piWebUrl: s.piWebUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
@@ -12,7 +13,7 @@ export default function Sidebar() {
     const b = backends.find((x) => x.name === name)
     if (!b) return
     setActiveBackend(b)
-    const cmds = await window.api.getCommands(name)
+    const cmds = await safeCall(() => window.api.getCommands(name), '切换后端失败')
     if (cmds) setCommandsSchema(cmds)
   }
   return (
@@ -113,7 +114,7 @@ export default function Sidebar() {
         className={`nav-item ${view === 'about' ? 'active' : ''}`}
         onClick={() => setView('about')}
       >
-        <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'monospace', width: 16, textAlign: 'center' }}>i</span>
+        <Info size={16} />
         关于
       </button>
       {backends.length > 0 && (

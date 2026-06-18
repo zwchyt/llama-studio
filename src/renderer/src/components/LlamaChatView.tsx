@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
+import { safeCall } from '../utils/safeCall'
 import { ExternalLink, Copy, Check, RefreshCw, Loader, X, Globe, Square } from 'lucide-react'
 
 export default function LlamaChatView() {
@@ -19,7 +20,7 @@ export default function LlamaChatView() {
     if (!port) return
     setWaiting(true)
     setShowIframe(false)
-    const ready = await window.api.waitForServer(port)
+    const ready = await safeCall(() => window.api.waitForServer(port), '连接服务器失败')
     setWaiting(false)
     if (ready) setShowIframe(true)
   }, [])

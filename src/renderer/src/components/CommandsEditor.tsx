@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
+import { safeCall } from '../utils/safeCall'
 import { Plus, Trash, ChevronDown, ChevronRight, Save, RotateCcw, Pencil, Check, X, Loader2 } from 'lucide-react'
 import type { CommandsSchema, CommandCategory, CommandParam } from '../../../shared/types'
 import { iconComponents, ICON_NAMES } from '../utils/iconMap'
@@ -199,23 +200,27 @@ export default function CommandsEditor({ backendName }: { backendName: string })
     window.api.getCommands(backendName).then(s => {
       setSchema(s ? JSON.parse(JSON.stringify(s)) : { version: '1.0', categories: [] })
       setLoading(false)
+    }).catch((e) => {
+      console.error('[getCommands]', e)
+      notify('加载命令 schema 失败', 'error')
+      setLoading(false)
     })
   }, [backendName])
   async function handleSave() {
     if (!schema) return
     setSaving(true)
-    const res = await window.api.saveBackendCommands(backendName, schema)
+    const res = await safeCall(() => window.api.saveBackendCommands(backendName, schema), '保存命令 schema 失败')
     setSaving(false)
-    if (res.success) {
+    if (res && res.success) {
       setSaved(true); setTimeout(() => setSaved(false), 2000)
-      const updated = await window.api.getCommands(backendName)
+      const updated = await safeCall(() => window.api.getCommands(backendName), '刷新 schema 失败')
       if (updated) setCommandsSchema(updated)
-    } else { notify('Save failed: ' + res.error, 'error') }
+    } else if (res && !res.success) { notify('Save failed: ' + res.error, 'error') }
   }
   async function handleReset() {
     if (!confirm('Reset to current saved schema?')) return
     setLoading(true)
-    const s = await window.api.getCommands(backendName)
+    const s = await safeCall(() => window.api.getCommands(backendName), '加载 schema 失败')
     setSchema(s ? JSON.parse(JSON.stringify(s)) : null)
     setLoading(false)
   }

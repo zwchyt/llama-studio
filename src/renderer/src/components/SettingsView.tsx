@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { useStore } from '../store/useStore'
+import { shallow } from 'zustand/shallow'
 import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity } from 'lucide-react'
 import { notify } from '../store/notificationStore'
+import { safeCall } from '../utils/safeCall'
 import CommandsEditor from './CommandsEditor'
 
 const NOTIF_KEY = 'hexllama_update_notify'
@@ -17,7 +19,10 @@ function getNotifPref(): 'banner' | 'manual' {
 export default function SettingsView() {
   const { backends, activeBackend, setActiveBackend, setCommandsSchema, setBackends,
     releaseInfo, checkingUpdate, downloadProgress, setDownloadProgress, setCheckingUpdate, setReleaseInfo,
-    setModels } = useStore()
+    setModels } = useStore(
+    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, setModels: s.setModels }),
+    shallow
+  )
   const [downloading, setDownloading] = useState(false)
   const [selectedAssetUrl, setSelectedAssetUrl] = useState('')
   const [expandedEditor, setExpandedEditor] = useState<string | null>(null)
@@ -32,22 +37,24 @@ export default function SettingsView() {
   }, [releaseInfo, selectedAssetUrl])
 
   useEffect(() => {
-    window.api.listExternalModelFolders().then(setExtFolders)
-    window.api.getMetricsPolling().then(setMetricsPolling)
+    window.api.listExternalModelFolders().then(setExtFolders).catch((e) => console.error('[listExternalModelFolders]', e))
+    window.api.getMetricsPolling().then(setMetricsPolling).catch((e) => console.error('[getMetricsPolling]', e))
   }, [])
 
   async function refreshModels() {
-    const m = await window.api.listModelsRefresh()
-    setModels(m)
+    const m = await safeCall(() => window.api.listModelsRefresh(), '刷新模型列表失败')
+    if (m) setModels(m)
   }
   async function handleAddExtFolder() {
-    const res = await window.api.addExternalModelFolder()
-    if (res.success && res.folders) { setExtFolders(res.folders); await refreshModels() }
+    const res = await safeCall(() => window.api.addExternalModelFolder(), '添加外部文件夹失败')
+    if (res && res.success && res.folders) { setExtFolders(res.folders); await refreshModels() }
   }
   async function handleRemoveExtFolder(folder: string) {
-    const res = await window.api.removeExternalModelFolder(folder)
-    setExtFolders(res.folders)
-    await refreshModels()
+    const res = await safeCall(() => window.api.removeExternalModelFolder(folder), '移除外部文件夹失败')
+    if (res && res.folders) {
+      setExtFolders(res.folders)
+      await refreshModels()
+    }
   }
 
   function handleNotifPref(pref: 'banner' | 'manual') {
@@ -59,16 +66,17 @@ export default function SettingsView() {
     const b = backends.find(x => x.name === name)
     if (!b) return
     setActiveBackend(b)
-    const cmds = await window.api.getCommands(name)
+    const cmds = await safeCall(() => window.api.getCommands(name), '切换后端失败')
     if (cmds) setCommandsSchema(cmds)
   }
 
   async function handleDeleteBackend(name: string) {
     if (!confirm(`确定删除后端 "${name}"？这将移除该文件夹中的所有文件。`)) return
-    const res = await window.api.deleteBackend(name)
+    const res = await safeCall(() => window.api.deleteBackend(name), '删除后端失败')
+    if (res === null) return
     if (res.success) {
-      const updated = await window.api.listBackends()
-      setBackends(updated)
+      const updated = await safeCall(() => window.api.listBackends(), '刷新后端列表失败')
+      if (updated) setBackends(updated)
     } else notify('删除失败：' + res.error, 'error')
   }
 
@@ -86,17 +94,19 @@ export default function SettingsView() {
     if (!releaseInfo || !releaseInfo.assets.length) return
     const asset = releaseInfo.assets.find(a => a.downloadUrl === selectedAssetUrl) || releaseInfo.assets[0]
     setDownloading(true)
-    const res = await window.api.downloadRelease({
+    const res = await safeCall(() => window.api.downloadRelease({
       url: asset.downloadUrl,
       version: `${releaseInfo.tagName}-${asset.name.replace(/\.(zip|tar\.gz)$/, '')}`,
       assetName: asset.name
-    })
+    }), '下载后端失败')
     setDownloading(false)
     setDownloadProgress(null)
-    if (res.success) {
-      const backendsData = await window.api.listBackends()
-      setBackends(backendsData)
-    } else notify(`下载失败：${res.error}`, 'error')
+    if (res && res.success) {
+      const backendsData = await safeCall(() => window.api.listBackends(), '刷新后端列表失败')
+      if (backendsData) setBackends(backendsData)
+    } else if (res && !res.success) {
+      notify(`下载失败：${res.error}`, 'error')
+    }
   }
 
   return (

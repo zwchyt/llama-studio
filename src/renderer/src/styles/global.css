@@ -241,7 +241,7 @@ select {
 }
 
 .terminal-toolbar-btn:hover {
-  background: var(--hover);
+  background: var(--surface-hover);
   color: var(--text);
 }
 
@@ -278,7 +278,7 @@ select {
 }
 
 .terminal-tab:hover {
-  background: var(--hover);
+  background: var(--surface-hover);
 }
 
 .terminal-tab.active {
@@ -349,7 +349,7 @@ select {
 
 .terminal-tab-close:hover {
   color: var(--text);
-  background: var(--hover);
+  background: var(--surface-hover);
 }
 
 .terminal-screens {

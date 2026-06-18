@@ -139,3 +139,14 @@ export interface ChatStreamChunk {
   done: boolean         // 是否结束
   error?: string        // 出错时的错误信息
 }
+
+// ── 下载状态 Phase 联合类型 ──
+
+/** 模型文件下载阶段（modelDownloads） */
+export type ModelDownloadPhase = 'downloading' | 'paused' | 'done' | 'error' | 'cancelled'
+
+/** HuggingFace 模型下载阶段（hfDownloads），含额外的保存/模板创建阶段 */
+export type HfDownloadPhase = ModelDownloadPhase | 'saving' | 'creating_template' | 'starting'
+
+/** 所有下载阶段的超集 */
+export type DownloadPhase = HfDownloadPhase

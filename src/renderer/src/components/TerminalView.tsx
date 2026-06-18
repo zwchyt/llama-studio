@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState } from 'react'
 import { createTerminal, attach, fitTerminal } from '../utils/terminalRegistry'
 import { useTerminalStore } from '../store/terminalStore'
 import { Terminal, FolderOpen, Plus } from 'lucide-react'
+import { safeCall } from '../utils/safeCall'
 
 const CWD_KEY = 'terminal-last-cwd'
 
@@ -9,22 +10,22 @@ function TerminalToolbar({ onOpen }: { onOpen: (cwd?: string) => void }): JSX.El
   const [cwd, setCwd] = useState(() => localStorage.getItem(CWD_KEY) || '')
 
   async function handleBrowse() {
-    const result = await window.api.selectDirectory()
-    if (result.path) {
+    const result = await safeCall(() => window.api.selectDirectory(), '选择目录失败')
+    if (result?.path) {
       setCwd(result.path)
-      localStorage.setItem(CWD_KEY, result.path)
+      try { localStorage.setItem(CWD_KEY, result.path) } catch { /* quota exceeded */ }
     }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter') {
-      localStorage.setItem(CWD_KEY, cwd)
+      try { localStorage.setItem(CWD_KEY, cwd) } catch { /* quota exceeded */ }
       onOpen(cwd || undefined)
     }
   }
 
   function handleOpen() {
-    localStorage.setItem(CWD_KEY, cwd)
+    try { localStorage.setItem(CWD_KEY, cwd) } catch { /* quota exceeded */ }
     onOpen(cwd || undefined)
   }
 
@@ -83,8 +84,8 @@ function TermScreen({ id, visible }: { id: string; visible: boolean }): JSX.Elem
     if (!el) return
     const term = createTerminal(id)
     attach(id, el)
-    const onData = term.onData((d) => window.api.terminalInput(id, d))
-    const onResize = term.onResize(({ cols, rows }) => window.api.terminalResize(id, cols, rows))
+    const onData = term.onData((d) => { window.api.terminalInput(id, d).catch(() => {}) })
+    const onResize = term.onResize(({ cols, rows }) => { window.api.terminalResize(id, cols, rows).catch(() => {}) })
     const ro = new ResizeObserver(() => fitTerminal(id))
     ro.observe(el)
     return () => {

@@ -2,7 +2,8 @@ import React, { useState } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
-import { FolderOpen, ChevronDown, Terminal, Globe, Server } from 'lucide-react'
+import { safeCall } from '../utils/safeCall'
+import { FolderOpen, ChevronDown, Terminal, Globe, Server, Loader2 } from 'lucide-react'
 import CmdParamsEditor from './CmdParamsEditor'
 import type { Template, TemplateArgs, CommandParam } from '../../../shared/types'
 
@@ -88,8 +89,9 @@ export default function CreateModal() {
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [importCmd, setImportCmd] = useState('')
+  const [submitting, setSubmitting] = useState(false)
   async function handlePickModel() {
-    const file = await window.api.pickModelFile()
+    const file = await safeCall(() => window.api.pickModelFile(), '选择模型文件失败')
     if (file) {
       setModelPath(file.path)
       const filename = file.path.split(/[/\\]/).pop() || ''
@@ -110,6 +112,7 @@ export default function CreateModal() {
   }
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (submitting) return
     if (!name.trim()) return notify('名称为必填项', 'error')
     const templateData: Partial<Template> = {
       name,
@@ -120,30 +123,35 @@ export default function CreateModal() {
       args,
       launchMode
     }
-    if (editingTemplate) {
-      const updated = { ...editingTemplate, ...templateData, updatedAt: new Date().toISOString() }
-      const res = await window.api.saveTemplate(updated)
-      if (res.success) {
-        updateCard(editingTemplate.id, { ...templateData, updatedAt: updated.updatedAt })
-        setShowCreateModal(false)
+    setSubmitting(true)
+    try {
+      if (editingTemplate) {
+        const updated = { ...editingTemplate, ...templateData, updatedAt: new Date().toISOString() }
+        const res = await safeCall(() => window.api.saveTemplate(updated), '保存模板失败')
+        if (res && res.success) {
+          updateCard(editingTemplate.id, { ...templateData, updatedAt: updated.updatedAt })
+          setShowCreateModal(false)
+        }
+      } else {
+        const newTemplate: Omit<Template, 'id'> = {
+          name,
+          description,
+          backendVersion,
+          modelPath,
+          serverPort,
+          args,
+          launchMode,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+        const res = await safeCall(() => window.api.saveTemplate(newTemplate), '创建模板失败')
+        if (res && res.success) {
+          addCard({ ...newTemplate, id: res.id } as Template)
+          setShowCreateModal(false)
+        }
       }
-    } else {
-      const newTemplate: Omit<Template, 'id'> = {
-        name,
-        description,
-        backendVersion,
-        modelPath,
-        serverPort,
-        args,
-        launchMode,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }
-      const res = await window.api.saveTemplate(newTemplate)
-      if (res.success) {
-        addCard({ ...newTemplate, id: res.id } as Template)
-        setShowCreateModal(false)
-      }
+    } finally {
+      setSubmitting(false)
     }
   }
   return (
@@ -154,7 +162,6 @@ export default function CreateModal() {
         </div>
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
           <div className="modal-body">
-            {}
             <div className="collapsible-section" style={{ marginBottom: 16 }}>
               <button
                 type="button"
@@ -192,7 +199,6 @@ export default function CreateModal() {
                 </div>
               )}
             </div>
-            {}
             <div className="form-group">
               <label className="form-label">模板名称</label>
               <input
@@ -205,7 +211,6 @@ export default function CreateModal() {
                 autoFocus
               />
             </div>
-            {}
             <div className="form-group">
               <label className="form-label">描述（可选）</label>
               <textarea
@@ -215,7 +220,6 @@ export default function CreateModal() {
                 placeholder="此配置的简短描述..."
               />
             </div>
-            {}
             <div className="form-row">
               <div className="form-group">
                 <label className="form-label">后端版本</label>
@@ -244,7 +248,6 @@ export default function CreateModal() {
                 />
               </div>
             </div>
-            {}
             <div className="form-group">
               <label className="form-label">启动模式</label>
               <div className="launch-mode-row">
@@ -257,7 +260,6 @@ export default function CreateModal() {
               </div>
               <div className="form-hint">聊天界面会打开浏览器。仅 API 模式仅在端口提供服务，不打开网页界面。</div>
             </div>
-            {}
             <div className="form-group mb-0">
               <label className="form-label">模型文件</label>
               <div className="file-picker">
@@ -290,7 +292,6 @@ export default function CreateModal() {
               </div>
               <div className="form-hint">从 /models 选择文件或浏览电脑。</div>
             </div>
-            {}
             <div className="collapsible-section" style={{ marginTop: 20 }}>
               <button
                 type="button"
@@ -319,7 +320,8 @@ export default function CreateModal() {
             <button type="button" className="btn btn-ghost" onClick={() => setShowCreateModal(false)}>
               取消
             </button>
-            <button type="submit" className="btn btn-primary">
+            <button type="submit" className="btn btn-primary" disabled={submitting}>
+              {submitting ? <Loader2 size={14} className="spin" /> : null}
               {editingTemplate ? '保存更改' : '创建模板'}
             </button>
           </div>

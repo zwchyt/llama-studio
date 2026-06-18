@@ -5,8 +5,10 @@ import {
   Search, Download, Heart, ChevronDown, ChevronLeft,
   FolderOpen, CheckCircle, Loader2, X, AlertCircle, Box, Pause, Play
 } from 'lucide-react'
-import { formatBytes, formatSpeed } from '../utils/format'
+import { formatBytes } from '../utils/format'
+import { formatDownloadStatus, formatDownloadStripText } from '../utils/downloadFormat'
 import { notify } from '../store/notificationStore'
+import { safeCall } from '../utils/safeCall'
 interface HfModel {
   id: string
   author: string
@@ -100,11 +102,15 @@ export default function HuggingFaceView() {
   async function handleDownload(file: HfFile) {
     if (!selectedModel) return
     setHfDownload({ repoId: selectedModel.id, filename: file.name, percent: 0, phase: 'starting' })
-    const res = await window.api.hfDownloadModel({
+    const res = await safeCall(() => window.api.hfDownloadModel({
       repoId: selectedModel.id,
       filename: file.name,
       downloadUrl: file.downloadUrl
-    })
+    }), '启动下载失败')
+    if (res === null) {
+      removeHfDownload(file.name)
+      return
+    }
     if (!res.success) {
       removeHfDownload(file.name)
       notify(`下载失败：${res.error}`, 'error')
@@ -115,7 +121,6 @@ export default function HuggingFaceView() {
   const getProgress = useCallback((filename: string) => hfDownloads.find(d => d.filename === filename), [hfDownloads])
   return (
     <div className="hub-container">
-      {}
       <div className="page-header">
         <div>
           <h1 className="page-title">模型中心</h1>
@@ -125,7 +130,6 @@ export default function HuggingFaceView() {
           <FolderOpen size={15} /> 打开 /models
         </button>
       </div>
-      {}
       <div className="hub-search-bar">
         <Search size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
         <input
@@ -146,7 +150,6 @@ export default function HuggingFaceView() {
           搜索
         </button>
       </div>
-      {}
       {!hubResults.length && !loading && (
         <div className="hub-tags">
           <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>热门搜索：</span>
@@ -157,7 +160,6 @@ export default function HuggingFaceView() {
           ))}
         </div>
       )}
-      {}
       {error && (
         <div className="hub-error">
           <AlertCircle size={14} />
@@ -167,7 +169,6 @@ export default function HuggingFaceView() {
           </button>
         </div>
       )}
-      {}
       {loading && (
         <div className="hub-grid">
           {Array.from({ length: 8 }).map((_, i) => (
@@ -175,10 +176,8 @@ export default function HuggingFaceView() {
           ))}
         </div>
       )}
-      {}
       {!loading && hubResults.length > 0 && (
         <div className={`hub-results-layout ${selectedModel ? 'has-detail' : ''}`}>
-          {}
           <div className="hub-grid">
             {(hubResults as HfModel[]).map(model => (
               <button
@@ -201,7 +200,6 @@ export default function HuggingFaceView() {
               </button>
             ))}
           </div>
-          {}
           {selectedModel && (
             <div className="hub-detail-panel">
               <div className="hub-detail-header">
@@ -253,20 +251,13 @@ export default function HuggingFaceView() {
                           <div className="hub-progress-fill" style={{ width: `${dl?.percent || 0}%`, opacity: dl?.phase === 'paused' ? 0.45 : 1, transition: 'width 0.3s ease' }} />
                         </div>
                         <span className="hub-progress-label">
-                          {dl?.phase === 'saving'
-                            ? '保存中...'
-                            : dl?.phase === 'creating_template'
-                            ? '创建模板中...'
-                            : dl?.phase === 'paused'
-                            ? `已暂停 • ${dl?.percent || 0}%`
-                            : `${dl?.percent || 0}%${dl?.speed ? ` • ${formatSpeed(dl.speed)}` : ''}`
-                          }
+                          {formatDownloadStatus({ phase: dl!.phase, percent: dl!.percent || 0, speed: dl!.speed })}
                         </span>
                         {dl?.phase === 'paused' ? (
                           <button
                             className="btn btn-ghost btn-icon"
                             style={{ marginLeft: 4 }}
-                            onClick={() => window.api.resumeModelDownload(file.name)}
+                            onClick={() => safeCall(() => window.api.resumeModelDownload(file.name), '继续下载失败')}
                             title="继续"
                           >
                             <Play size={12} />
@@ -275,7 +266,7 @@ export default function HuggingFaceView() {
                           <button
                             className="btn btn-ghost btn-icon"
                             style={{ marginLeft: 4 }}
-                            onClick={() => window.api.pauseModelDownload(file.name)}
+                            onClick={() => safeCall(() => window.api.pauseModelDownload(file.name), '暂停下载失败')}
                             title="暂停"
                           >
                             <Pause size={12} />
@@ -302,16 +293,11 @@ export default function HuggingFaceView() {
           )}
         </div>
       )}
-      {}
       {hfDownloads.filter(d => d.phase !== 'done').length > 0 && (
         <div className="hub-downloads-strip">
           {hfDownloads.filter(d => d.phase !== 'done').map(dl => {
             const isPaused = dl.phase === 'paused'
-            let statusText = `${dl.percent}%`
-            if (dl.phase === 'downloading') statusText = dl.speed ? `${dl.percent}% • ${formatSpeed(dl.speed)}` : `下载中 [${dl.percent}%]`
-            if (dl.phase === 'saving') statusText = '保存至 /models...'
-            if (dl.phase === 'creating_template') statusText = '创建模板中...'
-            if (isPaused) statusText = `已暂停 • ${dl.percent}%`
+            const statusText = formatDownloadStripText({ phase: dl.phase, percent: dl.percent, speed: dl.speed })
             return (
               <div key={dl.filename} className="hub-dl-strip-item">
                 {isPaused

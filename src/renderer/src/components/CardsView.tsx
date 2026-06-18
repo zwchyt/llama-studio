@@ -4,6 +4,7 @@ import { shallow } from 'zustand/shallow'
 import ModelCard from './ModelCard'
 import { Plus, Upload, Search } from 'lucide-react'
 import { notify } from '../store/notificationStore'
+import { safeCall } from '../utils/safeCall'
 import type { Template } from '../../../shared/types'
 export default function CardsView() {
   const { cards, setShowCreateModal, addCard, templateSearch, setTemplateSearch } = useStore(
@@ -11,7 +12,7 @@ export default function CardsView() {
     shallow
   )
   async function handleImport() {
-    const template = await window.api.importTemplate()
+    const template = await safeCall(() => window.api.importTemplate(), '导入模板失败')
     if (template) {
       addCard(template as Template)
       notify('导入成功', 'success')
@@ -47,7 +48,6 @@ export default function CardsView() {
           </button>
         </div>
       </div>
-      {}
       {cards.length > 0 && (
         <div className="template-search-bar">
           <Search size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />

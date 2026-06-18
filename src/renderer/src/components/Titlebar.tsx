@@ -9,7 +9,6 @@ export default function Titlebar({ onCheckUpdates }: Props) {
   const { checkingUpdate } = useStore(s => ({ checkingUpdate: s.checkingUpdate }), shallow)
   return (
     <header className="titlebar">
-      {}
       <div className="titlebar-logo">
         <img
           src="./full-logo.png"
@@ -18,7 +17,6 @@ export default function Titlebar({ onCheckUpdates }: Props) {
           draggable={false}
         />
       </div>
-      {}
       <div className="titlebar-drag-region" />
       <div className="titlebar-actions">
         <button

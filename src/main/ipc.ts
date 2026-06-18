@@ -8,6 +8,7 @@ import { spawn, ChildProcess } from 'child_process'
 import https from 'https'
 import http from 'http'
 import { app } from 'electron'
+import { randomUUID } from 'crypto'
 import extract from 'extract-zip'
 import * as pty from 'node-pty'
 
@@ -871,7 +872,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('save-template', async (_e, template: Record<string, unknown>) => {
     try {
-      const id = (template.id as string) || String(Date.now())
+      const id = (template.id as string) || randomUUID()
       if (/[\\/]/.test(id) || id.includes('..')) return { success: false, error: 'Invalid template ID' }
       writeFileSync(join(TEMPLATES_DIR, `${id}.json`), JSON.stringify({ ...template, id }, null, 2))
       return { success: true, id }

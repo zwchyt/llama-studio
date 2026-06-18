@@ -2,6 +2,7 @@ import { createWithEqualityFn } from 'zustand/traditional'
 import { shallow } from 'zustand/shallow'
 import { disposeTerminal } from '../utils/terminalRegistry'
 import { useStore } from './useStore'
+import { notify } from './notificationStore'
 
 export interface TerminalMeta {
   id: string
@@ -45,9 +46,17 @@ export const useTerminalStore = createWithEqualityFn<TerminalStore>(
     activeId: null,
 
     open: async (cwd?: string) => {
-      const result = await window.api.terminalCreate({ cwd })
-      if (!result.success) return
-      const id = result.id!
+      let result: { success: boolean; id?: string }
+      try {
+        result = await window.api.terminalCreate({ cwd })
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e)
+        notify(`打开终端失败：${msg}`, 'error')
+        return
+      }
+      if (!result.success) { notify('打开终端失败', 'error'); return }
+      const id = result.id
+      if (!id) { notify('打开终端失败：未返回终端 ID', 'error'); return }
       const meta: TerminalMeta = { id, title: '终端', cwd: cwd || '', exited: false }
       set((s) => {
         const sessions = [...s.sessions, meta]
@@ -58,7 +67,7 @@ export const useTerminalStore = createWithEqualityFn<TerminalStore>(
     },
 
     close: (id: string) => {
-      window.api.terminalKill(id)
+      window.api.terminalKill(id).catch(() => {})
       disposeTerminal(id)
       set((s) => {
         const sessions = s.sessions.filter((x) => x.id !== id)
