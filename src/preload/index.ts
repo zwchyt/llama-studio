@@ -108,9 +108,14 @@ const fullApi = {
     ipcRenderer.removeAllListeners('terminal:exited')
     ipcRenderer.on('terminal:exited', (_e, d) => cb(d))
   },
+  onTerminalTitle: (cb: (d: { id: string; title: string }) => void) => {
+    ipcRenderer.removeAllListeners('terminal:title')
+    ipcRenderer.on('terminal:title', (_e, d) => cb(d))
+  },
   removeTerminalListeners: () => {
     ipcRenderer.removeAllListeners('terminal:data')
     ipcRenderer.removeAllListeners('terminal:exited')
+    ipcRenderer.removeAllListeners('terminal:title')
   },
 }
 

@@ -23,6 +23,7 @@ interface TerminalSession {
   pendingData: string[]
   flushTimer: NodeJS.Timeout | null
   paused: boolean
+  oscBuf?: string
 }
 const sessions = new Map<string, TerminalSession>()
 
@@ -2150,10 +2151,25 @@ export function registerIpcHandlers(): void {
         cols, rows, cwd,
         env: { ...process.env, TERM: 'xterm-256color' } as any,
       })
+      // 从数据流中解析 OSC 标题变更序列（\x1b]0;title\x07 或 \x1b]2;title\x07）
       p.onData((data) => {
         const s = sessions.get(id)
         if (!s) return
         s.pendingData.push(data)
+        // OSC 标题解析：累积缓冲区并匹配 \x1b][02];<title>\x07
+        s.oscBuf = (s.oscBuf || '') + data
+        const oscRe = /\x1b\][02];([^\x07\x1b]*)\x07/g
+        let m: RegExpExecArray | null
+        while ((m = oscRe.exec(s.oscBuf)) !== null) {
+          const newTitle = m[1].trim()
+          if (newTitle && newTitle !== s.title) {
+            s.title = newTitle
+            terminalSend('terminal:title', { id, title: newTitle })
+          }
+        }
+        // 只保留末尾未完成的 OSC 序列片段（最多 256 字节）
+        const lastEsc = s.oscBuf.lastIndexOf('\x1b')
+        s.oscBuf = lastEsc >= 0 ? s.oscBuf.slice(lastEsc).slice(0, 256) : ''
         const totalBytes = s.pendingData.reduce((sum, d) => sum + Buffer.byteLength(d, 'utf-8'), 0)
         if (totalBytes > 1024 * 1024 && !s.paused) {
           try { s.pty.pause() } catch {}
@@ -2173,8 +2189,9 @@ export function registerIpcHandlers(): void {
         terminalSend('terminal:exited', { id, exitCode })
         sessions.delete(id)
       })
-      sessions.set(id, { id, pty: p, cols, rows, cwd, shell, title: shell, pendingData: [], flushTimer: null, paused: false })
-      return { success: true, id }
+      // 监听 OSC 标题变更序列已通过 onData 解析实现
+      sessions.set(id, { id, pty: p, cols, rows, cwd, shell, title: shell, pendingData: [], flushTimer: null, paused: false, oscBuf: '' })
+      return { success: true, id, shell }
     } catch (err) {
       return { success: false, error: String(err) }
     }

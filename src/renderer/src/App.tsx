@@ -122,6 +122,9 @@ function AppMain() {
         if (remaining.length > 0) useTerminalStore.getState().setActive(remaining[remaining.length - 1].id)
       }
     })
+    window.api.onTerminalTitle(({ id, title }) => {
+      useTerminalStore.getState().updateTitle(id, title)
+    })
     return () => window.api.removeTerminalListeners()
   }, [])
 

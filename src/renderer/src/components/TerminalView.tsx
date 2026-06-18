@@ -1,77 +1,159 @@
-import React, { useRef, useEffect, useState } from 'react'
+import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { createTerminal, attach, fitTerminal } from '../utils/terminalRegistry'
 import { useTerminalStore } from '../store/terminalStore'
-import { Terminal, FolderOpen, Plus } from 'lucide-react'
+import { Terminal, FolderOpen, Plus, ChevronDown, X } from 'lucide-react'
 import { safeCall } from '../utils/safeCall'
 
 const CWD_KEY = 'terminal-last-cwd'
 
-function TerminalToolbar({ onOpen }: { onOpen: (cwd?: string) => void }): JSX.Element {
+/** 新建终端弹出层：cwd 输入 + 浏览 + 打开 */
+function NewTerminalPopover({
+  anchorRef,
+  onOpen,
+  onClose,
+}: {
+  anchorRef: React.RefObject<HTMLButtonElement | null>
+  onOpen: (cwd?: string) => void
+  onClose: () => void
+}): JSX.Element {
   const [cwd, setCwd] = useState(() => localStorage.getItem(CWD_KEY) || '')
+  const inputRef = useRef<HTMLInputElement>(null)
 
-  async function handleBrowse() {
+  useEffect(() => {
+    // 弹出后自动聚焦输入框
+    inputRef.current?.focus()
+  }, [])
+
+  useEffect(() => {
+    // 点击外部关闭
+    function handleClickOutside(e: MouseEvent): void {
+      const target = e.target as Node
+      if (anchorRef.current?.contains(target)) return
+      const popEl = document.querySelector('.terminal-new-popover')
+      if (popEl && !popEl.contains(target)) onClose()
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [anchorRef, onClose])
+
+  async function handleBrowse(): Promise<void> {
     const result = await safeCall(() => window.api.selectDirectory(), '选择目录失败')
     if (result?.path) {
       setCwd(result.path)
-      try { localStorage.setItem(CWD_KEY, result.path) } catch { /* quota exceeded */ }
+      inputRef.current?.focus()
     }
   }
 
-  function handleKeyDown(e: React.KeyboardEvent) {
+  function handleKeyDown(e: React.KeyboardEvent): void {
     if (e.key === 'Enter') {
       try { localStorage.setItem(CWD_KEY, cwd) } catch { /* quota exceeded */ }
       onOpen(cwd || undefined)
+      onClose()
+    } else if (e.key === 'Escape') {
+      onClose()
     }
   }
 
-  function handleOpen() {
+  function handleOpen(): void {
     try { localStorage.setItem(CWD_KEY, cwd) } catch { /* quota exceeded */ }
     onOpen(cwd || undefined)
+    onClose()
   }
 
   return (
-    <div className="terminal-toolbar">
-      <input
-        className="terminal-cwd-input"
-        type="text"
-        placeholder="工作目录路径（留空使用默认目录）"
-        value={cwd}
-        onChange={(e) => setCwd(e.target.value)}
-        onKeyDown={handleKeyDown}
-      />
-      <button className="terminal-toolbar-btn" onClick={handleBrowse} title="选择目录">
-        <FolderOpen size={14} />
-      </button>
-      <button className="terminal-toolbar-btn terminal-toolbar-open" onClick={handleOpen} title="在此目录打开新终端">
-        <Plus size={14} />
-        打开
-      </button>
+    <div className="terminal-new-popover">
+      <div className="terminal-popover-header">
+        <span>新建终端</span>
+        <button className="terminal-popover-close" onClick={onClose}>
+          <X size={12} />
+        </button>
+      </div>
+      <div className="terminal-popover-body">
+        <input
+          ref={inputRef}
+          className="terminal-cwd-input"
+          type="text"
+          placeholder="工作目录路径（留空使用默认目录）"
+          value={cwd}
+          onChange={(e) => setCwd(e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+        <div className="terminal-popover-actions">
+          <button className="terminal-popover-btn" onClick={handleBrowse} title="选择目录">
+            <FolderOpen size={13} />
+            <span>浏览</span>
+          </button>
+          <button className="terminal-popover-btn terminal-popover-btn-primary" onClick={handleOpen}>
+            <Plus size={13} />
+            <span>打开</span>
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
 
+/** 统一标签栏：标签 + 新建按钮（含弹出层） */
 function TerminalTabBar(): JSX.Element {
   const { sessions, activeId, setActive, close, open } = useTerminalStore()
+  const [showPopover, setShowPopover] = useState(false)
+  const addBtnRef = useRef<HTMLButtonElement>(null)
+
+  // 快速新建：默认目录直接打开
+  function handleQuickNew(e: React.MouseEvent): void {
+    // 如果按住 Shift 或弹出层已显示，则切换弹出层
+    if (e.shiftKey) {
+      setShowPopover(v => !v)
+      return
+    }
+    open()
+  }
+
+  const handleClosePopover = useCallback(() => setShowPopover(false), [])
+
   return (
     <div className="terminal-tabbar">
-      {sessions.map((s) => (
-        <div
-          key={s.id}
-          className={`terminal-tab ${s.id === activeId ? 'active' : ''} ${s.exited ? 'exited' : ''}`}
-          onClick={() => setActive(s.id)}
-        >
-          <span>{s.title}</span>
-          <button
-            className="terminal-tab-close"
-            onClick={(e) => { e.stopPropagation(); close(s.id) }}
+      <div className="terminal-tabs-scroll">
+        {sessions.map((s) => (
+          <div
+            key={s.id}
+            className={`terminal-tab ${s.id === activeId ? 'active' : ''} ${s.exited ? 'exited' : ''}`}
+            onClick={() => setActive(s.id)}
           >
-            ×
-          </button>
-        </div>
-      ))}
-      <button className="terminal-tab-add" onClick={() => open()} title="新建终端">
-        +
-      </button>
+            <span className="terminal-tab-title">{s.title}</span>
+            <button
+              className="terminal-tab-close"
+              onClick={(e) => { e.stopPropagation(); close(s.id) }}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="terminal-tabbar-actions">
+        <button
+          ref={addBtnRef}
+          className={`terminal-tab-add ${showPopover ? 'active' : ''}`}
+          onClick={handleQuickNew}
+          title="新建终端（Shift+点击指定目录）"
+        >
+          <Plus size={15} strokeWidth={2} />
+        </button>
+        <button
+          className={`terminal-tab-dropdown-toggle ${showPopover ? 'active' : ''}`}
+          onClick={() => setShowPopover(v => !v)}
+          title="指定工作目录新建终端"
+        >
+          <ChevronDown size={12} strokeWidth={2} />
+        </button>
+        {showPopover && (
+          <NewTerminalPopover
+            anchorRef={addBtnRef}
+            onOpen={open}
+            onClose={handleClosePopover}
+          />
+        )}
+      </div>
     </div>
   )
 }
@@ -104,13 +186,12 @@ export default function TerminalView(): JSX.Element {
 
   return (
     <div className="terminal-view">
-      <TerminalToolbar onOpen={open} />
       <TerminalTabBar />
       {sessions.length === 0 ? (
         <div className="terminal-empty">
           <Terminal size={48} strokeWidth={1.5} />
           <p>没有打开的终端</p>
-          <p style={{ fontSize: 12 }}>在上方输入目录路径并点击“打开”</p>
+          <p style={{ fontSize: 12 }}>点击右上角 + 新建终端</p>
         </div>
       ) : (
         <div className="terminal-screens">
