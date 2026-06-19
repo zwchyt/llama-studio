@@ -603,11 +603,8 @@ function ChatSettingsCard({ session, anchorRect, onClose, onSetSystemPrompt, onS
   )
 }
 
-// ── 消息导航侧边栏 ──────────────────────────────────────────
-const NAV_SUMMARY_LEN = 25
-function formatTime(iso: string): string {
-  try { return new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) } catch { return '' }
-}
+// ── 消息导航侧边栏（minimap 式竖椭圆导航）─────────────────
+const NAV_PREVIEW_LEN = 200
 
 const MessageNav = React.memo(function MessageNav({
   messages, activeMsgId, containerRef
@@ -617,8 +614,57 @@ const MessageNav = React.memo(function MessageNav({
   containerRef: React.RefObject<HTMLDivElement | null>
 }) {
   const [hovered, setHovered] = useState(false)
+  const [mouseYRatio, setMouseYRatio] = useState<number | null>(null)
+  const [scrollRatio, setScrollRatio] = useState(0)
+  const [viewportRatio, setViewportRatio] = useState(1)
+  const [nodes, setNodes] = useState<{ topRatio: number; msg: ChatMessage }[]>([])
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+
   const userMsgs = useMemo(() => messages.filter(m => m.role === 'user'), [messages])
+  const userCount = userMsgs.length
+
+  // 面板实际高度（同步测量，避免首次 tooltip 位置偏差）
+  const [panelHeight, setPanelHeight] = useState(0)
+  useLayoutEffect(() => {
+    if (panelRef.current) setPanelHeight(panelRef.current.clientHeight)
+  }, [hovered])
+
+  // 跟踪滚动容器的滚动位置，计算各消息圆点位置
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el || userCount < 2) return
+    const update = () => {
+      const totalH = el.scrollHeight
+      const clientH = el.clientHeight
+      const scrollable = totalH - clientH
+      setScrollRatio(scrollable > 0 ? el.scrollTop / scrollable : 0)
+      setViewportRatio(clientH / totalH)
+      if (totalH <= 0) { setNodes([]); return }
+      const msgEls = el.querySelectorAll<HTMLElement>('[data-msg-id]')
+      const msgMap = new Map(userMsgs.map(m => [m.id, m]))
+      const newNodes: { topRatio: number; msg: ChatMessage }[] = []
+      const containerRect = el.getBoundingClientRect()
+      msgEls.forEach((msgEl) => {
+        const msgId = msgEl.dataset.msgId
+        const msg = msgId ? msgMap.get(msgId) : undefined
+        if (!msg) return
+        const rect = msgEl.getBoundingClientRect()
+        const top = rect.top - containerRect.top + el.scrollTop
+        newNodes.push({ topRatio: top / totalH, msg })
+      })
+      setNodes(newNodes)
+    }
+    el.addEventListener('scroll', update, { passive: true })
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    if (el.firstElementChild) ro.observe(el.firstElementChild)
+    update()
+    return () => {
+      el.removeEventListener('scroll', update)
+      ro.disconnect()
+    }
+  }, [containerRef, userMsgs, userCount])
 
   const handleEnter = useCallback(() => {
     if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null }
@@ -626,47 +672,75 @@ const MessageNav = React.memo(function MessageNav({
   }, [])
 
   const handleLeave = useCallback(() => {
-    hideTimerRef.current = setTimeout(() => setHovered(false), 200)
+    hideTimerRef.current = setTimeout(() => { setHovered(false); setMouseYRatio(null) }, 200)
   }, [])
 
   const handleClick = useCallback((msgId: string) => {
-    const container = containerRef.current
-    if (!container) return
-    const el = container.querySelector(`[data-msg-id="${msgId}"]`)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
+    const el = containerRef.current?.querySelector(`[data-msg-id="${msgId}"]`)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [containerRef])
 
-  if (userMsgs.length < 2) return null
+  if (userCount < 2) return null
+
+  const viewportBoxTop = scrollRatio * (1 - viewportRatio) * 100
+  const viewportBoxHeight = viewportRatio * 100
+
+  const nearestIndex = hovered && mouseYRatio !== null && nodes.length > 0
+    ? nodes.reduce((best, node, i) =>
+        Math.abs(node.topRatio - mouseYRatio) < Math.abs(nodes[best].topRatio - mouseYRatio) ? i : best, 0)
+    : null
+
+  const nearestNode = nearestIndex !== null ? nodes[nearestIndex] : null
+  const tooltipY = nearestNode ? nearestNode.topRatio * (panelHeight || 400) : 0
+  const TOOLTIP_H = 24
+  const tooltipTop = Math.max(1, Math.min(panelHeight - TOOLTIP_H - 1, tooltipY - TOOLTIP_H / 2))
 
   return (
     <div className="chat-nav-wrap" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
-      <button className="chat-nav-trigger">
-        <List size={14} />
-      </button>
+      <button className="chat-nav-trigger"><List size={14} /></button>
       {hovered && (
-        <div className="chat-nav-panel">
-          <div className="chat-nav-header">
-            <span className="chat-nav-title">消息导航</span>
-            <span className="chat-nav-count">{userMsgs.length}</span>
-          </div>
-          <div className="chat-nav-list">
-            {userMsgs.map((m) => {
-              const summary = m.content.length > NAV_SUMMARY_LEN ? m.content.slice(0, NAV_SUMMARY_LEN) + '…' : m.content
+        <>
+          <div
+            className="chat-nav-panel"
+            ref={panelRef}
+            onMouseMove={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect()
+              setMouseYRatio((e.clientY - rect.top) / rect.height)
+            }}
+          >
+            <div className="nav-centerline" />
+            <div className="nav-viewport" style={{ top: `${viewportBoxTop}%`, height: `${viewportBoxHeight}%` }} />
+            {nodes.map((node, i) => {
+              const isUser = node.msg.role === 'user'
+              const isNearest = nearestIndex === i
+              const isActive = activeMsgId === node.msg.id
               return (
-                <button
-                  key={m.id}
-                  className={`chat-nav-item ${activeMsgId === m.id ? 'active' : ''}`}
-                  onClick={() => handleClick(m.id)}
+                <div
+                  key={node.msg.id}
+                  className="nav-node"
+                  style={{ top: `${node.topRatio * 100}%` }}
+                  onClick={() => handleClick(node.msg.id)}
                 >
-                  <span className="chat-nav-item-text">{summary}</span>
-                  <span className="chat-nav-item-time">{formatTime(m.createdAt)}</span>
-                </button>
+                  <div
+                    className={`nav-node-indicator ${isUser ? 'user' : 'assistant'} ${isActive ? 'active' : ''}`}
+                    style={{
+                      transform: isNearest ? 'scale(1.6)' : 'scale(1)',
+                      animation: isNearest ? 'nav-bob 0.6s ease-in-out infinite' : 'none',
+                    }}
+                  />
+                </div>
               )
             })}
           </div>
-        </div>
+          {nearestNode && (
+            <div className="nav-tooltip" style={{ top: tooltipTop }}>
+              <span className="nav-tooltip-text">
+                {nearestNode.msg.content.slice(0, NAV_PREVIEW_LEN)}
+                {nearestNode.msg.content.length > NAV_PREVIEW_LEN ? '…' : ''}
+              </span>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
