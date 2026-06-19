@@ -110,6 +110,7 @@ export interface ChatMessage {
   // 仅 assistant 消息的推理统计（可选，流式结束后填充）
   tokensDecoded?: number
   msFirstToken?: number
+  decodeTokS?: number  // 解码速度（来自 /metrics llamacpp:predicted_tokens_seconds，与监控面板同源）
   error?: boolean
   stopped?: boolean  // 用户手动停止生成，消息内容不完整
 }
@@ -138,6 +139,13 @@ export interface ChatStreamChunk {
   delta?: string        // 增量文本（生成中）
   done: boolean         // 是否结束
   error?: string        // 出错时的错误信息
+  // 流结束时的统计信息（仅 done=true 时存在）
+  usage?: {
+    promptTokens: number
+    completionTokens: number
+  }
+  msFirstToken?: number // 首 token 延迟（ms）
+  decodeTokS?: number   // 解码速度（与监控面板同源）
 }
 
 // ── 下载状态 Phase 联合类型 ──

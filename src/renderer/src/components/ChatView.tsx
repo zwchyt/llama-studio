@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import {
   Plus, Send, Square, Trash2, Pencil, MessageSquare,
   ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain, RefreshCw,
-  Copy, Check, RotateCcw, ArrowDown, X, Eye, SlidersHorizontal
+  Copy, Check, RotateCcw, ArrowDown, X, Eye, SlidersHorizontal, List
 } from 'lucide-react'
 import { useChatStore, buildOpenAiMessages, DEFAULT_PARAMS } from '../store/chatStore'
 import { useStore } from '../store/useStore'
@@ -272,7 +272,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
   // 流式中不显示操作栏
   if (isStreaming) {
     return (
-      <div className="chat-msg chat-msg-assistant">
+      <div className="chat-msg chat-msg-assistant" data-msg-id={msg.id}>
         <div className="chat-msg-avatar"><Bot size={14} /></div>
         <div className="chat-msg-body">
           {msg.content ? (
@@ -303,7 +303,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
   }
 
   return (
-    <div className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-assistant'}`}>
+    <div className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-assistant'}`} data-msg-id={msg.id}>
       {!isUser && (
         <div className="chat-msg-avatar">
           <Bot size={14} />
@@ -332,6 +332,14 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
               <div className="chat-msg-stopped-badge">
                 <Square size={10} />
                 <span>已停止生成</span>
+              </div>
+            )}
+            {/* Token 统计信息 */}
+            {!msg.error && (msg.tokensDecoded != null || msg.msFirstToken != null || msg.decodeTokS != null) && (
+              <div className="chat-msg-token-stats">
+                {msg.decodeTokS != null && <span>{typeof msg.decodeTokS === 'number' ? msg.decodeTokS.toFixed(1) : msg.decodeTokS} tok/s</span>}
+                {msg.tokensDecoded != null && <span>{msg.tokensDecoded} tokens</span>}
+                {msg.msFirstToken != null && <span>TTFT {msg.msFirstToken}ms</span>}
               </div>
             )}
           </>
@@ -595,6 +603,75 @@ function ChatSettingsCard({ session, anchorRect, onClose, onSetSystemPrompt, onS
   )
 }
 
+// ── 消息导航侧边栏 ──────────────────────────────────────────
+const NAV_SUMMARY_LEN = 25
+function formatTime(iso: string): string {
+  try { return new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) } catch { return '' }
+}
+
+const MessageNav = React.memo(function MessageNav({
+  messages, activeMsgId, containerRef
+}: {
+  messages: ChatMessage[]
+  activeMsgId: string | null
+  containerRef: React.RefObject<HTMLDivElement | null>
+}) {
+  const [hovered, setHovered] = useState(false)
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const userMsgs = useMemo(() => messages.filter(m => m.role === 'user'), [messages])
+
+  const handleEnter = useCallback(() => {
+    if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null }
+    setHovered(true)
+  }, [])
+
+  const handleLeave = useCallback(() => {
+    hideTimerRef.current = setTimeout(() => setHovered(false), 200)
+  }, [])
+
+  const handleClick = useCallback((msgId: string) => {
+    const container = containerRef.current
+    if (!container) return
+    const el = container.querySelector(`[data-msg-id="${msgId}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [containerRef])
+
+  if (userMsgs.length < 2) return null
+
+  return (
+    <div className="chat-nav-wrap" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
+      <button className="chat-nav-trigger">
+        <List size={14} />
+      </button>
+      {hovered && (
+        <div className="chat-nav-panel">
+          <div className="chat-nav-header">
+            <span className="chat-nav-title">消息导航</span>
+            <span className="chat-nav-count">{userMsgs.length}</span>
+          </div>
+          <div className="chat-nav-list">
+            {userMsgs.map((m) => {
+              const summary = m.content.length > NAV_SUMMARY_LEN ? m.content.slice(0, NAV_SUMMARY_LEN) + '…' : m.content
+              return (
+                <button
+                  key={m.id}
+                  className={`chat-nav-item ${activeMsgId === m.id ? 'active' : ''}`}
+                  onClick={() => handleClick(m.id)}
+                >
+                  <span className="chat-nav-item-text">{summary}</span>
+                  <span className="chat-nav-item-time">{formatTime(m.createdAt)}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+})
+
 // ── 主视图 ─────────────────────────────────────────────────
 export default function ChatView() {
   const sessions = useChatStore((s) => s.sessions)
@@ -634,6 +711,7 @@ export default function ChatView() {
   const [autoScroll, setAutoScroll] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
   const [deletingSession, setDeletingSession] = useState<ChatSession | null>(null)
+  const [activeNavMsgId, setActiveNavMsgId] = useState<string | null>(null)
   // 输入框代码预览：用户手动关闭后，任意输入变化即可重新触发
   const [inputPreviewDismissed, setInputPreviewDismissed] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -756,6 +834,14 @@ export default function ChatView() {
         } else {
           // 成功：清除回滚备份
           regenerateRollbackRef.current = null
+          // 回填 token 统计
+          if (data.usage != null || data.msFirstToken != null || data.decodeTokS != null) {
+            st.finalizeLastMessage(targetSession.id, {
+              tokensDecoded: data.usage?.completionTokens,
+              msFirstToken: data.msFirstToken,
+              decodeTokS: data.decodeTokS
+            })
+          }
         }
         st.persist(targetSession.id)
         if (st.streamingId === data.streamId) st.setStreamingId(null)
@@ -767,19 +853,26 @@ export default function ChatView() {
     }
   }, [])
 
-  // 自动滚动到底部（切换会话时在绘制前同步跳转，消除闪烁）
+  // 自动滚动到底部
   useLayoutEffect(() => {
     const container = messagesContainerRef.current
-    if (!autoScroll || !container || !activeSessionId) return
-    if (lastScrollSessionRef.current !== activeSessionId) {
-      // 切换会话：直接将滚动条拉到底部，无动画
+    if (!container || !activeSessionId) return
+
+    const isSessionSwitch = lastScrollSessionRef.current !== activeSessionId
+    if (isSessionSwitch) {
+      // 切换会话：无条件滚到底部，重置 autoScroll，用 rAF 在布局完成后二次确认
       lastScrollSessionRef.current = activeSessionId
       container.scrollTop = container.scrollHeight
-    } else {
-      // 同一会话新消息：平滑滚动到底部
-      const target = container.scrollHeight
-      container.scrollTo({ top: target, behavior: 'smooth' })
+      requestAnimationFrame(() => {
+        container.scrollTop = container.scrollHeight
+      })
+      if (!autoScroll) setAutoScroll(true)
+      return
     }
+
+    // 同一会话内：仅在 autoScroll 开启时跟随滚动
+    if (!autoScroll) return
+    container.scrollTop = container.scrollHeight
   }, [activeSessionId, activeMessages.length, activeMessages[activeMessages.length - 1]?.content, autoScroll])
 
   // 监听滚动：用户上滚则暂停自动滚动
@@ -788,6 +881,15 @@ export default function ChatView() {
     if (!el) return
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
     setAutoScroll(atBottom)
+    // 导航栏：检测当前可见的用户消息
+    const userEls = el.querySelectorAll('.chat-msg-user[data-msg-id]')
+    const containerTop = el.scrollTop
+    let visible: string | null = null
+    userEls.forEach((node) => {
+      const top = (node as HTMLElement).offsetTop
+      if (top <= containerTop + 120) visible = (node as HTMLElement).dataset.msgId || null
+    })
+    if (visible) setActiveNavMsgId(visible)
   }, [])
 
   // 新建会话
@@ -1179,6 +1281,15 @@ export default function ChatView() {
             </button>
           )}
         </div>
+
+        {/* 消息导航侧边栏 */}
+        {activeMessages.length >= 2 && (
+          <MessageNav
+            messages={activeMessages}
+            activeMsgId={activeNavMsgId}
+            containerRef={messagesContainerRef}
+          />
+        )}
 
         {/* 输入代码预览：独立于输入框，置于其上方 */}
         {showInputPreview && (

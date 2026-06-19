@@ -1756,7 +1756,12 @@ export function registerIpcHandlers(): void {
   }): Promise<{ success: boolean; error?: string }> => {
     return new Promise((resolve) => {
       const { streamId, port, body } = opts
-      const bodyStr = JSON.stringify({ ...body, stream: true })
+      // stream_options.include_usage 让 llama-server 在流结束前发送 usage 统计
+      const bodyStr = JSON.stringify({ ...body, stream: true, stream_options: { include_usage: true } })
+      const streamStartTime = Date.now()
+      let firstTokenTime: number | null = null
+      let lastUsage: { promptTokens: number; completionTokens: number } | null = null
+      let endMetricsPromise: Promise<{ decodeTokS?: number; completionTokens?: number }> | null = null
       const req = http.request(`http://127.0.0.1:${port}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
@@ -1773,10 +1778,9 @@ export function registerIpcHandlers(): void {
           return
         }
         let buf = ''
-        res.on('data', (chunk: Buffer) => {
-          buf += chunk.toString()
+        // SSE 事件解析：处理 buf 中以 \n\n 分隔的事件
+        function processBuf() {
           let idx: number
-          // SSE 事件以空行(\n\n)分隔，逐个解析
           while ((idx = buf.indexOf('\n\n')) >= 0) {
             const raw = buf.slice(0, idx)
             buf = buf.slice(idx + 2)
@@ -1784,16 +1788,38 @@ export function registerIpcHandlers(): void {
             if (!line) continue
             const payload = line.slice(6).trim()
             if (payload === '[DONE]') {
-              e.sender.send('chat-stream-chunk', { streamId, done: true })
-              chatStreamInReasoning.delete(streamId)
               return
             }
             try {
               const parsed = JSON.parse(payload)
+              // 提取 usage（llama-server 在最后一个 SSE 事件中返回，choices 为空数组）
+              if (parsed?.usage) {
+                lastUsage = {
+                  promptTokens: parsed.usage.prompt_tokens ?? 0,
+                  completionTokens: parsed.usage.completion_tokens ?? 0
+                }
+                // usage chunk 到达时立即获取 /metrics 读取 predicted_tokens_seconds（与监控面板同源）
+                if (!endMetricsPromise) {
+                  endMetricsPromise = httpGetText(`http://127.0.0.1:${port}/metrics`)
+                    .then(raw => {
+                      const prom = parsePrometheusMetrics(raw)
+                      return {
+                        decodeTokS: prom['llamacpp:predicted_tokens_seconds'],
+                        completionTokens: lastUsage?.completionTokens
+                      }
+                    })
+                    .catch(() => ({ completionTokens: lastUsage?.completionTokens }))
+                }
+              }
               const choice = parsed?.choices?.[0]
               const content = choice?.delta?.content
               const reasoning = choice?.delta?.reasoning_content
               const inReasoning = chatStreamInReasoning.get(streamId) ?? false
+
+              // 记录首 token 时间（content 或 reasoning 均算首 token）
+              if ((content || reasoning) && firstTokenTime === null) {
+                firstTokenTime = Date.now() - streamStartTime
+              }
 
               // reasoning_content → 包裹在 <think> 标签中，以便前端折叠显示
               if (reasoning) {
@@ -1808,17 +1834,46 @@ export function registerIpcHandlers(): void {
               }
             } catch { /* 忽略心跳/keepalive/不完整 JSON */ }
           }
+        }
+        res.on('data', (chunk: Buffer) => {
+          buf += chunk.toString()
+          processBuf()
         })
         res.on('end', () => {
+          // 处理缓冲区中可能残留的未以 \n\n 结尾的 SSE 事件（如 usage chunk）
+          if (buf.trim()) {
+            buf += '\n\n'
+            processBuf()
+          }
           // 如果流结束时 <think> 尚未闭合，补上闭合标签
           const wasInReasoning = chatStreamInReasoning.get(streamId) ?? false
           if (wasInReasoning) {
             e.sender.send('chat-stream-chunk', { streamId, delta: '</think>', done: false })
           }
           chatStreamInReasoning.delete(streamId)
-          e.sender.send('chat-stream-chunk', { streamId, done: true })
-          activeChatStreams.delete(streamId)
-          resolve({ success: true })
+
+          // 等待 /metrics 结果，使用 predicted_tokens_seconds（与监控面板同源）
+          const finalizeStream = (metrics?: { decodeTokS?: number; completionTokens?: number }) => {
+            const finalTokens = metrics?.completionTokens ?? lastUsage?.completionTokens
+            const finalUsage = finalTokens != null
+              ? { promptTokens: lastUsage?.promptTokens ?? 0, completionTokens: finalTokens }
+              : undefined
+            e.sender.send('chat-stream-chunk', {
+              streamId,
+              done: true,
+              usage: finalUsage,
+              msFirstToken: firstTokenTime ?? undefined,
+              decodeTokS: metrics?.decodeTokS
+            })
+            activeChatStreams.delete(streamId)
+            resolve({ success: true })
+          }
+
+          if (endMetricsPromise) {
+            endMetricsPromise.then(m => finalizeStream(m)).catch(() => finalizeStream())
+          } else {
+            finalizeStream()
+          }
         })
       })
       req.on('error', (err) => {

@@ -60,6 +60,8 @@ interface ChatStore {
   markLastMessageError: (sessionId: string, error: string) => void
   // 标记最后一条 assistant 消息被用户手动停止
   markLastMessageStopped: (sessionId: string) => void
+  // 流式结束后回填 token 统计
+  finalizeLastMessage: (sessionId: string, stats: { tokensDecoded?: number; msFirstToken?: number; decodeTokS?: number }) => void
   // 删除从某条消息开始到末尾的所有消息（用于重试/编辑）
   truncateAfter: (sessionId: string, messageId: string) => void
   // 替换会话的所有消息（用于回滚）
@@ -255,6 +257,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const last = msgs[msgs.length - 1]
         if (last && last.role === 'assistant') {
           msgs[msgs.length - 1] = { ...last, stopped: true }
+        }
+        return { ...x, messages: msgs, updatedAt: new Date().toISOString() }
+      })
+    }))
+  },
+
+  finalizeLastMessage: (sessionId, stats) => {
+    set((s) => ({
+      sessions: s.sessions.map((x) => {
+        if (x.id !== sessionId) return x
+        const msgs = [...x.messages]
+        const last = msgs[msgs.length - 1]
+        if (last && last.role === 'assistant') {
+          msgs[msgs.length - 1] = {
+            ...last,
+            tokensDecoded: stats.tokensDecoded,
+            msFirstToken: stats.msFirstToken,
+            decodeTokS: stats.decodeTokS
+          }
         }
         return { ...x, messages: msgs, updatedAt: new Date().toISOString() }
       })
