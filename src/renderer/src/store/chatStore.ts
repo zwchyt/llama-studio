@@ -243,7 +243,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (x.id !== sessionId) return x
         const msgs = [...x.messages]
         const last = msgs[msgs.length - 1]
-        if (last && last.role === 'assistant') {
+        if (last && last.role === 'assistant' && !last.stopped) {
           const prefix = last.content ? last.content + '\n\n' : ''
           msgs[msgs.length - 1] = {
             ...last,

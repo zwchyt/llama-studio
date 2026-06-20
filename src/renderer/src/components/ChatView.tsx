@@ -13,6 +13,20 @@ import type { ChatSession, ChatMessage, ChatParams } from '../../../shared/types
 import CodeBlock from './CodeBlock'
 import ConfirmModal from './ConfirmModal'
 
+// ── 会话时间格式化 ───────────────────────────────────────
+function formatSessionTime(iso: string): string {
+  const d = new Date(iso)
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const sessionDay = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  const diffDays = Math.floor((today.getTime() - sessionDay.getTime()) / 86400000)
+  const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  if (diffDays === 0) return hhmm
+  if (diffDays === 1) return `昨天 ${hhmm}`
+  if (diffDays < 7) return `${['周日','周一','周二','周三','周四','周五','周六'][d.getDay()]} ${hhmm}`
+  return `${d.getMonth() + 1}/${d.getDate()} ${hhmm}`
+}
+
 // ── Markdown code 组件 ─────────────────────────────────────
 // react-markdown v10 不再传 inline prop，用 className 是否含 language- 区分块级/行内
 function MarkdownCode({ className, children }: { className?: string; children?: React.ReactNode }) {
@@ -64,9 +78,11 @@ const THINK_THROTTLE_MS = 120 // 流式文本节流间隔，避免每个 delta �
 
 const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, autoExpand }: { value: string; closed: boolean; isStreaming?: boolean; autoExpand?: boolean }) {
   const [expanded, setExpanded] = useState(autoExpand ?? false)
+  const [visible, setVisible] = useState(autoExpand ?? false)
   const userToggledRef = useRef(false)
   const thinking = !closed || isStreaming
   const bodyRef = useRef<HTMLDivElement>(null)
+  const collapseTimerRef = useRef<ReturnType<typeof setTimeout>>()
 
   // 节流显示文本：流式时按固定间隔更新，避免每个 token 都触发长文本重排
   const [displayValue, setDisplayValue] = useState(value)
@@ -89,9 +105,18 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
     }
   }, [displayValue, thinking, expanded])
 
+  // 展开/折叠动画：展开时先设 visible=true 再设 expanded=true；
+  // 折叠时先设 expanded=false 触发 CSS 过渡，等动画结束后再设 visible=false 移除 DOM
   useEffect(() => {
     if (userToggledRef.current) return
-    setExpanded(!!thinking)
+    if (thinking) {
+      clearTimeout(collapseTimerRef.current)
+      setVisible(true)
+      requestAnimationFrame(() => setExpanded(true))
+    } else {
+      setExpanded(false)
+      collapseTimerRef.current = setTimeout(() => setVisible(false), 300)
+    }
   }, [thinking])
 
   // 思考阶段结束时重置手动标记，下次可再次自动展开
@@ -105,16 +130,30 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
 
   const handleToggle = () => {
     userToggledRef.current = true
-    setExpanded(v => !v)
+    if (expanded) {
+      setExpanded(false)
+      collapseTimerRef.current = setTimeout(() => setVisible(false), 300)
+    } else {
+      setVisible(true)
+      requestAnimationFrame(() => setExpanded(true))
+    }
   }
 
+  // 停止生成但思考链未闭合 → 显示"已停止"
+  const wasStopped = !thinking && !closed
+
   return (
-    <div className={`chat-think ${thinking ? 'thinking' : ''} ${expanded ? 'expanded' : ''}`}>
+    <div className={`chat-think ${thinking ? 'thinking' : ''} ${expanded ? 'expanded' : ''} ${wasStopped ? 'stopped' : ''}`}>
       <button className="chat-think-toggle" onClick={handleToggle}>
         {thinking ? (
           <span className="chat-think-status">
             <RefreshCw size={12} className="spin" />
             思考中
+          </span>
+        ) : wasStopped ? (
+          <span className="chat-think-status">
+            <Brain size={12} />
+            思考已中断
           </span>
         ) : (
           <span className="chat-think-status">
@@ -124,8 +163,14 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
         )}
         <ChevronDown size={13} className={`chat-think-chevron ${expanded ? 'open' : ''}`} />
       </button>
-      {expanded && (
-        <div className="chat-think-body" ref={bodyRef}>{displayValue || '（空）'}</div>
+      {visible && (
+        <div className={`chat-think-body chat-msg-markdown ${expanded ? 'open' : ''}`} ref={bodyRef}>
+          {displayValue ? (
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any }}>
+              {displayValue}
+            </ReactMarkdown>
+          ) : '（空）'}
+        </div>
       )}
     </div>
   )
@@ -188,8 +233,66 @@ function parseIndentedBlocks(text: string): UserBlock[] {
   return blocks
 }
 
+// ── 预处理：让粘贴/输入的代码内容自动变成缩进代码块 ──────
+const codePatterns = [
+  /^(#include|#define|#ifndef|#ifdef|#endif)/,
+  /^(import\s|from\s+\S+\s+import|export\s)/,
+  /^(using\s+namespace|package\s)/,
+  /^(public\s+class|private\s+class|class\s+\w+)/,
+  /^(def\s+\w+\s*\(|function\s+\w+\s*\()/,
+  /^(int|void|char|float|double|bool|auto|string|var|let|const)\s+\w+/,
+  /[{};]\s*(\/\/.*)?$/,
+  /(<<|>>|::|&&|\|\||=>|->)/
+]
+
+function preprocessInput(raw: string): string {
+  // 已有围栏代码块 → 不动
+  if (/(?:^|\n)```/.test(raw)) return raw
+
+  const lines = raw.split('\n')
+
+  // 已有缩进代码块（连续 2+ 行缩进）且所有内容都已缩进 → 不动
+  // 但如果存在混合缩进（部分行有缩进、部分没有），仍需给所有行加缩进
+  let indentRun = 0
+  let hasIndent = false
+  let hasNonIndent = false
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (trimmed === '') continue // 空行不参与判断
+    if (/^( {4,}|\t)/.test(line)) {
+      hasIndent = true
+      indentRun++
+    } else {
+      hasNonIndent = true
+      indentRun = 0
+    }
+  }
+  // 只有全部非空行都已缩进时才跳过
+  if (hasIndent && !hasNonIndent) return raw
+  // 已有连续缩进且没有未缩进行 → 跳过
+  if (indentRun >= 2 && !hasNonIndent) return raw
+
+  // 少于 2 行非空行 → 不动
+  const nonEmpty = lines.filter(l => l.trim() !== '')
+  if (nonEmpty.length < 2) return raw
+
+  // 检测代码特征命中比例
+  let matchCount = 0
+  for (const line of nonEmpty) {
+    const trimmed = line.trim()
+    if (codePatterns.some(p => p.test(trimmed))) matchCount++
+  }
+
+  // 超过 30% 非空行命中代码特征 → 自动加 4 空格缩进
+  if (matchCount / nonEmpty.length > 0.3) {
+    return lines.map(l => '    ' + l).join('\n')
+  }
+
+  return raw
+}
+
 function parseUserContent(content: string): UserBlock[] {
-  // 第一步：用围栏代码块（```）切分
+  // 第一步：用已闭合的围栏代码块（```...```）切分
   const fenceRe = /```(\w*)\s*\r?\n([\s\S]*?)```/g
   const rawSegments: UserBlock[] = []
   let lastIdx = 0
@@ -201,8 +304,24 @@ function parseUserContent(content: string): UserBlock[] {
     rawSegments.push({ type: 'code', lang: m[1] || '', code: m[2] })
     lastIdx = m.index + m[0].length
   }
+
+  // 检查剩余内容中是否存在未闭合的围栏（有 opening ``` 但无 closing）
+  // 支持用户刚打完 ```lang 尚未按回车的场景
   if (lastIdx < content.length) {
-    rawSegments.push({ type: 'text', text: content.slice(lastIdx) })
+    const remaining = content.slice(lastIdx)
+    const openMatch = remaining.match(/```(\w*)\s*(?:\r?\n|$)/)
+    if (openMatch) {
+      const openIdx = openMatch.index!
+      // opening 之前的文本
+      if (openIdx > 0) {
+        rawSegments.push({ type: 'text', text: remaining.slice(0, openIdx) })
+      }
+      // opening 之后的内容全部视为未闭合的代码块
+      const afterOpen = remaining.slice(openIdx + openMatch[0].length)
+      rawSegments.push({ type: 'code', lang: openMatch[1] || '', code: afterOpen })
+    } else {
+      rawSegments.push({ type: 'text', text: remaining })
+    }
   }
 
   // 第二步：在每个纯文本片段内检测缩进代码块
@@ -264,11 +383,37 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
   )
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(msg.content)
+    // 助手消息只复制正文，排除思考链内容
+    const text = isUser
+      ? msg.content
+      : parseThinkSegments(msg.content)
+          .filter(s => s.type === 'text')
+          .map(s => s.value)
+          .join('\n\n')
+          .trim()
+    navigator.clipboard.writeText(text)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
     onCopy?.()
   }
+
+  // 共享：渲染思考链 + 正文片段序列
+  const renderSegments = (streaming: boolean) => (
+    segments.map((seg, i) => {
+      if (seg.type === 'think') {
+        // 流已中断时，未闭合的思考链视为已结束
+        const effectiveClosed = streaming ? seg.closed : true
+        return <ThinkBlock key={i} value={seg.value} closed={effectiveClosed} isStreaming={streaming && !seg.closed} />
+      }
+      return (
+        <div key={i} className="chat-msg-markdown">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any }}>
+            {seg.value}
+          </ReactMarkdown>
+        </div>
+      )
+    })
+  )
 
   // 流式中不显示操作栏
   if (isStreaming) {
@@ -278,19 +423,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
         <div className="chat-msg-body">
           {msg.content ? (
             <>
-              {segments.map((seg, i) => {
-                if (seg.type === 'think') {
-                  const thinkStreaming = true
-                  return <ThinkBlock key={i} value={seg.value} closed={seg.closed} isStreaming={thinkStreaming && !seg.closed} />
-                }
-                return (
-                  <div key={i} className="chat-msg-markdown">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any }}>
-                      {seg.value}
-                    </ReactMarkdown>
-                  </div>
-                )
-              })}
+              {renderSegments(true)}
               {segments.length > 0 && segments[segments.length - 1].type === 'text' && <span className="chat-cursor" />}
             </>
           ) : (
@@ -317,18 +450,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
           <div className="chat-msg-error">{msg.content}</div>
         ) : msg.content ? (
           <>
-            {segments.map((seg, i) => {
-              if (seg.type === 'think') {
-                return <ThinkBlock key={i} value={seg.value} closed={seg.closed} isStreaming={false} />
-              }
-              return (
-                <div key={i} className="chat-msg-markdown">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any }}>
-                    {seg.value}
-                  </ReactMarkdown>
-                </div>
-              )
-            })}
+            {renderSegments(false)}
             {msg.stopped && (
               <div className="chat-msg-stopped-badge">
                 <Square size={10} />
@@ -444,6 +566,7 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRe
                 <>
                   <div className="chat-session-main">
                     <div className="chat-session-name">{s.title}</div>
+                    <div className="chat-session-time">{formatSessionTime(s.updatedAt)}</div>
                   </div>
                   <div className="chat-session-actions">
                     <button
@@ -698,8 +821,14 @@ const MessageNav = React.memo(function MessageNav({
 
   if (userCount < 2) return null
 
-  const viewportBoxTop = scrollRatio * (1 - viewportRatio) * 100
-  const viewportBoxHeight = viewportRatio * 100
+  // 椭圆面板 border-radius=18px，节点需定位在圆角安全区内避免被裁切
+  const ph = panelHeight || 400
+  const safePad = Math.min(18, ph * 0.12)
+  const safePct = (safePad / ph) * 100
+  const toSafe = (r: number) => safePct + r * (100 - 2 * safePct)
+
+  const viewportBoxTop = toSafe(scrollRatio * (1 - viewportRatio))
+  const viewportBoxHeight = viewportRatio * (100 - 2 * safePct)
 
   const nearestIndex = hovered && mouseYRatio !== null && nodes.length > 0
     ? nodes.reduce((best, node, i) =>
@@ -707,9 +836,9 @@ const MessageNav = React.memo(function MessageNav({
     : null
 
   const nearestNode = nearestIndex !== null ? nodes[nearestIndex] : null
-  const tooltipY = nearestNode ? nearestNode.topRatio * (panelHeight || 400) : 0
+  const tooltipY = nearestNode ? toSafe(nearestNode.topRatio) / 100 * ph : 0
   const TOOLTIP_H = 24
-  const tooltipTop = Math.max(1, Math.min(panelHeight - TOOLTIP_H - 1, tooltipY - TOOLTIP_H / 2))
+  const tooltipTop = Math.max(1, Math.min(ph - TOOLTIP_H - 1, tooltipY - TOOLTIP_H / 2))
 
   return (
     <div className="chat-nav-wrap" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
@@ -721,7 +850,10 @@ const MessageNav = React.memo(function MessageNav({
             ref={panelRef}
             onMouseMove={(e) => {
               const rect = e.currentTarget.getBoundingClientRect()
-              setMouseYRatio((e.clientY - rect.top) / rect.height)
+              const rawY = (e.clientY - rect.top) / rect.height
+              // 将鼠标位置从面板坐标系反向映射到节点的安全区坐标系
+              const sp = safePct / 100
+              setMouseYRatio(Math.max(0, Math.min(1, (rawY - sp) / (1 - 2 * sp))))
             }}
           >
             <div className="nav-centerline" />
@@ -734,7 +866,7 @@ const MessageNav = React.memo(function MessageNav({
                 <div
                   key={node.msg.id}
                   className="nav-node"
-                  style={{ top: `${node.topRatio * 100}%` }}
+                  style={{ top: `${toSafe(node.topRatio)}%` }}
                   onClick={() => handleClick(node.msg.id)}
                 >
                   <div
@@ -799,7 +931,7 @@ export default function ChatView() {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const lastScrollSessionRef = useRef<string | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [deletingSession, setDeletingSession] = useState<ChatSession | null>(null)
   const [activeNavMsgId, setActiveNavMsgId] = useState<string | null>(null)
   // 输入框代码预览：用户手动关闭后，任意输入变化即可重新触发
@@ -839,24 +971,29 @@ export default function ChatView() {
     }, 300)
   }
 
+  // 预处理：代码内容自动缩进（仅用于预览，发送时仍用原始 input）
+  const processedInput = useMemo(() => preprocessInput(input), [input])
+
   // 只有实际存在代码块时才显示预览（避免空壳子）
   const hasCodeBlocks = useMemo(() => {
-    return /```(\w*)\s*\r?\n[\s\S]*?```/.test(input) ||
-      (() => {
-        const lines = input.split('\n')
-        let run = 0
-        for (const line of lines) {
-          run = /^( {4,}|\t)/.test(line) ? run + 1 : 0
-          if (run >= 2) return true
-        }
-        return false
-      })()
-  }, [input])
+    // 围栏代码块：行首出现 ```
+    if (/(?:^|\n)```/.test(processedInput)) return true
+    // 缩进代码块：连续 2+ 行缩进
+    const lines = processedInput.split('\n')
+    let run = 0
+    for (const line of lines) {
+      run = /^( {4,}|\t)/.test(line) ? run + 1 : 0
+      if (run >= 2) return true
+    }
+    return false
+  }, [processedInput])
 
   const showInputPreview = hasCodeBlocks && !inputPreviewDismissed
   // 看门狗：防止流卡住导致输入框永久冻结（per-stream，支持多会话并发）
   const streamWatchdogsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const streamReceivedRef = useRef<Map<string, boolean>>(new Map())
+  // 已被用户主动中止的流，用于屏蔽后续异步 chunk/done 事件
+  const abortedStreamsRef = useRef<Set<string>>(new Set())
   // 重新生成回滚备份：失败时恢复旧消息
   const regenerateRollbackRef = useRef<{ sessionId: string; messages: ChatMessage[]; streamId: string } | null>(null)
 
@@ -895,6 +1032,11 @@ export default function ChatView() {
     }
 
     window.api.onChatStreamChunk((data) => {
+      // 已中止的流：忽略所有后续事件（包括异步到达的 done）
+      if (abortedStreamsRef.current.has(data.streamId)) {
+        if (data.done) abortedStreamsRef.current.delete(data.streamId)
+        return
+      }
       const st = useChatStore.getState()
       // chunk 通过 streamId 关联到会话：发起流时把 streamId 记在会话最后一条 assistant 消息上
       const targetSession = st.sessions.find((s) =>
@@ -1092,6 +1234,7 @@ export default function ChatView() {
   // 停止生成（仅停止当前会话的流）
   const handleStop = useCallback(() => {
     if (activeStreamId && activeSessionId) {
+      abortedStreamsRef.current.add(activeStreamId)
       const wd = streamWatchdogsRef.current.get(activeStreamId)
       if (wd) { clearTimeout(wd); streamWatchdogsRef.current.delete(activeStreamId) }
       window.api.abortChatStream(activeStreamId)
@@ -1392,7 +1535,7 @@ export default function ChatView() {
               </button>
             </div>
             <div className="chat-input-preview-body">
-              <UserMessageContent content={input} />
+              <UserMessageContent content={processedInput} />
             </div>
           </div>
         )}

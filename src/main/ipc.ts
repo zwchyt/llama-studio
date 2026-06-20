@@ -97,6 +97,8 @@ for (const dir of [MODELS_DIR, TEMPLATES_DIR, BACKEND_DIR, CHATS_DIR]) {
 }
 // 活跃的聊天流式请求，按 streamId 索引，支持中止
 const activeChatStreams = new Map<string, http.ClientRequest>()
+// 被用户主动中止的流，用于抑制 destroy 后的 error 事件
+const abortedChatStreams = new Set<string>()
 // 每个流的「是否正在 reasoning」状态，用于把 reasoning_content 包裹成 <think> 标签
 const chatStreamInReasoning = new Map<string, boolean>()
 // isSafePath 函数用于防止路径遍历攻击（Path Traversal Attack），也称为目录遍历攻击。
@@ -1878,7 +1880,11 @@ export function registerIpcHandlers(): void {
       })
       req.on('error', (err) => {
         chatStreamInReasoning.delete(streamId)
-        e.sender.send('chat-stream-chunk', { streamId, done: true, error: err.message })
+        // 主动中止的流不发 error 事件，避免前端误显示
+        if (!abortedChatStreams.has(streamId)) {
+          e.sender.send('chat-stream-chunk', { streamId, done: true, error: err.message })
+        }
+        abortedChatStreams.delete(streamId)
         activeChatStreams.delete(streamId)
         resolve({ success: false, error: err.message })
       })
@@ -1899,7 +1905,11 @@ export function registerIpcHandlers(): void {
   // --- chat-stream-abort (中止一个进行中的聊天流) ---
   ipcMain.handle('chat-stream-abort', (_e, streamId: string) => {
     const req = activeChatStreams.get(streamId)
-    if (req) { req.destroy(); activeChatStreams.delete(streamId) }
+    if (req) {
+      abortedChatStreams.add(streamId)
+      req.destroy()
+      activeChatStreams.delete(streamId)
+    }
     return { success: true }
   })
 

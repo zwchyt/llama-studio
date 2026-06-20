@@ -3332,13 +3332,13 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 /* ── 左栏：会话列表 ── */
 .chat-sidebar-collapser {
   display: flex;
-  border-right: 1px solid var(--border);
 }
 
 .chat-sidebar {
-  width: 160px;
+  width: 220px;
   flex-shrink: 0;
   background: var(--surface);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -3435,6 +3435,13 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.chat-session-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
 }
 
 .chat-session-actions {
@@ -3951,7 +3958,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 
 /* ── 已停止生成徽章 ── */
 .chat-msg-stopped-badge {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 4px;
   margin-top: 6px;
@@ -3962,6 +3969,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   border: 1px solid var(--border);
   border-radius: 999px;
   opacity: .7;
+  max-width: 85%;
 }
 
 /* ── Token 统计信息 ── */
@@ -4422,9 +4430,9 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   justify-content: center;
   width: 32px;
   height: 32px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--bg);
+  background: var(--surface);
   color: var(--text-secondary);
   cursor: pointer;
   flex-shrink: 0;
@@ -4531,12 +4539,57 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   font-size: 12.5px;
   line-height: 1.7;
   color: var(--text-secondary);
-  white-space: pre-wrap;
   word-wrap: break-word;
   border-top: 1px solid var(--border);
+  max-height: 0;
+  overflow: hidden;
+  contain: content;
+  transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.25s ease;
+  opacity: 0;
+}
+
+.chat-think-body.open {
   max-height: 400px;
   overflow-y: auto;
-  contain: content;
+  opacity: 1;
+}
+
+/* 思考已中断：灰色边框 + 淡色标签 */
+.chat-think.stopped {
+  border-color: var(--border);
+  border-left-color: var(--text-muted);
+  background: var(--surface);
+}
+
+.chat-think.stopped .chat-think-status {
+  color: var(--text-muted);
+}
+
+/* 思考链内嵌 Markdown：去除气泡样式，保持紧凑 */
+.chat-think-body.chat-msg-markdown {
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  max-width: 100%;
+  font-size: 12.5px;
+}
+.chat-think-body.chat-msg-markdown h1,
+.chat-think-body.chat-msg-markdown h2,
+.chat-think-body.chat-msg-markdown h3 {
+  font-size: 13px;
+  margin: 10px 0 4px;
+}
+.chat-think-body.chat-msg-markdown p {
+  margin: 0 0 6px;
+}
+.chat-think-body.chat-msg-markdown pre {
+  font-size: 11.5px;
+  margin: 6px 0;
+}
+.chat-think-body.chat-msg-markdown ul,
+.chat-think-body.chat-msg-markdown ol {
+  margin: 4px 0;
+  padding-left: 20px;
 }
 
 /* ── 消息导航侧边栏 ── */

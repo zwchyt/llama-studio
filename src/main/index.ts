@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow } from 'electron'
+import { app, shell, BrowserWindow, Menu } from 'electron'
 import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -40,6 +40,23 @@ function createWindow(): void {
     }
     return { action: 'deny' }
   })
+  mainWindow.webContents.on('context-menu', (_e, params) => {
+    const menu = Menu.buildFromTemplate([
+      { role: 'undo', label: '撤销' },
+      { role: 'redo', label: '重做' },
+      { type: 'separator' },
+      { role: 'cut', label: '剪切' },
+      { role: 'copy', label: '复制' },
+      { role: 'paste', label: '粘贴' },
+      { type: 'separator' },
+      { role: 'selectAll', label: '全选' }
+    ])
+    // 仅在可编辑区域（如 textarea/input）显示菜单
+    if (params.isEditable) {
+      menu.popup({ window: mainWindow })
+    }
+  })
+
   mainWindow.webContents.on('will-navigate', (event, url) => {
     try {
       const parsed = new URL(url)
