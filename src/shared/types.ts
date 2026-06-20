@@ -97,6 +97,7 @@ export interface CardState {
   template: Template
   status: RunningStatus
   pid?: number
+  startedAt?: number
   expanded: boolean
   monitorExpanded?: boolean
 }

@@ -247,12 +247,13 @@ const UserMessageContent = React.memo(function UserMessageContent({ content }: {
 })
 
 // ── 单条消息 ───────────────────────────────────────────────
-const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate }: {
+const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled }: {
   msg: ChatMessage
   isStreaming?: boolean
   onCopy?: () => void
   onEdit?: () => void
   onRegenerate?: () => void
+  regenDisabled?: boolean
 }) {
   const isUser = msg.role === 'user'
   const [copied, setCopied] = useState(false)
@@ -358,7 +359,12 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
               </button>
             )}
             {!isUser && onRegenerate && (
-              <button className="chat-msg-action-btn" onClick={onRegenerate}>
+              <button
+                className="chat-msg-action-btn"
+                onClick={onRegenerate}
+                disabled={regenDisabled}
+                style={regenDisabled ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
+              >
                 <RotateCcw size={13} />
               </button>
             )}
@@ -475,7 +481,7 @@ const PARAM_CONFIG: Array<{
   { key: 'temperature', label: 'Temperature', min: 0, max: 2, step: 0.1, defaultVal: DEFAULT_PARAMS.temperature ?? 0.8 },
   { key: 'top_p', label: 'Top P', min: 0, max: 1, step: 0.05, defaultVal: DEFAULT_PARAMS.top_p ?? 0.95 },
   { key: 'top_k', label: 'Top K', min: 0, max: 200, step: 1, defaultVal: DEFAULT_PARAMS.top_k ?? 40 },
-  { key: 'max_tokens', label: 'Max Tokens', min: -1, max: 8192, step: 1, defaultVal: DEFAULT_PARAMS.max_tokens ?? -1 },
+  { key: 'max_tokens', label: 'Max Tokens', min: 0, max: 8192, step: 1, defaultVal: 0 },
   { key: 'repeat_penalty', label: 'Repeat Penalty', min: 0, max: 2, step: 0.1, defaultVal: DEFAULT_PARAMS.repeat_penalty ?? 1.1 },
 ]
 
@@ -577,12 +583,15 @@ function ChatSettingsCard({ session, anchorRect, onClose, onSetSystemPrompt, onS
 
           {/* 参数滑块 */}
           {PARAM_CONFIG.map(({ key, label, min, max, step, defaultVal }) => {
-            const val = (params[key] ?? defaultVal) as number
+            // max_tokens: UI 用 0 表示「无限」，内部存储 -1
+            const rawVal = (params[key] ?? defaultVal) as number
+            const val = key === 'max_tokens' && rawVal < 0 ? 0 : rawVal
+            const displayVal = key === 'max_tokens' && val <= 0 ? '无限' : val
             return (
               <div className="chat-settings-param" key={String(key)}>
                 <div className="chat-settings-param-header">
                   <span className="chat-settings-param-name">{label}</span>
-                  <span className="chat-settings-param-value">{val}</span>
+                  <span className="chat-settings-param-value">{displayVal}</span>
                 </div>
                 <input
                   type="range"
@@ -590,7 +599,14 @@ function ChatSettingsCard({ session, anchorRect, onClose, onSetSystemPrompt, onS
                   max={max}
                   step={step}
                   value={val}
-                  onChange={(e) => handleParamChange(key, parseFloat(e.target.value))}
+                  onChange={(e) => {
+                    const decimals = (String(step).split('.')[1] || '').length
+                    const factor = 10 ** decimals
+                    let v = Math.round(parseFloat(e.target.value) * factor) / factor
+                    // max_tokens: 0 → -1（无限）
+                    if (key === 'max_tokens' && v <= 0) v = -1
+                    handleParamChange(key, v)
+                  }}
                 />
               </div>
             )
@@ -750,8 +766,7 @@ const MessageNav = React.memo(function MessageNav({
 export default function ChatView() {
   const sessions = useChatStore((s) => s.sessions)
   const activeSessionId = useChatStore((s) => s.activeSessionId)
-  const streamingId = useChatStore((s) => s.streamingId)
-  const streamingSessionIds = useChatStore((s) => s.streamingSessionIds)
+  const streamingMap = useChatStore((s) => s.streamingMap)
   const loaded = useChatStore((s) => s.loaded)
   const loadSessions = useChatStore((s) => s.loadSessions)
   const createSession = useChatStore((s) => s.createSession)
@@ -763,7 +778,8 @@ export default function ChatView() {
   const appendUserMessage = useChatStore((s) => s.appendUserMessage)
   const appendMessage = useChatStore((s) => s.appendMessage)
   const markLastMessageError = useChatStore((s) => s.markLastMessageError)
-  const setStreamingId = useChatStore((s) => s.setStreamingId)
+  const setStreamForSession = useChatStore((s) => s.setStreamForSession)
+  const clearStreamForSession = useChatStore((s) => s.clearStreamForSession)
   const persist = useChatStore((s) => s.persist)
   const truncateAfter = useChatStore((s) => s.truncateAfter)
 
@@ -838,15 +854,16 @@ export default function ChatView() {
   }, [input])
 
   const showInputPreview = hasCodeBlocks && !inputPreviewDismissed
-  // 看门狗：防止流卡住导致输入框永久冻结
-  const streamWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const firstChunkReceivedRef = useRef(false)
+  // 看门狗：防止流卡住导致输入框永久冻结（per-stream，支持多会话并发）
+  const streamWatchdogsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const streamReceivedRef = useRef<Map<string, boolean>>(new Map())
   // 重新生成回滚备份：失败时恢复旧消息
   const regenerateRollbackRef = useRef<{ sessionId: string; messages: ChatMessage[]; streamId: string } | null>(null)
 
   const activeSession = sessions.find((s) => s.id === activeSessionId) || null
   const activeMessages = activeSession?.messages || []
   const activeModel = runningModels.find((m) => m.id === activeSession?.templateId)
+  const activeStreamId = (activeSessionId && streamingMap[activeSessionId]) || null
 
   // 首次加载会话
   useEffect(() => { loadSessions() }, [loadSessions])
@@ -871,10 +888,10 @@ export default function ChatView() {
 
   // 全局监听流式 chunk
   useEffect(() => {
-    // 清除可能残留的 streamingId（ChatView unmount 时流未结束导致卡死）
+    // 清除可能残留的流状态（ChatView unmount 时流未结束导致卡死）
     const initSt = useChatStore.getState()
-    if (initSt.streamingId) {
-      initSt.setStreamingId(null)
+    for (const sid of Object.keys(initSt.streamingMap)) {
+      initSt.clearStreamForSession(sid)
     }
 
     window.api.onChatStreamChunk((data) => {
@@ -885,15 +902,15 @@ export default function ChatView() {
       )
       if (!targetSession) return
       if (data.delta) {
-        firstChunkReceivedRef.current = true
+        streamReceivedRef.current.set(data.streamId, true)
         st.appendDeltaToLast(targetSession.id, data.delta)
-        st.setSessionStreaming(targetSession.id, true)
       }
       if (data.done) {
-        // 清理看门狗定时器
-        if (streamWatchdogRef.current) { clearTimeout(streamWatchdogRef.current); streamWatchdogRef.current = null }
-        firstChunkReceivedRef.current = false
-        st.setSessionStreaming(targetSession.id, false)
+        // 清理该流的看门狗定时器
+        const wd = streamWatchdogsRef.current.get(data.streamId)
+        if (wd) { clearTimeout(wd); streamWatchdogsRef.current.delete(data.streamId) }
+        streamReceivedRef.current.delete(data.streamId)
+        st.clearStreamForSession(targetSession.id)
         if (data.error) {
           // 如果是重新生成失败，回滚恢复旧消息
           const rollback = regenerateRollbackRef.current
@@ -918,12 +935,13 @@ export default function ChatView() {
           }
         }
         st.persist(targetSession.id)
-        if (st.streamingId === data.streamId) st.setStreamingId(null)
+        st.clearStreamForSession(targetSession.id)
       }
     })
     return () => {
       window.api.removeChatStreamListener()
-      if (streamWatchdogRef.current) { clearTimeout(streamWatchdogRef.current); streamWatchdogRef.current = null }
+      for (const [, timer] of streamWatchdogsRef.current) clearTimeout(timer)
+      streamWatchdogsRef.current.clear()
     }
   }, [])
 
@@ -983,20 +1001,14 @@ export default function ChatView() {
     if (!session) return
     const content = input.trim()
     if (!content) return
-    // 如果上一个流仍在进行，先终止它再发送新消息
-    if (streamingId) {
-      if (streamWatchdogRef.current) { clearTimeout(streamWatchdogRef.current); streamWatchdogRef.current = null }
-      window.api.abortChatStream(streamingId)
+    // 如果当前会话有正在进行的流，先终止它再发送新消息
+    if (activeStreamId) {
+      const wd = streamWatchdogsRef.current.get(activeStreamId)
+      if (wd) { clearTimeout(wd); streamWatchdogsRef.current.delete(activeStreamId) }
+      window.api.abortChatStream(activeStreamId)
       const prevSt = useChatStore.getState()
-      // 找到实际在流的会话进行落盘（而非 activeSessionId，后者可能已切换）
-      const streamingSession = prevSt.sessions.find((s) =>
-        s.messages.some((m) => m.id === streamingId)
-      )
-      if (streamingSession) {
-        prevSt.persist(streamingSession.id)
-        prevSt.setSessionStreaming(streamingSession.id, false)
-      }
-      prevSt.setStreamingId(null)
+      prevSt.persist(activeSessionId!)
+      prevSt.clearStreamForSession(activeSessionId!)
     }
 
     // 校验模型仍在运行
@@ -1021,22 +1033,22 @@ export default function ChatView() {
       createdAt: new Date().toISOString()
     }
     appendMessage(session.id, assistantMsg)
-    setStreamingId(streamId)
-    useChatStore.getState().setSessionStreaming(session.id, true)
+    setStreamForSession(session.id, streamId)
 
     // 看门狗：若 90 秒内既没收到任何 chunk、流也没结束，强制恢复输入能力
     // （防止模型加载缓慢或 IPC 异常导致输入框永久冻结）
-    firstChunkReceivedRef.current = false
-    if (streamWatchdogRef.current) clearTimeout(streamWatchdogRef.current)
-    streamWatchdogRef.current = setTimeout(() => {
+    streamReceivedRef.current.set(streamId, false)
+    const wdTimer = setTimeout(() => {
       const st = useChatStore.getState()
-      if (st.streamingId === streamId && !firstChunkReceivedRef.current) {
+      if (st.streamingMap[session.id] === streamId && !streamReceivedRef.current.get(streamId)) {
         st.markLastMessageError(session.id, '响应超时（90s 内无数据返回），可能是模型仍在加载中')
-        st.setStreamingId(null)
-        st.setSessionStreaming(session.id, false)
+        st.clearStreamForSession(session.id)
+        streamReceivedRef.current.delete(streamId)
         notify('响应超时，请确认模型已加载完成', 'error')
       }
+      streamWatchdogsRef.current.delete(streamId)
     }, 90000)
+    streamWatchdogsRef.current.set(streamId, wdTimer)
 
     // 组装 OpenAI 请求
     const updatedSession = { ...useChatStore.getState().sessions.find((s) => s.id === session.id)! }
@@ -1052,7 +1064,7 @@ export default function ChatView() {
           temperature: session.params.temperature,
           top_p: session.params.top_p,
           top_k: session.params.top_k,
-          max_tokens: session.params.max_tokens,
+          max_tokens: session.params.max_tokens || -1,
           repeat_penalty: session.params.repeat_penalty,
           stream: true
         }
@@ -1060,40 +1072,34 @@ export default function ChatView() {
       if (!res.success && res.error) {
         // 错误已在 chunk 回调里处理；这里兜底
         const st = useChatStore.getState()
-        if (streamWatchdogRef.current) { clearTimeout(streamWatchdogRef.current); streamWatchdogRef.current = null }
-        if (st.streamingId === streamId) {
-          st.setStreamingId(null)
-          st.setSessionStreaming(session.id, false)
+        const wd = streamWatchdogsRef.current.get(streamId)
+        if (wd) { clearTimeout(wd); streamWatchdogsRef.current.delete(streamId) }
+        if (st.streamingMap[session.id] === streamId) {
+          st.clearStreamForSession(session.id)
         }
       }
     } catch (e: any) {
-      if (streamWatchdogRef.current) { clearTimeout(streamWatchdogRef.current); streamWatchdogRef.current = null }
+      const wd = streamWatchdogsRef.current.get(streamId)
+      if (wd) { clearTimeout(wd); streamWatchdogsRef.current.delete(streamId) }
       const st = useChatStore.getState()
       st.markLastMessageError(session.id, e?.message || '请求失败')
-      if (st.streamingId === streamId) {
-        st.setStreamingId(null)
-        st.setSessionStreaming(session.id, false)
+      if (st.streamingMap[session.id] === streamId) {
+        st.clearStreamForSession(session.id)
       }
     }
-  }, [activeSessionId, input, streamingId, appendUserMessage, appendMessage, setStreamingId, markLastMessageError, runningModels])
+  }, [activeSessionId, input, activeStreamId, appendUserMessage, appendMessage, setStreamForSession, clearStreamForSession, markLastMessageError, runningModels])
 
-  // 停止生成
+  // 停止生成（仅停止当前会话的流）
   const handleStop = useCallback(() => {
-    if (streamingId) {
-      if (streamWatchdogRef.current) { clearTimeout(streamWatchdogRef.current); streamWatchdogRef.current = null }
-      window.api.abortChatStream(streamingId)
+    if (activeStreamId && activeSessionId) {
+      const wd = streamWatchdogsRef.current.get(activeStreamId)
+      if (wd) { clearTimeout(wd); streamWatchdogsRef.current.delete(activeStreamId) }
+      window.api.abortChatStream(activeStreamId)
       const st = useChatStore.getState()
-      // 找到实际在流的会话，标记消息为手动停止（含落盘）
-      const streamingSession = st.sessions.find((s) =>
-        s.messages.some((m) => m.id === streamingId)
-      )
-      if (streamingSession) {
-        st.markLastMessageStopped(streamingSession.id)
-        st.setSessionStreaming(streamingSession.id, false)
-      }
-      setStreamingId(null)
+      st.markLastMessageStopped(activeSessionId)
+      st.clearStreamForSession(activeSessionId)
     }
-  }, [streamingId, setStreamingId])
+  }, [activeStreamId, activeSessionId])
 
   // 切换会话绑定的模型
   const handleSwitchModel = useCallback((templateId: string) => {
@@ -1124,12 +1130,20 @@ export default function ChatView() {
     setInput(content)
     truncateAfter(activeSessionId, msgId)
     persist(activeSessionId)
-    inputRef.current?.focus()
+    // 回填多行内容后，等 DOM 更新再调整 textarea 高度
+    requestAnimationFrame(() => {
+      const el = inputRef.current
+      if (el) {
+        el.style.height = 'auto'
+        el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+        el.focus()
+      }
+    })
   }, [activeSessionId, truncateAfter, persist])
 
   // 重新生成：找到该助手消息前面的用户消息，截断后重新发送（失败自动回滚）
   const handleRegenerate = useCallback(async (assistantMsgId: string) => {
-    if (!activeSessionId || streamingId || runningModels.length === 0) return
+    if (!activeSessionId || activeStreamId || runningModels.length === 0) return
     const session = useChatStore.getState().sessions.find((s) => s.id === activeSessionId)
     if (!session) return
     const idx = session.messages.findIndex((m) => m.id === assistantMsgId)
@@ -1162,8 +1176,7 @@ export default function ChatView() {
       createdAt: new Date().toISOString()
     }
     appendMessage(activeSessionId, assistantMsg)
-    setStreamingId(streamId)
-    useChatStore.getState().setSessionStreaming(activeSessionId, true)
+    setStreamForSession(activeSessionId, streamId)
 
     const updatedSession = { ...useChatStore.getState().sessions.find((s) => s.id === activeSessionId)! }
     updatedSession.messages = [...updatedSession.messages]
@@ -1178,7 +1191,7 @@ export default function ChatView() {
           temperature: session.params.temperature,
           top_p: session.params.top_p,
           top_k: session.params.top_k,
-          max_tokens: session.params.max_tokens,
+          max_tokens: session.params.max_tokens || -1,
           repeat_penalty: session.params.repeat_penalty,
           stream: true
         }
@@ -1188,11 +1201,10 @@ export default function ChatView() {
       regenerateRollbackRef.current = null
       const st = useChatStore.getState()
       st.replaceMessages(activeSessionId, savedMessages)
-      st.setStreamingId(null)
-      st.setSessionStreaming(activeSessionId, false)
+      st.clearStreamForSession(activeSessionId)
       notify(`重新生成失败：${e?.message || '请求失败'}，已恢复原回复`, 'error')
     }
-  }, [activeSessionId, streamingId, truncateAfter, appendMessage, setStreamingId, runningModels])
+  }, [activeSessionId, activeStreamId, truncateAfter, appendMessage, setStreamForSession, clearStreamForSession, runningModels])
 
   return (
     <div className={`chat-layout ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
@@ -1205,7 +1217,7 @@ export default function ChatView() {
           onRename={renameSession}
           onDeleteRequest={(s) => setDeletingSession(s)}
           runningModels={runningModels}
-          streamingSessionIds={streamingSessionIds}
+          streamingSessionIds={Object.keys(streamingMap)}
         />
       </div>
 
@@ -1290,9 +1302,10 @@ export default function ChatView() {
                 <MessageBubble
                   key={m.id}
                   msg={m}
-                  isStreaming={streamingId === m.id}
+                  isStreaming={activeStreamId === m.id}
                   onEdit={m.role === 'user' ? () => handleEditMessage(m.id, m.content) : undefined}
                   onRegenerate={m.role === 'assistant' ? () => handleRegenerate(m.id) : undefined}
+                  regenDisabled={!!activeStreamId}
                 />
               ))
             )
@@ -1384,7 +1397,7 @@ export default function ChatView() {
           </div>
         )}
 
-        <div className={`chat-input-wrap${streamingId ? ' streaming' : ''}`}>
+        <div className={`chat-input-wrap${activeStreamId ? ' streaming' : ''}`}>
           <textarea
             ref={inputRef}
             className="chat-input"
@@ -1392,7 +1405,7 @@ export default function ChatView() {
             autoComplete="off"
             autoCorrect="off"
             placeholder={
-              streamingId
+              activeStreamId
                 ? '正在生成，可发送新消息（将自动停止当前流）…'
                 : activeModel
                   ? `给 ${activeModel.name} 发消息（Enter 发送，Shift+Enter 换行）`
@@ -1404,7 +1417,7 @@ export default function ChatView() {
             rows={1}
             disabled={!activeModel}
           />
-          {streamingId ? (
+          {activeStreamId ? (
             <button className="btn btn-danger chat-send-btn" onClick={handleStop}>
               <Square size={15} />
             </button>

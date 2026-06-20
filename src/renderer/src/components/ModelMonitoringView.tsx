@@ -89,11 +89,12 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
 
   const [uptime, setUptime] = useState(0)
   useEffect(() => {
-    if (!isRunning) { setUptime(0); return }
-    const start = Date.now()
+    if (!isRunning || !card.startedAt) { setUptime(0); return }
+    const start = card.startedAt
+    setUptime(Math.floor((Date.now() - start) / 1000))
     const iv = setInterval(() => setUptime(Math.floor((Date.now() - start) / 1000)), 1000)
     return () => clearInterval(iv)
-  }, [isRunning])
+  }, [isRunning, card.startedAt])
 
   async function handleStop() {
     // optimistic update: update UI immediately for zero-latency

@@ -16,6 +16,10 @@ function newId(): string {
   return crypto.randomUUID()
 }
 
+// 流式过程中的节流落盘：每个会话每 3 秒最多写一次，防止崩溃丢失已生成内容
+const STREAM_PERSIST_INTERVAL = 3000
+const streamPersistTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
 // 把会话里的消息组装成 OpenAI 格式（含 system prompt）
 export function buildOpenAiMessages(session: ChatSession): Array<{ role: string; content: string }> {
   const out: Array<{ role: string; content: string }> = []
@@ -33,8 +37,7 @@ export function buildOpenAiMessages(session: ChatSession): Array<{ role: string;
 interface ChatStore {
   sessions: ChatSession[]
   activeSessionId: string | null
-  streamingId: string | null      // 当前正在生成的流 ID；null 表示空闲
-  streamingSessionIds: string[]  // 正在流式生成的会话 ID 集合
+  streamingMap: Record<string, string>  // sessionId → streamId，支持多会话并发流式生成
   loaded: boolean
   errorStreamId: string | null    // 最近一次出错的流（用于 UI 提示）
 
@@ -68,8 +71,8 @@ interface ChatStore {
   replaceMessages: (sessionId: string, messages: ChatMessage[]) => void
 
   // 流状态
-  setStreamingId: (id: string | null) => void
-  setSessionStreaming: (sessionId: string, streaming: boolean) => void
+  setStreamForSession: (sessionId: string, streamId: string) => void
+  clearStreamForSession: (sessionId: string) => void
   setErrorStreamId: (id: string | null) => void
 
   // 持久化
@@ -79,8 +82,7 @@ interface ChatStore {
 export const useChatStore = create<ChatStore>((set, get) => ({
   sessions: [],
   activeSessionId: null,
-  streamingId: null,
-  streamingSessionIds: [],
+  streamingMap: {},
   loaded: false,
   errorStreamId: null,
 
@@ -226,7 +228,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         return { ...x, messages: msgs }
       })
     }))
-    // 流式过程中不落盘（避免频繁 IO），结束时会统一 persist
+    // 节流落盘：每 3 秒最多 persist 一次，防止崩溃/断电丢失已生成内容
+    if (!streamPersistTimers.has(sessionId)) {
+      streamPersistTimers.set(sessionId, setTimeout(() => {
+        streamPersistTimers.delete(sessionId)
+        get().persist(sessionId)
+      }, STREAM_PERSIST_INTERVAL))
+    }
   },
 
   markLastMessageError: (sessionId, error) => {
@@ -303,15 +311,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     get().persist(sessionId)
   },
 
-  setStreamingId: (id) => set({ streamingId: id }),
-
-  setSessionStreaming: (sessionId, streaming) => set((s) => ({
-    streamingSessionIds: streaming
-      ? s.streamingSessionIds.includes(sessionId)
-        ? s.streamingSessionIds
-        : [...s.streamingSessionIds, sessionId]
-      : s.streamingSessionIds.filter((id) => id !== sessionId)
+  setStreamForSession: (sessionId, streamId) => set((s) => ({
+    streamingMap: { ...s.streamingMap, [sessionId]: streamId }
   })),
+
+  clearStreamForSession: (sessionId) => {
+    // 流结束：取消待执行的节流落盘定时器（最终 persist 由调用方负责）
+    const timer = streamPersistTimers.get(sessionId)
+    if (timer) { clearTimeout(timer); streamPersistTimers.delete(sessionId) }
+    set((s) => {
+      const { [sessionId]: _, ...rest } = s.streamingMap
+      return { streamingMap: rest }
+    })
+  },
 
   setErrorStreamId: (id) => set({ errorStreamId: id }),
 
