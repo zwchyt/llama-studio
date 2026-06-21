@@ -17,6 +17,7 @@ export default function ModelCard({ card }: Props) {
   const [showParamsModal, setShowParamsModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const isRunning = card.status === 'running'
   const launchMode = card.template.launchMode || 'chat'
   const logs = useStore(s => s.modelLogs[card.template.id])
@@ -68,6 +69,7 @@ export default function ModelCard({ card }: Props) {
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
       clearTimeout(logCopiedTimeoutRef.current)
+      clearTimeout(hideTimerRef.current)
     }
   }, [])
   async function handleRunToggle() {
@@ -177,8 +179,16 @@ export default function ModelCard({ card }: Props) {
           <h3 className="card-name" title={card.template.name} style={isRunning ? { color: 'var(--success)' } : {}}>{card.template.name}</h3>
           <p className="card-desc" title={card.template.description}>{card.template.description || '暂无描述'}</p>
         </div>
-        <div className="card-menu-btn" ref={menuRef} style={{ position: 'relative', zIndex: 10 }}>
-          <button className="btn btn-ghost btn-icon" onClick={() => setShowMenu(!showMenu)} aria-label="更多操作">
+        <div className="card-menu-btn" ref={menuRef} style={{ position: 'relative', zIndex: 10 }}
+          onMouseEnter={() => {
+            clearTimeout(hideTimerRef.current)
+            setShowMenu(true)
+          }}
+          onMouseLeave={() => {
+            hideTimerRef.current = setTimeout(() => setShowMenu(false), 150)
+          }}
+        >
+          <button className="btn btn-ghost btn-icon" aria-label="更多操作">
             <MoreVertical size={16} />
           </button>
           {showMenu && (

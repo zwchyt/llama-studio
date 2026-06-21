@@ -953,7 +953,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('import-template', async () => {
     try {
-      const r = await dialog.showOpenDialog({ title: 'Import Template', filters: [{ name: 'JSON Template', extensions: ['json'] }], properties: ['openFile'] })
+      const r = await dialog.showOpenDialog({ title: 'Import Template', defaultPath: TEMPLATES_DIR, filters: [{ name: 'JSON Template', extensions: ['json'] }], properties: ['openFile'] })
       if (r.canceled || !r.filePaths.length) return null
       const data = JSON.parse(readFileSync(r.filePaths[0], 'utf-8'))
       const id = String(Date.now()); data.id = id

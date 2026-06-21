@@ -3,7 +3,7 @@ import { useStore, ModelFileInfo, ModelDownloadInfo } from '../store/useStore'
 
 import {
   HardDrive, Download, Trash, Pause, Play, X, Link, FolderOpen,
-  Pencil, Check, AlertCircle, Loader2, RefreshCw, Search
+  Pencil, Check, AlertCircle, Loader2, Search
 } from 'lucide-react'
 import { formatBytes } from '../utils/format'
 import { formatDownloadStatus } from '../utils/downloadFormat'
@@ -264,9 +264,6 @@ export default function ModelsView() {
           </p>
         </div>
         <div className="page-actions">
-          <button className="btn btn-ghost btn-icon" onClick={refresh} title="刷新" disabled={loading}>
-            <RefreshCw size={15} className={loading ? 'spin' : ''} />
-          </button>
           <button className="btn btn-secondary" onClick={() => paths?.models && window.api.openFolder(paths.models)} disabled={!paths?.models}>
             <FolderOpen size={15} /> 打开文件夹
           </button>

@@ -563,6 +563,7 @@ select {
   display: flex;
   gap: 8px;
   align-items: center;
+  margin-left: auto;
 }
 
 .btn {
@@ -728,6 +729,23 @@ select {
 .card-menu-btn {
   flex-shrink: 0;
   position: relative;
+}
+.card-menu-btn .dropdown-menu {
+  min-width: 100px;
+  padding: 3px 0;
+}
+.card-menu-btn .dropdown-item {
+  padding: 3px 8px;
+  font-size: 12px;
+  gap: 5px;
+  line-height: 1.3;
+}
+.card-menu-btn .dropdown-item svg {
+  width: 12px;
+  height: 12px;
+}
+.card-menu-btn .dropdown-divider {
+  margin: 2px 0;
 }
 
 .card-meta {
