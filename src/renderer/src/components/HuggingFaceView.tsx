@@ -148,7 +148,7 @@ export default function HuggingFaceView() {
               }
             }}
           >
-            <Globe size={13} /> HuggingFace
+            <img src="./models-web-logo/HuggingFace.png" alt="" style={{ width: 16, height: 16, flexShrink: 0, borderRadius: 2 }} /> HuggingFace
           </button>
           <button
             className={`hub-tab ${!isHF ? 'active' : ''}`}
@@ -164,8 +164,7 @@ export default function HuggingFaceView() {
               }
             }}
           >
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-            魔搭社区
+            <img src="./models-web-logo/ModelScope.png" alt="" style={{ width: 16, height: 16, flexShrink: 0, borderRadius: 2 }} /> 魔搭社区
           </button>
         </div>
         <button className="btn btn-ghost" onClick={() => window.api[isHF ? 'hfOpenModelsDir' : 'msOpenModelsDir']()} title="打开模型文件夹">
