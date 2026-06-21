@@ -16,6 +16,14 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
-    plugins: [react()]
+    plugins: [
+      react(),
+      {
+        name: 'suppress-vite-url',
+        configureServer(server) {
+          server.printUrls = () => {}
+        }
+      }
+    ]
   }
 })

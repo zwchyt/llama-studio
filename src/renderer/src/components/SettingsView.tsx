@@ -5,6 +5,7 @@ import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, 
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import CommandsEditor from './CommandsEditor'
+import ConfirmModal from './ConfirmModal'
 
 const NOTIF_KEY = 'hexllama_update_notify'
 
@@ -29,6 +30,7 @@ export default function SettingsView() {
   const [notifPref, setNotifPref] = useState<'banner' | 'manual'>(getNotifPref())
   const [extFolders, setExtFolders] = useState<string[]>([])
   const [metricsPolling, setMetricsPolling] = useState(true)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   useEffect(() => {
     if (releaseInfo?.assets.length && !selectedAssetUrl) {
@@ -71,7 +73,13 @@ export default function SettingsView() {
   }
 
   async function handleDeleteBackend(name: string) {
-    if (!confirm(`确定删除后端 "${name}"？这将移除该文件夹中的所有文件。`)) return
+    setDeleteTarget(name)
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    const name = deleteTarget
+    setDeleteTarget(null)
     const res = await safeCall(() => window.api.deleteBackend(name), '删除后端失败')
     if (res === null) return
     if (res.success) {
@@ -309,7 +317,18 @@ export default function SettingsView() {
             <RefreshCw size={14} className={checkingUpdate ? 'spin' : ''} /> 立即检查
           </button>
         </div>
+        </div>
+
+        <ConfirmModal
+          open={!!deleteTarget}
+          title="删除后端"
+          message={`确定删除后端 "${deleteTarget}"？这将移除该文件夹中的所有文件。`}
+          confirmLabel="删除"
+          cancelLabel="取消"
+          danger
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
       </div>
-    </div>
-  )
-}
+    )
+  }

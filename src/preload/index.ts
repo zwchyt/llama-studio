@@ -140,7 +140,8 @@ if (process.contextIsolated) {
       contextBridge.exposeInMainWorld('api', api)
     }
   } catch (error) {
-    console.error(error)
+    console.error('[preload] contextBridge.exposeInMainWorld 失败:', error,
+      'isChatWindow=', isChatWindow, 'isPiWebWindow=', isPiWebWindow)
   }
 } else {
   ;(window as any).electron = electronAPI

@@ -61,6 +61,14 @@ function AppMain() {
   const setView = useStore(s => s.setView)
 
   useEffect(() => {
+    // 防御性检查：如果 window.api 未定义（preload 未正确注入），跳过所有 IPC 调用并告警
+    if (!window.api) {
+      console.error('[App] window.api 未定义！preload 脚本可能未正确注入。' +
+        'isChatWindow=' + process.argv?.includes('--window-mode=chat') +
+        ' isPiWebWindow=' + process.argv?.includes('--window-mode=piweb'))
+      return
+    }
+
     // Stage 2: Default schema (activeBackend watcher at line 200 will re-fetch on backend change)
     window.api.getCommands('').then((cmds) => {
       if (cmds) setCommandsSchema(cmds)
