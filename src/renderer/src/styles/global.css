@@ -543,8 +543,7 @@ select {
 
 .page-header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
   margin-bottom: 24px;
 }
 
@@ -2600,6 +2599,45 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   background: var(--accent);
   color: var(--accent-fg);
   border-color: var(--accent);
+}
+
+/* ── ModelHub 双源标签切换 ── */
+.page-header {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.hub-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  margin-left: auto;
+}
+.hub-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: calc(var(--radius-sm) - 2px);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+.hub-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg);
+}
+.hub-tab.active {
+  background: var(--bg);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
 }
 
 .hub-error {

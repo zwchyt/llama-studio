@@ -1,4 +1,5 @@
 import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, ChatStreamChunk } from '../../shared/types'
+// 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
 interface ModelFileInfo {
   name: string
   path: string
@@ -23,6 +24,10 @@ interface HfModelResult {
   downloads: number; likes: number; tags: string[]; lastModified: string
 }
 interface HfFileResult { name: string; size: number; downloadUrl: string }
+interface MsModelResult {
+  id: string; author: string; name: string
+  downloads: number; likes: number; tags: string[]; lastModified: string
+}
 interface LlamaCppApi {
   listModels: () => Promise<ModelFileInfo[]>
   listModelsRefresh: () => Promise<ModelFileInfo[]>
@@ -60,6 +65,10 @@ interface LlamaCppApi {
   hfGetFiles: (repoId: string) => Promise<HfFileResult[] | { error: string }>
   hfDownloadModel: (opts: { repoId: string; filename: string; downloadUrl: string }) => Promise<{ success: boolean; error?: string }>
   hfOpenModelsDir: () => Promise<void>
+  msSearch: (query: string) => Promise<MsModelResult[] | { error: string }>
+  msGetFiles: (repoId: string) => Promise<HfFileResult[] | { error: string }>
+  msDownloadModel: (opts: { repoId: string; filename: string; downloadUrl: string }) => Promise<{ success: boolean; error?: string }>
+  msOpenModelsDir: () => Promise<void>
   onHfDownloadProgress: (callback: (data: {
     id: string; percent: number; phase: 'downloading' | 'paused' | 'done' | 'error' | 'cancelled'
     filename: string; destPath: string; speed: number; receivedBytes: number; totalBytes: number

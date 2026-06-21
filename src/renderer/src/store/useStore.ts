@@ -53,6 +53,7 @@ interface AppStore {
   hubQuery: string
   hubResults: import('../../../shared/types').HubResultItem[]
   hubSelectedModelId: string | null
+  hubSource: 'huggingface' | 'modelscope'
   modelLogs: Record<string, { stream: string; text: string; className: string }[]>
   modelMetrics: Record<string, ModelMetrics>
   appendModelLog: (id: string, stream: string, text: string) => void
@@ -79,6 +80,7 @@ interface AppStore {
   setHubQuery: (q: string) => void
   setHubResults: (r: import('../../../shared/types').HubResultItem[]) => void
   setHubSelectedModelId: (id: string | null) => void
+  setHubSource: (s: 'huggingface' | 'modelscope') => void
   addCard: (template: Template) => void
   updateCard: (id: string, template: Partial<Template>) => void
   removeCard: (id: string) => void
@@ -111,7 +113,7 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   view: 'welcome', showCreateModal: false, editingTemplate: null,
   updateDismissed: false, checkingUpdate: false, downloadProgress: null,
   templateSearch: '', modelDownloads: {}, hfDownloads: [],
-  hubQuery: '', hubResults: [], hubSelectedModelId: null,
+  hubQuery: '', hubResults: [], hubSelectedModelId: null, hubSource: 'huggingface',
   modelLogs: {},
   modelMetrics: {},
   activeChatUrl: null,
@@ -163,6 +165,7 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   setHubQuery: (q) => set({ hubQuery: q }),
   setHubResults: (r) => set({ hubResults: r }),
   setHubSelectedModelId: (id) => set({ hubSelectedModelId: id }),
+  setHubSource: (s) => set({ hubSource: s }),
   appendModelLog: (id, stream, text) => set((s) => {
     const existing = s.modelLogs[id] || []
     const lines = text.split('\n')

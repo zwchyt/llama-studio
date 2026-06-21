@@ -267,6 +267,40 @@ function fetchJson(url: string, depth = 0): Promise<unknown> {
     req.on('error', reject)
   })
 }
+/** 带 JSON body 的 HTTP POST/PUT 请求（用于 ModelScope 等 API） */
+function fetchJsonWithBody(
+  url: string,
+  body: unknown,
+  method: string = 'PUT'
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const postData = JSON.stringify(body)
+    const urlObj = new URL(url)
+    const mod = url.startsWith('https') ? https : http
+    const options = {
+      hostname: urlObj.hostname,
+      port: urlObj.port,
+      path: urlObj.pathname + urlObj.search,
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData),
+        'User-Agent': 'llamabox/1.0.0',
+      },
+    }
+    const req = mod.request(options, (res) => {
+      let data = ''
+      res.on('data', (chunk) => { data += chunk })
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)) } catch { reject(new Error('Invalid JSON response')) }
+      })
+    })
+    req.setTimeout(15000, () => req.destroy(new Error('Request timeout')))
+    req.on('error', reject)
+    req.write(postData)
+    req.end()
+  })
+}
 function startDownload(
   url: string,
   destPath: string,
@@ -1918,6 +1952,106 @@ export function registerIpcHandlers(): void {
   if (metricsPollingEnabled) startMetricsInterval()
 
   ipcMain.handle('hf-open-models-dir', () => shell.openPath(MODELS_DIR))
+  // ── ModelScope ──
+  ipcMain.handle('ms-search', async (_e, query: string) => {
+    try {
+      // MS 搜索需要用 Name 参数（Query 参数无效），附加 GGUF 关键词精确定位
+      const searchName = query.trim() ? query + ' GGUF' : 'GGUF'
+      const data: any = await fetchJsonWithBody('https://modelscope.cn/api/v1/dolphin/models', {
+        Name: searchName,
+        PageSize: 50,
+        PageNumber: 1,
+        Sort: { SortBy: 'DownloadCount', Descending: true }
+      })
+      const raw = data?.Data?.Model?.Models
+      if (!Array.isArray(raw)) return { error: 'API 返回格式异常' }
+      // 辅助函数：解析 Libraries 字段（可能是 JSON 字符串或数组）
+      const parseLibs = (libs: any): string[] => {
+        if (typeof libs === 'string') { try { return JSON.parse(libs) } catch { return [] } }
+        return Array.isArray(libs) ? libs : []
+      }
+      // 只保留 GGUF 模型
+      const ggufModels = raw.filter((m: any) =>
+        parseLibs(m.Libraries).some((l: string) => l.toLowerCase() === 'gguf')
+      )
+      if (ggufModels.length === 0) return { error: '未找到 GGUF 模型，请尝试其他关键词' }
+      return ggufModels.map((m: any) => ({
+        id: String(m.Path) + '/' + String(m.Name),
+        author: String(m.CreatedBy || m.Path || ''),
+        name: String(m.Name),
+        downloads: m.Downloads || 0,
+        likes: m.Stars || 0,
+        tags: typeof m.Tags === 'string' ? (() => { try { return JSON.parse(m.Tags) } catch { return [] } })() : (Array.isArray(m.Tags) ? m.Tags : []),
+        lastModified: m.LastUpdatedTime ? new Date(m.LastUpdatedTime * 1000).toISOString() : ''
+      }))
+    } catch (err) { return { error: String(err) } }
+  })
+  ipcMain.handle('ms-get-files', async (_e, repoId: string) => {
+    try {
+      const safeRepoId = repoId.split('/').map(s => encodeURIComponent(s)).join('/')
+      const data: any = await fetchJson(`https://modelscope.cn/api/v1/models/${safeRepoId}/repo/files?Revision=master&Root=`)
+      const files = data?.Data?.Files
+      if (!Array.isArray(files)) return { error: 'API 返回格式异常' }
+      const ggufFiles = files.filter((f: any) => f.Type === 'blob' && String(f.Name).endsWith('.gguf'))
+      if (ggufFiles.length === 0) return { error: '该仓库中没有找到 .gguf 文件' }
+      return ggufFiles.map((f: any) => ({
+        name: f.Name,
+        size: f.Size || 0,
+        downloadUrl: `https://modelscope.cn/models/${safeRepoId}/resolve/master/${String(f.Name).split('/').map(s => encodeURIComponent(s)).join('/')}`
+      }))
+    } catch (err) { return { error: String(err) } }
+  })
+  // ms-download-model 复用 hf-download-model 的下载基础设施，仅下载URL不同
+  ipcMain.handle('ms-download-model', (_event, opts: { repoId: string; filename: string; downloadUrl: string }) => {
+    const id = opts.filename
+    if (downloadTasks.has(id)) {
+      const existing = downloadTasks.get(id)!
+      if (existing.phase === 'downloading') return { success: false, error: 'Already downloading' }
+    }
+    const folder = opts.repoId.split('/').pop() || 'downloads'
+    const destDir = join(MODELS_DIR, folder)
+    if (!isSafePath(MODELS_DIR, destDir)) return { success: false, error: 'Access denied' }
+    if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true })
+    const finalPath = join(destDir, opts.filename)
+    if (!isSafePath(MODELS_DIR, finalPath)) return { success: false, error: 'Access denied' }
+    const tmpPath = finalPath + '.tmp'
+    const task: DownloadTask = { id, url: opts.downloadUrl, filename: opts.filename, destPath: finalPath, receivedBytes: 0, totalBytes: 0, speed: 0, phase: 'downloading', repoId: opts.repoId }
+    const broadcast = (force = false) => {
+      if (!force && !canBroadcast(task.id)) return
+      const percent = task.totalBytes > 0 ? Math.round(task.receivedBytes / task.totalBytes * 100) : 0
+      const speedBucket = Math.round(task.speed / (500 * 1024))
+      if (!force) {
+        const last = lastSent.get(task.id)
+        if (last && last.percent === percent && last.phase === task.phase && last.speedBucket === speedBucket) return
+      }
+      lastSent.set(task.id, { percent, phase: task.phase, speedBucket })
+      const payload = {
+        id: task.id, filename: task.filename, phase: task.phase,
+        percent, speed: task.speed, destPath: task.destPath,
+        receivedBytes: task.receivedBytes, totalBytes: task.totalBytes,
+        repoId: task.repoId
+      }
+      BrowserWindow.getAllWindows().forEach(win => {
+        if (!win.isDestroyed()) {
+          win.webContents.send('hf-download-progress', payload)
+        }
+      })
+    }
+    task.cancelFn = startDownload(
+      opts.downloadUrl, tmpPath, 0,
+      (r, t, speed) => { task.receivedBytes = r; task.totalBytes = t; task.speed = speed; broadcast() },
+      () => {
+        try { renameSync(tmpPath, finalPath) } catch { }
+        task.phase = 'done'; task.speed = 0; broadcast(true)
+        invalidateModelsCache()
+        setTimeout(() => { downloadTasks.delete(id); broadcastTimes.delete(id); lastSent.delete(id) }, 10000)
+      },
+      (err) => { task.phase = 'error'; task.speed = 0; broadcast(true); console.error('MS download error:', err) }
+    )
+    downloadTasks.set(id, task)
+    return { success: true }
+  })
+  ipcMain.handle('ms-open-models-dir', () => shell.openPath(MODELS_DIR))
   ipcMain.handle('onDownloadProgress', () => { })
   ipcMain.handle('removeDownloadListener', () => { })
 

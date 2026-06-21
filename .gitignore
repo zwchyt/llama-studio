@@ -64,3 +64,6 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# Runtime config (user-specific local paths)
+settings.json

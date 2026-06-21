@@ -46,6 +46,10 @@ const fullApi = {
   hfGetFiles: (repoId: string) => ipcRenderer.invoke('hf-get-files', repoId),
   hfDownloadModel: (opts: object) => ipcRenderer.invoke('hf-download-model', opts),
   hfOpenModelsDir: () => ipcRenderer.invoke('hf-open-models-dir'),
+  msSearch: (query: string) => ipcRenderer.invoke('ms-search', query),
+  msGetFiles: (repoId: string) => ipcRenderer.invoke('ms-get-files', repoId),
+  msDownloadModel: (opts: object) => ipcRenderer.invoke('ms-download-model', opts),
+  msOpenModelsDir: () => ipcRenderer.invoke('ms-open-models-dir'),
   onHfDownloadProgress: (callback: (data: { percent: number; phase: string; filename: string; destPath: string }) => void) => {
     ipcRenderer.removeAllListeners('hf-download-progress')
     ipcRenderer.on('hf-download-progress', (_event, data) => callback(data))

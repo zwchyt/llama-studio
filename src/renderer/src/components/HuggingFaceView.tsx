@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import {
   Search, Download, Heart, ChevronDown, ChevronLeft,
-  FolderOpen, CheckCircle, Loader2, X, AlertCircle, Box, Pause, Play
+  FolderOpen, CheckCircle, Loader2, X, AlertCircle, Box, Pause, Play, Globe
 } from 'lucide-react'
 import { formatBytes } from '../utils/format'
 import { formatDownloadStatus, formatDownloadStripText } from '../utils/downloadFormat'
@@ -46,13 +46,15 @@ const popularQueries = ['llama', 'mistral', 'phi', 'qwen', 'gemma', 'deepseek', 
 export default function HuggingFaceView() {
   const {
     hfDownloads, setHfDownload, removeHfDownload,
-    hubQuery, hubResults, hubSelectedModelId,
-    setHubQuery, setHubResults, setHubSelectedModelId
+    hubQuery, hubResults, hubSelectedModelId, hubSource,
+    setHubQuery, setHubResults, setHubSelectedModelId, setHubSource
   } = useStore(
-    s => ({ hfDownloads: s.hfDownloads, setHfDownload: s.setHfDownload, removeHfDownload: s.removeHfDownload, hubQuery: s.hubQuery, hubResults: s.hubResults, hubSelectedModelId: s.hubSelectedModelId, setHubQuery: s.setHubQuery, setHubResults: s.setHubResults, setHubSelectedModelId: s.setHubSelectedModelId }),
+    s => ({ hfDownloads: s.hfDownloads, setHfDownload: s.setHfDownload, removeHfDownload: s.removeHfDownload, hubQuery: s.hubQuery, hubResults: s.hubResults, hubSelectedModelId: s.hubSelectedModelId, hubSource: s.hubSource, setHubQuery: s.setHubQuery, setHubResults: s.setHubResults, setHubSelectedModelId: s.setHubSelectedModelId, setHubSource: s.setHubSource }),
     shallow
   )
 
+  const isHF = hubSource === 'huggingface'
+  const sourceLabel = isHF ? 'HuggingFace' : 'ModelScope'
   const selectedModel = (hubResults as HfModel[]).find(m => m.id === hubSelectedModelId) ?? null
 
   const [loading, setLoading] = useState(false)
@@ -64,13 +66,15 @@ export default function HuggingFaceView() {
 
   const doSearch = useCallback(async (q: string) => {
     if (!q.trim()) return
-    setHubQuery(q)          
+    setHubQuery(q)
     setLoading(true)
     setError('')
     setHubResults([])
     setHubSelectedModelId(null)
     try {
-      const res = await window.api.hfSearch(q.trim())
+      const res = isHF
+        ? await window.api.hfSearch(q.trim())
+        : await window.api.msSearch(q.trim())
       if ('error' in res) throw new Error(res.error)
       setHubResults(res)
     } catch (e: any) {
@@ -78,13 +82,15 @@ export default function HuggingFaceView() {
     } finally {
       setLoading(false)
     }
-  }, [setHubQuery, setHubResults, setHubSelectedModelId, setLoading, setError])
+  }, [setHubQuery, setHubResults, setHubSelectedModelId, setLoading, setError, isHF])
 
   async function fetchFiles(model: HfModel) {
     setFiles([])
     setFilesLoading(true)
     try {
-      const res = await window.api.hfGetFiles(model.id)
+      const res = isHF
+        ? await window.api.hfGetFiles(model.id)
+        : await window.api.msGetFiles(model.id)
       if ('error' in res) throw new Error(res.error)
       setFiles(res)
     } catch (e: any) {
@@ -102,7 +108,8 @@ export default function HuggingFaceView() {
   async function handleDownload(file: HfFile) {
     if (!selectedModel) return
     setHfDownload({ repoId: selectedModel.id, filename: file.name, percent: 0, phase: 'starting' })
-    const res = await safeCall(() => window.api.hfDownloadModel({
+    const api = isHF ? window.api.hfDownloadModel : window.api.msDownloadModel
+    const res = await safeCall(() => api({
       repoId: selectedModel.id,
       filename: file.name,
       downloadUrl: file.downloadUrl
@@ -124,9 +131,44 @@ export default function HuggingFaceView() {
       <div className="page-header">
         <div>
           <h1 className="page-title">模型中心</h1>
-          <p className="page-subtitle">搜索并下载 HuggingFace 上的 GGUF 模型</p>
+          <p className="page-subtitle">在 {isHF ? 'HuggingFace' : 'ModelScope (魔搭)'} 上搜索并下载 GGUF 模型</p>
         </div>
-        <button className="btn btn-ghost" onClick={() => window.api.hfOpenModelsDir()} title="打开模型文件夹">
+        <div className="hub-tabs">
+          <button
+            className={`hub-tab ${isHF ? 'active' : ''}`}
+            onClick={() => {
+              if (hubSource !== 'huggingface') {
+                setHubSource('huggingface')
+                setHubQuery('')
+                setHubResults([])
+                setHubSelectedModelId(null)
+                setInputValue('')
+                setFiles([])
+                setError('')
+              }
+            }}
+          >
+            <Globe size={13} /> HuggingFace
+          </button>
+          <button
+            className={`hub-tab ${!isHF ? 'active' : ''}`}
+            onClick={() => {
+              if (hubSource !== 'modelscope') {
+                setHubSource('modelscope')
+                setHubQuery('')
+                setHubResults([])
+                setHubSelectedModelId(null)
+                setInputValue('')
+                setFiles([])
+                setError('')
+              }
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            魔搭社区
+          </button>
+        </div>
+        <button className="btn btn-ghost" onClick={() => window.api[isHF ? 'hfOpenModelsDir' : 'msOpenModelsDir']()} title="打开模型文件夹">
           <FolderOpen size={15} /> 打开 /models
         </button>
       </div>
@@ -135,7 +177,7 @@ export default function HuggingFaceView() {
         <input
           className="hub-search-input"
           type="text"
-          placeholder="在 HuggingFace 上搜索 GGUF 模型..."
+          placeholder={`在 ${sourceLabel} 上搜索 GGUF 模型...`}
           value={inputValue}
           onChange={e => setInputValue(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && doSearch(inputValue)}
@@ -212,8 +254,8 @@ export default function HuggingFaceView() {
                 </div>
                 <button
                   className="btn btn-ghost btn-icon"
-                  onClick={() => window.api.openExternal(`https://huggingface.co/${selectedModel.id}`)}
-                  title="在 HuggingFace 上打开"
+                  onClick={() => window.api.openExternal(isHF ? `https://huggingface.co/${selectedModel.id}` : `https://modelscope.cn/models/${selectedModel.id}`)}
+                  title={`在 ${sourceLabel} 上打开`}
                 >
                   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                 </button>
