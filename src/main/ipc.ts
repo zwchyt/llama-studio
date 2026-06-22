@@ -99,8 +99,10 @@ for (const dir of [MODELS_DIR, TEMPLATES_DIR, BACKEND_DIR, CHATS_DIR]) {
 const activeChatStreams = new Map<string, http.ClientRequest>()
 // 被用户主动中止的流，用于抑制 destroy 后的 error 事件
 const abortedChatStreams = new Set<string>()
-// 每个流的「是否正在 reasoning」状态，用于把 reasoning_content 包裹成 <think> 标签
+// 每个流的「是否正在 reasoning」状态，用于把 reasoning_content 包裹在 <think> 标签中
 const chatStreamInReasoning = new Map<string, boolean>()
+// 每个流累积的 tool_calls（流式传输时按 index 拼接增量片段）
+const chatStreamToolCalls = new Map<string, Array<{ index: number; id: string; type: string; function: { name: string; arguments: string } }>>()
 // isSafePath 函数用于防止路径遍历攻击（Path Traversal Attack），也称为目录遍历攻击。
 function isSafePath(base: string, target: string): boolean {
   const rBase = resolve(base)
@@ -1797,6 +1799,7 @@ export function registerIpcHandlers(): void {
       const streamStartTime = Date.now()
       let firstTokenTime: number | null = null
       let lastUsage: { promptTokens: number; completionTokens: number } | null = null
+      let lastFinishReason: string | undefined
       let endMetricsPromise: Promise<{ decodeTokS?: number; completionTokens?: number }> | null = null
       const req = http.request(`http://127.0.0.1:${port}/v1/chat/completions`, {
         method: 'POST',
@@ -1868,6 +1871,24 @@ export function registerIpcHandlers(): void {
                 if (prefix) chatStreamInReasoning.set(streamId, false)
                 e.sender.send('chat-stream-chunk', { streamId, delta: prefix + content, done: false })
               }
+
+              // 累积 tool_calls 增量片段（delta.tool_calls 按 index 分片到达）
+              const deltaToolCalls = choice?.delta?.tool_calls
+              if (Array.isArray(deltaToolCalls)) {
+                let acc = chatStreamToolCalls.get(streamId)
+                if (!acc) { acc = []; chatStreamToolCalls.set(streamId, acc) }
+                for (const tc of deltaToolCalls) {
+                  const idx = tc.index ?? 0
+                  if (!acc[idx]) {
+                    acc[idx] = { index: idx, id: tc.id ?? '', type: tc.type ?? 'function', function: { name: '', arguments: '' } }
+                  }
+                  if (tc.id) acc[idx].id = tc.id
+                  if (tc.function?.name) acc[idx].function.name += tc.function.name
+                  if (tc.function?.arguments) acc[idx].function.arguments += tc.function.arguments
+                }
+              }
+              // 记录 finish_reason（通常只在最后一个有 choices 的 chunk 中出现）
+              if (choice?.finish_reason) lastFinishReason = choice.finish_reason
             } catch { /* 忽略心跳/keepalive/不完整 JSON */ }
           }
         }
@@ -1889,6 +1910,8 @@ export function registerIpcHandlers(): void {
           chatStreamInReasoning.delete(streamId)
 
           // 等待 /metrics 结果，使用 predicted_tokens_seconds（与监控面板同源）
+          const accToolCalls = chatStreamToolCalls.get(streamId)
+          chatStreamToolCalls.delete(streamId)
           const finalizeStream = (metrics?: { decodeTokS?: number; completionTokens?: number }) => {
             const finalTokens = metrics?.completionTokens ?? lastUsage?.completionTokens
             const finalUsage = finalTokens != null
@@ -1899,7 +1922,9 @@ export function registerIpcHandlers(): void {
               done: true,
               usage: finalUsage,
               msFirstToken: firstTokenTime ?? undefined,
-              decodeTokS: metrics?.decodeTokS
+              decodeTokS: metrics?.decodeTokS,
+              toolCalls: accToolCalls?.length ? accToolCalls.map(tc => ({ id: tc.id, function: tc.function })) : undefined,
+              finishReason: lastFinishReason ?? (accToolCalls?.length ? 'tool_calls' : undefined)
             })
             activeChatStreams.delete(streamId)
             resolve({ success: true })
@@ -1914,6 +1939,7 @@ export function registerIpcHandlers(): void {
       })
       req.on('error', (err) => {
         chatStreamInReasoning.delete(streamId)
+        chatStreamToolCalls.delete(streamId)
         // 主动中止的流不发 error 事件，避免前端误显示
         if (!abortedChatStreams.has(streamId)) {
           e.sender.send('chat-stream-chunk', { streamId, done: true, error: err.message })
@@ -1926,6 +1952,7 @@ export function registerIpcHandlers(): void {
       req.setTimeout(300000, () => {
         req.destroy()
         chatStreamInReasoning.delete(streamId)
+        chatStreamToolCalls.delete(streamId)
         e.sender.send('chat-stream-chunk', { streamId, done: true, error: 'timeout' })
         activeChatStreams.delete(streamId)
         resolve({ success: false, error: 'timeout' })

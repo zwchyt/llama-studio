@@ -4629,6 +4629,117 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   max-width: 100%;
   font-size: 12.5px;
 }
+
+/* ── 工具调用块（与 ThinkBlock 同构，绿色主题）── */
+.chat-tool {
+  margin: 0 0 10px;
+  border: 1px solid rgba(34,197,94,.25);
+  border-left: 3px solid rgba(34,197,94,.7);
+  border-radius: var(--radius-sm);
+  background: rgba(34,197,94,.03);
+  overflow: hidden;
+  transition: border-color var(--transition), background var(--transition);
+  max-width: 85%;
+}
+
+.chat-tool-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 7px 11px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--font);
+  transition: background var(--transition);
+}
+
+.chat-tool-toggle:hover {
+  background: rgba(34,197,94,.05);
+}
+
+.chat-tool-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(34,197,94,.9);
+}
+
+.chat-tool-chevron {
+  color: var(--text-muted);
+  transition: transform var(--transition);
+}
+
+.chat-tool-chevron.open {
+  transform: rotate(180deg);
+}
+
+.chat-tool-body {
+  padding: 4px 14px -1px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  word-wrap: break-word;
+  border-top: 1px solid rgba(34,197,94,.15);
+  max-height: 0;
+  overflow: hidden;
+  contain: content;
+  transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.25s ease;
+  opacity: 0;
+}
+
+.chat-tool-body.open {
+  max-height: 400px;
+  overflow-y: auto;
+  opacity: 1;
+}
+
+.chat-tool-call {
+  padding: 6px 0;
+}
+
+.chat-tool-call + .chat-tool-call {
+  border-top: 1px solid rgba(34,197,94,.1);
+}
+
+.chat-tool-call-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  font-size: 12px;
+  color: rgba(34,197,94,.85);
+}
+
+.chat-tool-call-args {
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  margin-top: 2px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.chat-tool-call-result {
+  margin-top: 4px;
+  padding: 4px 8px;
+  background: rgba(34,197,94,.04);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.chat-think-body.chat-msg-markdown {
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  max-width: 100%;
+  font-size: 12.5px;
+}
 .chat-think-body.chat-msg-markdown h1,
 .chat-think-body.chat-msg-markdown h2,
 .chat-think-body.chat-msg-markdown h3 {

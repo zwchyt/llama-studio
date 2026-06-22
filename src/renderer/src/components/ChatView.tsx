@@ -4,14 +4,71 @@ import remarkGfm from 'remark-gfm'
 import {
   Plus, Send, Square, Trash2, Pencil, MessageSquare,
   ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain, RefreshCw,
-  Copy, Check, RotateCcw, ArrowDown, X, Eye, SlidersHorizontal, List
+  Copy, Check, RotateCcw, ArrowDown, X, Eye, SlidersHorizontal, List, Play, Wrench
 } from 'lucide-react'
 import { useChatStore, buildOpenAiMessages, DEFAULT_PARAMS } from '../store/chatStore'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
-import type { ChatSession, ChatMessage, ChatParams } from '../../../shared/types'
+import type { ChatSession, ChatMessage, ChatParams, ToolCallInfo } from '../../../shared/types'
 import CodeBlock from './CodeBlock'
 import ConfirmModal from './ConfirmModal'
+
+// ── 工具调用定义 ───────────────────────────────────────
+const TOOL_DEFINITIONS = [
+  {
+    type: 'function',
+    function: {
+      name: 'get_datetime',
+      description: 'Get the current date and time.',
+      parameters: { type: 'object', properties: {} }
+    }
+  }
+]
+
+function executeToolCall(name: string, _args: Record<string, unknown>): string {
+  if (name === 'get_datetime') {
+    const now = new Date()
+    return JSON.stringify({
+      date: now.toLocaleDateString('zh-CN'),
+      time: now.toLocaleTimeString('zh-CN')
+    })
+  }
+  return JSON.stringify({ error: `Unknown tool: ${name}` })
+}
+
+// ── 工具调用展示块（与 ThinkBlock 同构，可折叠，无卡顿）────
+function ToolCallBlock({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div className="chat-tool">
+      <button className="chat-tool-toggle" onClick={() => setExpanded(v => !v)}>
+        <span className="chat-tool-status">
+          <Wrench size={12} />
+          工具调用（{toolCalls.length}）
+        </span>
+        <ChevronDown size={13} className={`chat-tool-chevron ${expanded ? 'open' : ''}`} />
+      </button>
+      <div className={`chat-tool-body ${expanded ? 'open' : ''}`}>
+        {toolCalls.map((tc, i) => {
+          let argsStr = tc.function.arguments
+          try { argsStr = JSON.stringify(JSON.parse(tc.function.arguments), null, 2) } catch { /* keep raw */ }
+          return (
+            <div key={i} className="chat-tool-call">
+              <div className="chat-tool-call-name">
+                <Wrench size={11} />
+                <span>{tc.function.name}</span>
+              </div>
+              {argsStr && argsStr !== '{}' && (
+                <div className="chat-tool-call-args">{argsStr}</div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 // ── 会话时间格式化 ───────────────────────────────────────
 function formatSessionTime(iso: string): string {
@@ -366,13 +423,17 @@ const UserMessageContent = React.memo(function UserMessageContent({ content }: {
 })
 
 // ── 单条消息 ───────────────────────────────────────────────
-const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled }: {
+const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled, onContinue, continueDisabled, onDelete, deleteDisabled }: {
   msg: ChatMessage
   isStreaming?: boolean
   onCopy?: () => void
   onEdit?: () => void
   onRegenerate?: () => void
   regenDisabled?: boolean
+  onContinue?: () => void
+  continueDisabled?: boolean
+  onDelete?: () => void
+  deleteDisabled?: boolean
 }) {
   const isUser = msg.role === 'user'
   const [copied, setCopied] = useState(false)
@@ -421,11 +482,41 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
       <div className="chat-msg chat-msg-assistant" data-msg-id={msg.id}>
         <div className="chat-msg-avatar"><Bot size={14} /></div>
         <div className="chat-msg-body">
+          {/* 工具调用块（流式中也显示） */}
+          {msg.toolCalls && msg.toolCalls.length > 0 && (
+            <ToolCallBlock toolCalls={msg.toolCalls} />
+          )}
           {msg.content ? (
-            <>
-              {renderSegments(true)}
-              {segments.length > 0 && segments[segments.length - 1].type === 'text' && <span className="chat-cursor" />}
-            </>
+            msg.toolCalls && msg.preToolContentLen != null
+              ? (() => {
+                  // 只显示工具调用后的内容（跳过 pre-tool 思考链）
+                  const postContent = msg.content.slice(msg.preToolContentLen)
+                  if (!postContent) return <span className="chat-cursor" />
+                  const postSegs = parseThinkSegments(postContent)
+                  return (
+                    <>
+                      {postSegs.map((seg, i) => {
+                        if (seg.type === 'think') {
+                          return <ThinkBlock key={i} value={seg.value} closed={false} isStreaming={!seg.closed} />
+                        }
+                        return (
+                          <div key={i} className="chat-msg-markdown">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any }}>
+                              {seg.value}
+                            </ReactMarkdown>
+                          </div>
+                        )
+                      })}
+                      {postSegs.length > 0 && postSegs[postSegs.length - 1].type === 'text' && <span className="chat-cursor" />}
+                    </>
+                  )
+                })()
+              : (
+                <>
+                  {renderSegments(true)}
+                  {segments.length > 0 && segments[segments.length - 1].type === 'text' && <span className="chat-cursor" />}
+                </>
+              )
           ) : (
             <div className="chat-msg-placeholder">
               <ThinkBlock value="" closed={false} isStreaming={true} autoExpand={false} />
@@ -448,9 +539,34 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
           <div className="chat-msg-bubble chat-msg-bubble-user"><UserMessageContent content={msg.content} /></div>
         ) : msg.error ? (
           <div className="chat-msg-error">{msg.content}</div>
-        ) : msg.content ? (
+        ) : msg.content || msg.toolCalls ? (
           <>
-            {renderSegments(false)}
+            {/* 工具调用块（显示在最上方） */}
+            {msg.toolCalls && msg.toolCalls.length > 0 && (
+              <ToolCallBlock toolCalls={msg.toolCalls} />
+            )}
+            {/* 工具调用后的内容（思考过程 + 模型回答），工具调用前的内容不显示 */}
+            {msg.content && (
+              msg.toolCalls && msg.preToolContentLen != null
+                ? (() => {
+                    const postContent = msg.content.slice(msg.preToolContentLen)
+                    if (!postContent) return null
+                    const postSegs = parseThinkSegments(postContent)
+                    return postSegs.map((seg, i) => {
+                      if (seg.type === 'think') {
+                        return <ThinkBlock key={`post-${i}`} value={seg.value} closed={true} isStreaming={false} />
+                      }
+                      return (
+                        <div key={`post-${i}`} className="chat-msg-markdown">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any }}>
+                            {seg.value}
+                          </ReactMarkdown>
+                        </div>
+                      )
+                    })
+                  })()
+                : renderSegments(false)
+            )}
             {msg.stopped && (
               <div className="chat-msg-stopped-badge">
                 <Square size={10} />
@@ -458,7 +574,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
               </div>
             )}
             {/* Token 统计信息 */}
-            {!msg.error && (msg.tokensDecoded != null || msg.msFirstToken != null || msg.decodeTokS != null) && (
+            {!msg.error && msg.content && (msg.tokensDecoded != null || msg.msFirstToken != null || msg.decodeTokS != null) && (
               <div className="chat-msg-token-stats">
                 {msg.decodeTokS != null && <span>{typeof msg.decodeTokS === 'number' ? msg.decodeTokS.toFixed(1) : msg.decodeTokS} tok/s</span>}
                 {msg.tokensDecoded != null && <span>{msg.tokensDecoded} tokens</span>}
@@ -488,6 +604,28 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
                 style={regenDisabled ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
               >
                 <RotateCcw size={13} />
+              </button>
+            )}
+            {!isUser && onContinue && (
+              <button
+                className="chat-msg-action-btn"
+                onClick={onContinue}
+                disabled={continueDisabled}
+                style={continueDisabled ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
+                title="继续生成"
+              >
+                <Play size={13} />
+              </button>
+            )}
+            {!isUser && onDelete && (
+              <button
+                className="chat-msg-action-btn"
+                onClick={onDelete}
+                disabled={deleteDisabled}
+                style={deleteDisabled ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
+                title="删除此回复"
+              >
+                <Trash2 size={13} />
               </button>
             )}
           </div>
@@ -914,6 +1052,7 @@ export default function ChatView() {
   const clearStreamForSession = useChatStore((s) => s.clearStreamForSession)
   const persist = useChatStore((s) => s.persist)
   const truncateAfter = useChatStore((s) => s.truncateAfter)
+  const replaceMessages = useChatStore((s) => s.replaceMessages)
 
   const setSystemPrompt = useChatStore((s) => s.setSystemPrompt)
   const setParams = useChatStore((s) => s.setParams)
@@ -994,6 +1133,8 @@ export default function ChatView() {
   const streamReceivedRef = useRef<Map<string, boolean>>(new Map())
   // 已被用户主动中止的流，用于屏蔽后续异步 chunk/done 事件
   const abortedStreamsRef = useRef<Set<string>>(new Set())
+  // 工具调用后续流：followStreamId → 原始 streamId，用于将后续 chunk 路由到同一条消息
+  const mergedFollowMap = useRef<Map<string, string>>(new Map())
   // 重新生成回滚备份：失败时恢复旧消息
   const regenerateRollbackRef = useRef<{ sessionId: string; messages: ChatMessage[]; streamId: string } | null>(null)
 
@@ -1037,6 +1178,13 @@ export default function ChatView() {
         if (data.done) abortedStreamsRef.current.delete(data.streamId)
         return
       }
+      // 工具调用后续流：将 followStreamId 映射回原始 streamId，使内容追加到同一条消息
+      const originalStreamId = mergedFollowMap.current.get(data.streamId)
+      if (originalStreamId) {
+        const followId = data.streamId
+        data = { ...data, streamId: originalStreamId }
+        if (data.done) mergedFollowMap.current.delete(followId)
+      }
       const st = useChatStore.getState()
       // chunk 通过 streamId 关联到会话：发起流时把 streamId 记在会话最后一条 assistant 消息上
       const targetSession = st.sessions.find((s) =>
@@ -1052,8 +1200,9 @@ export default function ChatView() {
         const wd = streamWatchdogsRef.current.get(data.streamId)
         if (wd) { clearTimeout(wd); streamWatchdogsRef.current.delete(data.streamId) }
         streamReceivedRef.current.delete(data.streamId)
-        st.clearStreamForSession(targetSession.id)
+
         if (data.error) {
+          st.clearStreamForSession(targetSession.id)
           // 如果是重新生成失败，回滚恢复旧消息
           const rollback = regenerateRollbackRef.current
           if (rollback && rollback.streamId === data.streamId) {
@@ -1064,18 +1213,129 @@ export default function ChatView() {
           } else {
             st.markLastMessageError(targetSession.id, data.error)
           }
-        } else {
-          // 成功：清除回滚备份
-          regenerateRollbackRef.current = null
-          // 回填 token 统计
-          if (data.usage != null || data.msFirstToken != null || data.decodeTokS != null) {
-            st.finalizeLastMessage(targetSession.id, {
-              tokensDecoded: data.usage?.completionTokens,
-              msFirstToken: data.msFirstToken,
-              decodeTokS: data.decodeTokS
+          st.persist(targetSession.id)
+          st.clearStreamForSession(targetSession.id)
+          return
+        }
+
+        // 成功：回填 token 统计
+        regenerateRollbackRef.current = null
+        if (data.usage != null || data.msFirstToken != null || data.decodeTokS != null) {
+          st.finalizeLastMessage(targetSession.id, {
+            tokensDecoded: data.usage?.completionTokens,
+            msFirstToken: data.msFirstToken,
+            decodeTokS: data.decodeTokS
+          })
+        }
+
+        // ── 工具调用流程：模型发起 tool_calls → 执行工具 → 自动发起第二轮请求 ──
+        const toolCalls = data.toolCalls
+        if (toolCalls && toolCalls.length > 0) {
+          // 将 toolCalls 存储到当前助手消息上（用于 UI 渲染）
+          const currentSt = useChatStore.getState()
+          const currentSession = currentSt.sessions.find(s => s.id === targetSession.id)
+          const toolMsg = currentSession?.messages.find(m => m.id === data.streamId)
+          if (toolMsg) {
+            // 更新消息：存储 toolCalls 和工具调用前的内容长度（用于区分前后思考链）
+            const updatedMsgs = currentSession!.messages.map(m =>
+              m.id === data.streamId ? { ...m, toolCalls, preToolContentLen: m.content.length } : m
+            )
+            currentSt.replaceMessages(targetSession.id, updatedMsgs)
+          }
+
+          // 执行所有工具调用
+          const toolResults: Array<{ callId: string; name: string; result: string }> = []
+          for (const tc of toolCalls) {
+            let args: Record<string, unknown> = {}
+            try { args = JSON.parse(tc.function.arguments || '{}') } catch { /* keep empty */ }
+            const result = executeToolCall(tc.function.name, args)
+            toolResults.push({ callId: tc.id, name: tc.function.name, result })
+          }
+
+          // 构建第二轮请求的消息数组（手动构建，避免 buildOpenAiMessages 重复包含工具调用消息）
+          const followSession = useChatStore.getState().sessions.find(s => s.id === targetSession.id)!
+          const followMessages: Array<Record<string, unknown>> = []
+          if (followSession.systemPrompt?.trim()) {
+            followMessages.push({ role: 'system', content: followSession.systemPrompt.trim() })
+          }
+          for (const m of followSession.messages) {
+            if (m.role === 'system') continue
+            if (m.id === data.streamId) {
+              // 工具调用消息：带上 tool_calls 字段
+              followMessages.push({
+                role: 'assistant',
+                content: m.content || '',
+                tool_calls: toolCalls.map(tc => ({
+                  id: tc.id,
+                  type: 'function',
+                  function: { name: tc.function.name, arguments: tc.function.arguments }
+                }))
+              })
+            } else {
+              if (!m.content && !m.error) continue
+              followMessages.push({ role: m.role, content: m.content })
+            }
+          }
+          // 追加每个工具的结果
+          for (const tr of toolResults) {
+            followMessages.push({
+              role: 'tool',
+              tool_call_id: tr.callId,
+              content: tr.result
             })
           }
+
+          // 不创建新消息，复用原始消息（工具调用 + 回复合并显示）
+          const followStreamId = (crypto as any).randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2))
+          mergedFollowMap.current.set(followStreamId, data.streamId)
+          // 清除并重新设置流状态（同一 streamId，保持消息关联）
+          const st2 = useChatStore.getState()
+          queueMicrotask(() => {
+            st2.clearStreamForSession(targetSession.id)
+            st2.setStreamForSession(targetSession.id, data.streamId)
+          })
+
+          // 看门狗
+          streamReceivedRef.current.set(followStreamId, false)
+          const wdTimer2 = setTimeout(() => {
+            const s = useChatStore.getState()
+            if (s.streamingMap[targetSession.id] === data.streamId && !streamReceivedRef.current.get(followStreamId)) {
+              s.markLastMessageError(targetSession.id, '工具调用后响应超时（90s）')
+              s.clearStreamForSession(targetSession.id)
+              streamReceivedRef.current.delete(followStreamId)
+              mergedFollowMap.current.delete(followStreamId)
+            }
+            streamWatchdogsRef.current.delete(followStreamId)
+          }, 90000)
+          streamWatchdogsRef.current.set(followStreamId, wdTimer2)
+
+          // 发送第二轮请求（含工具结果）
+          const port = followSession.port
+          window.api.chatStream({
+            streamId: followStreamId,
+            port,
+            body: {
+              messages: followMessages,
+              temperature: followSession.params.temperature,
+              top_p: followSession.params.top_p,
+              top_k: followSession.params.top_k,
+              max_tokens: followSession.params.max_tokens || -1,
+              repeat_penalty: followSession.params.repeat_penalty,
+              tools: TOOL_DEFINITIONS,
+              stream: true
+            }
+          }).catch((e: any) => {
+            const s = useChatStore.getState()
+            s.markLastMessageError(targetSession.id, e?.message || '工具调用后续请求失败')
+            if (s.streamingMap[targetSession.id] === data.streamId) {
+              s.clearStreamForSession(targetSession.id)
+            }
+            mergedFollowMap.current.delete(followStreamId)
+          })
+          return // 不清除当前 stream，保持工具调用消息可见
         }
+
+        // 无工具调用：正常结束流程
         st.persist(targetSession.id)
         st.clearStreamForSession(targetSession.id)
       }
@@ -1084,6 +1344,7 @@ export default function ChatView() {
       window.api.removeChatStreamListener()
       for (const [, timer] of streamWatchdogsRef.current) clearTimeout(timer)
       streamWatchdogsRef.current.clear()
+      mergedFollowMap.current.clear()
     }
   }, [])
 
@@ -1208,6 +1469,7 @@ export default function ChatView() {
           top_k: session.params.top_k,
           max_tokens: session.params.max_tokens || -1,
           repeat_penalty: session.params.repeat_penalty,
+          tools: TOOL_DEFINITIONS,
           stream: true
         }
       })
@@ -1244,6 +1506,13 @@ export default function ChatView() {
     }
   }, [activeStreamId, activeSessionId])
 
+  // 删除助手回复：截断该消息及其之后的所有消息
+  const [deletingMsgId, setDeletingMsgId] = useState<string | null>(null)
+  const handleDeleteReply = useCallback((msgId: string) => {
+    if (!activeSessionId || activeStreamId) return
+    setDeletingMsgId(msgId)
+  }, [activeSessionId, activeStreamId])
+
   // 切换会话绑定的模型
   const handleSwitchModel = useCallback((templateId: string) => {
     if (!activeSessionId) return
@@ -1261,9 +1530,15 @@ export default function ChatView() {
     el.style.height = Math.min(el.scrollHeight, 200) + 'px'
   }
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
       e.preventDefault()
       handleSend()
+    }
+    // Alt+Enter: 继续生成
+    if (e.altKey && e.key === 'Enter') {
+      e.preventDefault()
+      const lastAssistant = [...activeMessages].reverse().find(m => m.role === 'assistant')
+      if (lastAssistant) handleContinue(lastAssistant.id)
     }
   }
 
@@ -1348,6 +1623,88 @@ export default function ChatView() {
       notify(`重新生成失败：${e?.message || '请求失败'}，已恢复原回复`, 'error')
     }
   }, [activeSessionId, activeStreamId, truncateAfter, appendMessage, setStreamForSession, clearStreamForSession, runningModels])
+
+  // 继续生成：让模型从最后一条助手消息的内容继续补全
+  const handleContinue = useCallback(async (assistantMsgId: string) => {
+    if (!activeSessionId || activeStreamId || runningModels.length === 0) return
+    const session = useChatStore.getState().sessions.find((s) => s.id === activeSessionId)
+    if (!session) return
+
+    // 确认最后一条助手消息就是要继续的那条
+    const idx = session.messages.findIndex((m) => m.id === assistantMsgId)
+    if (idx < 0 || idx !== session.messages.length - 1) return
+    const lastMsg = session.messages[idx]
+    if (lastMsg.role !== 'assistant' || !lastMsg.content) return
+
+    setAutoScroll(true)
+    const streamId = (crypto as any).randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2))
+
+    // 用 streamId 替换该消息的 id，后续 delta 会通过 appendDeltaToLast 追加到这条消息
+    const continuedMsg: ChatMessage = {
+      ...lastMsg,
+      id: streamId,
+      stopped: undefined,
+      tokensDecoded: undefined,
+      msFirstToken: undefined,
+      decodeTokS: undefined,
+    }
+    const newMessages = [...session.messages.slice(0, idx), continuedMsg]
+    replaceMessages(activeSessionId, newMessages)
+    setStreamForSession(activeSessionId, streamId)
+
+    // 看门狗：90 秒无响应超时
+    streamReceivedRef.current.set(streamId, false)
+    const wdTimer = setTimeout(() => {
+      const st = useChatStore.getState()
+      if (st.streamingMap[session.id] === streamId && !streamReceivedRef.current.get(streamId)) {
+        st.markLastMessageError(session.id, '继续生成超时（90s 内无数据返回）')
+        st.clearStreamForSession(session.id)
+        streamReceivedRef.current.delete(streamId)
+      }
+      streamWatchdogsRef.current.delete(streamId)
+    }, 90000)
+    streamWatchdogsRef.current.set(streamId, wdTimer)
+
+    // 手动构建消息数组，添加继续生成指令（比 buildOpenAiMessages 多一条系统指令）
+    const currentSession = useChatStore.getState().sessions.find((s) => s.id === activeSessionId)!
+    const messages: Array<{ role: string; content: string }> = []
+    if (currentSession.systemPrompt?.trim()) {
+      messages.push({ role: 'system', content: currentSession.systemPrompt.trim() })
+    }
+    for (const m of currentSession.messages) {
+      if (m.role === 'system') continue
+      if (!m.content && !m.error) continue
+      messages.push({ role: m.role, content: m.content })
+    }
+    // 注入继续指令：告诉模型从最后一条助手消息的末尾接续，不要重复已有内容
+    messages.push({
+      role: 'system',
+      content: 'You are continuing the previous assistant response. Append new content directly after the existing text. Do NOT repeat or rephrase any part of the existing response. Do NOT add any preamble, acknowledgment, or transition phrases like "好的" or "继续". Just continue writing the next part seamlessly.'
+    })
+
+    try {
+      await window.api.chatStream({
+        streamId,
+        port: session.port,
+        body: {
+          messages,
+          temperature: session.params.temperature,
+          top_p: session.params.top_p,
+          top_k: session.params.top_k,
+          max_tokens: session.params.max_tokens || -1,
+          repeat_penalty: session.params.repeat_penalty,
+          stream: true,
+          add_generation_prompt: false
+        }
+      })
+    } catch (e: any) {
+      const st = useChatStore.getState()
+      st.markLastMessageError(session.id, e?.message || '继续生成失败')
+      if (st.streamingMap[session.id] === streamId) {
+        st.clearStreamForSession(session.id)
+      }
+    }
+  }, [activeSessionId, activeStreamId, runningModels, replaceMessages, setStreamForSession])
 
   return (
     <div className={`chat-layout ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
@@ -1449,6 +1806,11 @@ export default function ChatView() {
                   onEdit={m.role === 'user' ? () => handleEditMessage(m.id, m.content) : undefined}
                   onRegenerate={m.role === 'assistant' ? () => handleRegenerate(m.id) : undefined}
                   regenDisabled={!!activeStreamId}
+                  onContinue={m.role === 'assistant' && m.id === activeMessages[activeMessages.length - 1]?.id
+                    ? () => handleContinue(m.id) : undefined}
+                  continueDisabled={!!activeStreamId}
+                  onDelete={m.role === 'assistant' ? () => handleDeleteReply(m.id) : undefined}
+                  deleteDisabled={!!activeStreamId}
                 />
               ))
             )
@@ -1601,6 +1963,19 @@ export default function ChatView() {
           setDeletingSession(null)
         }}
         onCancel={() => setDeletingSession(null)}
+      />
+
+      <ConfirmModal
+        open={deletingMsgId !== null}
+        title="删除回复"
+        message="确定删除此回复及其后续消息？此操作不可撤销。"
+        confirmLabel="删除"
+        danger
+        onConfirm={() => {
+          if (deletingMsgId && activeSessionId) truncateAfter(activeSessionId, deletingMsgId)
+          setDeletingMsgId(null)
+        }}
+        onCancel={() => setDeletingMsgId(null)}
       />
     </div>
   )

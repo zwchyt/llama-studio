@@ -103,6 +103,10 @@ export interface CardState {
 }
 
 // ── 原生聊天 ───────────────────────────────────────────────
+export interface ToolCallInfo {
+  id: string
+  function: { name: string; arguments: string }
+}
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -114,6 +118,8 @@ export interface ChatMessage {
   decodeTokS?: number  // 解码速度（来自 /metrics llamacpp:predicted_tokens_seconds，与监控面板同源）
   error?: boolean
   stopped?: boolean  // 用户手动停止生成，消息内容不完整
+  toolCalls?: ToolCallInfo[]  // 模型发起的工具调用
+  preToolContentLen?: number  // 工具调用前的内容长度，用于区分工具调用前后的内容
 }
 export interface ChatParams {
   temperature?: number
@@ -147,6 +153,9 @@ export interface ChatStreamChunk {
   }
   msFirstToken?: number // 首 token 延迟（ms）
   decodeTokS?: number   // 解码速度（与监控面板同源）
+  // 工具调用（模型在响应中发起 tool_calls 时）
+  toolCalls?: Array<{ id: string; function: { name: string; arguments: string } }>
+  finishReason?: string // 停止原因（'stop' | 'tool_calls'）
 }
 
 // ── 下载状态 Phase 联合类型 ──
