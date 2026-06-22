@@ -4,7 +4,8 @@ import remarkGfm from 'remark-gfm'
 import {
   Plus, Send, Square, Trash2, Pencil, MessageSquare,
   ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain, RefreshCw,
-  Copy, Check, RotateCcw, ArrowDown, X, Eye, SlidersHorizontal, List, Play, Wrench
+  Copy, Check, RotateCcw, ArrowDown, X, Eye, SlidersHorizontal, List, Play, Wrench,
+  Paperclip, FileText
 } from 'lucide-react'
 import { useChatStore, buildOpenAiMessages, DEFAULT_PARAMS } from '../store/chatStore'
 import { useStore } from '../store/useStore'
@@ -67,6 +68,12 @@ function formatSessionTime(iso: string): string {
   if (diffDays === 1) return `昨天 ${hhmm}`
   if (diffDays < 7) return `${['周日','周一','周二','周三','周四','周五','周六'][d.getDay()]} ${hhmm}`
   return `${d.getMonth() + 1}/${d.getDate()} ${hhmm}`
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 // ── Markdown code 组件 ─────────────────────────────────────
@@ -866,8 +873,6 @@ function ChatSettingsCard({ session, anchorRect, onClose, onSetSystemPrompt, onS
 }
 
 // ── 消息导航侧边栏（minimap 式竖椭圆导航）─────────────────
-const NAV_PREVIEW_LEN = 200
-
 const MessageNav = React.memo(function MessageNav({
   messages, activeMsgId, containerRef
 }: {
@@ -876,17 +881,17 @@ const MessageNav = React.memo(function MessageNav({
   containerRef: React.RefObject<HTMLDivElement | null>
 }) {
   const [hovered, setHovered] = useState(false)
-  const [mouseYRatio, setMouseYRatio] = useState<number | null>(null)
   const [scrollRatio, setScrollRatio] = useState(0)
   const [viewportRatio, setViewportRatio] = useState(1)
   const [nodes, setNodes] = useState<{ topRatio: number; msg: ChatMessage }[]>([])
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
   const userMsgs = useMemo(() => messages.filter(m => m.role === 'user'), [messages])
   const userCount = userMsgs.length
 
-  // 面板实际高度（同步测量，避免首次 tooltip 位置偏差）
+  // 面板实际高度（同步测量）
   const [panelHeight, setPanelHeight] = useState(0)
   useLayoutEffect(() => {
     if (panelRef.current) setPanelHeight(panelRef.current.clientHeight)
@@ -934,7 +939,7 @@ const MessageNav = React.memo(function MessageNav({
   }, [])
 
   const handleLeave = useCallback(() => {
-    hideTimerRef.current = setTimeout(() => { setHovered(false); setMouseYRatio(null) }, 200)
+    hideTimerRef.current = setTimeout(() => { setHovered(false) }, 600)
   }, [])
 
   const handleClick = useCallback((msgId: string) => {
@@ -953,64 +958,44 @@ const MessageNav = React.memo(function MessageNav({
   const viewportBoxTop = toSafe(scrollRatio * (1 - viewportRatio))
   const viewportBoxHeight = viewportRatio * (100 - 2 * safePct)
 
-  const nearestIndex = hovered && mouseYRatio !== null && nodes.length > 0
-    ? nodes.reduce((best, node, i) =>
-        Math.abs(node.topRatio - mouseYRatio) < Math.abs(nodes[best].topRatio - mouseYRatio) ? i : best, 0)
-    : null
-
-  const nearestNode = nearestIndex !== null ? nodes[nearestIndex] : null
-  const tooltipY = nearestNode ? toSafe(nearestNode.topRatio) / 100 * ph : 0
-  const TOOLTIP_H = 24
-  const tooltipTop = Math.max(1, Math.min(ph - TOOLTIP_H - 1, tooltipY - TOOLTIP_H / 2))
-
   return (
     <div className="chat-nav-wrap" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
       <button className="chat-nav-trigger"><List size={14} /></button>
       {hovered && (
         <>
-          <div
-            className="chat-nav-panel"
-            ref={panelRef}
-            onMouseMove={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect()
-              const rawY = (e.clientY - rect.top) / rect.height
-              // 将鼠标位置从面板坐标系反向映射到节点的安全区坐标系
-              const sp = safePct / 100
-              setMouseYRatio(Math.max(0, Math.min(1, (rawY - sp) / (1 - 2 * sp))))
-            }}
-          >
+          <div className="chat-nav-panel" ref={panelRef}>
             <div className="nav-centerline" />
             <div className="nav-viewport" style={{ top: `${viewportBoxTop}%`, height: `${viewportBoxHeight}%` }} />
-            {nodes.map((node, i) => {
+            {nodes.map((node) => {
               const isUser = node.msg.role === 'user'
-              const isNearest = nearestIndex === i
               const isActive = activeMsgId === node.msg.id
+              const isHovered = hoveredNodeId === node.msg.id
               return (
                 <div
                   key={node.msg.id}
                   className="nav-node"
                   style={{ top: `${toSafe(node.topRatio)}%` }}
                   onClick={() => handleClick(node.msg.id)}
+                  onMouseEnter={() => setHoveredNodeId(node.msg.id)}
+                  onMouseLeave={() => setHoveredNodeId(null)}
                 >
                   <div
-                    className={`nav-node-indicator ${isUser ? 'user' : 'assistant'} ${isActive ? 'active' : ''}`}
-                    style={{
-                      transform: isNearest ? 'scale(1.6)' : 'scale(1)',
-                      animation: isNearest ? 'nav-bob 0.6s ease-in-out infinite' : 'none',
-                    }}
+                    className={`nav-node-indicator ${isUser ? 'user' : 'assistant'} ${isActive ? 'active' : ''} ${isHovered ? 'bob' : ''}`}
                   />
                 </div>
               )
             })}
           </div>
-          {nearestNode && (
-            <div className="nav-tooltip" style={{ top: tooltipTop }}>
-              <span className="nav-tooltip-text">
-                {nearestNode.msg.content.slice(0, NAV_PREVIEW_LEN)}
-                {nearestNode.msg.content.length > NAV_PREVIEW_LEN ? '…' : ''}
-              </span>
+          {/* 所有节点标签浮动在面板左侧 */}
+          {nodes.map((node) => (
+            <div
+              key={'lbl-' + node.msg.id}
+              className="nav-node-label"
+              style={{ top: `${toSafe(node.topRatio)}%` }}
+            >
+              {node.msg.content.slice(0, 30)}{node.msg.content.length > 30 ? '…' : ''}
             </div>
-          )}
+          ))}
         </>
       )}
     </div>
@@ -1064,6 +1049,9 @@ export default function ChatView() {
   const settingsBtnRef = useRef<HTMLButtonElement>(null)
   const [settingsAnchor, setSettingsAnchor] = useState<DOMRect | null>(null)
   const settingsHoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
+  // 文件上传
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([])
 
   useEffect(() => {
     return () => {
@@ -1093,6 +1081,36 @@ export default function ChatView() {
     settingsHoverTimeoutRef.current = setTimeout(() => {
       setShowSettings(false)
     }, 300)
+  }
+
+  // ── 文件上传 ───────────────────────────────────────────
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
+    setAttachedFiles(prev => [...prev, ...files])
+    // 清空 input 值，允许重复选同名文件
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }, [])
+
+  const removeAttachedFile = useCallback((index: number) => {
+    setAttachedFiles(prev => prev.filter((_, i) => i !== index))
+  }, [])
+
+  // 读取文件内容（文本用 readAsText，图片转 base64）
+  function readFileContent(file: File): Promise<{ text: string; isImage: boolean; dataUrl?: string }> {
+    return new Promise((resolve, reject) => {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader()
+        reader.onload = () => resolve({ text: '', isImage: true, dataUrl: reader.result as string })
+        reader.onerror = () => reject(reader.error)
+        reader.readAsDataURL(file)
+      } else {
+        const reader = new FileReader()
+        reader.onload = () => resolve({ text: reader.result as string, isImage: false })
+        reader.onerror = () => reject(reader.error)
+        reader.readAsText(file)
+      }
+    })
   }
 
   // 预处理：代码内容自动缩进（仅用于预览，发送时仍用原始 input）
@@ -1416,8 +1434,58 @@ export default function ChatView() {
     setInput('')
     setAutoScroll(true)
 
-    // 追加用户消息
-    appendUserMessage(session.id, content)
+    // ── 处理文件附件 ──
+    let finalContent = content
+    let multimodalMessages: Array<Record<string, unknown>> | null = null
+    const pendingFiles = [...attachedFiles]
+    setAttachedFiles([])
+
+    if (pendingFiles.length > 0) {
+      const fileContents = await Promise.all(pendingFiles.map(f => readFileContent(f)))
+      const hasImages = fileContents.some(fc => fc.isImage)
+
+      if (hasImages) {
+        // 多模态格式：content 为数组 [{ type: 'text'|'image_url' }]
+        const contentParts: Array<Record<string, unknown>> = []
+        if (content) contentParts.push({ type: 'text', text: content })
+        for (let i = 0; i < pendingFiles.length; i++) {
+          const fc = fileContents[i]
+          if (fc.isImage && fc.dataUrl) {
+            contentParts.push({ type: 'image_url', image_url: { url: fc.dataUrl } })
+            finalContent += `\n[图片: ${pendingFiles[i].name}]`
+          } else {
+            finalContent += `\n\n=====\n${fc.text}\n=====`
+          }
+        }
+        // 构建多模态消息数组
+        multimodalMessages = []
+        if (session.systemPrompt?.trim()) {
+          multimodalMessages.push({ role: 'system', content: session.systemPrompt.trim() })
+        }
+        const sessionMessages = useChatStore.getState().sessions.find(s => s.id === session.id)?.messages || []
+        for (const m of sessionMessages) {
+          if (m.role === 'system') continue
+          if (!m.content && !m.error) continue
+          multimodalMessages.push({ role: m.role, content: m.content })
+        }
+        // 替换最后一条 user 消息为多模态格式
+        for (let i = multimodalMessages.length - 1; i >= 0; i--) {
+          if (multimodalMessages[i].role === 'user') {
+            multimodalMessages[i] = { role: 'user', content: contentParts }
+            break
+          }
+        }
+      } else {
+        // 纯文本附件：拼接到用户消息后
+        const parts = fileContents.map((fc, i) =>
+          `\n\nName: ${pendingFiles[i].name}\nContents:\n\n=====\n${fc.text}\n=====`
+        )
+        finalContent += parts.join('')
+      }
+    }
+
+    // 追加用户消息（文本内容用作显示及持久化）
+    appendUserMessage(session.id, finalContent)
 
     // 追加空的 assistant 占位消息，用 streamId 作为消息 id（用于 chunk 路由）
     const streamId = (crypto as any).randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2))
@@ -1448,7 +1516,7 @@ export default function ChatView() {
     // 组装 OpenAI 请求
     const updatedSession = { ...useChatStore.getState().sessions.find((s) => s.id === session.id)! }
     updatedSession.messages = [...updatedSession.messages] // 已含刚追加的两条
-    const messages = buildOpenAiMessages(updatedSession)
+    const messages = multimodalMessages || buildOpenAiMessages(updatedSession)
 
     try {
       const res = await window.api.chatStream({
@@ -1895,37 +1963,71 @@ export default function ChatView() {
         )}
 
         <div className={`chat-input-wrap${activeStreamId ? ' streaming' : ''}`}>
-          <textarea
-            ref={inputRef}
-            className="chat-input"
-            spellCheck={false}
-            autoComplete="off"
-            autoCorrect="off"
-            placeholder={
-              activeStreamId
-                ? '正在生成，可发送新消息（将自动停止当前流）…'
-                : activeModel
-                  ? `给 ${activeModel.name} 发消息（Enter 发送，Shift+Enter 换行）`
-                  : '请先启动模型后再发送消息'
-            }
-            value={input}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            rows={1}
-            disabled={!activeModel}
+          {/* 隐藏的文件选择器 */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".txt,.md,.json,.js,.ts,.py,.rs,.go,.java,.c,.cpp,.h,.hpp,.css,.html,.xml,.yaml,.yml,.toml,.ini,.cfg,.csv,.log,.sh,.bat,.ps1,.sql,.r,.lua,.php,.rb,.swift,.kt,.scala,.tex,.srt,.vtt,.smi,.ass,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif,.bmp,.svg"
+            style={{ display: 'none' }}
+            onChange={handleFileSelect}
           />
-          {activeStreamId ? (
-            <button className="btn btn-danger chat-send-btn" onClick={handleStop}>
-              <Square size={15} />
-            </button>
-          ) : (
+          <div className="chat-input-row">
             <button
-              className="btn btn-primary chat-send-btn"
-              onClick={handleSend}
-              disabled={!input.trim() || !activeModel}
+              className="chat-attach-btn"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!activeModel}
+              title="上传文件（txt, pdf, docx, 图片等）"
             >
-              <Send size={15} />
+              <Paperclip size={15} />
             </button>
+            <textarea
+              ref={inputRef}
+              className="chat-input"
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              placeholder={
+                activeStreamId
+                  ? '正在生成，可发送新消息（将自动停止当前流）…'
+                  : activeModel
+                    ? `给 ${activeModel.name} 发消息（Enter 发送，Shift+Enter 换行）`
+                    : '请先启动模型后再发送消息'
+              }
+              value={input}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              rows={1}
+              disabled={!activeModel}
+            />
+            {activeStreamId ? (
+              <button className="btn btn-danger chat-send-btn" onClick={handleStop}>
+                <Square size={15} />
+              </button>
+            ) : (
+              <button
+                className="btn btn-primary chat-send-btn"
+                onClick={handleSend}
+                disabled={!input.trim() && attachedFiles.length === 0 || !activeModel}
+              >
+                <Send size={15} />
+              </button>
+            )}
+          </div>
+          {/* 附件 chips */}
+          {attachedFiles.length > 0 && (
+            <div className="chat-attach-chips">
+              {attachedFiles.map((f, i) => (
+                <div key={i} className="chat-attach-chip">
+                  <FileText size={12} />
+                  <span className="chat-attach-chip-name">{f.name}</span>
+                  <span className="chat-attach-chip-size">({formatFileSize(f.size)})</span>
+                  <button className="chat-attach-chip-remove" onClick={() => removeAttachedFile(i)}>
+                    <X size={11} />
+                  </button>
+                </div>
+              ))}
+            </div>
           )}
         </div>
 
