@@ -2435,4 +2435,99 @@ export function registerIpcHandlers(): void {
     try { sessions.get(id)?.pty.kill() } catch {}
     sessions.delete(id)
   })
+
+  // ── 网络搜索工具 ──────────────────────────────────────────
+  ipcMain.handle('web-search', async (_e, query: string): Promise<string> => {
+    if (!query?.trim()) return JSON.stringify({ error: '搜索关键词不能为空' })
+    try {
+      const encoded = encodeURIComponent(query.trim())
+      const url = `https://html.duckduckgo.com/html/?q=${encoded}`
+      const html = await fetchText(url)
+      // 解析 DuckDuckGo HTML 搜索结果
+      const results: Array<{ title: string; url: string; snippet: string }> = []
+      const rgLink = /<a[^>]+class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi
+      const rgSnippet = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi
+      const rgUrl = /uddg=([^&"]+)/i
+      let m: RegExpExecArray | null
+      while ((m = rgLink.exec(html)) !== null) {
+        const rawHref = m[1]
+        const title = stripHtml(m[2]).trim()
+        const hrefMatch = rawHref.match(rgUrl)
+        const resultUrl = hrefMatch ? decodeURIComponent(hrefMatch[1]) : rawHref
+        results.push({ title, url: resultUrl, snippet: '' })
+      }
+      let si = 0
+      while ((m = rgSnippet.exec(html)) !== null && si < results.length) {
+        results[si].snippet = stripHtml(m[1]).trim()
+        si++
+      }
+      return JSON.stringify(results.slice(0, 5))
+    } catch (e: any) {
+      return JSON.stringify({ error: `搜索失败: ${e?.message || e}` })
+    }
+  })
+
+  ipcMain.handle('fetch-webpage', async (_e, url: string): Promise<string> => {
+    if (!url?.trim()) return JSON.stringify({ error: 'URL 不能为空' })
+    try {
+      validateUrl(url)
+      const html = await fetchText(url, 15_000)
+      const text = stripHtml(html)
+        .replace(/\s*\n\s*\n\s*/g, '\n\n')
+        .replace(/[ \t]+/g, ' ')
+        .trim()
+      // 截取前 8192 个字符（约 2048 token）
+      const truncated = text.length > 8192 ? text.slice(0, 8192) + '\n\n…（内容已截断）' : text
+      return JSON.stringify({ url, content: truncated || '（页面无文本内容）' })
+    } catch (e: any) {
+      return JSON.stringify({ error: `获取页面失败: ${e?.message || e}` })
+    }
+  })
+}
+
+// ── 辅助函数 ──────────────────────────────────────────────
+function fetchText(url: string, timeout = 10_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const get = url.startsWith('https') ? https.get : http.get
+    const req = get(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36' }, timeout }, (res) => {
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.destroy()
+        const loc = res.headers.location
+        const base = url.startsWith('https') ? 'https' : 'http'
+        const redirectUrl = loc.startsWith('http') ? loc : `${base}://${res.headers.host || ''}${loc}`
+        fetchText(redirectUrl, timeout).then(resolve).catch(reject)
+      }
+      if (res.statusCode !== 200) {
+        reject(new Error(`HTTP ${res.statusCode}`))
+        return
+      }
+      const chunks: Buffer[] = []
+      res.on('data', (c: Buffer) => chunks.push(c))
+      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')))
+    })
+    req.on('error', reject)
+    req.on('timeout', () => { req.destroy(); reject(new Error('请求超时')) })
+  })
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+}
+
+function validateUrl(url: string): void {
+  if (/\\/.test(url)) throw new Error('URL 中包含反斜杠')
+  const parsed = new URL(url)
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('不支持的协议')
+  if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '0.0.0.0' ||
+      parsed.hostname.startsWith('192.168.') || parsed.hostname.startsWith('10.') ||
+      parsed.hostname.startsWith('172.16.')) throw new Error('不允许访问内网地址')
 }

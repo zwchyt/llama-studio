@@ -106,6 +106,7 @@ export interface CardState {
 export interface ToolCallInfo {
   id: string
   function: { name: string; arguments: string }
+  result?: string  // 工具执行结果（执行后填充）
 }
 export interface ChatMessage {
   id: string

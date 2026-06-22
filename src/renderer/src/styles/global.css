@@ -3388,6 +3388,16 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 /* ── 左栏：会话列表 ── */
 .chat-sidebar-collapser {
   display: flex;
+  width: 220px;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: width 0.25s ease, opacity 0.2s ease;
+}
+
+.chat-sidebar-collapser.collapsed,
+.sidebar-collapsed .chat-sidebar-collapser {
+  width: 0;
+  opacity: 0;
 }
 
 .chat-sidebar {
@@ -4731,6 +4741,8 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   font-size: 11px;
   color: var(--text-secondary);
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .chat-think-body.chat-msg-markdown {

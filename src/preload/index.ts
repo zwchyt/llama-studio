@@ -98,6 +98,9 @@ const fullApi = {
     ipcRenderer.on('chat-stream-chunk', (_event, data) => callback(data))
   },
   removeChatStreamListener: () => ipcRenderer.removeAllListeners('chat-stream-chunk'),
+  // ── 工具调用（网络搜索）──
+  webSearch: (query: string) => ipcRenderer.invoke('web-search', query),
+  fetchWebpage: (url: string) => ipcRenderer.invoke('fetch-webpage', url),
 
   // ── 终端控制台 ──
   terminalCreate: (opts: { cwd?: string; cols?: number; rows?: number }) => ipcRenderer.invoke('terminal:create', opts),

@@ -67,3 +67,6 @@ Thumbs.db
 
 # Runtime config (user-specific local paths)
 settings.json
+
+# Windows reserved device name (some tools may create this accidentally)
+nul

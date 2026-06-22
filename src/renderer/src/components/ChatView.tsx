@@ -10,33 +10,11 @@ import { useChatStore, buildOpenAiMessages, DEFAULT_PARAMS } from '../store/chat
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
 import type { ChatSession, ChatMessage, ChatParams, ToolCallInfo } from '../../../shared/types'
+import { getToolDefinitions, executeToolCall } from '../utils/tools'
 import CodeBlock from './CodeBlock'
 import ConfirmModal from './ConfirmModal'
 
-// ── 工具调用定义 ───────────────────────────────────────
-const TOOL_DEFINITIONS = [
-  {
-    type: 'function',
-    function: {
-      name: 'get_datetime',
-      description: 'Get the current date and time.',
-      parameters: { type: 'object', properties: {} }
-    }
-  }
-]
-
-function executeToolCall(name: string, _args: Record<string, unknown>): string {
-  if (name === 'get_datetime') {
-    const now = new Date()
-    return JSON.stringify({
-      date: now.toLocaleDateString('zh-CN'),
-      time: now.toLocaleTimeString('zh-CN')
-    })
-  }
-  return JSON.stringify({ error: `Unknown tool: ${name}` })
-}
-
-// ── 工具调用展示块（与 ThinkBlock 同构，可折叠，无卡顿）────
+// ── 工具调用展示块（与 ThinkBlock 同构，可折叠）────
 function ToolCallBlock({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
   const [expanded, setExpanded] = useState(false)
 
@@ -53,6 +31,10 @@ function ToolCallBlock({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
         {toolCalls.map((tc, i) => {
           let argsStr = tc.function.arguments
           try { argsStr = JSON.stringify(JSON.parse(tc.function.arguments), null, 2) } catch { /* keep raw */ }
+          let resultStr = tc.result
+          if (resultStr) {
+            try { resultStr = JSON.stringify(JSON.parse(resultStr), null, 2) } catch { /* keep raw */ }
+          }
           return (
             <div key={i} className="chat-tool-call">
               <div className="chat-tool-call-name">
@@ -61,6 +43,9 @@ function ToolCallBlock({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
               </div>
               {argsStr && argsStr !== '{}' && (
                 <div className="chat-tool-call-args">{argsStr}</div>
+              )}
+              {resultStr && (
+                <div className="chat-tool-call-result">{resultStr}</div>
               )}
             </div>
           )
@@ -1172,7 +1157,7 @@ export default function ChatView() {
       initSt.clearStreamForSession(sid)
     }
 
-    window.api.onChatStreamChunk((data) => {
+	    window.api.onChatStreamChunk(async (data) => {
       // 已中止的流：忽略所有后续事件（包括异步到达的 done）
       if (abortedStreamsRef.current.has(data.streamId)) {
         if (data.done) abortedStreamsRef.current.delete(data.streamId)
@@ -1229,7 +1214,7 @@ export default function ChatView() {
         }
 
         // ── 工具调用流程：模型发起 tool_calls → 执行工具 → 自动发起第二轮请求 ──
-        const toolCalls = data.toolCalls
+	        const toolCalls = data.toolCalls as ToolCallInfo[] | undefined
         if (toolCalls && toolCalls.length > 0) {
           // 将 toolCalls 存储到当前助手消息上（用于 UI 渲染）
           const currentSt = useChatStore.getState()
@@ -1243,14 +1228,21 @@ export default function ChatView() {
             currentSt.replaceMessages(targetSession.id, updatedMsgs)
           }
 
-          // 执行所有工具调用
+          // 执行所有工具调用（异步支持网络请求）
           const toolResults: Array<{ callId: string; name: string; result: string }> = []
           for (const tc of toolCalls) {
             let args: Record<string, unknown> = {}
             try { args = JSON.parse(tc.function.arguments || '{}') } catch { /* keep empty */ }
-            const result = executeToolCall(tc.function.name, args)
+            const result = await executeToolCall(tc.function.name, args)
             toolResults.push({ callId: tc.id, name: tc.function.name, result })
+            // 将执行结果回写到 toolCalls，用于 UI 展示
+            tc.result = result
           }
+          // 更新消息上的 toolCalls（带上结果）
+          const updatedMsgs2 = currentSession!.messages.map(m =>
+            m.id === data.streamId ? { ...m, toolCalls: toolCalls } : m
+          )
+          currentSt.replaceMessages(targetSession.id, updatedMsgs2)
 
           // 构建第二轮请求的消息数组（手动构建，避免 buildOpenAiMessages 重复包含工具调用消息）
           const followSession = useChatStore.getState().sessions.find(s => s.id === targetSession.id)!
@@ -1321,7 +1313,7 @@ export default function ChatView() {
               top_k: followSession.params.top_k,
               max_tokens: followSession.params.max_tokens || -1,
               repeat_penalty: followSession.params.repeat_penalty,
-              tools: TOOL_DEFINITIONS,
+              tools: getToolDefinitions(),
               stream: true
             }
           }).catch((e: any) => {
@@ -1469,7 +1461,7 @@ export default function ChatView() {
           top_k: session.params.top_k,
           max_tokens: session.params.max_tokens || -1,
           repeat_penalty: session.params.repeat_penalty,
-          tools: TOOL_DEFINITIONS,
+          tools: getToolDefinitions(),
           stream: true
         }
       })
@@ -1708,7 +1700,7 @@ export default function ChatView() {
 
   return (
     <div className={`chat-layout ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-      <div className="chat-sidebar-collapser" style={{ display: sidebarCollapsed ? 'none' : undefined }}>
+      <div className={`chat-sidebar-collapser ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <SessionList
           sessions={sessions}
           activeId={activeSessionId}

@@ -108,6 +108,9 @@ interface LlamaCppApi {
   abortChatStream: (streamId: string) => Promise<{ success: boolean }>
   onChatStreamChunk: (cb: (data: ChatStreamChunk) => void) => void
   removeChatStreamListener: () => void
+  // ── 工具调用（网络搜索）──
+  webSearch: (query: string) => Promise<string>
+  fetchWebpage: (url: string) => Promise<string>
   // ── 终端控制台 ──
   terminalCreate: (opts: { cwd?: string; cols?: number; rows?: number }) => Promise<{ success: boolean; id?: string; shell?: string; error?: string }>
   terminalInput: (id: string, data: string) => Promise<void>
