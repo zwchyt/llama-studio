@@ -68,8 +68,6 @@ body {
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 input,
@@ -3424,6 +3422,56 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   color: var(--text);
 }
 
+/* ── 会话搜索框 ── */
+.chat-sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+
+.chat-sidebar-search-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.chat-sidebar-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  font-family: var(--font);
+  color: var(--text);
+  outline: none;
+  min-width: 0;
+}
+
+.chat-sidebar-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.chat-sidebar-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background var(--transition);
+}
+
+.chat-sidebar-search-clear:hover {
+  background: var(--border-strong);
+}
+
 .chat-session-list {
   flex: 1;
   overflow-y: auto;
@@ -3514,6 +3562,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   display: none;
   gap: 2px;
   flex-shrink: 0;
+  position: relative;
 }
 
 .chat-session-item:hover .chat-session-actions {
@@ -3537,6 +3586,40 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 .chat-session-btn:hover {
   background: var(--border);
   color: var(--text);
+}
+
+/* ── 会话导出菜单 ── */
+.chat-session-export-menu {
+  position: absolute;
+  right: 100%;
+  top: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.chat-session-export-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition);
+}
+
+.chat-session-export-menu button:hover {
+  background: var(--bg);
 }
 
 .chat-session-btn.danger:hover {
@@ -3598,6 +3681,43 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ── Token 用量指示器 ── */
+/* ── Context Bar（消息下方 token 用量）── */
+.context-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  user-select: none;
+  margin-left: 10px;
+}
+
+.context-bar-track {
+  width: 50px;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.context-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.context-bar-label {
+  white-space: nowrap;
+  font-size: 10.5px;
+}
+
+.chat-token-label {
+  white-space: nowrap;
 }
 
 .chat-model-select {
@@ -3961,6 +4081,8 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   padding-top: 3px;
   display: flex;
   flex-direction: column;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* 用户消息：body 右对齐 */
@@ -4169,6 +4291,22 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 
 /* 生成中的光标 */
 .chat-msg-streaming {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  background: var(--surface);
+  border-radius: 4px var(--radius) var(--radius) var(--radius);
+  padding: 12px 16px;
+  max-width: 85%;
+  min-width: 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* 流式中普通文本片段 */
+.chat-msg-streaming-seg {
   font-size: 14px;
   line-height: 1.7;
   color: var(--text);
@@ -4426,9 +4564,8 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 .chat-input-wrap {
-  max-width: 860px;
-  margin: 0 auto 18px;
-  width: 100%;
+  margin: 0 18px 18px;
+  width: auto;
   box-sizing: border-box;
   padding: 8px 10px 8px 4px;
   background: var(--surface);

@@ -1789,38 +1789,36 @@ export function registerIpcHandlers(): void {
   })
 
 	  // --- chat-completion-stream (流式聊天代理：POST /v1/chat/completions，SSE 转发) ---
-	  // 节流：累积多个 token 后再发送，减少 IPC 频率（约 20fps）
-	  const streamThrottleTimers = new Map<string, ReturnType<typeof setTimeout>>()
-	  const streamPendingDeltas = new Map<string, string>()
-	  const STREAM_THROTTLE_MS = 40
-
-	  function flushStreamDelta(streamId: string): void {
-	    const delta = streamPendingDeltas.get(streamId)
-	    if (delta) {
-	      streamPendingDeltas.delete(streamId)
-	      e.sender.send('chat-stream-chunk', { streamId, delta, done: false })
-	    }
-	  }
-	  function queueStreamDelta(streamId: string, delta: string): void {
-	    const existing = streamPendingDeltas.get(streamId) || ''
-	    streamPendingDeltas.set(streamId, existing + delta)
-	    if (!streamThrottleTimers.has(streamId)) {
-	      streamThrottleTimers.set(streamId, setTimeout(() => {
-	        streamThrottleTimers.delete(streamId)
-	        flushStreamDelta(streamId)
-	      }, STREAM_THROTTLE_MS))
-	    }
-	  }
-	  function flushStreamNow(streamId: string): void {
-	    const t = streamThrottleTimers.get(streamId)
-	    if (t) { clearTimeout(t); streamThrottleTimers.delete(streamId) }
-	    flushStreamDelta(streamId)
-	  }
-
 	  ipcMain.handle('chat-completion-stream', (e, opts: {
-    streamId: string; port: number; body: Record<string, unknown>
-  }): Promise<{ success: boolean; error?: string }> => {
-    return new Promise((resolve) => {
+	    streamId: string; port: number; body: Record<string, unknown>
+	  }): Promise<{ success: boolean; error?: string }> => {
+	    // 节流：累积多个 token 后再发送，减少 IPC 频率（约 20fps）
+	    const streamThrottleTimers = new Map<string, ReturnType<typeof setTimeout>>()
+	    const streamPendingDeltas = new Map<string, string>()
+	    const STREAM_THROTTLE_MS = 5
+	    function flushStreamDelta(streamId: string): void {
+	      const delta = streamPendingDeltas.get(streamId)
+	      if (delta) {
+	        streamPendingDeltas.delete(streamId)
+	        e.sender.send('chat-stream-chunk', { streamId, delta, done: false })
+	      }
+	    }
+	    function queueStreamDelta(streamId: string, delta: string): void {
+	      const existing = streamPendingDeltas.get(streamId) || ''
+	      streamPendingDeltas.set(streamId, existing + delta)
+	      if (!streamThrottleTimers.has(streamId)) {
+	        streamThrottleTimers.set(streamId, setTimeout(() => {
+	          streamThrottleTimers.delete(streamId)
+	          flushStreamDelta(streamId)
+	        }, STREAM_THROTTLE_MS))
+	      }
+	    }
+	    function flushStreamNow(streamId: string): void {
+	      const t = streamThrottleTimers.get(streamId)
+	      if (t) { clearTimeout(t); streamThrottleTimers.delete(streamId) }
+	      flushStreamDelta(streamId)
+	    }
+	    return new Promise((resolve) => {
       const { streamId, port, body } = opts
       // stream_options.include_usage 让 llama-server 在流结束前发送 usage 统计
       const bodyStr = JSON.stringify({ ...body, stream: true, stream_options: { include_usage: true } })

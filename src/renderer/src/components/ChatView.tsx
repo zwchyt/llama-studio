@@ -8,7 +8,7 @@ import {
   Plus, Send, Square, Trash2, Pencil, MessageSquare,
   ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain, RefreshCw,
   Copy, Check, RotateCcw, ArrowDown, X, Eye, SlidersHorizontal, List, Play, Wrench,
-  Paperclip, FileText, GitBranch
+  Paperclip, FileText, GitBranch, Search, Download
 } from 'lucide-react'
 import { useChatStore, buildOpenAiMessages, DEFAULT_PARAMS } from '../store/chatStore'
 import { useStore } from '../store/useStore'
@@ -20,21 +20,21 @@ import ConfirmModal from './ConfirmModal'
 
 // 流式文本缓冲区（模块级，不经过 React 状态，避免重渲染卡顿）
 const streamingBuffer: Record<string, string> = {}
-let streamSyncTimer: ReturnType<typeof setTimeout> | null = null
-function scheduleStreamSync(sessionId: string, streamId: string): void {
-  if (!streamSyncTimer) {
-    streamSyncTimer = setTimeout(() => {
-      streamSyncTimer = null
-      const st = useChatStore.getState()
-      const s = st.sessions.find(s => s.id === sessionId)
-      if (!s) return
-      const buf = streamingBuffer[streamId]
-      if (buf) {
-        const msgs = s.messages.map(m => m.id === streamId ? { ...m, content: buf } : m)
-        st.replaceMessages(sessionId, msgs)
-      }
-    }, 300)
-  }
+// 轻量同步：每 100ms 同步一次缓冲区到 store（仅用于思考链渲染，不频繁）
+const streamSyncTimers = new Map<string, ReturnType<typeof setTimeout>>()
+function lightStreamSync(sessionId: string, streamId: string): void {
+  if (streamSyncTimers.has(streamId)) return
+  streamSyncTimers.set(streamId, setTimeout(() => {
+    streamSyncTimers.delete(streamId)
+    const st = useChatStore.getState()
+    const s = st.sessions.find(s => s.id === sessionId)
+    if (!s) return
+    const buf = streamingBuffer[streamId]
+    if (buf) {
+      const msgs = s.messages.map(m => m.id === streamId ? { ...m, content: buf } : m)
+      st.replaceMessages(sessionId, msgs)
+    }
+  }, 50))
 }
 
 // ── 工具调用展示块（与 ThinkBlock 同构，可折叠）────
@@ -436,36 +436,8 @@ const UserMessageContent = React.memo(function UserMessageContent({ content }: {
   )
 })
 
-// ── 流式文本组件（从模块级缓冲区读数据，直接操作 DOM）────
-const StreamingText = React.memo(function StreamingText({ streamId, preToolContentLen }: { streamId: string; preToolContentLen?: number }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const rafRef = useRef<number>(0)
-  const lastTextRef = useRef('')
-
-  useEffect(() => {
-    function tick(): void {
-      const raw = streamingBuffer[streamId] || ''
-      const display = preToolContentLen != null ? raw.slice(preToolContentLen) : raw
-      if (ref.current && display !== lastTextRef.current) {
-        ref.current.textContent = display
-        lastTextRef.current = display
-      }
-      rafRef.current = requestAnimationFrame(tick)
-    }
-    rafRef.current = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(rafRef.current)
-  }, [streamId, preToolContentLen])
-
-  return (
-    <div className="chat-msg-streaming">
-      <div ref={ref} />
-      <span className="chat-cursor" />
-    </div>
-  )
-})
-
 // ── 单条消息 ───────────────────────────────────────────────
-const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled, onContinue, continueDisabled, onDelete, deleteDisabled, onImageClick, onBranch }: {
+const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled, onContinue, continueDisabled, onDelete, deleteDisabled, onImageClick, onBranch, sessionId, serverPort }: {
   msg: ChatMessage
   isStreaming?: boolean
   onCopy?: () => void
@@ -478,6 +450,8 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
   deleteDisabled?: boolean
   onImageClick?: (url: string) => void
   onBranch?: () => void
+  sessionId?: string
+  serverPort?: number
 }) {
   const isUser = msg.role === 'user'
   const [copied, setCopied] = useState(false)
@@ -529,9 +503,12 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
 		          {msg.toolCalls && msg.toolCalls.length > 0 && (
 		            <ToolCallBlock toolCalls={msg.toolCalls} />
 		          )}
-		          {msg.content ? (
-		            <StreamingText streamId={msg.id} preToolContentLen={msg.preToolContentLen} />
-		          ) : (
+			        {msg.content || true ? (
+			          <>
+			            {renderSegments(true)}
+			            {segments.length > 0 && segments[segments.length - 1].type === 'text' && <span className="chat-cursor" />}
+			          </>
+			          ) : (
 		            <div className="chat-msg-placeholder">
 		              <span className="chat-typing-dots" />
 		            </div>
@@ -612,6 +589,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
                 {msg.decodeTokS != null && <span>{typeof msg.decodeTokS === 'number' ? msg.decodeTokS.toFixed(1) : msg.decodeTokS} tok/s</span>}
                 {msg.tokensDecoded != null && <span>{msg.tokensDecoded} tokens</span>}
                 {msg.msFirstToken != null && <span>TTFT {msg.msFirstToken}ms</span>}
+                <ContextBar sessionId={sessionId || ''} port={serverPort} />
               </div>
             )}
           </>
@@ -697,6 +675,58 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRe
 }) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [exportMenuId, setExportMenuId] = useState<string | null>(null)
+  const exportMenuRef = useRef<HTMLDivElement>(null)
+
+  // 点击外部关闭导出菜单
+  useEffect(() => {
+    if (!exportMenuId) return
+    const handler = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setExportMenuId(null)
+      }
+    }
+    setTimeout(() => document.addEventListener('click', handler), 0)
+    return () => document.removeEventListener('click', handler)
+  }, [exportMenuId])
+
+  function exportSession(s: ChatSession, format: 'json' | 'md'): void {
+    let content: string
+    let ext: string
+    let mime: string
+    if (format === 'json') {
+      content = JSON.stringify(s, null, 2)
+      ext = 'json'
+      mime = 'application/json'
+    } else {
+      const lines: string[] = [`# ${s.title}`, '', `导出时间: ${new Date().toLocaleString()}`, `模型: ${s.templateId || '未知'}`, '']
+      for (const m of s.messages) {
+        if (m.role === 'user') lines.push(`## 用户\n\n${m.content}\n`)
+        else if (m.role === 'assistant') lines.push(`## 助手\n\n${m.content}\n`)
+      }
+      content = lines.join('\n')
+      ext = 'md'
+      mime = 'text/markdown'
+    }
+    const blob = new Blob([content], { type: mime })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${s.title || '会话'}.${ext}`
+    a.click()
+    URL.revokeObjectURL(url)
+    setExportMenuId(null)
+  }
+
+  const filteredSessions = useMemo(() => {
+    if (!searchQuery.trim()) return sessions
+    const q = searchQuery.toLowerCase()
+    return sessions.filter(s => {
+      if (s.title.toLowerCase().includes(q)) return true
+      return s.messages.some(m => m.content && m.content.toLowerCase().includes(q))
+    })
+  }, [sessions, searchQuery])
 
   const startEdit = (s: ChatSession) => {
     setEditingId(s.id)
@@ -718,12 +748,27 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRe
           <Plus size={13} /> 新建
         </button>
       </div>
+      <div className="chat-sidebar-search">
+        <Search size={13} className="chat-sidebar-search-icon" />
+        <input
+          className="chat-sidebar-search-input"
+          type="text"
+          placeholder="搜索会话…"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+        />
+        {searchQuery && (
+          <button className="chat-sidebar-search-clear" onClick={() => setSearchQuery('')}>
+            <X size={11} />
+          </button>
+        )}
+      </div>
       <div className="chat-session-list">
-        {sessions.length === 0 ? (
+        {filteredSessions.length === 0 ? (
           <div className="chat-session-empty">
-            点击「新建」开始第一个对话。
+            {searchQuery ? '未找到匹配的会话' : '点击「新建」开始第一个对话。'}
           </div>
-        ) : sessions.map((s) => {
+        ) : filteredSessions.map((s) => {
           const model = runningModels.find((m) => m.id === s.templateId)
           const isStreaming = streamingSessionIds.includes(s.id)
           const state = isStreaming ? 'streaming' : (model ? 'running' : 'stopped')
@@ -751,6 +796,18 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRe
                     <div className="chat-session-time">{formatSessionTime(s.updatedAt)}</div>
                   </div>
                   <div className="chat-session-actions">
+                    <button
+                      className="chat-session-btn"
+                      onClick={(e) => { e.stopPropagation(); setExportMenuId(exportMenuId === s.id ? null : s.id) }}
+                    >
+                      <Download size={12} />
+                    </button>
+                    {exportMenuId === s.id && (
+                      <div className="chat-session-export-menu" ref={exportMenuRef}>
+                        <button onClick={(e) => { e.stopPropagation(); exportSession(s, 'json') }}>导出 JSON</button>
+                        <button onClick={(e) => { e.stopPropagation(); exportSession(s, 'md') }}>导出 Markdown</button>
+                      </div>
+                    )}
                     <button
                       className="chat-session-btn"
                       onClick={(e) => { e.stopPropagation(); startEdit(s) }}
@@ -1054,6 +1111,50 @@ const MessageNav = React.memo(function MessageNav({
   )
 })
 
+// ── Token 用量指示器 ───────────────────────────────────────
+function ContextBar({ sessionId, port }: { sessionId: string; port?: number }) {
+  const [maxCtx, setMaxCtx] = useState(8192)
+  const session = useChatStore(s => s.sessions.find(x => x.id === sessionId))
+
+  useEffect(() => {
+    if (!port) return
+    let cancelled = false
+    window.api.fetchServerEndpoint(port, 'slots')
+      .then(res => {
+        if (cancelled || !res.ok || !res.text) return
+        try {
+          const slots = JSON.parse(res.text)
+          const ctx = slots?.[0]?.n_ctx
+          if (ctx) setMaxCtx(ctx)
+        } catch {}
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [port])
+
+  const used = useMemo(() => {
+    if (!session) return 0
+    let total = 0
+    for (const m of session.messages) {
+      if (m.tokensDecoded) total += m.tokensDecoded
+      else total += Math.ceil(m.content.length / 4)
+    }
+    return total
+  }, [session])
+
+  if (!port || !maxCtx) return null
+  const ratio = used / maxCtx
+
+  return (
+    <span className="context-bar" title={`已用 ${used.toLocaleString()} / ${maxCtx.toLocaleString()} tokens (${(ratio*100).toFixed(1)}%)`}>
+      <span className="context-bar-track">
+        <span className="context-bar-fill" style={{ width: `${Math.min(ratio * 100, 100)}%` }} />
+      </span>
+      <span className="context-bar-label">{used.toLocaleString()} / {maxCtx.toLocaleString()}</span>
+    </span>
+  )
+}
+
 // ── 主视图 ─────────────────────────────────────────────────
 export default function ChatView() {
   const sessions = useChatStore((s) => s.sessions)
@@ -1308,13 +1409,14 @@ export default function ChatView() {
         s.messages.some((m) => m.id === data.streamId)
       )
       if (!targetSession) return
-	      if (data.delta) {
-	        streamReceivedRef.current.set(data.streamId, true)
-	        // 写入模块级缓冲区（不经过 React 状态），StreamingText 用 rAF 读取
-	        const prev = streamingBuffer[data.streamId] || ''
-	        streamingBuffer[data.streamId] = prev + data.delta
-	        scheduleStreamSync(targetSession.id, data.streamId)
-	      }
+		      if (data.delta) {
+		        streamReceivedRef.current.set(data.streamId, true)
+		        // 写入模块级缓冲区，StreamingText 用 rAF 读取
+		        const prev = streamingBuffer[data.streamId] || ''
+		        streamingBuffer[data.streamId] = prev + data.delta
+		        // 轻量同步到 store（100ms 一次），触发思考链重新渲染
+		        lightStreamSync(targetSession.id, data.streamId)
+		      }
       if (data.done) {
         // 清理该流的看门狗定时器
         const wd = streamWatchdogsRef.current.get(data.streamId)
@@ -2081,6 +2183,8 @@ export default function ChatView() {
                   key={m.id}
                   msg={m}
                   isStreaming={activeStreamId === m.id}
+                  sessionId={activeSessionId || undefined}
+                  serverPort={activeModel?.port}
                   onImageClick={setPreviewImage}
                   onEdit={m.role === 'user' ? () => handleEditMessage(m.id, m.content, m.attachments) : undefined}
                   onRegenerate={m.role === 'assistant' ? () => handleRegenerate(m.id) : undefined}
