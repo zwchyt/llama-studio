@@ -4168,14 +4168,30 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 /* 生成中的光标 */
+.chat-msg-streaming {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  background: var(--surface);
+  border-radius: 4px var(--radius) var(--radius) var(--radius);
+  padding: 12px 16px;
+  max-width: 85%;
+  min-width: 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .chat-cursor {
   display: inline-block;
-  width: 7px;
-  height: 15px;
+  width: 2px;
+  height: 16px;
   background: var(--accent);
-  margin-left: 2px;
+  margin-left: 1px;
   vertical-align: text-bottom;
-  animation: chatCursorBlink 1s steps(2) infinite;
+  animation: chatCursorBlink 0.8s ease-in-out infinite;
+  border-radius: 1px;
 }
 
 @keyframes chatCursorBlink {

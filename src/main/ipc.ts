@@ -1788,8 +1788,36 @@ export function registerIpcHandlers(): void {
     })
   })
 
-  // --- chat-completion-stream (流式聊天代理：POST /v1/chat/completions，SSE 转发) ---
-  ipcMain.handle('chat-completion-stream', (e, opts: {
+	  // --- chat-completion-stream (流式聊天代理：POST /v1/chat/completions，SSE 转发) ---
+	  // 节流：累积多个 token 后再发送，减少 IPC 频率（约 20fps）
+	  const streamThrottleTimers = new Map<string, ReturnType<typeof setTimeout>>()
+	  const streamPendingDeltas = new Map<string, string>()
+	  const STREAM_THROTTLE_MS = 40
+
+	  function flushStreamDelta(streamId: string): void {
+	    const delta = streamPendingDeltas.get(streamId)
+	    if (delta) {
+	      streamPendingDeltas.delete(streamId)
+	      e.sender.send('chat-stream-chunk', { streamId, delta, done: false })
+	    }
+	  }
+	  function queueStreamDelta(streamId: string, delta: string): void {
+	    const existing = streamPendingDeltas.get(streamId) || ''
+	    streamPendingDeltas.set(streamId, existing + delta)
+	    if (!streamThrottleTimers.has(streamId)) {
+	      streamThrottleTimers.set(streamId, setTimeout(() => {
+	        streamThrottleTimers.delete(streamId)
+	        flushStreamDelta(streamId)
+	      }, STREAM_THROTTLE_MS))
+	    }
+	  }
+	  function flushStreamNow(streamId: string): void {
+	    const t = streamThrottleTimers.get(streamId)
+	    if (t) { clearTimeout(t); streamThrottleTimers.delete(streamId) }
+	    flushStreamDelta(streamId)
+	  }
+
+	  ipcMain.handle('chat-completion-stream', (e, opts: {
     streamId: string; port: number; body: Record<string, unknown>
   }): Promise<{ success: boolean; error?: string }> => {
     return new Promise((resolve) => {
@@ -1807,20 +1835,21 @@ export function registerIpcHandlers(): void {
         agent: httpAgent
       }, (res) => {
         if (res.statusCode && res.statusCode >= 400) {
-          let errBody = ''
-          res.on('data', (c: Buffer) => { errBody += c.toString() })
-          res.on('end', () => {
-            activeChatStreams.delete(streamId)
-            e.sender.send('chat-stream-chunk', { streamId, done: true, error: `HTTP ${res.statusCode}: ${errBody.slice(0, 500)}` })
-            resolve({ success: false, error: `HTTP ${res.statusCode}` })
-          })
-          return
-        }
-        let buf = ''
-        // SSE 事件解析：处理 buf 中以 \n\n 分隔的事件
-        function processBuf() {
-          let idx: number
-          while ((idx = buf.indexOf('\n\n')) >= 0) {
+	          let errBody = ''
+	          res.on('data', (c: Buffer) => { errBody += c.toString() })
+	          res.on('end', () => {
+	            activeChatStreams.delete(streamId)
+	            flushStreamNow(streamId)
+	            e.sender.send('chat-stream-chunk', { streamId, done: true, error: `HTTP ${res.statusCode}: ${errBody.slice(0, 500)}` })
+	            resolve({ success: false, error: `HTTP ${res.statusCode}` })
+	          })
+	          return
+	        }
+	        let buf = ''
+	        // SSE 事件解析：处理 buf 中以 \n\n 分隔的事件
+	        function processBuf() {
+	          let idx: number
+	          while ((idx = buf.indexOf('\n\n')) >= 0) {
             const raw = buf.slice(0, idx)
             buf = buf.slice(idx + 2)
             const line = raw.split('\n').find(l => l.startsWith('data: '))
@@ -1860,17 +1889,17 @@ export function registerIpcHandlers(): void {
                 firstTokenTime = Date.now() - streamStartTime
               }
 
-              // reasoning_content → 包裹在 <think> 标签中，以便前端折叠显示
-              if (reasoning) {
-                const delta = (inReasoning ? '' : '<think>') + reasoning
-                e.sender.send('chat-stream-chunk', { streamId, delta, done: false })
-                chatStreamInReasoning.set(streamId, true)
-              }
-              if (content) {
-                const prefix = inReasoning || (chatStreamInReasoning.get(streamId) ?? false) ? '</think>\n' : ''
-                if (prefix) chatStreamInReasoning.set(streamId, false)
-                e.sender.send('chat-stream-chunk', { streamId, delta: prefix + content, done: false })
-              }
+	              // reasoning_content → 包裹在 <think> 标签中，以便前端折叠显示
+	              if (reasoning) {
+	                const delta = (inReasoning ? '' : '<think>') + reasoning
+	                queueStreamDelta(streamId, delta)
+	                chatStreamInReasoning.set(streamId, true)
+	              }
+	              if (content) {
+	                const prefix = inReasoning || (chatStreamInReasoning.get(streamId) ?? false) ? '</think>\n' : ''
+	                if (prefix) chatStreamInReasoning.set(streamId, false)
+	                queueStreamDelta(streamId, prefix + content)
+	              }
 
               // 累积 tool_calls 增量片段（delta.tool_calls 按 index 分片到达）
               const deltaToolCalls = choice?.delta?.tool_calls
@@ -1912,12 +1941,13 @@ export function registerIpcHandlers(): void {
           // 等待 /metrics 结果，使用 predicted_tokens_seconds（与监控面板同源）
           const accToolCalls = chatStreamToolCalls.get(streamId)
           chatStreamToolCalls.delete(streamId)
-          const finalizeStream = (metrics?: { decodeTokS?: number; completionTokens?: number }) => {
-            const finalTokens = metrics?.completionTokens ?? lastUsage?.completionTokens
-            const finalUsage = finalTokens != null
-              ? { promptTokens: lastUsage?.promptTokens ?? 0, completionTokens: finalTokens }
-              : undefined
-            e.sender.send('chat-stream-chunk', {
+	          const finalizeStream = (metrics?: { decodeTokS?: number; completionTokens?: number }) => {
+	            const finalTokens = metrics?.completionTokens ?? lastUsage?.completionTokens
+	            const finalUsage = finalTokens != null
+	              ? { promptTokens: lastUsage?.promptTokens ?? 0, completionTokens: finalTokens }
+	              : undefined
+	            flushStreamNow(streamId)
+	            e.sender.send('chat-stream-chunk', {
               streamId,
               done: true,
               usage: finalUsage,
@@ -1937,23 +1967,25 @@ export function registerIpcHandlers(): void {
           }
         })
       })
-      req.on('error', (err) => {
-        chatStreamInReasoning.delete(streamId)
-        chatStreamToolCalls.delete(streamId)
-        // 主动中止的流不发 error 事件，避免前端误显示
-        if (!abortedChatStreams.has(streamId)) {
-          e.sender.send('chat-stream-chunk', { streamId, done: true, error: err.message })
-        }
-        abortedChatStreams.delete(streamId)
-        activeChatStreams.delete(streamId)
-        resolve({ success: false, error: err.message })
-      })
-      // 流式生成可能很久，给一个较长的超时（5 分钟），超时则中止
-      req.setTimeout(300000, () => {
-        req.destroy()
-        chatStreamInReasoning.delete(streamId)
-        chatStreamToolCalls.delete(streamId)
-        e.sender.send('chat-stream-chunk', { streamId, done: true, error: 'timeout' })
+	      req.on('error', (err) => {
+	        chatStreamInReasoning.delete(streamId)
+	        chatStreamToolCalls.delete(streamId)
+	        // 主动中止的流不发 error 事件，避免前端误显示
+	        if (!abortedChatStreams.has(streamId)) {
+	          flushStreamNow(streamId)
+	          e.sender.send('chat-stream-chunk', { streamId, done: true, error: err.message })
+	        }
+	        abortedChatStreams.delete(streamId)
+	        activeChatStreams.delete(streamId)
+	        resolve({ success: false, error: err.message })
+	      })
+	      // 流式生成可能很久，给一个较长的超时（5 分钟），超时则中止
+	      req.setTimeout(300000, () => {
+	        req.destroy()
+	        chatStreamInReasoning.delete(streamId)
+	        chatStreamToolCalls.delete(streamId)
+	        flushStreamNow(streamId)
+	        e.sender.send('chat-stream-chunk', { streamId, done: true, error: 'timeout' })
         activeChatStreams.delete(streamId)
         resolve({ success: false, error: 'timeout' })
       })

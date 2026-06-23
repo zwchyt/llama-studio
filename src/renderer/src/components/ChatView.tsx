@@ -8,7 +8,7 @@ import {
   Plus, Send, Square, Trash2, Pencil, MessageSquare,
   ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain, RefreshCw,
   Copy, Check, RotateCcw, ArrowDown, X, Eye, SlidersHorizontal, List, Play, Wrench,
-  Paperclip, FileText
+  Paperclip, FileText, GitBranch
 } from 'lucide-react'
 import { useChatStore, buildOpenAiMessages, DEFAULT_PARAMS } from '../store/chatStore'
 import { useStore } from '../store/useStore'
@@ -17,6 +17,25 @@ import type { ChatSession, ChatMessage, ChatParams, ToolCallInfo, Attachment } f
 import { getToolDefinitions, executeToolCall } from '../utils/tools'
 import CodeBlock from './CodeBlock'
 import ConfirmModal from './ConfirmModal'
+
+// 流式文本缓冲区（模块级，不经过 React 状态，避免重渲染卡顿）
+const streamingBuffer: Record<string, string> = {}
+let streamSyncTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleStreamSync(sessionId: string, streamId: string): void {
+  if (!streamSyncTimer) {
+    streamSyncTimer = setTimeout(() => {
+      streamSyncTimer = null
+      const st = useChatStore.getState()
+      const s = st.sessions.find(s => s.id === sessionId)
+      if (!s) return
+      const buf = streamingBuffer[streamId]
+      if (buf) {
+        const msgs = s.messages.map(m => m.id === streamId ? { ...m, content: buf } : m)
+        st.replaceMessages(sessionId, msgs)
+      }
+    }, 300)
+  }
+}
 
 // ── 工具调用展示块（与 ThinkBlock 同构，可折叠）────
 function ToolCallBlock({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
@@ -417,8 +436,36 @@ const UserMessageContent = React.memo(function UserMessageContent({ content }: {
   )
 })
 
+// ── 流式文本组件（从模块级缓冲区读数据，直接操作 DOM）────
+const StreamingText = React.memo(function StreamingText({ streamId, preToolContentLen }: { streamId: string; preToolContentLen?: number }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const rafRef = useRef<number>(0)
+  const lastTextRef = useRef('')
+
+  useEffect(() => {
+    function tick(): void {
+      const raw = streamingBuffer[streamId] || ''
+      const display = preToolContentLen != null ? raw.slice(preToolContentLen) : raw
+      if (ref.current && display !== lastTextRef.current) {
+        ref.current.textContent = display
+        lastTextRef.current = display
+      }
+      rafRef.current = requestAnimationFrame(tick)
+    }
+    rafRef.current = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(rafRef.current)
+  }, [streamId, preToolContentLen])
+
+  return (
+    <div className="chat-msg-streaming">
+      <div ref={ref} />
+      <span className="chat-cursor" />
+    </div>
+  )
+})
+
 // ── 单条消息 ───────────────────────────────────────────────
-const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled, onContinue, continueDisabled, onDelete, deleteDisabled, onImageClick }: {
+const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled, onContinue, continueDisabled, onDelete, deleteDisabled, onImageClick, onBranch }: {
   msg: ChatMessage
   isStreaming?: boolean
   onCopy?: () => void
@@ -430,6 +477,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
   onDelete?: () => void
   deleteDisabled?: boolean
   onImageClick?: (url: string) => void
+  onBranch?: () => void
 }) {
   const isUser = msg.role === 'user'
   const [copied, setCopied] = useState(false)
@@ -473,54 +521,24 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
   )
 
   // 流式中不显示操作栏
-  if (isStreaming) {
-    return (
-      <div className="chat-msg chat-msg-assistant" data-msg-id={msg.id}>
-        <div className="chat-msg-avatar"><Bot size={14} /></div>
-        <div className="chat-msg-body">
-          {/* 工具调用块（流式中也显示） */}
-          {msg.toolCalls && msg.toolCalls.length > 0 && (
-            <ToolCallBlock toolCalls={msg.toolCalls} />
-          )}
-          {msg.content ? (
-            msg.toolCalls && msg.preToolContentLen != null
-              ? (() => {
-                  // 只显示工具调用后的内容（跳过 pre-tool 思考链）
-                  const postContent = msg.content.slice(msg.preToolContentLen)
-                  if (!postContent) return <span className="chat-cursor" />
-                  const postSegs = parseThinkSegments(postContent)
-                  return (
-                    <>
-                      {postSegs.map((seg, i) => {
-                        if (seg.type === 'think') {
-                          return <ThinkBlock key={i} value={seg.value} closed={false} isStreaming={!seg.closed} />
-                        }
-                        return (
-                          <div key={i} className="chat-msg-markdown">
-                            <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any }}>
-                              {seg.value}
-                            </ReactMarkdown>
-                          </div>
-                        )
-                      })}
-                      {postSegs.length > 0 && postSegs[postSegs.length - 1].type === 'text' && <span className="chat-cursor" />}
-                    </>
-                  )
-                })()
-              : (
-                <>
-                  {renderSegments(true)}
-                  {segments.length > 0 && segments[segments.length - 1].type === 'text' && <span className="chat-cursor" />}
-                </>
-              )
-          ) : (
-            <div className="chat-msg-placeholder">
-              <span className="chat-typing-dots" />
-            </div>
-          )}
-      </div>
-      </div>
-    )
+		  if (isStreaming) {
+		    return (
+		      <div className="chat-msg chat-msg-assistant" data-msg-id={msg.id}>
+		        <div className="chat-msg-avatar"><Bot size={14} /></div>
+		        <div className="chat-msg-body">
+		          {msg.toolCalls && msg.toolCalls.length > 0 && (
+		            <ToolCallBlock toolCalls={msg.toolCalls} />
+		          )}
+		          {msg.content ? (
+		            <StreamingText streamId={msg.id} preToolContentLen={msg.preToolContentLen} />
+		          ) : (
+		            <div className="chat-msg-placeholder">
+		              <span className="chat-typing-dots" />
+		            </div>
+		          )}
+		      </div>
+		      </div>
+		    )
   }
 
   return (
@@ -643,6 +661,15 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
                 title="删除此回复"
               >
                 <Trash2 size={13} />
+              </button>
+            )}
+            {!isUser && onBranch && (
+              <button
+                className="chat-msg-action-btn"
+                onClick={onBranch}
+                title="从此处分支"
+              >
+                <GitBranch size={13} />
               </button>
             )}
           </div>
@@ -1048,6 +1075,7 @@ export default function ChatView() {
   const persist = useChatStore((s) => s.persist)
   const truncateAfter = useChatStore((s) => s.truncateAfter)
   const replaceMessages = useChatStore((s) => s.replaceMessages)
+  const branchSession = useChatStore((s) => s.branchSession)
 
   const setSystemPrompt = useChatStore((s) => s.setSystemPrompt)
   const setParams = useChatStore((s) => s.setParams)
@@ -1280,10 +1308,13 @@ export default function ChatView() {
         s.messages.some((m) => m.id === data.streamId)
       )
       if (!targetSession) return
-      if (data.delta) {
-        streamReceivedRef.current.set(data.streamId, true)
-        st.appendDeltaToLast(targetSession.id, data.delta)
-      }
+	      if (data.delta) {
+	        streamReceivedRef.current.set(data.streamId, true)
+	        // 写入模块级缓冲区（不经过 React 状态），StreamingText 用 rAF 读取
+	        const prev = streamingBuffer[data.streamId] || ''
+	        streamingBuffer[data.streamId] = prev + data.delta
+	        scheduleStreamSync(targetSession.id, data.streamId)
+	      }
       if (data.done) {
         // 清理该流的看门狗定时器
         const wd = streamWatchdogsRef.current.get(data.streamId)
@@ -1307,9 +1338,20 @@ export default function ChatView() {
           return
         }
 
-        // 成功：回填 token 统计
-        regenerateRollbackRef.current = null
-        if (data.usage != null || data.msFirstToken != null || data.decodeTokS != null) {
+	        // 成功：流结束，同步缓冲区到 Zustand store
+	        const finalContent = streamingBuffer[data.streamId]
+	        delete streamingBuffer[data.streamId]
+	        if (finalContent != null) {
+	          const s = useChatStore.getState()
+	          const sess = s.sessions.find(s => s.id === targetSession.id)
+	          if (sess) {
+	            const msgs = sess.messages.map(m => m.id === data.streamId ? { ...m, content: finalContent } : m)
+	            s.replaceMessages(targetSession.id, msgs)
+	          }
+	        }
+
+	        regenerateRollbackRef.current = null
+	        if (data.usage != null || data.msFirstToken != null || data.decodeTokS != null) {
           st.finalizeLastMessage(targetSession.id, {
             tokensDecoded: data.usage?.completionTokens,
             msFirstToken: data.msFirstToken,
@@ -1498,7 +1540,7 @@ export default function ChatView() {
   const handleSend = useCallback(async () => {
     const session = useChatStore.getState().sessions.find((s) => s.id === activeSessionId)
     if (!session) return
-    const content = input.trim()
+	    const content = preprocessInput(input.trim())
     if (!content && attachedFiles.length === 0) return
     // 如果当前会话有正在进行的流，先终止它再发送新消息
     if (activeStreamId) {
@@ -1517,10 +1559,14 @@ export default function ChatView() {
       return
     }
 
-    setInput('')
-    setAutoScroll(true)
+	    setInput('')
+	    // 重置 textarea 高度
+	    if (inputRef.current) {
+	      inputRef.current.style.height = 'auto'
+	    }
+	    setAutoScroll(true)
 
-	    // ── 处理文件附件 ──
+		    // ── 处理文件附件 ──
 	    let finalContent = content
 	    let multimodalMessages: Array<Record<string, unknown>> | null = null
 	    const pendingFiles = [...attachedFiles]
@@ -1773,6 +1819,13 @@ export default function ChatView() {
       }
     })
   }, [activeSessionId, truncateAfter, persist])
+
+  // 分支：从指定消息处创建新对话
+  const handleBranch = useCallback((msgId: string) => {
+    if (!activeSessionId) return
+    const newId = branchSession(activeSessionId, msgId)
+    if (newId) notify('已创建分支对话', 'success')
+  }, [activeSessionId, branchSession])
 
   // dataUrl → Blob
   function dataUrlToBlob(dataUrl: string): Blob {
@@ -2037,6 +2090,7 @@ export default function ChatView() {
                   continueDisabled={!!activeStreamId}
                   onDelete={m.role === 'assistant' ? () => handleDeleteReply(m.id) : undefined}
                   deleteDisabled={!!activeStreamId}
+                  onBranch={m.role === 'assistant' ? () => handleBranch(m.id) : undefined}
                 />
               ))
             )

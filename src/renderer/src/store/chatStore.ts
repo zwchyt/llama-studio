@@ -69,6 +69,8 @@ interface ChatStore {
   truncateAfter: (sessionId: string, messageId: string) => void
   // 替换会话的所有消息（用于回滚）
   replaceMessages: (sessionId: string, messages: ChatMessage[]) => void
+  // 分支：从指定消息处创建新会话（保留该消息及之前的内容）
+  branchSession: (sessionId: string, messageId: string) => string
 
   // 流状态
   setStreamForSession: (sessionId: string, streamId: string) => void
@@ -310,6 +312,26 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       )
     }))
     get().persist(sessionId)
+  },
+
+  branchSession: (sessionId, messageId) => {
+    const src = get().sessions.find(s => s.id === sessionId)
+    if (!src) return ''
+    const idx = src.messages.findIndex(m => m.id === messageId)
+    if (idx < 0) return ''
+    const id = newId()
+    const now = new Date().toISOString()
+    const branch: ChatSession = {
+      ...src,
+      id,
+      title: src.title + ' (分支)',
+      messages: src.messages.slice(0, idx + 1),
+      createdAt: now,
+      updatedAt: now
+    }
+    set(s => ({ sessions: [branch, ...s.sessions], activeSessionId: id }))
+    get().persist(id)
+    return id
   },
 
   setStreamForSession: (sessionId, streamId) => set((s) => ({
