@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ChatSession, ChatMessage, ChatParams } from '../../../shared/types'
+import type { ChatSession, ChatMessage, ChatParams, Attachment } from '../../../shared/types'
 import { notify } from './notificationStore'
 
 // 默认采样参数
@@ -56,7 +56,7 @@ interface ChatStore {
 
   // 消息
   appendMessage: (sessionId: string, msg: ChatMessage) => void
-  appendUserMessage: (sessionId: string, content: string) => string  // 返回消息 id
+  appendUserMessage: (sessionId: string, content: string, attachments?: Attachment[]) => string
   // 流式：向最后一条 assistant 消息追加内容
   appendDeltaToLast: (sessionId: string, delta: string) => void
   // 标记最后一条 assistant 消息出错
@@ -195,13 +195,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     get().persist(sessionId)
   },
 
-  appendUserMessage: (sessionId, content) => {
+  appendUserMessage: (sessionId, content, attachments) => {
     const id = newId()
     const msg: ChatMessage = {
       id,
       role: 'user',
       content,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      ...(attachments && attachments.length > 0 ? { attachments } : {})
     }
     const isFirst = !get().sessions.find((x) => x.id === sessionId)?.messages.some((m) => m.role === 'user')
     set((s) => ({

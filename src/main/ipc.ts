@@ -1963,6 +1963,119 @@ export function registerIpcHandlers(): void {
     })
   })
 
+	  // --- chat-multimodal-stream (多模态：POST /completion + multimodal_data) ---
+	  ipcMain.handle('chat-multimodal-stream', async (e, opts: {
+	    streamId: string; port: number; messages: Record<string, unknown>[]; images: string[]
+	  }): Promise<{ success: boolean; error?: string }> => {
+	    const { streamId, port, messages, images } = opts
+	    // 1. 获取 media_marker
+	    let mediaMarker = '<image>'
+	    try {
+	      const propsJson = await fetchText(`http://127.0.0.1:${port}/props`)
+	      const props = JSON.parse(propsJson)
+	      if (props?.media_marker) mediaMarker = props.media_marker
+	    } catch { /* 默认值 */ }
+
+	    // 2. 构建 ChatML 格式 prompt，图片位置插入 media_marker
+	    let imgIdx = 0
+	    const parts: string[] = []
+	    parts.push('<|im_start|>system')
+	    parts.push('You are a helpful assistant.')
+	    parts.push('<|im_end|>')
+	    for (const m of messages) {
+	      const role = m.role === 'assistant' ? 'assistant' : 'user'
+	      parts.push(`<|im_start|>${role}`)
+	      if (Array.isArray(m.content)) {
+	        let text = ''
+	        for (const part of m.content as Array<Record<string, unknown>>) {
+	          if (part.type === 'text') text += part.text
+	          else if (part.type === 'image_url') {
+	            text += (imgIdx < images.length) ? mediaMarker : ''
+	            imgIdx++
+	          }
+	        }
+	        parts.push(text || ' ')
+	      } else if (typeof m.content === 'string') {
+	        parts.push(m.content || ' ')
+	      } else {
+	        parts.push(' ')
+	      }
+	      parts.push('<|im_end|>')
+	    }
+	    parts.push('<|im_start|>assistant')
+	    const prompt = parts.join('\n')
+
+	    // 3. 发送到 /completion
+	    return new Promise((resolve) => {
+	      const body = {
+	        prompt: { prompt_string: prompt, multimodal_data: images },
+	        stream: true,
+	        n_predict: -1,
+	        temperature: 0.8
+	      }
+      const bodyStr = JSON.stringify(body)
+      const req = http.request(`http://127.0.0.1:${port}/completion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
+        agent: httpAgent
+      }, (res) => {
+        if (res.statusCode && res.statusCode >= 400) {
+          let errBody = ''
+          res.on('data', (c: Buffer) => { errBody += c.toString() })
+          res.on('end', () => {
+            activeChatStreams.delete(streamId)
+            e.sender.send('chat-stream-chunk', { streamId, done: true, error: `HTTP ${res.statusCode}: ${errBody.slice(0, 500)}` })
+            resolve({ success: false, error: `HTTP ${res.statusCode}` })
+          })
+          return
+        }
+        let buf = ''
+        function processBuf() {
+          let idx: number
+          while ((idx = buf.indexOf('\n\n')) >= 0) {
+            const raw = buf.slice(0, idx)
+            buf = buf.slice(idx + 2)
+            const line = raw.split('\n').find(l => l.startsWith('data: '))
+            if (!line) continue
+            const payload = line.slice(6).trim()
+            if (payload === '[DONE]') {
+              // 发送最终的 done 事件
+              e.sender.send('chat-stream-chunk', { streamId, done: true })
+              return
+            }
+            try {
+              const parsed = JSON.parse(payload)
+              // /completion 返回格式: {"content": "...", "stop": bool, ...}
+              if (parsed.content) {
+                e.sender.send('chat-stream-chunk', { streamId, delta: parsed.content, done: false })
+              }
+              if (parsed.stop) {
+                e.sender.send('chat-stream-chunk', { streamId, done: true })
+                return
+              }
+            } catch { /* ignore parse errors */ }
+          }
+        }
+        res.on('data', (c: Buffer) => { buf += c.toString(); processBuf() })
+        res.on('end', () => {
+          activeChatStreams.delete(streamId)
+          if (!buf.endsWith('[DONE]') && !buf.includes('"stop":true')) {
+            e.sender.send('chat-stream-chunk', { streamId, done: true })
+          }
+          resolve({ success: true })
+        })
+      })
+      req.on('error', (err) => {
+        activeChatStreams.delete(streamId)
+        e.sender.send('chat-stream-chunk', { streamId, done: true, error: err.message })
+        resolve({ success: false, error: err.message })
+      })
+      req.write(bodyStr)
+      req.end()
+      activeChatStreams.set(streamId, req)
+    })
+  })
+
   // --- chat-stream-abort (中止一个进行中的聊天流) ---
   ipcMain.handle('chat-stream-abort', (_e, streamId: string) => {
     const req = activeChatStreams.get(streamId)

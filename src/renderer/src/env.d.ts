@@ -105,6 +105,7 @@ interface LlamaCppApi {
   saveChatSession: (session: object) => Promise<{ success: boolean; id?: string; error?: string }>
   deleteChatSession: (id: string) => Promise<{ success: boolean }>
   chatStream: (opts: { streamId: string; port: number; body: object }) => Promise<{ success: boolean; error?: string }>
+  chatMultimodalStream: (opts: { streamId: string; port: number; messages: object[]; images: string[] }) => Promise<{ success: boolean; error?: string }>
   abortChatStream: (streamId: string) => Promise<{ success: boolean }>
   onChatStreamChunk: (cb: (data: ChatStreamChunk) => void) => void
   removeChatStreamListener: () => void

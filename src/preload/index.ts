@@ -92,6 +92,7 @@ const fullApi = {
   saveChatSession: (session: object) => ipcRenderer.invoke('save-chat-session', session),
   deleteChatSession: (id: string) => ipcRenderer.invoke('delete-chat-session', id),
   chatStream: (opts: { streamId: string; port: number; body: object }) => ipcRenderer.invoke('chat-completion-stream', opts),
+  chatMultimodalStream: (opts: { streamId: string; port: number; messages: object[]; images: string[] }) => ipcRenderer.invoke('chat-multimodal-stream', opts),
   abortChatStream: (streamId: string) => ipcRenderer.invoke('chat-stream-abort', streamId),
   onChatStreamChunk: (callback: (data: { streamId: string; delta?: string; done: boolean; error?: string; usage?: { promptTokens: number; completionTokens: number }; msFirstToken?: number; decodeTokS?: number; toolCalls?: Array<{ id: string; function: { name: string; arguments: string } }>; finishReason?: string }) => void) => {
     ipcRenderer.removeAllListeners('chat-stream-chunk')

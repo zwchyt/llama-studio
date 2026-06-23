@@ -1,6 +1,9 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import 'katex/dist/katex.min.css'
 import {
   Plus, Send, Square, Trash2, Pencil, MessageSquare,
   ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain, RefreshCw,
@@ -10,7 +13,7 @@ import {
 import { useChatStore, buildOpenAiMessages, DEFAULT_PARAMS } from '../store/chatStore'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
-import type { ChatSession, ChatMessage, ChatParams, ToolCallInfo } from '../../../shared/types'
+import type { ChatSession, ChatMessage, ChatParams, ToolCallInfo, Attachment } from '../../../shared/types'
 import { getToolDefinitions, executeToolCall } from '../utils/tools'
 import CodeBlock from './CodeBlock'
 import ConfirmModal from './ConfirmModal'
@@ -215,7 +218,7 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
       {visible && (
         <div className={`chat-think-body chat-msg-markdown ${expanded ? 'open' : ''}`} ref={bodyRef}>
           {displayValue ? (
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any }}>
               {displayValue}
             </ReactMarkdown>
           ) : '（空）'}
@@ -415,7 +418,7 @@ const UserMessageContent = React.memo(function UserMessageContent({ content }: {
 })
 
 // ── 单条消息 ───────────────────────────────────────────────
-const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled, onContinue, continueDisabled, onDelete, deleteDisabled }: {
+const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled, onContinue, continueDisabled, onDelete, deleteDisabled, onImageClick }: {
   msg: ChatMessage
   isStreaming?: boolean
   onCopy?: () => void
@@ -426,6 +429,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
   continueDisabled?: boolean
   onDelete?: () => void
   deleteDisabled?: boolean
+  onImageClick?: (url: string) => void
 }) {
   const isUser = msg.role === 'user'
   const [copied, setCopied] = useState(false)
@@ -460,7 +464,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
       }
       return (
         <div key={i} className="chat-msg-markdown">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any }}>
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any }}>
             {seg.value}
           </ReactMarkdown>
         </div>
@@ -493,7 +497,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
                         }
                         return (
                           <div key={i} className="chat-msg-markdown">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any }}>
+                            <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any }}>
                               {seg.value}
                             </ReactMarkdown>
                           </div>
@@ -511,7 +515,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
               )
           ) : (
             <div className="chat-msg-placeholder">
-              <ThinkBlock value="" closed={false} isStreaming={true} autoExpand={false} />
+              <span className="chat-typing-dots" />
             </div>
           )}
       </div>
@@ -528,7 +532,26 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
       )}
       <div className="chat-msg-body">
         {isUser ? (
-          <div className="chat-msg-bubble chat-msg-bubble-user"><UserMessageContent content={msg.content} /></div>
+          <>
+            {msg.attachments && msg.attachments.length > 0 && (
+              <div className="chat-msg-attachments">
+                {msg.attachments.map((att, i) => (
+                  att.type === 'image' ? (
+                    <div key={i} className="chat-attachment-box chat-attachment-image" style={{ cursor: 'pointer' }} onClick={() => onImageClick?.(att.dataUrl!)}>
+                      <img src={att.dataUrl} alt={att.name} className="chat-attachment-img" />
+                      <span className="chat-attachment-name">{att.name}</span>
+                    </div>
+                  ) : (
+                    <div key={i} className="chat-attachment-box">
+                      <FileText size={14} />
+                      <span className="chat-attachment-name">{att.name}</span>
+                    </div>
+                  )
+                ))}
+              </div>
+            )}
+            <div className="chat-msg-bubble chat-msg-bubble-user"><UserMessageContent content={msg.content} /></div>
+          </>
         ) : msg.error ? (
           <div className="chat-msg-error">{msg.content}</div>
         ) : msg.content || msg.toolCalls ? (
@@ -550,7 +573,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
                       }
                       return (
                         <div key={`post-${i}`} className="chat-msg-markdown">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any }}>
+                          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any }}>
                             {seg.value}
                           </ReactMarkdown>
                         </div>
@@ -578,11 +601,13 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
           <div className="chat-msg-placeholder">（空回复）</div>
         )}
         {/* 悬停操作栏 */}
-        {msg.content && !msg.error && (
+        {(msg.content || (msg.attachments && msg.attachments.length > 0)) && !msg.error && (
           <div className="chat-msg-actions">
-            <button className="chat-msg-action-btn" onClick={handleCopy}>
-              {copied ? <Check size={13} /> : <Copy size={13} />}
-            </button>
+            {msg.content && (
+              <button className="chat-msg-action-btn" onClick={handleCopy}>
+                {copied ? <Check size={13} /> : <Copy size={13} />}
+              </button>
+            )}
             {isUser && onEdit && (
               <button className="chat-msg-action-btn" onClick={onEdit}>
                 <Pencil size={13} />
@@ -1049,9 +1074,18 @@ export default function ChatView() {
   const settingsBtnRef = useRef<HTMLButtonElement>(null)
   const [settingsAnchor, setSettingsAnchor] = useState<DOMRect | null>(null)
   const settingsHoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
+  // 图片点击放大
+  const [previewImage, setPreviewImage] = useState<string | null>(null)
+  useEffect(() => {
+    if (!previewImage) return
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setPreviewImage(null) }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [previewImage])
   // 文件上传
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [attachedFiles, setAttachedFiles] = useState<File[]>([])
+  const [previewUrls, setPreviewUrls] = useState<Map<number, string>>(new Map())
 
   useEffect(() => {
     return () => {
@@ -1087,29 +1121,81 @@ export default function ChatView() {
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     if (files.length === 0) return
+    const startIdx = attachedFiles.length
     setAttachedFiles(prev => [...prev, ...files])
+    // 为图片生成预览 data URL
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]
+      if (f.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name)) {
+        const reader = new FileReader()
+        const idx = startIdx + i
+        reader.onload = () => {
+          setPreviewUrls(prev => {
+            const next = new Map(prev)
+            next.set(idx, reader.result as string)
+            return next
+          })
+        }
+        reader.readAsDataURL(f)
+      }
+    }
     // 清空 input 值，允许重复选同名文件
     if (fileInputRef.current) fileInputRef.current.value = ''
-  }, [])
+  }, [attachedFiles.length])
 
   const removeAttachedFile = useCallback((index: number) => {
     setAttachedFiles(prev => prev.filter((_, i) => i !== index))
+    setPreviewUrls(prev => {
+      const next = new Map(prev)
+      next.delete(index)
+      return next
+    })
   }, [])
 
   // 读取文件内容（文本用 readAsText，图片转 base64）
   function readFileContent(file: File): Promise<{ text: string; isImage: boolean; dataUrl?: string }> {
     return new Promise((resolve, reject) => {
-      if (file.type.startsWith('image/')) {
+      const isImage = file.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(file.name)
+      if (isImage) {
+        // 用 ArrayBuffer + 手动 base64 编码，避免 readAsDataURL 兼容问题
         const reader = new FileReader()
-        reader.onload = () => resolve({ text: '', isImage: true, dataUrl: reader.result as string })
+        reader.onload = () => {
+          const buf = reader.result as ArrayBuffer
+          const bytes = new Uint8Array(buf)
+          let binary = ''
+          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+          const base64 = btoa(binary)
+          const mime = file.type || 'image/png'
+          resolve({ text: '', isImage: true, dataUrl: `data:${mime};base64,${base64}` })
+        }
         reader.onerror = () => reject(reader.error)
-        reader.readAsDataURL(file)
+        reader.readAsArrayBuffer(file)
       } else {
         const reader = new FileReader()
         reader.onload = () => resolve({ text: reader.result as string, isImage: false })
         reader.onerror = () => reject(reader.error)
         reader.readAsText(file)
       }
+    })
+  }
+
+  // 将 base64 图片缩小为指定最大宽度（用于存储，减少切换卡顿）
+  function makeThumbnail(dataUrl: string, maxW = 300): Promise<string> {
+    return new Promise((resolve) => {
+      const img = new Image()
+      img.onload = () => {
+        if (img.width <= maxW) { resolve(dataUrl); return }
+        const ratio = maxW / img.width
+        const w = maxW
+        const h = Math.round(img.height * ratio)
+        const c = document.createElement('canvas')
+        c.width = w; c.height = h
+        const ctx = c.getContext('2d')!
+        ctx.drawImage(img, 0, 0, w, h)
+        resolve(c.toDataURL('image/jpeg', 0.7))
+      }
+      img.onerror = () => resolve(dataUrl)
+      img.src = dataUrl
     })
   }
 
@@ -1413,7 +1499,7 @@ export default function ChatView() {
     const session = useChatStore.getState().sessions.find((s) => s.id === activeSessionId)
     if (!session) return
     const content = input.trim()
-    if (!content) return
+    if (!content && attachedFiles.length === 0) return
     // 如果当前会话有正在进行的流，先终止它再发送新消息
     if (activeStreamId) {
       const wd = streamWatchdogsRef.current.get(activeStreamId)
@@ -1434,60 +1520,79 @@ export default function ChatView() {
     setInput('')
     setAutoScroll(true)
 
-    // ── 处理文件附件 ──
-    let finalContent = content
-    let multimodalMessages: Array<Record<string, unknown>> | null = null
-    const pendingFiles = [...attachedFiles]
-    setAttachedFiles([])
+	    // ── 处理文件附件 ──
+	    let finalContent = content
+	    let multimodalMessages: Array<Record<string, unknown>> | null = null
+	    const pendingFiles = [...attachedFiles]
+			    setAttachedFiles([])
+			    setPreviewUrls(new Map())
 
-    if (pendingFiles.length > 0) {
-      const fileContents = await Promise.all(pendingFiles.map(f => readFileContent(f)))
-      const hasImages = fileContents.some(fc => fc.isImage)
+			    const attachments: Attachment[] = []
+			    const fullSizeMap: string[] = []
 
-      if (hasImages) {
-        // 多模态格式：content 为数组 [{ type: 'text'|'image_url' }]
-        const contentParts: Array<Record<string, unknown>> = []
-        if (content) contentParts.push({ type: 'text', text: content })
-        for (let i = 0; i < pendingFiles.length; i++) {
-          const fc = fileContents[i]
-          if (fc.isImage && fc.dataUrl) {
-            contentParts.push({ type: 'image_url', image_url: { url: fc.dataUrl } })
-            finalContent += `\n[图片: ${pendingFiles[i].name}]`
-          } else {
-            finalContent += `\n\n=====\n${fc.text}\n=====`
-          }
-        }
-        // 构建多模态消息数组
-        multimodalMessages = []
-        if (session.systemPrompt?.trim()) {
-          multimodalMessages.push({ role: 'system', content: session.systemPrompt.trim() })
-        }
-        const sessionMessages = useChatStore.getState().sessions.find(s => s.id === session.id)?.messages || []
-        for (const m of sessionMessages) {
-          if (m.role === 'system') continue
-          if (!m.content && !m.error) continue
-          multimodalMessages.push({ role: m.role, content: m.content })
-        }
-        // 替换最后一条 user 消息为多模态格式
-        for (let i = multimodalMessages.length - 1; i >= 0; i--) {
-          if (multimodalMessages[i].role === 'user') {
-            multimodalMessages[i] = { role: 'user', content: contentParts }
-            break
-          }
-        }
-      } else {
-        // 纯文本附件：拼接到用户消息后
-        const parts = fileContents.map((fc, i) =>
-          `\n\nName: ${pendingFiles[i].name}\nContents:\n\n=====\n${fc.text}\n=====`
-        )
-        finalContent += parts.join('')
-      }
-    }
+			    if (pendingFiles.length > 0) {
+			      const fileContents = await Promise.all(pendingFiles.map(f => readFileContent(f)))
+			      const hasImages = fileContents.some(fc => fc.isImage)
 
-    // 追加用户消息（文本内容用作显示及持久化）
-    appendUserMessage(session.id, finalContent)
+			      for (let i = 0; i < pendingFiles.length; i++) {
+			        const fc = fileContents[i]
+			        const f = pendingFiles[i]
+			        if (fc.isImage && fc.dataUrl) {
+			          fullSizeMap.push(fc.dataUrl)
+			          const thumb = await makeThumbnail(fc.dataUrl, 300)
+			          attachments.push({ name: f.name, type: 'image', dataUrl: thumb })
+			        } else {
+			          attachments.push({ name: f.name, type: 'file', content: fc.text })
+			        }
+			      }
 
-    // 追加空的 assistant 占位消息，用 streamId 作为消息 id（用于 chunk 路由）
+			      if (hasImages) {
+			        // 构建含图片的 contentParts
+			        const contentParts: Array<Record<string, unknown>> = []
+			        if (content) contentParts.push({ type: 'text', text: content })
+			        let imgIdx = 0
+			        for (const att of attachments) {
+			          if (att.type === 'image') {
+			            contentParts.push({ type: 'image_url', image_url: { url: fullSizeMap[imgIdx++] } })
+			          } else if (att.content) {
+			            finalContent += `\n\n=====\n${att.content}\n=====`
+			          }
+			        }
+
+			        // 关键！先追加用户消息到 store，再构建 multimodalMessages（这样新消息才在 store 里）
+			        appendUserMessage(session.id, content, attachments)
+			        multimodalMessages = []
+			        if (session.systemPrompt?.trim()) {
+			          multimodalMessages.push({ role: 'system', content: session.systemPrompt.trim() })
+			        }
+			        const sessionMessages = useChatStore.getState().sessions.find(s => s.id === session.id)?.messages || []
+			        for (const m of sessionMessages) {
+			          if (m.role === 'system') continue
+			          if (!m.content && !m.error && (!m.attachments || m.attachments.length === 0)) continue
+			          multimodalMessages.push({ role: m.role, content: m.content })
+			        }
+			        for (let i = multimodalMessages.length - 1; i >= 0; i--) {
+			          if (multimodalMessages[i].role === 'user') {
+			            multimodalMessages[i] = { role: 'user', content: contentParts }
+			            break
+			          }
+			        }
+			      } else {
+			        // 纯文本附件
+			        for (const att of attachments) {
+			          if (att.content) {
+			            finalContent += `\n\nName: ${att.name}\nContents:\n\n=====\n${att.content}\n=====`
+			          }
+			        }
+			      }
+			    }
+
+			    // 没有多模态时，普通追加用户消息
+			    if (!multimodalMessages) {
+			      appendUserMessage(session.id, content, attachments)
+			    }
+
+	    // 追加空的 assistant 占位消息
     const streamId = (crypto as any).randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2))
     const assistantMsg: ChatMessage = {
       id: streamId,
@@ -1518,21 +1623,39 @@ export default function ChatView() {
     updatedSession.messages = [...updatedSession.messages] // 已含刚追加的两条
     const messages = multimodalMessages || buildOpenAiMessages(updatedSession)
 
-    try {
-      const res = await window.api.chatStream({
-        streamId,
-        port: session.port,
-        body: {
-          messages,
-          temperature: session.params.temperature,
-          top_p: session.params.top_p,
-          top_k: session.params.top_k,
-          max_tokens: session.params.max_tokens || -1,
-          repeat_penalty: session.params.repeat_penalty,
-          tools: getToolDefinitions(),
-          stream: true
-        }
-      })
+		    try {
+		      let res
+		      if (multimodalMessages) {
+		        // 多模态：走 /v1/chat/completions，去掉 tools（多模态 + tools 冲突）
+		        res = await window.api.chatStream({
+		          streamId,
+		          port: session.port,
+		          body: {
+		            messages: multimodalMessages,
+		            temperature: session.params.temperature,
+		            top_p: session.params.top_p,
+		            top_k: session.params.top_k,
+		            max_tokens: session.params.max_tokens || -1,
+		            repeat_penalty: session.params.repeat_penalty,
+		            stream: true
+		          }
+		        })
+		      } else {
+	        res = await window.api.chatStream({
+	          streamId,
+	          port: session.port,
+	          body: {
+	            messages,
+	            temperature: session.params.temperature,
+	            top_p: session.params.top_p,
+	            top_k: session.params.top_k,
+	            max_tokens: session.params.max_tokens || -1,
+	            repeat_penalty: session.params.repeat_penalty,
+	            tools: getToolDefinitions(),
+	            stream: true
+	          }
+	        })
+	      }
       if (!res.success && res.error) {
         // 错误已在 chunk 回调里处理；这里兜底
         const st = useChatStore.getState()
@@ -1551,7 +1674,7 @@ export default function ChatView() {
         st.clearStreamForSession(session.id)
       }
     }
-  }, [activeSessionId, input, activeStreamId, appendUserMessage, appendMessage, setStreamForSession, clearStreamForSession, markLastMessageError, runningModels])
+  }, [activeSessionId, input, activeStreamId, appendUserMessage, appendMessage, setStreamForSession, clearStreamForSession, markLastMessageError, runningModels, attachedFiles])
 
   // 停止生成（仅停止当前会话的流）
   const handleStop = useCallback(() => {
@@ -1581,6 +1704,7 @@ export default function ChatView() {
   }, [activeSessionId, runningModels, setSessionModel])
 
   // textarea 自适应高度 + Enter 发送
+  const PASTE_THRESHOLD = 2500
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value)
     // 任意输入变化（包括空格）均可重新触发代码预览
@@ -1589,6 +1713,14 @@ export default function ChatView() {
     el.style.height = 'auto'
     el.style.height = Math.min(el.scrollHeight, 200) + 'px'
   }
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const text = e.clipboardData.getData('text')
+    if (text && text.length > PASTE_THRESHOLD) {
+      e.preventDefault()
+      const file = new File([text], 'pasted_text.txt', { type: 'text/plain' })
+      setAttachedFiles(prev => [...prev, file])
+    }
+  }, [])
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
       e.preventDefault()
@@ -1603,12 +1735,35 @@ export default function ChatView() {
   }
 
   // 编辑用户消息：将内容回填到输入框，截断该消息及之后的所有消息
-  const handleEditMessage = useCallback((msgId: string, content: string) => {
+  const handleEditMessage = useCallback((msgId: string, content: string, attachments?: Attachment[]) => {
     if (!activeSessionId) return
     setInput(content)
+    // 恢复附件
+    if (attachments && attachments.length > 0) {
+      // 图片附件用 dataUrl 生成 File 对象用于预览
+      const files: File[] = []
+      const urlMap = new Map<number, string>()
+      let fileIdx = 0
+      for (const att of attachments) {
+        if (att.type === 'image' && att.dataUrl) {
+          // 从 dataUrl 创建 File 用于显示在 chips 中
+          const blob = dataUrlToBlob(att.dataUrl)
+          const f = new File([blob], att.name, { type: blob.type })
+          files.push(f)
+          urlMap.set(fileIdx, att.dataUrl)
+          fileIdx++
+        } else {
+          // 文本文件：创建一个虚拟 File，内容从 attachment 恢复
+          const f = new File([att.content || ''], att.name, { type: 'text/plain' })
+          files.push(f)
+          fileIdx++
+        }
+      }
+      setAttachedFiles(files)
+      setPreviewUrls(urlMap)
+    }
     truncateAfter(activeSessionId, msgId)
     persist(activeSessionId)
-    // 回填多行内容后，等 DOM 更新再调整 textarea 高度
     requestAnimationFrame(() => {
       const el = inputRef.current
       if (el) {
@@ -1618,6 +1773,16 @@ export default function ChatView() {
       }
     })
   }, [activeSessionId, truncateAfter, persist])
+
+  // dataUrl → Blob
+  function dataUrlToBlob(dataUrl: string): Blob {
+    const [meta, b64] = dataUrl.split(',', 2)
+    const mime = meta?.split(':')[1]?.split(';')[0] || 'image/png'
+    const bin = atob(b64 || '')
+    const buf = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i)
+    return new Blob([buf], { type: mime })
+  }
 
   // 重新生成：找到该助手消息前面的用户消息，截断后重新发送（失败自动回滚）
   const handleRegenerate = useCallback(async (assistantMsgId: string) => {
@@ -1863,7 +2028,8 @@ export default function ChatView() {
                   key={m.id}
                   msg={m}
                   isStreaming={activeStreamId === m.id}
-                  onEdit={m.role === 'user' ? () => handleEditMessage(m.id, m.content) : undefined}
+                  onImageClick={setPreviewImage}
+                  onEdit={m.role === 'user' ? () => handleEditMessage(m.id, m.content, m.attachments) : undefined}
                   onRegenerate={m.role === 'assistant' ? () => handleRegenerate(m.id) : undefined}
                   regenDisabled={!!activeStreamId}
                   onContinue={m.role === 'assistant' && m.id === activeMessages[activeMessages.length - 1]?.id
@@ -1972,6 +2138,39 @@ export default function ChatView() {
             style={{ display: 'none' }}
             onChange={handleFileSelect}
           />
+          {/* 附件 chips（图片缩略图预览，显示在输入框上方） */}
+          {attachedFiles.length > 0 && (
+            <div className="chat-attach-chips">
+              {attachedFiles.map((f, i) => {
+                const isImg = f.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name)
+                return (
+                  <div key={i} className={`chat-attach-chip ${isImg ? 'chat-attach-chip-img' : ''}`}>
+                    {isImg ? (
+                      <div className="chat-attach-chip-img-box">
+                        <img
+                          src={previewUrls.get(i) || ''}
+                          alt={f.name}
+                          className="chat-attach-chip-thumb"
+                        />
+                        <button className="chat-attach-chip-img-remove" onClick={() => removeAttachedFile(i)}>
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <FileText size={12} />
+                        <span className="chat-attach-chip-name">{f.name}</span>
+                        <span className="chat-attach-chip-size">({formatFileSize(f.size)})</span>
+                        <button className="chat-attach-chip-remove" onClick={() => removeAttachedFile(i)}>
+                          <X size={11} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
           <div className="chat-input-row">
             <button
               className="chat-attach-btn"
@@ -1996,6 +2195,7 @@ export default function ChatView() {
               }
               value={input}
               onChange={handleInputChange}
+              onPaste={handlePaste}
               onKeyDown={handleKeyDown}
               rows={1}
               disabled={!activeModel}
@@ -2014,21 +2214,6 @@ export default function ChatView() {
               </button>
             )}
           </div>
-          {/* 附件 chips */}
-          {attachedFiles.length > 0 && (
-            <div className="chat-attach-chips">
-              {attachedFiles.map((f, i) => (
-                <div key={i} className="chat-attach-chip">
-                  <FileText size={12} />
-                  <span className="chat-attach-chip-name">{f.name}</span>
-                  <span className="chat-attach-chip-size">({formatFileSize(f.size)})</span>
-                  <button className="chat-attach-chip-remove" onClick={() => removeAttachedFile(i)}>
-                    <X size={11} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
       </div>
@@ -2071,6 +2256,16 @@ export default function ChatView() {
         }}
         onCancel={() => setDeletingMsgId(null)}
       />
+
+      {/* 图片点击放大遮罩 */}
+      {previewImage && (
+        <div className="chat-image-overlay" onClick={() => setPreviewImage(null)}>
+          <button className="chat-image-overlay-close" onClick={() => setPreviewImage(null)}>
+            <X size={20} />
+          </button>
+          <img src={previewImage} alt="preview" className="chat-image-overlay-img" />
+        </div>
+      )}
     </div>
   )
 }

@@ -103,6 +103,12 @@ export interface CardState {
 }
 
 // ── 原生聊天 ───────────────────────────────────────────────
+export interface Attachment {
+  name: string       // 文件名（如 "pasted_text.txt"）
+  type: 'image' | 'file'
+  content?: string   // 文本内容（用于提示注入，图片时为 undefined）
+  dataUrl?: string   // 图片 base64（仅图片类型）
+}
 export interface ToolCallInfo {
   id: string
   function: { name: string; arguments: string }
@@ -113,14 +119,15 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
   createdAt: string
+  attachments?: Attachment[]  // 用户消息的附件
   // 仅 assistant 消息的推理统计（可选，流式结束后填充）
   tokensDecoded?: number
   msFirstToken?: number
-  decodeTokS?: number  // 解码速度（来自 /metrics llamacpp:predicted_tokens_seconds，与监控面板同源）
+  decodeTokS?: number  // 解码速度
   error?: boolean
   stopped?: boolean  // 用户手动停止生成，消息内容不完整
   toolCalls?: ToolCallInfo[]  // 模型发起的工具调用
-  preToolContentLen?: number  // 工具调用前的内容长度，用于区分工具调用前后的内容
+  preToolContentLen?: number  // 工具调用前的内容长度
 }
 export interface ChatParams {
   temperature?: number

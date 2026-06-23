@@ -3968,6 +3968,66 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   align-items: flex-end;
 }
 
+/* ── 消息附件展示 ── */
+.chat-msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+  max-width: 80%;
+}
+
+.chat-attachment-box {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: default;
+  max-width: 200px;
+  overflow: hidden;
+}
+
+.chat-attachment-image {
+  flex-direction: column;
+  padding: 4px;
+  max-width: 180px;
+}
+
+.chat-attachment-img {
+  width: 100%;
+  height: auto;
+  max-height: 200px;
+  object-fit: contain;
+  border-radius: 4px;
+  margin-bottom: 2px;
+  background: var(--bg);
+}
+
+.chat-attachment-img-placeholder {
+  width: 100%;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  border-radius: 4px;
+  margin-bottom: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.chat-attachment-name {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
 /* 用户气泡 */
 .chat-msg-bubble-user {
   font-size: 14px;
@@ -4128,11 +4188,14 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   font-size: 14px;
   line-height: 1.7;
   color: var(--text);
+  overflow-wrap: break-word;
   word-wrap: break-word;
+  word-break: break-word;
   background: var(--surface);
   border-radius: 4px var(--radius) var(--radius) var(--radius);
   padding: 12px 16px;
   max-width: 85%;
+  min-width: 0;
   user-select: text;
   -webkit-user-select: text;
 }
@@ -4433,6 +4496,51 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   font-size: 11px;
   color: var(--text-secondary);
   max-width: 220px;
+}
+
+.chat-attach-chip-img {
+  padding: 0;
+  border: none;
+  background: transparent;
+  max-width: none;
+}
+
+.chat-attach-chip-img-box {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+
+.chat-attach-chip-thumb {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+}
+
+.chat-attach-chip-img-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--danger);
+  color: #fff;
+  cursor: pointer;
+  padding: 0;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  transition: transform 0.15s;
+}
+
+.chat-attach-chip-img-remove:hover {
+  transform: scale(1.15);
 }
 
 .chat-attach-chip-name {
@@ -5018,4 +5126,46 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 
 .chat-nav-wrap:hover .nav-node-label {
   display: flex;
+}
+
+/* ── 图片点击放大遮罩 ── */
+.chat-image-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0,0,0,0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+  animation: fadeIn 0.2s ease;
+}
+
+.chat-image-overlay-img {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+}
+
+.chat-image-overlay-close {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.15);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.chat-image-overlay-close:hover {
+  background: rgba(255,255,255,0.3);
 }
