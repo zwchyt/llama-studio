@@ -437,7 +437,7 @@ const UserMessageContent = React.memo(function UserMessageContent({ content }: {
 })
 
 // ── 单条消息 ───────────────────────────────────────────────
-const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled, onContinue, continueDisabled, onDelete, deleteDisabled, onImageClick, onBranch, sessionId, serverPort }: {
+const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled, onContinue, continueDisabled, onDelete, deleteDisabled, onImageClick, onBranch, onAddToInput, serverPort }: {
   msg: ChatMessage
   isStreaming?: boolean
   onCopy?: () => void
@@ -450,11 +450,53 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
   deleteDisabled?: boolean
   onImageClick?: (url: string) => void
   onBranch?: () => void
-  sessionId?: string
+  onAddToInput?: (text: string) => void
   serverPort?: number
 }) {
   const isUser = msg.role === 'user'
   const [copied, setCopied] = useState(false)
+  // 右键上下文菜单：选中文字时复制选中内容，否则复制全部
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; selectedText: string } | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!contextMenu) return
+    const handler = (e: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenu(null)
+      }
+    }
+    document.addEventListener('click', handler)
+    document.addEventListener('contextmenu', handler)
+    return () => {
+      document.removeEventListener('click', handler)
+      document.removeEventListener('contextmenu', handler)
+    }
+  }, [contextMenu])
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const sel = window.getSelection()?.toString().trim() || ''
+    setContextMenu({ x: e.clientX, y: e.clientY, selectedText: sel })
+  }
+
+  const handleContextCopy = () => {
+    if (contextMenu?.selectedText) {
+      navigator.clipboard.writeText(contextMenu.selectedText)
+    } else {
+      const text = isUser
+        ? msg.content
+        : parseThinkSegments(msg.content)
+            .filter(s => s.type === 'text')
+            .map(s => s.value)
+            .join('\n\n')
+            .trim()
+      navigator.clipboard.writeText(text)
+    }
+    setContextMenu(null)
+  }
+
   // 助手消息解析思考链片段（含 <think>...</think>）
   const segments = useMemo(
     () => (!isUser ? parseThinkSegments(msg.content) : []),
@@ -495,31 +537,48 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
   )
 
   // 流式中不显示操作栏
-		  if (isStreaming) {
-		    return (
-		      <div className="chat-msg chat-msg-assistant" data-msg-id={msg.id}>
-		        <div className="chat-msg-avatar"><Bot size={14} /></div>
-		        <div className="chat-msg-body">
-		          {msg.toolCalls && msg.toolCalls.length > 0 && (
-		            <ToolCallBlock toolCalls={msg.toolCalls} />
-		          )}
-			        {msg.content || true ? (
-			          <>
-			            {renderSegments(true)}
-			            {segments.length > 0 && segments[segments.length - 1].type === 'text' && <span className="chat-cursor" />}
-			          </>
-			          ) : (
-		            <div className="chat-msg-placeholder">
-		              <span className="chat-typing-dots" />
-		            </div>
-		          )}
-		      </div>
-		      </div>
-		    )
+ 		  if (isStreaming) {
+ 		    return (
+ 		      <>
+ 		      <div className="chat-msg chat-msg-assistant" data-msg-id={msg.id} onContextMenu={handleContextMenu}>
+ 		        <div className="chat-msg-avatar"><Bot size={14} /></div>
+ 		        <div className="chat-msg-body">
+ 		          {msg.toolCalls && msg.toolCalls.length > 0 && (
+ 		            <ToolCallBlock toolCalls={msg.toolCalls} />
+ 		          )}
+ 			        {msg.content || true ? (
+ 			          <>
+ 			            {renderSegments(true)}
+ 			            {segments.length > 0 && segments[segments.length - 1].type === 'text' && <span className="chat-cursor" />}
+ 			          </>
+ 			          ) : (
+ 		            <div className="chat-msg-placeholder">
+ 		              <span className="chat-typing-dots" />
+ 		            </div>
+ 		          )}
+ 		      </div>
+ 		      </div>
+ 		      {contextMenu && (
+ 		        <div ref={contextMenuRef} className="chat-msg-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+ 		          <button className="chat-msg-context-menu-item" onClick={handleContextCopy}>
+ 		            <Copy size={13} />
+ 		            <span>复制</span>
+ 		          </button>
+ 		          {onAddToInput && contextMenu.selectedText && (
+ 		            <button className="chat-msg-context-menu-item" onClick={() => { onAddToInput(contextMenu.selectedText); setContextMenu(null) }}>
+ 		              <MessageSquare size={13} />
+ 		              <span>添加到输入框</span>
+ 		            </button>
+ 		          )}
+ 		        </div>
+ 		      )}
+ 		      </>
+ 		    )
   }
 
   return (
-    <div className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-assistant'}`} data-msg-id={msg.id}>
+    <>
+    <div className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-assistant'}`} data-msg-id={msg.id} onContextMenu={handleContextMenu}>
       {!isUser && (
         <div className="chat-msg-avatar">
           <Bot size={14} />
@@ -589,7 +648,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
                 {msg.decodeTokS != null && <span>{typeof msg.decodeTokS === 'number' ? msg.decodeTokS.toFixed(1) : msg.decodeTokS} tok/s</span>}
                 {msg.tokensDecoded != null && <span>{msg.tokensDecoded} tokens</span>}
                 {msg.msFirstToken != null && <span>TTFT {msg.msFirstToken}ms</span>}
-                <ContextBar sessionId={sessionId || ''} port={serverPort} />
+                <ContextBar port={serverPort} />
               </div>
             )}
           </>
@@ -659,6 +718,21 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
         </div>
       )}
     </div>
+      {contextMenu && (
+        <div ref={contextMenuRef} className="chat-msg-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+          <button className="chat-msg-context-menu-item" onClick={handleContextCopy}>
+            <Copy size={13} />
+            <span>复制</span>
+          </button>
+          {onAddToInput && contextMenu.selectedText && (
+            <button className="chat-msg-context-menu-item" onClick={() => { onAddToInput(contextMenu.selectedText); setContextMenu(null) }}>
+              <MessageSquare size={13} />
+              <span>添加到输入框</span>
+            </button>
+          )}
+        </div>
+      )}
+    </>
   )
 })
 
@@ -1112,45 +1186,24 @@ const MessageNav = React.memo(function MessageNav({
 })
 
 // ── Token 用量指示器 ───────────────────────────────────────
-function ContextBar({ sessionId, port }: { sessionId: string; port?: number }) {
-  const [maxCtx, setMaxCtx] = useState(8192)
-  const session = useChatStore(s => s.sessions.find(x => x.id === sessionId))
+function ContextBar({ port }: { port?: number }) {
+  const metrics = useStore(s => {
+    if (!port) return undefined
+    const card = s.cards.find(c => c.template.serverPort === port && c.status === 'running')
+    return card ? s.modelMetrics[card.template.id] : undefined
+  })
+  const nCtx = metrics?.nCtx ?? 0
+  const nDecoded = metrics?.nDecoded ?? 0
 
-  useEffect(() => {
-    if (!port) return
-    let cancelled = false
-    window.api.fetchServerEndpoint(port, 'slots')
-      .then(res => {
-        if (cancelled || !res.ok || !res.text) return
-        try {
-          const slots = JSON.parse(res.text)
-          const ctx = slots?.[0]?.n_ctx
-          if (ctx) setMaxCtx(ctx)
-        } catch {}
-      })
-      .catch(() => {})
-    return () => { cancelled = true }
-  }, [port])
-
-  const used = useMemo(() => {
-    if (!session) return 0
-    let total = 0
-    for (const m of session.messages) {
-      if (m.tokensDecoded) total += m.tokensDecoded
-      else total += Math.ceil(m.content.length / 4)
-    }
-    return total
-  }, [session])
-
-  if (!port || !maxCtx) return null
-  const ratio = used / maxCtx
+  if (!port || !nCtx) return null
+  const ratio = nDecoded / nCtx
 
   return (
-    <span className="context-bar" title={`已用 ${used.toLocaleString()} / ${maxCtx.toLocaleString()} tokens (${(ratio*100).toFixed(1)}%)`}>
+    <span className="context-bar" title={`已用 ${nDecoded.toLocaleString()} / ${nCtx.toLocaleString()} tokens (${(ratio*100).toFixed(1)}%)`}>
       <span className="context-bar-track">
         <span className="context-bar-fill" style={{ width: `${Math.min(ratio * 100, 100)}%` }} />
       </span>
-      <span className="context-bar-label">{used.toLocaleString()} / {maxCtx.toLocaleString()}</span>
+      <span className="context-bar-label">{nDecoded.toLocaleString()} / {nCtx.toLocaleString()}</span>
     </span>
   )
 }
@@ -1882,6 +1935,18 @@ export default function ChatView() {
     }
   }
 
+  // 将选中文字添加到输入框（追加在现有内容后）
+  const handleAddToInput = useCallback((text: string) => {
+    setInput(prev => prev ? prev + '\n' + text : text)
+    requestAnimationFrame(() => {
+      if (inputRef.current) {
+        inputRef.current.focus()
+        inputRef.current.style.height = 'auto'
+        inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 200) + 'px'
+      }
+    })
+  }, [])
+
   // 编辑用户消息：将内容回填到输入框，截断该消息及之后的所有消息
   const handleEditMessage = useCallback((msgId: string, content: string, attachments?: Attachment[]) => {
     if (!activeSessionId) return
@@ -2017,13 +2082,17 @@ export default function ChatView() {
     if (lastMsg.role !== 'assistant' || !lastMsg.content) return
 
     setAutoScroll(true)
-    const streamId = (crypto as any).randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2))
+    // 复用原消息 id 作为 streamId，避免 React key 变化导致 MessageBubble 卸载重装（丢失 ThinkBlock 状态）
+    const streamId = assistantMsgId
 
-    // 用 streamId 替换该消息的 id，后续 delta 会通过 appendDeltaToLast 追加到这条消息
+    // 后续 delta 通过 streamId 路由追加到这条消息
     const continuedMsg: ChatMessage = {
       ...lastMsg,
       id: streamId,
       stopped: undefined,
+      error: undefined,
+      toolCalls: undefined,
+      preToolContentLen: undefined,
       tokensDecoded: undefined,
       msFirstToken: undefined,
       decodeTokS: undefined,
@@ -2031,6 +2100,9 @@ export default function ChatView() {
     const newMessages = [...session.messages.slice(0, idx), continuedMsg]
     replaceMessages(activeSessionId, newMessages)
     setStreamForSession(activeSessionId, streamId)
+
+    // 预填缓冲区：保留原始内容，流结束时 deltas 追加其后而非替换
+    streamingBuffer[streamId] = lastMsg.content
 
     // 看门狗：90 秒无响应超时
     streamReceivedRef.current.set(streamId, false)
@@ -2045,21 +2117,35 @@ export default function ChatView() {
     }, 90000)
     streamWatchdogsRef.current.set(streamId, wdTimer)
 
-    // 手动构建消息数组，添加继续生成指令（比 buildOpenAiMessages 多一条系统指令）
+    // 手动构建消息数组，添加继续生成指令
     const currentSession = useChatStore.getState().sessions.find((s) => s.id === activeSessionId)!
     const messages: Array<{ role: string; content: string }> = []
     if (currentSession.systemPrompt?.trim()) {
       messages.push({ role: 'system', content: currentSession.systemPrompt.trim() })
     }
+    // 剥离 <think> 标签（UI 专用格式，发给模型会干扰其推理启动逻辑）
+    const stripThink = (text: string) =>
+      text.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/g, '').trim()
+    let lastAsstHadText = false
     for (const m of currentSession.messages) {
       if (m.role === 'system') continue
-      if (!m.content && !m.error) continue
-      messages.push({ role: m.role, content: m.content })
+      const content = stripThink(m.content || '')
+      // 助手消息即使内容为空也保留（纯 think 块/工具调用场景）
+      // 用户消息为空则跳过
+      if (m.role === 'assistant') {
+        messages.push({ role: m.role, content: content || '' })
+        if (content) lastAsstHadText = true
+      } else {
+        if (!content && !m.error) continue
+        messages.push({ role: m.role, content })
+      }
     }
-    // 注入继续指令：告诉模型从最后一条助手消息的末尾接续，不要重复已有内容
+    // 注入接续指令（中文，模型更易理解）
     messages.push({
       role: 'system',
-      content: 'You are continuing the previous assistant response. Append new content directly after the existing text. Do NOT repeat or rephrase any part of the existing response. Do NOT add any preamble, acknowledgment, or transition phrases like "好的" or "继续". Just continue writing the next part seamlessly.'
+      content: lastAsstHadText
+        ? '请从助手消息被中断的位置继续往后写。直接续写，不要重复任何已有内容（包括用户的问题），不要加开场白或过渡语。'
+        : '助手在推理过程中被中断了，还没有产出可见的回答。请继续推理并直接给出最终答案。不要重复用户的问题。'
     })
 
     try {
@@ -2074,12 +2160,15 @@ export default function ChatView() {
           max_tokens: session.params.max_tokens || -1,
           repeat_penalty: session.params.repeat_penalty,
           stream: true,
-          add_generation_prompt: false
+          // add_generation_prompt: false  // 部分后端不支持此参数，注释掉
         }
       })
     } catch (e: any) {
       const st = useChatStore.getState()
       st.markLastMessageError(session.id, e?.message || '继续生成失败')
+      // 清理看门狗
+      const wd = streamWatchdogsRef.current.get(streamId)
+      if (wd) { clearTimeout(wd); streamWatchdogsRef.current.delete(streamId) }
       if (st.streamingMap[session.id] === streamId) {
         st.clearStreamForSession(session.id)
       }
@@ -2183,7 +2272,6 @@ export default function ChatView() {
                   key={m.id}
                   msg={m}
                   isStreaming={activeStreamId === m.id}
-                  sessionId={activeSessionId || undefined}
                   serverPort={activeModel?.port}
                   onImageClick={setPreviewImage}
                   onEdit={m.role === 'user' ? () => handleEditMessage(m.id, m.content, m.attachments) : undefined}
@@ -2195,6 +2283,7 @@ export default function ChatView() {
                   onDelete={m.role === 'assistant' ? () => handleDeleteReply(m.id) : undefined}
                   deleteDisabled={!!activeStreamId}
                   onBranch={m.role === 'assistant' ? () => handleBranch(m.id) : undefined}
+                  onAddToInput={handleAddToInput}
                 />
               ))
             )

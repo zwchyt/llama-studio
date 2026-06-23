@@ -4869,6 +4869,10 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   transition: border-color var(--transition), background var(--transition);
   max-width: 85%;
 }
+/* 非首个思考链与上方内容保持间距 */
+.chat-think:not(:first-child) {
+  margin-top: 12px;
+}
 
 .chat-think.thinking:not(.expanded) {
   border-color: rgba(124, 58, 237, .2);
@@ -5322,3 +5326,54 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 .chat-image-overlay-close:hover {
   background: rgba(255,255,255,0.3);
 }
+
+/* ── 消息右键上下文菜单 ── */
+.chat-msg-context-menu {
+  position: fixed;
+  z-index: 9999;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  min-width: 100px;
+  animation: chatCtxSlideIn 0.15s ease-out;
+  transform-origin: top left;
+}
+
+@keyframes chatCtxSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.chat-msg-context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  transition: background var(--transition);
+}
+
+.chat-msg-context-menu-item:hover {
+  background: var(--surface-hover);
+}
+
+.chat-msg-context-menu-item svg {
+  flex-shrink: 0;
+}
+

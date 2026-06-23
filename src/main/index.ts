@@ -51,8 +51,8 @@ function createWindow(): void {
       { type: 'separator' },
       { role: 'selectAll', label: '全选' }
     ])
-    // 仅在可编辑区域（如 textarea/input）显示菜单
-    if (params.isEditable) {
+    // 在可编辑区域或选中文本时显示菜单（让用户能右键复制选中的消息片段）
+    if (params.isEditable || params.selectionText) {
       menu.popup({ window: mainWindow })
     }
   })
