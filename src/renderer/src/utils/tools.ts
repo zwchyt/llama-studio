@@ -1,6 +1,6 @@
 // ── 工具注册中心（类似 textgen 的 tool_use.py + 各 tools/*.py）────
 
-interface ToolDefinition {
+export interface ToolDefinition {
   type: 'function'
   function: {
     name: string

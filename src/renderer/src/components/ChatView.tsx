@@ -15,6 +15,7 @@ import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
 import type { ChatSession, ChatMessage, ChatParams, ToolCallInfo, Attachment } from '../../../shared/types'
 import { getToolDefinitions, executeToolCall } from '../utils/tools'
+import type { ToolDefinition } from '../utils/tools'
 import CodeBlock from './CodeBlock'
 import ConfirmModal from './ConfirmModal'
 
@@ -35,6 +36,14 @@ function lightStreamSync(sessionId: string, streamId: string): void {
       st.replaceMessages(sessionId, msgs)
     }
   }, 50))
+}
+
+// 根据工具开关配置过滤工具定义列表
+function getEnabledToolDefinitions(): ToolDefinition[] {
+  const all = getToolDefinitions()
+  const cfg = useStore.getState().toolConfig
+  if (!cfg.enabled) return []
+  return all.filter(d => cfg.tools[d.function.name] !== false)
 }
 
 // ── 工具调用展示块（与 ThinkBlock 同构，可折叠）────
@@ -73,6 +82,97 @@ function ToolCallBlock({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
             </div>
           )
         })}
+      </div>
+    </div>
+  )
+}
+
+// ── 工具开关卡片（控制工具调用是否可用，以及单个工具的开关）────
+const TOOL_LABELS: Record<string, string> = {
+  get_datetime: '获取当前时间',
+  web_search: '搜索网页',
+  fetch_webpage: '抓取网页内容',
+}
+const TOOL_ORDER = ['get_datetime', 'web_search', 'fetch_webpage']
+
+function ToolToggleCard({ config, anchorRect, onClose, onChange, onMouseEnter, onMouseLeave }: {
+  config: { enabled: boolean; tools: Record<string, boolean> }
+  anchorRect: DOMRect | null
+  onClose: () => void
+  onChange: (config: { enabled: boolean; tools: Record<string, boolean> }) => void
+  onMouseEnter?: () => void
+  onMouseLeave?: () => void
+}) {
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  // 点击外部关闭
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (cardRef.current && !cardRef.current.contains(e.target as Node)) {
+        onClose()
+      }
+    }
+    const timer = setTimeout(() => document.addEventListener('mousedown', handler), 0)
+    return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler) }
+  }, [onClose])
+
+  // ESC 关闭
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  const style: React.CSSProperties = { position: 'fixed', zIndex: 1100 }
+  if (anchorRect) {
+    style.top = anchorRect.bottom + 6
+    style.right = window.innerWidth - anchorRect.right
+  }
+
+  const toggleMaster = () => onChange({ ...config, enabled: !config.enabled })
+  const toggleTool = (name: string) => onChange({
+    ...config,
+    tools: { ...config.tools, [name]: !config.tools[name] }
+  })
+
+  const enabledCount = TOOL_ORDER.filter(k => config.tools[k]).length
+
+  return (
+    <div className="chat-tools-card" ref={cardRef} style={style} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+      <div className="chat-tools-card-header">
+        <span className="chat-tools-card-title">工具调用</span>
+      </div>
+
+      {/* 总开关 */}
+      <div className="chat-tools-master">
+        <span className="chat-tools-master-label">启用工具调用</span>
+        <label className="chat-tools-switch">
+          <input type="checkbox" checked={config.enabled} onChange={toggleMaster} />
+          <span className="chat-tools-switch-slider" />
+        </label>
+      </div>
+
+      {config.enabled && (
+        <div className="chat-tools-divider" />
+      )}
+
+      {/* 单个工具开关 */}
+      {config.enabled && TOOL_ORDER.map(name => (
+        <div key={name} className="chat-tools-item">
+          <span className="chat-tools-item-label">{TOOL_LABELS[name] || name}</span>
+          <label className="chat-tools-switch chat-tools-switch-sm">
+            <input type="checkbox" checked={!!config.tools[name]} onChange={() => toggleTool(name)} />
+            <span className="chat-tools-switch-slider" />
+          </label>
+        </div>
+      ))}
+
+      <div className="chat-tools-footer">
+        <span className="chat-tools-footer-text">
+          {config.enabled
+            ? `已启用 ${enabledCount} 个工具`
+            : '工具调用已关闭'}
+        </span>
       </div>
     </div>
   )
@@ -437,7 +537,7 @@ const UserMessageContent = React.memo(function UserMessageContent({ content }: {
 })
 
 // ── 单条消息 ───────────────────────────────────────────────
-const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled, onContinue, continueDisabled, onDelete, deleteDisabled, onImageClick, onBranch, onAddToInput, serverPort }: {
+const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled, onContinue, continueDisabled, onDelete, deleteDisabled, onImageClick, onBranch, serverPort }: {
   msg: ChatMessage
   isStreaming?: boolean
   onCopy?: () => void
@@ -450,52 +550,10 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
   deleteDisabled?: boolean
   onImageClick?: (url: string) => void
   onBranch?: () => void
-  onAddToInput?: (text: string) => void
   serverPort?: number
 }) {
   const isUser = msg.role === 'user'
   const [copied, setCopied] = useState(false)
-  // 右键上下文菜单：选中文字时复制选中内容，否则复制全部
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; selectedText: string } | null>(null)
-  const contextMenuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!contextMenu) return
-    const handler = (e: MouseEvent) => {
-      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
-        setContextMenu(null)
-      }
-    }
-    document.addEventListener('click', handler)
-    document.addEventListener('contextmenu', handler)
-    return () => {
-      document.removeEventListener('click', handler)
-      document.removeEventListener('contextmenu', handler)
-    }
-  }, [contextMenu])
-
-  const handleContextMenu = (e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    const sel = window.getSelection()?.toString().trim() || ''
-    setContextMenu({ x: e.clientX, y: e.clientY, selectedText: sel })
-  }
-
-  const handleContextCopy = () => {
-    if (contextMenu?.selectedText) {
-      navigator.clipboard.writeText(contextMenu.selectedText)
-    } else {
-      const text = isUser
-        ? msg.content
-        : parseThinkSegments(msg.content)
-            .filter(s => s.type === 'text')
-            .map(s => s.value)
-            .join('\n\n')
-            .trim()
-      navigator.clipboard.writeText(text)
-    }
-    setContextMenu(null)
-  }
 
   // 助手消息解析思考链片段（含 <think>...</think>）
   const segments = useMemo(
@@ -537,10 +595,10 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
   )
 
   // 流式中不显示操作栏
- 		  if (isStreaming) {
- 		    return (
- 		      <>
- 		      <div className="chat-msg chat-msg-assistant" data-msg-id={msg.id} onContextMenu={handleContextMenu}>
+	 		  if (isStreaming) {
+	 		    return (
+	 		      <>
+	 		      <div className="chat-msg chat-msg-assistant" data-msg-id={msg.id}>
  		        <div className="chat-msg-avatar"><Bot size={14} /></div>
  		        <div className="chat-msg-body">
  		          {msg.toolCalls && msg.toolCalls.length > 0 && (
@@ -556,29 +614,15 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
  		              <span className="chat-typing-dots" />
  		            </div>
  		          )}
- 		      </div>
- 		      </div>
- 		      {contextMenu && (
- 		        <div ref={contextMenuRef} className="chat-msg-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
- 		          <button className="chat-msg-context-menu-item" onClick={handleContextCopy}>
- 		            <Copy size={13} />
- 		            <span>复制</span>
- 		          </button>
- 		          {onAddToInput && contextMenu.selectedText && (
- 		            <button className="chat-msg-context-menu-item" onClick={() => { onAddToInput(contextMenu.selectedText); setContextMenu(null) }}>
- 		              <MessageSquare size={13} />
- 		              <span>添加到输入框</span>
- 		            </button>
- 		          )}
- 		        </div>
- 		      )}
- 		      </>
- 		    )
-  }
+	 		      </div>
+	 		      </div>
+	 		      </>
+	 		    )
+	  }
 
-  return (
-    <>
-    <div className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-assistant'}`} data-msg-id={msg.id} onContextMenu={handleContextMenu}>
+	  return (
+		    <>
+		    <div className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-assistant'}`} data-msg-id={msg.id}>
       {!isUser && (
         <div className="chat-msg-avatar">
           <Bot size={14} />
@@ -712,29 +756,15 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
           </div>
         )}
       </div>
-      {isUser && (
-        <div className="chat-msg-avatar chat-msg-avatar-user">
-          <span style={{ fontSize: 12, fontWeight: 700 }}>我</span>
-        </div>
-      )}
-    </div>
-      {contextMenu && (
-        <div ref={contextMenuRef} className="chat-msg-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
-          <button className="chat-msg-context-menu-item" onClick={handleContextCopy}>
-            <Copy size={13} />
-            <span>复制</span>
-          </button>
-          {onAddToInput && contextMenu.selectedText && (
-            <button className="chat-msg-context-menu-item" onClick={() => { onAddToInput(contextMenu.selectedText); setContextMenu(null) }}>
-              <MessageSquare size={13} />
-              <span>添加到输入框</span>
-            </button>
-          )}
-        </div>
-      )}
-    </>
-  )
-})
+	      {isUser && (
+	        <div className="chat-msg-avatar chat-msg-avatar-user">
+	          <span style={{ fontSize: 12, fontWeight: 700 }}>我</span>
+	        </div>
+	      )}
+	    </div>
+	    </>
+	  )
+	})
 
 // ── 左栏：会话列表 ─────────────────────────────────────────
 function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRequest, runningModels, streamingSessionIds }: {
@@ -1235,6 +1265,8 @@ export default function ChatView() {
   const setParams = useChatStore((s) => s.setParams)
   const cards = useStore((s) => s.cards)
   const setView = useStore((s) => s.setView)
+  const setCardStatus = useStore((s) => s.setCardStatus)
+  const clearModelMetrics = useStore((s) => s.clearModelMetrics)
   const runningModels = useMemo(
     () => cards.filter((c) => c.status === 'running')
       .map((c) => ({ id: c.template.id, name: c.template.name, port: c.template.serverPort || 8080 })),
@@ -1256,6 +1288,13 @@ export default function ChatView() {
   const settingsBtnRef = useRef<HTMLButtonElement>(null)
   const [settingsAnchor, setSettingsAnchor] = useState<DOMRect | null>(null)
   const settingsHoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
+  // 工具开关面板
+  const [showTools, setShowTools] = useState(false)
+  const toolsBtnRef = useRef<HTMLButtonElement>(null)
+  const [toolsAnchor, setToolsAnchor] = useState<DOMRect | null>(null)
+  const toolsHoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
+  const toolConfig = useStore(s => s.toolConfig)
+  const setToolConfig = useStore(s => s.setToolConfig)
   // 图片点击放大
   const [previewImage, setPreviewImage] = useState<string | null>(null)
   useEffect(() => {
@@ -1272,6 +1311,7 @@ export default function ChatView() {
   useEffect(() => {
     return () => {
       if (settingsHoverTimeoutRef.current) clearTimeout(settingsHoverTimeoutRef.current)
+      if (toolsHoverTimeoutRef.current) clearTimeout(toolsHoverTimeoutRef.current)
     }
   }, [])
 
@@ -1296,6 +1336,31 @@ export default function ChatView() {
   function handleSettingsCardLeave(): void {
     settingsHoverTimeoutRef.current = setTimeout(() => {
       setShowSettings(false)
+    }, 300)
+  }
+
+  // ── 工具开关悬停处理 ──────────────────────────────────
+  function handleToolsEnter(): void {
+    if (toolsHoverTimeoutRef.current) clearTimeout(toolsHoverTimeoutRef.current)
+    if (toolsBtnRef.current) {
+      setToolsAnchor(toolsBtnRef.current.getBoundingClientRect())
+    }
+    setShowTools(true)
+  }
+
+  function handleToolsLeave(): void {
+    toolsHoverTimeoutRef.current = setTimeout(() => {
+      setShowTools(false)
+    }, 300)
+  }
+
+  function handleToolsCardEnter(): void {
+    if (toolsHoverTimeoutRef.current) clearTimeout(toolsHoverTimeoutRef.current)
+  }
+
+  function handleToolsCardLeave(): void {
+    toolsHoverTimeoutRef.current = setTimeout(() => {
+      setShowTools(false)
     }, 300)
   }
 
@@ -1408,6 +1473,12 @@ export default function ChatView() {
   const mergedFollowMap = useRef<Map<string, string>>(new Map())
   // 重新生成回滚备份：失败时恢复旧消息
   const regenerateRollbackRef = useRef<{ sessionId: string; messages: ChatMessage[]; streamId: string } | null>(null)
+  // 引用追问：绕过闭包直接传文本给 handleSend
+  const pendingSendTextRef = useRef<string | null>(null)
+  // 引用追问弹出输入框
+  const [quoteInput, setQuoteInput] = useState<{ x: number; y: number; selectedText: string } | null>(null)
+  const quoteInputRef = useRef<HTMLInputElement>(null)
+  const quotePopupRef = useRef<HTMLDivElement>(null)
 
   const activeSession = sessions.find((s) => s.id === activeSessionId) || null
   const activeMessages = activeSession?.messages || []
@@ -1614,10 +1685,10 @@ export default function ChatView() {
               top_k: followSession.params.top_k,
               max_tokens: followSession.params.max_tokens || -1,
               repeat_penalty: followSession.params.repeat_penalty,
-              tools: getToolDefinitions(),
-              stream: true
-            }
-          }).catch((e: any) => {
+	              tools: getEnabledToolDefinitions(),
+	              stream: true
+	            }
+	          }).catch((e: any) => {
             const s = useChatStore.getState()
             s.markLastMessageError(targetSession.id, e?.message || '工具调用后续请求失败')
             if (s.streamingMap[targetSession.id] === data.streamId) {
@@ -1691,11 +1762,39 @@ export default function ChatView() {
     setInput('')
   }, [runningModels, createSession, createEmptySession])
 
+  // 停止当前会话关联的模型
+  const handleStopModel = useCallback(async () => {
+    if (!activeModel) return
+    const card = cards.find(c => c.template.id === activeModel.id && c.status === 'running')
+    if (!card) return
+    setCardStatus(activeModel.id, 'idle')
+    clearModelMetrics(activeModel.id)
+    try {
+      const res = await window.api.stopModel(activeModel.id)
+      if (res.success) {
+        notify(`模型 ${activeModel.name} 已停止`, 'success', 1000)
+      } else {
+        notify(`停止失败：${res.error}`, 'error')
+        setCardStatus(activeModel.id, 'running')
+      }
+    } catch (e: any) {
+      notify(`停止失败：${e?.message || '未知错误'}`, 'error')
+      setCardStatus(activeModel.id, 'running')
+    }
+  }, [activeModel, cards, setCardStatus, clearModelMetrics])
+
   // 发送消息（发起流）
   const handleSend = useCallback(async () => {
     const session = useChatStore.getState().sessions.find((s) => s.id === activeSessionId)
     if (!session) return
-	    const content = preprocessInput(input.trim())
+    // 引用追问：优先使用 ref 传递的文本绕过闭包过期问题
+    let content: string
+    if (pendingSendTextRef.current !== null) {
+      content = pendingSendTextRef.current
+      pendingSendTextRef.current = null
+    } else {
+      content = preprocessInput(input.trim())
+    }
     if (!content && attachedFiles.length === 0) return
     // 如果当前会话有正在进行的流，先终止它再发送新消息
     if (activeStreamId) {
@@ -1852,12 +1951,12 @@ export default function ChatView() {
 	            top_k: session.params.top_k,
 	            max_tokens: session.params.max_tokens || -1,
 	            repeat_penalty: session.params.repeat_penalty,
-	            tools: getToolDefinitions(),
-	            stream: true
-	          }
-	        })
-	      }
-      if (!res.success && res.error) {
+		            tools: getEnabledToolDefinitions(),
+		            stream: true
+		          }
+		        })
+		      }
+	      if (!res.success && res.error) {
         // 错误已在 chunk 回调里处理；这里兜底
         const st = useChatStore.getState()
         const wd = streamWatchdogsRef.current.get(streamId)
@@ -1896,6 +1995,98 @@ export default function ChatView() {
     if (!activeSessionId || activeStreamId) return
     setDeletingMsgId(msgId)
   }, [activeSessionId, activeStreamId])
+
+  // ── 全局右键上下文菜单 ──
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; selectedText: string } | null>(null)
+  const ctxMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!ctxMenu) return
+    const handler = (e: MouseEvent) => {
+      if (ctxMenuRef.current && !ctxMenuRef.current.contains(e.target as Node)) {
+        setCtxMenu(null)
+      }
+    }
+    // 只在点击外部时关闭，不用 contextmenu 避免与右键弹出冲突
+    document.addEventListener('click', handler)
+    return () => {
+      document.removeEventListener('click', handler)
+    }
+  }, [ctxMenu])
+
+  // 引用追问弹出框：点击外部关闭
+  useEffect(() => {
+    if (!quoteInput) return
+    const handler = (e: MouseEvent) => {
+      if (quotePopupRef.current && !quotePopupRef.current.contains(e.target as Node)) {
+        setQuoteInput(null)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [quoteInput])
+
+  const handleChatContextMenu = useCallback((e: React.MouseEvent) => {
+    // 只在模型输出的消息气泡中触发
+    const target = e.target as HTMLElement
+    const msgEl = target.closest('.chat-msg-assistant')
+    if (!msgEl) return
+
+    e.preventDefault()
+    e.stopPropagation()
+    const sel = window.getSelection()?.toString().trim() || ''
+    setCtxMenu({ x: e.clientX, y: e.clientY, selectedText: sel })
+  }, [])
+
+  const handleCtxCopy = useCallback(() => {
+    if (ctxMenu?.selectedText) {
+      navigator.clipboard.writeText(ctxMenu.selectedText)
+    }
+    setCtxMenu(null)
+  }, [ctxMenu])
+
+  const handleCtxAddToInput = useCallback(() => {
+    if (ctxMenu?.selectedText) {
+      setInput(prev => prev ? prev + '\n' + ctxMenu.selectedText : ctxMenu.selectedText)
+      requestAnimationFrame(() => {
+        if (inputRef.current) {
+          inputRef.current.focus()
+          inputRef.current.style.height = 'auto'
+          inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 200) + 'px'
+        }
+      })
+    }
+    setCtxMenu(null)
+  }, [ctxMenu])
+
+  // 引用追问：弹出小输入框让用户输入问题，回车后组合发送
+  const handleCtxQuoteAsk = useCallback(() => {
+    if (!ctxMenu?.selectedText) { setCtxMenu(null); return }
+    const pos = { x: ctxMenu.x, y: ctxMenu.y, selectedText: ctxMenu.selectedText }
+    setCtxMenu(null)
+    // 延迟一下等 ctxMenu 关闭后再弹出，避免 React 批处理冲突
+    requestAnimationFrame(() => setQuoteInput(pos))
+  }, [ctxMenu])
+
+  const handleQuoteSubmit = useCallback((e: React.FormEvent | React.KeyboardEvent) => {
+    e.preventDefault()
+    if (!quoteInput) return
+    const question = quoteInputRef.current?.value.trim()
+    if (!question) return
+    // 组合：引用文本 + 用户问题
+    const formatted = `**📎 引用内容**\n> ${quoteInput.selectedText.replace(/\n/g, '\n> ')}\n\n---\n\n**💬 我的提问：**\n${question}`
+    pendingSendTextRef.current = formatted
+    setInput(formatted)
+    setQuoteInput(null)
+    // 等 React 重新渲染后，input 已更新，handleSend 会优先读 pendingSendTextRef
+    setTimeout(() => handleSend(), 0)
+  }, [quoteInput, handleSend])
+
+  const handleQuoteKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      setQuoteInput(null)
+    }
+  }, [])
 
   // 切换会话绑定的模型
   const handleSwitchModel = useCallback((templateId: string) => {
@@ -2140,13 +2331,13 @@ export default function ChatView() {
         messages.push({ role: m.role, content })
       }
     }
-    // 注入接续指令（中文，模型更易理解）
-    messages.push({
-      role: 'system',
-      content: lastAsstHadText
-        ? '请从助手消息被中断的位置继续往后写。直接续写，不要重复任何已有内容（包括用户的问题），不要加开场白或过渡语。'
-        : '助手在推理过程中被中断了，还没有产出可见的回答。请继续推理并直接给出最终答案。不要重复用户的问题。'
-    })
+	    // 注入接续指令（用 user 角色，因为大多数模板要求 system 只能在开头）
+	    messages.push({
+	      role: 'user',
+	      content: lastAsstHadText
+	        ? '请从助手消息被中断的位置继续往后写。直接续写，不要重复任何已有内容（包括用户的问题），不要加开场白或过渡语。'
+	        : '助手在推理过程中被中断了，还没有产出可见的回答。请继续推理并直接给出最终答案。不要重复用户的问题。'
+	    })
 
     try {
       await window.api.chatStream({
@@ -2213,6 +2404,15 @@ export default function ChatView() {
               ))}
             </select>
           </div>
+          {activeModel && (
+            <button
+              className="chat-settings-btn chat-stop-model-btn"
+              onClick={handleStopModel}
+              title={`停止模型 ${activeModel.name}`}
+            >
+              <Square size={14} />
+            </button>
+          )}
           <button
             ref={settingsBtnRef}
             className="chat-settings-btn"
@@ -2224,12 +2424,28 @@ export default function ChatView() {
             }}
             onMouseEnter={handleSettingsEnter}
             onMouseLeave={handleSettingsLeave}
+            title="会话参数"
           >
             <SlidersHorizontal size={16} />
           </button>
+          <button
+            ref={toolsBtnRef}
+            className="chat-settings-btn"
+            onClick={() => {
+              if (toolsBtnRef.current) {
+                setToolsAnchor(toolsBtnRef.current.getBoundingClientRect())
+              }
+              setShowTools((v) => !v)
+            }}
+            onMouseEnter={handleToolsEnter}
+            onMouseLeave={handleToolsLeave}
+            title={toolConfig.enabled ? '工具调用已开启' : '工具调用已关闭'}
+          >
+            <Wrench size={16} />
+          </button>
         </div>
 
-        <div className="chat-messages" ref={messagesContainerRef} onScroll={handleScroll}>
+        <div className="chat-messages" ref={messagesContainerRef} onScroll={handleScroll} onContextMenu={handleChatContextMenu}>
           {activeSession ? (
             activeMessages.length === 0 ? (
               <div className="chat-welcome">
@@ -2283,7 +2499,6 @@ export default function ChatView() {
                   onDelete={m.role === 'assistant' ? () => handleDeleteReply(m.id) : undefined}
                   deleteDisabled={!!activeStreamId}
                   onBranch={m.role === 'assistant' ? () => handleBranch(m.id) : undefined}
-                  onAddToInput={handleAddToInput}
                 />
               ))
             )
@@ -2354,6 +2569,49 @@ export default function ChatView() {
             activeMsgId={activeNavMsgId}
             containerRef={messagesContainerRef}
           />
+        )}
+
+        {/* 全局右键菜单 */}
+        {ctxMenu && (
+          <div ref={ctxMenuRef} className="chat-msg-context-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} onContextMenu={e => { e.preventDefault(); e.stopPropagation() }}>
+            <button className="chat-msg-context-menu-item" onClick={handleCtxCopy}>
+              <Copy size={13} />
+              <span>复制</span>
+            </button>
+            {ctxMenu.selectedText && (
+              <button className="chat-msg-context-menu-item" onClick={handleCtxAddToInput}>
+                <MessageSquare size={13} />
+                <span>添加到输入框</span>
+              </button>
+            )}
+            {ctxMenu.selectedText && (
+              <button className="chat-msg-context-menu-item" onClick={handleCtxQuoteAsk}>
+                <MessageSquare size={13} />
+                <span>引用追问</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* 引用追问弹出输入框 */}
+        {quoteInput && (
+          <div ref={quotePopupRef} className="chat-quote-popup" style={{ left: quoteInput.x, top: quoteInput.y }}>
+            <div className="chat-quote-popup-header">引用追问</div>
+            <div className="chat-quote-popup-quote">{quoteInput.selectedText}</div>
+            <form onSubmit={handleQuoteSubmit} className="chat-quote-popup-form">
+              <input
+                ref={quoteInputRef}
+                className="chat-quote-input"
+                type="text"
+                placeholder="输入你的问题…"
+                autoFocus
+                onKeyDown={handleQuoteKeyDown}
+              />
+              <button type="submit" className="chat-quote-popup-send" title="发送（Enter）">
+                <Send size={14} />
+              </button>
+            </form>
+          </div>
         )}
 
         {/* 输入代码预览：独立于输入框，置于其上方 */}
@@ -2475,6 +2733,17 @@ export default function ChatView() {
           onSetParams={(params) => activeSession && setParams(activeSession.id, params)}
           onMouseEnter={handleSettingsCardEnter}
           onMouseLeave={handleSettingsCardLeave}
+        />
+      )}
+
+      {showTools && (
+        <ToolToggleCard
+          config={toolConfig}
+          anchorRect={toolsAnchor}
+          onClose={() => setShowTools(false)}
+          onChange={setToolConfig}
+          onMouseEnter={handleToolsCardEnter}
+          onMouseLeave={handleToolsCardLeave}
         />
       )}
 

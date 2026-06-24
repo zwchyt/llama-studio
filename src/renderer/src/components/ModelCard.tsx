@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useStore } from '../store/useStore'
+import { useChatStore } from '../store/chatStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
-import { Play, Square, Settings, ChevronDown, MoreVertical, Copy, Trash, Download, Globe, Server, Terminal, Check } from 'lucide-react'
+import { Play, Square, Settings, ChevronDown, MoreVertical, Copy, Trash, Download, Globe, Server, Terminal, Check, MessageSquare } from 'lucide-react'
 import type { CardState } from '../../../shared/types'
 import ParamsModal from './ParamsModal'
 import ConfirmModal from './ConfirmModal'
@@ -252,6 +253,30 @@ export default function ModelCard({ card }: Props) {
             title="在主窗口打开聊天"
           >
             <Globe size={14} /> 打开聊天
+          </button>
+        )}
+        {isRunning && (
+          <button
+            className="btn card-run-btn"
+            style={{ flex: 0.5, background: 'var(--success)', color: '#fff' }}
+            onClick={() => {
+              const id = card.template.id
+              const port = card.template.serverPort || 8080
+              const name = card.template.name
+              const st = useChatStore.getState()
+              // 查找是否已有此模型的会话
+              let session = st.sessions.find(s => s.templateId === id)
+              if (!session) {
+                const newId = st.createSession(id, port, name)
+                session = st.sessions.find(s => s.id === newId)!
+              } else {
+                st.selectSession(session.id)
+              }
+              useStore.getState().setView('chat')
+            }}
+            title="跳转到原生聊天界面"
+          >
+            <MessageSquare size={14} /> 原生聊天
           </button>
         )}
         <button

@@ -1,8 +1,8 @@
 {
-  "name": "hexllama",
-  "version": "1.0.0",
-  "description": "hexllama — a GUI for llama.cpp",
-  "author": "hexllama",
+  "name": "llama-studio",
+  "version": "1.0.57",
+  "description": "llama-studio — a GUI for llama.cpp",
+  "author": "llama-studio",
   "main": "out/main/index.js",
   "homepage": "./",
   "scripts": {

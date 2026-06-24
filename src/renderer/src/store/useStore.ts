@@ -104,6 +104,9 @@ interface AppStore {
   setAgentCwd: (cwd: string | null) => void
   setAgentUpdates: (u: Record<string, { latest: string }>) => void
   setAgentUpdatesLoading: (v: boolean) => void
+  // ── 工具调用开关 ──
+  toolConfig: { enabled: boolean; tools: Record<string, boolean> }
+  setToolConfig: (config: { enabled: boolean; tools: Record<string, boolean> }) => void
 }
 // createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
@@ -253,5 +256,8 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   collapseAllCards: () => set((s) => ({ cards: s.cards.map(c => ({ ...c, expanded: false })) })),
   setActiveChat: (url, port) => set({ activeChatUrl: url, activeChatPort: port }),
   clearActiveChat: () => set({ activeChatUrl: null, activeChatPort: null }),
-  setPiWebUrl: (url) => set({ piWebUrl: url })
+  setPiWebUrl: (url) => set({ piWebUrl: url }),
+  // ── 工具调用开关 ──
+  toolConfig: { enabled: true, tools: { get_datetime: true, web_search: true, fetch_webpage: true } },
+  setToolConfig: (config) => set({ toolConfig: config }),
 }), shallow)
