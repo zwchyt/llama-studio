@@ -1307,6 +1307,8 @@ export default function ChatView() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [attachedFiles, setAttachedFiles] = useState<File[]>([])
   const [previewUrls, setPreviewUrls] = useState<Map<number, string>>(new Map())
+  // 拖拽上传：计数器防止嵌套元素 flicker
+  const [dragOverCount, setDragOverCount] = useState(0)
 
   useEffect(() => {
     return () => {
@@ -1398,6 +1400,52 @@ export default function ChatView() {
       return next
     })
   }, [])
+
+  // ── 拖拽上传 ───────────────────────────────────────────
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragOverCount(prev => prev + 1)
+  }, [])
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragOverCount(prev => Math.max(0, prev - 1))
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragOverCount(0)
+
+    const files = Array.from(e.dataTransfer.files || [])
+    if (files.length === 0) return
+
+    const startIdx = attachedFiles.length
+    setAttachedFiles(prev => [...prev, ...files])
+    // 为拖入的图片生成预览 URL
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]
+      if (f.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name)) {
+        const reader = new FileReader()
+        const idx = startIdx + i
+        reader.onload = () => {
+          setPreviewUrls(prev => {
+            const next = new Map(prev)
+            next.set(idx, reader.result as string)
+            return next
+          })
+        }
+        reader.readAsDataURL(f)
+      }
+    }
+  }, [attachedFiles.length])
 
   // 读取文件内容（文本用 readAsText，图片转 base64）
   function readFileContent(file: File): Promise<{ text: string; isImage: boolean; dataUrl?: string }> {
@@ -2106,13 +2154,42 @@ export default function ChatView() {
     el.style.height = Math.min(el.scrollHeight, 200) + 'px'
   }
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    // 优先级1：检查剪贴板中的图片（Ctrl+V 粘贴截图/复制图片）
+    const items = Array.from(e.clipboardData?.items ?? [])
+    const imageItems = items.filter((item) => item.type.startsWith('image/'))
+    if (imageItems.length > 0) {
+      e.preventDefault()
+      const files = imageItems.map((item) => item.getAsFile()).filter((f): f is File => f !== null)
+      if (files.length === 0) return
+      const startIdx = attachedFiles.length
+      setAttachedFiles(prev => [...prev, ...files])
+      // 为粘贴的图片生成预览 data URL
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i]
+        if (f.type.startsWith('image/')) {
+          const reader = new FileReader()
+          const idx = startIdx + i
+          reader.onload = () => {
+            setPreviewUrls(prev => {
+              const next = new Map(prev)
+              next.set(idx, reader.result as string)
+              return next
+            })
+          }
+          reader.readAsDataURL(f)
+        }
+      }
+      return
+    }
+
+    // 优先级2：长文本粘贴为文件附件（>2500 字符自动转为文本文件）
     const text = e.clipboardData.getData('text')
     if (text && text.length > PASTE_THRESHOLD) {
       e.preventDefault()
       const file = new File([text], 'pasted_text.txt', { type: 'text/plain' })
       setAttachedFiles(prev => [...prev, file])
     }
-  }, [])
+  }, [attachedFiles.length])
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
       e.preventDefault()
@@ -2381,7 +2458,27 @@ export default function ChatView() {
         />
       </div>
 
-      <div className="chat-main">
+      <div
+        className="chat-main"
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {/* 拖拽上传遮罩 */}
+        {dragOverCount > 0 && (
+          <div className="chat-drop-overlay">
+            <div className="chat-drop-overlay-inner">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              <span>释放文件以上传</span>
+              <span className="chat-drop-overlay-hint">支持图片、文本、PDF、代码文件等</span>
+            </div>
+          </div>
+        )}
         <div className="chat-header">
           <button
             className="chat-collapse-btn"

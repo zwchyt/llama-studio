@@ -3655,6 +3655,58 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   background: var(--bg);
 }
 
+/* ── 拖拽上传遮罩层 ── */
+.chat-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 75%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border-radius: 0;
+  animation: chatDropFadeIn 0.15s ease-out;
+}
+
+.chat-drop-overlay-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 48px 64px;
+  border: 2px dashed var(--border-strong);
+  border-radius: 20px;
+  background: var(--surface);
+  color: var(--text-muted);
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+  user-select: none;
+}
+
+.chat-drop-overlay-inner svg {
+  color: var(--accent);
+  opacity: 0.7;
+}
+
+.chat-drop-overlay-inner span {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.chat-drop-overlay-hint {
+  font-size: 13px !important;
+  font-weight: 400 !important;
+  color: var(--text-muted) !important;
+}
+
+@keyframes chatDropFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 .chat-header {
   display: flex;
   align-items: flex-start;
