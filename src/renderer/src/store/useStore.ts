@@ -107,6 +107,9 @@ interface AppStore {
   // ── 工具调用开关 ──
   toolConfig: { enabled: boolean; tools: Record<string, boolean> }
   setToolConfig: (config: { enabled: boolean; tools: Record<string, boolean> }) => void
+  // ── 提示音 ──
+  soundEnabled: boolean
+  setSoundEnabled: (v: boolean) => void
 }
 // createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
@@ -260,4 +263,7 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   // ── 工具调用开关 ──
   toolConfig: { enabled: true, tools: { get_datetime: true, web_search: true, fetch_webpage: true } },
   setToolConfig: (config) => set({ toolConfig: config }),
+  // ── 提示音 ──
+  soundEnabled: true,
+  setSoundEnabled: (v) => set({ soundEnabled: v }),
 }), shallow)

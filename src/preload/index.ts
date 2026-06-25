@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
 const fullApi = {
+  printToPDF: (html: string) => ipcRenderer.invoke('print-to-pdf', html),
+  savePng: (dataUrl: string) => ipcRenderer.invoke('save-png', dataUrl),
   listModels: () => ipcRenderer.invoke('list-models'),
   listModelsRefresh: () => ipcRenderer.invoke('list-models-refresh'),
   deleteModel: (filePath: string) => ipcRenderer.invoke('delete-model', filePath),

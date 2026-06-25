@@ -121,6 +121,9 @@ interface LlamaCppApi {
   onTerminalExited: (cb: (d: { id: string; exitCode: number }) => void) => void
   onTerminalTitle: (cb: (d: { id: string; title: string }) => void) => void
   removeTerminalListeners: () => void
+  // ── PDF 导出 ──
+  printToPDF: (html: string) => Promise<string>
+  savePng: (dataUrl: string) => Promise<string>
 }
 declare global {
   interface Window { api: LlamaCppApi }

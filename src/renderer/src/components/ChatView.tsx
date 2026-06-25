@@ -4,20 +4,49 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
+import { unified } from 'unified'
+import remarkParse from 'remark-parse'
+import remarkRehype from 'remark-rehype'
+import rehypeStringify from 'rehype-stringify'
 import {
   Plus, Send, Square, Trash2, Pencil, MessageSquare,
   ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain, RefreshCw,
   Copy, Check, RotateCcw, ArrowDown, X, Eye, SlidersHorizontal, List, Play, Wrench,
-  Paperclip, FileText, GitBranch, Search, Download
+  Paperclip, FileText, GitBranch, Search, Download, Volume2, ImageDown
 } from 'lucide-react'
 import { useChatStore, buildOpenAiMessages, DEFAULT_PARAMS } from '../store/chatStore'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
+import { playNotificationSound } from '../utils/sound'
+import { useTts } from '../utils/useTts'
+import html2canvas from 'html2canvas'
+
 import type { ChatSession, ChatMessage, ChatParams, ToolCallInfo, Attachment } from '../../../shared/types'
 import { getToolDefinitions, executeToolCall } from '../utils/tools'
 import type { ToolDefinition } from '../utils/tools'
 import CodeBlock from './CodeBlock'
 import ConfirmModal from './ConfirmModal'
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;')
+}
+
+const markdownProcessor = unified()
+  .use(remarkParse)
+  .use(remarkMath)
+  .use(remarkGfm)
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypeKatex, { throwOnError: false })
+  .use(rehypeStringify, { allowDangerousHtml: true })
+
+function markdownToHtml(text: string): string {
+  try {
+    const result = markdownProcessor.processSync(text)
+    return String(result)
+  } catch {
+    return escapeHtml(text)
+  }
+}
 
 // 流式文本缓冲区（模块级，不经过 React 状态，避免重渲染卡顿）
 const streamingBuffer: Record<string, string> = {}
@@ -537,7 +566,7 @@ const UserMessageContent = React.memo(function UserMessageContent({ content }: {
 })
 
 // ── 单条消息 ───────────────────────────────────────────────
-const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled, onContinue, continueDisabled, onDelete, deleteDisabled, onImageClick, onBranch, serverPort }: {
+const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled, onContinue, continueDisabled, onDelete, deleteDisabled, onImageClick, onBranch, serverPort, speakingId, onSpeak, onStopTts }: {
   msg: ChatMessage
   isStreaming?: boolean
   onCopy?: () => void
@@ -551,6 +580,9 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
   onImageClick?: (url: string) => void
   onBranch?: () => void
   serverPort?: number
+  speakingId?: string | null
+  onSpeak?: (id: string, text: string) => void
+  onStopTts?: () => void
 }) {
   const isUser = msg.role === 'user'
   const [copied, setCopied] = useState(false)
@@ -705,6 +737,25 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
             {msg.content && (
               <button className="chat-msg-action-btn" onClick={handleCopy}>
                 {copied ? <Check size={13} /> : <Copy size={13} />}
+              </button>
+            )}
+            {!isUser && msg.content && (
+              <button
+                className="chat-msg-action-btn"
+                onClick={() => {
+                  if (speakingId === msg.id) onStopTts?.()
+                  else {
+                    const text = parseThinkSegments(msg.content)
+                      .filter(s => s.type === 'text')
+                      .map(s => s.value)
+                      .join('\n')
+                      .trim()
+                    if (text) onSpeak?.(msg.id, text)
+                  }
+                }}
+                title={speakingId === msg.id ? '停止朗读' : '朗读回复'}
+              >
+                <Volume2 size={13} />
               </button>
             )}
             {isUser && onEdit && (
@@ -1295,6 +1346,7 @@ export default function ChatView() {
   const toolsHoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
   const toolConfig = useStore(s => s.toolConfig)
   const setToolConfig = useStore(s => s.setToolConfig)
+  const { speakingId, speak, stop: stopTts } = useTts()
   // 图片点击放大
   const [previewImage, setPreviewImage] = useState<string | null>(null)
   useEffect(() => {
@@ -1748,6 +1800,7 @@ export default function ChatView() {
         }
 
         // 无工具调用：正常结束流程
+        if (useStore.getState().soundEnabled) playNotificationSound()
         st.persist(targetSession.id)
         st.clearStreamForSession(targetSession.id)
       }
@@ -1830,6 +1883,78 @@ export default function ChatView() {
       setCardStatus(activeModel.id, 'running')
     }
   }, [activeModel, cards, setCardStatus, clearModelMetrics])
+
+  // 导出当前会话为 PNG
+  const handleExportPng = useCallback(async () => {
+    const el = messagesContainerRef.current
+    if (!el || !activeSession) return
+    try {
+      const canvas = await html2canvas(el, { useCORS: true, backgroundColor: '#fff' })
+      const dataUrl = canvas.toDataURL('image/png')
+      const filePath = await window.api.savePng(dataUrl)
+      notify(`PNG 已保存: ${filePath}`, 'success')
+    } catch (e) {
+      notify('导出图片失败', 'error')
+    }
+  }, [activeSession])
+
+  // 导出当前会话为 PDF（基于 Electron printToPDF，原生支持中文）
+  const handleExportPdf = useCallback(async () => {
+    if (!activeSession) return
+    try {
+      const stripThink = (t: string) => t.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/g, '').trim()
+      const msgsHtml = activeSession.messages
+        .filter(m => m.role !== 'system' && (m.content || m.error))
+        .map(m => {
+          const text = stripThink(m.content || '')
+          if (!text) return ''
+          const roleLabel = m.role === 'user' ? '用户' : '助手'
+          const color = m.role === 'user' ? '#2563eb' : '#000'
+          const textColor = m.role === 'user' ? '#333' : '#555'
+          const body = markdownToHtml(text)
+          return `<div class="msg"><span class="role" style="color:${color};font-weight:700">${roleLabel}</span><div style="color:${textColor}">${body}</div></div>`
+        })
+        .join('')
+
+      const html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; padding: 20mm; font-size: 11pt; line-height: 1.7; color: #222; }
+  h1 { font-size: 18pt; margin-bottom: 6pt; }
+  .meta { font-size: 9pt; color: #888; margin-bottom: 4pt; }
+  hr { border: none; border-top: 1px solid #ddd; margin: 10pt 0; }
+  .msg { margin-bottom: 10pt; }
+  .role { font-size: 10pt; display: block; margin-bottom: 2pt; }
+  .katex { font-size: 1.1em; }
+  .katex-display { margin: 8pt 0; overflow-x: auto; overflow-y: hidden; }
+  pre { background: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 4px; padding: 8pt; font-family: "Cascadia Code", "Fira Code", "Consolas", monospace; font-size: 9pt; line-height: 1.5; overflow-x: auto; margin: 6pt 0; }
+  code { font-family: "Cascadia Code", "Fira Code", "Consolas", monospace; font-size: 9pt; }
+  p code { background: #f0f0f0; padding: 1pt 4pt; border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; margin: 6pt 0; font-size: 10pt; }
+  th, td { border: 1px solid #ccc; padding: 4pt 8pt; text-align: left; }
+  th { background: #f0f0f0; font-weight: 700; }
+  tr:nth-child(even) { background: #fafafa; }
+  @page { margin: 0; }
+</style>
+</head>
+<body>
+<h1>${escapeHtml(activeSession.title || '对话记录')}</h1>
+<div class="meta">导出时间: ${new Date().toLocaleString()}</div>
+${activeSession.templateId ? `<div class="meta">模型: ${escapeHtml(activeSession.templateId)}</div>` : ''}
+<hr>
+${msgsHtml}
+</body>
+</html>`
+
+      const filePath = await window.api.printToPDF(html)
+      notify(`PDF 已保存: ${filePath}`, 'success')
+    } catch (e) {
+      notify('导出 PDF 失败', 'error')
+    }
+  }, [activeSession])
 
   // 发送消息（发起流）
   const handleSend = useCallback(async () => {
@@ -2203,18 +2328,6 @@ export default function ChatView() {
     }
   }
 
-  // 将选中文字添加到输入框（追加在现有内容后）
-  const handleAddToInput = useCallback((text: string) => {
-    setInput(prev => prev ? prev + '\n' + text : text)
-    requestAnimationFrame(() => {
-      if (inputRef.current) {
-        inputRef.current.focus()
-        inputRef.current.style.height = 'auto'
-        inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 200) + 'px'
-      }
-    })
-  }, [])
-
   // 编辑用户消息：将内容回填到输入框，截断该消息及之后的所有消息
   const handleEditMessage = useCallback((msgId: string, content: string, attachments?: Attachment[]) => {
     if (!activeSessionId) return
@@ -2540,6 +2653,20 @@ export default function ChatView() {
           >
             <Wrench size={16} />
           </button>
+          <button
+            className="chat-settings-btn"
+            onClick={handleExportPng}
+            title="导出为 PNG"
+          >
+            <ImageDown size={16} />
+          </button>
+          <button
+            className="chat-settings-btn"
+            onClick={handleExportPdf}
+            title="导出为 PDF"
+          >
+            <FileText size={16} />
+          </button>
         </div>
 
         <div className="chat-messages" ref={messagesContainerRef} onScroll={handleScroll} onContextMenu={handleChatContextMenu}>
@@ -2596,6 +2723,9 @@ export default function ChatView() {
                   onDelete={m.role === 'assistant' ? () => handleDeleteReply(m.id) : undefined}
                   deleteDisabled={!!activeStreamId}
                   onBranch={m.role === 'assistant' ? () => handleBranch(m.id) : undefined}
+                  speakingId={speakingId}
+                  onSpeak={speak}
+                  onStopTts={stopTts}
                 />
               ))
             )

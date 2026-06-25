@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import {
   Search, Download, Heart, ChevronDown, ChevronLeft,
-  FolderOpen, CheckCircle, Loader2, X, AlertCircle, Box, Pause, Play, Globe
+  FolderOpen, CheckCircle, Loader2, X, AlertCircle, Box, Pause, Play
 } from 'lucide-react'
 import { formatBytes } from '../utils/format'
 import { formatDownloadStatus, formatDownloadStripText } from '../utils/downloadFormat'

@@ -2626,6 +2626,50 @@ export function registerIpcHandlers(): void {
       return JSON.stringify({ error: `获取页面失败: ${e?.message || e}` })
     }
   })
+
+  ipcMain.handle('print-to-pdf', async (_e, html: string): Promise<string> => {
+    // 内联 KaTeX CSS，避免 CDN 加载失败
+    let katexCss = ''
+    try {
+      const katexPkgPath = require.resolve('katex/package.json')
+      const katexCssPath = join(dirname(katexPkgPath), 'dist', 'katex.min.css')
+      katexCss = readFileSync(katexCssPath, 'utf-8')
+    } catch { /* 找不到就跳过，公式仍可见只是缺少样式 */ }
+    const finalHtml = html.replace('</head>', `<style>${katexCss}</style></head>`)
+
+    const pdfWindow = new BrowserWindow({
+      show: false,
+      width: 1024, height: 768,
+      webPreferences: { offscreen: false, sandbox: false }
+    })
+    try {
+      await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(finalHtml)}`)
+      const pdfBuffer = await pdfWindow.webContents.printToPDF({
+        printBackground: true,
+        preferCSSPageSize: true
+      })
+      const chatDir = join(CHATS_DIR, 'pdf_exports')
+      mkdirSync(chatDir, { recursive: true })
+      const filePath = join(chatDir, `chat-${Date.now()}.pdf`)
+      writeFileSync(filePath, pdfBuffer)
+      shell.openPath(filePath)
+      return filePath
+    } finally {
+      if (!pdfWindow.isDestroyed()) pdfWindow.close()
+    }
+  })
+
+  ipcMain.handle('save-png', async (_e, dataUrl: string): Promise<string> => {
+    const chatDir = join(CHATS_DIR, 'images')
+    mkdirSync(chatDir, { recursive: true })
+    const matches = dataUrl.match(/^data:image\/png;base64,(.+)$/)
+    if (!matches) throw new Error('无效的 PNG data URL')
+    const buffer = Buffer.from(matches[1], 'base64')
+    const filePath = join(chatDir, `chat-${Date.now()}.png`)
+    writeFileSync(filePath, buffer)
+    shell.openPath(filePath)
+    return filePath
+  })
 }
 
 // ── 辅助函数 ──────────────────────────────────────────────

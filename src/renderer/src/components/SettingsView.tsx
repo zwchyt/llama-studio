@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity } from 'lucide-react'
+import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2 } from 'lucide-react'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import CommandsEditor from './CommandsEditor'
@@ -20,8 +20,8 @@ function getNotifPref(): 'banner' | 'manual' {
 export default function SettingsView() {
   const { backends, activeBackend, setActiveBackend, setCommandsSchema, setBackends,
     releaseInfo, checkingUpdate, downloadProgress, setDownloadProgress, setCheckingUpdate, setReleaseInfo,
-    setModels } = useStore(
-    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, setModels: s.setModels }),
+    setModels, soundEnabled, setSoundEnabled } = useStore(
+    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, setModels: s.setModels, soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled }),
     shallow
   )
   const [downloading, setDownloading] = useState(false)
@@ -167,6 +167,25 @@ export default function SettingsView() {
           </p>
           <label className="toggle" style={{ marginTop: 4 }}>
             <input type="checkbox" checked={metricsPolling} onChange={async (e) => { const v = e.target.checked; try { await window.api.setMetricsPolling(v); setMetricsPolling(v) } catch { setMetricsPolling(!v) } }} />
+            <span className="toggle-track"></span>
+            <span className="toggle-thumb"></span>
+          </label>
+        </div>
+      </div>
+
+      { }
+      <div className="settings-section">
+        <div className="settings-section-title"><Volume2 /> 界面</div>
+        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            聊天界面：助手回复完成时播放提示音。
+          </p>
+          <label className="toggle" style={{ marginTop: 4 }}>
+            <input
+              type="checkbox"
+              checked={soundEnabled}
+              onChange={() => setSoundEnabled(!soundEnabled)}
+            />
             <span className="toggle-track"></span>
             <span className="toggle-thumb"></span>
           </label>
