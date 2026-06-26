@@ -110,6 +110,9 @@ interface AppStore {
   // ── 提示音 ──
   soundEnabled: boolean
   setSoundEnabled: (v: boolean) => void
+  // ── 聊天界面 ──
+  chatSidebarCollapsed: boolean
+  setChatSidebarCollapsed: (v: boolean) => void
 }
 // createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
@@ -266,4 +269,12 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   // ── 提示音 ──
   soundEnabled: true,
   setSoundEnabled: (v) => set({ soundEnabled: v }),
+  // ── 聊天界面 ──
+  chatSidebarCollapsed: (() => {
+    try { return localStorage.getItem('chatSidebarCollapsed') === 'true' } catch { return false }
+  })(),
+  setChatSidebarCollapsed: (v) => {
+    try { localStorage.setItem('chatSidebarCollapsed', String(v)) } catch { /* ignore */ }
+    set({ chatSidebarCollapsed: v })
+  },
 }), shallow)

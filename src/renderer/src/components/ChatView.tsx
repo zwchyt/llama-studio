@@ -36,7 +36,7 @@ const markdownProcessor = unified()
   .use(remarkMath)
   .use(remarkGfm)
   .use(remarkRehype, { allowDangerousHtml: true })
-  .use(rehypeKatex, { throwOnError: false })
+  .use(rehypeKatex as any, { throwOnError: false })
   .use(rehypeStringify, { allowDangerousHtml: true })
 
 function markdownToHtml(text: string): string {
@@ -1346,6 +1346,8 @@ export default function ChatView() {
   const setView = useStore((s) => s.setView)
   const setCardStatus = useStore((s) => s.setCardStatus)
   const clearModelMetrics = useStore((s) => s.clearModelMetrics)
+  const sidebarCollapsed = useStore((s) => s.chatSidebarCollapsed)
+  const setSidebarCollapsed = useStore((s) => s.setChatSidebarCollapsed)
   const runningModels = useMemo(
     () => cards.filter((c) => c.status === 'running')
       .map((c) => ({ id: c.template.id, name: c.template.name, port: c.template.serverPort || 8080 })),
@@ -1360,7 +1362,6 @@ export default function ChatView() {
   const lastScrollSessionRef = useRef<string | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [atBottom, setAtBottom] = useState(true)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [deletingSession, setDeletingSession] = useState<ChatSession | null>(null)
   const [activeNavMsgId, setActiveNavMsgId] = useState<string | null>(null)
   // 输入框代码预览：用户手动关闭后，任意输入变化即可重新触发
