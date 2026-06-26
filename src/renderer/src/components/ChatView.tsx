@@ -636,7 +636,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
  		          {msg.toolCalls && msg.toolCalls.length > 0 && (
  		            <ToolCallBlock toolCalls={msg.toolCalls} />
  		          )}
- 			        {msg.content || true ? (
+			  {msg.content ? (
  			          <>
  			            {renderSegments(true)}
  			            {segments.length > 0 && segments[segments.length - 1].type === 'text' && <span className="chat-cursor" />}
@@ -1866,7 +1866,7 @@ export default function ChatView() {
     if (!autoScroll || currentContent === lastContentRef.current) return
     lastContentRef.current = currentContent
     container.scrollTop = container.scrollHeight
-  }, [activeSessionId, activeMessages.length, autoScroll])
+  }, [activeSessionId, activeMessages.length, activeMessages[activeMessages.length - 1]?.content, autoScroll])
 
   // 节流版：滚动时更新 autoScroll 和导航状态（限制到 vsync 频率）
   const handleScrollThrottled = useCallback(() => {
