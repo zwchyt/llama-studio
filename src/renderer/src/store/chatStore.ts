@@ -71,6 +71,8 @@ interface ChatStore {
   replaceMessages: (sessionId: string, messages: ChatMessage[]) => void
   // 分支：从指定消息处创建新会话（保留该消息及之前的内容）
   branchSession: (sessionId: string, messageId: string) => string
+  // 星标/取消星标会话
+  toggleSessionStar: (sessionId: string) => void
 
   // 流状态
   setStreamForSession: (sessionId: string, streamId: string) => void
@@ -145,7 +147,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   renameSession: (id, title) => {
     set((s) => ({
       sessions: s.sessions.map((x) =>
-        x.id === id ? { ...x, title: title || '未命名对话', updatedAt: new Date().toISOString() } : x
+        x.id === id ? { ...x, title: title || '未命名对话' } : x
       )
     }))
     get().persist(id)
@@ -333,6 +335,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     get().persist(id)
     return id
   },
+
+  toggleSessionStar: (sessionId) => set((s) => ({
+    sessions: s.sessions.map(ss =>
+      ss.id !== sessionId ? ss : { ...ss, starred: !ss.starred }
+    )
+  })),
 
   setStreamForSession: (sessionId, streamId) => set((s) => ({
     streamingMap: { ...s.streamingMap, [sessionId]: streamId }

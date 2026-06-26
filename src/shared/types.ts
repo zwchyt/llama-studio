@@ -145,6 +145,7 @@ export interface ChatSession {
   systemPrompt?: string
   params: ChatParams
   messages: ChatMessage[]
+  starred?: boolean  // 会话星标
   createdAt: string
   updatedAt: string
 }

@@ -3549,6 +3549,8 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
 }
 
 .chat-session-time {
@@ -3591,8 +3593,8 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 /* ── 会话导出菜单 ── */
 .chat-session-export-menu {
   position: absolute;
-  right: 100%;
-  top: 0;
+  left: 0;
+  top: 100%;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -3629,9 +3631,10 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 
 .chat-session-edit {
   flex: 1;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
-  padding: 4px 6px;
+  padding: 2px 6px;
   border: 1.5px solid var(--accent);
   border-radius: 5px;
   background: var(--surface);
@@ -3639,6 +3642,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   font-family: var(--font);
   outline: none;
   transition: box-shadow 120ms ease;
+  height: 24px;
 }
 .chat-session-edit:focus {
   box-shadow: 0 0 0 3px rgba(var(--accent-rgb, 99, 102, 241), .25);
@@ -3802,7 +3806,6 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 .chat-settings-btn:hover {
   background: var(--border);
   color: var(--text);
-  border-color: var(--accent);
 }
 .chat-stop-model-btn {
   margin-right: 4px;
@@ -4064,6 +4067,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   padding: 18px 0 8px;
   min-height: 0;
   position: relative;
+  will-change: scroll-position;
 }
 
 .chat-welcome {
@@ -4220,6 +4224,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   margin: 0 auto;
   width: 100%;
   box-sizing: border-box;
+  contain: layout style;
 }
 
 /* 用户消息：头像在右，文字在左（默认 flex-direction: row） */

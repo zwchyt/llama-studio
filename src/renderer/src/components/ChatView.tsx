@@ -12,7 +12,7 @@ import {
   Plus, Send, Square, Trash2, Pencil, MessageSquare,
   ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain, RefreshCw,
   Copy, Check, RotateCcw, ArrowDown, X, Eye, SlidersHorizontal, List, Play, Wrench,
-  Paperclip, FileText, GitBranch, Search, Download, Volume2, ImageDown
+  Paperclip, FileText, GitBranch, Search, Download, Volume2, ImageDown, Star
 } from 'lucide-react'
 import { useChatStore, buildOpenAiMessages, DEFAULT_PARAMS } from '../store/chatStore'
 import { useStore } from '../store/useStore'
@@ -818,7 +818,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
 	})
 
 // ── 左栏：会话列表 ─────────────────────────────────────────
-function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRequest, runningModels, streamingSessionIds }: {
+function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRequest, runningModels, streamingSessionIds, onToggleStar }: {
   sessions: ChatSession[]
   activeId: string | null
   onSelect: (id: string) => void
@@ -827,6 +827,7 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRe
   onDeleteRequest: (session: ChatSession) => void
   runningModels: Array<{ id: string; name: string; port: number }>
   streamingSessionIds: string[]
+  onToggleStar: (id: string) => void
 }) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -875,11 +876,18 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRe
   }
 
   const filteredSessions = useMemo(() => {
-    if (!searchQuery.trim()) return sessions
-    const q = searchQuery.toLowerCase()
-    return sessions.filter(s => {
-      if (s.title.toLowerCase().includes(q)) return true
-      return s.messages.some(m => m.content && m.content.toLowerCase().includes(q))
+    let list = sessions
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      list = sessions.filter(s => {
+        if (s.title.toLowerCase().includes(q)) return true
+        return s.messages.some(m => m.content && m.content.toLowerCase().includes(q))
+      })
+    }
+    return [...list].sort((a, b) => {
+      if (a.starred && !b.starred) return -1
+      if (!a.starred && b.starred) return 1
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     })
   }, [sessions, searchQuery])
 
@@ -935,22 +943,38 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRe
             >
               <div className={`chat-session-indicator ${state}`} />
               {editingId === s.id ? (
-                <input
-                  className="chat-session-edit"
-                  value={editValue}
-                  autoFocus
-                  onChange={(e) => setEditValue(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditingId(null) }}
-                  onBlur={commitEdit}
-                />
+                <div className="chat-session-main">
+                  <div className="chat-session-name">
+                    {s.starred && <Star size={11} fill="#f5c518" color="#f5c518" style={{ marginRight: 4, flexShrink: 0 }} />}
+                    <input
+                      className="chat-session-edit"
+                      value={editValue}
+                      autoFocus
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditingId(null) }}
+                      onBlur={commitEdit}
+                    />
+                  </div>
+                  <div className="chat-session-time">{formatSessionTime(s.updatedAt)}</div>
+                </div>
               ) : (
                 <>
                   <div className="chat-session-main">
-                    <div className="chat-session-name">{s.title}</div>
+                    <div className="chat-session-name">
+                      {s.starred && <Star size={11} fill="#f5c518" color="#f5c518" style={{ marginRight: 4, flexShrink: 0 }} />}
+                      {s.title}
+                    </div>
                     <div className="chat-session-time">{formatSessionTime(s.updatedAt)}</div>
                   </div>
                   <div className="chat-session-actions">
+                    <button
+                      className="chat-session-btn"
+                      onClick={(e) => { e.stopPropagation(); onToggleStar(s.id) }}
+                      title={s.starred ? '取消星标' : '星标会话'}
+                    >
+                      <Star size={12} fill={s.starred ? '#f5c518' : 'transparent'} color={s.starred ? '#f5c518' : '#888'} />
+                    </button>
                     <button
                       className="chat-session-btn"
                       onClick={(e) => { e.stopPropagation(); setExportMenuId(exportMenuId === s.id ? null : s.id) }}
@@ -1208,7 +1232,10 @@ const MessageNav = React.memo(function MessageNav({
 
   const handleClick = useCallback((msgId: string) => {
     const el = containerRef.current?.querySelector(`[data-msg-id="${msgId}"]`)
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (el && containerRef.current) {
+      const top = (el as HTMLElement).offsetTop - containerRef.current.offsetTop - 20
+      containerRef.current.scrollTop = top
+    }
   }, [containerRef])
 
   if (userCount < 2) return null
@@ -1301,6 +1328,7 @@ export default function ChatView() {
   const selectSession = useChatStore((s) => s.selectSession)
   const renameSession = useChatStore((s) => s.renameSession)
   const deleteSession = useChatStore((s) => s.deleteSession)
+  const toggleSessionStar = useChatStore((s) => s.toggleSessionStar)
   const setSessionModel = useChatStore((s) => s.setSessionModel)
   const appendUserMessage = useChatStore((s) => s.appendUserMessage)
   const appendMessage = useChatStore((s) => s.appendMessage)
@@ -1328,8 +1356,10 @@ export default function ChatView() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const throttledScroll = useRef<(() => void) | null>(null)
   const lastScrollSessionRef = useRef<string | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
+  const [atBottom, setAtBottom] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [deletingSession, setDeletingSession] = useState<ChatSession | null>(null)
   const [activeNavMsgId, setActiveNavMsgId] = useState<string | null>(null)
@@ -1814,42 +1844,51 @@ export default function ChatView() {
   }, [])
 
   // 自动滚动到底部
+  const lastContentRef = useRef<string>('')
   useLayoutEffect(() => {
     const container = messagesContainerRef.current
     if (!container || !activeSessionId) return
 
     const isSessionSwitch = lastScrollSessionRef.current !== activeSessionId
     if (isSessionSwitch) {
-      // 切换会话：无条件滚到底部，重置 autoScroll，用 rAF 在布局完成后二次确认
       lastScrollSessionRef.current = activeSessionId
       container.scrollTop = container.scrollHeight
       requestAnimationFrame(() => {
         container.scrollTop = container.scrollHeight
       })
       if (!autoScroll) setAutoScroll(true)
+      setAtBottom(true)
       return
     }
 
-    // 同一会话内：仅在 autoScroll 开启时跟随滚动
-    if (!autoScroll) return
+    // 仅在内容增长且 autoScroll 开启时跟随滚动
+    const currentContent = activeMessages[activeMessages.length - 1]?.content || ''
+    if (!autoScroll || currentContent === lastContentRef.current) return
+    lastContentRef.current = currentContent
     container.scrollTop = container.scrollHeight
-  }, [activeSessionId, activeMessages.length, activeMessages[activeMessages.length - 1]?.content, autoScroll])
+  }, [activeSessionId, activeMessages.length, autoScroll])
 
-  // 监听滚动：用户上滚则暂停自动滚动
-  const handleScroll = useCallback(() => {
+  // 节流版：滚动时更新 autoScroll 和导航状态（限制到 vsync 频率）
+  const handleScrollThrottled = useCallback(() => {
     const el = messagesContainerRef.current
     if (!el) return
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
-    setAutoScroll(atBottom)
-    // 导航栏：检测当前可见的用户消息
-    const userEls = el.querySelectorAll('.chat-msg-user[data-msg-id]')
-    const containerTop = el.scrollTop
-    let visible: string | null = null
-    userEls.forEach((node) => {
-      const top = (node as HTMLElement).offsetTop
-      if (top <= containerTop + 120) visible = (node as HTMLElement).dataset.msgId || null
-    })
-    if (visible) setActiveNavMsgId(visible)
+    if (!throttledScroll.current) {
+      throttledScroll.current = () => {
+        throttledScroll.current = null
+        const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+        setAtBottom(atBottom)
+        if (!atBottom) setAutoScroll(false)
+        const userEls = el.querySelectorAll('.chat-msg-user[data-msg-id]')
+        const containerTop = el.scrollTop
+        let visible: string | null = null
+        userEls.forEach((node) => {
+          const top = (node as HTMLElement).offsetTop
+          if (top <= containerTop + 120) visible = (node as HTMLElement).dataset.msgId || null
+        })
+        if (visible) setActiveNavMsgId(visible)
+      }
+      requestAnimationFrame(throttledScroll.current!)
+    }
   }, [])
 
   // 新建会话
@@ -2568,6 +2607,7 @@ ${msgsHtml}
           onDeleteRequest={(s) => setDeletingSession(s)}
           runningModels={runningModels}
           streamingSessionIds={Object.keys(streamingMap)}
+          onToggleStar={toggleSessionStar}
         />
       </div>
 
@@ -2669,7 +2709,7 @@ ${msgsHtml}
           </button>
         </div>
 
-        <div className="chat-messages" ref={messagesContainerRef} onScroll={handleScroll} onContextMenu={handleChatContextMenu}>
+        <div className="chat-messages" ref={messagesContainerRef} onScroll={handleScrollThrottled} onContextMenu={handleChatContextMenu}>
           {activeSession ? (
             activeMessages.length === 0 ? (
               <div className="chat-welcome">
@@ -2776,12 +2816,13 @@ ${msgsHtml}
             </div>
           )}
           <div ref={messagesEndRef} />
-          {!autoScroll && activeMessages.length > 0 && (
+          {!atBottom && activeMessages.length > 0 && (
             <button
               className="chat-scroll-bottom-btn"
               onClick={() => {
                 setAutoScroll(true)
-                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+                const c = messagesContainerRef.current
+                if (c) c.scrollTo({ top: c.scrollHeight, behavior: 'smooth' })
               }}
             >
               <ArrowDown size={16} />
