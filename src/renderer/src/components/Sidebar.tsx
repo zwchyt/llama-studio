@@ -153,6 +153,14 @@ export default function Sidebar() {
             <FolderOpen size={16} />
             打开 /models
           </button>
+          <button className="nav-item" onClick={() => window.api.openFolder(paths.chatImages)} title={paths.chatImages}>
+            <FolderOpen size={16} />
+            打开 /images
+          </button>
+          <button className="nav-item" onClick={() => window.api.openFolder(paths.chatPdfExports)} title={paths.chatPdfExports}>
+            <FolderOpen size={16} />
+            打开 /pdf_exports
+          </button>
         </div>
       )}
     </nav>

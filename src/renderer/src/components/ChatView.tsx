@@ -1392,6 +1392,10 @@ export default function ChatView() {
   const [previewUrls, setPreviewUrls] = useState<Map<number, string>>(new Map())
   // 拖拽上传：计数器防止嵌套元素 flicker
   const [dragOverCount, setDragOverCount] = useState(0)
+  // 右侧文件预览分屏
+  const [filePanelOpen, setFilePanelOpen] = useState(false)
+  const [filePreviewIndex, setFilePreviewIndex] = useState(0)
+  const [uploadedFileTexts, setUploadedFileTexts] = useState<Map<number, string>>(new Map())
 
   useEffect(() => {
     return () => {
@@ -1458,9 +1462,9 @@ export default function ChatView() {
     // 为图片生成预览 data URL
     for (let i = 0; i < files.length; i++) {
       const f = files[i]
+      const idx = startIdx + i
       if (f.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name)) {
         const reader = new FileReader()
-        const idx = startIdx + i
         reader.onload = () => {
           setPreviewUrls(prev => {
             const next = new Map(prev)
@@ -1469,6 +1473,17 @@ export default function ChatView() {
           })
         }
         reader.readAsDataURL(f)
+      } else {
+        // 文本文件读取内容用于右侧预览
+        const reader = new FileReader()
+        reader.onload = () => {
+          setUploadedFileTexts(prev => {
+            const next = new Map(prev)
+            next.set(idx, reader.result as string)
+            return next
+          })
+        }
+        reader.readAsText(f)
       }
     }
     // 清空 input 值，允许重复选同名文件
@@ -1482,7 +1497,14 @@ export default function ChatView() {
       next.delete(index)
       return next
     })
-  }, [])
+    setUploadedFileTexts(prev => {
+      const next = new Map(prev)
+      next.delete(index)
+      return next
+    })
+    // 如果所有文件都已移除，关闭预览面板
+    if (attachedFiles.length <= 1) setFilePanelOpen(false)
+  }, [attachedFiles.length])
 
   // ── 拖拽上传 ───────────────────────────────────────────
   const handleDragEnter = useCallback((e: React.DragEvent) => {
@@ -1515,9 +1537,9 @@ export default function ChatView() {
     // 为拖入的图片生成预览 URL
     for (let i = 0; i < files.length; i++) {
       const f = files[i]
+      const idx = startIdx + i
       if (f.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name)) {
         const reader = new FileReader()
-        const idx = startIdx + i
         reader.onload = () => {
           setPreviewUrls(prev => {
             const next = new Map(prev)
@@ -1526,6 +1548,17 @@ export default function ChatView() {
           })
         }
         reader.readAsDataURL(f)
+      } else {
+        // 文本文件读取内容用于右侧预览
+        const reader = new FileReader()
+        reader.onload = () => {
+          setUploadedFileTexts(prev => {
+            const next = new Map(prev)
+            next.set(idx, reader.result as string)
+            return next
+          })
+        }
+        reader.readAsText(f)
       }
     }
   }, [attachedFiles.length])
@@ -2619,6 +2652,7 @@ ${msgsHtml}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
+        <div className="chat-main-col">
         {/* 拖拽上传遮罩 */}
         {dragOverCount > 0 && (
           <div className="chat-drop-overlay">
@@ -2654,6 +2688,14 @@ ${msgsHtml}
                 <option key={m.id} value={m.id}>{m.name} (:{m.port})</option>
               ))}
             </select>
+          </div>
+          <div
+            className={`chat-auto-preview-toggle ${filePanelOpen ? 'on' : 'off'}`}
+            onClick={() => setFilePanelOpen(!filePanelOpen)}
+            title={filePanelOpen ? '关闭文件预览' : '打开文件预览'}
+          >
+            <Eye size={13} />
+            <span>预览</span>
           </div>
           {activeModel && (
             <button
@@ -2989,6 +3031,55 @@ ${msgsHtml}
             )}
           </div>
         </div>
+
+        </div>
+
+      {/* 右侧文件预览分屏面板 */}
+      {filePanelOpen && (
+        <div className="chat-file-panel">
+          <div className="chat-file-panel-header">
+            <FileText size={16} />
+            <span>文件预览</span>
+            <button
+              className="chat-file-panel-close"
+              onClick={() => setFilePanelOpen(false)}
+              title="关闭文件预览"
+            >
+              <X size={15} />
+            </button>
+          </div>
+          <div className="chat-file-tabs">
+            {attachedFiles.map((f, i) => (
+              <button
+                key={i}
+                className={`chat-file-tab${filePreviewIndex === i ? ' active' : ''}`}
+                onClick={() => setFilePreviewIndex(i)}
+              >
+                {f.name}
+              </button>
+            ))}
+          </div>
+          <div className="chat-file-content">
+            {attachedFiles.length > 0 && (() => {
+              const f = attachedFiles[filePreviewIndex]
+              const isImg = f.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name)
+              const imgUrl = previewUrls.get(filePreviewIndex)
+              const textContent = uploadedFileTexts.get(filePreviewIndex)
+              if (isImg && imgUrl) {
+                return <img src={imgUrl} alt={f.name} className="chat-file-preview-img" />
+              }
+              if (textContent != null) {
+                return <pre className="chat-file-preview-text">{textContent}</pre>
+              }
+              // 图片尚未加载完成的占位
+              if (isImg && !imgUrl) {
+                return <div className="chat-file-preview-loading">加载图片中…</div>
+              }
+              return <div className="chat-file-preview-loading">加载文件中…</div>
+            })()}
+          </div>
+        </div>
+      )}
 
       </div>
 

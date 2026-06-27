@@ -40,7 +40,7 @@ interface AppStore {
   activeBackend: BackendVersion | null
   commandsSchema: CommandsSchema | null
   releaseInfo: ReleaseInfo | null
-  paths: { models: string; templates: string; backend: string } | null
+  paths: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string } | null
   view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'piweb' | 'llama' | 'agents' | 'chat' | 'terminal'
   showCreateModal: boolean
   editingTemplate: Template | null

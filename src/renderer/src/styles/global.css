@@ -3653,10 +3653,47 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   min-height: 0;
   position: relative;
   background: var(--bg);
+}
+
+/* ── 主聊天区内列包裹层（与右侧文件面板分屏）── */
+.chat-main-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+/* ── 文件自动预览开关（header 中非按钮样式的点击反馈）── */
+.chat-auto-preview-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.chat-auto-preview-toggle.on {
+  background: var(--accent);
+  color: #fff;
+}
+.chat-auto-preview-toggle.off {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.chat-auto-preview-toggle:hover {
+  opacity: 0.8;
 }
 
 /* ── 拖拽上传遮罩层 ── */
@@ -5500,6 +5537,121 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 
 .chat-image-overlay-close:hover {
   background: rgba(255,255,255,0.3);
+}
+
+/* ── 右侧文件预览分屏面板 ── */
+.chat-file-panel {
+  width: 45%;
+  min-width: 300px;
+  max-width: 600px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+  animation: filePanelIn 0.2s ease;
+}
+
+@keyframes filePanelIn {
+  from { width: 0; min-width: 0; max-width: 0; opacity: 0; }
+  to { width: 45%; min-width: 300px; max-width: 600px; opacity: 1; }
+}
+
+.chat-file-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--bg);
+}
+
+.chat-file-panel-close {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.chat-file-panel-close:hover {
+  background: var(--hover-bg);
+  color: var(--text);
+}
+
+.chat-file-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  overflow-x: auto;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.chat-file-tab {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.chat-file-tab:hover {
+  background: var(--hover-bg);
+  color: var(--text);
+}
+.chat-file-tab.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.chat-file-content {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 16px;
+  min-height: 0;
+}
+
+.chat-file-preview-text {
+  margin: 0;
+  font-family: "Cascadia Code", "Fira Code", "Consolas", "SF Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text);
+}
+
+.chat-file-preview-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+.chat-file-preview-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 13px;
+  color: var(--text-muted);
 }
 
 /* ── 消息右键上下文菜单 ── */

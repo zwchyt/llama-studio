@@ -76,7 +76,7 @@ interface LlamaCppApi {
   }) => void) => void
   removeHfDownloadListener: () => void
   openFolder: (path: string) => Promise<void>
-  getPaths: () => Promise<{ models: string; templates: string; backend: string; chats: string }>
+  getPaths: () => Promise<{ models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string }>
   listExternalModelFolders: () => Promise<string[]>
   addExternalModelFolder: () => Promise<{ success: boolean; folders?: string[] }>
   removeExternalModelFolder: (folder: string) => Promise<{ success: boolean; folders: string[] }>

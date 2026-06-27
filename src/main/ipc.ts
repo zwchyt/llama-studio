@@ -1270,11 +1270,11 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('open-folder', async (_e, folderPath: string) => {
     const settings = await loadSettings()
-    const allowedBases = [MODELS_DIR, BACKEND_DIR, ...settings.externalModelFolders]
+    const allowedBases = [MODELS_DIR, BACKEND_DIR, CHATS_DIR, ...settings.externalModelFolders]
     if (!allowedBases.some(base => isSafePath(base, folderPath))) return
     shell.openPath(folderPath)
   })
-  ipcMain.handle('get-paths', () => ({ models: MODELS_DIR, templates: TEMPLATES_DIR, backend: BACKEND_DIR, chats: CHATS_DIR }))
+  ipcMain.handle('get-paths', () => ({ models: MODELS_DIR, templates: TEMPLATES_DIR, backend: BACKEND_DIR, chats: CHATS_DIR, chatImages: join(CHATS_DIR, 'images'), chatPdfExports: join(CHATS_DIR, 'pdf_exports') }))
   ipcMain.handle('open-external', (_e, url: string) => {
     try {
       const parsed = new URL(url)
@@ -2652,7 +2652,6 @@ export function registerIpcHandlers(): void {
       mkdirSync(chatDir, { recursive: true })
       const filePath = join(chatDir, `chat-${Date.now()}.pdf`)
       writeFileSync(filePath, pdfBuffer)
-      shell.openPath(filePath)
       return filePath
     } finally {
       if (!pdfWindow.isDestroyed()) pdfWindow.close()
@@ -2667,7 +2666,6 @@ export function registerIpcHandlers(): void {
     const buffer = Buffer.from(matches[1], 'base64')
     const filePath = join(chatDir, `chat-${Date.now()}.png`)
     writeFileSync(filePath, buffer)
-    shell.openPath(filePath)
     return filePath
   })
 }
