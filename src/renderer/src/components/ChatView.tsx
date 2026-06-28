@@ -24,8 +24,13 @@ import html2canvas from 'html2canvas'
 import type { ChatSession, ChatMessage, ChatParams, ToolCallInfo, Attachment } from '../../../shared/types'
 import { getToolDefinitions, executeToolCall } from '../utils/tools'
 import type { ToolDefinition } from '../utils/tools'
+import { getDocument } from 'pdfjs-dist'
+import mammoth from 'mammoth'
 import CodeBlock from './CodeBlock'
 import ConfirmModal from './ConfirmModal'
+
+// 导入 worker 模块使其注册 globalThis.pdfjsWorker，pdfjs 的 fake worker 回退自动使用它
+import 'pdfjs-dist/build/pdf.worker.js'
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;')
@@ -1396,6 +1401,12 @@ export default function ChatView() {
   const [filePanelOpen, setFilePanelOpen] = useState(false)
   const [filePreviewIndex, setFilePreviewIndex] = useState(0)
   const [uploadedFileTexts, setUploadedFileTexts] = useState<Map<number, string>>(new Map())
+  const [filePanelWidth, setFilePanelWidth] = useState(45) // 文件预览面板宽度（%）
+  // HTML 预览模式：false=源码, true=渲染
+  const [htmlRenderMode, setHtmlRenderMode] = useState(false)
+  // PDF 翻页
+  const [pdfPageNum, setPdfPageNum] = useState<Map<number, number>>(new Map())
+  const [pdfPagesCache, setPdfPagesCache] = useState<Map<number, string[]>>(new Map())
 
   useEffect(() => {
     return () => {
@@ -1459,39 +1470,19 @@ export default function ChatView() {
     if (files.length === 0) return
     const startIdx = attachedFiles.length
     setAttachedFiles(prev => [...prev, ...files])
-    // 为图片生成预览 data URL
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i]
-      const idx = startIdx + i
-      if (f.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name)) {
-        const reader = new FileReader()
-        reader.onload = () => {
-          setPreviewUrls(prev => {
-            const next = new Map(prev)
-            next.set(idx, reader.result as string)
-            return next
-          })
-        }
-        reader.readAsDataURL(f)
-      } else {
-        // 文本文件读取内容用于右侧预览
-        const reader = new FileReader()
-        reader.onload = () => {
-          setUploadedFileTexts(prev => {
-            const next = new Map(prev)
-            next.set(idx, reader.result as string)
-            return next
-          })
-        }
-        reader.readAsText(f)
-      }
-    }
+    loadFilePreviews(files, startIdx, setPreviewUrls, setUploadedFileTexts, setPdfPagesCache, setPdfPageNum)
     // 清空 input 值，允许重复选同名文件
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [attachedFiles.length])
 
   const removeAttachedFile = useCallback((index: number) => {
-    setAttachedFiles(prev => prev.filter((_, i) => i !== index))
+    setAttachedFiles(prev => {
+      const next = prev.filter((_, i) => i !== index)
+      // 删除后修正 filePreviewIndex，防止越界
+      setFilePreviewIndex(pi => Math.min(pi, Math.max(0, next.length - 1)))
+      if (next.length === 0) setFilePanelOpen(false)
+      return next
+    })
     setPreviewUrls(prev => {
       const next = new Map(prev)
       next.delete(index)
@@ -1502,9 +1493,17 @@ export default function ChatView() {
       next.delete(index)
       return next
     })
-    // 如果所有文件都已移除，关闭预览面板
-    if (attachedFiles.length <= 1) setFilePanelOpen(false)
-  }, [attachedFiles.length])
+    setPdfPagesCache(prev => {
+      const next = new Map(prev)
+      next.delete(index)
+      return next
+    })
+    setPdfPageNum(prev => {
+      const next = new Map(prev)
+      next.delete(index)
+      return next
+    })
+  }, [])
 
   // ── 拖拽上传 ───────────────────────────────────────────
   const handleDragEnter = useCallback((e: React.DragEvent) => {
@@ -1534,36 +1533,33 @@ export default function ChatView() {
 
     const startIdx = attachedFiles.length
     setAttachedFiles(prev => [...prev, ...files])
-    // 为拖入的图片生成预览 URL
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i]
-      const idx = startIdx + i
-      if (f.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name)) {
-        const reader = new FileReader()
-        reader.onload = () => {
-          setPreviewUrls(prev => {
-            const next = new Map(prev)
-            next.set(idx, reader.result as string)
-            return next
-          })
-        }
-        reader.readAsDataURL(f)
-      } else {
-        // 文本文件读取内容用于右侧预览
-        const reader = new FileReader()
-        reader.onload = () => {
-          setUploadedFileTexts(prev => {
-            const next = new Map(prev)
-            next.set(idx, reader.result as string)
-            return next
-          })
-        }
-        reader.readAsText(f)
-      }
-    }
+    loadFilePreviews(files, startIdx, setPreviewUrls, setUploadedFileTexts, setPdfPagesCache, setPdfPageNum)
   }, [attachedFiles.length])
 
-  // 读取文件内容（文本用 readAsText，图片转 base64）
+  // ── 文件预览面板宽度拖拽 ──────────────────────────────
+  const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const parent = (e.currentTarget.closest('.chat-main') as HTMLElement)
+    if (!parent) return
+    const rect = parent.getBoundingClientRect()
+    const parentW = rect.width
+    const parentLeft = rect.left
+    const onMove = (ev: MouseEvent) => {
+      const xInParent = ev.clientX - parentLeft
+      const newW = ((parentW - xInParent) / parentW) * 100
+      if (newW < 10) { setFilePanelOpen(false); cleanup(); return }
+      setFilePanelWidth(Math.min(Math.max(newW, 25), 70))
+    }
+    const onUp = () => cleanup()
+    const cleanup = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [])
+
+  // 读取文件内容（文本用 readAsText，图片转 base64，PDF/DOCX 提取文本）
   function readFileContent(file: File): Promise<{ text: string; isImage: boolean; dataUrl?: string }> {
     return new Promise((resolve, reject) => {
       const isImage = file.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(file.name)
@@ -1581,6 +1577,35 @@ export default function ChatView() {
         }
         reader.onerror = () => reject(reader.error)
         reader.readAsArrayBuffer(file)
+      } else if (isPdfFile(file.name)) {
+        // PDF：提取所有页面文本
+        (async () => {
+          try {
+            const buffer = await file.arrayBuffer()
+            const pdf = await getDocument({ data: buffer }).promise
+            const texts: string[] = []
+            for (let p = 1; p <= pdf.numPages; p++) {
+              const page = await pdf.getPage(p)
+              const tc = await page.getTextContent()
+              texts.push(tc.items.map((item: any) => item.str).join(' '))
+            }
+            resolve({ text: `[PDF: ${file.name}]\n${texts.join('\n---\n')}`, isImage: false })
+          } catch {
+            resolve({ text: `[PDF: ${file.name}]（文本提取失败）`, isImage: false })
+          }
+        })()
+      } else if (isDocxFile(file.name)) {
+        // DOCX：提取纯文本
+        file.arrayBuffer()
+          .then(async (buffer) => {
+            try {
+              const result = await mammoth.extractRawText({ arrayBuffer: buffer })
+              resolve({ text: `[DOCX: ${file.name}]\n${result.value}`, isImage: false })
+            } catch {
+              resolve({ text: `[DOCX: ${file.name}]（文本提取失败）`, isImage: false })
+            }
+          })
+          .catch(() => resolve({ text: `[DOCX: ${file.name}]（读取失败）`, isImage: false }))
       } else {
         const reader = new FileReader()
         reader.onload = () => resolve({ text: reader.result as string, isImage: false })
@@ -1608,6 +1633,138 @@ export default function ChatView() {
       img.onerror = () => resolve(dataUrl)
       img.src = dataUrl
     })
+  }
+
+  // ── 文件扩展名 → 语言/格式 映射（用于右侧预览面板渲染）────
+  const CODE_EXT_MAP: Record<string, string> = {
+    py: 'python', js: 'javascript', ts: 'typescript', rs: 'rust',
+    go: 'go', java: 'java', c: 'c', cpp: 'cpp', h: 'c', hpp: 'cpp',
+    cs: 'csharp', css: 'css', html: 'html', xml: 'xml',
+    json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'ini',
+    sh: 'bash', bash: 'bash', zsh: 'bash', ps1: 'powershell',
+    sql: 'sql', r: 'r', lua: 'lua', php: 'php', rb: 'ruby',
+    swift: 'swift', kt: 'kotlin', scala: 'scala',
+    tex: 'latex', svelte: 'svelte', vue: 'vue',
+    ini: 'ini', cfg: 'ini', conf: 'ini',
+    csv: 'plaintext', log: 'plaintext',
+    bat: 'dosbatch', cmake: 'cmake', dockerfile: 'dockerfile',
+    sqlite: 'sql', graphql: 'graphql', gql: 'graphql',
+  }
+  function getFileExtension(filename: string): string {
+    const i = filename.lastIndexOf('.')
+    return i > 0 ? filename.slice(i + 1).toLowerCase() : ''
+  }
+  function isMarkdownFile(filename: string): boolean {
+    const ext = getFileExtension(filename)
+    return ext === 'md' || ext === 'markdown'
+  }
+  function getCodeLanguage(filename: string): string | null {
+    const ext = getFileExtension(filename)
+    return CODE_EXT_MAP[ext] || null
+  }
+  function isPdfFile(filename: string): boolean {
+    return /\.pdf$/i.test(filename)
+  }
+  function isDocxFile(filename: string): boolean {
+    return /\.docx$/i.test(filename)
+  }
+  function isHtmlFile(filename: string): boolean {
+    return /\.html?$/i.test(filename)
+  }
+
+  // 通用文件预览加载（handleFileSelect / handleDrop 共用）
+  async function loadFilePreviews(
+    files: File[], startIdx: number,
+    _setPreviewUrls: typeof setPreviewUrls,
+    _setUploadedFileTexts: typeof setUploadedFileTexts,
+    _setPdfPagesCache: typeof setPdfPagesCache,
+    _setPdfPageNum: typeof setPdfPageNum
+  ): Promise<void> {
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]
+      const idx = startIdx + i
+      const isImage = f.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name)
+      if (isImage) {
+        const reader = new FileReader()
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = reject
+          reader.readAsDataURL(f)
+        })
+        _setPreviewUrls(prev => { const n = new Map(prev); n.set(idx, dataUrl); return n })
+      } else if (isPdfFile(f.name)) {
+        try {
+          const buffer = await f.arrayBuffer()
+          const pdf = await getDocument({ data: buffer }).promise
+          const numPages = pdf.numPages
+          // 渲染所有页面并缓存
+          const pages: string[] = []
+          for (let p = 1; p <= numPages; p++) {
+            const page = await pdf.getPage(p)
+            const scale = Math.min(1.5, 800 / Math.max(page.view[2], page.view[3]))
+            const vp = page.getViewport({ scale })
+            const canvas = document.createElement('canvas')
+            canvas.width = vp.width; canvas.height = vp.height
+            const ctx = canvas.getContext('2d')!
+            await page.render({ canvasContext: ctx, viewport: vp }).promise
+            pages.push(canvas.toDataURL('image/jpeg', 0.85))
+          }
+          // 第一页用于 previewUrls（兼容已有逻辑）
+          _setPreviewUrls(prev => { const n = new Map(prev); n.set(idx, pages[0]); return n })
+          // 所有页缓存
+          _setPdfPagesCache(prev => { const n = new Map(prev); n.set(idx, pages); return n })
+          // 页码状态
+          _setPdfPageNum(prev => { const n = new Map(prev); n.set(idx, 1); return n })
+          // 提取文本（仅第一页，用于发送时拼入消息）
+          const page1 = await pdf.getPage(1)
+          const tc = await page1.getTextContent()
+          const text = tc.items.map((item: any) => item.str).join(' ')
+          _setUploadedFileTexts(prev => { const n = new Map(prev); n.set(idx, text); return n })
+        } catch (e) {
+          _setUploadedFileTexts(prev => { const n = new Map(prev); n.set(idx, `[PDF 预览失败: ${e}]`); return n })
+        }
+      } else if (isDocxFile(f.name)) {
+        try {
+          const buffer = await f.arrayBuffer()
+          const result = await mammoth.convertToHtml({ arrayBuffer: buffer })
+          _setUploadedFileTexts(prev => { const n = new Map(prev); n.set(idx, result.value); return n })
+        } catch (e) {
+          _setUploadedFileTexts(prev => { const n = new Map(prev); n.set(idx, `[DOCX 预览失败]`); return n })
+        }
+      } else {
+        // 普通文本文件
+        const reader = new FileReader()
+        const text = await new Promise<string>((resolve, reject) => {
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = reject
+          reader.readAsText(f)
+        })
+        _setUploadedFileTexts(prev => { const n = new Map(prev); n.set(idx, text); return n })
+      }
+    }
+  }
+
+  // ── 文件类型图标（用于预览标签页）────
+  function getFileIcon(filename: string): string {
+    const ext = getFileExtension(filename)
+    if (!ext) return '📄'
+    const iconMap: Record<string, string> = {
+      md: '📝', markdown: '📝',
+      pdf: '📄',
+      docx: '📃',
+      py: '🐍', js: '🟨', ts: '🔷', rs: '🦀', go: '🔵',
+      java: '☕', c: '⚙️', cpp: '⚙️', h: '⚙️', hpp: '⚙️',
+      cs: '🔷', css: '🎨', html: '🌐', xml: '📋',
+      json: '📋', yaml: '📋', yml: '📋', toml: '⚙️',
+      sh: '⚡', bash: '⚡', zsh: '⚡', ps1: '⚡',
+      sql: '🗃️', csv: '📊',
+      swift: '🍎', kt: '🟣', scala: '🔥',
+      r: '📉', lua: '🌙', php: '🐘', rb: '💎',
+      tex: '📐', svelte: '🔥', vue: '💚',
+      bat: '⚡', cmake: '⚙️', dockerfile: '🐳',
+      graphql: '◈', gql: '◈',
+    }
+    return iconMap[ext] || (ext.length <= 4 ? '📄' : '📄')
   }
 
   // 预处理：代码内容自动缩进（仅用于预览，发送时仍用原始 input）
@@ -2072,6 +2229,8 @@ ${msgsHtml}
 	    const pendingFiles = [...attachedFiles]
 			    setAttachedFiles([])
 			    setPreviewUrls(new Map())
+			    setPdfPagesCache(new Map())
+			    setPdfPageNum(new Map())
 
 			    const attachments: Attachment[] = []
 			    const fullSizeMap: string[] = []
@@ -2689,14 +2848,6 @@ ${msgsHtml}
               ))}
             </select>
           </div>
-          <div
-            className={`chat-auto-preview-toggle ${filePanelOpen ? 'on' : 'off'}`}
-            onClick={() => setFilePanelOpen(!filePanelOpen)}
-            title={filePanelOpen ? '关闭文件预览' : '打开文件预览'}
-          >
-            <Eye size={13} />
-            <span>预览</span>
-          </div>
           {activeModel && (
             <button
               className="chat-settings-btn chat-stop-model-btn"
@@ -2749,6 +2900,13 @@ ${msgsHtml}
             title="导出为 PDF"
           >
             <FileText size={16} />
+          </button>
+          <button
+            className={`chat-settings-btn ${filePanelOpen ? 'preview-active' : ''}`}
+            onClick={() => setFilePanelOpen(v => !v)}
+            title={filePanelOpen ? '关闭文件预览' : '打开文件预览'}
+          >
+            <Eye size={14} />
           </button>
         </div>
 
@@ -3036,7 +3194,9 @@ ${msgsHtml}
 
       {/* 右侧文件预览分屏面板 */}
       {filePanelOpen && (
-        <div className="chat-file-panel">
+        <>
+          <div className="chat-file-divider" onMouseDown={handleDividerMouseDown} />
+          <div className="chat-file-panel" style={{ width: filePanelWidth + '%', maxWidth: filePanelWidth + '%' }}>
           <div className="chat-file-panel-header">
             <FileText size={16} />
             <span>文件预览</span>
@@ -3053,22 +3213,135 @@ ${msgsHtml}
               <button
                 key={i}
                 className={`chat-file-tab${filePreviewIndex === i ? ' active' : ''}`}
-                onClick={() => setFilePreviewIndex(i)}
+                onClick={() => { setFilePreviewIndex(i); setHtmlRenderMode(false) }}
               >
-                {f.name}
+                <span className="chat-file-tab-icon">{getFileIcon(f.name)}</span>
+                <span className="chat-file-tab-name">{f.name}</span>
               </button>
             ))}
           </div>
           <div className="chat-file-content">
             {attachedFiles.length > 0 && (() => {
               const f = attachedFiles[filePreviewIndex]
+              if (!f) return <div className="chat-file-preview-loading">预览不可用</div>
               const isImg = f.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name)
               const imgUrl = previewUrls.get(filePreviewIndex)
               const textContent = uploadedFileTexts.get(filePreviewIndex)
               if (isImg && imgUrl) {
                 return <img src={imgUrl} alt={f.name} className="chat-file-preview-img" />
               }
+              // PDF 渲染：支持多页翻页
+              if (isPdfFile(f.name)) {
+                const pages = pdfPagesCache.get(filePreviewIndex)
+                const pageIdx = pdfPageNum.get(filePreviewIndex) || 1
+                const totalPages = pages?.length || 0
+                if (pages && pages.length > 0) {
+                  const pageDataUrl = pages[pageIdx - 1]
+                  return (
+                    <div className="chat-file-preview-pdf">
+                      <img src={pageDataUrl} alt={`${f.name} 第${pageIdx}页`} className="chat-file-preview-pdf-img" />
+                      {totalPages > 1 ? (
+                        <div className="chat-file-preview-pdf-nav">
+                          <button
+                            className="chat-file-preview-pdf-nav-btn"
+                            disabled={pageIdx <= 1}
+                            onClick={() => {
+                              setPdfPageNum(prev => {
+                                const n = new Map(prev)
+                                n.set(filePreviewIndex, Math.max(1, pageIdx - 1))
+                                return n
+                              })
+                            }}
+                          >‹ 上一页</button>
+                          <span className="chat-file-preview-pdf-page">{pageIdx} / {totalPages}</span>
+                          <button
+                            className="chat-file-preview-pdf-nav-btn"
+                            disabled={pageIdx >= totalPages}
+                            onClick={() => {
+                              setPdfPageNum(prev => {
+                                const n = new Map(prev)
+                                n.set(filePreviewIndex, Math.min(totalPages, pageIdx + 1))
+                                return n
+                              })
+                            }}
+                          >下一页 ›</button>
+                        </div>
+                      ) : (
+                        <div className="chat-file-preview-file-info">📄 {f.name}</div>
+                      )}
+                    </div>
+                  )
+                }
+                if (textContent && textContent.startsWith('[PDF 预览失败')) {
+                  return <div className="chat-file-preview-loading">{textContent}</div>
+                }
+                return <div className="chat-file-preview-loading">加载 PDF 中…</div>
+              }
+              // DOCX 渲染：mammoth 转换为 HTML
+              if (isDocxFile(f.name)) {
+                if (textContent != null) {
+                  return (
+                    <div
+                      className="chat-file-preview-docx"
+                      dangerouslySetInnerHTML={{ __html: textContent }}
+                    />
+                  )
+                }
+                return <div className="chat-file-preview-loading">加载 DOCX 中…</div>
+              }
               if (textContent != null) {
+                // HTML 文件：可选渲染模式
+                if (isHtmlFile(f.name)) {
+                  return (
+                    <div className="chat-file-preview-html">
+                      <div className="chat-file-preview-html-toolbar">
+                        <button
+                          className={`chat-file-preview-html-btn${!htmlRenderMode ? ' active' : ''}`}
+                          onClick={() => setHtmlRenderMode(false)}
+                        >
+                          &lt;/&gt; 源码
+                        </button>
+                        <button
+                          className={`chat-file-preview-html-btn${htmlRenderMode ? ' active' : ''}`}
+                          onClick={() => setHtmlRenderMode(true)}
+                        >
+                          👁 预览
+                        </button>
+                      </div>
+                      {htmlRenderMode ? (
+                        <iframe
+                          className="chat-file-preview-iframe"
+                          sandbox=""
+                          srcDoc={textContent}
+                          title={f.name}
+                        />
+                      ) : (
+                        <div className="chat-code-scroll-wrap">
+                          <CodeBlock language="html" value={textContent} showLineNumbers />
+                        </div>
+                      )}
+                    </div>
+                  )
+                }
+                // Markdown 文件 → ReactMarkdown 渲染
+                if (isMarkdownFile(f.name)) {
+                  return (
+                    <div className="chat-file-preview-markdown">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm, remarkMath]}
+                        rehypePlugins={[rehypeKatex]}
+                      >
+                        {textContent}
+                      </ReactMarkdown>
+                    </div>
+                  )
+                }
+                // 代码文件 → CodeBlock 高亮渲染
+                const lang = getCodeLanguage(f.name)
+                if (lang) {
+                  return <CodeBlock language={lang} value={textContent} showLineNumbers />
+                }
+                // 纯文本文件 → <pre> 渲染
                 return <pre className="chat-file-preview-text">{textContent}</pre>
               }
               // 图片尚未加载完成的占位
@@ -3079,8 +3352,7 @@ ${msgsHtml}
             })()}
           </div>
         </div>
-      )}
-
+      </>)}
       </div>
 
       {/* 参数/系统提示词设置卡片 */}

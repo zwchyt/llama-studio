@@ -3670,32 +3670,6 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 /* ── 文件自动预览开关（header 中非按钮样式的点击反馈）── */
-.chat-auto-preview-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
-  font-size: 12px;
-  border-radius: 12px;
-  cursor: pointer;
-  user-select: none;
-  transition: all 0.15s ease;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.chat-auto-preview-toggle.on {
-  background: var(--accent);
-  color: #fff;
-}
-.chat-auto-preview-toggle.off {
-  background: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--border);
-}
-.chat-auto-preview-toggle:hover {
-  opacity: 0.8;
-}
-
 /* ── 拖拽上传遮罩层 ── */
 .chat-drop-overlay {
   position: absolute;
@@ -3843,6 +3817,11 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 .chat-settings-btn:hover {
   background: var(--border);
   color: var(--text);
+}
+.chat-settings-btn.preview-active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
 }
 .chat-stop-model-btn {
   margin-right: 4px;
@@ -4703,6 +4682,49 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   padding: 0;
 }
 
+/* 代码块 - 行号 */
+.chat-code-body {
+  display: flex;
+  overflow: hidden;
+}
+.chat-code-body.with-lines {
+  flex-direction: row;
+  min-height: 0;
+}
+.chat-code-body.with-lines .chat-code-pre {
+  flex: 1;
+  overflow: auto;
+  padding-left: 0;
+}
+.chat-code-line-nums {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 12px 0 12px 10px;
+  min-width: 36px;
+  text-align: right;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  opacity: 0.5;
+  user-select: none;
+  border-right: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.chat-code-line-nums span {
+  display: block;
+}
+.chat-code-line-count {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-weight: 400;
+  opacity: 0.6;
+}
+
 /* ── 输入框 ── */
 
 /* 输入代码预览面板 */
@@ -5541,9 +5563,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 
 /* ── 右侧文件预览分屏面板 ── */
 .chat-file-panel {
-  width: 45%;
   min-width: 300px;
-  max-width: 600px;
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -5553,8 +5573,47 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 @keyframes filePanelIn {
-  from { width: 0; min-width: 0; max-width: 0; opacity: 0; }
-  to { width: 45%; min-width: 300px; max-width: 600px; opacity: 1; }
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ── 文件预览面板拖拽分隔条 ── */
+.chat-file-divider {
+  width: 5px;
+  cursor: col-resize;
+  flex-shrink: 0;
+  background: transparent;
+  position: relative;
+  z-index: 10;
+  transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* 拖拽手柄：三个小圆点 */
+.chat-file-divider::after {
+  content: '';
+  display: block;
+  width: 3px;
+  height: 24px;
+  background: var(--border);
+  border-radius: 2px;
+  box-shadow:
+    0 -7px 0 var(--border),
+    0 7px 0 var(--border);
+  transition: background 0.15s, box-shadow 0.15s;
+  pointer-events: none;
+}
+.chat-file-divider:hover::after,
+.chat-file-divider:active::after {
+  background: var(--accent);
+  box-shadow:
+    0 -7px 0 var(--accent),
+    0 7px 0 var(--accent);
+}
+.chat-file-divider:hover,
+.chat-file-divider:active {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
 .chat-file-panel-header {
@@ -5600,6 +5659,9 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 .chat-file-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 4px 10px;
   font-size: 12px;
   border: 1px solid var(--border);
@@ -5619,6 +5681,17 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   background: var(--accent);
   color: #fff;
   border-color: var(--accent);
+}
+.chat-file-tab-icon {
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.chat-file-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100px;
 }
 
 .chat-file-content {
@@ -5652,6 +5725,235 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   height: 100%;
   font-size: 13px;
   color: var(--text-muted);
+}
+
+/* 文件预览 - Markdown 渲染 */
+.chat-file-preview-markdown {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+}
+.chat-file-preview-markdown h1,
+.chat-file-preview-markdown h2,
+.chat-file-preview-markdown h3,
+.chat-file-preview-markdown h4 {
+  margin: 1em 0 0.5em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.chat-file-preview-markdown h1 { font-size: 1.5em; }
+.chat-file-preview-markdown h2 { font-size: 1.3em; }
+.chat-file-preview-markdown h3 { font-size: 1.15em; }
+.chat-file-preview-markdown p { margin: 0.5em 0; }
+.chat-file-preview-markdown ul,
+.chat-file-preview-markdown ol { margin: 0.5em 0; padding-left: 1.5em; }
+.chat-file-preview-markdown li { margin: 0.2em 0; }
+.chat-file-preview-markdown blockquote {
+  margin: 0.5em 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--accent);
+  color: var(--text-secondary);
+  background: var(--bg);
+  border-radius: 0 4px 4px 0;
+}
+.chat-file-preview-markdown code {
+  font-family: "Cascadia Code", "Fira Code", "Consolas", "SF Mono", monospace;
+  font-size: 0.875em;
+  padding: 1px 5px;
+  background: var(--bg);
+  border-radius: 3px;
+}
+.chat-file-preview-markdown pre {
+  background: var(--bg) !important;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  overflow-x: auto;
+}
+.chat-file-preview-markdown pre code {
+  background: none;
+  padding: 0;
+  font-size: 13px;
+}
+.chat-file-preview-markdown table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 13px;
+}
+.chat-file-preview-markdown th,
+.chat-file-preview-markdown td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.chat-file-preview-markdown th {
+  background: var(--bg);
+  font-weight: 600;
+}
+.chat-file-preview-markdown hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1em 0;
+}
+.chat-file-preview-markdown img {
+  max-width: 100%;
+  border-radius: 4px;
+}
+.chat-file-preview-markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* 文件预览 - PDF 渲染 */
+.chat-file-preview-pdf {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.chat-file-preview-pdf-img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.chat-file-preview-file-info {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 12px;
+  background: var(--bg);
+  border-radius: 4px;
+}
+
+/* PDF 翻页导航 */
+.chat-file-preview-pdf-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.chat-file-preview-pdf-nav-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.chat-file-preview-pdf-nav-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.chat-file-preview-pdf-nav-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.chat-file-preview-pdf-page {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 50px;
+  text-align: center;
+}
+
+/* 文件预览 - DOCX 渲染 */
+.chat-file-preview-docx {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+}
+.chat-file-preview-docx h1,
+.chat-file-preview-docx h2,
+.chat-file-preview-docx h3,
+.chat-file-preview-docx h4 {
+  margin: 1em 0 0.5em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.chat-file-preview-docx h1 { font-size: 1.5em; }
+.chat-file-preview-docx h2 { font-size: 1.3em; }
+.chat-file-preview-docx h3 { font-size: 1.15em; }
+.chat-file-preview-docx p { margin: 0.5em 0; }
+.chat-file-preview-docx ul,
+.chat-file-preview-docx ol { margin: 0.5em 0; padding-left: 1.5em; }
+.chat-file-preview-docx li { margin: 0.2em 0; }
+.chat-file-preview-docx blockquote {
+  margin: 0.5em 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--accent);
+  color: var(--text-secondary);
+  background: var(--bg);
+  border-radius: 0 4px 4px 0;
+}
+.chat-file-preview-docx table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 13px;
+}
+.chat-file-preview-docx th,
+.chat-file-preview-docx td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.chat-file-preview-docx th {
+  background: var(--bg);
+  font-weight: 600;
+}
+.chat-file-preview-docx img {
+  max-width: 100%;
+  border-radius: 4px;
+}
+
+/* 文件预览 - HTML 渲染 */
+.chat-file-preview-html {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 8px;
+}
+.chat-file-preview-html-toolbar {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.chat-code-scroll-wrap {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+.chat-file-preview-html-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.chat-file-preview-html-btn:hover {
+  background: var(--hover-bg);
+}
+.chat-file-preview-html-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.chat-file-preview-iframe {
+  flex: 1;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+  min-height: 200px;
 }
 
 /* ── 消息右键上下文菜单 ── */

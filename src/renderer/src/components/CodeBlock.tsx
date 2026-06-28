@@ -9,9 +9,10 @@ import { Check, Copy } from 'lucide-react'
 interface CodeBlockProps {
   language: string
   value: string
+  showLineNumbers?: boolean
 }
 
-export default function CodeBlock({ language, value }: CodeBlockProps) {
+export default function CodeBlock({ language, value, showLineNumbers }: CodeBlockProps) {
   const codeRef = useRef<HTMLElement>(null)
   const [copied, setCopied] = useState(false)
 
@@ -38,19 +39,30 @@ export default function CodeBlock({ language, value }: CodeBlockProps) {
   }
 
   const langLabel = language || 'text'
+  const lineCount = value.split('\n').length
 
   return (
     <div className="chat-code-block">
       <div className="chat-code-header">
         <span className="chat-code-lang">{langLabel}</span>
+        {showLineNumbers && <span className="chat-code-line-count">{lineCount} 行</span>}
         <button className="chat-code-copy" onClick={handleCopy} title="复制代码">
           {copied ? <Check size={12} /> : <Copy size={12} />}
           {copied ? '已复制' : '复制'}
         </button>
       </div>
-      <pre className="chat-code-pre">
-        <code ref={codeRef} className={`hljs language-${langLabel}`} />
-      </pre>
+      <div className={`chat-code-body ${showLineNumbers ? 'with-lines' : ''}`}>
+        {showLineNumbers && (
+          <pre className="chat-code-line-nums" aria-hidden="true">
+            {Array.from({ length: lineCount }, (_, i) => (
+              <span key={i}>{i + 1}</span>
+            ))}
+          </pre>
+        )}
+        <pre className="chat-code-pre">
+          <code ref={codeRef} className={`hljs language-${langLabel}`} />
+        </pre>
+      </div>
     </div>
   )
 }
