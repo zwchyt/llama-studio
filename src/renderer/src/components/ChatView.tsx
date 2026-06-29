@@ -129,13 +129,11 @@ const TOOL_LABELS: Record<string, string> = {
 }
 const TOOL_ORDER = ['get_datetime', 'web_search', 'fetch_webpage']
 
-function ToolToggleCard({ config, anchorRect, onClose, onChange, onMouseEnter, onMouseLeave }: {
+function ToolToggleCard({ config, anchorRect, onClose, onChange }: {
   config: { enabled: boolean; tools: Record<string, boolean> }
   anchorRect: DOMRect | null
   onClose: () => void
   onChange: (config: { enabled: boolean; tools: Record<string, boolean> }) => void
-  onMouseEnter?: () => void
-  onMouseLeave?: () => void
 }) {
   const cardRef = useRef<HTMLDivElement>(null)
 
@@ -172,7 +170,7 @@ function ToolToggleCard({ config, anchorRect, onClose, onChange, onMouseEnter, o
   const enabledCount = TOOL_ORDER.filter(k => config.tools[k]).length
 
   return (
-    <div className="chat-tools-card" ref={cardRef} style={style} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+    <div className="chat-tools-card" ref={cardRef} style={style}>
       <div className="chat-tools-card-header">
         <span className="chat-tools-card-title">工具调用</span>
       </div>
@@ -1031,14 +1029,12 @@ const PARAM_CONFIG: Array<{
   { key: 'repeat_penalty', label: 'Repeat Penalty', min: 0, max: 2, step: 0.1, defaultVal: DEFAULT_PARAMS.repeat_penalty ?? 1.1 },
 ]
 
-function ChatSettingsCard({ session, anchorRect, onClose, onSetSystemPrompt, onSetParams, onMouseEnter, onMouseLeave }: {
+function ChatSettingsCard({ session, anchorRect, onClose, onSetSystemPrompt, onSetParams }: {
   session: ChatSession | null
   anchorRect: DOMRect | null
   onClose: () => void
   onSetSystemPrompt: (prompt: string) => void
   onSetParams: (params: Partial<ChatParams>) => void
-  onMouseEnter?: () => void
-  onMouseLeave?: () => void
 }) {
   const [sysPrompt, setSysPrompt] = useState(session?.systemPrompt || '')
   const [params, setLocalParams] = useState<ChatParams>(session ? { ...session.params } : { ...DEFAULT_PARAMS })
@@ -1101,7 +1097,7 @@ function ChatSettingsCard({ session, anchorRect, onClose, onSetSystemPrompt, onS
   }
 
   return (
-    <div className="chat-settings-card" ref={cardRef} style={style} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+    <div className="chat-settings-card" ref={cardRef} style={style}>
       {!session ? (
         <div className="chat-settings-empty">
           <SlidersHorizontal size={24} strokeWidth={1.2} style={{ opacity: 0.3 }} />
@@ -1374,12 +1370,10 @@ export default function ChatView() {
   const [showSettings, setShowSettings] = useState(false)
   const settingsBtnRef = useRef<HTMLButtonElement>(null)
   const [settingsAnchor, setSettingsAnchor] = useState<DOMRect | null>(null)
-  const settingsHoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
   // 工具开关面板
   const [showTools, setShowTools] = useState(false)
   const toolsBtnRef = useRef<HTMLButtonElement>(null)
   const [toolsAnchor, setToolsAnchor] = useState<DOMRect | null>(null)
-  const toolsHoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
   const toolConfig = useStore(s => s.toolConfig)
   const setToolConfig = useStore(s => s.setToolConfig)
   const { speakingId, speak, stop: stopTts } = useTts()
@@ -1408,61 +1402,7 @@ export default function ChatView() {
   const [pdfPageNum, setPdfPageNum] = useState<Map<number, number>>(new Map())
   const [pdfPagesCache, setPdfPagesCache] = useState<Map<number, string[]>>(new Map())
 
-  useEffect(() => {
-    return () => {
-      if (settingsHoverTimeoutRef.current) clearTimeout(settingsHoverTimeoutRef.current)
-      if (toolsHoverTimeoutRef.current) clearTimeout(toolsHoverTimeoutRef.current)
-    }
-  }, [])
 
-  function handleSettingsEnter(): void {
-    if (settingsHoverTimeoutRef.current) clearTimeout(settingsHoverTimeoutRef.current)
-    if (settingsBtnRef.current) {
-      setSettingsAnchor(settingsBtnRef.current.getBoundingClientRect())
-    }
-    setShowSettings(true)
-  }
-
-  function handleSettingsLeave(): void {
-    settingsHoverTimeoutRef.current = setTimeout(() => {
-      setShowSettings(false)
-    }, 300)
-  }
-
-  function handleSettingsCardEnter(): void {
-    if (settingsHoverTimeoutRef.current) clearTimeout(settingsHoverTimeoutRef.current)
-  }
-
-  function handleSettingsCardLeave(): void {
-    settingsHoverTimeoutRef.current = setTimeout(() => {
-      setShowSettings(false)
-    }, 300)
-  }
-
-  // ── 工具开关悬停处理 ──────────────────────────────────
-  function handleToolsEnter(): void {
-    if (toolsHoverTimeoutRef.current) clearTimeout(toolsHoverTimeoutRef.current)
-    if (toolsBtnRef.current) {
-      setToolsAnchor(toolsBtnRef.current.getBoundingClientRect())
-    }
-    setShowTools(true)
-  }
-
-  function handleToolsLeave(): void {
-    toolsHoverTimeoutRef.current = setTimeout(() => {
-      setShowTools(false)
-    }, 300)
-  }
-
-  function handleToolsCardEnter(): void {
-    if (toolsHoverTimeoutRef.current) clearTimeout(toolsHoverTimeoutRef.current)
-  }
-
-  function handleToolsCardLeave(): void {
-    toolsHoverTimeoutRef.current = setTimeout(() => {
-      setShowTools(false)
-    }, 300)
-  }
 
   // ── 文件上传 ───────────────────────────────────────────
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2866,8 +2806,6 @@ ${msgsHtml}
               }
               setShowSettings((v) => !v)
             }}
-            onMouseEnter={handleSettingsEnter}
-            onMouseLeave={handleSettingsLeave}
             title="会话参数"
           >
             <SlidersHorizontal size={16} />
@@ -2881,8 +2819,6 @@ ${msgsHtml}
               }
               setShowTools((v) => !v)
             }}
-            onMouseEnter={handleToolsEnter}
-            onMouseLeave={handleToolsLeave}
             title={toolConfig.enabled ? '工具调用已开启' : '工具调用已关闭'}
           >
             <Wrench size={16} />
@@ -3363,8 +3299,6 @@ ${msgsHtml}
           onClose={() => setShowSettings(false)}
           onSetSystemPrompt={(prompt) => activeSession && setSystemPrompt(activeSession.id, prompt)}
           onSetParams={(params) => activeSession && setParams(activeSession.id, params)}
-          onMouseEnter={handleSettingsCardEnter}
-          onMouseLeave={handleSettingsCardLeave}
         />
       )}
 
@@ -3374,8 +3308,6 @@ ${msgsHtml}
           anchorRect={toolsAnchor}
           onClose={() => setShowTools(false)}
           onChange={setToolConfig}
-          onMouseEnter={handleToolsCardEnter}
-          onMouseLeave={handleToolsCardLeave}
         />
       )}
 
