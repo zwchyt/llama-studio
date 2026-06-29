@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2 } from 'lucide-react'
+import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown } from 'lucide-react'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import CommandsEditor from './CommandsEditor'
@@ -20,8 +20,8 @@ function getNotifPref(): 'banner' | 'manual' {
 export default function SettingsView() {
 	  const { backends, activeBackend, setActiveBackend, setCommandsSchema, setBackends,
 	    releaseInfo, checkingUpdate, downloadProgress, setDownloadProgress, setCheckingUpdate, setReleaseInfo,
-	    setModels, soundEnabled, setSoundEnabled, chatSidebarCollapsed, setChatSidebarCollapsed } = useStore(
-	    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, setModels: s.setModels, soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, chatSidebarCollapsed: s.chatSidebarCollapsed, setChatSidebarCollapsed: s.setChatSidebarCollapsed }),
+	    setModels, setImageModels, soundEnabled, setSoundEnabled, chatSidebarCollapsed, setChatSidebarCollapsed } = useStore(
+	    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, setModels: s.setModels, setImageModels: s.setImageModels, soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, chatSidebarCollapsed: s.chatSidebarCollapsed, setChatSidebarCollapsed: s.setChatSidebarCollapsed }),
     shallow
   )
   const [downloading, setDownloading] = useState(false)
@@ -29,6 +29,7 @@ export default function SettingsView() {
   const [expandedEditor, setExpandedEditor] = useState<string | null>(null)
   const [notifPref, setNotifPref] = useState<'banner' | 'manual'>(getNotifPref())
   const [extFolders, setExtFolders] = useState<string[]>([])
+  const [imgFolders, setImgFolders] = useState<string[]>([])
   const [metricsPolling, setMetricsPolling] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
@@ -40,6 +41,7 @@ export default function SettingsView() {
 
   useEffect(() => {
     window.api.listExternalModelFolders().then(setExtFolders).catch((e) => console.error('[listExternalModelFolders]', e))
+    window.api.listImageModelFolders().then(setImgFolders).catch((e) => console.error('[listImageModelFolders]', e))
     window.api.getMetricsPolling().then(setMetricsPolling).catch((e) => console.error('[getMetricsPolling]', e))
   }, [])
 
@@ -56,6 +58,21 @@ export default function SettingsView() {
     if (res && res.folders) {
       setExtFolders(res.folders)
       await refreshModels()
+    }
+  }
+  async function refreshImageModels() {
+    const m = await safeCall(() => window.api.listImageModelsRefresh(), '刷新图片模型列表失败')
+    if (m) setImageModels(m)
+  }
+  async function handleAddImgFolder() {
+    const res = await safeCall(() => window.api.addImageModelFolder(), '添加图片模型文件夹失败')
+    if (res && res.success && res.folders) { setImgFolders(res.folders); await refreshImageModels() }
+  }
+  async function handleRemoveImgFolder(folder: string) {
+    const res = await safeCall(() => window.api.removeImageModelFolder(folder), '移除图片模型文件夹失败')
+    if (res && res.folders) {
+      setImgFolders(res.folders)
+      await refreshImageModels()
     }
   }
 
@@ -228,6 +245,33 @@ export default function SettingsView() {
             </div>
           )}
           <button className="btn btn-secondary btn-sm" onClick={handleAddExtFolder}>
+            <FolderPlus size={13} /> 添加文件夹
+          </button>
+        </div>
+      </div>
+
+      { }
+      <div className="settings-section">
+        <div className="settings-section-title"><ImageDown /> 图片模型文件夹</div>
+        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            添加存放多模态投影仪文件（如 mmproj*.gguf）的文件夹。这些文件将作为图片模型出现在模板的 --mmproj 参数下拉中。
+          </p>
+          {imgFolders.length === 0 ? (
+            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未配置图片模型文件夹。</div>
+          ) : (
+            <div className="flex flex-col gap-2" style={{ width: '100%' }}>
+              {imgFolders.map(f => (
+                <div key={f} className="settings-row" style={{ borderBottom: 'none', padding: '6px 0' }}>
+                  <div className="settings-row-sub mono" style={{ flex: 1, wordBreak: 'break-all' }}>{f}</div>
+                  <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleRemoveImgFolder(f)} title="移除文件夹">
+                    <Trash size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <button className="btn btn-secondary btn-sm" onClick={handleAddImgFolder}>
             <FolderPlus size={13} /> 添加文件夹
           </button>
         </div>

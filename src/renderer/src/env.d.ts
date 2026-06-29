@@ -80,6 +80,12 @@ interface LlamaCppApi {
   listExternalModelFolders: () => Promise<string[]>
   addExternalModelFolder: () => Promise<{ success: boolean; folders?: string[] }>
   removeExternalModelFolder: (folder: string) => Promise<{ success: boolean; folders: string[] }>
+  // ── 图片模型 ──
+  listImageModels: () => Promise<ModelFileInfo[]>
+  listImageModelsRefresh: () => Promise<ModelFileInfo[]>
+  listImageModelFolders: () => Promise<string[]>
+  addImageModelFolder: () => Promise<{ success: boolean; folders?: string[] }>
+  removeImageModelFolder: (folder: string) => Promise<{ success: boolean; folders: string[] }>
   openExternal: (url: string) => Promise<void>
   startPiWeb: () => Promise<{ success: boolean; url: string; error?: string }>
   stopPiWeb: () => Promise<void>

@@ -4348,6 +4348,8 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   color: #fff;
   background: #1c4d0d;
   word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
   padding: 10px 14px;
   border-radius: var(--radius) var(--radius) 4px var(--radius);
   max-width: 80%;
@@ -4359,6 +4361,8 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 .user-text {
   white-space: pre-wrap;
   word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 /* 用户气泡内代码块视觉适配 */
@@ -4619,6 +4623,8 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   padding: 1.5px 5px;
   border-radius: 4px;
   color: var(--code-keyword);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* ── 代码块 ── */

@@ -37,6 +37,7 @@ interface AppStore {
   cards: CardState[]
   backends: BackendVersion[]
   models: ModelFileInfo[]
+  imageModels: ModelFileInfo[]
   activeBackend: BackendVersion | null
   commandsSchema: CommandsSchema | null
   releaseInfo: ReleaseInfo | null
@@ -66,6 +67,7 @@ interface AppStore {
   setCommandsSchema: (s: CommandsSchema) => void
   setBackends: (b: BackendVersion[]) => void
   setModels: (m: ModelFileInfo[]) => void
+  setImageModels: (m: ModelFileInfo[]) => void
   setCards: (c: CardState[]) => void
   setReleaseInfo: (r: ReleaseInfo | null) => void
   setPaths: (p: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string }) => void
@@ -119,7 +121,7 @@ interface AppStore {
 // createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
 export const useStore = createWithEqualityFn<AppStore>((set) => ({
-  cards: [], backends: [], models: [], activeBackend: null,
+  cards: [], backends: [], models: [], imageModels: [], activeBackend: null,
   commandsSchema: null, releaseInfo: null, paths: null,
   view: 'welcome', showCreateModal: false, editingTemplate: null,
   updateDismissed: false, checkingUpdate: false, downloadProgress: null,
@@ -146,6 +148,7 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   setCommandsSchema: (s) => set({ commandsSchema: s }),
   setBackends: (b) => set({ backends: b }),
   setModels: (m) => set({ models: m }),
+  setImageModels: (m) => set({ imageModels: m }),
   setCards: (c) => set({ cards: c }),
   setReleaseInfo: (r) => set({ releaseInfo: r }),
   setPaths: (p) => set({ paths: p }),

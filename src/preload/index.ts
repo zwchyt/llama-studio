@@ -63,6 +63,12 @@ const fullApi = {
   listExternalModelFolders: () => ipcRenderer.invoke('list-external-model-folders'),
   addExternalModelFolder: () => ipcRenderer.invoke('add-external-model-folder'),
   removeExternalModelFolder: (folder: string) => ipcRenderer.invoke('remove-external-model-folder', folder),
+  // ── 图片模型 ──
+  listImageModels: () => ipcRenderer.invoke('list-image-models'),
+  listImageModelsRefresh: () => ipcRenderer.invoke('list-image-models-refresh'),
+  listImageModelFolders: () => ipcRenderer.invoke('list-image-model-folders'),
+  addImageModelFolder: () => ipcRenderer.invoke('add-image-model-folder'),
+  removeImageModelFolder: (folder: string) => ipcRenderer.invoke('remove-image-model-folder', folder),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   startPiWeb: () => ipcRenderer.invoke('start-pi-web'),
   stopPiWeb: () => ipcRenderer.invoke('stop-pi-web'),

@@ -185,19 +185,20 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
     return Promise.resolve()
   }
 }
-interface AppSettings { externalModelFolders: string[]; metricsPolling?: boolean }
+interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; metricsPolling?: boolean }
 let settingsCache: AppSettings | null = null
 async function loadSettings(): Promise<AppSettings> {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], metricsPolling: true }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
     const data = JSON.parse(await fsPromises.readFile(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
+      imageModelFolders: Array.isArray(data.imageModelFolders) ? data.imageModelFolders : [],
       metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], metricsPolling: true }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
 }
 async function saveSettings(s: AppSettings): Promise<void> {
   await fsPromises.writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2))
@@ -206,10 +207,11 @@ async function saveSettings(s: AppSettings): Promise<void> {
 function loadSettingsSync(): AppSettings {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], metricsPolling: true }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
     const data = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
+      imageModelFolders: Array.isArray(data.imageModelFolders) ? data.imageModelFolders : [],
       metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true
     }
     return settingsCache
@@ -646,6 +648,76 @@ export function registerIpcHandlers(): void {
     invalidateModelsCache()
     return { success: true, folders: s.externalModelFolders }
   })
+  // ── 图片模型文件夹 ──
+  const IMAGE_MODELS_CACHE_TTL = 30_000
+  let imageModelsCache: { ts: number; result: ModelFileInfo[] } | null = null
+  let imageModelsScanPromise: Promise<ModelFileInfo[]> | null = null
+  function invalidateImageModelsCache(): void {
+    imageModelsCache = null
+    imageModelsScanPromise = null
+  }
+  async function scanImageModels(force: boolean): Promise<ModelFileInfo[]> {
+    if (!force && imageModelsCache && (Date.now() - imageModelsCache.ts) < IMAGE_MODELS_CACHE_TTL) {
+      return imageModelsCache.result
+    }
+    if (imageModelsScanPromise) return imageModelsScanPromise
+    imageModelsScanPromise = (async () => {
+      const exts = ['.gguf', '.bin', '.ggml']
+      const results: ModelFileInfo[] = []
+      const seen = new Set<string>()
+      const visitedDirs = new Set<string>()
+      const scan = async (dir: string, depth = 0): Promise<void> => {
+        if (depth > 8) return
+        try {
+          const realDir = await fsPromises.realpath(dir)
+          if (visitedDirs.has(realDir)) return
+          visitedDirs.add(realDir)
+          const files = await fsPromises.readdir(dir, { withFileTypes: true })
+          for (const e of files) {
+            if (e.isDirectory()) await scan(join(dir, e.name), depth + 1)
+            else if (exts.includes(extname(e.name).toLowerCase()) && !e.name.endsWith('.tmp')) {
+              const fp = join(dir, e.name)
+              const key = resolve(fp)
+              if (seen.has(key)) continue
+              seen.add(key)
+              const st = await fsPromises.stat(fp)
+              results.push({ name: e.name, path: fp, size: st.size, folder: basename(dir), external: true })
+            }
+          }
+        } catch { }
+      }
+      const settings = await loadSettings()
+      for (const folder of settings.imageModelFolders) {
+        if (existsSync(folder)) await scan(folder)
+      }
+      imageModelsCache = { ts: Date.now(), result: results }
+      return results
+    })().finally(() => { imageModelsScanPromise = null })
+    return imageModelsScanPromise
+  }
+  ipcMain.handle('list-image-models', () => scanImageModels(false))
+  ipcMain.handle('list-image-models-refresh', () => scanImageModels(true))
+  ipcMain.handle('list-image-model-folders', async () => (await loadSettings()).imageModelFolders)
+  ipcMain.handle('add-image-model-folder', async () => {
+    const r = await dialog.showOpenDialog({ title: '添加图片模型文件夹', properties: ['openDirectory'] })
+    if (r.canceled || !r.filePaths.length) return { success: false }
+    const folder = r.filePaths[0]
+    const s = await loadSettings()
+    if (!s.imageModelFolders.includes(folder)) {
+      s.imageModelFolders.push(folder)
+      await saveSettings(s)
+      invalidateImageModelsCache()
+    }
+    return { success: true, folders: s.imageModelFolders }
+  })
+  ipcMain.handle('remove-image-model-folder', async (_e, folder: string) => {
+    const s = await loadSettings()
+    s.imageModelFolders = s.imageModelFolders.filter(f => f !== folder)
+    await saveSettings(s)
+    invalidateImageModelsCache()
+    return { success: true, folders: s.imageModelFolders }
+  })
+  // ── 删除模型 ──
   ipcMain.handle('delete-model', (_e, filePath: string) => {
     try {
       if (!isSafePath(MODELS_DIR, filePath)) return { success: false, error: 'Access denied' }

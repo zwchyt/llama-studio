@@ -17,6 +17,7 @@ interface Props {
 export default function ParamsModal({ templateId, args, onClose, cardName }: Props) {
   const { commandsSchema, cards } = useStore(s => ({ commandsSchema: s.commandsSchema, cards: s.cards }), shallow)
   const updateCard = useStore(s => s.updateCard)
+  const imageModels = useStore(s => s.imageModels)
   const [activeTab, setActiveTab] = useState('主要设置')
   const [searchQuery, setSearchQuery] = useState('')
   const [hoveredParam, setHoveredParam] = useState<string | null>(null)
@@ -189,7 +190,18 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
               <button className="num-btn" onClick={() => handleUpdate(cmd.arg, Math.min((cmd.max ?? Infinity), (Number(val) || 0) + 1))} disabled={disabled}>+</button>
             </div>
           )}
-          {cmd.type === 'string' && (
+          {cmd.type === 'string' && cmd.arg === '--mmproj' && (
+            <select className="cmd-select" style={{ width: 110 }} value={displayVal} onChange={(e) => handleUpdate(cmd.arg, e.target.value)} disabled={disabled} aria-label="--mmproj">
+              <option value="">不指定</option>
+              {imageModels.map(m => (
+                <option key={m.path} value={m.path}>{m.name}</option>
+              ))}
+              {displayVal && !imageModels.find(m => m.path === displayVal) && (
+                <option value={String(displayVal)}>{String(displayVal).split(/[/\\]/).pop()}</option>
+              )}
+            </select>
+          )}
+          {cmd.type === 'string' && cmd.arg !== '--mmproj' && (
             <input type="text" className="cmd-input" value={displayVal} placeholder={cmd.placeholder || cmd.default?.toString()} onChange={(e) => handleUpdate(cmd.arg, e.target.value)} disabled={disabled} />
           )}
           {cmd.type === 'select' && (
