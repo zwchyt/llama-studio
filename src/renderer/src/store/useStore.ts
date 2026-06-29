@@ -68,7 +68,7 @@ interface AppStore {
   setModels: (m: ModelFileInfo[]) => void
   setCards: (c: CardState[]) => void
   setReleaseInfo: (r: ReleaseInfo | null) => void
-  setPaths: (p: { models: string; templates: string; backend: string }) => void
+  setPaths: (p: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string }) => void
   setUpdateDismissed: (v: boolean) => void
   setCheckingUpdate: (v: boolean) => void
   setDownloadProgress: (data: { percent: number; phase: string } | null) => void
@@ -113,6 +113,8 @@ interface AppStore {
   // ── 聊天界面 ──
   chatSidebarCollapsed: boolean
   setChatSidebarCollapsed: (v: boolean) => void
+  chatSidebarCurrentCollapsed: boolean
+  setChatSidebarCurrentCollapsed: (v: boolean) => void
 }
 // createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
@@ -277,4 +279,9 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
     try { localStorage.setItem('chatSidebarCollapsed', String(v)) } catch { /* ignore */ }
     set({ chatSidebarCollapsed: v })
   },
+  // ── 聊天界面当前收起状态（仅会话内，不写 localStorage）──
+  chatSidebarCurrentCollapsed: (() => {
+    try { return localStorage.getItem('chatSidebarCollapsed') === 'true' } catch { return false }
+  })(),
+  setChatSidebarCurrentCollapsed: (v) => set({ chatSidebarCurrentCollapsed: v }),
 }), shallow)

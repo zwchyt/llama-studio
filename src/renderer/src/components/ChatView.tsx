@@ -1351,8 +1351,8 @@ export default function ChatView() {
   const setView = useStore((s) => s.setView)
   const setCardStatus = useStore((s) => s.setCardStatus)
   const clearModelMetrics = useStore((s) => s.clearModelMetrics)
-  const sidebarCollapsed = useStore((s) => s.chatSidebarCollapsed)
-  const setSidebarCollapsed = useStore((s) => s.setChatSidebarCollapsed)
+  const sidebarCollapsed = useStore((s) => s.chatSidebarCurrentCollapsed)
+  const setSidebarCollapsed = useStore((s) => s.setChatSidebarCurrentCollapsed)
   const runningModels = useMemo(
     () => cards.filter((c) => c.status === 'running')
       .map((c) => ({ id: c.template.id, name: c.template.name, port: c.template.serverPort || 8080 })),
