@@ -135,6 +135,15 @@ interface LlamaCppApi {
   abortOcrStream: (streamId: string) => Promise<{ success: boolean }>
   onOcrChunk: (cb: (data: { streamId: string; delta?: string; done: boolean; error?: string }) => void) => void
   removeOcrListeners: () => void
+  // ── 性能测试 ──
+  runBenchmark: (opts: { id: string; backendPath: string; exe: string; args: string[] }) => Promise<{ success: boolean; pid?: number; error?: string }>
+  stopBenchmark: (id: string) => Promise<{ success: boolean; error?: string }>
+  onBenchmarkLog: (cb: (data: { id: string; stream: string; text: string }) => void) => void
+  removeBenchmarkLogListener: () => void
+  onBenchmarkDone: (cb: (data: { id: string; code: number | null }) => void) => void
+  removeBenchmarkDoneListener: () => void
+  onBenchmarkError: (cb: (data: { id: string; error: string }) => void) => void
+  removeBenchmarkErrorListener: () => void
 }
 declare global {
   interface Window { api: LlamaCppApi }

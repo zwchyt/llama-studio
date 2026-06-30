@@ -1254,6 +1254,53 @@ export function registerIpcHandlers(): void {
     const killed = port ? await killByPortAsync(port) : false
     return { success: killed || !port, error: killed || !port ? undefined : 'Not running' }
   })
+  // ── 性能基准测试 ──
+  interface RunningBenchmark { proc: ChildProcess }
+  const runningBenchmarks = new Map<string, RunningBenchmark>()
+  ipcMain.handle('run-benchmark', (_e, opts: { id: string; backendPath: string; exe: string; args: string[] }) => {
+    if (runningBenchmarks.has(opts.id)) return { success: false, error: 'Already running' }
+    const exePath = join(opts.backendPath, opts.exe)
+    if (!isSafePath(BACKEND_DIR, exePath)) return { success: false, error: 'Access denied' }
+    if (!existsSync(exePath)) return { success: false, error: `Executable not found: ${exePath}` }
+    try {
+      const proc = spawn(exePath, opts.args, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: false })
+      proc.stdout?.on('data', (d) => {
+        const text = d.toString()
+        BrowserWindow.getAllWindows().forEach(win => { if (!win.isDestroyed()) win.webContents.send('benchmark-log', { id: opts.id, stream: 'stdout', text }) })
+      })
+      proc.stderr?.on('data', (d) => {
+        const text = d.toString()
+        BrowserWindow.getAllWindows().forEach(win => { if (!win.isDestroyed()) win.webContents.send('benchmark-log', { id: opts.id, stream: 'stderr', text }) })
+      })
+      proc.on('error', (err) => {
+        runningBenchmarks.delete(opts.id)
+        BrowserWindow.getAllWindows().forEach(win => { if (!win.isDestroyed()) win.webContents.send('benchmark-error', { id: opts.id, error: String(err) }) })
+      })
+      proc.on('exit', (code) => {
+        runningBenchmarks.delete(opts.id)
+        BrowserWindow.getAllWindows().forEach(win => { if (!win.isDestroyed()) win.webContents.send('benchmark-done', { id: opts.id, code }) })
+      })
+      runningBenchmarks.set(opts.id, { proc })
+      return { success: true, pid: proc.pid }
+    } catch (err) { return { success: false, error: String(err) } }
+  })
+  ipcMain.handle('stop-benchmark', async (_e, id: string) => {
+    const entry = runningBenchmarks.get(id)
+    if (!entry) return { success: false, error: 'Not running' }
+    runningBenchmarks.delete(id)
+    try {
+      const pid = entry.proc.pid
+      if (pid) {
+        await new Promise<void>((resolve) => {
+          const k = spawn('taskkill', ['/F', '/PID', String(pid)], { windowsHide: true })
+          k.on('exit', () => resolve()); k.on('error', () => resolve())
+        })
+      }
+      entry.proc.kill()
+    } catch { /* ignore */ }
+    return { success: true }
+  })
+
   let cancelBackendDl: (() => void) | null = null
 
   ipcMain.handle('check-updates', async () => {

@@ -143,6 +143,24 @@ const fullApi = {
   removeOcrListeners: () => {
     ipcRenderer.removeAllListeners('ocr-chunk')
   },
+  // ── 性能测试 ──
+  runBenchmark: (opts: { id: string; backendPath: string; exe: string; args: string[] }) => ipcRenderer.invoke('run-benchmark', opts),
+  stopBenchmark: (id: string) => ipcRenderer.invoke('stop-benchmark', id),
+  onBenchmarkLog: (cb: (data: { id: string; stream: string; text: string }) => void) => {
+    ipcRenderer.removeAllListeners('benchmark-log')
+    ipcRenderer.on('benchmark-log', (_e, data) => cb(data))
+  },
+  removeBenchmarkLogListener: () => ipcRenderer.removeAllListeners('benchmark-log'),
+  onBenchmarkDone: (cb: (data: { id: string; code: number | null }) => void) => {
+    ipcRenderer.removeAllListeners('benchmark-done')
+    ipcRenderer.on('benchmark-done', (_e, data) => cb(data))
+  },
+  removeBenchmarkDoneListener: () => ipcRenderer.removeAllListeners('benchmark-done'),
+  onBenchmarkError: (cb: (data: { id: string; error: string }) => void) => {
+    ipcRenderer.removeAllListeners('benchmark-error')
+    ipcRenderer.on('benchmark-error', (_e, data) => cb(data))
+  },
+  removeBenchmarkErrorListener: () => ipcRenderer.removeAllListeners('benchmark-error'),
 }
 
 const chatApi = {

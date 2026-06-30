@@ -6345,3 +6345,394 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   margin-bottom: 8px;
 }
 
+/* ── 性能测试 ── */
+.benchmark-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 20px 24px;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.benchmark-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.benchmark-config {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.benchmark-config-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.benchmark-config-row label {
+  min-width: 120px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.benchmark-config-row select,
+.benchmark-config-row input[type="number"] {
+  flex: 1;
+  max-width: 300px;
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.benchmark-config-row select:focus,
+.benchmark-config-row input[type="number"]:focus {
+  border-color: var(--accent);
+}
+
+.benchmark-mode-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+}
+
+.benchmark-mode-tab {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.benchmark-mode-tab.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.benchmark-mode-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.benchmark-config-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.benchmark-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.benchmark-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.benchmark-btn-run {
+  background: var(--success);
+  color: white;
+}
+
+.benchmark-btn-run:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.benchmark-btn-stop {
+  background: var(--danger);
+  color: white;
+}
+
+.benchmark-btn-stop:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.benchmark-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.benchmark-summary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.benchmark-summary h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+
+.benchmark-summary-line {
+  font-size: 13px;
+  font-family: var(--font);
+  color: var(--text);
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.benchmark-summary-line:last-child {
+  border-bottom: none;
+}
+
+.benchmark-log-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 6px 0;
+}
+
+.benchmark-spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.benchmark-log {
+  flex: 1;
+  min-height: 120px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: #1a1a2e;
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.benchmark-log-placeholder {
+  color: #888;
+  font-style: italic;
+}
+
+.benchmark-log-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.benchmark-log-stdout {
+  color: #e0e0e0;
+}
+
+.benchmark-log-stderr {
+  color: #f87171;
+}
+
+.benchmark-log-cursor {
+  color: #4ade80;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* ── 模型信息卡片 ── */
+.benchmark-model-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.benchmark-model-card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.benchmark-model-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.benchmark-model-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.benchmark-model-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.benchmark-model-card-meta strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ── 速度卡片 ── */
+.benchmark-speed-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+
+.benchmark-speed-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.benchmark-speed-card-accent {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.benchmark-speed-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.benchmark-speed-value {
+  margin-left: auto;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+  font-family: var(--font-mono, 'SF Mono', monospace);
+}
+
+.benchmark-speed-card-accent .benchmark-speed-value {
+  color: var(--success);
+}
+
+.benchmark-bar-container {
+  height: 6px;
+  background: var(--bg);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.benchmark-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--success));
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+.benchmark-speed-card-detail {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.benchmark-results-area {
+  animation: fadeSlideIn 0.5s ease;
+}
+
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.benchmark-rating {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: white;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.benchmark-speed-unit {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-left: -4px;
+}
+
+.benchmark-stat-number {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: var(--font-mono, 'SF Mono', monospace);
+}
+
+.benchmark-stat-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.benchmark-stat-row {
+  padding: 8px 0;
+  display: flex;
+  justify-content: space-around;
+  text-align: center;
+}
+
+@media (max-width: 1000px) {
+  .benchmark-speed-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
