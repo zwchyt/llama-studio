@@ -6100,3 +6100,248 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   opacity: .85;
 }
 
+/* ── OCR 视图 ── */
+.ocr-view {
+  max-width: 100%;
+}
+
+.ocr-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #fff3cd;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #856404;
+  margin-bottom: 16px;
+}
+
+.ocr-split {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.ocr-left-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ocr-right-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* ── 左侧：dropzone ── */
+.ocr-dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  background: var(--card-bg);
+  min-height: 300px;
+}
+
+.ocr-dropzone:hover,
+.ocr-dropzone.dragover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--card-bg));
+}
+
+.ocr-dropzone-icon {
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+
+.ocr-dropzone-text {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.ocr-dropzone-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── 左侧：图片预览卡片 ── */
+.ocr-image-card {
+  background: var(--card-bg);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.ocr-image-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.ocr-image-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ocr-image-preview {
+  padding: 12px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex: 1;
+  overflow: hidden;
+  min-height: 200px;
+}
+
+.ocr-image-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+}
+
+.ocr-actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── 右侧：占位 ── */
+.ocr-placeholder {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--card-bg);
+  min-height: 300px;
+}
+
+.ocr-placeholder-icon {
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+
+.ocr-placeholder-text {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.ocr-placeholder-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── 右侧：结果卡片 ── */
+.ocr-result-card {
+  background: var(--card-bg);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.ocr-result-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ocr-result-title {
+  flex: 1;
+}
+
+.ocr-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.ocr-badge-processing {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.ocr-badge-done {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.ocr-badge-error {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.ocr-result-body {
+  padding: 14px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 200px;
+  max-height: 600px;
+}
+
+.ocr-result-text {
+  font-family: var(--font-mono, 'SF Mono', 'Fira Code', monospace);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  margin: 0;
+}
+
+.ocr-result-placeholder {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.ocr-error-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #fef2f2;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--danger);
+  margin-bottom: 8px;
+}
+

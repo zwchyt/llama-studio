@@ -130,6 +130,11 @@ interface LlamaCppApi {
   // ── PDF 导出 ──
   printToPDF: (html: string) => Promise<string>
   savePng: (dataUrl: string) => Promise<string>
+  // ── OCR ──
+  ocrStream: (opts: { streamId: string; port: number; image: string }) => Promise<{ success: boolean; error?: string }>
+  abortOcrStream: (streamId: string) => Promise<{ success: boolean }>
+  onOcrChunk: (cb: (data: { streamId: string; delta?: string; done: boolean; error?: string }) => void) => void
+  removeOcrListeners: () => void
 }
 declare global {
   interface Window { api: LlamaCppApi }

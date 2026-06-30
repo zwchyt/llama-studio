@@ -18,6 +18,7 @@ import ChatWindow from './components/ChatWindow'
 import PiWebView from './components/PiWebView'
 import LlamaChatView from './components/LlamaChatView'
 import TerminalView from './components/TerminalView'
+import OcrView from './components/OcrView'
   import { buildDefaultTemplate } from './utils/defaultTemplate'
 import { writeToTerminal } from './utils/terminalRegistry'
 import { useTerminalStore } from './store/terminalStore'
@@ -384,6 +385,7 @@ function AppMain() {
       case 'welcome': return <WelcomeView />
       case 'terminal': return <TerminalView />
       case 'llama': return <LlamaChatView />
+      case 'ocr': return <OcrView />
       default: return <CardsView />
     }
   }, [view])

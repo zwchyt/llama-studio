@@ -7,7 +7,7 @@
   "homepage": "./",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "node scripts\\build-filtered.js",
     "preview": "electron-vite preview",
     "package": "electron-vite build && electron-builder"
   },
@@ -56,3 +56,5 @@
     "vite": "^5.3.1"
   }
 }
+
+

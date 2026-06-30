@@ -133,6 +133,16 @@ const fullApi = {
     ipcRenderer.removeAllListeners('terminal:exited')
     ipcRenderer.removeAllListeners('terminal:title')
   },
+  // ── OCR ──
+  ocrStream: (opts: { streamId: string; port: number; image: string }) => ipcRenderer.invoke('ocr-stream', opts),
+  abortOcrStream: (streamId: string) => ipcRenderer.invoke('ocr-stream-abort', streamId),
+  onOcrChunk: (cb: (data: { streamId: string; delta?: string; done: boolean; error?: string }) => void) => {
+    ipcRenderer.removeAllListeners('ocr-chunk')
+    ipcRenderer.on('ocr-chunk', (_e, data) => cb(data))
+  },
+  removeOcrListeners: () => {
+    ipcRenderer.removeAllListeners('ocr-chunk')
+  },
 }
 
 const chatApi = {

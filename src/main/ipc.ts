@@ -1,4 +1,4 @@
-import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
+﻿import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
 import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
   unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, promises as fsPromises
@@ -2180,6 +2180,80 @@ export function registerIpcHandlers(): void {
 
   // --- chat-stream-abort (中止一个进行中的聊天流) ---
   ipcMain.handle('chat-stream-abort', (_e, streamId: string) => {
+    const req = activeChatStreams.get(streamId)
+    if (req) {
+      abortedChatStreams.add(streamId)
+      req.destroy()
+      activeChatStreams.delete(streamId)
+    }
+    return { success: true }
+  })
+
+  // --- ocr-stream (发送图片到 /v1/chat/completions，OpenAI 格式) ---
+  ipcMain.handle('ocr-stream', async (e, opts: {
+    streamId: string; port: number; image: string
+  }): Promise<{ success: boolean; error?: string }> => {
+    const { streamId, port, image } = opts
+    const body = {
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: image } },
+            { type: 'text', text: 'OCR' }
+          ]
+        }
+      ]
+    }
+    const bodyStr = JSON.stringify(body)
+    console.error('[OCR] body:', bodyStr.slice(0, 300))
+    return new Promise((resolve) => {
+      const req = http.request(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
+        agent: httpAgent
+      }, (res) => {
+        if (res.statusCode && res.statusCode >= 400) {
+          let errBody = ''
+          res.on('data', (c: Buffer) => { errBody += c.toString() })
+          res.on('end', () => {
+            activeChatStreams.delete(streamId)
+            e.sender.send('ocr-chunk', { streamId, done: true, error: `HTTP ${res.statusCode}: ${errBody.slice(0, 500)}` })
+            resolve({ success: false, error: `HTTP ${res.statusCode}` })
+          })
+          return
+        }
+        let buf = ''
+        res.on('data', (c: Buffer) => { buf += c.toString() })
+        res.on('end', () => {
+          activeChatStreams.delete(streamId)
+          try {
+            const parsed = JSON.parse(buf)
+            const content = parsed?.choices?.[0]?.message?.content || ''
+            console.error('[OCR] content:', content.slice(0, 500))
+            if (content) {
+              e.sender.send('ocr-chunk', { streamId, delta: content, done: false })
+            }
+            e.sender.send('ocr-chunk', { streamId, done: true })
+          } catch {
+            e.sender.send('ocr-chunk', { streamId, done: true, error: 'Failed to parse response' })
+          }
+          resolve({ success: true })
+        })
+      })
+      req.on('error', (err) => {
+        activeChatStreams.delete(streamId)
+        e.sender.send('ocr-chunk', { streamId, done: true, error: err.message })
+        resolve({ success: false, error: err.message })
+      })
+      req.write(bodyStr)
+      req.end()
+      activeChatStreams.set(streamId, req)
+    })
+  })
+
+  // --- ocr-stream-abort ---
+  ipcMain.handle('ocr-stream-abort', (_e, streamId: string) => {
     const req = activeChatStreams.get(streamId)
     if (req) {
       abortedChatStreams.add(streamId)

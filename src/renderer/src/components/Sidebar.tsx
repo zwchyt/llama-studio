@@ -2,7 +2,7 @@ import React from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { safeCall } from '../utils/safeCall'
-import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Globe, Server, Bot, MessageSquare, Terminal, Info } from 'lucide-react'
+import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Globe, Server, Bot, MessageSquare, Terminal, Info, FileText } from 'lucide-react'
 export default function Sidebar() {
   const { view, setView, backends, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, piWebUrl, hasRunningModels } = useStore(
     s => ({ view: s.view, setView: s.setView, backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, piWebUrl: s.piWebUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
@@ -92,6 +92,16 @@ export default function Sidebar() {
       >
         <Terminal size={16} />
         终端
+      </button>
+      <button
+        className={`nav-item ${view === 'ocr' ? 'active' : ''}`}
+        onClick={() => setView('ocr')}
+        title={hasRunningModels ? 'OCR 文字识别' : '暂无运行中的模型'}
+        style={hasRunningModels ? { color: 'var(--success)' } : {}}
+      >
+        <FileText size={16} />
+        OCR
+        {hasRunningModels && <span className="nav-dot" />}
       </button>
 
       {/* ── 系统 ── */}
