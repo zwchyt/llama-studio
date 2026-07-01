@@ -6350,20 +6350,21 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 20px 24px;
-  gap: 16px;
+  padding: 12px 20px;
+  gap: 8px;
   overflow: hidden;
 }
 
 .benchmark-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 18px;
+  gap: 8px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text);
-  padding-bottom: 12px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .benchmark-config {
@@ -6373,75 +6374,154 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px;
+  padding: 16px 20px;
+  flex-shrink: 0;
+  box-shadow: var(--shadow-md);
+  position: relative;
+}
+
+.benchmark-config::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  background: linear-gradient(180deg, var(--accent), var(--success));
+  border-radius: 2px;
 }
 
 .benchmark-config-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .benchmark-config-row label {
-  min-width: 120px;
-  font-size: 13px;
-  font-weight: 500;
+  min-width: 72px;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text-secondary);
+  flex-shrink: 0;
 }
 
-.benchmark-config-row select,
-.benchmark-config-row input[type="number"] {
+.benchmark-config-row-split {
+  display: flex;
+  gap: 16px;
+}
+
+.benchmark-config-row-split > .benchmark-config-row {
   flex: 1;
-  max-width: 300px;
+  min-width: 0;
+}
+
+.benchmark-config-row select {
+  flex: 1;
+  min-width: 0;
   padding: 6px 10px;
-  font-size: 13px;
+  font-size: 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--bg);
   color: var(--text);
   outline: none;
-  transition: border-color var(--transition);
+  transition: all 0.2s ease;
 }
 
-.benchmark-config-row select:focus,
-.benchmark-config-row input[type="number"]:focus {
+.benchmark-config-row select:hover {
   border-color: var(--accent);
+  background: var(--surface);
+}
+
+.benchmark-config-row select:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.06);
+}
+
+.benchmark-config-params {
+  display: flex;
+  gap: 10px;
+}
+
+.benchmark-param {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.benchmark-param label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.benchmark-param input[type="number"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  text-align: center;
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.benchmark-param input[type="number"]:hover {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.benchmark-param input[type="number"]:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.06);
 }
 
 .benchmark-mode-tabs {
   display: flex;
-  gap: 4px;
+  gap: 3px;
   background: var(--bg);
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
   padding: 3px;
 }
 
 .benchmark-mode-tab {
   padding: 6px 16px;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   cursor: pointer;
-  transition: all var(--transition);
+  transition: all 0.15s ease;
 }
 
 .benchmark-mode-tab.active {
-  background: var(--accent);
-  color: var(--accent-fg);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
 .benchmark-mode-tab:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .benchmark-config-actions {
   display: flex;
-  gap: 10px;
-  margin-top: 6px;
+  justify-content: center;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
 }
 
 .benchmark-btn {
@@ -6454,12 +6534,14 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all var(--transition);
+  transition: all 0.2s ease;
+  box-shadow: var(--shadow);
 }
 
 .benchmark-btn:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .benchmark-btn-run {
@@ -6468,7 +6550,8 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 .benchmark-btn-run:hover:not(:disabled) {
-  opacity: 0.9;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.3);
+  transform: translateY(-1px);
 }
 
 .benchmark-btn-stop {
@@ -6477,14 +6560,15 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 .benchmark-btn-stop:hover:not(:disabled) {
-  opacity: 0.9;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
+  transform: translateY(-1px);
 }
 
 .benchmark-body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 6px;
   overflow: hidden;
   min-height: 0;
 }
@@ -6493,21 +6577,22 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px;
+  padding: 12px;
+  flex-shrink: 0;
 }
 
 .benchmark-summary h3 {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text);
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 .benchmark-summary-line {
-  font-size: 13px;
+  font-size: 12px;
   font-family: var(--font);
   color: var(--text);
-  padding: 3px 0;
+  padding: 2px 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -6518,11 +6603,12 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 .benchmark-log-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: 5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
-  padding: 6px 0;
+  padding: 4px 0;
+  flex-shrink: 0;
 }
 
 .benchmark-spinner {
@@ -6535,12 +6621,11 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 
 .benchmark-log {
   flex: 1;
-  min-height: 120px;
-  max-height: 300px;
+  min-height: 60px;
   overflow-y: auto;
   background: #1a1a2e;
   border-radius: var(--radius-sm);
-  padding: 12px;
+  padding: 10px;
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 12px;
   line-height: 1.5;
@@ -6578,10 +6663,11 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 10px 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .benchmark-model-card-row {
@@ -6591,15 +6677,15 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 .benchmark-model-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text);
 }
 
 .benchmark-model-badge {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
-  padding: 2px 8px;
+  padding: 1px 7px;
   border-radius: 10px;
   background: #dbeafe;
   color: #1d4ed8;
@@ -6608,8 +6694,8 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 .benchmark-model-card-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
-  font-size: 12px;
+  gap: 12px;
+  font-size: 11px;
   color: var(--text-secondary);
 }
 
@@ -6622,47 +6708,44 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 .benchmark-speed-cards {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  gap: 10px;
+  gap: 8px;
 }
 
 .benchmark-speed-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 10px 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
-.benchmark-speed-card-accent {
-  border-color: var(--accent);
-  background: var(--surface);
+.benchmark-speed-card-placeholder {
+  grid-column: 1 / -1;
+  text-align: center;
+  opacity: 0.7;
 }
 
 .benchmark-speed-card-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: 5px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-secondary);
 }
 
 .benchmark-speed-value {
   margin-left: auto;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--accent);
   font-family: var(--font-mono, 'SF Mono', monospace);
 }
 
-.benchmark-speed-card-accent .benchmark-speed-value {
-  color: var(--success);
-}
-
 .benchmark-bar-container {
-  height: 6px;
+  height: 5px;
   background: var(--bg);
   border-radius: 3px;
   overflow: hidden;
@@ -6678,23 +6761,30 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 .benchmark-speed-card-detail {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-muted);
 }
 
 .benchmark-results-area {
-  animation: fadeSlideIn 0.5s ease;
+  animation: fadeSlideIn 0.35s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 0;
+  overflow-y: auto;
+  flex-shrink: 0;
+  max-height: 55vh;
 }
 
 @keyframes fadeSlideIn {
-  from { opacity: 0; transform: translateY(12px); }
+  from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 .benchmark-rating {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
-  padding: 2px 8px;
+  padding: 1px 7px;
   border-radius: 10px;
   color: white;
   text-transform: uppercase;
@@ -6702,21 +6792,21 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 .benchmark-speed-unit {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
   color: var(--text-muted);
-  margin-left: -4px;
+  margin-left: -3px;
 }
 
 .benchmark-stat-number {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
   color: var(--text);
   font-family: var(--font-mono, 'SF Mono', monospace);
 }
 
 .benchmark-stat-label {
-  font-size: 10px;
+  font-size: 9px;
   color: var(--text-muted);
   margin-top: 2px;
   text-transform: uppercase;
@@ -6724,7 +6814,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 .benchmark-stat-row {
-  padding: 8px 0;
+  padding: 6px 0;
   display: flex;
   justify-content: space-around;
   text-align: center;
@@ -6732,6 +6822,9 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 
 @media (max-width: 1000px) {
   .benchmark-speed-cards {
+    grid-template-columns: 1fr;
+  }
+  .benchmark-config-params {
     grid-template-columns: 1fr;
   }
 }

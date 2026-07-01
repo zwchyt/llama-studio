@@ -45,6 +45,14 @@ function parseJsonOutput(text: string): ParsedBenchResult | null {
   } catch { return null }
 }
 
+function convertStoredResult(stored: { prompt: Record<string, unknown> | null; generation: Record<string, unknown> | null; modelInfo: Record<string, unknown> }): ParsedBenchResult {
+  return {
+    prompt: stored.prompt ? (stored.prompt as unknown as BenchTestResult) : null,
+    generation: stored.generation ? (stored.generation as unknown as BenchTestResult) : null,
+    modelInfo: stored.modelInfo as unknown as ParsedBenchResult['modelInfo'],
+  }
+}
+
 function formatParams(n: number): string {
   if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1) + 'B'
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
@@ -71,11 +79,14 @@ function AnimatedBar({ speed, maxSpeed, color }: { speed: number; maxSpeed: numb
 }
 
 export default function BenchmarkView() {
-  const { backends, models } = useStore(s => ({ backends: s.backends, models: s.models }), shallow)
+  const { backends, models, benchmarkResult, setBenchmarkResult } = useStore(
+    s => ({ backends: s.backends, models: s.models, benchmarkResult: s.benchmarkResult, setBenchmarkResult: s.setBenchmarkResult }),
+    shallow
+  )
 
-  const [mode, setMode] = useState<BenchMode>('quick')
-  const [selectedBackend, setSelectedBackend] = useState('')
-  const [selectedModel, setSelectedModel] = useState('')
+  const [mode, setMode] = useState<BenchMode>((benchmarkResult?.mode as BenchMode) || 'quick')
+  const [selectedBackend, setSelectedBackend] = useState(benchmarkResult?.selectedBackend || '')
+  const [selectedModel, setSelectedModel] = useState(benchmarkResult?.selectedModel || '')
   const [threads, setThreads] = useState(8)
   const [batchSize, setBatchSize] = useState(512)
   const [nTokens, setNTokens] = useState(128)
@@ -83,6 +94,7 @@ export default function BenchmarkView() {
   const [concurrent, setConcurrent] = useState(4)
   const [nRequests, setNRequests] = useState(50)
   const [running, setRunning] = useState(false)
+  const [showResults, setShowResults] = useState(false)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [parsed, setParsed] = useState<ParsedBenchResult | null>(null)
   const [summary, setSummary] = useState<string[]>([])
@@ -90,6 +102,17 @@ export default function BenchmarkView() {
   const resultRef = useRef<HTMLDivElement>(null)
   const benchIdRef = useRef<string>('')
   const logsRef = useRef<LogEntry[]>([])
+
+  useEffect(() => {
+    if (!benchmarkResult || !benchmarkResult.showResults) return
+    setShowResults(true)
+    if (benchmarkResult.mode === 'quick' && benchmarkResult.parsed) {
+      setParsed(convertStoredResult(benchmarkResult.parsed))
+    }
+    if (benchmarkResult.summary.length > 0) {
+      setSummary(benchmarkResult.summary)
+    }
+  }, [])
 
   const activeBackend = backends.find(b => b.name === selectedBackend)
   const benchExe = mode === 'quick' ? 'llama-bench.exe' : 'llama-batched-bench.exe'
@@ -116,12 +139,31 @@ export default function BenchmarkView() {
       const fullLog = logsRef.current.map(l => l.text).join('\n')
       if (mode === 'quick') {
         const result = parseJsonOutput(fullLog)
-        if (result) setParsed(result)
+        if (result) {
+          setParsed(result)
+          setBenchmarkResult({
+            mode: 'quick',
+            parsed: { prompt: result.prompt as unknown as Record<string, unknown> | null, generation: result.generation as unknown as Record<string, unknown> | null, modelInfo: result.modelInfo as unknown as Record<string, unknown> },
+            summary: [],
+            showResults: true,
+            selectedBackend,
+            selectedModel,
+          })
+        }
       } else {
-        setSummary(fullLog.split('\n').filter(l => {
+        const s = fullLog.split('\n').filter(l => {
           const t = l.trim()
           return t && (t.includes('avg time') || t.includes('peak memory') || t.includes('TTFT') || t.includes('TPOT') || t.includes('throughput') || t.includes('tokens/s') || t.includes('batched'))
-        }))
+        })
+        setSummary(s)
+        setBenchmarkResult({
+          mode: 'stress',
+          parsed: null,
+          summary: s,
+          showResults: true,
+          selectedBackend,
+          selectedModel,
+        })
       }
     })
     window.api.onBenchmarkError((data) => {
@@ -146,7 +188,7 @@ export default function BenchmarkView() {
     const id = crypto.randomUUID()
     benchIdRef.current = id
     logsRef.current = []
-    setRunning(true); setLogs([]); setParsed(null); setSummary([])
+    setRunning(true); setShowResults(true); setLogs([]); setParsed(null); setSummary([]); setBenchmarkResult(null)
     const args: string[] = ['-m', selectedModel, '-o', 'json']
     if (mode === 'quick') {
       args.push('-t', String(threads), '-b', String(batchSize), '-n', String(nTokens), '-p', String(nPrompt))
@@ -187,57 +229,61 @@ export default function BenchmarkView() {
             <button className={`benchmark-mode-tab ${mode === 'stress' ? 'active' : ''}`} onClick={() => setMode('stress')} disabled={running}>压力测试</button>
           </div>
         </div>
-        <div className="benchmark-config-row">
-          <label>后端版本</label>
-          <select value={selectedBackend} onChange={e => setSelectedBackend(e.target.value)} disabled={running}>
-            {backends.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
-          </select>
+        <div className="benchmark-config-row-split">
+          <div className="benchmark-config-row">
+            <label>后端版本</label>
+            <select value={selectedBackend} onChange={e => setSelectedBackend(e.target.value)} disabled={running}>
+              {backends.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
+            </select>
+          </div>
+          <div className="benchmark-config-row">
+            <label>模型文件</label>
+            <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)} disabled={running}>
+              {models.map(m => <option key={m.path} value={m.path}>{m.name} ({m.folder})</option>)}
+            </select>
+          </div>
         </div>
-        <div className="benchmark-config-row">
-          <label>模型文件</label>
-          <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)} disabled={running}>
-            {models.map(m => <option key={m.path} value={m.path}>{m.name} ({m.folder})</option>)}
-          </select>
+        <div className="benchmark-config-params">
+          {mode === 'quick' ? (
+            <>
+              <div className="benchmark-param">
+                <label>线程数</label>
+                <input type="number" value={threads} min={1} max={64} onChange={e => setThreads(parseInt(e.target.value) || 1)} disabled={running} />
+              </div>
+              <div className="benchmark-param">
+                <label>批次大小</label>
+                <input type="number" value={batchSize} min={1} max={4096} onChange={e => setBatchSize(parseInt(e.target.value) || 1)} disabled={running} />
+              </div>
+              <div className="benchmark-param">
+                <label>提示长度</label>
+                <input type="number" value={nPrompt} min={1} max={8192} onChange={e => setNPrompt(parseInt(e.target.value) || 1)} disabled={running} />
+              </div>
+              <div className="benchmark-param">
+                <label>生成 Token</label>
+                <input type="number" value={nTokens} min={1} max={4096} onChange={e => setNTokens(parseInt(e.target.value) || 1)} disabled={running} />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="benchmark-param">
+                <label>并发请求</label>
+                <input type="number" value={concurrent} min={1} max={128} onChange={e => setConcurrent(parseInt(e.target.value) || 1)} disabled={running} />
+              </div>
+              <div className="benchmark-param">
+                <label>总请求数</label>
+                <input type="number" value={nRequests} min={1} max={100000} onChange={e => setNRequests(parseInt(e.target.value) || 1)} disabled={running} />
+              </div>
+              <div className="benchmark-param">
+                <label>生成 Token</label>
+                <input type="number" value={nTokens} min={1} max={4096} onChange={e => setNTokens(parseInt(e.target.value) || 1)} disabled={running} />
+              </div>
+              <div className="benchmark-param">
+                <label>批次大小</label>
+                <input type="number" value={batchSize} min={1} max={4096} onChange={e => setBatchSize(parseInt(e.target.value) || 1)} disabled={running} />
+              </div>
+            </>
+          )}
         </div>
-        {mode === 'quick' ? (
-          <>
-            <div className="benchmark-config-row">
-              <label>线程数 (-t)</label>
-              <input type="number" value={threads} min={1} max={64} onChange={e => setThreads(parseInt(e.target.value) || 1)} disabled={running} />
-            </div>
-            <div className="benchmark-config-row">
-              <label>批次大小 (-b)</label>
-              <input type="number" value={batchSize} min={1} max={4096} onChange={e => setBatchSize(parseInt(e.target.value) || 1)} disabled={running} />
-            </div>
-            <div className="benchmark-config-row">
-              <label>提示长度 (-p)</label>
-              <input type="number" value={nPrompt} min={1} max={8192} onChange={e => setNPrompt(parseInt(e.target.value) || 1)} disabled={running} />
-            </div>
-            <div className="benchmark-config-row">
-              <label>生成 Token (-n)</label>
-              <input type="number" value={nTokens} min={1} max={4096} onChange={e => setNTokens(parseInt(e.target.value) || 1)} disabled={running} />
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="benchmark-config-row">
-              <label>并发请求 (-c)</label>
-              <input type="number" value={concurrent} min={1} max={128} onChange={e => setConcurrent(parseInt(e.target.value) || 1)} disabled={running} />
-            </div>
-            <div className="benchmark-config-row">
-              <label>总请求数 (-r)</label>
-              <input type="number" value={nRequests} min={1} max={100000} onChange={e => setNRequests(parseInt(e.target.value) || 1)} disabled={running} />
-            </div>
-            <div className="benchmark-config-row">
-              <label>生成 Token (-n)</label>
-              <input type="number" value={nTokens} min={1} max={4096} onChange={e => setNTokens(parseInt(e.target.value) || 1)} disabled={running} />
-            </div>
-            <div className="benchmark-config-row">
-              <label>批次大小 (-b)</label>
-              <input type="number" value={batchSize} min={1} max={4096} onChange={e => setBatchSize(parseInt(e.target.value) || 1)} disabled={running} />
-            </div>
-          </>
-        )}
         <div className="benchmark-config-actions">
           <button className="benchmark-btn benchmark-btn-run" onClick={handleRun} disabled={running || !hasBenchExe || !selectedModel}>
             <Play size={14} /> 开始测试
@@ -249,84 +295,104 @@ export default function BenchmarkView() {
       </div>
 
       <div className="benchmark-body">
-        {parsed && mi && (
+        {showResults && (
           <div className="benchmark-results-area" ref={resultRef}>
             <div className="benchmark-model-card">
-              <div className="benchmark-model-card-row">
-                <HardDrive size={18} />
-                <span className="benchmark-model-name">{mi.name.split('\\').pop()?.split('/').pop() || mi.name}</span>
-                <span className="benchmark-model-badge">{mi.type}</span>
-              </div>
-              <div className="benchmark-model-card-meta">
-                <span><strong>{mi.sizeGB.toFixed(2)} GB</strong> 大小</span>
-                <span><strong>{formatParams(mi.nParams)}</strong> 参数</span>
-                <span><strong>{mi.gpu || 'N/A'}</strong></span>
-                <span><strong>{mi.threads}</strong> 线程</span>
-              </div>
+              {mi ? (
+                <>
+                  <div className="benchmark-model-card-row">
+                    <HardDrive size={18} />
+                    <span className="benchmark-model-name">{mi.name.split('\\').pop()?.split('/').pop() || mi.name}</span>
+                    <span className="benchmark-model-badge">{mi.type}</span>
+                  </div>
+                  <div className="benchmark-model-card-meta">
+                    <span><strong>{mi.sizeGB.toFixed(2)} GB</strong> 大小</span>
+                    <span><strong>{formatParams(mi.nParams)}</strong> 参数</span>
+                    <span><strong>{mi.gpu || 'N/A'}</strong></span>
+                    <span><strong>{mi.threads}</strong> 线程</span>
+                  </div>
+                </>
+              ) : (
+                <div className="benchmark-model-card-row">
+                  <HardDrive size={18} />
+                  <span className="benchmark-model-name">正在测试...</span>
+                </div>
+              )}
             </div>
 
             <div className="benchmark-speed-cards">
-              {pt && (() => {
-                const r = speedRating(pt.avg_ts, mi.nParams)
-                return (
-                  <div className="benchmark-speed-card" key="prompt">
-                    <div className="benchmark-speed-card-header">
-                      <Zap size={18} style={{ color: r.color }} />
-                      <span>提示词处理</span>
-                      <span className="benchmark-rating" style={{ background: r.color }}>{r.label}</span>
-                      <span className="benchmark-speed-value" style={{ color: r.color }}>{pt.avg_ts.toFixed(2)}</span>
-                      <span className="benchmark-speed-unit">tok/s</span>
-                    </div>
-                    <AnimatedBar speed={pt.avg_ts} maxSpeed={maxSpeed} color={r.color} />
-                    <div className="benchmark-speed-card-detail">
-                      <span>{pt.n_prompt} tokens · {(pt.avg_ns / 1_000_000).toFixed(1)} ms</span>
-                      <span>±{pt.stddev_ts.toFixed(2)} tok/s</span>
-                    </div>
+              {parsed && mi ? (
+                <>
+                  {pt && (() => {
+                    const r = speedRating(pt.avg_ts, mi.nParams)
+                    return (
+                      <div className="benchmark-speed-card" key="prompt">
+                        <div className="benchmark-speed-card-header">
+                          <Zap size={18} style={{ color: r.color }} />
+                          <span>提示词处理</span>
+                          <span className="benchmark-rating" style={{ background: r.color }}>{r.label}</span>
+                          <span className="benchmark-speed-value" style={{ color: r.color }}>{pt.avg_ts.toFixed(2)}</span>
+                          <span className="benchmark-speed-unit">tok/s</span>
+                        </div>
+                        <AnimatedBar speed={pt.avg_ts} maxSpeed={maxSpeed} color={r.color} />
+                        <div className="benchmark-speed-card-detail">
+                          <span>{pt.n_prompt} tokens · {(pt.avg_ns / 1_000_000).toFixed(1)} ms</span>
+                          <span>±{pt.stddev_ts.toFixed(2)} tok/s</span>
+                        </div>
+                      </div>
+                    )
+                  })()}
+                  {gt && (() => {
+                    const r = speedRating(gt.avg_ts, mi.nParams)
+                    return (
+                      <div className="benchmark-speed-card" key="gen">
+                        <div className="benchmark-speed-card-header">
+                          <Cpu size={18} style={{ color: r.color }} />
+                          <span>Token 生成</span>
+                          <span className="benchmark-rating" style={{ background: r.color }}>{r.label}</span>
+                          <span className="benchmark-speed-value" style={{ color: r.color }}>{gt.avg_ts.toFixed(2)}</span>
+                          <span className="benchmark-speed-unit">tok/s</span>
+                        </div>
+                        <AnimatedBar speed={gt.avg_ts} maxSpeed={maxSpeed} color={r.color} />
+                        <div className="benchmark-speed-card-detail">
+                          <span>{gt.n_gen} tokens · {(gt.avg_ns / 1_000_000).toFixed(1)} ms</span>
+                          <span>±{gt.stddev_ts.toFixed(2)} tok/s</span>
+                        </div>
+                      </div>
+                    )
+                  })()}
+                  {pt && gt && (() => {
+                    const totalTokens = pt.n_prompt + gt.n_gen
+                    const totalNs = pt.avg_ns + gt.avg_ns
+                    const overallTokS = totalTokens / (totalNs / 1_000_000_000)
+                    const ratio = pt.avg_ts / gt.avg_ts
+                    const r = speedRating(overallTokS, mi.nParams)
+                    return (
+                      <div className="benchmark-speed-card" key="overall">
+                        <div className="benchmark-speed-card-header">
+                          <BarChart3 size={18} style={{ color: '#8b5cf6' }} />
+                          <span>综合吞吐</span>
+                          <span className="benchmark-rating" style={{ background: r.color }}>{r.label}</span>
+                          <span className="benchmark-speed-value" style={{ color: '#8b5cf6' }}>{overallTokS.toFixed(2)}</span>
+                          <span className="benchmark-speed-unit">tok/s</span>
+                        </div>
+                        <div className="benchmark-stat-row">
+                          <div><div className="benchmark-stat-number">{totalTokens}</div><div className="benchmark-stat-label">总 tokens</div></div>
+                          <div><div className="benchmark-stat-number">{(totalNs / 1_000_000).toFixed(0)}</div><div className="benchmark-stat-label">总耗时 (ms)</div></div>
+                          <div><div className="benchmark-stat-number">{ratio.toFixed(0)}x</div><div className="benchmark-stat-label">提示词/生成比</div></div>
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </>
+              ) : mode === 'quick' && (
+                <div className="benchmark-speed-card benchmark-speed-card-placeholder">
+                  <div className="benchmark-speed-card-header">
+                    <Loader2 size={18} className="benchmark-spinner" />
+                    <span>测试进行中，等待结果...</span>
                   </div>
-                )
-              })()}
-              {gt && (() => {
-                const r = speedRating(gt.avg_ts, mi.nParams)
-                return (
-                  <div className="benchmark-speed-card" key="gen">
-                    <div className="benchmark-speed-card-header">
-                      <Cpu size={18} style={{ color: r.color }} />
-                      <span>Token 生成</span>
-                      <span className="benchmark-rating" style={{ background: r.color }}>{r.label}</span>
-                      <span className="benchmark-speed-value" style={{ color: r.color }}>{gt.avg_ts.toFixed(2)}</span>
-                      <span className="benchmark-speed-unit">tok/s</span>
-                    </div>
-                    <AnimatedBar speed={gt.avg_ts} maxSpeed={maxSpeed} color={r.color} />
-                    <div className="benchmark-speed-card-detail">
-                      <span>{gt.n_gen} tokens · {(gt.avg_ns / 1_000_000).toFixed(1)} ms</span>
-                      <span>±{gt.stddev_ts.toFixed(2)} tok/s</span>
-                    </div>
-                  </div>
-                )
-              })()}
-              {pt && gt && (() => {
-                const totalTokens = pt.n_prompt + gt.n_gen
-                const totalNs = pt.avg_ns + gt.avg_ns
-                const overallTokS = totalTokens / (totalNs / 1_000_000_000)
-                const ratio = pt.avg_ts / gt.avg_ts
-                const r = speedRating(overallTokS, mi.nParams)
-                return (
-                  <div className="benchmark-speed-card benchmark-speed-card-accent" key="overall">
-                    <div className="benchmark-speed-card-header">
-                      <BarChart3 size={18} style={{ color: '#8b5cf6' }} />
-                      <span>综合吞吐</span>
-                      <span className="benchmark-rating" style={{ background: r.color }}>{r.label}</span>
-                      <span className="benchmark-speed-value" style={{ color: '#8b5cf6' }}>{overallTokS.toFixed(2)}</span>
-                      <span className="benchmark-speed-unit">tok/s</span>
-                    </div>
-                    <div className="benchmark-stat-row">
-                      <div><div className="benchmark-stat-number">{totalTokens}</div><div className="benchmark-stat-label">总 tokens</div></div>
-                      <div><div className="benchmark-stat-number">{(totalNs / 1_000_000).toFixed(0)}</div><div className="benchmark-stat-label">总耗时 (ms)</div></div>
-                      <div><div className="benchmark-stat-number">{ratio.toFixed(0)}x</div><div className="benchmark-stat-label">提示词/生成比</div></div>
-                    </div>
-                  </div>
-                )
-              })()}
+                </div>
+              )}
             </div>
           </div>
         )}

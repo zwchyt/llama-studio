@@ -117,6 +117,20 @@ interface AppStore {
   setChatSidebarCollapsed: (v: boolean) => void
   chatSidebarCurrentCollapsed: boolean
   setChatSidebarCurrentCollapsed: (v: boolean) => void
+  // ── 基准测试持久结果 ──
+  benchmarkResult: {
+    mode: 'quick' | 'stress'
+    parsed: {
+      prompt: Record<string, unknown> | null
+      generation: Record<string, unknown> | null
+      modelInfo: Record<string, unknown>
+    } | null
+    summary: string[]
+    showResults: boolean
+    selectedBackend: string
+    selectedModel: string
+  } | null
+  setBenchmarkResult: (r: AppStore['benchmarkResult']) => void
 }
 // createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
@@ -274,6 +288,9 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   // ── 提示音 ──
   soundEnabled: true,
   setSoundEnabled: (v) => set({ soundEnabled: v }),
+  // ── 基准测试持久结果 ──
+  benchmarkResult: null,
+  setBenchmarkResult: (r) => set({ benchmarkResult: r }),
   // ── 聊天界面 ──
   chatSidebarCollapsed: (() => {
     try { return localStorage.getItem('chatSidebarCollapsed') === 'true' } catch { return false }
