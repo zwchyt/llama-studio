@@ -1,7 +1,7 @@
 ﻿import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
 import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
-  unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, cpSync, promises as fsPromises
+  unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, promises as fsPromises
 } from 'fs'
 import { join, extname, basename, dirname, resolve, sep } from 'path'
 import { spawn, ChildProcess } from 'child_process'
@@ -1514,54 +1514,7 @@ export function registerIpcHandlers(): void {
   const PI_WEB_GITHUB_REPO = 'llama-studio'
   let piWebCancelDl: (() => void) | null = null
 
-  function downloadGitHubAsset(
-    url: string, destPath: string,
-    onProgress: (received: number, total: number) => void,
-    onDone: () => void,
-    onError: (err: Error) => void
-  ): () => void {
-    const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || ''
-    let destroyed = false
-    let currentReq: ReturnType<typeof https.get> | null = null
-    const file = createWriteStream(destPath)
-    const attempt = (currentUrl: string, redirectCount = 0) => {
-      if (redirectCount > 10) { if (!destroyed) onError(new Error('Too many redirects')); return }
-      const headers: Record<string, string> = { 'User-Agent': 'hexllama/1.0' }
-      if (token) headers['Authorization'] = `Bearer ${token}`
-      currentReq = https.get(currentUrl, { headers }, (res) => {
-        if (destroyed) { res.destroy(); return }
-        if (res.statusCode === 301 || res.statusCode === 302) {
-          const loc = res.headers.location!
-          if (!loc.startsWith('http:') && !loc.startsWith('https:')) { if (!destroyed) onError(new Error('Invalid redirect')); return }
-          res.destroy()
-          return attempt(loc, redirectCount + 1)
-        }
-        if (res.statusCode !== 200 && res.statusCode !== 206) {
-          if (!destroyed) onError(new Error(`HTTP ${res.statusCode}`))
-          return
-        }
-        const totalBytes = parseInt(res.headers['content-length'] || '0', 10)
-        let received = 0
-        res.on('data', (chunk: Buffer) => {
-          if (destroyed) return
-          file.write(chunk)
-          received += chunk.length
-          onProgress(received, totalBytes)
-        })
-        res.on('end', () => { if (!destroyed) file.end(() => { if (!destroyed) onDone() }) })
-        res.on('error', (err) => { if (!destroyed) { file.destroy(); onError(err) } })
-      })
-      currentReq.setTimeout(30000, () => { if (!destroyed) { try { currentReq?.destroy() } catch {}; onError(new Error('timeout')) } })
-      currentReq.on('error', (err) => { if (!destroyed) { file.destroy(); onError(err) } })
-    }
-    attempt(url)
-    return () => {
-      if (destroyed) return
-      destroyed = true
-      currentReq?.destroy()
-      file.end()
-    }
-  }
+
   const lastDecodeCount = new Map<string, { count: number; time: number }>()
   const lastCacheHit = new Map<string, { cached: number; total: number }>()
 
@@ -1722,47 +1675,40 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('download-pi-web', async (event) => {
     try {
-      if (app.isPackaged) {
-        const tag = `v${app.getVersion()}`
-        const downloadUrl = `https://github.com/${PI_WEB_GITHUB_OWNER}/${PI_WEB_GITHUB_REPO}/releases/download/${tag}/pi-web-${tag}.tar.gz`
-        const archivePath = join(APP_ROOT, '.pi-web-tmp.tar.gz')
-        if (existsSync(archivePath)) unlinkSync(archivePath)
-        let cancelled = false
-        const onProgress = (received: number, total: number) => {
-          if (!cancelled && !event.sender.isDestroyed()) {
-            event.sender.send('pi-web-download-progress', { percent: total > 0 ? Math.round((received / total) * 100) : 0, phase: 'downloading' })
-          }
+      const tag = `v${app.getVersion()}`
+      const downloadUrl = `https://github.com/${PI_WEB_GITHUB_OWNER}/${PI_WEB_GITHUB_REPO}/releases/download/${tag}/pi-web-${tag}.tar.gz`
+      const archivePath = join(APP_ROOT, '.pi-web-tmp.tar.gz')
+      if (existsSync(archivePath)) unlinkSync(archivePath)
+      let cancelled = false
+      const onProgress = (received: number, total: number) => {
+        if (!cancelled && !event.sender.isDestroyed()) {
+          event.sender.send('pi-web-download-progress', { percent: total > 0 ? Math.round((received / total) * 100) : 0, phase: 'downloading' })
         }
-        event.sender.send('pi-web-download-progress', { percent: 0, phase: 'downloading' })
-        await new Promise<void>((resolve, reject) => {
-          const cancelFn = downloadGitHubAsset(
-            downloadUrl, archivePath,
-            (received, total) => { if (!cancelled) onProgress(received, total) },
-            () => { if (!cancelled) resolve() },
-            (err) => { if (!cancelled) reject(err) }
-          )
-          piWebCancelDl = () => { cancelled = true; cancelFn(); reject(new Error('cancelled')) }
-          if (cancelled) { cancelFn(); reject(new Error('cancelled')) }
-        })
-        if (cancelled) return { success: false, error: 'cancelled' }
-        event.sender.send('pi-web-download-progress', { percent: 100, phase: 'extracting' })
-        const tempDir = join(APP_ROOT, '.pi-web-tmp')
-        if (existsSync(tempDir)) rmdirSync(tempDir, { recursive: true })
-        mkdirSync(tempDir, { recursive: true })
-        await new Promise<void>((resolve, reject) => {
-          const proc = spawn('tar', ['-xzf', archivePath, '-C', tempDir], { stdio: 'pipe' })
-          proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`tar exited with code ${code}`)))
-          proc.on('error', reject)
-        })
-        unlinkSync(archivePath)
-        if (existsSync(PI_WEB_DIR)) rmdirSync(PI_WEB_DIR, { recursive: true })
-        renameSync(tempDir, PI_WEB_DIR)
-      } else {
-        const projectPiWeb = join(process.cwd(), 'pi-web')
-        if (!existsSync(projectPiWeb)) return { success: false, error: `本地 pi-web 目录不存在: ${projectPiWeb}` }
-        if (existsSync(PI_WEB_DIR)) rmdirSync(PI_WEB_DIR, { recursive: true })
-        cpSync(projectPiWeb, PI_WEB_DIR, { recursive: true })
       }
+      event.sender.send('pi-web-download-progress', { percent: 0, phase: 'downloading' })
+      await new Promise<void>((resolve, reject) => {
+        const cancelFn = startDownload(
+          downloadUrl, archivePath, 0,
+          onProgress,
+          () => { if (!cancelled) resolve() },
+          (err) => { if (!cancelled) reject(err) }
+        )
+        piWebCancelDl = () => { cancelled = true; cancelFn(); reject(new Error('cancelled')) }
+        if (cancelled) { cancelFn(); reject(new Error('cancelled')) }
+      })
+      if (cancelled) return { success: false, error: 'cancelled' }
+      event.sender.send('pi-web-download-progress', { percent: 100, phase: 'extracting' })
+      const tempDir = join(APP_ROOT, '.pi-web-tmp')
+      if (existsSync(tempDir)) rmdirSync(tempDir, { recursive: true })
+      mkdirSync(tempDir, { recursive: true })
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn('tar', ['-xzf', archivePath, '-C', tempDir], { stdio: 'pipe' })
+        proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`tar exited with code ${code}`)))
+        proc.on('error', reject)
+      })
+      unlinkSync(archivePath)
+      if (existsSync(PI_WEB_DIR)) rmdirSync(PI_WEB_DIR, { recursive: true })
+      renameSync(tempDir, PI_WEB_DIR)
       event.sender.send('pi-web-download-progress', { percent: 100, phase: 'done' })
       return { success: true }
     } catch (err) {
