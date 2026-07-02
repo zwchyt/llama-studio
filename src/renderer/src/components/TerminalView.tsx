@@ -19,7 +19,7 @@ function NewTerminalPopover({
   onClose: () => void
   onMouseEnter?: () => void
   onMouseLeave?: () => void
-}): JSX.Element {
+}): React.JSX.Element {
   const [cwd, setCwd] = useState(() => localStorage.getItem(CWD_KEY) || '')
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -98,11 +98,11 @@ function NewTerminalPopover({
 }
 
 /** 统一标签栏：标签 + 新建按钮（含弹出层） */
-function TerminalTabBar(): JSX.Element {
+function TerminalTabBar(): React.JSX.Element {
   const { sessions, activeId, setActive, close, open } = useTerminalStore()
   const [showPopover, setShowPopover] = useState(false)
   const dropdownRef = useRef<HTMLButtonElement>(null)
-  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   useEffect(() => {
     return () => {
@@ -192,7 +192,7 @@ function TerminalTabBar(): JSX.Element {
   )
 }
 
-function TermScreen({ id, visible }: { id: string; visible: boolean }): JSX.Element {
+function TermScreen({ id, visible }: { id: string; visible: boolean }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -214,7 +214,7 @@ function TermScreen({ id, visible }: { id: string; visible: boolean }): JSX.Elem
   return <div ref={ref} className="terminal-screen" style={{ display: visible ? '' : 'none' }} />
 }
 
-export default function TerminalView(): JSX.Element {
+export default function TerminalView(): React.JSX.Element {
   const { sessions, activeId, open } = useTerminalStore()
   const active = sessions.find((s) => s.id === activeId)
 

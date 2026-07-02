@@ -93,7 +93,7 @@ function DownloadRow({ dl }: { dl: ModelDownloadInfo }) {
   const isErr = dl.phase === 'error'
   
   const [pending, setPending] = useState<'pausing' | 'resuming' | null>(null)
-  const pendingTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   async function togglePause() {
     if (isPaused) {

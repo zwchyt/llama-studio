@@ -285,7 +285,7 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
   const userToggledRef = useRef(false)
   const thinking = !closed || isStreaming
   const bodyRef = useRef<HTMLDivElement>(null)
-  const collapseTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const collapseTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   // 节流显示文本：流式时按固定间隔更新，避免每个 token 都触发长文本重排
   const [displayValue, setDisplayValue] = useState(value)

@@ -215,7 +215,7 @@ function loadSettingsSync(): AppSettings {
       metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], metricsPolling: true }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
 }
 interface RunningProcess { proc: ChildProcess; port: number }
 const runningProcesses = new Map<string, RunningProcess>()

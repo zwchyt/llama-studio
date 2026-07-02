@@ -18,14 +18,14 @@ export default function ModelCard({ card }: Props) {
   const [showParamsModal, setShowParamsModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   const isRunning = card.status === 'running'
   const launchMode = card.template.launchMode || 'chat'
   const logs = useStore(s => s.modelLogs[card.template.id])
   const clearModelLogs = useStore(s => s.clearModelLogs)
   const [cardLogsExpanded, setCardLogsExpanded] = useState(false)
   const [logCopied, setLogCopied] = useState(false)
-  const logCopiedTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
+  const logCopiedTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   const logsEndRef = useRef<HTMLDivElement>(null)
   const logsBodyRef = useRef<HTMLDivElement>(null)
   const userScrolledRef = useRef(false)

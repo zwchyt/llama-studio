@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,6 +14,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.release_tag.outputs.tag }}
     steps:
       - name: Check out Git repository
         uses: actions/checkout@v4
@@ -69,11 +74,21 @@ jobs:
           echo "$NOTES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      - name: Determine Release Tag
+        id: release_tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="${{ steps.bump_version.outputs.new_tag }}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.bump_version.outputs.new_tag }}
-          name: Release ${{ steps.bump_version.outputs.new_tag }}
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          name: Release ${{ steps.release_tag.outputs.tag }}
           body: |
             ![Hexllama Logo](https://github.com/${{ github.repository }}/raw/main/assets/github-logo-hexllama.png)
 
@@ -81,8 +96,51 @@ jobs:
             ${{ steps.release_notes.outputs.notes }}
 
             ---
-            **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ steps.bump_version.outputs.previous_tag }}...${{ steps.bump_version.outputs.new_tag }}
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ steps.bump_version.outputs.previous_tag }}...${{ steps.release_tag.outputs.tag }}
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm install
+
+      - name: Build pi-web (Next.js)
+        run: npx next build
+        working-directory: pi-web
+        env:
+          NODE_ENV: production
+
+      - name: Build Electron
+        run: npm run build
+
+      - name: Package with electron-builder
+        run: npm run package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installer to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release.outputs.release_tag }}
+          files: |
+            dist/*.exe
+            dist/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifact (all builds)
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/
