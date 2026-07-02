@@ -70,6 +70,14 @@ const fullApi = {
   addImageModelFolder: () => ipcRenderer.invoke('add-image-model-folder'),
   removeImageModelFolder: (folder: string) => ipcRenderer.invoke('remove-image-model-folder', folder),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+  checkPiWeb: () => ipcRenderer.invoke('check-pi-web'),
+  downloadPiWeb: () => ipcRenderer.invoke('download-pi-web'),
+  cancelPiWebDownload: () => ipcRenderer.invoke('cancel-pi-web-download'),
+  onPiWebDownloadProgress: (cb: (data: { percent: number; phase: string }) => void) => {
+    ipcRenderer.removeAllListeners('pi-web-download-progress')
+    ipcRenderer.on('pi-web-download-progress', (_e, d) => cb(d))
+  },
+  removePiWebDownloadListener: () => ipcRenderer.removeAllListeners('pi-web-download-progress'),
   startPiWeb: () => ipcRenderer.invoke('start-pi-web'),
   stopPiWeb: () => ipcRenderer.invoke('stop-pi-web'),
   openPiWebWindow: () => ipcRenderer.invoke('open-pi-web-window'),

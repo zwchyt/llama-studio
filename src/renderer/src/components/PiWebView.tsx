@@ -1,50 +1,100 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import { Globe, ExternalLink, Loader, AlertTriangle, Play, Square, RefreshCw } from 'lucide-react'
-import { safeCall } from '../utils/safeCall'
+import { Globe, ExternalLink, Loader, AlertTriangle, Play, Square, RefreshCw, Download } from 'lucide-react'
+
+type PageStatus = 'checking' | 'needs_download' | 'downloading' | 'idle' | 'starting' | 'ready' | 'error'
 
 export default function PiWebView() {
   const { piWebUrl, setPiWebUrl } = useStore(s => ({ piWebUrl: s.piWebUrl, setPiWebUrl: s.setPiWebUrl }), shallow)
-  const [localStatus, setLocalStatus] = useState<'idle' | 'starting' | 'ready' | 'error'>(piWebUrl ? 'ready' : 'idle')
+  const [localStatus, setLocalStatus] = useState<PageStatus>('checking')
   const [error, setError] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
+  const [dlPercent, setDlPercent] = useState(0)
+  const [dlPhase, setDlPhase] = useState('')
+  const mountedRef = useRef(true)
 
   useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
+
+  useEffect(() => {
+    if (piWebUrl) { setLocalStatus('ready'); return }
     let cancelled = false
-    if (piWebUrl) {
-      setLocalStatus('ready')
-    } else {
-      window.api.getPiWebStatus().then((res: { running: boolean; url: string }) => {
+    ;(async () => {
+      try {
+        const { exists } = await window.api.checkPiWeb()
         if (cancelled) return
-        if (res.running) {
-          setLocalStatus('ready')
-          setPiWebUrl(res.url)
+        if (exists) {
+          setLocalStatus('idle')
+        } else {
+          setLocalStatus('needs_download')
         }
-      }).catch((e) => console.error('[getPiWebStatus]', e))
-    }
+      } catch {
+        if (!cancelled) setLocalStatus('needs_download')
+      }
+    })()
+    window.api.getPiWebStatus().then((res: { running: boolean; url: string }) => {
+      if (cancelled || !res.running) return
+      setLocalStatus('ready')
+      setPiWebUrl(res.url)
+    }).catch(() => {})
     return () => { cancelled = true }
   }, [])
+
+  const handleDownload = async () => {
+    setLocalStatus('downloading')
+    setError('')
+    setDlPercent(0)
+    setDlPhase('downloading')
+    window.api.onPiWebDownloadProgress((data) => {
+      if (!mountedRef.current) return
+      setDlPercent(data.percent)
+      setDlPhase(data.phase)
+    })
+    const res = await window.api.downloadPiWeb()
+    window.api.removePiWebDownloadListener()
+    if (!mountedRef.current) return
+    if (res.success) {
+      setLocalStatus('idle')
+    } else {
+      setLocalStatus('needs_download')
+      setError(res.error || '下载失败')
+    }
+  }
+
+  const handleCancelDownload = () => {
+    window.api.cancelPiWebDownload()
+    window.api.removePiWebDownloadListener()
+    if (mountedRef.current) {
+      setLocalStatus('needs_download')
+    }
+  }
 
   const handleStart = async () => {
     setLocalStatus('starting')
     setError('')
-    const res = await safeCall(() => window.api.startPiWeb(), '启动 pi-web 失败')
-    if (res && res.success) {
-      setLocalStatus('ready')
-      setPiWebUrl(res.url)
-    } else if (res) {
+    try {
+      const res = await window.api.startPiWeb()
+      if (!mountedRef.current) return
+      if (res.success) {
+        setLocalStatus('ready')
+        setPiWebUrl(res.url)
+      } else {
+        setLocalStatus('error')
+        setError(res.error || '启动失败')
+      }
+    } catch (e) {
+      if (!mountedRef.current) return
       setLocalStatus('error')
-      setError(res.error || 'Failed to start pi-web')
-    } else {
-      setLocalStatus('error')
-      setError('启动 pi-web 失败')
+      setError(String(e))
     }
   }
 
   const handleStop = async () => {
-    const ok = await safeCall(() => window.api.stopPiWeb(), '停止 pi-web 失败')
-    if (ok === null) return
+    await window.api.stopPiWeb()
+    if (!mountedRef.current) return
     setLocalStatus('idle')
     setPiWebUrl(null)
     setError('')
@@ -56,38 +106,8 @@ export default function PiWebView() {
 
   const handleReload = () => setReloadKey(k => k + 1)
 
-  if (localStatus !== 'ready') {
+  if (localStatus === 'ready') {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16, color: 'var(--text)', padding: 40 }}>
-        {localStatus === 'idle' && (
-          <>
-            <Globe size={48} style={{ opacity: 0.4 }} />
-            <span style={{ fontSize: 14, opacity: 0.7 }}>pi-web server is not running</span>
-            <button className="btn btn-primary" onClick={handleStart}>
-              <Play size={14} /> Start pi-web
-            </button>
-          </>
-        )}
-        {localStatus === 'starting' && (
-          <>
-            <Loader size={32} className="spin" style={{ opacity: 0.5 }} />
-            <span style={{ fontSize: 14, opacity: 0.7 }}>Starting pi-web server...</span>
-          </>
-        )}
-        {localStatus === 'error' && (
-          <>
-            <AlertTriangle size={32} style={{ color: 'var(--warn, #eab308)' }} />
-            <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>{error}</span>
-            <button className="btn btn-primary" onClick={handleStart}>
-              <Play size={14} /> Retry
-            </button>
-          </>
-        )}
-      </div>
-    )
-  }
-
-  return (
       <div className="llama-chat-container">
         <div className="llama-chat-header">
           <div className="llama-chat-header-left">
@@ -112,5 +132,64 @@ export default function PiWebView() {
           <webview key={reloadKey} src={piWebUrl!} style={{ flex: 1, width: '100%' }} />
         </div>
       </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16, color: 'var(--text)', padding: 40 }}>
+      {localStatus === 'checking' && (
+        <>
+          <Loader size={32} className="spin" style={{ opacity: 0.5 }} />
+          <span style={{ fontSize: 14, opacity: 0.7 }}>检查 pi-web 安装状态...</span>
+        </>
+      )}
+      {localStatus === 'needs_download' && (
+        <>
+          <Download size={48} style={{ opacity: 0.4 }} />
+          <span style={{ fontSize: 14, opacity: 0.7 }}>需要下载 pi-web 组件</span>
+          <span style={{ fontSize: 12, opacity: 0.5 }}>首次使用需下载约 200MB</span>
+          <button className="btn btn-primary" onClick={handleDownload}>
+            <Download size={14} /> 下载 pi-web
+          </button>
+        </>
+      )}
+      {localStatus === 'downloading' && (
+        <>
+          <Loader size={32} className="spin" style={{ opacity: 0.5 }} />
+          <span style={{ fontSize: 14, opacity: 0.7 }}>
+            {dlPhase === 'downloading' ? '正在下载 pi-web...' : '正在解压...'}
+          </span>
+          <div style={{ width: 240, height: 6, background: 'var(--surface-2)', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{ width: `${dlPercent}%`, height: '100%', background: 'var(--accent)', borderRadius: 3, transition: 'width 0.3s' }} />
+          </div>
+          <span style={{ fontSize: 12, opacity: 0.5 }}>{dlPercent}%</span>
+          <button className="btn btn-ghost btn-sm" onClick={handleCancelDownload}>取消</button>
+        </>
+      )}
+      {localStatus === 'idle' && (
+        <>
+          <Globe size={48} style={{ opacity: 0.4 }} />
+          <span style={{ fontSize: 14, opacity: 0.7 }}>pi-web 已就绪</span>
+          <button className="btn btn-primary" onClick={handleStart}>
+            <Play size={14} /> 启动 pi-web
+          </button>
+        </>
+      )}
+      {localStatus === 'starting' && (
+        <>
+          <Loader size={32} className="spin" style={{ opacity: 0.5 }} />
+          <span style={{ fontSize: 14, opacity: 0.7 }}>正在启动 pi-web...</span>
+        </>
+      )}
+      {localStatus === 'error' && (
+        <>
+          <AlertTriangle size={32} style={{ color: 'var(--warn, #eab308)' }} />
+          <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>{error}</span>
+          <button className="btn btn-primary" onClick={handleStart}>
+            <Play size={14} /> 重试
+          </button>
+        </>
+      )}
+    </div>
   )
 }

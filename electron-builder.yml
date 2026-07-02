@@ -9,12 +9,6 @@ files:
 extraResources:
   - from: resources
     to: resources
-  - from: pi-web
-    to: pi-web
-    filter:
-      - "**/*"
-      - "!.next/cache/**"
-      - "!.next/dev/**"
 win:
   target:
     - target: nsis

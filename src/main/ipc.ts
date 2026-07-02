@@ -124,8 +124,13 @@ function loadSchemaArgs(backendPath: string): { allowed: Set<string>; boolean: S
   const commandsPath = join(backendPath, 'commands.json')
   if (existsSync(commandsPath)) schema = tryLoad(commandsPath)
   if (!schema) {
-    const defaultPath = join(APP_ROOT, 'resources', 'commands.json')
-    if (existsSync(defaultPath)) schema = tryLoad(defaultPath)
+    const defaultPaths = [
+      join(APP_ROOT, 'resources', 'commands.json'),
+      ...(app.isPackaged ? [join(process.resourcesPath, 'resources', 'commands.json')] : [])
+    ]
+    for (const p of defaultPaths) {
+      if (existsSync(p)) { schema = tryLoad(p); break }
+    }
   }
   const allowed = new Set<string>()
   const boolean = new Set<string>()
@@ -1503,8 +1508,11 @@ export function registerIpcHandlers(): void {
   })
 
   // --- pi-web ---
-  const PI_WEB_DIR = app.isPackaged ? join(process.resourcesPath, 'pi-web') : join(APP_ROOT, 'pi-web')
+  const PI_WEB_DIR = join(APP_ROOT, 'pi-web')
   const PI_WEB_PORT = 30141
+  const PI_WEB_GITHUB_OWNER = 'zwchyt'
+  const PI_WEB_GITHUB_REPO = 'llama-studio'
+  let piWebCancelDl: (() => void) | null = null
   const lastDecodeCount = new Map<string, { count: number; time: number }>()
   const lastCacheHit = new Map<string, { cached: number; total: number }>()
 
@@ -1656,6 +1664,60 @@ export function registerIpcHandlers(): void {
     piWebWindow.on('closed', () => { piWebWindow = null })
   }
 
+  ipcMain.handle('check-pi-web', () => {
+    const exists = existsSync(PI_WEB_DIR) && existsSync(join(PI_WEB_DIR, 'node_modules')) && existsSync(join(PI_WEB_DIR, '.next'))
+    const versionFile = join(PI_WEB_DIR, 'version.json')
+    let version: string | null = null
+    try { if (existsSync(versionFile)) version = JSON.parse(readFileSync(versionFile, 'utf-8')).release_tag } catch {}
+    return { exists, version }
+  })
+  ipcMain.handle('download-pi-web', async (event) => {
+    try {
+      const tag = app.isPackaged ? `v${app.getVersion()}` : 'latest'
+      const downloadUrl = app.isPackaged
+        ? `https://github.com/${PI_WEB_GITHUB_OWNER}/${PI_WEB_GITHUB_REPO}/releases/download/${tag}/pi-web-${tag}.tar.gz`
+        : `https://github.com/${PI_WEB_GITHUB_OWNER}/${PI_WEB_GITHUB_REPO}/releases/latest/download/pi-web-latest.tar.gz`
+      const tempDir = join(APP_ROOT, '.pi-web-tmp')
+      const archivePath = join(APP_ROOT, '.pi-web-tmp.tar.gz')
+      if (existsSync(tempDir)) rmdirSync(tempDir, { recursive: true })
+      if (existsSync(archivePath)) unlinkSync(archivePath)
+      let cancelled = false
+      const onProgress = (received: number, total: number) => {
+        if (!cancelled && !event.sender.isDestroyed()) {
+          event.sender.send('pi-web-download-progress', { percent: total > 0 ? Math.round((received / total) * 100) : 0, phase: 'downloading' })
+        }
+      }
+      event.sender.send('pi-web-download-progress', { percent: 0, phase: 'downloading' })
+      await new Promise<void>((resolve, reject) => {
+        const cancelFn = startDownload(
+          downloadUrl, archivePath, 0,
+          onProgress,
+          () => { if (!cancelled) resolve() },
+          (err) => { if (!cancelled) reject(err) }
+        )
+        piWebCancelDl = () => { cancelled = true; cancelFn(); reject(new Error('cancelled')) }
+        if (cancelled) { cancelFn(); reject(new Error('cancelled')) }
+      })
+      if (cancelled) return { success: false, error: 'cancelled' }
+      event.sender.send('pi-web-download-progress', { percent: 100, phase: 'extracting' })
+      mkdirSync(tempDir, { recursive: true })
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn('tar', ['-xzf', archivePath, '-C', tempDir], { stdio: 'pipe' })
+        proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`tar exited with code ${code}`)))
+        proc.on('error', reject)
+      })
+      unlinkSync(archivePath)
+      if (existsSync(PI_WEB_DIR)) rmdirSync(PI_WEB_DIR, { recursive: true })
+      renameSync(tempDir, PI_WEB_DIR)
+      event.sender.send('pi-web-download-progress', { percent: 100, phase: 'done' })
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+  ipcMain.handle('cancel-pi-web-download', () => {
+    if (piWebCancelDl) { piWebCancelDl(); piWebCancelDl = null }
+  })
   ipcMain.handle('start-pi-web', async () => {
     try {
       const url = await startPiWeb()
@@ -1749,12 +1811,16 @@ export function registerIpcHandlers(): void {
 
   async function collectMetrics(id: string, port: number, pid?: number): Promise<Record<string, unknown>> {
     const [rawSlots, rawMetrics] = await Promise.all([
-      httpGetText(`http://127.0.0.1:${port}/slots`).catch(() => ''),
-      httpGetText(`http://127.0.0.1:${port}/metrics`).catch(() => ''),
+      httpGetText(`http://127.0.0.1:${port}/slots`).catch((e) => { console.error('[metrics] /slots error', e?.message); return '' }),
+      httpGetText(`http://127.0.0.1:${port}/metrics`).catch((e) => { console.error('[metrics] /metrics error', e?.message); return '' }),
     ])
     const gpu = cachedGpuData
     const payload: Record<string, unknown> = { id, lastUpdated: Date.now() }
     const slots = rawSlots ? tryParseJson(rawSlots) : null
+    if (!rawSlots) console.warn('[metrics] /slots returned empty for', id, 'port', port)
+    else if (!slots) console.warn('[metrics] /slots parse failed, raw:', rawSlots.slice(0, 200))
+    else if (!Array.isArray(slots)) console.warn('[metrics] /slots is not array, got:', typeof slots, JSON.stringify(slots).slice(0, 200))
+    else if (slots.length === 0) console.log('[metrics] /slots empty array (no active inference)')
     if (slots && Array.isArray(slots) && slots.length > 0) {
       const s = slots[0]
       if (s.n_ctx !== undefined) payload.nCtx = s.n_ctx
@@ -1777,6 +1843,8 @@ export function registerIpcHandlers(): void {
     }
     if (rawMetrics) {
       const prom = parsePrometheusMetrics(rawMetrics)
+      const keys = Object.keys(prom)
+      if (keys.length === 0) console.warn('[metrics] /metrics parsed 0 Prometheus keys, raw prefix:', rawMetrics.slice(0, 150))
       if (prom['llamacpp:predicted_tokens_seconds'] !== undefined) payload.decodeTokS = prom['llamacpp:predicted_tokens_seconds']
       if (prom['llamacpp:prompt_tokens_seconds'] !== undefined) payload.prefillTokS = prom['llamacpp:prompt_tokens_seconds']
       if (prom['llamacpp:n_decode_total'] !== undefined) {

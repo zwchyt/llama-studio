@@ -129,6 +129,21 @@ jobs:
         run: npm prune --omit=dev
         working-directory: pi-web
 
+      - name: Package pi-web as tar.gz
+        run: |
+          $tag = "${{ needs.release.outputs.release_tag }}"
+          $piweb_root = "pi-web"
+          $out_name = "pi-web-$tag.tar.gz"
+          # Remove cache/dev dirs before packaging
+          Remove-Item -Recurse -Force "$piweb_root\.next\cache" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "$piweb_root\.next\dev" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "$piweb_root\.next\*debug*" -ErrorAction SilentlyContinue
+          # Write version marker
+          Set-Content -Path "$piweb_root\version.json" -Value "{`"release_tag`": `"$tag`", `"built_at`": `"$(Get-Date -Format o)`"}"
+          # Create tar.gz
+          tar -czf "$out_name" -C "$piweb_root" .
+          Write-Output "piweb_package=$out_name" >> $env:GITHUB_ENV
+
       - name: Build Electron
         run: npm run build
 
@@ -144,6 +159,7 @@ jobs:
           files: |
             dist/*.exe
             dist/*.zip
+            pi-web-*.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
