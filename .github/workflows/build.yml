@@ -125,6 +125,10 @@ jobs:
         env:
           NODE_ENV: production
 
+      - name: Strip devDependencies from pi-web
+        run: npm prune --omit=dev
+        working-directory: pi-web
+
       - name: Build Electron
         run: npm run build
 
