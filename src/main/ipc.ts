@@ -951,10 +951,15 @@ export function registerIpcHandlers(): void {
     try {
       if (existsSync(commandsPath)) return JSON.parse(await fsPromises.readFile(commandsPath, 'utf-8'))
     } catch { }
-    const defaultPath = join(APP_ROOT, 'resources', 'commands.json')
-    try {
-      if (existsSync(defaultPath)) return JSON.parse(await fsPromises.readFile(defaultPath, 'utf-8'))
-    } catch { }
+    const defaultPaths = [
+      join(APP_ROOT, 'resources', 'commands.json'),
+      ...(app.isPackaged ? [join(process.resourcesPath, 'resources', 'commands.json')] : [])
+    ]
+    for (const defaultPath of defaultPaths) {
+      try {
+        if (existsSync(defaultPath)) return JSON.parse(await fsPromises.readFile(defaultPath, 'utf-8'))
+      } catch { }
+    }
     return null
   })
   ipcMain.handle('save-backend-commands', (_e, backendName: string, schema: unknown) => {

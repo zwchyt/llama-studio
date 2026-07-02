@@ -3,6 +3,7 @@ import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers, cleanupRunningProcesses } from './ipc'
+import { appendFileSync } from 'fs'
 import { existsSync } from 'fs'
 function resolveIcon(): string | undefined {
   const candidates = [
@@ -28,11 +29,22 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webviewTag: true
     }
   })
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+  })
+  mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    const msg = `[did-fail-load] code=${code} desc=${desc} url=${url}\n`
+    console.error(msg.trim())
+    try { appendFileSync(join(app.getPath('userData'), 'debug.log'), msg) } catch {}
+  })
+  mainWindow.webContents.on('before-input-event', (_e, input) => {
+    if (input.key === 'F12') {
+      mainWindow.webContents.toggleDevTools()
+    }
   })
   mainWindow.webContents.setWindowOpenHandler((details) => {
     if (details.url.startsWith('https:') || details.url.startsWith('http:')) {

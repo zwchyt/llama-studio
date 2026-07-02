@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { Globe, ExternalLink, Loader, AlertTriangle, Play, Square, RefreshCw } from 'lucide-react'
@@ -9,7 +9,6 @@ export default function PiWebView() {
   const [localStatus, setLocalStatus] = useState<'idle' | 'starting' | 'ready' | 'error'>(piWebUrl ? 'ready' : 'idle')
   const [error, setError] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
-  const iframeRef = useRef<HTMLIFrameElement>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -26,18 +25,6 @@ export default function PiWebView() {
     }
     return () => { cancelled = true }
   }, [])
-
-  useEffect(() => {
-    const handler = async (e: MessageEvent) => {
-      if (e.data?.type !== 'REQUEST_DIRECTORY_SELECTION') return
-      if (e.source !== iframeRef.current?.contentWindow) return
-      if (!piWebUrl || e.origin !== new URL(piWebUrl).origin) return
-      const result = await safeCall(() => window.api.selectDirectory(), '选择目录失败')
-      e.source?.postMessage({ type: 'DIRECTORY_SELECTION_RESULT', path: result?.path ?? null }, { targetOrigin: piWebUrl })
-    }
-    window.addEventListener('message', handler)
-    return () => window.removeEventListener('message', handler)
-  }, [piWebUrl])
 
   const handleStart = async () => {
     setLocalStatus('starting')
@@ -122,7 +109,7 @@ export default function PiWebView() {
           </div>
         </div>
         <div className="llama-chat-body">
-          <iframe key={reloadKey} ref={iframeRef} src={piWebUrl!} className="llama-chat-iframe" title="pi-web" />
+          <webview key={reloadKey} src={piWebUrl!} style={{ flex: 1, width: '100%' }} />
         </div>
       </div>
   )

@@ -7,6 +7,8 @@ files:
   - out/preload/**/*
   - out/renderer/**/*
 extraResources:
+  - from: resources
+    to: resources
   - from: pi-web
     to: pi-web
     filter:

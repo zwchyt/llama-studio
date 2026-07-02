@@ -2456,6 +2456,12 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   width: 100%;
 }
 
+webview {
+  flex: 1;
+  width: 100%;
+  border: none;
+}
+
 .llama-chat-status {
   flex: 1;
   display: flex;
