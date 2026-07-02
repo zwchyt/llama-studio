@@ -14,6 +14,7 @@ import WelcomeView from './components/WelcomeView'
 import ChatView from './components/ChatView'
 import CreateModal from './components/CreateModal'
 import UpdateBanner from './components/UpdateBanner'
+import AppUpdateBanner from './components/AppUpdateBanner'
 import ChatWindow from './components/ChatWindow'
 import PiWebView from './components/PiWebView'
 import LlamaChatView from './components/LlamaChatView'
@@ -57,6 +58,8 @@ function AppMain() {
   const setPaths = useStore(s => s.setPaths)
   const setReleaseInfo = useStore(s => s.setReleaseInfo)
   const setCheckingUpdate = useStore(s => s.setCheckingUpdate)
+  const setAppReleaseInfo = useStore(s => s.setAppReleaseInfo)
+  const setAppCheckingUpdate = useStore(s => s.setAppCheckingUpdate)
   const setHfDownload = useStore(s => s.setHfDownload)
   const removeHfDownload = useStore(s => s.removeHfDownload)
   const upsertModelDownload = useStore(s => s.upsertModelDownload)
@@ -113,6 +116,7 @@ function AppMain() {
 
     // Stage 3: Low priority — defer to next microtask so it overlaps with UI render
     queueMicrotask(() => { checkUpdates() })
+    queueMicrotask(() => { checkAppUpdate() })
 
     window.api.onModelError((data) => {
       const s = useStore.getState()
@@ -373,6 +377,16 @@ function AppMain() {
     }
   }
 
+  async function checkAppUpdate() {
+    setAppCheckingUpdate(true)
+    try {
+      const info = await window.api.checkAppUpdate()
+      setAppReleaseInfo(info)
+    } finally {
+      setAppCheckingUpdate(false)
+    }
+  }
+
   const currentView = useMemo(() => {
     switch (view) {
       case 'hub': return <HuggingFaceView />
@@ -409,6 +423,7 @@ function AppMain() {
     <div className="app">
       <Titlebar onCheckUpdates={checkUpdates} />
       <UpdateBanner />
+      <AppUpdateBanner />
       <div className="main-layout">
         <Sidebar />
         <main className="content" style={view === 'llama' || view === 'piweb' ? { display: 'none' } : {}}>

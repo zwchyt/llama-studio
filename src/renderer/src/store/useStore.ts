@@ -1,6 +1,6 @@
 import { createWithEqualityFn } from 'zustand/traditional'
 import { shallow } from 'zustand/shallow'
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, RunningStatus, ModelMetrics, ModelDownloadPhase, HfDownloadPhase } from '../../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, AppUpdateInfo, RunningStatus, ModelMetrics, ModelDownloadPhase, HfDownloadPhase } from '../../../shared/types'
 interface CardState {
   template: Template
   status: RunningStatus
@@ -48,6 +48,11 @@ interface AppStore {
   updateDismissed: boolean
   checkingUpdate: boolean
   downloadProgress: { percent: number; phase: string } | null
+  // ── 应用自身更新 ──
+  appReleaseInfo: AppUpdateInfo | null
+  appUpdateDismissed: boolean
+  appDownloadProgress: { percent: number; phase: string; received?: number; total?: number } | null
+  appCheckingUpdate: boolean
   templateSearch: string
   modelDownloads: Record<string, ModelDownloadInfo>
   hfDownloads: { repoId: string; filename: string; percent: number; phase: HfDownloadPhase; speed?: number }[]
@@ -74,6 +79,10 @@ interface AppStore {
   setUpdateDismissed: (v: boolean) => void
   setCheckingUpdate: (v: boolean) => void
   setDownloadProgress: (data: { percent: number; phase: string } | null) => void
+  setAppReleaseInfo: (r: AppUpdateInfo | null) => void
+  setAppUpdateDismissed: (v: boolean) => void
+  setAppDownloadProgress: (data: { percent: number; phase: string; received?: number; total?: number } | null) => void
+  setAppCheckingUpdate: (v: boolean) => void
   setTemplateSearch: (q: string) => void
   upsertModelDownload: (d: ModelDownloadInfo) => void
   removeModelDownload: (id: string) => void
@@ -139,6 +148,7 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   commandsSchema: null, releaseInfo: null, paths: null,
   view: 'welcome', showCreateModal: false, editingTemplate: null,
   updateDismissed: false, checkingUpdate: false, downloadProgress: null,
+  appReleaseInfo: null, appUpdateDismissed: false, appDownloadProgress: null, appCheckingUpdate: false,
   templateSearch: '', modelDownloads: {}, hfDownloads: [],
   hubQuery: '', hubResults: [], hubSelectedModelId: null, hubSource: 'huggingface',
   modelLogs: {},
@@ -169,6 +179,10 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   setUpdateDismissed: (v) => set({ updateDismissed: v }),
   setCheckingUpdate: (v) => set({ checkingUpdate: v }),
   setDownloadProgress: (data) => set({ downloadProgress: data }),
+  setAppReleaseInfo: (r) => set({ appReleaseInfo: r }),
+  setAppUpdateDismissed: (v) => set({ appUpdateDismissed: v }),
+  setAppDownloadProgress: (data) => set({ appDownloadProgress: data }),
+  setAppCheckingUpdate: (v) => set({ appCheckingUpdate: v }),
   setTemplateSearch: (q) => set({ templateSearch: q }),
   upsertModelDownload: (d) => set((s) => {
     const existing = s.modelDownloads[d.id]

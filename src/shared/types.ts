@@ -54,6 +54,22 @@ export interface ReleaseInfo {
   assets: { name: string; downloadUrl: string; size: number }[]
   error?: string
 }
+
+/** 应用自身更新的信息 */
+export interface AppUpdateInfo {
+  available: boolean
+  latestVersion: string
+  currentVersion: string
+  tagName: string
+  releaseName: string
+  releaseUrl: string
+  publishedAt: string
+  /** Windows 平台的 asset（NSIS 安装器） */
+  assetName: string
+  assetUrl: string
+  assetSize: number
+  error?: string
+}
 export interface IntervalSample {
   t: number  // unix timestamp ms
   v: number  // value

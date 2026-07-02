@@ -1397,6 +1397,145 @@ export function registerIpcHandlers(): void {
     }
     return { success: true }
   })
+
+  // ── 应用自身更新 ───────────────────────────────────────────
+  const APP_GITHUB_OWNER = 'zwchyt'
+  const APP_GITHUB_REPO = 'llama-studio'
+  let cancelAppDl: (() => void) | null = null
+
+  ipcMain.handle('check-app-update', async () => {
+    try {
+      const currentVersion = app.getVersion() || '0.0.0'
+
+      const release = await fetchJson(
+        `https://api.github.com/repos/${APP_GITHUB_OWNER}/${APP_GITHUB_REPO}/releases/latest`
+      ) as GitHubRelease
+
+      if (!release || !release.tag_name) {
+        return { available: false, currentVersion, error: 'Invalid response from GitHub' }
+      }
+
+      const tagName = release.tag_name // e.g. "v1.0.79"
+      const latestVersion = tagName.replace(/^v/, '')
+
+      // semver compare
+      const currentParts = currentVersion.split('.').map(Number)
+      const latestParts = latestVersion.split('.').map(Number)
+      let available = false
+      for (let i = 0; i < 3; i++) {
+        const cur = currentParts[i] || 0
+        const lat = latestParts[i] || 0
+        if (lat > cur) { available = true; break }
+        if (lat < cur) break
+      }
+
+      // Find platform installer asset
+      const isWin = process.platform === 'win32'
+      const platformAssets = release.assets.filter((a: GitHubAsset) => {
+        const n = a.name.toLowerCase()
+        if (isWin) {
+          // NSIS installer: e.g. "Hexllama-Setup-1.0.79.exe" or "Hexllama Setup 1.0.79.exe"
+          return n.endsWith('.exe') && (n.includes('setup') || n.includes('installer'))
+        }
+        return false
+      })
+
+      const asset = platformAssets.length > 0 ? platformAssets[0] : null
+
+      return {
+        available,
+        latestVersion,
+        currentVersion,
+        tagName,
+        releaseName: release.name || tagName,
+        releaseUrl: release.html_url,
+        publishedAt: release.published_at,
+        assetName: asset?.name || '',
+        assetUrl: asset?.browser_download_url || '',
+        assetSize: asset?.size || 0,
+      }
+    } catch (err) {
+      return { available: false, currentVersion: app.getVersion(), error: String(err) }
+    }
+  })
+
+  ipcMain.handle('download-app-update', async (event, opts: { url: string; assetName: string }) => {
+    if (!opts.url.startsWith('https://github.com/') && !opts.url.startsWith('https://objects.githubusercontent.com/')) {
+      return { success: false, error: 'Invalid download URL' }
+    }
+    if (!opts.assetName || opts.assetName.includes('..') || opts.assetName.includes('/') || opts.assetName.includes('\\')) {
+      return { success: false, error: 'Invalid asset name' }
+    }
+
+    const archivePath = join(app.getPath('temp'), opts.assetName)
+
+    try {
+      event.sender.send('app-download-progress', { percent: 0, phase: 'downloading' })
+
+      await new Promise<void>((resolve, reject) => {
+        cancelAppDl = startDownload(
+          opts.url, archivePath, 0,
+          (r, t) => {
+            event.sender.send('app-download-progress', {
+              percent: t > 0 ? Math.round(r / t * 100) : 0,
+              phase: 'downloading',
+              received: r,
+              total: t
+            })
+          },
+          () => {
+            event.sender.send('app-download-progress', { percent: 100, phase: 'downloaded' })
+            resolve()
+          },
+          (err) => reject(err)
+        )
+      })
+      cancelAppDl = null
+      return { success: true, path: archivePath }
+    } catch (err) {
+      cancelAppDl = null
+      try { unlinkSync(archivePath) } catch { /* ignore */ }
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('cancel-app-download', () => {
+    if (cancelAppDl) {
+      cancelAppDl()
+      cancelAppDl = null
+    }
+    return { success: true }
+  })
+
+  ipcMain.handle('install-app-update', async (_e, opts: { installerPath: string }) => {
+    if (!opts.installerPath || !existsSync(opts.installerPath)) {
+      return { success: false, error: 'Installer not found' }
+    }
+    if (!opts.installerPath.toLowerCase().endsWith('.exe')) {
+      return { success: false, error: 'Unsupported installer type' }
+    }
+
+    try {
+      const installDir = dirname(app.getPath('exe'))
+
+      // NSIS /D= flag must be the last unquoted argument on the command line
+      const child = spawn(opts.installerPath, [`/D=${installDir}`], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      })
+      child.unref()
+
+      // Give the installer a moment to start, then quit the app
+      setTimeout(() => {
+        app.quit()
+      }, 1500)
+
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
   ipcMain.handle('open-folder', async (_e, folderPath: string) => {
     const settings = await loadSettings()
     const allowedBases = [MODELS_DIR, BACKEND_DIR, CHATS_DIR, ...settings.externalModelFolders]

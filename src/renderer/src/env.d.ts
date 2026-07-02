@@ -61,6 +61,13 @@ interface LlamaCppApi {
   cancelBackendDownload: () => Promise<{ success: boolean }>
   onDownloadProgress: (callback: (data: { percent: number; phase: string }) => void) => void
   removeDownloadListener: () => void
+  // ── 应用自身更新 ──
+  checkAppUpdate: () => Promise<AppUpdateInfo>
+  downloadAppUpdate: (opts: { url: string; assetName: string }) => Promise<{ success: boolean; path?: string; error?: string }>
+  cancelAppDownload: () => Promise<{ success: boolean }>
+  installAppUpdate: (opts: { installerPath: string }) => Promise<{ success: boolean; error?: string }>
+  onAppDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number }) => void) => void
+  removeAppDownloadListener: () => void
   hfSearch: (query: string) => Promise<HfModelResult[] | { error: string }>
   hfGetFiles: (repoId: string) => Promise<HfFileResult[] | { error: string }>
   hfDownloadModel: (opts: { repoId: string; filename: string; downloadUrl: string }) => Promise<{ success: boolean; error?: string }>

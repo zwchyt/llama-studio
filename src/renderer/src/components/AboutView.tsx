@@ -1,8 +1,45 @@
-import React from 'react'
-import { ExternalLink, Info, ShieldAlert, FileText, Heart } from 'lucide-react'
+import React, { useState } from 'react'
+import { ExternalLink, Info, ShieldAlert, FileText, Heart, RotateCw } from 'lucide-react'
+import { useStore } from '../store/useStore'
+import { shallow } from 'zustand/shallow'
+import { notify } from '../store/notificationStore'
+
 export default function AboutView() {
   const openLink = (url: string) => {
     window.api.openExternal(url)
+  }
+
+  const [checking, setChecking] = useState(false)
+  const { appReleaseInfo, setAppReleaseInfo, setAppCheckingUpdate, setAppUpdateDismissed } = useStore(s => ({
+    appReleaseInfo: s.appReleaseInfo,
+    setAppReleaseInfo: s.setAppReleaseInfo,
+    setAppCheckingUpdate: s.setAppCheckingUpdate,
+    setAppUpdateDismissed: s.setAppUpdateDismissed,
+  }), shallow)
+
+  // 获取当前版本号（从 package.json version）
+  const currentVersion = appReleaseInfo?.currentVersion || '...'
+
+  const handleCheckUpdate = async () => {
+    setChecking(true)
+    try {
+      const info = await window.api.checkAppUpdate()
+      setAppReleaseInfo(info)
+      setAppCheckingUpdate(false)
+      if (info.available) {
+        // 重置横幅关闭状态，让 AppUpdateBanner 显示出来
+        setAppUpdateDismissed(false)
+        notify(`发现新版本 ${info.latestVersion}！`, 'success')
+      } else if (info.error) {
+        notify(`检查更新失败：${info.error}`, 'error')
+      } else {
+        notify(`当前版本 ${info.currentVersion} 已是最新`, 'info')
+      }
+    } catch (e) {
+      notify(`检查更新失败：${String(e)}`, 'error')
+    } finally {
+      setChecking(false)
+    }
   }
   return (
     <div className="about-container" style={{ padding: 24, maxWidth: 800, margin: '0 auto', color: 'var(--text)' }}>
@@ -14,6 +51,48 @@ export default function AboutView() {
           <p className="page-subtitle">一个快速、美观的本地 LLM 管理图形界面</p>
         </div>
       </div>
+
+      {/* 版本信息 */}
+      <section className="about-section" style={{ marginBottom: 16 }}>
+        <div className="about-card" style={{
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)', padding: '16px 20px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16
+        }}>
+          <div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>
+              Hexllama {currentVersion}
+            </div>
+            {appReleaseInfo?.available && !appReleaseInfo?.error && (
+              <div style={{ fontSize: 12, color: 'var(--accent)' }}>
+                新版本 {appReleaseInfo.latestVersion} 可用
+              </div>
+            )}
+            {appReleaseInfo?.error && (
+              <div style={{ fontSize: 12, color: 'var(--danger)' }}>
+                检查更新失败
+              </div>
+            )}
+            {!appReleaseInfo?.error && !appReleaseInfo?.available && appReleaseInfo?.currentVersion && (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                已是最新版本
+              </div>
+            )}
+          </div>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={handleCheckUpdate}
+            disabled={checking}
+            style={{ whiteSpace: 'nowrap' }}
+          >
+            {checking ? (
+              <><RotateCw size={14} className="spin" style={{ marginRight: 4 }} /> 检查中...</>
+            ) : (
+              <><RotateCw size={14} style={{ marginRight: 4 }} /> 检查更新</>
+            )}
+          </button>
+        </div>
+      </section>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
         { }
         <section className="about-section">

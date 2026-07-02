@@ -44,6 +44,16 @@ const fullApi = {
     ipcRenderer.on('download-progress', (_event, data) => callback(data))
   },
   removeDownloadListener: () => ipcRenderer.removeAllListeners('download-progress'),
+  // ── 应用自身更新 ──
+  checkAppUpdate: () => ipcRenderer.invoke('check-app-update'),
+  downloadAppUpdate: (opts: { url: string; assetName: string }) => ipcRenderer.invoke('download-app-update', opts),
+  cancelAppDownload: () => ipcRenderer.invoke('cancel-app-download'),
+  installAppUpdate: (opts: { installerPath: string }) => ipcRenderer.invoke('install-app-update', opts),
+  onAppDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number }) => void) => {
+    ipcRenderer.removeAllListeners('app-download-progress')
+    ipcRenderer.on('app-download-progress', (_event, data) => callback(data))
+  },
+  removeAppDownloadListener: () => ipcRenderer.removeAllListeners('app-download-progress'),
   hfSearch: (query: string) => ipcRenderer.invoke('hf-search', query),
   hfGetFiles: (repoId: string) => ipcRenderer.invoke('hf-get-files', repoId),
   hfDownloadModel: (opts: object) => ipcRenderer.invoke('hf-download-model', opts),
