@@ -1,6 +1,5 @@
 {
   "name": "llama-studio",
-  "workspaces": ["pi-web"],
   "version": "1.0.57",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",

@@ -115,6 +115,10 @@ jobs:
 
       - run: npm install
 
+      - name: Install pi-web dependencies
+        run: npm install
+        working-directory: pi-web
+
       - name: Build pi-web (Next.js)
         run: npx next build
         working-directory: pi-web
