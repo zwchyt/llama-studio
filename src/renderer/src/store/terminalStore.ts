@@ -21,21 +21,17 @@ interface TerminalStore {
   updateTitle: (id: string, title: string) => void
 }
 
-/** 从 shell 路径提取可读名称，如 C:\Windows\System32\cmd.exe → cmd */
-function shellLabel(shell?: string): string {
-  if (!shell) return '终端'
-  const base = shell.replace(/[\\/]/g, '/').split('/').pop() || shell
-  return base.replace(/\.exe$/i, '')
-}
-
-/** 根据当前会话列表生成带序号的标题 */
-function makeTitle(shell: string | undefined, sessions: TerminalMeta[]): string {
-  const label = shellLabel(shell)
-  // 统计已有同名标题数量（含序号前缀），决定是否追加序号
-  const samePrefix = sessions.filter(s =>
-    s.title === label || /^.+\s\d+$/.test(s.title) && s.title.startsWith(label + ' ')
-  ).length
-  return samePrefix > 0 ? `${label} ${samePrefix + 1}` : label
+/** 根据当前会话列表生成带序号的标题：终端 1、终端 2 … */
+function makeTitle(sessions: TerminalMeta[]): string {
+  const usedNums = new Set(
+    sessions.map(s => {
+      const m = s.title.match(/^终端\s(\d+)$/)
+      return m ? parseInt(m[1], 10) : 0
+    })
+  )
+  let n = 1
+  while (usedNums.has(n)) n++
+  return `终端 ${n}`
 }
 
 const STORAGE_KEY = 'terminal-sessions'
@@ -77,7 +73,7 @@ export const useTerminalStore = createWithEqualityFn<TerminalStore>(
       if (!id) { notify('打开终端失败：未返回终端 ID', 'error'); return }
       const shell = result.shell
       set((s) => {
-        const title = makeTitle(shell, s.sessions)
+        const title = makeTitle(s.sessions)
         const meta: TerminalMeta = { id, title, cwd: cwd || '', exited: false }
         const sessions = [...s.sessions, meta]
         persistSessions(sessions)
@@ -111,7 +107,12 @@ export const useTerminalStore = createWithEqualityFn<TerminalStore>(
 
     updateTitle: (id: string, title: string) => {
       set((s) => {
-        const sessions = s.sessions.map((x) => x.id === id && !x.exited ? { ...x, title } : x)
+        const sessions = s.sessions.map((x) => {
+          if (x.id !== id || x.exited) return x
+          // 跳过 OSC 序列改名，保留终端 1、终端 2 等序号标题
+          if (/^终端\s\d+$/.test(x.title)) return x
+          return { ...x, title }
+        })
         persistSessions(sessions)
         return { sessions }
       })

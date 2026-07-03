@@ -1640,8 +1640,9 @@ export function registerIpcHandlers(): void {
     checkFileCache.set(filePath, exists)
     return exists
   })
-  ipcMain.handle('select-directory', async () => {
-    const r = await dialog.showOpenDialog({ title: 'Select Directory', properties: ['openDirectory'] })
+  ipcMain.handle('select-directory', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const r = await dialog.showOpenDialog(win!, { title: 'Select Directory', properties: ['openDirectory'] })
     if (r.canceled || !r.filePaths.length) return { path: null }
     return { path: r.filePaths[0] }
   })
@@ -2644,18 +2645,18 @@ export function registerIpcHandlers(): void {
     { name: 'OpenClaude',        pkg: '@gitlawb/openclaude',             cmd: 'openclaude',  logo: './agent-logos/OpenClaude.png',    website: 'https://openclaude.gitlawb.com/' },
     { name: 'Crush',             pkg: '@charmland/crush',                cmd: 'crush',       logo: './agent-logos/Cursh.png',         website: 'https://github.com/charmbracelet/crush' },
     { name: 'CodeWhale',         pkg: 'codewhale',                        cmd: 'codewhale',   logo: './agent-logos/CodeWhale.jpg',     website: 'https://github.com/Hmbown/CodeWhale' },
-    { name: 'Kimi',              pkg: 'kimi',                             cmd: 'kimi', nonNpm: true, logo: './agent-logos/KimiCode.jpg', website: 'https://www.kimi.com/code' },
+    { name: 'Kimi',              pkg: '@moonshot-ai/kimi-code',          cmd: 'kimi',        logo: './agent-logos/KimiCode.jpg', website: 'https://www.kimi.com/code' },
   ]
   // Special update commands — agents not updated via npm install -g
   const AGENT_UPDATE_OVERRIDES: Record<string, { exe: string; args: string[] }> = {
     '@earendil-works/pi-coding-agent': { exe: 'pi', args: ['update'] },
     'codewhale': { exe: 'codewhale', args: ['update'] },
-    'kimi': { exe: 'kimi', args: ['upgrade'] },
+    '@moonshot-ai/kimi-code': { exe: 'npm', args: ['install', '-g', '@moonshot-ai/kimi-code@latest'] },
   }
   // Install commands per agent — non-npm agents use custom exe/args
   const INSTALL_OVERRIDES: Record<string, { exe: string; args: string[] }> = {
     '@earendil-works/pi-coding-agent': { exe: 'npm', args: ['install', '-g', '--ignore-scripts', '@earendil-works/pi-coding-agent'] },
-    'kimi': { exe: 'powershell', args: ['-ExecutionPolicy', 'Bypass', '-Command', 'irm https://code.kimi.com/kimi-code/install.ps1 | iex'] },
+    '@moonshot-ai/kimi-code': { exe: 'npm', args: ['install', '-g', '--ignore-scripts', '@moonshot-ai/kimi-code'] },
   }
   let agentsCache: { ts: number; result: { name: string; pkg: string; cmd: string; installed: boolean; version: string | null; logo?: string }[] } | null = null
   const AGENTS_CACHE_TTL = 30000
