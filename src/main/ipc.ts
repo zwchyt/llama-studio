@@ -1518,19 +1518,17 @@ export function registerIpcHandlers(): void {
     try {
       const installDir = dirname(app.getPath('exe'))
 
-      // NSIS /D= flag must be the last unquoted argument on the command line
-      const child = spawn(opts.installerPath, [`/D=${installDir}`], {
+      // start 启动 GUI 安装器，/D= 指定默认安装路径
+      // 用 shell 启动避免 Node 对含空格路径加引号导致 NSIS 解析失败
+      const shellCmd = `start "" "${opts.installerPath}" /D=${installDir}`
+      spawn(shellCmd, [], {
+        shell: true,
         detached: true,
         stdio: 'ignore',
-        windowsHide: true,
       })
-      child.unref()
 
-      // Give the installer a moment to start, then quit the app
-      setTimeout(() => {
-        app.quit()
-      }, 1500)
-
+      // 先返回 IPC 响应，再退出应用释放文件锁
+      setTimeout(() => app.quit(), 2000)
       return { success: true }
     } catch (err) {
       return { success: false, error: String(err) }
