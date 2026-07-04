@@ -5,6 +5,9 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers, cleanupRunningProcesses } from './ipc'
 import { appendFileSync } from 'fs'
 import { existsSync } from 'fs'
+
+process.noDeprecation = true
+
 function resolveIcon(): string | undefined {
   const candidates = [
     join(process.cwd(), 'assets', 'icon.png'),                  

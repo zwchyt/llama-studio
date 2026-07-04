@@ -34,7 +34,7 @@ export default function SettingsView() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   useEffect(() => {
-    if (releaseInfo?.assets.length && !selectedAssetUrl) {
+    if (releaseInfo?.assets?.length && !selectedAssetUrl) {
       setSelectedAssetUrl(releaseInfo.assets[0].downloadUrl)
     }
   }, [releaseInfo, selectedAssetUrl])

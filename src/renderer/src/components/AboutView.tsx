@@ -27,11 +27,8 @@ export default function AboutView() {
       setAppReleaseInfo(info)
       setAppCheckingUpdate(false)
       if (info.available) {
-        // 重置横幅关闭状态，让 AppUpdateBanner 显示出来
         setAppUpdateDismissed(false)
         notify(`发现新版本 ${info.latestVersion}！`, 'success')
-      } else if (info.error) {
-        notify(`检查更新失败：${info.error}`, 'error')
       } else {
         notify(`当前版本 ${info.currentVersion} 已是最新`, 'info')
       }
@@ -63,17 +60,11 @@ export default function AboutView() {
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>
               Hexllama {currentVersion}
             </div>
-            {appReleaseInfo?.available && !appReleaseInfo?.error && (
+            {appReleaseInfo?.available ? (
               <div style={{ fontSize: 12, color: 'var(--accent)' }}>
                 新版本 {appReleaseInfo.latestVersion} 可用
               </div>
-            )}
-            {appReleaseInfo?.error && (
-              <div style={{ fontSize: 12, color: 'var(--danger)' }}>
-                检查更新失败
-              </div>
-            )}
-            {!appReleaseInfo?.error && !appReleaseInfo?.available && appReleaseInfo?.currentVersion && (
+            ) : appReleaseInfo?.currentVersion && (
               <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                 已是最新版本
               </div>

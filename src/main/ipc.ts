@@ -249,7 +249,10 @@ function canBroadcast(id: string): boolean {
 function fetchJson(url: string, depth = 0): Promise<unknown> {
   if (depth > 10) return Promise.reject(new Error('Too many redirects'))
   return new Promise((resolve, reject) => {
-    const opts = { headers: { 'User-Agent': 'llamabox/1.0.0', Accept: 'application/json' } }
+    const headers: Record<string, string> = { 'User-Agent': 'llamabox/1.0.0', Accept: 'application/json' }
+    const token = process.env.GITHUB_TOKEN
+    if (token) headers.Authorization = `Bearer ${token}`
+    const opts = { headers }
     const get = url.startsWith('https') ? https.get : http.get
     const req = get(url, opts, (res) => {
       if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location) {
@@ -258,6 +261,10 @@ function fetchJson(url: string, depth = 0): Promise<unknown> {
         if (!loc.startsWith('http:') && !loc.startsWith('https:')) return reject(new Error('Invalid redirect protocol'))
         fetchJson(loc, depth + 1).then(resolve).catch(reject)
         return
+      }
+      if (res.statusCode && res.statusCode >= 400) {
+        res.destroy()
+        return reject(new Error(`GitHub API returned ${res.statusCode}`))
       }
       const MAX = 5 * 1024 * 1024
       let size = 0
@@ -1316,7 +1323,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('check-updates', async () => {
     try {
       const release = await fetchJson('https://api.github.com/repos/ggml-org/llama.cpp/releases/latest') as GitHubRelease
-      if (!release || !release.assets) return { error: 'Invalid response from GitHub' }
+      if (!release || !release.assets) return {}
       const isMac = process.platform === 'darwin'
       const isLinux = process.platform === 'linux'
       const arch = process.arch
@@ -1350,7 +1357,7 @@ export function registerIpcHandlers(): void {
         }
       }
       return { tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at, isNewer, assets: platformAssets.map((a: GitHubAsset) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size })) }
-    } catch (err) { return { error: String(err) } }
+    } catch { return {} }
   })
   ipcMain.handle('download-release', async (event, opts: { url: string; version: string; assetName: string }) => {
     if (!opts.version || /[\\/:*?"<>|]/.test(opts.version) || opts.version.includes('..')) {
@@ -1412,13 +1419,12 @@ export function registerIpcHandlers(): void {
       ) as GitHubRelease
 
       if (!release || !release.tag_name) {
-        return { available: false, currentVersion, error: 'Invalid response from GitHub' }
+        return { available: false, currentVersion }
       }
 
-      const tagName = release.tag_name // e.g. "v1.0.79"
+      const tagName = release.tag_name
       const latestVersion = tagName.replace(/^v/, '')
 
-      // semver compare
       const currentParts = currentVersion.split('.').map(Number)
       const latestParts = latestVersion.split('.').map(Number)
       let available = false
@@ -1429,12 +1435,10 @@ export function registerIpcHandlers(): void {
         if (lat < cur) break
       }
 
-      // Find platform installer asset
       const isWin = process.platform === 'win32'
       const platformAssets = release.assets.filter((a: GitHubAsset) => {
         const n = a.name.toLowerCase()
         if (isWin) {
-          // NSIS installer: e.g. "Hexllama-Setup-1.0.79.exe" or "Hexllama Setup 1.0.79.exe"
           return n.endsWith('.exe') && (n.includes('setup') || n.includes('installer'))
         }
         return false
@@ -1454,8 +1458,8 @@ export function registerIpcHandlers(): void {
         assetUrl: asset?.browser_download_url || '',
         assetSize: asset?.size || 0,
       }
-    } catch (err) {
-      return { available: false, currentVersion: app.getVersion(), error: String(err) }
+    } catch {
+      return { available: false, currentVersion: app.getVersion() }
     }
   })
 
@@ -1521,7 +1525,7 @@ export function registerIpcHandlers(): void {
       // start 启动 GUI 安装器，/D= 指定默认安装路径
       // 用 shell 启动避免 Node 对含空格路径加引号导致 NSIS 解析失败
       const shellCmd = `start "" "${opts.installerPath}" /D=${installDir}`
-      spawn(shellCmd, [], {
+      spawn(shellCmd, {
         shell: true,
         detached: true,
         stdio: 'ignore',
@@ -1909,10 +1913,9 @@ export function registerIpcHandlers(): void {
     }
     try {
       const result = await new Promise<string>((resolve, reject) => {
-        const proc = spawn(smiPath, [
-          '--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name,power.draw',
-          '--format=csv,noheader,nounits'
-        ], { windowsHide: true, shell: process.platform === 'win32' })
+        const isWin = process.platform === 'win32'
+        const smiArgs = ['--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name,power.draw', '--format=csv,noheader,nounits']
+        const proc = spawn(isWin ? `"${smiPath}" ${smiArgs.map(a => `"${a}"`).join(' ')}` : smiPath, isWin ? [] : smiArgs, { windowsHide: true, shell: isWin })
         let stdout = '', stderr = ''
         proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
         proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
@@ -2675,7 +2678,8 @@ export function registerIpcHandlers(): void {
         })
         // Binary exists, get version
         const version = await new Promise<string | null>((resolve) => {
-          const vp = spawn(agent.cmd, ['--version'], { windowsHide: true, shell: process.platform === 'win32' })
+          const isWin = process.platform === 'win32'
+          const vp = spawn(isWin ? `"${agent.cmd}" --version` : agent.cmd, isWin ? [] : ['--version'], { windowsHide: true, shell: isWin })
           let out = ''
           vp.stdout?.on('data', (d: Buffer) => { out += d.toString() })
           const t = setTimeout(() => { try { vp.kill() } catch {} resolve(null) }, 5000)
@@ -2714,7 +2718,8 @@ export function registerIpcHandlers(): void {
     }
     const result = await new Promise<{ name: string; pkg: string; cmd: string; installed: boolean; version: string | null }[]>((resolve) => {
       const npmCmd = findNpmCmd()
-      const proc = spawn(npmCmd, ['list', '-g', '--depth=0', '--json'], { windowsHide: true, shell: process.platform === 'win32' })
+      const isWin = process.platform === 'win32'
+      const proc = spawn(isWin ? `"${npmCmd}" list -g --depth=0 --json` : npmCmd, isWin ? [] : ['list', '-g', '--depth=0', '--json'], { windowsHide: true, shell: isWin })
       let stdout = ''
       let stderr = ''
       proc.stdout?.on('data', (d: Buffer) => { stdout += d.toString() })
