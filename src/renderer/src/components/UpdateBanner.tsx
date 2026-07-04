@@ -20,7 +20,7 @@ export default function UpdateBanner() {
   })
   if (!releaseInfo || releaseInfo.error || updateDismissed || releaseInfo.isNewer === false || notifPref === 'manual') return null
   const handleDownload = async () => {
-    if (!releaseInfo.assets.length) return
+    if (!releaseInfo.assets?.length) return
     const asset = releaseInfo.assets.find(a => a.downloadUrl === selectedAssetUrl) || releaseInfo.assets[0]
     setDownloading(true)
     const res = await window.api.downloadRelease({
@@ -47,7 +47,7 @@ export default function UpdateBanner() {
         <button onClick={() => window.api.openExternal(releaseInfo.url)}>
           查看发布
         </button>
-        {releaseInfo.assets.length > 0 && (
+        {releaseInfo.assets?.length > 0 && (
           <>
             {' '}·{' '}
             {downloading || downloadProgress ? (

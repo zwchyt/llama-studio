@@ -116,7 +116,7 @@ export default function SettingsView() {
   }
 
   const handleDownload = async () => {
-    if (!releaseInfo || !releaseInfo.assets.length) return
+    if (!releaseInfo || !releaseInfo.assets?.length) return
     const asset = releaseInfo.assets.find(a => a.downloadUrl === selectedAssetUrl) || releaseInfo.assets[0]
     setDownloading(true)
     const res = await safeCall(() => window.api.downloadRelease({
@@ -352,7 +352,7 @@ export default function SettingsView() {
                   {releaseInfo.isNewer === false && <span style={{ marginLeft: 8, color: 'var(--success)' }}>✓ 已是最新</span>}
                 </div>
               </div>
-              {releaseInfo.isNewer !== false && releaseInfo.assets.length > 0 && (
+              {releaseInfo.isNewer !== false && releaseInfo.assets?.length > 0 && (
                 <div className="flex items-center gap-2 w-full">
                   <select
                     className="cmd-select flex-1"

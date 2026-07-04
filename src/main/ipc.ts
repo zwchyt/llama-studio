@@ -4,7 +4,7 @@ import {
   unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, promises as fsPromises
 } from 'fs'
 import { join, extname, basename, dirname, resolve, sep } from 'path'
-import { spawn, ChildProcess } from 'child_process'
+import { spawn, execSync, ChildProcess } from 'child_process'
 import https from 'https'
 import http from 'http'
 import { app } from 'electron'
@@ -249,7 +249,7 @@ function canBroadcast(id: string): boolean {
 function fetchJson(url: string, depth = 0): Promise<unknown> {
   if (depth > 10) return Promise.reject(new Error('Too many redirects'))
   return new Promise((resolve, reject) => {
-    const headers: Record<string, string> = { 'User-Agent': 'llamabox/1.0.0', Accept: 'application/json' }
+    const headers: Record<string, string> = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36', Accept: 'application/json' }
     const token = process.env.GITHUB_TOKEN
     if (token) headers.Authorization = `Bearer ${token}`
     const opts = { headers }
@@ -263,8 +263,13 @@ function fetchJson(url: string, depth = 0): Promise<unknown> {
         return
       }
       if (res.statusCode && res.statusCode >= 400) {
-        res.destroy()
-        return reject(new Error(`GitHub API returned ${res.statusCode}`))
+        let errBody = ''
+        res.on('data', (c) => { errBody += c.toString() })
+        res.on('end', () => {
+          const h = JSON.stringify(res.headers)
+          console.error('[fetchJson] HTTP', res.statusCode, 'headers:', h, 'body:', errBody.slice(0, 500))
+        })
+        return reject(new Error(`HTTP ${res.statusCode} x-ratelimit-remaining:${res.headers['x-ratelimit-remaining'] || '?'}`))
       }
       const MAX = 5 * 1024 * 1024
       let size = 0
@@ -1357,7 +1362,7 @@ export function registerIpcHandlers(): void {
         }
       }
       return { tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at, isNewer, assets: platformAssets.map((a: GitHubAsset) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size })) }
-    } catch { return {} }
+    } catch (e) { return { error: String(e) } }
   })
   ipcMain.handle('download-release', async (event, opts: { url: string; version: string; assetName: string }) => {
     if (!opts.version || /[\\/:*?"<>|]/.test(opts.version) || opts.version.includes('..')) {
@@ -2637,16 +2642,17 @@ export function registerIpcHandlers(): void {
     { name: 'OpenCode',          pkg: 'opencode-ai',                     cmd: 'opencode',    logo: './agent-logos/OpenCode.png',      website: 'https://opencode.ai' },
     { name: 'Codex',             pkg: '@openai/codex',                   cmd: 'codex',       logo: './agent-logos/Codex.png',         website: 'https://developers.openai.com/codex/cli' },
     { name: 'Qwen Code',         pkg: '@qwen-code/qwen-code',            cmd: 'qwen',        logo: './agent-logos/QwenCode.png',      website: 'https://qwen.ai/qwencode' },
-    { name: 'Droid',             pkg: 'droid',                            cmd: 'droid',       logo: './agent-logos/Droid.png',         website: 'https://factory.ai/' },
+    { name: 'Droid',             pkg: 'droid',                           cmd: 'droid',       logo: './agent-logos/Droid.png',         website: 'https://factory.ai/' },
     { name: 'Pi Coding Agent',   pkg: '@earendil-works/pi-coding-agent', cmd: 'pi',          logo: './agent-logos/Pi.png',            website: 'https://pi.dev/' },
     { name: 'GitHub Copilot',    pkg: '@github/copilot',                 cmd: 'copilot',     logo: './agent-logos/Copilot.png',       website: 'https://github.com/features/copilot/cli' },
     { name: 'KiloCode',          pkg: '@kilocode/cli',                   cmd: 'kilo',        logo: './agent-logos/KiloCode.png',      website: 'https://kilo.ai/cli' },
     { name: 'Mimo AI',           pkg: '@mimo-ai/cli',                    cmd: 'mimo',        logo: './agent-logos/MiMoCode .png',     website: 'https://mimo.xiaomi.com/mimocode/install' },
-    { name: 'Command Code',      pkg: 'command-code',                    cmd: 'command-code',logo: './agent-logos/Command Code.png' },
+    { name: 'Command Code',      pkg: 'command-code',                    cmd: 'command-code',logo: './agent-logos/Command Code.png',  website: 'https://commandcode.ai/'},
     { name: 'OpenClaude',        pkg: '@gitlawb/openclaude',             cmd: 'openclaude',  logo: './agent-logos/OpenClaude.png',    website: 'https://openclaude.gitlawb.com/' },
     { name: 'Crush',             pkg: '@charmland/crush',                cmd: 'crush',       logo: './agent-logos/Cursh.png',         website: 'https://github.com/charmbracelet/crush' },
-    { name: 'CodeWhale',         pkg: 'codewhale',                        cmd: 'codewhale',   logo: './agent-logos/CodeWhale.jpg',     website: 'https://github.com/Hmbown/CodeWhale' },
-    { name: 'Kimi',              pkg: '@moonshot-ai/kimi-code',          cmd: 'kimi',        logo: './agent-logos/KimiCode.jpg', website: 'https://www.kimi.com/code' },
+    { name: 'CodeWhale',         pkg: 'codewhale',                       cmd: 'codewhale',   logo: './agent-logos/CodeWhale.jpg',     website: 'https://github.com/Hmbown/CodeWhale' },
+    { name: 'Kimi',              pkg: '@moonshot-ai/kimi-code',          cmd: 'kimi',        logo: './agent-logos/KimiCode.jpg',      website: 'https://www.kimi.com/code' },
+    { name: 'Zero',              pkg: '@gitlawb/zero',                   cmd: 'zero',        logo: './agent-logos/OpenClaude.png',    website: 'https://zero.gitlawb.com/' },
   ]
   // Special update commands — agents not updated via npm install -g
   const AGENT_UPDATE_OVERRIDES: Record<string, { exe: string; args: string[] }> = {
@@ -2698,12 +2704,26 @@ export function registerIpcHandlers(): void {
     await Promise.all(checks)
   }
 
+  let resolvedNpmCmd: string | null = null
   function findNpmCmd(): string {
+    if (resolvedNpmCmd) return resolvedNpmCmd
     if (process.platform === 'win32') {
-      const npmCmd = process.env.APPDATA ? join(process.env.APPDATA, 'npm', 'npm.cmd') : 'npm.cmd'
-      if (existsSync(npmCmd)) return npmCmd
+      const appDataNpm = process.env.APPDATA ? join(process.env.APPDATA, 'npm', 'npm.cmd') : ''
+      if (appDataNpm && existsSync(appDataNpm)) { resolvedNpmCmd = appDataNpm; return resolvedNpmCmd }
+      try {
+        const lines = execSync('where npm.cmd', { encoding: 'utf8', timeout: 5000 }).trim().split(/\r?\n/)
+        const cwd = process.cwd().toLowerCase()
+        for (const line of lines) {
+          const p = line.trim()
+          if (p && !p.toLowerCase().startsWith(cwd)) {
+            resolvedNpmCmd = p
+            return resolvedNpmCmd
+          }
+        }
+      } catch {}
     }
-    return 'npm'
+    resolvedNpmCmd = 'npm'
+    return resolvedNpmCmd
   }
   function npmGlobalEnv(): Record<string, string | undefined> {
     const npmBinDir = process.env.APPDATA ? join(process.env.APPDATA, 'npm') : ''
@@ -2726,11 +2746,13 @@ export function registerIpcHandlers(): void {
       proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
       const timeout = setTimeout(() => {
         try { proc.kill() } catch {}
+        console.warn('[npm list] timed out after 15s, stderr:', stderr.slice(0, 300))
         const fallback = KNOWN_AGENTS.map(a => ({ ...a, installed: false, version: null }))
         resolve(fallback)
       }, 15000)
       proc.on('close', () => {
         clearTimeout(timeout)
+        if (stderr.trim()) console.warn('[npm list stderr]', stderr.trim())
         try {
           const data = JSON.parse(stdout)
           const deps = data.dependencies || {}
@@ -2748,12 +2770,14 @@ export function registerIpcHandlers(): void {
           })
           resolve(r)
         } catch {
+          console.warn('[npm list] JSON parse failed, stdout:', stdout.slice(0, 500))
           const fallback = KNOWN_AGENTS.map(a => ({ ...a, installed: false, version: null }))
           resolve(fallback)
         }
       })
-      proc.on('error', () => {
+      proc.on('error', (err) => {
         clearTimeout(timeout)
+        console.warn('[npm list] spawn error:', err.message)
         const fallback = KNOWN_AGENTS.map(a => ({ ...a, installed: false, version: null }))
         resolve(fallback)
       })
@@ -2837,6 +2861,7 @@ export function registerIpcHandlers(): void {
     if (!opts.pkg) return { success: false, error: 'Missing pkg' }
     const known = KNOWN_AGENTS.find(a => a.pkg === opts.pkg)
     if (!known) return { success: false, error: `Unknown agent: ${opts.pkg}` }
+    agentsCache = null
     try {
       const override = INSTALL_OVERRIDES[opts.pkg]
       let exe: string, args: string[]
