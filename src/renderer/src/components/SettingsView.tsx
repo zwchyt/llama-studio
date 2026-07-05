@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown } from 'lucide-react'
@@ -28,6 +28,18 @@ export default function SettingsView() {
   const [selectedAssetUrl, setSelectedAssetUrl] = useState('')
   const [expandedEditor, setExpandedEditor] = useState<string | null>(null)
   const [notifPref, setNotifPref] = useState<'banner' | 'manual'>(getNotifPref())
+  const [showAssetDropdown, setShowAssetDropdown] = useState(false)
+  const [dropdownUp, setDropdownUp] = useState(false)
+  const assetDropdownRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (assetDropdownRef.current && !assetDropdownRef.current.contains(e.target as Node)) {
+        setShowAssetDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
   const [extFolders, setExtFolders] = useState<string[]>([])
   const [imgFolders, setImgFolders] = useState<string[]>([])
   const [metricsPolling, setMetricsPolling] = useState(true)
@@ -354,19 +366,45 @@ export default function SettingsView() {
               </div>
               {releaseInfo.isNewer !== false && releaseInfo.assets?.length > 0 && (
                 <div className="flex items-center gap-2 w-full">
-                  <select
-                    className="cmd-select flex-1"
-                    value={selectedAssetUrl}
-                    onChange={e => setSelectedAssetUrl(e.target.value)}
-                    disabled={downloading || !!downloadProgress}
-                    aria-label="选择版本"
-                  >
-                    {releaseInfo.assets.map(a => (
-                      <option key={a.downloadUrl} value={a.downloadUrl}>
-                        {a.name} ({Math.round(a.size / 1024 / 1024)} MB)
-                      </option>
-                    ))}
-                  </select>
+                  <div ref={assetDropdownRef} style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+                    <button
+                      className="cmd-select"
+                      style={{ width: '100%', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                      onClick={() => {
+                        if (showAssetDropdown) { setShowAssetDropdown(false); return }
+                        if (assetDropdownRef.current) {
+                          const rect = assetDropdownRef.current.getBoundingClientRect()
+                          setDropdownUp(window.innerHeight - rect.bottom < 260)
+                        }
+                        setShowAssetDropdown(true)
+                      }}
+                      disabled={downloading || !!downloadProgress}
+                    >
+                      {releaseInfo.assets.find(a => a.downloadUrl === selectedAssetUrl)?.name || '选择版本'}
+                    </button>
+                    {showAssetDropdown && (
+                      <div style={Object.assign({
+                        position: 'absolute', left: 0, right: 0,
+                        background: 'var(--surface)', border: '1.5px solid var(--border)',
+                        borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-md)',
+                        maxHeight: 240, overflowY: 'auto', zIndex: 300
+                      }, dropdownUp ? { bottom: 'calc(100% + 2px)' } : { top: 'calc(100% + 2px)' })}>
+                        {releaseInfo.assets.map(a => (
+                          <div
+                            key={a.downloadUrl}
+                            style={{
+                              padding: '6px 10px', fontSize: 12, cursor: 'pointer',
+                              background: a.downloadUrl === selectedAssetUrl ? 'var(--bg)' : 'transparent',
+                              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+                            }}
+                            onClick={() => { setSelectedAssetUrl(a.downloadUrl); setShowAssetDropdown(false) }}
+                          >
+                            {a.name} ({Math.round(a.size / 1024 / 1024)} MB)
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   {downloading || downloadProgress ? (
                     <div className="text-sm flex items-center gap-3" style={{ color: 'var(--text-muted)' }}>
                       <Loader2 size={14} className="spin" />

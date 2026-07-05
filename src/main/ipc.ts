@@ -2652,6 +2652,8 @@ export function registerIpcHandlers(): void {
     { name: 'Crush',             pkg: '@charmland/crush',                cmd: 'crush',       logo: './agent-logos/Cursh.png',         website: 'https://github.com/charmbracelet/crush' },
     { name: 'CodeWhale',         pkg: 'codewhale',                       cmd: 'codewhale',   logo: './agent-logos/CodeWhale.jpg',     website: 'https://github.com/Hmbown/CodeWhale' },
     { name: 'Kimi',              pkg: '@moonshot-ai/kimi-code',          cmd: 'kimi',        logo: './agent-logos/KimiCode.jpg',      website: 'https://www.kimi.com/code' },
+    { name: 'Gemini CLI',        pkg: '@google/gemini-cli',              cmd: 'gemini',      logo: './agent-logos/Gemini.jpg',        website: 'https://geminicli.com/' },
+    { name: 'Claude Code',       pkg: '@anthropic/claude-code',          cmd: 'claude',      nonNpm: true, logo: './agent-logos/Claude code.png', website: 'https://claude.com/product/claude-code' },
     { name: 'Zero',              pkg: '@gitlawb/zero',                   cmd: 'zero',        logo: './agent-logos/OpenClaude.png',    website: 'https://zero.gitlawb.com/' },
   ]
   // Special update commands — agents not updated via npm install -g
@@ -2659,11 +2661,13 @@ export function registerIpcHandlers(): void {
     '@earendil-works/pi-coding-agent': { exe: 'pi', args: ['update'] },
     'codewhale': { exe: 'codewhale', args: ['update'] },
     '@moonshot-ai/kimi-code': { exe: 'npm', args: ['install', '-g', '@moonshot-ai/kimi-code@latest'] },
+    '@anthropic/claude-code': { exe: 'claude', args: ['update'] },
   }
   // Install commands per agent — non-npm agents use custom exe/args
   const INSTALL_OVERRIDES: Record<string, { exe: string; args: string[] }> = {
     '@earendil-works/pi-coding-agent': { exe: 'npm', args: ['install', '-g', '--ignore-scripts', '@earendil-works/pi-coding-agent'] },
     '@moonshot-ai/kimi-code': { exe: 'npm', args: ['install', '-g', '--ignore-scripts', '@moonshot-ai/kimi-code'] },
+    '@anthropic/claude-code': { exe: 'powershell.exe', args: ['-Command', 'irm https://claude.ai/install.ps1 | iex'] },
   }
   let agentsCache: { ts: number; result: { name: string; pkg: string; cmd: string; installed: boolean; version: string | null; logo?: string }[] } | null = null
   const AGENTS_CACHE_TTL = 30000
@@ -2790,7 +2794,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('check-agent-updates', async (_e, installed: { pkg: string; version: string }[]) => {
     const results: Record<string, { latest: string }> = {}
-    // Skip non-npm agents — they can't be checked via npm registry
+    // Some non-npm agents support --latest-version to check latest published version
+    const CLI_LATEST_VERSION: Record<string, { exe: string; args: string[] }> = {
+      '@anthropic/claude-code': { exe: 'claude', args: ['--latest-version'] },
+    }
     const nonNpmPkgs = new Set(KNOWN_AGENTS.filter(a => a.nonNpm).map(a => a.pkg))
     const npmAgents = installed.filter(a => !nonNpmPkgs.has(a.pkg))
     const checks = npmAgents.map(async (agent) => {
@@ -2808,6 +2815,31 @@ export function registerIpcHandlers(): void {
       }
     })
     await Promise.all(checks)
+    // Check non-npm agents that support --latest-version
+    for (const agent of installed) {
+      const cliCheck = CLI_LATEST_VERSION[agent.pkg]
+      if (!cliCheck) continue
+      try {
+        const latestVersion = await new Promise<string | null>((resolve) => {
+          const isWin = process.platform === 'win32'
+          const p = spawn(isWin ? `"${cliCheck.exe}" ${cliCheck.args.join(' ')}` : cliCheck.exe, isWin ? [] : cliCheck.args, { windowsHide: true, shell: isWin })
+          let out = ''
+          p.stdout?.on('data', (d: Buffer) => { out += d.toString() })
+          const t = setTimeout(() => { try { p.kill() } catch {} resolve(null) }, 10000)
+          p.on('close', () => {
+            clearTimeout(t)
+            const v = out.trim().match(/(\d+\.\d+\.\d+)/)
+            resolve(v ? v[1] : null)
+          })
+          p.on('error', () => { clearTimeout(t); resolve(null) })
+        })
+        if (latestVersion && latestVersion !== agent.version) {
+          results[agent.pkg] = { latest: latestVersion }
+        }
+      } catch {
+        // silently skip
+      }
+    }
     return results
   })
 
@@ -2828,8 +2860,7 @@ export function registerIpcHandlers(): void {
         env = undefined
       }
       if (process.platform === 'win32') {
-        const cmdLine = [exe, ...args].map(a => a.includes(' ') ? `"${a}"` : a).join(' ')
-        spawn('cmd.exe', ['/c', 'start', 'cmd', '/k', cmdLine], {
+        spawn('cmd.exe', ['/c', 'start', 'cmd', '/k', exe, ...args], {
           detached: true, stdio: 'ignore', env: env || npmGlobalEnv()
         }).unref()
       } else if (process.platform === 'darwin') {
@@ -2874,8 +2905,7 @@ export function registerIpcHandlers(): void {
       }
       const env = npmGlobalEnv()
       if (process.platform === 'win32') {
-        const cmdLine = [exe, ...args].map(a => a.includes(' ') ? `"${a}"` : a).join(' ')
-        spawn('cmd.exe', ['/c', 'start', 'cmd', '/k', cmdLine], {
+        spawn('cmd.exe', ['/c', 'start', 'cmd', '/k', exe, ...args], {
           detached: true, stdio: 'ignore', env
         }).unref()
       } else if (process.platform === 'darwin') {
