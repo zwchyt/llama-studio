@@ -172,7 +172,7 @@ function DownloadRow({ dl }: { dl: ModelDownloadInfo }) {
   )
 }
 
-function ModelFileRow({ model, onDeleted }: { model: ModelFileInfo; onDeleted: () => void }) {
+function ModelFileRow({ model, isImage, onDeleted }: { model: ModelFileInfo; isImage?: boolean; onDeleted: () => void }) {
   const [editing, setEditing] = useState(false)
   const [newName, setNewName] = useState(model.name.replace(/\.[^.]+$/, ''))
   useEffect(() => {
@@ -212,6 +212,7 @@ function ModelFileRow({ model, onDeleted }: { model: ModelFileInfo; onDeleted: (
         <div className="models-file-sub">
           <span className="models-folder-badge">{model.folder}</span>
           {model.external && <span className="models-folder-badge" title="来自外部文件夹的模型——应用不会重命名或删除此类模型">外部</span>}
+          {isImage && <span className="models-folder-badge" style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }} title="多模态投影仪文件（--mmproj）">图片</span>}
           <span>{formatBytes(model.size)}</span>
         </div>
       </div>
@@ -225,24 +226,35 @@ function ModelFileRow({ model, onDeleted }: { model: ModelFileInfo; onDeleted: (
 }
 export default function ModelsView() {
   const models = useStore(s => s.models)
+  const imageModels = useStore(s => s.imageModels)
   const setModels = useStore(s => s.setModels)
+  const setImageModels = useStore(s => s.setImageModels)
   const modelDownloads = useStore(s => s.modelDownloads)
   const upsertModelDownload = useStore(s => s.upsertModelDownload)
   const paths = useStore(s => s.paths)
   const [showUrlModal, setShowUrlModal] = useState(false)
   const [loading, setLoading] = useState(false)
   const [filter, setFilter] = useState('')
+  const allModels = useMemo(() => {
+    const seen = new Set(models.map(m => m.path))
+    const unique = imageModels.filter(m => !seen.has(m.path))
+    return [...models, ...unique]
+  }, [models, imageModels])
   const filteredModels = useMemo(() => {
     const q = filter.trim().toLowerCase()
-    if (!q) return models
-    return models.filter(m => m.name.toLowerCase().includes(q) || m.folder.toLowerCase().includes(q))
-  }, [models, filter])
+    if (!q) return allModels
+    return allModels.filter(m => m.name.toLowerCase().includes(q) || m.folder.toLowerCase().includes(q))
+  }, [allModels, filter])
   const refresh = useCallback(async () => {
     setLoading(true)
-    const m = await safeCall(() => window.api.listModelsRefresh(), '刷新模型列表失败')
+    const [m, im] = await Promise.all([
+      safeCall(() => window.api.listModelsRefresh(), '刷新模型列表失败'),
+      safeCall(() => window.api.listImageModelsRefresh(), '刷新图片模型列表失败')
+    ])
     if (m) setModels(m)
+    if (im) setImageModels(im)
     setLoading(false)
-  }, [setModels])
+  }, [setModels, setImageModels])
 
   useEffect(() => {
     refresh()
@@ -259,7 +271,7 @@ export default function ModelsView() {
         <div>
           <h1 className="page-title">模型</h1>
           <p className="page-subtitle">
-            {filter ? `${filteredModels.length} / ${models.length}` : models.length} 个模型已安装
+            {filter ? `${filteredModels.length} / ${allModels.length}` : allModels.length} 个模型已安装
             {activeDownloads.length > 0 ? ` · ${activeDownloads.length} 正在下载` : ''}
           </p>
         </div>
@@ -326,9 +338,9 @@ export default function ModelsView() {
             没有匹配 "{filter}" 的模型
           </div>
         )}
-        {filteredModels.map(m => (
-          <ModelFileRow key={m.path} model={m} onDeleted={refresh} />
-        ))}
+          {filteredModels.map(m => (
+            <ModelFileRow key={m.path} model={m} isImage={imageModels.some(im => im.path === m.path)} onDeleted={refresh} />
+          ))}
       </div>
       {showUrlModal && <UrlDownloadModal onClose={() => { setShowUrlModal(false); refresh() }} />}
     </div>

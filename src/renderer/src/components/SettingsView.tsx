@@ -30,6 +30,7 @@ export default function SettingsView() {
   const [notifPref, setNotifPref] = useState<'banner' | 'manual'>(getNotifPref())
   const [showAssetDropdown, setShowAssetDropdown] = useState(false)
   const [dropdownUp, setDropdownUp] = useState(false)
+  const [hoveredAsset, setHoveredAsset] = useState('')
   const assetDropdownRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -394,10 +395,12 @@ export default function SettingsView() {
                             key={a.downloadUrl}
                             style={{
                               padding: '6px 10px', fontSize: 12, cursor: 'pointer',
-                              background: a.downloadUrl === selectedAssetUrl ? 'var(--bg)' : 'transparent',
+                              background: a.downloadUrl === selectedAssetUrl ? 'var(--bg)' : hoveredAsset === a.downloadUrl ? 'var(--surface-hover)' : 'transparent',
                               whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
                             }}
                             onClick={() => { setSelectedAssetUrl(a.downloadUrl); setShowAssetDropdown(false) }}
+                            onMouseEnter={() => setHoveredAsset(a.downloadUrl)}
+                            onMouseLeave={() => setHoveredAsset('')}
                           >
                             {a.name} ({Math.round(a.size / 1024 / 1024)} MB)
                           </div>
@@ -406,16 +409,22 @@ export default function SettingsView() {
                     )}
                   </div>
                   {downloading || downloadProgress ? (
-                    <div className="text-sm flex items-center gap-3" style={{ color: 'var(--text-muted)' }}>
-                      <Loader2 size={14} className="spin" />
-                      {downloadProgress?.phase === 'extracting' ? '解压中...' : `下载中... ${downloadProgress?.percent || 0}%`}
-                      <button
-                        className="btn btn-ghost btn-sm text-danger"
-                        onClick={() => { window.api.cancelBackendDownload(); setDownloading(false); setDownloadProgress(null); }}
-                        style={{ padding: '0 8px' }}
-                      >
-                        取消
-                      </button>
+                    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span className="text-sm" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          {downloadProgress?.phase === 'extracting' ? '解压中...' : `下载中... ${downloadProgress?.percent || 0}%`}
+                        </span>
+                        <div className="hub-progress-bar" style={{ flex: 1 }}>
+                          <div className="hub-progress-fill" style={{ width: `${downloadProgress?.percent || 0}%` }} />
+                        </div>
+                        <button
+                          className="btn btn-ghost btn-sm text-danger"
+                          onClick={() => { window.api.cancelBackendDownload(); setDownloading(false); setDownloadProgress(null); }}
+                          style={{ padding: '0 8px', flexShrink: 0 }}
+                        >
+                          取消
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <button className="btn btn-primary btn-sm" onClick={handleDownload}>下载</button>

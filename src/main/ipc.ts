@@ -1545,7 +1545,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('open-folder', async (_e, folderPath: string) => {
     const settings = await loadSettings()
-    const allowedBases = [MODELS_DIR, BACKEND_DIR, CHATS_DIR, ...settings.externalModelFolders]
+    const allowedBases = [MODELS_DIR, BACKEND_DIR, CHATS_DIR, ...settings.externalModelFolders, ...settings.imageModelFolders]
     if (!allowedBases.some(base => isSafePath(base, folderPath))) return
     shell.openPath(folderPath)
   })
@@ -2652,6 +2652,8 @@ export function registerIpcHandlers(): void {
     { name: 'Crush',             pkg: '@charmland/crush',                cmd: 'crush',       logo: './agent-logos/Cursh.png',         website: 'https://github.com/charmbracelet/crush' },
     { name: 'CodeWhale',         pkg: 'codewhale',                       cmd: 'codewhale',   logo: './agent-logos/CodeWhale.jpg',     website: 'https://github.com/Hmbown/CodeWhale' },
     { name: 'Kimi',              pkg: '@moonshot-ai/kimi-code',          cmd: 'kimi',        logo: './agent-logos/KimiCode.jpg',      website: 'https://www.kimi.com/code' },
+    { name: 'Cline',             pkg: 'cline',                           cmd: 'cline',       logo: './agent-logos/Cline.png',         website: 'https://cline.bot/' },
+    { name: 'Augment Code',      pkg: '@augmentcode/auggie',             cmd: 'auggie',      logo: './agent-logos/Augment Code.png',  website: 'https://www.augmentcode.com/product/cli' },
     { name: 'Gemini CLI',        pkg: '@google/gemini-cli',              cmd: 'gemini',      logo: './agent-logos/Gemini.jpg',        website: 'https://geminicli.com/' },
     { name: 'Claude Code',       pkg: '@anthropic/claude-code',          cmd: 'claude',      nonNpm: true, logo: './agent-logos/Claude code.png', website: 'https://claude.com/product/claude-code' },
     { name: 'Zero',              pkg: '@gitlawb/zero',                   cmd: 'zero',        logo: './agent-logos/OpenClaude.png',    website: 'https://zero.gitlawb.com/' },
