@@ -123,7 +123,6 @@ interface LlamaCppApi {
   saveChatSession: (session: object) => Promise<{ success: boolean; id?: string; error?: string }>
   deleteChatSession: (id: string) => Promise<{ success: boolean }>
   chatStream: (opts: { streamId: string; port: number; body: object }) => Promise<{ success: boolean; error?: string }>
-  chatMultimodalStream: (opts: { streamId: string; port: number; messages: object[]; images: string[] }) => Promise<{ success: boolean; error?: string }>
   abortChatStream: (streamId: string) => Promise<{ success: boolean }>
   onChatStreamChunk: (cb: (data: ChatStreamChunk) => void) => void
   removeChatStreamListener: () => void
@@ -143,7 +142,7 @@ interface LlamaCppApi {
   printToPDF: (html: string) => Promise<string>
   savePng: (dataUrl: string) => Promise<string>
   // ── OCR ──
-  ocrStream: (opts: { streamId: string; port: number; image: string }) => Promise<{ success: boolean; error?: string }>
+  ocrStream: (opts: { streamId: string; port: number; image: string; prompt?: string }) => Promise<{ success: boolean; error?: string }>
   abortOcrStream: (streamId: string) => Promise<{ success: boolean }>
   onOcrChunk: (cb: (data: { streamId: string; delta?: string; done: boolean; error?: string }) => void) => void
   removeOcrListeners: () => void

@@ -118,7 +118,6 @@ const fullApi = {
   saveChatSession: (session: object) => ipcRenderer.invoke('save-chat-session', session),
   deleteChatSession: (id: string) => ipcRenderer.invoke('delete-chat-session', id),
   chatStream: (opts: { streamId: string; port: number; body: object }) => ipcRenderer.invoke('chat-completion-stream', opts),
-  chatMultimodalStream: (opts: { streamId: string; port: number; messages: object[]; images: string[] }) => ipcRenderer.invoke('chat-multimodal-stream', opts),
   abortChatStream: (streamId: string) => ipcRenderer.invoke('chat-stream-abort', streamId),
   onChatStreamChunk: (callback: (data: { streamId: string; delta?: string; done: boolean; error?: string; usage?: { promptTokens: number; completionTokens: number }; msFirstToken?: number; decodeTokS?: number; toolCalls?: Array<{ id: string; function: { name: string; arguments: string } }>; finishReason?: string }) => void) => {
     ipcRenderer.removeAllListeners('chat-stream-chunk')
@@ -152,7 +151,7 @@ const fullApi = {
     ipcRenderer.removeAllListeners('terminal:title')
   },
   // ── OCR ──
-  ocrStream: (opts: { streamId: string; port: number; image: string }) => ipcRenderer.invoke('ocr-stream', opts),
+  ocrStream: (opts: { streamId: string; port: number; image: string; prompt: string }) => ipcRenderer.invoke('ocr-stream', opts),
   abortOcrStream: (streamId: string) => ipcRenderer.invoke('ocr-stream-abort', streamId),
   onOcrChunk: (cb: (data: { streamId: string; delta?: string; done: boolean; error?: string }) => void) => {
     ipcRenderer.removeAllListeners('ocr-chunk')

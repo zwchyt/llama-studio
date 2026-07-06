@@ -4,6 +4,7 @@ import { shallow } from 'zustand/shallow'
 import { ChevronDown, ChevronRight, Copy, Check, Search, Lock } from 'lucide-react'
 import type { CommandParam, TemplateArgs } from '../../../shared/types'
 import { iconElements } from '../utils/iconMap'
+import CustomSelect from './CustomSelect'
 
 const FEATURED_ARGS = ['--ctx-size', '--gpu-layers', '--threads', '--batch-size', '--flash-attn']
 interface Props {
@@ -15,7 +16,7 @@ interface Props {
   disabled?: boolean
 }
 export default function CmdParamsEditor({ templateId, args, onChange, modelPathFallback, serverPortFallback, disabled: disabledProp }: Props) {
-  const { commandsSchema, updateCard, cards } = useStore(s => ({ commandsSchema: s.commandsSchema, updateCard: s.updateCard, cards: s.cards }), shallow)
+  const { commandsSchema, updateCard, cards, imageModels } = useStore(s => ({ commandsSchema: s.commandsSchema, updateCard: s.updateCard, cards: s.cards, imageModels: s.imageModels }), shallow)
   const [searchQuery, setSearchQuery] = useState('')
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set())
   const [hoveredParam, setHoveredParam] = useState<string | null>(null)
@@ -198,14 +199,34 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
               <button className="num-btn" onClick={() => handleUpdate(cmd.arg, Math.min((cmd.max ?? Infinity), (Number(val) || 0) + 1))} disabled={disabled}>+</button>
             </div>
           )}
-          {cmd.type === 'string' && (
+          {cmd.type === 'string' && cmd.arg === '--mmproj' && (
+            <CustomSelect
+              className="cmd-select-mmproj"
+              value={typeof val === 'boolean' ? '' : val}
+              onChange={(v) => handleUpdate(cmd.arg, v)}
+              options={[
+                { value: '', label: '不指定' },
+...imageModels.map(m => ({ value: m.path, label: m.name })),
+                 ...(val && !imageModels.find(m => m.path === val) ? [{ value: String(val), label: String(val).split(/[/\\]/).pop() ?? '' }] : [])
+              ]}
+              disabled={disabled}
+              aria-label="--mmproj"
+            />
+          )}
+          {cmd.type === 'string' && cmd.arg !== '--mmproj' && (
             <input type="text" className="cmd-input" value={typeof val === 'boolean' ? '' : val} placeholder={cmd.placeholder || cmd.default?.toString()} onChange={(e) => handleUpdate(cmd.arg, e.target.value)} disabled={disabled} />
           )}
           {cmd.type === 'select' && (
-            <select className="cmd-select" value={typeof val === 'boolean' ? '' : val} onChange={(e) => handleUpdate(cmd.arg, e.target.value)} disabled={disabled} aria-label={cmd.arg}>
-              <option value="">Default</option>
-              {cmd.options?.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-            </select>
+            <CustomSelect
+              value={typeof val === 'boolean' ? '' : val}
+              onChange={(v) => handleUpdate(cmd.arg, v)}
+              options={[
+                { value: '', label: 'Default' },
+                ...(cmd.options?.map(opt => ({ value: opt, label: opt })) || [])
+              ]}
+              disabled={disabled}
+              aria-label={cmd.arg}
+            />
           )}
         </div>
         {cmd.type === 'text' && (

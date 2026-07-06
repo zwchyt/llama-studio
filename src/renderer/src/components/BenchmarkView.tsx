@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { Terminal, Gauge, Loader2, Cpu, Zap, HardDrive, BarChart3, Play, Square } from 'lucide-react'
+import CustomSelect from './CustomSelect'
 
 type BenchMode = 'quick' | 'stress'
 
@@ -232,15 +233,25 @@ export default function BenchmarkView() {
         <div className="benchmark-config-row-split">
           <div className="benchmark-config-row">
             <label>后端版本</label>
-            <select value={selectedBackend} onChange={e => setSelectedBackend(e.target.value)} disabled={running}>
-              {backends.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
-            </select>
+            <CustomSelect
+              buttonClass="benchmark-select-button"
+              value={selectedBackend}
+              onChange={setSelectedBackend}
+              options={backends.map(b => ({ value: b.name, label: b.name }))}
+              disabled={running}
+              aria-label="后端版本"
+            />
           </div>
           <div className="benchmark-config-row">
             <label>模型文件</label>
-            <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)} disabled={running}>
-              {models.map(m => <option key={m.path} value={m.path}>{m.name} ({m.folder})</option>)}
-            </select>
+            <CustomSelect
+              buttonClass="benchmark-select-button"
+              value={selectedModel}
+              onChange={setSelectedModel}
+              options={models.map(m => ({ value: m.path, label: `${m.name} (${m.folder})` }))}
+              disabled={running}
+              aria-label="模型文件"
+            />
           </div>
         </div>
         <div className="benchmark-config-params">

@@ -1069,6 +1069,12 @@ select {
 
 .cmd-input[type="number"] {
   width: 90px;
+  -moz-appearance: textfield;
+}
+.cmd-input[type="number"]::-webkit-inner-spin-button,
+.cmd-input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .cmd-select {
@@ -1079,6 +1085,11 @@ select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b6b6b'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 8px center;
+}
+
+.cmd-select-mmproj {
+  width: 150px;
+  vertical-align: top;
 }
 
 .cmd-textarea {
@@ -1296,6 +1307,30 @@ select {
   background-position: right 12px center;
   background-color: var(--bg);
   padding-right: 32px;
+}
+
+.cmd-select.form-select-button {
+  padding: 9px 12px;
+  font-size: 13px;
+  background-color: var(--bg);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b6b6b'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 10px 6px;
+  padding-right: 32px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font);
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.cmd-select.form-select-button:hover {
+  border-color: var(--accent);
+}
+.cmd-select.form-select-button:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(10, 10, 10, .08);
 }
 
 .form-textarea {
@@ -6056,6 +6091,58 @@ webview {
   min-width: 0;
 }
 
+/* ── 模式切换 ── */
+.ocr-mode-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 12px;
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  width: fit-content;
+}
+
+.ocr-mode-btn {
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.ocr-mode-btn:hover {
+  color: var(--text);
+}
+
+.ocr-mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.ocr-prompt-input {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+  margin-bottom: 12px;
+}
+
+.ocr-prompt-input:focus {
+  border-color: var(--accent);
+}
+
 /* ── 左侧：dropzone ── */
 .ocr-dropzone {
   border: 2px dashed var(--border);
@@ -6124,6 +6211,7 @@ webview {
 }
 
 .ocr-image-preview {
+  position: relative;
   padding: 12px;
   display: flex;
   justify-content: center;
@@ -6131,6 +6219,47 @@ webview {
   flex: 1;
   overflow: hidden;
   min-height: 200px;
+}
+
+.ocr-image-preview.scanning::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.03);
+  pointer-events: none;
+  z-index: 1;
+  border-radius: 6px;
+}
+
+.ocr-scan-overlay {
+  position: absolute;
+  inset: 12px;
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  place-items: center;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+
+.ocr-image-preview.scanning .ocr-scan-overlay {
+  opacity: 1;
+}
+
+.ocr-scan-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 5px var(--accent);
+  opacity: 0.1;
+  animation: ocr-dot-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes ocr-dot-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.1; }
+  50% { transform: scale(2.5); opacity: 0.65; }
 }
 
 .ocr-image-preview img {
@@ -6352,6 +6481,28 @@ webview {
 }
 
 .benchmark-config-row select:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.06);
+}
+
+.cmd-select.benchmark-select-button {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.cmd-select.benchmark-select-button:hover {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+.cmd-select.benchmark-select-button:focus-visible {
   border-color: var(--accent);
   background: var(--surface);
   box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.06);

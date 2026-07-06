@@ -4,6 +4,7 @@ import { shallow } from 'zustand/shallow'
 import { X, Search, Copy, Check, Lock } from 'lucide-react'
 import type { CommandParam, TemplateArgs } from '../../../shared/types'
 import { iconElements } from '../utils/iconMap'
+import CustomSelect from './CustomSelect'
 
 const FEATURED_ARGS = ['--ctx-size', '--gpu-layers', '--threads', '--batch-size', '--flash-attn']
 
@@ -191,24 +192,33 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
             </div>
           )}
           {cmd.type === 'string' && cmd.arg === '--mmproj' && (
-            <select className="cmd-select" style={{ width: 110 }} value={displayVal} onChange={(e) => handleUpdate(cmd.arg, e.target.value)} disabled={disabled} aria-label="--mmproj">
-              <option value="">不指定</option>
-              {imageModels.map(m => (
-                <option key={m.path} value={m.path}>{m.name}</option>
-              ))}
-              {displayVal && !imageModels.find(m => m.path === displayVal) && (
-                <option value={String(displayVal)}>{String(displayVal).split(/[/\\]/).pop()}</option>
-              )}
-            </select>
+            <CustomSelect
+              className="cmd-select-mmproj"
+              value={displayVal}
+              onChange={(v) => handleUpdate(cmd.arg, v)}
+              options={[
+                { value: '', label: '不指定' },
+...imageModels.map(m => ({ value: m.path, label: m.name })),
+                 ...(displayVal && !imageModels.find(m => m.path === displayVal) ? [{ value: String(displayVal), label: String(displayVal).split(/[/\\]/).pop() ?? '' }] : [])
+              ]}
+              disabled={disabled}
+              aria-label="--mmproj"
+            />
           )}
           {cmd.type === 'string' && cmd.arg !== '--mmproj' && (
             <input type="text" className="cmd-input" value={displayVal} placeholder={cmd.placeholder || cmd.default?.toString()} onChange={(e) => handleUpdate(cmd.arg, e.target.value)} disabled={disabled} />
           )}
           {cmd.type === 'select' && (
-            <select className="cmd-select" value={displayVal} onChange={(e) => handleUpdate(cmd.arg, e.target.value)} disabled={disabled} aria-label={cmd.arg}>
-              <option value="">Default</option>
-              {cmd.options?.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-            </select>
+            <CustomSelect
+              value={displayVal}
+              onChange={(v) => handleUpdate(cmd.arg, v)}
+              options={[
+                { value: '', label: 'Default' },
+                ...(cmd.options?.map(opt => ({ value: opt, label: opt })) || [])
+              ]}
+              disabled={disabled}
+              aria-label={cmd.arg}
+            />
           )}
         </div>
         {cmd.type === 'text' && (

@@ -211,13 +211,13 @@ function ModelFileRow({ model, isImage, onDeleted }: { model: ModelFileInfo; isI
         )}
         <div className="models-file-sub">
           <span className="models-folder-badge">{model.folder}</span>
-          {model.external && <span className="models-folder-badge" title="来自外部文件夹的模型——应用不会重命名或删除此类模型">外部</span>}
+          {model.external && <span className="models-folder-badge" title="来自外部文件夹的模型——删除操作不可用">外部</span>}
           {isImage && <span className="models-folder-badge" style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }} title="多模态投影仪文件（--mmproj）">图片</span>}
           <span>{formatBytes(model.size)}</span>
         </div>
       </div>
       <div className="models-file-actions">
-        <button className="btn btn-ghost btn-icon" onClick={() => setEditing(true)} title={model.external ? '外部模型不可重命名' : '重命名'} disabled={model.external}><Pencil size={14} /></button>
+        <button className="btn btn-ghost btn-icon" onClick={() => setEditing(true)} title="重命名"><Pencil size={14} /></button>
         <button className="btn btn-ghost btn-icon" onClick={handleOpenFolder} title="打开文件夹"><FolderOpen size={14} /></button>
         <button className="btn btn-ghost btn-icon text-danger" onClick={handleDelete} title={model.external ? '外部模型不可删除' : '删除'} disabled={model.external}><Trash size={14} /></button>
       </div>

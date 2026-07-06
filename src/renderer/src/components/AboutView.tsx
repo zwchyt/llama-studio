@@ -58,7 +58,7 @@ export default function AboutView() {
         }}>
           <div>
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>
-              Hexllama {currentVersion}
+              llama-studio {currentVersion}
             </div>
             {appReleaseInfo?.available ? (
               <div style={{ fontSize: 12, color: 'var(--accent)' }}>
@@ -126,6 +126,23 @@ export default function AboutView() {
               </button>
               <button className="btn btn-ghost btn-sm" onClick={() => openLink('https://andercoder.com/hexllama')}>
                 <ExternalLink size={14} /> 网站
+              </button>
+            </div>
+          </div>
+        </section>
+        {}
+        <section className="about-section">
+          <h2 style={{ fontSize: 16, display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <ExternalLink size={16} /> 本分支
+          </h2>
+          <div className="about-card" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 20 }}>
+            <p style={{ marginBottom: 16, lineHeight: 1.6 }}>
+              <strong>llama-studio</strong> 是 hexllama 的中文定制分支，由 <strong>zwchyt</strong> 维护。
+              在原版基础上增加了 GLM-OCR 图片识别、自定义提示词、外部/图片模型管理等本地化功能。
+            </p>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => openLink('https://github.com/zwchyt/llama-studio')}>
+                <ExternalLink size={14} /> GitHub 仓库
               </button>
             </div>
           </div>

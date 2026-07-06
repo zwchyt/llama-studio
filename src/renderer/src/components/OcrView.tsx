@@ -13,6 +13,8 @@ export default function OcrView() {
   const [errorMsg, setErrorMsg] = useState('')
   const [copied, setCopied] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [mode, setMode] = useState<'ocr' | 'describe'>('ocr')
+  const [customPrompt, setCustomPrompt] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const streamIdRef = useRef<string | null>(null)
   const resultRef = useRef<HTMLDivElement>(null)
@@ -93,6 +95,19 @@ export default function OcrView() {
     }
   }
 
+  function handleModeChange(newMode: 'ocr' | 'describe') {
+    if (newMode === mode) return
+    setMode(newMode)
+    if (newMode === 'describe' && !customPrompt) {
+      setCustomPrompt('详细描述这张图片的内容')
+    }
+    if (status !== 'idle') {
+      setOcrResult('')
+      setStatus('idle')
+      setErrorMsg('')
+    }
+  }
+
   async function handleOcr() {
     if (!imageDataUrl || !port) return
     setOcrResult('')
@@ -101,7 +116,8 @@ export default function OcrView() {
     const streamId = crypto.randomUUID()
     streamIdRef.current = streamId
     try {
-      const res = await window.api.ocrStream({ streamId, port, image: imageDataUrl })
+      const prompt = mode === 'ocr' ? '请识别这张图片中的文字' : (customPrompt || '详细描述这张图片的内容')
+      const res = await window.api.ocrStream({ streamId, port, image: imageDataUrl, prompt })
       if (!res.success) {
         setStatus('error')
         setErrorMsg(res.error || 'OCR 请求失败')
@@ -135,8 +151,8 @@ export default function OcrView() {
     <div className="ocr-view">
       <div className="page-header">
         <div>
-          <h1 className="page-title">OCR 文字识别</h1>
-          <p className="page-subtitle">上传图片，识别其中的文字内容</p>
+          <h1 className="page-title">{mode === 'ocr' ? 'OCR 文字识别' : '图片描述'}</h1>
+          <p className="page-subtitle">{mode === 'ocr' ? '上传图片，识别其中的文字内容' : '上传图片，AI 将描述其中的内容'}</p>
         </div>
         {status === 'done' && ocrResult && (
           <div className="page-actions">
@@ -156,6 +172,21 @@ export default function OcrView() {
           <AlertCircle size={16} />
           没有运行中的模型。请先在「我的模板」中启动一个支持多模态的模型。
         </div>
+      )}
+
+      {port && (
+        <div className="ocr-mode-toggle">
+          <button className={`ocr-mode-btn${mode === 'ocr' ? ' active' : ''}`} onClick={() => handleModeChange('ocr')}>文字识别</button>
+          <button className={`ocr-mode-btn${mode === 'describe' ? ' active' : ''}`} onClick={() => handleModeChange('describe')}>图片描述</button>
+        </div>
+      )}
+      {port && mode === 'describe' && (
+        <input
+          className="ocr-prompt-input"
+          value={customPrompt}
+          onChange={e => setCustomPrompt(e.target.value)}
+          placeholder="输入自定义描述指令..."
+        />
       )}
 
       <div className="ocr-split">
@@ -183,8 +214,15 @@ export default function OcrView() {
                   <X size={14} />
                 </button>
               </div>
-              <div className="ocr-image-preview">
+              <div className={`ocr-image-preview${status === 'processing' ? ' scanning' : ''}`}>
                 <img src={imageDataUrl} alt="预览" />
+                {status === 'processing' && (
+                  <div className="ocr-scan-overlay">
+                    {Array.from({ length: 7 * 12 }, (_, i) => (
+                      <div key={i} className="ocr-scan-dot" style={{ animationDelay: `${Math.floor(i / 12) * 0.12}s` }} />
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="ocr-actions">
                 <button
@@ -193,7 +231,7 @@ export default function OcrView() {
                   disabled={status === 'processing' || !port}
                 >
                   {status === 'processing' ? <Loader2 size={14} className="spin" /> : <FileText size={14} />}
-                  {status === 'processing' ? '识别中...' : '开始识别'}
+                  {status === 'processing' ? `${mode === 'ocr' ? '识别' : '描述'}中...` : `开始${mode === 'ocr' ? '识别' : '描述'}`}
                 </button>
                 {status === 'processing' && (
                   <button className="btn btn-ghost" onClick={handleAbort}>
@@ -210,13 +248,13 @@ export default function OcrView() {
           {!hasResult ? (
             <div className="ocr-placeholder">
               <ImageIcon size={40} className="ocr-placeholder-icon" />
-              <span className="ocr-placeholder-text">选择图片后开始识别</span>
-              <span className="ocr-placeholder-hint">识别结果将显示在此处</span>
+              <span className="ocr-placeholder-text">选择图片后开始{mode === 'ocr' ? '识别' : '描述'}</span>
+              <span className="ocr-placeholder-hint">{mode === 'ocr' ? '识别' : '描述'}结果将显示在此处</span>
             </div>
           ) : (
             <div className="ocr-result-card">
               <div className="ocr-result-header">
-                <span className="ocr-result-title">识别结果</span>
+                <span className="ocr-result-title">{mode === 'ocr' ? '识别结果' : '描述结果'}</span>
                 {status === 'processing' && (
                   <span className="ocr-badge ocr-badge-processing">处理中...</span>
                 )}

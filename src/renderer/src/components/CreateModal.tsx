@@ -5,6 +5,7 @@ import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { FolderOpen, ChevronDown, Terminal, Globe, Server, Loader2 } from 'lucide-react'
 import CmdParamsEditor from './CmdParamsEditor'
+import CustomSelect from './CustomSelect'
 import type { Template, TemplateArgs, CommandParam } from '../../../shared/types'
 
 const EXTRA_ALIASES: Record<string, string> = {
@@ -223,17 +224,16 @@ export default function CreateModal() {
             <div className="form-row">
               <div className="form-group">
                 <label className="form-label">后端版本</label>
-                <select
-                  className="form-select"
+                <CustomSelect
+                  buttonClass="form-select-button"
                   value={backendVersion}
-                  onChange={e => setBackendVersion(e.target.value)}
+                  onChange={setBackendVersion}
+                  options={[
+                    { value: '', label: '默认（当前）' },
+                    ...backends.map(b => ({ value: b.name, label: b.name }))
+                  ]}
                   aria-label="后端版本"
-                >
-                  <option value="">默认（当前）</option>
-                  {backends.map(b => (
-                    <option key={b.name} value={b.name}>{b.name}</option>
-                  ))}
-                </select>
+                />
               </div>
               <div className="form-group">
                 <label className="form-label">服务器端口</label>
@@ -263,28 +263,27 @@ export default function CreateModal() {
             <div className="form-group mb-0">
               <label className="form-label">模型文件</label>
               <div className="file-picker">
-                <select
-                  className="form-select mono text-sm flex-1"
+                <CustomSelect
+                  buttonClass="form-select-button mono text-sm"
+                  style={{ flex: 1 }}
                   value={modelPath}
-                  onChange={e => {
-                    const path = e.target.value
-                    setModelPath(path)
-                    if (path) {
-                      const filename = path.split(/[/\\]/).pop() || ''
+                  onChange={v => {
+                    setModelPath(v)
+                    if (v) {
+                      const filename = v.split(/[/\\]/).pop() || ''
                       const stripped = filename.replace(/\.(gguf|ggml|bin)$/i, '')
                       if (stripped) setName(stripped)
                     }
                   }}
+                  options={[
+                    { value: '', label: '-- 选择模型 --' },
+                    ...models.map(m => ({ value: m.path, label: m.name })),
+                    ...(modelPath && !models.find(m => m.path === modelPath)
+                      ? [{ value: modelPath, label: modelPath.split(/[/\\]/).pop() || '' }]
+                      : [])
+                  ]}
                   aria-label="模型文件"
-                >
-                  <option value="">-- 选择模型 --</option>
-                  {models.map(m => (
-                    <option key={m.path} value={m.path}>{m.name}</option>
-                  ))}
-                  {modelPath && !models.find(m => m.path === modelPath) && (
-                    <option value={modelPath}>{modelPath.split(/[/\\]/).pop()}</option>
-                  )}
-                </select>
+                />
                 <button type="button" className="btn btn-secondary" onClick={handlePickModel}>
                   <FolderOpen size={16} />
                   浏览

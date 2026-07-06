@@ -146,7 +146,7 @@ interface AppStore {
 export const useStore = createWithEqualityFn<AppStore>((set) => ({
   cards: [], backends: [], models: [], imageModels: [], activeBackend: null,
   commandsSchema: null, releaseInfo: null, paths: null,
-  view: 'welcome', showCreateModal: false, editingTemplate: null,
+  view: 'cards', showCreateModal: false, editingTemplate: null,
   updateDismissed: false, checkingUpdate: false, downloadProgress: null,
   appReleaseInfo: null, appUpdateDismissed: false, appDownloadProgress: null, appCheckingUpdate: false,
   templateSearch: '', modelDownloads: {}, hfDownloads: [],

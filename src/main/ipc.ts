@@ -542,7 +542,7 @@ async function getCpuUsage(): Promise<number | null> {
   if (result !== null) {
     cachedCpuPct = result
     lastCpuFetch = Date.now()
-    console.log(`[cpu] ${result}% via ${usedSource}`)
+    // console.log(`[cpu] ${result}% via ${usedSource}`)
   }
   return cachedCpuPct
 }
@@ -751,10 +751,18 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('rename-model', (_e, oldPath: string, newName: string) => {
     try {
-      if (!isSafePath(MODELS_DIR, oldPath)) return { success: false, error: 'Access denied' }
+      const settings = loadSettingsSync()
+      const allDirs = [MODELS_DIR, ...settings.externalModelFolders, ...settings.imageModelFolders]
+      const resolvedTarget = resolve(oldPath)
+      const matches = allDirs.map(d => ({ dir: d, resolvedDir: resolve(d), match: resolvedTarget.startsWith(resolve(d)) }))
+      const isAllowed = matches.some(m => m.match)
+      if (!isAllowed) {
+        return { success: false, error: `Access denied: 模型路径"${oldPath}"不在允许目录内。MODELS_DIR="${MODELS_DIR}", 外部文件夹=[${settings.externalModelFolders.join('; ')}], 匹配详情=[${matches.map(m => `{dir:${m.dir}, resolved:${m.resolvedDir}, match:${m.match}}`).join(', ')}]` }
+      }
       const dir = dirname(oldPath)
       const newPath = join(dir, newName + extname(oldPath))
-      if (!isSafePath(MODELS_DIR, newPath)) return { success: false, error: 'Access denied' }
+      const isNewAllowed = allDirs.some(d => isSafePath(d, newPath))
+      if (!isNewAllowed) return { success: false, error: `Access denied (newPath): ${newPath}` }
       renameSync(oldPath, newPath)
       invalidateModelsCache()
       return { success: true, newPath }
@@ -2331,119 +2339,6 @@ export function registerIpcHandlers(): void {
     })
   })
 
-	  // --- chat-multimodal-stream (多模态：POST /completion + multimodal_data) ---
-	  ipcMain.handle('chat-multimodal-stream', async (e, opts: {
-	    streamId: string; port: number; messages: Record<string, unknown>[]; images: string[]
-	  }): Promise<{ success: boolean; error?: string }> => {
-	    const { streamId, port, messages, images } = opts
-	    // 1. 获取 media_marker
-	    let mediaMarker = '<image>'
-	    try {
-	      const propsJson = await fetchText(`http://127.0.0.1:${port}/props`)
-	      const props = JSON.parse(propsJson)
-	      if (props?.media_marker) mediaMarker = props.media_marker
-	    } catch { /* 默认值 */ }
-
-	    // 2. 构建 ChatML 格式 prompt，图片位置插入 media_marker
-	    let imgIdx = 0
-	    const parts: string[] = []
-	    parts.push('<|im_start|>system')
-	    parts.push('You are a helpful assistant.')
-	    parts.push('<|im_end|>')
-	    for (const m of messages) {
-	      const role = m.role === 'assistant' ? 'assistant' : 'user'
-	      parts.push(`<|im_start|>${role}`)
-	      if (Array.isArray(m.content)) {
-	        let text = ''
-	        for (const part of m.content as Array<Record<string, unknown>>) {
-	          if (part.type === 'text') text += part.text
-	          else if (part.type === 'image_url') {
-	            text += (imgIdx < images.length) ? mediaMarker : ''
-	            imgIdx++
-	          }
-	        }
-	        parts.push(text || ' ')
-	      } else if (typeof m.content === 'string') {
-	        parts.push(m.content || ' ')
-	      } else {
-	        parts.push(' ')
-	      }
-	      parts.push('<|im_end|>')
-	    }
-	    parts.push('<|im_start|>assistant')
-	    const prompt = parts.join('\n')
-
-	    // 3. 发送到 /completion
-	    return new Promise((resolve) => {
-	      const body = {
-	        prompt: { prompt_string: prompt, multimodal_data: images },
-	        stream: true,
-	        n_predict: -1,
-	        temperature: 0.8
-	      }
-      const bodyStr = JSON.stringify(body)
-      const req = http.request(`http://127.0.0.1:${port}/completion`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
-        agent: httpAgent
-      }, (res) => {
-        if (res.statusCode && res.statusCode >= 400) {
-          let errBody = ''
-          res.on('data', (c: Buffer) => { errBody += c.toString() })
-          res.on('end', () => {
-            activeChatStreams.delete(streamId)
-            e.sender.send('chat-stream-chunk', { streamId, done: true, error: `HTTP ${res.statusCode}: ${errBody.slice(0, 500)}` })
-            resolve({ success: false, error: `HTTP ${res.statusCode}` })
-          })
-          return
-        }
-        let buf = ''
-        function processBuf() {
-          let idx: number
-          while ((idx = buf.indexOf('\n\n')) >= 0) {
-            const raw = buf.slice(0, idx)
-            buf = buf.slice(idx + 2)
-            const line = raw.split('\n').find(l => l.startsWith('data: '))
-            if (!line) continue
-            const payload = line.slice(6).trim()
-            if (payload === '[DONE]') {
-              // 发送最终的 done 事件
-              e.sender.send('chat-stream-chunk', { streamId, done: true })
-              return
-            }
-            try {
-              const parsed = JSON.parse(payload)
-              // /completion 返回格式: {"content": "...", "stop": bool, ...}
-              if (parsed.content) {
-                e.sender.send('chat-stream-chunk', { streamId, delta: parsed.content, done: false })
-              }
-              if (parsed.stop) {
-                e.sender.send('chat-stream-chunk', { streamId, done: true })
-                return
-              }
-            } catch { /* ignore parse errors */ }
-          }
-        }
-        res.on('data', (c: Buffer) => { buf += c.toString(); processBuf() })
-        res.on('end', () => {
-          activeChatStreams.delete(streamId)
-          if (!buf.endsWith('[DONE]') && !buf.includes('"stop":true')) {
-            e.sender.send('chat-stream-chunk', { streamId, done: true })
-          }
-          resolve({ success: true })
-        })
-      })
-      req.on('error', (err) => {
-        activeChatStreams.delete(streamId)
-        e.sender.send('chat-stream-chunk', { streamId, done: true, error: err.message })
-        resolve({ success: false, error: err.message })
-      })
-      req.write(bodyStr)
-      req.end()
-      activeChatStreams.set(streamId, req)
-    })
-  })
-
   // --- chat-stream-abort (中止一个进行中的聊天流) ---
   ipcMain.handle('chat-stream-abort', (_e, streamId: string) => {
     const req = activeChatStreams.get(streamId)
@@ -2455,26 +2350,33 @@ export function registerIpcHandlers(): void {
     return { success: true }
   })
 
-  // --- ocr-stream (发送图片到 /v1/chat/completions，OpenAI 格式) ---
+  // --- ocr-stream (发送图片到 /completion，llama.cpp 原生多模态格式) ---
   ipcMain.handle('ocr-stream', async (e, opts: {
-    streamId: string; port: number; image: string
+    streamId: string; port: number; image: string; prompt: string
   }): Promise<{ success: boolean; error?: string }> => {
-    const { streamId, port, image } = opts
+    const { streamId, port, image, prompt } = opts
+    // 1. 获取 media_marker（告诉模型图片插在哪）
+    let mediaMarker = '<image>'
+    try {
+      const propsJson = await fetchText(`http://127.0.0.1:${port}/props`)
+      const props = JSON.parse(propsJson)
+      if (props?.media_marker) mediaMarker = props.media_marker
+    } catch { /* 使用默认值 */ }
+    const base64Image = image.startsWith('data:') ? image.split(',')[1] : image
+    const promptText = prompt || 'OCR this image:'
+    const finalPrompt = `<|user|>\n${mediaMarker}\n${promptText}\n<|assistant|>`
     const body = {
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'image_url', image_url: { url: image } },
-            { type: 'text', text: 'OCR' }
-          ]
-        }
-      ]
+      prompt: {
+        prompt_string: finalPrompt,
+        multimodal_data: [base64Image]
+      },
+      stream: true,
+      n_predict: 512,
+      temperature: 0.1
     }
     const bodyStr = JSON.stringify(body)
-    console.error('[OCR] body:', bodyStr.slice(0, 300))
     return new Promise((resolve) => {
-      const req = http.request(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      const req = http.request(`http://127.0.0.1:${port}/completion`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
         agent: httpAgent
@@ -2490,19 +2392,52 @@ export function registerIpcHandlers(): void {
           return
         }
         let buf = ''
-        res.on('data', (c: Buffer) => { buf += c.toString() })
+        let finished = false
+        let chunkCount = 0
+        const MAX_CHUNKS = 200
+        res.on('data', (c: Buffer) => {
+          buf += c.toString()
+          let idx: number
+          while ((idx = buf.indexOf('\n\n')) >= 0) {
+            const raw = buf.slice(0, idx)
+            buf = buf.slice(idx + 2)
+            const line = raw.split('\n').find(l => l.startsWith('data: '))
+            if (!line) continue
+            const payload = line.slice(6).trim()
+            if (payload === '[DONE]') {
+              if (!finished) { finished = true; e.sender.send('ocr-chunk', { streamId, done: true }) }
+              continue
+            }
+            try {
+              const parsed = JSON.parse(payload)
+              if (parsed.content) {
+                chunkCount++
+                if (chunkCount > MAX_CHUNKS) {
+                  if (!finished) { finished = true; e.sender.send('ocr-chunk', { streamId, done: true }) }
+                  req.destroy()
+                  continue
+                }
+                e.sender.send('ocr-chunk', { streamId, delta: parsed.content, done: false })
+              }
+              if (parsed.stop) {
+                if (!finished) { finished = true; e.sender.send('ocr-chunk', { streamId, done: true }) }
+              }
+            } catch { /* skip */ }
+          }
+        })
         res.on('end', () => {
           activeChatStreams.delete(streamId)
-          try {
-            const parsed = JSON.parse(buf)
-            const content = parsed?.choices?.[0]?.message?.content || ''
-            console.error('[OCR] content:', content.slice(0, 500))
-            if (content) {
-              e.sender.send('ocr-chunk', { streamId, delta: content, done: false })
+          if (!finished) {
+            if (buf.trim()) {
+              try {
+                const parsed = JSON.parse(buf)
+                if (parsed.content) {
+                  e.sender.send('ocr-chunk', { streamId, delta: parsed.content, done: false })
+                }
+              } catch { /* skip */ }
             }
+            finished = true
             e.sender.send('ocr-chunk', { streamId, done: true })
-          } catch {
-            e.sender.send('ocr-chunk', { streamId, done: true, error: 'Failed to parse response' })
           }
           resolve({ success: true })
         })
