@@ -151,7 +151,7 @@ const fullApi = {
     ipcRenderer.removeAllListeners('terminal:title')
   },
   // ── OCR ──
-  ocrStream: (opts: { streamId: string; port: number; image: string; prompt: string }) => ipcRenderer.invoke('ocr-stream', opts),
+  ocrStream: (opts: { streamId: string; port: number; image: string; prompt: string; templateArgs?: Record<string, string | number | boolean | null> }) => ipcRenderer.invoke('ocr-stream', opts),
   abortOcrStream: (streamId: string) => ipcRenderer.invoke('ocr-stream-abort', streamId),
   onOcrChunk: (cb: (data: { streamId: string; delta?: string; done: boolean; error?: string }) => void) => {
     ipcRenderer.removeAllListeners('ocr-chunk')

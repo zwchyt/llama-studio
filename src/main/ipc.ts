@@ -2352,9 +2352,9 @@ export function registerIpcHandlers(): void {
 
   // --- ocr-stream (发送图片到 /completion，llama.cpp 原生多模态格式) ---
   ipcMain.handle('ocr-stream', async (e, opts: {
-    streamId: string; port: number; image: string; prompt: string
+    streamId: string; port: number; image: string; prompt: string; templateArgs?: Record<string, string | number | boolean | null>
   }): Promise<{ success: boolean; error?: string }> => {
-    const { streamId, port, image, prompt } = opts
+    const { streamId, port, image, prompt, templateArgs } = opts
     // 1. 获取 media_marker（告诉模型图片插在哪）
     let mediaMarker = '<image>'
     try {
@@ -2365,14 +2365,17 @@ export function registerIpcHandlers(): void {
     const base64Image = image.startsWith('data:') ? image.split(',')[1] : image
     const promptText = prompt || 'OCR this image:'
     const finalPrompt = `<|user|>\n${mediaMarker}\n${promptText}\n<|assistant|>`
-    const body = {
+    const nPredict = (typeof templateArgs?.['n-predict'] === 'number' ? templateArgs['n-predict'] :
+      typeof templateArgs?.n_predict === 'number' ? templateArgs.n_predict : 2048)
+    const temperature = typeof templateArgs?.temperature === 'number' ? templateArgs.temperature : 0.1
+    const body: Record<string, unknown> = {
       prompt: {
         prompt_string: finalPrompt,
         multimodal_data: [base64Image]
       },
       stream: true,
-      n_predict: 512,
-      temperature: 0.1
+      n_predict: nPredict,
+      temperature
     }
     const bodyStr = JSON.stringify(body)
     return new Promise((resolve) => {
@@ -2394,7 +2397,7 @@ export function registerIpcHandlers(): void {
         let buf = ''
         let finished = false
         let chunkCount = 0
-        const MAX_CHUNKS = 200
+        const MAX_CHUNKS = 4096
         res.on('data', (c: Buffer) => {
           buf += c.toString()
           let idx: number

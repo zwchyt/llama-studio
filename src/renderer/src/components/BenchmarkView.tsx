@@ -234,6 +234,7 @@ export default function BenchmarkView() {
           <div className="benchmark-config-row">
             <label>后端版本</label>
             <CustomSelect
+              className="benchmark-select-wrapper"
               buttonClass="benchmark-select-button"
               value={selectedBackend}
               onChange={setSelectedBackend}
@@ -245,6 +246,7 @@ export default function BenchmarkView() {
           <div className="benchmark-config-row">
             <label>模型文件</label>
             <CustomSelect
+              className="benchmark-select-wrapper"
               buttonClass="benchmark-select-button"
               value={selectedModel}
               onChange={setSelectedModel}

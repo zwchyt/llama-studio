@@ -110,9 +110,12 @@ export default function AppUpdateBanner() {
         {installing ? (
           <strong>正在安装更新...</strong>
         ) : isDownloading ? (
-          <span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             <strong>正在下载 {appReleaseInfo.releaseName}</strong>
-            {' · '}下载中... {progressPercent}%
+            <div className="hub-progress-bar" style={{ width: 100, height: 6, flexShrink: 0, background: 'rgba(255,255,255,0.25)' }}>
+              <div className="hub-progress-fill" style={{ width: `${progressPercent}%`, background: '#fff' }} />
+            </div>
+            <span>{progressPercent}%</span>
           </span>
         ) : isDownloaded ? (
           <span>

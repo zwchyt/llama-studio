@@ -117,7 +117,7 @@ export default function OcrView() {
     streamIdRef.current = streamId
     try {
       const prompt = mode === 'ocr' ? '请识别这张图片中的文字' : (customPrompt || '详细描述这张图片的内容')
-      const res = await window.api.ocrStream({ streamId, port, image: imageDataUrl, prompt })
+      const res = await window.api.ocrStream({ streamId, port, image: imageDataUrl, prompt, templateArgs: runningModel?.template.args })
       if (!res.success) {
         setStatus('error')
         setErrorMsg(res.error || 'OCR 请求失败')

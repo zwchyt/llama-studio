@@ -135,7 +135,7 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
         <span className="monitoring-status-text" style={{ color: statusInfo.color }}>{statusInfo.label}</span>
         {card.pid && <span className="monitoring-pid">PID {card.pid}</span>}
         {isRunning && (
-          <button className="btn btn-ghost btn-icon" onClick={(e) => { e.stopPropagation(); handleStop() }} title="停止">
+          <button className="btn btn-ghost btn-icon btn-stop-model" onClick={(e) => { e.stopPropagation(); handleStop() }} title="停止">
             <Square size={13} />
           </button>
         )}
@@ -250,11 +250,11 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
                   </div>
                   <span className="metric-label">上下文</span>
                   <span className="metric-value" style={{ color: '#f59e0b', fontSize: 16, marginLeft: 'auto' }}>
-                    {fmtInt(metrics?.nDecoded ?? 0)}<span className="metric-unit"> / {fmtInt(metrics?.nCtx ?? 0)} tokens ({fmt(Math.min(100, ((metrics?.nDecoded ?? 0) / (metrics?.nCtx || 1)) * 100), 0)}%)</span>
+                    {fmtInt(metrics?.nPromptTokens ?? 0)}<span className="metric-unit"> / {fmtInt(metrics?.nCtx ?? 0)} tokens ({fmt(Math.min(100, ((metrics?.nPromptTokens ?? 0) / (metrics?.nCtx || 1)) * 100), 0)}%)</span>
                   </span>
                 </div>
                 <div className="metric-bar-wrap" style={{ marginTop: 4 }}>
-                    <div className="metric-bar-fill" style={{ width: `${Math.min(100, ((metrics?.nDecoded ?? 0) / (metrics?.nCtx ?? 1)) * 100)}%`, background: '#f59e0b', opacity: 0.6 }} />
+                    <div className="metric-bar-fill" style={{ width: `${Math.min(100, ((metrics?.nPromptTokens ?? 0) / (metrics?.nCtx ?? 1)) * 100)}%`, background: '#f59e0b', opacity: 0.6 }} />
                 </div>
               </div>
             )}

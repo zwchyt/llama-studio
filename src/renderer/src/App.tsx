@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo } from 'react'
-import { useStore } from './store/useStore'
+import { useStore, type AgentStatus } from './store/useStore'
 import { notify } from './store/notificationStore'
 import Titlebar from './components/Titlebar'
 import Sidebar from './components/Sidebar'
@@ -117,6 +117,17 @@ function AppMain() {
     // Stage 3: Low priority — defer to next microtask so it overlaps with UI render
     queueMicrotask(() => { checkUpdates() })
     queueMicrotask(() => { checkAppUpdate() })
+    queueMicrotask(async () => {
+      try {
+        const agents = await window.api.listGlobalAgents() as AgentStatus[]
+        useStore.getState().setAgentStatuses(agents)
+        const installed = agents.filter(a => a.installed && a.version).map(a => ({ pkg: a.pkg, version: a.version! }))
+        if (installed.length > 0) {
+          const updates = await window.api.checkAgentUpdates(installed)
+          useStore.getState().setAgentUpdates(updates)
+        }
+      } catch { /* ignore */ }
+    })
 
     window.api.onModelError((data) => {
       const s = useStore.getState()

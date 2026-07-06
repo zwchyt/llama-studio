@@ -28,6 +28,7 @@ import { getDocument } from 'pdfjs-dist'
 import mammoth from 'mammoth'
 import CodeBlock from './CodeBlock'
 import ConfirmModal from './ConfirmModal'
+import CustomSelect from './CustomSelect'
 
 // 导入 worker 模块使其注册 globalThis.pdfjsWorker，pdfjs 的 fake worker 回退自动使用它
 import 'pdfjs-dist/build/pdf.worker.js'
@@ -1302,17 +1303,17 @@ function ContextBar({ port }: { port?: number }) {
     return card ? s.modelMetrics[card.template.id] : undefined
   })
   const nCtx = metrics?.nCtx ?? 0
-  const nDecoded = metrics?.nDecoded ?? 0
+  const nPromptTokens = metrics?.nPromptTokens ?? 0
 
   if (!port || !nCtx) return null
-  const ratio = nDecoded / nCtx
+  const ratio = nPromptTokens / nCtx
 
   return (
-    <span className="context-bar" title={`已用 ${nDecoded.toLocaleString()} / ${nCtx.toLocaleString()} tokens (${(ratio*100).toFixed(1)}%)`}>
+    <span className="context-bar" title={`已用 ${nPromptTokens.toLocaleString()} / ${nCtx.toLocaleString()} tokens (${(ratio*100).toFixed(1)}%)`}>
       <span className="context-bar-track">
         <span className="context-bar-fill" style={{ width: `${Math.min(ratio * 100, 100)}%` }} />
       </span>
-      <span className="context-bar-label">{nDecoded.toLocaleString()} / {nCtx.toLocaleString()}</span>
+      <span className="context-bar-label">{nPromptTokens.toLocaleString()} / {nCtx.toLocaleString()}</span>
     </span>
   )
 }
@@ -2775,18 +2776,14 @@ ${msgsHtml}
           </button>
           <div className="chat-header-info">
             <span className="chat-header-title">{activeSession?.title || '聊天'}</span>
-            <select
+            <CustomSelect
               className="chat-model-select"
               value={activeSession && runningModels.length > 0 ? activeSession.templateId : ''}
-              onChange={(e) => handleSwitchModel(e.target.value)}
+              onChange={(v) => handleSwitchModel(v)}
+              options={runningModels.map(m => ({ value: m.id, label: `${m.name} (:${m.port})` }))}
+              placeholder="模型未运行"
               disabled={runningModels.length === 0}
-            >
-              {runningModels.length === 0 ? (
-                <option value="">模型未运行</option>
-              ) : runningModels.map((m) => (
-                <option key={m.id} value={m.id}>{m.name} (:{m.port})</option>
-              ))}
-            </select>
+            />
           </div>
           {activeModel && (
             <button
