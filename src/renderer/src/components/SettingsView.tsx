@@ -141,7 +141,10 @@ export default function SettingsView() {
     setDownloadProgress(null)
     if (res && res.success) {
       const backendsData = await safeCall(() => window.api.listBackends(), '刷新后端列表失败')
-      if (backendsData) setBackends(backendsData)
+      if (backendsData) {
+        setBackends(backendsData)
+        if (backendsData.length > 0) setActiveBackend(backendsData[0])
+      }
     } else if (res && !res.success) {
       notify(`下载失败：${res.error}`, 'error')
     }

@@ -916,14 +916,18 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('list-backends', async () => {
     if (!existsSync(BACKEND_DIR)) return []
     const findExecutable = async (dir: string, depth = 0): Promise<string | null> => {
-      if (depth > 3) return null
+      if (depth > 10) return null
       try {
         const files = await fsPromises.readdir(dir, { withFileTypes: true })
         const names = process.platform === 'win32'
-          ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server']
+          ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe']
           : ['llama-server', 'main', 'server']
         for (const f of files) {
           if (!f.isDirectory() && names.includes(f.name.toLowerCase())) return f.name
+        }
+        if (process.platform === 'win32') {
+          const exeFiles = files.filter(f => !f.isDirectory() && f.name.toLowerCase().endsWith('.exe'))
+          if (exeFiles.length > 0) return exeFiles[0].name
         }
         for (const f of files) {
           if (f.isDirectory()) {

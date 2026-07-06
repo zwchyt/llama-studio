@@ -82,7 +82,10 @@ export default function CreateModal() {
   // so initial values are always correct.
   const [name, setName] = useState(editingTemplate?.name ?? '')
   const [description, setDescription] = useState(editingTemplate?.description ?? '')
-  const [backendVersion, setBackendVersion] = useState(editingTemplate?.backendVersion ?? activeBackend?.name ?? '')
+  const initialBackend = editingTemplate?.backendVersion
+    ? (backends.some(b => b.name === editingTemplate.backendVersion) ? editingTemplate.backendVersion : '')
+    : (activeBackend?.name ?? '')
+  const [backendVersion, setBackendVersion] = useState(initialBackend)
   const [modelPath, setModelPath] = useState(editingTemplate?.modelPath ?? '')
   const [serverPort, setServerPort] = useState(editingTemplate?.serverPort ?? 8080)
   const [args, setArgs] = useState<TemplateArgs>(editingTemplate?.args ?? {})
