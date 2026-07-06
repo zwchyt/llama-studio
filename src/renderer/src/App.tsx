@@ -15,6 +15,7 @@ import ChatView from './components/ChatView'
 import CreateModal from './components/CreateModal'
 import UpdateBanner from './components/UpdateBanner'
 import AppUpdateBanner from './components/AppUpdateBanner'
+import BackendDownloadBanner from './components/BackendDownloadBanner'
 import ChatWindow from './components/ChatWindow'
 import PiWebView from './components/PiWebView'
 import LlamaChatView from './components/LlamaChatView'
@@ -435,6 +436,7 @@ function AppMain() {
       <Titlebar onCheckUpdates={checkUpdates} />
       <UpdateBanner />
       <AppUpdateBanner />
+      <BackendDownloadBanner />
       <div className="main-layout">
         <Sidebar />
         <main className="content" style={view === 'llama' || view === 'piweb' ? { display: 'none' } : {}}>

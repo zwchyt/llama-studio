@@ -387,12 +387,13 @@ export default function SettingsView() {
                       {releaseInfo.assets.find(a => a.downloadUrl === selectedAssetUrl)?.name || '选择版本'}
                     </button>
                     {showAssetDropdown && (
-                      <div style={Object.assign({
-                        position: 'absolute', left: 0, right: 0,
+                      <div style={{
+                        position: 'absolute' as const, left: 0, right: 0,
                         background: 'var(--surface)', border: '1.5px solid var(--border)',
                         borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-md)',
-                        maxHeight: 240, overflowY: 'auto', zIndex: 300
-                      }, dropdownUp ? { bottom: 'calc(100% + 2px)' } : { top: 'calc(100% + 2px)' })}>
+                        maxHeight: 240, overflowY: 'auto' as const, zIndex: 300,
+                        ...(dropdownUp ? { bottom: 'calc(100% + 2px)' } : { top: 'calc(100% + 2px)' })
+                      }}>
                         {releaseInfo.assets.map(a => (
                           <div
                             key={a.downloadUrl}
@@ -412,23 +413,9 @@ export default function SettingsView() {
                     )}
                   </div>
                   {downloading || downloadProgress ? (
-                    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span className="text-sm" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                          {downloadProgress?.phase === 'extracting' ? '解压中...' : `下载中... ${downloadProgress?.percent || 0}%`}
-                        </span>
-                        <div className="hub-progress-bar" style={{ flex: 1 }}>
-                          <div className="hub-progress-fill" style={{ width: `${downloadProgress?.percent || 0}%` }} />
-                        </div>
-                        <button
-                          className="btn btn-ghost btn-sm text-danger"
-                          onClick={() => { window.api.cancelBackendDownload(); setDownloading(false); setDownloadProgress(null); }}
-                          style={{ padding: '0 8px', flexShrink: 0 }}
-                        >
-                          取消
-                        </button>
-                      </div>
-                    </div>
+                    <button className="btn btn-secondary btn-sm" disabled>
+                      <Loader2 size={14} className="spin" /> 下载中...
+                    </button>
                   ) : (
                     <button className="btn btn-primary btn-sm" onClick={handleDownload}>下载</button>
                   )}

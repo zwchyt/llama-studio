@@ -97,6 +97,7 @@ export default function ModelCard({ card }: Props) {
     if (commandsSchema) {
       for (const cat of commandsSchema.categories) {
         for (const cmd of cat.commands) {
+          if (cmd.arg === '--port' || cmd.arg === '--model') continue
           const val = tArgs[cmd.arg]
           if (val !== undefined && val !== null && val !== '') {
             if (cmd.type === 'boolean') { if (val === true || val === 'true' || val === '1') args.push(cmd.arg) }
@@ -106,14 +107,14 @@ export default function ModelCard({ card }: Props) {
         }
       }
     } else {
-      const fallbackAllowed = new Set(['--model', '-m', '--port', '--host', '--no-webui', '--ctx-size', '-c', '--gpu-layers', '-ngl', '--threads', '-t', '--batch-size', '-b', '--flash-attn', '-fa', '--mlock', '--mmap', '--verbose'])
+      const fallbackAllowed = new Set(['--host', '--no-webui', '--ctx-size', '-c', '--gpu-layers', '-ngl', '--threads', '-t', '--batch-size', '-b', '--flash-attn', '-fa', '--mlock', '--mmap', '--verbose'])
       for (const [k, v] of Object.entries(tArgs)) {
         if (!fallbackAllowed.has(k)) continue
         if (v === true) args.push(k)
         else if (v !== false && v !== null && v !== '') args.push(k, String(v))
       }
     }
-    if (!args.includes('--port') && card.template.serverPort) {
+    if (card.template.serverPort) {
       args.push('--port', String(card.template.serverPort))
     }
     const port = card.template.serverPort || 8080

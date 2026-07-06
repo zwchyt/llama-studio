@@ -1,7 +1,7 @@
 ﻿import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
 import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
-  unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, promises as fsPromises
+  unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, promises as fsPromises
 } from 'fs'
 import { join, extname, basename, dirname, resolve, sep } from 'path'
 import { spawn, execSync, ChildProcess } from 'child_process'
@@ -334,6 +334,7 @@ function startDownload(
   let currentReq: ReturnType<typeof https.get> | null = null
   const flags = startByte > 0 ? 'a' : 'w'
   const file = createWriteStream(destPath, { flags })
+  file.on('error', (err) => { if (!destroyed) { destroyed = true; onError(err) } })
 
   let speedBytes = 0
   let lastSpeedCheck = Date.now()
@@ -374,9 +375,10 @@ function startDownload(
         }
       }, 5000)
 
+      let paused = false
       res.on('data', (chunk: Buffer) => {
         if (destroyed) return
-        file.write(chunk)
+        const canContinue = file.write(chunk)
         receivedBytes += chunk.length
         speedBytes += chunk.length
         lastDataTime = Date.now()
@@ -389,9 +391,16 @@ function startDownload(
           lastSpeedCheck = now
         }
         onProgress(receivedBytes, totalBytes, currentSpeed)
+        if (!canContinue) {
+          paused = true
+          res.pause()
+          file.once('drain', () => {
+            if (!destroyed) { paused = false; res.resume() }
+          })
+        }
       })
 
-      res.on('end', () => { clearStall(); if (!destroyed) file.end(() => { if (!destroyed) onDone() }) })
+      res.on('end', () => { clearStall(); if (!destroyed) { if (paused) { file.once('drain', () => { if (!destroyed) file.end(() => { if (!destroyed) onDone() }) }) } else { file.end(() => { if (!destroyed) onDone() }) } } })
       res.on('error', (err) => { clearStall(); if (!destroyed) { file.destroy(); onError(err) } })
       res.on('close', () => { clearStall() })
     })
@@ -922,8 +931,9 @@ export function registerIpcHandlers(): void {
         const names = process.platform === 'win32'
           ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe']
           : ['llama-server', 'main', 'server']
-        for (const f of files) {
-          if (!f.isDirectory() && names.includes(f.name.toLowerCase())) return f.name
+        for (const n of names) {
+          const found = files.find(f => !f.isDirectory() && f.name.toLowerCase() === n)
+          if (found) return found.name
         }
         if (process.platform === 'win32') {
           const exeFiles = files.filter(f => !f.isDirectory() && f.name.toLowerCase().endsWith('.exe'))
@@ -961,6 +971,7 @@ export function registerIpcHandlers(): void {
     try {
       const backendPath = join(BACKEND_DIR, backendName)
       if (!isSafePath(BACKEND_DIR, backendPath)) return { success: false, error: 'Access denied' }
+      if (!existsSync(backendPath)) return { success: true }
       const rm = (dir: string) => {
         for (const e of readdirSync(dir, { withFileTypes: true })) {
           const p = join(dir, e.name)
@@ -1170,7 +1181,8 @@ export function registerIpcHandlers(): void {
       }
       proc.on('exit', (code) => {
         if (code !== 0 && runningProcesses.has(opts.id)) {
-          const msg = `Process exited with code ${code}`
+          const errorLines = stderrBuf.split('\n').filter(l => l.trim()).slice(-5).join('; ')
+          const msg = `Process exited with code ${code}${errorLines ? ': ' + errorLines : ''}`
           BrowserWindow.getAllWindows().forEach(win => {
             if (!win.isDestroyed()) win.webContents.send('model-error', { id: opts.id, error: msg })
           })
@@ -1403,14 +1415,29 @@ export function registerIpcHandlers(): void {
           p.on('error', reject)
           p.on('exit', code => code === 0 ? resolve() : reject(new Error(`tar exited with code ${code}`)))
         })
-      } else {
+      } else if (process.platform === 'darwin' || process.platform === 'linux') {
         await extract(archivePath, { dir: extractPath })
+      } else {
+        await new Promise<void>((resolve, reject) => {
+          const escapedZip = archivePath.replace(/'/g, "''")
+          const escapedDir = extractPath.replace(/'/g, "''")
+          const p = spawn('powershell', [
+            '-NoProfile', '-NonInteractive',
+            '-Command',
+            `Expand-Archive -Path '${escapedZip}' -DestinationPath '${escapedDir}' -Force`
+          ], { stdio: 'pipe' })
+          p.on('error', reject)
+          p.on('exit', code => code === 0 ? resolve() : reject(new Error(`Expand-Archive exited with code ${code}`)))
+        })
       }
       try { unlinkSync(archivePath) } catch (e) { console.error('Failed to cleanup temp file', e) }
       return { success: true, path: extractPath }
     } catch (err) {
       cancelBackendDl = null
       try { unlinkSync(archivePath) } catch (e) { console.error('Failed to cleanup temp file', e) }
+      if (existsSync(extractPath)) {
+        try { rmSync(extractPath, { recursive: true, force: true }) } catch {}
+      }
       return { success: false, error: String(err) }
     }
   })
@@ -1969,16 +1996,12 @@ export function registerIpcHandlers(): void {
 
   async function collectMetrics(id: string, port: number, pid?: number): Promise<Record<string, unknown>> {
     const [rawSlots, rawMetrics] = await Promise.all([
-      httpGetText(`http://127.0.0.1:${port}/slots`).catch((e) => { console.error('[metrics] /slots error', e?.message); return '' }),
-      httpGetText(`http://127.0.0.1:${port}/metrics`).catch((e) => { console.error('[metrics] /metrics error', e?.message); return '' }),
+      httpGetText(`http://127.0.0.1:${port}/slots`).catch(() => ''),
+      httpGetText(`http://127.0.0.1:${port}/metrics`).catch(() => ''),
     ])
     const gpu = cachedGpuData
     const payload: Record<string, unknown> = { id, lastUpdated: Date.now() }
     const slots = rawSlots ? tryParseJson(rawSlots) : null
-    if (!rawSlots) console.warn('[metrics] /slots returned empty for', id, 'port', port)
-    else if (!slots) console.warn('[metrics] /slots parse failed, raw:', rawSlots.slice(0, 200))
-    else if (!Array.isArray(slots)) console.warn('[metrics] /slots is not array, got:', typeof slots, JSON.stringify(slots).slice(0, 200))
-    else if (slots.length === 0) console.log('[metrics] /slots empty array (no active inference)')
     if (slots && Array.isArray(slots) && slots.length > 0) {
       const s = slots[0]
       if (s.n_ctx !== undefined) payload.nCtx = s.n_ctx
@@ -2002,7 +2025,6 @@ export function registerIpcHandlers(): void {
     if (rawMetrics) {
       const prom = parsePrometheusMetrics(rawMetrics)
       const keys = Object.keys(prom)
-      if (keys.length === 0) console.warn('[metrics] /metrics parsed 0 Prometheus keys, raw prefix:', rawMetrics.slice(0, 150))
       if (prom['llamacpp:predicted_tokens_seconds'] !== undefined) payload.decodeTokS = prom['llamacpp:predicted_tokens_seconds']
       if (prom['llamacpp:prompt_tokens_seconds'] !== undefined) payload.prefillTokS = prom['llamacpp:prompt_tokens_seconds']
       if (prom['llamacpp:n_decode_total'] !== undefined) {
