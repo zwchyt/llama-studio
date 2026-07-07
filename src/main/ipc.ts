@@ -1726,18 +1726,20 @@ export function registerIpcHandlers(): void {
       nextBin = join(PI_WEB_DIR, 'node_modules', 'next', 'dist', 'bin', 'next')
     }
     return new Promise((resolve, reject) => {
-      const proc = spawn(process.execPath, [nextBin, 'start', '-p', String(PI_WEB_PORT)], {
+      const bundledNode = join(process.resourcesPath, 'node_runtime', 'node.exe')
+      const nodeExe = existsSync(bundledNode) ? bundledNode : 'node'
+      const proc = spawn(nodeExe, [nextBin, 'start', '-p', String(PI_WEB_PORT)], {
         cwd: PI_WEB_DIR,
         stdio: ['ignore', 'pipe', 'pipe'],
         env: {
           ...process.env,
-          ELECTRON_RUN_AS_NODE: '1',
           NODE_ENV: 'production',
           NEXT_DISABLE_TURBOPACK: '1',
           NODE_OPTIONS: '--max-old-space-size=512',
           NEXT_SKIP_WORKSPACE_ROOT_CHECK: '1',
         },
         windowsHide: true,
+        shell: !existsSync(bundledNode),
       })
       let resolved = false
       const startupTimeout = setTimeout(() => {

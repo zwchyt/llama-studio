@@ -70,3 +70,7 @@ settings.json
 
 # Windows reserved device name (some tools may create this accidentally)
 nul
+
+# Bundled node runtime (build artifact)
+node_runtime/
+

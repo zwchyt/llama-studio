@@ -1,6 +1,6 @@
 {
   "name": "llama-studio",
-  "version": "1.0.96",
+  "version": "1.0.97",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",
   "main": "out/main/index.js",
@@ -9,7 +9,7 @@
     "dev": "electron-vite dev",
     "build": "node scripts\\build-filtered.js",
     "preview": "electron-vite preview",
-    "package": "electron-vite build && electron-builder",
+    "package": "node scripts\\copy-node.js && electron-vite build && electron-builder",
     "postinstall": "electron-rebuild -w node-pty || echo electron-rebuild 跳过（终端功能如需请在 Electron 下重建 node-pty：npx electron-rebuild -w node-pty）"
   },
   "dependencies": {

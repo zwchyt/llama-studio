@@ -6,10 +6,16 @@ files:
   - out/main/**/*
   - out/preload/**/*
   - out/renderer/**/*
+  - node_modules/**/*
 nodeGypRebuild: false
+npmRebuild: false
+asarUnpack:
+  - node_modules/**/*
 extraResources:
   - from: resources
     to: resources
+  - from: node_runtime
+    to: node_runtime
 win:
   target:
     - target: nsis
