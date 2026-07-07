@@ -3,7 +3,7 @@ import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
   unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, promises as fsPromises
 } from 'fs'
-import { join, extname, basename, dirname, resolve, sep } from 'path'
+import { join, extname, basename, dirname, resolve, sep, delimiter as pathDelim } from 'path'
 import { spawn, execSync, ChildProcess } from 'child_process'
 import https from 'https'
 import http from 'http'
@@ -1706,36 +1706,6 @@ export function registerIpcHandlers(): void {
   const lastDecodeCount = new Map<string, { count: number; time: number }>()
   const lastCacheHit = new Map<string, { cached: number; total: number }>()
 
-  let nodeExeCached: string | null = null
-  function findNodeExe(): string {
-    if (nodeExeCached) return nodeExeCached
-    const candidates: string[] = []
-    if (process.env.NODE) candidates.push(process.env.NODE)
-    try {
-      const r = execSync('where node', { encoding: 'utf8', timeout: 3000 }).trim()
-      candidates.push(...r.split(/\r?\n/).filter(Boolean))
-    } catch {}
-    try {
-      const r = execSync('which node', { encoding: 'utf8', timeout: 3000 }).trim()
-      if (r) candidates.push(r)
-    } catch {}
-    for (const p of candidates) {
-      if (existsSync(p)) { nodeExeCached = p; return p }
-    }
-    const common = [
-      'C:\\Program Files\\nodejs\\node.exe',
-      'C:\\Program Files (x86)\\nodejs\\node.exe',
-      '/usr/local/bin/node',
-      '/usr/bin/node',
-      '/opt/homebrew/bin/node',
-    ]
-    for (const p of common) {
-      if (existsSync(p)) { nodeExeCached = p; return p }
-    }
-    nodeExeCached = 'node'
-    return 'node'
-  }
-
   async function startPiWeb(): Promise<string> {
     if (piWebState === 'starting' || piWebState === 'running') {
       if (piWebWindow && !piWebWindow.isDestroyed()) piWebWindow.focus()
@@ -1762,17 +1732,22 @@ export function registerIpcHandlers(): void {
       nextBin = join(PI_WEB_DIR, 'node_modules', 'next', 'dist', 'bin', 'next')
     }
     return new Promise((resolve, reject) => {
-      const nodeExe = findNodeExe()
-      const proc = spawn(nodeExe, [nextBin, 'start', '-p', String(PI_WEB_PORT)], {
+      const env = { ...process.env }
+      env.PATH = [
+        'C:\\Program Files\\nodejs',
+        'C:\\Program Files (x86)\\nodejs',
+        env.PATH || '',
+      ].join(pathDelim)
+      Object.assign(env, {
+        NODE_ENV: 'production',
+        NEXT_DISABLE_TURBOPACK: '1',
+        NODE_OPTIONS: '--max-old-space-size=512',
+        NEXT_SKIP_WORKSPACE_ROOT_CHECK: '1',
+      })
+      const proc = spawn('node', [nextBin, 'start', '-p', String(PI_WEB_PORT)], {
         cwd: PI_WEB_DIR,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          NODE_ENV: 'production',
-          NEXT_DISABLE_TURBOPACK: '1',
-          NODE_OPTIONS: '--max-old-space-size=512',
-          NEXT_SKIP_WORKSPACE_ROOT_CHECK: '1',
-        },
+        env,
         windowsHide: true,
       })
       let resolved = false
