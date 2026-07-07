@@ -1736,7 +1736,7 @@ export function registerIpcHandlers(): void {
         nextBin = join(PI_WEB_DIR, 'node_modules', 'next', 'dist', 'bin', 'next')
       }
     }
-    const nodePath = 'C:\\Program Files\\nodejs\\node.exe'
+    const nodeExe = process.env.NODE ?? 'node'
     return new Promise((resolve, reject) => {
       const cleanEnv = Object.fromEntries(
         Object.entries(process.env).filter(([k]) => !k.startsWith('ELECTRON_'))
@@ -1747,7 +1747,7 @@ export function registerIpcHandlers(): void {
         NODE_OPTIONS: '--max-old-space-size=512',
         NEXT_SKIP_WORKSPACE_ROOT_CHECK: '1',
       })
-      const proc = spawn(nodePath, [nextBin, 'start', '-p', String(PI_WEB_PORT)], {
+      const proc = spawn(nodeExe, [nextBin, 'start', '-p', String(PI_WEB_PORT)], {
         cwd: PI_WEB_DIR,
         stdio: ['ignore', 'pipe', 'pipe'],
         env: cleanEnv,
