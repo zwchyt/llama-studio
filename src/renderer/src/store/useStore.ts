@@ -42,7 +42,7 @@ interface AppStore {
   commandsSchema: CommandsSchema | null
   releaseInfo: ReleaseInfo | null
   paths: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string } | null
-  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'piweb' | 'llama' | 'agents' | 'chat' | 'terminal' | 'ocr' | 'benchmark'
+  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'terminal' | 'ocr' | 'benchmark'
   showCreateModal: boolean
   editingTemplate: Template | null
   updateDismissed: boolean
@@ -103,8 +103,6 @@ interface AppStore {
   activeChatPort: number | null
   setActiveChat: (url: string, port: number) => void
   clearActiveChat: () => void
-  piWebUrl: string | null
-  setPiWebUrl: (url: string | null) => void
   agentStatuses: AgentStatus[]
   agentsLoading: boolean
   agentCwd: string | null
@@ -155,7 +153,6 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   modelMetrics: {},
   activeChatUrl: null,
   activeChatPort: null,
-  piWebUrl: null,
   agentStatuses: [],
   agentsLoading: false,
   agentCwd: null,
@@ -295,7 +292,6 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   collapseAllCards: () => set((s) => ({ cards: s.cards.map(c => ({ ...c, expanded: false })) })),
   setActiveChat: (url, port) => set({ activeChatUrl: url, activeChatPort: port }),
   clearActiveChat: () => set({ activeChatUrl: null, activeChatPort: null }),
-  setPiWebUrl: (url) => set({ piWebUrl: url }),
   // ── 工具调用开关 ──
   toolConfig: { enabled: true, tools: { get_datetime: true, web_search: true, fetch_webpage: true } },
   setToolConfig: (config) => set({ toolConfig: config }),

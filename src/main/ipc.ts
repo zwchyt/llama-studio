@@ -1,4 +1,4 @@
-﻿import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
+import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
 import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
   unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, promises as fsPromises
@@ -424,11 +424,6 @@ function startDownload(
   }
 }
 
-let piWebProcess: ChildProcess | null = null
-let piWebUrl = ''
-let piWebState: 'idle' | 'starting' | 'running' | 'stopping' | 'error' = 'idle'
-let piWebStopRequested = false
-let piWebWindow: BrowserWindow | null = null
 let metricsPollingEnabled = true
 let metricsInterval: ReturnType<typeof setInterval> | null = null
 let cachedGpuData: GpuInfo | null = null
@@ -574,16 +569,6 @@ export function cleanupRunningProcesses(): void {
     killProcessTreeAsync(proc)
   }
   runningProcesses.clear()
-  if (piWebProcess) {
-    killProcessTreeAsync(piWebProcess)
-    piWebProcess = null
-  }
-  piWebUrl = ''
-  piWebState = 'idle'
-  if (piWebWindow && !piWebWindow.isDestroyed()) {
-    piWebWindow.close()
-    piWebWindow = null
-  }
   // 清理所有进行中的聊天流式请求
   for (const [, req] of activeChatStreams) {
     try { req.destroy() } catch { /* ignore */ }
@@ -1687,171 +1672,9 @@ export function registerIpcHandlers(): void {
     return { path: r.filePaths[0] }
   })
 
-  // --- pi-web ---
-  function resolvePiWebDir(): string {
-    try {
-      const pkg = require.resolve('@agegr/pi-web/package.json')
-      return dirname(pkg)
-    } catch {}
-    throw new Error('@agegr/pi-web 未安装，请运行 npm install')
-  }
-  const PI_WEB_DIR = resolvePiWebDir()
-  const PI_WEB_PORT = 30141
-  const lastDecodeCount = new Map<string, { count: number; time: number }>()
-  const lastCacheHit = new Map<string, { cached: number; total: number }>()
-
-  async function startPiWeb(): Promise<string> {
-    if (piWebState === 'starting' || piWebState === 'running') {
-      if (piWebWindow && !piWebWindow.isDestroyed()) piWebWindow.focus()
-      return piWebUrl
-    }
-    if (piWebProcess) {
-      const old = piWebProcess
-      piWebProcess = null
-      await new Promise<void>((resolve) => {
-        let done = false
-        const finish = () => { if (!done) { done = true; resolve() } }
-        old.once('exit', finish)
-        killProcessTreeAsync(old).then(finish, finish)
-        setTimeout(finish, 3000)
-      })
-    }
-    piWebStopRequested = false
-    piWebState = 'starting'
-    piWebUrl = ''
-    let nextBin: string
-    try {
-      nextBin = require.resolve('next/dist/bin/next', { paths: [PI_WEB_DIR] })
-    } catch {
-      nextBin = join(PI_WEB_DIR, 'node_modules', 'next', 'dist', 'bin', 'next')
-    }
-    return new Promise((resolve, reject) => {
-      const bundledNode = join(process.resourcesPath, 'node_runtime', 'node.exe')
-      const nodeExe = existsSync(bundledNode) ? bundledNode : 'node'
-      const proc = spawn(nodeExe, [nextBin, 'start', '-p', String(PI_WEB_PORT)], {
-        cwd: PI_WEB_DIR,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          NODE_ENV: 'production',
-          NEXT_DISABLE_TURBOPACK: '1',
-          NODE_OPTIONS: '--max-old-space-size=512',
-          NEXT_SKIP_WORKSPACE_ROOT_CHECK: '1',
-        },
-        windowsHide: true,
-        shell: !existsSync(bundledNode),
-      })
-      let resolved = false
-      const startupTimeout = setTimeout(() => {
-        if (resolved) return
-        resolved = true
-        killProcessTreeAsync(proc)
-        piWebProcess = null
-        piWebUrl = ''
-        piWebState = 'error'
-        reject(new Error('pi-web startup timed out after 60 seconds'))
-      }, 60000)
-      const cancelTimeout = () => clearTimeout(startupTimeout)
-      proc.stdout?.on('data', (chunk: Buffer) => {
-        for (const line of chunk.toString().split(/\r?\n/)) {
-          if (line) console.log('[pi-web]', line)
-        }
-        if (!resolved && chunk.toString().includes('Ready')) {
-          resolved = true
-          piWebUrl = `http://localhost:${PI_WEB_PORT}`
-          cancelTimeout()
-          piWebState = 'running'
-          resolve(piWebUrl)
-        }
-      })
-      proc.stderr?.on('data', (chunk: Buffer) => {
-        const text = chunk.toString()
-        if (!text.includes('ExperimentalWarning')) {
-          console.error('[pi-web]', text.trimEnd())
-        }
-      })
-      proc.on('error', (err) => {
-        cancelTimeout()
-        piWebProcess = null
-        piWebUrl = ''
-        if (!piWebStopRequested) piWebState = 'error'
-        if (!resolved) { resolved = true; reject(err) }
-      })
-      proc.on('exit', (code) => {
-        cancelTimeout()
-        piWebProcess = null
-        if (!piWebStopRequested) {
-          piWebUrl = ''
-          piWebState = resolved ? 'idle' : 'error'
-          console.log('[pi-web] exited')
-        }
-        piWebStopRequested = false
-        if (!resolved) { resolved = true; reject(new Error(`pi-web exited with code ${code}`)) }
-      })
-      piWebProcess = proc
-    })
-  }
-
-  function stopPiWeb(): void {
-    piWebState = 'stopping'
-    piWebStopRequested = true
-    if (piWebProcess) {
-      killProcessTreeAsync(piWebProcess)
-      piWebProcess = null
-      piWebUrl = ''
-    }
-    piWebState = 'idle'
-    if (piWebWindow && !piWebWindow.isDestroyed()) {
-      piWebWindow.close()
-      piWebWindow = null
-    }
-  }
-
-  function openPiWebWindow(): void {
-    if (!piWebUrl) return
-    if (piWebWindow && !piWebWindow.isDestroyed()) {
-      piWebWindow.focus()
-      return
-    }
-    const icon = [join(__dirname, '../../assets/icon.png'), join(app.getAppPath(), 'assets', 'icon.png')].find(existsSync)
-    piWebWindow = new BrowserWindow({
-      width: 1280, height: 800, show: true, autoHideMenuBar: true,
-      title: 'Hexllama - pi-web',
-      titleBarStyle: 'hiddenInset',
-      backgroundColor: '#ffffff',
-      ...(icon ? { icon } : {}),
-      webPreferences: {
-        preload: join(__dirname, '../preload/index.js'),
-        sandbox: false,
-        contextIsolation: true,
-        nodeIntegration: false,
-        additionalArguments: ['--window-mode=piweb']
-      }
-    })
-    piWebWindow.loadURL(piWebUrl)
-    piWebWindow.on('closed', () => { piWebWindow = null })
-  }
-
-  ipcMain.handle('check-pi-web', () => {
-    const ok = existsSync(PI_WEB_DIR) && existsSync(join(PI_WEB_DIR, '.next'))
-    const pkg = join(PI_WEB_DIR, 'package.json')
-    let version: string | null = null
-    try { version = JSON.parse(readFileSync(pkg, 'utf-8')).version } catch {}
-    return { exists: ok, version }
-  })
-  ipcMain.handle('start-pi-web', async () => {
-    try {
-      const url = await startPiWeb()
-      return { success: true, url }
-    } catch (err) {
-      return { success: false, error: String(err) }
-    }
-  })
-  ipcMain.handle('stop-pi-web', () => { stopPiWeb() })
-  ipcMain.handle('open-pi-web-window', () => { openPiWebWindow() })
-  ipcMain.handle('get-pi-web-status', () => ({ running: piWebState === 'running', url: piWebUrl }))
-
   // --- metrics ---
+  const lastCacheHit = new Map<string, { cached: number; total: number }>()
+  const lastDecodeCount = new Map<string, { count: number; time: number }>()
   async function httpGetText(url: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const req = http.get(url, { agent: httpAgent }, (res) => {

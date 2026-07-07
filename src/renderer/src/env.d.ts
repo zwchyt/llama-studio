@@ -94,11 +94,6 @@ interface LlamaCppApi {
   addImageModelFolder: () => Promise<{ success: boolean; folders?: string[] }>
   removeImageModelFolder: (folder: string) => Promise<{ success: boolean; folders: string[] }>
   openExternal: (url: string) => Promise<void>
-  checkPiWeb: () => Promise<{ exists: boolean; version: string | null }>
-  startPiWeb: () => Promise<{ success: boolean; url: string; error?: string }>
-  stopPiWeb: () => Promise<void>
-  openPiWebWindow: () => Promise<void>
-  getPiWebStatus: () => Promise<{ running: boolean; url: string }>
   openChatWindow: (port: number) => Promise<void>
   waitForServer: (port: number) => Promise<boolean>
   fetchServerEndpoint: (port: number, endpoint: string) => Promise<{ ok: boolean; status?: number; text?: string; error?: string }>

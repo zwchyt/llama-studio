@@ -80,11 +80,6 @@ const fullApi = {
   addImageModelFolder: () => ipcRenderer.invoke('add-image-model-folder'),
   removeImageModelFolder: (folder: string) => ipcRenderer.invoke('remove-image-model-folder', folder),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
-  checkPiWeb: () => ipcRenderer.invoke('check-pi-web'),
-  startPiWeb: () => ipcRenderer.invoke('start-pi-web'),
-  stopPiWeb: () => ipcRenderer.invoke('stop-pi-web'),
-  openPiWebWindow: () => ipcRenderer.invoke('open-pi-web-window'),
-  getPiWebStatus: () => ipcRenderer.invoke('get-pi-web-status'),
   getMetricsPolling: () => ipcRenderer.invoke('get-metrics-polling'),
   setMetricsPolling: (enabled: boolean) => ipcRenderer.invoke('set-metrics-polling', enabled),
   openChatWindow: (port: number) => ipcRenderer.invoke('open-chat-window', port),
@@ -179,23 +174,18 @@ const chatApi = {
 }
 
 const isChatWindow = process.argv.includes('--window-mode=chat')
-const isPiWebWindow = process.argv.includes('--window-mode=piweb')
 
-const api = isPiWebWindow ? {} : isChatWindow ? chatApi : fullApi
+const api = isChatWindow ? chatApi : fullApi
 
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI)
-    if (!isPiWebWindow) {
-      contextBridge.exposeInMainWorld('api', api)
-    }
+    contextBridge.exposeInMainWorld('api', api)
   } catch (error) {
     console.error('[preload] contextBridge.exposeInMainWorld 失败:', error,
-      'isChatWindow=', isChatWindow, 'isPiWebWindow=', isPiWebWindow)
+      'isChatWindow=', isChatWindow)
   }
 } else {
   ;(window as any).electron = electronAPI
-  if (!isPiWebWindow) {
-    ;(window as any).api = api
-  }
+  ;(window as any).api = api
 }

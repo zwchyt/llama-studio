@@ -4,8 +4,8 @@ import { shallow } from 'zustand/shallow'
 import { safeCall } from '../utils/safeCall'
 import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Globe, Server, Bot, MessageSquare, Terminal, Info, FileText, Gauge } from 'lucide-react'
 export default function Sidebar() {
-  const { view, setView, backends, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, piWebUrl, hasRunningModels } = useStore(
-    s => ({ view: s.view, setView: s.setView, backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, piWebUrl: s.piWebUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
+  const { view, setView, backends, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, hasRunningModels } = useStore(
+    s => ({ view: s.view, setView: s.setView, backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
     shallow
   )
 
@@ -83,16 +83,7 @@ export default function Sidebar() {
         <Gauge size={16} />
         性能测试
       </button>
-      <button
-        className={`nav-item ${view === 'piweb' ? 'active' : ''}`}
-        onClick={() => setView('piweb')}
-        title={piWebUrl ? '打开 pi-web' : '暂无运行中的 pi-web'}
-        style={piWebUrl ? { color: 'var(--success)' } : {}}
-      >
-        <Globe size={16} />
-        pi-web
-        {piWebUrl && <span className="nav-dot" />}
-      </button>
+
       <button
         className={`nav-item ${view === 'terminal' ? 'active' : ''}`}
         onClick={() => setView('terminal')}

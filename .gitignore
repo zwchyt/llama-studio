@@ -72,5 +72,4 @@ settings.json
 nul
 
 # Bundled node runtime (build artifact)
-node_runtime/
 

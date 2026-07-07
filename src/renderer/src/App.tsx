@@ -17,7 +17,6 @@ import UpdateBanner from './components/UpdateBanner'
 import AppUpdateBanner from './components/AppUpdateBanner'
 import BackendDownloadBanner from './components/BackendDownloadBanner'
 import ChatWindow from './components/ChatWindow'
-import PiWebView from './components/PiWebView'
 import LlamaChatView from './components/LlamaChatView'
 import TerminalView from './components/TerminalView'
 import OcrView from './components/OcrView'
@@ -70,9 +69,7 @@ function AppMain() {
   useEffect(() => {
     // 防御性检查：如果 window.api 未定义（preload 未正确注入），跳过所有 IPC 调用并告警
     if (!window.api) {
-      console.error('[App] window.api 未定义！preload 脚本可能未正确注入。' +
-        'isChatWindow=' + process.argv?.includes('--window-mode=chat') +
-        ' isPiWebWindow=' + process.argv?.includes('--window-mode=piweb'))
+      console.error('[App] window.api 未定义！preload 脚本可能未正确注入。')
       return
     }
 
@@ -408,7 +405,6 @@ function AppMain() {
       case 'about': return <AboutView />
       case 'agents': return <AgentsView />
       case 'chat': return <ChatView />
-      case 'piweb': return <PiWebView />
       case 'welcome': return <WelcomeView />
       case 'terminal': return <TerminalView />
       case 'llama': return <LlamaChatView />
@@ -439,15 +435,12 @@ function AppMain() {
       <BackendDownloadBanner />
       <div className="main-layout">
         <Sidebar />
-        <main className="content" style={view === 'llama' || view === 'piweb' ? { display: 'none' } : {}}>
+        <main className="content" style={view === 'llama' ? { display: 'none' } : {}}>
           {currentView}
         </main>
-        <div style={{ flex: view === 'llama' || view === 'piweb' ? 1 : 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: view === 'llama' ? 1 : 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: view === 'llama' ? 'flex' : 'none', flex: 1, overflow: 'hidden', flexDirection: 'column' }}>
             <LlamaChatView />
-          </div>
-          <div style={{ display: view === 'piweb' ? 'flex' : 'none', flex: 1, overflow: 'hidden', flexDirection: 'column' }}>
-            <PiWebView />
           </div>
         </div>
       </div>
