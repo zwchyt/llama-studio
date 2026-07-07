@@ -1,12 +1,24 @@
 import { app, shell, BrowserWindow, Menu } from 'electron'
 import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
+import { tmpdir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers, cleanupRunningProcesses } from './ipc'
 import { appendFileSync } from 'fs'
 import { existsSync } from 'fs'
 
 process.noDeprecation = true
+
+import { mkdirSync } from 'fs'
+try { mkdirSync(join(tmpdir(), 'hexllama-cache'), { recursive: true }) } catch {}
+app.commandLine.appendSwitch('--disk-cache-dir', join(tmpdir(), 'hexllama-cache'))
+app.commandLine.appendSwitch('--disable-gpu-cache')
+app.commandLine.appendSwitch('--disable-disk-cache')
+
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+}
 
 function resolveIcon(): string | undefined {
   const candidates = [

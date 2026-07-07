@@ -3,7 +3,7 @@ import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
   unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, promises as fsPromises
 } from 'fs'
-import { join, extname, basename, dirname, resolve, sep, delimiter as pathDelim } from 'path'
+import { join, extname, basename, dirname, resolve, sep } from 'path'
 import { spawn, execSync, ChildProcess } from 'child_process'
 import https from 'https'
 import http from 'http'
@@ -531,27 +531,21 @@ async function getCpuUsage(): Promise<number | null> {
   }
   // 尝试链：注册表发现名 → 英文 → 中文 → WMI 兑底
   let result: number | null = null
-  let usedSource = ''
   if (cpuCounterName !== 'NOT_AVAILABLE') {
     result = await typeperfQuery(cpuCounterName!)
-    if (result !== null) usedSource = `registry:${cpuCounterName}`
   }
   if (result === null) {
     result = await typeperfQuery('\\Processor Information(_Total)\\% Processor Utility')
-    if (result !== null) usedSource = 'english-counter'
   }
   if (result === null) {
     result = await typeperfQuery('\\处理器信息(_total)\\% 处理器实用工具')
-    if (result !== null) usedSource = 'chinese-counter'
   }
   if (result === null) {
     result = await wmiFallback()
-    if (result !== null) usedSource = 'wmi-fallback'
   }
   if (result !== null) {
     cachedCpuPct = result
     lastCpuFetch = Date.now()
-    // console.log(`[cpu] ${result}% via ${usedSource}`)
   }
   return cachedCpuPct
 }
@@ -1732,22 +1726,17 @@ export function registerIpcHandlers(): void {
       nextBin = join(PI_WEB_DIR, 'node_modules', 'next', 'dist', 'bin', 'next')
     }
     return new Promise((resolve, reject) => {
-      const env = { ...process.env }
-      env.PATH = [
-        'C:\\Program Files\\nodejs',
-        'C:\\Program Files (x86)\\nodejs',
-        env.PATH || '',
-      ].join(pathDelim)
-      Object.assign(env, {
-        NODE_ENV: 'production',
-        NEXT_DISABLE_TURBOPACK: '1',
-        NODE_OPTIONS: '--max-old-space-size=512',
-        NEXT_SKIP_WORKSPACE_ROOT_CHECK: '1',
-      })
-      const proc = spawn('node', [nextBin, 'start', '-p', String(PI_WEB_PORT)], {
+      const proc = spawn(process.execPath, [nextBin, 'start', '-p', String(PI_WEB_PORT)], {
         cwd: PI_WEB_DIR,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env,
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: '1',
+          NODE_ENV: 'production',
+          NEXT_DISABLE_TURBOPACK: '1',
+          NODE_OPTIONS: '--max-old-space-size=512',
+          NEXT_SKIP_WORKSPACE_ROOT_CHECK: '1',
+        },
         windowsHide: true,
       })
       let resolved = false
@@ -1968,7 +1957,6 @@ export function registerIpcHandlers(): void {
     }
     if (rawMetrics) {
       const prom = parsePrometheusMetrics(rawMetrics)
-      const keys = Object.keys(prom)
       if (prom['llamacpp:predicted_tokens_seconds'] !== undefined) payload.decodeTokS = prom['llamacpp:predicted_tokens_seconds']
       if (prom['llamacpp:prompt_tokens_seconds'] !== undefined) payload.prefillTokS = prom['llamacpp:prompt_tokens_seconds']
       if (prom['llamacpp:n_decode_total'] !== undefined) {
