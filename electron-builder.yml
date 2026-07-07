@@ -6,6 +6,7 @@ files:
   - out/main/**/*
   - out/preload/**/*
   - out/renderer/**/*
+nodeGypRebuild: true
 extraResources:
   - from: resources
     to: resources

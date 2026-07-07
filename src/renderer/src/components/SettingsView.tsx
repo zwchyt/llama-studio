@@ -359,6 +359,17 @@ export default function SettingsView() {
         ) : releaseInfo ? (
           releaseInfo.error ? (
             <div className="text-danger text-sm py-2">错误：{releaseInfo.error}</div>
+          ) : releaseInfo.noRelease ? (
+            <div className="text-sm py-2" style={{ color: 'var(--text-muted)' }}>
+              未检测到官方发布信息（GitHub 可能暂未发布，或接口返回为空）。
+            </div>
+          ) : releaseInfo.noPackage ? (
+            <div className="text-sm py-2" style={{ color: 'var(--text-muted)' }}>
+              未检测到适用于当前平台 / 架构的官方发布包。
+              {(releaseInfo.name || releaseInfo.tagName) && (
+                <> 最新发布：{releaseInfo.name || releaseInfo.tagName}（{new Date(releaseInfo.publishedAt).toLocaleDateString()}）</>
+              )}
+            </div>
           ) : (
             <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
               <div>

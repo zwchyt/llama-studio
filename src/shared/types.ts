@@ -53,6 +53,10 @@ export interface ReleaseInfo {
   isNewer?: boolean
   assets: { name: string; downloadUrl: string; size: number }[]
   error?: string
+  /** GitHub 未返回发布信息（可能官方暂未发布或接口返回为空） */
+  noRelease?: boolean
+  /** 有发布但不存在匹配当前平台 / 架构的官方包 */
+  noPackage?: boolean
 }
 
 /** 应用自身更新的信息 */

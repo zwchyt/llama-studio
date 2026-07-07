@@ -7,8 +7,7 @@ import { X, Download, Loader2, RotateCw } from 'lucide-react'
 export default function AppUpdateBanner() {
   const {
     appReleaseInfo, appUpdateDismissed, setAppUpdateDismissed,
-    appDownloadProgress, setAppDownloadProgress, appCheckingUpdate, setAppCheckingUpdate,
-    setAppReleaseInfo
+    appDownloadProgress, setAppDownloadProgress
   } = useStore(
     s => ({
       appReleaseInfo: s.appReleaseInfo,
@@ -16,9 +15,6 @@ export default function AppUpdateBanner() {
       setAppUpdateDismissed: s.setAppUpdateDismissed,
       appDownloadProgress: s.appDownloadProgress,
       setAppDownloadProgress: s.setAppDownloadProgress,
-      appCheckingUpdate: s.appCheckingUpdate,
-      setAppCheckingUpdate: s.setAppCheckingUpdate,
-      setAppReleaseInfo: s.setAppReleaseInfo,
     }),
     shallow
   )

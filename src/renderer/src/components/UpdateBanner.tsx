@@ -27,7 +27,7 @@ export default function UpdateBanner() {
   const [notifPref] = useState(() => {
     try { return localStorage.getItem('hexllama_update_notify') || 'banner' } catch { return 'banner' }
   })
-  if (!releaseInfo || releaseInfo.error || updateDismissed || releaseInfo.isNewer === false || notifPref === 'manual') return null
+  if (!releaseInfo || releaseInfo.error || releaseInfo.noRelease || releaseInfo.noPackage || updateDismissed || releaseInfo.isNewer === false || notifPref === 'manual') return null
   const selectedAsset = releaseInfo.assets?.find(a => a.downloadUrl === selectedAssetUrl)
   const handleDownload = async () => {
     if (!releaseInfo.assets?.length) return

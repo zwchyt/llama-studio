@@ -71,7 +71,6 @@ export const useTerminalStore = createWithEqualityFn<TerminalStore>(
       if (!result.success) { notify('打开终端失败', 'error'); return }
       const id = result.id
       if (!id) { notify('打开终端失败：未返回终端 ID', 'error'); return }
-      const shell = result.shell
       set((s) => {
         const title = makeTitle(s.sessions)
         const meta: TerminalMeta = { id, title, cwd: cwd || '', exited: false }

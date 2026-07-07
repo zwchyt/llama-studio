@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react'
-import { createTerminal, attach, fitTerminal } from '../utils/terminalRegistry'
+import { createTerminal, attach, fitTerminal, disposeTerminal } from '../utils/terminalRegistry'
 import { useTerminalStore } from '../store/terminalStore'
 import { Terminal, FolderOpen, Plus } from 'lucide-react'
 import { safeCall } from '../utils/safeCall'
@@ -114,15 +114,18 @@ function TermScreen({ id, visible }: { id: string; visible: boolean }): React.JS
     const el = ref.current
     if (!el) return
     const term = createTerminal(id)
+    // 先注册 onResize，再 attach（attach 内部会 fit 触发 onResize），避免首帧 resize 丢失
+    const onResize = term.onResize(({ cols, rows }) => { window.api.terminalResize(id, cols, rows).catch(() => {}) })
     attach(id, el)
     const onData = term.onData((d) => { window.api.terminalInput(id, d).catch(() => {}) })
-    const onResize = term.onResize(({ cols, rows }) => { window.api.terminalResize(id, cols, rows).catch(() => {}) })
     const ro = new ResizeObserver(() => fitTerminal(id))
     ro.observe(el)
     return () => {
       onData.dispose()
       onResize.dispose()
       ro.disconnect()
+      // 切换走终端视图 / 会话关闭时销毁实例，避免对已 open 的实例重复调用 term.open（重挂载会传入新容器）
+      disposeTerminal(id)
     }
   }, [id])
 

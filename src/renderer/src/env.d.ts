@@ -95,10 +95,6 @@ interface LlamaCppApi {
   removeImageModelFolder: (folder: string) => Promise<{ success: boolean; folders: string[] }>
   openExternal: (url: string) => Promise<void>
   checkPiWeb: () => Promise<{ exists: boolean; version: string | null }>
-  downloadPiWeb: () => Promise<{ success: boolean; error?: string }>
-  cancelPiWebDownload: () => Promise<void>
-  onPiWebDownloadProgress: (cb: (data: { percent: number; phase: string }) => void) => void
-  removePiWebDownloadListener: () => void
   startPiWeb: () => Promise<{ success: boolean; url: string; error?: string }>
   stopPiWeb: () => Promise<void>
   openPiWebWindow: () => Promise<void>

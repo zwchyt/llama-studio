@@ -1352,7 +1352,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('check-updates', async () => {
     try {
       const release = await fetchJson('https://api.github.com/repos/ggml-org/llama.cpp/releases/latest') as GitHubRelease
-      if (!release || !release.assets) return {}
+      if (!release || !release.assets || !release.tag_name) return { assets: [], noRelease: true }
       const isMac = process.platform === 'darwin'
       const isLinux = process.platform === 'linux'
       const arch = process.arch
@@ -1385,7 +1385,7 @@ export function registerIpcHandlers(): void {
           if (parseInt(m[1], 10) >= latestNum || d.name.includes(release.tag_name)) { isNewer = false; break }
         }
       }
-      return { tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at, isNewer, assets: platformAssets.map((a: GitHubAsset) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size })) }
+      return { tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at, isNewer, noPackage: platformAssets.length === 0, assets: platformAssets.map((a: GitHubAsset) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size })) }
     } catch (e) { return { error: String(e) } }
   })
   ipcMain.handle('download-release', async (event, opts: { url: string; version: string; assetName: string }) => {
@@ -1694,13 +1694,15 @@ export function registerIpcHandlers(): void {
   })
 
   // --- pi-web ---
-  const PI_WEB_DIR = join(APP_ROOT, 'pi-web')
+  function resolvePiWebDir(): string {
+    try {
+      const pkg = require.resolve('@agegr/pi-web/package.json')
+      return dirname(pkg)
+    } catch {}
+    throw new Error('@agegr/pi-web 未安装，请运行 npm install')
+  }
+  const PI_WEB_DIR = resolvePiWebDir()
   const PI_WEB_PORT = 30141
-  const PI_WEB_GITHUB_OWNER = 'zwchyt'
-  const PI_WEB_GITHUB_REPO = 'llama-studio'
-  let piWebCancelDl: (() => void) | null = null
-
-
   const lastDecodeCount = new Map<string, { count: number; time: number }>()
   const lastCacheHit = new Map<string, { cached: number; total: number }>()
 
@@ -1734,17 +1736,21 @@ export function registerIpcHandlers(): void {
         nextBin = join(PI_WEB_DIR, 'node_modules', 'next', 'dist', 'bin', 'next')
       }
     }
+    const nodePath = 'C:\\Program Files\\nodejs\\node.exe'
     return new Promise((resolve, reject) => {
-      const nextMode = app.isPackaged ? 'start' : 'dev'
-      const proc = spawn('node', [nextBin, nextMode, '-p', String(PI_WEB_PORT)], {
+      const cleanEnv = Object.fromEntries(
+        Object.entries(process.env).filter(([k]) => !k.startsWith('ELECTRON_'))
+      )
+      Object.assign(cleanEnv, {
+        NODE_ENV: 'production',
+        NEXT_DISABLE_TURBOPACK: '1',
+        NODE_OPTIONS: '--max-old-space-size=512',
+        NEXT_SKIP_WORKSPACE_ROOT_CHECK: '1',
+      })
+      const proc = spawn(nodePath, [nextBin, 'start', '-p', String(PI_WEB_PORT)], {
         cwd: PI_WEB_DIR,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          NODE_ENV: app.isPackaged ? 'production' : 'development',
-          NEXT_DISABLE_TURBOPACK: '1',
-          NODE_OPTIONS: '--max-old-space-size=512',
-        },
+        env: cleanEnv,
         windowsHide: true,
       })
       let resolved = false
@@ -1759,36 +1765,22 @@ export function registerIpcHandlers(): void {
       }, 60000)
       const cancelTimeout = () => clearTimeout(startupTimeout)
       proc.stdout?.on('data', (chunk: Buffer) => {
-        const text = chunk.toString()
-        if (!resolved && text.includes('Ready')) {
+        for (const line of chunk.toString().split(/\r?\n/)) {
+          if (line) console.log('[pi-web]', line)
+        }
+        if (!resolved && chunk.toString().includes('Ready')) {
           resolved = true
           piWebUrl = `http://localhost:${PI_WEB_PORT}`
-          const checkUrl = piWebUrl
-            ; (async () => {
-              for (let i = 0; i < 30; i++) {
-                if (piWebState !== 'starting') { cancelTimeout(); return }
-                try {
-                  const r = await fetch(`${checkUrl}/api/models`)
-                  if (r.ok) {
-                    if (piWebState !== 'starting') { cancelTimeout(); return }
-                    piWebState = 'running'
-                    cancelTimeout()
-                    resolve(piWebUrl)
-                    return
-                  }
-                } catch { }
-                await new Promise(r => setTimeout(r, 1000))
-              }
-              if (piWebState === 'starting') {
-                piWebState = 'error'
-                cancelTimeout()
-                reject(new Error('pi-web health check failed: server not responding'))
-              }
-            })()
+          cancelTimeout()
+          piWebState = 'running'
+          resolve(piWebUrl)
         }
       })
       proc.stderr?.on('data', (chunk: Buffer) => {
-        console.error('[pi-web stderr]', chunk.toString())
+        const text = chunk.toString()
+        if (!text.includes('ExperimentalWarning')) {
+          console.error('[pi-web]', text.trimEnd())
+        }
       })
       proc.on('error', (err) => {
         cancelTimeout()
@@ -1800,10 +1792,10 @@ export function registerIpcHandlers(): void {
       proc.on('exit', (code) => {
         cancelTimeout()
         piWebProcess = null
-        piWebUrl = ''
-        console.error(`[pi-web] process exited with code ${code} (state: ${piWebState})`)
         if (!piWebStopRequested) {
+          piWebUrl = ''
           piWebState = resolved ? 'idle' : 'error'
+          console.log('[pi-web] exited')
         }
         piWebStopRequested = false
         if (!resolved) { resolved = true; reject(new Error(`pi-web exited with code ${code}`)) }
@@ -1853,56 +1845,11 @@ export function registerIpcHandlers(): void {
   }
 
   ipcMain.handle('check-pi-web', () => {
-    const exists = existsSync(PI_WEB_DIR) && existsSync(join(PI_WEB_DIR, 'node_modules')) && existsSync(join(PI_WEB_DIR, '.next'))
-    const versionFile = join(PI_WEB_DIR, 'version.json')
+    const ok = existsSync(PI_WEB_DIR) && existsSync(join(PI_WEB_DIR, '.next'))
+    const pkg = join(PI_WEB_DIR, 'package.json')
     let version: string | null = null
-    try { if (existsSync(versionFile)) version = JSON.parse(readFileSync(versionFile, 'utf-8')).release_tag } catch {}
-    return { exists, version }
-  })
-  ipcMain.handle('download-pi-web', async (event) => {
-    try {
-      const tag = `v${app.getVersion()}`
-      const downloadUrl = `https://github.com/${PI_WEB_GITHUB_OWNER}/${PI_WEB_GITHUB_REPO}/releases/download/${tag}/pi-web-${tag}.tar.gz`
-      const archivePath = join(APP_ROOT, '.pi-web-tmp.tar.gz')
-      if (existsSync(archivePath)) unlinkSync(archivePath)
-      let cancelled = false
-      const onProgress = (received: number, total: number) => {
-        if (!cancelled && !event.sender.isDestroyed()) {
-          event.sender.send('pi-web-download-progress', { percent: total > 0 ? Math.round((received / total) * 100) : 0, phase: 'downloading' })
-        }
-      }
-      event.sender.send('pi-web-download-progress', { percent: 0, phase: 'downloading' })
-      await new Promise<void>((resolve, reject) => {
-        const cancelFn = startDownload(
-          downloadUrl, archivePath, 0,
-          onProgress,
-          () => { if (!cancelled) resolve() },
-          (err) => { if (!cancelled) reject(err) }
-        )
-        piWebCancelDl = () => { cancelled = true; cancelFn(); reject(new Error('cancelled')) }
-        if (cancelled) { cancelFn(); reject(new Error('cancelled')) }
-      })
-      if (cancelled) return { success: false, error: 'cancelled' }
-      event.sender.send('pi-web-download-progress', { percent: 100, phase: 'extracting' })
-      const tempDir = join(APP_ROOT, '.pi-web-tmp')
-      if (existsSync(tempDir)) rmdirSync(tempDir, { recursive: true })
-      mkdirSync(tempDir, { recursive: true })
-      await new Promise<void>((resolve, reject) => {
-        const proc = spawn('tar', ['-xzf', archivePath, '-C', tempDir], { stdio: 'pipe' })
-        proc.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`tar exited with code ${code}`)))
-        proc.on('error', reject)
-      })
-      unlinkSync(archivePath)
-      if (existsSync(PI_WEB_DIR)) rmdirSync(PI_WEB_DIR, { recursive: true })
-      renameSync(tempDir, PI_WEB_DIR)
-      event.sender.send('pi-web-download-progress', { percent: 100, phase: 'done' })
-      return { success: true }
-    } catch (err) {
-      return { success: false, error: String(err) }
-    }
-  })
-  ipcMain.handle('cancel-pi-web-download', () => {
-    if (piWebCancelDl) { piWebCancelDl(); piWebCancelDl = null }
+    try { version = JSON.parse(readFileSync(pkg, 'utf-8')).version } catch {}
+    return { exists: ok, version }
   })
   ipcMain.handle('start-pi-web', async () => {
     try {
