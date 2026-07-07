@@ -1729,28 +1729,19 @@ export function registerIpcHandlers(): void {
     try {
       nextBin = require.resolve('next/dist/bin/next', { paths: [PI_WEB_DIR] })
     } catch {
-      try {
-        const nextPkg = require.resolve('next/package.json', { paths: [PI_WEB_DIR] })
-        nextBin = join(dirname(nextPkg), 'dist', 'bin', 'next')
-      } catch {
-        nextBin = join(PI_WEB_DIR, 'node_modules', 'next', 'dist', 'bin', 'next')
-      }
+      nextBin = join(PI_WEB_DIR, 'node_modules', 'next', 'dist', 'bin', 'next')
     }
-    const nodeExe = process.env.NODE ?? 'node'
     return new Promise((resolve, reject) => {
-      const cleanEnv = Object.fromEntries(
-        Object.entries(process.env).filter(([k]) => !k.startsWith('ELECTRON_'))
-      )
-      Object.assign(cleanEnv, {
-        NODE_ENV: 'production',
-        NEXT_DISABLE_TURBOPACK: '1',
-        NODE_OPTIONS: '--max-old-space-size=512',
-        NEXT_SKIP_WORKSPACE_ROOT_CHECK: '1',
-      })
-      const proc = spawn(nodeExe, [nextBin, 'start', '-p', String(PI_WEB_PORT)], {
+      const proc = spawn('node', [nextBin, 'start', '-p', String(PI_WEB_PORT)], {
         cwd: PI_WEB_DIR,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: cleanEnv,
+        env: {
+          ...process.env,
+          NODE_ENV: 'production',
+          NEXT_DISABLE_TURBOPACK: '1',
+          NODE_OPTIONS: '--max-old-space-size=512',
+          NEXT_SKIP_WORKSPACE_ROOT_CHECK: '1',
+        },
         windowsHide: true,
       })
       let resolved = false
