@@ -109,6 +109,14 @@ function isSafePath(base: string, target: string): boolean {
   const rTarget = resolve(target)
   return rTarget === rBase || rTarget.startsWith(rBase + sep)
 }
+// 下载镜像源：在 GitHub 链接前拼接用户设置的镜像前缀（如 https://ghproxy.com/），用于加速国内访问。
+// 仅做字符串拼接；镜像是否真正可用取决于它是否代理对应域名。未配置或为空则原样返回。
+function mirrorUrl(url: string): string {
+  if (!url) return url
+  const m = (settingsCache?.downloadMirror || '').trim()
+  if (!m) return url
+  return `${m.replace(/\/+$/, '')}/${url}`
+}
 // 下面的代码实现了一个简单的命令行参数验证机制，确保只有在 commands.json 中定义的参数才会被传递给后端执行的模型运行命令。这有助于防止恶意用户通过 IPC 传递危险的参数来执行未授权的操作。
 const schemaCache = new Map<string, { allowed: Set<string>; boolean: Set<string> }>()
 function loadSchemaArgs(backendPath: string): { allowed: Set<string>; boolean: Set<string> } {
@@ -190,12 +198,12 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
     return Promise.resolve()
   }
 }
-interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; metricsPolling?: boolean }
+interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; metricsPolling?: boolean; downloadMirror?: string }
 let settingsCache: AppSettings | null = null
 async function loadSettings(): Promise<AppSettings> {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, downloadMirror: '' }; return settingsCache }
     const data = JSON.parse(await fsPromises.readFile(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
@@ -203,7 +211,7 @@ async function loadSettings(): Promise<AppSettings> {
       metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, downloadMirror: '' }; return settingsCache }
 }
 async function saveSettings(s: AppSettings): Promise<void> {
   await fsPromises.writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2))
@@ -212,7 +220,7 @@ async function saveSettings(s: AppSettings): Promise<void> {
 function loadSettingsSync(): AppSettings {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, downloadMirror: '' }; return settingsCache }
     const data = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
@@ -220,7 +228,7 @@ function loadSettingsSync(): AppSettings {
       metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, downloadMirror: '' }; return settingsCache }
 }
 interface RunningProcess { proc: ChildProcess; port: number }
 const runningProcesses = new Map<string, RunningProcess>()
@@ -465,9 +473,12 @@ function startParallelDownload(
     onProgress(Math.min(receivedBytes, totalBytes || receivedBytes), totalBytes, speed)
   }
 
-  const fallback = (targetUrl: string) => {
-    if (destroyed || cancelled) return
-    fallbackCancel = startDownload(targetUrl, destPath, startByte, onProgress, onDone, onError)
+  let fellBack = false
+  const fallback = (targetUrl: string, resumeFrom: number) => {
+    if (destroyed || cancelled || fellBack) return
+    fellBack = true
+    // 并行下载失败时回退到经过验证的单连接下载，作为可靠保底（速度换稳定）
+    fallbackCancel = startDownload(targetUrl, destPath, resumeFrom, onProgress, onDone, onError)
   }
 
   const probe = (currentUrl: string, redirectCount = 0): void => {
@@ -489,13 +500,13 @@ function startParallelDownload(
         const m = cr.match(/bytes\s+\d+-\d+\/(\d+)/i)
         const total = m ? parseInt(m[1], 10) : parseInt(String(res.headers['content-length'] || '0'), 10)
         res.destroy()
-        if (!total || isNaN(total) || acceptRanges !== 'bytes' || total < MIN_CHUNK * 2) return fallback(url)
+        if (!total || isNaN(total) || acceptRanges !== 'bytes' || total < MIN_CHUNK * 2) return fallback(url, startByte)
         startChunks(total)
       })
-    } catch (e) { onError(e as Error); return }
+    } catch (e) { fallback(url, startByte); return }
     probeReq = req
-    req.setTimeout(15000, () => { if (!destroyed && !cancelled) { try { req.destroy() } catch {} onError(new Error('Probe connection timeout')) } })
-    req.on('error', (err) => { if (!destroyed && !cancelled) onError(err) })
+    req.setTimeout(15000, () => { if (!destroyed && !cancelled) { try { req.destroy() } catch {} fallback(url, startByte) } })
+    req.on('error', () => { if (!destroyed && !cancelled) fallback(url, startByte) })
   }
 
   const startChunks = (total: number): void => {
@@ -535,7 +546,10 @@ function startParallelDownload(
         if (finished || destroyed || cancelled) return
         finished = true
         for (const c of activeCancel) { try { c() } catch {} }
-        onError(err)
+        // 并行分片失败：丢弃已写的分片并回退到单连接下载作为可靠保底
+        console.error('[parallel] chunk download failed, falling back to single connection:', err.message)
+        try { unlinkSync(destPath) } catch {}
+        fallback(url, 0)
       }
       for (const range of ranges) {
         if (range.end < effectiveStart) { onChunkDone(); continue }
@@ -1527,7 +1541,15 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('check-updates', async () => {
     try {
-      const release = await fetchJson('https://api.github.com/repos/ggml-org/llama.cpp/releases/latest') as GitHubRelease
+      const apiUrl = 'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest'
+      let release: GitHubRelease
+      try {
+        release = await fetchJson(mirrorUrl(apiUrl)) as GitHubRelease
+      } catch (e) {
+        // 若镜像不代理 api.github.com，则回退直连 GitHub
+        if ((settingsCache?.downloadMirror || '').trim()) release = await fetchJson(apiUrl) as GitHubRelease
+        else throw e
+      }
       if (!release || !release.assets || !release.tag_name) return { assets: [], noRelease: true }
       const isMac = process.platform === 'darwin'
       const isLinux = process.platform === 'linux'
@@ -1561,7 +1583,7 @@ export function registerIpcHandlers(): void {
           if (parseInt(m[1], 10) >= latestNum || d.name.includes(release.tag_name)) { isNewer = false; break }
         }
       }
-      return { tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at, isNewer, noPackage: platformAssets.length === 0, assets: platformAssets.map((a: GitHubAsset) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size })) }
+      return { tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at, isNewer, noPackage: platformAssets.length === 0, assets: platformAssets.map((a: GitHubAsset) => ({ name: a.name, downloadUrl: mirrorUrl(a.browser_download_url), size: a.size })) }
     } catch (e) { return { error: String(e) } }
   })
   ipcMain.handle('download-release', async (event, opts: { url: string; version: string; assetName: string }) => {
@@ -1637,9 +1659,15 @@ export function registerIpcHandlers(): void {
     try {
       const currentVersion = app.getVersion() || '0.0.0'
 
-      const release = await fetchJson(
-        `https://api.github.com/repos/${APP_GITHUB_OWNER}/${APP_GITHUB_REPO}/releases/latest`
-      ) as GitHubRelease
+      const apiUrl = `https://api.github.com/repos/${APP_GITHUB_OWNER}/${APP_GITHUB_REPO}/releases/latest`
+      let release: GitHubRelease
+      try {
+        release = await fetchJson(mirrorUrl(apiUrl)) as GitHubRelease
+      } catch (e) {
+        // 若镜像不代理 api.github.com，则回退直连 GitHub
+        if ((settingsCache?.downloadMirror || '').trim()) release = await fetchJson(apiUrl) as GitHubRelease
+        else throw e
+      }
 
       if (!release || !release.tag_name) {
         return { available: false, currentVersion }
@@ -1678,7 +1706,7 @@ export function registerIpcHandlers(): void {
         releaseUrl: release.html_url,
         publishedAt: release.published_at,
         assetName: asset?.name || '',
-        assetUrl: asset?.browser_download_url || '',
+        assetUrl: mirrorUrl(asset?.browser_download_url || ''),
         assetSize: asset?.size || 0,
       }
     } catch {
@@ -1687,7 +1715,10 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('download-app-update', async (event, opts: { url: string; assetName: string }) => {
-    if (!opts.url.startsWith('https://github.com/') && !opts.url.startsWith('https://objects.githubusercontent.com/')) {
+    await loadSettings()
+    const mirrorBase = (settingsCache?.downloadMirror || '').trim().replace(/\/+$/, '')
+    const urlOk = opts.url.startsWith('https://github.com/') || opts.url.startsWith('https://objects.githubusercontent.com/') || (mirrorBase !== '' && opts.url.startsWith(mirrorBase + '/'))
+    if (!urlOk) {
       return { success: false, error: 'Invalid download URL' }
     }
     if (!opts.assetName || opts.assetName.includes('..') || opts.assetName.includes('/') || opts.assetName.includes('\\')) {
@@ -2065,6 +2096,16 @@ export function registerIpcHandlers(): void {
     await saveSettings(s)
     if (enabled) startMetricsInterval()
     else stopMetricsInterval()
+    return { success: true }
+  })
+  ipcMain.handle('get-download-mirror', async () => {
+    const s = await loadSettings()
+    return { mirror: (s.downloadMirror || '').trim() }
+  })
+  ipcMain.handle('set-download-mirror', async (_e, mirror: string) => {
+    const s = await loadSettings()
+    s.downloadMirror = (mirror || '').trim()
+    await saveSettings(s)
     return { success: true }
   })
 

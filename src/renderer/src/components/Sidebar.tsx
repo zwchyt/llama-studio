@@ -2,7 +2,7 @@ import React from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { safeCall } from '../utils/safeCall'
-import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Globe, Server, Bot, MessageSquare, Terminal, Info, FileText, Gauge } from 'lucide-react'
+import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Server, Bot, MessageSquare, Terminal, Info, FileText, Gauge } from 'lucide-react'
 export default function Sidebar() {
   const { view, setView, backends, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, hasRunningModels } = useStore(
     s => ({ view: s.view, setView: s.setView, backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
