@@ -424,6 +424,203 @@ function startDownload(
   }
 }
 
+/**
+ * 多线程分片下载：用 Range 把文件切成多片并发拉取，各自写入目标文件的对应偏移，
+ * 以绕过 GitHub CDN 的单连接限速，显著提升国内下载速度。接口与 startDownload 一致，可直接替换。
+ * - 不支持 Range 或文件过小时，自动回退到单连接 startDownload。
+ * - 支持断点续传：startByte>0 时按分片边界对齐，跳过已完成分片、从未完成处继续（单连接回退同样走 Range 续传）。
+ */
+function startParallelDownload(
+  url: string,
+  destPath: string,
+  startByte: number,
+  onProgress: (received: number, total: number, speed: number) => void,
+  onDone: () => void,
+  onError: (err: Error) => void
+): () => void {
+  const USER_AGENT = 'hexllama/1.0'
+  const MIN_CHUNK = 1 * 1024 * 1024
+  const MAX_CHUNKS = 6
+  const CHUNK_RETRIES = 3
+  let destroyed = false
+  let cancelled = false
+  let activeCancel: Array<() => void> = []
+  let fallbackCancel: (() => void) | null = null
+  let probeReq: ReturnType<typeof https.get> | null = null
+
+  let totalBytes = 0
+  let receivedBytes = startByte
+  let speedBytes = 0
+  let lastSpeedCheck = Date.now()
+
+  const report = () => {
+    const now = Date.now()
+    const elapsed = (now - lastSpeedCheck) / 1000
+    let speed = 0
+    if (elapsed >= 0.5) {
+      speed = speedBytes / elapsed
+      speedBytes = 0
+      lastSpeedCheck = now
+    }
+    onProgress(Math.min(receivedBytes, totalBytes || receivedBytes), totalBytes, speed)
+  }
+
+  const fallback = (targetUrl: string) => {
+    if (destroyed || cancelled) return
+    fallbackCancel = startDownload(targetUrl, destPath, startByte, onProgress, onDone, onError)
+  }
+
+  const probe = (currentUrl: string, redirectCount = 0): void => {
+    if (destroyed || cancelled) return
+    if (redirectCount > 10) { onError(new Error('Too many redirects')); return }
+    const get = currentUrl.startsWith('https') ? https.get : http.get
+    let req: ReturnType<typeof https.get>
+    try {
+      req = get(currentUrl, { headers: { 'User-Agent': USER_AGENT, Range: 'bytes=0-0' } }, (res) => {
+        if (destroyed || cancelled) { res.destroy(); return }
+        if (res.statusCode === 301 || res.statusCode === 302) {
+          res.destroy()
+          const loc = res.headers.location
+          if (!loc || (!loc.startsWith('http:') && !loc.startsWith('https:'))) { onError(new Error('Invalid redirect protocol')); return }
+          return probe(loc, redirectCount + 1)
+        }
+        const acceptRanges = String(res.headers['accept-ranges'] || '').toLowerCase()
+        const cr = String(res.headers['content-range'] || '')
+        const m = cr.match(/bytes\s+\d+-\d+\/(\d+)/i)
+        const total = m ? parseInt(m[1], 10) : parseInt(String(res.headers['content-length'] || '0'), 10)
+        res.destroy()
+        if (!total || isNaN(total) || acceptRanges !== 'bytes' || total < MIN_CHUNK * 2) return fallback(url)
+        startChunks(total)
+      })
+    } catch (e) { onError(e as Error); return }
+    probeReq = req
+    req.setTimeout(15000, () => { if (!destroyed && !cancelled) { try { req.destroy() } catch {} onError(new Error('Probe connection timeout')) } })
+    req.on('error', (err) => { if (!destroyed && !cancelled) onError(err) })
+  }
+
+  const startChunks = (total: number): void => {
+    totalBytes = total
+    const numChunks = Math.min(MAX_CHUNKS, Math.max(2, Math.floor(total / (MIN_CHUNK * 2))))
+    const chunkSize = Math.ceil(total / numChunks)
+    // 按分片边界对齐续传点，避免把未写完的最后一个分片误判为已完成
+    const effectiveStart = Math.floor(startByte / chunkSize) * chunkSize
+    receivedBytes = effectiveStart
+    const ranges: Array<{ start: number; end: number }> = []
+    for (let i = 0; i < numChunks; i++) {
+      const s = i * chunkSize
+      const e = Math.min(total - 1, s + chunkSize - 1)
+      ranges.push({ start: s, end: e })
+    }
+    const ensureSize = async () => {
+      if (existsSync(destPath)) {
+        const cur = (await fsPromises.stat(destPath)).size
+        if (cur < total) await fsPromises.truncate(destPath, total)
+      } else {
+        await fsPromises.writeFile(destPath, Buffer.alloc(0))
+        await fsPromises.truncate(destPath, total)
+      }
+    }
+    ensureSize().then(() => {
+      if (destroyed || cancelled) return
+      report()
+      let doneCount = 0
+      let finished = false
+      const onChunkDone = () => {
+        if (finished || destroyed || cancelled) return
+        doneCount++
+        report()
+        if (doneCount >= numChunks) { finished = true; onDone() }
+      }
+      const onChunkError = (err: Error) => {
+        if (finished || destroyed || cancelled) return
+        finished = true
+        for (const c of activeCancel) { try { c() } catch {} }
+        onError(err)
+      }
+      for (const range of ranges) {
+        if (range.end < effectiveStart) { onChunkDone(); continue }
+        const rStart = Math.max(range.start, effectiveStart)
+        const rEnd = range.end
+        let cancelledOne = false
+        activeCancel.push(() => { cancelledOne = true })
+        const fetchChunk = (currentUrl: string, redirectCount: number, retries: number) => {
+          if (destroyed || cancelled || cancelledOne) return
+          if (redirectCount > 10) { onChunkError(new Error('Too many redirects')); return }
+          const g = currentUrl.startsWith('https') ? https.get : http.get
+          let reqRef: ReturnType<typeof https.get> | null = null
+          let chunkReceived = 0
+          const fail = (err: Error) => {
+            if (destroyed || cancelled || cancelledOne || finished) return
+            if (retries > 0) {
+              // 重试前回退本分片已计入的字节，避免同一 Range 重复下载导致进度超过 100%
+              receivedBytes -= chunkReceived
+              chunkReceived = 0
+              fetchChunk(currentUrl, 0, retries - 1)
+              return
+            }
+            onChunkError(err)
+          }
+          let req: ReturnType<typeof https.get>
+          try {
+            req = g(currentUrl, { headers: { 'User-Agent': USER_AGENT, Range: `bytes=${rStart}-${rEnd}` } }, (res) => {
+              if (destroyed || cancelled || cancelledOne) { res.destroy(); return }
+              if (res.statusCode === 301 || res.statusCode === 302) {
+                res.destroy()
+                const loc = res.headers.location
+                if (!loc || (!loc.startsWith('http:') && !loc.startsWith('https:'))) { onChunkError(new Error('Invalid redirect protocol')); return }
+                return fetchChunk(loc, redirectCount + 1, retries)
+              }
+              if (res.statusCode !== 206 && res.statusCode !== 200) { onChunkError(new Error(`HTTP ${res.statusCode}`)); return }
+              const ws = createWriteStream(destPath, { flags: 'r+', start: rStart })
+              let paused = false
+              ws.on('drain', () => { if (paused && !destroyed && !cancelled && !cancelledOne) { paused = false; res.resume() } })
+              let lastDataTime = Date.now()
+              const stall = setInterval(() => {
+                if (destroyed || cancelled || cancelledOne) { clearInterval(stall); return }
+                if (Date.now() - lastDataTime > 30000) {
+                  clearInterval(stall)
+                  try { ws.destroy() } catch {}
+                  try { reqRef?.destroy() } catch {}
+                  fail(new Error('Download stalled'))
+                }
+              }, 5000)
+              res.on('data', (chunk: Buffer) => {
+                if (destroyed || cancelled || cancelledOne) return
+                lastDataTime = Date.now()
+                speedBytes += chunk.length
+                receivedBytes += chunk.length
+                chunkReceived += chunk.length
+                if (!ws.write(chunk)) { res.pause(); paused = true }
+              })
+              res.on('end', () => {
+                clearInterval(stall)
+                if (destroyed || cancelled || cancelledOne) return
+                ws.end(() => { if (!destroyed && !cancelled && !cancelledOne) onChunkDone() })
+              })
+              res.on('error', (err) => { fail(err) })
+              ws.on('error', (err) => { fail(err) })
+            })
+          } catch (e) { onChunkError(e as Error); return }
+          reqRef = req
+          req.setTimeout(15000, () => { if (!destroyed && !cancelled && !cancelledOne) { try { req.destroy() } catch {} fail(new Error('Connection timeout')) } })
+          req.on('error', (err) => { if (!destroyed && !cancelled && !cancelledOne) fail(err) })
+        }
+        fetchChunk(url, 0, CHUNK_RETRIES)
+      }
+    }).catch((e) => { if (!destroyed && !cancelled) onError(e as Error) })
+  }
+
+  probe(url)
+  return () => {
+    if (destroyed) return
+    destroyed = true
+    cancelled = true
+    try { probeReq?.destroy() } catch {}
+    if (fallbackCancel) fallbackCancel()
+    for (const c of activeCancel) { try { c() } catch {} }
+  }
+}
+
 let metricsPollingEnabled = true
 let metricsInterval: ReturnType<typeof setInterval> | null = null
 let cachedGpuData: GpuInfo | null = null
@@ -1378,10 +1575,13 @@ export function registerIpcHandlers(): void {
     const extractPath = join(BACKEND_DIR, opts.version)
     if (!isSafePath(BACKEND_DIR, extractPath)) return { success: false, error: 'Access denied' }
     const isTarGz = opts.assetName.toLowerCase().endsWith('.tar.gz')
+    // 断点续传：若上次下载残留了部分文件，则从断点继续（startParallelDownload 内部按分片边界对齐）
+    let startByte = 0
+    try { const st = statSync(archivePath); if (st.size > 0) startByte = st.size } catch {}
     try {
       event.sender.send('download-progress', { percent: 0, phase: 'downloading' })
       await new Promise<void>((resolve, reject) => {
-        cancelBackendDl = startDownload(opts.url, archivePath, 0,
+        cancelBackendDl = startParallelDownload(opts.url, archivePath, startByte,
           (r, t) => event.sender.send('download-progress', { percent: t > 0 ? Math.round(r / t * 100) : 0, phase: 'downloading' }),
           resolve, reject)
       })
@@ -1413,7 +1613,7 @@ export function registerIpcHandlers(): void {
       return { success: true, path: extractPath }
     } catch (err) {
       cancelBackendDl = null
-      try { unlinkSync(archivePath) } catch (e) { console.error('Failed to cleanup temp file', e) }
+      // 保留 archivePath 以支持断点续传：下次下载会从已下载的字节数继续，而不是从头重来
       if (existsSync(extractPath)) {
         try { rmSync(extractPath, { recursive: true, force: true }) } catch {}
       }
@@ -1495,13 +1695,16 @@ export function registerIpcHandlers(): void {
     }
 
     const archivePath = join(app.getPath('temp'), opts.assetName)
+    // 断点续传：若上次下载残留了部分文件，则从断点继续（与后端下载一致）
+    let startByte = 0
+    try { const st = statSync(archivePath); if (st.size > 0) startByte = st.size } catch {}
 
     try {
       event.sender.send('app-download-progress', { percent: 0, phase: 'downloading' })
 
       await new Promise<void>((resolve, reject) => {
-        cancelAppDl = startDownload(
-          opts.url, archivePath, 0,
+        cancelAppDl = startParallelDownload(
+          opts.url, archivePath, startByte,
           (r, t) => {
             event.sender.send('app-download-progress', {
               percent: t > 0 ? Math.round(r / t * 100) : 0,
@@ -1521,7 +1724,7 @@ export function registerIpcHandlers(): void {
       return { success: true, path: archivePath }
     } catch (err) {
       cancelAppDl = null
-      try { unlinkSync(archivePath) } catch { /* ignore */ }
+      // 保留 archivePath 以支持断点续传：下次下载从断点继续，而不是从头重来
       return { success: false, error: String(err) }
     }
   })
@@ -1565,7 +1768,12 @@ export function registerIpcHandlers(): void {
     const settings = await loadSettings()
     const allowedBases = [MODELS_DIR, BACKEND_DIR, CHATS_DIR, ...settings.externalModelFolders, ...settings.imageModelFolders]
     if (!allowedBases.some(base => isSafePath(base, folderPath))) return
-    shell.openPath(folderPath)
+    // 确保目录存在（例如 chats/images、chats/pdf_exports 是惰性创建的），
+    // 否则 shell.openPath 在路径不存在时会静默失败、什么也不打开。
+    if (!existsSync(folderPath)) mkdirSync(folderPath, { recursive: true })
+    const err = await shell.openPath(folderPath)
+    if (err) console.error('[open-folder] 无法打开目录:', folderPath, err)
+    return err
   })
   ipcMain.handle('get-paths', () => ({ models: MODELS_DIR, templates: TEMPLATES_DIR, backend: BACKEND_DIR, chats: CHATS_DIR, chatImages: join(CHATS_DIR, 'images'), chatPdfExports: join(CHATS_DIR, 'pdf_exports') }))
   ipcMain.handle('open-external', (_e, url: string) => {
