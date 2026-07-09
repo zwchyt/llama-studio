@@ -44,10 +44,6 @@ export default function SettingsView() {
   const [extFolders, setExtFolders] = useState<string[]>([])
   const [imgFolders, setImgFolders] = useState<string[]>([])
   const [metricsPolling, setMetricsPolling] = useState(true)
-  const [downloadMirror, setDownloadMirror] = useState('')
-  useEffect(() => {
-    window.api.getDownloadMirror().then(r => setDownloadMirror(r.mirror || '')).catch(() => {})
-  }, [])
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   useEffect(() => {
@@ -353,24 +349,8 @@ export default function SettingsView() {
         )}
       </div>
 
-      { }
       <div className="settings-section">
         <div className="settings-section-title"><Download /> 可用更新</div>
-        <div className="settings-row" style={{ borderBottom: 'none' }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="settings-row-label">下载镜像源（可选）</div>
-            <div className="settings-row-sub">留空则直连 GitHub；国内用户可填镜像前缀（如 https://ghproxy.com/）以加速后端与安装包下载。</div>
-            <input
-              style={{ width: '100%', marginTop: 6, padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}
-              placeholder="https://ghproxy.com/"
-              value={downloadMirror}
-              onChange={(e) => setDownloadMirror(e.target.value)}
-              onBlur={async () => {
-                try { await window.api.setDownloadMirror(downloadMirror.trim()); notify('已保存下载镜像源', 'success') } catch { notify('保存失败', 'error') }
-              }}
-            />
-          </div>
-        </div>
         {checkingUpdate ? (
           <div className="flex items-center gap-2 text-sm py-4" style={{ color: 'var(--text-muted)' }}>
             <RefreshCw size={14} className="spin" /> 正在检查 GitHub 发布...

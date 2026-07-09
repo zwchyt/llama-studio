@@ -104,8 +104,6 @@ interface LlamaCppApi {
   removeMetricsUpdateListener: () => void
   getMetricsPolling: () => Promise<boolean>
   setMetricsPolling: (enabled: boolean) => Promise<{ success: boolean }>
-  getDownloadMirror: () => Promise<{ mirror: string }>
-  setDownloadMirror: (mirror: string) => Promise<{ success: boolean }>
   listGlobalAgents: () => Promise<{ name: string; pkg: string; cmd: string; installed: boolean; version: string | null; website?: string }[]>
   launchAgent: (cmd: string, cwd: string) => Promise<{ success: boolean; error?: string }>
   installAgent: (pkg: string) => Promise<{ success: boolean; error?: string }>

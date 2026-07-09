@@ -187,7 +187,27 @@ select {
   padding: 0 !important;
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-height: 0;
+}
+
+/* 终端已退出时的覆盖层（保留活动终端的最终画面，叠加提示） */
+.terminal-exited-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.62);
+  color: #e6e6e6;
+}
+
+.terminal-exited-overlay p {
+  margin: 0;
+  font-size: 14px;
 }
 
 /* ── 终端 cwd 输入（弹出层内复用） ── */

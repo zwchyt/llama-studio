@@ -147,11 +147,14 @@ export default function TerminalView(): React.JSX.Element {
         </div>
       ) : (
         <div className="terminal-screens">
-          {sessions.map((s) =>
-            s.exited ? null : <TermScreen key={s.id} id={s.id} visible={s.id === activeId} />
-          )}
-          {(!active || active.exited) && (
-            <div className="terminal-empty">
+          {/* 所有未退出的终端保持挂载，仅通过 display 切换可见性，
+            以保留各自的滚动历史与活动 PTY（参考 local-studio 的 PersistentTerminals）。
+            TermScreen 仅在会话被关闭/退出（从列表移除）时才卸载并释放实例。 */}
+          {sessions.filter((s) => !s.exited).map((s) => (
+            <TermScreen key={s.id} id={s.id} visible={s.id === activeId} />
+          ))}
+          {active && active.exited && (
+            <div className="terminal-exited-overlay">
               <p>终端已退出</p>
               <button className="terminal-new-btn" onClick={() => open()}>
                 新建终端

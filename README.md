@@ -85,7 +85,7 @@ This project is built upon the following open-source projects:
 
 - **[hexllama](https://github.com/andersondanieln/hexllama.git)** — original author: andersondanieln, provides the core framework
 - **[pi-web](https://github.com/agegr/pi-web.git)** — original author: agegr, provides web interface and component support
-- **[llama.cpp](https://github.com/ggerganov/llama.cpp)** — by Georgi Gerganov and the ggml-org community
+- **[llama.cpp](https://github.com/ggml-org/llama.cpp)** — by Georgi Gerganov and the ggml-org community
 
 This repository has integrated features, fixed bugs, and independently developed upon these projects.
 

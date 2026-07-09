@@ -16,6 +16,10 @@ const pendingWrites = new Map<string, PendingWrite>()
 const TERMINAL_BOTTOM_BUFFER = 1
 
 function fitWithBuffer(e: Entry): void {
+  // 容器隐藏（display:none）时 clientWidth/Height 为 0，此时 fit 会把 PTY 尺寸
+  // 误算成 0；跳过，待切回可见（ResizeObserver 触发）再重新 fit。
+  const c = e.container
+  if (c && (c.clientWidth === 0 || c.clientHeight === 0)) return
   try { e.fit.fit() } catch {}
   if (e.term.rows > TERMINAL_BOTTOM_BUFFER) {
     try { e.term.resize(e.term.cols, e.term.rows - TERMINAL_BOTTOM_BUFFER) } catch {}

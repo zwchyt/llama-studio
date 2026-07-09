@@ -1,15 +1,13 @@
-import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
+import { ipcMain, dialog, shell, BrowserWindow, net } from 'electron'
 import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
   unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, promises as fsPromises
 } from 'fs'
 import { join, extname, basename, dirname, resolve, sep } from 'path'
 import { spawn, execSync, ChildProcess } from 'child_process'
-import https from 'https'
 import http from 'http'
 import { app } from 'electron'
 import { randomUUID } from 'crypto'
-import extract from 'extract-zip'
 import * as pty from 'node-pty'
 
 interface TerminalSession {
@@ -50,14 +48,6 @@ function flushTerminalData(id: string): void {
   }
 }
 
-interface GitHubAsset { name: string; browser_download_url: string; size: number }
-interface GitHubRelease {
-  tag_name: string
-  name: string
-  html_url: string
-  published_at: string
-  assets: GitHubAsset[]
-}
 interface HfModelRaw {
   id: string
   author?: string
@@ -108,14 +98,6 @@ function isSafePath(base: string, target: string): boolean {
   const rBase = resolve(base)
   const rTarget = resolve(target)
   return rTarget === rBase || rTarget.startsWith(rBase + sep)
-}
-// 下载镜像源：在 GitHub 链接前拼接用户设置的镜像前缀（如 https://ghproxy.com/），用于加速国内访问。
-// 仅做字符串拼接；镜像是否真正可用取决于它是否代理对应域名。未配置或为空则原样返回。
-function mirrorUrl(url: string): string {
-  if (!url) return url
-  const m = (settingsCache?.downloadMirror || '').trim()
-  if (!m) return url
-  return `${m.replace(/\/+$/, '')}/${url}`
 }
 // 下面的代码实现了一个简单的命令行参数验证机制，确保只有在 commands.json 中定义的参数才会被传递给后端执行的模型运行命令。这有助于防止恶意用户通过 IPC 传递危险的参数来执行未授权的操作。
 const schemaCache = new Map<string, { allowed: Set<string>; boolean: Set<string> }>()
@@ -198,12 +180,12 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
     return Promise.resolve()
   }
 }
-interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; metricsPolling?: boolean; downloadMirror?: string }
+interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; metricsPolling?: boolean }
 let settingsCache: AppSettings | null = null
 async function loadSettings(): Promise<AppSettings> {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, downloadMirror: '' }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
     const data = JSON.parse(await fsPromises.readFile(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
@@ -211,7 +193,7 @@ async function loadSettings(): Promise<AppSettings> {
       metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, downloadMirror: '' }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
 }
 async function saveSettings(s: AppSettings): Promise<void> {
   await fsPromises.writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2))
@@ -220,7 +202,7 @@ async function saveSettings(s: AppSettings): Promise<void> {
 function loadSettingsSync(): AppSettings {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, downloadMirror: '' }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
     const data = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
@@ -228,7 +210,7 @@ function loadSettingsSync(): AppSettings {
       metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, downloadMirror: '' }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
 }
 interface RunningProcess { proc: ChildProcess; port: number }
 const runningProcesses = new Map<string, RunningProcess>()
@@ -254,22 +236,15 @@ function canBroadcast(id: string): boolean {
   if (now - last >= BROADCAST_THROTTLE_MS) { broadcastTimes.set(id, now); return true }
   return false
 }
-function fetchJson(url: string, depth = 0): Promise<unknown> {
-  if (depth > 10) return Promise.reject(new Error('Too many redirects'))
+function fetchJson(url: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const headers: Record<string, string> = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36', Accept: 'application/json' }
     const token = process.env.GITHUB_TOKEN
     if (token) headers.Authorization = `Bearer ${token}`
-    const opts = { headers }
-    const get = url.startsWith('https') ? https.get : http.get
-    const req = get(url, opts, (res) => {
-      if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location) {
-        res.destroy()
-        const loc = res.headers.location
-        if (!loc.startsWith('http:') && !loc.startsWith('https:')) return reject(new Error('Invalid redirect protocol'))
-        fetchJson(loc, depth + 1).then(resolve).catch(reject)
-        return
-      }
+    const req = net.request({ url, headers })
+    const timeout = setTimeout(() => { req.abort(); reject(new Error('Request timeout')) }, 10000)
+    req.on('response', (res) => {
+      clearTimeout(timeout)
       if (res.statusCode && res.statusCode >= 400) {
         let errBody = ''
         res.on('data', (c) => { errBody += c.toString() })
@@ -285,16 +260,24 @@ function fetchJson(url: string, depth = 0): Promise<unknown> {
       res.on('data', (c) => {
         size += c.length
         if (size > MAX) {
-          res.destroy()
+          (res as any).destroy()
           return reject(new Error('Response too large'))
         }
         data += c
       })
       res.on('end', () => { try { resolve(JSON.parse(data)) } catch (e) { reject(e) } })
     })
-    req.setTimeout(10000, () => req.destroy(new Error('Request timeout')))
-    req.on('error', reject)
+    req.on('error', (err) => { clearTimeout(timeout); reject(err) })
+    req.end()
   })
+}
+interface GitHubAsset { name: string; browser_download_url: string; size: number }
+interface GitHubRelease {
+  tag_name: string
+  name: string
+  html_url: string
+  published_at: string
+  assets: GitHubAsset[]
 }
 /** 带 JSON body 的 HTTP POST/PUT 请求（用于 ModelScope 等 API） */
 function fetchJsonWithBody(
@@ -304,28 +287,25 @@ function fetchJsonWithBody(
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const postData = JSON.stringify(body)
-    const urlObj = new URL(url)
-    const mod = url.startsWith('https') ? https : http
-    const options = {
-      hostname: urlObj.hostname,
-      port: urlObj.port,
-      path: urlObj.pathname + urlObj.search,
+    const req = net.request({
       method,
+      url,
       headers: {
         'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(postData),
+        'Content-Length': String(Buffer.byteLength(postData)),
         'User-Agent': 'llamabox/1.0.0',
       },
-    }
-    const req = mod.request(options, (res) => {
+    })
+    const timeout = setTimeout(() => { req.abort(); reject(new Error('Request timeout')) }, 15000)
+    req.on('response', (res) => {
+      clearTimeout(timeout)
       let data = ''
       res.on('data', (chunk) => { data += chunk })
       res.on('end', () => {
         try { resolve(JSON.parse(data)) } catch { reject(new Error('Invalid JSON response')) }
       })
     })
-    req.setTimeout(15000, () => req.destroy(new Error('Request timeout')))
-    req.on('error', reject)
+    req.on('error', (err) => { clearTimeout(timeout); reject(err) })
     req.write(postData)
     req.end()
   })
@@ -339,105 +319,77 @@ function startDownload(
   onError: (err: Error) => void
 ): () => void {
   let destroyed = false
-  let currentReq: ReturnType<typeof https.get> | null = null
+  let currentReq: Electron.ClientRequest | null = null
   const flags = startByte > 0 ? 'a' : 'w'
   const file = createWriteStream(destPath, { flags })
-  file.on('error', (err) => { if (!destroyed) { destroyed = true; onError(err) } })
 
   let speedBytes = 0
   let lastSpeedCheck = Date.now()
   let currentSpeed = 0
 
-  const attempt = (currentUrl: string, redirectCount = 0) => {
-    if (redirectCount > 10) { if (!destroyed) onError(new Error('Too many redirects')); return }
-    const get = currentUrl.startsWith('https') ? https.get : http.get
-    const headers: Record<string, string> = { 'User-Agent': 'hexllama/1.0' }
-    if (startByte > 0) headers['Range'] = `bytes=${startByte}-`
-    let lastDataTime = Date.now()
-    let stallCheck: ReturnType<typeof setInterval> | null = null
-    const clearStall = () => { if (stallCheck) { clearInterval(stallCheck); stallCheck = null } }
-    currentReq = get(currentUrl, { headers }, (res) => {
-      if (destroyed) { res.destroy(); return }
-      if (res.statusCode === 301 || res.statusCode === 302) {
-        res.destroy()
-        const loc = res.headers.location!
-        if (!loc.startsWith('http:') && !loc.startsWith('https:')) { if (!destroyed) onError(new Error('Invalid redirect protocol')); return }
-        return attempt(loc, redirectCount + 1)
-      }
-      if (res.statusCode !== 200 && res.statusCode !== 206) {
-        if (!destroyed) onError(new Error(`HTTP ${res.statusCode}`))
-        return
-      }
-      const contentLength = parseInt(res.headers['content-length'] || '0', 10)
-      const totalBytes = contentLength + startByte
-      let receivedBytes = startByte
+  const headers: Record<string, string> = { 'User-Agent': 'hexllama/1.0' }
+  if (startByte > 0) headers['Range'] = `bytes=${startByte}-`
+  const req = net.request({ url, headers })
+  currentReq = req
+  file.on('error', (err) => {
+    if (!destroyed) { destroyed = true; req.abort(); onError(err) }
+  })
+  const timeout = setTimeout(() => { if (!destroyed) { req.abort(); onError(new Error('Connection timeout')) } }, 30000)
+  req.on('response', (res) => {
+    clearTimeout(timeout)
+    if (destroyed) { (res as any).destroy(); return }
+    if (res.statusCode !== 200 && res.statusCode !== 206) {
+      if (!destroyed) onError(new Error(`HTTP ${res.statusCode}`))
+      return
+    }
+    const contentLength = parseInt(String(res.headers['content-length'] || '0'), 10)
+    const totalBytes = contentLength + startByte
+    let receivedBytes = startByte
 
-      lastDataTime = Date.now()
-      clearStall()
-      stallCheck = setInterval(() => {
-        if (destroyed) { clearStall(); return }
-        if (Date.now() - lastDataTime > 30000) {
-          clearStall()
-          res.destroy()
-          if (!destroyed) onError(new Error('Download stalled'))
-        }
-      }, 5000)
-
-      let paused = false
-      res.on('data', (chunk: Buffer) => {
-        if (destroyed) return
-        const canContinue = file.write(chunk)
-        receivedBytes += chunk.length
-        speedBytes += chunk.length
-        lastDataTime = Date.now()
-
-        const now = Date.now()
-        const elapsed = (now - lastSpeedCheck) / 1000
-        if (elapsed >= 0.5) {
-          currentSpeed = speedBytes / elapsed
-          speedBytes = 0
-          lastSpeedCheck = now
-        }
-        onProgress(receivedBytes, totalBytes, currentSpeed)
-        if (!canContinue) {
-          paused = true
-          res.pause()
-          file.once('drain', () => {
-            if (!destroyed) { paused = false; res.resume() }
-          })
-        }
-      })
-
-      res.on('end', () => { clearStall(); if (!destroyed) { if (paused) { file.once('drain', () => { if (!destroyed) file.end(() => { if (!destroyed) onDone() }) }) } else { file.end(() => { if (!destroyed) onDone() }) } } })
-      res.on('error', (err) => { clearStall(); if (!destroyed) { file.destroy(); onError(err) } })
-      res.on('close', () => { clearStall() })
-    })
-    currentReq.setTimeout(15000, () => {
+    res.on('data', (chunk: Buffer) => {
       if (destroyed) return
-      try { currentReq?.destroy() } catch {}
-      if (!destroyed) onError(new Error('Connection timeout'))
+      if (!file.write(chunk)) {
+        (res as any).pause()
+        file.once('drain', () => { if (!destroyed) (res as any).resume() })
+      }
+      receivedBytes += chunk.length
+      speedBytes += chunk.length
+
+      const now = Date.now()
+      const elapsed = (now - lastSpeedCheck) / 1000
+      if (elapsed >= 0.5) {
+        currentSpeed = speedBytes / elapsed
+        speedBytes = 0
+        lastSpeedCheck = now
+      }
+      onProgress(receivedBytes, totalBytes, currentSpeed)
     })
-    currentReq.on('error', (err) => {
-      clearStall()
+
+    res.on('end', () => {
+      if (destroyed) return
+      file.end(() => {
+        if (!destroyed) onDone()
+      })
+    })
+
+    res.on('error', (err) => {
       if (!destroyed) { file.destroy(); onError(err) }
     })
-  }
-  attempt(url)
+  })
+  req.on('error', (err) => {
+    clearTimeout(timeout)
+    if (!destroyed) { file.destroy(); onError(err) }
+  })
+  req.end()
   return () => {
     if (destroyed) return
     destroyed = true
-    currentReq?.destroy()
-
+    currentReq?.abort()
+    clearTimeout(timeout)
     file.end()
   }
 }
 
-/**
- * 多线程分片下载：用 Range 把文件切成多片并发拉取，各自写入目标文件的对应偏移，
- * 以绕过 GitHub CDN 的单连接限速，显著提升国内下载速度。接口与 startDownload 一致，可直接替换。
- * - 不支持 Range 或文件过小时，自动回退到单连接 startDownload。
- * - 支持断点续传：startByte>0 时按分片边界对齐，跳过已完成分片、从未完成处继续（单连接回退同样走 Range 续传）。
- */
 function startParallelDownload(
   url: string,
   destPath: string,
@@ -454,7 +406,7 @@ function startParallelDownload(
   let cancelled = false
   let activeCancel: Array<() => void> = []
   let fallbackCancel: (() => void) | null = null
-  let probeReq: ReturnType<typeof https.get> | null = null
+  let probeReq: Electron.ClientRequest | null = null
 
   let totalBytes = 0
   let receivedBytes = startByte
@@ -473,47 +425,33 @@ function startParallelDownload(
     onProgress(Math.min(receivedBytes, totalBytes || receivedBytes), totalBytes, speed)
   }
 
-  let fellBack = false
-  const fallback = (targetUrl: string, resumeFrom: number) => {
-    if (destroyed || cancelled || fellBack) return
-    fellBack = true
-    // 并行下载失败时回退到经过验证的单连接下载，作为可靠保底（速度换稳定）
-    fallbackCancel = startDownload(targetUrl, destPath, resumeFrom, onProgress, onDone, onError)
+  const fallback = () => {
+    if (destroyed || cancelled) return
+    fallbackCancel = startDownload(url, destPath, startByte, onProgress, onDone, onError)
   }
 
-  const probe = (currentUrl: string, redirectCount = 0): void => {
+  const probe = (): void => {
     if (destroyed || cancelled) return
-    if (redirectCount > 10) { onError(new Error('Too many redirects')); return }
-    const get = currentUrl.startsWith('https') ? https.get : http.get
-    let req: ReturnType<typeof https.get>
-    try {
-      req = get(currentUrl, { headers: { 'User-Agent': USER_AGENT, Range: 'bytes=0-0' } }, (res) => {
-        if (destroyed || cancelled) { res.destroy(); return }
-        if (res.statusCode === 301 || res.statusCode === 302) {
-          res.destroy()
-          const loc = res.headers.location
-          if (!loc || (!loc.startsWith('http:') && !loc.startsWith('https:'))) { onError(new Error('Invalid redirect protocol')); return }
-          return probe(loc, redirectCount + 1)
-        }
-        const acceptRanges = String(res.headers['accept-ranges'] || '').toLowerCase()
-        const cr = String(res.headers['content-range'] || '')
-        const m = cr.match(/bytes\s+\d+-\d+\/(\d+)/i)
-        const total = m ? parseInt(m[1], 10) : parseInt(String(res.headers['content-length'] || '0'), 10)
-        res.destroy()
-        if (!total || isNaN(total) || acceptRanges !== 'bytes' || total < MIN_CHUNK * 2) return fallback(url, startByte)
-        startChunks(total)
-      })
-    } catch (e) { fallback(url, startByte); return }
+    const req = net.request({ url, headers: { 'User-Agent': USER_AGENT } })
     probeReq = req
-    req.setTimeout(15000, () => { if (!destroyed && !cancelled) { try { req.destroy() } catch {} fallback(url, startByte) } })
-    req.on('error', () => { if (!destroyed && !cancelled) fallback(url, startByte) })
+    const timeout = setTimeout(() => { if (!destroyed && !cancelled) { req.abort(); onError(new Error('Probe connection timeout')) } }, 30000)
+    req.on('response', (res) => {
+      clearTimeout(timeout)
+      if (destroyed || cancelled) { (res as any).destroy(); return }
+      const acceptRanges = String(res.headers['accept-ranges'] || '').toLowerCase()
+      const total = parseInt(String(res.headers['content-length'] || '0'), 10)
+      ;(res as any).destroy()
+      if (!total || isNaN(total) || acceptRanges !== 'bytes' || total < MIN_CHUNK * 2) return fallback()
+      startChunks(total)
+    })
+    req.on('error', (err) => { clearTimeout(timeout); if (!destroyed && !cancelled) fallback() })
+    req.end()
   }
 
   const startChunks = (total: number): void => {
     totalBytes = total
     const numChunks = Math.min(MAX_CHUNKS, Math.max(2, Math.floor(total / (MIN_CHUNK * 2))))
     const chunkSize = Math.ceil(total / numChunks)
-    // 按分片边界对齐续传点，避免把未写完的最后一个分片误判为已完成
     const effectiveStart = Math.floor(startByte / chunkSize) * chunkSize
     receivedBytes = effectiveStart
     const ranges: Array<{ start: number; end: number }> = []
@@ -546,10 +484,7 @@ function startParallelDownload(
         if (finished || destroyed || cancelled) return
         finished = true
         for (const c of activeCancel) { try { c() } catch {} }
-        // 并行分片失败：丢弃已写的分片并回退到单连接下载作为可靠保底
-        console.error('[parallel] chunk download failed, falling back to single connection:', err.message)
-        try { unlinkSync(destPath) } catch {}
-        fallback(url, 0)
+        onError(err)
       }
       for (const range of ranges) {
         if (range.end < effectiveStart) { onChunkDone(); continue }
@@ -557,79 +492,70 @@ function startParallelDownload(
         const rEnd = range.end
         let cancelledOne = false
         activeCancel.push(() => { cancelledOne = true })
-        const fetchChunk = (currentUrl: string, redirectCount: number, retries: number) => {
+        const fetchChunk = (retries: number) => {
           if (destroyed || cancelled || cancelledOne) return
-          if (redirectCount > 10) { onChunkError(new Error('Too many redirects')); return }
-          const g = currentUrl.startsWith('https') ? https.get : http.get
-          let reqRef: ReturnType<typeof https.get> | null = null
+          let reqRef: Electron.ClientRequest | null = null
           let chunkReceived = 0
           const fail = (err: Error) => {
             if (destroyed || cancelled || cancelledOne || finished) return
             if (retries > 0) {
-              // 重试前回退本分片已计入的字节，避免同一 Range 重复下载导致进度超过 100%
               receivedBytes -= chunkReceived
               chunkReceived = 0
-              fetchChunk(currentUrl, 0, retries - 1)
+              fetchChunk(retries - 1)
               return
             }
             onChunkError(err)
           }
-          let req: ReturnType<typeof https.get>
-          try {
-            req = g(currentUrl, { headers: { 'User-Agent': USER_AGENT, Range: `bytes=${rStart}-${rEnd}` } }, (res) => {
-              if (destroyed || cancelled || cancelledOne) { res.destroy(); return }
-              if (res.statusCode === 301 || res.statusCode === 302) {
-                res.destroy()
-                const loc = res.headers.location
-                if (!loc || (!loc.startsWith('http:') && !loc.startsWith('https:'))) { onChunkError(new Error('Invalid redirect protocol')); return }
-                return fetchChunk(loc, redirectCount + 1, retries)
-              }
-              if (res.statusCode !== 206 && res.statusCode !== 200) { onChunkError(new Error(`HTTP ${res.statusCode}`)); return }
-              const ws = createWriteStream(destPath, { flags: 'r+', start: rStart })
-              let paused = false
-              ws.on('drain', () => { if (paused && !destroyed && !cancelled && !cancelledOne) { paused = false; res.resume() } })
-              let lastDataTime = Date.now()
-              const stall = setInterval(() => {
-                if (destroyed || cancelled || cancelledOne) { clearInterval(stall); return }
-                if (Date.now() - lastDataTime > 30000) {
-                  clearInterval(stall)
-                  try { ws.destroy() } catch {}
-                  try { reqRef?.destroy() } catch {}
-                  fail(new Error('Download stalled'))
-                }
-              }, 5000)
-              res.on('data', (chunk: Buffer) => {
-                if (destroyed || cancelled || cancelledOne) return
-                lastDataTime = Date.now()
-                speedBytes += chunk.length
-                receivedBytes += chunk.length
-                chunkReceived += chunk.length
-                if (!ws.write(chunk)) { res.pause(); paused = true }
-              })
-              res.on('end', () => {
-                clearInterval(stall)
-                if (destroyed || cancelled || cancelledOne) return
-                ws.end(() => { if (!destroyed && !cancelled && !cancelledOne) onChunkDone() })
-              })
-              res.on('error', (err) => { fail(err) })
-              ws.on('error', (err) => { fail(err) })
-            })
-          } catch (e) { onChunkError(e as Error); return }
+          const req = net.request({ url, headers: { 'User-Agent': USER_AGENT, Range: `bytes=${rStart}-${rEnd}` } })
           reqRef = req
-          req.setTimeout(15000, () => { if (!destroyed && !cancelled && !cancelledOne) { try { req.destroy() } catch {} fail(new Error('Connection timeout')) } })
-          req.on('error', (err) => { if (!destroyed && !cancelled && !cancelledOne) fail(err) })
+          const timeout = setTimeout(() => { if (!destroyed && !cancelled && !cancelledOne) { req.abort(); fail(new Error('Connection timeout')) } }, 30000)
+          req.on('response', (res) => {
+            clearTimeout(timeout)
+            if (destroyed || cancelled || cancelledOne) { (res as any).destroy(); return }
+            if (res.statusCode !== 206 && res.statusCode !== 200) { onChunkError(new Error(`HTTP ${res.statusCode}`)); return }
+            const ws = createWriteStream(destPath, { flags: 'r+', start: rStart })
+            let paused = false
+            ws.on('drain', () => { if (paused && !destroyed && !cancelled && !cancelledOne) { paused = false; (res as any).resume() } })
+            let lastDataTime = Date.now()
+            const stall = setInterval(() => {
+              if (destroyed || cancelled || cancelledOne) { clearInterval(stall); return }
+              if (Date.now() - lastDataTime > 30000) {
+                clearInterval(stall)
+                try { ws.destroy() } catch {}
+                try { reqRef?.abort() } catch {}
+                fail(new Error('Download stalled'))
+              }
+            }, 5000)
+            res.on('data', (chunk: Buffer) => {
+              if (destroyed || cancelled || cancelledOne) return
+              lastDataTime = Date.now()
+              speedBytes += chunk.length
+              receivedBytes += chunk.length
+              chunkReceived += chunk.length
+              if (!ws.write(chunk)) { (res as any).pause(); paused = true }
+            })
+            res.on('end', () => {
+              clearInterval(stall)
+              if (destroyed || cancelled || cancelledOne) return
+              ws.end(() => { if (!destroyed && !cancelled && !cancelledOne) onChunkDone() })
+            })
+            res.on('error', (err) => { clearInterval(stall); fail(err) })
+            ws.on('error', (err) => { clearInterval(stall); fail(err) })
+          })
+          req.on('error', (err) => { clearTimeout(timeout); if (!destroyed && !cancelled && !cancelledOne) fail(err) })
+          req.end()
         }
-        fetchChunk(url, 0, CHUNK_RETRIES)
+        fetchChunk(CHUNK_RETRIES)
       }
     }).catch((e) => { if (!destroyed && !cancelled) onError(e as Error) })
   }
 
-  probe(url)
+  probe()
   return () => {
     if (destroyed) return
     destroyed = true
     cancelled = true
-    try { probeReq?.destroy() } catch {}
+    try { probeReq?.abort() } catch {}
     if (fallbackCancel) fallbackCancel()
     for (const c of activeCancel) { try { c() } catch {} }
   }
@@ -1541,20 +1467,12 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('check-updates', async () => {
     try {
-      const apiUrl = 'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest'
-      let release: GitHubRelease
-      try {
-        release = await fetchJson(mirrorUrl(apiUrl)) as GitHubRelease
-      } catch (e) {
-        // 若镜像不代理 api.github.com，则回退直连 GitHub
-        if ((settingsCache?.downloadMirror || '').trim()) release = await fetchJson(apiUrl) as GitHubRelease
-        else throw e
-      }
-      if (!release || !release.assets || !release.tag_name) return { assets: [], noRelease: true }
+      const release = await fetchJson('https://api.github.com/repos/ggml-org/llama.cpp/releases/latest') as any
+      if (!release || !release.assets) return { error: 'Invalid response from GitHub' }
       const isMac = process.platform === 'darwin'
       const isLinux = process.platform === 'linux'
       const arch = process.arch
-      const platformAssets = release.assets.filter((a: GitHubAsset) => {
+      const platformAssets = release.assets.filter((a: any) => {
         const n = a.name.toLowerCase()
         if (n.startsWith('cudart-')) return false
         if (isMac) {
@@ -1583,8 +1501,8 @@ export function registerIpcHandlers(): void {
           if (parseInt(m[1], 10) >= latestNum || d.name.includes(release.tag_name)) { isNewer = false; break }
         }
       }
-      return { tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at, isNewer, noPackage: platformAssets.length === 0, assets: platformAssets.map((a: GitHubAsset) => ({ name: a.name, downloadUrl: mirrorUrl(a.browser_download_url), size: a.size })) }
-    } catch (e) { return { error: String(e) } }
+      return { tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at, isNewer, assets: platformAssets.map((a: any) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size })) }
+    } catch (err) { return { error: String(err) } }
   })
   ipcMain.handle('download-release', async (event, opts: { url: string; version: string; assetName: string }) => {
     if (!opts.version || /[\\/:*?"<>|]/.test(opts.version) || opts.version.includes('..')) {
@@ -1597,45 +1515,53 @@ export function registerIpcHandlers(): void {
     const extractPath = join(BACKEND_DIR, opts.version)
     if (!isSafePath(BACKEND_DIR, extractPath)) return { success: false, error: 'Access denied' }
     const isTarGz = opts.assetName.toLowerCase().endsWith('.tar.gz')
-    // 断点续传：若上次下载残留了部分文件，则从断点继续（startParallelDownload 内部按分片边界对齐）
     let startByte = 0
     try { const st = statSync(archivePath); if (st.size > 0) startByte = st.size } catch {}
+    let dlReject: ((err: Error) => void) | null = null
+    const overallTimer = setTimeout(() => {
+      if (dlReject) dlReject(new Error('下载整体超时'))
+      if (cancelBackendDl) { cancelBackendDl(); cancelBackendDl = null }
+    }, 5 * 60 * 1000)
     try {
       event.sender.send('download-progress', { percent: 0, phase: 'downloading' })
+      console.log('[dl] 开始下载:', opts.url)
       await new Promise<void>((resolve, reject) => {
+        dlReject = reject
         cancelBackendDl = startParallelDownload(opts.url, archivePath, startByte,
           (r, t) => event.sender.send('download-progress', { percent: t > 0 ? Math.round(r / t * 100) : 0, phase: 'downloading' }),
-          resolve, reject)
+          () => { console.log('[dl] 下载完成'); resolve() },
+          (err) => { console.log('[dl] 下载失败:', err.message); reject(err) })
       })
-      cancelBackendDl = null
+      cancelBackendDl = null; dlReject = null
+      console.log('[dl] 开始解压:', archivePath, '->', extractPath)
       event.sender.send('download-progress', { percent: 100, phase: 'extracting' })
       if (!existsSync(extractPath)) mkdirSync(extractPath, { recursive: true })
       if (isTarGz) {
         await new Promise<void>((resolve, reject) => {
           const p = spawn('tar', ['-xzf', archivePath, '-C', extractPath], { stdio: 'pipe' })
-          p.on('error', reject)
-          p.on('exit', code => code === 0 ? resolve() : reject(new Error(`tar exited with code ${code}`)))
+          const t = setTimeout(() => { p.kill(); reject(new Error('tar解压超时')) }, 120000)
+          p.on('error', (e) => { clearTimeout(t); reject(e) })
+          p.on('exit', code => { clearTimeout(t); code === 0 ? resolve() : reject(new Error(`tar exited with code ${code}`)) })
         })
-      } else if (process.platform === 'darwin' || process.platform === 'linux') {
-        await extract(archivePath, { dir: extractPath })
       } else {
+        const zipTool = process.platform === 'win32' ? 'tar' : 'unzip'
+        const zipArgs = process.platform === 'win32' ? ['-xf', archivePath, '-C', extractPath] : ['-o', archivePath, '-d', extractPath]
         await new Promise<void>((resolve, reject) => {
-          const escapedZip = archivePath.replace(/'/g, "''")
-          const escapedDir = extractPath.replace(/'/g, "''")
-          const p = spawn('powershell', [
-            '-NoProfile', '-NonInteractive',
-            '-Command',
-            `Expand-Archive -Path '${escapedZip}' -DestinationPath '${escapedDir}' -Force`
-          ], { stdio: 'pipe' })
-          p.on('error', reject)
-          p.on('exit', code => code === 0 ? resolve() : reject(new Error(`Expand-Archive exited with code ${code}`)))
+          const p = spawn(zipTool, zipArgs, { stdio: 'pipe' })
+          const t = setTimeout(() => { p.kill(); reject(new Error('解压超时')) }, 120000)
+          p.on('error', (e) => { clearTimeout(t); reject(e) })
+          p.on('exit', code => { clearTimeout(t); code === 0 ? resolve() : reject(new Error(`${zipTool} exited with code ${code}`)) })
         })
       }
+      console.log('[dl] 解压完成')
       try { unlinkSync(archivePath) } catch (e) { console.error('Failed to cleanup temp file', e) }
+      clearTimeout(overallTimer)
       return { success: true, path: extractPath }
     } catch (err) {
-      cancelBackendDl = null
-      // 保留 archivePath 以支持断点续传：下次下载会从已下载的字节数继续，而不是从头重来
+      console.log('[dl] 失败:', err)
+      cancelBackendDl = null; dlReject = null
+      clearTimeout(overallTimer)
+      // 保留 archivePath 以支持断点续传
       if (existsSync(extractPath)) {
         try { rmSync(extractPath, { recursive: true, force: true }) } catch {}
       }
@@ -1659,16 +1585,7 @@ export function registerIpcHandlers(): void {
     try {
       const currentVersion = app.getVersion() || '0.0.0'
 
-      const apiUrl = `https://api.github.com/repos/${APP_GITHUB_OWNER}/${APP_GITHUB_REPO}/releases/latest`
-      let release: GitHubRelease
-      try {
-        release = await fetchJson(mirrorUrl(apiUrl)) as GitHubRelease
-      } catch (e) {
-        // 若镜像不代理 api.github.com，则回退直连 GitHub
-        if ((settingsCache?.downloadMirror || '').trim()) release = await fetchJson(apiUrl) as GitHubRelease
-        else throw e
-      }
-
+      const release = await fetchJson(`https://api.github.com/repos/${APP_GITHUB_OWNER}/${APP_GITHUB_REPO}/releases/latest`) as GitHubRelease
       if (!release || !release.tag_name) {
         return { available: false, currentVersion }
       }
@@ -1706,7 +1623,7 @@ export function registerIpcHandlers(): void {
         releaseUrl: release.html_url,
         publishedAt: release.published_at,
         assetName: asset?.name || '',
-        assetUrl: mirrorUrl(asset?.browser_download_url || ''),
+        assetUrl: asset?.browser_download_url || '',
         assetSize: asset?.size || 0,
       }
     } catch {
@@ -1716,8 +1633,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('download-app-update', async (event, opts: { url: string; assetName: string }) => {
     await loadSettings()
-    const mirrorBase = (settingsCache?.downloadMirror || '').trim().replace(/\/+$/, '')
-    const urlOk = opts.url.startsWith('https://github.com/') || opts.url.startsWith('https://objects.githubusercontent.com/') || (mirrorBase !== '' && opts.url.startsWith(mirrorBase + '/'))
+    const urlOk = opts.url.startsWith('https://github.com/') || opts.url.startsWith('https://objects.githubusercontent.com/')
     if (!urlOk) {
       return { success: false, error: 'Invalid download URL' }
     }
@@ -2098,17 +2014,6 @@ export function registerIpcHandlers(): void {
     else stopMetricsInterval()
     return { success: true }
   })
-  ipcMain.handle('get-download-mirror', async () => {
-    const s = await loadSettings()
-    return { mirror: (s.downloadMirror || '').trim() }
-  })
-  ipcMain.handle('set-download-mirror', async (_e, mirror: string) => {
-    const s = await loadSettings()
-    s.downloadMirror = (mirror || '').trim()
-    await saveSettings(s)
-    return { success: true }
-  })
-
   ipcMain.handle('get-metrics', async () => {
     const result: Record<string, unknown> = {}
     await refreshGpuData()
@@ -2133,7 +2038,7 @@ export function registerIpcHandlers(): void {
       try {
         await new Promise<void>((resolve, reject) => {
           const req = http.get(`http://127.0.0.1:${port}/v1/models`, (res) => {
-            res.resume()
+            (res as any).resume()
             if (res.statusCode === 200) {
               resolved = true
               resolve()
@@ -2250,7 +2155,8 @@ export function registerIpcHandlers(): void {
                       return {
                         decodeTokS: prom['llamacpp:predicted_tokens_seconds'],
                         completionTokens: lastUsage?.completionTokens
-                      }
+}
+
                     })
                     .catch(() => ({ completionTokens: lastUsage?.completionTokens }))
                 }
@@ -2944,7 +2850,12 @@ export function registerIpcHandlers(): void {
   })
 
   // ── 终端控制台 ──
+  const MAX_PTY_SESSIONS = 64
   ipcMain.handle('terminal:create', (_e, opts: { cwd?: string; cols?: number; rows?: number }) => {
+    // 限制同时存在的 PTY 数量，防止失控的渲染端循环创建把主机 fork-bomb。
+    if (sessions.size >= MAX_PTY_SESSIONS) {
+      return { success: false, error: `PTY 数量已达上限（${MAX_PTY_SESSIONS}）` }
+    }
     const id = `term_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     const cols = opts.cols ?? 80
     const rows = opts.rows ?? 24
@@ -3109,15 +3020,10 @@ export function registerIpcHandlers(): void {
 // ── 辅助函数 ──────────────────────────────────────────────
 function fetchText(url: string, timeout = 10_000): Promise<string> {
   return new Promise((resolve, reject) => {
-    const get = url.startsWith('https') ? https.get : http.get
-    const req = get(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36' }, timeout }, (res) => {
-      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.destroy()
-        const loc = res.headers.location
-        const base = url.startsWith('https') ? 'https' : 'http'
-        const redirectUrl = loc.startsWith('http') ? loc : `${base}://${res.headers.host || ''}${loc}`
-        fetchText(redirectUrl, timeout).then(resolve).catch(reject)
-      }
+    const req = net.request({ url, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36' } })
+    const t = setTimeout(() => { req.abort(); reject(new Error('请求超时')) }, timeout)
+    req.on('response', (res) => {
+      clearTimeout(t)
       if (res.statusCode !== 200) {
         reject(new Error(`HTTP ${res.statusCode}`))
         return
@@ -3126,8 +3032,8 @@ function fetchText(url: string, timeout = 10_000): Promise<string> {
       res.on('data', (c: Buffer) => chunks.push(c))
       res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')))
     })
-    req.on('error', reject)
-    req.on('timeout', () => { req.destroy(); reject(new Error('请求超时')) })
+    req.on('error', (err) => { clearTimeout(t); reject(err) })
+    req.end()
   })
 }
 

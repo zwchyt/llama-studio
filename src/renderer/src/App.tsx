@@ -406,10 +406,10 @@ function AppMain() {
       case 'agents': return <AgentsView />
       case 'chat': return <ChatView />
       case 'welcome': return <WelcomeView />
-      case 'terminal': return <TerminalView />
       case 'llama': return <LlamaChatView />
       case 'ocr': return <OcrView />
       case 'benchmark': return <BenchmarkView />
+      case 'terminal': return null
       default: return <CardsView />
     }
   }, [view])
@@ -437,6 +437,20 @@ function AppMain() {
         <Sidebar />
         <main className="content" style={view === 'llama' ? { display: 'none' } : {}}>
           {currentView}
+          {/* 终端视图常驻挂载，仅按 view 切换显示/隐藏：切到其它侧边栏页再返回时，
+              各终端的滚动历史与活动 PTY 全部保留（对应 local-studio 的 PersistentTerminals）。 */}
+          <div
+            className="terminal-view-host"
+            style={{
+              display: view === 'terminal' ? 'flex' : 'none',
+              flex: 1,
+              minHeight: 0,
+              padding: 0,
+              overflow: 'hidden',
+            }}
+          >
+            <TerminalView />
+          </div>
         </main>
         <div style={{ flex: view === 'llama' ? 1 : 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: view === 'llama' ? 'flex' : 'none', flex: 1, overflow: 'hidden', flexDirection: 'column' }}>

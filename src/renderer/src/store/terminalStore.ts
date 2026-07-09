@@ -60,7 +60,7 @@ export const useTerminalStore = createWithEqualityFn<TerminalStore>(
     activeId: null,
 
     open: async (cwd?: string) => {
-      let result: { success: boolean; id?: string; shell?: string }
+      let result: { success: boolean; id?: string; shell?: string; error?: string }
       try {
         result = await window.api.terminalCreate({ cwd })
       } catch (e: unknown) {
@@ -68,7 +68,7 @@ export const useTerminalStore = createWithEqualityFn<TerminalStore>(
         notify(`打开终端失败：${msg}`, 'error')
         return
       }
-      if (!result.success) { notify('打开终端失败', 'error'); return }
+      if (!result.success) { notify(`打开终端失败：${result.error ?? '未知错误'}`, 'error'); return }
       const id = result.id
       if (!id) { notify('打开终端失败：未返回终端 ID', 'error'); return }
       set((s) => {
