@@ -21,10 +21,7 @@ export default function CardsView() {
   const filtered = useMemo(() => {
     const q = templateSearch.trim().toLowerCase()
     if (!q) return cards
-    return cards.filter(c =>
-      c.template.name.toLowerCase().includes(q) ||
-      (c.template.description || '').toLowerCase().includes(q)
-    )
+    return cards.filter(c => c.template.name.toLowerCase().startsWith(q))
   }, [cards, templateSearch])
   return (
     <div>
@@ -38,6 +35,25 @@ export default function CardsView() {
           </p>
         </div>
         <div className="page-actions">
+          {cards.length > 0 && (
+            <div className="template-search-bar">
+              <Search size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+              <input
+                type="text"
+                className="template-search-input"
+                placeholder="搜索模板..."
+                value={templateSearch}
+                onChange={e => setTemplateSearch(e.target.value)}
+              />
+              {templateSearch && (
+                <button
+                  className="template-search-clear"
+                  onClick={() => setTemplateSearch('')}
+                  title="清除"
+                >×</button>
+              )}
+            </div>
+          )}
           <button className="btn btn-secondary" onClick={handleImport}>
             <Upload size={15} />
             导入
@@ -48,25 +64,6 @@ export default function CardsView() {
           </button>
         </div>
       </div>
-      {cards.length > 0 && (
-        <div className="template-search-bar">
-          <Search size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-          <input
-            type="text"
-            className="template-search-input"
-            placeholder="搜索模板..."
-            value={templateSearch}
-            onChange={e => setTemplateSearch(e.target.value)}
-          />
-          {templateSearch && (
-            <button
-              className="template-search-clear"
-              onClick={() => setTemplateSearch('')}
-              title="清除"
-            >×</button>
-          )}
-        </div>
-      )}
       {cards.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">
@@ -75,12 +72,18 @@ export default function CardsView() {
               <path d="M12 8v8M8 12h8" />
             </svg>
           </div>
-          <h3>暂无模板</h3>
-          <p>创建模板以一键配置和启动 llama.cpp 模型。</p>
-          <button className="btn btn-primary" onClick={() => setShowCreateModal(true)}>
-            <Plus size={15} />
-            创建模板
-          </button>
+          <h3>还没有模板</h3>
+          <p>从本地 GGUF 创建，或从文件导入，即可一键配置并启动 llama.cpp 模型。</p>
+          <div className="empty-state-actions">
+            <button className="btn btn-primary" onClick={() => setShowCreateModal(true)}>
+              <Plus size={15} />
+              新建模板
+            </button>
+            <button className="btn btn-secondary" onClick={handleImport}>
+              <Upload size={15} />
+              导入
+            </button>
+          </div>
         </div>
       ) : filtered.length === 0 ? (
         <div className="empty-state" style={{ padding: '40px 24px' }}>

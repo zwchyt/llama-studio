@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useStore } from '../store/useStore'
 import { useChatStore } from '../store/chatStore'
 import { shallow } from 'zustand/shallow'
@@ -26,7 +26,21 @@ export default function ModelCard({ card }: Props) {
   const [cardLogsExpanded, setCardLogsExpanded] = useState(false)
   const [logCopied, setLogCopied] = useState(false)
   const logCopiedTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const nameRef = useRef<HTMLHeadingElement>(null)
+  const [nameOverflow, setNameOverflow] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const modelTagRef = useRef<HTMLSpanElement>(null)
+  const [modelTagOverflow, setModelTagOverflow] = useState(false)
+  const avatar = useMemo(() => {
+    const key = card.template.name || '?'
+    let h = 0
+    for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) % 360
+    return {
+      bg: `hsl(${h}, 65%, 88%)`,
+      fg: `hsl(${h}, 45%, 32%)`,
+      letter: (key.trim()[0] || '?').toUpperCase(),
+    }
+  }, [card.template.name])
   const logsBodyRef = useRef<HTMLDivElement>(null)
   const userScrolledRef = useRef(false)
   useEffect(() => {
@@ -44,6 +58,19 @@ export default function ModelCard({ card }: Props) {
     el.addEventListener('scroll', handleScroll)
     return () => el.removeEventListener('scroll', handleScroll)
   }, [cardLogsExpanded])
+  function checkOverflow(
+    ref: React.RefObject<HTMLElement | null>,
+    setter: (v: boolean) => void,
+    varName: string
+  ) {
+    const el = ref.current
+    if (!el) return
+    const overflow = el.scrollWidth > el.clientWidth + 1
+    setter(overflow)
+    if (overflow) el.style.setProperty(varName, `${el.scrollWidth - el.clientWidth}px`)
+  }
+  useEffect(() => { checkOverflow(nameRef, setNameOverflow, '--name-slide') }, [card.template.name])
+  useEffect(() => { checkOverflow(modelTagRef, setModelTagOverflow, '--tag-slide') }, [card.template.modelPath])
   function handleCopyLogs() {
     const text = (logs ?? []).map(e => e.text).join('\n')
     safeCall(() => navigator.clipboard.writeText(text), '复制失败').then((ok) => {
@@ -166,20 +193,24 @@ export default function ModelCard({ card }: Props) {
   return (
     <div className={`model-card ${isRunning ? 'running' : ''}`}>
       <div className="card-header">
-        <div className="card-icon">
-          {isRunning ? (
-            <div className="spin"><Settings size={20} className="text-success" /></div>
-          ) : (
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-              <line x1="12" y1="22.08" x2="12" y2="12" />
-            </svg>
-          )}
+        <div
+          className={`card-icon${isRunning ? ' running' : ''}`}
+          style={{ background: avatar.bg, color: avatar.fg }}
+        >
+          <span className="card-icon-letter">{avatar.letter}</span>
+          {isRunning && <span className="card-icon-spin" />}
         </div>
         <div className="card-info">
-          <h3 className="card-name" title={card.template.name} style={isRunning ? { color: 'var(--success)' } : {}}>{card.template.name}</h3>
-          <p className="card-desc" title={card.template.description}>{card.template.description || '暂无描述'}</p>
+          <h3
+            ref={nameRef}
+            className={`card-name${nameOverflow ? ' card-name--slide' : ''}`}
+            style={isRunning ? { color: 'var(--success)' } : card.status === 'error' ? { color: 'var(--danger)' } : {}}
+          >
+            <span className="card-name-text">{card.template.name}</span>
+          </h3>
+          {card.template.description?.trim() && (
+            <p className="card-desc" title={card.template.description}>{card.template.description}</p>
+          )}
         </div>
         <div className="card-menu-btn" ref={menuRef} style={{ position: 'relative', zIndex: 10 }}
           onMouseEnter={() => {
@@ -205,13 +236,18 @@ export default function ModelCard({ card }: Props) {
         </div>
       </div>
       <div className="card-meta">
-        <span className="card-tag" title={card.template.modelPath}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /></svg>
-          {!modelExists ? <span style={{ color: 'var(--danger)' }}>文件缺失</span> : (card.template.modelPath?.split(/[/\\]/).pop() || '无模型')}
+        <span
+          ref={modelTagRef}
+          className={`card-tag card-tag--model${modelTagOverflow ? ' card-tag--slide' : ''}`}
+        >
+          <span className="card-tag-inner">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /></svg>
+            {!modelExists ? <span style={{ color: 'var(--danger)' }}>文件缺失</span> : (card.template.modelPath?.split(/[/\\]/).pop() || '无模型')}
+          </span>
         </span>
-        <span className="card-tag">
-          <span className={`status-dot ${isRunning ? 'running' : 'idle'}`} />
-          {isRunning ? `端口 ${card.template.serverPort}` : '就绪'}
+        <span className="card-tag card-tag--status">
+          <span className={`status-dot ${isRunning ? 'running' : card.status === 'error' ? 'error' : 'idle'}`} />
+          {isRunning ? `端口 ${card.template.serverPort}` : card.status === 'error' ? '错误' : '就绪'}
         </span>
       </div>
       <div className="card-launch-mode">
@@ -237,7 +273,7 @@ export default function ModelCard({ card }: Props) {
           className={`btn card-run-btn ${isRunning ? 'btn-danger' : 'btn-primary'}`}
           onClick={handleRunToggle}
           disabled={!isRunning && !modelExists}
-          style={isRunning ? { flex: 0.5 } : {}}
+          style={isRunning ? { flex: 0.7 } : {}}
           title={!isRunning && !modelExists ? '无法启动：模型文件缺失' : ''}
         >
           {isRunning ? <><Square size={14} /> 停止</> : <><Play size={14} /> 启动</>}
@@ -245,7 +281,7 @@ export default function ModelCard({ card }: Props) {
         {isRunning && (
           <button
             className="btn card-run-btn"
-            style={{ flex: 0.5, background: 'var(--accent)', color: 'var(--accent-fg)' }}
+            style={{ flex: 0.4, background: 'var(--accent)', color: 'var(--accent-fg)' }}
             onClick={() => {
               const port = card.template.serverPort || 8080
               useStore.getState().setActiveChat(`http://127.0.0.1:${port}`, port)
@@ -259,7 +295,7 @@ export default function ModelCard({ card }: Props) {
         {isRunning && (
           <button
             className="btn card-run-btn"
-            style={{ flex: 0.5, background: 'var(--success)', color: '#fff' }}
+            style={{ flex: 0.4, background: 'var(--success)', color: '#fff' }}
             onClick={() => {
               const id = card.template.id
               const port = card.template.serverPort || 8080

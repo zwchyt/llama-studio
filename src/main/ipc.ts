@@ -2589,6 +2589,7 @@ export function registerIpcHandlers(): void {
     { name: 'Gemini CLI',        pkg: '@google/gemini-cli',              cmd: 'gemini',      logo: './agent-logos/Gemini.jpg',        website: 'https://geminicli.com/' },
     { name: 'Claude Code',       pkg: '@anthropic/claude-code',          cmd: 'claude',      nonNpm: true, logo: './agent-logos/Claude code.png', website: 'https://claude.com/product/claude-code' },
     { name: 'Zero',              pkg: '@gitlawb/zero',                   cmd: 'zero',        logo: './agent-logos/OpenClaude.png',    website: 'https://zero.gitlawb.com/' },
+    { name: 'Grok',              pkg: 'grok',                            cmd: 'grok',        nonNpm: true, logo: './agent-logos/Grok.png',        website: 'https://x.ai/cli' },
   ]
   // Special update commands — agents not updated via npm install -g
   const AGENT_UPDATE_OVERRIDES: Record<string, { exe: string; args: string[] }> = {
@@ -2596,12 +2597,14 @@ export function registerIpcHandlers(): void {
     'codewhale': { exe: 'codewhale', args: ['update'] },
     '@moonshot-ai/kimi-code': { exe: 'npm', args: ['install', '-g', '@moonshot-ai/kimi-code@latest'] },
     '@anthropic/claude-code': { exe: 'claude', args: ['update'] },
+    'grok': { exe: 'grok', args: ['update'] },
   }
   // Install commands per agent — non-npm agents use custom exe/args
   const INSTALL_OVERRIDES: Record<string, { exe: string; args: string[] }> = {
     '@earendil-works/pi-coding-agent': { exe: 'npm', args: ['install', '-g', '--ignore-scripts', '@earendil-works/pi-coding-agent'] },
     '@moonshot-ai/kimi-code': { exe: 'npm', args: ['install', '-g', '--ignore-scripts', '@moonshot-ai/kimi-code'] },
     '@anthropic/claude-code': { exe: 'powershell.exe', args: ['-Command', 'irm https://claude.ai/install.ps1 | iex'] },
+    'grok': { exe: 'powershell.exe', args: ['-Command', 'irm https://x.ai/cli/install.ps1 | iex'] },
   }
   let agentsCache: { ts: number; result: { name: string; pkg: string; cmd: string; installed: boolean; version: string | null; logo?: string }[] } | null = null
   const AGENTS_CACHE_TTL = 30000
@@ -2728,10 +2731,12 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('check-agent-updates', async (_e, installed: { pkg: string; version: string }[]) => {
     const results: Record<string, { latest: string }> = {}
-    // Some non-npm agents support --latest-version to check latest published version
-    const CLI_LATEST_VERSION: Record<string, { exe: string; args: string[] }> = {
-      '@anthropic/claude-code': { exe: 'claude', args: ['--latest-version'] },
+    // Some non-npm agents support a flag to check the latest published version.
+    // `json: true` means the command emits machine-readable JSON we parse for `latestVersion`.
+    const CLI_LATEST_VERSION: Record<string, { exe: string; args: string[]; json?: boolean }> = {
+      'grok': { exe: 'grok', args: ['update', '--check', '--json'], json: true },
     }
+    // Non-npm agents are not looked up on the npm registry.
     const nonNpmPkgs = new Set(KNOWN_AGENTS.filter(a => a.nonNpm).map(a => a.pkg))
     const npmAgents = installed.filter(a => !nonNpmPkgs.has(a.pkg))
     const checks = npmAgents.map(async (agent) => {
@@ -2762,8 +2767,17 @@ export function registerIpcHandlers(): void {
           const t = setTimeout(() => { try { p.kill() } catch {} resolve(null) }, 10000)
           p.on('close', () => {
             clearTimeout(t)
-            const v = out.trim().match(/(\d+\.\d+\.\d+)/)
-            resolve(v ? v[1] : null)
+            if (cliCheck.json) {
+              try {
+                const data = JSON.parse(out)
+                resolve(typeof data.latestVersion === 'string' ? data.latestVersion : null)
+              } catch {
+                resolve(null)
+              }
+            } else {
+              const v = out.trim().match(/(\d+\.\d+\.\d+)/)
+              resolve(v ? v[1] : null)
+            }
           })
           p.on('error', () => { clearTimeout(t); resolve(null) })
         })
@@ -2772,6 +2786,28 @@ export function registerIpcHandlers(): void {
         }
       } catch {
         // silently skip
+      }
+    }
+    // Non-npm agents that publish releases on GitHub — query the latest release tag.
+    // (Keeps update detection aligned with their non-npm / ps1 install channel.)
+    const GITHUB_LATEST: Record<string, string> = {
+      '@anthropic/claude-code': 'anthropics/claude-code',
+    }
+    for (const agent of installed) {
+      const repo = GITHUB_LATEST[agent.pkg]
+      if (!repo) continue
+      try {
+        const data = await fetchJson(`https://api.github.com/repos/${repo}/releases/latest`) as { tag_name?: string }
+        const tag = data?.tag_name
+        if (tag) {
+          const m = tag.match(/(\d+\.\d+\.\d+)/)
+          const latest = m ? m[1] : tag.replace(/^v/, '')
+          if (latest && latest !== agent.version) {
+            results[agent.pkg] = { latest }
+          }
+        }
+      } catch {
+        // silently skip failed queries (e.g. rate limit)
       }
     }
     return results
