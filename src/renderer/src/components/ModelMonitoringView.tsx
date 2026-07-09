@@ -102,10 +102,10 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
     setCardStatus(card.template.id, 'idle')
     try {
       const res = await window.api.stopModel(card.template.id)
-      if (!res.success && res.error !== 'Not running') {
+      if (!res.success && res.error !== '未在运行') {
         notify(`停止失败：${res.error}`, 'error')
       }
-    } catch (e) { console.error('Failed to stop model', e) }
+    } catch (e) { console.error('停止模型失败', e) }
   }
 
   const templateId = card?.template?.id
@@ -336,7 +336,7 @@ function ApiEndpoints({ port }: { port: number }) {
     setLoading(true)
     try {
       const res = await window.api.fetchServerEndpoint(port, t)
-      if (!res.ok) throw new Error(res.error || `status ${res.status}`)
+      if (!res.ok) throw new Error(res.error || `状态码 ${res.status}`)
       const text = res.text || ''
       // Try to format JSON
       try {

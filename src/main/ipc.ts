@@ -10,6 +10,17 @@ import { app } from 'electron'
 import { randomUUID } from 'crypto'
 import * as pty from 'node-pty'
 
+function countExtractedFiles(dir: string): number {
+  let count = 0
+  const entries = readdirSync(dir, { withFileTypes: true })
+  for (const e of entries) {
+    const p = join(dir, e.name)
+    if (e.isDirectory()) count += countExtractedFiles(p)
+    else count++
+  }
+  return count
+}
+
 interface TerminalSession {
   id: string
   pty: pty.IPty
@@ -242,7 +253,7 @@ function fetchJson(url: string): Promise<unknown> {
     const token = process.env.GITHUB_TOKEN
     if (token) headers.Authorization = `Bearer ${token}`
     const req = net.request({ url, headers })
-    const timeout = setTimeout(() => { req.abort(); reject(new Error('Request timeout')) }, 10000)
+    const timeout = setTimeout(() => { req.abort(); reject(new Error('请求超时')) }, 10000)
     req.on('response', (res) => {
       clearTimeout(timeout)
       if (res.statusCode && res.statusCode >= 400) {
@@ -252,7 +263,7 @@ function fetchJson(url: string): Promise<unknown> {
           const h = JSON.stringify(res.headers)
           console.error('[fetchJson] HTTP', res.statusCode, 'headers:', h, 'body:', errBody.slice(0, 500))
         })
-        return reject(new Error(`HTTP ${res.statusCode} x-ratelimit-remaining:${res.headers['x-ratelimit-remaining'] || '?'}`))
+        return reject(new Error(`HTTP ${res.statusCode} 速率限制剩余:${res.headers['x-ratelimit-remaining'] || '?'}`))
       }
       const MAX = 5 * 1024 * 1024
       let size = 0
@@ -261,7 +272,7 @@ function fetchJson(url: string): Promise<unknown> {
         size += c.length
         if (size > MAX) {
           (res as any).destroy()
-          return reject(new Error('Response too large'))
+          return reject(new Error('响应数据过大'))
         }
         data += c
       })
@@ -292,17 +303,16 @@ function fetchJsonWithBody(
       url,
       headers: {
         'Content-Type': 'application/json',
-        'Content-Length': String(Buffer.byteLength(postData)),
-        'User-Agent': 'llamabox/1.0.0',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
       },
     })
-    const timeout = setTimeout(() => { req.abort(); reject(new Error('Request timeout')) }, 15000)
+    const timeout = setTimeout(() => { req.abort(); reject(new Error('请求超时')) }, 15000)
     req.on('response', (res) => {
       clearTimeout(timeout)
       let data = ''
       res.on('data', (chunk) => { data += chunk })
       res.on('end', () => {
-        try { resolve(JSON.parse(data)) } catch { reject(new Error('Invalid JSON response')) }
+        try { resolve(JSON.parse(data)) } catch { reject(new Error('无效的 JSON 响应')) }
       })
     })
     req.on('error', (err) => { clearTimeout(timeout); reject(err) })
@@ -334,12 +344,12 @@ function startDownload(
   file.on('error', (err) => {
     if (!destroyed) { destroyed = true; req.abort(); onError(err) }
   })
-  const timeout = setTimeout(() => { if (!destroyed) { req.abort(); onError(new Error('Connection timeout')) } }, 30000)
+  const timeout = setTimeout(() => { if (!destroyed) { req.abort(); onError(new Error('连接超时')) } }, 30000)
   req.on('response', (res) => {
     clearTimeout(timeout)
     if (destroyed) { (res as any).destroy(); return }
     if (res.statusCode !== 200 && res.statusCode !== 206) {
-      if (!destroyed) onError(new Error(`HTTP ${res.statusCode}`))
+      if (!destroyed) onError(new Error(`HTTP 错误 ${res.statusCode}`))
       return
     }
     const contentLength = parseInt(String(res.headers['content-length'] || '0'), 10)
@@ -434,7 +444,7 @@ function startParallelDownload(
     if (destroyed || cancelled) return
     const req = net.request({ url, headers: { 'User-Agent': USER_AGENT } })
     probeReq = req
-    const timeout = setTimeout(() => { if (!destroyed && !cancelled) { req.abort(); onError(new Error('Probe connection timeout')) } }, 30000)
+    const timeout = setTimeout(() => { if (!destroyed && !cancelled) { req.abort(); onError(new Error('探测连接超时')) } }, 30000)
     req.on('response', (res) => {
       clearTimeout(timeout)
       if (destroyed || cancelled) { (res as any).destroy(); return }
@@ -444,7 +454,7 @@ function startParallelDownload(
       if (!total || isNaN(total) || acceptRanges !== 'bytes' || total < MIN_CHUNK * 2) return fallback()
       startChunks(total)
     })
-    req.on('error', (err) => { clearTimeout(timeout); if (!destroyed && !cancelled) fallback() })
+    req.on('error', () => { clearTimeout(timeout); if (!destroyed && !cancelled) fallback() })
     req.end()
   }
 
@@ -478,7 +488,14 @@ function startParallelDownload(
         if (finished || destroyed || cancelled) return
         doneCount++
         report()
-        if (doneCount >= numChunks) { finished = true; onDone() }
+        if (doneCount >= numChunks) {
+          finished = true
+          if (totalBytes > 0 && receivedBytes !== totalBytes) {
+            onError(new Error(`下载不完整: 已接收 ${receivedBytes} / ${totalBytes} 字节`))
+            return
+          }
+          onDone()
+        }
       }
       const onChunkError = (err: Error) => {
         if (finished || destroyed || cancelled) return
@@ -488,14 +505,16 @@ function startParallelDownload(
       }
       for (const range of ranges) {
         if (range.end < effectiveStart) { onChunkDone(); continue }
-        const rStart = Math.max(range.start, effectiveStart)
-        const rEnd = range.end
-        let cancelledOne = false
-        activeCancel.push(() => { cancelledOne = true })
-        const fetchChunk = (retries: number) => {
-          if (destroyed || cancelled || cancelledOne) return
-          let reqRef: Electron.ClientRequest | null = null
-          let chunkReceived = 0
+         const rStart = Math.max(range.start, effectiveStart)
+         const rEnd = range.end
+         const expectedBytes = rEnd - rStart + 1
+         let cancelledOne = false
+         activeCancel.push(() => { cancelledOne = true })
+         const fetchChunk = (retries: number) => {
+           if (destroyed || cancelled || cancelledOne) return
+           let reqRef: Electron.ClientRequest | null = null
+           let chunkReceived = 0
+           let stall: ReturnType<typeof setInterval> | null = null
           const fail = (err: Error) => {
             if (destroyed || cancelled || cancelledOne || finished) return
             if (retries > 0) {
@@ -508,22 +527,33 @@ function startParallelDownload(
           }
           const req = net.request({ url, headers: { 'User-Agent': USER_AGENT, Range: `bytes=${rStart}-${rEnd}` } })
           reqRef = req
-          const timeout = setTimeout(() => { if (!destroyed && !cancelled && !cancelledOne) { req.abort(); fail(new Error('Connection timeout')) } }, 30000)
+          const timeout = setTimeout(() => { if (!destroyed && !cancelled && !cancelledOne) { req.abort(); fail(new Error('连接超时')) } }, 30000)
           req.on('response', (res) => {
             clearTimeout(timeout)
             if (destroyed || cancelled || cancelledOne) { (res as any).destroy(); return }
-            if (res.statusCode !== 206 && res.statusCode !== 200) { onChunkError(new Error(`HTTP ${res.statusCode}`)); return }
+            if (res.statusCode === 200) {
+              // 服务器未支持 Range（返回了完整文件），并行分片写入会导致文件损坏。
+              // 取消所有分片，改用顺序下载重写整个文件。
+              if (finished || destroyed || cancelled) { (res as any).destroy(); return }
+              finished = true
+              if (stall) clearInterval(stall)
+              try { (res as any).destroy() } catch {}
+              for (const c of activeCancel) { try { c() } catch {} }
+              fallback()
+              return
+            }
+            if (res.statusCode !== 206) { onChunkError(new Error(`HTTP 错误 ${res.statusCode}`)); return }
             const ws = createWriteStream(destPath, { flags: 'r+', start: rStart })
             let paused = false
             ws.on('drain', () => { if (paused && !destroyed && !cancelled && !cancelledOne) { paused = false; (res as any).resume() } })
             let lastDataTime = Date.now()
-            const stall = setInterval(() => {
-              if (destroyed || cancelled || cancelledOne) { clearInterval(stall); return }
+            stall = setInterval(() => {
+              if (destroyed || cancelled || cancelledOne) { if (stall) clearInterval(stall); return }
               if (Date.now() - lastDataTime > 30000) {
-                clearInterval(stall)
+                if (stall) clearInterval(stall)
                 try { ws.destroy() } catch {}
                 try { reqRef?.abort() } catch {}
-                fail(new Error('Download stalled'))
+                fail(new Error('下载停滞'))
               }
             }, 5000)
             res.on('data', (chunk: Buffer) => {
@@ -535,12 +565,18 @@ function startParallelDownload(
               if (!ws.write(chunk)) { (res as any).pause(); paused = true }
             })
             res.on('end', () => {
-              clearInterval(stall)
+              if (stall) clearInterval(stall)
               if (destroyed || cancelled || cancelledOne) return
+              if (chunkReceived < expectedBytes) {
+                // 服务器提前关闭连接，分片数据不完整（会在文件中留下空洞导致压缩包损坏），重试该分片
+                try { ws.destroy() } catch {}
+                fail(new Error('分片下载不完整'))
+                return
+              }
               ws.end(() => { if (!destroyed && !cancelled && !cancelledOne) onChunkDone() })
             })
-            res.on('error', (err) => { clearInterval(stall); fail(err) })
-            ws.on('error', (err) => { clearInterval(stall); fail(err) })
+            res.on('error', (err) => { if (stall) clearInterval(stall); fail(err) })
+            ws.on('error', (err) => { if (stall) clearInterval(stall); fail(err) })
           })
           req.on('error', (err) => { clearTimeout(timeout); if (!destroyed && !cancelled && !cancelledOne) fail(err) })
           req.end()
@@ -862,7 +898,7 @@ export function registerIpcHandlers(): void {
   // ── 删除模型 ──
   ipcMain.handle('delete-model', (_e, filePath: string) => {
     try {
-      if (!isSafePath(MODELS_DIR, filePath)) return { success: false, error: 'Access denied' }
+      if (!isSafePath(MODELS_DIR, filePath)) return { success: false, error: '访问被拒绝' }
       unlinkSync(filePath)
       const dir = dirname(filePath)
       if (dir !== MODELS_DIR) {
@@ -904,14 +940,14 @@ export function registerIpcHandlers(): void {
     const id = opts.filename
     if (downloadTasks.has(id)) {
       const t = downloadTasks.get(id)!
-      if (t.phase === 'downloading') return { success: false, error: 'Already downloading' }
+      if (t.phase === 'downloading') return { success: false, error: '已在下载中' }
     }
     const folder = opts.modelFolder || opts.repoId?.split('/').pop() || 'downloads'
     const destDir = join(MODELS_DIR, folder)
-    if (!isSafePath(MODELS_DIR, destDir)) return { success: false, error: 'Access denied' }
+    if (!isSafePath(MODELS_DIR, destDir)) return { success: false, error: '访问被拒绝' }
     if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true })
     const finalPath = join(destDir, opts.filename)
-    if (!isSafePath(MODELS_DIR, finalPath)) return { success: false, error: 'Access denied' }
+    if (!isSafePath(MODELS_DIR, finalPath)) return { success: false, error: '访问被拒绝' }
     const tmpPath = finalPath + '.tmp'
     const task: DownloadTask = {
       id, url: opts.url, filename: opts.filename,
@@ -946,7 +982,7 @@ export function registerIpcHandlers(): void {
         invalidateModelsCache()
         setTimeout(() => { downloadTasks.delete(id); broadcastTimes.delete(id); lastSent.delete(id) }, 5000)
       },
-      (err) => { task.phase = 'error'; task.speed = 0; broadcastProgress(task, true); console.error('Download error:', err) }
+      (err) => { task.phase = 'error'; task.speed = 0; broadcastProgress(task, true); console.error('下载错误:', err) }
     )
     downloadTasks.set(id, task)
     broadcastProgress(task, true)
@@ -954,7 +990,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('pause-model-download', (_e, id: string) => {
     const task = downloadTasks.get(id)
-    if (!task || task.phase !== 'downloading') return { success: false, error: 'Not downloading' }
+    if (!task || task.phase !== 'downloading') return { success: false, error: '未在下载' }
     task.cancelFn?.()
     task.phase = 'paused'
     task.speed = 0
@@ -977,7 +1013,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('resume-model-download', (_e, id: string) => {
     const task = downloadTasks.get(id)
-    if (!task || task.phase !== 'paused') return { success: false, error: 'Not paused' }
+    if (!task || task.phase !== 'paused') return { success: false, error: '未暂停' }
     task.phase = 'downloading'
     const tmpPath = task.destPath + '.tmp'
 
@@ -1007,14 +1043,14 @@ export function registerIpcHandlers(): void {
         invalidateModelsCache()
         setTimeout(() => { downloadTasks.delete(id); broadcastTimes.delete(id); lastSent.delete(id) }, 5000)
       },
-      (err) => { task.phase = 'error'; task.speed = 0; broadcastProgress(task, true); console.error('Resume error:', err) }
+      (err) => { task.phase = 'error'; task.speed = 0; broadcastProgress(task, true); console.error('恢复下载错误:', err) }
     )
     broadcastProgress(task, true)
     return { success: true }
   })
   ipcMain.handle('cancel-model-download', (_event, id: string) => {
     const task = downloadTasks.get(id)
-    if (!task) return { success: false, error: 'Not found' }
+    if (!task) return { success: false, error: '未找到' }
     if (task.phase === 'done') return { success: true }
     task.cancelFn?.()
     task.phase = 'cancelled'
@@ -1086,7 +1122,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('delete-backend', (_e, backendName: string) => {
     try {
       const backendPath = join(BACKEND_DIR, backendName)
-      if (!isSafePath(BACKEND_DIR, backendPath)) return { success: false, error: 'Access denied' }
+      if (!isSafePath(BACKEND_DIR, backendPath)) return { success: false, error: '访问被拒绝' }
       if (!existsSync(backendPath)) return { success: true }
       const rm = (dir: string) => {
         for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -1121,7 +1157,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('save-backend-commands', (_e, backendName: string, schema: unknown) => {
     try {
       const backendPath = join(BACKEND_DIR, backendName)
-      if (!isSafePath(BACKEND_DIR, backendPath)) return { success: false, error: 'Access denied' }
+      if (!isSafePath(BACKEND_DIR, backendPath)) return { success: false, error: '访问被拒绝' }
       if (!existsSync(backendPath)) mkdirSync(backendPath, { recursive: true })
       writeFileSync(join(backendPath, 'commands.json'), JSON.stringify(schema, null, 2))
       return { success: true }
@@ -1145,14 +1181,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('save-template', async (_e, template: Record<string, unknown>) => {
     try {
       const id = (template.id as string) || randomUUID()
-      if (/[\\/]/.test(id) || id.includes('..')) return { success: false, error: 'Invalid template ID' }
+      if (/[\\/]/.test(id) || id.includes('..')) return { success: false, error: '无效的模板 ID' }
       writeFileSync(join(TEMPLATES_DIR, `${id}.json`), JSON.stringify({ ...template, id }, null, 2))
       return { success: true, id }
     } catch (err) { return { success: false, error: String(err) } }
   })
   ipcMain.handle('delete-template', (_e, id: string) => {
     const fp = join(TEMPLATES_DIR, `${id}.json`)
-    if (!isSafePath(TEMPLATES_DIR, fp)) return { success: false, error: 'Access denied' }
+    if (!isSafePath(TEMPLATES_DIR, fp)) return { success: false, error: '访问被拒绝' }
     try { if (existsSync(fp)) unlinkSync(fp) } catch { }
     return { success: true }
   })
@@ -1173,16 +1209,16 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('save-chat-session', async (_e, session: Record<string, unknown>) => {
     try {
       const id = (session.id as string) || String(Date.now())
-      if (/[\\/]/.test(id) || id.includes('..')) return { success: false, error: 'Invalid session ID' }
+      if (/[\\/]/.test(id) || id.includes('..')) return { success: false, error: '无效的会话 ID' }
       const fp = join(CHATS_DIR, `${id}.json`)
-      if (!isSafePath(CHATS_DIR, fp)) return { success: false, error: 'Access denied' }
+      if (!isSafePath(CHATS_DIR, fp)) return { success: false, error: '访问被拒绝' }
       writeFileSync(fp, JSON.stringify({ ...session, id }, null, 2))
       return { success: true, id }
     } catch (err) { return { success: false, error: String(err) } }
   })
   ipcMain.handle('delete-chat-session', (_e, id: string) => {
     const fp = join(CHATS_DIR, `${id}.json`)
-    if (!isSafePath(CHATS_DIR, fp)) return { success: false, error: 'Access denied' }
+    if (!isSafePath(CHATS_DIR, fp)) return { success: false, error: '访问被拒绝' }
     try { if (existsSync(fp)) unlinkSync(fp) } catch { }
     return { success: true }
   })
@@ -1209,10 +1245,10 @@ export function registerIpcHandlers(): void {
     return { name: basename(r.filePaths[0]), path: r.filePaths[0] }
   })
   ipcMain.handle('run-model', (_e, opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number }) => {
-    if (runningProcesses.has(opts.id)) return { success: false, error: 'Already running' }
+    if (runningProcesses.has(opts.id)) return { success: false, error: '已在运行中' }
     const exePath = join(opts.backendPath, opts.exe)
-    if (!isSafePath(BACKEND_DIR, exePath)) return { success: false, error: 'Access denied' }
-    if (!existsSync(exePath)) return { success: false, error: `Executable not found: ${exePath}` }
+    if (!isSafePath(BACKEND_DIR, exePath)) return { success: false, error: '访问被拒绝' }
+    if (!existsSync(exePath)) return { success: false, error: `可执行文件未找到: ${exePath}` }
     try {
       const { allowed, boolean } = loadSchemaArgs(opts.backendPath)
       const safeArgs = validateArgs(opts.args, allowed, boolean)
@@ -1314,7 +1350,7 @@ export function registerIpcHandlers(): void {
       return { success: true, pid: proc.pid }
     } catch (err: unknown) {
       if (hasErrnoCode(err) && err.code === 'UNKNOWN' && opts.backendPath.toLowerCase().includes('arm64') && process.arch !== 'arm64') {
-        return { success: false, error: 'Architecture mismatch: You are trying to run an ARM64 backend on an x64 system. Please delete this backend in Settings and download the x64 version.' }
+        return { success: false, error: '架构不匹配：你正在 x64 系统上运行 ARM64 版本的后端。请在设置中删除此后端并下载 x64 版本。' }
       }
       return { success: false, error: String(err) }
     }
@@ -1414,16 +1450,16 @@ export function registerIpcHandlers(): void {
       }
     }
     const killed = port ? await killByPortAsync(port) : false
-    return { success: killed || !port, error: killed || !port ? undefined : 'Not running' }
+    return { success: killed || !port, error: killed || !port ? undefined : '未在运行' }
   })
   // ── 性能基准测试 ──
   interface RunningBenchmark { proc: ChildProcess }
   const runningBenchmarks = new Map<string, RunningBenchmark>()
   ipcMain.handle('run-benchmark', (_e, opts: { id: string; backendPath: string; exe: string; args: string[] }) => {
-    if (runningBenchmarks.has(opts.id)) return { success: false, error: 'Already running' }
+    if (runningBenchmarks.has(opts.id)) return { success: false, error: '已在运行中' }
     const exePath = join(opts.backendPath, opts.exe)
-    if (!isSafePath(BACKEND_DIR, exePath)) return { success: false, error: 'Access denied' }
-    if (!existsSync(exePath)) return { success: false, error: `Executable not found: ${exePath}` }
+    if (!isSafePath(BACKEND_DIR, exePath)) return { success: false, error: '访问被拒绝' }
+    if (!existsSync(exePath)) return { success: false, error: `可执行文件未找到: ${exePath}` }
     try {
       const proc = spawn(exePath, opts.args, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: false })
       proc.stdout?.on('data', (d) => {
@@ -1448,7 +1484,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('stop-benchmark', async (_e, id: string) => {
     const entry = runningBenchmarks.get(id)
-    if (!entry) return { success: false, error: 'Not running' }
+    if (!entry) return { success: false, error: '未在运行' }
     runningBenchmarks.delete(id)
     try {
       const pid = entry.proc.pid
@@ -1468,7 +1504,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('check-updates', async () => {
     try {
       const release = await fetchJson('https://api.github.com/repos/ggml-org/llama.cpp/releases/latest') as any
-      if (!release || !release.assets) return { error: 'Invalid response from GitHub' }
+      if (!release || !release.assets) return { error: 'GitHub 返回数据无效' }
       const isMac = process.platform === 'darwin'
       const isLinux = process.platform === 'linux'
       const arch = process.arch
@@ -1506,15 +1542,17 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('download-release', async (event, opts: { url: string; version: string; assetName: string }) => {
     if (!opts.version || /[\\/:*?"<>|]/.test(opts.version) || opts.version.includes('..')) {
-      return { success: false, error: 'Invalid version' }
+      return { success: false, error: '无效的版本' }
     }
     if (!opts.assetName || opts.assetName.includes('..') || opts.assetName.includes('/') || opts.assetName.includes('\\')) {
-      return { success: false, error: 'Invalid asset name' }
+      return { success: false, error: '无效的资源名称' }
     }
     const archivePath = join(app.getPath('temp'), opts.assetName)
     const extractPath = join(BACKEND_DIR, opts.version)
-    if (!isSafePath(BACKEND_DIR, extractPath)) return { success: false, error: 'Access denied' }
+    if (!isSafePath(BACKEND_DIR, extractPath)) return { success: false, error: '访问被拒绝' }
     const isTarGz = opts.assetName.toLowerCase().endsWith('.tar.gz')
+    // 删除可能残留的损坏/不完整文件，确保本次为全新下载
+    if (existsSync(archivePath)) { try { unlinkSync(archivePath) } catch {} }
     let startByte = 0
     try { const st = statSync(archivePath); if (st.size > 0) startByte = st.size } catch {}
     let dlReject: ((err: Error) => void) | null = null
@@ -1523,49 +1561,66 @@ export function registerIpcHandlers(): void {
       if (cancelBackendDl) { cancelBackendDl(); cancelBackendDl = null }
     }, 5 * 60 * 1000)
     try {
-      event.sender.send('download-progress', { percent: 0, phase: 'downloading' })
+      event.sender.send('download-progress', { percent: 0, phase: 'downloading', received: 0, total: 0 })
       console.log('[dl] 开始下载:', opts.url)
       await new Promise<void>((resolve, reject) => {
         dlReject = reject
         cancelBackendDl = startParallelDownload(opts.url, archivePath, startByte,
-          (r, t) => event.sender.send('download-progress', { percent: t > 0 ? Math.round(r / t * 100) : 0, phase: 'downloading' }),
+          (r, t) => event.sender.send('download-progress', { percent: t > 0 ? Math.round(r / t * 100) : 0, phase: 'downloading', received: r, total: t }),
           () => { console.log('[dl] 下载完成'); resolve() },
           (err) => { console.log('[dl] 下载失败:', err.message); reject(err) })
       })
       cancelBackendDl = null; dlReject = null
       console.log('[dl] 开始解压:', archivePath, '->', extractPath)
-      event.sender.send('download-progress', { percent: 100, phase: 'extracting' })
+      event.sender.send('download-progress', { percent: 100, phase: 'extracting', received: 0, total: 0 })
       if (!existsSync(extractPath)) mkdirSync(extractPath, { recursive: true })
+      const archiveSize = statSync(archivePath).size
+      if (archiveSize === 0) throw new Error('下载文件为空')
       if (isTarGz) {
         await new Promise<void>((resolve, reject) => {
           const p = spawn('tar', ['-xzf', archivePath, '-C', extractPath], { stdio: 'pipe' })
           const t = setTimeout(() => { p.kill(); reject(new Error('tar解压超时')) }, 120000)
           p.on('error', (e) => { clearTimeout(t); reject(e) })
-          p.on('exit', code => { clearTimeout(t); code === 0 ? resolve() : reject(new Error(`tar exited with code ${code}`)) })
+          p.on('exit', code => { clearTimeout(t); code === 0 ? resolve() : reject(new Error(`tar 退出码 ${code}`)) })
         })
       } else {
-        const zipTool = process.platform === 'win32' ? 'tar' : 'unzip'
-        const zipArgs = process.platform === 'win32' ? ['-xf', archivePath, '-C', extractPath] : ['-o', archivePath, '-d', extractPath]
+        // Windows 用原生 PowerShell Expand-Archive，Linux/macOS 用 unzip
+        const [cmd, args] = process.platform === 'win32'
+          ? ['powershell', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${archivePath.replace(/'/g, "''")}' -DestinationPath '${extractPath.replace(/'/g, "''")}' -Force`]]
+          : ['unzip', ['-o', archivePath, '-d', extractPath]]
         await new Promise<void>((resolve, reject) => {
-          const p = spawn(zipTool, zipArgs, { stdio: 'pipe' })
+          const p = spawn(cmd, args, { stdio: 'pipe' })
           const t = setTimeout(() => { p.kill(); reject(new Error('解压超时')) }, 120000)
           p.on('error', (e) => { clearTimeout(t); reject(e) })
-          p.on('exit', code => { clearTimeout(t); code === 0 ? resolve() : reject(new Error(`${zipTool} exited with code ${code}`)) })
+          p.on('exit', code => { clearTimeout(t); code === 0 ? resolve() : reject(new Error(`解压失败, exit code ${code}`)) })
         })
       }
-      console.log('[dl] 解压完成')
-      try { unlinkSync(archivePath) } catch (e) { console.error('Failed to cleanup temp file', e) }
+      // 校验解压结果，避免“解压成功但内容为空”
+      const extractedCount = countExtractedFiles(extractPath)
+      console.log('[dl] 解压完成, 文件数:', extractedCount)
+      if (extractedCount === 0) throw new Error('解压后内容为空')
+      try { unlinkSync(archivePath) } catch (e) { console.error('清理临时文件失败', e) }
       clearTimeout(overallTimer)
       return { success: true, path: extractPath }
     } catch (err) {
       console.log('[dl] 失败:', err)
       cancelBackendDl = null; dlReject = null
       clearTimeout(overallTimer)
-      // 保留 archivePath 以支持断点续传
       if (existsSync(extractPath)) {
         try { rmSync(extractPath, { recursive: true, force: true }) } catch {}
       }
-      return { success: false, error: String(err) }
+      const msg = String(err)
+      let cnMsg = msg
+      if (msg.includes('ERR_CONNECTION_TIMED_OUT') || msg.includes('Connection timeout') || msg.includes('Probe connection timeout')) cnMsg = '连接超时，请检查网络或代理设置'
+      else if (msg.includes('ERR_CONNECTION_REFUSED')) cnMsg = '连接被拒绝'
+      else if (msg.includes('ERR_INTERNET_DISCONNECTED')) cnMsg = '网络未连接'
+      else if (msg.includes('ERR_NAME_NOT_RESOLVED')) cnMsg = 'DNS 解析失败，请检查网络'
+      else if (msg.includes('Download stalled')) cnMsg = '下载停滞，请检查网络'
+      else if (msg.includes('HTTP 4') || msg.includes('HTTP 5')) cnMsg = '服务器返回错误：' + (msg.match(/HTTP \d+/)?.[0] || '')
+      else if (msg.includes('下载不完整') || msg.includes('分片下载不完整') || msg.includes('解压后内容为空') || msg.includes('下载文件为空')) cnMsg = '下载不完整，压缩包可能已损坏，请重试'
+      else if (msg.includes('压缩包损坏') || msg.includes('tar') || msg.includes('unzip') || msg.includes('zip') || msg.includes('corrupt')) cnMsg = '解压失败，压缩包可能已损坏'
+      else if (msg.includes('overall')) cnMsg = '下载整体超时'
+      return { success: false, error: cnMsg }
     }
   })
   ipcMain.handle('cancel-backend-download', () => {
@@ -1635,14 +1690,15 @@ export function registerIpcHandlers(): void {
     await loadSettings()
     const urlOk = opts.url.startsWith('https://github.com/') || opts.url.startsWith('https://objects.githubusercontent.com/')
     if (!urlOk) {
-      return { success: false, error: 'Invalid download URL' }
+      return { success: false, error: '无效的下载地址' }
     }
     if (!opts.assetName || opts.assetName.includes('..') || opts.assetName.includes('/') || opts.assetName.includes('\\')) {
-      return { success: false, error: 'Invalid asset name' }
+      return { success: false, error: '无效的资源名称' }
     }
 
     const archivePath = join(app.getPath('temp'), opts.assetName)
-    // 断点续传：若上次下载残留了部分文件，则从断点继续（与后端下载一致）
+    // 删除可能残留的损坏/不完整文件，确保本次为全新下载
+    if (existsSync(archivePath)) { try { unlinkSync(archivePath) } catch {} }
     let startByte = 0
     try { const st = statSync(archivePath); if (st.size > 0) startByte = st.size } catch {}
 
@@ -1686,10 +1742,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('install-app-update', async (_e, opts: { installerPath: string }) => {
     if (!opts.installerPath || !existsSync(opts.installerPath)) {
-      return { success: false, error: 'Installer not found' }
+      return { success: false, error: '安装程序未找到' }
     }
     if (!opts.installerPath.toLowerCase().endsWith('.exe')) {
-      return { success: false, error: 'Unsupported installer type' }
+      return { success: false, error: '不支持的安装程序类型' }
     }
 
     try {
@@ -1760,14 +1816,14 @@ export function registerIpcHandlers(): void {
     const id = opts.filename
     if (downloadTasks.has(id)) {
       const existing = downloadTasks.get(id)!
-      if (existing.phase === 'downloading') return { success: false, error: 'Already downloading' }
+      if (existing.phase === 'downloading') return { success: false, error: '已在下载中' }
     }
     const folder = opts.repoId.split('/').pop() || 'downloads'
     const destDir = join(MODELS_DIR, folder)
-    if (!isSafePath(MODELS_DIR, destDir)) return { success: false, error: 'Access denied' }
+    if (!isSafePath(MODELS_DIR, destDir)) return { success: false, error: '访问被拒绝' }
     if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true })
     const finalPath = join(destDir, opts.filename)
-    if (!isSafePath(MODELS_DIR, finalPath)) return { success: false, error: 'Access denied' }
+    if (!isSafePath(MODELS_DIR, finalPath)) return { success: false, error: '访问被拒绝' }
     const tmpPath = finalPath + '.tmp'
     const task: DownloadTask = { id, url: opts.downloadUrl, filename: opts.filename, destPath: finalPath, receivedBytes: 0, totalBytes: 0, speed: 0, phase: 'downloading', repoId: opts.repoId }
     const broadcast = (force = false) => {
@@ -1800,7 +1856,7 @@ export function registerIpcHandlers(): void {
         invalidateModelsCache()
         setTimeout(() => { downloadTasks.delete(id); broadcastTimes.delete(id); lastSent.delete(id) }, 10000)
       },
-      (err) => { task.phase = 'error'; task.speed = 0; broadcast(true); console.error('HF download error:', err) }
+      (err) => { task.phase = 'error'; task.speed = 0; broadcast(true); console.error('HF 模型下载错误:', err) }
     )
     downloadTasks.set(id, task)
     return { success: true }
@@ -1834,11 +1890,11 @@ export function registerIpcHandlers(): void {
     return new Promise((resolve, reject) => {
       const req = http.get(url, { agent: httpAgent }, (res) => {
         let body = ''
-        res.on('data', (c) => { body += c.toString(); if (body.length > 1e6) { req.destroy(); reject(new Error('response too large')) } })
+        res.on('data', (c) => { body += c.toString(); if (body.length > 1e6) { req.destroy(); reject(new Error('响应数据过大')) } })
         res.on('end', () => resolve(body))
       })
       req.on('error', reject)
-      req.setTimeout(3000, () => { req.destroy(); reject(new Error('timeout')) })
+      req.setTimeout(3000, () => { req.destroy(); reject(new Error('超时')) })
     })
   }
 
@@ -1879,7 +1935,7 @@ export function registerIpcHandlers(): void {
         proc.on('error', reject)
         proc.on('close', (code) => {
           if (code === 0) resolve(stdout.trim())
-          else reject(new Error(`nvidia-smi exit ${code}: ${stderr.trim()}`))
+          else reject(new Error(`nvidia-smi 退出码 ${code}: ${stderr.trim()}`))
         })
       })
       // output: "32, 8192, 24576, 45, NVIDIA GeForce RTX 4090, 150.50"
@@ -2043,7 +2099,7 @@ export function registerIpcHandlers(): void {
               resolved = true
               resolve()
             } else {
-              reject(new Error(`status ${res.statusCode}`))
+              reject(new Error(`状态码 ${res.statusCode}`))
             }
           })
           req.on('error', () => reject())
@@ -2121,8 +2177,8 @@ export function registerIpcHandlers(): void {
 	          res.on('end', () => {
 	            activeChatStreams.delete(streamId)
 	            flushStreamNow(streamId)
-	            e.sender.send('chat-stream-chunk', { streamId, done: true, error: `HTTP ${res.statusCode}: ${errBody.slice(0, 500)}` })
-	            resolve({ success: false, error: `HTTP ${res.statusCode}` })
+	            e.sender.send('chat-stream-chunk', { streamId, done: true, error: `HTTP 错误 ${res.statusCode}: ${errBody.slice(0, 500)}` })
+	            resolve({ success: false, error: `HTTP 错误 ${res.statusCode}` })
 	          })
 	          return
 	        }
@@ -2267,9 +2323,9 @@ export function registerIpcHandlers(): void {
 	        chatStreamInReasoning.delete(streamId)
 	        chatStreamToolCalls.delete(streamId)
 	        flushStreamNow(streamId)
-	        e.sender.send('chat-stream-chunk', { streamId, done: true, error: 'timeout' })
+	        e.sender.send('chat-stream-chunk', { streamId, done: true, error: '超时' })
         activeChatStreams.delete(streamId)
-        resolve({ success: false, error: 'timeout' })
+        resolve({ success: false, error: '超时' })
       })
       activeChatStreams.set(streamId, req)
       req.write(bodyStr)
@@ -2327,8 +2383,8 @@ export function registerIpcHandlers(): void {
           res.on('data', (c: Buffer) => { errBody += c.toString() })
           res.on('end', () => {
             activeChatStreams.delete(streamId)
-            e.sender.send('ocr-chunk', { streamId, done: true, error: `HTTP ${res.statusCode}: ${errBody.slice(0, 500)}` })
-            resolve({ success: false, error: `HTTP ${res.statusCode}` })
+            e.sender.send('ocr-chunk', { streamId, done: true, error: `HTTP 错误 ${res.statusCode}: ${errBody.slice(0, 500)}` })
+            resolve({ success: false, error: `HTTP 错误 ${res.statusCode}` })
           })
           return
         }
@@ -2464,14 +2520,14 @@ export function registerIpcHandlers(): void {
     const id = opts.filename
     if (downloadTasks.has(id)) {
       const existing = downloadTasks.get(id)!
-      if (existing.phase === 'downloading') return { success: false, error: 'Already downloading' }
+      if (existing.phase === 'downloading') return { success: false, error: '已在下载中' }
     }
     const folder = opts.repoId.split('/').pop() || 'downloads'
     const destDir = join(MODELS_DIR, folder)
-    if (!isSafePath(MODELS_DIR, destDir)) return { success: false, error: 'Access denied' }
+    if (!isSafePath(MODELS_DIR, destDir)) return { success: false, error: '访问被拒绝' }
     if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true })
     const finalPath = join(destDir, opts.filename)
-    if (!isSafePath(MODELS_DIR, finalPath)) return { success: false, error: 'Access denied' }
+    if (!isSafePath(MODELS_DIR, finalPath)) return { success: false, error: '访问被拒绝' }
     const tmpPath = finalPath + '.tmp'
     const task: DownloadTask = { id, url: opts.downloadUrl, filename: opts.filename, destPath: finalPath, receivedBytes: 0, totalBytes: 0, speed: 0, phase: 'downloading', repoId: opts.repoId }
     const broadcast = (force = false) => {
@@ -2504,7 +2560,7 @@ export function registerIpcHandlers(): void {
         invalidateModelsCache()
         setTimeout(() => { downloadTasks.delete(id); broadcastTimes.delete(id); lastSent.delete(id) }, 10000)
       },
-      (err) => { task.phase = 'error'; task.speed = 0; broadcast(true); console.error('MS download error:', err) }
+      (err) => { task.phase = 'error'; task.speed = 0; broadcast(true); console.error('MS 模型下载错误:', err) }
     )
     downloadTasks.set(id, task)
     return { success: true }
@@ -2561,7 +2617,7 @@ export function registerIpcHandlers(): void {
         const whereCmd = process.platform === 'win32' ? 'where' : 'which'
         await new Promise<void>((resolve, reject) => {
           const p = spawn(whereCmd, [agent.cmd], { windowsHide: true, stdio: 'ignore' })
-          p.on('close', (code) => code === 0 ? resolve() : reject(new Error('not found')))
+          p.on('close', (code) => code === 0 ? resolve() : reject(new Error('未找到')))
           p.on('error', reject)
         })
         // Binary exists, get version
@@ -2722,9 +2778,9 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('update-agent', async (_e, opts: { pkg: string }) => {
-    if (!opts.pkg) return { success: false, error: 'Missing pkg' }
+    if (!opts.pkg) return { success: false, error: '缺少包名' }
     const known = KNOWN_AGENTS.find(a => a.pkg === opts.pkg)
-    if (!known) return { success: false, error: `Unknown agent: ${opts.pkg}` }
+    if (!known) return { success: false, error: `未知 agent: ${opts.pkg}` }
     try {
       const override = AGENT_UPDATE_OVERRIDES[opts.pkg]
       let exe: string, args: string[], env: Record<string, string | undefined> | undefined
@@ -2758,7 +2814,7 @@ export function registerIpcHandlers(): void {
             return { success: true }
           } catch { /* try next */ }
         }
-        return { success: false, error: 'No terminal emulator found' }
+        return { success: false, error: '未找到终端模拟器' }
       }
       return { success: true }
     } catch (err) {
@@ -2767,9 +2823,9 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('install-agent', async (_e, opts: { pkg: string }) => {
-    if (!opts.pkg) return { success: false, error: 'Missing pkg' }
+    if (!opts.pkg) return { success: false, error: '缺少包名' }
     const known = KNOWN_AGENTS.find(a => a.pkg === opts.pkg)
-    if (!known) return { success: false, error: `Unknown agent: ${opts.pkg}` }
+    if (!known) return { success: false, error: `未知 agent: ${opts.pkg}` }
     agentsCache = null
     try {
       const override = INSTALL_OVERRIDES[opts.pkg]
@@ -2803,7 +2859,7 @@ export function registerIpcHandlers(): void {
             return { success: true }
           } catch { /* try next */ }
         }
-        return { success: false, error: 'No terminal emulator found' }
+        return { success: false, error: '未找到终端模拟器' }
       }
       return { success: true }
     } catch (err) {
@@ -2812,10 +2868,10 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('launch-agent', async (_e, opts: { cmd: string; cwd: string }) => {
-    if (!opts.cmd || !opts.cwd) return { success: false, error: 'Missing cmd or cwd' }
+    if (!opts.cmd || !opts.cwd) return { success: false, error: '缺少命令或目录' }
     const known = KNOWN_AGENTS.find(a => a.cmd === opts.cmd)
-    if (!known) return { success: false, error: `Unknown agent command: ${opts.cmd}` }
-    if (!existsSync(opts.cwd)) return { success: false, error: `Directory not found: ${opts.cwd}` }
+    if (!known) return { success: false, error: `未知的命令: ${opts.cmd}` }
+    if (!existsSync(opts.cwd)) return { success: false, error: `目录未找到: ${opts.cwd}` }
     try {
       if (process.platform === 'win32') {
         // Do NOT set windowsHide: true — the new cmd window must be visible
@@ -2841,7 +2897,7 @@ export function registerIpcHandlers(): void {
             return { success: true }
           } catch { /* try next */ }
         }
-        return { success: false, error: 'No terminal emulator found' }
+        return { success: false, error: '未找到终端模拟器' }
       }
       return { success: true }
     } catch (err) {
@@ -3058,3 +3114,4 @@ function validateUrl(url: string): void {
       parsed.hostname.startsWith('192.168.') || parsed.hostname.startsWith('10.') ||
       parsed.hostname.startsWith('172.16.')) throw new Error('不允许访问内网地址')
 }
+

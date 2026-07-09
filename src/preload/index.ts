@@ -39,7 +39,7 @@ const fullApi = {
   checkUpdates: () => ipcRenderer.invoke('check-updates'),
   downloadRelease: (opts: object) => ipcRenderer.invoke('download-release', opts),
   cancelBackendDownload: () => ipcRenderer.invoke('cancel-backend-download'),
-  onDownloadProgress: (callback: (data: { percent: number; phase: string }) => void) => {
+  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number }) => void) => {
     ipcRenderer.removeAllListeners('download-progress')
     ipcRenderer.on('download-progress', (_event, data) => callback(data))
   },

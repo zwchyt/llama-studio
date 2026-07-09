@@ -59,7 +59,7 @@ interface LlamaCppApi {
   checkUpdates: () => Promise<ReleaseInfo>
   downloadRelease: (opts: { url: string; version: string; assetName: string }) => Promise<{ success: boolean; path?: string; error?: string }>
   cancelBackendDownload: () => Promise<{ success: boolean }>
-  onDownloadProgress: (callback: (data: { percent: number; phase: string }) => void) => void
+  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number }) => void) => void
   removeDownloadListener: () => void
   // ── 应用自身更新 ──
   checkAppUpdate: () => Promise<AppUpdateInfo>

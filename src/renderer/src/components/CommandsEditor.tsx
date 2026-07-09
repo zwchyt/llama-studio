@@ -215,10 +215,10 @@ export default function CommandsEditor({ backendName }: { backendName: string })
       setSaved(true); setTimeout(() => setSaved(false), 2000)
       const updated = await safeCall(() => window.api.getCommands(backendName), '刷新 schema 失败')
       if (updated) setCommandsSchema(updated)
-    } else if (res && !res.success) { notify('Save failed: ' + res.error, 'error') }
+    } else if (res && !res.success) { notify('保存失败：' + res.error, 'error') }
   }
   async function handleReset() {
-    if (!confirm('Reset to current saved schema?')) return
+    if (!confirm('重置为当前已保存的 schema？')) return
     setLoading(true)
     const s = await safeCall(() => window.api.getCommands(backendName), '加载 schema 失败')
     setSchema(s ? JSON.parse(JSON.stringify(s)) : null)

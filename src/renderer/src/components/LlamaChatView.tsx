@@ -62,7 +62,7 @@ export default function LlamaChatView() {
     try {
       const res = await window.api.stopModel(card.template.id)
       if (!res.success) notify(`停止失败：${res.error}`, 'error')
-    } catch (e) { console.error('Failed to stop model', e) }
+    } catch (e) { console.error('停止模型失败', e) }
   }
 
   const handleClose = () => {

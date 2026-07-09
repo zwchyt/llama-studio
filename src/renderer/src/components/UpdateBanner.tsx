@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
+import { safeCall } from '../utils/safeCall'
 import { X, Download, Loader2 } from 'lucide-react'
 export default function UpdateBanner() {
   const { releaseInfo, updateDismissed, setUpdateDismissed, downloadProgress, setDownloadProgress, setBackends } = useStore(
@@ -33,20 +34,20 @@ export default function UpdateBanner() {
     if (!releaseInfo.assets?.length) return
     const asset = selectedAsset || releaseInfo.assets[0]
     setDownloading(true)
-    const res = await window.api.downloadRelease({
+    const res = await safeCall(() => window.api.downloadRelease({
       url: asset.downloadUrl,
       version: `${releaseInfo.tagName}-${asset.name.replace(/\.(zip|tar\.gz)$/, '')}`,
       assetName: asset.name
-    })
+    }), '下载后端失败')
     setDownloading(false)
     setDownloadProgress(null)
-    if (res.success) {
+    if (res && res.success) {
       notify(`成功下载并解压 ${asset.name}`, 'success')
       setUpdateDismissed(true)
       const backendsData = await window.api.listBackends()
       setBackends(backendsData)
       if (backendsData.length > 0) useStore.getState().setActiveBackend(backendsData[0])
-    } else {
+    } else if (res) {
       notify(`下载失败：${res.error}`, 'error')
     }
   }
@@ -68,7 +69,7 @@ export default function UpdateBanner() {
                   <div style={{ width: 80, height: 6, background: 'rgba(255,255,255,0.25)', borderRadius: 3, overflow: 'hidden', flexShrink: 0 }}>
                     <div style={{ width: `${downloadProgress?.percent || 0}%`, height: '100%', background: 'rgba(255,255,255,0.8)', borderRadius: 3, transition: 'width .3s' }} />
                   </div>
-                  <span>{downloadProgress?.percent || 0}%</span>
+                  <span>{downloadProgress?.received ? formatSize(downloadProgress.received) : '0 B'}{downloadProgress?.total ? '/' + formatSize(downloadProgress.total) : ''}</span>
                 </span>
               </>
             ) : (
@@ -135,4 +136,9 @@ export default function UpdateBanner() {
       )}
     </div>
   )
+}
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }

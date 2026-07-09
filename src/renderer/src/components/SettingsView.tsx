@@ -13,7 +13,7 @@ function getNotifPref(): 'banner' | 'manual' {
   try {
     const val = localStorage.getItem(NOTIF_KEY)
     if (val === 'banner' || val === 'manual') return val
-  } catch (e) { console.error('Failed to read notification preference', e) }
+  } catch (e) { console.error('读取通知偏好失败', e) }
   return 'banner'
 }
 
@@ -91,7 +91,7 @@ export default function SettingsView() {
 
   function handleNotifPref(pref: 'banner' | 'manual') {
     setNotifPref(pref)
-    try { localStorage.setItem(NOTIF_KEY, pref) } catch (e) { console.error('Failed to save notification preference', e) }
+    try { localStorage.setItem(NOTIF_KEY, pref) } catch (e) { console.error('保存通知偏好失败', e) }
   }
 
   async function handleSwitchBackend(name: string) {

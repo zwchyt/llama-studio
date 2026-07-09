@@ -106,7 +106,7 @@ function AppMain() {
           }))
         )
       } catch (e) {
-        console.error('Init error:', e)
+        console.error('初始化错误:', e)
       } finally {
         setLoading(false)
       }
@@ -134,7 +134,7 @@ function AppMain() {
       if (card && card.template.serverPort === s.activeChatPort) {
         s.clearActiveChat()
       }
-      notify(`Model error: ${data.error}`, 'error')
+      notify(`模型错误：${data.error}`, 'error')
     })
     return () => window.api.removeModelErrorListener()
   }, [])
@@ -370,7 +370,7 @@ function AppMain() {
         if (res.metrics) {
           Object.values(res.metrics).forEach((m) => { if (m.id) useStore.getState().updateModelMetric(m.id, m) })
         }
-      } catch (e) { console.error('Failed to init metrics', e) }
+      } catch (e) { console.error('初始化指标失败', e) }
     }
     initMetrics()
     return () => window.api.removeMetricsUpdateListener()

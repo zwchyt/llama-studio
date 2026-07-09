@@ -47,7 +47,7 @@ interface AppStore {
   editingTemplate: Template | null
   updateDismissed: boolean
   checkingUpdate: boolean
-  downloadProgress: { percent: number; phase: string } | null
+  downloadProgress: { percent: number; phase: string; received?: number; total?: number } | null
   // ── 应用自身更新 ──
   appReleaseInfo: AppUpdateInfo | null
   appUpdateDismissed: boolean
@@ -78,7 +78,7 @@ interface AppStore {
   setPaths: (p: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string }) => void
   setUpdateDismissed: (v: boolean) => void
   setCheckingUpdate: (v: boolean) => void
-  setDownloadProgress: (data: { percent: number; phase: string } | null) => void
+  setDownloadProgress: (data: { percent: number; phase: string; received?: number; total?: number } | null) => void
   setAppReleaseInfo: (r: AppUpdateInfo | null) => void
   setAppUpdateDismissed: (v: boolean) => void
   setAppDownloadProgress: (data: { percent: number; phase: string; received?: number; total?: number } | null) => void
