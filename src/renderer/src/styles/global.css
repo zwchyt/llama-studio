@@ -845,14 +845,33 @@ select {
 }
 
 .card-run-btn {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   justify-content: center;
+  align-items: center;
+  height: 36px;
+  padding: 0 6px;
+  font-size: 12px;
+  gap: 4px;
+}
+
+.card-run-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.card-run-btn .btn-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card-expand-btn {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+  margin-left: auto;
   width: 36px;
   height: 36px;
   border-radius: var(--radius-sm);
@@ -891,6 +910,15 @@ select {
   border: 1.5px solid var(--border);
 }
 
+.logs-popover {
+  position: fixed;
+  z-index: 3000;
+  width: 380px;
+  max-width: calc(100vw - 16px);
+  margin: 0;
+  box-shadow: var(--shadow-lg);
+}
+
 .card-logs-header {
   display: flex;
   align-items: center;
@@ -901,27 +929,13 @@ select {
   font-family: var(--font);
 }
 
-.card-logs-toggle {
+.card-logs-count {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex: 1;
-  background: none;
-  border: none;
-  cursor: pointer;
   color: #a0a0a0;
   padding: 3px 0;
-  font: inherit;
-  transition: color var(--transition);
-}
-
-.card-logs-toggle:hover {
-  color: #d4d4d4;
-}
-
-.card-logs-toggle span {
-  flex: 1;
-  text-align: left;
 }
 
 .card-logs-header-actions {
@@ -947,14 +961,6 @@ select {
 .card-logs-header-btn:hover {
   background: rgba(255, 255, 255, .1);
   color: #d4d4d4;
-}
-
-.card-logs-chevron {
-  transition: transform var(--transition);
-}
-
-.card-logs-section.open .card-logs-chevron {
-  transform: rotate(180deg);
 }
 
 .card-logs-body {
@@ -1559,6 +1565,17 @@ select {
   display: flex;
   justify-content: center;
   gap: 10px;
+}
+
+/* 紧凑型空态：用于「没有匹配」等纯文本提示，复用 .empty-state 的居中与次要色 */
+.empty-state--sm {
+  padding: 24px;
+  font-size: 13px;
+}
+
+/* 中等空态：用于「暂无模型」等带图标/按钮的空态 */
+.empty-state--md {
+  padding: 40px 24px;
 }
 
 .settings-section {
@@ -2323,13 +2340,17 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   align-items: center;
   gap: 12px;
   background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 0 12px;
   margin-bottom: 16px;
   position: sticky;
-  top: 0;
+  top: calc(-1 * var(--content-pad, 0px));
   z-index: 10;
+  box-shadow: var(--shadow);
 }
 
 .params-search-box .form-input {
@@ -3120,6 +3141,22 @@ webview {
   height: 11px;
 }
 
+/* 模型首界面：限制内容最大宽度，超宽屏下避免阅读动线过长（不影响侧边栏） */
+.models-view {
+  --content-pad: 24px;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--content-pad);
+}
+
+@media (min-width: 1400px) {
+  .models-view {
+    --content-pad: 32px;
+    max-width: 1200px;
+  }
+}
+
 .models-section {
   margin-bottom: 24px;
 }
@@ -3153,6 +3190,20 @@ webview {
 
 .models-dl-row.error {
   border-color: var(--danger);
+}
+
+/* 下载行内的状态小字（失败/成功），颜色由行状态决定 */
+.models-dl-status-text {
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.models-dl-row.error .models-dl-status-text {
+  color: var(--danger);
+}
+
+.models-dl-row.done .models-dl-status-text {
+  color: var(--success);
 }
 
 .models-dl-meta {
@@ -3189,7 +3240,7 @@ webview {
 
 .models-dl-bar {
   flex: 1;
-  height: 5px;
+  height: 8px;
   background: var(--border);
   border-radius: 99px;
   overflow: hidden;
@@ -3204,7 +3255,7 @@ webview {
 .models-dl-pct {
   font-size: 11px;
   color: var(--text-muted);
-  min-width: 30px;
+  min-width: 80px;
   text-align: right;
 }
 
@@ -3236,6 +3287,13 @@ webview {
   justify-content: center;
   flex-shrink: 0;
   color: var(--text-secondary);
+}
+
+/* 多模态 / 投影仪文件（--mmproj）：用彩色图标块强化类型辨识 */
+.models-file-icon.image {
+  background: linear-gradient(135deg, var(--accent), #3a3a3a);
+  border-color: transparent;
+  color: var(--accent-fg);
 }
 
 .models-file-meta {

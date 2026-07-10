@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { useStore } from '../store/useStore'
 import { useChatStore } from '../store/chatStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
-import { Play, Square, Settings, ChevronDown, MoreVertical, Copy, Trash, Download, Globe, Server, Terminal, Check, MessageSquare } from 'lucide-react'
+import { Play, Square, Settings, MoreVertical, Copy, Trash, Download, Globe, Server, Terminal, Check, MessageSquare } from 'lucide-react'
 import type { CardState } from '../../../shared/types'
 import ParamsModal from './ParamsModal'
 import ConfirmModal from './ConfirmModal'
@@ -43,6 +44,9 @@ export default function ModelCard({ card }: Props) {
   }, [card.template.name])
   const logsBodyRef = useRef<HTMLDivElement>(null)
   const userScrolledRef = useRef(false)
+  const logsBtnRef = useRef<HTMLButtonElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null)
   useEffect(() => {
     if (cardLogsExpanded && logsBodyRef.current && !userScrolledRef.current) {
       logsBodyRef.current.scrollTop = logsBodyRef.current.scrollHeight
@@ -84,6 +88,54 @@ export default function ModelCard({ card }: Props) {
   function handleClearLogs() {
     clearModelLogs(card.template.id)
   }
+  function toggleLogs() {
+    if (cardLogsExpanded) {
+      setCardLogsExpanded(false)
+      setPopoverPos(null)
+      return
+    }
+    const el = logsBtnRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const PW = 380
+    const PH = 460
+    let left = r.left
+    if (left + PW > window.innerWidth - 8) left = window.innerWidth - 8 - PW
+    if (left < 8) left = 8
+    let top = r.bottom + 6
+    if (top + PH > window.innerHeight - 8) {
+      top = r.top - 6 - PH
+      if (top < 8) top = 8
+    }
+    setPopoverPos({ top, left })
+    setCardLogsExpanded(true)
+  }
+  useEffect(() => {
+    if (!cardLogsExpanded) return
+    function onDown(e: MouseEvent) {
+      const t = e.target as Node
+      if (popoverRef.current && popoverRef.current.contains(t)) return
+      if (logsBtnRef.current && logsBtnRef.current.contains(t)) return
+      setCardLogsExpanded(false)
+      setPopoverPos(null)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { setCardLogsExpanded(false); setPopoverPos(null) }
+    }
+    function onScroll(e: Event) {
+      if (popoverRef.current && popoverRef.current.contains(e.target as Node)) return
+      setCardLogsExpanded(false)
+      setPopoverPos(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', onScroll, true)
+    }
+  }, [cardLogsExpanded])
   const [modelExists, setModelExists] = useState(true)
   useEffect(() => {
     if (!card.template.modelPath) { setModelExists(true); return }
@@ -267,21 +319,30 @@ export default function ModelCard({ card }: Props) {
         >
           <Server size={12} /> 仅 API
         </button>
+        {(isRunning || card.status === 'error') && logs && logs.length > 0 && (
+          <button
+            ref={logsBtnRef}
+            className={`launch-mode-btn logs-toggle-btn ${cardLogsExpanded ? 'active' : ''}`}
+            onClick={toggleLogs}
+            title="查看运行日志"
+          >
+            <Terminal size={12} /> 日志
+          </button>
+        )}
       </div>
       <div className="card-actions">
         <button
           className={`btn card-run-btn ${isRunning ? 'btn-danger' : 'btn-primary'}`}
           onClick={handleRunToggle}
           disabled={!isRunning && !modelExists}
-          style={isRunning ? { flex: 0.7 } : {}}
           title={!isRunning && !modelExists ? '无法启动：模型文件缺失' : ''}
         >
-          {isRunning ? <><Square size={14} /> 停止</> : <><Play size={14} /> 启动</>}
+          {isRunning ? <><Square size={14} /> <span className="btn-label">停止</span></> : <><Play size={14} /> <span className="btn-label">启动</span></>}
         </button>
         {isRunning && (
           <button
             className="btn card-run-btn"
-            style={{ flex: 0.4, background: 'var(--accent)', color: 'var(--accent-fg)' }}
+            style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
             onClick={() => {
               const port = card.template.serverPort || 8080
               useStore.getState().setActiveChat(`http://127.0.0.1:${port}`, port)
@@ -289,13 +350,13 @@ export default function ModelCard({ card }: Props) {
             }}
             title="在主窗口打开聊天"
           >
-            <Globe size={14} /> 打开聊天
+            <Globe size={14} /> <span className="btn-label">打开聊天</span>
           </button>
         )}
         {isRunning && (
           <button
             className="btn card-run-btn"
-            style={{ flex: 0.4, background: 'var(--success)', color: '#fff' }}
+            style={{ background: 'var(--success)', color: '#fff' }}
             onClick={() => {
               const id = card.template.id
               const port = card.template.serverPort || 8080
@@ -313,28 +374,30 @@ export default function ModelCard({ card }: Props) {
             }}
             title="跳转到原生聊天界面"
           >
-            <MessageSquare size={14} /> 原生聊天
+            <MessageSquare size={14} /> <span className="btn-label">原生聊天</span>
           </button>
         )}
-        <button
-          className="card-expand-btn"
-          onClick={() => setShowParamsModal(true)}
-          title="配置命令行参数"
-        >
-          <Settings size={16} />
-        </button>
+        {!isRunning && (
+          <button
+            className="card-expand-btn"
+            onClick={() => setShowParamsModal(true)}
+            title="配置命令行参数"
+          >
+            <Settings size={16} />
+          </button>
+        )}
       </div>
-      {(isRunning || card.status === 'error') && logs && logs.length > 0 && (
-        <div className={`card-logs-section ${cardLogsExpanded ? 'open' : ''}`}>
+      {(isRunning || card.status === 'error') && logs && logs.length > 0 && cardLogsExpanded && popoverPos && createPortal(
+        <div
+          ref={popoverRef}
+          className="card-logs-section logs-popover open"
+          style={{ top: popoverPos.top, left: popoverPos.left }}
+        >
           <div className="card-logs-header">
-            <button
-              className="card-logs-toggle"
-              onClick={() => setCardLogsExpanded(!cardLogsExpanded)}
-            >
+            <span className="card-logs-count">
               <Terminal size={13} />
-              <span>{logs?.length || 0} 行</span>
-              <ChevronDown size={13} className="card-logs-chevron" />
-            </button>
+              {logs?.length || 0} 行
+            </span>
             <div className="card-logs-header-actions">
               <button className="card-logs-header-btn" onClick={handleCopyLogs} title="复制全部日志">
                 {logCopied ? <Check size={12} /> : <Copy size={12} />}
@@ -354,7 +417,8 @@ export default function ModelCard({ card }: Props) {
               <div ref={logsEndRef} />
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
       {showParamsModal && (
         <ParamsModal

@@ -3,7 +3,7 @@ import { useStore, ModelFileInfo, ModelDownloadInfo } from '../store/useStore'
 
 import {
   HardDrive, Download, Trash, Pause, Play, X, Link, FolderOpen,
-  Pencil, Check, AlertCircle, Loader2, Search
+  Pencil, Check, AlertCircle, Loader2, Search, Image as ImageIcon
 } from 'lucide-react'
 import { formatBytes } from '../utils/format'
 import { formatDownloadStatus } from '../utils/downloadFormat'
@@ -138,7 +138,7 @@ function DownloadRow({ dl }: { dl: ModelDownloadInfo }) {
         <div className="models-dl-bar">
           <div className="models-dl-fill" style={{ width: `${dl.percent}%`, background: isErr ? 'var(--danger)' : isDone ? 'var(--success)' : 'var(--accent)', opacity: isPaused || pending ? 0.5 : 1, transition: 'width 0.3s ease' }} />
         </div>
-        <span className="models-dl-pct" style={{ minWidth: 80, textAlign: 'right', color: isPaused ? 'var(--text-muted)' : 'inherit' }}>
+        <span className="models-dl-pct" style={{ color: isPaused ? 'var(--text-muted)' : 'inherit' }}>
           {statusLabel}
         </span>
         {!isDone && !isErr && (
@@ -166,8 +166,8 @@ function DownloadRow({ dl }: { dl: ModelDownloadInfo }) {
           </button>
         )}
       </div>
-      {isErr && <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 2 }}>下载失败</div>}
-      {isDone && <div style={{ fontSize: 11, color: 'var(--success)', marginTop: 2 }}>✓ 已保存至 {dl.destPath}</div>}
+      {isErr && <div className="models-dl-status-text">下载失败</div>}
+      {isDone && <div className="models-dl-status-text">✓ 已保存至 {dl.destPath}</div>}
     </div>
   )
 }
@@ -198,7 +198,9 @@ function ModelFileRow({ model, isImage, onDeleted }: { model: ModelFileInfo; isI
   }
   return (
     <div className="models-file-row">
-      <div className="models-file-icon"><HardDrive size={16} /></div>
+      <div className={`models-file-icon${isImage ? ' image' : ''}`}>
+        {isImage ? <ImageIcon size={16} /> : <HardDrive size={16} />}
+      </div>
       <div className="models-file-meta">
         {editing ? (
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -243,7 +245,7 @@ export default function ModelsView() {
   const filteredModels = useMemo(() => {
     const q = filter.trim().toLowerCase()
     if (!q) return allModels
-    return allModels.filter(m => m.name.toLowerCase().includes(q) || m.folder.toLowerCase().includes(q))
+    return allModels.filter(m => m.name.toLowerCase().startsWith(q) || m.folder.toLowerCase().startsWith(q))
   }, [allModels, filter])
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -266,7 +268,7 @@ export default function ModelsView() {
   const downloads = Object.values(modelDownloads)
   const activeDownloads = downloads.filter(d => d.phase !== 'cancelled')
   return (
-    <div>
+    <div className="models-view">
       <div className="page-header">
         <div>
           <h1 className="page-title">模型</h1>
@@ -302,7 +304,7 @@ export default function ModelsView() {
             <input
               type="text"
               className="form-input"
-              placeholder="按名称或文件夹筛选模型..."
+              placeholder="按名称或文件夹前缀筛选模型..."
               value={filter}
               onChange={e => setFilter(e.target.value)}
             />
@@ -324,7 +326,7 @@ export default function ModelsView() {
           </div>
         )}
         {!loading && models.length === 0 && (
-          <div className="empty-state" style={{ padding: '40px 24px' }}>
+          <div className="empty-state empty-state--md">
             <div className="empty-state-icon"><HardDrive size={28} /></div>
             <h3>暂无模型</h3>
             <p>从模型中心下载模型或使用"通过 URL 下载"按钮。</p>
@@ -334,7 +336,7 @@ export default function ModelsView() {
           </div>
         )}
         {models.length > 0 && filteredModels.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)', fontSize: 13 }}>
+          <div className="empty-state empty-state--sm">
             没有匹配 "{filter}" 的模型
           </div>
         )}
