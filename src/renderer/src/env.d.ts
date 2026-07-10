@@ -83,7 +83,7 @@ interface LlamaCppApi {
   }) => void) => void
   removeHfDownloadListener: () => void
   openFolder: (path: string) => Promise<void>
-  getPaths: () => Promise<{ models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string }>
+  getPaths: () => Promise<{ models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string; chatTemplates: string }>
   listExternalModelFolders: () => Promise<string[]>
   addExternalModelFolder: () => Promise<{ success: boolean; folders?: string[] }>
   removeExternalModelFolder: (folder: string) => Promise<{ success: boolean; folders: string[] }>
@@ -93,6 +93,8 @@ interface LlamaCppApi {
   listImageModelFolders: () => Promise<string[]>
   addImageModelFolder: () => Promise<{ success: boolean; folders?: string[] }>
   removeImageModelFolder: (folder: string) => Promise<{ success: boolean; folders: string[] }>
+  listChatTemplates: () => Promise<ModelFileInfo[]>
+  listChatTemplatesRefresh: () => Promise<ModelFileInfo[]>
   openExternal: (url: string) => Promise<void>
   openChatWindow: (port: number) => Promise<void>
   waitForServer: (port: number) => Promise<boolean>

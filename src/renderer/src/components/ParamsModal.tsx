@@ -5,6 +5,7 @@ import { X, Search, Copy, Check, Lock } from 'lucide-react'
 import type { CommandParam, TemplateArgs } from '../../../shared/types'
 import { iconElements } from '../utils/iconMap'
 import CustomSelect from './CustomSelect'
+import ModelFileSelect from './ModelFileSelect'
 
 const FEATURED_ARGS = ['--ctx-size', '--gpu-layers', '--threads', '--batch-size', '--flash-attn']
 
@@ -16,9 +17,9 @@ interface Props {
 }
 
 export default function ParamsModal({ templateId, args, onClose, cardName }: Props) {
-  const { commandsSchema, cards } = useStore(s => ({ commandsSchema: s.commandsSchema, cards: s.cards }), shallow)
+  const { commandsSchema, cards, imageModels, chatTemplates } = useStore(s => ({ commandsSchema: s.commandsSchema, cards: s.cards, imageModels: s.imageModels, chatTemplates: s.chatTemplates }), shallow)
   const updateCard = useStore(s => s.updateCard)
-  const imageModels = useStore(s => s.imageModels)
+  const setChatTemplates = useStore(s => s.setChatTemplates)
   const [activeTab, setActiveTab] = useState('主要设置')
   const [searchQuery, setSearchQuery] = useState('')
   const [hoveredParam, setHoveredParam] = useState<string | null>(null)
@@ -45,6 +46,10 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
 
   // 组件卸载或关闭时确保落盘
   useEffect(() => () => { flushSave() }, [flushSave])
+
+  useEffect(() => {
+    window.api.listChatTemplates().then(setChatTemplates).catch(() => {})
+  }, [])
 
   const handleUpdate = useCallback((argName: string, value: any) => {
     const { cards } = useStore.getState()
@@ -192,20 +197,28 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
             </div>
           )}
           {cmd.type === 'string' && cmd.arg === '--mmproj' && (
-            <CustomSelect
+            <ModelFileSelect
               className="cmd-select-mmproj"
               value={displayVal}
               onChange={(v) => handleUpdate(cmd.arg, v)}
-              options={[
-                { value: '', label: '不指定' },
-...imageModels.map(m => ({ value: m.path, label: m.name })),
-                 ...(displayVal && !imageModels.find(m => m.path === displayVal) ? [{ value: String(displayVal), label: String(displayVal).split(/[/\\]/).pop() ?? '' }] : [])
-              ]}
+              items={imageModels}
+              defaultLabel="不指定"
               disabled={disabled}
-              aria-label="--mmproj"
+              ariaLabel="--mmproj"
             />
           )}
-          {cmd.type === 'string' && cmd.arg !== '--mmproj' && (
+          {cmd.type === 'string' && cmd.arg === '--chat-template-file' && (
+            <ModelFileSelect
+              className="cmd-select-chat-template"
+              value={displayVal}
+              onChange={(v) => handleUpdate(cmd.arg, v)}
+              items={chatTemplates}
+              defaultLabel="Default"
+              disabled={disabled}
+              ariaLabel="--chat-template-file"
+            />
+          )}
+          {cmd.type === 'string' && cmd.arg !== '--mmproj' && cmd.arg !== '--chat-template-file' && (
             <input type="text" className="cmd-input" value={displayVal} placeholder={cmd.placeholder || cmd.default?.toString()} onChange={(e) => handleUpdate(cmd.arg, e.target.value)} disabled={disabled} />
           )}
           {cmd.type === 'select' && (

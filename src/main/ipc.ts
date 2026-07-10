@@ -92,8 +92,9 @@ const MODELS_DIR = join(APP_ROOT, 'models')
 const TEMPLATES_DIR = join(APP_ROOT, 'templates')
 const BACKEND_DIR = join(APP_ROOT, 'backend')
 const CHATS_DIR = join(APP_ROOT, 'chats')
+const CHAT_TEMPLATES_DIR = join(APP_ROOT, 'chat-templates')
 const SETTINGS_PATH = join(APP_ROOT, 'settings.json')
-for (const dir of [MODELS_DIR, TEMPLATES_DIR, BACKEND_DIR, CHATS_DIR]) {
+for (const dir of [MODELS_DIR, TEMPLATES_DIR, BACKEND_DIR, CHATS_DIR, CHAT_TEMPLATES_DIR]) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
 // 活跃的聊天流式请求，按 streamId 索引，支持中止
@@ -894,6 +895,21 @@ export function registerIpcHandlers(): void {
     await saveSettings(s)
     invalidateImageModelsCache()
     return { success: true, folders: s.imageModelFolders }
+  })
+  // ── 自定义聊天模板 (Jinja) ──
+  ipcMain.handle('list-chat-templates', async () => {
+    if (!existsSync(CHAT_TEMPLATES_DIR)) return []
+    const files = await fsPromises.readdir(CHAT_TEMPLATES_DIR)
+    const results: ModelFileInfo[] = []
+    for (const f of files) {
+      if (!f.endsWith('.jinja')) continue
+      const fp = join(CHAT_TEMPLATES_DIR, f)
+      try {
+        const st = await fsPromises.stat(fp)
+        results.push({ name: f, path: fp, size: st.size, folder: 'chat-templates' })
+      } catch { /* skip */ }
+    }
+    return results
   })
   // ── 删除模型 ──
   ipcMain.handle('delete-model', (_e, filePath: string) => {
@@ -1769,7 +1785,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('open-folder', async (_e, folderPath: string) => {
     const settings = await loadSettings()
-    const allowedBases = [MODELS_DIR, BACKEND_DIR, CHATS_DIR, ...settings.externalModelFolders, ...settings.imageModelFolders]
+    const allowedBases = [MODELS_DIR, BACKEND_DIR, CHATS_DIR, CHAT_TEMPLATES_DIR, ...settings.externalModelFolders, ...settings.imageModelFolders]
     if (!allowedBases.some(base => isSafePath(base, folderPath))) return
     // 确保目录存在（例如 chats/images、chats/pdf_exports 是惰性创建的），
     // 否则 shell.openPath 在路径不存在时会静默失败、什么也不打开。
@@ -1778,7 +1794,7 @@ export function registerIpcHandlers(): void {
     if (err) console.error('[open-folder] 无法打开目录:', folderPath, err)
     return err
   })
-  ipcMain.handle('get-paths', () => ({ models: MODELS_DIR, templates: TEMPLATES_DIR, backend: BACKEND_DIR, chats: CHATS_DIR, chatImages: join(CHATS_DIR, 'images'), chatPdfExports: join(CHATS_DIR, 'pdf_exports') }))
+  ipcMain.handle('get-paths', () => ({ models: MODELS_DIR, templates: TEMPLATES_DIR, backend: BACKEND_DIR, chats: CHATS_DIR, chatImages: join(CHATS_DIR, 'images'), chatPdfExports: join(CHATS_DIR, 'pdf_exports'), chatTemplates: CHAT_TEMPLATES_DIR }))
   ipcMain.handle('open-external', (_e, url: string) => {
     try {
       const parsed = new URL(url)

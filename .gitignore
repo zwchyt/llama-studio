@@ -52,6 +52,9 @@ templates/*
 chats/*
 !chats/.gitkeep
 
+chat-templates/*
+!chat-templates/.gitkeep
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

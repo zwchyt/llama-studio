@@ -264,16 +264,8 @@ export default function ModelCard({ card }: Props) {
             <p className="card-desc" title={card.template.description}>{card.template.description}</p>
           )}
         </div>
-        <div className="card-menu-btn" ref={menuRef} style={{ position: 'relative', zIndex: 10 }}
-          onMouseEnter={() => {
-            clearTimeout(hideTimerRef.current)
-            setShowMenu(true)
-          }}
-          onMouseLeave={() => {
-            hideTimerRef.current = setTimeout(() => setShowMenu(false), 150)
-          }}
-        >
-          <button className="btn btn-ghost btn-icon" aria-label="更多操作">
+        <div className="card-menu-btn" ref={menuRef} style={{ position: 'relative', zIndex: 10 }}>
+          <button className="btn btn-ghost btn-icon" aria-label="更多操作" onClick={() => setShowMenu(p => !p)}>
             <MoreVertical size={16} />
           </button>
           {showMenu && (

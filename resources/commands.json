@@ -83,6 +83,7 @@
         { "arg": "--port", "label": "Server Port", "description": "服务器监听端口", "type": "number", "default": 8080, "min": 1024, "max": 65535, "env": "LLAMA_ARG_PORT" },
         { "arg": "--host", "label": "Server Host", "description": "绑定的主机地址", "type": "string", "default": "127.0.0.1", "placeholder": "127.0.0.1", "env": "LLAMA_ARG_HOST" },
         { "arg": "--chat-template", "label": "Chat Template", "description": "自定义 Jinja 聊天模板名称或路径", "type": "string", "placeholder": "llama3", "env": "LLAMA_ARG_CHAT_TEMPLATE" },
+        { "arg": "--chat-template-file", "label": "Chat Template File", "description": "自定义 Jinja 聊天模板文件路径", "type": "string", "placeholder": "/path/to/template.jinja", "env": "LLAMA_ARG_CHAT_TEMPLATE_FILE" },
         { "arg": "--jinja", "label": "Use Jinja Templating", "description": "启用 Jinja 模板引擎处理聊天", "type": "boolean", "default": true, "env": "LLAMA_ARG_JINJA" },
         { "arg": "--reasoning-format", "label": "Reasoning Format", "description": "模型推理输出格式", "type": "select", "options": ["auto", "none", "deepseek", "deepseek-legacy"], "default": "auto", "env": "LLAMA_ARG_THINK" },
         { "arg": "--reasoning", "short": "-rea", "label": "Reasoning Mode", "description": "在聊天中启用推理/思考模式", "type": "select", "options": ["auto", "on", "off"], "default": "auto", "env": "LLAMA_ARG_REASONING" },

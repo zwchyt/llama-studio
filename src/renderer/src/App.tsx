@@ -52,6 +52,7 @@ function AppMain() {
   const setBackends = useStore(s => s.setBackends)
   const setModels = useStore(s => s.setModels)
   const setImageModels = useStore(s => s.setImageModels)
+  const setChatTemplates = useStore(s => s.setChatTemplates)
   const setActiveBackend = useStore(s => s.setActiveBackend)
   const setCommandsSchema = useStore(s => s.setCommandsSchema)
   const setCards = useStore(s => s.setCards)
@@ -85,6 +86,9 @@ function AppMain() {
     window.api.listImageModels()
       .then((m) => setImageModels(m))
       .catch((e) => console.error('[listImageModels]', e))
+    window.api.listChatTemplates()
+      .then((m) => setChatTemplates(m))
+      .catch((e) => console.error('[listChatTemplates]', e))
 
     // Stage 1: First-paint critical — fetch 3 IPC calls in parallel
     ;(async () => {

@@ -170,6 +170,10 @@ export default function Sidebar() {
             <FolderOpen size={16} />
             打开 /pdf_exports
           </button>
+          <button className="nav-item" onClick={() => window.api.openFolder(paths.chatTemplates)} title={paths.chatTemplates}>
+            <FolderOpen size={16} />
+            打开 /chat-templates
+          </button>
         </div>
       )}
     </nav>

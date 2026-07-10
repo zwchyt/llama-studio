@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, Copy, Check, Search, Lock } from 'lucide-rea
 import type { CommandParam, TemplateArgs } from '../../../shared/types'
 import { iconElements } from '../utils/iconMap'
 import CustomSelect from './CustomSelect'
+import ModelFileSelect from './ModelFileSelect'
 
 const FEATURED_ARGS = ['--ctx-size', '--gpu-layers', '--threads', '--batch-size', '--flash-attn']
 interface Props {
@@ -16,13 +17,18 @@ interface Props {
   disabled?: boolean
 }
 export default function CmdParamsEditor({ templateId, args, onChange, modelPathFallback, serverPortFallback, disabled: disabledProp }: Props) {
-  const { commandsSchema, updateCard, cards, imageModels } = useStore(s => ({ commandsSchema: s.commandsSchema, updateCard: s.updateCard, cards: s.cards, imageModels: s.imageModels }), shallow)
+  const { commandsSchema, updateCard, cards, imageModels, chatTemplates } = useStore(s => ({ commandsSchema: s.commandsSchema, updateCard: s.updateCard, cards: s.cards, imageModels: s.imageModels, chatTemplates: s.chatTemplates }), shallow)
+  const setChatTemplates = useStore(s => s.setChatTemplates)
   const [searchQuery, setSearchQuery] = useState('')
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set())
   const [hoveredParam, setHoveredParam] = useState<string | null>(null)
   const [descTooltip, setDescTooltip] = useState<{ text: string; x: number; y: number } | null>(null)
   const [copiedParam, setCopiedParam] = useState<string | null>(null)
   const initialSchemaRef = useRef(true)
+
+  useEffect(() => {
+    window.api.listChatTemplates().then(setChatTemplates).catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (commandsSchema) {
@@ -200,20 +206,28 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
             </div>
           )}
           {cmd.type === 'string' && cmd.arg === '--mmproj' && (
-            <CustomSelect
+            <ModelFileSelect
               className="cmd-select-mmproj"
-              value={typeof val === 'boolean' ? '' : val}
+              value={val}
               onChange={(v) => handleUpdate(cmd.arg, v)}
-              options={[
-                { value: '', label: '不指定' },
-...imageModels.map(m => ({ value: m.path, label: m.name })),
-                 ...(val && !imageModels.find(m => m.path === val) ? [{ value: String(val), label: String(val).split(/[/\\]/).pop() ?? '' }] : [])
-              ]}
+              items={imageModels}
+              defaultLabel="不指定"
               disabled={disabled}
-              aria-label="--mmproj"
+              ariaLabel="--mmproj"
             />
           )}
-          {cmd.type === 'string' && cmd.arg !== '--mmproj' && (
+          {cmd.type === 'string' && cmd.arg === '--chat-template-file' && (
+            <ModelFileSelect
+              className="cmd-select-chat-template"
+              value={val}
+              onChange={(v) => handleUpdate(cmd.arg, v)}
+              items={chatTemplates}
+              defaultLabel="Default"
+              disabled={disabled}
+              ariaLabel="--chat-template-file"
+            />
+          )}
+          {cmd.type === 'string' && cmd.arg !== '--mmproj' && cmd.arg !== '--chat-template-file' && (
             <input type="text" className="cmd-input" value={typeof val === 'boolean' ? '' : val} placeholder={cmd.placeholder || cmd.default?.toString()} onChange={(e) => handleUpdate(cmd.arg, e.target.value)} disabled={disabled} />
           )}
           {cmd.type === 'select' && (

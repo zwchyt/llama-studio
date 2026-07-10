@@ -38,10 +38,11 @@ interface AppStore {
   backends: BackendVersion[]
   models: ModelFileInfo[]
   imageModels: ModelFileInfo[]
+  chatTemplates: ModelFileInfo[]
   activeBackend: BackendVersion | null
   commandsSchema: CommandsSchema | null
   releaseInfo: ReleaseInfo | null
-  paths: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string } | null
+  paths: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string; chatTemplates: string } | null
   view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'terminal' | 'ocr' | 'benchmark'
   showCreateModal: boolean
   editingTemplate: Template | null
@@ -73,9 +74,10 @@ interface AppStore {
   setBackends: (b: BackendVersion[]) => void
   setModels: (m: ModelFileInfo[]) => void
   setImageModels: (m: ModelFileInfo[]) => void
+  setChatTemplates: (m: ModelFileInfo[]) => void
   setCards: (c: CardState[]) => void
   setReleaseInfo: (r: ReleaseInfo | null) => void
-  setPaths: (p: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string }) => void
+  setPaths: (p: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string; chatTemplates: string }) => void
   setUpdateDismissed: (v: boolean) => void
   setCheckingUpdate: (v: boolean) => void
   setDownloadProgress: (data: { percent: number; phase: string; received?: number; total?: number } | null) => void
@@ -142,7 +144,7 @@ interface AppStore {
 // createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
 export const useStore = createWithEqualityFn<AppStore>((set) => ({
-  cards: [], backends: [], models: [], imageModels: [], activeBackend: null,
+  cards: [], backends: [], models: [], imageModels: [], chatTemplates: [], activeBackend: null,
   commandsSchema: null, releaseInfo: null, paths: null,
   view: 'cards', showCreateModal: false, editingTemplate: null,
   updateDismissed: false, checkingUpdate: false, downloadProgress: null,
@@ -170,6 +172,7 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   setBackends: (b) => set({ backends: b }),
   setModels: (m) => set({ models: m }),
   setImageModels: (m) => set({ imageModels: m }),
+  setChatTemplates: (m) => set({ chatTemplates: m }),
   setCards: (c) => set({ cards: c }),
   setReleaseInfo: (r) => set({ releaseInfo: r }),
   setPaths: (p) => set({ paths: p }),
