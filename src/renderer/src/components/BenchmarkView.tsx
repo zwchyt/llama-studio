@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import { Terminal, Gauge, Loader2, Cpu, Zap, HardDrive, BarChart3, Play, Square } from 'lucide-react'
+import { Terminal, Gauge, Loader2, Cpu, Zap, HardDrive, BarChart3, Play, Square, ChevronDown } from 'lucide-react'
 import CustomSelect from './CustomSelect'
 
 type BenchMode = 'quick' | 'stress'
@@ -60,21 +60,29 @@ function formatParams(n: number): string {
   return String(n)
 }
 
-function speedRating(tokPerS: number, nParams: number): { label: string; color: string } {
+function speedRating(tokPerS: number, nParams: number): { label: string; color: string; ratio: number } {
   const ratio = tokPerS / Math.max(nParams / 1_000_000_000, 0.1)
-  if (ratio > 100) return { label: '极速', color: '#22c55e' }
-  if (ratio > 50) return { label: '优秀', color: '#16a34a' }
-  if (ratio > 20) return { label: '良好', color: '#eab308' }
-  if (ratio > 10) return { label: '一般', color: '#f97316' }
-  return { label: '较慢', color: '#ef4444' }
+  if (ratio > 100) return { label: '极速', color: '#22c55e', ratio }
+  if (ratio > 50) return { label: '优秀', color: '#16a34a', ratio }
+  if (ratio > 20) return { label: '良好', color: '#eab308', ratio }
+  if (ratio > 10) return { label: '一般', color: '#f97316', ratio }
+  return { label: '较慢', color: '#ef4444', ratio }
 }
 
-function AnimatedBar({ speed, maxSpeed, color }: { speed: number; maxSpeed: number; color: string }) {
+function AnimatedBar({ score, color }: { score: number; color: string }) {
   const [w, setW] = useState(0)
-  useEffect(() => { requestAnimationFrame(() => setW(Math.min((speed / maxSpeed) * 100, 100))) }, [speed, maxSpeed])
+  useEffect(() => { requestAnimationFrame(() => setW(Math.min(score, 100))) }, [score])
+  const display = Math.round(Math.min(score, 100))
   return (
-    <div className="benchmark-bar-container">
-      <div className="benchmark-bar-fill" style={{ width: `${w}%`, background: color, transition: 'width 0.8s cubic-bezier(0.22, 1, 0.36, 1)' }} />
+    <div className="benchmark-speed-bar-row">
+      <div className="benchmark-bar-container">
+        <div className="benchmark-bar-fill" style={{ width: `${w}%`, background: color }} />
+      </div>
+      <span
+        className="benchmark-bar-score"
+        style={{ color }}
+        title={`性能评分 ${display} / 100（极速线为满分）`}
+      >{display}</span>
     </div>
   )
 }
@@ -96,6 +104,7 @@ export default function BenchmarkView() {
   const [nRequests, setNRequests] = useState(50)
   const [running, setRunning] = useState(false)
   const [showResults, setShowResults] = useState(false)
+  const [configCollapsed, setConfigCollapsed] = useState(false)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [parsed, setParsed] = useState<ParsedBenchResult | null>(null)
   const [summary, setSummary] = useState<string[]>([])
@@ -189,7 +198,7 @@ export default function BenchmarkView() {
     const id = crypto.randomUUID()
     benchIdRef.current = id
     logsRef.current = []
-    setRunning(true); setShowResults(true); setLogs([]); setParsed(null); setSummary([]); setBenchmarkResult(null)
+    setRunning(true); setShowResults(true); setLogs([]); setParsed(null); setSummary([]); setBenchmarkResult(null); setConfigCollapsed(true)
     const args: string[] = ['-m', selectedModel, '-o', 'json']
     if (mode === 'quick') {
       args.push('-t', String(threads), '-b', String(batchSize), '-n', String(nTokens), '-p', String(nPrompt))
@@ -213,7 +222,13 @@ export default function BenchmarkView() {
   const mi = parsed?.modelInfo
   const pt = parsed?.prompt
   const gt = parsed?.generation
-  const maxSpeed = Math.max(pt?.avg_ts ?? 0, gt?.avg_ts ?? 0, 1)
+
+  const selectedModelInfo = models.find(m => m.path === selectedModel)
+  const collapsedSummary = `${mode === 'quick' ? '快速跑分' : '压力测试'} · ${selectedBackend || '—'} · ${selectedModelInfo?.name || '未选择模型'}`
+
+  const testBatch = pt?.n_batch ?? gt?.n_batch ?? batchSize
+  const testPrompt = pt?.n_prompt ?? nPrompt
+  const testGen = gt?.n_gen ?? nTokens
 
   return (
     <div className="benchmark-view">
@@ -223,87 +238,101 @@ export default function BenchmarkView() {
       </div>
 
       <div className="benchmark-config">
-        <div className="benchmark-config-row">
-          <label>测试模式</label>
-          <div className="benchmark-mode-tabs">
-            <button className={`benchmark-mode-tab ${mode === 'quick' ? 'active' : ''}`} onClick={() => setMode('quick')} disabled={running}>快速跑分</button>
-            <button className={`benchmark-mode-tab ${mode === 'stress' ? 'active' : ''}`} onClick={() => setMode('stress')} disabled={running}>压力测试</button>
+        <button
+          className="benchmark-config-toggle"
+          onClick={() => setConfigCollapsed(c => !c)}
+          aria-expanded={!configCollapsed}
+          title={configCollapsed ? '展开配置' : '收起配置'}
+        >
+          <ChevronDown size={16} className={`benchmark-chevron ${configCollapsed ? 'collapsed' : ''}`} />
+          <span className="benchmark-config-toggle-title">测试配置</span>
+          <span className="benchmark-config-toggle-summary">{collapsedSummary}</span>
+        </button>
+        <div className={`benchmark-config-body-wrapper ${configCollapsed ? 'collapsed' : ''}`}>
+          <div className="benchmark-config-body">
+            <div className="benchmark-config-row">
+              <label>测试模式</label>
+              <div className="benchmark-mode-tabs">
+                <button className={`benchmark-mode-tab ${mode === 'quick' ? 'active' : ''}`} onClick={() => setMode('quick')} disabled={running}>快速跑分</button>
+                <button className={`benchmark-mode-tab ${mode === 'stress' ? 'active' : ''}`} onClick={() => setMode('stress')} disabled={running}>压力测试</button>
+              </div>
+            </div>
+            <div className="benchmark-config-row-split">
+              <div className="benchmark-config-row">
+                <label>后端版本</label>
+                <CustomSelect
+                  className="benchmark-select-wrapper"
+                  buttonClass="benchmark-select-button"
+                  value={selectedBackend}
+                  onChange={setSelectedBackend}
+                  options={backends.map(b => ({ value: b.name, label: b.name }))}
+                  disabled={running}
+                  aria-label="后端版本"
+                />
+              </div>
+              <div className="benchmark-config-row">
+                <label>模型文件</label>
+                <CustomSelect
+                  className="benchmark-select-wrapper"
+                  buttonClass="benchmark-select-button"
+                  value={selectedModel}
+                  onChange={setSelectedModel}
+                  options={models.map(m => ({ value: m.path, label: `${m.name} (${m.folder})` }))}
+                  disabled={running}
+                  aria-label="模型文件"
+                />
+              </div>
+            </div>
+            <div className="benchmark-config-params">
+              {mode === 'quick' ? (
+                <>
+                  <div className="benchmark-param">
+                    <label>线程数</label>
+                    <input type="number" value={threads} min={1} max={64} onChange={e => setThreads(parseInt(e.target.value) || 1)} disabled={running} />
+                  </div>
+                  <div className="benchmark-param">
+                    <label>批次大小</label>
+                    <input type="number" value={batchSize} min={1} max={4096} onChange={e => setBatchSize(parseInt(e.target.value) || 1)} disabled={running} />
+                  </div>
+                  <div className="benchmark-param">
+                    <label>提示长度</label>
+                    <input type="number" value={nPrompt} min={1} max={8192} onChange={e => setNPrompt(parseInt(e.target.value) || 1)} disabled={running} />
+                  </div>
+                  <div className="benchmark-param">
+                    <label>生成 Token</label>
+                    <input type="number" value={nTokens} min={1} max={4096} onChange={e => setNTokens(parseInt(e.target.value) || 1)} disabled={running} />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="benchmark-param">
+                    <label>并发请求</label>
+                    <input type="number" value={concurrent} min={1} max={128} onChange={e => setConcurrent(parseInt(e.target.value) || 1)} disabled={running} />
+                  </div>
+                  <div className="benchmark-param">
+                    <label>总请求数</label>
+                    <input type="number" value={nRequests} min={1} max={100000} onChange={e => setNRequests(parseInt(e.target.value) || 1)} disabled={running} />
+                  </div>
+                  <div className="benchmark-param">
+                    <label>生成 Token</label>
+                    <input type="number" value={nTokens} min={1} max={4096} onChange={e => setNTokens(parseInt(e.target.value) || 1)} disabled={running} />
+                  </div>
+                  <div className="benchmark-param">
+                    <label>批次大小</label>
+                    <input type="number" value={batchSize} min={1} max={4096} onChange={e => setBatchSize(parseInt(e.target.value) || 1)} disabled={running} />
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="benchmark-config-actions">
+              <button className="benchmark-btn benchmark-btn-run" onClick={handleRun} disabled={running || !hasBenchExe || !selectedModel}>
+                <Play size={14} /> 开始测试
+              </button>
+              <button className="benchmark-btn benchmark-btn-stop" onClick={handleStop} disabled={!running}>
+                <Square size={14} /> 停止
+              </button>
+            </div>
           </div>
-        </div>
-        <div className="benchmark-config-row-split">
-          <div className="benchmark-config-row">
-            <label>后端版本</label>
-            <CustomSelect
-              className="benchmark-select-wrapper"
-              buttonClass="benchmark-select-button"
-              value={selectedBackend}
-              onChange={setSelectedBackend}
-              options={backends.map(b => ({ value: b.name, label: b.name }))}
-              disabled={running}
-              aria-label="后端版本"
-            />
-          </div>
-          <div className="benchmark-config-row">
-            <label>模型文件</label>
-            <CustomSelect
-              className="benchmark-select-wrapper"
-              buttonClass="benchmark-select-button"
-              value={selectedModel}
-              onChange={setSelectedModel}
-              options={models.map(m => ({ value: m.path, label: `${m.name} (${m.folder})` }))}
-              disabled={running}
-              aria-label="模型文件"
-            />
-          </div>
-        </div>
-        <div className="benchmark-config-params">
-          {mode === 'quick' ? (
-            <>
-              <div className="benchmark-param">
-                <label>线程数</label>
-                <input type="number" value={threads} min={1} max={64} onChange={e => setThreads(parseInt(e.target.value) || 1)} disabled={running} />
-              </div>
-              <div className="benchmark-param">
-                <label>批次大小</label>
-                <input type="number" value={batchSize} min={1} max={4096} onChange={e => setBatchSize(parseInt(e.target.value) || 1)} disabled={running} />
-              </div>
-              <div className="benchmark-param">
-                <label>提示长度</label>
-                <input type="number" value={nPrompt} min={1} max={8192} onChange={e => setNPrompt(parseInt(e.target.value) || 1)} disabled={running} />
-              </div>
-              <div className="benchmark-param">
-                <label>生成 Token</label>
-                <input type="number" value={nTokens} min={1} max={4096} onChange={e => setNTokens(parseInt(e.target.value) || 1)} disabled={running} />
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="benchmark-param">
-                <label>并发请求</label>
-                <input type="number" value={concurrent} min={1} max={128} onChange={e => setConcurrent(parseInt(e.target.value) || 1)} disabled={running} />
-              </div>
-              <div className="benchmark-param">
-                <label>总请求数</label>
-                <input type="number" value={nRequests} min={1} max={100000} onChange={e => setNRequests(parseInt(e.target.value) || 1)} disabled={running} />
-              </div>
-              <div className="benchmark-param">
-                <label>生成 Token</label>
-                <input type="number" value={nTokens} min={1} max={4096} onChange={e => setNTokens(parseInt(e.target.value) || 1)} disabled={running} />
-              </div>
-              <div className="benchmark-param">
-                <label>批次大小</label>
-                <input type="number" value={batchSize} min={1} max={4096} onChange={e => setBatchSize(parseInt(e.target.value) || 1)} disabled={running} />
-              </div>
-            </>
-          )}
-        </div>
-        <div className="benchmark-config-actions">
-          <button className="benchmark-btn benchmark-btn-run" onClick={handleRun} disabled={running || !hasBenchExe || !selectedModel}>
-            <Play size={14} /> 开始测试
-          </button>
-          <button className="benchmark-btn benchmark-btn-stop" onClick={handleStop} disabled={!running}>
-            <Square size={14} /> 停止
-          </button>
         </div>
       </div>
 
@@ -316,13 +345,18 @@ export default function BenchmarkView() {
                   <div className="benchmark-model-card-row">
                     <HardDrive size={18} />
                     <span className="benchmark-model-name">{mi.name.split('\\').pop()?.split('/').pop() || mi.name}</span>
-                    <span className="benchmark-model-badge">{mi.type}</span>
+                    <span className="benchmark-model-type-hint">架构类型</span>
+                    <span className="benchmark-model-badge" title="模型架构类型（model_type）">{mi.type}</span>
                   </div>
                   <div className="benchmark-model-card-meta">
                     <span><strong>{mi.sizeGB.toFixed(2)} GB</strong> 大小</span>
                     <span><strong>{formatParams(mi.nParams)}</strong> 参数</span>
-                    <span><strong>{mi.gpu || 'N/A'}</strong></span>
+                    <span><strong>{mi.gpu || 'N/A'}</strong> GPU</span>
+                    <span className="benchmark-model-card-params-label">测试参数</span>
                     <span><strong>{mi.threads}</strong> 线程</span>
+                    <span><strong>{testBatch}</strong> 批次大小</span>
+                    <span><strong>{testPrompt}</strong> 提示长度</span>
+                    <span><strong>{testGen}</strong> 生成 Token</span>
                   </div>
                 </>
               ) : (
@@ -344,13 +378,17 @@ export default function BenchmarkView() {
                           <Zap size={18} style={{ color: r.color }} />
                           <span>提示词处理</span>
                           <span className="benchmark-rating" style={{ background: r.color }}>{r.label}</span>
-                          <span className="benchmark-speed-value" style={{ color: r.color }}>{pt.avg_ts.toFixed(2)}</span>
-                          <span className="benchmark-speed-unit">tok/s</span>
+                          <span className="benchmark-speed-value-group">
+                            <span className="benchmark-speed-value" style={{ color: r.color }}>{pt.avg_ts.toFixed(2)}</span>
+                            <span className="benchmark-speed-unit">tok/s</span>
+                          </span>
                         </div>
-                        <AnimatedBar speed={pt.avg_ts} maxSpeed={maxSpeed} color={r.color} />
-                        <div className="benchmark-speed-card-detail">
-                          <span>{pt.n_prompt} tokens · {(pt.avg_ns / 1_000_000).toFixed(1)} ms</span>
-                          <span>±{pt.stddev_ts.toFixed(2)} tok/s</span>
+                        <div className="benchmark-speed-card-footer">
+                          <AnimatedBar score={Math.min(r.ratio, 100)} color={r.color} />
+                          <div className="benchmark-speed-card-detail">
+                            <span>{pt.n_prompt} tokens · {(pt.avg_ns / 1_000_000).toFixed(1)} ms</span>
+                            <span>±{pt.stddev_ts.toFixed(2)} tok/s</span>
+                          </div>
                         </div>
                       </div>
                     )
@@ -363,13 +401,17 @@ export default function BenchmarkView() {
                           <Cpu size={18} style={{ color: r.color }} />
                           <span>Token 生成</span>
                           <span className="benchmark-rating" style={{ background: r.color }}>{r.label}</span>
-                          <span className="benchmark-speed-value" style={{ color: r.color }}>{gt.avg_ts.toFixed(2)}</span>
-                          <span className="benchmark-speed-unit">tok/s</span>
+                          <span className="benchmark-speed-value-group">
+                            <span className="benchmark-speed-value" style={{ color: r.color }}>{gt.avg_ts.toFixed(2)}</span>
+                            <span className="benchmark-speed-unit">tok/s</span>
+                          </span>
                         </div>
-                        <AnimatedBar speed={gt.avg_ts} maxSpeed={maxSpeed} color={r.color} />
-                        <div className="benchmark-speed-card-detail">
-                          <span>{gt.n_gen} tokens · {(gt.avg_ns / 1_000_000).toFixed(1)} ms</span>
-                          <span>±{gt.stddev_ts.toFixed(2)} tok/s</span>
+                        <div className="benchmark-speed-card-footer">
+                          <AnimatedBar score={Math.min(r.ratio, 100)} color={r.color} />
+                          <div className="benchmark-speed-card-detail">
+                            <span>{gt.n_gen} tokens · {(gt.avg_ns / 1_000_000).toFixed(1)} ms</span>
+                            <span>±{gt.stddev_ts.toFixed(2)} tok/s</span>
+                          </div>
                         </div>
                       </div>
                     )
@@ -386,13 +428,17 @@ export default function BenchmarkView() {
                           <BarChart3 size={18} style={{ color: '#8b5cf6' }} />
                           <span>综合吞吐</span>
                           <span className="benchmark-rating" style={{ background: r.color }}>{r.label}</span>
-                          <span className="benchmark-speed-value" style={{ color: '#8b5cf6' }}>{overallTokS.toFixed(2)}</span>
-                          <span className="benchmark-speed-unit">tok/s</span>
+                          <span className="benchmark-speed-value-group">
+                            <span className="benchmark-speed-value" style={{ color: '#8b5cf6' }}>{overallTokS.toFixed(2)}</span>
+                            <span className="benchmark-speed-unit">tok/s</span>
+                          </span>
                         </div>
-                        <div className="benchmark-stat-row">
-                          <div><div className="benchmark-stat-number">{totalTokens}</div><div className="benchmark-stat-label">总 tokens</div></div>
-                          <div><div className="benchmark-stat-number">{(totalNs / 1_000_000).toFixed(0)}</div><div className="benchmark-stat-label">总耗时 (ms)</div></div>
-                          <div><div className="benchmark-stat-number">{ratio.toFixed(0)}x</div><div className="benchmark-stat-label">提示词/生成比</div></div>
+                        <div className="benchmark-speed-card-footer">
+                          <div className="benchmark-stat-row">
+                            <div><div className="benchmark-stat-number">{totalTokens}</div><div className="benchmark-stat-label">总 tokens</div></div>
+                            <div><div className="benchmark-stat-number">{(totalNs / 1_000_000).toFixed(0)}</div><div className="benchmark-stat-label">总耗时 (ms)</div></div>
+                            <div><div className="benchmark-stat-number">{ratio.toFixed(0)}x</div><div className="benchmark-stat-label">提示词/生成比</div></div>
+                          </div>
                         </div>
                       </div>
                     )

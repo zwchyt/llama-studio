@@ -2590,6 +2590,12 @@ export function registerIpcHandlers(): void {
     { name: 'Claude Code',       pkg: '@anthropic/claude-code',          cmd: 'claude',      nonNpm: true, logo: './agent-logos/Claude code.png', website: 'https://claude.com/product/claude-code' },
     { name: 'Zero',              pkg: '@gitlawb/zero',                   cmd: 'zero',        logo: './agent-logos/OpenClaude.png',    website: 'https://zero.gitlawb.com/' },
     { name: 'Grok',              pkg: 'grok',                            cmd: 'grok',        nonNpm: true, logo: './agent-logos/Grok.png',        website: 'https://x.ai/cli' },
+    { name: 'OMP',               pkg: '@oh-my-pi/pi-coding-agent',       cmd: 'omp',         nonNpm: true, logo: './agent-logos/omp.jpg',         website: 'https://omp.sh/' },
+    { name: 'Claurst',           pkg: 'claurst',                         cmd: 'claurst',     logo: './agent-logos/Caurst.png',        website: 'https://claurst.kuber.studio/' },
+    { name: 'Codeep',            pkg: 'codeep',                          cmd: 'codeep',      logo: './agent-logos/Codeep.png',        website: 'https://codeep.dev/' },
+    { name: 'DeepSeek Code',     pkg: '@vegamo/deepcode-cli',            cmd: 'deepcode',    logo: './agent-logos/DeepSeek Code.png', website: 'https://deepcode.vegamo.cn/' },
+    { name: 'Langcli',           pkg: 'langcli-com',                     cmd: 'langcli',     logo: './agent-logos/Langcli.webp',      website: 'https://langcli.com/' },
+    { name: 'Reasonix',          pkg: 'reasonix',                        cmd: 'reasonix',    logo: './agent-logos/reasonix.png',      website: 'https://reasonix.io/' },
   ]
   // Special update commands — agents not updated via npm install -g
   const AGENT_UPDATE_OVERRIDES: Record<string, { exe: string; args: string[] }> = {
@@ -2598,6 +2604,7 @@ export function registerIpcHandlers(): void {
     '@moonshot-ai/kimi-code': { exe: 'npm', args: ['install', '-g', '@moonshot-ai/kimi-code@latest'] },
     '@anthropic/claude-code': { exe: 'claude', args: ['update'] },
     'grok': { exe: 'grok', args: ['update'] },
+    '@oh-my-pi/pi-coding-agent': { exe: 'powershell.exe', args: ['-Command', 'irm https://omp.sh/install.ps1 | iex'] },
   }
   // Install commands per agent — non-npm agents use custom exe/args
   const INSTALL_OVERRIDES: Record<string, { exe: string; args: string[] }> = {
@@ -2605,6 +2612,7 @@ export function registerIpcHandlers(): void {
     '@moonshot-ai/kimi-code': { exe: 'npm', args: ['install', '-g', '--ignore-scripts', '@moonshot-ai/kimi-code'] },
     '@anthropic/claude-code': { exe: 'powershell.exe', args: ['-Command', 'irm https://claude.ai/install.ps1 | iex'] },
     'grok': { exe: 'powershell.exe', args: ['-Command', 'irm https://x.ai/cli/install.ps1 | iex'] },
+    '@oh-my-pi/pi-coding-agent': { exe: 'powershell.exe', args: ['-Command', 'irm https://omp.sh/install.ps1 | iex'] },
   }
   let agentsCache: { ts: number; result: { name: string; pkg: string; cmd: string; installed: boolean; version: string | null; logo?: string }[] } | null = null
   const AGENTS_CACHE_TTL = 30000
@@ -2792,6 +2800,7 @@ export function registerIpcHandlers(): void {
     // (Keeps update detection aligned with their non-npm / ps1 install channel.)
     const GITHUB_LATEST: Record<string, string> = {
       '@anthropic/claude-code': 'anthropics/claude-code',
+      '@oh-my-pi/pi-coding-agent': 'can1357/oh-my-pi',
     }
     for (const agent of installed) {
       const repo = GITHUB_LATEST[agent.pkg]
