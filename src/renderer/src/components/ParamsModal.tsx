@@ -25,6 +25,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   const [hoveredParam, setHoveredParam] = useState<string | null>(null)
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
   const [copiedParam, setCopiedParam] = useState<string | null>(null)
+  const [closing, setClosing] = useState(false)
 
   const card = cards.find(c => c.template.id === templateId)
   const isRunning = card?.status === 'running'
@@ -50,6 +51,30 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   useEffect(() => {
     window.api.listChatTemplates().then(setChatTemplates).catch(() => {})
   }, [])
+
+  // 关闭动画结束（或兜底定时器）后真正卸载；closedRef 防止重复调用
+  const closedRef = useRef(false)
+  const doClose = useCallback(() => {
+    if (closedRef.current) return
+    closedRef.current = true
+    onClose()
+  }, [onClose])
+
+  // 点击遮罩 / 关闭按钮 / Esc：先播放关闭动画，结束后再真正卸载
+  const handleClose = useCallback(() => {
+    setClosing(true)
+    // 兜底：万一 animationend 未触发（动画被中断/替换等），
+    // 定时强制卸载，避免透明遮罩残留在 DOM 中挡住界面交互
+    window.setTimeout(doClose, 220)
+  }, [doClose])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [handleClose])
 
   const handleUpdate = useCallback((argName: string, value: any) => {
     const { cards } = useStore.getState()
@@ -243,14 +268,24 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
 
   if (!commandsSchema) {
     return (
-      <div className="modal-overlay" onClick={onClose}>
-        <div className="modal modal-params" onClick={e => e.stopPropagation()}>
+      <div
+        className={`modal-overlay${closing ? ' closing' : ''}`}
+        onClick={handleClose}
+        onContextMenu={(e) => {
+          // 在输入框/文本域/下拉等可编辑元素上保留原生右键菜单，不关闭
+          const t = e.target as HTMLElement
+          if (t.closest('input, textarea, select, [contenteditable="true"]')) return
+          e.preventDefault()
+          handleClose()
+        }}
+      >
+        <div className="modal modal-params" onClick={e => e.stopPropagation()} onAnimationEnd={(e) => { if (closing && e.target === e.currentTarget) doClose() }}>
           <div className="modal-header">
             <div>
               <h2 className="modal-title">参数设置</h2>
               <div className="param-modal-subtitle">{cardName}</div>
             </div>
-            <button className="btn btn-ghost btn-icon" onClick={onClose} aria-label="关闭">
+            <button className="btn btn-ghost btn-icon" onClick={handleClose} aria-label="关闭">
               <X size={20} />
             </button>
           </div>
@@ -263,14 +298,24 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-params" onClick={e => e.stopPropagation()}>
+    <div
+      className={`modal-overlay${closing ? ' closing' : ''}`}
+      onClick={handleClose}
+      onContextMenu={(e) => {
+        // 在输入框/文本域/下拉等可编辑元素上保留原生右键菜单，不关闭
+        const t = e.target as HTMLElement
+        if (t.closest('input, textarea, select, [contenteditable="true"]')) return
+        e.preventDefault()
+        handleClose()
+      }}
+    >
+      <div className="modal modal-params" onClick={e => e.stopPropagation()} onAnimationEnd={(e) => { if (closing && e.target === e.currentTarget) doClose() }}>
         <div className="modal-header">
           <div>
             <h2 className="modal-title">参数设置</h2>
             <div className="param-modal-subtitle">{cardName}</div>
           </div>
-          <button className="btn btn-ghost btn-icon" onClick={onClose} aria-label="关闭">
+          <button className="btn btn-ghost btn-icon" onClick={handleClose} aria-label="关闭">
             <X size={20} />
           </button>
         </div>

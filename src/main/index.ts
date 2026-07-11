@@ -37,7 +37,6 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    titleBarStyle: 'hiddenInset',
     backgroundColor: '#f5f5f5',
     ...(icon ? { icon } : {}),
     webPreferences: {

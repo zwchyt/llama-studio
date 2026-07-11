@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo } from 'react'
 import { useStore, type AgentStatus } from './store/useStore'
 import { notify } from './store/notificationStore'
-import Titlebar from './components/Titlebar'
 import Sidebar from './components/Sidebar'
 import CardsView from './components/CardsView'
 import SettingsView from './components/SettingsView'
@@ -433,7 +432,6 @@ function AppMain() {
 
   return (
     <div className="app">
-      <Titlebar onCheckUpdates={checkUpdates} />
       <UpdateBanner />
       <AppUpdateBanner />
       <BackendDownloadBanner />

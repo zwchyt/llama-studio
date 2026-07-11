@@ -906,7 +906,7 @@ export function registerIpcHandlers(): void {
       const fp = join(CHAT_TEMPLATES_DIR, f)
       try {
         const st = await fsPromises.stat(fp)
-        results.push({ name: f, path: fp, size: st.size, folder: 'chat-templates' })
+        results.push({ name: f, path: fp, size: st.size, folder: 'chat-templates', external: false })
       } catch { /* skip */ }
     }
     return results
@@ -1385,7 +1385,6 @@ export function registerIpcHandlers(): void {
     const chatWin = new BrowserWindow({
       width: 1024, height: 768, show: true, autoHideMenuBar: true,
       title: 'Hexllama - Llama-UI',
-      titleBarStyle: 'hiddenInset',
       backgroundColor: '#ffffff',
       ...(icon ? { icon } : {}),
       webPreferences: {
