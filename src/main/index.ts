@@ -15,8 +15,9 @@ app.commandLine.appendSwitch('--disk-cache-dir', join(tmpdir(), 'hexllama-cache'
 app.commandLine.appendSwitch('--disable-gpu-cache')
 app.commandLine.appendSwitch('--disable-disk-cache')
 
+// 单实例锁：打包后的应用保持单实例；dev 模式放宽，避免残留进程占用锁导致新实例秒退
 const gotLock = app.requestSingleInstanceLock()
-if (!gotLock) {
+if (!gotLock && app.isPackaged) {
   app.quit()
 }
 
@@ -28,7 +29,7 @@ function resolveIcon(): string | undefined {
   ]
   return candidates.find(existsSync)
 }
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   const icon = resolveIcon()
   const mainWindow = new BrowserWindow({
     width: 1280,

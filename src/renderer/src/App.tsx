@@ -12,6 +12,7 @@ import AgentsView from './components/AgentsView'
 import WelcomeView from './components/WelcomeView'
 import ChatView from './components/ChatView'
 import CreateModal from './components/CreateModal'
+import SplashScreen from './components/SplashScreen'
 import UpdateBanner from './components/UpdateBanner'
 import AppUpdateBanner from './components/AppUpdateBanner'
 import BackendDownloadBanner from './components/BackendDownloadBanner'
@@ -39,7 +40,10 @@ export default function App() {
 }
 
 function AppMain() {
-  const [loading, setLoading] = React.useState(true)
+  // 开屏动画：dataReady=初始化数据已就绪（触发爆炸退场），splashExited=开屏已完全卸载
+  const appStartRef = React.useRef(performance.now())
+  const [splashExited, setSplashExited] = React.useState(false)
+  const [dataReady, setDataReady] = React.useState(false)
   const processedHfDownloads = React.useRef(new Set<string>())
   const processedModelDownloads = React.useRef(new Set<string>())
   const timeoutsRef = React.useRef<ReturnType<typeof setTimeout>[]>([])
@@ -111,7 +115,10 @@ function AppMain() {
       } catch (e) {
         console.error('初始化错误:', e)
       } finally {
-        setLoading(false)
+        // 数据初始化完成：至少展示 1.2s 后触发开屏爆炸退场
+        const elapsed = performance.now() - appStartRef.current
+        const wait = Math.max(0, 1200 - elapsed)
+        window.setTimeout(() => setDataReady(true), wait)
       }
     })()
 
@@ -417,20 +424,8 @@ function AppMain() {
     }
   }, [view])
 
-  if (loading) {
-    return (
-      <div style={{
-        position: 'fixed', inset: 0, background: 'var(--bg)', zIndex: 9999,
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        color: 'var(--text)'
-      }}>
-        <img src="./icon.png" alt="Hexllama Icon" style={{ width: 128, height: 128, marginBottom: 24, imageRendering: 'crisp-edges' }} draggable={false} />
-        <h2 style={{ fontSize: 18, fontWeight: 600, letterSpacing: '0.5px' }}>All AI-Glory to the Llama.cpp</h2>
-      </div>
-    )
-  }
-
   return (
+    <>
     <div className="app">
       <UpdateBanner />
       <AppUpdateBanner />
@@ -462,5 +457,9 @@ function AppMain() {
       </div>
       {showCreateModal && <CreateModal />}
     </div>
+    {!splashExited && (
+      <SplashScreen startExit={dataReady} onExited={() => setSplashExited(true)} />
+    )}
+    </>
   )
 }

@@ -41,6 +41,18 @@
   --code-deletion: #b31d28;
 }
 
+/* 开屏动画层（SplashScreen 组件） */
+#splash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 45%, #f7f9fc 0%, #e6eaf1 65%, #dde2ec 100%);
+}
+#splash-screen canvas { display: block; }
+
 @media (prefers-color-scheme: dark) {
   :root {
     --code-bg: #161b22;
