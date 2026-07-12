@@ -6,10 +6,10 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers, cleanupRunningProcesses } from './ipc'
 import { appendFileSync } from 'fs'
 import { existsSync } from 'fs'
+import { mkdirSync } from 'fs'
 
 process.noDeprecation = true
 
-import { mkdirSync } from 'fs'
 try { mkdirSync(join(tmpdir(), 'hexllama-cache'), { recursive: true }) } catch {}
 app.commandLine.appendSwitch('--disk-cache-dir', join(tmpdir(), 'hexllama-cache'))
 app.commandLine.appendSwitch('--disable-gpu-cache')
@@ -38,7 +38,7 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#e5e5e5',
     ...(icon ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -102,6 +102,7 @@ function createWindow(): BrowserWindow {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+  return mainWindow
 }
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.hexllama')

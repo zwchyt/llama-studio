@@ -42,7 +42,8 @@ export default function App() {
 function AppMain() {
   // 开屏动画：dataReady=初始化数据已就绪（触发爆炸退场），splashExited=开屏已完全卸载
   const appStartRef = React.useRef(performance.now())
-  const [splashExited, setSplashExited] = React.useState(false)
+  // 开屏动画：默认开启；此处按用户设置快照一次，仅在本次启动生效（设置改动在下次启动时应用）
+  const [splashExited, setSplashExited] = React.useState(() => !useStore.getState().splashEnabled)
   const [dataReady, setDataReady] = React.useState(false)
   const processedHfDownloads = React.useRef(new Set<string>())
   const processedModelDownloads = React.useRef(new Set<string>())

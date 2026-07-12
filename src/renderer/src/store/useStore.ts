@@ -125,6 +125,9 @@ interface AppStore {
   chatSidebarCollapsed: boolean
   setChatSidebarCollapsed: (v: boolean) => void
   chatSidebarCurrentCollapsed: boolean
+  // ── 开屏动画 ──
+  splashEnabled: boolean
+  setSplashEnabled: (v: boolean) => void
   setChatSidebarCurrentCollapsed: (v: boolean) => void
   // ── 基准测试持久结果 ──
   benchmarkResult: {
@@ -311,6 +314,14 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   setChatSidebarCollapsed: (v) => {
     try { localStorage.setItem('chatSidebarCollapsed', String(v)) } catch { /* ignore */ }
     set({ chatSidebarCollapsed: v })
+  },
+  // ── 开屏动画 ──
+  splashEnabled: (() => {
+    try { return localStorage.getItem('splashEnabled') !== 'false' } catch { return true }
+  })(),
+  setSplashEnabled: (v) => {
+    try { localStorage.setItem('splashEnabled', String(v)) } catch { /* ignore */ }
+    set({ splashEnabled: v })
   },
   // ── 聊天界面当前收起状态（仅会话内，不写 localStorage）──
   chatSidebarCurrentCollapsed: (() => {

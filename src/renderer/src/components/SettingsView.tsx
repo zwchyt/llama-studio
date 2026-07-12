@@ -21,8 +21,8 @@ function getNotifPref(): 'banner' | 'manual' {
 export default function SettingsView() {
 	  const { backends, activeBackend, setActiveBackend, setCommandsSchema, setBackends,
 	    releaseInfo, checkingUpdate, downloadProgress, setDownloadProgress, setCheckingUpdate, setReleaseInfo,
-	    setModels, setImageModels, soundEnabled, setSoundEnabled, chatSidebarCollapsed, setChatSidebarCollapsed } = useStore(
-	    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, setModels: s.setModels, setImageModels: s.setImageModels, soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, chatSidebarCollapsed: s.chatSidebarCollapsed, setChatSidebarCollapsed: s.setChatSidebarCollapsed }),
+	    setModels, setImageModels, soundEnabled, setSoundEnabled, chatSidebarCollapsed, setChatSidebarCollapsed, splashEnabled, setSplashEnabled } = useStore(
+	    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, setModels: s.setModels, setImageModels: s.setImageModels, soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, chatSidebarCollapsed: s.chatSidebarCollapsed, setChatSidebarCollapsed: s.setChatSidebarCollapsed, splashEnabled: s.splashEnabled, setSplashEnabled: s.setSplashEnabled }),
     shallow
   )
   const [downloading, setDownloading] = useState(false)
@@ -236,14 +236,28 @@ export default function SettingsView() {
 	        </div>
 	        <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
 	          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-	            默认收起聊天界面的会话侧边栏，为消息区域留出更多空间。
-	          </p>
-	          <label className="toggle" style={{ marginTop: 4 }}>
-	            <input
-	              type="checkbox"
-	              checked={chatSidebarCollapsed}
-	              onChange={() => setChatSidebarCollapsed(!chatSidebarCollapsed)}
-	            />
+            默认收起聊天界面的会话侧边栏，为消息区域留出更多空间。
+          </p>
+          <label className="toggle" style={{ marginTop: 4 }}>
+            <input
+              type="checkbox"
+              checked={chatSidebarCollapsed}
+              onChange={() => setChatSidebarCollapsed(!chatSidebarCollapsed)}
+            />
+            <span className="toggle-track"></span>
+            <span className="toggle-thumb"></span>
+          </label>
+        </div>
+        <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            启动时播放开屏动画（积木塔崩落效果）。关闭后将直接进入主界面。
+          </p>
+          <label className="toggle" style={{ marginTop: 4 }}>
+            <input
+              type="checkbox"
+              checked={splashEnabled}
+              onChange={() => setSplashEnabled(!splashEnabled)}
+            />
             <span className="toggle-track"></span>
             <span className="toggle-thumb"></span>
           </label>
