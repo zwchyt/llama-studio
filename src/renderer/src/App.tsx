@@ -78,6 +78,8 @@ function AppMain() {
       return
     }
 
+    useStore.getState().initUiSettings()
+
     // Stage 2: Default schema (activeBackend watcher at line 200 will re-fetch on backend change)
     window.api.getCommands('').then((cmds) => {
       if (cmds) setCommandsSchema(cmds)
@@ -382,6 +384,13 @@ function AppMain() {
           Object.values(res.metrics).forEach((m) => { if (m.id) useStore.getState().updateModelMetric(m.id, m) })
         }
       } catch (e) { console.error('初始化指标失败', e) }
+      try {
+        const runningIds: string[] = await window.api.getRunningProcesses()
+        if (runningIds && runningIds.length > 0) {
+          const { setCardStatus } = useStore.getState()
+          runningIds.forEach((id) => setCardStatus(id, 'running'))
+        }
+      } catch (e) { console.error('同步运行状态失败', e) }
     }
     initMetrics()
     return () => window.api.removeMetricsUpdateListener()

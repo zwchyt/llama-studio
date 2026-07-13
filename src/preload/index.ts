@@ -84,6 +84,8 @@ const fullApi = {
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   getMetricsPolling: () => ipcRenderer.invoke('get-metrics-polling'),
   setMetricsPolling: (enabled: boolean) => ipcRenderer.invoke('set-metrics-polling', enabled),
+  getUiSettings: () => ipcRenderer.invoke('get-ui-settings'),
+  setUiSetting: (key: string, value: boolean) => ipcRenderer.invoke('set-ui-setting', key, value),
   openChatWindow: (port: number) => ipcRenderer.invoke('open-chat-window', port),
   waitForServer: (port: number) => ipcRenderer.invoke('wait-for-server', port),
   fetchServerEndpoint: (port: number, endpoint: string) => ipcRenderer.invoke('fetch-server-endpoint', port, endpoint),
@@ -93,6 +95,7 @@ const fullApi = {
   },
   removeModelLogListener: () => ipcRenderer.removeAllListeners('model-log'),
   getMetrics: () => ipcRenderer.invoke('get-metrics'),
+  getRunningProcesses: () => ipcRenderer.invoke('get-running-processes'),
   onMetricsUpdate: (callback: (data: Record<string, unknown>) => void) => {
     ipcRenderer.removeAllListeners('metrics-update')
     ipcRenderer.on('metrics-update', (_event, data) => callback(data))

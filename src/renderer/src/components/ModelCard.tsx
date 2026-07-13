@@ -334,7 +334,7 @@ export default function ModelCard({ card }: Props) {
         {isRunning && (
           <button
             className="btn card-run-btn"
-            style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
+            style={{ background: '#c1c1c1', color: '#1e0303' }}
             onClick={() => {
               const port = card.template.serverPort || 8080
               useStore.getState().setActiveChat(`http://127.0.0.1:${port}`, port)
@@ -348,7 +348,7 @@ export default function ModelCard({ card }: Props) {
         {isRunning && (
           <button
             className="btn card-run-btn"
-            style={{ background: 'var(--success)', color: '#fff' }}
+            style={{ background: 'rgb(98 157 69)', color: 'rgb(37 8 8)' }}
             onClick={() => {
               const id = card.template.id
               const port = card.template.serverPort || 8080

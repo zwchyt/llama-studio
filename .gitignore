@@ -55,6 +55,9 @@ chats/*
 chat-templates/*
 !chat-templates/.gitkeep
 
+# Agent instructions (not part of source code)
+AGENTS.md
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

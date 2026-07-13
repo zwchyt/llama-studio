@@ -8,7 +8,13 @@ import { spawn, execSync, ChildProcess } from 'child_process'
 import http from 'http'
 import { app } from 'electron'
 import { randomUUID } from 'crypto'
-import * as pty from 'node-pty'
+import type * as ptyNs from 'node-pty'
+
+let ptyModule: typeof ptyNs | null = null
+async function getPty(): Promise<typeof ptyNs> {
+  if (!ptyModule) ptyModule = await import('node-pty')
+  return ptyModule
+}
 
 function countExtractedFiles(dir: string): number {
   let count = 0
@@ -23,7 +29,7 @@ function countExtractedFiles(dir: string): number {
 
 interface TerminalSession {
   id: string
-  pty: pty.IPty
+  pty: ptyNs.IPty
   cols: number
   rows: number
   cwd: string
@@ -192,20 +198,23 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
     return Promise.resolve()
   }
 }
-interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; metricsPolling?: boolean }
+interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean; chatSidebarCollapsed?: boolean }
 let settingsCache: AppSettings | null = null
 async function loadSettings(): Promise<AppSettings> {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false }; return settingsCache }
     const data = JSON.parse(await fsPromises.readFile(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
       imageModelFolders: Array.isArray(data.imageModelFolders) ? data.imageModelFolders : [],
-      metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true
+      metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true,
+      splashEnabled: data.splashEnabled !== undefined ? data.splashEnabled : true,
+      soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
+      chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? data.chatSidebarCollapsed : false
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false }; return settingsCache }
 }
 async function saveSettings(s: AppSettings): Promise<void> {
   await fsPromises.writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2))
@@ -214,15 +223,18 @@ async function saveSettings(s: AppSettings): Promise<void> {
 function loadSettingsSync(): AppSettings {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false }; return settingsCache }
     const data = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
       imageModelFolders: Array.isArray(data.imageModelFolders) ? data.imageModelFolders : [],
-      metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true
+      metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true,
+      splashEnabled: data.splashEnabled !== undefined ? data.splashEnabled : true,
+      soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
+      chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? data.chatSidebarCollapsed : false
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false }; return settingsCache }
 }
 interface RunningProcess { proc: ChildProcess; port: number }
 const runningProcesses = new Map<string, RunningProcess>()
@@ -2085,6 +2097,18 @@ export function registerIpcHandlers(): void {
     else stopMetricsInterval()
     return { success: true }
   })
+  ipcMain.handle('get-ui-settings', async () => {
+    const s = await loadSettings()
+    return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, chatSidebarCollapsed: s.chatSidebarCollapsed ?? false }
+  })
+  ipcMain.handle('set-ui-setting', async (_e, key: string, value: boolean) => {
+    const s = await loadSettings()
+    if (key === 'splashEnabled' || key === 'soundEnabled' || key === 'chatSidebarCollapsed') {
+      ;(s as any)[key] = value
+      await saveSettings(s)
+    }
+    return { success: true }
+  })
   ipcMain.handle('get-metrics', async () => {
     const result: Record<string, unknown> = {}
     await refreshGpuData()
@@ -2097,6 +2121,9 @@ export function registerIpcHandlers(): void {
       } catch { }
     }
     return { metrics: result }
+  })
+  ipcMain.handle('get-running-processes', async () => {
+    return Array.from(runningProcesses.keys())
   })
 
   // --- wait-for-server ---
@@ -2967,7 +2994,7 @@ export function registerIpcHandlers(): void {
 
   // ── 终端控制台 ──
   const MAX_PTY_SESSIONS = 64
-  ipcMain.handle('terminal:create', (_e, opts: { cwd?: string; cols?: number; rows?: number }) => {
+  ipcMain.handle('terminal:create', async (_e, opts: { cwd?: string; cols?: number; rows?: number }) => {
     // 限制同时存在的 PTY 数量，防止失控的渲染端循环创建把主机 fork-bomb。
     if (sessions.size >= MAX_PTY_SESSIONS) {
       return { success: false, error: `PTY 数量已达上限（${MAX_PTY_SESSIONS}）` }
@@ -2978,6 +3005,7 @@ export function registerIpcHandlers(): void {
     const cwd = opts.cwd && existsSync(opts.cwd) ? opts.cwd : app.getPath('home')
     try {
       const shell = process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : (process.env.SHELL || '/bin/bash')
+      const pty = await getPty()
       const p = pty.spawn(shell, [], {
         name: 'xterm-color',
         cols, rows, cwd,

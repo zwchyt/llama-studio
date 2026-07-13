@@ -128,6 +128,7 @@ interface AppStore {
   // ── 开屏动画 ──
   splashEnabled: boolean
   setSplashEnabled: (v: boolean) => void
+  initUiSettings: () => Promise<void>
   setChatSidebarCurrentCollapsed: (v: boolean) => void
   // ── 基准测试持久结果 ──
   benchmarkResult: {
@@ -303,7 +304,11 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   setToolConfig: (config) => set({ toolConfig: config }),
   // ── 提示音 ──
   soundEnabled: true,
-  setSoundEnabled: (v) => set({ soundEnabled: v }),
+  setSoundEnabled: (v: boolean) => {
+    set({ soundEnabled: v })
+    try { localStorage.setItem('soundEnabled', String(v)) } catch { /* ignore */ }
+    window.api?.setUiSetting('soundEnabled', v)
+  },
   // ── 基准测试持久结果 ──
   benchmarkResult: null,
   setBenchmarkResult: (r) => set({ benchmarkResult: r }),
@@ -311,17 +316,38 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   chatSidebarCollapsed: (() => {
     try { return localStorage.getItem('chatSidebarCollapsed') === 'true' } catch { return false }
   })(),
-  setChatSidebarCollapsed: (v) => {
-    try { localStorage.setItem('chatSidebarCollapsed', String(v)) } catch { /* ignore */ }
+  setChatSidebarCollapsed: (v: boolean) => {
     set({ chatSidebarCollapsed: v })
+    try { localStorage.setItem('chatSidebarCollapsed', String(v)) } catch { /* ignore */ }
+    window.api?.setUiSetting('chatSidebarCollapsed', v)
   },
   // ── 开屏动画 ──
   splashEnabled: (() => {
     try { return localStorage.getItem('splashEnabled') !== 'false' } catch { return true }
   })(),
-  setSplashEnabled: (v) => {
-    try { localStorage.setItem('splashEnabled', String(v)) } catch { /* ignore */ }
+  setSplashEnabled: (v: boolean) => {
     set({ splashEnabled: v })
+    try { localStorage.setItem('splashEnabled', String(v)) } catch { /* ignore */ }
+    window.api?.setUiSetting('splashEnabled', v)
+  },
+  // ── 从主进程同步 UI 设置（覆盖 localStorage 的陈旧值）──
+  initUiSettings: async () => {
+    try {
+      const s = await window.api?.getUiSettings()
+      if (!s) return
+      if (s.splashEnabled !== undefined) {
+        try { localStorage.setItem('splashEnabled', String(s.splashEnabled)) } catch { /* ignore */ }
+        set({ splashEnabled: s.splashEnabled })
+      }
+      if (s.soundEnabled !== undefined) {
+        try { localStorage.setItem('soundEnabled', String(s.soundEnabled)) } catch { /* ignore */ }
+        set({ soundEnabled: s.soundEnabled })
+      }
+      if (s.chatSidebarCollapsed !== undefined) {
+        try { localStorage.setItem('chatSidebarCollapsed', String(s.chatSidebarCollapsed)) } catch { /* ignore */ }
+        set({ chatSidebarCollapsed: s.chatSidebarCollapsed })
+      }
+    } catch { /* ignore */ }
   },
   // ── 聊天界面当前收起状态（仅会话内，不写 localStorage）──
   chatSidebarCurrentCollapsed: (() => {

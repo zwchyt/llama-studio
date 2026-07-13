@@ -78,7 +78,7 @@ body,
 body {
   font-family: var(--font);
   background: var(--bg);
-  color: var(--text);
+  color: #7c7c87;
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -578,7 +578,7 @@ select {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-	  background: #1c6937;
+	  background: #6ab785;
 	  box-shadow: 0 0 0 3px rgb(1 65 24 / 22%);
   flex-shrink: 0;
   margin-left: 2px;
@@ -657,9 +657,9 @@ select {
 }
 
 .btn-primary {
-  background: var(--accent);
-  color: var(--accent-fg);
-  border-color: var(--accent);
+  background: #d3d3d3;
+  color: #120404;
+  border-color: #dbdbdb;
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -696,9 +696,9 @@ select {
 }
 
 .btn-danger {
-  background: var(--danger);
-  color: #fff;
-  border-color: var(--danger);
+    background: #bf726a;
+    color: #020000;
+    border-color: #cdcacc;
 }
 
 .btn-danger:hover:not(:disabled) {
@@ -748,8 +748,8 @@ select {
 }
 
 .model-card.running {
-  border-color: var(--success);
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, .1), var(--shadow-md);
+    border-color: #d4d5d3;
+    box-shadow: 0 0 0 3px rgb(0 175 23 / 10%), var(--shadow-md);
 }
 
 .card-header {
@@ -943,8 +943,8 @@ select {
 }
 
 .status-dot.running {
-  background: var(--success);
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, .25);
+  background: #df6464;
+  box-shadow: 0 0 0 3px rgb(197 63 99 / 25%);
   animation: pulse 1.8s ease-in-out infinite;
 }
 
@@ -1238,7 +1238,7 @@ select {
 .cmd-label {
   font-size: 12px;
   font-weight: 600;
-  color: var(--text);
+  color: #4f5f4f;
 }
 
 .cmd-arg {
@@ -1283,7 +1283,7 @@ select {
 }
 
 .toggle input:checked~.toggle-track {
-  background: var(--accent);
+  background: #7a8978;
 }
 
 	.toggle-thumb {
@@ -2259,19 +2259,19 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: #fff;
+  background: #ececec;
   color: #000;
   cursor: pointer;
   transition: all .15s;
 }
 
 .api-tab:hover {
-  background: #f0f0f0;
+  background: #e0e0e0;
   border-color: var(--accent);
 }
 
 .api-tab.active {
-  background: #fff;
+  background: #ececec;
   color: #000;
   border-color: #888;
 }
@@ -2301,7 +2301,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 .api-endpoints-body {
-  background: #fff;
+  background: #ececec;
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   max-height: 260px;
@@ -2612,11 +2612,10 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 .param-tab.active {
-  background: var(--accent);
-  color: var(--accent-fg);
-  border-color: var(--accent);
+    background: #d1d1d1;
+    color: #160808;
+    border-color: #e1e1e1;
 }
-
 .param-tab svg {
   width: 13px;
   height: 13px;
@@ -3299,9 +3298,9 @@ webview {
 }
 
 .launch-mode-btn.active {
-  background: var(--accent);
-  color: var(--accent-fg);
-  border-color: var(--accent);
+    background: #d3d3d3;
+    color: #120101;
+    border-color: #d9d9d9;
 }
 
 .launch-mode-btn:disabled {
@@ -6773,7 +6772,7 @@ webview {
   gap: 8px;
   font-size: 15px;
   font-weight: 600;
-  color: var(--text);
+  color: #7c7c87;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
@@ -6799,7 +6798,7 @@ webview {
   top: 10px;
   bottom: 10px;
   width: 3px;
-  background: linear-gradient(180deg, var(--accent), var(--success));
+  background: linear-gradient(180deg, #2e3b28, #ffffff);
   border-radius: 2px;
 }
 
@@ -6885,7 +6884,7 @@ webview {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg);
-  color: var(--text);
+  color: #979797;
   text-align: center;
   font-family: var(--font-mono, 'SF Mono', monospace);
   outline: none;
@@ -6963,7 +6962,7 @@ webview {
 }
 
 .benchmark-btn-run {
-  background: var(--success);
+  background: #3d995f;
   color: white;
 }
 
