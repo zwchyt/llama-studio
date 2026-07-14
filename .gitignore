@@ -74,6 +74,10 @@ Thumbs.db
 # Runtime config (user-specific local paths)
 settings.json
 
+# Agent Code 工作台会话记录（用户数据，不入库；保留空文件夹，仅忽略日志文件）
+Agent session/*
+!Agent session/.gitkeep
+
 # Windows reserved device name (some tools may create this accidentally)
 nul
 

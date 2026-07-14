@@ -1,4 +1,5 @@
 import { createWithEqualityFn } from 'zustand/traditional'
+import type { AgentProject } from '../../../shared/types'
 import { shallow } from 'zustand/shallow'
 import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, AppUpdateInfo, RunningStatus, ModelMetrics, ModelDownloadPhase, HfDownloadPhase } from '../../../shared/types'
 interface CardState {
@@ -33,6 +34,15 @@ function logClass(text: string): string {
   if (/\bwarn(ing)?\b/i.test(text)) return 'log-warn'
   return 'log-stdout'
 }
+// ── Agent Code 工作台：项目（含会话）落盘持久化（防抖，避免流式过程中频繁写盘）──
+let saveAgentProjectsTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleSaveAgentProjects(p: AgentProject[]): void {
+  if (saveAgentProjectsTimer) clearTimeout(saveAgentProjectsTimer)
+  saveAgentProjectsTimer = setTimeout(() => {
+    window.api?.saveAgentProjects(p).catch(() => {})
+  }, 800)
+}
+
 interface AppStore {
   cards: CardState[]
   backends: BackendVersion[]
@@ -43,7 +53,7 @@ interface AppStore {
   commandsSchema: CommandsSchema | null
   releaseInfo: ReleaseInfo | null
   paths: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string; chatTemplates: string } | null
-  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'terminal' | 'ocr' | 'benchmark'
+  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'terminal' | 'ocr' | 'benchmark' | 'agent-code'
   showCreateModal: boolean
   editingTemplate: Template | null
   updateDismissed: boolean
@@ -144,6 +154,9 @@ interface AppStore {
     selectedModel: string
   } | null
   setBenchmarkResult: (r: AppStore['benchmarkResult']) => void
+  // ── Agent Code ──
+  agentProjects: AgentProject[]
+  setAgentProjects: (p: AgentProject[]) => void
 }
 // createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
@@ -312,6 +325,11 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   // ── 基准测试持久结果 ──
   benchmarkResult: null,
   setBenchmarkResult: (r) => set({ benchmarkResult: r }),
+  agentProjects: [],
+  setAgentProjects: (p) => {
+    set({ agentProjects: p })
+    scheduleSaveAgentProjects(p)
+  },
   // ── 聊天界面 ──
   chatSidebarCollapsed: (() => {
     try { return localStorage.getItem('chatSidebarCollapsed') === 'true' } catch { return false }

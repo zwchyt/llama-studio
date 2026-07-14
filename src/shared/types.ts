@@ -197,3 +197,27 @@ export type HfDownloadPhase = ModelDownloadPhase | 'saving' | 'creating_template
 
 /** 所有下载阶段的超集 */
 export type DownloadPhase = HfDownloadPhase
+
+// ── Agent Code 工作台 ──
+export interface AgentMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  toolCalls?: { id: string; name: string; args: string; result?: string; truncated?: boolean; resultTotal?: number; failed?: boolean; durationMs?: number }[]
+  attachments?: Attachment[]  // 用户消息的附件（图片 / 文件）
+  stopped?: boolean           // 用户手动停止生成，消息内容不完整
+}
+
+export interface AgentSession {
+  id: string
+  title: string
+  messages: AgentMessage[]
+}
+
+export interface AgentProject {
+  id: string
+  title: string
+  workspaceDir: string
+  expanded: boolean
+  sessions: AgentSession[]
+}

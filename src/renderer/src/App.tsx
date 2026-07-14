@@ -21,6 +21,7 @@ import LlamaChatView from './components/LlamaChatView'
 import TerminalView from './components/TerminalView'
 import OcrView from './components/OcrView'
 import BenchmarkView from './components/BenchmarkView'
+import AgentCodeView from './components/AgentCodeView'
   import { buildDefaultTemplate } from './utils/defaultTemplate'
 import { writeToTerminal } from './utils/terminalRegistry'
 import { useTerminalStore } from './store/terminalStore'
@@ -79,6 +80,11 @@ function AppMain() {
     }
 
     useStore.getState().initUiSettings()
+
+    // Agent Code 工作台：启动时从磁盘恢复项目（含会话）历史
+    window.api.loadAgentProjects()
+      .then((projects) => { if (Array.isArray(projects)) useStore.getState().setAgentProjects(projects) })
+      .catch(() => {})
 
     // Stage 2: Default schema (activeBackend watcher at line 200 will re-fetch on backend change)
     window.api.getCommands('').then((cmds) => {
@@ -429,6 +435,7 @@ function AppMain() {
       case 'llama': return <LlamaChatView />
       case 'ocr': return <OcrView />
       case 'benchmark': return <BenchmarkView />
+      case 'agent-code': return <AgentCodeView />
       case 'terminal': return null
       default: return <CardsView />
     }

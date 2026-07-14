@@ -716,6 +716,11 @@ select {
   font-size: 12px;
 }
 
+.btn-xs {
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
 .btn-icon {
   padding: 7px;
   border-radius: var(--radius-sm);
@@ -5122,12 +5127,10 @@ webview {
   width: auto;
   box-sizing: border-box;
   padding: 8px 10px 8px 4px;
-  background: var(--surface);
-  border: 1.5px solid var(--border);
   border-radius: 18px;
   box-shadow: var(--shadow-md);
   flex-shrink: 0;
-  transition: border-color var(--transition), box-shadow var(--transition);
+  transition: box-shadow var(--transition);
 }
 
 .chat-input-wrap:focus-within {
@@ -5136,18 +5139,15 @@ webview {
 
 /* 流式生成中脉冲动画 */
 .chat-input-wrap.streaming {
-  border-color: var(--accent);
   animation: chatInputPulse 2.4s ease-in-out infinite;
 }
 
 @keyframes chatInputPulse {
   0%, 100% {
     box-shadow: var(--shadow-md), 0 0 0 0 rgba(10, 10, 10, .08);
-    border-color: var(--accent);
   }
   50% {
     box-shadow: var(--shadow-md), 0 0 0 5px rgba(10, 10, 10, .04);
-    border-color: var(--border-strong);
   }
 }
 
@@ -5296,6 +5296,10 @@ webview {
   line-height: 1.5;
   max-height: 200px;
   min-height: 24px;
+  overflow-y: auto;
+  appearance: none;
+  -webkit-appearance: none;
+  box-shadow: none;
 }
 
 .chat-input:focus {
@@ -5513,7 +5517,10 @@ webview {
   max-height: 0;
   overflow: hidden;
   contain: content;
-  transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.25s ease;
+  /* 收起的卡顿根因：transition 包含 max-height 时，浏览器每帧都对子树（含 KaTeX）
+     做完整布局计算。改为只在 opacity 上做过渡（合成器线程处理，不触发布局），
+     max-height 瞬间切换，从根本上消除收起时的布局风暴。 */
+  transition: opacity 0.25s ease;
   opacity: 0;
 }
 
@@ -5521,6 +5528,16 @@ webview {
   max-height: 400px;
   overflow-y: auto;
   opacity: 1;
+}
+
+.chat-think-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
 }
 
 /* 思考已中断：灰色边框 + 淡色标签 */
@@ -7525,6 +7542,1564 @@ input[type="reset"]:not(:disabled) {
 }
 .cursor-preview-cell-label {
   pointer-events: none;
+}
+
+/* ── Agent Code 工作台（聊天布局）── */
+.agent-code-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  min-width: 500px;         /* 侧边栏200px + 聊天区最小300px，防止完全坍塌 */
+}
+
+.agent-code-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  height: 40px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.agent-code-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-code-topbar-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.agent-code-rename-input {
+  flex: 1;
+  min-width: 0;
+  max-width: 200px;
+  padding: 3px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+
+.agent-code-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.agent-code-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--warning, #e6a700);
+  margin-right: 4px;
+}
+
+/* ⚠️ 以下为「Agent Code 工作台」专用聊天样式，全部挂在 .agent-code-view 下，
+   与原生聊天界面（ChatView）完全隔离，避免互相影响。 */
+.agent-code-view .chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-code-view .chat-messages .chat-msg {
+  display: flex;
+  gap: 10px;
+  padding: 0 16px;
+}
+
+.agent-code-view .chat-messages .chat-msg-avatar {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.agent-code-view .chat-messages .chat-msg-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 用户 / 助手消息共用右边界（content-38）：
+   - 助手：头像在左，内容区右侧预留头像宽；气泡与思考链整宽靠左，自然如模型
+   - 用户：头像在右，气泡按文字长度自适应、靠右，右边缘与助手对齐 */
+.agent-code-view .chat-messages .chat-msg-user .chat-msg-body {
+  align-items: flex-end;
+}
+
+.agent-code-view .chat-messages .chat-msg-assistant .chat-msg-body {
+  margin-right: 38px;           /* 右侧预留与用户头像等宽，共用右边界 */
+}
+
+/* 助手气泡整宽靠左：与思考链 / 工具调用同宽（均 100%），右边缘对齐 */
+.agent-code-view .chat-messages .chat-msg-assistant .chat-msg-markdown {
+  width: 100%;
+  max-width: 100%;
+}
+
+/* 思考链框与助手文本气泡同宽（均整宽），右边缘对齐 */
+.agent-code-view .chat-messages .chat-msg-assistant .chat-think {
+  max-width: 100%;
+}
+
+/* 用户气泡：按文字长度自适应宽度（不撑满），靠右，右边缘落在 content-38 */
+.agent-code-view .chat-messages .chat-msg-user .chat-msg-markdown {
+  max-width: 85%;
+}
+
+.agent-code-view .chat-messages .chat-msg-bubble {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.agent-code-view .chat-messages .chat-msg-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: inherit;
+  margin: 0;
+}
+
+.chat-tool-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+
+.chat-tool-args {
+  background: #1e1e1e;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+}
+
+.chat-tool-args pre,
+.chat-tool-result pre {
+  margin: 0;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.chat-tool-args pre {
+  color: #d4d4d4;
+}
+
+.chat-tool-result {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+}
+
+.chat-tool-result pre {
+  color: var(--text);
+}
+
+/* ── Agent Code 工作台 输入框（全新设计）── */
+
+.chat-input-area {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-code-view .chat-input-row {
+  position: relative;
+  width: 100%;
+}
+
+.agent-code-view .chat-input {
+  width: 100%;
+  padding: 10px 44px;
+  font-size: 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  resize: none;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  line-height: 1.5;
+  box-sizing: border-box;
+  min-height: 42px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.agent-code-view .chat-input:focus {
+  border-color: var(--accent);
+}
+
+.agent-code-view .chat-input::placeholder {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.agent-code-view .chat-send-btn.btn {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  padding: 0;
+}
+
+.agent-code-view .chat-input-row .chat-attach-btn {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 0;
+  z-index: 1;
+}
+
+.agent-code-view .chat-input-row .chat-attach-btn:hover:not(:disabled) {
+  color: var(--accent);
+  background: var(--border);
+}
+
+.agent-code-view .chat-input-row .chat-attach-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.agent-code-view .chat-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.chat-attach-thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.chat-attach-fileicon {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.chat-attach-name {
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-attach-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 3px;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.chat-attach-remove:hover:not(:disabled) {
+  background: var(--border);
+  color: var(--text);
+}
+
+.chat-attach-remove:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 输入框左侧的附件按钮（Agent Code 工作台专用，按钮绝对定位在 textarea 上方） */
+.agent-code-view .chat-input-row .chat-attach-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--transition), color var(--transition);
+  margin-bottom: 2px;
+  padding: 0;
+}
+
+.agent-code-view .chat-input-row .chat-attach-btn:hover:not(:disabled) {
+  background: var(--bg);
+  color: var(--text-secondary);
+}
+
+.agent-code-view .chat-input-row .chat-attach-btn:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+.agent-code-view .chat-input-row .chat-input {
+  padding-left: 44px;
+  min-height: 42px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.agent-code-view .chat-input:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* ── 附件 / 图片输入（Agent Code 工作台）── */
+.chat-attach-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+  width: 100%;
+}
+
+.chat-attach-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 4px 6px 4px 4px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* ── Agent Code 分栏布局 ── */
+.agent-code-body {
+  flex: 1;
+  display: flex;
+  overflow: auto hidden;    /* 水平溢出时可滚动（右侧面板），垂直隐藏（内部滚动由聊天区自己处理） */
+  min-height: 0;
+}
+
+/* 文件树 / 预览面板之间的可拖拽分隔条 */
+.agent-code-resize-handle {
+  width: 5px;
+  flex-shrink: 0;
+  align-self: stretch;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+  transition: background .15s;
+}
+
+.agent-code-resize-handle:hover,
+.agent-code-resize-handle:active {
+  background: var(--accent);
+}
+
+.agent-code-chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 300px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* ── Agent Code 侧边栏（会话列表）── */
+
+/* 侧边栏折叠容器（模仿 chat-sidebar-collapser 模式） */
+.agent-code-sidebar-collapser {
+  display: flex;
+  width: 200px;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: width 0.25s ease, opacity 0.2s ease;
+}
+
+.sidebar-collapsed .agent-code-sidebar-collapser {
+  width: 0;
+  opacity: 0;
+}
+
+.agent-code-sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* ── 右侧面板（文件树 + 预览）折叠容器 ── */
+.agent-code-right-collapser {
+  display: flex;
+  flex-shrink: 0;
+  overflow: hidden;
+  max-width: 2000px;
+  transition: max-width 0.35s ease, opacity 0.2s ease;
+}
+
+.agent-code-right-collapser.collapsed {
+  max-width: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── 预览面板折叠容器 ── */
+.agent-code-preview-group {
+  display: flex;
+  flex-shrink: 0;
+  overflow: hidden;
+  max-width: 800px;
+  transition: max-width 0.25s ease, opacity 0.2s ease;
+}
+
+.agent-code-preview-group.collapsed {
+  max-width: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.agent-code-sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  flex-shrink: 0;
+}
+.agent-code-session-new-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .15s;
+  flex-shrink: 0;
+}
+
+.agent-code-session-new-btn:hover {
+  background: var(--surface-hover);
+}
+
+/* ── 项目层级 ── */
+.agent-code-project-group {
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-code-project-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 8px 7px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  transition: background .15s;
+  user-select: none;
+}
+
+.agent-code-project-item:hover {
+  background: var(--surface-hover);
+}
+
+.agent-code-project-item.active {
+  background: #d9d9d9;
+  color: #100606;
+}
+
+.agent-code-project-item.active .agent-code-session-del {
+  color: rgb(24 11 11 / 70%);
+}
+
+.agent-code-project-chevron {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 3px;
+  opacity: .6;
+}
+
+.agent-code-project-chevron:hover {
+  opacity: 1;
+  background: rgba(128,128,128,.15);
+}
+
+.agent-code-child-sessions {
+  padding-left: 22px;
+  border-top: 1px solid var(--border);
+}
+
+.agent-code-session-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background .15s;
+  user-select: none;
+  border-radius: 0;
+}
+
+.agent-code-session-item:hover {
+  background: var(--surface-hover);
+}
+
+.agent-code-session-item.active {
+  background: var(--surface-hover);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.agent-code-session-title {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-code-session-del {
+  flex-shrink: 0;
+  opacity: 0;
+  padding: 2px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.agent-code-project-item:hover .agent-code-session-del,
+.agent-code-session-item:hover .agent-code-session-del {
+  opacity: 1;
+}
+
+.agent-code-session-del:hover {
+  background: rgba(255,80,80,.2);
+  color: #e55;
+}
+
+.agent-code-add-sess-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all .15s;
+}
+
+.agent-code-add-sess-btn:hover {
+  color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.agent-code-session-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.agent-code-empty-chat {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 40px 20px;
+  text-align: center;
+}
+
+/* ── Agent 欢迎 / 空会话引导页 ── */
+.agent-welcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 24px;
+  text-align: center;
+}
+
+.agent-welcome-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.agent-welcome-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.agent-welcome-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  align-self: flex-end;
+  max-width: 520px;
+  width: 100%;
+  padding-right: 4px;
+}
+
+.agent-welcome-suggestions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+  width: 100%;
+  max-width: 520px;
+}
+
+.agent-suggestion {
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, transform .05s;
+}
+
+.agent-suggestion:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.agent-suggestion:active {
+  transform: translateY(1px);
+}
+
+/* ── Agent Code 工具调用展示 ── */
+.chat-tool-calls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.chat-tool-call {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.chat-tool-call-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  background: var(--surface-hover);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+
+.chat-tool-name {
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.chat-tool-args, .chat-tool-result {
+  padding: 8px 10px;
+}
+
+.chat-tool-args pre, .chat-tool-result pre {
+  margin: 0;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.chat-tool-args {
+  background: #1a1a2e;
+}
+
+.chat-tool-args pre {
+  color: #d4d4d4;
+}
+
+.chat-tool-result {
+  border-top: 1px solid var(--border);
+}
+
+.chat-tool-result pre {
+  color: var(--text);
+}
+
+/* ── Agent Code 工具调用块（中文名 / 折叠 / 截断 / 加载指示）── */
+.agent-tool-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.agent-tool-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 4px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.agent-tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-tool-call {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+/* 不同工具类型使用不同强调色，便于一眼区分 */
+.agent-tool-call.tool-read { --tool-accent: #2563eb; }
+.agent-tool-call.tool-write { --tool-accent: var(--success); }
+.agent-tool-call.tool-edit { --tool-accent: var(--warning); }
+.agent-tool-call.tool-glob { --tool-accent: #7c3aed; }
+.agent-tool-call.tool-grep { --tool-accent: #0891b2; }
+.agent-tool-call.tool-bash { --tool-accent: #ea580c; }
+.agent-tool-call.tool-delete { --tool-accent: #d946ef; }
+
+.agent-tool-call-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface-hover);
+  border-bottom: 1px solid var(--border);
+  color: var(--tool-accent, var(--accent));
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.agent-tool-call-name {
+  color: var(--tool-accent, var(--accent));
+}
+
+.agent-tool-call-desc {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 多工具调用时的步骤序号 */
+.agent-tool-call-step {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+/* 头部预览摘要（文件路径 / 命令 / 模式等），省略号截断 */
+.agent-tool-call-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+/* 文件类工具的可点击路径（在右侧预览面板打开） */
+.agent-tool-call-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 42%;
+  border: none;
+  background: transparent;
+  color: var(--tool-accent, var(--accent));
+  font-size: 11px;
+  font-weight: 400;
+  cursor: pointer;
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-tool-call-path:hover {
+  text-decoration: underline;
+}
+
+/* 右侧元信息区（状态 + 耗时），始终靠右且不挤压描述 */
+.agent-tool-call-meta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.agent-tool-call-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.agent-tool-call-status.ok { color: var(--success); }
+.agent-tool-call-status.err { color: var(--danger); }
+.agent-tool-call-status.run { color: var(--tool-accent, var(--accent)); }
+
+.agent-tool-call-dur {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-tool-call-spin {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.agent-tool-args {
+  padding: 4px 10px 0;
+}
+
+/* 卡片正文（展开后显示），整体为纯文本，不渲染为 markdown */
+.agent-tool-call-body {
+  border-top: 1px solid var(--border);
+}
+
+/* Write/Edit 正文以纯文本展示（真实换行、等宽、可滚动），避免出现 JSON 转义或 markdown 语义 */
+.agent-tool-content {
+  margin: 4px 0 8px;
+}
+
+.agent-tool-content-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.agent-tool-content-pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  max-height: 360px;
+  overflow: auto;
+}
+
+/* 带行号的纯文本代码块（读取 / 写入文件内容） */
+.agent-tool-lined {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.agent-tool-lined-row {
+  display: flex;
+  align-items: flex-start;
+}
+
+.agent-tool-lined-num {
+  flex-shrink: 0;
+  width: 38px;
+  padding: 1px 6px 1px 0;
+  margin-right: 8px;
+  text-align: right;
+  color: var(--text-muted);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-tool-lined-code {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 8px 1px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 文件类工具的可点击路径条（在正文顶部，点击于右侧预览面板打开） */
+.agent-tool-filebar {
+  padding: 4px 0 2px;
+}
+
+/* Edit 工具分栏 diff：左原内容 / 右新内容，带行号与 +/- 标记 */
+.agent-tool-diff {
+  margin: 4px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.agent-tool-diff-head {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--surface-hover);
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-tool-diff-head > span {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.agent-tool-diff-head > span:last-child {
+  border-left: 1px solid var(--border);
+}
+
+.agent-tool-diff-body {
+  max-height: 420px;
+  overflow: auto;
+}
+
+.agent-tool-diff-row {
+  display: grid;
+  grid-template-columns: 44px 1fr 44px 1fr;
+}
+
+.agent-tool-diff-num {
+  padding: 1px 6px;
+  text-align: right;
+  color: var(--text-muted);
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-tool-diff-num.right {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+
+.agent-tool-diff-code {
+  margin: 0;
+  padding: 1px 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.agent-tool-diff-mark {
+  display: inline-block;
+  width: 12px;
+  margin-right: 2px;
+  font-weight: 700;
+  user-select: none;
+}
+
+.agent-tool-diff-row.del .agent-tool-diff-code.left {
+  background: rgba(220, 38, 38, 0.10);
+}
+
+.agent-tool-diff-row.del .agent-tool-diff-num.left {
+  background: rgba(220, 38, 38, 0.16);
+  color: #b91c1c;
+}
+
+.agent-tool-diff-row.del .agent-tool-diff-mark {
+  color: #dc2626;
+}
+
+.agent-tool-diff-row.ins .agent-tool-diff-code.right {
+  background: rgba(22, 163, 74, 0.12);
+}
+
+.agent-tool-diff-row.ins .agent-tool-diff-num.right {
+  background: rgba(22, 163, 74, 0.18);
+  color: #15803d;
+}
+
+.agent-tool-diff-row.ins .agent-tool-diff-mark {
+  color: #16a34a;
+}
+
+.agent-tool-subtoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.agent-tool-subtoggle:hover {
+  color: var(--text);
+}
+
+.agent-tool-chev {
+  transition: transform .15s;
+}
+
+.agent-tool-chev.open {
+  transform: rotate(90deg);
+}
+
+.agent-tool-args-pre {
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  max-height: 320px;
+  overflow: auto;
+}
+
+.agent-tool-result {
+  padding: 6px 10px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.agent-tool-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.agent-tool-result-label {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.agent-tool-result-pre {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.agent-tool-result-running {
+  padding: 8px 10px;
+}
+
+/* Bash 命令以终端样式高亮展示 */
+.agent-tool-bash {
+  margin: 0 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.agent-tool-bash-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--surface-hover);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.agent-tool-bash-cmd {
+  margin: 0;
+  padding: 8px 10px;
+  background: #1a1a2e;
+  color: #d4d4d4;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-tool-dots {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: agent-tool-pulse 1s ease-in-out infinite;
+}
+
+@keyframes agent-tool-pulse {
+  0%, 100% { opacity: .3; }
+  50% { opacity: 1; }
+}
+
+/* 文件预览 Markdown 渲染（覆盖 chat-msg-markdown 的气泡样式，填满面板） */
+.agent-code-preview-md {
+  max-width: 100%;
+  width: 100%;
+  background: transparent;
+  border-radius: 0;
+  padding: 12px 16px;
+  overflow: auto;
+  font-size: 13px;
+}
+
+/* ── Agent Code 聊天消息区（复用原样式 + 适配）── */
+
+.agent-code-tree {
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-code-tree-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.agent-code-tree-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── 文件树 ── */
+.file-tree {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+
+.file-tree-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.file-tree-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.file-tree-path {
+  padding: 6px 12px;
+  font-size: 10px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-tree-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.file-tree-loading,
+.file-tree-empty {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.file-tree-node {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.file-tree-node:hover {
+  background: var(--surface-hover);
+}
+
+.file-tree-arrow {
+  width: 12px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.file-tree-icon {
+  width: 16px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.file-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-tree-node-error .file-tree-name {
+  color: #e55;
+}
+
+.file-tree-error-icon {
+  color: #e55;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.file-tree-error-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: #e55;
+  cursor: pointer;
+  opacity: .85;
+}
+
+.file-tree-error-row:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.file-tree-truncated {
+  padding: 2px 8px 4px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+/* ── 文件内容预览（文件树右侧独立列）── */
+.agent-code-preview {
+  width: 360px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.agent-code-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.agent-code-preview-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-code-preview-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.agent-code-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.agent-code-preview-close:hover {
+  color: #ff5c5c;
+  border-color: #ff5c5c;
+}
+
+/* 多文件预览标签栏（只显示文件名，悬停显示完整路径） */
+.agent-code-preview-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.agent-code-preview-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  max-width: 160px;
+  padding: 2px 4px 2px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.agent-code-preview-tab.active {
+  background: var(--surface-hover);
+  border-color: #dfdfdf;
+  color: var(--text);
+}
+
+.agent-code-preview-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-code-preview-tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.agent-code-preview-tab-close:hover {
+  color: #ff5c5c;
+  background: var(--border);
+}
+
+.agent-code-preview-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.agent-code-preview-code {
+  padding: 8px 0;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.agent-code-preview-line {
+  display: flex;
+  align-items: flex-start;
+}
+
+.agent-code-preview-ln {
+  flex-shrink: 0;
+  width: 44px;
+  padding-right: 8px;
+  text-align: right;
+  color: var(--text-muted);
+  user-select: none;
+  border-right: 1px solid var(--border);
+}
+
+.agent-code-preview-lc {
+  flex: 1;
+  min-height: 1.5em;
+  padding-left: 10px;
+  padding-right: 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.agent-code-preview-error {
+  padding: 12px 10px;
+  font-size: 12px;
+  color: #e55;
 }
 
 

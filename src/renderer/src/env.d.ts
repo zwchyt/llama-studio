@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, ChatStreamChunk } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, ChatStreamChunk, AgentProject } from '../../shared/types'
 // 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
 interface ModelFileInfo {
   name: string
@@ -106,6 +106,9 @@ interface LlamaCppApi {
   removeMetricsUpdateListener: () => void
   getMetricsPolling: () => Promise<boolean>
   setMetricsPolling: (enabled: boolean) => Promise<{ success: boolean }>
+  getRunningProcesses: () => Promise<string[]>
+  getUiSettings: () => Promise<{ splashEnabled?: boolean; soundEnabled?: boolean; chatSidebarCollapsed?: boolean }>
+  setUiSetting: (key: string, value: boolean) => Promise<void>
   listGlobalAgents: () => Promise<{ name: string; pkg: string; cmd: string; installed: boolean; version: string | null; website?: string }[]>
   launchAgent: (cmd: string, cwd: string) => Promise<{ success: boolean; error?: string }>
   installAgent: (pkg: string) => Promise<{ success: boolean; error?: string }>
@@ -116,6 +119,7 @@ interface LlamaCppApi {
   saveChatSession: (session: object) => Promise<{ success: boolean; id?: string; error?: string }>
   deleteChatSession: (id: string) => Promise<{ success: boolean }>
   chatStream: (opts: { streamId: string; port: number; body: object }) => Promise<{ success: boolean; error?: string }>
+  chatCompletion: (opts: { port: number; body: object }) => Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }>
   abortChatStream: (streamId: string) => Promise<{ success: boolean }>
   onChatStreamChunk: (cb: (data: ChatStreamChunk) => void) => void
   removeChatStreamListener: () => void
@@ -148,7 +152,29 @@ interface LlamaCppApi {
   removeBenchmarkDoneListener: () => void
   onBenchmarkError: (cb: (data: { id: string; error: string }) => void) => void
   removeBenchmarkErrorListener: () => void
-}
+  // ── Agent Code 文件树 ──
+  buildFileTree: (dir: string, maxDepth?: number) => Promise<{ success: boolean; tree?: { name: string; path: string; isDir: boolean; children?: any[] }; error?: string }>
+  expandFileTree: (dir: string, limit?: number) => Promise<{ success: boolean; children?: { name: string; path: string; isDir: boolean }[]; truncated?: boolean; total?: number; error?: string }>
+  // ── Agent Code 文件树自动刷新（目录监听）──
+  startAgentFileWatch: (dir: string) => Promise<{ success: boolean; error?: string }>
+  stopAgentFileWatch: () => Promise<{ success: boolean }>
+  onAgentFileChanged: (cb: (data: { dir: string; filename: string }) => void) => void
+  removeAgentFileListeners: () => void
+  // ── Agent Code 文件操作 ──
+  readFile: (filePath: string, opts?: { maxBytes?: number }) => Promise<{ success: boolean; content?: string; lines?: number; totalLines?: number; startLine?: number; truncated?: boolean; error?: string }>
+  writeFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>
+  editFile: (filePath: string, oldString: string, newString: string, replaceAll?: boolean) => Promise<{ success: boolean; content?: string; error?: string }>
+  glob: (opts: { pattern: string; path: string; limit?: number }) => Promise<{ success: boolean; filenames?: string[]; numFiles?: number; truncated?: boolean; error?: string }>
+  grep: (opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean }) => Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; error?: string }>
+	  // ── Agent Code 工作台 项目持久化 ──
+	  loadAgentProjects: () => Promise<AgentProject[]>
+	  saveAgentProjects: (projects: AgentProject[]) => Promise<{ success: boolean; error?: string }>
+		  // ── Agent Code Bash 执行 ──
+		  executeCommand: (opts: { command: string; timeout?: number }) => Promise<{ stdout: string; stderr: string; code: number }>
+		  setBashCwd: (dir: string) => Promise<{ success: boolean }>
+		  // ── Agent Code 文件删除 ──
+		  deletePath: (targetPath: string, recursive: boolean) => Promise<{ success: boolean; message?: string; error?: string }>
+	}
 declare global {
   interface Window { api: LlamaCppApi }
 }

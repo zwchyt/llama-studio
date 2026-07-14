@@ -1,14 +1,15 @@
 import { ipcMain, dialog, shell, BrowserWindow, net } from 'electron'
 import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
-  unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, promises as fsPromises
+  unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, watch, promises as fsPromises
 } from 'fs'
-import { join, extname, basename, dirname, resolve, sep } from 'path'
-import { spawn, execSync, ChildProcess } from 'child_process'
+import { join, extname, basename, dirname, resolve, sep, relative } from 'path'
+import { spawn, exec, execSync, ChildProcess } from 'child_process'
 import http from 'http'
 import { app } from 'electron'
 import { randomUUID } from 'crypto'
 import type * as ptyNs from 'node-pty'
+import type { AgentProject, AgentMessage } from '../shared/types'
 
 let ptyModule: typeof ptyNs | null = null
 async function getPty(): Promise<typeof ptyNs> {
@@ -2169,7 +2170,38 @@ export function registerIpcHandlers(): void {
     })
   })
 
-	  // --- chat-completion-stream (流式聊天代理：POST /v1/chat/completions，SSE 转发) ---
+	  // --- chat-completion (非流式聊天代理：POST /v1/chat/completions，返回解析后的 JSON) ---
+  ipcMain.handle('chat-completion', (_e, opts: { port: number; body: Record<string, unknown> }): Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }> => {
+    return new Promise((resolve) => {
+      const { port, body } = opts
+      const bodyStr = JSON.stringify({ ...body, stream: false })
+      const req = http.request(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
+        agent: httpAgent
+      }, (res) => {
+        let respBody = ''
+        res.on('data', (c: Buffer) => { respBody += c.toString() })
+        res.on('end', () => {
+          if (res.statusCode && res.statusCode >= 400) {
+            resolve({ ok: false, status: res.statusCode, error: `HTTP 错误 ${res.statusCode}: ${respBody.slice(0, 500)}` })
+            return
+          }
+          try {
+            resolve({ ok: true, status: res.statusCode, data: JSON.parse(respBody) })
+          } catch (e: any) {
+            resolve({ ok: false, error: `解析失败: ${e?.message || String(e)}` })
+          }
+        })
+      })
+      req.on('error', (e) => resolve({ ok: false, error: e.message }))
+      req.setTimeout(120000, () => { req.destroy(); resolve({ ok: false, error: '请求超时' }) })
+      req.write(bodyStr)
+      req.end()
+    })
+  })
+
+  // --- chat-completion-stream (流式聊天代理：POST /v1/chat/completions，SSE 转发) ---
 	  ipcMain.handle('chat-completion-stream', (e, opts: {
 	    streamId: string; port: number; body: Record<string, unknown>
 	  }): Promise<{ success: boolean; error?: string }> => {
@@ -3158,6 +3190,650 @@ export function registerIpcHandlers(): void {
     const filePath = join(chatDir, `chat-${Date.now()}.png`)
     writeFileSync(filePath, buffer)
     return filePath
+  })
+
+  // ── Agent Code 工作台 文件操作 ──
+  const MAX_FILE_SIZE = 1024 * 1024 * 1024 // 1 GiB
+
+  function detectEncoding(buffer: Buffer): 'utf16le' | 'utf8' {
+    return buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe ? 'utf16le' : 'utf8'
+  }
+
+  function readFileContent(filePath: string): { content: string; encoding: string; fileExists: boolean } {
+    try {
+      const buf = readFileSync(filePath)
+      const encoding = detectEncoding(buf)
+      const content = buf.toString(encoding as BufferEncoding).replaceAll('\r\n', '\n')
+      return { content, encoding, fileExists: true }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+        return { content: '', encoding: 'utf8', fileExists: false }
+      }
+      throw e
+    }
+  }
+
+  function findActualString(fileContent: string, oldString: string): string | null {
+    if (fileContent.includes(oldString)) return oldString
+    const curly = oldString.replace(/'/g, '\u2018').replace(/'/g, '\u2019').replace(/"/g, '\u201c').replace(/"/g, '\u201d')
+    if (fileContent.includes(curly)) return curly
+    const straight = curly.replace(/\u2018/g, "'").replace(/\u2019/g, "'").replace(/\u201c/g, '"').replace(/\u201d/g, '"')
+    if (straight !== curly && fileContent.includes(straight)) return straight
+    return null
+  }
+
+  // 跟踪读取时间戳，用于 edit 防竞态检测
+  const readFileTimestamps = new Map<string, number>()
+  function getFileModificationTime(filePath: string): number {
+    try { return statSync(filePath).mtimeMs } catch { return 0 }
+  }
+
+  ipcMain.handle('read-file', async (_e, filePath: string, opts?: { maxBytes?: number }): Promise<{ success: boolean; content?: string; lines?: number; totalLines?: number; startLine?: number; truncated?: boolean; error?: string }> => {
+    try {
+      const fileSize = statSync(filePath).size
+      if (fileSize > MAX_FILE_SIZE) {
+        return { success: false, error: `文件过大（${(fileSize / 1024 / 1024).toFixed(1)} MiB），最大允许读取 1 GiB` }
+      }
+      readFileTimestamps.set(filePath, getFileModificationTime(filePath))
+
+      // 预览场景：仅读取前 maxBytes 字节，避免大文件占满内存
+      const maxBytes = opts?.maxBytes ?? 0
+      const previewLarge = maxBytes > 0 && fileSize > maxBytes
+      let content: string
+      if (previewLarge) {
+        const fh = await fsPromises.open(filePath, 'r')
+        try {
+          const buf = Buffer.alloc(maxBytes)
+          const { bytesRead } = await fh.read(buf, 0, maxBytes, 0)
+          content = buf.slice(0, bytesRead).toString('utf-8')
+        } finally {
+          await fh.close()
+        }
+        content = content.replace(/[\uD800-\uDBFF]$/u, '') // 去除可能被截断的半个代理对
+      } else {
+        const r = readFileContent(filePath)
+        if (!r.fileExists) return { success: false, error: '文件不存在' }
+        content = r.content
+      }
+
+      const lines = content.split('\n').length
+      return { success: true, content, lines, totalLines: lines, startLine: 1, truncated: previewLarge }
+    } catch (e) {
+      return { success: false, error: `读取失败：${e instanceof Error ? e.message : String(e)}` }
+    }
+  })
+
+  ipcMain.handle('write-file', async (_e, filePath: string, content: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      // SECURITY: 拒绝 UNC 路径防 NTLM 凭据泄露
+      if (filePath.startsWith('\\\\') || filePath.startsWith('//')) {
+        return { success: false, error: '不支持 UNC 路径' }
+      }
+      mkdirSync(dirname(filePath), { recursive: true })
+      // 检测原文件编码并保留
+      let encoding: string = 'utf8'
+      if (existsSync(filePath)) {
+        const buf = readFileSync(filePath)
+        encoding = detectEncoding(buf)
+      }
+      await fsPromises.writeFile(filePath, content, encoding as BufferEncoding)
+      readFileTimestamps.set(filePath, getFileModificationTime(filePath))
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: `写入失败：${e instanceof Error ? e.message : String(e)}` }
+    }
+  })
+
+  ipcMain.handle('edit-file', async (_e, filePath: string, oldString: string, newString: string, replaceAll?: boolean): Promise<{ success: boolean; content?: string; error?: string }> => {
+    try {
+      if (!existsSync(filePath)) return { success: false, error: '文件不存在' }
+
+      // 防竞态检测：文件在上次读取后被修改
+      const lastRead = readFileTimestamps.get(filePath)
+      const currentMtime = getFileModificationTime(filePath)
+      if (lastRead && currentMtime > lastRead) {
+        return { success: false, error: '文件已被外部修改，请重新读取后再编辑' }
+      }
+
+      // 文件大小限制
+      const stat = statSync(filePath)
+      if (stat.size > MAX_FILE_SIZE) {
+        return { success: false, error: `文件过大（${(stat.size / 1024 / 1024).toFixed(1)} MiB），最大允许编辑 1 GiB` }
+      }
+
+      const { content: fileContent, encoding } = readFileContent(filePath)
+
+      if (!oldString && fileContent.trim() !== '') {
+        return { success: false, error: '文件已存在且非空，无法创建' }
+      }
+
+      if (!oldString && !fileContent.trim()) {
+        // 空文件 + 空 oldString = 创建新内容
+        const updated = newString
+        await fsPromises.writeFile(filePath, updated, encoding as BufferEncoding)
+        readFileTimestamps.set(filePath, getFileModificationTime(filePath))
+        return { success: true, content: updated }
+      }
+
+      const actualOldString = findActualString(fileContent, oldString)
+      if (!actualOldString) {
+        return { success: false, error: `未在文件中找到要替换的字符串:\n${oldString}` }
+      }
+
+      // 多匹配检测
+      const matches = fileContent.split(actualOldString).length - 1
+      if (matches > 1 && !replaceAll) {
+        return { success: false, error: `找到 ${matches} 处匹配，请设置 replaceAll=true 或提供更多上下文精确定位` }
+      }
+
+      const updated = replaceAll
+        ? fileContent.replaceAll(actualOldString, newString)
+        : fileContent.replace(actualOldString, newString)
+
+      await fsPromises.writeFile(filePath, updated, encoding as BufferEncoding)
+      readFileTimestamps.set(filePath, getFileModificationTime(filePath))
+      return { success: true, content: updated }
+    } catch (e) {
+      return { success: false, error: `编辑失败：${e instanceof Error ? e.message : String(e)}` }
+    }
+  })
+
+  // ── Agent Code: glob / grep ──
+  const GLOB_GREP_IGNORE_DIRS = new Set(['.git', 'node_modules'])
+
+  function escapeRe(s: string): string {
+    return s.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+  }
+
+  // 把 glob 模式转换为正则（支持 ** * ? {a,b} [abc]）
+  function globToRegExp(pattern: string): RegExp {
+    let re = ''
+    for (let i = 0; i < pattern.length; i++) {
+      const c = pattern[i]!
+      if (c === '*') {
+        if (pattern[i + 1] === '*') {
+          re += '.*' // ** 匹配任意（含 /）
+          i++
+          if (pattern[i + 1] === '/') i++ // 跳过 **/ 中的 /
+        } else {
+          re += '[^/]*' // * 不匹配 /
+        }
+      } else if (c === '?') {
+        re += '[^/]'
+      } else if (c === '{') {
+        const end = pattern.indexOf('}', i)
+        if (end > i) {
+          re += '(' + pattern.slice(i + 1, end).split(',').map(escapeRe).join('|') + ')'
+          i = end
+        } else {
+          re += escapeRe(c)
+        }
+      } else if (c === '[') {
+        const end = pattern.indexOf(']', i)
+        if (end > i) {
+          let cls = pattern.slice(i + 1, end)
+          if (cls[0] === '!') cls = '^' + cls.slice(1)
+          re += '[' + cls + ']'
+          i = end
+        } else {
+          re += escapeRe(c)
+        }
+      } else {
+        re += escapeRe(c)
+      }
+    }
+    return new RegExp('^' + re + '$')
+  }
+
+  // 安全读取文本：跳过超大文件与二进制文件（含空字节）
+  function readTextSafe(filePath: string, maxBytes: number): string | null {
+    try {
+      const st = statSync(filePath)
+      if (st.size > maxBytes) return null
+      const buf = readFileSync(filePath)
+      if (buf.includes(0)) return null // 二进制
+      return buf.toString('utf8')
+    } catch {
+      return null
+    }
+  }
+
+  ipcMain.handle('glob', async (_e, opts: { pattern: string; path: string; limit?: number }): Promise<{ success: boolean; filenames?: string[]; numFiles?: number; truncated?: boolean; error?: string }> => {
+    try {
+      if (!opts || !opts.path) return { success: false, error: '缺少搜索目录' }
+      if (opts.path.startsWith('\\\\') || opts.path.startsWith('//')) return { success: false, error: '不支持 UNC 路径' }
+      if (!existsSync(opts.path)) return { success: false, error: '目录不存在' }
+      const limit = Math.max(1, Math.min(opts.limit ?? 100, 2000))
+      const re = globToRegExp(opts.pattern)
+      const found: string[] = []
+      const walk = (dir: string) => {
+        if (found.length >= limit) return
+        let entries: any[]
+        try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+        for (const e of entries) {
+          const full = join(dir, e.name)
+          if (e.isDirectory()) {
+            if (GLOB_GREP_IGNORE_DIRS.has(e.name)) continue
+            walk(full)
+          } else if (e.isFile()) {
+            const rel = relative(opts.path, full).split('\\').join('/')
+            if (re.test(rel)) found.push(full)
+          }
+          if (found.length >= limit) return
+        }
+      }
+      walk(opts.path)
+      found.sort()
+      const truncated = found.length >= limit
+      return { success: true, filenames: found, numFiles: found.length, truncated }
+    } catch (e) {
+      return { success: false, error: `搜索失败：${e instanceof Error ? e.message : String(e)}` }
+    }
+  })
+
+  ipcMain.handle('grep', async (_e, opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean }): Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; error?: string }> => {
+    try {
+      if (!opts || !opts.path) return { success: false, error: '缺少搜索目录' }
+      if (opts.path.startsWith('\\\\') || opts.path.startsWith('//')) return { success: false, error: '不支持 UNC 路径' }
+      if (!existsSync(opts.path)) return { success: false, error: '目录不存在' }
+      const root = opts.path
+      const mode = (opts.output_mode || 'files_with_matches') as 'content' | 'files_with_matches' | 'count'
+      const headLimit = opts.head_limit === undefined ? 250 : opts.head_limit
+      const flags = opts['-i'] ? 'i' : ''
+      let regex: RegExp
+      try { regex = new RegExp(opts.pattern, flags) } catch (e) { return { success: false, error: `无效正则：${e instanceof Error ? e.message : String(e)}` } }
+      const globRe = opts.glob ? globToRegExp(opts.glob) : null
+      const ctx = opts.context ?? 0
+      const showLineNumbers = opts['-n'] !== false
+      const maxBytes = 5 * 1024 * 1024
+
+      const files: string[] = []
+      const walk = (dir: string) => {
+        if (files.length >= 20000) return
+        let entries: any[]
+        try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+        for (const e of entries) {
+          const full = join(dir, e.name)
+          if (e.isDirectory()) {
+            if (GLOB_GREP_IGNORE_DIRS.has(e.name)) continue
+            walk(full)
+          } else if (e.isFile()) {
+            if (globRe) {
+              const rel = relative(root, full).split('\\').join('/')
+              if (!globRe.test(rel)) continue
+            }
+            files.push(full)
+          }
+        }
+      }
+      walk(root)
+
+      const slice = (arr: string[]) => {
+        const truncated = headLimit !== 0 && arr.length > headLimit
+        return { items: headLimit === 0 ? arr : arr.slice(0, headLimit), truncated }
+      }
+
+      if (mode === 'files_with_matches') {
+        const matched: string[] = []
+        for (const f of files) {
+          const text = readTextSafe(f, maxBytes)
+          if (text === null) continue
+          if (text.split('\n').some(l => regex.test(l))) matched.push(f)
+        }
+        const r = slice(matched)
+        return {
+          success: true,
+          numFiles: r.items.length,
+          truncated: r.truncated,
+          content: r.items.length ? `Found ${r.items.length} file(s):\n${r.items.join('\n')}${r.truncated ? '\n(结果已截断)' : ''}` : 'No files found.'
+        }
+      }
+
+      if (mode === 'count') {
+        const lines: string[] = []
+        let total = 0
+        for (const f of files) {
+          const text = readTextSafe(f, maxBytes)
+          if (text === null) continue
+          const c = text.split('\n').filter(l => regex.test(l)).length
+          if (c > 0) { lines.push(`${f}:${c}`); total += c }
+        }
+        const r = slice(lines)
+        return {
+          success: true,
+          numFiles: r.items.length,
+          truncated: r.truncated,
+          content: `Found ${total} matches across ${r.items.length} file(s):\n${r.items.join('\n')}${r.truncated ? '\n(结果已截断)' : ''}`
+        }
+      }
+
+      // content 模式
+      const outLines: string[] = []
+      let fileCount = 0
+      for (const f of files) {
+        const text = readTextSafe(f, maxBytes)
+        if (text === null) continue
+        const lines = text.split('\n')
+        const wanted = new Set<number>()
+        for (let i = 0; i < lines.length; i++) {
+          if (regex.test(lines[i]!)) {
+            for (let j = Math.max(0, i - ctx); j <= Math.min(lines.length - 1, i + ctx); j++) wanted.add(j)
+          }
+        }
+        if (wanted.size === 0) continue
+        fileCount++
+        const sorted = [...wanted].sort((a, b) => a - b)
+        for (const idx of sorted) {
+          const num = idx + 1
+          outLines.push(showLineNumbers ? `${f}:${num}:${lines[idx]}` : `${f}:${lines[idx]}`)
+        }
+        if (headLimit !== 0 && outLines.length >= headLimit) break
+      }
+      const r = slice(outLines)
+      return {
+        success: true,
+        numFiles: fileCount,
+        truncated: r.truncated,
+        content: r.items.length ? `${r.items.join('\n')}${r.truncated ? '\n(结果已截断)' : ''}` : 'No matches found.'
+      }
+    } catch (e) {
+      return { success: false, error: `搜索失败：${e instanceof Error ? e.message : String(e)}` }
+    }
+  })
+
+  // ── 文件树浏览 ──
+  ipcMain.handle('build-file-tree', async (_e, dir: string, maxDepth = 3): Promise<{ success: boolean; tree?: { name: string; path: string; isDir: boolean; children?: any[] }; error?: string }> => {
+    try {
+      if (!existsSync(dir)) return { success: false, error: '目录不存在' }
+      async function buildTree(dirPath: string, depth: number): Promise<{ name: string; path: string; isDir: boolean; children?: any[] }> {
+        const name = basename(dirPath)
+        const node: any = { name, path: dirPath, isDir: true, children: [] }
+        const entries = readdirSync(dirPath, { withFileTypes: true })
+        for (const entry of entries) {
+          const fullPath = join(dirPath, entry.name)
+          if (entry.isDirectory() && depth > 0) {
+            const child = await buildTree(fullPath, depth - 1)
+            node.children.push(child)
+          } else if (entry.isFile()) {
+            node.children.push({ name: entry.name, path: fullPath, isDir: false })
+          }
+        }
+        node.children.sort((a: any, b: any) => a.name.localeCompare(b.name))
+        return node
+      }
+      const tree = await buildTree(dir, maxDepth)
+      return { success: true, tree }
+    } catch (e) {
+      return { success: false, error: `读取目录失败：${e instanceof Error ? e.message : String(e)}` }
+    }
+  })
+
+  ipcMain.handle('expand-file-tree', async (_e, dir: string, limit = 500): Promise<{ success: boolean; children?: { name: string; path: string; isDir: boolean }[]; truncated?: boolean; total?: number; error?: string }> => {
+    try {
+      if (!existsSync(dir)) return { success: false, error: '目录不存在' }
+      const entries = readdirSync(dir, { withFileTypes: true })
+      const all = entries
+        .filter(e => e.isDirectory() || e.isFile())
+        .map(e => ({ name: e.name, path: join(dir, e.name), isDir: e.isDirectory() }))
+        .sort((a, b) => {
+          if (a.isDir && !b.isDir) return -1
+          if (!a.isDir && b.isDir) return 1
+          return a.name.localeCompare(b.name)
+        })
+      const truncated = all.length > limit
+      const children = all.slice(0, limit)
+      return { success: true, children, truncated, total: all.length }
+    } catch (e) {
+      return { success: false, error: `展开目录失败：${e instanceof Error ? e.message : String(e)}` }
+    }
+  })
+
+  // ── Agent Code 文件树：自动监听目录变化（免去手动刷新按钮）──
+  let agentFileWatcher: import('fs').FSWatcher | null = null
+  function startAgentFileWatch(dir: string): { success: boolean; error?: string } {
+    try {
+      if (agentFileWatcher) { agentFileWatcher.close(); agentFileWatcher = null }
+      const watcher = watch(
+        dir,
+        process.platform === 'win32' || process.platform === 'darwin' ? { recursive: true } : {},
+        (_event, filename) => {
+          const payload = { dir, filename: typeof filename === 'string' ? filename : '' }
+          BrowserWindow.getAllWindows().forEach(w => { if (!w.isDestroyed()) w.webContents.send('agent-file-changed', payload) })
+        }
+      )
+      watcher.on('error', () => { /* 目录被删除等瞬时错误，忽略 */ })
+      agentFileWatcher = watcher
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  }
+  function stopAgentFileWatch(): void {
+    if (agentFileWatcher) { try { agentFileWatcher.close() } catch { /* ignore */ } agentFileWatcher = null }
+  }
+  ipcMain.handle('start-agent-file-watch', (_e, dir: string) => startAgentFileWatch(dir))
+  ipcMain.handle('stop-agent-file-watch', () => { stopAgentFileWatch(); return { success: true } })
+
+  // ── Agent Code 工作台：项目（含会话）持久化 ──
+  // 每个会话独立存储为一个 JSON 文件，统一放在 `Agent session/` 文件夹下：
+  //   Agent session/<sessionId>.json  —— 单个会话的全部消息 + 所属项目信息
+  // 加载时按 projectId 分组重建出项目列表；空文件夹通过 .gitkeep 保留在仓库中。
+  const AGENT_PROJECTS_DIR = join(APP_ROOT, 'Agent session')
+  // 遗留单文件（旧版：所有会话塞进一个 agent-projects.json）
+  const AGENT_PROJECTS_LEGACY_PATH = join(AGENT_PROJECTS_DIR, 'agent-projects.json')
+  const AGENT_PROJECTS_ROOT_LEGACY_PATH = join(APP_ROOT, 'agent-projects.json')
+
+  // 单个会话落盘文件结构：在 AgentSession 基础上附带项目信息，便于按项目分组还原
+  interface SessionFile {
+    id: string
+    title: string
+    projectId: string
+    projectTitle: string
+    workspaceDir: string
+    createdAt: number
+    messages: AgentMessage[]
+  }
+
+  function ensureAgentProjectsDir(): void {
+    if (!existsSync(AGENT_PROJECTS_DIR)) mkdirSync(AGENT_PROJECTS_DIR, { recursive: true })
+  }
+
+  // 将遗留的单文件（所有会话）拆分为多个独立会话文件，并删除旧单文件
+  async function migrateLegacyAgentProjects(): Promise<void> {
+    for (const legacy of [AGENT_PROJECTS_LEGACY_PATH, AGENT_PROJECTS_ROOT_LEGACY_PATH]) {
+      if (!existsSync(legacy)) continue
+      let data: unknown = null
+      try { data = JSON.parse(readFileSync(legacy, 'utf-8')) } catch { /* 损坏则直接丢弃 */ }
+      if (Array.isArray(data)) {
+        ensureAgentProjectsDir()
+        let order = 0
+        for (const p of data as AgentProject[]) {
+          for (const s of p.sessions || []) {
+            const file: SessionFile = {
+              id: s.id,
+              title: s.title,
+              projectId: p.id,
+              projectTitle: p.title,
+              workspaceDir: p.workspaceDir,
+              createdAt: Date.now() + order++,
+              messages: s.messages || [],
+            }
+            try {
+              await fsPromises.writeFile(join(AGENT_PROJECTS_DIR, `${s.id}.json`), JSON.stringify(file, null, 2))
+            } catch { /* 单条失败不影响其他 */ }
+          }
+        }
+      }
+      try { unlinkSync(legacy) } catch { /* 旧文件删除失败不影响使用 */ }
+    }
+  }
+
+  // 读取所有独立会话文件，按 projectId 分组重建出项目列表；无会话文件时尝试迁移遗留单文件
+  async function loadAgentProjectsFromDisk(): Promise<AgentProject[]> {
+    ensureAgentProjectsDir()
+    let files: string[] = []
+    try {
+      files = readdirSync(AGENT_PROJECTS_DIR).filter(f => f.endsWith('.json') && f !== 'agent-projects.json')
+    } catch { return [] }
+    const sessions: SessionFile[] = []
+    for (const f of files) {
+      try {
+        const raw = JSON.parse(readFileSync(join(AGENT_PROJECTS_DIR, f), 'utf-8'))
+        if (raw && typeof raw.id === 'string' && Array.isArray(raw.messages)) sessions.push(raw as SessionFile)
+      } catch { /* 跳过损坏文件 */ }
+    }
+    if (sessions.length === 0) {
+      if (existsSync(AGENT_PROJECTS_LEGACY_PATH) || existsSync(AGENT_PROJECTS_ROOT_LEGACY_PATH)) {
+        await migrateLegacyAgentProjects()
+        return loadAgentProjectsFromDisk() // 重新读取刚写好的独立会话文件
+      }
+      return []
+    }
+    // 按 projectId 分组
+    const byProject = new Map<string, SessionFile[]>()
+    for (const s of sessions) {
+      const arr = byProject.get(s.projectId) ?? []
+      arr.push(s)
+      byProject.set(s.projectId, arr)
+    }
+    const projects: AgentProject[] = []
+    const orderInfo: { id: string; minCreated: number }[] = []
+    for (const [projectId, sessList] of byProject) {
+      sessList.sort((a, b) => a.createdAt - b.createdAt)
+      const first = sessList[0]!
+      projects.push({
+        id: projectId,
+        title: first.projectTitle || projectId,
+        workspaceDir: first.workspaceDir || '',
+        expanded: true,
+        sessions: sessList.map(s => ({ id: s.id, title: s.title, messages: s.messages })),
+      })
+      orderInfo.push({ id: projectId, minCreated: Math.min(...sessList.map(s => s.createdAt)) })
+    }
+    projects.sort((a, b) => {
+      const am = orderInfo.find(o => o.id === a.id)!.minCreated
+      const bm = orderInfo.find(o => o.id === b.id)!.minCreated
+      return am - bm
+    })
+    return projects
+  }
+
+  ipcMain.handle('load-agent-projects', async (): Promise<AgentProject[]> => {
+    try {
+      return await loadAgentProjectsFromDisk()
+    } catch (e) {
+      console.error('[load-agent-projects] 读取失败:', e)
+      return []
+    }
+  })
+  ipcMain.handle('save-agent-projects', async (_e, projects: AgentProject[]): Promise<{ success: boolean; error?: string }> => {
+    try {
+      ensureAgentProjectsDir()
+      const liveIds = new Set<string>()
+      for (const p of projects || []) {
+        for (const s of p.sessions || []) {
+          liveIds.add(s.id)
+          // 保留已有文件的 createdAt，保证排序稳定（新会话用当前时间戳）
+          let createdAt = Date.now()
+          const existingPath = join(AGENT_PROJECTS_DIR, `${s.id}.json`)
+          try {
+            if (existsSync(existingPath)) {
+              const ex = JSON.parse(readFileSync(existingPath, 'utf-8'))
+              if (typeof ex.createdAt === 'number') createdAt = ex.createdAt
+            }
+          } catch { /* 忽略，使用新时间戳 */ }
+          const file: SessionFile = {
+            id: s.id,
+            title: s.title,
+            projectId: p.id,
+            projectTitle: p.title,
+            workspaceDir: p.workspaceDir,
+            createdAt,
+            messages: s.messages || [],
+          }
+          await fsPromises.writeFile(existingPath, JSON.stringify(file, null, 2))
+        }
+      }
+      // GC：删除已被删除会话残留的孤立文件（排除遗留单文件）
+      let allFiles: string[] = []
+      try { allFiles = readdirSync(AGENT_PROJECTS_DIR) } catch { allFiles = [] }
+      for (const f of allFiles) {
+        if (!f.endsWith('.json')) continue
+        if (f === 'agent-projects.json') continue
+        const id = f.slice(0, -5)
+        if (!liveIds.has(id)) {
+          try { unlinkSync(join(AGENT_PROJECTS_DIR, f)) } catch { /* ignore */ }
+        }
+      }
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  // ── Agent Code Bash 执行 ────────────────────────────
+  // 当前工作目录（由渲染进程在切换项目时通过 set-bash-cwd 同步过来）
+  let bashCwd: string | null = null
+  ipcMain.handle('set-bash-cwd', async (_e, dir: string) => {
+    bashCwd = dir || null
+    return { success: true }
+  })
+  ipcMain.handle('execute-command', async (_e, opts: { command: string; timeout?: number }): Promise<{ stdout: string; stderr: string; code: number }> => {
+    const timeout = opts.timeout ?? 120000
+    // Windows 中文系统默认代码页为 CP936（GBK），而 Node.js child_process 解码输出时
+    // 默认按 UTF-8 处理，导致中文乱码（典型的 "�����"）。将命令包裹在 chcp 65001 中
+    // 强制管道使用 UTF-8 编码，输出即可正常解码。
+    const wrappedCommand = process.platform === 'win32'
+      ? `@chcp 65001 >NUL && ${opts.command}`
+      : opts.command
+    return new Promise((resolve) => {
+      const child = exec(wrappedCommand, { cwd: bashCwd ?? undefined, timeout, windowsHide: true }, (error, stdout, stderr) => {
+        resolve({
+          stdout: stdout ?? '',
+          stderr: stderr ?? '',
+          code: error?.code ?? (error ? 1 : 0)
+        })
+      })
+      if (timeout > 0) {
+        child.on('error', () => {
+          resolve({ stdout: '', stderr: 'command execution error', code: 1 })
+        })
+      }
+    })
+  })
+
+  // ── Agent Code 文件删除（安全校验）────────────────────
+  // 使用 isSafePath 确保删除操作不会越出项目目录（或 App 根目录）
+  const DELETE_BASES = (): string[] => {
+    const bases = [APP_ROOT]
+    if (bashCwd) bases.push(bashCwd)
+    return bases
+  }
+  function isDeletePathSafe(target: string): boolean {
+    return DELETE_BASES().some(base => isSafePath(base, target))
+  }
+  ipcMain.handle('delete-path', async (_e, targetPath: string, recursive: boolean): Promise<{ success: boolean; message?: string; error?: string }> => {
+    try {
+      const resolved = resolve(targetPath)
+      if (!isDeletePathSafe(resolved)) return { success: false, error: '访问被拒绝：路径不在安全范围内' }
+      if (!existsSync(resolved)) return { success: false, error: '路径不存在' }
+      const isDir = statSync(resolved).isDirectory()
+      if (!isDir) {
+        unlinkSync(resolved)
+        return { success: true, message: 'File deleted successfully.' }
+      }
+      // isDirectory
+      if (!recursive) {
+        const contents = readdirSync(resolved)
+        if (contents.length > 0) return { success: false, error: '目录非空：如需删除非空目录请设置 recursive: true' }
+        rmdirSync(resolved)
+      } else {
+        rmSync(resolved, { recursive: true, force: true })
+      }
+      return { success: true, message: 'Directory deleted successfully.' }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
   })
 }
 

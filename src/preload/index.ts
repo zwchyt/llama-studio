@@ -111,12 +111,40 @@ const fullApi = {
   saveChatSession: (session: object) => ipcRenderer.invoke('save-chat-session', session),
   deleteChatSession: (id: string) => ipcRenderer.invoke('delete-chat-session', id),
   chatStream: (opts: { streamId: string; port: number; body: object }) => ipcRenderer.invoke('chat-completion-stream', opts),
+  chatCompletion: (opts: { port: number; body: object }) => ipcRenderer.invoke('chat-completion', opts),
   abortChatStream: (streamId: string) => ipcRenderer.invoke('chat-stream-abort', streamId),
   onChatStreamChunk: (callback: (data: { streamId: string; delta?: string; done: boolean; error?: string; usage?: { promptTokens: number; completionTokens: number }; msFirstToken?: number; decodeTokS?: number; toolCalls?: Array<{ id: string; function: { name: string; arguments: string } }>; finishReason?: string }) => void) => {
     ipcRenderer.removeAllListeners('chat-stream-chunk')
     ipcRenderer.on('chat-stream-chunk', (_event, data) => callback(data))
   },
   removeChatStreamListener: () => ipcRenderer.removeAllListeners('chat-stream-chunk'),
+  // ── Agent Code 文件树浏览 ──
+  buildFileTree: (dir: string, maxDepth?: number) => ipcRenderer.invoke('build-file-tree', dir, maxDepth),
+  expandFileTree: (dir: string, limit?: number) => ipcRenderer.invoke('expand-file-tree', dir, limit),
+
+  // ── Agent Code 工作台 文件操作 ──
+  readFile: (filePath: string, opts?: { maxBytes?: number }) => ipcRenderer.invoke('read-file', filePath, opts),
+  writeFile: (filePath: string, content: string) => ipcRenderer.invoke('write-file', filePath, content),
+  editFile: (filePath: string, oldString: string, newString: string, replaceAll?: boolean) => ipcRenderer.invoke('edit-file', filePath, oldString, newString, replaceAll),
+  glob: (opts: { pattern: string; path: string; limit?: number }) => ipcRenderer.invoke('glob', opts),
+  grep: (opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean }) => ipcRenderer.invoke('grep', opts),
+  // ── Agent Code 工作台 文件树自动刷新（目录监听）──
+  startAgentFileWatch: (dir: string) => ipcRenderer.invoke('start-agent-file-watch', dir),
+  stopAgentFileWatch: () => ipcRenderer.invoke('stop-agent-file-watch'),
+  onAgentFileChanged: (cb: (data: { dir: string; filename: string }) => void) => {
+    ipcRenderer.removeAllListeners('agent-file-changed')
+    ipcRenderer.on('agent-file-changed', (_e, data) => cb(data))
+  },
+  removeAgentFileListeners: () => {
+    ipcRenderer.removeAllListeners('agent-file-changed')
+  },
+  // ── Agent Code 工作台 项目持久化 ──
+  loadAgentProjects: () => ipcRenderer.invoke('load-agent-projects'),
+  saveAgentProjects: (projects: object) => ipcRenderer.invoke('save-agent-projects', projects),
+	  executeCommand: (opts: { command: string; timeout?: number }) => ipcRenderer.invoke('execute-command', opts),
+	  setBashCwd: (dir: string) => ipcRenderer.invoke('set-bash-cwd', dir),
+	  deletePath: (targetPath: string, recursive: boolean) => ipcRenderer.invoke('delete-path', targetPath, recursive),
+
   // ── 工具调用（网络搜索）──
   webSearch: (query: string) => ipcRenderer.invoke('web-search', query),
   fetchWebpage: (url: string) => ipcRenderer.invoke('fetch-webpage', url),

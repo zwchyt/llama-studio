@@ -73,6 +73,22 @@ register(
   async (args) => window.api.fetchWebpage(String(args.url || ''))
 )
 
+// ── Agent Code 文件操作工具（从独立模块导入）──────────────
+import { definition as FileReadDef, execute as FileReadExec } from '../tools/FileReadTool'
+import { definition as FileWriteDef, execute as FileWriteExec } from '../tools/FileWriteTool'
+import { definition as FileEditDef, execute as FileEditExec } from '../tools/FileEditTool'
+import { definition as GlobDef, execute as GlobExec } from '../tools/GlobTool'
+import { definition as GrepDef, execute as GrepExec } from '../tools/GrepTool'
+import { definition as BashDef, execute as BashExec } from '../tools/BashTool'
+import { definition as FileDeleteDef, execute as FileDeleteExec } from '../tools/FileDeleteTool'
+register(FileReadDef, FileReadExec)
+register(FileWriteDef, FileWriteExec)
+register(FileEditDef, FileEditExec)
+register(GlobDef, GlobExec)
+register(GrepDef, GrepExec)
+register(BashDef, BashExec)
+register(FileDeleteDef, FileDeleteExec)
+
 // ── 导出 API（类似 textgen 的 load_tools / execute_tool）──
 
 /** 获取所有已注册工具的定义列表（OpenAI 格式） */

@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { safeCall } from '../utils/safeCall'
-import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Server, Bot, MessageSquare, Terminal, Info, FileText, Gauge, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Server, Bot, MessageSquare, Terminal, Info, FileText, Gauge, PanelLeftClose, PanelLeftOpen, Code } from 'lucide-react'
 
 function BackendNavItem({ b, isActive, onSwitch }: { b: { name: string; path?: string }; isActive: boolean; onSwitch: () => void }) {
   return (
@@ -190,6 +190,18 @@ export default function Sidebar() {
         <span>OCR</span>
         {view === 'ocr' && <span className="nav-active-dot" />}
         {hasRunningModels && <span className="nav-dot" />}
+      </button>
+
+      {/* ── 工作台 ── */}
+      <span className="nav-section-label" style={{ marginTop: 12 }}>工作台</span>
+      <button
+        className={`nav-item ${view === 'agent-code' ? 'active' : ''}`}
+        onClick={() => setView('agent-code')}
+        title="Agent Code 工作台"
+      >
+        <Code size={16} />
+        <span>Agent Code 工作台</span>
+        {view === 'agent-code' && <span className="nav-active-dot" />}
       </button>
 
       {/* ── 系统 ── */}
