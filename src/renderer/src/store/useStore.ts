@@ -9,6 +9,7 @@ interface CardState {
   startedAt?: number
   expanded: boolean
   monitorExpanded: boolean
+  ready?: boolean // 已监听到 llama_server 监听日志（服务就绪可对外提供服务）
 }
 export interface ModelFileInfo {
   name: string; path: string; size: number; folder: string; external?: boolean
@@ -108,6 +109,7 @@ interface AppStore {
   updateCard: (id: string, template: Partial<Template>) => void
   removeCard: (id: string) => void
   setCardStatus: (id: string, status: RunningStatus, pid?: number) => void
+  setCardReady: (id: string, ready: boolean) => void
   toggleCardExpanded: (id: string) => void
   toggleMonitorExpanded: (id: string) => void
   collapseAllCards: () => void
@@ -157,6 +159,9 @@ interface AppStore {
   // ── Agent Code ──
   agentProjects: AgentProject[]
   setAgentProjects: (p: AgentProject[]) => void
+  // ── Agent Code 工具执行阶段（pi-web 风格状态机，驱动前端状态栏）──
+  agentPhase: { kind: 'running_tools'; tools: { name: string; verb: string }[] } | { kind: 'waiting_model' } | null
+  setAgentPhase: (phase: AppStore['agentPhase']) => void
 }
 // createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
@@ -299,9 +304,15 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   removeCard: (id) => set((s) => ({ cards: s.cards.filter(c => c.template.id !== id) })),
   setCardStatus: (id, status, pid) => set((s) => ({
     cards: s.cards.map(c => c.template.id === id ? {
-      ...c, status, pid: pid ?? (status === 'idle' || status === 'error' ? undefined : c.pid),
+      ...c, status,
+      // 仅在停止/出错时清除就绪标记；保持 running 时保留（避免聊天流式调用 setCardStatus 时清掉绿灯）
+      ready: status === 'running' ? c.ready : false,
+      pid: pid ?? (status === 'idle' || status === 'error' ? undefined : c.pid),
       startedAt: status === 'running' ? (c.startedAt ?? Date.now()) : undefined
     } : c)
+  })),
+  setCardReady: (id, ready) => set((s) => ({
+    cards: s.cards.map(c => c.template.id === id ? { ...c, ready } : c)
   })),
   toggleCardExpanded: (id) => set((s) => ({
     cards: s.cards.map(c => c.template.id === id ? { ...c, expanded: !c.expanded } : c)
@@ -330,6 +341,8 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
     set({ agentProjects: p })
     scheduleSaveAgentProjects(p)
   },
+  agentPhase: null,
+  setAgentPhase: (phase) => set({ agentPhase: phase }),
   // ── 聊天界面 ──
   chatSidebarCollapsed: (() => {
     try { return localStorage.getItem('chatSidebarCollapsed') === 'true' } catch { return false }

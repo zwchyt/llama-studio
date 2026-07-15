@@ -290,7 +290,13 @@ function AppMain() {
     window.api.onModelLog((data) => {
       useStore.getState().appendModelLog(data.id, data.stream, data.text)
     })
-    return () => window.api.removeModelLogListener()
+    window.api.onModelReady((data) => {
+      useStore.getState().setCardReady(data.id, true)
+    })
+    return () => {
+      window.api.removeModelLogListener()
+      window.api.removeModelReadyListener()
+    }
   }, [])
 
   function sanitizeMetricsPayload(raw: Record<string, unknown>): Record<string, unknown> | null {
@@ -393,8 +399,17 @@ function AppMain() {
       try {
         const runningIds: string[] = await window.api.getRunningProcesses()
         if (runningIds && runningIds.length > 0) {
-          const { setCardStatus } = useStore.getState()
-          runningIds.forEach((id) => setCardStatus(id, 'running'))
+          const { setCardStatus, cards, setCardReady } = useStore.getState()
+          runningIds.forEach((id) => {
+            setCardStatus(id, 'running')
+            // 已运行的进程无法直接拿到日志，轮询端口判断是否已就绪
+            const port = cards.find(c => c.template.id === id)?.template.serverPort
+            if (port) {
+              window.api.waitForServer(port)
+                .then((ok) => { if (ok) setCardReady(id, true) })
+                .catch(() => { /* ignore */ })
+            }
+          })
         }
       } catch (e) { console.error('同步运行状态失败', e) }
     }
@@ -435,7 +450,7 @@ function AppMain() {
       case 'llama': return <LlamaChatView />
       case 'ocr': return <OcrView />
       case 'benchmark': return <BenchmarkView />
-      case 'agent-code': return <AgentCodeView />
+      case 'agent-code': return null
       case 'terminal': return null
       default: return <CardsView />
     }
@@ -451,6 +466,22 @@ function AppMain() {
         <Sidebar />
         <main className="content" style={view === 'llama' ? { display: 'none' } : {}}>
           {currentView}
+          {/* Agent Code 工作台常驻挂载：切换侧边栏时不卸载组件，
+              保证正在进行的生成 / 工具循环不被打断，进度、滚动、输入框状态全部保留
+              （与下方 terminal 视图的常驻挂载做法一致）。 */}
+          <div
+            className="agent-code-host"
+            style={{
+              display: view === 'agent-code' ? 'flex' : 'none',
+              flexDirection: 'column',
+              flex: 1,
+              minHeight: 0,
+              padding: 0,
+              overflow: 'hidden',
+            }}
+          >
+            <AgentCodeView />
+          </div>
           {/* 终端视图常驻挂载，仅按 view 切换显示/隐藏：切到其它侧边栏页再返回时，
               各终端的滚动历史与活动 PTY 全部保留（对应 local-studio 的 PersistentTerminals）。 */}
           <div

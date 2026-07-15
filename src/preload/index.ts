@@ -94,6 +94,11 @@ const fullApi = {
     ipcRenderer.on('model-log', (_e, data) => cb(data))
   },
   removeModelLogListener: () => ipcRenderer.removeAllListeners('model-log'),
+  onModelReady: (cb: (data: { id: string; url: string }) => void) => {
+    ipcRenderer.removeAllListeners('model-ready')
+    ipcRenderer.on('model-ready', (_e, data) => cb(data))
+  },
+  removeModelReadyListener: () => ipcRenderer.removeAllListeners('model-ready'),
   getMetrics: () => ipcRenderer.invoke('get-metrics'),
   getRunningProcesses: () => ipcRenderer.invoke('get-running-processes'),
   onMetricsUpdate: (callback: (data: Record<string, unknown>) => void) => {
@@ -144,6 +149,16 @@ const fullApi = {
 	  executeCommand: (opts: { command: string; timeout?: number }) => ipcRenderer.invoke('execute-command', opts),
 	  setBashCwd: (dir: string) => ipcRenderer.invoke('set-bash-cwd', dir),
 	  deletePath: (targetPath: string, recursive: boolean) => ipcRenderer.invoke('delete-path', targetPath, recursive),
+  setAgentWorkspace: (dir: string) => ipcRenderer.invoke('set-agent-workspace', dir),
+
+  // ── Agent Code 任务清单（Todo / Task）──
+  agentTodoWrite: (sessionId: string, todos: object[]) => ipcRenderer.invoke('agent-todo-write', sessionId, todos),
+  agentTaskCreate: (sessionId: string, input: object) => ipcRenderer.invoke('agent-task-create', sessionId, input),
+  agentTaskGet: (sessionId: string, taskId: string) => ipcRenderer.invoke('agent-task-get', sessionId, taskId),
+  agentTaskList: (sessionId: string) => ipcRenderer.invoke('agent-task-list', sessionId),
+  agentTaskUpdate: (sessionId: string, taskId: string, updates: object) => ipcRenderer.invoke('agent-task-update', sessionId, taskId, updates),
+  agentTaskStop: (sessionId: string, taskId: string) => ipcRenderer.invoke('agent-task-stop', sessionId, taskId),
+  agentTaskOutput: (sessionId: string, taskId: string) => ipcRenderer.invoke('agent-task-output', sessionId, taskId),
 
   // ── 工具调用（网络搜索）──
   webSearch: (query: string) => ipcRenderer.invoke('web-search', query),

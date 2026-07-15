@@ -3,11 +3,11 @@ import { FILE_DELETE_TOOL_NAME } from './constants'
 
 export const definition: Omit<ToolDefinition['function'], 'type'> = {
   name: FILE_DELETE_TOOL_NAME,
-  description: 'Delete a file or directory. This is the ONLY tool for deletion — do NOT use Write/Bash for deletion. For files just supply the path; for directories set recursive: true if non-empty. The path is validated against the project root for safety.',
+  description: 'Delete a file or directory. This is the ONLY tool for deletion — do NOT use Write/Bash for deletion. For files just supply the path; for directories set recursive: true if non-empty. The path is resolved relative to the project directory and validated against it for safety.',
   parameters: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: 'Absolute path to the file or directory to delete.' },
+      path: { type: 'string', description: 'Path to delete, relative to the project directory (e.g. "subdir/file.py") or absolute.' },
       recursive: { type: 'boolean', description: 'Set to true when deleting a non-empty directory (default false, only empty dirs allowed without this).' }
     },
     required: ['path']

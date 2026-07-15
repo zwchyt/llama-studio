@@ -4,11 +4,11 @@ import type { FileEditInput } from './types'
 
 export const definition: Omit<ToolDefinition['function'], 'type'> = {
   name: FILE_EDIT_TOOL_NAME,
-  description: 'Edit a file by replacing text. Requires exact old_string match (quote-normalized). Use replace_all for bulk. Always Read the file first to ensure old_string is unique. Returns error if no match found.',
+  description: 'Edit a file by replacing text. Requires exact old_string match (quote-normalized). Use replace_all for bulk. Always Read the file first to ensure old_string is unique. Returns error if no match found. Path is resolved relative to the project directory, so relative paths like "subdir/file.py" work (absolute paths also work).',
   parameters: {
     type: 'object',
     properties: {
-      file_path: { type: 'string', description: 'The absolute path to the file to edit.' },
+      file_path: { type: 'string', description: 'Path to the file, relative to the project directory (e.g. "subdir/file.py") or absolute.' },
       old_string: { type: 'string', description: 'The string to be replaced (quote-normalized matching).' },
       new_string: { type: 'string', description: 'The replacement string.' },
       replace_all: { type: 'boolean', description: 'Replace all occurrences of old_string when true (default false).' }

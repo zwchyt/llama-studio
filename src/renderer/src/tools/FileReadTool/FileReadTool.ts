@@ -4,11 +4,11 @@ import type { FileReadInput } from './types'
 
 export const definition: Omit<ToolDefinition['function'], 'type'> = {
   name: FILE_READ_TOOL_NAME,
-  description: 'Read file content with automatic encoding detection (UTF-8/UTF-16). Returns content with line numbers. Max 128KB; larger files are truncated. Prefer over Bash type/cat. Always uses absolute paths.',
+  description: 'Read file content with automatic encoding detection (UTF-8/UTF-16). Returns content with line numbers. Max 128KB; larger files are truncated. Prefer over Bash type/cat. Path is resolved relative to the project directory, so relative paths like "subdir/file.py" work (absolute paths also work).',
   parameters: {
     type: 'object',
     properties: {
-      file_path: { type: 'string', description: 'The absolute path to the file to read.' }
+      file_path: { type: 'string', description: 'Path to the file, relative to the project directory (e.g. "subdir/file.py") or absolute.' }
     },
     required: ['file_path']
   }

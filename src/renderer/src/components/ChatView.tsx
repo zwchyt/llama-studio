@@ -1795,14 +1795,18 @@ export default function ChatView() {
         s.messages.some((m) => m.id === data.streamId)
       )
       if (!targetSession) return
-		      if (data.delta) {
-		        streamReceivedRef.current.set(data.streamId, true)
-		        // 写入模块级缓冲区，StreamingText 用 rAF 读取
-		        const prev = streamingBuffer[data.streamId] || ''
-		        streamingBuffer[data.streamId] = prev + data.delta
-		        // 轻量同步到 store（100ms 一次），触发思考链重新渲染
-		        lightStreamSync(targetSession.id, data.streamId)
-		      }
+      if (data.delta) {
+        streamReceivedRef.current.set(data.streamId, true)
+        // 写入模块级缓冲区，StreamingText 用 rAF 读取
+        const prev = streamingBuffer[data.streamId] || ''
+        streamingBuffer[data.streamId] = prev + data.delta
+        // 轻量同步到 store（100ms 一次），触发思考链重新渲染
+        lightStreamSync(targetSession.id, data.streamId)
+      }
+      // /metrics 补充事件（done 已先行发出，这里仅补充解码速度，不触发 finalize）
+      if (data.metrics) {
+        st.finalizeLastMessage(targetSession.id, { decodeTokS: data.metrics.decodeTokS })
+      }
       if (data.done) {
         // 清理该流的看门狗定时器
         const wd = streamWatchdogsRef.current.get(data.streamId)

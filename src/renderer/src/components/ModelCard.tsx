@@ -290,8 +290,8 @@ export default function ModelCard({ card }: Props) {
           </span>
         </span>
         <span className="card-tag card-tag--status">
-          <span className={`status-dot ${isRunning ? 'running' : card.status === 'error' ? 'error' : 'idle'}`} />
-          {isRunning ? `端口 ${card.template.serverPort}` : card.status === 'error' ? '错误' : '就绪'}
+          <span className={`status-dot ${card.ready ? 'ready' : isRunning ? 'running' : card.status === 'error' ? 'error' : 'idle'}`} />
+          {card.ready ? '就绪' : isRunning ? '启动中' : card.status === 'error' ? '错误' : '未启动'}
         </span>
       </div>
       <div className="card-launch-mode">

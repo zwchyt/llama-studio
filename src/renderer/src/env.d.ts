@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, ChatStreamChunk, AgentProject } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, ChatStreamChunk, AgentProject, AgentTask, TodoItem } from '../../shared/types'
 // 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
 interface ModelFileInfo {
   name: string
@@ -101,6 +101,8 @@ interface LlamaCppApi {
   fetchServerEndpoint: (port: number, endpoint: string) => Promise<{ ok: boolean; status?: number; text?: string; error?: string }>
   onModelLog: (cb: (data: { id: string; stream: string; text: string }) => void) => void
   removeModelLogListener: () => void
+  onModelReady: (cb: (data: { id: string; url: string }) => void) => void
+  removeModelReadyListener: () => void
   getMetrics: () => Promise<{ metrics: Record<string, Partial<ModelMetrics>> }>
   onMetricsUpdate: (cb: (data: Partial<ModelMetrics> & { id: string }) => void) => void
   removeMetricsUpdateListener: () => void
@@ -174,6 +176,15 @@ interface LlamaCppApi {
 		  setBashCwd: (dir: string) => Promise<{ success: boolean }>
 		  // ── Agent Code 文件删除 ──
 		  deletePath: (targetPath: string, recursive: boolean) => Promise<{ success: boolean; message?: string; error?: string }>
+		  setAgentWorkspace: (dir: string) => Promise<{ success: boolean }>
+		  // ── Agent Code 任务清单（Todo / Task）──
+		  agentTodoWrite: (sessionId: string, todos: TodoItem[]) => Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }>
+		  agentTaskCreate: (sessionId: string, input: { subject: string; description?: string; activeForm?: string }) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
+		  agentTaskGet: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
+		  agentTaskList: (sessionId: string) => Promise<{ success: boolean; tasks: AgentTask[] }>
+		  agentTaskUpdate: (sessionId: string, taskId: string, updates: { status?: string; subject?: string; description?: string; activeForm?: string; notes?: string }) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
+		  agentTaskStop: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
+		  agentTaskOutput: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; output?: string; error?: string }>
 	}
 declare global {
   interface Window { api: LlamaCppApi }

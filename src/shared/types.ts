@@ -120,6 +120,7 @@ export interface CardState {
   startedAt?: number
   expanded: boolean
   monitorExpanded?: boolean
+  ready?: boolean // 已监听到 llama_server 监听日志（服务就绪可对外提供服务）
 }
 
 // ── 原生聊天 ───────────────────────────────────────────────
@@ -185,6 +186,9 @@ export interface ChatStreamChunk {
   // 工具调用（模型在响应中发起 tool_calls 时）
   toolCalls?: Array<{ id: string; function: { name: string; arguments: string } }>
   finishReason?: string // 停止原因（'stop' | 'tool_calls'）
+  // /metrics 补充事件：done 已先行发送（不再阻塞工具调用展示），
+  // 待 /metrics 请求返回后再以该事件补充解码速度，不触发二次 finalize
+  metrics?: { decodeTokS?: number; completionTokens?: number }
 }
 
 // ── 下载状态 Phase 联合类型 ──
@@ -203,7 +207,7 @@ export interface AgentMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
-  toolCalls?: { id: string; name: string; args: string; result?: string; truncated?: boolean; resultTotal?: number; failed?: boolean; durationMs?: number }[]
+  toolCalls?: { id: string; name: string; args: string; status?: 'pending' | 'await_approval' | 'executing' | 'done'; result?: string; truncated?: boolean; resultTotal?: number; failed?: boolean; durationMs?: number; restored?: boolean; backupPath?: string }[]
   attachments?: Attachment[]  // 用户消息的附件（图片 / 文件）
   stopped?: boolean           // 用户手动停止生成，消息内容不完整
 }
@@ -220,4 +224,31 @@ export interface AgentProject {
   workspaceDir: string
   expanded: boolean
   sessions: AgentSession[]
+  systemPrompt?: string      // 自定义系统提示词（按项目）；为空则用默认工具指引
+  approveWriteEdit?: boolean  // 是否对 Write / Edit 也要求人工确认（Delete / Bash 始终要求）
+}
+
+// ── Agent Code 任务清单（Todo / Task 工具）──
+export type AgentTaskStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'completed'
+  | 'cancelled'
+  | 'deleted'
+
+export interface AgentTask {
+  id: string
+  subject: string
+  description: string
+  status: AgentTaskStatus
+  activeForm?: string
+  notes?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface TodoItem {
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+  activeForm?: string
 }

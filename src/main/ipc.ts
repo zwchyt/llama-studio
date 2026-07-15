@@ -3,13 +3,14 @@ import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
   unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, watch, promises as fsPromises
 } from 'fs'
-import { join, extname, basename, dirname, resolve, sep, relative } from 'path'
+import { join, extname, basename, dirname, resolve, sep, relative, isAbsolute } from 'path'
 import { spawn, exec, execSync, ChildProcess } from 'child_process'
+import iconv from 'iconv-lite'
 import http from 'http'
 import { app } from 'electron'
 import { randomUUID } from 'crypto'
 import type * as ptyNs from 'node-pty'
-import type { AgentProject, AgentMessage } from '../shared/types'
+import type { AgentProject, AgentMessage, AgentTask, TodoItem, AgentTaskStatus } from '../shared/types'
 
 let ptyModule: typeof ptyNs | null = null
 async function getPty(): Promise<typeof ptyNs> {
@@ -1318,6 +1319,13 @@ export function registerIpcHandlers(): void {
               }
             }
           }
+          // 监听就绪：llama_server: listening on http://127.0.0.1:8080
+          const readyMatch = line.match(/listening on (https?:\/\/\S+)/i)
+          if (readyMatch) {
+            BrowserWindow.getAllWindows().forEach(win => {
+              if (!win.isDestroyed()) win.webContents.send('model-ready', { id: opts.id, url: readyMatch[1] })
+            })
+          }
         }
       })
       proc.stdout?.on('data', (d) => {
@@ -1329,6 +1337,13 @@ export function registerIpcHandlers(): void {
         for (const raw of text.trim().split('\n')) {
           const line = raw.trim()
           if (!line) continue
+          // 监听就绪：llama_server: listening on http://127.0.0.1:8080
+          const readyMatch = line.match(/listening on (https?:\/\/\S+)/i)
+          if (readyMatch) {
+            BrowserWindow.getAllWindows().forEach(win => {
+              if (!win.isDestroyed()) win.webContents.send('model-ready', { id: opts.id, url: readyMatch[1] })
+            })
+          }
           try {
             const json = JSON.parse(line)
             if (json && typeof json === 'object') {
@@ -2343,39 +2358,45 @@ export function registerIpcHandlers(): void {
             buf += '\n\n'
             processBuf()
           }
-          // 如果流结束时 <think> 尚未闭合，补上闭合标签
+          // 先把节流队列里残留的内容 flush 出去，保证内容顺序正确
+          flushStreamNow(streamId)
+          // 如果流结束时 <think> 尚未闭合，补上闭合标签（同样经队列发送，避免乱序）
           const wasInReasoning = chatStreamInReasoning.get(streamId) ?? false
           if (wasInReasoning) {
-            e.sender.send('chat-stream-chunk', { streamId, delta: '</think>', done: false })
+            queueStreamDelta(streamId, '</think>')
+            flushStreamNow(streamId)
           }
           chatStreamInReasoning.delete(streamId)
 
-          // 等待 /metrics 结果，使用 predicted_tokens_seconds（与监控面板同源）
+          // 先取出累积的 tool_calls，done 事件要立即携带它们，绝不能等 /metrics
           const accToolCalls = chatStreamToolCalls.get(streamId)
           chatStreamToolCalls.delete(streamId)
-	          const finalizeStream = (metrics?: { decodeTokS?: number; completionTokens?: number }) => {
-	            const finalTokens = metrics?.completionTokens ?? lastUsage?.completionTokens
-	            const finalUsage = finalTokens != null
-	              ? { promptTokens: lastUsage?.promptTokens ?? 0, completionTokens: finalTokens }
-	              : undefined
-	            flushStreamNow(streamId)
-	            e.sender.send('chat-stream-chunk', {
-              streamId,
-              done: true,
-              usage: finalUsage,
-              msFirstToken: firstTokenTime ?? undefined,
-              decodeTokS: metrics?.decodeTokS,
-              toolCalls: accToolCalls?.length ? accToolCalls.map(tc => ({ id: tc.id, function: tc.function })) : undefined,
-              finishReason: lastFinishReason ?? (accToolCalls?.length ? 'tool_calls' : undefined)
-            })
-            activeChatStreams.delete(streamId)
-            resolve({ success: true })
-          }
 
+          // 立即发送 done + toolCalls：usage / msFirstToken 已在流内同步解析得到，
+          // 唯有 decodeTokS（来自 /metrics 异步请求）可能尚未就绪。done 不等待 /metrics，
+          // 前端即可立刻展示工具调用并停止「思考中」转圈。
+          const finalTokens = lastUsage?.completionTokens
+          const finalUsage = finalTokens != null
+            ? { promptTokens: lastUsage?.promptTokens ?? 0, completionTokens: finalTokens }
+            : undefined
+          e.sender.send('chat-stream-chunk', {
+            streamId,
+            done: true,
+            usage: finalUsage,
+            msFirstToken: firstTokenTime ?? undefined,
+            decodeTokS: undefined,
+            toolCalls: accToolCalls?.length ? accToolCalls.map(tc => ({ id: tc.id, function: tc.function })) : undefined,
+            finishReason: lastFinishReason ?? (accToolCalls?.length ? 'tool_calls' : undefined)
+          })
+          activeChatStreams.delete(streamId)
+          resolve({ success: true })
+
+          // /metrics 异步获取（与监控面板同源）；返回后作为「补充事件」发送，
+          // 不携带 done，因此不会触发前端二次 finalize / 二次工具执行。
           if (endMetricsPromise) {
-            endMetricsPromise.then(m => finalizeStream(m)).catch(() => finalizeStream())
-          } else {
-            finalizeStream()
+            endMetricsPromise
+              .then(m => { e.sender.send('chat-stream-chunk', { streamId, metrics: m }) })
+              .catch(() => {})
           }
         })
       })
@@ -3230,6 +3251,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('read-file', async (_e, filePath: string, opts?: { maxBytes?: number }): Promise<{ success: boolean; content?: string; lines?: number; totalLines?: number; startLine?: number; truncated?: boolean; error?: string }> => {
     try {
+      filePath = resolveAgentPath(filePath)
       const fileSize = statSync(filePath).size
       if (fileSize > MAX_FILE_SIZE) {
         return { success: false, error: `文件过大（${(fileSize / 1024 / 1024).toFixed(1)} MiB），最大允许读取 1 GiB` }
@@ -3265,6 +3287,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('write-file', async (_e, filePath: string, content: string): Promise<{ success: boolean; error?: string }> => {
     try {
+      filePath = resolveAgentPath(filePath)
       // SECURITY: 拒绝 UNC 路径防 NTLM 凭据泄露
       if (filePath.startsWith('\\\\') || filePath.startsWith('//')) {
         return { success: false, error: '不支持 UNC 路径' }
@@ -3286,6 +3309,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('edit-file', async (_e, filePath: string, oldString: string, newString: string, replaceAll?: boolean): Promise<{ success: boolean; content?: string; error?: string }> => {
     try {
+      filePath = resolveAgentPath(filePath)
       if (!existsSync(filePath)) return { success: false, error: '文件不存在' }
 
       // 防竞态检测：文件在上次读取后被修改
@@ -3401,6 +3425,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('glob', async (_e, opts: { pattern: string; path: string; limit?: number }): Promise<{ success: boolean; filenames?: string[]; numFiles?: number; truncated?: boolean; error?: string }> => {
     try {
       if (!opts || !opts.path) return { success: false, error: '缺少搜索目录' }
+      opts.path = resolveAgentPath(opts.path)
       if (opts.path.startsWith('\\\\') || opts.path.startsWith('//')) return { success: false, error: '不支持 UNC 路径' }
       if (!existsSync(opts.path)) return { success: false, error: '目录不存在' }
       const limit = Math.max(1, Math.min(opts.limit ?? 100, 2000))
@@ -3422,7 +3447,13 @@ export function registerIpcHandlers(): void {
           if (found.length >= limit) return
         }
       }
-      walk(opts.path)
+      // path 既可为目录，也可为单个文件；为文件时若匹配模式则直接返回该文件
+      const rootStat = statSync(opts.path)
+      if (rootStat.isFile()) {
+        if (re.test(basename(opts.path))) found.push(opts.path)
+      } else {
+        walk(opts.path)
+      }
       found.sort()
       const truncated = found.length >= limit
       return { success: true, filenames: found, numFiles: found.length, truncated }
@@ -3434,6 +3465,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('grep', async (_e, opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean }): Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; error?: string }> => {
     try {
       if (!opts || !opts.path) return { success: false, error: '缺少搜索目录' }
+      opts.path = resolveAgentPath(opts.path)
       if (opts.path.startsWith('\\\\') || opts.path.startsWith('//')) return { success: false, error: '不支持 UNC 路径' }
       if (!existsSync(opts.path)) return { success: false, error: '目录不存在' }
       const root = opts.path
@@ -3466,7 +3498,13 @@ export function registerIpcHandlers(): void {
           }
         }
       }
-      walk(root)
+      // path 既可为目录，也可为单个文件；为文件时直接搜索该文件本身（glob 仅按文件名过滤）
+      const rootStat = statSync(root)
+      if (rootStat.isFile()) {
+        if (!globRe || globRe.test(basename(root))) files.push(root)
+      } else {
+        walk(root)
+      }
 
       const slice = (arr: string[]) => {
         const truncated = headLimit !== 0 && arr.length > headLimit
@@ -3754,14 +3792,14 @@ export function registerIpcHandlers(): void {
           await fsPromises.writeFile(existingPath, JSON.stringify(file, null, 2))
         }
       }
-      // GC：删除已被删除会话残留的孤立文件（排除遗留单文件）
+      // GC：删除已被删除会话残留的孤立文件（排除遗留单文件，含 .tasks.json）
       let allFiles: string[] = []
       try { allFiles = readdirSync(AGENT_PROJECTS_DIR) } catch { allFiles = [] }
       for (const f of allFiles) {
         if (!f.endsWith('.json')) continue
         if (f === 'agent-projects.json') continue
-        const id = f.slice(0, -5)
-        if (!liveIds.has(id)) {
+        const sessionId = f.endsWith('.tasks.json') ? f.slice(0, -11) : f.slice(0, -5)
+        if (!liveIds.has(sessionId)) {
           try { unlinkSync(join(AGENT_PROJECTS_DIR, f)) } catch { /* ignore */ }
         }
       }
@@ -3771,6 +3809,135 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  // ── Agent Code 任务清单（Todo / Task）─────────────────
+  // 每个会话的任务清单持久化为 <sessionId>.tasks.json（与会话文件同目录），
+  // 主进程内用 Map 缓存，惰性加载、每次变更落盘。
+  const agentTaskStore = new Map<string, AgentTask[]>()
+
+  function agentTaskFilePath(sessionId: string): string {
+    return join(AGENT_PROJECTS_DIR, `${sessionId}.tasks.json`)
+  }
+
+  function loadAgentTasks(sessionId: string): AgentTask[] {
+    const cached = agentTaskStore.get(sessionId)
+    if (cached) return cached
+    let tasks: AgentTask[] = []
+    try {
+      const p = agentTaskFilePath(sessionId)
+      if (existsSync(p)) {
+        const parsed = JSON.parse(readFileSync(p, 'utf-8'))
+        if (Array.isArray(parsed)) tasks = parsed as AgentTask[]
+      }
+    } catch (e) {
+      console.error('[agent-task] 读取失败:', e)
+      tasks = []
+    }
+    agentTaskStore.set(sessionId, tasks)
+    return tasks
+  }
+
+  function saveAgentTasks(sessionId: string, tasks: AgentTask[]): void {
+    agentTaskStore.set(sessionId, tasks)
+    try {
+      ensureAgentProjectsDir()
+      writeFileSync(agentTaskFilePath(sessionId), JSON.stringify(tasks, null, 2))
+    } catch (e) {
+      console.error('[agent-task] 保存失败:', e)
+    }
+  }
+
+  function nextTaskId(tasks: AgentTask[]): string {
+    const max = tasks.reduce((m, t) => Math.max(m, Number(t.id) || 0), 0)
+    return String(max + 1)
+  }
+
+  ipcMain.handle('agent-todo-write', async (_e, sessionId: string, todos: TodoItem[]): Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }> => {
+    try {
+      const now = Date.now()
+      const tasks: AgentTask[] = (todos || []).map((t, i) => ({
+        id: String(i + 1),
+        subject: t.content,
+        description: '',
+        status: t.status === 'in_progress' || t.status === 'completed' ? t.status : 'pending',
+        activeForm: t.activeForm,
+        notes: '',
+        createdAt: now,
+        updatedAt: now
+      }))
+      saveAgentTasks(sessionId, tasks)
+      return { success: true, tasks }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('agent-task-create', async (_e, sessionId: string, input: { subject: string; description?: string; activeForm?: string }): Promise<{ success: boolean; task?: AgentTask; error?: string }> => {
+    try {
+      if (!input?.subject) return { success: false, error: 'subject is required' }
+      const tasks = loadAgentTasks(sessionId)
+      const now = Date.now()
+      const task: AgentTask = {
+        id: nextTaskId(tasks),
+        subject: input.subject,
+        description: input.description || '',
+        status: 'pending',
+        activeForm: input.activeForm,
+        notes: '',
+        createdAt: now,
+        updatedAt: now
+      }
+      tasks.push(task)
+      saveAgentTasks(sessionId, tasks)
+      return { success: true, task }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('agent-task-get', async (_e, sessionId: string, taskId: string): Promise<{ success: boolean; task?: AgentTask; error?: string }> => {
+    const task = loadAgentTasks(sessionId).find(t => t.id === String(taskId))
+    return task ? { success: true, task } : { success: false, error: `Task ${taskId} not found` }
+  })
+
+  ipcMain.handle('agent-task-list', async (_e, sessionId: string): Promise<{ success: boolean; tasks: AgentTask[] }> => {
+    return { success: true, tasks: loadAgentTasks(sessionId) }
+  })
+
+  ipcMain.handle('agent-task-update', async (_e, sessionId: string, taskId: string, updates: { status?: string; subject?: string; description?: string; activeForm?: string; notes?: string }): Promise<{ success: boolean; task?: AgentTask; error?: string }> => {
+    const tasks = loadAgentTasks(sessionId)
+    const task = tasks.find(t => t.id === String(taskId))
+    if (!task) return { success: false, error: `Task ${taskId} not found` }
+    if (updates.status !== undefined) task.status = updates.status as AgentTaskStatus
+    if (updates.subject !== undefined) task.subject = updates.subject
+    if (updates.description !== undefined) task.description = updates.description
+    if (updates.activeForm !== undefined) task.activeForm = updates.activeForm
+    if (updates.notes !== undefined) task.notes = updates.notes
+    task.updatedAt = Date.now()
+    if (task.status === 'deleted') {
+      saveAgentTasks(sessionId, tasks.filter(t => t.id !== task.id))
+      return { success: true }
+    }
+    saveAgentTasks(sessionId, tasks)
+    return { success: true, task }
+  })
+
+  ipcMain.handle('agent-task-stop', async (_e, sessionId: string, taskId: string): Promise<{ success: boolean; task?: AgentTask; error?: string }> => {
+    const tasks = loadAgentTasks(sessionId)
+    const task = tasks.find(t => t.id === String(taskId))
+    if (!task) return { success: false, error: `Task ${taskId} not found` }
+    if (task.status === 'completed') return { success: false, error: `Task ${taskId} 已完成，无法停止` }
+    task.status = 'cancelled'
+    task.updatedAt = Date.now()
+    saveAgentTasks(sessionId, tasks)
+    return { success: true, task }
+  })
+
+  ipcMain.handle('agent-task-output', async (_e, sessionId: string, taskId: string): Promise<{ success: boolean; task?: AgentTask; output?: string; error?: string }> => {
+    const task = loadAgentTasks(sessionId).find(t => t.id === String(taskId))
+    if (!task) return { success: false, error: `Task ${taskId} not found` }
+    return { success: true, task, output: task.notes || '' }
+  })
+
   // ── Agent Code Bash 执行 ────────────────────────────
   // 当前工作目录（由渲染进程在切换项目时通过 set-bash-cwd 同步过来）
   let bashCwd: string | null = null
@@ -3778,27 +3945,46 @@ export function registerIpcHandlers(): void {
     bashCwd = dir || null
     return { success: true }
   })
+
+  // Agent Code 文件工具的“工作区根目录”。渲染进程在切换项目/目录时通过
+  // set-agent-workspace 同步过来。模型若给出相对路径，统一在下面各 handler 中解析到
+  // 工作区根目录，避免相对路径被错误地解析到应用进程的工作目录（process.cwd()），
+  // 从而出现“在 test 同级目录新建目录而非在 test 内创建文件”这类错位。
+  let agentWorkspaceRoot: string | null = null
+  ipcMain.handle('set-agent-workspace', async (_e, dir: string) => {
+    agentWorkspaceRoot = dir || null
+    return { success: true }
+  })
+
+  // 将模型给出的（可能相对的）路径解析到工作区根目录；绝对路径（含 Windows 盘符/UNC 除外）原样返回
+  function resolveAgentPath(p: string): string {
+    if (!p) return p
+    if (isAbsolute(p)) return p
+    if (agentWorkspaceRoot) return resolve(agentWorkspaceRoot, p)
+    return p
+  }
   ipcMain.handle('execute-command', async (_e, opts: { command: string; timeout?: number }): Promise<{ stdout: string; stderr: string; code: number }> => {
     const timeout = opts.timeout ?? 120000
-    // Windows 中文系统默认代码页为 CP936（GBK），而 Node.js child_process 解码输出时
-    // 默认按 UTF-8 处理，导致中文乱码（典型的 "�����"）。将命令包裹在 chcp 65001 中
-    // 强制管道使用 UTF-8 编码，输出即可正常解码。
+    // Windows 中文系统下，命令输出编码分两种情况：
+    //  - 现代外部程序（node / git / npm 等）输出 UTF-8；
+    //  - cmd 内部命令（cd / dir / echo / type 等）在管道中仍按 OEM 代码页（CP936 / GBK）输出，
+    //    即便 @chcp 65001 也无法改变“管道”编码，导致直接按 UTF-8 解码出现 “�����”。
+    // 因此这里捕获原始 Buffer，先按 UTF-8 解码；若含非法 UTF-8 序列则回退用 GBK 解码，
+    // 两种场景的中文都能正确显示。
     const wrappedCommand = process.platform === 'win32'
       ? `@chcp 65001 >NUL && ${opts.command}`
       : opts.command
     return new Promise((resolve) => {
-      const child = exec(wrappedCommand, { cwd: bashCwd ?? undefined, timeout, windowsHide: true }, (error, stdout, stderr) => {
+      const child = exec(wrappedCommand, { cwd: bashCwd ?? undefined, timeout, windowsHide: true, encoding: 'buffer' }, (error, stdout, stderr) => {
         resolve({
-          stdout: stdout ?? '',
-          stderr: stderr ?? '',
+          stdout: decodeCommandOutput(stdout),
+          stderr: decodeCommandOutput(stderr),
           code: error?.code ?? (error ? 1 : 0)
         })
       })
-      if (timeout > 0) {
-        child.on('error', () => {
-          resolve({ stdout: '', stderr: 'command execution error', code: 1 })
-        })
-      }
+      child.on('error', () => {
+        resolve({ stdout: '', stderr: 'command execution error', code: 1 })
+      })
     })
   })
 
@@ -3807,6 +3993,7 @@ export function registerIpcHandlers(): void {
   const DELETE_BASES = (): string[] => {
     const bases = [APP_ROOT]
     if (bashCwd) bases.push(bashCwd)
+    if (agentWorkspaceRoot) bases.push(agentWorkspaceRoot)
     return bases
   }
   function isDeletePathSafe(target: string): boolean {
@@ -3814,7 +4001,7 @@ export function registerIpcHandlers(): void {
   }
   ipcMain.handle('delete-path', async (_e, targetPath: string, recursive: boolean): Promise<{ success: boolean; message?: string; error?: string }> => {
     try {
-      const resolved = resolve(targetPath)
+      const resolved = resolve(resolveAgentPath(targetPath))
       if (!isDeletePathSafe(resolved)) return { success: false, error: '访问被拒绝：路径不在安全范围内' }
       if (!existsSync(resolved)) return { success: false, error: '路径不存在' }
       const isDir = statSync(resolved).isDirectory()
@@ -3838,6 +4025,24 @@ export function registerIpcHandlers(): void {
 }
 
 // ── 辅助函数 ──────────────────────────────────────────────
+/**
+ * 将命令输出的原始 Buffer 解码为字符串，兼容 Windows 中文环境下的两种编码：
+ * 优先按 UTF-8 解码（node/git/npm 等现代程序）；若含非法 UTF-8 序列（cmd 内部命令
+ * 经管道输出 GBK/CP936），则回退用 GBK 解码，避免中文乱码。
+ */
+function decodeCommandOutput(buf: Buffer | string | undefined): string {
+  if (typeof buf === 'string') return buf
+  if (!buf || buf.length === 0) return ''
+  const asUtf8 = buf.toString('utf8')
+  // U+FFFD 替换字符说明存在非法 UTF-8 字节，大概率是 GBK 输出
+  if (!asUtf8.includes('\uFFFD')) return asUtf8
+  try {
+    return iconv.decode(buf, 'gbk')
+  } catch {
+    return asUtf8
+  }
+}
+
 function fetchText(url: string, timeout = 10_000): Promise<string> {
   return new Promise((resolve, reject) => {
     const req = net.request({ url, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36' } })
