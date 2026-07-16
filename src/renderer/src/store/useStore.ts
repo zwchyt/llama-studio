@@ -39,6 +39,8 @@ function logClass(text: string): string {
 let saveAgentProjectsTimer: ReturnType<typeof setTimeout> | null = null
 function scheduleSaveAgentProjects(p: AgentProject[]): void {
   if (saveAgentProjectsTimer) clearTimeout(saveAgentProjectsTimer)
+  // 空占位项目（无会话、无工作目录）不落盘，避免 IPC GC 误删磁盘已有会话文件
+  if (p.length === 0 || p.every(proj => proj.sessions.length === 0 && !proj.workspaceDir)) return
   saveAgentProjectsTimer = setTimeout(() => {
     window.api?.saveAgentProjects(p).catch(() => {})
   }, 800)
@@ -140,6 +142,9 @@ interface AppStore {
   // ── 开屏动画 ──
   splashEnabled: boolean
   setSplashEnabled: (v: boolean) => void
+  // ── Agent Code 工具调用卡片默认展开 ──
+  agentToolCardsExpanded: boolean
+  setAgentToolCardsExpanded: (v: boolean) => void
   initUiSettings: () => Promise<void>
   setChatSidebarCurrentCollapsed: (v: boolean) => void
   // ── 基准测试持久结果 ──
@@ -361,6 +366,15 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
     try { localStorage.setItem('splashEnabled', String(v)) } catch { /* ignore */ }
     window.api?.setUiSetting('splashEnabled', v)
   },
+  // ── Agent Code 工具调用卡片默认展开 ──
+  agentToolCardsExpanded: (() => {
+    try { return localStorage.getItem('agentToolCardsExpanded') !== 'false' } catch { return true }
+  })(),
+  setAgentToolCardsExpanded: (v: boolean) => {
+    set({ agentToolCardsExpanded: v })
+    try { localStorage.setItem('agentToolCardsExpanded', String(v)) } catch { /* ignore */ }
+    window.api?.setUiSetting('agentToolCardsExpanded', v)
+  },
   // ── 从主进程同步 UI 设置（覆盖 localStorage 的陈旧值）──
   initUiSettings: async () => {
     try {
@@ -377,6 +391,10 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
       if (s.chatSidebarCollapsed !== undefined) {
         try { localStorage.setItem('chatSidebarCollapsed', String(s.chatSidebarCollapsed)) } catch { /* ignore */ }
         set({ chatSidebarCollapsed: s.chatSidebarCollapsed })
+      }
+      if (s.agentToolCardsExpanded !== undefined) {
+        try { localStorage.setItem('agentToolCardsExpanded', String(s.agentToolCardsExpanded)) } catch { /* ignore */ }
+        set({ agentToolCardsExpanded: s.agentToolCardsExpanded })
       }
     } catch { /* ignore */ }
   },

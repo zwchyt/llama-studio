@@ -7,4 +7,5 @@ export interface GrepInput {
   '-i'?: boolean
   context?: number
   '-n'?: boolean
+  type?: string
 }

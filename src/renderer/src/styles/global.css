@@ -30,8 +30,9 @@
   --font: 'Inter', system-ui, sans-serif;
 
   /* 代码块配色（浅色） */
-  --code-bg: #f6f8fa;
-  --code-header-bg: #f0f2f5;
+  --code-bg: #f7f7f8;
+  --code-header-bg: #efeff1;
+  --code-border: #e6e6e8;
   --code-text: #24292e;
   --code-comment: #6a737d;
   --code-keyword: #d73a49;
@@ -39,6 +40,9 @@
   --code-number: #005cc5;
   --code-attr: #6f42c1;
   --code-deletion: #b31d28;
+  /* Markdown 气泡内子元素背景（更淡，贴近气泡底色） */
+  --table-head-bg: #f1f1f2;
+  --quote-bg: #f4f4f5;
 }
 
 /* 开屏动画层（SplashScreen 组件） */
@@ -61,7 +65,8 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --code-bg: #161b22;
-    --code-header-bg: #1c2128;
+    --code-header-bg: #1a1f27;
+    --code-border: #262c36;
     --code-text: #e6edf3;
     --code-comment: #8b949e;
     --code-keyword: #ff7b72;
@@ -69,6 +74,12 @@
     --code-number: #79c0ff;
     --code-attr: #d2a8ff;
     --code-deletion: #ffa198;
+    /* Markdown 气泡内子元素背景（暗色，比气泡底色略亮但不刺眼） */
+    --table-head-bg: #1c222b;
+    --quote-bg: #191e26;
+  }
+  .chat-code-pre {
+    background: #171c24;
   }
 }
 
@@ -291,8 +302,11 @@ select {
   flex-direction: column;
 }
 
-/* 为 .content 内所有子视图提供默认内边距（chat-layout 自行处理） */
-.content>*:not(.chat-layout) {
+/* 为 .content 内所有子视图提供默认内边距（chat-layout / agent-code-view 自行处理）。
+   注意：必须把 .agent-code-view 排除，否则它会被强制 overflow-y:auto，
+   导致整个工作台（文件树+预览+聊天）成为可滚动容器，
+   表现为「滑预览滚动条时整体一起上下滑动」。 */
+.content>*:not(.chat-layout):not(.agent-code-view) {
   padding: 24px;
   overflow-y: auto;
   flex: 1;
@@ -4522,10 +4536,12 @@ webview {
 }
 
 /* ── 回到底部浮动按钮 ── */
+/* 锚定在 .chat-main-col（非滚动容器）内，底部偏移 = 输入框高度 + 间距，
+   从而精确悬浮在输入框正上方，不随消息滚动而漂移、也不遮挡输入框。 */
 .chat-scroll-bottom-btn {
-  position: sticky;
-  bottom: 8px;
+  position: absolute;
   left: 50%;
+  bottom: calc(var(--chat-input-h, 70px) + 12px);
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -4540,7 +4556,7 @@ webview {
   box-shadow: var(--shadow-md);
   transition: all var(--transition);
   animation: chatScrollBtnIn .25s ease-out;
-  z-index: 10;
+  z-index: 30;
 }
 
 .chat-scroll-bottom-btn:hover {
@@ -5110,9 +5126,11 @@ webview {
 }
 
 .chat-msg-markdown blockquote {
-  margin: 0 0 10px;
+  margin:0 0 10px;
   padding: 4px 14px;
   border-left: 3px solid var(--border-strong);
+  background: var(--quote-bg);
+  border-radius: 0 4px 4px 0;
   color: var(--text-secondary);
 }
 
@@ -5123,8 +5141,9 @@ webview {
 
 .chat-msg-markdown table {
   border-collapse: collapse;
-  margin: 0 0 10px;
+  margin:0 0 10px;
   font-size: 13px;
+  width: 100%;
   display: block;
   overflow-x: auto;
 }
@@ -5137,7 +5156,7 @@ webview {
 }
 
 .chat-msg-markdown th {
-  background: var(--surface-2, var(--bg));
+  background: var(--table-head-bg);
   font-weight: 600;
 }
 
@@ -5160,10 +5179,10 @@ webview {
 
 /* ── 代码块 ── */
 .chat-code-block {
-  margin: 0 0 10px;
-  border: 1px solid var(--border);
+  margin:0 0 10px;
+  border:1px solid var(--code-border);
   border-radius: var(--radius-sm);
-  overflow: hidden;
+  overflow:hidden;
   background: var(--code-bg);
 }
 
@@ -5172,9 +5191,42 @@ webview {
   align-items: center;
   justify-content: space-between;
   padding: 5px 10px;
-  background: var(--code-header-bg);
-  border-bottom: 1px solid var(--border);
+  background: #cfcfd3;
+  border-bottom: 1px solid var(--code-border);
   font-size: 11px;
+}
+
+.chat-code-head-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chat-code-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  border-radius: 4px;
+  transition: color var(--transition);
+}
+
+.chat-code-toggle:hover {
+  color: var(--text);
+}
+
+/* 收起态：隐藏代码体，去掉头部底边框，使整体更紧凑 */
+.chat-code-block.collapsed .chat-code-header {
+  border-bottom: none;
+}
+
+.chat-code-body.hidden {
+  display: none;
 }
 
 .chat-code-lang {
@@ -5209,6 +5261,9 @@ webview {
   margin: 0;
   padding: 12px 14px;
   overflow-x: auto;
+  flex: 1;
+  min-width: 0;
+  background: #dfdfdf;
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 12.5px;
   line-height: 1.6;
@@ -7939,8 +7994,8 @@ input[type="reset"]:not(:disabled) {
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  min-width: 500px;
-  /* 侧边栏200px + 聊天区最小300px，防止完全坍塌 */
+  /* 不再固定 min-width：窄窗由 JS 自适应收起侧栏/预览，内部 min-width 兜底，
+     避免整体被撑开导致横向溢出裁切。 */
 }
 
 .agent-code-topbar {
@@ -7991,6 +8046,7 @@ input[type="reset"]:not(:disabled) {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+  position: relative;
 }
 
 .agent-code-warning {
@@ -8011,6 +8067,7 @@ input[type="reset"]:not(:disabled) {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow-anchor: none;
 }
 
 .agent-code-view .chat-messages .chat-msg {
@@ -8137,6 +8194,72 @@ input[type="reset"]:not(:disabled) {
   padding: 10px 54px;
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+
+/* ── 输入框 @ 文件补全浮层（显示在输入框上方）── */
+.chat-at-file-pop {
+  position: absolute;
+  left: 54px;
+  right: 54px;
+  bottom: 100%;
+  margin-bottom: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .3);
+  padding: 4px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-at-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.chat-at-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-at-item:hover {
+  background: var(--surface-hover);
+}
+
+.chat-at-item svg {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.chat-at-name {
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.chat-at-rel {
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: auto;
+  padding-left: 10px;
 }
 
 /* 上下文窗口裁剪提示：自动省略早期消息时显示在输入框上方 */
@@ -8376,25 +8499,48 @@ input[type="reset"]:not(:disabled) {
 .agent-code-body {
   flex: 1;
   display: flex;
-  overflow: auto hidden;
-  /* 水平溢出时可滚动（右侧面板），垂直隐藏（内部滚动由聊天区自己处理） */
+  /* 水平/垂直均 hidden：禁止整个工作台（文件树+预览+聊天）作为整体出现
+     共享滚动条。原 auto hidden 会在面板总宽超出窗口时产生一条水平滚动条，
+     拖动它会导致所有面板整体水平平移（即「滑预览时文件树跟着水平滑动」）。
+     各面板内部滚动由 .file-tree-content / .agent-code-preview-body / .agent-code-chat 自行处理。 */
+  overflow: hidden;
   min-height: 0;
 }
 
 /* 文件树 / 预览面板之间的可拖拽分隔条 */
 .agent-code-resize-handle {
-  width: 5px;
+  width: 9px;
   flex-shrink: 0;
   align-self: stretch;
   cursor: col-resize;
   background: transparent;
   touch-action: none;
-  transition: background .15s;
+  transition: background .2s;
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.agent-code-resize-handle:hover,
-.agent-code-resize-handle:active {
+/* 三个小点组成的拖拽指示器（一直显示） */
+.agent-code-resize-handle::before {
+  content: '';
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  box-shadow: 0 7px 0 var(--text-muted), 0 14px 0 var(--text-muted);
+  opacity: 0.45;
+  transition: opacity .2s;
+}
+
+.agent-code-resize-handle:hover::before,
+.agent-code-resize-handle--active::before {
+  opacity: 1;
   background: var(--accent);
+  box-shadow: 0 7px 0 var(--accent), 0 14px 0 var(--accent);
 }
 
 .agent-code-chat {
@@ -8403,7 +8549,38 @@ input[type="reset"]:not(:disabled) {
   flex-direction: column;
   min-width: 300px;
   overflow: hidden;
+  position: relative;
   background: var(--bg);
+}
+
+/* ── 滚动到底部浮动按钮 ── */
+/* 锚定在 .agent-code-chat（非滚动容器）内，底部偏移 = 输入框高度 + 间距，
+   从而精确悬浮在输入框正上方，不遮挡输入框。 */
+.chat-scroll-bottom-btn {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--chat-input-h, 70px) + 14px);
+  transform: translateX(-50%);
+  z-index: 20;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.12s ease, opacity 0.15s ease;
+}
+.chat-scroll-bottom-btn:hover {
+  background: var(--surface-hover);
+  transform: translateX(-50%) translateY(-2px);
+}
+.chat-scroll-bottom-btn:active {
+  transform: translateX(-50%) translateY(0);
 }
 
 /* ── Agent Code 侧边栏（会话列表）── */
@@ -8442,7 +8619,9 @@ input[type="reset"]:not(:disabled) {
   transition: max-width 0.35s ease, opacity 0.2s ease;
 }
 
-/* 右侧栏主体（文件树 / 预览 / 任务），位于上下文监控面板下方 */
+/* 右侧栏主体（文件树 / 预览 / 任务），位于上下文监控面板下方。
+   参考 Reasonix 的「单宽度 + CSS 派生」：只由 --agent-tree-width 控制文件树宽度，
+   预览宽度不固定，用 flex:1 吃掉本组的剩余空间，拖文件树时预览自然跟随。 */
 .agent-code-right-body {
   flex: 1;
   display: flex;
@@ -8458,7 +8637,7 @@ input[type="reset"]:not(:disabled) {
 /* ── Agent Code 上下文监控面板（右侧栏常驻顶部卡片）── */
 .agent-ctx-panel {
   flex-shrink: 0;
-  background: #d9d9de;
+  background: #efefef;
   border-bottom: 1px solid var(--border);
   padding: 10px 12px;
   display: flex;
@@ -8596,6 +8775,35 @@ input[type="reset"]:not(:disabled) {
   color: #000000;
 }
 
+/* ── 顶栏上下文 / 计划按钮样式 ── */
+.agent-code-topbar-btn {
+  padding: 3px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all .15s ease;
+  white-space: nowrap;
+}
+
+.agent-code-topbar-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.agent-code-topbar-btn.active {
+  background: var(--surface-hover);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.agent-code-topbar-btn.active:hover {
+  background: var(--surface-hover);
+}
+
 /* ── 任务清单面板（Todo / Task）── */
 .agent-code-task-panel {
   display: flex;
@@ -8727,24 +8935,26 @@ input[type="reset"]:not(:disabled) {
 /* ── 预览面板折叠容器 ── */
 .agent-code-preview-group {
   display: flex;
-  flex-shrink: 0;
+  flex: 1 1 0;
+  min-width: 0;
   overflow: hidden;
-  max-width: 800px;
   transition: max-width 0.25s ease, opacity 0.2s ease;
+  border-left: 1px solid var(--border);
 }
 
 .agent-code-preview-group.collapsed {
   max-width: 0;
   opacity: 0;
   pointer-events: none;
+  border-left: none;
 }
 
 .agent-code-sidebar-header {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  font-size: 10px;
+  gap: 6px;
+  padding: 14px 16px 8px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -8756,26 +8966,32 @@ input[type="reset"]:not(:disabled) {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  width: 100%;
+  gap: 7px;
+  margin: 4px 12px 12px;
+  width: calc(100% - 24px);
   padding: 10px 12px;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--accent);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
-  transition: background .15s;
+  transition: all .15s ease;
   flex-shrink: 0;
 }
 
 .agent-code-session-new-btn:hover {
+  border-color: var(--accent);
+  border-style: solid;
   background: var(--surface-hover);
+  color: var(--accent);
+  box-shadow: var(--shadow);
 }
 
 /* ── 项目层级 ── */
 .agent-code-project-group {
+  padding: 4px 12px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -8783,13 +8999,14 @@ input[type="reset"]:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 7px 8px 7px 4px;
-  font-size: 12px;
+  padding: 8px 8px 8px 6px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text);
   cursor: pointer;
-  transition: background .15s;
+  transition: background .15s ease, color .15s ease;
   user-select: none;
+  border-radius: var(--radius-sm);
 }
 
 .agent-code-project-item:hover {
@@ -8797,60 +9014,89 @@ input[type="reset"]:not(:disabled) {
 }
 
 .agent-code-project-item.active {
-  background: #d9d9d9;
-  color: #100606;
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border-strong), var(--shadow);
 }
 
 .agent-code-project-item.active .agent-code-session-del {
-  color: rgb(24 11 11 / 70%);
+  color: var(--text-secondary);
 }
 
 .agent-code-project-chevron {
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
   background: none;
-  color: inherit;
+  color: var(--text-muted);
   cursor: pointer;
-  border-radius: 3px;
-  opacity: .6;
+  border-radius: 5px;
+  opacity: .7;
+  transition: opacity .15s, background .15s;
 }
 
 .agent-code-project-chevron:hover {
   opacity: 1;
-  background: rgba(128, 128, 128, .15);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
 }
 
 .agent-code-child-sessions {
-  padding-left: 22px;
-  border-top: 1px solid var(--border);
+  padding: 4px 0 6px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .agent-code-session-item {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 8px;
-  font-size: 11px;
+  gap: 6px;
+  padding: 7px 10px;
+  font-size: 12px;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background .15s;
+  transition: background .15s ease, color .15s ease;
   user-select: none;
-  border-radius: 0;
+  border-radius: var(--radius-sm);
+  position: relative;
+}
+
+.agent-code-session-item::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  transition: background .15s, transform .15s;
 }
 
 .agent-code-session-item:hover {
   background: var(--surface-hover);
+  color: var(--text);
+}
+
+.agent-code-session-item:hover::before {
+  background: var(--text-muted);
 }
 
 .agent-code-session-item.active {
   background: var(--surface-hover);
-  color: var(--accent);
-  font-weight: 500;
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.agent-code-session-item.active::before {
+  background: var(--accent);
+  transform: translateY(-50%) scale(1.3);
 }
 
 .agent-code-session-title {
@@ -8858,21 +9104,23 @@ input[type="reset"]:not(:disabled) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  padding-left: 6px;
 }
 
 .agent-code-session-del {
   flex-shrink: 0;
   opacity: 0;
-  padding: 2px;
+  padding: 3px;
   border: none;
   background: none;
   color: var(--text-muted);
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: 5px;
   display: flex;
   align-items: center;
   justify-content: center;
   line-height: 1;
+  transition: opacity .15s, background .15s, color .15s;
 }
 
 .agent-code-project-item:hover .agent-code-session-del,
@@ -8881,22 +9129,24 @@ input[type="reset"]:not(:disabled) {
 }
 
 .agent-code-session-del:hover {
-  background: rgba(255, 80, 80, .2);
-  color: #e55;
+  background: rgba(255, 80, 80, .15);
+  color: #e5484d;
 }
 
 .agent-code-add-sess-btn {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   width: 100%;
-  padding: 5px 8px;
+  margin-top: 2px;
+  padding: 7px 10px 7px 18px;
   border: none;
   background: none;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
-  transition: all .15s;
+  transition: all .15s ease;
+  border-radius: var(--radius-sm);
 }
 
 .agent-code-add-sess-btn:hover {
@@ -8907,6 +9157,7 @@ input[type="reset"]:not(:disabled) {
 .agent-code-session-list {
   flex: 1;
   overflow-y: auto;
+  padding-bottom: 12px;
 }
 
 .agent-code-empty-chat {
@@ -8949,6 +9200,19 @@ input[type="reset"]:not(:disabled) {
   text-align: center;
   max-width: 520px;
   width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.agent-welcome-atfile {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  user-select: none;
 }
 
 .agent-welcome-suggestions {
@@ -9081,32 +9345,11 @@ input[type="reset"]:not(:disabled) {
 }
 
 /* ══ Agent Code 工具调用块（中文名 / 折叠 / 截断 / 加载指示）══ */
-.agent-tool-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.agent-tool-group-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  align-self: flex-start;
-  padding: 4px 10px;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent);
-  cursor: pointer;
-}
-
 .agent-tool-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  margin-bottom: 8px;
 }
 
 .agent-tool-call {
@@ -9302,14 +9545,14 @@ input[type="reset"]:not(:disabled) {
   color: var(--warning);
 }
 
-/* 工具执行「一键撤销」按钮与「已恢复」徽标 */
+/* 工具执行「一键撤销」按钮与「已恢复」徽标（位于卡片头部右侧 meta 区） */
 .agent-tool-undo {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-top: 8px;
-  padding: 4px 10px;
-  font-size: 12px;
+  margin-left: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
   font-weight: 500;
   border: 1px solid var(--warning);
   color: var(--warning);
@@ -9328,9 +9571,8 @@ input[type="reset"]:not(:disabled) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-top: 8px;
-  margin-left: 8px;
-  font-size: 12px;
+  margin-left: 4px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--success);
 }
@@ -9865,29 +10107,18 @@ input[type="reset"]:not(:disabled) {
 
 .agent-code-tree {
   flex-shrink: 0;
+  width: fit-content;
+  min-width: 160px;
+  max-width: 380px;
   border-left: 1px solid var(--border);
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  background: var(--surface);
 }
 
 .agent-code-tree-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-  gap: 8px;
-}
-
-.agent-code-tree-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: none;
 }
 
 /* ── 文件树 ── */
@@ -9903,7 +10134,7 @@ input[type="reset"]:not(:disabled) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 7px 12px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -10011,14 +10242,55 @@ input[type="reset"]:not(:disabled) {
   color: var(--text-muted);
 }
 
-/* ── 文件内容预览（文件树右侧独立列）── */
-.agent-code-preview {
-  width: 360px;
-  flex-shrink: 0;
-  border-left: 1px solid var(--border);
+/* ── 文件浏览器右键菜单（仅文件节点触发）── */
+.file-tree-ctx-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 152px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .28);
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  gap: 2px;
+}
+
+.file-tree-ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-tree-ctx-item:hover {
+  background: var(--surface-hover);
+}
+
+.file-tree-ctx-item svg {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ── 文件内容预览（文件树右侧独立列）──
+   宽度由父容器 .agent-code-preview-group 的剩余空间派生（flex:1），
+   不固定、不存 state；拖文件树时因剩余空间变化而自然跟随。 */
+.agent-code-preview {
+  width: var(--agent-preview-width, 480px);
+  min-width: 240px;
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
   overflow: hidden;
 }
 
@@ -10030,6 +10302,7 @@ input[type="reset"]:not(:disabled) {
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  background: var(--surface);
 }
 
 .agent-code-preview-name {
@@ -10122,7 +10395,9 @@ input[type="reset"]:not(:disabled) {
 .agent-code-preview-body {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--bg);
 }
 
 .agent-code-preview-code {
@@ -10161,4 +10436,279 @@ input[type="reset"]:not(:disabled) {
   padding: 12px 10px;
   font-size: 12px;
   color: #e55;
+}
+
+/* ── AskUserQuestionModal ─────────────────────────────────── */
+
+.ask-user-question-modal {
+  width: 520px;
+}
+
+.ask-user-question-modal .modal-close-btn {
+  margin-left: auto;
+  padding: 4px;
+  flex-shrink: 0;
+}
+
+.ask-question-block {
+  margin-bottom: 20px;
+}
+
+.ask-question-block:last-child {
+  margin-bottom: 0;
+}
+
+.ask-question-text {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.ask-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ask-question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+
+.ask-question-option:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.ask-question-option.selected {
+  background: rgba(96, 165, 250, .08);
+  border-color: var(--accent);
+}
+
+.ask-question-option input[type="radio"],
+.ask-question-option input[type="checkbox"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+
+.ask-question-option-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ask-question-option-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ask-question-option-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.ask-question-other {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px dashed var(--border);
+}
+
+.ask-question-other .ask-question-option-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ask-question-other-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.ask-question-other-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ask-question-preview {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.ask-question-preview pre {
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ── 上下文 / 提示词浮动卡片（与计划卡片统一风格）── */
+.agent-card-ctx .agent-ctx-panel {
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+
+.agent-card-ctx .agent-ctx-head {
+  display: none;
+}
+
+.agent-card-ctx .agent-ctx-divider {
+  margin-top: 0;
+}
+
+.agent-card-prompt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-card-prompt-body .agent-prompt-textarea {
+  width: 100%;
+  min-height: 100px;
+  max-height: 200px;
+  padding: 8px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.agent-card-prompt-body .agent-prompt-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.agent-card-prompt-body .agent-prompt-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.agent-card-prompt-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* ── Agent Code 任务计划浮动卡片（聊天区右上角）── */
+.agent-task-card {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 50;
+  width: 320px;
+  max-height: 50vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+  animation: taskCardIn 0.15s ease-out;
+  overflow: hidden;
+}
+
+@keyframes taskCardIn {
+  from { opacity: 0; transform: translateY(-8px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.agent-task-card-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.agent-task-card-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.agent-task-card-empty {
+  padding: 16px 0;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.agent-task-card-item {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.agent-task-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.agent-task-card-id {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+}
+
+.agent-task-card-subject {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.agent-task-card-notes {
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-top: 1px dashed var(--border);
+  padding-top: 3px;
 }

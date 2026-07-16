@@ -34,11 +34,23 @@ export function getBashPrompt(): string {
 
 ## 超时
 - 默认超时 120s，可调（最大 300s）。
+- 设置 \`auto_background: true\` 可让超时命令自动转后台继续运行，而非被杀死。
+
+## 后台执行
+- 设置 \`is_background: true\` 将命令放到后台运行（适合 dev server、long build 等），立即返回 task_id。
+- 后台任务完成后：用 \`get_background_task_output\` 工具检索输出。
+- 后台任务列表：用 \`list_background_tasks\` 查看所有任务状态。
+- \`timeout: 0\` 在后台模式下禁用超时（一直运行到完成或手动终止）。
+
+## 输出截断
+- 输出超过约 100K 字符时会自动截断，完整输出保存到临时文件。
+- 截断信息会显示在结果中。
 
 ## 最佳实践总结
 - **读文件/搜内容**：强制用 Read/Grep 工具。
 - **写文件**：强制用 Write/Edit 工具。
 - **git 操作**：优先新建 commit 而非 amend，永远不要 \`--no-verify\` 跳过 hooks。
 - **路径处理**：优先用 \`/\`，绝对路径含空格时用 \`"C:/Program Files/..."\`。
-- **静默操作**：非必要不输出，减少 token 消耗。`
+- **静默操作**：非必要不输出，减少 token 消耗。
+- **传信息给工具链**：直接返回文本即可，不要用 echo/printf。`
 }

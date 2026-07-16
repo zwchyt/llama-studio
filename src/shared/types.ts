@@ -242,13 +242,26 @@ export interface AgentTask {
   description: string
   status: AgentTaskStatus
   activeForm?: string
+  priority?: 'high' | 'medium' | 'low'
   notes?: string
   createdAt: number
   updatedAt: number
 }
 
 export interface TodoItem {
+  id?: string
   content: string
-  status: 'pending' | 'in_progress' | 'completed'
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+  priority?: 'high' | 'medium' | 'low'
   activeForm?: string
+}
+
+export interface TodoUpdate {
+  id?: string
+  content?: string
+  description?: string
+  status?: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+  priority?: 'high' | 'medium' | 'low'
+  activeForm?: string
+  notes?: string
 }

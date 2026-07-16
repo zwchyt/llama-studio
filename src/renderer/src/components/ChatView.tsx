@@ -28,6 +28,7 @@ import { getDocument } from 'pdfjs-dist'
 import mammoth from 'mammoth'
 import CodeBlock from './CodeBlock'
 import ConfirmModal from './ConfirmModal'
+import AskUserQuestionModal from './AskUserQuestionModal'
 import CustomSelect from './CustomSelect'
 
 // 导入 worker 模块使其注册 globalThis.pdfjsWorker，pdfjs 的 fake worker 回退自动使用它
@@ -221,7 +222,7 @@ function formatSessionTime(iso: string): string {
   const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
   if (diffDays === 0) return hhmm
   if (diffDays === 1) return `昨天 ${hhmm}`
-  if (diffDays < 7) return `${['周日','周一','周二','周三','周四','周五','周六'][d.getDay()]} ${hhmm}`
+  if (diffDays < 7) return `${['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]} ${hhmm}`
   return `${d.getMonth() + 1}/${d.getDate()} ${hhmm}`
 }
 
@@ -243,7 +244,7 @@ function MarkdownCode({ className, children }: { className?: string; children?: 
   if (text.includes('\n')) {
     return <CodeBlock language="" value={text} />
   }
-  return <code className="chat-code-inline">{text}</code>
+  return <code className="chat-code-in-line">{text}</code>
 }
 
 // ── 思考链（reasoning）解析 ─────────────────────────────────
@@ -602,10 +603,10 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
     const text = isUser
       ? msg.content
       : parseThinkSegments(msg.content)
-          .filter(s => s.type === 'text')
-          .map(s => s.value)
-          .join('\n\n')
-          .trim()
+        .filter(s => s.type === 'text')
+        .map(s => s.value)
+        .join('\n\n')
+        .trim()
     navigator.clipboard.writeText(text)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
@@ -631,73 +632,73 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
   )
 
   // 流式中不显示操作栏
-	 		  if (isStreaming) {
-	 		    return (
-	 		      <>
-	 		      <div className="chat-msg chat-msg-assistant" data-msg-id={msg.id}>
- 		        <div className="chat-msg-avatar"><Bot size={14} /></div>
- 		        <div className="chat-msg-body">
- 		          {msg.toolCalls && msg.toolCalls.length > 0 && (
- 		            <ToolCallBlock toolCalls={msg.toolCalls} />
- 		          )}
-			  {msg.content ? (
- 			          <>
- 			            {renderSegments(true)}
- 			            {segments.length > 0 && segments[segments.length - 1].type === 'text' && <span className="chat-cursor" />}
- 			          </>
- 			          ) : (
- 		            <div className="chat-msg-placeholder">
- 		              <span className="chat-typing-dots" />
- 		            </div>
- 		          )}
-	 		      </div>
-	 		      </div>
-	 		      </>
-	 		    )
-	  }
-
-	  return (
-		    <>
-		    <div className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-assistant'}`} data-msg-id={msg.id}>
-      {!isUser && (
-        <div className="chat-msg-avatar">
-          <Bot size={14} />
-        </div>
-      )}
-      <div className="chat-msg-body">
-        {isUser ? (
-          <>
-            {msg.attachments && msg.attachments.length > 0 && (
-              <div className="chat-msg-attachments">
-                {msg.attachments.map((att, i) => (
-                  att.type === 'image' ? (
-                    <div key={i} className="chat-attachment-box chat-attachment-image" style={{ cursor: 'pointer' }} onClick={() => onImageClick?.(att.dataUrl!)}>
-                      <img src={att.dataUrl} alt={att.name} className="chat-attachment-img" />
-                      <span className="chat-attachment-name">{att.name}</span>
-                    </div>
-                  ) : (
-                    <div key={i} className="chat-attachment-box">
-                      <FileText size={14} />
-                      <span className="chat-attachment-name">{att.name}</span>
-                    </div>
-                  )
-                ))}
-              </div>
-            )}
-            <div className="chat-msg-bubble chat-msg-bubble-user"><UserMessageContent content={msg.content} /></div>
-          </>
-        ) : msg.error ? (
-          <div className="chat-msg-error">{msg.content}</div>
-        ) : msg.content || msg.toolCalls ? (
-          <>
-            {/* 工具调用块（显示在最上方） */}
+  if (isStreaming) {
+    return (
+      <>
+        <div className="chat-msg chat-msg-assistant" data-msg-id={msg.id}>
+          <div className="chat-msg-avatar"><Bot size={14} /></div>
+          <div className="chat-msg-body">
             {msg.toolCalls && msg.toolCalls.length > 0 && (
               <ToolCallBlock toolCalls={msg.toolCalls} />
             )}
-            {/* 工具调用后的内容（思考过程 + 模型回答），工具调用前的内容不显示 */}
-            {msg.content && (
-              msg.toolCalls && msg.preToolContentLen != null
-                ? (() => {
+            {msg.content ? (
+              <>
+                {renderSegments(true)}
+                {segments.length > 0 && segments[segments.length - 1].type === 'text' && <span className="chat-cursor" />}
+              </>
+            ) : (
+              <div className="chat-msg-placeholder">
+                <span className="chat-typing-dots" />
+              </div>
+            )}
+          </div>
+        </div>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <div className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-assistant'}`} data-msg-id={msg.id}>
+        {!isUser && (
+          <div className="chat-msg-avatar">
+            <Bot size={14} />
+          </div>
+        )}
+        <div className="chat-msg-body">
+          {isUser ? (
+            <>
+              {msg.attachments && msg.attachments.length > 0 && (
+                <div className="chat-msg-attachments">
+                  {msg.attachments.map((att, i) => (
+                    att.type === 'image' ? (
+                      <div key={i} className="chat-attachment-box chat-attachment-image" style={{ cursor: 'pointer' }} onClick={() => onImageClick?.(att.dataUrl!)}>
+                        <img src={att.dataUrl} alt={att.name} className="chat-attachment-img" />
+                        <span className="chat-attachment-name">{att.name}</span>
+                      </div>
+                    ) : (
+                      <div key={i} className="chat-attachment-box">
+                        <FileText size={14} />
+                        <span className="chat-attachment-name">{att.name}</span>
+                      </div>
+                    )
+                  ))}
+                </div>
+              )}
+              <div className="chat-msg-bubble chat-msg-bubble-user"><UserMessageContent content={msg.content} /></div>
+            </>
+          ) : msg.error ? (
+            <div className="chat-msg-error">{msg.content}</div>
+          ) : msg.content || msg.toolCalls ? (
+            <>
+              {/* 工具调用块（显示在最上方） */}
+              {msg.toolCalls && msg.toolCalls.length > 0 && (
+                <ToolCallBlock toolCalls={msg.toolCalls} />
+              )}
+              {/* 工具调用后的内容（思考过程 + 模型回答），工具调用前的内容不显示 */}
+              {msg.content && (
+                msg.toolCalls && msg.preToolContentLen != null
+                  ? (() => {
                     const postContent = msg.content.slice(msg.preToolContentLen)
                     if (!postContent) return null
                     const postSegs = parseThinkSegments(postContent)
@@ -714,112 +715,112 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
                       )
                     })
                   })()
-                : renderSegments(false)
-            )}
-            {msg.stopped && (
-              <div className="chat-msg-stopped-badge">
-                <Square size={10} />
-                <span>已停止生成</span>
-              </div>
-            )}
-            {/* Token 统计信息 */}
-            {!msg.error && msg.content && (msg.tokensDecoded != null || msg.msFirstToken != null || msg.decodeTokS != null) && (
-              <div className="chat-msg-token-stats">
-                {msg.decodeTokS != null && <span>{typeof msg.decodeTokS === 'number' ? msg.decodeTokS.toFixed(1) : msg.decodeTokS} tok/s</span>}
-                {msg.tokensDecoded != null && <span>{msg.tokensDecoded} tokens</span>}
-                {msg.msFirstToken != null && <span>TTFT {msg.msFirstToken}ms</span>}
-                <ContextBar port={serverPort} />
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="chat-msg-placeholder">（空回复）</div>
-        )}
-        {/* 悬停操作栏 */}
-        {(msg.content || (msg.attachments && msg.attachments.length > 0)) && !msg.error && (
-          <div className="chat-msg-actions">
-            {msg.content && (
-              <button className="chat-msg-action-btn" onClick={handleCopy}>
-                {copied ? <Check size={13} /> : <Copy size={13} />}
-              </button>
-            )}
-            {!isUser && msg.content && (
-              <button
-                className="chat-msg-action-btn"
-                onClick={() => {
-                  if (speakingId === msg.id) onStopTts?.()
-                  else {
-                    const text = parseThinkSegments(msg.content)
-                      .filter(s => s.type === 'text')
-                      .map(s => s.value)
-                      .join('\n')
-                      .trim()
-                    if (text) onSpeak?.(msg.id, text)
-                  }
-                }}
-                title={speakingId === msg.id ? '停止朗读' : '朗读回复'}
-              >
-                <Volume2 size={13} />
-              </button>
-            )}
-            {isUser && onEdit && (
-              <button className="chat-msg-action-btn" onClick={onEdit}>
-                <Pencil size={13} />
-              </button>
-            )}
-            {!isUser && onRegenerate && (
-              <button
-                className="chat-msg-action-btn"
-                onClick={onRegenerate}
-                disabled={regenDisabled}
-                style={regenDisabled ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
-              >
-                <RotateCcw size={13} />
-              </button>
-            )}
-            {!isUser && onContinue && (
-              <button
-                className="chat-msg-action-btn"
-                onClick={onContinue}
-                disabled={continueDisabled}
-                style={continueDisabled ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
-                title="继续生成"
-              >
-                <Play size={13} />
-              </button>
-            )}
-            {!isUser && onDelete && (
-              <button
-                className="chat-msg-action-btn"
-                onClick={onDelete}
-                disabled={deleteDisabled}
-                style={deleteDisabled ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
-                title="删除此回复"
-              >
-                <Trash2 size={13} />
-              </button>
-            )}
-            {!isUser && onBranch && (
-              <button
-                className="chat-msg-action-btn"
-                onClick={onBranch}
-                title="从此处分支"
-              >
-                <GitBranch size={13} />
-              </button>
-            )}
+                  : renderSegments(false)
+              )}
+              {msg.stopped && (
+                <div className="chat-msg-stopped-badge">
+                  <Square size={10} />
+                  <span>已停止生成</span>
+                </div>
+              )}
+              {/* Token 统计信息 */}
+              {!msg.error && msg.content && (msg.tokensDecoded != null || msg.msFirstToken != null || msg.decodeTokS != null) && (
+                <div className="chat-msg-token-stats">
+                  {msg.decodeTokS != null && <span>{typeof msg.decodeTokS === 'number' ? msg.decodeTokS.toFixed(1) : msg.decodeTokS} tok/s</span>}
+                  {msg.tokensDecoded != null && <span>{msg.tokensDecoded} tokens</span>}
+                  {msg.msFirstToken != null && <span>TTFT {msg.msFirstToken}ms</span>}
+                  <ContextBar port={serverPort} />
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="chat-msg-placeholder">（空回复）</div>
+          )}
+          {/* 悬停操作栏 */}
+          {(msg.content || (msg.attachments && msg.attachments.length > 0)) && !msg.error && (
+            <div className="chat-msg-actions">
+              {msg.content && (
+                <button className="chat-msg-action-btn" onClick={handleCopy}>
+                  {copied ? <Check size={13} /> : <Copy size={13} />}
+                </button>
+              )}
+              {!isUser && msg.content && (
+                <button
+                  className="chat-msg-action-btn"
+                  onClick={() => {
+                    if (speakingId === msg.id) onStopTts?.()
+                    else {
+                      const text = parseThinkSegments(msg.content)
+                        .filter(s => s.type === 'text')
+                        .map(s => s.value)
+                        .join('\n')
+                        .trim()
+                      if (text) onSpeak?.(msg.id, text)
+                    }
+                  }}
+                  title={speakingId === msg.id ? '停止朗读' : '朗读回复'}
+                >
+                  <Volume2 size={13} />
+                </button>
+              )}
+              {isUser && onEdit && (
+                <button className="chat-msg-action-btn" onClick={onEdit}>
+                  <Pencil size={13} />
+                </button>
+              )}
+              {!isUser && onRegenerate && (
+                <button
+                  className="chat-msg-action-btn"
+                  onClick={onRegenerate}
+                  disabled={regenDisabled}
+                  style={regenDisabled ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
+                >
+                  <RotateCcw size={13} />
+                </button>
+              )}
+              {!isUser && onContinue && (
+                <button
+                  className="chat-msg-action-btn"
+                  onClick={onContinue}
+                  disabled={continueDisabled}
+                  style={continueDisabled ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
+                  title="继续生成"
+                >
+                  <Play size={13} />
+                </button>
+              )}
+              {!isUser && onDelete && (
+                <button
+                  className="chat-msg-action-btn"
+                  onClick={onDelete}
+                  disabled={deleteDisabled}
+                  style={deleteDisabled ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
+                  title="删除此回复"
+                >
+                  <Trash2 size={13} />
+                </button>
+              )}
+              {!isUser && onBranch && (
+                <button
+                  className="chat-msg-action-btn"
+                  onClick={onBranch}
+                  title="从此处分支"
+                >
+                  <GitBranch size={13} />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        {isUser && (
+          <div className="chat-msg-avatar chat-msg-avatar-user">
+            <span style={{ fontSize: 12, fontWeight: 700 }}>我</span>
           </div>
         )}
       </div>
-	      {isUser && (
-	        <div className="chat-msg-avatar chat-msg-avatar-user">
-	          <span style={{ fontSize: 12, fontWeight: 700 }}>我</span>
-	        </div>
-	      )}
-	    </div>
-	    </>
-	  )
-	})
+    </>
+  )
+})
 
 // ── 左栏：会话列表 ─────────────────────────────────────────
 function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRequest, runningModels, streamingSessionIds, onToggleStar }: {
@@ -1023,12 +1024,12 @@ const PARAM_CONFIG: Array<{
   step: number
   defaultVal: number
 }> = [
-  { key: 'temperature', label: 'Temperature', min: 0, max: 2, step: 0.1, defaultVal: DEFAULT_PARAMS.temperature ?? 0.8 },
-  { key: 'top_p', label: 'Top P', min: 0, max: 1, step: 0.05, defaultVal: DEFAULT_PARAMS.top_p ?? 0.95 },
-  { key: 'top_k', label: 'Top K', min: 0, max: 200, step: 1, defaultVal: DEFAULT_PARAMS.top_k ?? 40 },
-  { key: 'max_tokens', label: 'Max Tokens', min: 0, max: 8192, step: 1, defaultVal: 0 },
-  { key: 'repeat_penalty', label: 'Repeat Penalty', min: 0, max: 2, step: 0.1, defaultVal: DEFAULT_PARAMS.repeat_penalty ?? 1.1 },
-]
+    { key: 'temperature', label: 'Temperature', min: 0, max: 2, step: 0.1, defaultVal: DEFAULT_PARAMS.temperature ?? 0.8 },
+    { key: 'top_p', label: 'Top P', min: 0, max: 1, step: 0.05, defaultVal: DEFAULT_PARAMS.top_p ?? 0.95 },
+    { key: 'top_k', label: 'Top K', min: 0, max: 200, step: 1, defaultVal: DEFAULT_PARAMS.top_k ?? 40 },
+    { key: 'max_tokens', label: 'Max Tokens', min: 0, max: 8192, step: 1, defaultVal: 0 },
+    { key: 'repeat_penalty', label: 'Repeat Penalty', min: 0, max: 2, step: 0.1, defaultVal: DEFAULT_PARAMS.repeat_penalty ?? 1.1 },
+  ]
 
 function ChatSettingsCard({ session, anchorRect, onClose, onSetSystemPrompt, onSetParams }: {
   session: ChatSession | null
@@ -1309,7 +1310,7 @@ function ContextBar({ port }: { port?: number }) {
   const ratio = nPromptTokens / nCtx
 
   return (
-    <span className="context-bar" title={`已用 ${nPromptTokens.toLocaleString()} / ${nCtx.toLocaleString()} tokens (${(ratio*100).toFixed(1)}%)`}>
+    <span className="context-bar" title={`已用 ${nPromptTokens.toLocaleString()} / ${nCtx.toLocaleString()} tokens (${(ratio * 100).toFixed(1)}%)`}>
       <span className="context-bar-track">
         <span className="context-bar-fill" style={{ width: `${Math.min(ratio * 100, 100)}%` }} />
       </span>
@@ -1359,6 +1360,9 @@ export default function ChatView() {
   const [input, setInput] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
+  // 输入框区域高度（含代码预览 / 附件托盘等）：用于把「回到底部」按钮
+  // 精确悬浮在输入框正上方，而不遮挡输入框。
+  const chatInputWrapRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const throttledScroll = useRef<(() => void) | null>(null)
   const lastScrollSessionRef = useRef<string | null>(null)
@@ -1776,7 +1780,7 @@ export default function ChatView() {
       initSt.clearStreamForSession(sid)
     }
 
-	    window.api.onChatStreamChunk(async (data) => {
+    window.api.onChatStreamChunk(async (data) => {
       // 已中止的流：忽略所有后续事件（包括异步到达的 done）
       if (abortedStreamsRef.current.has(data.streamId)) {
         if (data.done) abortedStreamsRef.current.delete(data.streamId)
@@ -1830,20 +1834,20 @@ export default function ChatView() {
           return
         }
 
-	        // 成功：流结束，同步缓冲区到 Zustand store
-	        const finalContent = streamingBuffer[data.streamId]
-	        delete streamingBuffer[data.streamId]
-	        if (finalContent != null) {
-	          const s = useChatStore.getState()
-	          const sess = s.sessions.find(s => s.id === targetSession.id)
-	          if (sess) {
-	            const msgs = sess.messages.map(m => m.id === data.streamId ? { ...m, content: finalContent } : m)
-	            s.replaceMessages(targetSession.id, msgs)
-	          }
-	        }
+        // 成功：流结束，同步缓冲区到 Zustand store
+        const finalContent = streamingBuffer[data.streamId]
+        delete streamingBuffer[data.streamId]
+        if (finalContent != null) {
+          const s = useChatStore.getState()
+          const sess = s.sessions.find(s => s.id === targetSession.id)
+          if (sess) {
+            const msgs = sess.messages.map(m => m.id === data.streamId ? { ...m, content: finalContent } : m)
+            s.replaceMessages(targetSession.id, msgs)
+          }
+        }
 
-	        regenerateRollbackRef.current = null
-	        if (data.usage != null || data.msFirstToken != null || data.decodeTokS != null) {
+        regenerateRollbackRef.current = null
+        if (data.usage != null || data.msFirstToken != null || data.decodeTokS != null) {
           st.finalizeLastMessage(targetSession.id, {
             tokensDecoded: data.usage?.completionTokens,
             msFirstToken: data.msFirstToken,
@@ -1852,7 +1856,7 @@ export default function ChatView() {
         }
 
         // ── 工具调用流程：模型发起 tool_calls → 执行工具 → 自动发起第二轮请求 ──
-	        const toolCalls = data.toolCalls as ToolCallInfo[] | undefined
+        const toolCalls = data.toolCalls as ToolCallInfo[] | undefined
         if (toolCalls && toolCalls.length > 0) {
           // 将 toolCalls 存储到当前助手消息上（用于 UI 渲染）
           const currentSt = useChatStore.getState()
@@ -1951,10 +1955,10 @@ export default function ChatView() {
               top_k: followSession.params.top_k,
               max_tokens: followSession.params.max_tokens || -1,
               repeat_penalty: followSession.params.repeat_penalty,
-	              tools: getEnabledToolDefinitions(),
-	              stream: true
-	            }
-	          }).catch((e: any) => {
+              tools: getEnabledToolDefinitions(),
+              stream: true
+            }
+          }).catch((e: any) => {
             const s = useChatStore.getState()
             s.markLastMessageError(targetSession.id, e?.message || '工具调用后续请求失败')
             if (s.streamingMap[targetSession.id] === data.streamId) {
@@ -2003,6 +2007,19 @@ export default function ChatView() {
     lastContentRef.current = currentContent
     container.scrollTop = container.scrollHeight
   }, [activeSessionId, activeMessages.length, activeMessages[activeMessages.length - 1]?.content, autoScroll])
+
+  // 测量输入框区域高度，写入 CSS 变量，使浮动按钮精确浮在输入框上方
+  useEffect(() => {
+    const el = chatInputWrapRef.current
+    if (!el) return
+    const root = el.closest('.chat-main-col') as HTMLElement | null
+    if (!root) return
+    const apply = () => root.style.setProperty('--chat-input-h', `${el.offsetHeight}px`)
+    apply()
+    const ro = new ResizeObserver(apply)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // 节流版：滚动时更新 autoScroll 和导航状态（限制到 vsync 频率）
   const handleScrollThrottled = useCallback(() => {
@@ -2161,88 +2178,88 @@ ${msgsHtml}
       return
     }
 
-	    setInput('')
-	    // 重置 textarea 高度
-	    if (inputRef.current) {
-	      inputRef.current.style.height = 'auto'
-	    }
-	    setAutoScroll(true)
+    setInput('')
+    // 重置 textarea 高度
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto'
+    }
+    setAutoScroll(true)
 
-		    // ── 处理文件附件 ──
-	    let finalContent = content
-	    let multimodalMessages: Array<Record<string, unknown>> | null = null
-	    const pendingFiles = [...attachedFiles]
-			    setAttachedFiles([])
-			    setPreviewUrls(new Map())
-			    setPdfPagesCache(new Map())
-			    setPdfPageNum(new Map())
+    // ── 处理文件附件 ──
+    let finalContent = content
+    let multimodalMessages: Array<Record<string, unknown>> | null = null
+    const pendingFiles = [...attachedFiles]
+    setAttachedFiles([])
+    setPreviewUrls(new Map())
+    setPdfPagesCache(new Map())
+    setPdfPageNum(new Map())
 
-			    const attachments: Attachment[] = []
-			    const fullSizeMap: string[] = []
+    const attachments: Attachment[] = []
+    const fullSizeMap: string[] = []
 
-			    if (pendingFiles.length > 0) {
-			      const fileContents = await Promise.all(pendingFiles.map(f => readFileContent(f)))
-			      const hasImages = fileContents.some(fc => fc.isImage)
+    if (pendingFiles.length > 0) {
+      const fileContents = await Promise.all(pendingFiles.map(f => readFileContent(f)))
+      const hasImages = fileContents.some(fc => fc.isImage)
 
-			      for (let i = 0; i < pendingFiles.length; i++) {
-			        const fc = fileContents[i]
-			        const f = pendingFiles[i]
-			        if (fc.isImage && fc.dataUrl) {
-			          fullSizeMap.push(fc.dataUrl)
-			          const thumb = await makeThumbnail(fc.dataUrl, 300)
-			          attachments.push({ name: f.name, type: 'image', dataUrl: thumb })
-			        } else {
-			          attachments.push({ name: f.name, type: 'file', content: fc.text })
-			        }
-			      }
+      for (let i = 0; i < pendingFiles.length; i++) {
+        const fc = fileContents[i]
+        const f = pendingFiles[i]
+        if (fc.isImage && fc.dataUrl) {
+          fullSizeMap.push(fc.dataUrl)
+          const thumb = await makeThumbnail(fc.dataUrl, 300)
+          attachments.push({ name: f.name, type: 'image', dataUrl: thumb })
+        } else {
+          attachments.push({ name: f.name, type: 'file', content: fc.text })
+        }
+      }
 
-			      if (hasImages) {
-			        // 构建含图片的 contentParts
-			        const contentParts: Array<Record<string, unknown>> = []
-			        if (content) contentParts.push({ type: 'text', text: content })
-			        let imgIdx = 0
-			        for (const att of attachments) {
-			          if (att.type === 'image') {
-			            contentParts.push({ type: 'image_url', image_url: { url: fullSizeMap[imgIdx++] } })
-			          } else if (att.content) {
-			            finalContent += `\n\n=====\n${att.content}\n=====`
-			          }
-			        }
+      if (hasImages) {
+        // 构建含图片的 contentParts
+        const contentParts: Array<Record<string, unknown>> = []
+        if (content) contentParts.push({ type: 'text', text: content })
+        let imgIdx = 0
+        for (const att of attachments) {
+          if (att.type === 'image') {
+            contentParts.push({ type: 'image_url', image_url: { url: fullSizeMap[imgIdx++] } })
+          } else if (att.content) {
+            finalContent += `\n\n=====\n${att.content}\n=====`
+          }
+        }
 
-			        // 关键！先追加用户消息到 store，再构建 multimodalMessages（这样新消息才在 store 里）
-			        appendUserMessage(session.id, content, attachments)
-			        multimodalMessages = []
-			        if (session.systemPrompt?.trim()) {
-			          multimodalMessages.push({ role: 'system', content: session.systemPrompt.trim() })
-			        }
-			        const sessionMessages = useChatStore.getState().sessions.find(s => s.id === session.id)?.messages || []
-			        for (const m of sessionMessages) {
-			          if (m.role === 'system') continue
-			          if (!m.content && !m.error && (!m.attachments || m.attachments.length === 0)) continue
-			          multimodalMessages.push({ role: m.role, content: m.content })
-			        }
-			        for (let i = multimodalMessages.length - 1; i >= 0; i--) {
-			          if (multimodalMessages[i].role === 'user') {
-			            multimodalMessages[i] = { role: 'user', content: contentParts }
-			            break
-			          }
-			        }
-			      } else {
-			        // 纯文本附件
-			        for (const att of attachments) {
-			          if (att.content) {
-			            finalContent += `\n\nName: ${att.name}\nContents:\n\n=====\n${att.content}\n=====`
-			          }
-			        }
-			      }
-			    }
+        // 关键！先追加用户消息到 store，再构建 multimodalMessages（这样新消息才在 store 里）
+        appendUserMessage(session.id, content, attachments)
+        multimodalMessages = []
+        if (session.systemPrompt?.trim()) {
+          multimodalMessages.push({ role: 'system', content: session.systemPrompt.trim() })
+        }
+        const sessionMessages = useChatStore.getState().sessions.find(s => s.id === session.id)?.messages || []
+        for (const m of sessionMessages) {
+          if (m.role === 'system') continue
+          if (!m.content && !m.error && (!m.attachments || m.attachments.length === 0)) continue
+          multimodalMessages.push({ role: m.role, content: m.content })
+        }
+        for (let i = multimodalMessages.length - 1; i >= 0; i--) {
+          if (multimodalMessages[i].role === 'user') {
+            multimodalMessages[i] = { role: 'user', content: contentParts }
+            break
+          }
+        }
+      } else {
+        // 纯文本附件
+        for (const att of attachments) {
+          if (att.content) {
+            finalContent += `\n\nName: ${att.name}\nContents:\n\n=====\n${att.content}\n=====`
+          }
+        }
+      }
+    }
 
-			    // 没有多模态时，普通追加用户消息
-			    if (!multimodalMessages) {
-			      appendUserMessage(session.id, content, attachments)
-			    }
+    // 没有多模态时，普通追加用户消息
+    if (!multimodalMessages) {
+      appendUserMessage(session.id, content, attachments)
+    }
 
-	    // 追加空的 assistant 占位消息
+    // 追加空的 assistant 占位消息
     const streamId = (crypto as any).randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2))
     const assistantMsg: ChatMessage = {
       id: streamId,
@@ -2273,40 +2290,40 @@ ${msgsHtml}
     updatedSession.messages = [...updatedSession.messages] // 已含刚追加的两条
     const messages = multimodalMessages || buildOpenAiMessages(updatedSession)
 
-		    try {
-		      let res
-		      if (multimodalMessages) {
-		        // 多模态：走 /v1/chat/completions，去掉 tools（多模态 + tools 冲突）
-		        res = await window.api.chatStream({
-		          streamId,
-		          port: session.port,
-		          body: {
-		            messages: multimodalMessages,
-		            temperature: session.params.temperature,
-		            top_p: session.params.top_p,
-		            top_k: session.params.top_k,
-		            max_tokens: session.params.max_tokens || -1,
-		            repeat_penalty: session.params.repeat_penalty,
-		            stream: true
-		          }
-		        })
-		      } else {
-	        res = await window.api.chatStream({
-	          streamId,
-	          port: session.port,
-	          body: {
-	            messages,
-	            temperature: session.params.temperature,
-	            top_p: session.params.top_p,
-	            top_k: session.params.top_k,
-	            max_tokens: session.params.max_tokens || -1,
-	            repeat_penalty: session.params.repeat_penalty,
-		            tools: getEnabledToolDefinitions(),
-		            stream: true
-		          }
-		        })
-		      }
-	      if (!res.success && res.error) {
+    try {
+      let res
+      if (multimodalMessages) {
+        // 多模态：走 /v1/chat/completions，去掉 tools（多模态 + tools 冲突）
+        res = await window.api.chatStream({
+          streamId,
+          port: session.port,
+          body: {
+            messages: multimodalMessages,
+            temperature: session.params.temperature,
+            top_p: session.params.top_p,
+            top_k: session.params.top_k,
+            max_tokens: session.params.max_tokens || -1,
+            repeat_penalty: session.params.repeat_penalty,
+            stream: true
+          }
+        })
+      } else {
+        res = await window.api.chatStream({
+          streamId,
+          port: session.port,
+          body: {
+            messages,
+            temperature: session.params.temperature,
+            top_p: session.params.top_p,
+            top_k: session.params.top_k,
+            max_tokens: session.params.max_tokens || -1,
+            repeat_penalty: session.params.repeat_penalty,
+            tools: getEnabledToolDefinitions(),
+            stream: true
+          }
+        })
+      }
+      if (!res.success && res.error) {
         // 错误已在 chunk 回调里处理；这里兜底
         const st = useChatStore.getState()
         const wd = streamWatchdogsRef.current.get(streamId)
@@ -2698,13 +2715,13 @@ ${msgsHtml}
         messages.push({ role: m.role, content })
       }
     }
-	    // 注入接续指令（用 user 角色，因为大多数模板要求 system 只能在开头）
-	    messages.push({
-	      role: 'user',
-	      content: lastAsstHadText
-	        ? '请从助手消息被中断的位置继续往后写。直接续写，不要重复任何已有内容（包括用户的问题），不要加开场白或过渡语。'
-	        : '助手在推理过程中被中断了，还没有产出可见的回答。请继续推理并直接给出最终答案。不要重复用户的问题。'
-	    })
+    // 注入接续指令（用 user 角色，因为大多数模板要求 system 只能在开头）
+    messages.push({
+      role: 'user',
+      content: lastAsstHadText
+        ? '请从助手消息被中断的位置继续往后写。直接续写，不要重复任何已有内容（包括用户的问题），不要加开场白或过渡语。'
+        : '助手在推理过程中被中断了，还没有产出可见的回答。请继续推理并直接给出最终答案。不要重复用户的问题。'
+    })
 
     try {
       await window.api.chatStream({
@@ -2757,203 +2774,207 @@ ${msgsHtml}
         onDrop={handleDrop}
       >
         <div className="chat-main-col">
-        {/* 拖拽上传遮罩 */}
-        {dragOverCount > 0 && (
-          <div className="chat-drop-overlay">
-            <div className="chat-drop-overlay-inner">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="17 8 12 3 7 8" />
-                <line x1="12" y1="3" x2="12" y2="15" />
-              </svg>
-              <span>释放文件以上传</span>
-              <span className="chat-drop-overlay-hint">支持图片、文本、PDF、代码文件等</span>
+          {/* 拖拽上传遮罩 */}
+          {dragOverCount > 0 && (
+            <div className="chat-drop-overlay">
+              <div className="chat-drop-overlay-inner">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                <span>释放文件以上传</span>
+                <span className="chat-drop-overlay-hint">支持图片、文本、PDF、代码文件等</span>
+              </div>
             </div>
-          </div>
-        )}
-        <div className="chat-header">
-          <button
-            className="chat-collapse-btn"
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          >
-            {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-          </button>
-          <div className="chat-header-info">
-            <span className="chat-header-title">{activeSession?.title || '聊天'}</span>
-            <CustomSelect
-              className="chat-model-select"
-              value={activeSession && runningModels.length > 0 ? activeSession.templateId : ''}
-              onChange={(v) => handleSwitchModel(v)}
-              options={runningModels.map(m => ({ value: m.id, label: `${m.name} (:${m.port})` }))}
-              placeholder="模型未运行"
-              disabled={runningModels.length === 0}
-            />
-          </div>
-          {activeModel && (
-            <button
-              className="chat-settings-btn chat-stop-model-btn"
-              onClick={handleStopModel}
-              title={`停止模型 ${activeModel.name}`}
-            >
-              <Square size={14} />
-            </button>
           )}
-          <button
-            ref={settingsBtnRef}
-            className="chat-settings-btn"
-            onClick={() => {
-              if (settingsBtnRef.current) {
-                setSettingsAnchor(settingsBtnRef.current.getBoundingClientRect())
-              }
-              setShowSettings((v) => !v)
-            }}
-            title="会话参数"
-          >
-            <SlidersHorizontal size={16} />
-          </button>
-          <button
-            ref={toolsBtnRef}
-            className="chat-settings-btn"
-            onClick={() => {
-              if (toolsBtnRef.current) {
-                setToolsAnchor(toolsBtnRef.current.getBoundingClientRect())
-              }
-              setShowTools((v) => !v)
-            }}
-            title={toolConfig.enabled ? '工具调用已开启' : '工具调用已关闭'}
-          >
-            <Wrench size={16} />
-          </button>
-          <button
-            className="chat-settings-btn"
-            onClick={handleExportPng}
-            title="导出为 PNG"
-          >
-            <ImageDown size={16} />
-          </button>
-          <button
-            className="chat-settings-btn"
-            onClick={handleExportPdf}
-            title="导出为 PDF"
-          >
-            <FileText size={16} />
-          </button>
-          <button
-            className={`chat-settings-btn ${filePanelOpen ? 'preview-active' : ''}`}
-            onClick={() => setFilePanelOpen(v => !v)}
-            title={filePanelOpen ? '关闭文件预览' : '打开文件预览'}
-          >
-            <Eye size={14} />
-          </button>
-        </div>
+          <div className="chat-header">
+            <button
+              className="chat-collapse-btn"
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            >
+              {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+            </button>
+            <div className="chat-header-info">
+              <span className="chat-header-title">{activeSession?.title || '聊天'}</span>
+              <CustomSelect
+                className="chat-model-select"
+                value={activeSession && runningModels.length > 0 ? activeSession.templateId : ''}
+                onChange={(v) => handleSwitchModel(v)}
+                options={runningModels.map(m => ({ value: m.id, label: `${m.name} (:${m.port})` }))}
+                placeholder="模型未运行"
+                disabled={runningModels.length === 0}
+              />
+            </div>
+            {activeModel && (
+              <button
+                className="chat-settings-btn chat-stop-model-btn"
+                onClick={handleStopModel}
+                title={`停止模型 ${activeModel.name}`}
+              >
+                <Square size={14} />
+              </button>
+            )}
+            <button
+              ref={settingsBtnRef}
+              className="chat-settings-btn"
+              onClick={() => {
+                if (settingsBtnRef.current) {
+                  setSettingsAnchor(settingsBtnRef.current.getBoundingClientRect())
+                }
+                setShowSettings((v) => !v)
+              }}
+              title="会话参数"
+            >
+              <SlidersHorizontal size={16} />
+            </button>
+            <button
+              ref={toolsBtnRef}
+              className="chat-settings-btn"
+              onClick={() => {
+                if (toolsBtnRef.current) {
+                  setToolsAnchor(toolsBtnRef.current.getBoundingClientRect())
+                }
+                setShowTools((v) => !v)
+              }}
+              title={toolConfig.enabled ? '工具调用已开启' : '工具调用已关闭'}
+            >
+              <Wrench size={16} />
+            </button>
+            <button
+              className="chat-settings-btn"
+              onClick={handleExportPng}
+              title="导出为 PNG"
+            >
+              <ImageDown size={16} />
+            </button>
+            <button
+              className="chat-settings-btn"
+              onClick={handleExportPdf}
+              title="导出为 PDF"
+            >
+              <FileText size={16} />
+            </button>
+            <button
+              className={`chat-settings-btn ${filePanelOpen ? 'preview-active' : ''}`}
+              onClick={() => setFilePanelOpen(v => !v)}
+              title={filePanelOpen ? '关闭文件预览' : '打开文件预览'}
+            >
+              <Eye size={14} />
+            </button>
+          </div>
 
-        <div className="chat-messages" ref={messagesContainerRef} onScroll={handleScrollThrottled} onContextMenu={handleChatContextMenu}>
-          {activeSession ? (
-            activeMessages.length === 0 ? (
-              <div className="chat-welcome">
-                <Bot size={40} style={{ opacity: 0.3 }} />
-                {activeModel ? (
-                  <>
-                    <p>向 {activeModel.name} 提个问题吧</p>
-                    <div className="chat-welcome-suggestions">
-                      <span className="chat-welcome-suggestions-label">试试这些提问</span>
-                      <div className="chat-welcome-suggestions-grid">
-                        {[
-                          '用简单的语言解释一下量子计算',
-                          '帮我写一段 Python 快速排序',
-                          '给我讲一个有趣的冷知识',
-                          '帮我总结今天的要点',
-                        ].map((q) => (
-                          <button
-                            key={q}
-                            className="chat-welcome-suggestion-btn"
-                            onClick={() => { setInput(q); inputRef.current?.focus() }}
-                          >
-                            {q}
-                          </button>
-                        ))}
+          <div className="chat-messages" ref={messagesContainerRef} onScroll={handleScrollThrottled} onContextMenu={handleChatContextMenu}>
+            {activeSession ? (
+              activeMessages.length === 0 ? (
+                <div className="chat-welcome">
+                  <Bot size={40} style={{ opacity: 0.3 }} />
+                  {activeModel ? (
+                    <>
+                      <p>向 {activeModel.name} 提个问题吧</p>
+                      <div className="chat-welcome-suggestions">
+                        <span className="chat-welcome-suggestions-label">试试这些提问</span>
+                        <div className="chat-welcome-suggestions-grid">
+                          {[
+                            '用简单的语言解释一下量子计算',
+                            '帮我写一段 Python 快速排序',
+                            '给我讲一个有趣的冷知识',
+                            '帮我总结今天的要点',
+                          ].map((q) => (
+                            <button
+                              key={q}
+                              className="chat-welcome-suggestion-btn"
+                              onClick={() => { setInput(q); inputRef.current?.focus() }}
+                            >
+                              {q}
+                            </button>
+                          ))}
+                        </div>
                       </div>
+                    </>
+                  ) : (
+                    <div>
+                      <p>该会话的模型未运行，无法发送消息</p>
+                      <button className="btn btn-sm" style={{ marginTop: 8 }} onClick={() => setView('cards')}>
+                        前往「我的模板」启动模型
+                      </button>
                     </div>
-                  </>
-                ) : (
-                  <div>
-                    <p>该会话的模型未运行，无法发送消息</p>
-                    <button className="btn btn-sm" style={{ marginTop: 8 }} onClick={() => setView('cards')}>
-                      前往「我的模板」启动模型
-                    </button>
+                  )}
+                </div>
+              ) : (
+                activeMessages.map((m) => (
+                  <MessageBubble
+                    key={m.id}
+                    msg={m}
+                    isStreaming={activeStreamId === m.id}
+                    serverPort={activeModel?.port}
+                    onImageClick={setPreviewImage}
+                    onEdit={m.role === 'user' ? () => handleEditMessage(m.id, m.content, m.attachments) : undefined}
+                    onRegenerate={m.role === 'assistant' ? () => handleRegenerate(m.id) : undefined}
+                    regenDisabled={!!activeStreamId}
+                    onContinue={m.role === 'assistant' && m.id === activeMessages[activeMessages.length - 1]?.id
+                      ? () => handleContinue(m.id) : undefined}
+                    continueDisabled={!!activeStreamId}
+                    onDelete={m.role === 'assistant' ? () => handleDeleteReply(m.id) : undefined}
+                    deleteDisabled={!!activeStreamId}
+                    onBranch={m.role === 'assistant' ? () => handleBranch(m.id) : undefined}
+                    speakingId={speakingId}
+                    onSpeak={speak}
+                    onStopTts={stopTts}
+                  />
+                ))
+              )
+            ) : (
+              <div className="chat-welcome">
+                <div className="chat-welcome-brand">
+                  <MessageSquare size={56} strokeWidth={1.2} />
+                </div>
+                <h2 className="chat-welcome-title">开始对话</h2>
+                <p className="chat-welcome-subtitle">
+                  从左侧选择一个已有会话，或点击「新建」开始新的对话。
+                </p>
+                <div className="chat-welcome-tips">
+                  <div className="chat-welcome-tip">
+                    <Plus size={16} />
+                    <span>点击「新建」创建会话</span>
+                  </div>
+                  <div className="chat-welcome-tip">
+                    <Pencil size={16} />
+                    <span>点铅笔图标可重命名</span>
+                  </div>
+                  <div className="chat-welcome-tip">
+                    <Trash2 size={16} />
+                    <span>悬停会话可删除</span>
+                  </div>
+                </div>
+                {runningModels.length > 0 && (
+                  <div className="chat-welcome-suggestions">
+                    <span className="chat-welcome-suggestions-label">试试这些提问</span>
+                    <div className="chat-welcome-suggestions-grid">
+                      {[
+                        '用简单的语言解释一下量子计算',
+                        '帮我写一段 Python 快速排序',
+                        '给我讲一个有趣的冷知识',
+                        '帮我总结今天的要点',
+                      ].map((q) => (
+                        <button
+                          key={q}
+                          className="chat-welcome-suggestion-btn"
+                          onClick={() => { setInput(q); inputRef.current?.focus() }}
+                        >
+                          {q}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
-            ) : (
-              activeMessages.map((m) => (
-                <MessageBubble
-                  key={m.id}
-                  msg={m}
-                  isStreaming={activeStreamId === m.id}
-                  serverPort={activeModel?.port}
-                  onImageClick={setPreviewImage}
-                  onEdit={m.role === 'user' ? () => handleEditMessage(m.id, m.content, m.attachments) : undefined}
-                  onRegenerate={m.role === 'assistant' ? () => handleRegenerate(m.id) : undefined}
-                  regenDisabled={!!activeStreamId}
-                  onContinue={m.role === 'assistant' && m.id === activeMessages[activeMessages.length - 1]?.id
-                    ? () => handleContinue(m.id) : undefined}
-                  continueDisabled={!!activeStreamId}
-                  onDelete={m.role === 'assistant' ? () => handleDeleteReply(m.id) : undefined}
-                  deleteDisabled={!!activeStreamId}
-                  onBranch={m.role === 'assistant' ? () => handleBranch(m.id) : undefined}
-                  speakingId={speakingId}
-                  onSpeak={speak}
-                  onStopTts={stopTts}
-                />
-              ))
-            )
-          ) : (
-            <div className="chat-welcome">
-              <div className="chat-welcome-brand">
-                <MessageSquare size={56} strokeWidth={1.2} />
-              </div>
-              <h2 className="chat-welcome-title">开始对话</h2>
-              <p className="chat-welcome-subtitle">
-                从左侧选择一个已有会话，或点击「新建」开始新的对话。
-              </p>
-              <div className="chat-welcome-tips">
-                <div className="chat-welcome-tip">
-                  <Plus size={16} />
-                  <span>点击「新建」创建会话</span>
-                </div>
-                <div className="chat-welcome-tip">
-                  <Pencil size={16} />
-                  <span>点铅笔图标可重命名</span>
-                </div>
-                <div className="chat-welcome-tip">
-                  <Trash2 size={16} />
-                  <span>悬停会话可删除</span>
-                </div>
-              </div>
-              {runningModels.length > 0 && (
-                <div className="chat-welcome-suggestions">
-                  <span className="chat-welcome-suggestions-label">试试这些提问</span>
-                  <div className="chat-welcome-suggestions-grid">
-                    {[
-                      '用简单的语言解释一下量子计算',
-                      '帮我写一段 Python 快速排序',
-                      '给我讲一个有趣的冷知识',
-                      '帮我总结今天的要点',
-                    ].map((q) => (
-                      <button
-                        key={q}
-                        className="chat-welcome-suggestion-btn"
-                        onClick={() => { setInput(q); inputRef.current?.focus() }}
-                      >
-                        {q}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-          <div ref={messagesEndRef} />
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* 回到底部浮动按钮：锚定在 chat-main-col（非滚动容器）内，
+              精确悬浮在输入框正上方；仅当用户已向上滚动（非贴底）时显示 */}
           {!atBottom && activeMessages.length > 0 && (
             <button
               className="chat-scroll-bottom-btn"
@@ -2966,330 +2987,331 @@ ${msgsHtml}
               <ArrowDown size={16} />
             </button>
           )}
-        </div>
 
-        {/* 消息导航侧边栏 */}
-        {activeMessages.length >= 2 && (
-          <MessageNav
-            messages={activeMessages}
-            activeMsgId={activeNavMsgId}
-            containerRef={messagesContainerRef}
-          />
-        )}
+          {/* 消息导航侧边栏 */}
+          {activeMessages.length >= 2 && (
+            <MessageNav
+              messages={activeMessages}
+              activeMsgId={activeNavMsgId}
+              containerRef={messagesContainerRef}
+            />
+          )}
 
-        {/* 全局右键菜单 */}
-        {ctxMenu && (
-          <div ref={ctxMenuRef} className="chat-msg-context-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} onContextMenu={e => { e.preventDefault(); e.stopPropagation() }}>
-            <button className="chat-msg-context-menu-item" onClick={handleCtxCopy}>
-              <Copy size={13} />
-              <span>复制</span>
-            </button>
-            {ctxMenu.selectedText && (
-              <button className="chat-msg-context-menu-item" onClick={handleCtxAddToInput}>
-                <MessageSquare size={13} />
-                <span>添加到输入框</span>
+          {/* 全局右键菜单 */}
+          {ctxMenu && (
+            <div ref={ctxMenuRef} className="chat-msg-context-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} onContextMenu={e => { e.preventDefault(); e.stopPropagation() }}>
+              <button className="chat-msg-context-menu-item" onClick={handleCtxCopy}>
+                <Copy size={13} />
+                <span>复制</span>
               </button>
-            )}
-            {ctxMenu.selectedText && (
-              <button className="chat-msg-context-menu-item" onClick={handleCtxQuoteAsk}>
-                <MessageSquare size={13} />
-                <span>引用追问</span>
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* 引用追问弹出输入框 */}
-        {quoteInput && (
-          <div ref={quotePopupRef} className="chat-quote-popup" style={{ left: quoteInput.x, top: quoteInput.y }}>
-            <div className="chat-quote-popup-header">引用追问</div>
-            <div className="chat-quote-popup-quote">{quoteInput.selectedText}</div>
-            <form onSubmit={handleQuoteSubmit} className="chat-quote-popup-form">
-              <input
-                ref={quoteInputRef}
-                className="chat-quote-input"
-                type="text"
-                placeholder="输入你的问题…"
-                autoFocus
-                onKeyDown={handleQuoteKeyDown}
-              />
-              <button type="submit" className="chat-quote-popup-send" title="发送（Enter）">
-                <Send size={14} />
-              </button>
-            </form>
-          </div>
-        )}
-
-        {/* 输入代码预览：独立于输入框，置于其上方 */}
-        {showInputPreview && (
-          <div className="chat-input-preview">
-            <div className="chat-input-preview-header">
-              <Eye size={12} />
-              <span>代码预览</span>
-              <button
-                className="chat-input-preview-close"
-                onClick={() => setInputPreviewDismissed(true)}
-              >
-                <X size={12} />
-              </button>
-            </div>
-            <div className="chat-input-preview-body">
-              <UserMessageContent content={processedInput} />
-            </div>
-          </div>
-        )}
-
-        <div className={`chat-input-wrap${activeStreamId ? ' streaming' : ''}`}>
-          {/* 隐藏的文件选择器 */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept=".txt,.md,.json,.js,.ts,.py,.rs,.go,.java,.c,.cpp,.h,.hpp,.css,.html,.xml,.yaml,.yml,.toml,.ini,.cfg,.csv,.log,.sh,.bat,.ps1,.sql,.r,.lua,.php,.rb,.swift,.kt,.scala,.tex,.srt,.vtt,.smi,.ass,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif,.bmp,.svg"
-            style={{ display: 'none' }}
-            onChange={handleFileSelect}
-          />
-          {/* 附件 chips（图片缩略图预览，显示在输入框上方） */}
-          {attachedFiles.length > 0 && (
-            <div className="chat-attach-chips">
-              {attachedFiles.map((f, i) => {
-                const isImg = f.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name)
-                return (
-                  <div key={i} className={`chat-attach-chip ${isImg ? 'chat-attach-chip-img' : ''}`}>
-                    {isImg ? (
-                      <div className="chat-attach-chip-img-box">
-                        <img
-                          src={previewUrls.get(i) || ''}
-                          alt={f.name}
-                          className="chat-attach-chip-thumb"
-                        />
-                        <button className="chat-attach-chip-img-remove" onClick={() => removeAttachedFile(i)}>
-                          <X size={12} />
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <FileText size={12} />
-                        <span className="chat-attach-chip-name">{f.name}</span>
-                        <span className="chat-attach-chip-size">({formatFileSize(f.size)})</span>
-                        <button className="chat-attach-chip-remove" onClick={() => removeAttachedFile(i)}>
-                          <X size={11} />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )
-              })}
+              {ctxMenu.selectedText && (
+                <button className="chat-msg-context-menu-item" onClick={handleCtxAddToInput}>
+                  <MessageSquare size={13} />
+                  <span>添加到输入框</span>
+                </button>
+              )}
+              {ctxMenu.selectedText && (
+                <button className="chat-msg-context-menu-item" onClick={handleCtxQuoteAsk}>
+                  <MessageSquare size={13} />
+                  <span>引用追问</span>
+                </button>
+              )}
             </div>
           )}
-          <div className="chat-input-row">
-            <button
-              className="chat-attach-btn"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={!activeModel}
-              title="上传文件（txt, pdf, docx, 图片等）"
-            >
-              <Paperclip size={15} />
-            </button>
-            <textarea
-              ref={inputRef}
-              className="chat-input"
-              spellCheck={false}
-              autoComplete="off"
-              autoCorrect="off"
-              placeholder={
-                activeStreamId
-                  ? '正在生成，可发送新消息（将自动停止当前流）…'
-                  : activeModel
-                    ? `给 ${activeModel.name} 发消息（Enter 发送，Shift+Enter 换行）`
-                    : '请先启动模型后再发送消息'
-              }
-              value={input}
-              onChange={handleInputChange}
-              onPaste={handlePaste}
-              onKeyDown={handleKeyDown}
-              rows={1}
-              disabled={!activeModel}
+
+          {/* 引用追问弹出输入框 */}
+          {quoteInput && (
+            <div ref={quotePopupRef} className="chat-quote-popup" style={{ left: quoteInput.x, top: quoteInput.y }}>
+              <div className="chat-quote-popup-header">引用追问</div>
+              <div className="chat-quote-popup-quote">{quoteInput.selectedText}</div>
+              <form onSubmit={handleQuoteSubmit} className="chat-quote-popup-form">
+                <input
+                  ref={quoteInputRef}
+                  className="chat-quote-input"
+                  type="text"
+                  placeholder="输入你的问题…"
+                  autoFocus
+                  onKeyDown={handleQuoteKeyDown}
+                />
+                <button type="submit" className="chat-quote-popup-send" title="发送（Enter）">
+                  <Send size={14} />
+                </button>
+              </form>
+            </div>
+          )}
+
+          {/* 输入代码预览：独立于输入框，置于其上方 */}
+          {showInputPreview && (
+            <div className="chat-input-preview">
+              <div className="chat-input-preview-header">
+                <Eye size={12} />
+                <span>代码预览</span>
+                <button
+                  className="chat-input-preview-close"
+                  onClick={() => setInputPreviewDismissed(true)}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+              <div className="chat-input-preview-body">
+                <UserMessageContent content={processedInput} />
+              </div>
+            </div>
+          )}
+
+          <div className={`chat-input-wrap${activeStreamId ? ' streaming' : ''}`} ref={chatInputWrapRef}>
+            {/* 隐藏的文件选择器 */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".txt,.md,.json,.js,.ts,.py,.rs,.go,.java,.c,.cpp,.h,.hpp,.css,.html,.xml,.yaml,.yml,.toml,.ini,.cfg,.csv,.log,.sh,.bat,.ps1,.sql,.r,.lua,.php,.rb,.swift,.kt,.scala,.tex,.srt,.vtt,.smi,.ass,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif,.bmp,.svg"
+              style={{ display: 'none' }}
+              onChange={handleFileSelect}
             />
-            {activeStreamId ? (
-              <button className="btn btn-danger chat-send-btn" onClick={handleStop}>
-                <Square size={15} />
-              </button>
-            ) : (
-              <button
-                className="btn btn-primary chat-send-btn"
-                onClick={handleSend}
-                disabled={!input.trim() && attachedFiles.length === 0 || !activeModel}
-              >
-                <Send size={15} />
-              </button>
+            {/* 附件 chips（图片缩略图预览，显示在输入框上方） */}
+            {attachedFiles.length > 0 && (
+              <div className="chat-attach-chips">
+                {attachedFiles.map((f, i) => {
+                  const isImg = f.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name)
+                  return (
+                    <div key={i} className={`chat-attach-chip ${isImg ? 'chat-attach-chip-img' : ''}`}>
+                      {isImg ? (
+                        <div className="chat-attach-chip-img-box">
+                          <img
+                            src={previewUrls.get(i) || ''}
+                            alt={f.name}
+                            className="chat-attach-chip-thumb"
+                          />
+                          <button className="chat-attach-chip-img-remove" onClick={() => removeAttachedFile(i)}>
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <FileText size={12} />
+                          <span className="chat-attach-chip-name">{f.name}</span>
+                          <span className="chat-attach-chip-size">({formatFileSize(f.size)})</span>
+                          <button className="chat-attach-chip-remove" onClick={() => removeAttachedFile(i)}>
+                            <X size={11} />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             )}
-          </div>
-        </div>
-
-        </div>
-
-      {/* 右侧文件预览分屏面板 */}
-      {filePanelOpen && (
-        <>
-          <div className="chat-file-divider" onMouseDown={handleDividerMouseDown} />
-          <div className="chat-file-panel" style={{ width: filePanelWidth + '%', maxWidth: filePanelWidth + '%' }}>
-          <div className="chat-file-panel-header">
-            <FileText size={16} />
-            <span>文件预览</span>
-            <button
-              className="chat-file-panel-close"
-              onClick={() => setFilePanelOpen(false)}
-              title="关闭文件预览"
-            >
-              <X size={15} />
-            </button>
-          </div>
-          <div className="chat-file-tabs">
-            {attachedFiles.map((f, i) => (
+            <div className="chat-input-row">
               <button
-                key={i}
-                className={`chat-file-tab${filePreviewIndex === i ? ' active' : ''}`}
-                onClick={() => { setFilePreviewIndex(i); setHtmlRenderMode(false) }}
+                className="chat-attach-btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!activeModel}
+                title="上传文件（txt, pdf, docx, 图片等）"
               >
-                <span className="chat-file-tab-icon">{getFileIcon(f.name)}</span>
-                <span className="chat-file-tab-name">{f.name}</span>
+                <Paperclip size={15} />
               </button>
-            ))}
+              <textarea
+                ref={inputRef}
+                className="chat-input"
+                spellCheck={false}
+                autoComplete="off"
+                autoCorrect="off"
+                placeholder={
+                  activeStreamId
+                    ? '正在生成，可发送新消息（将自动停止当前流）…'
+                    : activeModel
+                      ? `给 ${activeModel.name} 发消息（Enter 发送，Shift+Enter 换行）`
+                      : '请先启动模型后再发送消息'
+                }
+                value={input}
+                onChange={handleInputChange}
+                onPaste={handlePaste}
+                onKeyDown={handleKeyDown}
+                rows={1}
+                disabled={!activeModel}
+              />
+              {activeStreamId ? (
+                <button className="btn btn-danger chat-send-btn" onClick={handleStop}>
+                  <Square size={15} />
+                </button>
+              ) : (
+                <button
+                  className="btn btn-primary chat-send-btn"
+                  onClick={handleSend}
+                  disabled={!input.trim() && attachedFiles.length === 0 || !activeModel}
+                >
+                  <Send size={15} />
+                </button>
+              )}
+
+            </div>
           </div>
-          <div className="chat-file-content">
-            {attachedFiles.length > 0 && (() => {
-              const f = attachedFiles[filePreviewIndex]
-              if (!f) return <div className="chat-file-preview-loading">预览不可用</div>
-              const isImg = f.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name)
-              const imgUrl = previewUrls.get(filePreviewIndex)
-              const textContent = uploadedFileTexts.get(filePreviewIndex)
-              if (isImg && imgUrl) {
-                return <img src={imgUrl} alt={f.name} className="chat-file-preview-img" />
-              }
-              // PDF 渲染：支持多页翻页
-              if (isPdfFile(f.name)) {
-                const pages = pdfPagesCache.get(filePreviewIndex)
-                const pageIdx = pdfPageNum.get(filePreviewIndex) || 1
-                const totalPages = pages?.length || 0
-                if (pages && pages.length > 0) {
-                  const pageDataUrl = pages[pageIdx - 1]
-                  return (
-                    <div className="chat-file-preview-pdf">
-                      <img src={pageDataUrl} alt={`${f.name} 第${pageIdx}页`} className="chat-file-preview-pdf-img" />
-                      {totalPages > 1 ? (
-                        <div className="chat-file-preview-pdf-nav">
-                          <button
-                            className="chat-file-preview-pdf-nav-btn"
-                            disabled={pageIdx <= 1}
-                            onClick={() => {
-                              setPdfPageNum(prev => {
-                                const n = new Map(prev)
-                                n.set(filePreviewIndex, Math.max(1, pageIdx - 1))
-                                return n
-                              })
-                            }}
-                          >‹ 上一页</button>
-                          <span className="chat-file-preview-pdf-page">{pageIdx} / {totalPages}</span>
-                          <button
-                            className="chat-file-preview-pdf-nav-btn"
-                            disabled={pageIdx >= totalPages}
-                            onClick={() => {
-                              setPdfPageNum(prev => {
-                                const n = new Map(prev)
-                                n.set(filePreviewIndex, Math.min(totalPages, pageIdx + 1))
-                                return n
-                              })
-                            }}
-                          >下一页 ›</button>
-                        </div>
-                      ) : (
-                        <div className="chat-file-preview-file-info">📄 {f.name}</div>
-                      )}
-                    </div>
-                  )
-                }
-                if (textContent && textContent.startsWith('[PDF 预览失败')) {
-                  return <div className="chat-file-preview-loading">{textContent}</div>
-                }
-                return <div className="chat-file-preview-loading">加载 PDF 中…</div>
-              }
-              // DOCX 渲染：mammoth 转换为 HTML
-              if (isDocxFile(f.name)) {
-                if (textContent != null) {
-                  return (
-                    <div
-                      className="chat-file-preview-docx"
-                      dangerouslySetInnerHTML={{ __html: textContent }}
-                    />
-                  )
-                }
-                return <div className="chat-file-preview-loading">加载 DOCX 中…</div>
-              }
-              if (textContent != null) {
-                // HTML 文件：可选渲染模式
-                if (isHtmlFile(f.name)) {
-                  return (
-                    <div className="chat-file-preview-html">
-                      <div className="chat-file-preview-html-toolbar">
-                        <button
-                          className={`chat-file-preview-html-btn${!htmlRenderMode ? ' active' : ''}`}
-                          onClick={() => setHtmlRenderMode(false)}
-                        >
-                          &lt;/&gt; 源码
-                        </button>
-                        <button
-                          className={`chat-file-preview-html-btn${htmlRenderMode ? ' active' : ''}`}
-                          onClick={() => setHtmlRenderMode(true)}
-                        >
-                          👁 预览
-                        </button>
-                      </div>
-                      {htmlRenderMode ? (
-                        <iframe
-                          className="chat-file-preview-iframe"
-                          sandbox=""
-                          srcDoc={textContent}
-                          title={f.name}
-                        />
-                      ) : (
-                        <div className="chat-code-scroll-wrap">
-                          <CodeBlock language="html" value={textContent} showLineNumbers />
-                        </div>
-                      )}
-                    </div>
-                  )
-                }
-                // Markdown 文件 → ReactMarkdown 渲染
-                if (isMarkdownFile(f.name)) {
-                  return (
-                    <div className="chat-file-preview-markdown">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm, remarkMath]}
-                        rehypePlugins={[rehypeKatex]}
-                      >
-                        {textContent}
-                      </ReactMarkdown>
-                    </div>
-                  )
-                }
-                // 代码文件 → CodeBlock 高亮渲染
-                const lang = getCodeLanguage(f.name)
-                if (lang) {
-                  return <CodeBlock language={lang} value={textContent} showLineNumbers />
-                }
-                // 纯文本文件 → <pre> 渲染
-                return <pre className="chat-file-preview-text">{textContent}</pre>
-              }
-              // 图片尚未加载完成的占位
-              if (isImg && !imgUrl) {
-                return <div className="chat-file-preview-loading">加载图片中…</div>
-              }
-              return <div className="chat-file-preview-loading">加载文件中…</div>
-            })()}
-          </div>
+
         </div>
-      </>)}
+
+        {/* 右侧文件预览分屏面板 */}
+        {filePanelOpen && (
+          <>
+            <div className="chat-file-divider" onMouseDown={handleDividerMouseDown} />
+            <div className="chat-file-panel" style={{ width: filePanelWidth + '%', maxWidth: filePanelWidth + '%' }}>
+              <div className="chat-file-panel-header">
+                <FileText size={16} />
+                <span>文件预览</span>
+                <button
+                  className="chat-file-panel-close"
+                  onClick={() => setFilePanelOpen(false)}
+                  title="关闭文件预览"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+              <div className="chat-file-tabs">
+                {attachedFiles.map((f, i) => (
+                  <button
+                    key={i}
+                    className={`chat-file-tab${filePreviewIndex === i ? ' active' : ''}`}
+                    onClick={() => { setFilePreviewIndex(i); setHtmlRenderMode(false) }}
+                  >
+                    <span className="chat-file-tab-icon">{getFileIcon(f.name)}</span>
+                    <span className="chat-file-tab-name">{f.name}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="chat-file-content">
+                {attachedFiles.length > 0 && (() => {
+                  const f = attachedFiles[filePreviewIndex]
+                  if (!f) return <div className="chat-file-preview-loading">预览不可用</div>
+                  const isImg = f.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name)
+                  const imgUrl = previewUrls.get(filePreviewIndex)
+                  const textContent = uploadedFileTexts.get(filePreviewIndex)
+                  if (isImg && imgUrl) {
+                    return <img src={imgUrl} alt={f.name} className="chat-file-preview-img" />
+                  }
+                  // PDF 渲染：支持多页翻页
+                  if (isPdfFile(f.name)) {
+                    const pages = pdfPagesCache.get(filePreviewIndex)
+                    const pageIdx = pdfPageNum.get(filePreviewIndex) || 1
+                    const totalPages = pages?.length || 0
+                    if (pages && pages.length > 0) {
+                      const pageDataUrl = pages[pageIdx - 1]
+                      return (
+                        <div className="chat-file-preview-pdf">
+                          <img src={pageDataUrl} alt={`${f.name} 第${pageIdx}页`} className="chat-file-preview-pdf-img" />
+                          {totalPages > 1 ? (
+                            <div className="chat-file-preview-pdf-nav">
+                              <button
+                                className="chat-file-preview-pdf-nav-btn"
+                                disabled={pageIdx <= 1}
+                                onClick={() => {
+                                  setPdfPageNum(prev => {
+                                    const n = new Map(prev)
+                                    n.set(filePreviewIndex, Math.max(1, pageIdx - 1))
+                                    return n
+                                  })
+                                }}
+                              >‹ 上一页</button>
+                              <span className="chat-file-preview-pdf-page">{pageIdx} / {totalPages}</span>
+                              <button
+                                className="chat-file-preview-pdf-nav-btn"
+                                disabled={pageIdx >= totalPages}
+                                onClick={() => {
+                                  setPdfPageNum(prev => {
+                                    const n = new Map(prev)
+                                    n.set(filePreviewIndex, Math.min(totalPages, pageIdx + 1))
+                                    return n
+                                  })
+                                }}
+                              >下一页 ›</button>
+                            </div>
+                          ) : (
+                            <div className="chat-file-preview-file-info">📄 {f.name}</div>
+                          )}
+                        </div>
+                      )
+                    }
+                    if (textContent && textContent.startsWith('[PDF 预览失败')) {
+                      return <div className="chat-file-preview-loading">{textContent}</div>
+                    }
+                    return <div className="chat-file-preview-loading">加载 PDF 中…</div>
+                  }
+                  // DOCX 渲染：mammoth 转换为 HTML
+                  if (isDocxFile(f.name)) {
+                    if (textContent != null) {
+                      return (
+                        <div
+                          className="chat-file-preview-docx"
+                          dangerouslySetInnerHTML={{ __html: textContent }}
+                        />
+                      )
+                    }
+                    return <div className="chat-file-preview-loading">加载 DOCX 中…</div>
+                  }
+                  if (textContent != null) {
+                    // HTML 文件：可选渲染模式
+                    if (isHtmlFile(f.name)) {
+                      return (
+                        <div className="chat-file-preview-html">
+                          <div className="chat-file-preview-html-toolbar">
+                            <button
+                              className={`chat-file-preview-html-btn${!htmlRenderMode ? ' active' : ''}`}
+                              onClick={() => setHtmlRenderMode(false)}
+                            >
+                              &lt;/&gt; 源码
+                            </button>
+                            <button
+                              className={`chat-file-preview-html-btn${htmlRenderMode ? ' active' : ''}`}
+                              onClick={() => setHtmlRenderMode(true)}
+                            >
+                              👁 预览
+                            </button>
+                          </div>
+                          {htmlRenderMode ? (
+                            <iframe
+                              className="chat-file-preview-iframe"
+                              sandbox=""
+                              srcDoc={textContent}
+                              title={f.name}
+                            />
+                          ) : (
+                            <div className="chat-code-scroll-wrap">
+                              <CodeBlock language="html" value={textContent} showLineNumbers />
+                            </div>
+                          )}
+                          <AskUserQuestionModal />
+                        </div>
+                      )
+                    }
+                    // Markdown 文件 → ReactMarkdown 渲染
+                    if (isMarkdownFile(f.name)) {
+                      return (
+                        <div className="chat-file-preview-markdown">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm, remarkMath]}
+                            rehypePlugins={[rehypeKatex]}
+                          >
+                            {textContent}
+                          </ReactMarkdown>
+                        </div>
+                      )
+                    }
+                    // 代码文件 → CodeBlock 高亮渲染
+                    const lang = getCodeLanguage(f.name)
+                    if (lang) {
+                      return <CodeBlock language={lang} value={textContent} showLineNumbers />
+                    }
+                    // 纯文本文件 → <pre> 渲染
+                    return <pre className="chat-file-preview-text">{textContent}</pre>
+                  }
+                  // 图片尚未加载完成的占位
+                  if (isImg && !imgUrl) {
+                    return <div className="chat-file-preview-loading">加载图片中…</div>
+                  }
+                  return <div className="chat-file-preview-loading">加载文件中…</div>
+                })()}
+              </div>
+            </div>
+          </>)}
       </div>
 
       {/* 参数/系统提示词设置卡片 */}

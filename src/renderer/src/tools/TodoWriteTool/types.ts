@@ -1,5 +1,6 @@
-import type { TodoItem } from '../../../../shared/types'
+import type { TodoUpdate } from '../../../../shared/types'
 
 export interface TodoWriteInput {
-  todos: TodoItem[]
+  merge?: boolean
+  todos: TodoUpdate[]
 }

@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  ChevronRight, ChevronDown, File, Folder, FolderOpen, Loader2, AlertCircle, RefreshCw,
-  Code, Braces, FileText, Image, Palette, Settings, Terminal, FileCode
+  ChevronRight, ChevronDown, File, Folder, FolderOpen, Loader2, AlertCircle, RefreshCw, Copy,
+  Code, Braces, FileText, Image, Palette, Settings, Terminal, FileCode, CornerDownLeft
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { notify } from '../store/notificationStore'
 
 interface FileNode {
   name: string
@@ -45,11 +46,14 @@ function updateNodeInTree(root: FileNode, targetPath: string, updates: Partial<F
   return root
 }
 
-export default function AgentFileTree({ workspaceDir, onPreviewFile }: { workspaceDir: string; onPreviewFile?: (path: string) => void }) {
+export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileName }: { workspaceDir: string; onPreviewFile?: (path: string) => void; onSendFileName?: (name: string) => void }) {
   const [tree, setTree] = useState<FileNode | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [loadingSet, setLoadingSet] = useState<Set<string>>(new Set())
   const [errorSet, setErrorSet] = useState<Set<string>>(new Set())
+  // 右键菜单：仅文件节点触发，{ x, y } 为屏幕坐标，name/path 为当前文件
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; name: string; path: string } | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   const expandedRef = useRef(expanded)
   expandedRef.current = expanded
@@ -141,16 +145,65 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile }: { workspa
     }
   }, [workspaceDir, refreshDir])
 
+  // 复制文件完整路径到剪贴板（优先 navigator.clipboard，失败回退 execCommand）
+  const copyPath = useCallback(async (path: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(path)
+      } else {
+        const ta = document.createElement('textarea')
+        ta.value = path
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      notify('已复制文件路径', 'success')
+    } catch {
+      notify('复制失败', 'error')
+    }
+  }, [])
+
+  // 点击空白 / 右键别处 / 按下 Esc 时关闭右键菜单
+  useEffect(() => {
+    if (!ctxMenu) return
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      // 菜单内部点击不关闭，交给菜单项自身处理
+      if (menuRef.current?.contains(e.target as Node)) return
+      setCtxMenu(null)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setCtxMenu(null) }
+    // 捕获阶段先于节点 onClick，避免关闭后立即触发展开等
+    document.addEventListener('pointerdown', close, true)
+    document.addEventListener('contextmenu', close, true)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', close, true)
+      document.removeEventListener('contextmenu', close, true)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [ctxMenu])
+
   const renderNode = (node: FileNode, level: number) => {
     const isExpanded = expanded.has(node.path)
     const isLoading = loadingSet.has(node.path)
     const isError = errorSet.has(node.path)
+    // 文件节点右键：弹出自定义菜单（仅文件，目录保持原有点击行为）
+    const onNodeContextMenu = (e: React.MouseEvent) => {
+      if (node.isDir) return
+      e.preventDefault()
+      e.stopPropagation()
+      setCtxMenu({ x: e.clientX, y: e.clientY, name: node.name, path: node.path })
+    }
     return (
       <div key={node.path}>
         <div
           className={`file-tree-node ${isError ? 'file-tree-node-error' : ''}`}
           style={{ paddingLeft: level * 16 }}
           onClick={() => toggleExpand(node)}
+          onContextMenu={onNodeContextMenu}
         >
           <span className="file-tree-arrow">
             {node.isDir ? (
@@ -199,6 +252,35 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile }: { workspa
           <div className="file-tree-loading">加载中...</div>
         )}
       </div>
+      {ctxMenu && (() => {
+        // 视口边界修正：菜单超出右/下边界时向左/上翻转，避免溢出被裁切
+        const MENU_W = 168, MENU_H = 76
+        const x = Math.min(ctxMenu.x, window.innerWidth - MENU_W - 8)
+        const y = Math.min(ctxMenu.y, window.innerHeight - MENU_H - 8)
+        return (
+          <div
+            ref={menuRef}
+            className="file-tree-ctx-menu"
+            style={{ left: Math.max(8, x), top: Math.max(8, y) }}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <button
+              className="file-tree-ctx-item"
+              onClick={() => { onSendFileName?.(ctxMenu.name); setCtxMenu(null) }}
+            >
+              <CornerDownLeft size={13} />
+              发送到输入框
+            </button>
+            <button
+              className="file-tree-ctx-item"
+              onClick={() => { copyPath(ctxMenu.path); setCtxMenu(null) }}
+            >
+              <Copy size={13} />
+              复制路径
+            </button>
+          </div>
+        )
+      })()}
     </div>
   )
 }

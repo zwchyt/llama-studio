@@ -21,8 +21,8 @@ function getNotifPref(): 'banner' | 'manual' {
 export default function SettingsView() {
 	  const { backends, activeBackend, setActiveBackend, setCommandsSchema, setBackends,
 	    releaseInfo, checkingUpdate, downloadProgress, setDownloadProgress, setCheckingUpdate, setReleaseInfo,
-	    setModels, setImageModels, soundEnabled, setSoundEnabled, chatSidebarCollapsed, setChatSidebarCollapsed, splashEnabled, setSplashEnabled } = useStore(
-	    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, setModels: s.setModels, setImageModels: s.setImageModels, soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, chatSidebarCollapsed: s.chatSidebarCollapsed, setChatSidebarCollapsed: s.setChatSidebarCollapsed, splashEnabled: s.splashEnabled, setSplashEnabled: s.setSplashEnabled }),
+	    setModels, setImageModels, soundEnabled, setSoundEnabled, chatSidebarCollapsed, setChatSidebarCollapsed, splashEnabled, setSplashEnabled, agentToolCardsExpanded, setAgentToolCardsExpanded } = useStore(
+	    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, setModels: s.setModels, setImageModels: s.setImageModels, soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, chatSidebarCollapsed: s.chatSidebarCollapsed, setChatSidebarCollapsed: s.setChatSidebarCollapsed, splashEnabled: s.splashEnabled, setSplashEnabled: s.setSplashEnabled, agentToolCardsExpanded: s.agentToolCardsExpanded, setAgentToolCardsExpanded: s.setAgentToolCardsExpanded }),
     shallow
   )
   const [downloading, setDownloading] = useState(false)
@@ -257,6 +257,20 @@ export default function SettingsView() {
               type="checkbox"
               checked={splashEnabled}
               onChange={() => setSplashEnabled(!splashEnabled)}
+            />
+            <span className="toggle-track"></span>
+            <span className="toggle-thumb"></span>
+          </label>
+        </div>
+        <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            Agent Code 工作台中，工具调用卡片（Bash、文件读取、搜索等）内部的参数与结果详情默认展开；关闭后新产生的工具调用卡片默认折叠，只显示工具名称与状态。
+          </p>
+          <label className="toggle" style={{ marginTop: 4 }}>
+            <input
+              type="checkbox"
+              checked={agentToolCardsExpanded}
+              onChange={() => setAgentToolCardsExpanded(!agentToolCardsExpanded)}
             />
             <span className="toggle-track"></span>
             <span className="toggle-thumb"></span>

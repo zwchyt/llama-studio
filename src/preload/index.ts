@@ -126,13 +126,15 @@ const fullApi = {
   // ── Agent Code 文件树浏览 ──
   buildFileTree: (dir: string, maxDepth?: number) => ipcRenderer.invoke('build-file-tree', dir, maxDepth),
   expandFileTree: (dir: string, limit?: number) => ipcRenderer.invoke('expand-file-tree', dir, limit),
+  listFlatFiles: (dir: string, opts?: { maxDepth?: number; maxFiles?: number }) => ipcRenderer.invoke('list-flat-files', dir, opts),
+  listDir: (dirPath: string) => ipcRenderer.invoke('list-dir', dirPath),
 
   // ── Agent Code 工作台 文件操作 ──
   readFile: (filePath: string, opts?: { maxBytes?: number }) => ipcRenderer.invoke('read-file', filePath, opts),
   writeFile: (filePath: string, content: string) => ipcRenderer.invoke('write-file', filePath, content),
   editFile: (filePath: string, oldString: string, newString: string, replaceAll?: boolean) => ipcRenderer.invoke('edit-file', filePath, oldString, newString, replaceAll),
   glob: (opts: { pattern: string; path: string; limit?: number }) => ipcRenderer.invoke('glob', opts),
-  grep: (opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean }) => ipcRenderer.invoke('grep', opts),
+  grep: (opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean; type?: string }) => ipcRenderer.invoke('grep', opts),
   // ── Agent Code 工作台 文件树自动刷新（目录监听）──
   startAgentFileWatch: (dir: string) => ipcRenderer.invoke('start-agent-file-watch', dir),
   stopAgentFileWatch: () => ipcRenderer.invoke('stop-agent-file-watch'),
@@ -146,18 +148,18 @@ const fullApi = {
   // ── Agent Code 工作台 项目持久化 ──
   loadAgentProjects: () => ipcRenderer.invoke('load-agent-projects'),
   saveAgentProjects: (projects: object) => ipcRenderer.invoke('save-agent-projects', projects),
-	  executeCommand: (opts: { command: string; timeout?: number }) => ipcRenderer.invoke('execute-command', opts),
+	  executeCommand: (opts: { command: string; timeout?: number; isBackground?: boolean; maxOutputChars?: number; autoBackground?: boolean }) => ipcRenderer.invoke('execute-command', opts),
 	  setBashCwd: (dir: string) => ipcRenderer.invoke('set-bash-cwd', dir),
+	  getBackgroundTask: (taskId: string) => ipcRenderer.invoke('get-background-task', taskId),
+	  listBackgroundTasks: () => ipcRenderer.invoke('list-background-tasks'),
+	  killBackgroundTask: (taskId: string) => ipcRenderer.invoke('kill-background-task', taskId),
 	  deletePath: (targetPath: string, recursive: boolean) => ipcRenderer.invoke('delete-path', targetPath, recursive),
   setAgentWorkspace: (dir: string) => ipcRenderer.invoke('set-agent-workspace', dir),
 
   // ── Agent Code 任务清单（Todo / Task）──
-  agentTodoWrite: (sessionId: string, todos: object[]) => ipcRenderer.invoke('agent-todo-write', sessionId, todos),
-  agentTaskCreate: (sessionId: string, input: object) => ipcRenderer.invoke('agent-task-create', sessionId, input),
+  agentTodoWrite: (sessionId: string, input: object) => ipcRenderer.invoke('agent-todo-write', sessionId, input),
   agentTaskGet: (sessionId: string, taskId: string) => ipcRenderer.invoke('agent-task-get', sessionId, taskId),
   agentTaskList: (sessionId: string) => ipcRenderer.invoke('agent-task-list', sessionId),
-  agentTaskUpdate: (sessionId: string, taskId: string, updates: object) => ipcRenderer.invoke('agent-task-update', sessionId, taskId, updates),
-  agentTaskStop: (sessionId: string, taskId: string) => ipcRenderer.invoke('agent-task-stop', sessionId, taskId),
   agentTaskOutput: (sessionId: string, taskId: string) => ipcRenderer.invoke('agent-task-output', sessionId, taskId),
 
   // ── 工具调用（网络搜索）──

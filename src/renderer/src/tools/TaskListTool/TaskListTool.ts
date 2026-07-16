@@ -23,7 +23,7 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
   let tasks = res.tasks ?? []
   if (status) tasks = tasks.filter(t => t.status === status)
   if (tasks.length === 0) return '任务清单为空。'
-  const lines = tasks.map(t => `#${t.id} [${t.status}] ${t.subject}`)
+  const lines = tasks.map(t => `#${t.id} [${t.status}] [${t.priority || 'medium'}] ${t.subject}`)
   const summary = `共 ${tasks.length} 个任务：`
   return summary + '\n' + lines.join('\n')
 }

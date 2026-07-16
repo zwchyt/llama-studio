@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, ChatStreamChunk, AgentProject, AgentTask, TodoItem } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, ChatStreamChunk, AgentProject, AgentTask, TodoItem, TodoUpdate } from '../../shared/types'
 // 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
 interface ModelFileInfo {
   name: string
@@ -109,7 +109,7 @@ interface LlamaCppApi {
   getMetricsPolling: () => Promise<boolean>
   setMetricsPolling: (enabled: boolean) => Promise<{ success: boolean }>
   getRunningProcesses: () => Promise<string[]>
-  getUiSettings: () => Promise<{ splashEnabled?: boolean; soundEnabled?: boolean; chatSidebarCollapsed?: boolean }>
+  getUiSettings: () => Promise<{ splashEnabled?: boolean; soundEnabled?: boolean; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean }>
   setUiSetting: (key: string, value: boolean) => Promise<void>
   listGlobalAgents: () => Promise<{ name: string; pkg: string; cmd: string; installed: boolean; version: string | null; website?: string }[]>
   launchAgent: (cmd: string, cwd: string) => Promise<{ success: boolean; error?: string }>
@@ -157,33 +157,36 @@ interface LlamaCppApi {
   // ── Agent Code 文件树 ──
   buildFileTree: (dir: string, maxDepth?: number) => Promise<{ success: boolean; tree?: { name: string; path: string; isDir: boolean; children?: any[] }; error?: string }>
   expandFileTree: (dir: string, limit?: number) => Promise<{ success: boolean; children?: { name: string; path: string; isDir: boolean }[]; truncated?: boolean; total?: number; error?: string }>
+  listFlatFiles: (dir: string, opts?: { maxDepth?: number; maxFiles?: number }) => Promise<{ success: boolean; files?: { name: string; path: string; relPath: string }[]; truncated?: boolean; total?: number; error?: string }>
   // ── Agent Code 文件树自动刷新（目录监听）──
   startAgentFileWatch: (dir: string) => Promise<{ success: boolean; error?: string }>
   stopAgentFileWatch: () => Promise<{ success: boolean }>
   onAgentFileChanged: (cb: (data: { dir: string; filename: string }) => void) => void
   removeAgentFileListeners: () => void
+  // ── Agent Code 目录操作 ──
+  listDir: (dirPath: string) => Promise<{ success: boolean; entries?: { name: string; isDir: boolean; fileCount: number }[]; truncated?: boolean; total?: number; error?: string }>
   // ── Agent Code 文件操作 ──
-  readFile: (filePath: string, opts?: { maxBytes?: number }) => Promise<{ success: boolean; content?: string; lines?: number; totalLines?: number; startLine?: number; truncated?: boolean; error?: string }>
+  readFile: (filePath: string, opts?: { maxBytes?: number; offset?: number; limit?: number }) => Promise<{ success: boolean; content?: string; lines?: number; totalLines?: number; startLine?: number; truncated?: boolean; error?: string; errorType?: string; fileSize?: number; suggestedCommand?: string }>
   writeFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>
   editFile: (filePath: string, oldString: string, newString: string, replaceAll?: boolean) => Promise<{ success: boolean; content?: string; error?: string }>
   glob: (opts: { pattern: string; path: string; limit?: number }) => Promise<{ success: boolean; filenames?: string[]; numFiles?: number; truncated?: boolean; error?: string }>
-  grep: (opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean }) => Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; error?: string }>
+  grep: (opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean; type?: string }) => Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }>
 	  // ── Agent Code 工作台 项目持久化 ──
 	  loadAgentProjects: () => Promise<AgentProject[]>
 	  saveAgentProjects: (projects: AgentProject[]) => Promise<{ success: boolean; error?: string }>
 		  // ── Agent Code Bash 执行 ──
-		  executeCommand: (opts: { command: string; timeout?: number }) => Promise<{ stdout: string; stderr: string; code: number }>
+		  executeCommand: (opts: { command: string; timeout?: number; isBackground?: boolean; maxOutputChars?: number; autoBackground?: boolean }) => Promise<{ stdout: string; stderr: string; code: number; truncated?: boolean; totalBytes?: number; outputFile?: string; autoBackgrounded?: boolean; taskId?: string }>
 		  setBashCwd: (dir: string) => Promise<{ success: boolean }>
+		  getBackgroundTask: (taskId: string) => Promise<{ success: boolean; stdout?: string; stderr?: string; code?: number | null; status?: string; truncated?: boolean; totalBytes?: number; error?: string }>
+		  listBackgroundTasks: () => Promise<Array<{ id: string; command: string; status: string; pid: number; startTime: number; autoBackgrounded: boolean }>>
+		  killBackgroundTask: (taskId: string) => Promise<{ success: boolean; error?: string }>
 		  // ── Agent Code 文件删除 ──
 		  deletePath: (targetPath: string, recursive: boolean) => Promise<{ success: boolean; message?: string; error?: string }>
 		  setAgentWorkspace: (dir: string) => Promise<{ success: boolean }>
 		  // ── Agent Code 任务清单（Todo / Task）──
-		  agentTodoWrite: (sessionId: string, todos: TodoItem[]) => Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }>
-		  agentTaskCreate: (sessionId: string, input: { subject: string; description?: string; activeForm?: string }) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
+		  agentTodoWrite: (sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }) => Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }>
 		  agentTaskGet: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
 		  agentTaskList: (sessionId: string) => Promise<{ success: boolean; tasks: AgentTask[] }>
-		  agentTaskUpdate: (sessionId: string, taskId: string, updates: { status?: string; subject?: string; description?: string; activeForm?: string; notes?: string }) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
-		  agentTaskStop: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
 		  agentTaskOutput: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; output?: string; error?: string }>
 	}
 declare global {

@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
 import hljs from 'highlight.js/lib/common'
-import { Check, Copy } from 'lucide-react'
+import { Check, Copy, ChevronDown } from 'lucide-react'
 
 /**
- * 代码块组件：用 highlight.js 高亮，带语言标签和复制按钮。
+ * 代码块组件：用 highlight.js 高亮，带语言标签、复制按钮和折叠/展开。
  * 供 react-markdown 的 code 渲染器使用。
  */
 interface CodeBlockProps {
@@ -15,6 +15,7 @@ interface CodeBlockProps {
 export default function CodeBlock({ language, value, showLineNumbers }: CodeBlockProps) {
   const codeRef = useRef<HTMLElement>(null)
   const [copied, setCopied] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
     if (codeRef.current) {
@@ -42,16 +43,26 @@ export default function CodeBlock({ language, value, showLineNumbers }: CodeBloc
   const lineCount = value.split('\n').length
 
   return (
-    <div className="chat-code-block">
+    <div className={`chat-code-block ${collapsed ? 'collapsed' : ''}`}>
       <div className="chat-code-header">
-        <span className="chat-code-lang">{langLabel}</span>
-        {showLineNumbers && <span className="chat-code-line-count">{lineCount} 行</span>}
+        <div className="chat-code-head-left">
+          <button
+            className="chat-code-toggle"
+            onClick={() => setCollapsed(v => !v)}
+            title={collapsed ? '展开代码' : '收起代码'}
+            aria-label={collapsed ? '展开代码' : '收起代码'}
+          >
+            <ChevronDown size={13} className={`agent-tool-chev ${collapsed ? '' : 'open'}`} />
+          </button>
+          <span className="chat-code-lang">{langLabel}</span>
+          {showLineNumbers && <span className="chat-code-line-count">{lineCount} 行</span>}
+        </div>
         <button className="chat-code-copy" onClick={handleCopy} title="复制代码">
           {copied ? <Check size={12} /> : <Copy size={12} />}
           {copied ? '已复制' : '复制'}
         </button>
       </div>
-      <div className={`chat-code-body ${showLineNumbers ? 'with-lines' : ''}`}>
+      <div className={`chat-code-body ${showLineNumbers ? 'with-lines' : ''} ${collapsed ? 'hidden' : ''}`}>
         {showLineNumbers && (
           <pre className="chat-code-line-nums" aria-hidden="true">
             {Array.from({ length: lineCount }, (_, i) => (

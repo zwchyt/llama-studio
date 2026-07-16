@@ -352,7 +352,7 @@ function AppMain() {
           }
         } else {
           const existing = useStore.getState().modelMetrics[mid]
-          const hist = (existing?.decodeTokS as number[]) || []
+          const hist = Array.isArray(existing?.decodeTokS) ? (existing!.decodeTokS as unknown[]) : []
           partial.decodeTokS = [...hist, rawVal].slice(-30)
         }
       }
@@ -366,7 +366,7 @@ function AppMain() {
           }
         } else {
           const existing = useStore.getState().modelMetrics[mid]
-          const hist = (existing?.reqPerSec as number[]) || []
+          const hist = Array.isArray(existing?.reqPerSec) ? (existing!.reqPerSec as unknown[]) : []
           partial.reqPerSec = [...hist, rawVal].slice(-30)
         }
       }

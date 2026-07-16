@@ -4,13 +4,14 @@ import {
   unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, watch, promises as fsPromises
 } from 'fs'
 import { join, extname, basename, dirname, resolve, sep, relative, isAbsolute } from 'path'
-import { spawn, exec, execSync, ChildProcess } from 'child_process'
+import { spawn, execSync, ChildProcess } from 'child_process'
+import { tmpdir } from 'os'
 import iconv from 'iconv-lite'
 import http from 'http'
 import { app } from 'electron'
 import { randomUUID } from 'crypto'
 import type * as ptyNs from 'node-pty'
-import type { AgentProject, AgentMessage, AgentTask, TodoItem, AgentTaskStatus } from '../shared/types'
+import type { AgentProject, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus } from '../shared/types'
 
 let ptyModule: typeof ptyNs | null = null
 async function getPty(): Promise<typeof ptyNs> {
@@ -200,12 +201,12 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
     return Promise.resolve()
   }
 }
-interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean; chatSidebarCollapsed?: boolean }
+interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean }
 let settingsCache: AppSettings | null = null
 async function loadSettings(): Promise<AppSettings> {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
     const data = JSON.parse(await fsPromises.readFile(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
@@ -213,7 +214,8 @@ async function loadSettings(): Promise<AppSettings> {
       metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true,
       splashEnabled: data.splashEnabled !== undefined ? data.splashEnabled : true,
       soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
-      chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? data.chatSidebarCollapsed : false
+      chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? data.chatSidebarCollapsed : false,
+      agentToolCardsExpanded: data.agentToolCardsExpanded !== undefined ? data.agentToolCardsExpanded : true
     }
     return settingsCache
   } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false }; return settingsCache }
@@ -225,7 +227,7 @@ async function saveSettings(s: AppSettings): Promise<void> {
 function loadSettingsSync(): AppSettings {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
     const data = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
@@ -233,7 +235,8 @@ function loadSettingsSync(): AppSettings {
       metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true,
       splashEnabled: data.splashEnabled !== undefined ? data.splashEnabled : true,
       soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
-      chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? data.chatSidebarCollapsed : false
+      chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? data.chatSidebarCollapsed : false,
+      agentToolCardsExpanded: data.agentToolCardsExpanded !== undefined ? data.agentToolCardsExpanded : true
     }
     return settingsCache
   } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false }; return settingsCache }
@@ -2115,11 +2118,11 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('get-ui-settings', async () => {
     const s = await loadSettings()
-    return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, chatSidebarCollapsed: s.chatSidebarCollapsed ?? false }
+    return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, chatSidebarCollapsed: s.chatSidebarCollapsed ?? false, agentToolCardsExpanded: s.agentToolCardsExpanded ?? true }
   })
   ipcMain.handle('set-ui-setting', async (_e, key: string, value: boolean) => {
     const s = await loadSettings()
-    if (key === 'splashEnabled' || key === 'soundEnabled' || key === 'chatSidebarCollapsed') {
+    if (key === 'splashEnabled' || key === 'soundEnabled' || key === 'chatSidebarCollapsed' || key === 'agentToolCardsExpanded') {
       ;(s as any)[key] = value
       await saveSettings(s)
     }
@@ -3215,6 +3218,8 @@ export function registerIpcHandlers(): void {
 
   // ── Agent Code 工作台 文件操作 ──
   const MAX_FILE_SIZE = 1024 * 1024 * 1024 // 1 GiB
+  const MAX_READ_TOKENS = 25_000
+  const CHARS_PER_TOKEN = 4
 
   function detectEncoding(buffer: Buffer): 'utf16le' | 'utf8' {
     return buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe ? 'utf16le' : 'utf8'
@@ -3249,16 +3254,68 @@ export function registerIpcHandlers(): void {
     try { return statSync(filePath).mtimeMs } catch { return 0 }
   }
 
-  ipcMain.handle('read-file', async (_e, filePath: string, opts?: { maxBytes?: number }): Promise<{ success: boolean; content?: string; lines?: number; totalLines?: number; startLine?: number; truncated?: boolean; error?: string }> => {
+  /** 用 ~4 chars/token 估算 token 数 */
+  function estimateTokens(text: string): number {
+    return Math.ceil(text.length / CHARS_PER_TOKEN)
+  }
+
+  /** 格式化行号：每 10 行显示一次行号，其余用 ":" 占位 */
+  function formatLines(lines: string[], startLine: number): string {
+    return lines.map((line, i) => {
+      const lineNum = startLine + i
+      if (lineNum % 10 === 1 || lineNum === startLine || i === lines.length - 1) {
+        return `${lineNum}: ${line}`
+      }
+      return `: ${line}`
+    }).join('\n')
+  }
+
+  ipcMain.handle('read-file', async (_e, filePath: string, opts?: { maxBytes?: number; offset?: number; limit?: number }): Promise<{
+    success: boolean
+    content?: string
+    lines?: number
+    totalLines?: number
+    startLine?: number
+    truncated?: boolean
+    error?: string
+    errorType?: string
+    fileSize?: number
+    suggestedCommand?: string
+  }> => {
     try {
       filePath = resolveAgentPath(filePath)
-      const fileSize = statSync(filePath).size
-      if (fileSize > MAX_FILE_SIZE) {
-        return { success: false, error: `文件过大（${(fileSize / 1024 / 1024).toFixed(1)} MiB），最大允许读取 1 GiB` }
+
+      // 结构化错误：检查路径是否存在、是否为目录、权限等
+      let fileStat: import('fs').Stats
+      try {
+        fileStat = statSync(filePath)
+        if (fileStat.isDirectory()) {
+          return { success: false, error: `路径是目录，无法读取：${filePath}`, errorType: 'IsADirectory' }
+        }
+      } catch (e) {
+        const err = e as NodeJS.ErrnoException
+        if (err.code === 'ENOENT') {
+          return { success: false, error: `文件不存在：${filePath}`, errorType: 'FileNotFound' }
+        }
+        if (err.code === 'EACCES' || err.code === 'EPERM') {
+          return { success: false, error: `权限不足，无法读取：${filePath}`, errorType: 'PermissionDenied' }
+        }
+        throw e
       }
+
+      const fileSize = fileStat.size
+      if (fileSize > MAX_FILE_SIZE) {
+        return {
+          success: false,
+          error: `文件过大（${(fileSize / 1024 / 1024).toFixed(1)} MiB），最大允许读取 1 GiB`,
+          errorType: 'FileTooLarge',
+          fileSize
+        }
+      }
+
       readFileTimestamps.set(filePath, getFileModificationTime(filePath))
 
-      // 预览场景：仅读取前 maxBytes 字节，避免大文件占满内存
+      // 预览场景（UI 文件浏览器）：仅读取前 maxBytes 字节
       const maxBytes = opts?.maxBytes ?? 0
       const previewLarge = maxBytes > 0 && fileSize > maxBytes
       let content: string
@@ -3271,17 +3328,63 @@ export function registerIpcHandlers(): void {
         } finally {
           await fh.close()
         }
-        content = content.replace(/[\uD800-\uDBFF]$/u, '') // 去除可能被截断的半个代理对
+        content = content.replace(/[\uD800-\uDBFF]$/u, '')
       } else {
         const r = readFileContent(filePath)
-        if (!r.fileExists) return { success: false, error: '文件不存在' }
+        if (!r.fileExists) {
+          return { success: false, error: `文件不存在：${filePath}`, errorType: 'FileNotFound' }
+        }
         content = r.content
       }
 
-      const lines = content.split('\n').length
-      return { success: true, content, lines, totalLines: lines, startLine: 1, truncated: previewLarge }
+      const allLines = content.split('\n')
+      const totalLines = allLines.length
+
+      // offset/limit 行级分片
+      let offset = opts?.offset ?? 1
+      let limit = opts?.limit
+
+      if (offset < 0) {
+        offset = Math.max(1, totalLines + offset + 1)
+      }
+      offset = Math.max(1, Math.min(offset, totalLines))
+
+      let endLine: number
+      if (limit !== undefined && limit > 0) {
+        endLine = Math.min(offset + limit - 1, totalLines)
+      } else {
+        endLine = totalLines
+      }
+
+      const selectedLines = allLines.slice(offset - 1, endLine)
+      const slicedContent = selectedLines.join('\n')
+
+      // Token 预算预估：超限则引导使用 Grep
+      const estimatedTokens = estimateTokens(slicedContent)
+      if (estimatedTokens > MAX_READ_TOKENS) {
+        return {
+          success: false,
+          error: `内容过多（约 ${estimatedTokens} tokens，超出 ${MAX_READ_TOKENS} token 预算），`
+            + `请缩小 offset/limit 范围，或使用 Grep 按关键字搜索`,
+          errorType: 'FileTooLarge',
+          fileSize,
+          suggestedCommand: `grep(pattern, path: "${filePath}")`
+        }
+      }
+
+      // 格式化行号：每 10 行显示一次行号
+      const formattedContent = formatLines(selectedLines, offset)
+
+      return {
+        success: true,
+        content: formattedContent,
+        lines: selectedLines.length,
+        totalLines,
+        startLine: offset,
+        truncated: previewLarge
+      }
     } catch (e) {
-      return { success: false, error: `读取失败：${e instanceof Error ? e.message : String(e)}` }
+      return { success: false, error: `读取失败：${e instanceof Error ? e.message : String(e)}`, errorType: 'FileReadError' }
     }
   })
 
@@ -3462,19 +3565,88 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('grep', async (_e, opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean }): Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; error?: string }> => {
+  ipcMain.handle('list-dir', async (_e, dirPath: string): Promise<{
+    success: boolean
+    entries?: { name: string; isDir: boolean; fileCount: number }[]
+    truncated?: boolean
+    total?: number
+    error?: string
+  }> => {
     try {
-      if (!opts || !opts.path) return { success: false, error: '缺少搜索目录' }
+      if (!dirPath) return { success: false, error: '缺少路径' }
+      const resolved = resolve(resolveAgentPath(dirPath))
+      if (resolved.startsWith('\\\\') || resolved.startsWith('//')) return { success: false, error: '不支持 UNC 路径' }
+      if (!existsSync(resolved)) return { success: false, error: '目录不存在' }
+      const stat = statSync(resolved)
+      if (!stat.isDirectory()) return { success: false, error: '路径不是目录' }
+      const entries = readdirSync(resolved, { withFileTypes: true })
+      const children = entries
+        .filter(e => e.isDirectory() || e.isFile())
+        .map(e => {
+          const isDir = e.isDirectory()
+          let fileCount = 0
+          if (isDir) {
+            try { fileCount = readdirSync(join(resolved, e.name)).length } catch { }
+          }
+          return { name: e.name, isDir, fileCount }
+        })
+        .sort((a, b) => {
+          if (a.isDir && !b.isDir) return -1
+          if (!a.isDir && b.isDir) return 1
+          return a.name.localeCompare(b.name)
+        })
+      const MAX_ITEMS = 1000
+      const truncated = children.length > MAX_ITEMS
+      return { success: true, entries: children.slice(0, MAX_ITEMS), truncated, total: children.length }
+    } catch (e) {
+      return { success: false, error: `列出目录失败：${e instanceof Error ? e.message : String(e)}` }
+    }
+  })
+
+  const DEFAULT_MAX_CHARS_PER_LINE = 1_000
+  const GREP_TIMEOUT_MS = 20_000
+  const TYPE_GLOB_MAP: Record<string, string> = {
+    py: '*.py', js: '*.js', ts: '*.{ts,tsx}', 'c++': '*.{cpp,cc,cxx}',
+    cpp: '*.{cpp,cc,cxx}', cc: '*.{cpp,cc,cxx}', c: '*.{c,h}',
+    h: '*.{c,h}', java: '*.java', rs: '*.rs', rust: '*.rs',
+    go: '*.go', css: '*.css', html: '*.html', json: '*.json',
+    md: '*.md', markdown: '*.md', yaml: '*.{yaml,yml}', yml: '*.{yaml,yml}',
+    toml: '*.toml', xml: '*.xml', sql: '*.sql', sh: '*.sh',
+    bash: '*.sh', ps1: '*.ps1', powershell: '*.ps1', dockerfile: 'Dockerfile',
+    makefile: 'Makefile', gitignore: '.gitignore',
+  }
+
+  /** 截断过长的行 */
+  function trimLine(line: string, maxChars: number): string {
+    if (line.length <= maxChars) return line
+    return line.slice(0, maxChars) + ` [... truncated ${line.length - maxChars} chars]`
+  }
+
+  ipcMain.handle('grep', async (_e, opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean; type?: string }): Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }> => {
+    let timedOut = false
+    const timeoutId = setTimeout(() => { timedOut = true }, GREP_TIMEOUT_MS)
+
+    const returnResult = (result: { success: boolean; content?: string; numFiles?: number; truncated?: boolean; error?: string }) => {
+      clearTimeout(timeoutId)
+      return { ...result, timedOut }
+    }
+
+    try {
+      if (!opts || !opts.path) return returnResult({ success: false, error: '缺少搜索目录' })
       opts.path = resolveAgentPath(opts.path)
-      if (opts.path.startsWith('\\\\') || opts.path.startsWith('//')) return { success: false, error: '不支持 UNC 路径' }
-      if (!existsSync(opts.path)) return { success: false, error: '目录不存在' }
+      if (opts.path.startsWith('\\\\') || opts.path.startsWith('//')) return returnResult({ success: false, error: '不支持 UNC 路径' })
+      if (!existsSync(opts.path)) return returnResult({ success: false, error: '目录不存在' })
       const root = opts.path
       const mode = (opts.output_mode || 'files_with_matches') as 'content' | 'files_with_matches' | 'count'
       const headLimit = opts.head_limit === undefined ? 250 : opts.head_limit
       const flags = opts['-i'] ? 'i' : ''
       let regex: RegExp
-      try { regex = new RegExp(opts.pattern, flags) } catch (e) { return { success: false, error: `无效正则：${e instanceof Error ? e.message : String(e)}` } }
-      const globRe = opts.glob ? globToRegExp(opts.glob) : null
+      try { regex = new RegExp(opts.pattern, flags) } catch (e) { return returnResult({ success: false, error: `无效正则：${e instanceof Error ? e.message : String(e)}` }) }
+      let globPattern = opts.glob
+      if (!globPattern && opts.type && TYPE_GLOB_MAP[opts.type]) {
+        globPattern = TYPE_GLOB_MAP[opts.type]
+      }
+      const globRe = globPattern ? globToRegExp(globPattern) : null
       const ctx = opts.context ?? 0
       const showLineNumbers = opts['-n'] !== false
       const maxBytes = 5 * 1024 * 1024
@@ -3485,6 +3657,7 @@ export function registerIpcHandlers(): void {
         let entries: any[]
         try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
         for (const e of entries) {
+          if (timedOut) return
           const full = join(dir, e.name)
           if (e.isDirectory()) {
             if (GLOB_GREP_IGNORE_DIRS.has(e.name)) continue
@@ -3498,84 +3671,91 @@ export function registerIpcHandlers(): void {
           }
         }
       }
-      // path 既可为目录，也可为单个文件；为文件时直接搜索该文件本身（glob 仅按文件名过滤）
       const rootStat = statSync(root)
       if (rootStat.isFile()) {
         if (!globRe || globRe.test(basename(root))) files.push(root)
       } else {
         walk(root)
       }
+      if (timedOut) return returnResult({ success: true, content: '搜索超时，返回部分结果。请缩小搜索范围或使用更具体的参数。', numFiles: 0, truncated: true })
 
-      const slice = (arr: string[]) => {
-        const truncated = headLimit !== 0 && arr.length > headLimit
-        return { items: headLimit === 0 ? arr : arr.slice(0, headLimit), truncated }
-      }
+      // 精确匹配检测：收集 headLimit+1 个结果，区分 exact-fit vs truncation
+      const processLimit = headLimit === 0 ? Infinity : headLimit + 1
 
       if (mode === 'files_with_matches') {
         const matched: string[] = []
         for (const f of files) {
+          if (timedOut) break
+          if (headLimit !== 0 && matched.length >= processLimit) break
           const text = readTextSafe(f, maxBytes)
           if (text === null) continue
           if (text.split('\n').some(l => regex.test(l))) matched.push(f)
         }
-        const r = slice(matched)
-        return {
+        const truncated = headLimit !== 0 && matched.length > headLimit
+        const items = headLimit === 0 ? matched : matched.slice(0, headLimit)
+        return returnResult({
           success: true,
-          numFiles: r.items.length,
-          truncated: r.truncated,
-          content: r.items.length ? `Found ${r.items.length} file(s):\n${r.items.join('\n')}${r.truncated ? '\n(结果已截断)' : ''}` : 'No files found.'
-        }
+          numFiles: items.length,
+          truncated,
+          content: items.length ? `Found ${items.length} file(s):\n${items.join('\n')}${truncated ? '\n(结果已截断)' : ''}` : 'No files found.'
+        })
       }
 
       if (mode === 'count') {
         const lines: string[] = []
         let total = 0
         for (const f of files) {
+          if (timedOut) break
+          if (headLimit !== 0 && lines.length >= processLimit) break
           const text = readTextSafe(f, maxBytes)
           if (text === null) continue
           const c = text.split('\n').filter(l => regex.test(l)).length
           if (c > 0) { lines.push(`${f}:${c}`); total += c }
         }
-        const r = slice(lines)
-        return {
+        const truncated = headLimit !== 0 && lines.length > headLimit
+        const items = headLimit === 0 ? lines : lines.slice(0, headLimit)
+        return returnResult({
           success: true,
-          numFiles: r.items.length,
-          truncated: r.truncated,
-          content: `Found ${total} matches across ${r.items.length} file(s):\n${r.items.join('\n')}${r.truncated ? '\n(结果已截断)' : ''}`
-        }
+          numFiles: items.length,
+          truncated,
+          content: `Found ${total} matches across ${items.length} file(s):\n${items.join('\n')}${truncated ? '\n(结果已截断)' : ''}`
+        })
       }
 
       // content 模式
       const outLines: string[] = []
       let fileCount = 0
       for (const f of files) {
+        if (timedOut) break
+        if (headLimit !== 0 && outLines.length >= processLimit) break
         const text = readTextSafe(f, maxBytes)
         if (text === null) continue
-        const lines = text.split('\n')
+        const fileLines = text.split('\n')
         const wanted = new Set<number>()
-        for (let i = 0; i < lines.length; i++) {
-          if (regex.test(lines[i]!)) {
-            for (let j = Math.max(0, i - ctx); j <= Math.min(lines.length - 1, i + ctx); j++) wanted.add(j)
+        for (let i = 0; i < fileLines.length; i++) {
+          if (regex.test(fileLines[i]!)) {
+            for (let j = Math.max(0, i - ctx); j <= Math.min(fileLines.length - 1, i + ctx); j++) wanted.add(j)
           }
         }
         if (wanted.size === 0) continue
         fileCount++
         const sorted = [...wanted].sort((a, b) => a - b)
         for (const idx of sorted) {
-          const num = idx + 1
-          outLines.push(showLineNumbers ? `${f}:${num}:${lines[idx]}` : `${f}:${lines[idx]}`)
+          const line = trimLine(fileLines[idx]!, DEFAULT_MAX_CHARS_PER_LINE)
+          outLines.push(showLineNumbers ? `${f}:${idx + 1}:${line}` : `${f}:${line}`)
         }
-        if (headLimit !== 0 && outLines.length >= headLimit) break
+        if (headLimit !== 0 && outLines.length >= processLimit) break
       }
-      const r = slice(outLines)
-      return {
+      const truncated = headLimit !== 0 && outLines.length > headLimit
+      const items = headLimit === 0 ? outLines : outLines.slice(0, headLimit)
+      return returnResult({
         success: true,
         numFiles: fileCount,
-        truncated: r.truncated,
-        content: r.items.length ? `${r.items.join('\n')}${r.truncated ? '\n(结果已截断)' : ''}` : 'No matches found.'
-      }
+        truncated,
+        content: items.length ? `${items.join('\n')}${truncated ? '\n(结果已截断)' : ''}` : 'No matches found.'
+      })
     } catch (e) {
-      return { success: false, error: `搜索失败：${e instanceof Error ? e.message : String(e)}` }
+      return returnResult({ success: false, error: `搜索失败：${e instanceof Error ? e.message : String(e)}` })
     }
   })
 
@@ -3623,6 +3803,45 @@ export function registerIpcHandlers(): void {
       return { success: true, children, truncated, total: all.length }
     } catch (e) {
       return { success: false, error: `展开目录失败：${e instanceof Error ? e.message : String(e)}` }
+    }
+  })
+
+  // ── Agent Code 输入框 @ 文件补全：递归扁平列举工作区全部文件（带上限保护）──
+  // 跳过 .git / node_modules 等噪声目录；仅收集文件（不含目录）。
+  ipcMain.handle('list-flat-files', (_e, dir: string, opts?: { maxDepth?: number; maxFiles?: number }): { success: boolean; files?: { name: string; path: string; relPath: string }[]; truncated?: boolean; total?: number; error?: string } => {
+    try {
+      if (!dir || !existsSync(dir)) return { success: false, error: '目录不存在' }
+      // 路径安全：防止通过异常路径遍历越出工作区
+      if (!isSafePath(dir, dir)) return { success: false, error: '访问被拒绝' }
+      const maxDepth = Math.max(1, Math.min(opts?.maxDepth ?? 12, 32))
+      const maxFiles = Math.max(100, Math.min(opts?.maxFiles ?? 3000, 20000))
+      const SKIP = new Set(['.git', 'node_modules', '.hg', '.svn', 'dist', 'build', 'out', '.cache'])
+      const root = resolve(dir)
+      const files: { name: string; path: string; relPath: string }[] = []
+      let truncated = false
+      const walk = (cur: string, depth: number) => {
+        if (truncated || depth > maxDepth) return
+        let entries
+        try { entries = readdirSync(cur, { withFileTypes: true }) } catch { return }
+        // 目录优先深度遍历，文件收集；保持一定顺序稳定性
+        entries.sort((a, b) => a.name.localeCompare(b.name))
+        for (const entry of entries) {
+          if (truncated) return
+          const full = join(cur, entry.name)
+          if (entry.isDirectory()) {
+            if (SKIP.has(entry.name)) continue
+            walk(full, depth + 1)
+          } else if (entry.isFile()) {
+            if (files.length >= maxFiles) { truncated = true; return }
+            const rel = relative(root, full).split(sep).join('/')
+            files.push({ name: entry.name, path: full, relPath: rel })
+          }
+        }
+      }
+      walk(root, 1)
+      return { success: true, files, truncated, total: files.length }
+    } catch (e) {
+      return { success: false, error: `列举文件失败：${e instanceof Error ? e.message : String(e)}` }
     }
   })
 
@@ -3767,6 +3986,10 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('save-agent-projects', async (_e, projects: AgentProject[]): Promise<{ success: boolean; error?: string }> => {
     try {
       ensureAgentProjectsDir()
+      // 没有任何含会话的项目 → 跳过落盘和 GC，防止误删磁盘数据
+      if (!projects || projects.length === 0 || projects.every(p => !p.sessions || p.sessions.length === 0)) {
+        return { success: true }
+      }
       const liveIds = new Set<string>()
       for (const p of projects || []) {
         for (const s of p.sessions || []) {
@@ -3846,49 +4069,80 @@ export function registerIpcHandlers(): void {
     }
   }
 
-  function nextTaskId(tasks: AgentTask[]): string {
-    const max = tasks.reduce((m, t) => Math.max(m, Number(t.id) || 0), 0)
-    return String(max + 1)
+  function validateNoDuplicateIds(updates: TodoUpdate[]): string | null {
+    const seen = new Set<string>()
+    for (const u of updates) {
+      if (u.id && seen.has(u.id)) return u.id
+      if (u.id) seen.add(u.id)
+    }
+    return null
   }
 
-  ipcMain.handle('agent-todo-write', async (_e, sessionId: string, todos: TodoItem[]): Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }> => {
+  function todoContentFallback(u: TodoUpdate): string {
+    if (u.content && u.content.length > 0) return u.content
+    return u.id ?? ''
+  }
+
+  function todoUpdateToAgentTask(u: TodoUpdate, i: number, now: number): AgentTask {
+    return {
+      id: u.id || String(i + 1),
+      subject: todoContentFallback(u),
+      description: u.description ?? '',
+      status: u.status || 'pending',
+      activeForm: u.activeForm,
+      priority: u.priority || 'medium',
+      notes: u.notes ?? '',
+      createdAt: now,
+      updatedAt: now
+    }
+  }
+
+  ipcMain.handle('agent-todo-write', async (_e, sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }): Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }> => {
     try {
+      const updates = input?.todos ?? []
+
+      // Validate duplicate IDs
+      const dup = validateNoDuplicateIds(updates)
+      if (dup) return { success: false, error: `重复的 todo ID: "${dup}"。每个 todo 必须有唯一 ID。` }
+
       const now = Date.now()
-      const tasks: AgentTask[] = (todos || []).map((t, i) => ({
-        id: String(i + 1),
-        subject: t.content,
-        description: '',
-        status: t.status === 'in_progress' || t.status === 'completed' ? t.status : 'pending',
-        activeForm: t.activeForm,
-        notes: '',
-        createdAt: now,
-        updatedAt: now
-      }))
+      const existing = loadAgentTasks(sessionId)
+
+      // Auto-upgrade to merge when state is non-empty and all updates target
+      // existing IDs without providing content (model forgot merge:true).
+      const autoMerge = !input.merge
+        && existing.length > 0
+        && updates.length > 0
+        && updates.every(u => !(u.content?.length) && existing.some(e => e.id === u.id))
+
+      const effectiveMerge = input.merge || autoMerge
+
+      let tasks: AgentTask[]
+      if (effectiveMerge) {
+        const byId = new Map(existing.map(t => [t.id, t]))
+        for (const u of updates) {
+          const existingTask = u.id ? byId.get(u.id) : undefined
+          if (existingTask) {
+            if (u.content?.length) existingTask.subject = u.content
+            if (u.description !== undefined) existingTask.description = u.description
+            if (u.status) existingTask.status = u.status as AgentTaskStatus
+            if (u.priority) existingTask.priority = u.priority
+            if (u.activeForm !== undefined) existingTask.activeForm = u.activeForm
+            if (u.notes !== undefined) existingTask.notes = u.notes
+            existingTask.updatedAt = now
+          } else {
+            const task = todoUpdateToAgentTask(u, byId.size, now)
+            byId.set(task.id, task)
+          }
+        }
+        tasks = Array.from(byId.values())
+      } else {
+        // Replace mode: clear and build fresh list
+        tasks = updates.map((u, i) => todoUpdateToAgentTask(u, i, now))
+      }
+
       saveAgentTasks(sessionId, tasks)
       return { success: true, tasks }
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) }
-    }
-  })
-
-  ipcMain.handle('agent-task-create', async (_e, sessionId: string, input: { subject: string; description?: string; activeForm?: string }): Promise<{ success: boolean; task?: AgentTask; error?: string }> => {
-    try {
-      if (!input?.subject) return { success: false, error: 'subject is required' }
-      const tasks = loadAgentTasks(sessionId)
-      const now = Date.now()
-      const task: AgentTask = {
-        id: nextTaskId(tasks),
-        subject: input.subject,
-        description: input.description || '',
-        status: 'pending',
-        activeForm: input.activeForm,
-        notes: '',
-        createdAt: now,
-        updatedAt: now
-      }
-      tasks.push(task)
-      saveAgentTasks(sessionId, tasks)
-      return { success: true, task }
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
@@ -3901,35 +4155,6 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('agent-task-list', async (_e, sessionId: string): Promise<{ success: boolean; tasks: AgentTask[] }> => {
     return { success: true, tasks: loadAgentTasks(sessionId) }
-  })
-
-  ipcMain.handle('agent-task-update', async (_e, sessionId: string, taskId: string, updates: { status?: string; subject?: string; description?: string; activeForm?: string; notes?: string }): Promise<{ success: boolean; task?: AgentTask; error?: string }> => {
-    const tasks = loadAgentTasks(sessionId)
-    const task = tasks.find(t => t.id === String(taskId))
-    if (!task) return { success: false, error: `Task ${taskId} not found` }
-    if (updates.status !== undefined) task.status = updates.status as AgentTaskStatus
-    if (updates.subject !== undefined) task.subject = updates.subject
-    if (updates.description !== undefined) task.description = updates.description
-    if (updates.activeForm !== undefined) task.activeForm = updates.activeForm
-    if (updates.notes !== undefined) task.notes = updates.notes
-    task.updatedAt = Date.now()
-    if (task.status === 'deleted') {
-      saveAgentTasks(sessionId, tasks.filter(t => t.id !== task.id))
-      return { success: true }
-    }
-    saveAgentTasks(sessionId, tasks)
-    return { success: true, task }
-  })
-
-  ipcMain.handle('agent-task-stop', async (_e, sessionId: string, taskId: string): Promise<{ success: boolean; task?: AgentTask; error?: string }> => {
-    const tasks = loadAgentTasks(sessionId)
-    const task = tasks.find(t => t.id === String(taskId))
-    if (!task) return { success: false, error: `Task ${taskId} not found` }
-    if (task.status === 'completed') return { success: false, error: `Task ${taskId} 已完成，无法停止` }
-    task.status = 'cancelled'
-    task.updatedAt = Date.now()
-    saveAgentTasks(sessionId, tasks)
-    return { success: true, task }
   })
 
   ipcMain.handle('agent-task-output', async (_e, sessionId: string, taskId: string): Promise<{ success: boolean; task?: AgentTask; output?: string; error?: string }> => {
@@ -3963,29 +4188,226 @@ export function registerIpcHandlers(): void {
     if (agentWorkspaceRoot) return resolve(agentWorkspaceRoot, p)
     return p
   }
-  ipcMain.handle('execute-command', async (_e, opts: { command: string; timeout?: number }): Promise<{ stdout: string; stderr: string; code: number }> => {
-    const timeout = opts.timeout ?? 120000
-    // Windows 中文系统下，命令输出编码分两种情况：
-    //  - 现代外部程序（node / git / npm 等）输出 UTF-8；
-    //  - cmd 内部命令（cd / dir / echo / type 等）在管道中仍按 OEM 代码页（CP936 / GBK）输出，
-    //    即便 @chcp 65001 也无法改变“管道”编码，导致直接按 UTF-8 解码出现 “�����”。
-    // 因此这里捕获原始 Buffer，先按 UTF-8 解码；若含非法 UTF-8 序列则回退用 GBK 解码，
-    // 两种场景的中文都能正确显示。
+
+  // ── 后台任务管理器 ──────────────────────────────────
+  interface BackgroundTask {
+    id: string
+    command: string
+    pid: number
+    startTime: number
+    stdout: string
+    stderr: string
+    code: number | null
+    status: 'running' | 'completed' | 'killed' | 'timeout'
+    totalBytes: number
+    truncated: boolean
+    outputFile: string
+    isBackground: boolean
+    autoBackgrounded: boolean
+  }
+  const BASH_OUTPUT_DIR = join(tmpdir(), 'llama-studio-bash')
+  try { mkdirSync(BASH_OUTPUT_DIR, { recursive: true }) } catch { /* ok */ }
+  const backgroundTasks = new Map<string, BackgroundTask>()
+  let bgTaskCounter = 0
+  function registerBackgroundTask(command: string, pid: number, isBackground: boolean, autoBackgrounded: boolean): { taskId: string; task: BackgroundTask } {
+    const id = `bg-${++bgTaskCounter}`
+    const outputFile = join(BASH_OUTPUT_DIR, `${id}.log`)
+    const task: BackgroundTask = {
+      id, command, pid, startTime: Date.now(),
+      stdout: '', stderr: '', code: null,
+      status: 'running', totalBytes: 0, truncated: false,
+      outputFile, isBackground, autoBackgrounded
+    }
+    backgroundTasks.set(id, task)
+    return { taskId: id, task }
+  }
+
+  const DEFAULT_EXEC_TIMEOUT = 120_000
+  const DEFAULT_MAX_OUTPUT_CHARS = 100_000
+
+  function spawnCommand(command: string) {
     const wrappedCommand = process.platform === 'win32'
-      ? `@chcp 65001 >NUL && ${opts.command}`
-      : opts.command
-    return new Promise((resolve) => {
-      const child = exec(wrappedCommand, { cwd: bashCwd ?? undefined, timeout, windowsHide: true, encoding: 'buffer' }, (error, stdout, stderr) => {
-        resolve({
-          stdout: decodeCommandOutput(stdout),
-          stderr: decodeCommandOutput(stderr),
-          code: error?.code ?? (error ? 1 : 0)
-        })
+      ? `@chcp 65001 >NUL && ${command}`
+      : command
+    return process.platform === 'win32'
+      ? spawn('cmd.exe', ['/c', wrappedCommand], { cwd: bashCwd ?? undefined, windowsHide: true })
+      : spawn('/bin/sh', ['-c', wrappedCommand], { cwd: bashCwd ?? undefined })
+  }
+
+  ipcMain.handle('execute-command', async (_e, opts: {
+    command: string
+    timeout?: number
+    isBackground?: boolean
+    maxOutputChars?: number
+    autoBackground?: boolean
+  }): Promise<{
+    stdout: string
+    stderr: string
+    code: number
+    truncated?: boolean
+    totalBytes?: number
+    outputFile?: string
+    autoBackgrounded?: boolean
+    taskId?: string
+  }> => {
+    const timeout = opts.timeout ?? DEFAULT_EXEC_TIMEOUT
+    const maxOutputChars = opts.maxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS
+
+    // 显式后台执行
+    if (opts.isBackground) {
+      const child = spawnCommand(opts.command)
+      const { taskId, task } = registerBackgroundTask(opts.command, child.pid || 0, true, false)
+
+      const outBufs: Buffer[] = []
+      const errBufs: Buffer[] = []
+      child.stdout?.on('data', (d: Buffer) => { outBufs.push(d) })
+      child.stderr?.on('data', (d: Buffer) => { errBufs.push(d) })
+      child.on('close', (code) => {
+        const stdout = decodeCommandOutput(Buffer.concat(outBufs))
+        const stderr = decodeCommandOutput(Buffer.concat(errBufs))
+        task.stdout = stdout
+        task.stderr = stderr
+        task.code = code
+        task.status = 'completed'
+        task.totalBytes = stdout.length
+        if (stdout.length > maxOutputChars) {
+          task.truncated = true
+          task.stdout = stdout.slice(0, maxOutputChars) + `\n[... truncated: showing ${formatChars(maxOutputChars)} of ${formatChars(stdout.length)} chars]`
+        }
+        try { writeFileSync(task.outputFile, stdout, 'utf-8') } catch { /* ok */ }
       })
+      child.on('error', () => { task.status = 'killed'; task.code = 1 })
+
+      return {
+        stdout: '',
+        stderr: '',
+        code: 0,
+        taskId,
+        autoBackgrounded: false
+      }
+    }
+
+    // 前台执行（带自动后台转后台功能）
+    return new Promise((resolve) => {
+      const child = spawnCommand(opts.command)
+      const outBufs: Buffer[] = []
+      const errBufs: Buffer[] = []
+      let timedOut = false
+      let resolved = false
+
+      const timeoutId = setTimeout(() => {
+        timedOut = true
+        if (opts.autoBackground) {
+          const { taskId, task } = registerBackgroundTask(opts.command, child.pid || 0, false, true)
+          const stdout = decodeCommandOutput(Buffer.concat(outBufs))
+          const stderr = decodeCommandOutput(Buffer.concat(errBufs))
+          task.stdout = stdout
+          task.stderr = stderr
+          task.status = 'running'
+          resolved = true
+          const truncated = stdout.length > maxOutputChars
+          resolve({
+            stdout: `[Command moved to background (timed out after ${timeout}ms)]\n${truncated ? stdout.slice(0, maxOutputChars) : stdout}`,
+            stderr,
+            code: -1,
+            autoBackgrounded: true,
+            taskId,
+            truncated,
+            totalBytes: stdout.length
+          })
+        } else {
+          child.kill()
+        }
+      }, timeout)
+
+      child.stdout?.on('data', (d: Buffer) => { outBufs.push(d) })
+      child.stderr?.on('data', (d: Buffer) => { errBufs.push(d) })
       child.on('error', () => {
+        if (resolved) return
+        clearTimeout(timeoutId)
+        resolved = true
         resolve({ stdout: '', stderr: 'command execution error', code: 1 })
       })
+      child.on('close', (code) => {
+        if (resolved) return
+        clearTimeout(timeoutId)
+        resolved = true
+        const stdout = decodeCommandOutput(Buffer.concat(outBufs))
+        const stderr = decodeCommandOutput(Buffer.concat(errBufs))
+        const totalBytes = stdout.length
+        let displayStdout = stdout
+        let truncated = false
+        let outputFile = ''
+        if (stdout.length > maxOutputChars) {
+          truncated = true
+          outputFile = join(BASH_OUTPUT_DIR, `fg-${Date.now()}.log`)
+          try { writeFileSync(outputFile, stdout, 'utf-8') } catch { /* ok */ }
+          displayStdout = stdout.slice(0, maxOutputChars) + `\n[... truncated: showing ${formatChars(maxOutputChars)} of ${formatChars(stdout.length)} chars - full output at: ${outputFile}]`
+        }
+        resolve({
+          stdout: displayStdout,
+          stderr,
+          code: timedOut ? 124 : (code ?? 1),
+          truncated,
+          totalBytes,
+          outputFile: outputFile || undefined
+        })
+      })
     })
+  })
+
+  ipcMain.handle('get-background-task', async (_e, taskId: string): Promise<{
+    success: boolean
+    stdout?: string
+    stderr?: string
+    code?: number | null
+    status?: string
+    truncated?: boolean
+    totalBytes?: number
+    error?: string
+  }> => {
+    const task = backgroundTasks.get(taskId)
+    if (!task) return { success: false, error: `Task ${taskId} not found` }
+    return {
+      success: true,
+      stdout: task.stdout,
+      stderr: task.stderr,
+      code: task.code,
+      status: task.status,
+      truncated: task.truncated,
+      totalBytes: task.totalBytes
+    }
+  })
+
+  ipcMain.handle('list-background-tasks', async (): Promise<Array<{
+    id: string
+    command: string
+    status: string
+    pid: number
+    startTime: number
+    autoBackgrounded: boolean
+  }>> => {
+    return [...backgroundTasks.values()].map(t => ({
+      id: t.id,
+      command: t.command,
+      status: t.status,
+      pid: t.pid,
+      startTime: t.startTime,
+      autoBackgrounded: t.autoBackgrounded
+    }))
+  })
+
+  ipcMain.handle('kill-background-task', async (_e, taskId: string): Promise<{ success: boolean; error?: string }> => {
+    const task = backgroundTasks.get(taskId)
+    if (!task) return { success: false, error: `Task ${taskId} not found` }
+    if (task.status !== 'running') return { success: false, error: `Task ${taskId} is not running (${task.status})` }
+    try {
+      process.kill(task.pid)
+      task.status = 'killed'
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
   })
 
   // ── Agent Code 文件删除（安全校验）────────────────────
@@ -4030,6 +4452,12 @@ export function registerIpcHandlers(): void {
  * 优先按 UTF-8 解码（node/git/npm 等现代程序）；若含非法 UTF-8 序列（cmd 内部命令
  * 经管道输出 GBK/CP936），则回退用 GBK 解码，避免中文乱码。
  */
+function formatChars(n: number): string {
+  if (n < 1000) return `${n}`
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`
+  return `${(n / 1_000_000).toFixed(1)}M`
+}
+
 function decodeCommandOutput(buf: Buffer | string | undefined): string {
   if (typeof buf === 'string') return buf
   if (!buf || buf.length === 0) return ''

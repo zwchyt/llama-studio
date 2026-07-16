@@ -5,7 +5,7 @@ import { getAgentSessionId } from '../agentSession'
 
 export const definition: Omit<ToolDefinition['function'], 'type'> = {
   name: TASK_OUTPUT_TOOL_NAME,
-  description: 'Get a task output / result notes (the notes you recorded via TaskUpdate) and its current status. In the local single-agent environment this returns the task notes rather than a live process stream.',
+  description: 'Get a task output / result notes (the notes you recorded via TodoWrite notes field) and its current status. In the local single-agent environment this returns the task notes rather than a live process stream.',
   parameters: {
     type: 'object',
     properties: {
@@ -25,6 +25,6 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
   return [
     `任务 #${taskId} 状态：${t?.status ?? '未知'}`,
     `结果备注：`,
-    res.output || '（暂无结果备注，可用 TaskUpdate 的 notes 字段写入）'
+    res.output || '（暂无结果备注，可用 TodoWrite 的 notes 字段写入）'
   ].join('\n')
 }

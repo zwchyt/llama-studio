@@ -80,28 +80,30 @@ import { definition as FileEditDef, execute as FileEditExec } from '../tools/Fil
 import { definition as GlobDef, execute as GlobExec } from '../tools/GlobTool'
 import { definition as GrepDef, execute as GrepExec } from '../tools/GrepTool'
 import { definition as BashDef, execute as BashExec } from '../tools/BashTool'
+import { definition as ListDirDef, execute as ListDirExec } from '../tools/ListDirTool'
 import { definition as FileDeleteDef, execute as FileDeleteExec } from '../tools/FileDeleteTool'
 import { definition as TodoWriteDef, execute as TodoWriteExec } from '../tools/TodoWriteTool'
-import { definition as TaskCreateDef, execute as TaskCreateExec } from '../tools/TaskCreateTool'
 import { definition as TaskGetDef, execute as TaskGetExec } from '../tools/TaskGetTool'
 import { definition as TaskListDef, execute as TaskListExec } from '../tools/TaskListTool'
-import { definition as TaskUpdateDef, execute as TaskUpdateExec } from '../tools/TaskUpdateTool'
-import { definition as TaskStopDef, execute as TaskStopExec } from '../tools/TaskStopTool'
 import { definition as TaskOutputDef, execute as TaskOutputExec } from '../tools/TaskOutputTool'
+import { definition as GetBackgroundTaskOutputDef, execute as GetBackgroundTaskOutputExec } from '../tools/GetBackgroundTaskOutputTool'
+import { definition as ListBackgroundTasksDef, execute as ListBackgroundTasksExec } from '../tools/ListBackgroundTasksTool'
+import { definition as AskUserQuestionDef, execute as AskUserQuestionExec } from '../tools/AskUserQuestionTool'
 register(FileReadDef, FileReadExec)
 register(FileWriteDef, FileWriteExec)
 register(FileEditDef, FileEditExec)
 register(GlobDef, GlobExec)
 register(GrepDef, GrepExec)
 register(BashDef, BashExec)
+register(ListDirDef, ListDirExec)
 register(FileDeleteDef, FileDeleteExec)
 register(TodoWriteDef, TodoWriteExec)
-register(TaskCreateDef, TaskCreateExec)
 register(TaskGetDef, TaskGetExec)
 register(TaskListDef, TaskListExec)
-register(TaskUpdateDef, TaskUpdateExec)
-register(TaskStopDef, TaskStopExec)
 register(TaskOutputDef, TaskOutputExec)
+register(GetBackgroundTaskOutputDef, GetBackgroundTaskOutputExec)
+register(ListBackgroundTasksDef, ListBackgroundTasksExec)
+register(AskUserQuestionDef, AskUserQuestionExec)
 
 // ── 导出 API（类似 textgen 的 load_tools / execute_tool）──
 

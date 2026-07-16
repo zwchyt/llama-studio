@@ -1,11 +1,11 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { flushSync } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
-import { Send, Square, Paperclip, X, FileText, Bot, User, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, RefreshCw, Eye, FilePlus2, FileSearch, TerminalSquare, Clock, CheckCircle2, XCircle, Search, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check } from 'lucide-react'
+import { Send, Square, Paperclip, X, FileText, Bot, User, FolderOpen, Plus, Trash2, AlertCircle, HelpCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, RefreshCw, Eye, FilePlus2, FileSearch, TerminalSquare, Clock, CheckCircle2, XCircle, Search, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
@@ -20,18 +20,17 @@ import { getGrepPrompt } from '../tools/GrepTool/prompt'
 import { getBashPrompt } from '../tools/BashTool/prompt'
 import { getFileDeletePrompt } from '../tools/FileDeleteTool/prompt'
 import { getTodoWritePrompt } from '../tools/TodoWriteTool/prompt'
-import { getTaskCreatePrompt } from '../tools/TaskCreateTool/prompt'
+import { getAskUserQuestionPrompt } from '../tools/AskUserQuestionTool/prompt'
 import { getTaskGetPrompt } from '../tools/TaskGetTool/prompt'
 import { getTaskListPrompt } from '../tools/TaskListTool/prompt'
-import { getTaskUpdatePrompt } from '../tools/TaskUpdateTool/prompt'
-import { getTaskStopPrompt } from '../tools/TaskStopTool/prompt'
 import { getTaskOutputPrompt } from '../tools/TaskOutputTool/prompt'
 import AgentFileTree from './AgentFileTree'
-import AgentToolBar from './AgentToolBar'
+
 import AgentContextPanel from './AgentContextPanel'
 import CodeBlock from './CodeBlock'
+import AskUserQuestionModal from './AskUserQuestionModal'
 
-import type { AgentMessage, AgentSession, AgentProject, Attachment, AgentTask } from '../../../shared/types'
+import type { AgentMessage, AgentSession, AgentProject, Attachment, AgentTask, TodoUpdate } from '../../../shared/types'
 
 type ApiMessage =
   | { role: 'system' | 'user' | 'assistant'; content: string | Array<Record<string, unknown>> }
@@ -169,6 +168,10 @@ function LinedPre({ text, maxHeight }: { text: string; maxHeight?: number }) {
 }
 
 // ── Markdown 渲染（复用全局 CodeBlock 高亮，支持 GFM 表格/列表/math）────
+// 注意：CodeBlock 渲染的是 <div> 结构，不能塞进 react-markdown 默认的
+// <pre><code> 里（<div> 非法嵌套在 <pre> 中会被浏览器重排导致错位）。
+// 因此块级代码需拦截整个 <pre>，从其中的 <code> 取出语言与文本再交给 CodeBlock；
+// 行内代码（不在 <pre> 内）仍由 code 渲染器处理，保留 chat-code-in-line 样式。
 function MarkdownCode({ className, children }: { className?: string; children?: React.ReactNode }) {
   const text = String(children ?? '').replace(/\n$/, '')
   const match = /language-(\w+)/.exec(className || '')
@@ -178,7 +181,7 @@ function MarkdownCode({ className, children }: { className?: string; children?: 
   if (text.includes('\n')) {
     return <CodeBlock language="" value={text} />
   }
-  return <code className="chat-code-inline">{text}</code>
+  return <code className="chat-code-in-line">{text}</code>
 }
 
 const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { content: string }) {
@@ -204,6 +207,7 @@ const TOOL_META: Record<string, { name: string; desc: string; icon: React.Compon
   get_datetime: { name: '获取时间', desc: '获取当前日期与时间', icon: Clock },
   web_search: { name: '网络搜索', desc: '搜索网页并返回标题、链接与摘要', icon: Search },
   fetch_webpage: { name: '抓取网页', desc: '抓取网页内容并转为纯文本', icon: FileText },
+  AskUserQuestion: { name: '提问用户', desc: '向用户提出选择题并收集答案', icon: HelpCircle },
 }
 
 // 工具「执行中」状态文案（替代通用的「执行中…」，显示具体动作，如 Edit 编辑中）
@@ -216,11 +220,9 @@ const TOOL_RUN_VERB: Record<string, string> = {
   Bash: '执行中',
   Delete: '删除中',
   TodoWrite: '计划中',
-  TaskCreate: '创建任务中',
+  AskUserQuestion: '提问中',
   TaskGet: '查询任务中',
   TaskList: '列出任务中',
-  TaskUpdate: '更新任务中',
-  TaskStop: '停止任务中',
   TaskOutput: '读取输出中',
   get_datetime: '获取时间中',
   web_search: '搜索中',
@@ -231,7 +233,7 @@ function toolRunVerb(name: string): string {
 }
 
 // Agent 工作台暴露文件操作类工具 + Bash 执行（不调用联网 / 时间类工具）
-const AGENT_FILE_TOOL_NAMES = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'Delete', 'TodoWrite', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate', 'TaskStop', 'TaskOutput']
+const AGENT_FILE_TOOL_NAMES = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'ListDir', 'Delete', 'TodoWrite', 'AskUserQuestion', 'TaskGet', 'TaskList', 'TaskOutput', 'GetBackgroundTaskOutput', 'ListBackgroundTasks']
 
 // 需要人工确认的「破坏性」工具：Delete / Bash 默认开启；Write / Edit 可由项目开关追加
 const APPROVAL_TOOLS = new Set(['Delete', 'Bash'])
@@ -251,14 +253,12 @@ function buildSystemContent(project: AgentProject): string {
     getBashPrompt(),
     getFileDeletePrompt(),
     getTodoWritePrompt(),
-    getTaskCreatePrompt(),
+    getAskUserQuestionPrompt(),
     getTaskGetPrompt(),
     getTaskListPrompt(),
-    getTaskUpdatePrompt(),
-    getTaskStopPrompt(),
     getTaskOutputPrompt(),
   ].join('\n\n---\n\n')
-  const base = `你是一个编码智能体，可以使用以下工具完成任务。请仔细阅读每个工具的使用说明。\n\n${toolPrompts}`
+  const base = `你是一个编码智能体，可以使用以下工具完成任务。注意：工具调用失败时请分析错误原因并修正参数后再试。如果同一工具连续失败多次，说明当前方法不可行，应改用其他方案或直接告知用户，不要反复重试。\n\n请仔细阅读每个工具的使用说明。\n\n${toolPrompts}`
   const custom = project.systemPrompt?.trim()
   return custom ? `${custom}\n\n${base}` : base
 }
@@ -612,8 +612,13 @@ const ToolResultView = React.memo(function ToolResultView({ result, truncated, t
   const lines = result.split('\n')
   const lineCount = lines.length
   const [expanded, setExpanded] = useState(lineCount <= 20 && result.length <= 1600)
-  const collapsed = lineCount > 12
-  const shownText = expanded ? result : (collapsed ? lines.slice(0, 12).join('\n') + '\n…' : result)
+  // 收起预览：>12 行显示前 12 行；2~12 行多行结果折叠为首行预览；单行无需收起。
+  // 注意 collapsed 不能只按 >12 行判定，否则 ≤12 行的短结果点「收起」内容不变、按钮看似无效。
+  const isLong = lineCount > 12
+  const isMulti = lineCount > 1
+  const shownText = expanded
+    ? result
+    : (isLong ? lines.slice(0, 12).join('\n') + '\n…' : (isMulti ? lines.slice(0, 1).join('\n') + '\n…' : result))
   return (
     <div className="agent-tool-result">
       <div className="agent-tool-result-head">
@@ -622,7 +627,7 @@ const ToolResultView = React.memo(function ToolResultView({ result, truncated, t
         </span>
         <button className="agent-tool-subtoggle" onClick={() => setExpanded(v => !v)}>
           <ChevronRight size={11} className={`agent-tool-chev ${expanded ? 'open' : ''}`} />
-          {expanded ? '收起' : (collapsed ? `展开（显示前 12 / 共 ${lineCount} 行）` : '展开')}
+          {expanded ? '收起' : (isLong ? `展开（显示前 12 / 共 ${lineCount} 行）` : (isMulti ? `展开（显示首行 / 共 ${lineCount} 行）` : '展开'))}
         </button>
       </div>
       {lined ? <LinedPre text={shownText} /> : <pre className="agent-tool-result-pre">{shownText}</pre>}
@@ -630,7 +635,7 @@ const ToolResultView = React.memo(function ToolResultView({ result, truncated, t
   )
 })
 
-const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPreviewFile, canUndo, onUndo }: { tc: NonNullable<AgentMessage['toolCalls']>[number]; index: number; total: number; onPreviewFile: (p: string) => void; canUndo?: boolean; onUndo?: () => void }) {
+const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPreviewFile, canUndo, onUndo, defaultOpen }: { tc: NonNullable<AgentMessage['toolCalls']>[number]; index: number; total: number; onPreviewFile: (p: string) => void; canUndo?: boolean; onUndo?: () => void; defaultOpen?: boolean }) {
   const meta = TOOL_META[tc.name]
   const Icon = meta?.icon || Wrench
   // 状态：pending(待执行) / await_approval(待人工确认) / executing(执行中) / done(已完成)
@@ -641,15 +646,7 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
   const done = status === 'done'
   const failed = done && !!tc.failed
   const canRestore = done && canUndo && !tc.restored && BACKUP_TOOLS.has(tc.name)
-  const [expanded, setExpanded] = useState(!pending) // pending 时默认收起，executing/done 时展开
-  // 当工具从 pending 变为 executing 时自动展开
-  const prevStatusRef = useRef(status)
-  useEffect(() => {
-    if (prevStatusRef.current === 'pending' && status === 'executing') {
-      setExpanded(true)
-    }
-    prevStatusRef.current = status
-  }, [status])
+  const [expanded, setExpanded] = useState(defaultOpen ?? false)
   const parsed = (() => { try { return JSON.parse(tc.args || '{}') } catch { return null } })()
   const preview = getToolPreview(parsed)
   // 编辑工具的增删行数统计（显示在工具卡片上方，类似 git diff 的 +N -M）
@@ -699,6 +696,14 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
               <Clock size={10} /> {formatDuration(tc.durationMs)}
             </span>
           )}
+          {canRestore && (
+            <button className="agent-tool-undo" onClick={(e) => { e.stopPropagation(); onUndo?.() }} title="撤销本次操作，恢复工具执行前的原文件内容">
+              <Undo2 size={12} /> 恢复
+            </button>
+          )}
+          {tc.restored && (
+            <span className="agent-tool-restored"><Check size={12} /> 已恢复</span>
+          )}
           <ChevronRight size={12} className={`agent-tool-chev ${expanded ? 'open' : ''}`} />
         </span>
       </div>
@@ -716,34 +721,16 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
           ) : done ? (
             <ToolResultView result={tc.result!} truncated={tc.truncated} total={tc.resultTotal} lined={tc.name === 'Read'} />
           ) : null}
-          {canRestore && (
-            <button className="agent-tool-undo" onClick={onUndo} title="撤销本次操作，恢复工具执行前的原文件内容">
-              <Undo2 size={12} /> 恢复
-            </button>
-          )}
-          {tc.restored && (
-            <span className="agent-tool-restored"><Check size={12} /> 已恢复</span>
-          )}
         </div>
       )}
     </div>
   )
 })
 
-const ToolCallGroup = React.memo(function ToolCallGroup({ toolCalls, defaultOpen, onPreviewFile, canUndoFor, onUndo }: { toolCalls: NonNullable<AgentMessage['toolCalls']>; defaultOpen?: boolean; onPreviewFile: (p: string) => void; canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean; onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void }) {
-  const [open, setOpen] = useState(defaultOpen ?? true)
+const ToolCallGroup = React.memo(function ToolCallGroup({ toolCalls, onPreviewFile, canUndoFor, onUndo, cardDefaultOpen }: { toolCalls: NonNullable<AgentMessage['toolCalls']>; onPreviewFile: (p: string) => void; canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean; onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void; cardDefaultOpen?: boolean }) {
   return (
-    <div className="agent-tool-group">
-      <button className="agent-tool-group-head" onClick={() => setOpen(v => !v)}>
-        <ChevronDown size={13} className={`agent-tool-chev ${open ? 'open' : ''}`} />
-        <Wrench size={12} />
-        <span>工具调用{toolCalls.length > 1 ? `（${toolCalls.length}）` : ''}</span>
-      </button>
-      {open && (
-        <div className="agent-tool-list">
-          {toolCalls.map((tc, i) => <ToolCallCard key={tc.id || i} tc={tc} index={i} total={toolCalls.length} onPreviewFile={onPreviewFile} canUndo={canUndoFor ? canUndoFor(tc) : false} onUndo={onUndo ? () => onUndo(tc) : undefined} />)}
-        </div>
-      )}
+    <div className="agent-tool-list">
+      {toolCalls.map((tc, i) => <ToolCallCard key={tc.id || i} tc={tc} index={i} total={toolCalls.length} onPreviewFile={onPreviewFile} canUndo={canUndoFor ? canUndoFor(tc) : false} onUndo={onUndo ? () => onUndo(tc) : undefined} defaultOpen={cardDefaultOpen} />)}
     </div>
   )
 })
@@ -817,52 +804,73 @@ export default function AgentCodeView() {
     })
   }, [])
 
-  // 文件树 / 预览面板宽度可调（拖拽左侧边框）；聊天区有最小宽度兜底，避免输入框被遮挡
-  const TREE_MIN = 120, TREE_MAX = 480
+  // 预览面板宽度：拖拽预览左边框时调整，文件树宽度固定不动
   const PREVIEW_MIN = 240, PREVIEW_MAX = 760
-  const [treeWidth, setTreeWidth] = useState(280)
-  const [previewWidth, setPreviewWidth] = useState(360)
-  const draggingRef = useRef<{ type: 'tree' | 'preview'; startX: number; startTreeW: number; startPreviewW: number } | null>(null)
+  const [previewWidth, setPreviewWidth] = useState(PREVIEW_MIN)
+  const [previewResizing, setPreviewResizing] = useState(false)
+  const draggingRef = useRef<{ startX: number; startPreviewW: number } | null>(null)
+  // rAF 节流：拖动期间把宽度写入 CSS 变量，避免每帧 React 重渲
+  const rafRef = useRef<number | null>(null)
+  const applyPreviewWidth = useCallback((w: number) => {
+    const clamped = Math.max(PREVIEW_MIN, Math.min(PREVIEW_MAX, w))
+    const root = document.querySelector('.agent-code-preview') as HTMLElement | null
+    if (root) root.style.setProperty('--agent-preview-width', `${clamped}px`)
+  }, [])
 
   const onDragMove = useCallback((e: PointerEvent) => {
     const d = draggingRef.current
     if (!d) return
+    lastClientXRef.current = e.clientX
     const dx = e.clientX - d.startX
-    if (d.type === 'tree') {
-      // 树拖拽：只改变树宽，预览保持自身宽度跟随树一起平移（整体平移）
-      setTreeWidth(Math.max(TREE_MIN, Math.min(TREE_MAX, d.startTreeW - dx)))
-    } else {
-      // 预览拖拽：只改变预览宽度，文件树保持不变（不带动树）
-      const pw = Math.max(PREVIEW_MIN, Math.min(PREVIEW_MAX, d.startPreviewW - dx))
-      setPreviewWidth(pw)
-    }
-  }, [])
+    const next = d.startPreviewW - dx
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+    rafRef.current = requestAnimationFrame(() => applyPreviewWidth(next))
+  }, [applyPreviewWidth])
+
+  useEffect(() => {
+    applyPreviewWidth(previewWidth)
+  }, [previewWidth, applyPreviewWidth])
 
   const onDragEnd = useCallback(() => {
+    const d = draggingRef.current
+    if (d) {
+      setPreviewWidth(Math.max(PREVIEW_MIN, Math.min(PREVIEW_MAX, d.startPreviewW - (lastClientXRef.current - d.startX))))
+    }
     draggingRef.current = null
+    setPreviewResizing(false)
     document.body.style.userSelect = ''
     document.body.style.cursor = ''
     window.removeEventListener('pointermove', onDragMove)
     window.removeEventListener('pointerup', onDragEnd)
   }, [onDragMove])
 
+  const lastClientXRef = useRef(0)
   const startResize = (type: 'tree' | 'preview') => (e: React.PointerEvent) => {
+    if (type === 'tree') return // 文件树宽度固定不动
     e.preventDefault()
-    draggingRef.current = { type, startX: e.clientX, startTreeW: treeWidth, startPreviewW: previewWidth }
+    lastClientXRef.current = e.clientX
+    draggingRef.current = { startX: e.clientX, startPreviewW: previewWidth }
+    setPreviewResizing(true)
     document.body.style.userSelect = 'none'
     document.body.style.cursor = 'col-resize'
     window.addEventListener('pointermove', onDragMove)
     window.addEventListener('pointerup', onDragEnd)
   }
 
-  // Persist to store on every change
-  useEffect(() => { setAgentProjects(projects) }, [projects, setAgentProjects])
+  // Persist to store on every change（跳过纯占位项目，防止干扰 seededRef 逻辑）
+  useEffect(() => {
+    const hasRealContent = projects.some(p => p.sessions.length > 0 || p.workspaceDir)
+    if (hasRealContent) setAgentProjects(projects)
+  }, [projects, setAgentProjects])
 
   // 应用启动后，store 从磁盘载入历史项目时，把本地状态同步为已持久化的内容（仅一次）
   const seededRef = useRef(false)
   useEffect(() => {
     if (seededRef.current) return
     if (storedProjects.length > 0) {
+      // 仅当 loaded 数据含实际内容时才应用 + 加锁，避免空占位项目提前锁死
+      const hasReal = storedProjects.some(p => p.sessions.length > 0 || p.workspaceDir)
+      if (!hasReal) return
       setProjects(storedProjects)
       setActiveProjectId(storedProjects[0]!.id)
       setActiveSessionId(storedProjects[0]!.sessions[0]?.id || '')
@@ -882,6 +890,8 @@ export default function AgentCodeView() {
   // 聊天滚动容器 + 「是否贴底」标记（仅贴底时自动跟随滚动）
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)
+  // 是否贴底（用于渲染「滚动到底部」浮动按钮；仅非贴底时显示）
+  const [atBottom, setAtBottom] = useState(true)
   // 生成期间排队的发送（当前轮次结束后自动发出）
   const pendingSendRef = useRef<{ text: string; attachments: Attachment[] } | null>(null)
   // 始终持有最新的 handleSend，避免排队回调使用过期闭包（如切换了会话）
@@ -894,14 +904,89 @@ export default function AgentCodeView() {
   const historyIdxRef = useRef<number>(-1)
   // 附件 / 图片
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const ctxBtnRef = useRef<HTMLButtonElement>(null)
+  const promptBtnRef = useRef<HTMLButtonElement>(null)
   const [attachedFiles, setAttachedFiles] = useState<Array<{ id: string; name: string; isImage: boolean; dataUrl?: string; content?: string }>>([])
   const [treeOpen, setTreeOpen] = useState(true)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [contextModalOpen, setContextModalOpen] = useState(false)
+
+  // ── 窗口自适应（参考 Reasonix 按 viewport 实时约束面板宽度）──
+  // 监听工作台可用宽度：窄窗时自动收起侧栏 / 预览，并把文件树宽度夹紧到不溢出，
+  // 避免各面板固定 min-width 叠加导致整体被裁切或错乱。
+  const viewBodyRef = useRef<HTMLDivElement | null>(null)
+  // 用 ref 镜像 open 状态，避免 resize 回调闭包拿到过期值
+  const treeOpenRef = useRef(treeOpen)
+  treeOpenRef.current = treeOpen
+  const adaptToWidth = useCallback(() => {
+    // 不再自动收起右侧面板，由用户手动控制
+  }, [])
+
+  useLayoutEffect(() => {
+    const el = viewBodyRef.current
+    if (!el) return
+    // 首次挂载即按当前宽度适配一次
+    adaptToWidth()
+    const ro = new ResizeObserver(() => {
+      adaptToWidth()
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [adaptToWidth])
+
+  // 点击弹窗外 / Escape 关闭上下文下拉面板
+  useEffect(() => {
+    if (!contextModalOpen) return
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e.type === 'keydown' && (e as KeyboardEvent).key === 'Escape') {
+        setContextModalOpen(false)
+        return
+      }
+      // 点击弹窗内部不关闭
+      const target = e.target as Node
+      if (ctxBtnRef.current?.contains(target)) return
+      const pop = document.querySelector('.agent-card-ctx')
+      if (pop?.contains(target)) return
+      setContextModalOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', close)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', close)
+    }
+  }, [contextModalOpen])
+
   // 任务清单（Todo / Task 工具的可视化面板）
-  const [tasks, setTasks] = useState<AgentTask[]>([])
-  const [rightTab, setRightTab] = useState<'files' | 'tasks'>('files')
+  const [, setTasks] = useState<AgentTask[]>([])
+  const [taskModalOpen, setTaskModalOpen] = useState(false)
   // 上下文裁剪提示：当因窗口限制自动省略早期消息时显示（null = 未触发）
   const [ctxTrimInfo, setCtxTrimInfo] = useState<{ dropped: number } | null>(null)
+  // 当前 TodoWrite 计划项（每次新调用替换，不累加）
+  const [currentPlanItems, setCurrentPlanItems] = useState<TodoUpdate[]>([])
+
+  // 点击任务卡片外部 / Escape 关闭
+  useEffect(() => {
+    if (!taskModalOpen) return
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e.type === 'keydown' && (e as KeyboardEvent).key === 'Escape') {
+        setTaskModalOpen(false)
+        setCurrentPlanItems([])
+        return
+      }
+      const card = document.querySelector('.agent-task-card')
+      if (card?.contains(e.target as Node)) return
+      setTaskModalOpen(false)
+      setCurrentPlanItems([])
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', close)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', close)
+    }
+  }, [taskModalOpen])
+
   // 会话级监控统计（上下文面板用）：请求数 / 累计 tokens
   const [reqCount, setReqCount] = useState(0)
   const [cumTokens, setCumTokens] = useState(0)
@@ -917,6 +1002,28 @@ export default function AgentCodeView() {
   const [promptModalOpen, setPromptModalOpen] = useState(false)
   const [promptDraft, setPromptDraft] = useState('')
   const [approveWriteEditDraft, setApproveWriteEditDraft] = useState(false)
+
+  // 点击提示词面板外部 / Escape 关闭
+  useEffect(() => {
+    if (!promptModalOpen) return
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e.type === 'keydown' && (e as KeyboardEvent).key === 'Escape') {
+        setPromptModalOpen(false)
+        return
+      }
+      const pop = document.querySelector('.agent-card-prompt')
+      if (pop?.contains(e.target as Node)) return
+      if (promptBtnRef.current?.contains(e.target as Node)) return
+      setPromptModalOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', close)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', close)
+    }
+  }, [promptModalOpen])
+
   // 用户消息内联编辑中的消息 id（null = 无）
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState('')
@@ -950,31 +1057,62 @@ export default function AgentCodeView() {
   const [projRenameText, setProjRenameText] = useState('')
   const projRenameInputRef = useRef<HTMLInputElement>(null)
   const msgEndRef = useRef<HTMLDivElement>(null)
+  // 输入框区域高度（含附件托盘 / 上下文提示）：用于把「滚动到底部」按钮
+  // 精确悬浮在输入框正上方，而不遮挡输入框。
+  const chatInputAreaRef = useRef<HTMLDivElement>(null)
 
   const activeProject = projects.find(p => p.id === activeProjectId) || projects[0]!
   const activeSession = activeProject.sessions.find(s => s.id === activeSessionId) || activeProject.sessions[0] || null
-  // 最后一次含工具调用的消息下标，仅该组工具默认展开，其余折叠以减少噪音
-  // 工具调用组默认展开（显示工具卡片列表）；卡片详情（参数/结果）仍默认折叠，点击卡片头部再展开
-  const toolGroupDefaultOpen = true
+  // 工具调用组默认展开（显示工具卡片列表）；组内的单个工具卡片详情（参数/结果）
+  // 是否默认展开由「设置 → 界面 → 工具调用卡片默认展开」开关控制（持久化）。
+  const toolCardExpandedDefault = useStore(s => s.agentToolCardsExpanded)
 
   // 滚动时更新「是否贴底」标记（阈值 80px 内视为贴底）
   const onChatScroll = useCallback(() => {
     const el = chatScrollRef.current
     if (!el) return
-    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    atBottomRef.current = bottom
+    setAtBottom(bottom)
+  }, [])
+
+  const scrollToBottom = useCallback((smooth = false) => {
+    const el = chatScrollRef.current
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+      atBottomRef.current = true
+      setAtBottom(true)
+    }
   }, [])
 
   useEffect(() => {
-    // 仅当用户已接近底部时才自动跟随，向上翻看历史时不被拽回底部
     if (atBottomRef.current) {
-      msgEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      scrollToBottom()
     }
   }, [activeSession?.messages])
+
+  // 测量输入框区域高度，写入 CSS 变量，使浮动按钮精确浮在输入框上方
+  useEffect(() => {
+    const el = chatInputAreaRef.current
+    if (!el) return
+    const apply = () => {
+      const root = chatScrollRef.current?.closest('.agent-code-chat') as HTMLElement | null
+      if (root) root.style.setProperty('--chat-input-h', `${el.offsetHeight}px`)
+    }
+    apply()
+    const ro = new ResizeObserver(apply)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // 切换会话时重置监控统计（请求数 / 累计 tokens）
   useEffect(() => {
     setReqCount(0)
     setCumTokens(0)
+    // 切换会话后内容会变短/重置，先假定贴底（进入会话即滚到底部），
+    // 真实滚动事件会在用户上滚时把按钮显示出来
+    atBottomRef.current = true
+    setAtBottom(true)
   }, [activeSessionId])
 
   // 将当前项目目录设为 Glob/Grep/Bash 等工具的默认工作目录
@@ -1041,10 +1179,6 @@ export default function AgentCodeView() {
     setActiveSessionId(prev => prev === sessId ? fallbackId : prev)
   }, [])
 
-  const handleFileSelect = useCallback((path: string) => {
-    setInput(prev => prev ? `${prev}\n${path}` : path)
-  }, [])
-
   // ── 输入框自动增高 ──
   const autoResize = useCallback(() => {
     const el = textareaRef.current
@@ -1052,6 +1186,121 @@ export default function AgentCodeView() {
     el.style.height = 'auto'
     el.style.height = Math.min(el.scrollHeight, 220) + 'px'
   }, [])
+
+  // 把文本插入到输入框光标处（追加/插入文本，不触发发送）
+  // 用于文件浏览器右键「发送到输入框」：插入文件名到当前光标位置
+  const insertAtCursor = useCallback((text: string) => {
+    const el = textareaRef.current
+    if (!el) {
+      setInput(prev => prev ? `${prev}\n${text}` : text)
+      autoResize()
+      return
+    }
+    const start = el.selectionStart ?? el.value.length
+    const end = el.selectionEnd ?? el.value.length
+    const next = el.value.slice(0, start) + text + el.value.slice(end)
+    setInput(next)
+    // 还原光标到插入文本之后，并聚焦输入框
+    requestAnimationFrame(() => {
+      el.focus()
+      const pos = start + text.length
+      el.setSelectionRange(pos, pos)
+      autoResize()
+    })
+  }, [autoResize])
+
+  // ── 输入框 @ 文件补全 ──
+  // 把 [start, end) 区间的文本替换为 text（用于选中文件时替换触发用的 @查询串）
+  const replaceRange = useCallback((start: number, end: number, text: string) => {
+    const el = textareaRef.current
+    if (!el) {
+      setInput(prev => prev.slice(0, start) + text + prev.slice(end))
+      return
+    }
+    const next = el.value.slice(0, start) + text + el.value.slice(end)
+    setInput(next)
+    requestAnimationFrame(() => {
+      el.focus()
+      const pos = start + text.length
+      el.setSelectionRange(pos, pos)
+      autoResize()
+    })
+  }, [autoResize])
+
+  // 工作区文件缓存（扁平列表），按 workspaceDir 加载一次，过滤纯前端
+  interface FlatFileEntry { name: string; path: string; relPath: string }
+  const allFilesRef = useRef<FlatFileEntry[]>([])
+  const atLoadedDirRef = useRef<string>('')
+  const [atQuery, setAtQuery] = useState<string | null>(null) // 非空=浮层激活，存 @ 后的查询串
+  const [atFiles, setAtFiles] = useState<FlatFileEntry[]>([]) // 当前过滤后的列表
+  const atAnchorRef = useRef<number | null>(null) // @ 在 input 中的起始索引
+  const atPopRef = useRef<HTMLDivElement>(null)
+
+  // 首次需要时按工作区目录加载扁平文件列表（带上限保护，见主进程 list-flat-files）
+  const ensureWorkspaceFiles = useCallback(async (dir: string) => {
+    if (!dir || atLoadedDirRef.current === dir) return
+    atLoadedDirRef.current = dir
+    try {
+      const res = await window.api.listFlatFiles(dir, { maxDepth: 12, maxFiles: 3000 })
+      if (res.success && res.files) allFilesRef.current = res.files
+      else allFilesRef.current = []
+    } catch {
+      allFilesRef.current = []
+    }
+  }, [])
+
+  // 根据光标位置检测是否处于「@触发」状态：@ 前为空白或行首，@ 后无空白
+  const detectAt = useCallback((value: string, caret: number) => {
+    const before = value.slice(0, caret)
+    const m = /(^|\s)@([^\s@]*)$/.exec(before)
+    if (m) {
+      const atStart = caret - (m[2]!.length + 1) // @ 符号的索引
+      atAnchorRef.current = atStart
+      setAtQuery(m[2]!)
+      return true
+    }
+    atAnchorRef.current = null
+    setAtQuery(null)
+    return false
+  }, [])
+
+  // 按 atQuery 过滤工作区文件（匹配文件名或相对路径，不区分大小写）
+  const filterAtFiles = useCallback((query: string) => {
+    const q = query.toLowerCase()
+    const all = allFilesRef.current
+    const matched = q
+      ? all.filter(f => f.name.toLowerCase().includes(q) || f.relPath.toLowerCase().includes(q))
+      : all
+    setAtFiles(matched.slice(0, 50))
+  }, [])
+
+  // 选中文件：把 @查询串 替换为文件名文本，插入到输入框，不发送
+  const onPickAtFile = useCallback((entry: FlatFileEntry) => {
+    const anchor = atAnchorRef.current
+    if (anchor == null) { insertAtCursor(entry.name); setAtQuery(null); return }
+    // 替换从 @ 到当前光标处的整段（即 @查询串）
+    const caret = textareaRef.current?.selectionStart ?? input.length
+    replaceRange(anchor, caret, entry.name)
+    setAtQuery(null)
+  }, [insertAtCursor, replaceRange, input.length])
+
+  // 点击浮层外部 / 切换工作区关闭浮层
+  useEffect(() => {
+    if (atQuery === null) return
+    const close = (e: MouseEvent) => {
+      if (atPopRef.current?.contains(e.target as Node)) return
+      setAtQuery(null)
+    }
+    document.addEventListener('pointerdown', close, true)
+    return () => document.removeEventListener('pointerdown', close, true)
+  }, [atQuery])
+
+  // 切换工作区目录时重置文件缓存（下次输入 @ 重新加载）
+  useEffect(() => {
+    atLoadedDirRef.current = ''
+    allFilesRef.current = []
+    setAtQuery(null)
+  }, [activeProject.workspaceDir])
 
   // ── 附件 / 图片 ──
   async function readAttachmentFile(file: File): Promise<{ isImage: boolean; dataUrl?: string; text: string }> {
@@ -1262,6 +1511,9 @@ export default function AgentCodeView() {
 
     try {
       let turn = 0
+      // 工具失败跟踪：防止模型无限重试同一工具调用
+      const toolFailCount = new Map<string, number>()
+      const failedCalls = new Set<string>()
       // 不再限制工具调用轮次：循环在模型不再返回工具调用（break）或用户点击停止（abort）时自然结束，
       // 避免“已达到最大工具调用轮次”打断本就需要多步工具协作的复杂任务。
       while (true) {
@@ -1296,7 +1548,20 @@ export default function AgentCodeView() {
               }
             }
             if (data.done) {
-              if (data.toolCalls?.length) toolCalls = data.toolCalls
+              if (data.toolCalls?.length) {
+                toolCalls = data.toolCalls
+                // 在流式结束时检测 TodoWrite，提前打开计划卡片
+                //（与工具执行循环解耦，避免 React 18 批处理导致 true/false 合并）
+                const todoWriteCall = data.toolCalls.find((tc: any) => tc.function?.name === 'TodoWrite')
+                if (todoWriteCall) {
+                  setTaskModalOpen(true)
+                  // 解析本次 TodoWrite 的计划项（不累加历史任务）
+                  try {
+                    const args = JSON.parse(todoWriteCall.function.arguments)
+                    if (args.todos?.length) setCurrentPlanItems(args.todos)
+                  } catch { /* 忽略解析错误 */ }
+                }
+              }
               if (data.error) streamError = data.error
               // 累计本会话 tokens（prompt + completion），供上下文监控面板展示
               if (data.usage) setCumTokens(c => c + (data.usage!.promptTokens || 0) + (data.usage!.completionTokens || 0))
@@ -1337,7 +1602,7 @@ export default function AgentCodeView() {
             updateSessionInProject(pid, sid, { messages: displayMsgs })
           })
           // 立即滚动到底部，确保工具卡片在视口内可见
-          msgEndRef.current?.scrollIntoView({ behavior: 'instant' })
+          scrollToBottom()
           apiMsgs.push({ role: 'assistant', content: streamedText || null, tool_calls: toolCalls.map(tc => ({ id: tc.id, type: 'function' as const, function: { name: tc.function.name, arguments: tc.function.arguments } })) } as ApiMessage)
           // 第二阶段：逐个执行工具（pi-web 风格：状态驱动）
           for (const tc of toolCalls) {
@@ -1366,21 +1631,45 @@ export default function AgentCodeView() {
             commitToolCall(liveId, tc.id, { status: 'executing' })
             // ★ 同步通知 store 工具执行阶段（驱动状态栏即时渲染）
             flushSync(() => { useStore.getState().setAgentPhase({ kind: 'running_tools', tools: [{ name: tc.function.name, verb: toolRunVerb(tc.function.name) }] }) })
-            msgEndRef.current?.scrollIntoView({ behavior: 'instant' })
+            scrollToBottom()
 
             let toolResult: string
             let failed = false
             try { const args = parseToolArgs(tc.function.arguments); toolResult = await executeToolCall(tc.function.name, args) } catch (e: any) { toolResult = JSON.stringify({ error: e?.message || String(e) }); failed = true }
             if (!failed && isToolErrorResult(toolResult)) failed = true
-            // 工具执行完成：更新消息状态
+
+            // ── 工具失败跟踪：防止模型无限重试 ──
+            if (failed) {
+              const toolName = tc.function.name
+              const curFail = (toolFailCount.get(toolName) || 0) + 1
+              toolFailCount.set(toolName, curFail)
+              const callKey = `${toolName}::${tc.function.arguments}`
+              const isExactRetry = failedCalls.has(callKey)
+              failedCalls.add(callKey)
+              const warnings: string[] = []
+              if (isExactRetry) warnings.push('该工具已使用完全相同参数尝试过并失败')
+              if (curFail >= 3) warnings.push(`${toolName} 已连续失败 ${curFail} 次`)
+              if (warnings.length > 0) {
+                toolResult += `\n\n【${warnings.join('；')}。请改用其他方法，或直接向用户说明情况。不要继续重试。】`
+              }
+            } else {
+              toolFailCount.set(tc.function.name, 0)
+            }
+
+            // 工具执行完成：更新消息状态（flushSync 确保 DOM 即时提交后再滚动，防止布局偏移）
             const capped = truncateToolResult(toolResult, toolResultCharLimit(opts.ctxBudget))
-            commitToolCall(liveId, tc.id, { status: 'done', result: capped.text, truncated: capped.truncated, resultTotal: capped.total, failed })
+            flushSync(() => { commitToolCall(liveId, tc.id, { status: 'done', result: capped.text, truncated: capped.truncated, resultTotal: capped.total, failed }) })
             apiMsgs.push({ role: 'tool', tool_call_id: tc.id, content: capped.text })
+            scrollToBottom()
+            // TodoWrite 执行完毕后立即刷新任务数据，弹窗内容随之更新
+            if (tc.function.name === 'TodoWrite') {
+              refreshTasksRef.current()
+            }
           }
           if (abortRef.current.aborted) break
           // ★ 工具执行完毕，清除 store 阶段状态
           useStore.getState().setAgentPhase(null)
-          // 工具执行后刷新右侧任务清单面板
+          // 工具执行后刷新任务清单
           refreshTasksRef.current()
           continue
         }
@@ -1619,10 +1908,13 @@ export default function AgentCodeView() {
 
   // 系统提示词编辑器
   const openPromptModal = useCallback(() => {
-    setPromptDraft(activeProject.systemPrompt ?? '')
-    setApproveWriteEditDraft(!!activeProject.approveWriteEdit)
-    setPromptModalOpen(true)
-  }, [activeProject])
+    const next = !promptModalOpen
+    setPromptModalOpen(next)
+    if (next) {
+      setPromptDraft(activeProject.systemPrompt ?? '')
+      setApproveWriteEditDraft(!!activeProject.approveWriteEdit)
+    }
+  }, [activeProject, promptModalOpen])
 
   const saveSystemPrompt = useCallback(() => {
     updateProject(activeProjectId, { systemPrompt: promptDraft, approveWriteEdit: approveWriteEditDraft })
@@ -1653,6 +1945,27 @@ export default function AgentCodeView() {
     else if (e.key === 'ArrowDown' && !input) { e.preventDefault(); recallHistory(1) }
   }
 
+  // 始终持有最新 atQuery，供异步加载回调读取（避免闭包陈旧）
+  const atQueryRef = useRef<string>('')
+  useEffect(() => { atQueryRef.current = atQuery ?? '' }, [atQuery])
+
+  // 输入框 onChange：更新文本 + 自动增高，并检测 @ 触发文件补全浮层
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value
+    const caret = e.target.selectionStart ?? value.length
+    setInput(value)
+    autoResize()
+    const dir = activeProject.workspaceDir
+    if (!dir) { setAtQuery(null); return }
+    if (detectAt(value, caret)) {
+      // 先确保文件列表已加载（按工作区缓存），再过滤
+      ensureWorkspaceFiles(dir).finally(() => {
+        // 输入框可能在加载期间又变化，仅当仍处于激活状态才过滤
+        if (atAnchorRef.current != null) filterAtFiles(atQueryRef.current ?? '')
+      })
+    }
+  }, [autoResize, detectAt, ensureWorkspaceFiles, filterAtFiles, activeProject.workspaceDir])
+
   // 兼容 arguments 为字符串或已解析对象两种情况，避免 JSON.parse(object) 抛错
   function parseToolArgs(raw: unknown): Record<string, unknown> {
     if (raw && typeof raw === 'object') return raw as Record<string, unknown>
@@ -1662,10 +1975,10 @@ export default function AgentCodeView() {
     return {}
   }
 
-  const renderToolCalls = (toolCalls: NonNullable<AgentMessage['toolCalls']>, defaultOpen: boolean, msgId: string) => (
+  const renderToolCalls = (toolCalls: NonNullable<AgentMessage['toolCalls']>, msgId: string) => (
     <ToolCallGroup
       toolCalls={toolCalls}
-      defaultOpen={defaultOpen}
+      cardDefaultOpen={toolCardExpandedDefault}
       onPreviewFile={openPreview}
       canUndoFor={(tc) => !!backupsRef.current[tc.id]}
       onUndo={(tc) => handleUndo(msgId, tc.id)}
@@ -1692,20 +2005,17 @@ export default function AgentCodeView() {
           {activeSession && <button className="btn btn-xs" onClick={startRename} title="修改标题"><Pencil size={12} /></button>}
         </div>
         <div className="agent-code-topbar-right">
-          {!apiBaseUrl && <span className="agent-code-warning"><AlertCircle size={12} /> 请先启动模型</span>}
-          <div className="agent-code-tab-switch">
-            <button className={`btn btn-xs ${rightTab === 'files' ? 'active' : ''}`} onClick={() => { setRightTab('files'); setTreeOpen(true) }} title="文件树 / 预览">文件</button>
-            <button className={`btn btn-xs ${rightTab === 'tasks' ? 'active' : ''}`} onClick={() => { setRightTab('tasks'); setTreeOpen(true); refreshTasks() }} title="任务清单">任务</button>
-          </div>
-          <button className="btn btn-xs" onClick={() => setTreeOpen(v => !v)} title={treeOpen ? '收起面板' : '展开面板'}>
-            {treeOpen ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
+          <button ref={ctxBtnRef} className={`agent-code-topbar-btn ${contextModalOpen ? 'active' : ''}`} onClick={() => setContextModalOpen(v => !v)} title="上下文窗口">上下文</button>
+          <button className={`agent-code-topbar-btn ${taskModalOpen ? 'active' : ''}`} onClick={() => { const next = !taskModalOpen; setTaskModalOpen(next); if (next) refreshTasks() }} title="任务计划">计划</button>
+          <button ref={promptBtnRef} className={`agent-code-topbar-btn ${promptModalOpen ? 'active' : ''}`} onClick={openPromptModal} title="自定义系统提示词"><SlidersHorizontal size={12} /> 提示词</button>
+          <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} title={treeOpen ? '收起面板' : '展开面板'} style={{ marginTop: 0, width: 28, height: 28 }}>
+            {treeOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
           </button>
-          <button className="btn btn-xs" onClick={openPromptModal} title="自定义系统提示词"><SlidersHorizontal size={13} /> 提示词</button>
         </div>
-      </div>
-      <AgentToolBar />
 
-      <div className={`agent-code-body ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
+      </div>
+
+      <div ref={viewBodyRef} className={`agent-code-body ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
         <div className="agent-code-sidebar-collapser">
           <div className="agent-code-sidebar">
             <button className="agent-code-session-new-btn" onClick={createProject}>
@@ -1759,7 +2069,10 @@ export default function AgentCodeView() {
               <div className="agent-welcome">
                 <div className="agent-welcome-title">一个编码智能体</div>
                 <div className="agent-welcome-desc">描述任务，或随便问点什么。</div>
-                <div className="agent-welcome-hint">⏎ 发送</div>
+                <div className="agent-welcome-hint">
+                  <span>⏎ 发送</span>
+                  <span className="agent-welcome-atfile">@ 文件</span>
+                </div>
                 <div className="agent-welcome-suggestions">
                   {AGENT_SUGGESTIONS.map((s) => (
                     <button key={s} className="agent-suggestion" onClick={() => sendSuggestion(s)}>{s}</button>
@@ -1823,9 +2136,9 @@ export default function AgentCodeView() {
                           )
                         )}
                         {/* 工具调用结果卡片 */}
-                        {hasToolCalls ? renderToolCalls(msg.toolCalls!, toolGroupDefaultOpen, msg.id) : null}
-                        {/* 流式进行中不展示操作按钮（复制/重新生成/重试），完成后才出现，与 pi-web 一致 */}
-                        {!streamingThis && (
+                        {hasToolCalls ? renderToolCalls(msg.toolCalls!, msg.id) : null}
+                        {/* 流式进行中或工具调用消息不展示操作按钮 */}
+                        {!streamingThis && !hasToolCalls && (
                           <div className="chat-msg-actions">
                             <button className="chat-msg-action-btn" title="复制" onClick={() => copyMessage(msg.content || '')}><Copy size={13} /></button>
                             {isLast && !loading && (
@@ -1847,7 +2160,90 @@ export default function AgentCodeView() {
             })}
             <div ref={msgEndRef} />
           </div>
-          <div className="chat-input-area">
+          {/* 任务计划卡片（浮动在聊天区右上角） */}
+          {taskModalOpen && (
+            <div className="agent-task-card">
+              <div className="agent-task-card-header">
+                <span>任务计划</span>
+              </div>
+              <div className="agent-task-card-body">
+                {currentPlanItems.length === 0 ? (
+                  <div className="agent-task-card-empty">暂无计划</div>
+                ) : (
+                  currentPlanItems.map((item, i) => (
+                    <div key={item.id || i} className="agent-task-card-item">
+                      <div className="agent-task-card-row">
+                        <span className="agent-task-card-id">{item.id ? `#${item.id}` : `#${i + 1}`}</span>
+                        <span className={`task-status ${item.status || 'pending'}`}>{item.status || 'pending'}</span>
+                      </div>
+                      <div className="agent-task-card-subject">{item.content || item.description || ''}</div>
+                      {item.notes ? <div className="agent-task-card-notes">{item.notes}</div> : null}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+          {/* 上下文卡片（浮动在聊天区右上角） */}
+          {contextModalOpen && (
+            <div className="agent-task-card agent-card-ctx">
+              <div className="agent-task-card-header">
+                <span>上下文窗口</span>
+              </div>
+              <div className="agent-task-card-body">
+                <AgentContextPanel
+                  templateId={runningCard?.template.id ?? null}
+                  startedAt={runningCard?.startedAt}
+                  requests={reqCount}
+                  cumTokens={cumTokens}
+                />
+              </div>
+            </div>
+          )}
+          {/* 提示词卡片（浮动在聊天区右上角） */}
+          {promptModalOpen && (
+            <div className="agent-task-card agent-card-prompt">
+              <div className="agent-task-card-header">
+                <span>系统提示词 · {activeProject.title}</span>
+              </div>
+              <div className="agent-task-card-body agent-card-prompt-body">
+                <p className="agent-prompt-hint">为该项目的智能体追加自定义指令（如「只用中文回复」「优先最小改动」）。留空则使用默认工具指引。</p>
+                <textarea className="agent-prompt-textarea" value={promptDraft} onChange={e => setPromptDraft(e.target.value)} placeholder="例如：你只允许使用中文；修改文件时优先给出最小改动；不要随意运行删除命令。" />
+                <label className="agent-prompt-check">
+                  <input type="checkbox" checked={approveWriteEditDraft} onChange={e => setApproveWriteEditDraft(e.target.checked)} />
+                  对写入 / 编辑（Write / Edit）也要求人工确认
+                </label>
+              </div>
+              <div className="agent-card-prompt-footer">
+                <button className="btn btn-ghost btn-xs" onClick={() => { setPromptDraft(''); setApproveWriteEditDraft(false) }}>重置默认</button>
+                <button className="btn btn-ghost btn-xs" onClick={() => setPromptModalOpen(false)}>取消</button>
+                <button className="btn btn-primary btn-xs" onClick={saveSystemPrompt}>保存</button>
+              </div>
+            </div>
+          )}
+          {/* 滚动到底部浮动按钮：仅当消息列表较长且用户已向上滚动（非贴底）时显示。
+              置于 .agent-code-chat（非滚动容器）内，用 --chat-input-h 变量精确浮在输入框上方。 */}
+          {!atBottom && (
+            <button className="chat-scroll-bottom-btn" onClick={() => scrollToBottom(true)} title="滚动到底部">
+              <ChevronDown size={18} />
+            </button>
+          )}
+          <div className="chat-input-area" ref={chatInputAreaRef}>
+            {atQuery !== null && (
+              <div className="chat-at-file-pop" ref={atPopRef}>
+                {atFiles.length === 0 ? (
+                  <div className="chat-at-empty">无匹配文件</div>
+                ) : (
+                  atFiles.map(f => (
+                    <button className="chat-at-item" key={f.path} onClick={() => onPickAtFile(f)} title={f.path}>
+                      <FileText size={13} />
+                      <span className="chat-at-name">{f.name}</span>
+                      <span className="chat-at-rel">{f.relPath}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
             {ctxTrimInfo && (
               <div className="agent-ctx-trim-note" title="为保证不超出本地模型的上下文窗口，已自动省略最早的若干条对话（仅影响发送给模型的内容，界面历史保持完整）">
                 <AlertCircle size={12} /> 已因上下文窗口限制自动省略最早 {ctxTrimInfo.dropped} 条消息
@@ -1868,7 +2264,7 @@ export default function AgentCodeView() {
             )}
             <div className="chat-input-row">
               <button className="chat-attach-btn" onClick={() => fileInputRef.current?.click()} disabled={!apiBaseUrl} title="添加附件 / 图片"><Paperclip size={15} /></button>
-              <textarea ref={textareaRef} className="chat-input" placeholder={apiBaseUrl ? '输入自然语言指令，或添加附件 / 图片…' : '请先启动模型'} rows={1} value={input} onChange={e => { setInput(e.target.value); autoResize() }} onKeyDown={handleKeyDown} disabled={!apiBaseUrl} />
+              <textarea ref={textareaRef} className="chat-input" placeholder={apiBaseUrl ? '输入自然语言指令，或添加附件 / 图片…' : '请先启动模型'} rows={1} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown} disabled={!apiBaseUrl} />
               {loading ? (
                 <button className="btn btn-primary chat-send-btn" onClick={handleStop} title="停止生成"><Square size={16} /></button>
               ) : (
@@ -1880,102 +2276,60 @@ export default function AgentCodeView() {
         </div>
 
         <div className={`agent-code-right-collapser ${treeOpen ? '' : 'collapsed'}`}>
-          <AgentContextPanel
-            templateId={runningCard?.template.id ?? null}
-            startedAt={runningCard?.startedAt}
-            requests={reqCount}
-            cumTokens={cumTokens}
-          />
           <div className="agent-code-right-body">
-          {rightTab === 'tasks' ? (
-            <div className="agent-code-task-panel">
-              <div className="agent-code-task-header">
-                <span className="agent-code-task-title">任务清单</span>
-                <span className="agent-code-task-count">{tasks.length}</span>
-                <button className="btn btn-xs" onClick={() => refreshTasks()} title="刷新任务"><RefreshCw size={12} /></button>
-              </div>
-              <div className="agent-code-task-list">
-                {tasks.length === 0 ? (
-                  <div className="agent-code-task-empty">暂无任务。可在对话中让模型使用 TodoWrite / TaskCreate 创建任务。</div>
-                ) : tasks.map(t => (
-                  <div key={t.id} className="agent-code-task-item">
-                    <div className="agent-code-task-row">
-                      <span className="agent-code-task-id">#{t.id}</span>
-                      <span className={`task-status ${t.status}`}>{t.status}</span>
-                    </div>
-                    <div className="agent-code-task-subject">{t.subject}</div>
-                    {t.notes ? <div className="agent-code-task-notes">{t.notes}</div> : null}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="agent-code-resize-handle" onPointerDown={startResize('tree')} title="拖动调整文件树宽度" />
-              <div className="agent-code-tree" style={{ width: treeWidth }}>
-                <div className="agent-code-tree-header">
-                  <span className="agent-code-tree-label">{activeProject.workspaceDir ? '📁 ' + dirName(activeProject.workspaceDir) : '未选择目录'}</span>
-                  <button className="btn btn-xs" onClick={() => changeProjectDir(activeProjectId)} title="选择 / 更改项目目录">
-                    <FolderOpen size={12} />
-                  </button>
+                <div className="agent-code-tree">
+                  <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={(name) => insertAtCursor(name)} />
                 </div>
-                <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} />
-              </div>
-              <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''}`}>
-                <div className="agent-code-resize-handle" onPointerDown={startResize('preview')} title="拖动调整预览宽度（不影响聊天区）" />
-                <div className="agent-code-preview" style={{ width: previewWidth }}>
-                  <div className="agent-code-preview-header">
-                    <div className="agent-code-preview-tabs">
-                      {openTabs.map(t => (
-                        <div
-                          key={t.path}
-                          className={`agent-code-preview-tab ${t.path === activeTabPath ? 'active' : ''}`}
-                          onClick={() => setActiveTabPath(t.path)}
-                          title={t.path}
-                        >
-                          <span className="agent-code-preview-tab-name">{t.name}</span>
-                          <button
-                            className="agent-code-preview-tab-close"
-                            onClick={(e) => { e.stopPropagation(); closeTab(t.path) }}
-                            title="关闭此文件"
+                <div className={`agent-code-resize-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startResize('preview')} title="拖动调整预览宽度" />
+                <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''}`}>
+                  <div className="agent-code-preview">
+                    <div className="agent-code-preview-header">
+                      <div className="agent-code-preview-tabs">
+                        {openTabs.map(t => (
+                          <div
+                            key={t.path}
+                            className={`agent-code-preview-tab ${t.path === activeTabPath ? 'active' : ''}`}
+                            onClick={() => setActiveTabPath(t.path)}
+                            title={t.path}
                           >
-                            <X size={10} />
-                          </button>
-                        </div>
-                      ))}
+                            <span className="agent-code-preview-tab-name">{t.name}</span>
+                            <button
+                              className="agent-code-preview-tab-close"
+                              onClick={(e) => { e.stopPropagation(); closeTab(t.path) }}
+                              title="关闭此文件"
+                            >
+                              <X size={10} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <span className="agent-code-preview-actions">
+                        <button className="btn btn-xs agent-code-preview-close" onClick={() => activeTab && closeTab(activeTab.path)} title="关闭预览" disabled={!activeTab}>
+                          <X size={12} />
+                        </button>
+                      </span>
                     </div>
-                    <span className="agent-code-preview-actions">
-                      <button className="btn btn-xs" onClick={() => activeTab && handleFileSelect(activeTab.path)} title="插入路径到输入框" disabled={!activeTab}>
-                        <Plus size={12} />
-                      </button>
-                      <button className="btn btn-xs agent-code-preview-close" onClick={() => activeTab && closeTab(activeTab.path)} title="关闭预览" disabled={!activeTab}>
-                        <X size={12} />
-                      </button>
-                    </span>
-                  </div>
-                  <div className="agent-code-preview-body">
-                    {!activeTab ? null
-                      : activeTab.loading ? <div className="file-tree-loading">读取中…</div>
-                        : activeTab.error ? <div className="agent-code-preview-error">{activeTab.error}</div>
-                          : isPreviewMarkdown ? (
-                            <div className="agent-code-preview-md chat-msg-markdown">
-                              <AgentMarkdown content={activeTab.content ?? ''} />
-                            </div>
-                          ) : (
-                            <div className="agent-code-preview-code">
-                              {(activeTab.content ?? '').split('\n').map((line, i) => (
-                                <div className="agent-code-preview-line" key={i}>
-                                  <span className="agent-code-preview-ln">{i + 1}</span>
-                                  <span className="agent-code-preview-lc">{line || ' '}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
+                    <div className="agent-code-preview-body">
+                      {!activeTab ? null
+                        : activeTab.loading ? <div className="file-tree-loading">读取中…</div>
+                          : activeTab.error ? <div className="agent-code-preview-error">{activeTab.error}</div>
+                            : isPreviewMarkdown ? (
+                              <div className="agent-code-preview-md chat-msg-markdown">
+                                <AgentMarkdown content={activeTab.content ?? ''} />
+                              </div>
+                            ) : (
+                              <div className="agent-code-preview-code">
+                                {(activeTab.content ?? '').split('\n').map((line, i) => (
+                                  <div className="agent-code-preview-line" key={i}>
+                                    <span className="agent-code-preview-ln">{i + 1}</span>
+                                    <span className="agent-code-preview-lc">{line || ' '}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            </>
-          )}
           </div>
         </div>
       </div>
@@ -2007,29 +2361,8 @@ export default function AgentCodeView() {
         </div>
       )}
 
-      {/* 系统提示词编辑器 */}
-      {promptModalOpen && (
-        <div className="modal-overlay" onClick={() => setPromptModalOpen(false)}>
-          <div className="modal agent-prompt-modal" style={{ width: 520 }} onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <span className="modal-title">系统提示词 · {activeProject.title}</span>
-            </div>
-            <div className="modal-body">
-              <p className="agent-prompt-hint">为该项目的智能体追加自定义指令（如「只用中文回复」「优先最小改动」）。留空则使用默认工具指引。</p>
-              <textarea className="agent-prompt-textarea" value={promptDraft} onChange={e => setPromptDraft(e.target.value)} placeholder="例如：你只允许使用中文；修改文件时优先给出最小改动；不要随意运行删除命令。" />
-              <label className="agent-prompt-check">
-                <input type="checkbox" checked={approveWriteEditDraft} onChange={e => setApproveWriteEditDraft(e.target.checked)} />
-                对写入 / 编辑（Write / Edit）也要求人工确认
-              </label>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-ghost" onClick={() => { setPromptDraft(''); setApproveWriteEditDraft(false) }}>重置默认</button>
-              <button className="btn btn-ghost" onClick={() => setPromptModalOpen(false)}>取消</button>
-              <button className="btn btn-primary" onClick={saveSystemPrompt}>保存</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AskUserQuestionModal />
+
     </div>
   )
 }

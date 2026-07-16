@@ -26,6 +26,7 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
     `任务 #${t.id}`,
     `- 主题：${t.subject}`,
     `- 状态：${t.status}`,
+    `- 优先级：${t.priority || 'medium'}`,
     `- 描述：${t.description || '（无）'}`,
     t.activeForm ? `- 进行中展示：${t.activeForm}` : '',
     `- 备注：${t.notes || '（无）'}`
