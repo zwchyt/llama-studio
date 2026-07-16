@@ -166,7 +166,8 @@ interface LlamaCppApi {
   // ── Agent Code 目录操作 ──
   listDir: (dirPath: string) => Promise<{ success: boolean; entries?: { name: string; isDir: boolean; fileCount: number }[]; truncated?: boolean; total?: number; error?: string }>
   // ── Agent Code 文件操作 ──
-  readFile: (filePath: string, opts?: { maxBytes?: number; offset?: number; limit?: number }) => Promise<{ success: boolean; content?: string; lines?: number; totalLines?: number; startLine?: number; truncated?: boolean; error?: string; errorType?: string; fileSize?: number; suggestedCommand?: string }>
+  readFile: (filePath: string, opts?: { maxBytes?: number; offset?: number; limit?: number; raw?: boolean }) => Promise<{ success: boolean; content?: string; lines?: number; totalLines?: number; startLine?: number; truncated?: boolean; error?: string; errorType?: string; fileSize?: number; suggestedCommand?: string }>
+  readFileBase64: (filePath: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>
   writeFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>
   editFile: (filePath: string, oldString: string, newString: string, replaceAll?: boolean) => Promise<{ success: boolean; content?: string; error?: string }>
   glob: (opts: { pattern: string; path: string; limit?: number }) => Promise<{ success: boolean; filenames?: string[]; numFiles?: number; truncated?: boolean; error?: string }>

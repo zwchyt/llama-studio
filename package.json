@@ -1,6 +1,6 @@
 {
   "name": "llama-studio",
-  "version": "1.0.114",
+  "version": "1.0.115",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",
   "main": "out/main/index.js",
@@ -28,6 +28,8 @@
     "pdfjs-dist": "^3.11.174",
     "react-markdown": "^10.1.0",
     "rehype-katex": "^7.0.1",
+    "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
     "rehype-stringify": "^10.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",

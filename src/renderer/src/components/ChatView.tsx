@@ -247,6 +247,12 @@ function MarkdownCode({ className, children }: { className?: string; children?: 
   return <code className="chat-code-in-line">{text}</code>
 }
 
+// 块级代码容器：直接透传 children，丢弃默认的 <pre> 包裹，
+// 避免 CodeBlock 的 <div> 被非法嵌套进 <pre> 导致代码块错位。
+function MarkdownPre({ children }: { children?: React.ReactNode }) {
+  return <>{children}</>
+}
+
 // ── 思考链（reasoning）解析 ─────────────────────────────────
 // 把含 <think>...</think> 的内容切分成「普通文本 / 思考内容」片段序列。
 // 支持流式中思考未闭合（只有 <think> 没有 </think>）的情况。
@@ -371,7 +377,7 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
       {visible && (
         <div className={`chat-think-body chat-msg-markdown ${expanded ? 'open' : ''}`} ref={bodyRef}>
           {displayValue ? (
-            <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any, pre: MarkdownPre as any }}>
               {displayValue}
             </ReactMarkdown>
           ) : '（空）'}
@@ -623,7 +629,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
       }
       return (
         <div key={i} className="chat-msg-markdown">
-          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any }}>
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any, pre: MarkdownPre as any }}>
             {seg.value}
           </ReactMarkdown>
         </div>
@@ -708,7 +714,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
                       }
                       return (
                         <div key={`post-${i}`} className="chat-msg-markdown">
-                          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any }}>
+                          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any, pre: MarkdownPre as any }}>
                             {seg.value}
                           </ReactMarkdown>
                         </div>

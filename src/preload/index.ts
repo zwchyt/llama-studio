@@ -130,7 +130,8 @@ const fullApi = {
   listDir: (dirPath: string) => ipcRenderer.invoke('list-dir', dirPath),
 
   // ── Agent Code 工作台 文件操作 ──
-  readFile: (filePath: string, opts?: { maxBytes?: number }) => ipcRenderer.invoke('read-file', filePath, opts),
+  readFile: (filePath: string, opts?: { maxBytes?: number; raw?: boolean }) => ipcRenderer.invoke('read-file', filePath, opts),
+  readFileBase64: (filePath: string) => ipcRenderer.invoke('read-file-base64', filePath),
   writeFile: (filePath: string, content: string) => ipcRenderer.invoke('write-file', filePath, content),
   editFile: (filePath: string, oldString: string, newString: string, replaceAll?: boolean) => ipcRenderer.invoke('edit-file', filePath, oldString, newString, replaceAll),
   glob: (opts: { pattern: string; path: string; limit?: number }) => ipcRenderer.invoke('glob', opts),

@@ -3270,7 +3270,7 @@ export function registerIpcHandlers(): void {
     }).join('\n')
   }
 
-  ipcMain.handle('read-file', async (_e, filePath: string, opts?: { maxBytes?: number; offset?: number; limit?: number }): Promise<{
+  ipcMain.handle('read-file', async (_e, filePath: string, opts?: { maxBytes?: number; offset?: number; limit?: number; raw?: boolean }): Promise<{
     success: boolean
     content?: string
     lines?: number
@@ -3372,8 +3372,11 @@ export function registerIpcHandlers(): void {
         }
       }
 
-      // 格式化行号：每 10 行显示一次行号
-      const formattedContent = formatLines(selectedLines, offset)
+      // 格式化行号：每 10 行显示一次行号。
+      // raw=true 时跳过行号前缀，返回纯净原文——供 UI 文件预览（尤其是 Markdown 渲染）
+      // 使用，避免 "N: " / ": " 前缀破坏 Markdown 语法（表现为满屏 "::::" 且标题/列表失效）。
+      // 工具 Read 结果展示仍走带行号格式（对模型/工具卡片更友好）。
+      const formattedContent = opts?.raw ? slicedContent : formatLines(selectedLines, offset)
 
       return {
         success: true,
@@ -3385,6 +3388,27 @@ export function registerIpcHandlers(): void {
       }
     } catch (e) {
       return { success: false, error: `读取失败：${e instanceof Error ? e.message : String(e)}`, errorType: 'FileReadError' }
+    }
+  })
+
+  // 读取文件并以 data URL（base64）形式返回，供渲染进程内联本地图片。
+  // 预览面板里的 Markdown 可能引用相对路径图片（assets/xxx.png）；dev 模式下渲染进程
+  // 是 http://localhost 源，无法加载 file:// 子资源，故把图片内联为 data: URL 以跨源显示。
+  const MIME_BY_EXT: Record<string, string> = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+    webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml', ico: 'image/x-icon',
+    avif: 'image/avif',
+  }
+  ipcMain.handle('read-file-base64', async (_e, filePath: string): Promise<{ success: boolean; dataUrl?: string; error?: string }> => {
+    try {
+      filePath = resolveAgentPath(filePath)
+      const ext = /\.([a-z0-9]+)$/i.exec(filePath)
+      const mime = ext ? (MIME_BY_EXT[ext[1]!.toLowerCase()] ?? 'application/octet-stream') : 'application/octet-stream'
+      const buf = readFileSync(filePath)
+      const base64 = buf.toString('base64')
+      return { success: true, dataUrl: `data:${mime};base64,${base64}` }
+    } catch (e) {
+      return { success: false, error: `读取失败：${e instanceof Error ? e.message : String(e)}` }
     }
   })
 

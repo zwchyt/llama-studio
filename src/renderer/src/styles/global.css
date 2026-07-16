@@ -5150,7 +5150,7 @@ webview {
 
 .chat-msg-markdown th,
 .chat-msg-markdown td {
-  border: 1px solid var(--border);
+  border: 1px solid #cfcfcf;
   padding: 6px 10px;
   text-align: left;
 }
@@ -10096,11 +10096,22 @@ input[type="reset"]:not(:disabled) {
 .agent-code-preview-md {
   max-width: 100%;
   width: 100%;
+  min-width: 0;
   background: transparent;
   border-radius: 0;
   padding: 12px 16px;
   overflow: auto;
   font-size: 13px;
+  /* 文件预览场景下，.chat-msg-markdown 继承来的 word-break:break-word 会把长单词/路径/代码
+     强行断行，在固定窄宽的预览窗里显得排版错乱；改为 normal，
+     窄窗下的长内容交给各代码块/表格自身的横向滚动处理。 */
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+.agent-code-preview-md img {
+  max-width: 100%;
+  height: auto;
 }
 
 /* ── Agent Code 聊天消息区（复用原样式 + 适配）── */

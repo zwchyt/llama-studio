@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { flushSync } from 'react-dom'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import 'katex/dist/katex.min.css'
 import { Send, Square, Paperclip, X, FileText, Bot, User, FolderOpen, Plus, Trash2, AlertCircle, HelpCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, RefreshCw, Eye, FilePlus2, FileSearch, TerminalSquare, Clock, CheckCircle2, XCircle, Search, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check } from 'lucide-react'
 import { useStore } from '../store/useStore'
@@ -168,13 +170,105 @@ function LinedPre({ text, maxHeight }: { text: string; maxHeight?: number }) {
 }
 
 // ── Markdown 渲染（复用全局 CodeBlock 高亮，支持 GFM 表格/列表/math）────
-// 注意：CodeBlock 渲染的是 <div> 结构，不能塞进 react-markdown 默认的
-// <pre><code> 里（<div> 非法嵌套在 <pre> 中会被浏览器重排导致错位）。
-// 因此块级代码需拦截整个 <pre>，从其中的 <code> 取出语言与文本再交给 CodeBlock；
-// 行内代码（不在 <pre> 内）仍由 code 渲染器处理，保留 chat-code-in-line 样式。
-function MarkdownCode({ className, children }: { className?: string; children?: React.ReactNode }) {
-  const text = String(children ?? '').replace(/\n$/, '')
-  const match = /language-(\w+)/.exec(className || '')
+// 关键点：CodeBlock 渲染的是 <div> 结构，不能塞进 react-markdown 默认的
+// <pre><code> 里（<div> 非法嵌套在 <pre> 中会被浏览器重排导致代码块错位/缩进错乱）。
+// 所以必须同时拦截 pre 与 code：
+//   - MarkdownPre：块级代码容器，直接透传 children（不再生成 <pre> 标签），
+//     让内部 code 渲染器返回的 CodeBlock <div> 裸露在外，避免 <div> 被包进 <pre>。
+//   - MarkdownCode：块级代码（含 language- 或含换行）交给 CodeBlock；
+//     行内代码（不在 pre 内、无换行）保留 chat-code-in-line 样式。
+function MarkdownPre({ children }: { children?: React.ReactNode }) {
+  // 直接返回子节点（即 code 渲染器产出的 CodeBlock），丢弃默认 <pre> 包裹。
+  return <>{children}</>
+}
+
+// ── Markdown 链接渲染 ──
+// 安全考量：Electron 渲染进程内原生 <a href> 默认会在应用内导航（或尝试加载），
+// 既危险（javascript:/file: 等伪协议可绕过沙箱）又影响体验（跳离应用）。
+// 故自定义 a 渲染器：仅放行 http(s):/mailto: 协议，点击统一走 window.api.openExternal
+// 用系统浏览器打开（与项目其他处一致），并加 rel="noopener noreferrer" 防 window.opener 钓鱼。
+// 裸网址（非 []() 形式）由 remarkLinkifyUrls 在解析阶段转为链接节点，最终也走本渲染器。
+const SAFE_URL_RE = /^(https?:|mailto:)/i
+function MarkdownLink({ href, children }: { href?: string; children?: React.ReactNode }) {
+  const url = typeof href === 'string' ? href : ''
+  const safe = SAFE_URL_RE.test(url)
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => {
+        e.preventDefault()
+        if (safe) window.api.openExternal(url)
+      }}
+    >
+      {children}
+    </a>
+  )
+}
+
+// 轻量 remark 插件：把文本节点中的裸网址（http(s)://...）拆成「文本 + 链接」两个节点，
+// 使未写成 [文本](url) 的网址也可点击。不引入额外依赖，直接操作 mdast。
+// 只对 type==='text' 的节点处理；代码块内容在解析阶段已是 code/inlineCode 节点（非 text），
+// 不会被命中，因此不会被错误地链接化。采用「父数组原地替换」的标准访问者手法，
+// 避免把 text 节点非法地升级为 paragraph。
+function remarkLinkifyUrls() {
+  const URL_RE = /(https?:\/\/[^\s<>"')]+)/g
+  const splitText = (value: string): any[] => {
+    const out: any[] = []
+    let last = 0
+    let m: RegExpExecArray | null
+    URL_RE.lastIndex = 0
+    while ((m = URL_RE.exec(value)) !== null) {
+      if (m.index > last) out.push({ type: 'text', value: value.slice(last, m.index) })
+      out.push({
+        type: 'link',
+        url: m[0],
+        data: { hProperties: { href: m[0] } },
+        children: [{ type: 'text', value: m[0] }],
+      })
+      last = m.index + m[0].length
+    }
+    if (last < value.length) out.push({ type: 'text', value: value.slice(last) })
+    return out
+  }
+  const visit = (node: any) => {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) { node.forEach(visit); return }
+    if (Array.isArray(node.children)) {
+      for (let i = 0; i < node.children.length; i++) {
+        const child = node.children[i]
+        if (child && child.type === 'text' && typeof child.value === 'string' && URL_RE.test(child.value)) {
+          URL_RE.lastIndex = 0
+          node.children.splice(i, 1, ...splitText(child.value))
+          i += splitText(child.value).length - 1
+        } else {
+          visit(child)
+        }
+      }
+    }
+  }
+  return (tree: any) => { visit(tree) }
+}
+
+function MarkdownCode({ className, children, node }: { className?: string; children?: React.ReactNode; node?: any }) {
+  // react-markdown v10 传给 code 渲染器的 children 通常是「单个字符串」，但也可能含
+  // 注释节点 / 实体 / 转义 HTML 等，变成 [string, <Element>, string]。
+  // 优先用原始节点文本（node 直接持有未经拆分的元素文本），缺失时回退到 children 拼接。
+  const nodeText: string | undefined = node?.children?.[0]?.value
+  const nodeToText = (n: React.ReactNode): string => {
+    if (n == null) return ''
+    if (typeof n === 'string') return n
+    if (typeof n === 'number') return String(n)
+    if (Array.isArray(n)) return n.map(nodeToText).join('')
+    // React 元素（如注释、实体）保留其 children 文本，而非直接丢弃（修复内容缺失）
+    if (typeof n === 'object' && 'props' in (n as any)) return nodeToText((n as any).props?.children)
+    return ''
+  }
+  const text = (typeof nodeText === 'string' ? nodeText : nodeToText(children)).replace(/\n$/, '')
+  // 语言识别必须匹配 language-c++ / language-c# / language-shell-session 等带符号或
+  // 多段名称的写法；(\w+) 只到 [a-zA-Z0-9_]，会把 c++ 截断为 c、shell-session 截断为 shell。
+  const match = /language-([^\s]+)/.exec(className || '')
   if (match) {
     return <CodeBlock language={match[1]} value={text} />
   }
@@ -184,17 +278,68 @@ function MarkdownCode({ className, children }: { className?: string; children?: 
   return <code className="chat-code-in-line">{text}</code>
 }
 
+// 自定义 rehype-sanitize schema：在默认安全规则基础上，放行 README 常用的
+// align、width、height、style 等属性（rehype-raw 解析后需要这些才能正确渲染）。
+// 同时放行 data: 协议用于 src 属性，使内联的 data URL 图片能正常显示。
+const SANITIZE_SCHEMA = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    div: [...(defaultSchema.attributes?.div || []), 'align', 'style'],
+    p: [...(defaultSchema.attributes?.p || []), 'align', 'style'],
+    span: [...(defaultSchema.attributes?.span || []), 'style'],
+    img: [...(defaultSchema.attributes?.img || []), 'width', 'height', 'style', 'loading'],
+    table: [...(defaultSchema.attributes?.table || []), 'style'],
+    td: [...(defaultSchema.attributes?.td || []), 'style', 'colspan', 'rowspan'],
+    th: [...(defaultSchema.attributes?.th || []), 'style', 'colspan', 'rowspan'],
+    '*': [...(defaultSchema.attributes?.['*'] || []), 'style'],
+  },
+  protocols: {
+    ...defaultSchema.protocols,
+    src: [...(defaultSchema.protocols?.src || ['http', 'https']), 'data'],
+  },
+}
+
 const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMath]}
-      rehypePlugins={[rehypeKatex]}
-      components={{ code: MarkdownCode as any }}
+      remarkPlugins={[remarkGfm, remarkMath, remarkLinkifyUrls]}
+      // 顺序：先处理数学公式 → 解析原始 HTML → 最后 sanitize 过滤不安全内容
+      rehypePlugins={[rehypeKatex, rehypeRaw, [rehypeSanitize, SANITIZE_SCHEMA]]}
+      // 必须显式设置 allowDangerousHtml: true，否则 remark-rehype 会剥离 HTML
+      // 节点，rehype-raw 接收不到 raw 节点而无任何效果。
+      remarkRehypeOptions={{ allowDangerousHtml: true }}
+      // 默认 urlTransform 会过滤 file: 协议导致本地图片 src 被清空（无法渲染）。
+      // 此处放行 http(s):/mailto:/file:/data: 等安全协议，其余仍走默认实现
+      // （默认实现会拦截 javascript: 等危险协议，保留 XSS 防护）。
+      urlTransform={(url) => /^(https?:|mailto:|file:|data:)/i.test(url) ? url : defaultUrlTransform(url)}
+      components={{ code: MarkdownCode as any, pre: MarkdownPre as any, a: MarkdownLink as any }}
     >
       {content}
     </ReactMarkdown>
   )
 })
+
+// ── 预览面板专用：轻量预处理 ──
+// 背景：README 等文件头部常见 <div align="center"> / <img> / <p> / <br/> 等
+// HTML 片段。react-markdown 默认不解析 HTML（避免 XSS），但此处通过 rehype-raw +
+// rehype-sanitize 安全地渲染白名单 HTML 标签，无需手动转换。
+// 该函数保留为入口点，当前直接透传（所有 HTML 由 rehype 插件处理）。
+// 仅对预览面板内容调用；聊天/思考块的 Markdown 不启用，避免模型输出被意外改写。
+function preprocessReadmeHtml(src: string): string {
+  return src ?? ''
+}
+
+// 把预览 Markdown 内容转成可渲染形式：相对图片路径（assets/xxx.png）内联已在
+// openPreview 读取阶段由 inlineLocalImages 完成，此处只做透传（HTML 标签由
+// rehype-raw + rehype-sanitize 在 AgentMarkdown 中处理）。
+const pathDir = (p: string) => p.replace(/[\\/][^\\/]*$/, '').replace(/\\/g, '/')
+function renderPreviewMarkdown(content: string): string {
+  // 相对图片的内联（转 data: URL）已在 openPreview 读取阶段由 inlineLocalImages 完成
+  // openPreview 读取阶段由 inlineLocalImages 完成，此处不再处理路径。
+  return preprocessReadmeHtml(content ?? '')
+}
+
 
 // ── 工具元信息：中文名 / 描述 / 图标（用于工具调用块展示）────
 const TOOL_META: Record<string, { name: string; desc: string; icon: React.ComponentType<{ size?: number; className?: string }> }> = {
@@ -258,7 +403,54 @@ function buildSystemContent(project: AgentProject): string {
     getTaskListPrompt(),
     getTaskOutputPrompt(),
   ].join('\n\n---\n\n')
-  const base = `你是一个编码智能体，可以使用以下工具完成任务。注意：工具调用失败时请分析错误原因并修正参数后再试。如果同一工具连续失败多次，说明当前方法不可行，应改用其他方案或直接告知用户，不要反复重试。\n\n请仔细阅读每个工具的使用说明。\n\n${toolPrompts}`
+  const base = `你是 llama-studio 的编码智能体，运行在桌面 GUI 环境中。你的工作目录由用户在界面上选择。你的核心目标是通过工具调用协助用户完成软件工程任务。请仔细阅读以下行为准则。
+
+## 操作安全分级
+
+根据操作的可逆性和影响范围，分为三级：
+
+- **安全操作（自由执行）**：读取文件、搜索内容、glob 查找文件、获取时间。这些操作不会修改任何状态，可直接执行。
+- **需确认操作（等待用户审批）**：
+  - \`Delete\`、\`Bash\` — 无论何时都需用户确认
+  - \`Write\`、\`Edit\` — 取决于项目设置（可在项目面板中切换开关）
+  对于这些工具，你发起调用后会弹出审批窗口等待用户决定。如果用户拒绝，会返回拒绝信息，请根据该信息调整方案。
+- **备份保护**：\`Write\`、\`Edit\`、\`Delete\` 在执行前会自动备份原文件内容，支持一键撤销。
+
+一次同意不是空白授权。即使之前允许过某个操作，后续每次调用仍需独立审批。
+
+## 工具使用规范
+
+优先使用专用工具而非 shell 命令：
+- 读文件 → 使用 \`Read\` 工具（返回 \`行号 哈希|内容\` 格式的 **Hashline 锚点**，每行带内容指纹哈希，用于 Edit 精确定位）
+- 写文件 → 使用 \`Write\` 工具（会自动创建父目录）
+- 编辑文件 → 使用 \`Edit\` 工具（配合 Read 返回的 hashline：\`old_string\` 取 \`|\` 后的内容，可选 \`hashline\` 参数交叉验证）
+- 搜索文件 → 使用 \`Glob\` 工具（按文件名模式匹配）
+- 搜索内容 → 使用 \`Grep\` 工具（按正则搜索内容）
+- 执行命令 → 使用 \`Bash\` 工具（终端、脚本、编译等）
+- 删除文件 → 使用 \`Delete\` 工具
+
+仅在真正需要 shell 执行时使用 \`Bash\`。禁止用 echo 或其他命令输出工具来与用户通信——所有回复应直接写在 response 文本中。
+
+## 输出格式
+
+使用 GitHub Flavored Markdown 格式：
+- 并列项使用无序列表
+- **强调**用粗体
+- \`路径/命令/标识符\` 用行内代码
+- 枚举型数据（文件/行号/状态、before/after、量化数据）用表格
+- 代码块标注语言以启用语法高亮
+
+你的回复应像优秀技术博客一样精确、结构化、高质量。避免行话堆砌，用简洁的语言解释做了什么和为什么。回复长度与任务复杂度匹配。
+
+## 工具调用注意事项
+
+- 工具调用失败时，分析错误原因并修正参数后再试
+- 如果同一工具连续失败多次，说明当前方法不可行，应改用其他方案或直接告知用户，不要反复重试
+- 工具执行结果过长时会被自动截断（仅保留前 6000 字符），但完整内容你可以在预览面板中查看
+
+请仔细阅读每个工具的具体使用说明：
+
+${toolPrompts}`
   const custom = project.systemPrompt?.trim()
   return custom ? `${custom}\n\n${base}` : base
 }
@@ -774,7 +966,90 @@ export default function AgentCodeView() {
   const openTabsRef = useRef<PreviewTab[]>([])
   useEffect(() => { openTabsRef.current = openTabs }, [openTabs])
   const activeTab = openTabs.find(t => t.path === activeTabPath) || null
-  const isPreviewMarkdown = /\.(md|markdown)$/i.test(activeTabPath || '')
+  // 预览区是否按 markdown 渲染：不再单纯依赖扩展名（扩展名判断会漏掉 .mdx、无扩展名的
+  // README、或路径被改写后不带扩展名的文件，导致误走纯文本分支——表现就是“完全没渲染”，
+  // 整页逐行显示源码）。改为「扩展名优先 + 内容嗅探兜底」：
+  //   1) 已知 markdown 系扩展名 → 直接 markdown；
+  //   2) 已知代码/数据扩展名 → 直接纯文本（避免被嗅探误判成 markdown）；
+  //   3) 无扩展名 / 未知扩展名 → 看内容是否像 markdown（# 标题、> 引用、列表、```、表格等）。
+  // 这样无论文件叫什么名字，只要内容是 markdown 就能正确渲染。
+  const CODE_EXT = new Set([
+    'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'cc', 'hh',
+    'cs', 'go', 'rs', 'rb', 'php', 'swift', 'kt', 'kts', 'scala', 'html', 'htm',
+    'css', 'scss', 'less', 'sass', 'json', 'jsonc', 'xml', 'yaml', 'yml', 'toml',
+    'ini', 'cfg', 'conf', 'env', 'sh', 'bash', 'zsh', 'bat', 'ps1', 'cmd', 'sql',
+    'r', 'R', 'lua', 'pl', 'pm', 'dart', 'vue', 'svelte', 'gradle', 'makefile',
+    'lock', 'log', 'csv', 'tsv', 'diff', 'patch',
+  ])
+  const MD_EXT = new Set(['md', 'markdown', 'mdx', 'mkd', 'mdwn', 'mkdn', 'text', 'txt', 'rst', 'adoc', 'asciidoc', 'ronn'])
+  const isPreviewMarkdown = (() => {
+    const p = activeTabPath || ''
+    const extMatch = /\.([a-z0-9]+)$/i.exec(p)
+    const ext = extMatch ? extMatch[1].toLowerCase() : ''
+    if (MD_EXT.has(ext)) return true
+    if (CODE_EXT.has(ext)) return false
+    // 无扩展名 / 未知扩展名：内容嗅探（仅当确含 markdown 特征时才按 markdown 渲染，
+    // 避免把 LICENSE / Makefile / Dockerfile 等纯文本误当 markdown；同时 markdown 内容
+    // 必含 # / > / 列表 / ``` / 表格等特征而被命中，不会误判成纯文本）。
+    const c = activeTab?.content
+    if (c && /(^|\n)\s*(<[a-zA-Z][a-zA-Z0-9]*(\s[^>]*)?>|#{1,6}\s|>\s|[-*+]\s+\S|\d+\.\s+\S|```|!?\[|\[.+\]\(|\|[^\n]*\|)/.test(c.slice(0, 3000))) {
+      return true
+    }
+    // 内容尚不可用（读取中）或无 markdown 特征：无扩展名常见文档名按 markdown 渲染
+    const base = dirName(p).toLowerCase()
+    return /^(readme|changelog|license|licence|contributing|notice|authors|code_of_conduct|security|todo|notes?)$/.test(base)
+  })()
+
+  // 把 Markdown 内容中「相对路径」图片（如 assets/xxx.png）内联为 data: URL。
+  // 原因：dev 模式下渲染进程是 http://localhost 源，浏览器安全策略禁止其加载 file://
+  // 子资源，故本地图片必须内联才能跨源显示（打包后 file:// 源同理更稳）。
+  // 同时处理 markdown 图片语法 ![alt](src) 和 HTML <img src="..."> 标签。
+  // 远程 https://、绝对路径、data: 等不处理。
+  const inlineLocalImages = useCallback(async (markdown: string, baseFilePath: string): Promise<string> => {
+    const dir = pathDir(baseFilePath)
+
+    // 1. markdown 图片 ![alt](src) 和 2. HTML <img src> 分别匹配
+    type Match = { type: 'md'; full: string; alt: string; url: string } | { type: 'html'; full: string; src: string; url: string }
+
+    const mdImgRe = /!\[([^\]]*)\]\(([^)]+)\)/g
+    const htmlImgRe = /<img\b([^>]*)>/gi
+    const matches: Match[] = []
+
+    let m: RegExpExecArray | null
+    while ((m = mdImgRe.exec(markdown)) !== null) {
+      const url = m[2]!.trim()
+      if (/^(https?:|data:|file:\/\/|\/)/.test(url)) continue
+      matches.push({ type: 'md', full: m[0], alt: m[1]!, url })
+    }
+    while ((m = htmlImgRe.exec(markdown)) !== null) {
+      const attrs = m[1]!
+      const srcM = /\bsrc\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(attrs)
+      const url = srcM ? (srcM[2] ?? srcM[3] ?? srcM[4] ?? '') : ''
+      if (!url || /^(https?:|data:|file:\/\/|\/)/.test(url)) continue
+      matches.push({ type: 'html', full: m[0], src: url, url })
+    }
+
+    if (matches.length === 0) return markdown
+
+    const replaced = await Promise.all(matches.map(async (match) => {
+      const abs = (dir + '/' + match.url).replace(/\\/g, '/').replace(/\/+/g, '/')
+      const r = await window.api.readFileBase64(abs)
+      return { ...match, dataUrl: r.success ? r.dataUrl : null }
+    }))
+
+    let out = markdown
+    for (const item of replaced) {
+      if (!item.dataUrl) continue
+      if (item.type === 'md') {
+        out = out.split(item.full).join(`![${item.alt}](${item.dataUrl})`)
+      } else {
+        // 替换 HTML <img> 标签中的 src 属性（支持双引号和单引号）
+        const newTag = item.full.replace(/\bsrc\s*=\s*(['"])([^'"]*)\1/i, `src=$1${item.dataUrl}$1`)
+        out = out.split(item.full).join(newTag)
+      }
+    }
+    return out
+  }, [])
 
   const openPreview = useCallback(async (path: string) => {
     const name = dirName(path)
@@ -784,16 +1059,24 @@ export default function AgentCodeView() {
       return [...prev, { path, name, content: null, lines: null, truncated: false, loading: true, error: null }]
     })
     setActiveTabPath(path)
-    const res = await window.api.readFile(path, { maxBytes: PREVIEW_MAX_BYTES })
+    const res = await window.api.readFile(path, { maxBytes: PREVIEW_MAX_BYTES, raw: true })
+    let content = res.success ? (res.content || '') : null
+    // 仅对疑似 Markdown 的内容内联本地图片（避免代码文件被无意义扫描）。
+    // 同时匹配 markdown 特征和 HTML 标签（以 < 开头），确保 <div>/<img>/<p> 等
+    // HTML 内容中的相对路径图片也能被内联。
+    // 注意：正则字面量不能跨行，且避免裸 ``` 反引号，故用单行形式。
+    if (content && /(^|\n)\s*(<[a-zA-Z]|#{1,6}\s|>\s|!\[|\[.+\]|```|[-*+]\s+\S)/.test(content.slice(0, 3000))) {
+      try { content = await inlineLocalImages(content, path) } catch { /* 内联失败不影响文本预览 */ }
+    }
     setOpenTabs(prev => prev.map(t => t.path === path ? {
       ...t,
       loading: false,
       error: res.success ? null : (res.error || '读取失败'),
-      content: res.success ? (res.content || '') : null,
+      content,
       lines: res.success ? (res.lines ?? 0) : null,
       truncated: !!res.truncated,
     } : t))
-  }, [])
+  }, [inlineLocalImages])
 
   const closeTab = useCallback((path: string) => {
     const next = openTabsRef.current.filter(t => t.path !== path)
@@ -2315,7 +2598,7 @@ export default function AgentCodeView() {
                           : activeTab.error ? <div className="agent-code-preview-error">{activeTab.error}</div>
                             : isPreviewMarkdown ? (
                               <div className="agent-code-preview-md chat-msg-markdown">
-                                <AgentMarkdown content={activeTab.content ?? ''} />
+                                <AgentMarkdown content={renderPreviewMarkdown(activeTab.content ?? '')} />
                               </div>
                             ) : (
                               <div className="agent-code-preview-code">
