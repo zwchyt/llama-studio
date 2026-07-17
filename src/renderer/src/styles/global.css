@@ -5128,8 +5128,8 @@ webview {
 .chat-msg-markdown blockquote {
   margin:0 0 10px;
   padding: 4px 14px;
-  border-left: 3px solid var(--border-strong);
-  background: var(--quote-bg);
+  border-left: 3px solid #b7b4b2;
+  background: #e5e5e5;
   border-radius: 0 4px 4px 0;
   color: var(--text-secondary);
 }

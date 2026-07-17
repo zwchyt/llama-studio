@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
 const fullApi = {
@@ -132,6 +132,7 @@ const fullApi = {
   // ── Agent Code 工作台 文件操作 ──
   readFile: (filePath: string, opts?: { maxBytes?: number; raw?: boolean }) => ipcRenderer.invoke('read-file', filePath, opts),
   readFileBase64: (filePath: string) => ipcRenderer.invoke('read-file-base64', filePath),
+  getFilePath: (file: File) => webUtils.getPathForFile(file),
   writeFile: (filePath: string, content: string) => ipcRenderer.invoke('write-file', filePath, content),
   editFile: (filePath: string, oldString: string, newString: string, replaceAll?: boolean) => ipcRenderer.invoke('edit-file', filePath, oldString, newString, replaceAll),
   glob: (opts: { pattern: string; path: string; limit?: number }) => ipcRenderer.invoke('glob', opts),
@@ -222,6 +223,7 @@ const fullApi = {
 const chatApi = {
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   waitForServer: (port: number) => ipcRenderer.invoke('wait-for-server', port),
+  getFilePath: (file: File) => webUtils.getPathForFile(file),
 }
 
 const isChatWindow = process.argv.includes('--window-mode=chat')

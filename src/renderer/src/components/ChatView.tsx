@@ -1,8 +1,10 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import 'katex/dist/katex.min.css'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
@@ -29,6 +31,26 @@ import mammoth from 'mammoth'
 import CodeBlock from './CodeBlock'
 import ConfirmModal from './ConfirmModal'
 import AskUserQuestionModal from './AskUserQuestionModal'
+
+// ── Markdown 文件预览 rehype-sanitize schema（同 AgentCodeView 配置）──
+const FILE_PREVIEW_SANITIZE_SCHEMA = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    div: [...(defaultSchema.attributes?.div || []), 'align', 'style'],
+    p: [...(defaultSchema.attributes?.p || []), 'align', 'style'],
+    span: [...(defaultSchema.attributes?.span || []), 'style'],
+    img: [...(defaultSchema.attributes?.img || []), 'width', 'height', 'style', 'loading'],
+    table: [...(defaultSchema.attributes?.table || []), 'style'],
+    td: [...(defaultSchema.attributes?.td || []), 'style', 'colspan', 'rowspan'],
+    th: [...(defaultSchema.attributes?.th || []), 'style', 'colspan', 'rowspan'],
+    '*': [...(defaultSchema.attributes?.['*'] || []), 'style'],
+  },
+  protocols: {
+    ...defaultSchema.protocols,
+    src: [...(defaultSchema.protocols?.src || ['http', 'https']), 'data'],
+  },
+}
 import CustomSelect from './CustomSelect'
 
 // 导入 worker 模块使其注册 globalThis.pdfjsWorker，pdfjs 的 fake worker 回退自动使用它
@@ -251,6 +273,27 @@ function MarkdownCode({ className, children }: { className?: string; children?: 
 // 避免 CodeBlock 的 <div> 被非法嵌套进 <pre> 导致代码块错位。
 function MarkdownPre({ children }: { children?: React.ReactNode }) {
   return <>{children}</>
+}
+
+// 文件预览图片渲染器：处理相对路径图片（通过 ref 读取 fileBaseDirs）
+let _fileBaseDirs = new Map<number, string>()
+let _previewFileIdx = 0
+export function setPreviewFileBaseDirs(dirs: Map<number, string>, idx: number) {
+  _fileBaseDirs = dirs
+  _previewFileIdx = idx
+}
+function PreviewMarkdownImage({ src, alt }: { src?: string; alt?: string }) {
+  const [dataSrc, setDataSrc] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    if (!src || /^(https?:|data:|file:\/\/|\/)/.test(src)) { setDataSrc(src); return }
+    const dir = _fileBaseDirs.get(_previewFileIdx)
+    if (!dir) { setDataSrc(src); return }
+    const abs = (dir + '/' + src).replace(/\\/g, '/').replace(/\/+/g, '/')
+    window.api.readFileBase64(abs).then(r => {
+      setDataSrc(r.success ? r.dataUrl : src)
+    }).catch(() => setDataSrc(src))
+  }, [src])
+  return <img src={dataSrc || src || ''} alt={alt || ''} style={{ maxWidth: '100%', height: 'auto' }} />
 }
 
 // ── 思考链（reasoning）解析 ─────────────────────────────────
@@ -1406,6 +1449,7 @@ export default function ChatView() {
   const [filePanelOpen, setFilePanelOpen] = useState(false)
   const [filePreviewIndex, setFilePreviewIndex] = useState(0)
   const [uploadedFileTexts, setUploadedFileTexts] = useState<Map<number, string>>(new Map())
+  const [fileBaseDirs, setFileBaseDirs] = useState<Map<number, string>>(new Map())
   const [filePanelWidth, setFilePanelWidth] = useState(45) // 文件预览面板宽度（%）
   // HTML 预览模式：false=源码, true=渲染
   const [htmlRenderMode, setHtmlRenderMode] = useState(false)
@@ -1421,7 +1465,7 @@ export default function ChatView() {
     if (files.length === 0) return
     const startIdx = attachedFiles.length
     setAttachedFiles(prev => [...prev, ...files])
-    loadFilePreviews(files, startIdx, setPreviewUrls, setUploadedFileTexts, setPdfPagesCache, setPdfPageNum)
+    loadFilePreviews(files, startIdx, setPreviewUrls, setUploadedFileTexts, setPdfPagesCache, setPdfPageNum, setFileBaseDirs)
     // 清空 input 值，允许重复选同名文件
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [attachedFiles.length])
@@ -1484,7 +1528,7 @@ export default function ChatView() {
 
     const startIdx = attachedFiles.length
     setAttachedFiles(prev => [...prev, ...files])
-    loadFilePreviews(files, startIdx, setPreviewUrls, setUploadedFileTexts, setPdfPagesCache, setPdfPageNum)
+    loadFilePreviews(files, startIdx, setPreviewUrls, setUploadedFileTexts, setPdfPagesCache, setPdfPageNum, setFileBaseDirs)
   }, [attachedFiles.length])
 
   // ── 文件预览面板宽度拖拽 ──────────────────────────────
@@ -1629,7 +1673,8 @@ export default function ChatView() {
     _setPreviewUrls: typeof setPreviewUrls,
     _setUploadedFileTexts: typeof setUploadedFileTexts,
     _setPdfPagesCache: typeof setPdfPagesCache,
-    _setPdfPageNum: typeof setPdfPageNum
+    _setPdfPageNum: typeof setPdfPageNum,
+    _setFileBaseDirs: React.Dispatch<React.SetStateAction<Map<number, string>>>
   ): Promise<void> {
     for (let i = 0; i < files.length; i++) {
       const f = files[i]
@@ -1690,7 +1735,76 @@ export default function ChatView() {
           reader.onerror = reject
           reader.readAsText(f)
         })
-        _setUploadedFileTexts(prev => { const n = new Map(prev); n.set(idx, text); return n })
+        // 对 Markdown 文件内联相对路径图片
+        const isMdFile = /\.(md|markdown|mdx|mkd|mdwn|mkdn)$/i.test(f.name)
+        let finalText = text
+        // 尝试内联相对路径图片（使用 webUtils.getPathForFile 替代废弃的 File.path）
+        const filePath = window.api.getFilePath(f)
+        const hasFilePath = typeof filePath === 'string' && filePath.length > 0
+        if (isMdFile && hasFilePath) {
+          try {
+            const dir = filePath.replace(/[\\/][^\\/]*$/, '').replace(/\\/g, '/')
+              // 1) 处理 HTML <img src="相对路径">
+              finalText = finalText.replace(/<img\b([^>]*)>/gi, (full, attrs) => {
+              const srcM = /\bsrc\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(attrs)
+              const url = srcM ? (srcM[2] ?? srcM[3] ?? srcM[4] ?? '') : ''
+              if (!url || /^(https?:|data:|file:\/\/|\/)/.test(url)) return full
+              // 异步标记：暂时保留原文，后续统一替换
+              return `__HIMGLOCAL__${url}__END__`
+            })
+            // 2) 处理 Markdown 图片 ![alt](相对路径)
+            const mdImgs: { full: string; alt: string; url: string }[] = []
+            const mdRe = /!\[([^\]]*)\]\(([^)]+)\)/g
+            let mm: RegExpExecArray | null
+            while ((mm = mdRe.exec(finalText)) !== null) {
+              const url = mm[2]!.trim()
+              if (/^(https?:|data:|file:\/\/|\/)/.test(url)) continue
+              mdImgs.push({ full: mm[0], alt: mm[1]!, url })
+            }
+            // 3) 收集 HTML 本地图片
+            const htmlLocals: { placeholder: string; url: string }[] = []
+            const phRe = /__HIMGLOCAL__([^_]+)__END__/g
+            while ((mm = phRe.exec(finalText)) !== null) {
+              htmlLocals.push({ placeholder: mm[0], url: mm[1]! })
+            }
+            // 4) 异步读取所有图片并替换
+            if (mdImgs.length > 0 || htmlLocals.length > 0) {
+              const absPath = (path: string) => (dir + '/' + path).replace(/\\/g, '/').replace(/\/+/g, '/')
+              // Markdown 图片
+              for (const img of mdImgs) {
+                try {
+                  const abs = absPath(img.url)
+                  console.log('[ChatView] inline md img:', img.url, '→', abs)
+                  const r = await window.api.readFileBase64(abs)
+                  if (r.success) finalText = finalText.replace(img.full, `![${img.alt}](${r.dataUrl})`)
+                  else console.warn('[ChatView] inline md img failed:', r.error)
+                } catch (e) { console.warn('[ChatView] inline md img error:', e) }
+              }
+              // HTML 图片
+              for (const img of htmlLocals) {
+                try {
+                  const abs = absPath(img.url)
+                  console.log('[ChatView] inline html img:', img.url, '→', abs)
+                  const r = await window.api.readFileBase64(abs)
+                  if (r.success) {
+                    const newTag = `<img src="${r.dataUrl}" alt="" style="max-width:100%;height:auto" />`
+                    finalText = finalText.replace(img.placeholder, newTag)
+                  } else {
+                    finalText = finalText.replace(img.placeholder, '')
+                  }
+                } catch {
+                  finalText = finalText.replace(img.placeholder, '')
+                }
+              }
+            }
+          } catch { /* 内联失败不影响文本预览 */ }
+        }
+        // 存储文件基准目录，供 ReactMarkdown img 渲染器解析相对路径
+        if (hasFilePath) {
+          const dir = filePath.replace(/[\\/][^\\/]*$/, '').replace(/\\/g, '/')
+          _setFileBaseDirs(prev => { const n = new Map(prev); n.set(idx, dir); return n })
+        }
+        _setUploadedFileTexts(prev => { const n = new Map(prev); n.set(idx, finalText); return n })
       }
     }
   }
@@ -3290,11 +3404,19 @@ ${msgsHtml}
                     }
                     // Markdown 文件 → ReactMarkdown 渲染
                     if (isMarkdownFile(f.name)) {
+                      // 更新图片渲染器的 ref，使其能解析相对路径
+                      setPreviewFileBaseDirs(fileBaseDirs, filePreviewIndex)
+                      const previewComponents = {
+                        img: PreviewMarkdownImage
+                      }
                       return (
                         <div className="chat-file-preview-markdown">
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm, remarkMath]}
-                            rehypePlugins={[rehypeKatex]}
+                            rehypePlugins={[rehypeKatex, rehypeRaw, [rehypeSanitize, FILE_PREVIEW_SANITIZE_SCHEMA]]}
+                            remarkRehypeOptions={{ allowDangerousHtml: true }}
+                            urlTransform={(url) => /^(https?:|mailto:|file:|data:)/i.test(url) ? url : defaultUrlTransform(url)}
+                            components={previewComponents}
                           >
                             {textContent}
                           </ReactMarkdown>
