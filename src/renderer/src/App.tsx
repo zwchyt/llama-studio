@@ -465,7 +465,13 @@ function AppMain() {
       <div className="main-layout">
         <Sidebar />
         <main className="content" style={view === 'llama' ? { display: 'none' } : {}}>
-          {currentView}
+          <div
+            className="view-transition"
+            key={view}
+            style={view === 'agent-code' || view === 'terminal' ? { display: 'none' } : {}}
+          >
+            {currentView}
+          </div>
           {/* Agent Code 工作台常驻挂载：切换侧边栏时不卸载组件，
               保证正在进行的生成 / 工具循环不被打断，进度、滚动、输入框状态全部保留
               （与下方 terminal 视图的常驻挂载做法一致）。 */}

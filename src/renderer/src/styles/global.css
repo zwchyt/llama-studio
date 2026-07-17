@@ -152,9 +152,6 @@ select {
 
 /* 收起过渡中：只应用宽度变化，保持展开布局（避免图标瞬间跳动），
    过渡结束后移除 collapsing，内部样式在 50px 容器内瞬间生效，跳动仅 15px */
-.sidebar-wrapper.collapsed.collapsing .sidebar {
-  /* 收起过渡中：保持展开布局，不应用收起样式 */
-}
 
 .sidebar-wrapper.collapsed .sidebar {
   overflow: hidden;
@@ -302,11 +299,74 @@ select {
   flex-direction: column;
 }
 
+/* 视图切换过渡容器：导航项切换时重新挂载（key=view），触发进入动画。
+   仅做淡入，位移交给标题栏与内容各自处理，避免 transform 叠加冲突。
+   需撑满 .content 并允许内部滚动，行为与原直接子视图一致。 */
+.view-transition {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  animation: view-fade-in 0.22s cubic-bezier(.4, 0, .2, 1) both;
+}
+
+/* 标题一栏：切换时从上方滑入 + 淡入，强调「上下切换」层次感 */
+.view-transition>.page-header {
+  animation: view-header-in 0.22s cubic-bezier(.4, 0, .2, 1) both;
+}
+
+/* 内容区：切换时从下方滑入 + 淡入，与标题栏反向错开形成层次 */
+.view-transition>:not(.page-header) {
+  animation: view-content-in 0.22s cubic-bezier(.4, 0, .2, 1) both;
+}
+
+@keyframes view-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes view-header-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes view-content-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* 为 .content 内所有子视图提供默认内边距（chat-layout / agent-code-view 自行处理）。
    注意：必须把 .agent-code-view 排除，否则它会被强制 overflow-y:auto，
    导致整个工作台（文件树+预览+聊天）成为可滚动容器，
    表现为「滑预览滚动条时整体一起上下滑动」。 */
 .content>*:not(.chat-layout):not(.agent-code-view) {
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+/* 过渡容器内的普通子视图沿用默认内边距与滚动 */
+.view-transition>:not(.chat-layout):not(.agent-code-view) {
   padding: 24px;
   overflow-y: auto;
   flex: 1;
@@ -1375,6 +1435,7 @@ select {
 
 .cmd-input[type="number"] {
   width: 90px;
+  appearance: textfield;
   -moz-appearance: textfield;
 }
 
@@ -4538,10 +4599,13 @@ webview {
 /* ── 回到底部浮动按钮 ── */
 /* 锚定在 .chat-main-col（非滚动容器）内，底部偏移 = 输入框高度 + 间距，
    从而精确悬浮在输入框正上方，不随消息滚动而漂移、也不遮挡输入框。 */
+/* 通用「滚动到底部」浮动按钮（原生聊天 + Agent Code 共用基础样式，
+   间距由 bottom 控制；Agent Code 的差异用 .agent-code-view 前缀单独覆盖，
+   避免两份裸 .chat-scroll-bottom-btn 互相覆盖导致改了不生效。 */
 .chat-scroll-bottom-btn {
   position: absolute;
   left: 50%;
-  bottom: calc(var(--chat-input-h, 70px) + 12px);
+  bottom: calc(var(--chat-input-h, 70px) + 30px);
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -4564,6 +4628,10 @@ webview {
   color: var(--text);
   box-shadow: var(--shadow-lg);
   transform: translateX(-50%) scale(1.08);
+}
+
+.chat-scroll-bottom-btn:active {
+  transform: translateX(-50%) scale(0.96);
 }
 
 @keyframes chatScrollBtnIn {
@@ -5156,7 +5224,7 @@ webview {
 }
 
 .chat-msg-markdown th {
-  background: var(--table-head-bg);
+  background: #d5d5d5;
   font-weight: 600;
 }
 
@@ -8034,11 +8102,18 @@ input[type="reset"]:not(:disabled) {
   padding: 3px 8px;
   font-size: 13px;
   font-weight: 600;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--bg);
+  background: var(--surface);
   color: var(--text);
   outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.agent-code-rename-input:focus {
+  outline: none;
+  border-color: var(--border-strong);
 }
 
 .agent-code-topbar-right {
@@ -8499,6 +8574,7 @@ input[type="reset"]:not(:disabled) {
 .agent-code-body {
   flex: 1;
   display: flex;
+  position: relative;
   /* 水平/垂直均 hidden：禁止整个工作台（文件树+预览+聊天）作为整体出现
      共享滚动条。原 auto hidden 会在面板总宽超出窗口时产生一条水平滚动条，
      拖动它会导致所有面板整体水平平移（即「滑预览时文件树跟着水平滑动」）。
@@ -8543,6 +8619,66 @@ input[type="reset"]:not(:disabled) {
   box-shadow: 0 7px 0 var(--accent), 0 14px 0 var(--accent);
 }
 
+/* 会话侧边栏右侧的可拖拽分隔条（调整侧边栏宽度） */
+/* 注意：此为 absolute 定位，放在 agent-code-body（position: relative）内。
+   宽度用 --agent-sidebar-width CSS 变量控制（由 JS 拖拽逻辑实时更新）。
+   收起时通过 sidebar-collapsed 整个隐藏手柄，避免悬浮在聊天区中间。 */
+.agent-code-sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--agent-sidebar-width, 200px);
+  transform: translateX(-50%);
+  /* 扩大可点击区域：基础 9px + ::after 左右各扩展 4px = 17px 敏感区 */
+  width: 9px;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+  transition: background .15s, opacity .2s ease;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 收起时立即隐藏，不残留在聊天区中间 */
+  opacity: 1;
+}
+
+/* 透明点击扩展区（左右各 4px），降低精准度要求 */
+.agent-code-sidebar-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
+}
+
+/* 视觉指示器：三个小点（与文件树/预览分隔条一致） */
+.agent-code-sidebar-resize-handle::before {
+  content: '';
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  box-shadow: 0 7px 0 var(--text-muted), 0 14px 0 var(--text-muted);
+  opacity: 0.45;
+  transition: opacity .2s;
+}
+
+.agent-code-sidebar-resize-handle:hover::before,
+.agent-code-sidebar-resize-handle.agent-code-resize-handle--active::before {
+  opacity: 1;
+  background: var(--accent);
+  box-shadow: 0 7px 0 var(--accent), 0 14px 0 var(--accent);
+}
+
+/* 收起侧边栏时拖拽手柄一并隐藏，解决「侧栏已缩、手柄飘在聊天区中间」的问题 */
+.sidebar-collapsed .agent-code-sidebar-resize-handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .agent-code-chat {
   flex: 1;
   display: flex;
@@ -8554,32 +8690,23 @@ input[type="reset"]:not(:disabled) {
 }
 
 /* ── 滚动到底部浮动按钮 ── */
-/* 锚定在 .agent-code-chat（非滚动容器）内，底部偏移 = 输入框高度 + 间距，
-   从而精确悬浮在输入框正上方，不遮挡输入框。 */
-.chat-scroll-bottom-btn {
-  position: absolute;
-  left: 50%;
-  bottom: calc(var(--chat-input-h, 70px) + 14px);
-  transform: translateX(-50%);
+/* Agent Code 工作台内的「滚动到底部」按钮：在通用样式基础上，
+   仅覆盖本工作台需要的差异（更小的间距 + 稍大尺寸 + 自有 hover/active），
+   用 .agent-code-view 前缀避免再与通用规则互相覆盖。 */
+.agent-code-view .chat-scroll-bottom-btn {
+  bottom: calc(var(--chat-input-h, 70px) + 2px);
   z-index: 20;
   width: 38px;
   height: 38px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border);
-  background: var(--surface);
   color: var(--text);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
-  cursor: pointer;
   transition: background 0.15s ease, transform 0.12s ease, opacity 0.15s ease;
 }
-.chat-scroll-bottom-btn:hover {
+.agent-code-view .chat-scroll-bottom-btn:hover {
   background: var(--surface-hover);
   transform: translateX(-50%) translateY(-2px);
 }
-.chat-scroll-bottom-btn:active {
+.agent-code-view .chat-scroll-bottom-btn:active {
   transform: translateX(-50%) translateY(0);
 }
 
@@ -8588,10 +8715,10 @@ input[type="reset"]:not(:disabled) {
 /* 侧边栏折叠容器（模仿 chat-sidebar-collapser 模式） */
 .agent-code-sidebar-collapser {
   display: flex;
-  width: 200px;
+  width: var(--agent-sidebar-width, 200px);
   flex-shrink: 0;
   overflow: hidden;
-  transition: width 0.25s ease, opacity 0.2s ease;
+  transition: opacity 0.2s ease;
 }
 
 .sidebar-collapsed .agent-code-sidebar-collapser {
@@ -8600,7 +8727,8 @@ input[type="reset"]:not(:disabled) {
 }
 
 .agent-code-sidebar {
-  width: 200px;
+  width: var(--agent-sidebar-width, 200px);
+  min-width: 0;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
   display: flex;
@@ -8616,7 +8744,7 @@ input[type="reset"]:not(:disabled) {
   flex-shrink: 0;
   overflow: hidden;
   max-width: 2000px;
-  transition: max-width 0.35s ease, opacity 0.2s ease;
+  transition: max-width 0.45s cubic-bezier(.4, 0, .2, 1), opacity 0.35s ease;
 }
 
 /* 右侧栏主体（文件树 / 预览 / 任务），位于上下文监控面板下方。
@@ -8797,11 +8925,26 @@ input[type="reset"]:not(:disabled) {
 .agent-code-topbar-btn.active {
   background: var(--surface-hover);
   color: var(--accent);
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .agent-code-topbar-btn.active:hover {
   background: var(--surface-hover);
+}
+
+/* 彻底去掉点击 / 聚焦（含点击弹窗后按钮仍持有焦点）时的黑色高亮边框 */
+.agent-code-topbar-btn:focus,
+.agent-code-topbar-btn:focus-visible,
+.agent-code-topbar-btn:active,
+.agent-code-topbar-btn:focus:not(:active) {
+  outline: none !important;
+  border-color: var(--border) !important;
+  box-shadow: none !important;
+}
+/* Firefox 点击后残留的内焦点边框 */
+.agent-code-topbar-btn::-moz-focus-inner {
+  border: 0 !important;
+  outline: none !important;
 }
 
 /* ── 任务清单面板（Todo / Task）── */
@@ -8999,6 +9142,7 @@ input[type="reset"]:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
   padding: 8px 8px 8px 6px;
   font-size: 13px;
   font-weight: 600;
@@ -9007,62 +9151,102 @@ input[type="reset"]:not(:disabled) {
   transition: background .15s ease, color .15s ease;
   user-select: none;
   border-radius: var(--radius-sm);
+  position: relative;
+}
+
+/* 项目名前的文件夹图标锚点：标识"项目根"，与右侧更改目录按钮呼应 */
+.agent-code-project-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: color .15s ease;
+}
+
+.agent-code-project-item:hover .agent-code-project-icon,
+.agent-code-project-item.active .agent-code-project-icon {
+  color: var(--text-secondary);
 }
 
 .agent-code-project-item:hover {
   background: var(--surface-hover);
 }
 
+/* 选中态：仅浅灰背景区分（不再用左侧竖条，按需求去掉黑条）。
+   文字保持近黑（--text），与全局选中态惯例一致 */
 .agent-code-project-item.active {
-  background: var(--bg);
+  background: var(--surface-hover);
   color: var(--text);
-  box-shadow: inset 0 0 0 1px var(--border-strong), var(--shadow);
 }
 
+.agent-code-project-item.active:hover {
+  background: var(--surface-hover);
+}
+
+/* 项目操作按钮的自定义 tooltip（替代原生 title 气泡） */
+.ac-icon-btn {
+  position: relative;
+  display: inline-flex;
+}
+
+.agent-code-project-item.active .agent-code-session-title {
+  font-weight: 700;
+}
+
+/* 选中态行常驻显示操作按钮，提升操作可发现性（#3） */
 .agent-code-project-item.active .agent-code-session-del {
-  color: var(--text-secondary);
-}
-
-.agent-code-project-chevron {
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-radius: 5px;
-  opacity: .7;
-  transition: opacity .15s, background .15s;
-}
-
-.agent-code-project-chevron:hover {
   opacity: 1;
-  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text-muted);
 }
 
+/* 外层：用 max-height + opacity 实现平滑伸缩。
+   不用 grid 0fr→1fr（内容增减会重算轨道、引发闪烁）。
+   max-height 目标值固定，切换选中时不会重触发过渡，故不闪 */
+.agent-code-child-wrap {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height .26s cubic-bezier(.4, 0, .2, 1),
+    opacity .26s cubic-bezier(.4, 0, .2, 1);
+}
+
+.agent-code-child-wrap.open {
+  max-height: 600px;
+  opacity: 1;
+}
+
+/* 内层：内边距从 0 过渡到实际值，使边缘收起时不留空隙 */
 .agent-code-child-sessions {
-  padding: 4px 0 6px 16px;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  padding: 0 0 0 16px;
+  transition: padding .26s cubic-bezier(.4, 0, .2, 1);
+}
+
+.agent-code-child-wrap.open .agent-code-child-sessions {
+  padding: 4px 0 6px 16px;
 }
 
 .agent-code-session-item {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   padding: 7px 10px;
   font-size: 12px;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background .15s ease, color .15s ease;
+  transition: background .18s ease, color .18s ease,
+    opacity .22s ease, transform .22s cubic-bezier(.4, 0, .2, 1);
   user-select: none;
   border-radius: var(--radius-sm);
   position: relative;
+}
+
+/* 未展开时子项轻微下移+半透明；展开后归位 → 整组柔和滑入一次。
+   仅由 .open 状态触发，切换选中不改变此项 transform/opacity，故不闪 */
+.agent-code-child-wrap:not(.open) .agent-code-session-item {
+  opacity: 0;
+  transform: translateY(4px);
 }
 
 .agent-code-session-item::before {
@@ -9087,20 +9271,24 @@ input[type="reset"]:not(:disabled) {
   background: var(--text-muted);
 }
 
+/* 选中态：仅浅灰背景 + 加粗区分（已按需求去掉左侧黑条）。
+   文字保持近黑（--text），与全局选中态惯例一致 */
 .agent-code-session-item.active {
   background: var(--surface-hover);
   color: var(--text);
   font-weight: 600;
-  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
+/* 圆点语义化（#2）：选中态变为深灰并放大，作为当前会话状态指示，
+   其余状态保持中性灰，不冒充"进行中/出错"等含义 */
 .agent-code-session-item.active::before {
-  background: var(--accent);
-  transform: translateY(-50%) scale(1.3);
+  background: var(--text);
+  transform: translateY(-50%) scale(1.4);
 }
 
 .agent-code-session-title {
   flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -9124,7 +9312,9 @@ input[type="reset"]:not(:disabled) {
 }
 
 .agent-code-project-item:hover .agent-code-session-del,
-.agent-code-session-item:hover .agent-code-session-del {
+.agent-code-session-item:hover .agent-code-session-del,
+.agent-code-project-item.active .agent-code-session-del,
+.agent-code-session-item.active .agent-code-session-del {
   opacity: 1;
 }
 
@@ -9133,31 +9323,79 @@ input[type="reset"]:not(:disabled) {
   color: #e5484d;
 }
 
-.agent-code-add-sess-btn {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  width: 100%;
-  margin-top: 2px;
-  padding: 7px 10px 7px 18px;
+.agent-code-session-rename {
+  flex-shrink: 0;
+  opacity: 0;
+  padding: 3px;
   border: none;
   background: none;
   color: var(--text-muted);
-  font-size: 12px;
   cursor: pointer;
-  transition: all .15s ease;
-  border-radius: var(--radius-sm);
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: opacity .15s, background .15s, color .15s;
 }
 
-.agent-code-add-sess-btn:hover {
-  color: var(--accent);
-  background: var(--surface-hover);
+.agent-code-project-item:hover .agent-code-session-rename,
+.agent-code-session-item:hover .agent-code-session-rename,
+.agent-code-project-item.active .agent-code-session-rename,
+.agent-code-session-item.active .agent-code-session-rename {
+  opacity: 1;
+}
+
+.agent-code-session-rename:hover {
+  background: rgba(255, 80, 80, .15);
+  color: #e5484d;
+}
+
+.agent-code-session-add {
+  flex-shrink: 0;
+  opacity: 0;
+  padding: 3px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: opacity .15s, background .15s, color .15s;
+}
+
+.agent-code-project-item:hover .agent-code-session-add,
+.agent-code-project-item.active .agent-code-session-add {
+  opacity: 1;
+}
+
+.agent-code-session-add:hover {
+  background: rgba(255, 80, 80, .15);
+  color: #e5484d;
 }
 
 .agent-code-session-list {
   flex: 1;
+  min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding-bottom: 12px;
+}
+
+/* 侧栏内滚动条稍深，便于在浅灰背景上定位（#6） */
+.agent-code-session-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.agent-code-session-list::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+}
+
+.agent-code-session-list::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 .agent-code-empty-chat {
@@ -9178,15 +9416,23 @@ input[type="reset"]:not(:disabled) {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 10px;
   padding: 40px 24px;
   text-align: center;
 }
 
 .agent-welcome-title {
-  font-size: 22px;
-  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: 600;
   color: var(--text);
+  letter-spacing: .2px;
+}
+
+.agent-welcome-icon {
+  color: var(--text-muted);
 }
 
 .agent-welcome-desc {
@@ -9206,25 +9452,47 @@ input[type="reset"]:not(:disabled) {
   gap: 6px;
 }
 
-.agent-welcome-atfile {
+/* 提示行做成统一小标签（chip）：浅底 + 圆角，像“能力/键位”提示 */
+.agent-welcome-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-size: 11px;
-  color: var(--text-muted);
-  padding: 1px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
   user-select: none;
+}
+
+.agent-welcome-key {
+  color: var(--text-muted);
+  font-weight: 600;
 }
 
 .agent-welcome-suggestions {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  /* 固定 2 列：左栏收起动画期间聊天区宽度持续变化，
+     卡片只等比拉宽、不在列数上跳变（避免 auto-fit 跨阈值时的跳动） */
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
   margin-top: 12px;
   width: 100%;
   max-width: 520px;
 }
 
+/* 极窄时降为 1 列（用 media query 控制，不依赖 grid auto-fit 实时跳变） */
+@media (max-width: 480px) {
+  .agent-welcome-suggestions {
+    grid-template-columns: 1fr;
+  }
+}
+
 .agent-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 10px 12px;
   background: var(--surface);
   border: 1px solid var(--border-strong);
@@ -9233,12 +9501,20 @@ input[type="reset"]:not(:disabled) {
   font-size: 12.5px;
   text-align: left;
   cursor: pointer;
-  transition: border-color .15s, background .15s, transform .05s;
+  transition: border-color .15s, background .15s, transform .08s, box-shadow .15s;
+}
+
+.agent-suggestion-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
 }
 
 .agent-suggestion:hover {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
   background: var(--surface-hover);
+  box-shadow: var(--shadow);
 }
 
 .agent-suggestion:active {
@@ -10192,10 +10468,33 @@ input[type="reset"]:not(:disabled) {
   color: var(--text);
   white-space: nowrap;
   user-select: none;
+  transition: background .15s ease, transform .12s ease;
 }
 
-.file-tree-node:hover {
+/* 仅主目录下的文件/文件夹节点 hover 才右移起伏；主目录（level 0）不动 */
+.file-tree-node--sub:hover {
   background: var(--surface-hover);
+  transform: translateX(4px);
+}
+
+/* 右键菜单打开时，被右键的节点保持起伏（class 驱动，菜单关闭即恢复） */
+.file-tree-node--pinned {
+  background: var(--surface-hover);
+  transform: translateX(4px);
+}
+
+/* 目录子节点容器：max-height 过渡实现柔和展开/收起（不稳闪烁） */
+.file-tree-children {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height .22s cubic-bezier(.4, 0, .2, 1),
+    opacity .22s cubic-bezier(.4, 0, .2, 1);
+}
+
+.file-tree-children.open {
+  max-height: 2000px;
+  opacity: 1;
 }
 
 .file-tree-arrow {
@@ -10297,7 +10596,8 @@ input[type="reset"]:not(:disabled) {
    不固定、不存 state；拖文件树时因剩余空间变化而自然跟随。 */
 .agent-code-preview {
   width: var(--agent-preview-width, 480px);
-  min-width: 240px;
+  flex-shrink: 1;
+  min-width: 0;
   max-width: 760px;
   display: flex;
   flex-direction: column;
@@ -10314,6 +10614,7 @@ input[type="reset"]:not(:disabled) {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   background: var(--surface);
+  position: relative;
 }
 
 .agent-code-preview-name {
@@ -10337,11 +10638,16 @@ input[type="reset"]:not(:disabled) {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+  margin-left: auto;
+  position: relative;
+  z-index: 1;
+  padding-left: 6px;
+  background: var(--surface);
 }
 
 .agent-code-preview-close:hover {
-  color: #ff5c5c;
-  border-color: #ff5c5c;
+  color: var(--text-secondary);
+  border-color: var(--border-strong);
 }
 
 /* 多文件预览标签栏（只显示文件名，悬停显示完整路径） */
@@ -10354,6 +10660,25 @@ input[type="reset"]:not(:disabled) {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* 多文件预览标签栏横向滚动条：贴合界面主题，纤细且半透明，hover 高亮 */
+.agent-code-preview-tabs::-webkit-scrollbar {
+  height: 6px;
+}
+
+.agent-code-preview-tabs::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.agent-code-preview-tabs::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 99px;
+}
+
+.agent-code-preview-tabs::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 .agent-code-preview-tab {
@@ -10361,6 +10686,7 @@ input[type="reset"]:not(:disabled) {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+  min-width: 0;
   max-width: 160px;
   padding: 2px 4px 2px 8px;
   background: var(--bg);
@@ -10399,7 +10725,7 @@ input[type="reset"]:not(:disabled) {
 }
 
 .agent-code-preview-tab-close:hover {
-  color: #ff5c5c;
+  color: var(--text-secondary);
   background: var(--border);
 }
 
@@ -10635,6 +10961,95 @@ input[type="reset"]:not(:disabled) {
   padding: 8px 12px;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+/* 提示词弹窗专属按钮：贴合界面主题（圆角 / 边框 / 强调色），不依赖全局 .btn */
+.agent-prompt-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  transition: all .15s ease;
+  white-space: nowrap;
+}
+.agent-prompt-btn:focus,
+.agent-prompt-btn:focus-visible,
+.agent-prompt-btn:active {
+  outline: none !important;
+  box-shadow: none !important;
+}
+.agent-prompt-btn-ghost {
+  border-color: var(--border);
+  background: var(--bg);
+  color: var(--text-secondary);
+}
+.agent-prompt-btn-ghost:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+/* 主按钮（保存）：浅色描边风格，不用黑色背景，边框用中性灰，仅文字用强调色 */
+.agent-prompt-btn-primary {
+  background: var(--bg);
+  color: var(--accent);
+  border-color: var(--border-strong);
+  font-weight: 600;
+}
+.agent-prompt-btn-primary:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--accent);
+  border-color: var(--border-strong);
+}
+.agent-prompt-btn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+/* 自定义勾选框：圆形，选中时内部填充主题色圆点（非黑色），无勾号 */
+.agent-prompt-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--bg);
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+  transition: all .15s ease;
+}
+.agent-prompt-checkbox:hover {
+  border-color: var(--border-strong);
+}
+.agent-prompt-checkbox:checked {
+  border-color: var(--border-strong);
+  background: var(--bg);
+}
+.agent-prompt-checkbox:checked::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  transform: translate(-50%, -50%);
+}
+.agent-prompt-checkbox:focus,
+.agent-prompt-checkbox:focus-visible {
+  outline: none !important;
+  border-color: var(--border-strong);
 }
 
 /* ── Agent Code 任务计划浮动卡片（聊天区右上角）── */

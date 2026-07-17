@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  ChevronRight, ChevronDown, File, Folder, FolderOpen, Loader2, AlertCircle, RefreshCw, Copy,
+  ChevronRight, ChevronDown, File, Folder, FolderOpen, Loader2, AlertCircle, Copy,
   Code, Braces, FileText, Image, Palette, Settings, Terminal, FileCode, CornerDownLeft
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -51,7 +51,7 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [loadingSet, setLoadingSet] = useState<Set<string>>(new Set())
   const [errorSet, setErrorSet] = useState<Set<string>>(new Set())
-  // 右键菜单：仅文件节点触发，{ x, y } 为屏幕坐标，name/path 为当前文件
+  // 右键菜单：文件与文件夹节点均可触发，{ x, y } 为屏幕坐标，name/path 为当前节点
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; name: string; path: string } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -190,9 +190,8 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
     const isExpanded = expanded.has(node.path)
     const isLoading = loadingSet.has(node.path)
     const isError = errorSet.has(node.path)
-    // 文件节点右键：弹出自定义菜单（仅文件，目录保持原有点击行为）
+    // 文件 / 文件夹节点右键：弹出自定义菜单（目录同样支持，菜单项对两者均适用）
     const onNodeContextMenu = (e: React.MouseEvent) => {
-      if (node.isDir) return
       e.preventDefault()
       e.stopPropagation()
       setCtxMenu({ x: e.clientX, y: e.clientY, name: node.name, path: node.path })
@@ -200,7 +199,7 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
     return (
       <div key={node.path}>
         <div
-          className={`file-tree-node ${isError ? 'file-tree-node-error' : ''}`}
+          className={`file-tree-node ${isError ? 'file-tree-node-error' : ''} ${level > 0 ? 'file-tree-node--sub' : ''} ${ctxMenu?.path === node.path ? 'file-tree-node--pinned' : ''}`}
           style={{ paddingLeft: level * 16 }}
           onClick={() => toggleExpand(node)}
           onContextMenu={onNodeContextMenu}
@@ -221,13 +220,17 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
         </div>
         {isError && (
           <div className="file-tree-error-row" style={{ paddingLeft: (level + 1) * 16 }} onClick={() => toggleExpand(node)}>
-            <RefreshCw size={11} /> 展开失败，点击重试
+            展开失败，点击重试
           </div>
         )}
-        {node.isDir && isExpanded && node.children?.map(child => renderNode(child, level + 1))}
-        {node.isDir && isExpanded && node.truncated && (
-          <div className="file-tree-truncated" style={{ paddingLeft: (level + 1) * 16 }}>
-            目录文件过多，仅显示前 {node.children?.length ?? 0} / {node.total} 个
+        {node.isDir && (
+          <div className={`file-tree-children ${isExpanded ? 'open' : ''}`}>
+            {node.children?.map(child => renderNode(child, level + 1))}
+            {node.truncated && (
+              <div className="file-tree-truncated" style={{ paddingLeft: (level + 1) * 16 }}>
+                目录文件过多，仅显示前 {node.children?.length ?? 0} / {node.total} 个
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -242,7 +245,7 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
           文件浏览器
         </span>
       </div>
-      <div className="file-tree-path" title={workspaceDir}>{workspaceDir}</div>
+      <div className="file-tree-path">{workspaceDir}</div>
       <div className="file-tree-content">
         {!workspaceDir ? (
           <div className="file-tree-empty">点击上方的文件夹图标选择目录</div>

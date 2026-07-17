@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { flushSync } from 'react-dom'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -7,7 +7,7 @@ import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import 'katex/dist/katex.min.css'
-import { Send, Square, Paperclip, X, FileText, Bot, User, FolderOpen, Plus, Trash2, AlertCircle, HelpCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, RefreshCw, Eye, FilePlus2, FileSearch, TerminalSquare, Clock, CheckCircle2, XCircle, Search, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check } from 'lucide-react'
+import { Send, Square, Paperclip, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, HelpCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, RefreshCw, Eye, FilePlus2, FileSearch, TerminalSquare, Clock, CheckCircle2, XCircle, Search, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
@@ -1140,6 +1140,50 @@ export default function AgentCodeView() {
     window.addEventListener('pointerup', onDragEnd)
   }
 
+  // 会话侧边栏宽度：拖拽侧边栏右边框时调整
+  const SIDEBAR_MIN = 160, SIDEBAR_MAX = 420
+  const [sidebarWidth, setSidebarWidth] = useState(200)
+  const [sidebarResizing, setSidebarResizing] = useState(false)
+  const sidebarDragRef = useRef<{ startX: number; startW: number } | null>(null)
+  const sidebarRafRef = useRef<number | null>(null)
+  const applySidebarWidth = useCallback((w: number) => {
+    const clamped = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, w))
+    const root = document.querySelector('.agent-code-body') as HTMLElement | null
+    if (root) root.style.setProperty('--agent-sidebar-width', `${clamped}px`)
+  }, [])
+  const onSidebarDragMove = useCallback((e: PointerEvent) => {
+    const d = sidebarDragRef.current
+    if (!d) return
+    lastClientXRef.current = e.clientX
+    const dx = e.clientX - d.startX
+    const next = d.startW + dx
+    if (sidebarRafRef.current !== null) cancelAnimationFrame(sidebarRafRef.current)
+    sidebarRafRef.current = requestAnimationFrame(() => applySidebarWidth(next))
+  }, [applySidebarWidth])
+  const onSidebarDragEnd = useCallback(() => {
+    const d = sidebarDragRef.current
+    if (d) setSidebarWidth(Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, d.startW + (lastClientXRef.current - d.startX))))
+    sidebarDragRef.current = null
+    setSidebarResizing(false)
+    document.body.style.userSelect = ''
+    document.body.style.cursor = ''
+    window.removeEventListener('pointermove', onSidebarDragMove)
+    window.removeEventListener('pointerup', onSidebarDragEnd)
+  }, [onSidebarDragMove])
+  useEffect(() => {
+    applySidebarWidth(sidebarWidth)
+  }, [sidebarWidth, applySidebarWidth])
+  const startSidebarResize = (e: React.PointerEvent) => {
+    e.preventDefault()
+    lastClientXRef.current = e.clientX // 同步更新最后坐标，供 onSidebarDragEnd 使用（与预览拖拽共享 ref）
+    sidebarDragRef.current = { startX: e.clientX, startW: sidebarWidth }
+    setSidebarResizing(true)
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+    window.addEventListener('pointermove', onSidebarDragMove)
+    window.addEventListener('pointerup', onSidebarDragEnd)
+  }
+
   // Persist to store on every change（跳过纯占位项目，防止干扰 seededRef 逻辑）
   useEffect(() => {
     const hasRealContent = projects.some(p => p.sessions.length > 0 || p.workspaceDir)
@@ -1197,25 +1241,15 @@ export default function AgentCodeView() {
   // ── 窗口自适应（参考 Reasonix 按 viewport 实时约束面板宽度）──
   // 监听工作台可用宽度：窄窗时自动收起侧栏 / 预览，并把文件树宽度夹紧到不溢出，
   // 避免各面板固定 min-width 叠加导致整体被裁切或错乱。
-  const viewBodyRef = useRef<HTMLDivElement | null>(null)
   // 用 ref 镜像 open 状态，避免 resize 回调闭包拿到过期值
   const treeOpenRef = useRef(treeOpen)
   treeOpenRef.current = treeOpen
-  const adaptToWidth = useCallback(() => {
-    // 不再自动收起右侧面板，由用户手动控制
-  }, [])
-
-  useLayoutEffect(() => {
-    const el = viewBodyRef.current
-    if (!el) return
-    // 首次挂载即按当前宽度适配一次
-    adaptToWidth()
-    const ro = new ResizeObserver(() => {
-      adaptToWidth()
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [adaptToWidth])
+  // ── 会话栏随「是否打开文件预览」自动收起/展开 ──
+  // 预览中有文件标签(openTabs.length>0)→ 收起左会话栏，把空间让给预览；
+  // 仅文件树、无文件预览 → 展开左会话栏。逻辑简单、状态驱动，无需测量宽度。
+  useEffect(() => {
+    setSidebarOpen(openTabs.length === 0)
+  }, [openTabs.length])
 
   // 点击弹窗外 / Escape 关闭上下文下拉面板
   useEffect(() => {
@@ -1333,9 +1367,9 @@ export default function AgentCodeView() {
   // 始终持有最新的 refreshTasks，避免 send 闭包使用过期引用
   const refreshTasksRef = useRef(refreshTasks)
   refreshTasksRef.current = refreshTasks
-  const [renaming, setRenaming] = useState(false)
-  const [renameText, setRenameText] = useState('')
-  const renameInputRef = useRef<HTMLInputElement>(null)
+  const [sessRenamingId, setSessRenamingId] = useState<string | null>(null)
+  const [sessRenameText, setSessRenameText] = useState('')
+  const sessRenameInputRef = useRef<HTMLInputElement>(null)
   const [projRenamingId, setProjRenamingId] = useState<string | null>(null)
   const [projRenameText, setProjRenameText] = useState('')
   const projRenameInputRef = useRef<HTMLInputElement>(null)
@@ -1425,7 +1459,7 @@ export default function AgentCodeView() {
     const res = await safeCall<{ path: string | null }>(() => window.api.selectDirectory(), '选择目录')
     if (!res?.path) return
     const name = dirName(res.path)
-    const proj: AgentProject = { id: uniqueId('proj'), title: name, workspaceDir: res.path, expanded: true, sessions: [{ id: uniqueId('sess'), title: '对话 1', messages: [] }] }
+    const proj: AgentProject = { id: uniqueId('proj'), title: name, workspaceDir: res.path, expanded: true, sessions: [{ id: uniqueId('sess'), title: '新会话', messages: [] }] }
     // 创建真实项目后，自动移除仍处于空状态的默认占位项目（避免与新建项目并存）
     setProjects(prev => [...prev.filter(p => !isPlaceholderProject(p)), proj])
     setActiveProjectId(proj.id)
@@ -1444,7 +1478,7 @@ export default function AgentCodeView() {
   }, [])
 
   const addSessionToProject = useCallback((projId: string) => {
-    const sess: AgentSession = { id: uniqueId('sess'), title: `对话 ${Date.now().toString(36).slice(-4)}`, messages: [] }
+    const sess: AgentSession = { id: uniqueId('sess'), title: '新会话', messages: [] }
     setProjects(prev => prev.map(p => p.id === projId ? { ...p, sessions: [...p.sessions, sess] } : p))
     setActiveSessionId(sess.id)
   }, [])
@@ -1455,7 +1489,7 @@ export default function AgentCodeView() {
       ...p,
       sessions: (() => {
         const next = p.sessions.filter(s => s.id !== sessId)
-        if (next.length === 0) next.push({ id: fallbackId, title: '对话 1', messages: [] })
+        if (next.length === 0) next.push({ id: fallbackId, title: '新会话', messages: [] })
         return next
       })()
     }))
@@ -1656,18 +1690,11 @@ export default function AgentCodeView() {
   const changeProjectDir = useCallback(async (projId: string) => {
     const res = await safeCall<{ path: string | null }>(() => window.api.selectDirectory(), '选择目录')
     if (!res?.path) return
-    const proj = projects.find(p => p.id === projId)
-    // 若仍为默认占位标题，则一并更新为目录名；已手动重命名的项目保留原标题
-    const patch: Partial<AgentProject> = { workspaceDir: res.path }
-    if (proj && proj.title === '新项目') patch.title = dirName(res.path)
+    // 更改目录后，标题同步显示为该目录的主目录文件名，
+    // 使左侧标题栏始终等于当前切换到的目录名
+    const patch: Partial<AgentProject> = { workspaceDir: res.path, title: dirName(res.path) }
     updateProject(projId, patch)
-  }, [projects, updateProject])
-
-  const startProjRename = (id: string, currentTitle: string) => {
-    setProjRenameText(currentTitle)
-    setProjRenamingId(id)
-    setTimeout(() => projRenameInputRef.current?.focus(), 0)
-  }
+  }, [updateProject])
 
   const confirmProjRename = () => {
     const text = projRenameText.trim()
@@ -1675,17 +1702,16 @@ export default function AgentCodeView() {
     setProjRenamingId(null)
   }
 
-  const startRename = () => {
-    if (!activeSession) return
-    setRenameText(activeSession.title)
-    setRenaming(true)
-    setTimeout(() => renameInputRef.current?.focus(), 0)
+  const startSessRename = (sessId: string, currentTitle: string) => {
+    setSessRenamingId(sessId)
+    setSessRenameText(currentTitle)
+    setTimeout(() => sessRenameInputRef.current?.focus(), 0)
   }
 
-  const confirmRename = () => {
-    const text = renameText.trim()
-    if (text) updateSessionInProject(activeProjectId, activeSessionId, { title: text })
-    setRenaming(false)
+  const confirmSessRename = (projId: string, sessId: string) => {
+    const text = sessRenameText.trim()
+    if (text) updateSessionInProject(projId, sessId, { title: text })
+    setSessRenamingId(null)
   }
 
   function buildApiMessages(messages: AgentMessage[]): ApiMessage[] {
@@ -2206,11 +2232,11 @@ export default function AgentCodeView() {
   }, [activeProjectId, promptDraft, approveWriteEditDraft, updateProject])
 
   // 欢迎页建议：模型已启动则直接发送，否则填入输入框待手动发送
-  const AGENT_SUGGESTIONS = [
-    '讲讲这个代码库的架构',
-    '总结最近的 git 改动',
-    '智能体的运行主循环在哪，它做了什么？',
-    '找出并修复这个项目里的一个 bug',
+  const AGENT_SUGGESTIONS: { text: string; icon: React.ReactNode }[] = [
+    { text: '讲讲这个代码库的架构', icon: <Code2 size={13} /> },
+    { text: '总结最近的 git 改动', icon: <GitBranch size={13} /> },
+    { text: '智能体的运行主循环在哪，它做了什么？', icon: <Bot size={13} /> },
+    { text: '找出并修复这个项目里的一个 bug', icon: <Bug size={13} /> },
   ]
   const sendSuggestion = useCallback((text: string) => {
     if (loading || !apiBaseUrl || !runningCard) {
@@ -2277,28 +2303,23 @@ export default function AgentCodeView() {
     <div className="agent-code-view">
       <div className="agent-code-topbar">
         <div className="agent-code-topbar-left">
-          <button className="chat-collapse-btn" onClick={() => setSidebarOpen(v => !v)} title={sidebarOpen ? '收起侧边栏' : '展开侧边栏'} style={{ marginTop: 0, width: 28, height: 28 }}>
+          <button className="chat-collapse-btn" onClick={() => setSidebarOpen(v => !v)} style={{ marginTop: 0, width: 28, height: 28 }}>
             {sidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
           </button>
-          {renaming ? (
-            <input ref={renameInputRef} className="agent-code-rename-input" value={renameText} onChange={e => setRenameText(e.target.value)} onBlur={confirmRename} onKeyDown={e => { if (e.key === 'Enter') confirmRename(); if (e.key === 'Escape') setRenaming(false) }} />
-          ) : (
-            <span className="agent-code-topbar-title">{activeSession ? activeSession.title : activeProject.title}</span>
-          )}
-          {activeSession && <button className="btn btn-xs" onClick={startRename} title="修改标题"><Pencil size={12} /></button>}
+          <span className="agent-code-topbar-title">{activeSession?.title || '新会话'}</span>
         </div>
         <div className="agent-code-topbar-right">
-          <button ref={ctxBtnRef} className={`agent-code-topbar-btn ${contextModalOpen ? 'active' : ''}`} onClick={() => setContextModalOpen(v => !v)} title="上下文窗口">上下文</button>
-          <button className={`agent-code-topbar-btn ${taskModalOpen ? 'active' : ''}`} onClick={() => { const next = !taskModalOpen; setTaskModalOpen(next); if (next) refreshTasks() }} title="任务计划">计划</button>
-          <button ref={promptBtnRef} className={`agent-code-topbar-btn ${promptModalOpen ? 'active' : ''}`} onClick={openPromptModal} title="自定义系统提示词"><SlidersHorizontal size={12} /> 提示词</button>
-          <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} title={treeOpen ? '收起面板' : '展开面板'} style={{ marginTop: 0, width: 28, height: 28 }}>
+          <button ref={ctxBtnRef} className={`agent-code-topbar-btn ${contextModalOpen ? 'active' : ''}`} onClick={() => setContextModalOpen(v => !v)}>上下文</button>
+          <button className={`agent-code-topbar-btn ${taskModalOpen ? 'active' : ''}`} onClick={() => { const next = !taskModalOpen; setTaskModalOpen(next); if (next) refreshTasks() }}>计划</button>
+          <button ref={promptBtnRef} className={`agent-code-topbar-btn ${promptModalOpen ? 'active' : ''}`} onClick={openPromptModal}><SlidersHorizontal size={12} /> 提示词</button>
+          <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} style={{ marginTop: 0, width: 28, height: 28 }}>
             {treeOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
           </button>
         </div>
 
       </div>
 
-      <div ref={viewBodyRef} className={`agent-code-body ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
+      <div className={`agent-code-body ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
         <div className="agent-code-sidebar-collapser">
           <div className="agent-code-sidebar">
             <button className="agent-code-session-new-btn" onClick={createProject}>
@@ -2308,10 +2329,7 @@ export default function AgentCodeView() {
             <div className="agent-code-session-list">
               {projects.map(p => (
                 <div key={p.id} className="agent-code-project-group">
-                  <div className={`agent-code-project-item ${p.id === activeProjectId ? 'active' : ''}`} onClick={() => { setActiveProjectId(p.id); setActiveSessionId(p.sessions[0]?.id || '') }}>
-                    <button className="agent-code-project-chevron" onClick={e => { e.stopPropagation(); updateProject(p.id, { expanded: !p.expanded }) }}>
-                      {p.expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                    </button>
+                  <div className={`agent-code-project-item ${p.id === activeProjectId ? 'active' : ''}`} onClick={() => { updateProject(p.id, { expanded: !p.expanded }); setActiveProjectId(p.id); }}>
                     {projRenamingId === p.id ? (
                       <input
                         ref={projRenameInputRef}
@@ -2323,42 +2341,72 @@ export default function AgentCodeView() {
                         onKeyDown={e => { if (e.key === 'Enter') confirmProjRename(); if (e.key === 'Escape') setProjRenamingId(null) }}
                       />
                     ) : (
-                      <span className="agent-code-session-title">{p.title}</span>
+                      <>
+                        <Folder size={13} className="agent-code-project-icon" />
+                        <span className="agent-code-session-title">{p.title}</span>
+                      </>
                     )}
-                    <button className="agent-code-session-del" onClick={e => { e.stopPropagation(); changeProjectDir(p.id) }} title="选择 / 更改项目目录"><FolderOpen size={11} /></button>
-                    <button className="agent-code-session-del" onClick={e => { e.stopPropagation(); startProjRename(p.id, p.title) }} title="重命名项目"><Pencil size={11} /></button>
-                    <button className="agent-code-session-del" onClick={e => { e.stopPropagation(); deleteProject(p.id) }} title="删除项目"><Trash2 size={11} /></button>
+                    <span className="ac-icon-btn">
+                      <button className="agent-code-session-del" onClick={e => { e.stopPropagation(); changeProjectDir(p.id) }}><FolderOpen size={11} /></button>
+                    </span>
+                    <span className="ac-icon-btn">
+                      <button className="agent-code-session-del" onClick={e => { e.stopPropagation(); deleteProject(p.id) }}><Trash2 size={11} /></button>
+                    </span>
+                    <span className="ac-icon-btn">
+                      <button className="agent-code-session-add" onClick={e => { e.stopPropagation(); addSessionToProject(p.id) }}><Plus size={11} /></button>
+                    </span>
                   </div>
-                  {p.expanded && (
+                  <div className={`agent-code-child-wrap ${p.expanded ? 'open' : ''}`}>
                     <div className="agent-code-child-sessions">
                       {p.sessions.map(s => (
                         <div key={s.id} className={`agent-code-session-item ${s.id === activeSessionId && p.id === activeProjectId ? 'active' : ''}`} onClick={() => { setActiveProjectId(p.id); setActiveSessionId(s.id) }}>
-                          <span className="agent-code-session-title">{s.title}</span>
-                          <button className="agent-code-session-del" onClick={e => { e.stopPropagation(); deleteSession(p.id, s.id) }} title="删除"><Trash2 size={10} /></button>
+                          {sessRenamingId === s.id ? (
+                            <input
+                              ref={sessRenameInputRef}
+                              className="agent-code-rename-input"
+                              value={sessRenameText}
+                              onChange={e => setSessRenameText(e.target.value)}
+                              onBlur={() => confirmSessRename(p.id, s.id)}
+                              onClick={e => e.stopPropagation()}
+                              onKeyDown={e => { if (e.key === 'Enter') confirmSessRename(p.id, s.id); if (e.key === 'Escape') setSessRenamingId(null) }}
+                            />
+                          ) : (
+                            <span className="agent-code-session-title">{s.title}</span>
+                          )}
+                          <span className="ac-icon-btn">
+                            <button className="agent-code-session-rename" onClick={e => { e.stopPropagation(); startSessRename(s.id, s.title) }}><Pencil size={10} /></button>
+                            <button className="agent-code-session-del" onClick={e => { e.stopPropagation(); deleteSession(p.id, s.id) }}><Trash2 size={10} /></button>
+                          </span>
                         </div>
                       ))}
-                      <button className="agent-code-add-sess-btn" onClick={() => addSessionToProject(p.id)}><Plus size={11} /> 新建对话</button>
                     </div>
-                  )}
+                  </div>
                 </div>
               ))}
             </div>
           </div>
         </div>
+        <div className={`agent-code-sidebar-resize-handle${sidebarResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startSidebarResize} />
 
         <div className="agent-code-chat">
           <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll}>
             {!activeSession || activeSession.messages.length === 0 ? (
               <div className="agent-welcome">
-                <div className="agent-welcome-title">一个编码智能体</div>
+                <div className="agent-welcome-title">
+                  <Sparkles size={20} className="agent-welcome-icon" />
+                  一个LLM本地智能体
+                </div>
                 <div className="agent-welcome-desc">描述任务，或随便问点什么。</div>
                 <div className="agent-welcome-hint">
-                  <span>⏎ 发送</span>
-                  <span className="agent-welcome-atfile">@ 文件</span>
+                  <span className="agent-welcome-chip"><span className="agent-welcome-key">⏎</span> 发送</span>
+                  <span className="agent-welcome-chip"><span className="agent-welcome-key">@</span> 文件</span>
                 </div>
                 <div className="agent-welcome-suggestions">
                   {AGENT_SUGGESTIONS.map((s) => (
-                    <button key={s} className="agent-suggestion" onClick={() => sendSuggestion(s)}>{s}</button>
+                    <button key={s.text} className="agent-suggestion" onClick={() => sendSuggestion(s.text)}>
+                      <span className="agent-suggestion-icon">{s.icon}</span>
+                      {s.text}
+                    </button>
                   ))}
                 </div>
               </div>
@@ -2493,14 +2541,14 @@ export default function AgentCodeView() {
                 <p className="agent-prompt-hint">为该项目的智能体追加自定义指令（如「只用中文回复」「优先最小改动」）。留空则使用默认工具指引。</p>
                 <textarea className="agent-prompt-textarea" value={promptDraft} onChange={e => setPromptDraft(e.target.value)} placeholder="例如：你只允许使用中文；修改文件时优先给出最小改动；不要随意运行删除命令。" />
                 <label className="agent-prompt-check">
-                  <input type="checkbox" checked={approveWriteEditDraft} onChange={e => setApproveWriteEditDraft(e.target.checked)} />
+                  <input type="checkbox" className="agent-prompt-checkbox" checked={approveWriteEditDraft} onChange={e => setApproveWriteEditDraft(e.target.checked)} />
                   对写入 / 编辑（Write / Edit）也要求人工确认
                 </label>
               </div>
               <div className="agent-card-prompt-footer">
-                <button className="btn btn-ghost btn-xs" onClick={() => { setPromptDraft(''); setApproveWriteEditDraft(false) }}>重置默认</button>
-                <button className="btn btn-ghost btn-xs" onClick={() => setPromptModalOpen(false)}>取消</button>
-                <button className="btn btn-primary btn-xs" onClick={saveSystemPrompt}>保存</button>
+                <button className="agent-prompt-btn agent-prompt-btn-ghost" onClick={() => { setPromptDraft(''); setApproveWriteEditDraft(false) }}>重置默认</button>
+                <button className="agent-prompt-btn agent-prompt-btn-ghost" onClick={() => setPromptModalOpen(false)}>取消</button>
+                <button className="agent-prompt-btn agent-prompt-btn-primary" onClick={saveSystemPrompt}>保存</button>
               </div>
             </div>
           )}
@@ -2571,15 +2619,13 @@ export default function AgentCodeView() {
                         {openTabs.map(t => (
                           <div
                             key={t.path}
-                            className={`agent-code-preview-tab ${t.path === activeTabPath ? 'active' : ''}`}
+                            className={`agent-code-preview-tab ac-icon-btn ${t.path === activeTabPath ? 'active' : ''}`}
                             onClick={() => setActiveTabPath(t.path)}
-                            title={t.path}
                           >
                             <span className="agent-code-preview-tab-name">{t.name}</span>
                             <button
                               className="agent-code-preview-tab-close"
                               onClick={(e) => { e.stopPropagation(); closeTab(t.path) }}
-                              title="关闭此文件"
                             >
                               <X size={10} />
                             </button>
@@ -2587,7 +2633,7 @@ export default function AgentCodeView() {
                         ))}
                       </div>
                       <span className="agent-code-preview-actions">
-                        <button className="btn btn-xs agent-code-preview-close" onClick={() => activeTab && closeTab(activeTab.path)} title="关闭预览" disabled={!activeTab}>
+                        <button className="btn btn-xs agent-code-preview-close ac-icon-btn" onClick={() => activeTab && closeTab(activeTab.path)} disabled={!activeTab}>
                           <X size={12} />
                         </button>
                       </span>
