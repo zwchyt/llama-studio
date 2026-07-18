@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
-import { Plus, Trash, ChevronDown, ChevronRight, Save, RotateCcw, Pencil, Check, X, Loader2 } from 'lucide-react'
+import { Plus, Trash, ChevronDown, ChevronRight, Save, RotateCcw, Pencil, Check, X, Loader2, AlertTriangle } from 'lucide-react'
 import type { CommandsSchema, CommandCategory, CommandParam } from '../../../shared/types'
 import { iconComponents, ICON_NAMES } from '../utils/iconMap'
 
@@ -21,6 +21,26 @@ interface CmdFormProps {
 }
 function CmdForm({ cmd, onChange, onDelete }: CmdFormProps) {
   const set = (k: keyof CommandParam, v: any) => onChange({ ...cmd, [k]: v })
+  const [showPopover, setShowPopover] = useState(false)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const confirmRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!showPopover) return
+    function handlePointer(e: MouseEvent) {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) setShowPopover(false)
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { e.stopPropagation(); setShowPopover(false) }
+      if (e.key === 'Enter') { e.preventDefault(); setShowPopover(false); onDelete() }
+    }
+    document.addEventListener('mousedown', handlePointer)
+    window.addEventListener('keydown', handleKey)
+    confirmRef.current?.focus()
+    return () => {
+      document.removeEventListener('mousedown', handlePointer)
+      window.removeEventListener('keydown', handleKey)
+    }
+  }, [showPopover, onDelete])
   return (
     <div className="ce-cmd-form">
       <div className="ce-cmd-form-grid">
@@ -74,9 +94,26 @@ function CmdForm({ cmd, onChange, onDelete }: CmdFormProps) {
         </div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
-        <button className="btn btn-ghost btn-sm text-danger" onClick={onDelete}>
-          <Trash size={13} /> Remove command
-        </button>
+        <div style={{ position: 'relative' }}>
+          <button className="btn btn-ghost btn-sm text-danger" onClick={() => setShowPopover(true)}>
+            <Trash size={13} /> Remove command
+          </button>
+          {showPopover && (
+            <div ref={popoverRef} className="delete-popover">
+              <div className="delete-popover-header">
+                <AlertTriangle size={16} />
+                <span className="delete-popover-title">删除命令</span>
+              </div>
+              <div className="delete-popover-body">
+                确定删除该命令参数？此操作不可撤销。
+              </div>
+              <div className="delete-popover-footer">
+                <button className="btn btn-ghost btn-sm" onClick={() => setShowPopover(false)}>取消</button>
+                <button ref={confirmRef} className="btn btn-danger btn-sm" onClick={() => { setShowPopover(false); onDelete() }}>删除</button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -93,7 +130,27 @@ function CategorySection({ cat, catIndex: _catIndex, onChange, onDelete }: Categ
   const [pickingIcon, setPickingIcon] = useState(false)
   const [nameVal, setNameVal] = useState(cat.name)
   const [expandedCmds, setExpandedCmds] = useState<Set<number>>(new Set())
+  const [showDeletePopover, setShowDeletePopover] = useState(false)
+  const deletePopoverRef = useRef<HTMLDivElement>(null)
+  const deleteConfirmRef = useRef<HTMLButtonElement>(null)
   const iconRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!showDeletePopover) return
+    function handlePointer(e: MouseEvent) {
+      if (deletePopoverRef.current && !deletePopoverRef.current.contains(e.target as Node)) setShowDeletePopover(false)
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { e.stopPropagation(); setShowDeletePopover(false) }
+      if (e.key === 'Enter') { e.preventDefault(); setShowDeletePopover(false); onDelete() }
+    }
+    document.addEventListener('mousedown', handlePointer)
+    window.addEventListener('keydown', handleKey)
+    deleteConfirmRef.current?.focus()
+    return () => {
+      document.removeEventListener('mousedown', handlePointer)
+      window.removeEventListener('keydown', handleKey)
+    }
+  }, [showDeletePopover, onDelete])
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -127,7 +184,7 @@ function CategorySection({ cat, catIndex: _catIndex, onChange, onDelete }: Categ
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           {editingName ? (
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
-              <input className="form-input" style={{ padding: '3px 8px', fontSize: 12 }} value={nameVal} onChange={e => setNameVal(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') saveName() }} autoFocus aria-label="Category name" />
+              <input className="ce-rename-input" value={nameVal} onChange={e => setNameVal(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') saveName() }} autoFocus aria-label="Category name" />
               <button className="btn btn-ghost btn-icon" style={{ padding: 3 }} onClick={saveName} aria-label="保存名称"><Check size={12} /></button>
               <button className="btn btn-ghost btn-icon" style={{ padding: 3 }} onClick={() => setEditingName(false)} aria-label="取消编辑"><X size={12} /></button>
             </div>
@@ -143,7 +200,6 @@ function CategorySection({ cat, catIndex: _catIndex, onChange, onDelete }: Categ
             className="btn btn-ghost btn-icon" 
             style={{ padding: 4 }} 
             onClick={() => setPickingIcon(!pickingIcon)}
-            title={`Category Icon: ${cat.icon}`}
           >
             {React.createElement(iconComponents[cat.icon] || iconComponents.Sliders, { size: 14 })}
           </button>
@@ -162,8 +218,25 @@ function CategorySection({ cat, catIndex: _catIndex, onChange, onDelete }: Categ
               ))}
             </div>
           )}
-          <button className="btn btn-ghost btn-icon" style={{ padding: 4 }} onClick={() => setEditingName(true)} title="Rename"><Pencil size={12} /></button>
-          <button className="btn btn-ghost btn-icon text-danger" style={{ padding: 4 }} onClick={onDelete} title="Delete category"><Trash size={12} /></button>
+          <button className="btn btn-ghost btn-icon" style={{ padding: 4 }} onClick={() => setEditingName(true)}><Pencil size={12} /></button>
+          <div style={{ position: 'relative' }}>
+            <button className="btn btn-ghost btn-icon text-danger" style={{ padding: 4 }} onClick={() => setShowDeletePopover(true)}><Trash size={12} /></button>
+            {showDeletePopover && (
+              <div ref={deletePopoverRef} className="delete-popover">
+                <div className="delete-popover-header">
+                  <AlertTriangle size={16} />
+                  <span className="delete-popover-title">删除分类</span>
+                </div>
+                <div className="delete-popover-body">
+                  确定删除分类「{cat.name}」及其下所有命令？此操作不可撤销。
+                </div>
+                <div className="delete-popover-footer">
+                  <button className="btn btn-ghost btn-sm" onClick={() => setShowDeletePopover(false)}>取消</button>
+                  <button ref={deleteConfirmRef} className="btn btn-danger btn-sm" onClick={() => { setShowDeletePopover(false); onDelete() }}>删除</button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
       {open && (
@@ -195,6 +268,9 @@ export default function CommandsEditor({ backendName }: { backendName: string })
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [showResetPopover, setShowResetPopover] = useState(false)
+  const resetPopoverRef = useRef<HTMLDivElement>(null)
+  const resetConfirmRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     setLoading(true)
     window.api.getCommands(backendName).then(s => {
@@ -206,6 +282,25 @@ export default function CommandsEditor({ backendName }: { backendName: string })
       setLoading(false)
     })
   }, [backendName])
+  useEffect(() => {
+    if (!showResetPopover) return
+    function handlePointer(e: MouseEvent) {
+      if (resetPopoverRef.current && !resetPopoverRef.current.contains(e.target as Node)) {
+        setShowResetPopover(false)
+      }
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { e.stopPropagation(); setShowResetPopover(false) }
+      if (e.key === 'Enter') { e.preventDefault(); confirmReset() }
+    }
+    document.addEventListener('mousedown', handlePointer)
+    window.addEventListener('keydown', handleKey)
+    resetConfirmRef.current?.focus()
+    return () => {
+      document.removeEventListener('mousedown', handlePointer)
+      window.removeEventListener('keydown', handleKey)
+    }
+  }, [showResetPopover])
   async function handleSave() {
     if (!schema) return
     setSaving(true)
@@ -217,8 +312,11 @@ export default function CommandsEditor({ backendName }: { backendName: string })
       if (updated) setCommandsSchema(updated)
     } else if (res && !res.success) { notify('保存失败：' + res.error, 'error') }
   }
-  async function handleReset() {
-    if (!confirm('重置为当前已保存的 schema？')) return
+  function handleReset() {
+    setShowResetPopover(true)
+  }
+  async function confirmReset() {
+    setShowResetPopover(false)
     setLoading(true)
     const s = await safeCall(() => window.api.getCommands(backendName), '加载 schema 失败')
     setSchema(s ? JSON.parse(JSON.stringify(s)) : null)
@@ -246,7 +344,24 @@ export default function CommandsEditor({ backendName }: { backendName: string })
           {schema.categories.length} categories · {schema.categories.reduce((a, c) => a + c.commands.length, 0)} commands
         </span>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-ghost btn-sm" onClick={handleReset}><RotateCcw size={13} /> Reset</button>
+          <div style={{ position: 'relative' }}>
+            <button className="btn btn-ghost btn-sm" onClick={handleReset}><RotateCcw size={13} /> Reset</button>
+            {showResetPopover && (
+              <div ref={resetPopoverRef} className="delete-popover">
+                <div className="delete-popover-header">
+                  <AlertTriangle size={16} />
+                  <span className="delete-popover-title">重置参数</span>
+                </div>
+                <div className="delete-popover-body">
+                  确定重置为当前已保存的参数配置？未保存的修改将丢失。
+                </div>
+                <div className="delete-popover-footer">
+                  <button className="btn btn-ghost btn-sm" onClick={() => setShowResetPopover(false)}>取消</button>
+                  <button ref={resetConfirmRef} className="btn btn-danger btn-sm" onClick={confirmReset}>重置</button>
+                </div>
+              </div>
+            )}
+          </div>
           <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
             {saving ? <Loader2 size={13} className="spin" /> : saved ? <Check size={13} /> : <Save size={13} />}
             {saved ? 'Saved!' : 'Save'}

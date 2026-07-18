@@ -145,6 +145,9 @@ interface AppStore {
   // ── Agent Code 工具调用卡片默认展开 ──
   agentToolCardsExpanded: boolean
   setAgentToolCardsExpanded: (v: boolean) => void
+  // ── 参数弹窗悬停提示框 ──
+  paramTooltipEnabled: boolean
+  setParamTooltipEnabled: (v: boolean) => void
   initUiSettings: () => Promise<void>
   setChatSidebarCurrentCollapsed: (v: boolean) => void
   // ── 基准测试持久结果 ──
@@ -374,6 +377,15 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
     set({ agentToolCardsExpanded: v })
     try { localStorage.setItem('agentToolCardsExpanded', String(v)) } catch { /* ignore */ }
     window.api?.setUiSetting('agentToolCardsExpanded', v)
+  },
+  // ── 参数弹窗悬停提示框（默认关闭）──
+  paramTooltipEnabled: (() => {
+    try { return localStorage.getItem('paramTooltipEnabled') === 'true' } catch { return false }
+  })(),
+  setParamTooltipEnabled: (v: boolean) => {
+    set({ paramTooltipEnabled: v })
+    try { localStorage.setItem('paramTooltipEnabled', String(v)) } catch { /* ignore */ }
+    window.api?.setUiSetting('paramTooltipEnabled', v)
   },
   // ── 从主进程同步 UI 设置（覆盖 localStorage 的陈旧值）──
   initUiSettings: async () => {

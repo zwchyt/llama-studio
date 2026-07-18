@@ -219,9 +219,9 @@ function ModelFileRow({ model, isImage, onDeleted }: { model: ModelFileInfo; isI
         </div>
       </div>
       <div className="models-file-actions">
-        <button className="btn btn-ghost btn-icon" onClick={() => setEditing(true)} title="重命名"><Pencil size={14} /></button>
-        <button className="btn btn-ghost btn-icon" onClick={handleOpenFolder} title="打开文件夹"><FolderOpen size={14} /></button>
-        <button className="btn btn-ghost btn-icon text-danger" onClick={handleDelete} title={model.external ? '外部模型不可删除' : '删除'} disabled={model.external}><Trash size={14} /></button>
+        <button className="btn btn-ghost btn-icon" onClick={() => setEditing(true)}><Pencil size={14} /></button>
+        <button className="btn btn-ghost btn-icon" onClick={handleOpenFolder}><FolderOpen size={14} /></button>
+        <button className="btn btn-ghost btn-icon text-danger" onClick={handleDelete} disabled={model.external}><Trash size={14} /></button>
       </div>
     </div>
   )

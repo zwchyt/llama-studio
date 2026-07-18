@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown } from 'lucide-react'
+import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown, AlertTriangle } from 'lucide-react'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import CommandsEditor from './CommandsEditor'
-import ConfirmModal from './ConfirmModal'
 import { CURSOR_SCHEMES, getCursorSchemeId, applyCursorScheme, CURSOR_STORAGE_KEY, schemeCursorValue, type CursorRole } from '../cursor-theme'
 
 const NOTIF_KEY = 'hexllama_update_notify'
@@ -21,8 +20,8 @@ function getNotifPref(): 'banner' | 'manual' {
 export default function SettingsView() {
 	  const { backends, activeBackend, setActiveBackend, setCommandsSchema, setBackends,
 	    releaseInfo, checkingUpdate, downloadProgress, setDownloadProgress, setCheckingUpdate, setReleaseInfo,
-	    setModels, setImageModels, soundEnabled, setSoundEnabled, chatSidebarCollapsed, setChatSidebarCollapsed, splashEnabled, setSplashEnabled, agentToolCardsExpanded, setAgentToolCardsExpanded } = useStore(
-	    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, setModels: s.setModels, setImageModels: s.setImageModels, soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, chatSidebarCollapsed: s.chatSidebarCollapsed, setChatSidebarCollapsed: s.setChatSidebarCollapsed, splashEnabled: s.splashEnabled, setSplashEnabled: s.setSplashEnabled, agentToolCardsExpanded: s.agentToolCardsExpanded, setAgentToolCardsExpanded: s.setAgentToolCardsExpanded }),
+    setModels, setImageModels, soundEnabled, setSoundEnabled, splashEnabled, setSplashEnabled, agentToolCardsExpanded, setAgentToolCardsExpanded, paramTooltipEnabled, setParamTooltipEnabled } = useStore(
+    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, setModels: s.setModels, setImageModels: s.setImageModels, soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, chatSidebarCollapsed: s.chatSidebarCollapsed, setChatSidebarCollapsed: s.setChatSidebarCollapsed, splashEnabled: s.splashEnabled, setSplashEnabled: s.setSplashEnabled, agentToolCardsExpanded: s.agentToolCardsExpanded, setAgentToolCardsExpanded: s.setAgentToolCardsExpanded, paramTooltipEnabled: s.paramTooltipEnabled, setParamTooltipEnabled: s.setParamTooltipEnabled }),
     shallow
   )
   const [downloading, setDownloading] = useState(false)
@@ -46,6 +45,27 @@ export default function SettingsView() {
   const [imgFolders, setImgFolders] = useState<string[]>([])
   const [metricsPolling, setMetricsPolling] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const deletePopoverRef = useRef<HTMLDivElement>(null)
+  const deleteConfirmRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!deleteTarget) return
+    function handlePointer(e: MouseEvent) {
+      if (deletePopoverRef.current && !deletePopoverRef.current.contains(e.target as Node)) {
+        setDeleteTarget(null)
+      }
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { e.stopPropagation(); setDeleteTarget(null) }
+      if (e.key === 'Enter') { e.preventDefault(); confirmDelete() }
+    }
+    document.addEventListener('mousedown', handlePointer)
+    window.addEventListener('keydown', handleKey)
+    deleteConfirmRef.current?.focus()
+    return () => {
+      document.removeEventListener('mousedown', handlePointer)
+      window.removeEventListener('keydown', handleKey)
+    }
+  }, [deleteTarget])
   const [cursorScheme, setCursorScheme] = useState<string>(getCursorSchemeId())
   const [previewId, setPreviewId] = useState<string | null>(null)
   const previewScheme = CURSOR_SCHEMES.find(s => s.id === (previewId ?? cursorScheme)) || CURSOR_SCHEMES[0]
@@ -233,20 +253,6 @@ export default function SettingsView() {
 	            <span className="toggle-track"></span>
 	            <span className="toggle-thumb"></span>
 	          </label>
-	        </div>
-	        <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
-	          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-            默认收起聊天界面的会话侧边栏，为消息区域留出更多空间。
-          </p>
-          <label className="toggle" style={{ marginTop: 4 }}>
-            <input
-              type="checkbox"
-              checked={chatSidebarCollapsed}
-              onChange={() => setChatSidebarCollapsed(!chatSidebarCollapsed)}
-            />
-            <span className="toggle-track"></span>
-            <span className="toggle-thumb"></span>
-          </label>
         </div>
         <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
@@ -271,6 +277,20 @@ export default function SettingsView() {
               type="checkbox"
               checked={agentToolCardsExpanded}
               onChange={() => setAgentToolCardsExpanded(!agentToolCardsExpanded)}
+            />
+            <span className="toggle-track"></span>
+            <span className="toggle-thumb"></span>
+          </label>
+        </div>
+        <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            参数弹窗中，鼠标悬停在参数上显示说明提示框。关闭后悬停不再弹出提示。
+          </p>
+          <label className="toggle" style={{ marginTop: 4 }}>
+            <input
+              type="checkbox"
+              checked={paramTooltipEnabled}
+              onChange={() => setParamTooltipEnabled(!paramTooltipEnabled)}
             />
             <span className="toggle-track"></span>
             <span className="toggle-thumb"></span>
@@ -341,7 +361,7 @@ export default function SettingsView() {
               {extFolders.map(f => (
                 <div key={f} className="settings-row" style={{ borderBottom: 'none', padding: '6px 0' }}>
                   <div className="settings-row-sub mono" style={{ flex: 1, wordBreak: 'break-all' }}>{f}</div>
-                  <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleRemoveExtFolder(f)} title="移除文件夹">
+                  <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleRemoveExtFolder(f)}>
                     <Trash size={14} />
                   </button>
                 </div>
@@ -368,7 +388,7 @@ export default function SettingsView() {
               {imgFolders.map(f => (
                 <div key={f} className="settings-row" style={{ borderBottom: 'none', padding: '6px 0' }}>
                   <div className="settings-row-sub mono" style={{ flex: 1, wordBreak: 'break-all' }}>{f}</div>
-                  <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleRemoveImgFolder(f)} title="移除文件夹">
+                  <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleRemoveImgFolder(f)}>
                     <Trash size={14} />
                   </button>
                 </div>
@@ -412,18 +432,36 @@ export default function SettingsView() {
                     <button
                       className={`btn btn-ghost btn-sm flex items-center gap-1 ${expandedEditor === b.name ? 'btn-primary' : ''}`}
                       onClick={() => setExpandedEditor(expandedEditor === b.name ? null : b.name)}
-                      title="编辑 commands.json"
                     >
                       <Terminal size={13} />
                       <ChevronDown size={12} style={{ transform: expandedEditor === b.name ? 'rotate(180deg)' : 'none', transition: 'transform 180ms' }} />
                     </button>
-                    <button
-                      className="btn btn-ghost btn-icon text-danger"
-                      onClick={() => handleDeleteBackend(b.name)}
-                      title="删除后端"
-                    >
-                      <Trash size={14} />
-                    </button>
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        className="btn btn-ghost btn-icon text-danger"
+                        onClick={() => handleDeleteBackend(b.name)}
+                      >
+                        <Trash size={14} />
+                      </button>
+                      {deleteTarget === b.name && (
+                        <div
+                          ref={deletePopoverRef}
+                          className="delete-popover"
+                        >
+                          <div className="delete-popover-header">
+                            <AlertTriangle size={16} />
+                            <span className="delete-popover-title">删除后端</span>
+                          </div>
+                          <div className="delete-popover-body">
+                            确定删除后端 <b>{b.name}</b>？这将移除该文件夹中的所有文件，且不可撤销。
+                          </div>
+                          <div className="delete-popover-footer">
+                            <button className="btn btn-ghost btn-sm" onClick={() => setDeleteTarget(null)}>取消</button>
+                            <button ref={deleteConfirmRef} className="btn btn-danger btn-sm" onClick={confirmDelete}>删除</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
                 {expandedEditor === b.name && (
@@ -530,17 +568,6 @@ export default function SettingsView() {
           </button>
         </div>
         </div>
-
-        <ConfirmModal
-          open={!!deleteTarget}
-          title="删除后端"
-          message={`确定删除后端 "${deleteTarget}"？这将移除该文件夹中的所有文件。`}
-          confirmLabel="删除"
-          cancelLabel="取消"
-          danger
-          onConfirm={confirmDelete}
-          onCancel={() => setDeleteTarget(null)}
-        />
       </div>
     )
   }

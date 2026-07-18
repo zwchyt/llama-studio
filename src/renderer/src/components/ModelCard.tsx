@@ -261,7 +261,7 @@ export default function ModelCard({ card }: Props) {
             <span className="card-name-text">{card.template.name}</span>
           </h3>
           {card.template.description?.trim() && (
-            <p className="card-desc" title={card.template.description}>{card.template.description}</p>
+            <p className="card-desc">{card.template.description}</p>
           )}
         </div>
         <div className="card-menu-btn" ref={menuRef} style={{ position: 'relative', zIndex: 10 }}>
@@ -298,7 +298,6 @@ export default function ModelCard({ card }: Props) {
         <button
           className={`launch-mode-btn ${launchMode === 'chat' ? 'active' : ''}`}
           onClick={() => setLaunchMode('chat')}
-          title="启动时打开聊天网页界面"
           disabled={isRunning}
         >
           <Globe size={12} /> 聊天界面
@@ -306,7 +305,6 @@ export default function ModelCard({ card }: Props) {
         <button
           className={`launch-mode-btn ${launchMode === 'api' ? 'active' : ''}`}
           onClick={() => setLaunchMode('api')}
-          title="仅提供 API 服务，不打开网页界面"
           disabled={isRunning}
         >
           <Server size={12} /> 仅 API
@@ -316,7 +314,6 @@ export default function ModelCard({ card }: Props) {
             ref={logsBtnRef}
             className={`launch-mode-btn logs-toggle-btn ${cardLogsExpanded ? 'active' : ''}`}
             onClick={toggleLogs}
-            title="查看运行日志"
           >
             <Terminal size={12} /> 日志
           </button>
@@ -327,7 +324,6 @@ export default function ModelCard({ card }: Props) {
           className={`btn card-run-btn ${isRunning ? 'btn-danger' : 'btn-primary'}`}
           onClick={handleRunToggle}
           disabled={!isRunning && !modelExists}
-          title={!isRunning && !modelExists ? '无法启动：模型文件缺失' : ''}
         >
           {isRunning ? <><Square size={14} /> <span className="btn-label">停止</span></> : <><Play size={14} /> <span className="btn-label">启动</span></>}
         </button>
@@ -340,7 +336,6 @@ export default function ModelCard({ card }: Props) {
               useStore.getState().setActiveChat(`http://127.0.0.1:${port}`, port)
               useStore.getState().setView('llama')
             }}
-            title="在主窗口打开聊天"
           >
             <Globe size={14} /> <span className="btn-label">打开聊天</span>
           </button>
@@ -364,7 +359,6 @@ export default function ModelCard({ card }: Props) {
               }
               useStore.getState().setView('chat')
             }}
-            title="跳转到原生聊天界面"
           >
             <MessageSquare size={14} /> <span className="btn-label">原生聊天</span>
           </button>
@@ -373,7 +367,6 @@ export default function ModelCard({ card }: Props) {
           <button
             className="card-expand-btn"
             onClick={() => setShowParamsModal(true)}
-            title="配置命令行参数"
           >
             <Settings size={16} />
           </button>
@@ -391,10 +384,10 @@ export default function ModelCard({ card }: Props) {
               {logs?.length || 0} 行
             </span>
             <div className="card-logs-header-actions">
-              <button className="card-logs-header-btn" onClick={handleCopyLogs} title="复制全部日志">
+              <button className="card-logs-header-btn" onClick={handleCopyLogs}>
                 {logCopied ? <Check size={12} /> : <Copy size={12} />}
               </button>
-              <button className="card-logs-header-btn" onClick={handleClearLogs} title="清空日志">
+              <button className="card-logs-header-btn" onClick={handleClearLogs}>
                 <Trash size={12} />
               </button>
             </div>

@@ -807,7 +807,6 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
                       if (text) onSpeak?.(msg.id, text)
                     }
                   }}
-                  title={speakingId === msg.id ? '停止朗读' : '朗读回复'}
                 >
                   <Volume2 size={13} />
                 </button>
@@ -833,7 +832,6 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
                   onClick={onContinue}
                   disabled={continueDisabled}
                   style={continueDisabled ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
-                  title="继续生成"
                 >
                   <Play size={13} />
                 </button>
@@ -844,7 +842,6 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
                   onClick={onDelete}
                   disabled={deleteDisabled}
                   style={deleteDisabled ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
-                  title="删除此回复"
                 >
                   <Trash2 size={13} />
                 </button>
@@ -853,7 +850,6 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
                 <button
                   className="chat-msg-action-btn"
                   onClick={onBranch}
-                  title="从此处分支"
                 >
                   <GitBranch size={13} />
                 </button>
@@ -1025,7 +1021,6 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRe
                     <button
                       className="chat-session-btn"
                       onClick={(e) => { e.stopPropagation(); onToggleStar(s.id) }}
-                      title={s.starred ? '取消星标' : '星标会话'}
                     >
                       <Star size={12} fill={s.starred ? '#f5c518' : 'transparent'} color={s.starred ? '#f5c518' : '#888'} />
                     </button>
@@ -1359,7 +1354,7 @@ function ContextBar({ port }: { port?: number }) {
   const ratio = nPromptTokens / nCtx
 
   return (
-    <span className="context-bar" title={`已用 ${nPromptTokens.toLocaleString()} / ${nCtx.toLocaleString()} tokens (${(ratio * 100).toFixed(1)}%)`}>
+    <span className="context-bar">
       <span className="context-bar-track">
         <span className="context-bar-fill" style={{ width: `${Math.min(ratio * 100, 100)}%` }} />
       </span>
@@ -2930,7 +2925,6 @@ ${msgsHtml}
               <button
                 className="chat-settings-btn chat-stop-model-btn"
                 onClick={handleStopModel}
-                title={`停止模型 ${activeModel.name}`}
               >
                 <Square size={14} />
               </button>
@@ -2944,7 +2938,6 @@ ${msgsHtml}
                 }
                 setShowSettings((v) => !v)
               }}
-              title="会话参数"
             >
               <SlidersHorizontal size={16} />
             </button>
@@ -2957,28 +2950,28 @@ ${msgsHtml}
                 }
                 setShowTools((v) => !v)
               }}
-              title={toolConfig.enabled ? '工具调用已开启' : '工具调用已关闭'}
             >
               <Wrench size={16} />
             </button>
             <button
               className="chat-settings-btn"
               onClick={handleExportPng}
-              title="导出为 PNG"
             >
               <ImageDown size={16} />
             </button>
             <button
               className="chat-settings-btn"
               onClick={handleExportPdf}
-              title="导出为 PDF"
             >
               <FileText size={16} />
             </button>
             <button
               className={`chat-settings-btn ${filePanelOpen ? 'preview-active' : ''}`}
-              onClick={() => setFilePanelOpen(v => !v)}
-              title={filePanelOpen ? '关闭文件预览' : '打开文件预览'}
+              onClick={() => {
+                const next = !filePanelOpen
+                setFilePanelOpen(next)
+                setSidebarCollapsed(next ? true : false)
+              }}
             >
               <Eye size={14} />
             </button>
@@ -3153,7 +3146,7 @@ ${msgsHtml}
                   autoFocus
                   onKeyDown={handleQuoteKeyDown}
                 />
-                <button type="submit" className="chat-quote-popup-send" title="发送（Enter）">
+                <button type="submit" className="chat-quote-popup-send">
                   <Send size={14} />
                 </button>
               </form>
@@ -3227,7 +3220,6 @@ ${msgsHtml}
                 className="chat-attach-btn"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={!activeModel}
-                title="上传文件（txt, pdf, docx, 图片等）"
               >
                 <Paperclip size={15} />
               </button>
@@ -3280,8 +3272,7 @@ ${msgsHtml}
                 <span>文件预览</span>
                 <button
                   className="chat-file-panel-close"
-                  onClick={() => setFilePanelOpen(false)}
-                  title="关闭文件预览"
+                  onClick={() => { setFilePanelOpen(false); setSidebarCollapsed(false) }}
                 >
                   <X size={15} />
                 </button>
@@ -3391,7 +3382,6 @@ ${msgsHtml}
                               className="chat-file-preview-iframe"
                               sandbox=""
                               srcDoc={textContent}
-                              title={f.name}
                             />
                           ) : (
                             <div className="chat-code-scroll-wrap">
@@ -3464,7 +3454,6 @@ ${msgsHtml}
 
       <ConfirmModal
         open={deletingSession !== null}
-        title="删除会话"
         message={deletingSession ? `确定删除会话「${deletingSession.title}」？此操作不可撤销。` : ''}
         confirmLabel="删除"
         danger
@@ -3477,7 +3466,6 @@ ${msgsHtml}
 
       <ConfirmModal
         open={deletingMsgId !== null}
-        title="删除回复"
         message="确定删除此回复及其后续消息？此操作不可撤销。"
         confirmLabel="删除"
         danger

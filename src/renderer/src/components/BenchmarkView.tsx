@@ -81,7 +81,6 @@ function AnimatedBar({ score, color }: { score: number; color: string }) {
       <span
         className="benchmark-bar-score"
         style={{ color }}
-        title={`性能评分 ${display} / 100（极速线为满分）`}
       >{display}</span>
     </div>
   )
@@ -242,7 +241,6 @@ export default function BenchmarkView() {
           className="benchmark-config-toggle"
           onClick={() => setConfigCollapsed(c => !c)}
           aria-expanded={!configCollapsed}
-          title={configCollapsed ? '展开配置' : '收起配置'}
         >
           <ChevronDown size={16} className={`benchmark-chevron ${configCollapsed ? 'collapsed' : ''}`} />
           <span className="benchmark-config-toggle-title">测试配置</span>
@@ -346,7 +344,7 @@ export default function BenchmarkView() {
                     <HardDrive size={18} />
                     <span className="benchmark-model-name">{mi.name.split('\\').pop()?.split('/').pop() || mi.name}</span>
                     <span className="benchmark-model-type-hint">架构类型</span>
-                    <span className="benchmark-model-badge" title="模型架构类型（model_type）">{mi.type}</span>
+                    <span className="benchmark-model-badge">{mi.type}</span>
                   </div>
                   <div className="benchmark-model-card-meta">
                     <span><strong>{mi.sizeGB.toFixed(2)} GB</strong> 大小</span>

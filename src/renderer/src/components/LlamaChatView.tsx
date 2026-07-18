@@ -73,7 +73,7 @@ export default function LlamaChatView() {
   if (!activeChatUrl) {
     return (
       <div className="llama-empty">
-        <button className="llama-empty-close" onClick={handleClose} title="关闭">
+        <button className="llama-empty-close" onClick={handleClose}>
           <X size={16} />
         </button>
         <Globe size={48} style={{ opacity: 0.4 }} />
@@ -94,20 +94,20 @@ export default function LlamaChatView() {
           <span className="llama-chat-url">{activeChatUrl}</span>
         </div>
         <div className="llama-chat-header-actions">
-          <button className="btn btn-danger btn-sm" onClick={handleStop} title="停止模型">
+          <button className="btn btn-danger btn-sm" onClick={handleStop}>
             <Square size={13} /> 停止
           </button>
           <span className="llama-chat-sep" />
-          <button className="btn btn-ghost btn-sm" onClick={handleReload} title="刷新">
+          <button className="btn btn-ghost btn-sm" onClick={handleReload}>
             <RefreshCw size={13} />
           </button>
-          <button className="btn btn-ghost btn-sm" onClick={handleCopy} title="复制链接">
+          <button className="btn btn-ghost btn-sm" onClick={handleCopy}>
             {copied ? <Check size={13} /> : <Copy size={13} />}
           </button>
-          <button className="btn btn-ghost btn-sm" onClick={handleOpenBrowser} title="在浏览器打开">
+          <button className="btn btn-ghost btn-sm" onClick={handleOpenBrowser}>
             <ExternalLink size={13} />
           </button>
-          <button className="btn btn-ghost btn-sm" onClick={handleClose} title="关闭">
+          <button className="btn btn-ghost btn-sm" onClick={handleClose}>
             <X size={13} />
           </button>
         </div>

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import { X, Search, Copy, Check, Lock } from 'lucide-react'
+import { Search, Copy, Check, Lock } from 'lucide-react'
 import type { CommandParam, TemplateArgs } from '../../../shared/types'
 import { iconElements } from '../utils/iconMap'
 import CustomSelect from './CustomSelect'
@@ -17,7 +17,7 @@ interface Props {
 }
 
 export default function ParamsModal({ templateId, args, onClose, cardName }: Props) {
-  const { commandsSchema, cards, imageModels, chatTemplates } = useStore(s => ({ commandsSchema: s.commandsSchema, cards: s.cards, imageModels: s.imageModels, chatTemplates: s.chatTemplates }), shallow)
+  const { commandsSchema, cards, imageModels, chatTemplates, paramTooltipEnabled } = useStore(s => ({ commandsSchema: s.commandsSchema, cards: s.cards, imageModels: s.imageModels, chatTemplates: s.chatTemplates, paramTooltipEnabled: s.paramTooltipEnabled }), shallow)
   const updateCard = useStore(s => s.updateCard)
   const setChatTemplates = useStore(s => s.setChatTemplates)
   const [activeTab, setActiveTab] = useState('主要设置')
@@ -166,15 +166,23 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
     return cmd
   }, [cmdPreviewItems])
 
-  const handleCopyParam = async (text: string, id: string) => {
-    await navigator.clipboard.writeText(text)
-    setCopiedParam(id)
-    setTimeout(() => setCopiedParam(null), 1500)
-  }
-
   const handleCopyAll = async () => {
     await navigator.clipboard.writeText(fullCommand)
     setCopiedParam('__all__')
+    setTimeout(() => setCopiedParam(null), 1500)
+  }
+
+  // 只复制参数部分（去掉 llama-server 与 -m "模型路径" 开头）
+  const argsOnly = useMemo(
+    () => cmdPreviewItems
+      .filter(item => item.id !== 'model')
+      .map(item => item.fullText)
+      .join(' '),
+    [cmdPreviewItems]
+  )
+  const handleCopyArgs = async () => {
+    await navigator.clipboard.writeText(argsOnly)
+    setCopiedParam('__args__')
     setTimeout(() => setCopiedParam(null), 1500)
   }
 
@@ -269,7 +277,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   if (!commandsSchema) {
     return (
       <div
-        className={`modal-overlay${closing ? ' closing' : ''}`}
+        className={`modal-overlay modal-overlay--plain${closing ? ' closing' : ''}`}
         onClick={handleClose}
         onContextMenu={(e) => {
           // 在输入框/文本域/下拉等可编辑元素上保留原生右键菜单，不关闭
@@ -285,9 +293,6 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
               <h2 className="modal-title">参数设置</h2>
               <div className="param-modal-subtitle">{cardName}</div>
             </div>
-            <button className="btn btn-ghost btn-icon" onClick={handleClose} aria-label="关闭">
-              <X size={20} />
-            </button>
           </div>
           <div className="modal-body">
             <div className="text-muted text-sm">参数 schema 未加载，请确保已安装后端。</div>
@@ -299,7 +304,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
 
   return (
     <div
-      className={`modal-overlay${closing ? ' closing' : ''}`}
+      className={`modal-overlay modal-overlay--plain${closing ? ' closing' : ''}`}
       onClick={handleClose}
       onContextMenu={(e) => {
         // 在输入框/文本域/下拉等可编辑元素上保留原生右键菜单，不关闭
@@ -315,9 +320,6 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
             <h2 className="modal-title">参数设置</h2>
             <div className="param-modal-subtitle">{cardName}</div>
           </div>
-          <button className="btn btn-ghost btn-icon" onClick={handleClose} aria-label="关闭">
-            <X size={20} />
-          </button>
         </div>
 
         <div className="modal-body param-modal-body">
@@ -360,7 +362,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
             {currentCommands.length === 0 ? (
               <div className="text-center py-6 text-sm text-muted">无匹配参数。</div>
             ) : (
-              <div className="cmd-grid">
+              <div className="cmd-grid" key={activeTab}>
                 {currentCommands.map(renderCommand)}
               </div>
             )}
@@ -370,10 +372,16 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
         <div className="params-preview">
           <div className="params-preview-header">
             <span>Preview</span>
-            <button className="cmd-copy-all-btn" onClick={handleCopyAll} title="复制完整命令">
-              {copiedParam === '__all__' ? <Check size={12} /> : <Copy size={12} />}
-              {copiedParam === '__all__' ? '已复制' : '复制全部'}
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="cmd-copy-all-btn" onClick={handleCopyArgs}>
+                {copiedParam === '__args__' ? <Check size={12} /> : <Copy size={12} />}
+                {copiedParam === '__args__' ? '已复制' : '复制参数'}
+              </button>
+              <button className="cmd-copy-all-btn" onClick={handleCopyAll}>
+                {copiedParam === '__all__' ? <Check size={12} /> : <Copy size={12} />}
+                {copiedParam === '__all__' ? '已复制' : '复制全部'}
+              </button>
+            </div>
           </div>
           <div className="cmd-preview">
             <span className="cmd-preview-base">llama-server</span>
@@ -389,19 +397,10 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
                   <span className="arg">{item.label}</span>
                   {item.value && <> <span className="val">{item.value}</span></>}
                 </span>
-                {hoveredParam === item.id && (
-                  <button
-                    className="cmd-param-copy-btn"
-                    onClick={() => handleCopyParam(item.fullText, item.id)}
-                    title="复制此参数"
-                  >
-                    {copiedParam === item.id ? <Check size={11} /> : <Copy size={11} />}
-                  </button>
-                )}
               </span>
             ))}
           </div>
-          {hoveredParam && tooltipPos && (() => {
+          {paramTooltipEnabled && hoveredParam && tooltipPos && (() => {
             const desc = currentCommands.find(c => c.arg === hoveredParam)?.description
             return desc ? (
               <div

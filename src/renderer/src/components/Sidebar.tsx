@@ -90,7 +90,6 @@ export default function Sidebar() {
       <button
         className="sidebar-toggle"
         onClick={toggleCollapse}
-        title={collapsed ? '展开侧边栏' : '收起侧边栏'}
       >
         {collapsed && !hoverExpanded ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
       </button>
@@ -99,7 +98,6 @@ export default function Sidebar() {
       <button
         className={`nav-item ${view === 'cards' ? 'active' : ''}`}
         onClick={() => setView('cards')}
-        title="我的模板"
         style={hasRunningModels ? { color: 'var(--success)' } : {}}
       >
         <LayoutGrid size={16} />
@@ -110,7 +108,6 @@ export default function Sidebar() {
       <button
         className={`nav-item ${view === 'models' ? 'active' : ''}`}
         onClick={() => setView('models')}
-        title="模型"
       >
         <HardDrive size={16} />
         <span>模型</span>
@@ -119,7 +116,6 @@ export default function Sidebar() {
       <button
         className={`nav-item ${view === 'hub' ? 'active' : ''}`}
         onClick={() => setView('hub')}
-        title="模型中心"
       >
         <Search size={16} />
         <span>模型中心</span>
@@ -131,7 +127,6 @@ export default function Sidebar() {
       <button
         className={`nav-item ${view === 'llama' ? 'active' : ''}`}
         onClick={() => setView('llama')}
-        title={activeChatUrl ? '打开聊天界面' : '暂无活跃会话'}
         style={activeChatUrl ? { color: 'var(--success)' } : {}}
       >
         <Server size={16} />
@@ -142,7 +137,6 @@ export default function Sidebar() {
       <button
         className={`nav-item ${view === 'chat' ? 'active' : ''}`}
         onClick={() => setView('chat')}
-        title="聊天"
         style={hasRunningModels ? { color: 'var(--success)' } : {}}
       >
         <MessageSquare size={16} />
@@ -153,7 +147,6 @@ export default function Sidebar() {
       <button
         className={`nav-item ${view === 'monitoring' ? 'active' : ''}`}
         onClick={() => setView('monitoring')}
-        title="模型运行数据"
         style={hasRunningModels ? { color: 'var(--success)' } : {}}
       >
         <Activity size={16} />
@@ -164,7 +157,6 @@ export default function Sidebar() {
       <button
         className={`nav-item ${view === 'benchmark' ? 'active' : ''}`}
         onClick={() => setView('benchmark')}
-        title="性能测试"
       >
         <Gauge size={16} />
         <span>性能测试</span>
@@ -174,7 +166,6 @@ export default function Sidebar() {
       <button
         className={`nav-item ${view === 'terminal' ? 'active' : ''}`}
         onClick={() => setView('terminal')}
-        title="终端"
       >
         <Terminal size={16} />
         <span>终端</span>
@@ -183,7 +174,6 @@ export default function Sidebar() {
       <button
         className={`nav-item ${view === 'ocr' ? 'active' : ''}`}
         onClick={() => setView('ocr')}
-        title={hasRunningModels ? 'OCR 文字识别' : '暂无运行中的模型'}
         style={hasRunningModels ? { color: 'var(--success)' } : {}}
       >
         <FileText size={16} />
@@ -197,7 +187,6 @@ export default function Sidebar() {
       <button
         className={`nav-item ${view === 'agent-code' ? 'active' : ''}`}
         onClick={() => setView('agent-code')}
-        title="Agent Code 工作台"
       >
         <Code size={16} />
         <span>Agent Code 工作台</span>
@@ -209,7 +198,6 @@ export default function Sidebar() {
       <button
         className={`nav-item ${view === 'agents' ? 'active' : ''}`}
         onClick={() => setView('agents')}
-        title="AI Agent"
       >
         <Bot size={16} />
         <span>AI Agent</span>
@@ -218,7 +206,6 @@ export default function Sidebar() {
       <button
         className={`nav-item ${view === 'settings' ? 'active' : ''}`}
         onClick={() => setView('settings')}
-        title="设置"
       >
         <Settings size={16} />
         <span>设置</span>
@@ -227,7 +214,6 @@ export default function Sidebar() {
       <button
         className={`nav-item ${view === 'about' ? 'active' : ''}`}
         onClick={() => setView('about')}
-        title="关于"
       >
         <Info size={16} />
         <span>关于</span>
@@ -256,23 +242,23 @@ export default function Sidebar() {
       )}
       {paths && (
         <div className="sidebar-bottom-section" style={{ marginTop: 'auto', paddingTop: 12 }}>
-          <button className="nav-item" onClick={() => window.api.openFolder(paths.backend)} title={paths.backend}>
+          <button className="nav-item" onClick={() => window.api.openFolder(paths.backend)}>
             <FolderOpen size={16} />
             <span>打开 /backend</span>
           </button>
-          <button className="nav-item" onClick={() => window.api.openFolder(paths.models)} title={paths.models}>
+          <button className="nav-item" onClick={() => window.api.openFolder(paths.models)}>
             <FolderOpen size={16} />
             <span>打开 /models</span>
           </button>
-          <button className="nav-item" onClick={() => window.api.openFolder(paths.chatImages)} title={paths.chatImages}>
+          <button className="nav-item" onClick={() => window.api.openFolder(paths.chatImages)}>
             <FolderOpen size={16} />
             <span>打开 /images</span>
           </button>
-          <button className="nav-item" onClick={() => window.api.openFolder(paths.chatPdfExports)} title={paths.chatPdfExports}>
+          <button className="nav-item" onClick={() => window.api.openFolder(paths.chatPdfExports)}>
             <FolderOpen size={16} />
             <span>打开 /pdf_exports</span>
           </button>
-          <button className="nav-item" onClick={() => window.api.openFolder(paths.chatTemplates)} title={paths.chatTemplates}>
+          <button className="nav-item" onClick={() => window.api.openFolder(paths.chatTemplates)}>
             <FolderOpen size={16} />
             <span>打开 /chat-templates</span>
           </button>

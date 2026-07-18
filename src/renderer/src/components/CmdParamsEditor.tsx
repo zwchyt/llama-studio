@@ -21,7 +21,6 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
   const setChatTemplates = useStore(s => s.setChatTemplates)
   const [searchQuery, setSearchQuery] = useState('')
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set())
-  const [hoveredParam, setHoveredParam] = useState<string | null>(null)
   const [descTooltip, setDescTooltip] = useState<{ text: string; x: number; y: number } | null>(null)
   const [copiedParam, setCopiedParam] = useState<string | null>(null)
   const initialSchemaRef = useRef(true)
@@ -82,16 +81,37 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
     return cmd
   }, [cmdPreviewItems])
 
-  const handleCopyParam = async (text: string, id: string) => {
-    await navigator.clipboard.writeText(text)
-    setCopiedParam(id)
-    setTimeout(() => setCopiedParam(null), 1500)
+  const copyText = async (text: string): Promise<boolean> => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text)
+        return true
+      }
+    } catch {
+      /* fall through to legacy method */
+    }
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.focus()
+      ta.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(ta)
+      return ok
+    } catch {
+      return false
+    }
   }
 
   const handleCopyAll = async () => {
-    await navigator.clipboard.writeText(fullCommand)
-    setCopiedParam('__all__')
-    setTimeout(() => setCopiedParam(null), 1500)
+    const ok = await copyText(fullCommand)
+    if (ok) {
+      setCopiedParam('__all__')
+      setTimeout(() => setCopiedParam(null), 1500)
+    }
   }
   const filteredCategories = useMemo(() => {
     if (!commandsSchema) return []
@@ -304,12 +324,13 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
           })
         )}
         <div className="cmd-section" style={{ marginBottom: 0, marginTop: 16 }}>
-          <div className="cmd-section-header">
-            Preview
+          <div className="cmd-section-header preview-header" data-section="preview">
+            <span className="preview-title">Preview</span>
             <button
+              type="button"
               className="cmd-copy-all-btn"
+              data-action="copy-all"
               onClick={handleCopyAll}
-              title="复制完整命令"
             >
               {copiedParam === '__all__' ? <Check size={12} /> : <Copy size={12} />}
               {copiedParam === '__all__' ? '已复制' : '复制全部'}
@@ -321,23 +342,12 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
               <span
                 key={item.id}
                 className="cmd-preview-item-wrap"
-                onMouseEnter={() => setHoveredParam(item.id)}
-                onMouseLeave={() => setHoveredParam(null)}
               >
                 <span className="cmd-preview-item">
                   {' '}
                   <span className="arg">{item.label}</span>
                   {item.value && <> <span className="val">{item.value}</span></>}
                 </span>
-                {hoveredParam === item.id && (
-                  <button
-                    className="cmd-param-copy-btn"
-                    onClick={() => handleCopyParam(item.fullText, item.id)}
-                    title="复制此参数"
-                  >
-                    {copiedParam === item.id ? <Check size={11} /> : <Copy size={11} />}
-                  </button>
-                )}
               </span>
             ))}
           </div>

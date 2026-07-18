@@ -509,7 +509,7 @@ select {
 }
 
 .terminal-cwd-bar .terminal-cwd-input:focus {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .terminal-cwd-bar .terminal-cwd-input::placeholder {
@@ -1332,8 +1332,9 @@ select {
 }
 
 .cmd-row.active-param {
-  border-color: var(--accent);
-  background: rgba(10, 10, 10, .02);
+  border-color: #c9c9c9;
+  background: rgba(0, 0, 0, 0.02);
+  box-shadow: var(--shadow-md);
 }
 
 .cmd-label-group {
@@ -1425,7 +1426,7 @@ select {
 .cmd-input:focus,
 .cmd-select:focus,
 .cmd-textarea:focus {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .cmd-input {
@@ -1435,8 +1436,8 @@ select {
 
 .cmd-input[type="number"] {
   width: 90px;
-  appearance: textfield;
   -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 .cmd-input[type="number"]::-webkit-inner-spin-button,
@@ -1529,6 +1530,20 @@ select {
   animation: fadeIn 150ms ease;
 }
 
+/* 参数弹窗：透明无模糊遮罩（避免 backdrop-filter 卡顿/字体抖动；仍拦截点击以触发关闭） */
+.modal-overlay--plain {
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  animation: none;
+}
+
+/* 无模糊时：背景统一为界面表面色（#ececec），与界面其它卡片一致 */
+.modal-overlay--plain .modal {
+  background: var(--surface);
+  border: 1.5px solid var(--border-strong);
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0
@@ -1536,6 +1551,90 @@ select {
 
   to {
     opacity: 1
+  }
+}
+
+/* 删除确认气泡弹窗（在删除按钮左侧弹出） */
+.delete-popover {
+  position: absolute;
+  top: 0;
+  right: calc(100% + 10px);
+  width: 260px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: 14px;
+  z-index: 400;
+  animation: popoverIn 160ms cubic-bezier(.16, 1, .3, 1);
+  transform-origin: top right;
+}
+
+/* 指向右侧删除按钮的小箭头 */
+.delete-popover::before {
+  content: "";
+  position: absolute;
+  top: 11px;
+  right: -7px;
+  width: 12px;
+  height: 12px;
+  background: var(--surface);
+  border-right: 1.5px solid var(--border);
+  border-top: 1.5px solid var(--border);
+  transform: rotate(45deg);
+  border-top-right-radius: 3px;
+}
+
+.delete-popover-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.delete-popover-header svg {
+  color: var(--danger);
+  flex-shrink: 0;
+}
+
+.delete-popover-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.delete-popover-body {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+.delete-popover-body b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.delete-popover-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.delete-popover-footer .btn {
+  min-width: 60px;
+}
+
+@keyframes popoverIn {
+  from {
+    opacity: 0;
+    transform: scale(.92) translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateX(0);
   }
 }
 
@@ -1696,8 +1795,7 @@ select {
 .form-input:focus,
 .form-select:focus,
 .form-textarea:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(10, 10, 10, .08);
+  border-color: var(--border-strong);
 }
 
 .form-select {
@@ -1728,12 +1826,11 @@ select {
 }
 
 .cmd-select.form-select-button:hover {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .cmd-select.form-select-button:focus-visible {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(10, 10, 10, .08);
+  border-color: var(--border-strong);
 }
 
 .form-textarea {
@@ -1922,7 +2019,7 @@ select {
 .version-badge.active-version {
   background: var(--accent);
   color: var(--accent-fg);
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .dropdown {
@@ -2007,8 +2104,10 @@ select {
 
 .tooltip {
   position: fixed;
-  background: var(--accent);
-  color: var(--accent-fg);
+  background: #f4f4f4;
+  color: var(--text);
+  border: 1.5px solid var(--border-strong);
+  box-shadow: var(--shadow-md);
   padding: 5px 10px;
   border-radius: 6px;
   font-size: 11px;
@@ -2072,7 +2171,7 @@ select {
 }
 
 .add-card:hover {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
   color: var(--text);
   background: rgba(10, 10, 10, .02);
 }
@@ -2378,7 +2477,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 
 .api-tab:hover {
   background: #e0e0e0;
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .api-tab.active {
@@ -2403,7 +2502,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 
 .api-tab-btn:hover {
   color: var(--text);
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .api-tab-btn:disabled {
@@ -2524,6 +2623,26 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 .cmd-copy-all-btn svg {
   width: 12px;
   height: 12px;
+}
+
+/* Preview 区块 header：文字区不显示文本光标，避免与复制按钮混淆 */
+.cmd-section-header.preview-header {
+  cursor: default;
+  position: relative;
+}
+
+.cmd-section-header.preview-header .preview-title {
+  display: inline-flex;
+  align-items: center;
+}
+
+.cmd-section-header.preview-header .cmd-copy-all-btn {
+  position: relative;
+  z-index: 1;
+}
+
+.cmd-section-header.preview-header:hover {
+  color: var(--text-muted);
 }
 
 .flex {
@@ -2903,7 +3022,7 @@ webview {
 }
 
 .template-search-bar:focus-within {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .template-search-input {
@@ -2953,7 +3072,7 @@ webview {
 }
 
 .hub-search-bar:focus-within {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .hub-search-input {
@@ -3005,7 +3124,7 @@ webview {
 .hub-tag-btn:hover {
   background: var(--accent);
   color: var(--accent-fg);
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 /* ── ModelHub 双源标签切换 ── */
@@ -3118,7 +3237,7 @@ webview {
 }
 
 .hub-card.selected {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
   background: rgba(10, 10, 10, .02);
 }
 
@@ -4274,7 +4393,7 @@ webview {
 .chat-settings-btn.preview-active {
   background: var(--accent);
   color: #fff;
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .chat-stop-model-btn {
@@ -4393,7 +4512,7 @@ webview {
 
 .chat-settings-textarea:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .chat-settings-textarea::placeholder {
@@ -4599,13 +4718,10 @@ webview {
 /* ── 回到底部浮动按钮 ── */
 /* 锚定在 .chat-main-col（非滚动容器）内，底部偏移 = 输入框高度 + 间距，
    从而精确悬浮在输入框正上方，不随消息滚动而漂移、也不遮挡输入框。 */
-/* 通用「滚动到底部」浮动按钮（原生聊天 + Agent Code 共用基础样式，
-   间距由 bottom 控制；Agent Code 的差异用 .agent-code-view 前缀单独覆盖，
-   避免两份裸 .chat-scroll-bottom-btn 互相覆盖导致改了不生效。 */
 .chat-scroll-bottom-btn {
   position: absolute;
   left: 50%;
-  bottom: calc(var(--chat-input-h, 70px) + 30px);
+  bottom: calc(var(--chat-input-h, 70px) + 12px);
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -4628,10 +4744,6 @@ webview {
   color: var(--text);
   box-shadow: var(--shadow-lg);
   transform: translateX(-50%) scale(1.08);
-}
-
-.chat-scroll-bottom-btn:active {
-  transform: translateX(-50%) scale(0.96);
 }
 
 @keyframes chatScrollBtnIn {
@@ -4744,7 +4856,7 @@ webview {
 }
 
 .chat-welcome-suggestion-btn:hover {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
   color: var(--text);
   background: var(--bg);
 }
@@ -6420,7 +6532,7 @@ webview {
 .chat-file-tab.active {
   background: var(--accent);
   color: #fff;
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .chat-file-tab-icon {
@@ -6624,7 +6736,7 @@ webview {
 .chat-file-preview-pdf-nav-btn:hover:not(:disabled) {
   background: var(--accent);
   color: #fff;
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .chat-file-preview-pdf-nav-btn:disabled {
@@ -6753,7 +6865,7 @@ webview {
 .chat-file-preview-html-btn.active {
   background: var(--accent);
   color: #fff;
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .chat-file-preview-iframe {
@@ -7001,7 +7113,7 @@ webview {
 }
 
 .ocr-prompt-input:focus {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 /* ── 左侧：dropzone ── */
@@ -7022,7 +7134,7 @@ webview {
 
 .ocr-dropzone:hover,
 .ocr-dropzone.dragover {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
   background: color-mix(in srgb, var(--accent) 6%, var(--card-bg));
 }
 
@@ -7353,14 +7465,13 @@ webview {
 }
 
 .cmd-select.benchmark-select-button:hover {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
   background: var(--surface);
 }
 
 .cmd-select.benchmark-select-button:focus-visible {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
   background: var(--surface);
-  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.06);
 }
 
 .benchmark-config-params {
@@ -7401,14 +7512,13 @@ webview {
 }
 
 .benchmark-param input[type="number"]:hover {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
   background: var(--surface);
 }
 
 .benchmark-param input[type="number"]:focus {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
   background: var(--surface);
-  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.06);
 }
 
 .benchmark-mode-tabs {
@@ -7987,12 +8097,12 @@ input[type="reset"]:not(:disabled) {
 }
 
 .cursor-theme-card:hover {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
   background: var(--surface-hover);
 }
 
 .cursor-theme-card.selected {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
   box-shadow: 0 0 0 3px rgba(10, 10, 10, .08);
 }
 
@@ -8102,18 +8212,11 @@ input[type="reset"]:not(:disabled) {
   padding: 3px 8px;
   font-size: 13px;
   font-weight: 600;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--bg);
   color: var(--text);
   outline: none;
-  -webkit-appearance: none;
-  appearance: none;
-}
-
-.agent-code-rename-input:focus {
-  outline: none;
-  border-color: var(--border-strong);
 }
 
 .agent-code-topbar-right {
@@ -8383,7 +8486,7 @@ input[type="reset"]:not(:disabled) {
 }
 
 .agent-code-view .chat-input:focus {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
@@ -8406,7 +8509,7 @@ input[type="reset"]:not(:disabled) {
   padding: 0;
   background: var(--accent);
   color: var(--accent-fg, #fff);
-  border-color: var(--accent);
+  border-color: var(--border-strong);
   transition: opacity .15s ease, transform .05s ease, box-shadow .15s ease;
 }
 
@@ -8619,10 +8722,6 @@ input[type="reset"]:not(:disabled) {
   box-shadow: 0 7px 0 var(--accent), 0 14px 0 var(--accent);
 }
 
-/* 会话侧边栏右侧的可拖拽分隔条（调整侧边栏宽度） */
-/* 注意：此为 absolute 定位，放在 agent-code-body（position: relative）内。
-   宽度用 --agent-sidebar-width CSS 变量控制（由 JS 拖拽逻辑实时更新）。
-   收起时通过 sidebar-collapsed 整个隐藏手柄，避免悬浮在聊天区中间。 */
 .agent-code-sidebar-resize-handle {
   position: absolute;
   top: 0;
@@ -8690,23 +8789,32 @@ input[type="reset"]:not(:disabled) {
 }
 
 /* ── 滚动到底部浮动按钮 ── */
-/* Agent Code 工作台内的「滚动到底部」按钮：在通用样式基础上，
-   仅覆盖本工作台需要的差异（更小的间距 + 稍大尺寸 + 自有 hover/active），
-   用 .agent-code-view 前缀避免再与通用规则互相覆盖。 */
-.agent-code-view .chat-scroll-bottom-btn {
-  bottom: calc(var(--chat-input-h, 70px) + 2px);
+/* 锚定在 .agent-code-chat（非滚动容器）内，底部偏移 = 输入框高度 + 间距，
+   从而精确悬浮在输入框正上方，不遮挡输入框。 */
+.chat-scroll-bottom-btn {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--chat-input-h, 70px) + 14px);
+  transform: translateX(-50%);
   z-index: 20;
   width: 38px;
   height: 38px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--surface);
   color: var(--text);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
   transition: background 0.15s ease, transform 0.12s ease, opacity 0.15s ease;
 }
-.agent-code-view .chat-scroll-bottom-btn:hover {
+.chat-scroll-bottom-btn:hover {
   background: var(--surface-hover);
   transform: translateX(-50%) translateY(-2px);
 }
-.agent-code-view .chat-scroll-bottom-btn:active {
+.chat-scroll-bottom-btn:active {
   transform: translateX(-50%) translateY(0);
 }
 
@@ -8718,17 +8826,17 @@ input[type="reset"]:not(:disabled) {
   width: var(--agent-sidebar-width, 200px);
   flex-shrink: 0;
   overflow: hidden;
-  transition: opacity 0.2s ease;
+  /* width 不加 transition：拖动时瞬时跟手；折叠动画改由 margin-left 负责 */
+  transition: margin-left 0.25s ease, opacity 0.2s ease;
 }
 
 .sidebar-collapsed .agent-code-sidebar-collapser {
-  width: 0;
+  margin-left: calc(-1 * var(--agent-sidebar-width, 200px));
   opacity: 0;
 }
 
 .agent-code-sidebar {
   width: var(--agent-sidebar-width, 200px);
-  min-width: 0;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
   display: flex;
@@ -8744,7 +8852,7 @@ input[type="reset"]:not(:disabled) {
   flex-shrink: 0;
   overflow: hidden;
   max-width: 2000px;
-  transition: max-width 0.45s cubic-bezier(.4, 0, .2, 1), opacity 0.35s ease;
+  transition: max-width 0.35s ease, opacity 0.2s ease;
 }
 
 /* 右侧栏主体（文件树 / 预览 / 任务），位于上下文监控面板下方。
@@ -8924,27 +9032,12 @@ input[type="reset"]:not(:disabled) {
 
 .agent-code-topbar-btn.active {
   background: var(--surface-hover);
-  color: var(--accent);
+  color: var(--text);
   border-color: var(--border-strong);
 }
 
 .agent-code-topbar-btn.active:hover {
   background: var(--surface-hover);
-}
-
-/* 彻底去掉点击 / 聚焦（含点击弹窗后按钮仍持有焦点）时的黑色高亮边框 */
-.agent-code-topbar-btn:focus,
-.agent-code-topbar-btn:focus-visible,
-.agent-code-topbar-btn:active,
-.agent-code-topbar-btn:focus:not(:active) {
-  outline: none !important;
-  border-color: var(--border) !important;
-  box-shadow: none !important;
-}
-/* Firefox 点击后残留的内焦点边框 */
-.agent-code-topbar-btn::-moz-focus-inner {
-  border: 0 !important;
-  outline: none !important;
 }
 
 /* ── 任务清单面板（Todo / Task）── */
@@ -9125,10 +9218,10 @@ input[type="reset"]:not(:disabled) {
 }
 
 .agent-code-session-new-btn:hover {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
   border-style: solid;
   background: var(--surface-hover);
-  color: var(--accent);
+  color: var(--text);
   box-shadow: var(--shadow);
 }
 
@@ -9142,7 +9235,6 @@ input[type="reset"]:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 4px;
-  min-width: 0;
   padding: 8px 8px 8px 6px;
   font-size: 13px;
   font-weight: 600;
@@ -9185,6 +9277,32 @@ input[type="reset"]:not(:disabled) {
 .ac-icon-btn {
   position: relative;
   display: inline-flex;
+}
+
+.ac-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-50%) translateY(4px);
+  transition: opacity .15s ease, transform .15s ease;
+  z-index: 50;
+}
+
+.ac-icon-btn:hover .ac-tip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 .agent-code-project-item.active .agent-code-session-title {
@@ -9230,7 +9348,6 @@ input[type="reset"]:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
   padding: 7px 10px;
   font-size: 12px;
   color: var(--text-secondary);
@@ -9288,7 +9405,6 @@ input[type="reset"]:not(:disabled) {
 
 .agent-code-session-title {
   flex: 1;
-  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -9323,6 +9439,7 @@ input[type="reset"]:not(:disabled) {
   color: #e5484d;
 }
 
+.agent-code-session-add,
 .agent-code-session-rename {
   flex-shrink: 0;
   opacity: 0;
@@ -9339,6 +9456,10 @@ input[type="reset"]:not(:disabled) {
   transition: opacity .15s, background .15s, color .15s;
 }
 
+.agent-code-project-item:hover .agent-code-session-add,
+.agent-code-session-item:hover .agent-code-session-add,
+.agent-code-project-item.active .agent-code-session-add,
+.agent-code-session-item.active .agent-code-session-add,
 .agent-code-project-item:hover .agent-code-session-rename,
 .agent-code-session-item:hover .agent-code-session-rename,
 .agent-code-project-item.active .agent-code-session-rename,
@@ -9346,41 +9467,39 @@ input[type="reset"]:not(:disabled) {
   opacity: 1;
 }
 
-.agent-code-session-rename:hover {
-  background: rgba(255, 80, 80, .15);
-  color: #e5484d;
+.agent-code-session-add:hover {
+  background: rgba(22, 163, 74, .15);
+  color: #16a34a;
 }
 
-.agent-code-session-add {
-  flex-shrink: 0;
-  opacity: 0;
-  padding: 3px;
+.agent-code-session-rename:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.agent-code-add-sess-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  margin-top: 2px;
+  padding: 7px 10px 7px 18px;
   border: none;
   background: none;
   color: var(--text-muted);
+  font-size: 12px;
   cursor: pointer;
-  border-radius: 5px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  transition: opacity .15s, background .15s, color .15s;
+  transition: all .15s ease;
+  border-radius: var(--radius-sm);
 }
 
-.agent-code-project-item:hover .agent-code-session-add,
-.agent-code-project-item.active .agent-code-session-add {
-  opacity: 1;
-}
-
-.agent-code-session-add:hover {
-  background: rgba(255, 80, 80, .15);
-  color: #e5484d;
+.agent-code-add-sess-btn:hover {
+  color: var(--accent);
+  background: var(--surface-hover);
 }
 
 .agent-code-session-list {
   flex: 1;
-  min-width: 0;
-  overflow-x: hidden;
   overflow-y: auto;
   padding-bottom: 12px;
 }
@@ -9938,7 +10057,7 @@ input[type="reset"]:not(:disabled) {
 
 .agent-prompt-textarea:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .agent-prompt-check {
@@ -10596,8 +10715,7 @@ input[type="reset"]:not(:disabled) {
    不固定、不存 state；拖文件树时因剩余空间变化而自然跟随。 */
 .agent-code-preview {
   width: var(--agent-preview-width, 480px);
-  flex-shrink: 1;
-  min-width: 0;
+  min-width: 240px;
   max-width: 760px;
   display: flex;
   flex-direction: column;
@@ -10614,7 +10732,6 @@ input[type="reset"]:not(:disabled) {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   background: var(--surface);
-  position: relative;
 }
 
 .agent-code-preview-name {
@@ -10639,10 +10756,6 @@ input[type="reset"]:not(:disabled) {
   gap: 4px;
   flex-shrink: 0;
   margin-left: auto;
-  position: relative;
-  z-index: 1;
-  padding-left: 6px;
-  background: var(--surface);
 }
 
 .agent-code-preview-close:hover {
@@ -10660,32 +10773,13 @@ input[type="reset"]:not(:disabled) {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
-}
-
-/* 多文件预览标签栏横向滚动条：贴合界面主题，纤细且半透明，hover 高亮 */
-.agent-code-preview-tabs::-webkit-scrollbar {
-  height: 6px;
-}
-
-.agent-code-preview-tabs::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.agent-code-preview-tabs::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 99px;
-}
-
-.agent-code-preview-tabs::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
 }
 
 .agent-code-preview-tab {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex-shrink: 0;
+  flex-shrink: 1;
   min-width: 0;
   max-width: 160px;
   padding: 2px 4px 2px 8px;
@@ -10821,12 +10915,12 @@ input[type="reset"]:not(:disabled) {
 
 .ask-question-option:hover {
   background: var(--bg-hover);
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .ask-question-option.selected {
   background: rgba(96, 165, 250, .08);
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .ask-question-option input[type="radio"],
@@ -10883,7 +10977,7 @@ input[type="reset"]:not(:disabled) {
 
 .ask-question-other-input:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .ask-question-preview {
@@ -10924,9 +11018,9 @@ input[type="reset"]:not(:disabled) {
 
 .agent-card-prompt-body .agent-prompt-textarea {
   width: 100%;
-  min-height: 100px;
-  max-height: 200px;
-  padding: 8px 10px;
+  min-height: 130px;
+  max-height: 220px;
+  padding: 10px 12px;
   font-size: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -10934,7 +11028,7 @@ input[type="reset"]:not(:disabled) {
   color: var(--text);
   resize: vertical;
   font-family: inherit;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .agent-card-prompt-body .agent-prompt-hint {
@@ -10957,99 +11051,90 @@ input[type="reset"]:not(:disabled) {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
-  padding: 8px 12px;
+  gap: 8px;
+  padding: 10px 12px;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
 
-/* 提示词弹窗专属按钮：贴合界面主题（圆角 / 边框 / 强调色），不依赖全局 .btn */
 .agent-prompt-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  padding: 4px 12px;
-  font-size: 11px;
-  font-weight: 500;
+  padding: 6px 14px;
   border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font);
   cursor: pointer;
   border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: inherit;
   transition: all .15s ease;
   white-space: nowrap;
 }
-.agent-prompt-btn:focus,
-.agent-prompt-btn:focus-visible,
-.agent-prompt-btn:active {
-  outline: none !important;
-  box-shadow: none !important;
-}
+
 .agent-prompt-btn-ghost {
-  border-color: var(--border);
-  background: var(--bg);
+  background: transparent;
   color: var(--text-secondary);
+  border-color: var(--border-strong);
 }
+
 .agent-prompt-btn-ghost:hover:not(:disabled) {
-  background: var(--surface-hover);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.agent-prompt-btn-primary {
+  background: var(--bg);
   color: var(--text);
   border-color: var(--border-strong);
 }
-/* 主按钮（保存）：浅色描边风格，不用黑色背景，边框用中性灰，仅文字用强调色 */
-.agent-prompt-btn-primary {
-  background: var(--bg);
-  color: var(--accent);
-  border-color: var(--border-strong);
-  font-weight: 600;
-}
+
 .agent-prompt-btn-primary:hover:not(:disabled) {
   background: var(--surface-hover);
-  color: var(--accent);
-  border-color: var(--border-strong);
+  border-color: var(--text-muted);
 }
+
 .agent-prompt-btn:disabled {
-  opacity: .45;
+  opacity: .5;
   cursor: not-allowed;
 }
-/* 自定义勾选框：圆形，选中时内部填充主题色圆点（非黑色），无勾号 */
+
+/* 自定义勾选框（替代浏览器默认 checkbox） */
 .agent-prompt-checkbox {
   appearance: none;
   -webkit-appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
   margin: 0;
-  padding: 0;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 4px;
   background: var(--bg);
   cursor: pointer;
   position: relative;
-  flex-shrink: 0;
-  transition: all .15s ease;
+  transition: border-color .15s ease, background .15s ease;
 }
+
 .agent-prompt-checkbox:hover {
-  border-color: var(--border-strong);
+  border-color: var(--text-muted);
 }
+
 .agent-prompt-checkbox:checked {
+  background: var(--accent);
   border-color: var(--border-strong);
-  background: var(--bg);
 }
+
 .agent-prompt-checkbox:checked::after {
   content: '';
   position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--success);
-  transform: translate(-50%, -50%);
-}
-.agent-prompt-checkbox:focus,
-.agent-prompt-checkbox:focus-visible {
-  outline: none !important;
-  border-color: var(--border-strong);
+  left: 5px;
+  top: 2px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--accent-fg);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
 }
 
 /* ── Agent Code 任务计划浮动卡片（聊天区右上角）── */
