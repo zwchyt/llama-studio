@@ -1,0 +1,440 @@
+.hub-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.hub-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  margin-bottom: 14px;
+  transition: border-color var(--transition);
+  box-shadow: var(--shadow);
+}
+
+.hub-search-bar:focus-within {
+  border-color: var(--border-strong);
+}
+
+.hub-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  font-family: var(--font);
+  color: var(--text);
+  outline: none;
+}
+
+.hub-search-clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  transition: color var(--transition);
+}
+
+.hub-search-clear:hover {
+  color: var(--text);
+}
+
+.hub-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.hub-tag-btn {
+  padding: 4px 12px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all var(--transition);
+  font-family: var(--font);
+}
+
+.hub-tag-btn:hover {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--border-strong);
+}
+
+.hub-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  margin-left: auto;
+}
+
+.hub-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: calc(var(--radius-sm) - 2px);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+
+.hub-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg);
+}
+
+.hub-tab.active {
+  background: var(--bg);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+}
+
+.hub-results-layout {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hub-results-layout .hub-grid {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.hub-results-layout.has-detail .hub-grid {
+  max-width: 420px;
+}
+
+.hub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 10px;
+  align-content: start;
+}
+
+.hub-results-layout .hub-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hub-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: all var(--transition);
+  box-shadow: var(--shadow);
+  font-family: var(--font);
+}
+
+.hub-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.hub-card.selected {
+  border-color: var(--border-strong);
+  background: rgba(10, 10, 10, .02);
+}
+
+.hub-card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.hub-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.hub-card-name {
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.hub-card-author {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.hub-card-stats {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.hub-card-stats span {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.hub-card.skeleton {
+  height: 72px;
+  background: linear-gradient(90deg, var(--bg) 25%, var(--border) 50%, var(--bg) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  cursor: default;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.hub-detail-panel {
+  width: 380px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  overflow-y: auto;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.hub-detail-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.hub-detail-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.hub-detail-author {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.hub-detail-stats {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+}
+
+.hub-detail-stats span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.hub-file-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hub-quant-badge {
+  padding: 2px 7px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .4px;
+  flex-shrink: 0;
+}
+
+.hub-dl-btn {
+  align-self: flex-end;
+}
+
+.hub-file-done {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.hub-file-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hub-progress-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 32px;
+  text-align: right;
+}
+
+.hub-downloads-strip {
+  position: sticky;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--accent);
+  color: var(--accent-fg);
+  padding: 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid rgba(255, 255, 255, .1);
+  animation: slideDown 300ms ease;
+}
+
+.hub-dl-strip-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.hub-dl-strip-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+.hub-dl-strip-bar {
+  width: 120px;
+  height: 3px;
+  background: rgba(255, 255, 255, .3);
+  border-radius: 99px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.hub-dl-strip-fill {
+  height: 100%;
+  background: white;
+  border-radius: 99px;
+  transition: width 300ms linear;
+}
+
+.hub-dl-strip-pct {
+  font-size: 11px;
+  opacity: .8;
+  min-width: 30px;
+  text-align: right;
+}
+/* === 从 global.css 迁移的 hub 视图专属样式 === */
+
+
+/* global.css 原行 1993-2004 */
+.hub-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(220, 38, 38, .08);
+  border: 1px solid rgba(220, 38, 38, .2);
+  border-radius: var(--radius-sm);
+  color: var(--danger);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+/* global.css 原行 2016-2071 */
+.hub-detail-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.hub-file-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  margin-bottom: 8px;
+  transition: border-color var(--transition);
+}
+
+.hub-file-row:hover {
+  border-color: var(--border-strong);
+}
+
+.hub-file-name {
+  font-size: 11px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hub-file-size {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.hub-progress-bar {
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.hub-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 99px;
+  transition: width 300ms linear;
+}

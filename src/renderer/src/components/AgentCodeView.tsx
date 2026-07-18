@@ -33,6 +33,7 @@ import CodeBlock from './CodeBlock'
 import AskUserQuestionModal from './AskUserQuestionModal'
 
 import type { AgentMessage, AgentSession, AgentProject, Attachment, AgentTask, TodoUpdate } from '../../../shared/types'
+import '../styles/agent-code.css'
 
 type ApiMessage =
   | { role: 'system' | 'user' | 'assistant'; content: string | Array<Record<string, unknown>> }

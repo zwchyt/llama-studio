@@ -1,6 +1,7 @@
 import React from 'react'
 import { useStore } from '../store/useStore'
 import { Play, Search, HardDrive, Settings } from 'lucide-react'
+import '../styles/welcome.css'
 
 export default function WelcomeView() {
   const setView = useStore(s => s.setView)

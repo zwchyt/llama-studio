@@ -8,6 +8,7 @@ import {
 import { formatBytes } from '../utils/format'
 import { formatDownloadStatus } from '../utils/downloadFormat'
 import { notify } from '../store/notificationStore'
+import '../styles/models.css'
 import { safeCall } from '../utils/safeCall'
 function UrlDownloadModal({ onClose }: { onClose: () => void }) {
   const [url, setUrl] = useState('')

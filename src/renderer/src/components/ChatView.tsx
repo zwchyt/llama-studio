@@ -55,6 +55,7 @@ import CustomSelect from './CustomSelect'
 
 // 导入 worker 模块使其注册 globalThis.pdfjsWorker，pdfjs 的 fake worker 回退自动使用它
 import 'pdfjs-dist/build/pdf.worker.js'
+import '../styles/chat.css'
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;')
@@ -1412,7 +1413,6 @@ export default function ChatView() {
   const lastScrollSessionRef = useRef<string | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [atBottom, setAtBottom] = useState(true)
-  const [deletingSession, setDeletingSession] = useState<ChatSession | null>(null)
   const [activeNavMsgId, setActiveNavMsgId] = useState<string | null>(null)
   // 输入框代码预览：用户手动关闭后，任意输入变化即可重新触发
   const [inputPreviewDismissed, setInputPreviewDismissed] = useState(false)
@@ -2874,7 +2874,7 @@ ${msgsHtml}
           onSelect={selectSession}
           onNew={handleNew}
           onRename={renameSession}
-          onDeleteRequest={(s) => setDeletingSession(s)}
+          onDeleteRequest={(s) => deleteSession(s.id)}
           runningModels={runningModels}
           streamingSessionIds={Object.keys(streamingMap)}
           onToggleStar={toggleSessionStar}
@@ -3453,19 +3453,8 @@ ${msgsHtml}
       )}
 
       <ConfirmModal
-        open={deletingSession !== null}
-        message={deletingSession ? `确定删除会话「${deletingSession.title}」？此操作不可撤销。` : ''}
-        confirmLabel="删除"
-        danger
-        onConfirm={() => {
-          if (deletingSession) deleteSession(deletingSession.id)
-          setDeletingSession(null)
-        }}
-        onCancel={() => setDeletingSession(null)}
-      />
-
-      <ConfirmModal
         open={deletingMsgId !== null}
+        title="删除消息"
         message="确定删除此回复及其后续消息？此操作不可撤销。"
         confirmLabel="删除"
         danger

@@ -124,6 +124,16 @@ function AppMain() {
       } catch (e) {
         console.error('初始化错误:', e)
       } finally {
+        // 同步主进程中实际在运行的模型状态（刷新后恢复运行中标识）
+        window.api.getRunningProcesses().then((runningIds: string[]) => {
+          if (runningIds.length > 0) {
+            const st = useStore.getState()
+            for (const id of runningIds) {
+              st.setCardStatus(id, 'running')
+            }
+          }
+        }).catch(() => {})
+
         // 数据初始化完成：至少展示 1.2s 后触发开屏爆炸退场
         const elapsed = performance.now() - appStartRef.current
         const wait = Math.max(0, 1200 - elapsed)

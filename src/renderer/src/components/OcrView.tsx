@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { Upload, X, Copy, Check, Loader2, FileText, Trash2, AlertCircle, ImageIcon } from 'lucide-react'
 import { notify } from '../store/notificationStore'
+import '../styles/ocr.css'
 
 export default function OcrView() {
   const cards = useStore(s => s.cards, shallow)

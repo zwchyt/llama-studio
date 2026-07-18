@@ -3,6 +3,7 @@ import { createTerminal, attach, fitTerminal, disposeTerminal } from '../utils/t
 import { useTerminalStore } from '../store/terminalStore'
 import { Terminal, FolderOpen, Plus } from 'lucide-react'
 import { safeCall } from '../utils/safeCall'
+import '../styles/terminal.css'
 
 const CWD_KEY = 'terminal-last-cwd'
 

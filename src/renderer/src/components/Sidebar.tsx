@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { safeCall } from '../utils/safeCall'
 import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Server, Bot, MessageSquare, Terminal, Info, FileText, Gauge, PanelLeftClose, PanelLeftOpen, Code } from 'lucide-react'
+import '../styles/sidebar.css'
 
 function BackendNavItem({ b, isActive, onSwitch }: { b: { name: string; path?: string }; isActive: boolean; onSwitch: () => void }) {
   return (

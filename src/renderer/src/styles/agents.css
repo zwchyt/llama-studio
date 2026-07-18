@@ -1,0 +1,132 @@
+
+
+div[style*="cursor: pointer"]:hover .agent-website-badge {
+  opacity: 1 !important;
+}
+/* === 从 global.css 迁移的 agents 视图专属样式 === */
+
+
+/* global.css 原行 3661-3784 */
+.ask-user-question-modal {
+  width: 520px;
+}
+
+.ask-user-question-modal .modal-close-btn {
+  margin-left: auto;
+  padding: 4px;
+  flex-shrink: 0;
+}
+
+.ask-question-block {
+  margin-bottom: 20px;
+}
+
+.ask-question-block:last-child {
+  margin-bottom: 0;
+}
+
+.ask-question-text {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.ask-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ask-question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+
+.ask-question-option:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.ask-question-option.selected {
+  background: rgba(96, 165, 250, .08);
+  border-color: var(--border-strong);
+}
+
+.ask-question-option input[type="radio"],
+.ask-question-option input[type="checkbox"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+
+.ask-question-option-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ask-question-option-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ask-question-option-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.ask-question-other {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px dashed var(--border);
+}
+
+.ask-question-other .ask-question-option-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ask-question-other-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.ask-question-other-input:focus {
+  outline: none;
+  border-color: var(--border-strong);
+}
+
+.ask-question-preview {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.ask-question-preview pre {
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

@@ -9,6 +9,7 @@ import { formatBytes } from '../utils/format'
 import { formatDownloadStatus, formatDownloadStripText } from '../utils/downloadFormat'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
+import '../styles/hub.css'
 interface HfModel {
   id: string
   author: string

@@ -4,6 +4,7 @@ import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { ExternalLink, Copy, Check, RefreshCw, Loader, X, Globe, Square } from 'lucide-react'
+import '../styles/llama.css'
 
 export default function LlamaChatView() {
   const { activeChatUrl, activeChatPort, clearActiveChat, setView } = useStore(

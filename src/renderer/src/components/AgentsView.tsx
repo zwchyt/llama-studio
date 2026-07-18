@@ -2,6 +2,7 @@ import React, { useEffect, useCallback, useState, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { RefreshCw, CheckCircle2, XCircle, FolderOpen, Play, Download, ArrowUpCircle, PackagePlus, ExternalLink } from 'lucide-react'
 import type { AgentStatus } from '../store/useStore'
+import '../styles/agents.css'
 
 export default function AgentsView() {
   const agentStatuses = useStore(s => s.agentStatuses)

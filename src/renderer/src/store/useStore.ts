@@ -42,7 +42,7 @@ function scheduleSaveAgentProjects(p: AgentProject[]): void {
   // 空占位项目（无会话、无工作目录）不落盘，避免 IPC GC 误删磁盘已有会话文件
   if (p.length === 0 || p.every(proj => proj.sessions.length === 0 && !proj.workspaceDir)) return
   saveAgentProjectsTimer = setTimeout(() => {
-    window.api?.saveAgentProjects(p).catch(() => {})
+    window.api?.saveAgentProjects(p).catch(() => { })
   }, 800)
 }
 
@@ -257,31 +257,35 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   updateModelMetric: (id, partial) => set((s) => {
     const existing = s.modelMetrics[id]
     if (!existing) {
-      return { modelMetrics: { ...s.modelMetrics, [id]: {
-        id,
-        templateName: partial.templateName || id,
-        pid: partial.pid,
-        decodeTokS: partial.decodeTokS ?? [],
-        ttftMs: partial.ttftMs ?? null,
-        prefillTokS: partial.prefillTokS ?? null,
-        reqPerSec: partial.reqPerSec ?? [],
-        vramUsedMb: partial.vramUsedMb ?? null,
-        vramTotalMb: partial.vramTotalMb ?? 0,
-        gpuTemperature: partial.gpuTemperature ?? null,
-        gpuUtilization: partial.gpuUtilization ?? null,
-        gpuName: partial.gpuName ?? '',
-        gpuPowerDraw: partial.gpuPowerDraw ?? null,
-        cpuUsage: partial.cpuUsage ?? null,
-        nPromptTokens: partial.nPromptTokens ?? 0,
-        nPromptTokensCache: partial.nPromptTokensCache ?? 0,
-        nPromptTokensProcessed: partial.nPromptTokensProcessed ?? 0,
-        nDecoded: partial.nDecoded ?? 0,
-        isProcessing: partial.isProcessing ?? false,
-        prefillProgress: partial.prefillProgress ?? null,
-        nPredict: partial.nPredict ?? -1,
-        nCtx: partial.nCtx ?? 0,
-        lastUpdated: Date.now(),
-      } } }
+      return {
+        modelMetrics: {
+          ...s.modelMetrics, [id]: {
+            id,
+            templateName: partial.templateName || id,
+            pid: partial.pid,
+            decodeTokS: partial.decodeTokS ?? [],
+            ttftMs: partial.ttftMs ?? null,
+            prefillTokS: partial.prefillTokS ?? null,
+            reqPerSec: partial.reqPerSec ?? [],
+            vramUsedMb: partial.vramUsedMb ?? null,
+            vramTotalMb: partial.vramTotalMb ?? 0,
+            gpuTemperature: partial.gpuTemperature ?? null,
+            gpuUtilization: partial.gpuUtilization ?? null,
+            gpuName: partial.gpuName ?? '',
+            gpuPowerDraw: partial.gpuPowerDraw ?? null,
+            cpuUsage: partial.cpuUsage ?? null,
+            nPromptTokens: partial.nPromptTokens ?? 0,
+            nPromptTokensCache: partial.nPromptTokensCache ?? 0,
+            nPromptTokensProcessed: partial.nPromptTokensProcessed ?? 0,
+            nDecoded: partial.nDecoded ?? 0,
+            isProcessing: partial.isProcessing ?? false,
+            prefillProgress: partial.prefillProgress ?? null,
+            nPredict: partial.nPredict ?? -1,
+            nCtx: partial.nCtx ?? 0,
+            lastUpdated: Date.now(),
+          }
+        }
+      }
     }
     for (const k in partial) {
       const key = k as keyof ModelMetrics
@@ -289,13 +293,17 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
       const ev = existing[key]
       const next = (key === 'nPromptTokensCache' || key === 'nPromptTokensProcessed') ? (pv ?? ev) : pv
       if (next !== ev) {
-        return { modelMetrics: { ...s.modelMetrics, [id]: {
-          ...existing,
-          ...partial,
-          nPromptTokensCache: partial.nPromptTokensCache ?? existing.nPromptTokensCache,
-          nPromptTokensProcessed: partial.nPromptTokensProcessed ?? existing.nPromptTokensProcessed,
-          lastUpdated: Date.now(),
-        } } }
+        return {
+          modelMetrics: {
+            ...s.modelMetrics, [id]: {
+              ...existing,
+              ...partial,
+              nPromptTokensCache: partial.nPromptTokensCache ?? existing.nPromptTokensCache,
+              nPromptTokensProcessed: partial.nPromptTokensProcessed ?? existing.nPromptTokensProcessed,
+              lastUpdated: Date.now(),
+            }
+          }
+        }
       }
     }
     return s

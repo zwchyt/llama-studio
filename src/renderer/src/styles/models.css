@@ -1,0 +1,570 @@
+empty-state/btn/form-input/params-search-box/hub-* 等通用类定义在 global.css，未搬移 */ .models-view {
+  --content-pad: 24px;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: var(--content-pad);
+}
+
+@media (min-width: 1400px) {
+  .models-view {
+    --content-pad: 32px;
+    max-width: 1200px;
+  }
+}
+
+.models-section {
+  margin-bottom: 24px;
+}
+
+.models-section-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .7px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.models-dl-row {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  transition: border-color var(--transition);
+}
+
+.models-dl-row.done {
+  border-color: var(--success);
+}
+
+.models-dl-row.error {
+  border-color: var(--danger);
+}
+
+.models-dl-status-text {
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.models-dl-row.error .models-dl-status-text {
+  color: var(--danger);
+}
+
+.models-dl-row.done .models-dl-status-text {
+  color: var(--success);
+}
+
+.models-dl-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.models-dl-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.models-dl-size {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.models-dl-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.models-dl-bar {
+  flex: 1;
+  height: 8px;
+  background: var(--border);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.models-dl-fill {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 300ms linear;
+}
+
+.models-dl-pct {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 80px;
+  text-align: right;
+}
+
+.models-file-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  transition: all var(--transition);
+}
+
+.models-file-row:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow);
+}
+
+.models-file-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.models-file-icon.image {
+  background: linear-gradient(135deg, var(--accent), #3a3a3a);
+  border-color: transparent;
+  color: var(--accent-fg);
+}
+
+.models-file-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.models-file-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.models-file-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.models-folder-badge {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text-secondary);
+}
+
+.models-file-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+/* === 从 global.css 迁移的 models 视图专属样式 === */
+
+
+/* global.css 原行 782-1002 */
+.cmd-section {
+  margin-bottom: 20px;
+}
+
+.cmd-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cmd-section-header svg {
+  width: 13px;
+  height: 13px;
+}
+
+.collapsible-section-header {
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: color var(--transition);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  margin: -4px -6px 12px;
+}
+
+.collapsible-section-header:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.section-chevron {
+  display: inline-flex;
+  transition: transform var(--transition);
+  flex-shrink: 0;
+}
+
+.cmd-grid-wrapper {
+  overflow: visible;
+  transition: max-height 300ms cubic-bezier(.4, 0, .2, 1), opacity 200ms ease;
+  max-height: 2000px;
+  opacity: 1;
+}
+
+.cmd-grid-collapsed {
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.cmd-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.cmd-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--transition);
+  position: relative;
+  grid-column: span 1;
+}
+
+.cmd-row:hover {
+  border-color: var(--border-strong);
+  z-index: 10;
+}
+
+.cmd-row.active-param {
+  border-color: #c9c9c9;
+  background: rgba(0, 0, 0, 0.02);
+  box-shadow: var(--shadow-md);
+}
+
+.cmd-label-group {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cmd-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4f5f4f;
+}
+
+.cmd-arg {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  margin-top: 1px;
+}
+
+.cmd-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+.toggle-wrap {
+  flex-shrink: 0;
+}
+
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  cursor: pointer;
+}
+
+.toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 99px;
+  background: var(--border-strong);
+  transition: background var(--transition);
+}
+
+.toggle input:checked~.toggle-track {
+  background: #7a8978;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #717a7f;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+  transition: transform var(--transition);
+}
+
+.toggle input:checked~.toggle-thumb {
+  transform: translateX(18px);
+}
+
+.cmd-input,
+.cmd-select,
+.cmd-textarea {
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.cmd-input:focus,
+.cmd-select:focus,
+.cmd-textarea:focus {
+  border-color: var(--border-strong);
+}
+
+.cmd-input {
+  padding: 5px 9px;
+  width: 110px;
+}
+
+.cmd-input[type="number"] {
+  width: 90px;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.cmd-input[type="number"]::-webkit-inner-spin-button,
+.cmd-input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.cmd-select {
+  padding: 5px 24px 5px 9px;
+  appearance: none;
+  cursor: pointer;
+  min-width: 90px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b6b6b'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+.cmd-select-mmproj {
+  width: 150px;
+  vertical-align: top;
+}
+
+.cmd-textarea {
+  padding: 7px 9px;
+  width: 100%;
+  resize: vertical;
+  min-height: 60px;
+  font-size: 11px;
+  margin-top: 6px;
+  display: block;
+}
+
+/* global.css 原行 2073-2227 */
+.card-launch-mode {
+  display: flex;
+  gap: 4px;
+  padding: 0 18px 12px;
+}
+
+.launch-mode-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.launch-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font);
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.launch-mode-btn:not(.active):hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.launch-mode-btn.active {
+  background: #d3d3d3;
+  color: #120101;
+  border-color: #d9d9d9;
+}
+
+.launch-mode-btn:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.launch-mode-btn svg {
+  width: 11px;
+  height: 11px;
+}
+
+.ce-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ce-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  margin-bottom: 4px;
+}
+
+.ce-category {
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.ce-category-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  background: var(--bg);
+  transition: background var(--transition);
+  -webkit-user-select: none;
+  user-select: none;
+  border-radius: calc(var(--radius-sm) - 1.5px) calc(var(--radius-sm) - 1.5px) 0 0;
+}
+
+.ce-category-header:hover {
+  background: var(--border);
+}
+
+.ce-cat-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ce-cat-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+.ce-category-body {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.ce-cmd-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.ce-cmd-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  background: var(--bg);
+  transition: background var(--transition);
+}
+
+.ce-cmd-item-header:hover {
+  background: var(--border);
+}
+
+.ce-cmd-arg {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  min-width: 120px;
+}
+
+.ce-cmd-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.ce-cmd-type-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ce-cmd-form {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}

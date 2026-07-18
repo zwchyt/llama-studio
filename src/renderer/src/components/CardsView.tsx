@@ -6,6 +6,7 @@ import { Plus, Upload, Search } from 'lucide-react'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import type { Template } from '../../../shared/types'
+import '../styles/cards.css'
 export default function CardsView() {
   const { cards, setShowCreateModal, addCard, templateSearch, setTemplateSearch } = useStore(
     s => ({ cards: s.cards, setShowCreateModal: s.setShowCreateModal, addCard: s.addCard, templateSearch: s.templateSearch, setTemplateSearch: s.setTemplateSearch }),

@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { Terminal, Gauge, Loader2, Cpu, Zap, HardDrive, BarChart3, Play, Square, ChevronDown } from 'lucide-react'
 import CustomSelect from './CustomSelect'
+import '../styles/benchmark.css'
 
 type BenchMode = 'quick' | 'stress'
 

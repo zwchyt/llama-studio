@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { Activity, Database, HardDrive, Square, HardDrive as MemIcon, Zap, Clock, Gauge, Play, MessageSquare, Thermometer, Cpu, RefreshCw, ExternalLink, Copy, Check, ChevronDown, Timer } from 'lucide-react'
+import '../styles/monitoring.css'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function fmt(n: unknown, digits = 1): string {
