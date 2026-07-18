@@ -82,7 +82,7 @@ export const useTerminalStore = createWithEqualityFn<TerminalStore>(
     },
 
     close: (id: string) => {
-      window.api.terminalKill(id).catch(() => {})
+      window.api.terminalKill(id).catch(() => { })
       disposeTerminal(id)
       set((s) => {
         const sessions = s.sessions.filter((x) => x.id !== id)

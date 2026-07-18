@@ -30,7 +30,7 @@ import AgentFileTree from './AgentFileTree'
 
 import AgentContextPanel from './AgentContextPanel'
 import CodeBlock from './CodeBlock'
-import AskUserQuestionModal from './AskUserQuestionModal'
+import AskUserQuestionInline from './AskUserQuestionInline'
 
 import type { AgentMessage, AgentSession, AgentProject, Attachment, AgentTask, TodoUpdate } from '../../../shared/types'
 import '../styles/agent-code.css'
@@ -804,7 +804,8 @@ const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPreviewFil
 const ToolResultView = React.memo(function ToolResultView({ result, truncated, total, lined }: { result: string; truncated?: boolean; total?: number; lined?: boolean }) {
   const lines = result.split('\n')
   const lineCount = lines.length
-  const [expanded, setExpanded] = useState(lineCount <= 20 && result.length <= 1600)
+  // 所有工具结果默认收起，点击「展开」才显示完整内容
+  const [expanded, setExpanded] = useState(false)
   // 收起预览：>12 行显示前 12 行；2~12 行多行结果折叠为首行预览；单行无需收起。
   // 注意 collapsed 不能只按 >12 行判定，否则 ≤12 行的短结果点「收起」内容不变、按钮看似无效。
   const isLong = lineCount > 12
@@ -864,11 +865,11 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
       <div className="agent-tool-call-head" onClick={() => setExpanded(v => !v)}>
         <Icon size={13} />
         <span className="agent-tool-call-name">{tc.name}</span>
-        {preview && <span className="agent-tool-call-preview" title={preview}>{preview}</span>}
+        {preview && <span className="agent-tool-call-preview">{preview}</span>}
         {total > 1 && <span className="agent-tool-call-step">步骤 {index + 1}/{total}</span>}
         <span className="agent-tool-call-meta">
           {editDiffStat && (
-            <span className="agent-tool-diffstat" title={`新增 ${editDiffStat.added} 行，删除 ${editDiffStat.removed} 行`}>
+            <span className="agent-tool-diffstat">
               <span className="diff-add">+{editDiffStat.added}</span>
               <span className="diff-del">-{editDiffStat.removed}</span>
             </span>
@@ -885,12 +886,12 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
             <span className="agent-tool-call-status ok"><CheckCircle2 size={12} /> 完成</span>
           )}
           {done && tc.durationMs != null && (
-            <span className="agent-tool-call-dur" title={`耗时 ${tc.durationMs} 毫秒`}>
+            <span className="agent-tool-call-dur">
               <Clock size={10} /> {formatDuration(tc.durationMs)}
             </span>
           )}
           {canRestore && (
-            <button className="agent-tool-undo" onClick={(e) => { e.stopPropagation(); onUndo?.() }} title="撤销本次操作，恢复工具执行前的原文件内容">
+            <button className="agent-tool-undo" onClick={(e) => { e.stopPropagation(); onUndo?.() }}>
               <Undo2 size={12} /> 恢复
             </button>
           )}
@@ -1821,6 +1822,10 @@ export default function AgentCodeView() {
 
     try {
       let turn = 0
+      // 整个对话轮（从用户消息到模型给出最终文本前）共享同一个助手消息 id，
+      // 这样无论模型分几轮返回工具调用，所有工具卡片都聚合在「一条」助手消息下、
+      // 只显示一个模型头像，而不是每个工具调用各成一条消息、各带一个头像。
+      let liveId = ''
       // 工具失败跟踪：防止模型无限重试同一工具调用
       const toolFailCount = new Map<string, number>()
       const failedCalls = new Set<string>()
@@ -1830,10 +1835,13 @@ export default function AgentCodeView() {
         if (abortRef.current.aborted) break
         const streamId = `agent-${sid}-${++turn}`
         currentStreamIdRef.current = streamId
-        const liveId = newMsgId()
-        // 先种一颗空的助手消息，用于流式（打字机）填充
-        displayMsgs = [...displayMsgs, { id: liveId, role: 'assistant', content: '' }]
-        updateSessionInProject(pid, sid, { messages: displayMsgs })
+        // 仅首轮（或上一轮已结束）新建助手消息；后续工具轮复用同一条，避免重复头像
+        if (!liveId) liveId = newMsgId()
+        // 若最后一条消息不是当前 liveId（说明本轮尚未建过），种一颗空的助手消息用于流式填充
+        if (displayMsgs[displayMsgs.length - 1]?.id !== liveId) {
+          displayMsgs = [...displayMsgs, { id: liveId, role: 'assistant', content: '' }]
+          updateSessionInProject(pid, sid, { messages: displayMsgs })
+        }
 
         let streamedText = ''
         let toolCalls: { id: string; function: { name: string; arguments: string } }[] | undefined
@@ -1849,7 +1857,9 @@ export default function AgentCodeView() {
             if (data.streamId !== streamId) return
             if (typeof data.delta === 'string' && data.delta) {
               streamedText += data.delta
-              displayMsgs = displayMsgs.slice(0, -1).concat({ id: liveId, role: 'assistant', content: streamedText })
+              // 保留该助手消息已有的 toolCalls（跨轮工具调用不被流式帧清空）
+              const keepCalls = displayMsgs.find(m => m.id === liveId)?.toolCalls
+              displayMsgs = displayMsgs.slice(0, -1).concat({ id: liveId, role: 'assistant', content: streamedText, ...(keepCalls ? { toolCalls: keepCalls } : {}) })
               // 节流：仅每 ~100ms 落盘一次，避免逐 token 整页重渲染
               const now = performance.now()
               if (now - lastFlush >= STREAM_FLUSH_MS) {
@@ -1905,7 +1915,11 @@ export default function AgentCodeView() {
 
         if (toolCalls && toolCalls.length) {
           // 第一阶段：展示工具调用计划（所有工具状态为 pending）
-          const assistMsg: AgentMessage = { id: liveId, role: 'assistant', content: streamedText, toolCalls: toolCalls.map(tc => ({ id: tc.id, name: tc.function.name, args: tc.function.arguments, status: 'pending' as const })) }
+          // 跨轮合并：若当前助手消息已含 toolCalls（上一轮的工具），则把本轮新调用追加进去，
+          // 而非覆盖——保证整段工具调用只显示在「一条」助手消息下、只一个头像。
+          const prevCalls = displayMsgs.find(m => m.id === liveId)?.toolCalls || []
+          const nextCalls = toolCalls.map(tc => ({ id: tc.id, name: tc.function.name, args: tc.function.arguments, status: 'pending' as const }))
+          const assistMsg: AgentMessage = { id: liveId, role: 'assistant', content: streamedText, toolCalls: [...prevCalls, ...nextCalls] }
           displayMsgs = displayMsgs.slice(0, -1).concat(assistMsg)
           // 强制同步提交 DOM，确保用户立即看到工具卡片列表（待执行状态）
           flushSync(() => {
@@ -2301,7 +2315,7 @@ export default function AgentCodeView() {
 
 
   return (
-    <div className="agent-code-view">
+    <div className={`agent-code-view ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
       <div className="agent-code-topbar">
         <div className="agent-code-topbar-left">
           <button className="chat-collapse-btn" onClick={() => setSidebarOpen(v => !v)} style={{ marginTop: 0, width: 28, height: 28 }}>
@@ -2436,15 +2450,17 @@ export default function AgentCodeView() {
                         <>
                           <div className="chat-msg-bubble chat-msg-markdown"><AgentMarkdown content={msg.content} /></div>
                           <div className="chat-msg-actions">
-                            <button className="chat-msg-action-btn" title="复制" onClick={() => copyMessage(msg.content)}><Copy size={13} /></button>
-                            <button className="chat-msg-action-btn" title="编辑" onClick={() => editAt(msg.id)} disabled={loading}><Pencil size={13} /></button>
-                            <button className="chat-msg-action-btn" title="重发" onClick={() => resendAt(msg.id)} disabled={loading}><Send size={13} /></button>
-                            <button className="chat-msg-action-btn" title="从此处分支" onClick={() => branchAt(msg.id)} disabled={loading}><GitBranch size={13} /></button>
+                            <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content)}><Copy size={13} /></button>
+                            <button className="chat-msg-action-btn" onClick={() => editAt(msg.id)} disabled={loading}><Pencil size={13} /></button>
+                            <button className="chat-msg-action-btn" onClick={() => resendAt(msg.id)} disabled={loading}><Send size={13} /></button>
+                            <button className="chat-msg-action-btn" onClick={() => branchAt(msg.id)} disabled={loading}><GitBranch size={13} /></button>
                           </div>
                         </>
                       ) : null
                     ) : (
                       <>
+                        {/* 工具调用卡片显示在消息气泡（模型回复文本）之上 */}
+                        {hasToolCalls ? renderToolCalls(msg.toolCalls!, msg.id) : null}
                         {msg.stopped && (
                           <div className="chat-msg-stopped-badge">
                             <Square size={10} />
@@ -2467,17 +2483,15 @@ export default function AgentCodeView() {
                               : <div key={`m-${j}`} className={`chat-msg-bubble chat-msg-markdown${streamingThis ? ' chat-msg-bubble--streaming' : ''}`}><AgentMarkdown content={seg.value} /></div>
                           )
                         )}
-                        {/* 工具调用结果卡片 */}
-                        {hasToolCalls ? renderToolCalls(msg.toolCalls!, msg.id) : null}
                         {/* 流式进行中或工具调用消息不展示操作按钮 */}
                         {!streamingThis && !hasToolCalls && (
                           <div className="chat-msg-actions">
-                            <button className="chat-msg-action-btn" title="复制" onClick={() => copyMessage(msg.content || '')}><Copy size={13} /></button>
+                            <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content || '')}><Copy size={13} /></button>
                             {isLast && !loading && (
-                              <button className="chat-msg-action-btn" title="重新生成" onClick={() => regenerateAt(msg.id)}><RotateCcw size={13} /></button>
+                              <button className="chat-msg-action-btn" onClick={() => regenerateAt(msg.id)}><RotateCcw size={13} /></button>
                             )}
                             {isLast && (msg.stopped || (msg.content && (msg.content.startsWith('模型调用失败') || msg.content.startsWith('发送失败')))) && !loading && (
-                              <button className="chat-msg-action-btn" title="重试" onClick={() => regenerateAt(msg.id)}><RotateCcw size={13} /></button>
+                              <button className="chat-msg-action-btn" onClick={() => regenerateAt(msg.id)}><RotateCcw size={13} /></button>
                             )}
                           </div>
                         )}
@@ -2556,11 +2570,12 @@ export default function AgentCodeView() {
           {/* 滚动到底部浮动按钮：仅当消息列表较长且用户已向上滚动（非贴底）时显示。
               置于 .agent-code-chat（非滚动容器）内，用 --chat-input-h 变量精确浮在输入框上方。 */}
           {!atBottom && (
-            <button className="chat-scroll-bottom-btn" onClick={() => scrollToBottom(true)} title="滚动到底部">
+            <button className="agent-code-scroll-bottom-btn" onClick={() => scrollToBottom(true)} title="滚动到底部">
               <ChevronDown size={18} />
             </button>
           )}
           <div className="chat-input-area" ref={chatInputAreaRef}>
+            <AskUserQuestionInline />
             {atQuery !== null && (
               <div className="chat-at-file-pop" ref={atPopRef}>
                 {atFiles.length === 0 ? (
@@ -2595,8 +2610,8 @@ export default function AgentCodeView() {
               </div>
             )}
             <div className="chat-input-row">
-              <button className="chat-attach-btn" onClick={() => fileInputRef.current?.click()} disabled={!apiBaseUrl} title="添加附件 / 图片"><Paperclip size={15} /></button>
-              <textarea ref={textareaRef} className="chat-input" placeholder={apiBaseUrl ? '输入自然语言指令，或添加附件 / 图片…' : '请先启动模型'} rows={1} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown} disabled={!apiBaseUrl} />
+              <button className="chat-attach-btn" onClick={() => fileInputRef.current?.click()} title="添加附件 / 图片"><Paperclip size={15} /></button>
+              <textarea ref={textareaRef} className="chat-input" placeholder={apiBaseUrl ? '输入自然语言指令，或添加附件 / 图片…' : '请先启动模型，输入内容将在启动后可发送'} rows={1} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown} />
               {loading ? (
                 <button className="btn btn-primary chat-send-btn" onClick={handleStop} title="停止生成"><Square size={16} /></button>
               ) : (
@@ -2609,57 +2624,57 @@ export default function AgentCodeView() {
 
         <div className={`agent-code-right-collapser ${treeOpen ? '' : 'collapsed'}`}>
           <div className="agent-code-right-body">
-                <div className="agent-code-tree">
-                  <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={(name) => insertAtCursor(name)} />
-                </div>
-                <div className={`agent-code-resize-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startResize('preview')} title="拖动调整预览宽度" />
-                <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''}`}>
-                  <div className="agent-code-preview">
-                    <div className="agent-code-preview-header">
-                      <div className="agent-code-preview-tabs">
-                        {openTabs.map(t => (
-                          <div
-                            key={t.path}
-                            className={`agent-code-preview-tab ac-icon-btn ${t.path === activeTabPath ? 'active' : ''}`}
-                            onClick={() => setActiveTabPath(t.path)}
-                          >
-                            <span className="agent-code-preview-tab-name">{t.name}</span>
-                            <button
-                              className="agent-code-preview-tab-close"
-                              onClick={(e) => { e.stopPropagation(); closeTab(t.path) }}
-                            >
-                              <X size={10} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                      <span className="agent-code-preview-actions">
-                        <button className="btn btn-xs agent-code-preview-close ac-icon-btn" onClick={() => activeTab && closeTab(activeTab.path)} disabled={!activeTab}>
-                          <X size={12} />
+            <div className="agent-code-tree">
+              <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={(name) => insertAtCursor(name)} />
+            </div>
+            <div className={`agent-code-resize-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startResize('preview')} title="拖动调整预览宽度" />
+            <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''}`}>
+              <div className="agent-code-preview">
+                <div className="agent-code-preview-header">
+                  <div className="agent-code-preview-tabs">
+                    {openTabs.map(t => (
+                      <div
+                        key={t.path}
+                        className={`agent-code-preview-tab ac-icon-btn ${t.path === activeTabPath ? 'active' : ''}`}
+                        onClick={() => setActiveTabPath(t.path)}
+                      >
+                        <span className="agent-code-preview-tab-name">{t.name}</span>
+                        <button
+                          className="agent-code-preview-tab-close"
+                          onClick={(e) => { e.stopPropagation(); closeTab(t.path) }}
+                        >
+                          <X size={10} />
                         </button>
-                      </span>
-                    </div>
-                    <div className="agent-code-preview-body">
-                      {!activeTab ? null
-                        : activeTab.loading ? <div className="file-tree-loading">读取中…</div>
-                          : activeTab.error ? <div className="agent-code-preview-error">{activeTab.error}</div>
-                            : isPreviewMarkdown ? (
-                              <div className="agent-code-preview-md chat-msg-markdown">
-                                <AgentMarkdown content={renderPreviewMarkdown(activeTab.content ?? '')} />
-                              </div>
-                            ) : (
-                              <div className="agent-code-preview-code">
-                                {(activeTab.content ?? '').split('\n').map((line, i) => (
-                                  <div className="agent-code-preview-line" key={i}>
-                                    <span className="agent-code-preview-ln">{i + 1}</span>
-                                    <span className="agent-code-preview-lc">{line || ' '}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                    </div>
+                      </div>
+                    ))}
                   </div>
+                  <span className="agent-code-preview-actions">
+                    <button className="btn btn-xs agent-code-preview-close ac-icon-btn" onClick={() => activeTab && closeTab(activeTab.path)} disabled={!activeTab}>
+                      <X size={12} />
+                    </button>
+                  </span>
                 </div>
+                <div className="agent-code-preview-body">
+                  {!activeTab ? null
+                    : activeTab.loading ? <div className="file-tree-loading">读取中…</div>
+                      : activeTab.error ? <div className="agent-code-preview-error">{activeTab.error}</div>
+                        : isPreviewMarkdown ? (
+                          <div className="agent-code-preview-md chat-msg-markdown">
+                            <AgentMarkdown content={renderPreviewMarkdown(activeTab.content ?? '')} />
+                          </div>
+                        ) : (
+                          <div className="agent-code-preview-code">
+                            {(activeTab.content ?? '').split('\n').map((line, i) => (
+                              <div className="agent-code-preview-line" key={i}>
+                                <span className="agent-code-preview-ln">{i + 1}</span>
+                                <span className="agent-code-preview-lc">{line || ' '}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -2690,8 +2705,6 @@ export default function AgentCodeView() {
           </div>
         </div>
       )}
-
-      <AskUserQuestionModal />
 
     </div>
   )

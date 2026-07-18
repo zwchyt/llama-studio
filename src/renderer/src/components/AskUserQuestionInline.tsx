@@ -3,7 +3,10 @@ import { HelpCircle, X } from 'lucide-react'
 import { askUserQuestionRegistry } from '../utils/askUserQuestionRegistry'
 import type { Question } from '../tools/AskUserQuestionTool/types'
 
-export default function AskUserQuestionModal() {
+// 内联版 AskUserQuestion：仅用于 Agent Code 工作台。
+// 订阅 askUserQuestionRegistry，渲染在输入框上方的「内联提问面板」，
+// 而非覆盖式弹窗。
+export default function AskUserQuestionInline() {
   const [pending, setPending] = useState<Question[] | null>(null)
 
   useEffect(() => {
@@ -97,63 +100,67 @@ export default function AskUserQuestionModal() {
   const questionCount = pending.length
 
   return (
-    <div className="modal-overlay" onClick={handleCancel}>
-      <div className="modal ask-user-question-modal" style={{ width: 520, maxHeight: '80vh' }} onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <HelpCircle size={20} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-          <span className="modal-title">需要你回答一些问题{questionCount > 1 ? `（${questionCount} 个）` : ''}</span>
-          <button className="btn btn-ghost modal-close-btn" onClick={handleCancel} title="取消"><X size={16} /></button>
-        </div>
-        <div className="modal-body" style={{ overflowY: 'auto', maxHeight: 'calc(80vh - 100px)' }}>
-          {pending.map((q, qIdx) => (
-            <div key={qIdx} className="ask-question-block">
-              <div className="ask-question-text">{q.question}</div>
-              <div className="ask-question-options">
-                {q.options.map((opt) => {
-                  const sel = isSelected(qIdx, opt.label)
-                  const inputType = q.multi_select ? 'checkbox' : 'radio'
-                  const name = `q_${qIdx}`
-                  return (
-                    <label key={opt.label} className={`ask-question-option ${sel ? 'selected' : ''}`}
-                      onMouseEnter={() => setFocusedPreview(opt.preview ?? null)}
-                      onMouseLeave={() => setFocusedPreview(prev => prev === opt.preview ? null : prev)}
-                    >
-                      <input
-                        type={inputType}
-                        name={name}
-                        checked={sel}
-                        onChange={() => toggleOption(qIdx, opt.label, !!q.multi_select)}
-                      />
-                      <div className="ask-question-option-content">
-                        <span className="ask-question-option-label">{opt.label}</span>
-                        <span className="ask-question-option-desc">{opt.description}</span>
-                      </div>
-                    </label>
-                  )
-                })}
-                <div className="ask-question-other">
-                  <span className="ask-question-option-label">其他（自由输入）</span>
-                  <textarea
-                    className="ask-question-other-input"
-                    rows={2}
-                    placeholder="输入你的答案…"
-                    value={notes.get(qIdx) ?? ''}
-                    onChange={e => handleCustom(qIdx, e.target.value)}
-                  />
-                </div>
+    <div className="agent-ask-question">
+      <div className="agent-ask-question-head">
+        <HelpCircle size={15} className="agent-ask-question-icon" />
+        <span className="agent-ask-question-title">
+          需要你回答一些问题{questionCount > 1 ? `（${questionCount} 个）` : ''}
+        </span>
+        <button className="agent-ask-question-close" onClick={handleCancel} title="取消">
+          <X size={14} />
+        </button>
+      </div>
+      <div className="agent-ask-question-body">
+        {pending.map((q, qIdx) => (
+          <div key={qIdx} className="agent-ask-question-block">
+            <div className="agent-ask-question-text">{q.question}</div>
+            <div className="agent-ask-question-options">
+              {q.options.map((opt) => {
+                const sel = isSelected(qIdx, opt.label)
+                const inputType = q.multi_select ? 'checkbox' : 'radio'
+                const name = `q_${qIdx}`
+                return (
+                  <label
+                    key={opt.label}
+                    className={`agent-ask-question-option ${sel ? 'selected' : ''}`}
+                    onMouseEnter={() => setFocusedPreview(opt.preview ?? null)}
+                    onMouseLeave={() => setFocusedPreview(prev => prev === opt.preview ? null : prev)}
+                  >
+                    <input
+                      type={inputType}
+                      name={name}
+                      checked={sel}
+                      onChange={() => toggleOption(qIdx, opt.label, !!q.multi_select)}
+                    />
+                    <div className="agent-ask-question-option-content">
+                      <span className="agent-ask-question-option-label">{opt.label}</span>
+                      <span className="agent-ask-question-option-desc">{opt.description}</span>
+                    </div>
+                  </label>
+                )
+              })}
+              <div className="agent-ask-question-other">
+                <span className="agent-ask-question-option-label">其他（自由输入）</span>
+                <textarea
+                  className="agent-ask-question-other-input"
+                  rows={2}
+                  placeholder="输入你的答案…"
+                  value={notes.get(qIdx) ?? ''}
+                  onChange={e => handleCustom(qIdx, e.target.value)}
+                />
               </div>
-              {focusedPreview && (
-                <div className="ask-question-preview">
-                  <pre>{focusedPreview}</pre>
-                </div>
-              )}
             </div>
-          ))}
-        </div>
-        <div className="modal-footer">
-          <button className="btn btn-ghost" onClick={handleCancel}>取消</button>
-          <button className="btn btn-primary" onClick={handleSubmit}>提交答案</button>
-        </div>
+            {focusedPreview && (
+              <div className="agent-ask-question-preview">
+                <pre>{focusedPreview}</pre>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="agent-ask-question-footer">
+        <button className="agent-prompt-btn agent-prompt-btn-ghost" onClick={handleCancel}>取消</button>
+        <button className="agent-prompt-btn agent-prompt-btn-primary" onClick={handleSubmit}>提交答案</button>
       </div>
     </div>
   )

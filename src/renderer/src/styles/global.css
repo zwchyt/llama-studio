@@ -179,7 +179,7 @@ select {
   animation: view-content-in 0.22s cubic-bezier(.4, 0, .2, 1) both;
 }
 
-/* ── 全局视图布局（从 chat.css 迁移）── */
+
 .content>*:not(.chat-layout):not(.agent-code-view) {
   padding: 24px;
   overflow-y: auto;

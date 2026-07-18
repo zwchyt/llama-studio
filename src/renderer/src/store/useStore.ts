@@ -418,9 +418,6 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
       }
     } catch { /* ignore */ }
   },
-  // ── 聊天界面当前收起状态（仅会话内，不写 localStorage）──
-  chatSidebarCurrentCollapsed: (() => {
-    try { return localStorage.getItem('chatSidebarCollapsed') === 'true' } catch { return false }
-  })(),
+  chatSidebarCurrentCollapsed: false,
   setChatSidebarCurrentCollapsed: (v) => set({ chatSidebarCurrentCollapsed: v }),
 }), shallow)

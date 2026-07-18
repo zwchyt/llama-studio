@@ -97,10 +97,10 @@ function TerminalTabBar(): React.JSX.Element {
           onChange={(e) => setCwd(e.target.value)}
           onKeyDown={handleKeyDown}
         />
-        <button className="terminal-tabbar-btn" onClick={handleBrowse} title="选择目录">
+        <button className="terminal-tabbar-btn" onClick={handleBrowse}>
           <FolderOpen size={13} />
         </button>
-        <button className="terminal-tabbar-btn primary" onClick={handleNew} title="新建终端">
+        <button className="terminal-tabbar-btn primary" onClick={handleNew}>
           <Plus size={13} />
         </button>
       </div>

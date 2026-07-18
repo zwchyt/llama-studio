@@ -30,8 +30,6 @@ import { getDocument } from 'pdfjs-dist'
 import mammoth from 'mammoth'
 import CodeBlock from './CodeBlock'
 import ConfirmModal from './ConfirmModal'
-import AskUserQuestionModal from './AskUserQuestionModal'
-
 // ── Markdown 文件预览 rehype-sanitize schema（同 AgentCodeView 配置）──
 const FILE_PREVIEW_SANITIZE_SCHEMA = {
   ...defaultSchema,
@@ -97,12 +95,18 @@ function lightStreamSync(sessionId: string, streamId: string): void {
   }, 50))
 }
 
-// 根据工具开关配置过滤工具定义列表
+// 原生聊天仅允许使用 3 个只读/联网工具，绝不暴露 Agent Code 的文件/命令类工具
+// （Write/Edit/Read/Bash 等）。白名单写死，确保无论全局注册了什么工具都不会泄露。
+const CHAT_ALLOWED_TOOLS = ['get_datetime', 'web_search', 'fetch_webpage']
+
+// 根据工具开关配置 + 原生聊天白名单过滤工具定义列表
 function getEnabledToolDefinitions(): ToolDefinition[] {
   const all = getToolDefinitions()
   const cfg = useStore.getState().toolConfig
   if (!cfg.enabled) return []
-  return all.filter(d => cfg.tools[d.function.name] !== false)
+  return all.filter(
+    d => CHAT_ALLOWED_TOOLS.includes(d.function.name) && cfg.tools[d.function.name] !== false
+  )
 }
 
 // ── 工具调用展示块（与 ThinkBlock 同构，可折叠）────
@@ -1878,6 +1882,14 @@ export default function ChatView() {
     createSession(m.id, m.port, m.name)
   }, [loaded, sessions.length, runningModels, createSession])
 
+  // 加载完成后若已有会话、但未选中任何会话，自动选中第一个会话
+  useEffect(() => {
+    if (!loaded) return
+    if (activeSessionId) return
+    if (sessions.length === 0) return
+    selectSession(sessions[0].id)
+  }, [loaded, activeSessionId, sessions, selectSession])
+
   // 选中会话时，若其模型未运行但存在其他运行中模型，自动切换
   useEffect(() => {
     if (!activeSessionId || !loaded) return
@@ -1990,6 +2002,16 @@ export default function ChatView() {
           for (const tc of toolCalls) {
             let args: Record<string, unknown> = {}
             try { args = JSON.parse(tc.function.arguments || '{}') } catch { /* keep empty */ }
+            // 执行端兜底：原生聊天只允许白名单内的 3 个工具，
+            // 其余（如 Write/Edit/Bash）即使模型发起也不执行，直接拒绝，避免误改本地文件。
+            if (!CHAT_ALLOWED_TOOLS.includes(tc.function.name)) {
+              const refused = JSON.stringify({
+                error: `工具 "${tc.function.name}" 在原生聊天中不可用，仅支持：获取时间、搜索网页、抓取网页内容。请在 Agent Code 工作台中使用文件/命令类工具。`
+              })
+              toolResults.push({ callId: tc.id, name: tc.function.name, result: refused })
+              tc.result = refused
+              continue
+            }
             const result = await executeToolCall(tc.function.name, args)
             toolResults.push({ callId: tc.id, name: tc.function.name, result })
             // 将执行结果回写到 toolCalls，用于 UI 展示
@@ -3219,7 +3241,6 @@ ${msgsHtml}
               <button
                 className="chat-attach-btn"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={!activeModel}
               >
                 <Paperclip size={15} />
               </button>
@@ -3234,14 +3255,13 @@ ${msgsHtml}
                     ? '正在生成，可发送新消息（将自动停止当前流）…'
                     : activeModel
                       ? `给 ${activeModel.name} 发消息（Enter 发送，Shift+Enter 换行）`
-                      : '请先启动模型后再发送消息'
+                      : '请先启动模型，输入内容将在启动后可发送'
                 }
                 value={input}
                 onChange={handleInputChange}
                 onPaste={handlePaste}
                 onKeyDown={handleKeyDown}
                 rows={1}
-                disabled={!activeModel}
               />
               {activeStreamId ? (
                 <button className="btn btn-danger chat-send-btn" onClick={handleStop}>
@@ -3286,6 +3306,14 @@ ${msgsHtml}
                   >
                     <span className="chat-file-tab-icon">{getFileIcon(f.name)}</span>
                     <span className="chat-file-tab-name">{f.name}</span>
+                    <span
+                      className="chat-file-tab-close"
+                      role="button"
+                      title="关闭预览"
+                      onClick={(e) => { e.stopPropagation(); removeAttachedFile(i) }}
+                    >
+                      <X size={11} />
+                    </span>
                   </button>
                 ))}
               </div>
@@ -3384,11 +3412,15 @@ ${msgsHtml}
                               srcDoc={textContent}
                             />
                           ) : (
-                            <div className="chat-code-scroll-wrap">
-                              <CodeBlock language="html" value={textContent} showLineNumbers />
+                            <div className="chat-code-body with-lines chat-file-preview-code">
+                              <pre className="chat-file-preview-ln" aria-hidden="true">
+                                {textContent.split('\n').map((_, i) => (
+                                  <span key={i}>{i + 1}</span>
+                                ))}
+                              </pre>
+                              <pre className="chat-file-preview-text">{textContent}</pre>
                             </div>
                           )}
-                          <AskUserQuestionModal />
                         </div>
                       )
                     }
@@ -3413,10 +3445,19 @@ ${msgsHtml}
                         </div>
                       )
                     }
-                    // 代码文件 → CodeBlock 高亮渲染
+                    // 代码/数据文件 → 带行号的原样显示（不复用 CodeBlock 的收起/复制 UI）
                     const lang = getCodeLanguage(f.name)
                     if (lang) {
-                      return <CodeBlock language={lang} value={textContent} showLineNumbers />
+                      return (
+                        <div className="chat-code-body with-lines chat-file-preview-code">
+                          <pre className="chat-file-preview-ln" aria-hidden="true">
+                            {textContent.split('\n').map((_, i) => (
+                              <span key={i}>{i + 1}</span>
+                            ))}
+                          </pre>
+                          <pre className="chat-file-preview-text">{textContent}</pre>
+                        </div>
+                      )
                     }
                     // 纯文本文件 → <pre> 渲染
                     return <pre className="chat-file-preview-text">{textContent}</pre>

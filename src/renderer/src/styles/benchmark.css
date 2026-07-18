@@ -326,7 +326,7 @@
   flex: 1;
   min-height: 60px;
   overflow-y: auto;
-  background: #1a1a2e;
+  background: #cfcfcf;
   border-radius: var(--radius-sm);
   padding: 10px;
   font-family: 'SF Mono', 'Fira Code', monospace;
@@ -345,11 +345,11 @@
 }
 
 .benchmark-log-stdout {
-  color: #e0e0e0;
+  color: #000000;
 }
 
 .benchmark-log-stderr {
-  color: #f87171;
+  color: #4f8f6f;
 }
 
 .benchmark-log-cursor {
@@ -600,10 +600,7 @@
   gap: 8px;
   text-align: center;
 }
-/* === 从 global.css 迁移的 benchmark 视图专属样式 === */
 
-
-/* global.css 原行 3010-3037 */
 .cmd-select.benchmark-select-button {
   flex: 1;
   min-width: 0;

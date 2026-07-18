@@ -163,10 +163,7 @@
 .cursor-preview-cell-label {
   pointer-events: none;
 }
-/* === 从 global.css 迁移的 settings 视图专属样式 === */
 
-
-/* global.css 原行 1478-1484 */
 .settings-section {
   background: var(--surface);
   border: 1.5px solid var(--border);

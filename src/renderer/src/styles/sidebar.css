@@ -108,14 +108,16 @@
 
 .sidebar {
   width: 100%;
-  height: 100%;
+  height: calc(100% - 16px);
   flex-shrink: 0;
   background: var(--surface);
-  border-right: 1px solid var(--border);
+  margin: 8px;
+  border-radius: var(--radius, 10px);
+  border: 1.5px solid var(--border-strong);
   display: flex;
   flex-direction: column;
   padding: 16px 12px;
-  gap: 4px;
+  gap: 0px;
   overflow-x: hidden;
   overflow-y: auto;
   position: relative;
