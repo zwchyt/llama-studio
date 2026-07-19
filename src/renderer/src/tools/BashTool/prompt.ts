@@ -46,6 +46,11 @@ export function getBashPrompt(): string {
 - 输出超过约 100K 字符时会自动截断，完整输出保存到临时文件。
 - 截断信息会显示在结果中。
 
+## 人工确认（审批）
+- **普通命令直接执行，不弹窗**：列目录（\`dir\`）、运行脚本（\`python\`/\`node\`）、构建、查询类命令（\`git status\`/\`git log\`/\`where\` 等）无需确认，放心调用。
+- **仅破坏性命令会弹窗等待确认**：涉及删除（\`del\`/\`rmdir\`/\`rm\`/\`erase\`）、格式化（\`format\`/\`diskpart\`）、终止进程（\`taskkill\`/\`shutdown\`）、改动系统状态（\`reg delete\`/\`sc\`/\`net stop\`/\`bcdedit\`/\`icacls\` 等）时才需用户审批。
+- 不要因为"怕弹窗"而回避使用非破坏性命令；也不要为绕过审批把破坏性操作伪装成普通命令。
+
 ## 最佳实践总结
 - **读文件/搜内容**：强制用 Read/Grep 工具。
 - **写文件**：强制用 Write/Edit 工具。

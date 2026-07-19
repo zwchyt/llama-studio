@@ -16,6 +16,24 @@ export const definition: Omit<ToolDefinition['function'], 'type'> = {
   }
 }
 
+// ── 短期读取缓存 ──
+// Agent 探索项目时模型常对同一文件重复 Read（尤其上下文被裁剪后）。
+// 按 file_path|offset|limit 缓存格式化结果，命中则直接返回，避免反复读盘与重复轮次。
+const readCache = new Map<string, string>()
+const READ_CACHE_MAX = 200
+
+function readCacheKey(file_path: string, offset?: number, limit?: number): string {
+  return `${file_path}|${offset ?? ''}|${limit ?? ''}`
+}
+
+/** 文件被写入/编辑/删除后调用，使该路径的缓存失效 */
+export function invalidateReadCache(file_path?: string): void {
+  if (!file_path) { readCache.clear(); return }
+  for (const key of readCache.keys()) {
+    if (key.startsWith(`${file_path}|`)) readCache.delete(key)
+  }
+}
+
 // ── Hashline：行内容指纹锚点 ──
 // 每行的内容指纹（FNV-1a 哈希前 7 位），用于 Edit 时精确定位。
 // 模型不可自行编造或修改锚点字符串；锚点由 Read 工具生成，Edit 工具校验。
@@ -30,6 +48,9 @@ function lineHash(text: string): string {
 
 export async function execute(args: Record<string, unknown>): Promise<string> {
   const { file_path, offset, limit } = args as unknown as FileReadInput
+  const cacheKey = readCacheKey(file_path, offset, limit)
+  const cached = readCache.get(cacheKey)
+  if (cached !== undefined) return `${cached}\n\n(命中读取缓存，未重复读盘；该文件内容已在上方，请直接基于已有内容分析，不要再次读取同一文件)`
   // raw=true 获取纯净原文（无行号前缀），用于 hashline 锚点格式化
   const res = await window.api.readFile(file_path, { offset, limit, raw: true })
   if (!res.success) {
@@ -48,5 +69,8 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
     const hash = lineHash(line)
     return `${lineNum} ${hash}|${line}`
   }).join('\n')
-  return `File: ${file_path}\nLines: ${startLine}-${startLine + allLines.length - 1} of ${totalLines}\n\n${hashlineContent}`
+  const result = `File: ${file_path}\nLines: ${startLine}-${startLine + allLines.length - 1} of ${totalLines}\n\n${hashlineContent}`
+  if (readCache.size >= READ_CACHE_MAX) readCache.clear()
+  readCache.set(cacheKey, result)
+  return result
 }

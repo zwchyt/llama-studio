@@ -48,6 +48,7 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
     return 'No questions provided. Continue with the task.'
   }
 
+  // 同一调用内去重
   const seen = new Set<string>()
   for (const q of input.questions) {
     if (seen.has(q.question)) {
@@ -56,6 +57,14 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
     seen.add(q.question)
   }
 
+  // 跨轮次内容去重：已问过的问题不再弹出面板，直接返回提示
+  const alreadyAsked = input.questions.filter(q => askUserQuestionRegistry.wasAsked(q.question))
+  if (alreadyAsked.length > 0) {
+    const titles = alreadyAsked.map(q => `"${q.question}"`).join('、')
+    return `问题 ${titles} 已在本次会话中问过，请不要重复提问。基于已有信息继续推进任务。`
+  }
+
+  // ask() 内部会记录问题文本，供后续去重
   const result = await askUserQuestionRegistry.ask(input.questions)
   return result
 }

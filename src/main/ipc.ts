@@ -3284,6 +3284,7 @@ export function registerIpcHandlers(): void {
   }> => {
     try {
       filePath = resolveAgentPath(filePath)
+      filePath = redirectToWorkspaceIfMissing(filePath)
 
       // 结构化错误：检查路径是否存在、是否为目录、权限等
       let fileStat: import('fs').Stats
@@ -3342,7 +3343,10 @@ export function registerIpcHandlers(): void {
 
       // offset/limit 行级分片
       let offset = opts?.offset ?? 1
-      let limit = opts?.limit
+      // 未指定 limit 时，默认最多读取 2000 行（参考 grok-build 的「默认截断到 1000 行」），
+      // 避免大文件一次性全文读入占用大量上下文；超出 token 预算时仍会引导改用 Grep。
+      const DEFAULT_READ_LINES = 2000
+      let limit = opts?.limit ?? DEFAULT_READ_LINES
 
       if (offset < 0) {
         offset = Math.max(1, totalLines + offset + 1)
@@ -3492,6 +3496,60 @@ export function registerIpcHandlers(): void {
   // ── Agent Code: glob / grep ──
   const GLOB_GREP_IGNORE_DIRS = new Set(['.git', 'node_modules'])
 
+  // gitignore 单一真源：读取项目根 .gitignore，作为 ListDir/Grep 过滤依据
+  // （参考 grok-build 的 gitignore.rs：屏蔽项以项目 .gitignore 为权威，而非硬编码目录名）。
+  const gitignoreCache = new Map<string, { patterns: GitignorePattern[]; mtime: number }>()
+  interface GitignorePattern { negated: boolean; re: RegExp; anchored: boolean }
+  function parseGitignoreLine(line: string): GitignorePattern | null {
+    let s = line.trim()
+    if (!s || s.startsWith('#')) return null
+    let negated = false
+    if (s.startsWith('!')) { negated = true; s = s.slice(1).trim() }
+    const anchored = s.startsWith('/')
+    s = s.replace(/^\/+/, '')
+    if (!s) return null
+    // 转为正则：支持 ** * ? 并保留 /
+    let re = ''
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i]!
+      if (c === '*') {
+        if (s[i + 1] === '*') {
+          // ** 匹配任意层（含 /）
+          re += '.*'
+          i++
+          if (s[i + 1] === '/') i++ // 吃掉 **/ 的斜杠
+        } else {
+          re += '[^/]*'
+        }
+      } else if (c === '?') re += '[^/]'
+      else if ('+^${}()|[]\\.'.includes(c)) re += '\\' + c
+      else re += c
+    }
+    // 以 / 结尾表示只匹配目录；这里统一按「路径段」匹配，宽松处理
+    return { negated, anchored, re: new RegExp('^(?:.*/)?' + re + '(?:/.*)?$') }
+  }
+  function loadGitignorePatterns(root: string): GitignorePattern[] {
+    const igPath = join(root, '.gitignore')
+    try {
+      const st = statSync(igPath)
+      const cached = gitignoreCache.get(root)
+      if (cached && cached.mtime === st.mtimeMs) return cached.patterns
+      const text = readFileSync(igPath, 'utf-8')
+      const patterns = text.split('\n').map(parseGitignoreLine).filter((p): p is GitignorePattern => !!p)
+      gitignoreCache.set(root, { patterns, mtime: st.mtimeMs })
+      return patterns
+    } catch { return [] }
+  }
+  function isGitignored(relPath: string, patterns: GitignorePattern[]): boolean {
+    if (patterns.length === 0) return false
+    const p = relPath.split('\\').join('/')
+    let ignored = false
+    for (const pat of patterns) {
+      if (pat.re.test(p)) ignored = !pat.negated
+    }
+    return ignored
+  }
+
   function escapeRe(s: string): string {
     return s.replace(/[.+^${}()|[\]\\]/g, '\\$&')
   }
@@ -3557,6 +3615,7 @@ export function registerIpcHandlers(): void {
       if (!existsSync(opts.path)) return { success: false, error: '目录不存在' }
       const limit = Math.max(1, Math.min(opts.limit ?? 100, 2000))
       const re = globToRegExp(opts.pattern)
+      const giPatterns = loadGitignorePatterns(opts.path)
       const found: string[] = []
       const walk = (dir: string) => {
         if (found.length >= limit) return
@@ -3564,11 +3623,12 @@ export function registerIpcHandlers(): void {
         try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
         for (const e of entries) {
           const full = join(dir, e.name)
+          const rel = relative(opts.path, full).split('\\').join('/')
+          if (isGitignored(rel, giPatterns)) continue
           if (e.isDirectory()) {
             if (GLOB_GREP_IGNORE_DIRS.has(e.name)) continue
             walk(full)
           } else if (e.isFile()) {
-            const rel = relative(opts.path, full).split('\\').join('/')
             if (re.test(rel)) found.push(full)
           }
           if (found.length >= limit) return
@@ -3598,14 +3658,24 @@ export function registerIpcHandlers(): void {
   }> => {
     try {
       if (!dirPath) return { success: false, error: '缺少路径' }
-      const resolved = resolve(resolveAgentPath(dirPath))
+      const resolved = resolve(redirectToWorkspaceIfMissing(resolveAgentPath(dirPath)))
       if (resolved.startsWith('\\\\') || resolved.startsWith('//')) return { success: false, error: '不支持 UNC 路径' }
       if (!existsSync(resolved)) return { success: false, error: '目录不存在' }
       const stat = statSync(resolved)
       if (!stat.isDirectory()) return { success: false, error: '路径不是目录' }
       const entries = readdirSync(resolved, { withFileTypes: true })
+      // 默认排除：版本控制/依赖/构建产物等无分析价值的重目录与隐藏文件（兜底），
+      // 并叠加项目 .gitignore 的忽略项（gitignore 单一真源，参考 grok-build）。
+      const LISTDIR_IGNORE = new Set(['.git', 'node_modules', '__pycache__', 'dist', 'build', '.next', '.idea', '.vscode', 'target', 'bin', 'obj'])
+      const giPatterns = loadGitignorePatterns(resolved)
       const children = entries
-        .filter(e => e.isDirectory() || e.isFile())
+        .filter(e => {
+          if (!(e.isDirectory() || e.isFile())) return false
+          if (LISTDIR_IGNORE.has(e.name)) return false
+          if (e.name.startsWith('.')) return false
+          if (giPatterns.length && isGitignored(e.name, giPatterns)) return false
+          return true
+        })
         .map(e => {
           const isDir = e.isDirectory()
           let fileCount = 0
@@ -3676,6 +3746,7 @@ export function registerIpcHandlers(): void {
       const maxBytes = 5 * 1024 * 1024
 
       const files: string[] = []
+      const giPatterns = loadGitignorePatterns(root)
       const walk = (dir: string) => {
         if (files.length >= 20000) return
         let entries: any[]
@@ -3683,14 +3754,13 @@ export function registerIpcHandlers(): void {
         for (const e of entries) {
           if (timedOut) return
           const full = join(dir, e.name)
+          const rel = relative(root, full).split('\\').join('/')
+          if (isGitignored(rel, giPatterns)) continue
           if (e.isDirectory()) {
             if (GLOB_GREP_IGNORE_DIRS.has(e.name)) continue
             walk(full)
           } else if (e.isFile()) {
-            if (globRe) {
-              const rel = relative(root, full).split('\\').join('/')
-              if (!globRe.test(rel)) continue
-            }
+            if (globRe && !globRe.test(rel)) continue
             files.push(full)
           }
         }
@@ -4205,11 +4275,57 @@ export function registerIpcHandlers(): void {
     return { success: true }
   })
 
-  // 将模型给出的（可能相对的）路径解析到工作区根目录；绝对路径（含 Windows 盘符/UNC 除外）原样返回
-  function resolveAgentPath(p: string): string {
+  // 将超长工具结果完整写入系统临时目录，返回绝对路径，供模型用 Read 查看完整内容。
+  // 对应 grok-build 的「showing first/last，完整输出保存至文件」策略。
+  ipcMain.handle('write-temp-file', async (_e, content: string, ext = 'txt'): Promise<{ success: boolean; path?: string; error?: string }> => {
+    try {
+      const dir = join(tmpdir(), 'llama-studio-agent')
+      mkdirSync(dir, { recursive: true })
+      const safeExt = /^[a-z0-9]+$/i.test(ext) ? ext : 'txt'
+      const name = `tool-output-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`
+      const full = join(dir, name)
+      writeFileSync(full, String(content ?? ''), 'utf-8')
+      return { success: true, path: full }
+    } catch (e: any) {
+      return { success: false, error: e?.message || String(e) }
+    }
+  })
+
+  // 清理模型给出的路径参数：去掉首尾空白、包裹的引号、以及（仅当被引号包裹时）
+  // 字面的 \r\n\t 转义——避免误吞 Windows 路径里的反斜杠。
+  function sanitizeAgentPathArg(raw: string): string {
+    let s = String(raw ?? '')
+    s = s.trim()
+    // 去掉模型常在外面裹的单/双引号
+    if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+      s = s.slice(1, -1).trim()
+    }
+    // 去掉尾部换行（模型偶尔在 JSON 参数里带 \n）
+    s = s.replace(/\r?\n+$/, '')
+    // 仅当原参数被引号包裹时才剥离字面转义，避免破坏 Windows 路径反斜杠
+    if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
+      s = s.replace(/\\r|\\n|\\t/g, '')
+    }
+    return s
+  }
+
+  // 将模型给出的（可能相对的）路径解析到工作区根目录；绝对路径原样返回
+  function resolveAgentPath(raw: string): string {
+    const p = sanitizeAgentPathArg(raw)
     if (!p) return p
     if (isAbsolute(p)) return p
     if (agentWorkspaceRoot) return resolve(agentWorkspaceRoot, p)
+    return p
+  }
+
+  // 智能重定向：当解析后的路径不存在，但取文件名放到工作区根下能命中真实文件时，
+  // 重定向过去。主要处理模型把「嵌套目录」与「项目根」搞混的情况
+  // （如实际文件在 C:\proj\example.md，模型却传 C:\proj\sub\example.md）。
+  function redirectToWorkspaceIfMissing(p: string): string {
+    if (agentWorkspaceRoot && !existsSync(p)) {
+      const alt = resolve(agentWorkspaceRoot, basename(p))
+      if (alt !== p && existsSync(alt)) return alt
+    }
     return p
   }
 
@@ -4250,12 +4366,19 @@ export function registerIpcHandlers(): void {
   const DEFAULT_MAX_OUTPUT_CHARS = 100_000
 
   function spawnCommand(command: string) {
-    const wrappedCommand = process.platform === 'win32'
-      ? `@chcp 65001 >NUL && ${command}`
-      : command
-    return process.platform === 'win32'
-      ? spawn('cmd.exe', ['/c', wrappedCommand], { cwd: bashCwd ?? undefined, windowsHide: true })
-      : spawn('/bin/sh', ['-c', wrappedCommand], { cwd: bashCwd ?? undefined })
+    const isWin = process.platform === 'win32'
+    if (isWin) {
+      // 关键：用 shell:true 把整条命令作为「字符串」交给 cmd.exe，
+      // 而不是把 wrappedCommand 作为单个 argv 元素传给 spawn。
+      // 若用 spawn('cmd.exe', ['/c', wrappedCommand])，Node 在 Windows 下会对含空格/
+      // 特殊字符的 argv 元素整体加一层双引号，导致模型命令里自带的路径引号
+      // （如 dir "C:\工具集合\..."）被外层引号截断，cmd 解析出错：
+      // 「文件名、目录名或卷标语法不正确」。shell:true 下 Node 不再额外加引号，
+      // cmd 收到的是字面值，引号得以原样保留（与 PowerShell 中直接执行一致）。
+      const full = `@chcp 65001 >NUL && ${command}`
+      return spawn(full, [], { cwd: bashCwd ?? undefined, windowsHide: true, shell: true })
+    }
+    return spawn('/bin/sh', ['-c', command], { cwd: bashCwd ?? undefined })
   }
 
   ipcMain.handle('execute-command', async (_e, opts: {

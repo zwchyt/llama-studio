@@ -151,6 +151,7 @@ const fullApi = {
   loadAgentProjects: () => ipcRenderer.invoke('load-agent-projects'),
   saveAgentProjects: (projects: object) => ipcRenderer.invoke('save-agent-projects', projects),
 	  executeCommand: (opts: { command: string; timeout?: number; isBackground?: boolean; maxOutputChars?: number; autoBackground?: boolean }) => ipcRenderer.invoke('execute-command', opts),
+	  writeTempFile: (content: string, ext?: string) => ipcRenderer.invoke('write-temp-file', content, ext),
 	  setBashCwd: (dir: string) => ipcRenderer.invoke('set-bash-cwd', dir),
 	  getBackgroundTask: (taskId: string) => ipcRenderer.invoke('get-background-task', taskId),
 	  listBackgroundTasks: () => ipcRenderer.invoke('list-background-tasks'),

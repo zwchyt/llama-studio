@@ -17,13 +17,11 @@ export default function AskUserQuestionInline() {
 
   const [selected, setSelected] = useState<Map<number, string[]>>(new Map())
   const [notes, setNotes] = useState<Map<number, string>>(new Map())
-  const [focusedPreview, setFocusedPreview] = useState<string | null>(null)
 
   useEffect(() => {
     if (pending) {
       setSelected(new Map())
       setNotes(new Map())
-      setFocusedPreview(null)
     }
   }, [pending])
 
@@ -123,8 +121,6 @@ export default function AskUserQuestionInline() {
                   <label
                     key={opt.label}
                     className={`agent-ask-question-option ${sel ? 'selected' : ''}`}
-                    onMouseEnter={() => setFocusedPreview(opt.preview ?? null)}
-                    onMouseLeave={() => setFocusedPreview(prev => prev === opt.preview ? null : prev)}
                   >
                     <input
                       type={inputType}
@@ -150,11 +146,6 @@ export default function AskUserQuestionInline() {
                 />
               </div>
             </div>
-            {focusedPreview && (
-              <div className="agent-ask-question-preview">
-                <pre>{focusedPreview}</pre>
-              </div>
-            )}
           </div>
         ))}
       </div>

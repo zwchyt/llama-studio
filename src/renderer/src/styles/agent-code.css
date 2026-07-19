@@ -1192,22 +1192,78 @@
   color: var(--success);
 }
 
-.agent-approve-modal {
-  width: 440px;
+/* 破坏性工具审批面板：居中浮在输入框上方，固定较窄宽度（不撑满输入框） */
+.agent-approve-inline {
+  position: absolute;
+  left: 54px;
+  right: 54px;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border-strong));
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.20);
+  animation: agent-ask-question-in 0.22s ease-out;
 }
 
-.agent-approve-desc {
-  margin: 0 0 12px;
+.agent-approve-inline-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-approve-inline-head .agent-ask-question-icon {
+  color: var(--warning);
+}
+
+.agent-approve-inline-head .agent-ask-question-title {
+  flex: 1;
+}
+
+.agent-approve-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.agent-approve-inline-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-approve-inline-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.agent-approve-keys {
+  margin-right: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.agent-approve-keys kbd {
+  display: inline-block;
+  padding: 0 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  line-height: 1.5;
   color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.6;
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-muted) 20%, transparent);
+  border-radius: 3px;
+  min-width: 14px;
+  text-align: center;
 }
-
-.agent-approve-detail {
-  border: 1px solid var(--border, #ccc);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--surface);
+.agent-approve-inline-footer button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .agent-approve-detail-row {
@@ -1215,21 +1271,16 @@
   align-items: flex-start;
 }
 
-.agent-approve-detail-row+.agent-approve-detail-row {
-  border-top: 1px solid var(--border, #ccc);
-}
-
 .agent-approve-detail-row>span:first-child {
   flex-shrink: 0;
   width: 52px;
-  padding: 8px 10px;
+  padding: 2px 0;
   font-size: 12px;
   color: var(--text-muted);
-  background: rgba(0, 0, 0, .03);
 }
 
 .agent-approve-detail-row code {
-  padding: 8px 10px;
+  padding: 2px 0;
   font-family: var(--font-mono, monospace);
   font-size: 12px;
   color: var(--tool-accent, var(--accent));
@@ -1237,8 +1288,7 @@
 
 .agent-approve-args {
   margin: 0;
-  padding: 8px 10px;
-  max-height: 220px;
+  max-height: 200px;
   overflow: auto;
   font-family: var(--font-mono, monospace);
   font-size: 12px;
@@ -1998,73 +2048,186 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.28);
   animation: taskCardIn 0.15s ease-out;
   overflow: hidden;
 }
 
-.agent-task-card-header {
+.agent-task-card-inline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  top: auto;
+  width: auto;
+  max-height: 40vh;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  box-shadow: 0 -4px 12px rgba(0,0,0,0.06);
+  z-index: 30;
+  /* 关闭/收起时平滑过渡高度与透明度；真实像素高度由 ResizeObserver 同步到 --task-card-h，
+     故消息区底部预留空间会跟随卡片实际高度平滑变化，关闭后严丝合缝贴回输入框。 */
+  transition: max-height .2s ease, opacity .2s ease, transform .2s ease;
+}
+.agent-task-card-inline.collapsed {
+  /* 用数值 max-height 以便能向关闭态（max-height:0）平滑过渡；仅头部可见，body 未渲染 */
+  max-height: 120px;
+  padding-bottom: 6px;
+}
+/* 关闭过渡态：卡片向上收起并淡出，高度过渡至 0，消息区随之跟降 */
+.agent-task-card-inline.closing {
+  max-height: 0 !important;
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+}
+
+.agent-task-card-head {
   display: flex;
   align-items: center;
-  padding: 6px 10px;
-  font-size: 12px;
+  gap: 8px;
+  padding: 8px 10px 0;
+  flex-shrink: 0;
+}
+
+.agent-task-card-title {
+  font-size: 14px;
   font-weight: 600;
   color: var(--text);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+}
+
+.agent-task-card-count {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.agent-task-card-head-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.agent-task-card-head-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.agent-task-card-head-btn:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* 计划总标题（plan 级别，区别于每条带状态的待办）：显示在头部与待办列表之间，不带状态徽标 */
+.agent-task-card-plan-title {
+  margin: 6px 10px 2px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  word-break: break-word;
 }
 
 .agent-task-card-body {
   flex: 1;
   overflow-y: auto;
-  padding: 6px 10px 10px;
+  padding: 6px 8px 8px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 3px;
 }
 
 .agent-task-card-empty {
   padding: 16px 0;
   text-align: center;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .agent-task-card-item {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 8px;
-}
-
-.agent-task-card-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 2px;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--bg);
 }
 
-.agent-task-card-id {
+.agent-task-card-item.done {
+  opacity: .7;
+}
+
+.agent-task-card-status {
+  flex-shrink: 0;
   font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 8px;
+  line-height: 1.4;
+}
+.agent-task-card-status.status-pending {
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: #000;
+  border: 1px solid var(--border, #cfcfcf);
+}
+.agent-task-card-status.status-in_progress {
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+}
+.agent-task-card-status.status-completed {
+  background: color-mix(in srgb, #6fbc8f 16%, transparent);
+  color: #0a3b1e;
+  border: 1px solid #6fbc8f;
+}
+.agent-task-card-status.status-cancelled {
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
   color: var(--text-muted);
-  font-family: var(--font-mono, monospace);
+  border: 1px solid var(--border, #cfcfcf);
+}
+.agent-task-card-status.status-deleted {
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
+  border: 1px dashed var(--border, #cfcfcf);
 }
 
-.agent-task-card-subject {
-  font-size: 12px;
+.agent-task-card-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-task-card-text {
+  font-size: 12.5px;
   color: var(--text);
+  font-weight: 450;
   line-height: 1.4;
-  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-task-card-item.done .agent-task-card-text {
+  text-decoration: line-through;
+  color: var(--text-muted);
 }
 
 .agent-task-card-notes {
-  margin-top: 3px;
-  font-size: 10px;
-  color: var(--text-muted);
-  white-space: pre-wrap;
-  word-break: break-word;
-  border-top: 1px dashed var(--border);
-  padding-top: 3px;
+  display: none;
 }
 
 .agent-code-view .chat-messages {
@@ -2074,7 +2237,17 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  overflow-anchor: none;
+  /* 启用滚动锚定：当用户向上翻阅历史、上方消息（流式/工具结果）高度变化时，
+     浏览器自动保持当前阅读位置，避免视图跳动到顶部。 */
+  overflow-anchor: auto;
+}
+
+/* 计划卡片（agent-task-card-inline）为 absolute 浮层、脱离文档流，展开时向上遮挡消息。
+   用其高度（--task-card-h）在消息列表底部预留等高的空间，使消息区上移、不被遮挡。
+   变量为 0 时（卡片关闭/收起）无额外预留。
+   基础间隙从 16px 缩小到 8px（约一个复制按钮高度的紧凑贴合），让消息底与卡片上边框更贴近。 */
+.agent-code-view .chat-messages {
+  padding-bottom: calc(1px + var(--task-card-h, 0px));
 }
 
 .agent-code-view .chat-messages .chat-msg {
@@ -2314,8 +2487,8 @@
   flex-direction: column;
   gap: 10px;
   padding: 12px 14px 14px;
-  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border-strong));
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border-strong));
   border-radius: var(--radius-sm);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.20);
   animation: agent-ask-question-in 0.22s ease-out;
@@ -2340,9 +2513,8 @@
 }
 
 .agent-ask-question-icon {
-  color: var(--accent);
+  color: var(--warning);
   flex-shrink: 0;
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 45%, transparent));
 }
 
 .agent-ask-question-title {
@@ -2481,26 +2653,6 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
-.agent-ask-question-preview {
-  margin-top: 7px;
-  padding: 7px 9px;
-  border: 1px dashed var(--border-strong);
-  border-radius: 7px;
-  background: var(--bg);
-  max-height: 150px;
-  overflow: auto;
-}
-
-.agent-ask-question-preview pre {
-  margin: 0;
-  font-family: var(--font-mono, monospace);
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--text-secondary);
-}
-
 .agent-ask-question-footer {
   display: flex;
   align-items: center;
@@ -2547,40 +2699,6 @@
 
 .agent-code-scroll-bottom-btn:active {
   transform: translateX(-50%) translateY(0);
-}
-
-.task-status {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 7px;
-  border-radius: 10px;
-  text-transform: uppercase;
-  letter-spacing: .4px;
-}
-
-.task-status.pending {
-  background: rgba(139, 147, 161, .18);
-  color: #aeb6c2;
-}
-
-.task-status.in_progress {
-  background: rgba(79, 140, 255, .18);
-  color: #6fa8ff;
-}
-
-.task-status.completed {
-  background: rgba(76, 200, 120, .18);
-  color: #5fd089;
-}
-
-.task-status.cancelled {
-  background: rgba(255, 159, 64, .18);
-  color: #ffb066;
-}
-
-.task-status.deleted {
-  background: rgba(255, 95, 95, .18);
-  color: #ff8a8a;
 }
 
 .ac-icon-btn {

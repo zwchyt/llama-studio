@@ -227,8 +227,8 @@ export default function SettingsView() {
         <div className="settings-section-title"><Activity /> 模型监控轮询</div>
         <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-            每秒向 llama-server 请求 <code>/slots</code> 接口获取实时 slot 状态（上下文用量、解码进度等）。
-            关闭可减少约 35% 的 HTTP 轮询开销，tok/s 数据仍通过日志实时解析不受影响。
+            每 2 秒向 llama-server 请求 <code>/slots</code> 与 <code>/metrics</code> 接口，获取实时 slot 状态（上下文用量、解码进度等）及 tok/s、KV 缓存占用等监控数据。
+            关闭后停止轮询，监控面板将不再刷新。
           </p>
           <label className="toggle" style={{ marginTop: 4 }}>
             <input type="checkbox" checked={metricsPolling} onChange={async (e) => { const v = e.target.checked; try { await window.api.setMetricsPolling(v); setMetricsPolling(v) } catch { setMetricsPolling(!v) } }} />
@@ -242,9 +242,9 @@ export default function SettingsView() {
         <div className="settings-section">
 	        <div className="settings-section-title"><Volume2 /> 界面</div>
 	        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-	          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-	            聊天界面：助手回复完成时播放提示音。
-	          </p>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            开启：助手回复完成时播放提示音。关闭：不播放提示音。
+          </p>
 	          <label className="toggle" style={{ marginTop: 4 }}>
 	            <input
 	              type="checkbox"
@@ -257,7 +257,7 @@ export default function SettingsView() {
         </div>
         <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-            启动时播放开屏动画（积木塔崩落效果）。关闭后将直接进入主界面。
+            开启：启动时播放开屏动画。关闭：直接进入主界面。
           </p>
           <label className="toggle" style={{ marginTop: 4 }}>
             <input
@@ -271,7 +271,7 @@ export default function SettingsView() {
         </div>
         <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-            Agent Code 工作台中，工具调用卡片（Bash、文件读取、搜索等）内部的参数与结果详情默认展开；关闭后新产生的工具调用卡片默认折叠，只显示工具名称与状态。
+            开启：工具调用卡片展开，显示参数与结果详情。关闭：仅显示工具名称与状态。
           </p>
           <label className="toggle" style={{ marginTop: 4 }}>
             <input
@@ -285,7 +285,7 @@ export default function SettingsView() {
         </div>
         <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-            参数弹窗中，鼠标悬停在参数上显示说明提示框。关闭后悬停不再弹出提示。
+            开启：悬停参数时显示说明提示框。关闭：不显示提示框。
           </p>
           <label className="toggle" style={{ marginTop: 4 }}>
             <input

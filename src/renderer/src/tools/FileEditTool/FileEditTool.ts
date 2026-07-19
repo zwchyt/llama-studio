@@ -1,6 +1,7 @@
 import type { ToolDefinition } from '../../utils/tools'
 import { FILE_EDIT_TOOL_NAME } from './constants'
 import type { FileEditInput } from './types'
+import { invalidateReadCache } from '../FileReadTool/FileReadTool'
 
 export const definition: Omit<ToolDefinition['function'], 'type'> = {
   name: FILE_EDIT_TOOL_NAME,
@@ -21,6 +22,9 @@ export const definition: Omit<ToolDefinition['function'], 'type'> = {
 export async function execute(args: Record<string, unknown>): Promise<string> {
   const { file_path, old_string, new_string, replace_all } = args as unknown as FileEditInput & { replace_all?: boolean }
   const res = await window.api.editFile(file_path, old_string, new_string, replace_all)
-  if (res.success) return 'File edited successfully.'
-  return `Error: ${res.error}`
+  if (res.success) { invalidateReadCache(file_path); return '✅ 文件编辑成功。' }
+  const err = res.error || ''
+  if (/not found|no match|unable to locate/.test(err)) return `❌ 编辑失败：未找到匹配的 old_string，请对照 Read 返回的 hashline 重新检查。\n${err}`
+  if (/ENOENT|no such|does not exist/.test(err)) return `❌ 编辑失败：文件不存在\n${err}`
+  return `❌ 编辑失败：${err}`
 }

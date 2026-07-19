@@ -1,5 +1,6 @@
 import type { ToolDefinition } from '../../utils/tools'
 import { FILE_DELETE_TOOL_NAME } from './constants'
+import { invalidateReadCache } from '../FileReadTool/FileReadTool'
 
 export const definition: Omit<ToolDefinition['function'], 'type'> = {
   name: FILE_DELETE_TOOL_NAME,
@@ -17,9 +18,13 @@ export const definition: Omit<ToolDefinition['function'], 'type'> = {
 export async function execute(args: Record<string, unknown>): Promise<string> {
   const path = String(args.path || '')
   const recursive = !!args.recursive
-  if (!path) return 'Error: path is required.'
+  if (!path) return '❌ 删除失败：缺少路径参数 path'
   // 让主进程自动判断是文件还是目录，并执行相应删除
   const res = await window.api.deletePath(path, recursive)
-  if (res.success) return res.message || 'Deleted successfully.'
-  return `Error: ${res.error}`
+  if (res.success) { invalidateReadCache(path); return res.message || '✅ 删除成功。' }
+  const err = res.error || ''
+  if (/ENOENT|no such|does not exist/.test(err)) return `❌ 删除失败：路径不存在\n${err}`
+  if (/EACCES|EPERM|permission/.test(err)) return `🔒 删除失败：权限不足\n${err}`
+  if (/not empty|directory not empty/i.test(err)) return `📁 删除失败：目录非空，请设置 recursive: true 后再试\n${err}`
+  return `❌ 删除失败：${err}`
 }

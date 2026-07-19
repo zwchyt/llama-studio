@@ -13,10 +13,18 @@ When merge=true (default), you can send partial updates — include only the ite
 
 When merge=false, the provided list replaces the previous one entirely (use when initializing or restructuring).
 
-Priority: high / medium / low (default medium). Status: pending / in_progress / completed / cancelled. Fields: id, content (subject), description, status, priority, activeForm, notes.`,
+Priority: high / medium / low (default medium). Status: pending / in_progress / completed / cancelled. Fields: id, content (subject), description, status, priority, activeForm, notes.
+
+IMPORTANT: Do NOT mark tasks as 'completed' yourself — the system automatically flips the current 'in_progress' task to 'completed' and promotes the next 'pending' task to 'in_progress' after you successfully execute the corresponding tool. You only need to set a task to 'in_progress' to begin it (or leave it 'pending').
+
+EXECUTION DISCIPLINE: After creating the plan, you MUST execute the tasks strictly IN ORDER, one by one — start from the first task, run the actual tool(s) it requires (Read/Write/Edit/Bash/...), and only move to the next task after the current one's work is genuinely done. NEVER skip a pending task, NEVER jump ahead, and DO NOT output a final answer until every task in the plan is completed. If a task turns out unnecessary, mark it cancelled explicitly rather than silently skipping it.`,
   parameters: {
     type: 'object',
     properties: {
+      title: {
+        type: 'string',
+        description: 'Optional overall title/summary for this plan (e.g. a one-line goal). Shown above the task list in the plan card, without a status badge. Omit if there is no meaningful plan title.'
+      },
       merge: {
         type: 'boolean',
         description: 'Optional. When true (default), merge the provided todos into the existing list by id — send only the items you are changing. When false, replace the entire list.'
@@ -40,6 +48,14 @@ Priority: high / medium / low (default medium). Status: pending / in_progress / 
     },
     required: ['todos']
   }
+}
+
+// 计划总标题（plan 级别，区别于每条待办的 content）：仅用于 Agent Code 工作台内联卡片展示，
+// 不随任务清单持久化。模型可在调用时附带，作为整批计划的概括标题显示在待办列表上方。
+export interface TodoWriteArgs {
+  title?: string
+  merge?: boolean
+  todos: TodoUpdate[]
 }
 
 export async function execute(args: Record<string, unknown>): Promise<string> {

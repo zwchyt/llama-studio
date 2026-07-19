@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { flushSync } from 'react-dom'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -7,22 +7,26 @@ import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import 'katex/dist/katex.min.css'
-import { Send, Square, Paperclip, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, HelpCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, RefreshCw, Eye, FilePlus2, FileSearch, TerminalSquare, Clock, CheckCircle2, XCircle, Search, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles } from 'lucide-react'
+import { Send, Square, Paperclip, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, RefreshCw, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
-import { getToolDefinitions, executeToolCall } from '../utils/tools'
-import { setWorkspaceRoot, getWorkspaceRoot } from '../tools/workspaceRoot'
+import { getToolDefinitions, executeToolCall, TOOL_METAS, APPROVAL_TOOLS, WRITE_EDIT_TOOLS, BACKUP_TOOLS } from '../utils/tools'
+import { setWorkspaceRootForSession, getWorkspaceRootForSession } from '../tools/workspaceRoot'
 import { setAgentSessionId } from '../tools/agentSession'
 import { getFileReadPrompt } from '../tools/FileReadTool/prompt'
 import { getFileWritePrompt } from '../tools/FileWriteTool/prompt'
 import { getFileEditPrompt } from '../tools/FileEditTool/prompt'
 import { getGlobPrompt } from '../tools/GlobTool/prompt'
 import { getGrepPrompt } from '../tools/GrepTool/prompt'
+import { getListDirPrompt } from '../tools/ListDirTool/prompt'
+import { getAnalyzeDirPrompt } from '../tools/AnalyzeDirTool/prompt'
 import { getBashPrompt } from '../tools/BashTool/prompt'
+import { isDestructiveBashCommand } from '../tools/BashTool/BashTool'
 import { getFileDeletePrompt } from '../tools/FileDeleteTool/prompt'
 import { getTodoWritePrompt } from '../tools/TodoWriteTool/prompt'
 import { getAskUserQuestionPrompt } from '../tools/AskUserQuestionTool/prompt'
+import { askUserQuestionRegistry } from '../utils/askUserQuestionRegistry'
 import { getTaskGetPrompt } from '../tools/TaskGetTool/prompt'
 import { getTaskListPrompt } from '../tools/TaskListTool/prompt'
 import { getTaskOutputPrompt } from '../tools/TaskOutputTool/prompt'
@@ -32,7 +36,7 @@ import AgentContextPanel from './AgentContextPanel'
 import CodeBlock from './CodeBlock'
 import AskUserQuestionInline from './AskUserQuestionInline'
 
-import type { AgentMessage, AgentSession, AgentProject, Attachment, AgentTask, TodoUpdate } from '../../../shared/types'
+import type { AgentMessage, AgentSession, AgentProject, Attachment, AgentTask, TodoUpdate, AgentSegment } from '../../../shared/types'
 import '../styles/agent-code.css'
 
 type ApiMessage =
@@ -43,8 +47,6 @@ type ApiMessage =
 let idCounter = 0
 function newId(prefix = 'x') { return `${prefix}-${++idCounter}` }
 function newMsgId() { return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }
-// 项目 / 会话 id 需要跨重启全局唯一：每个会话会落盘为独立文件，
-// 若使用会归零的计数器 id，不同启动的会话可能映射到同一文件名而被互相覆盖。
 function uniqueId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -67,9 +69,6 @@ function getToolPreview(input: unknown): string {
   return typeof first === 'string' ? first.slice(0, 120) : ''
 }
 
-// 由 old/new 文本计算「分栏 diff」：左列为原内容、右列为新内容，标注 +/-
-// 行类型：equal(两列相同) / del(仅左列，删除) / ins(仅右列，新增) /
-//         replace(同处一行：左=删除、右=新增，用于「删→增」改动的逐行对照)
 type DiffRow = { type: 'equal' | 'del' | 'ins' | 'replace'; left: string | null; right: string | null; leftNum: number | null; rightNum: number | null }
 function computeSplitDiff(oldText: string, newText: string): DiffRow[] {
   const a = oldText.split('\n')
@@ -93,8 +92,6 @@ function computeSplitDiff(oldText: string, newText: string): DiffRow[] {
   while (i < n) { script.push({ type: 'del', ai: i, bj: -1 }); i++ }
   while (j < m) { script.push({ type: 'ins', ai: -1, bj: j }); j++ }
 
-  // 将相邻的「del 段 + ins 段」配对成 replace 行（左删右增、同处一行），实现严格逐行对齐：
-  // 一眼即可看出某一行从什么改成了什么；段长不一致时剩余行仍按 del / ins 单独成行。
   const rows: DiffRow[] = []
   let lnum = 1, rnum = 1, k = 0
   while (k < script.length) {
@@ -155,7 +152,6 @@ function ToolEditDiff({ oldText, newText }: { oldText: string; newText: string }
   )
 }
 
-// 带行号的纯文本代码块（用于读取 / 写入文件的文本内容展示）
 function LinedPre({ text, maxHeight }: { text: string; maxHeight?: number }) {
   const lines = text.split('\n')
   return (
@@ -170,25 +166,10 @@ function LinedPre({ text, maxHeight }: { text: string; maxHeight?: number }) {
   )
 }
 
-// ── Markdown 渲染（复用全局 CodeBlock 高亮，支持 GFM 表格/列表/math）────
-// 关键点：CodeBlock 渲染的是 <div> 结构，不能塞进 react-markdown 默认的
-// <pre><code> 里（<div> 非法嵌套在 <pre> 中会被浏览器重排导致代码块错位/缩进错乱）。
-// 所以必须同时拦截 pre 与 code：
-//   - MarkdownPre：块级代码容器，直接透传 children（不再生成 <pre> 标签），
-//     让内部 code 渲染器返回的 CodeBlock <div> 裸露在外，避免 <div> 被包进 <pre>。
-//   - MarkdownCode：块级代码（含 language- 或含换行）交给 CodeBlock；
-//     行内代码（不在 pre 内、无换行）保留 chat-code-in-line 样式。
 function MarkdownPre({ children }: { children?: React.ReactNode }) {
-  // 直接返回子节点（即 code 渲染器产出的 CodeBlock），丢弃默认 <pre> 包裹。
   return <>{children}</>
 }
 
-// ── Markdown 链接渲染 ──
-// 安全考量：Electron 渲染进程内原生 <a href> 默认会在应用内导航（或尝试加载），
-// 既危险（javascript:/file: 等伪协议可绕过沙箱）又影响体验（跳离应用）。
-// 故自定义 a 渲染器：仅放行 http(s):/mailto: 协议，点击统一走 window.api.openExternal
-// 用系统浏览器打开（与项目其他处一致），并加 rel="noopener noreferrer" 防 window.opener 钓鱼。
-// 裸网址（非 []() 形式）由 remarkLinkifyUrls 在解析阶段转为链接节点，最终也走本渲染器。
 const SAFE_URL_RE = /^(https?:|mailto:)/i
 function MarkdownLink({ href, children }: { href?: string; children?: React.ReactNode }) {
   const url = typeof href === 'string' ? href : ''
@@ -208,11 +189,6 @@ function MarkdownLink({ href, children }: { href?: string; children?: React.Reac
   )
 }
 
-// 轻量 remark 插件：把文本节点中的裸网址（http(s)://...）拆成「文本 + 链接」两个节点，
-// 使未写成 [文本](url) 的网址也可点击。不引入额外依赖，直接操作 mdast。
-// 只对 type==='text' 的节点处理；代码块内容在解析阶段已是 code/inlineCode 节点（非 text），
-// 不会被命中，因此不会被错误地链接化。采用「父数组原地替换」的标准访问者手法，
-// 避免把 text 节点非法地升级为 paragraph。
 function remarkLinkifyUrls() {
   const URL_RE = /(https?:\/\/[^\s<>"')]+)/g
   const splitText = (value: string): any[] => {
@@ -253,22 +229,16 @@ function remarkLinkifyUrls() {
 }
 
 function MarkdownCode({ className, children, node }: { className?: string; children?: React.ReactNode; node?: any }) {
-  // react-markdown v10 传给 code 渲染器的 children 通常是「单个字符串」，但也可能含
-  // 注释节点 / 实体 / 转义 HTML 等，变成 [string, <Element>, string]。
-  // 优先用原始节点文本（node 直接持有未经拆分的元素文本），缺失时回退到 children 拼接。
   const nodeText: string | undefined = node?.children?.[0]?.value
   const nodeToText = (n: React.ReactNode): string => {
     if (n == null) return ''
     if (typeof n === 'string') return n
     if (typeof n === 'number') return String(n)
     if (Array.isArray(n)) return n.map(nodeToText).join('')
-    // React 元素（如注释、实体）保留其 children 文本，而非直接丢弃（修复内容缺失）
     if (typeof n === 'object' && 'props' in (n as any)) return nodeToText((n as any).props?.children)
     return ''
   }
   const text = (typeof nodeText === 'string' ? nodeText : nodeToText(children)).replace(/\n$/, '')
-  // 语言识别必须匹配 language-c++ / language-c# / language-shell-session 等带符号或
-  // 多段名称的写法；(\w+) 只到 [a-zA-Z0-9_]，会把 c++ 截断为 c、shell-session 截断为 shell。
   const match = /language-([^\s]+)/.exec(className || '')
   if (match) {
     return <CodeBlock language={match[1]} value={text} />
@@ -279,9 +249,6 @@ function MarkdownCode({ className, children, node }: { className?: string; child
   return <code className="chat-code-in-line">{text}</code>
 }
 
-// 自定义 rehype-sanitize schema：在默认安全规则基础上，放行 README 常用的
-// align、width、height、style 等属性（rehype-raw 解析后需要这些才能正确渲染）。
-// 同时放行 data: 协议用于 src 属性，使内联的 data URL 图片能正常显示。
 const SANITIZE_SCHEMA = {
   ...defaultSchema,
   attributes: {
@@ -305,14 +272,8 @@ const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { content: 
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath, remarkLinkifyUrls]}
-      // 顺序：先处理数学公式 → 解析原始 HTML → 最后 sanitize 过滤不安全内容
       rehypePlugins={[rehypeKatex, rehypeRaw, [rehypeSanitize, SANITIZE_SCHEMA]]}
-      // 必须显式设置 allowDangerousHtml: true，否则 remark-rehype 会剥离 HTML
-      // 节点，rehype-raw 接收不到 raw 节点而无任何效果。
       remarkRehypeOptions={{ allowDangerousHtml: true }}
-      // 默认 urlTransform 会过滤 file: 协议导致本地图片 src 被清空（无法渲染）。
-      // 此处放行 http(s):/mailto:/file:/data: 等安全协议，其余仍走默认实现
-      // （默认实现会拦截 javascript: 等危险协议，保留 XSS 防护）。
       urlTransform={(url) => /^(https?:|mailto:|file:|data:)/i.test(url) ? url : defaultUrlTransform(url)}
       components={{ code: MarkdownCode as any, pre: MarkdownPre as any, a: MarkdownLink as any }}
     >
@@ -321,75 +282,60 @@ const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { content: 
   )
 })
 
-// ── 预览面板专用：轻量预处理 ──
-// 背景：README 等文件头部常见 <div align="center"> / <img> / <p> / <br/> 等
-// HTML 片段。react-markdown 默认不解析 HTML（避免 XSS），但此处通过 rehype-raw +
-// rehype-sanitize 安全地渲染白名单 HTML 标签，无需手动转换。
-// 该函数保留为入口点，当前直接透传（所有 HTML 由 rehype 插件处理）。
-// 仅对预览面板内容调用；聊天/思考块的 Markdown 不启用，避免模型输出被意外改写。
 function preprocessReadmeHtml(src: string): string {
   return src ?? ''
 }
 
-// 把预览 Markdown 内容转成可渲染形式：相对图片路径（assets/xxx.png）内联已在
-// openPreview 读取阶段由 inlineLocalImages 完成，此处只做透传（HTML 标签由
-// rehype-raw + rehype-sanitize 在 AgentMarkdown 中处理）。
 const pathDir = (p: string) => p.replace(/[\\/][^\\/]*$/, '').replace(/\\/g, '/')
 function renderPreviewMarkdown(content: string): string {
-  // 相对图片的内联（转 data: URL）已在 openPreview 读取阶段由 inlineLocalImages 完成
-  // openPreview 读取阶段由 inlineLocalImages 完成，此处不再处理路径。
   return preprocessReadmeHtml(content ?? '')
 }
 
 
 // ── 工具元信息：中文名 / 描述 / 图标（用于工具调用块展示）────
-const TOOL_META: Record<string, { name: string; desc: string; icon: React.ComponentType<{ size?: number; className?: string }> }> = {
-  Read: { name: '读取文件', desc: '读取文件内容（自动识别编码，带行号）', icon: Eye },
-  Write: { name: '写入文件', desc: '将内容写入文件，自动创建父目录', icon: FilePlus2 },
-  Edit: { name: '编辑文件', desc: '替换文件中的文本（支持整体替换）', icon: Pencil },
-  Glob: { name: '查找文件', desc: '按文件名模式（glob）查找文件', icon: Search },
-  Grep: { name: '搜索内容', desc: '按正则搜索文件内容，支持计数/文件模式', icon: FileSearch },
-  Bash: { name: '执行命令', desc: '执行 shell 命令（终端、脚本、编译等）', icon: TerminalSquare },
-  get_datetime: { name: '获取时间', desc: '获取当前日期与时间', icon: Clock },
-  web_search: { name: '网络搜索', desc: '搜索网页并返回标题、链接与摘要', icon: Search },
-  fetch_webpage: { name: '抓取网页', desc: '抓取网页内容并转为纯文本', icon: FileText },
-  AskUserQuestion: { name: '提问用户', desc: '向用户提出选择题并收集答案', icon: HelpCircle },
-}
+// 工具分类/展示/权限元数据已集中到 utils/tools.ts 的 TOOL_METAS（单一事实来源）。
+// 以下 helper 从元数据派生，替代原先散落的字符串 Set 与手写 Map。
+const TOOL_META: Record<string, { name: string; desc: string; icon: React.ComponentType<{ size?: number; className?: string }> }> =
+  Object.fromEntries(
+    Object.entries(TOOL_METAS).map(([name, m]) => [name, { name: m.label, desc: '', icon: m.icon }])
+  )
 
 // 工具「执行中」状态文案（替代通用的「执行中…」，显示具体动作，如 Edit 编辑中）
-const TOOL_RUN_VERB: Record<string, string> = {
-  Read: '读取中',
-  Write: '写入中',
-  Edit: '编辑中',
-  Glob: '查找中',
-  Grep: '搜索中',
-  Bash: '执行中',
-  Delete: '删除中',
-  TodoWrite: '计划中',
-  AskUserQuestion: '提问中',
-  TaskGet: '查询任务中',
-  TaskList: '列出任务中',
-  TaskOutput: '读取输出中',
-  get_datetime: '获取时间中',
-  web_search: '搜索中',
-  fetch_webpage: '抓取中',
-}
 function toolRunVerb(name: string): string {
-  return TOOL_RUN_VERB[name] ?? '执行中'
+  return TOOL_METAS[name]?.verb ?? '执行中'
 }
 
 // Agent 工作台暴露文件操作类工具 + Bash 执行（不调用联网 / 时间类工具）
-const AGENT_FILE_TOOL_NAMES = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'ListDir', 'Delete', 'TodoWrite', 'AskUserQuestion', 'TaskGet', 'TaskList', 'TaskOutput', 'GetBackgroundTaskOutput', 'ListBackgroundTasks']
+const AGENT_FILE_TOOL_NAMES = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'ListDir', 'AnalyzeDir', 'Delete', 'TodoWrite', 'AskUserQuestion', 'TaskGet', 'TaskList', 'TaskOutput', 'GetBackgroundTaskOutput', 'ListBackgroundTasks']
 
-// 需要人工确认的「破坏性」工具：Delete / Bash 默认开启；Write / Edit 可由项目开关追加
-const APPROVAL_TOOLS = new Set(['Delete', 'Bash'])
-const WRITE_EDIT_TOOLS = new Set(['Write', 'Edit'])
-// 执行前需备份原文件、支持「一键撤销」的工具
-const BACKUP_TOOLS = new Set(['Write', 'Edit', 'Delete'])
 const BACKUP_MAX_BYTES = 2 * 1024 * 1024
 
+// 发现项目说明文件（README / AGENTS.md / CLAUDE.md 等），并将其内容注入系统提示，
+// 让模型开箱即知项目类型/约定/架构概览（参考 grok-build 的 AGENTS.md 逐级发现）。
+// 仅在 workspaceDir 非空时尝试，失败/无文件时不阻断。
+async function discoverProjectDocs(workspaceDir: string): Promise<string> {
+  if (!workspaceDir) return ''
+  const candidates = ['README.md', 'README', 'AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md']
+  const parts: string[] = []
+  for (const name of candidates) {
+    try {
+      const path = workspaceDir.replace(/\\/g, '/') + '/' + name
+      const res = await window.api.readFile(path, { maxBytes: 8000 })
+      if (res.success && res.content) {
+        const title = name === 'README.md' || name === 'README' ? '项目说明（README）'
+          : name === 'AGENTS.md' ? '项目智能体约定（AGENTS.md）'
+            : name === 'CLAUDE.md' ? '项目智能体约定（CLAUDE.md）'
+              : name === 'CONTRIBUTING.md' ? '贡献指南'
+                : name
+        parts.push(`## ${title}\n\n${res.content}`)
+      }
+    } catch { /* 文件不存在或无法读取，跳过 */ }
+  }
+  return parts.length ? `\n\n## 项目说明\n\n以下内容从工作区项目文件自动提取，供你了解项目的类型、结构和约定：\n\n${parts.join('\n\n---\n\n')}\n` : ''
+}
+
 // 构建系统提示词：自定义指令（按项目）优先，其后追加工具使用指引
-function buildSystemContent(project: AgentProject): string {
+async function buildSystemContent(project: AgentProject): Promise<string> {
   const toolPrompts = [
     getFileReadPrompt(),
     getFileWritePrompt(),
@@ -398,6 +344,8 @@ function buildSystemContent(project: AgentProject): string {
     getGrepPrompt(),
     getBashPrompt(),
     getFileDeletePrompt(),
+    getListDirPrompt(),
+    getAnalyzeDirPrompt(),
     getTodoWritePrompt(),
     getAskUserQuestionPrompt(),
     getTaskGetPrompt(),
@@ -432,6 +380,36 @@ function buildSystemContent(project: AgentProject): string {
 
 仅在真正需要 shell 执行时使用 \`Bash\`。禁止用 echo 或其他命令输出工具来与用户通信——所有回复应直接写在 response 文本中。
 
+## 探索项目的高效策略
+
+分析项目架构或定位代码时，**先建立全局视图，再只深入相关的部分**，不要盲目枚举：
+
+- **先概览、后深入**：分析目录/项目功能时，**直接用 \`AnalyzeDir\`（项目根）一次得到完整概览**（目录树 + 入口文件 + 文件类型统计），配合 \`Grep\`/\`Glob\` 建立整体认知；确认了与任务相关的文件后，再针对性 \`Read\`。\`AnalyzeDir\` 已包含整棵树，无需再逐层探索。
+- **禁止逐个 Read**：不要把一个目录下的所有文件逐一 \`Read\`。优先用 \`Grep\` 按关键词 / 入口符号定位，用 \`Glob\` 按文件名模式筛选，而不是通读。
+- **一个目录只需一次 \`AnalyzeDir\`**：分析目录结构**只需调用一次 \`AnalyzeDir\`**，它已递归返回全树概览。严禁为了"看所有文件夹"而对每个子目录各发一条命令——这既浪费轮次又撑爆上下文。\`ListDir\` 与 \`AnalyzeDir\` 不要混用做同一件事：\`ListDir\` 只看单个目录单层（确认/核对路径），\`AnalyzeDir\` 做全局概览，二者择一即可。
+- **严禁用 Bash 列目录、严禁 ListDir recursive 全树 dump**：查看目录结构一律用 \`AnalyzeDir\` / \`ListDir\`，**绝对禁止**用 \`Bash\` 执行 \`dir\` / \`ls\` 等命令来列目录（如 \`dir "路径"\` 这类命令是错误的枚举行为，会触发人工确认且绕过了专用工具）。**也不要**用 \`ListDir\` 的 \`recursive\` 参数一次性 dump 整棵树（会把成百上千文件灌入上下文）。\`Bash\` 仅用于真正需要 shell 执行的场景（运行程序、脚本、构建等），且需人工确认。
+- **及时收敛**：在已有足够信息回答用户时，停止继续探索并直接给出结论，避免无意义的额外工具调用。
+
+## 符号检索（高效定位函数/类/定义）
+
+需要查找函数、类、接口等定义或引用时，不要逐一 Read 文件，而是用 \`Grep\` 按关键词定位：
+- 查找函数/方法定义：\`Grep\` 模式 \`def 函数名\` 或 \`函数名=\` 或 \`function 函数名\`  
+- 查找类定义：\`Grep\` 模式 \`class 类名\` 或 \`interface 类名\`  
+- 查找引用/调用点：\`Grep\` 模式 \`函数名(\` 或 \`对象.方法(\`  
+- 查找导入/导出：\`Grep\` 模式 \`from '模块名'\` 或 \`import {.*符号名.*}\`  
+- 先用 \`output_mode: "files_with_matches"\`（默认）列命中文件，再针对性地 \`Read\` 具体段落，不要对全部命中文件逐一通读。
+	
+## 计划任务执行纪律
+
+当你用 TodoWrite 创建了任务计划后，必须**严格按任务顺序逐个执行**，纪律如下：
+
+- **顺序执行**：从第一个任务开始，运行它真正需要的工具（Read / Write / Edit / Bash / …），确认该任务的工作确实完成，再进入下一个任务。
+- **禁止跳过**：绝不允许跳过任何一个 pending / in_progress 的任务，也不允许"跳着做"或只做其中几个。
+- **禁止提前结束**：在所有任务都标记为 completed 之前，不得输出最终答案。若某个任务确实不再需要，必须显式将其标记为 cancelled，而不是悄悄跳过。
+- **状态跟随**：任务进行中用 in_progress 标记，完成后系统会自动将其翻为 completed 并推进下一项；你无需手动标 completed，但要保证每个任务对应的工具都真实执行过。
+
+这条纪律优先于"尽早给出结论"的倾向——计划未跑完就收尾属于未完成工作。
+
 ## 输出格式
 
 使用 GitHub Flavored Markdown 格式：
@@ -443,17 +421,37 @@ function buildSystemContent(project: AgentProject): string {
 
 你的回复应像优秀技术博客一样精确、结构化、高质量。避免行话堆砌，用简洁的语言解释做了什么和为什么。回复长度与任务复杂度匹配。
 
+## 思考链格式（<think> 内的自我推理）
+
+在 \`<think>\` 标签内输出推理过程时，必须**结构化、分层次**，禁止一大段纯文本堆砌。遵循以下约定：
+
+- **分模块**：用 Markdown 标题把过程切成清晰阶段，推荐顺序：
+  \`## 问题定位\` → \`## 根因分析\` → \`## 解决方案\`（定位类任务可用「现象 → 排查 → 结论」）。
+- **步骤编号前缀**：多步推理统一用 \`**Step 1:**\` → \`**Step 2:**\` → \`**Step 3:**\` 前缀标注，\`Step N:\` 后紧跟内容说明，让用户能清晰追踪推理链条；若步骤内还有子推理，用有序列表 \`1. 2. 3.\` 或无序 bullet 点缩进。
+- **逻辑阶段标注**：每步推理开头用 \`**思考：**\`、\`**分析：**\`、\`**结论：**\` 等标签明确标记当前所处的逻辑阶段，让阅读者一眼看出这一步是"在分析"还是"已得出结论"。
+- **每步独立成段**：步骤之间用空行或分隔线（\`---\`）隔开，不要密集堆叠，确保视觉上可逐条扫读。
+- **复杂步骤内的层次**：当一步涉及多个子推理时，用缩进 bullet points（\`- 子推理 1\` → \`- 子推理 2\`）展示子层级，不要平铺成连续段落。
+- **突出核心结论**：最关键的根因 / 决策用 \`> 引用块\` 或 **加粗** 单独呈现，不要淹没在叙述中段。
+- **标注关键信息**：文件路径、函数名、行号等一律用行内代码 \`\`\`path/to/file.py:123\`\`\` 或 \`\`\`function_name()\`\`\` 包裹；成组的关键信息（候选根因、受影响文件清单）用列表或表格罗列。
+- **最终输出分离**：思考链结束后用 \`**最终答案：**\` 加粗标记或 \`---\` 分隔线明确隔离推理与最终结果，让用户知道"结论已出"。
+- **整体简洁**：控制每步长度，优先使用短句和要点式表达；合理利用空格、对齐和分隔符提升可读性，避免冗长段落。
+- 思考链是给用户看的「可追溯推理」，结构化程度直接决定可读性，请务必重视排版层次（缩进、序号、分隔线）。
+
 ## 工具调用注意事项
 
 - 工具调用失败时，分析错误原因并修正参数后再试
 - 如果同一工具连续失败多次，说明当前方法不可行，应改用其他方案或直接告知用户，不要反复重试
 - 工具执行结果过长时会被自动截断（仅保留前 6000 字符），但完整内容你可以在预览面板中查看
+- **读取文件后必须基于内容进行分析或给出下一步，严禁在未分析的情况下再次读取同一文件**。文件内容已保留在对话中，重复读取同一文件既浪费又无新信息；若确需回顾，直接引用上方已有的内容即可。
+- Read 工具对同一文件的重复读取会被缓存并直接返回已有内容，此时请**直接分析已有内容**，不要继续发起新的 Read 调用。
 
 请仔细阅读每个工具的具体使用说明：
 
-${toolPrompts}`
+	${toolPrompts}`
+  const docs = await discoverProjectDocs(project.workspaceDir)
+  const full = docs ? `${base}\n\n${docs}` : base
   const custom = project.systemPrompt?.trim()
-  return custom ? `${custom}\n\n${base}` : base
+  return custom ? `${custom}\n\n${full}` : full
 }
 
 // 执行写/改/删前读取原文件内容作为撤销备份（仅内存保留，不落盘）
@@ -470,13 +468,53 @@ async function backupBeforeTool(args: Record<string, unknown>): Promise<{ path: 
   return null
 }
 
-// ── 工具结果与回传模型的截断 ──
-// 存储 / 回传模型的最大长度（避免大文件、大 grep 撑爆上下文）
 const TOOL_RESULT_LIMIT = 6000
-function truncateToolResult(s: string, limit: number = TOOL_RESULT_LIMIT): { text: string; truncated: boolean; total: number } {
-  if (s.length <= limit) return { text: s, truncated: false, total: s.length }
-  const note = `\n…（结果过长已截断，仅显示前 ${limit} / 共 ${s.length} 字符）`
-  return { text: s.slice(0, limit) + note, truncated: true, total: s.length }
+// 单条工具结果的硬上限（字符）：无论上下文多大都不超过此值。
+// 关键护栏：32k 这类小上下文模型上，toolResultCharLimit 原随预算放大到 ~68k 字符，
+// 一条 Read 大文件就能吃掉大半个 prompt 预算 → 几轮就把上下文填爆。
+// 这里封顶，保证单条结果在任何模型上都不会超过 ~16k 字符（约 5k token）。
+const TOOL_RESULT_HARD_CAP = 16000
+// 单条工具结果最多可占 prompt 预算的比例：从预算分配层面兜底，
+// 即使预算很大，单条也不会吃掉大部分可用上下文（小上下文模型受益最大）。
+const TOOL_RESULT_BUDGET_RATIO = 0.4
+// 工具结果截断：两种策略
+//  - 'keep-ends'（默认，bash/read 等）：保留头尾，中间省略——内容对模型有价值，尽量保全
+//  - 'drop-long-lines'（grep 等）：超长单行直接丢弃并标注，避免单条巨行挤占上下文
+// 参考 grok-build 的「grep 类丢弃+标记 / bash 类软换行保全部」二分思路。
+const TRUNC_LINE_CAP = 2000 // 单行超此长度则在 drop 模式下截断/标注
+function truncateToolResult(s: string, limit: number = TOOL_RESULT_LIMIT, mode: 'keep-ends' | 'drop-long-lines' = 'keep-ends'): { text: string; truncated: boolean; total: number } {
+  if (s.length <= limit) {
+    if (mode === 'drop-long-lines') {
+      // 未超总限，但仍可能含个别超长行：仅做行级收敛
+      const lines = s.split('\n')
+      let changed = false
+      const out = lines.map(l => {
+        if (l.length > TRUNC_LINE_CAP) { changed = true; return l.slice(0, TRUNC_LINE_CAP) + ` [... 单行过长已截断 ${l.length - TRUNC_LINE_CAP} 字符]` }
+        return l
+      })
+      if (changed) return { text: out.join('\n'), truncated: false, total: s.length }
+    }
+    return { text: s, truncated: false, total: s.length }
+  }
+  if (mode === 'drop-long-lines') {
+    const lines = s.split('\n')
+    const kept: string[] = []
+    let total = 0
+    let dropped = 0
+    for (const l of lines) {
+      if (l.length > TRUNC_LINE_CAP) { dropped++; kept.push(l.slice(0, TRUNC_LINE_CAP) + ` [... 单行过长已截断 ${l.length - TRUNC_LINE_CAP} 字符]`); total += TRUNC_LINE_CAP; }
+      else if (total + l.length + 1 <= limit) { kept.push(l); total += l.length + 1; }
+      else { dropped++; }
+    }
+    const note = dropped > 0 ? `\n…（结果过长：已省略 ${dropped} 行超长/溢出内容，仅显示约 ${total} / 共 ${s.length} 字符）` : `\n…（结果过长已截断，仅显示约 ${total} / 共 ${s.length} 字符）`
+    return { text: kept.join('\n') + note, truncated: true, total: s.length }
+  }
+  // keep-ends：头 + 省略标记 + 尾
+  const head = Math.floor(limit * 0.6)
+  const tail = limit - head
+  const mid = s.length - head - tail
+  const note = `\n…（结果过长已截断：显示前 ${head} + 后 ${tail} 字符，中间省略 ${mid} 字符，共 ${s.length} 字符）`
+  return { text: s.slice(0, head) + note + s.slice(s.length - tail), truncated: true, total: s.length }
 }
 
 // 将工具参数格式化为可读 JSON（参数可能为压缩单行字符串或已解析对象）
@@ -497,8 +535,10 @@ function formatDuration(ms: number): string {
   return `${s < 10 ? s.toFixed(1) : Math.round(s)}s`
 }
 
-// 判断工具返回是否为错误结果（工具自身或异常包装均可能返回 { error: ... }）
 function isToolErrorResult(s: string): boolean {
+  if (!s) return false
+  const trimmed = s.trimStart()
+  if (/^error:/i.test(trimmed)) return true
   try {
     const o = JSON.parse(s)
     return !!(o && typeof o === 'object' && 'error' in o)
@@ -511,21 +551,15 @@ function isToolErrorResult(s: string): boolean {
 function resolveWorkspacePath(p: string): string {
   if (!p) return ''
   if (/^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('/') || p.startsWith('\\')) return p
-  const root = getWorkspaceRoot()
+  const root = getWorkspaceRootForSession()
   if (!root) return p
   return root.replace(/[\\/]+$/, '') + '/' + p.replace(/^[\\/]+/, '')
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 上下文窗口管理（本地 LLM 上下文固定且偏小，发送前需按 token 预算裁剪历史，
-// 否则逐轮累加的工具结果会撑爆上下文 → 崩溃 / 胡言）。
-// 仅裁剪「发送给模型」的内容；界面展示的 displayMsgs 保持完整。
-// ═══════════════════════════════════════════════════════════════════════════
 const AGENT_CTX_DEFAULT = 4096    // 取不到真实 n_ctx 时的兜底上下文大小
 const AGENT_MAX_OUTPUT = 4096     // 与 chatStream 实际 max_tokens 一致
 const AGENT_CTX_SAFETY = 256      // 预留安全余量（token）
 
-// 粗略 token 估算：ASCII ~0.3 token/字符，CJK ~1.6 token/字符（偏保守，宁可多裁避免溢出）
 function estimateTextTokens(text: string): number {
   if (!text) return 0
   let ascii = 0
@@ -557,10 +591,13 @@ function computeContextBudget(nCtx: number): number {
 }
 
 // 单条工具结果允许的最大字符数：随模型上下文预算伸缩（不再固定 6000），
-// 避免大上下文模型也被无意义截断；小上下文模型仍受预算约束（至少 TOOL_RESULT_LIMIT）。
+// 避免大上下文模型也被无意义截断；同时受「硬上限 + 预算占比上限」双重封顶，
+// 防止小上下文模型（如 32k）因单条结果过大而几轮内就把 prompt 预算吃爆。
 function toolResultCharLimit(budgetTokens: number): number {
   const n = Number.isFinite(budgetTokens) && budgetTokens > 0 ? budgetTokens : AGENT_CTX_DEFAULT
-  return Math.max(TOOL_RESULT_LIMIT, Math.floor(n * 3))
+  const scaled = Math.floor(n * 3)
+  const byBudget = Math.floor(n * TOOL_RESULT_BUDGET_RATIO)
+  return Math.max(TOOL_RESULT_LIMIT, Math.min(scaled, TOOL_RESULT_HARD_CAP, byBudget))
 }
 
 // 按「轮次」裁剪：保留 system + 最新的若干完整轮次，丢弃最早的轮次；
@@ -586,20 +623,72 @@ function trimApiMessages(messages: ApiMessage[], budget: number): { messages: Ap
   }
   let result = sys ? [sys, ...kept.flat()] : kept.flat()
   const dropped = messages.length - result.length
-  // 安全阀：最新一轮仍超预算时，从最旧起截断 tool 结果内容
+  // 安全阀：最新一轮仍超预算时，从最旧起截断 tool 结果内容。
+  // 仅截断、绝不丢弃 tool 消息——丢弃会破坏「tool_calls ↔ tool 结果」配对导致 API 400。
+  // 单条压到 120 字符后若仍超预算（极端小上下文 + 极长结果的罕见情况），保留轻微超限：
+  // 本地模型通常对少量 token 溢出有容忍度，且继续裁剪会损害可读性，故在此止步。
   used = result.reduce((s, m) => s + estimateApiMsgTokens(m), 0)
+  // 安全阀：最新一轮仍超预算时，从最早的 tool 结果起压缩内容。
+  // 两阶段策略，避免「读 → 被裁没 → 再读」死循环：
+  //   1) 先压缩所有「非 Read」工具结果（Bash/Grep 等），Read 结果暂时保全；
+  //   2) 仅当非 Read 结果已无可压、仍超限时，才最后压缩 Read 结果（保头尾、留底限），
+  //      保证小上下文模型（如 32k）的上下文最终能被压回预算内，而非单调撑爆。
+  const READ_FLOOR = 2000 // Read 结果压缩后的最小保留字符（头尾各半，足以让模型「看见」关键片段）
+  const isReadContent = (c: string) => /"File: /.test(c) || c.startsWith('File: ')
+  const compressTo = (m: ApiMessage, floor: number) => {
+    if (m.role !== 'tool' || typeof m.content !== 'string') return
+    let text = m.content
+    while (used > budget && text.length > floor) {
+      text = text.slice(0, Math.floor(text.length * 0.6))
+      result[result.indexOf(m)] = { ...m, content: text }
+      used = result.reduce((s, mm) => s + estimateApiMsgTokens(mm), 0)
+    }
+  }
+  // 阶段一：非 Read 结果
   for (let i = 0; i < result.length && used > budget; i++) {
     const m = result[i]
-    if (m.role === 'tool' && typeof m.content === 'string') {
-      let text = m.content
-      while (used > budget && text.length > 200) {
-        text = text.slice(0, Math.floor(text.length * 0.6))
-        result[i] = { ...m, content: text }
-        used = result.reduce((s, mm) => s + estimateApiMsgTokens(mm), 0)
+    if (m.role === 'tool' && typeof m.content === 'string' && !isReadContent(m.content)) {
+      compressTo(m, 120)
+    }
+  }
+  // 阶段二：Read 结果（最后手段，保留头尾足够内容让模型仍可定位）
+  for (let i = 0; i < result.length && used > budget; i++) {
+    const m = result[i]
+    if (m.role === 'tool' && typeof m.content === 'string' && isReadContent(m.content)) {
+      compressTo(m, READ_FLOOR)
+    }
+  }
+  // ── 配对兜底（参考 grok-build 的 repair_dangling_tool_calls）──
+  // 若某条 assistant 的 tool_calls 中，有 id 找不到对应的 tool 结果消息（例如熔断/中止时
+  // 提前 break 导致后续调用未产生结果、或裁剪时丢掉了结果轮次），会破坏
+  // 「tool_calls ↔ tool 结果」配对，发送给模型即触发 API 400。此处补一条合成结果，保证配对完整。
+  result = repairDanglingToolCalls(result)
+  return { messages: result, dropped }
+}
+
+// 纯函数：扫描所有 assistant 的 tool_calls，对缺少对应 tool 结果的 id 补一条合成结果。
+// 合成结果标注来源，避免模型误以为是真实执行产出。幂等、不改原数组。
+function repairDanglingToolCalls(msgs: ApiMessage[]): ApiMessage[] {
+  const presentIds = new Set<string>()
+  for (const m of msgs) {
+    if (m.role === 'tool') presentIds.add(m.tool_call_id)
+  }
+  const synthetic: ApiMessage[] = []
+  for (const m of msgs) {
+    if (m.role !== 'assistant' || !('tool_calls' in m) || !m.tool_calls || m.tool_calls.length === 0) continue
+    for (const tc of m.tool_calls) {
+      if (!presentIds.has(tc.id)) {
+        presentIds.add(tc.id)
+        synthetic.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: JSON.stringify({ error: '该工具调用未产生结果（可能因达到熔断/轮次上限被提前中止）。请换用其他方案或向用户说明。' })
+        })
       }
     }
   }
-  return { messages: result, dropped }
+  if (synthetic.length === 0) return msgs
+  return [...msgs, ...synthetic]
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -635,6 +724,35 @@ function parseThinkSegments(content: string): ContentSegment[] {
     rest = rest.slice(closeIdx + '</think>'.length)
   }
   return segments
+}
+
+// 把累积的「自上一工具批以来的文本」切分为已闭合的 think/text 片段，
+// 返回这些片段与「尚未闭合、需下次继续累积」的尾部。用于按流式时间线把
+// 思考段与工具批交错成 segments（工具栏 → 思考链 → 工具栏 → 思考链 …）。
+// 仅吐出完全闭合的 <think>…</think>；遇到未闭合的尾部（模型还在思考中）
+// 则留作 rest 缓冲，避免把"想一半"的思考块当 finalized 渲染。
+function segmentClosedThink(raw: string): { segments: ContentSegment[]; rest: string } {
+  const out: ContentSegment[] = []
+  let rest = raw
+  while (rest.length > 0) {
+    const openIdx = rest.indexOf('<think>')
+    if (openIdx === -1) {
+      if (rest.trim()) out.push({ type: 'text', value: rest })
+      return { segments: out, rest: '' }
+    }
+    if (openIdx > 0 && rest.slice(0, openIdx).trim()) {
+      out.push({ type: 'text', value: rest.slice(0, openIdx) })
+    }
+    const inner = rest.slice(openIdx + '<think>'.length)
+    const closeIdx = inner.indexOf('</think>')
+    if (closeIdx === -1) {
+      // 未闭合：保留后续所有内容待下次
+      return { segments: out, rest: rest.slice(openIdx) }
+    }
+    out.push({ type: 'think', value: inner.slice(0, closeIdx), closed: true })
+    rest = inner.slice(closeIdx + '</think>'.length)
+  }
+  return { segments: out, rest: '' }
 }
 
 // 思考块渲染节流间隔（参考原生聊天 ChatView 的 THINK_THROTTLE_MS）
@@ -756,6 +874,53 @@ const StreamingBadge = React.memo(function StreamingBadge({ text, modelLabel }: 
         <span className="agent-stream-tps" style={{ background: bg }}>{tps.toFixed(1)} t/s</span>
       )}
     </div>
+  )
+})
+
+// ── 流式正文（非思考段）Markdown 节流渲染 ──
+// 模型主输出（正文）在流式期间每 ~30ms 落盘一次（STREAM_FLUSH_MS），若不优化，每次都触发 react-markdown
+// + remark-gfm/math + rehype-katex + rehype-raw + rehype-sanitize 对「完整且持续变长」的
+// 文本做一次全量解析 → 内容越长单帧开销越大，表现为文字跳动/卡顿。
+// 三管齐下：
+//   1) 节流：用 setInterval（~150ms）同步渲染值，把重解析频率与落盘频率解耦；
+//   2) 轻量插件栈：流式期间只用 remarkGfm + remarkLinkifyUrls，跳过 katex/raw/sanitize
+//      （这些最耗时的插件在「完成时」才用完整栈精确渲染）；
+//   3) content-visibility：视口外消息跳过渲染（CSS 侧），进一步降低整页重绘成本。
+// 流式 Markdown 重解析节流间隔。流式期间已改用轻量插件栈，单帧解析成本很低，
+// 故可把间隔压到 60ms：既让文字显示跟手（~16 次/秒重解析），又避免逐 commit 重解析。
+// 注：落盘节流 STREAM_FLUSH_MS 取更小值（见流式循环），二者配合使画面接近模型真实吐字节奏。
+const STREAM_MD_THROTTLE_MS = 60
+// 流式专用轻量 Markdown：插件栈大幅精简（去掉 rehypeKatex / rehypeRaw / rehypeSanitize），
+// 仅保 gfm + 链接识别，单帧解析开销显著下降；完成时由 AgentMarkdown 完整栈接管。
+const StreamingMarkdown = React.memo(function StreamingMarkdown({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
+  const [display, setDisplay] = useState(content)
+  useEffect(() => {
+    if (!isStreaming) { setDisplay(content); return }
+    setDisplay(content)
+    const timer = setInterval(() => setDisplay(content), STREAM_MD_THROTTLE_MS)
+    return () => clearInterval(timer)
+  }, [content, isStreaming])
+  if (!display) return null
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm, remarkLinkifyUrls]}
+      components={{ code: MarkdownCode as any, pre: MarkdownPre as any, a: MarkdownLink as any }}
+    >
+      {display}
+    </ReactMarkdown>
+  )
+})
+
+const StreamingContent = React.memo(function StreamingContent({ content, streaming }: { content: string; streaming?: boolean }) {
+  const segs = useMemo(() => parseThinkSegments(content || ''), [content])
+  return (
+    <>
+      {segs.map((seg, j) =>
+        seg.type === 'think'
+          ? <ThinkBlock key={`t-${j}`} value={seg.value} closed={seg.closed} isStreaming={!!streaming && !seg.closed} />
+          : <div key={`m-${j}`} className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}><StreamingMarkdown content={seg.value} isStreaming={streaming} /></div>
+      )}
+    </>
   )
 })
 
@@ -951,9 +1116,7 @@ export default function AgentCodeView() {
     storedProjects.length > 0 ? storedProjects : [freshProject('新项目')]
   )
 
-  // 文件预览状态（预览面板显示在文件树右侧独立列）
   const PREVIEW_MAX_BYTES = 128 * 1024
-  // 多文件预览标签：可同时打开多个文件并在标签间切换
   interface PreviewTab {
     path: string
     name: string
@@ -968,13 +1131,6 @@ export default function AgentCodeView() {
   const openTabsRef = useRef<PreviewTab[]>([])
   useEffect(() => { openTabsRef.current = openTabs }, [openTabs])
   const activeTab = openTabs.find(t => t.path === activeTabPath) || null
-  // 预览区是否按 markdown 渲染：不再单纯依赖扩展名（扩展名判断会漏掉 .mdx、无扩展名的
-  // README、或路径被改写后不带扩展名的文件，导致误走纯文本分支——表现就是“完全没渲染”，
-  // 整页逐行显示源码）。改为「扩展名优先 + 内容嗅探兜底」：
-  //   1) 已知 markdown 系扩展名 → 直接 markdown；
-  //   2) 已知代码/数据扩展名 → 直接纯文本（避免被嗅探误判成 markdown）；
-  //   3) 无扩展名 / 未知扩展名 → 看内容是否像 markdown（# 标题、> 引用、列表、```、表格等）。
-  // 这样无论文件叫什么名字，只要内容是 markdown 就能正确渲染。
   const CODE_EXT = new Set([
     'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'cc', 'hh',
     'cs', 'go', 'rs', 'rb', 'php', 'swift', 'kt', 'kts', 'scala', 'html', 'htm',
@@ -990,27 +1146,18 @@ export default function AgentCodeView() {
     const ext = extMatch ? extMatch[1].toLowerCase() : ''
     if (MD_EXT.has(ext)) return true
     if (CODE_EXT.has(ext)) return false
-    // 无扩展名 / 未知扩展名：内容嗅探（仅当确含 markdown 特征时才按 markdown 渲染，
-    // 避免把 LICENSE / Makefile / Dockerfile 等纯文本误当 markdown；同时 markdown 内容
-    // 必含 # / > / 列表 / ``` / 表格等特征而被命中，不会误判成纯文本）。
     const c = activeTab?.content
     if (c && /(^|\n)\s*(<[a-zA-Z][a-zA-Z0-9]*(\s[^>]*)?>|#{1,6}\s|>\s|[-*+]\s+\S|\d+\.\s+\S|```|!?\[|\[.+\]\(|\|[^\n]*\|)/.test(c.slice(0, 3000))) {
       return true
     }
-    // 内容尚不可用（读取中）或无 markdown 特征：无扩展名常见文档名按 markdown 渲染
+
     const base = dirName(p).toLowerCase()
     return /^(readme|changelog|license|licence|contributing|notice|authors|code_of_conduct|security|todo|notes?)$/.test(base)
   })()
 
-  // 把 Markdown 内容中「相对路径」图片（如 assets/xxx.png）内联为 data: URL。
-  // 原因：dev 模式下渲染进程是 http://localhost 源，浏览器安全策略禁止其加载 file://
-  // 子资源，故本地图片必须内联才能跨源显示（打包后 file:// 源同理更稳）。
-  // 同时处理 markdown 图片语法 ![alt](src) 和 HTML <img src="..."> 标签。
-  // 远程 https://、绝对路径、data: 等不处理。
   const inlineLocalImages = useCallback(async (markdown: string, baseFilePath: string): Promise<string> => {
     const dir = pathDir(baseFilePath)
 
-    // 1. markdown 图片 ![alt](src) 和 2. HTML <img src> 分别匹配
     type Match = { type: 'md'; full: string; alt: string; url: string } | { type: 'html'; full: string; src: string; url: string }
 
     const mdImgRe = /!\[([^\]]*)\]\(([^)]+)\)/g
@@ -1210,28 +1357,17 @@ export default function AgentCodeView() {
   const [activeSessionId, setActiveSessionId] = useState(projects[0]!.sessions[0]?.id || '')
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  // 「正在流式」与「正在执行工具」是两个不同状态：loading 覆盖整个 handleSend
-  // （流式 + 工具循环），但 UI 需要区分二者——思考块只在「真正流式」时转圈，
-  // 一旦模型返回工具调用、进入执行阶段，应停止转圈并展示工具卡片。
   const [streaming, setStreaming] = useState(false)
-  // 输入框自动增高
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  // 聊天滚动容器 + 「是否贴底」标记（仅贴底时自动跟随滚动）
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)
-  // 是否贴底（用于渲染「滚动到底部」浮动按钮；仅非贴底时显示）
   const [atBottom, setAtBottom] = useState(true)
-  // 生成期间排队的发送（当前轮次结束后自动发出）
-  const pendingSendRef = useRef<{ text: string; attachments: Attachment[] } | null>(null)
-  // 始终持有最新的 handleSend，避免排队回调使用过期闭包（如切换了会话）
+  const pendingSendRef = useRef<Array<{ text: string; attachments: Attachment[] }>>([])
   const handleSendRef = useRef<(text?: string, attachments?: Attachment[]) => void>(() => { })
-  // 中止控制：aborted 标记 + 当前流式 Promise 的 resolve，便于在停止时唤醒循环
   const abortRef = useRef<{ aborted: boolean; resolve: (() => void) | null }>({ aborted: false, resolve: null })
   const currentStreamIdRef = useRef<string | null>(null)
-  // 历史输入回溯（↑ / ↓）
   const inputHistoryRef = useRef<string[]>([])
   const historyIdxRef = useRef<number>(-1)
-  // 附件 / 图片
   const fileInputRef = useRef<HTMLInputElement>(null)
   const ctxBtnRef = useRef<HTMLButtonElement>(null)
   const promptBtnRef = useRef<HTMLButtonElement>(null)
@@ -1239,21 +1375,12 @@ export default function AgentCodeView() {
   const [treeOpen, setTreeOpen] = useState(true)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [contextModalOpen, setContextModalOpen] = useState(false)
-
-  // ── 窗口自适应（参考 Reasonix 按 viewport 实时约束面板宽度）──
-  // 监听工作台可用宽度：窄窗时自动收起侧栏 / 预览，并把文件树宽度夹紧到不溢出，
-  // 避免各面板固定 min-width 叠加导致整体被裁切或错乱。
-  // 用 ref 镜像 open 状态，避免 resize 回调闭包拿到过期值
   const treeOpenRef = useRef(treeOpen)
   treeOpenRef.current = treeOpen
-  // ── 会话栏随「是否打开文件预览」自动收起/展开 ──
-  // 预览中有文件标签(openTabs.length>0)→ 收起左会话栏，把空间让给预览；
-  // 仅文件树、无文件预览 → 展开左会话栏。逻辑简单、状态驱动，无需测量宽度。
   useEffect(() => {
     setSidebarOpen(openTabs.length === 0)
   }, [openTabs.length])
 
-  // 点击弹窗外 / Escape 关闭上下文下拉面板
   useEffect(() => {
     if (!contextModalOpen) return
     const close = (e: MouseEvent | KeyboardEvent) => {
@@ -1261,7 +1388,6 @@ export default function AgentCodeView() {
         setContextModalOpen(false)
         return
       }
-      // 点击弹窗内部不关闭
       const target = e.target as Node
       if (ctxBtnRef.current?.contains(target)) return
       const pop = document.querySelector('.agent-card-ctx')
@@ -1279,50 +1405,46 @@ export default function AgentCodeView() {
   // 任务清单（Todo / Task 工具的可视化面板）
   const [, setTasks] = useState<AgentTask[]>([])
   const [taskModalOpen, setTaskModalOpen] = useState(false)
+  // 卡片关闭过渡态：关闭时先播放收起/淡出动画，动画结束再真正卸载（taskModalOpen=false）。
+  // 过渡期间卡片真实高度仍由 ResizeObserver 写入 --task-card-h，消息区平滑跟降，无突跳/留缝。
+  const [taskCardClosing, setTaskCardClosing] = useState(false)
   // 上下文裁剪提示：当因窗口限制自动省略早期消息时显示（null = 未触发）
   const [ctxTrimInfo, setCtxTrimInfo] = useState<{ dropped: number } | null>(null)
   // 当前 TodoWrite 计划项（每次新调用替换，不累加）
   const [currentPlanItems, setCurrentPlanItems] = useState<TodoUpdate[]>([])
+  // 计划总标题（plan 级别，区别于每条待办 content）：仅用于内联卡片展示，不持久化
+  const [planTitle, setPlanTitle] = useState('')
 
-  // 点击任务卡片外部 / Escape 关闭
+  const [taskPanelCollapsed, setTaskPanelCollapsed] = useState(false)
+
+  // 点击任务卡片外部 / Escape 关闭：进入过渡态（播放收起动画），而非立即卸载
   useEffect(() => {
-    if (!taskModalOpen) return
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e.type === 'keydown' && (e as KeyboardEvent).key === 'Escape') {
-        setTaskModalOpen(false)
-        setCurrentPlanItems([])
-        return
+    if (!taskModalOpen || taskCardClosing) return
+    const close = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setTaskCardClosing(true)
       }
-      const card = document.querySelector('.agent-task-card')
-      if (card?.contains(e.target as Node)) return
-      setTaskModalOpen(false)
-      setCurrentPlanItems([])
     }
-    document.addEventListener('pointerdown', close)
     document.addEventListener('keydown', close)
     return () => {
-      document.removeEventListener('pointerdown', close)
       document.removeEventListener('keydown', close)
     }
-  }, [taskModalOpen])
+  }, [taskModalOpen, taskCardClosing])
 
-  // 会话级监控统计（上下文面板用）：请求数 / 累计 tokens
   const [reqCount, setReqCount] = useState(0)
   const [cumTokens, setCumTokens] = useState(0)
-  // 破坏性工具审批：待确认请求（null = 无）+ 本轮「全部允许」标记 + Promise resolve 句柄
   const [approvalReq, setApprovalReq] = useState<{ id: string; name: string; args: string } | null>(null)
   const approvalResolveRef = useRef<((approved: boolean) => void) | null>(null)
   const autoApproveRef = useRef(false)
-  // 写/改/删前备份（仅内存，按 toolCall id 索引；刷新 / 重开应用后失效）
+  const rejectBtnRef = useRef<HTMLButtonElement>(null)
+  const autoApproveBtnRef = useRef<HTMLButtonElement>(null)
+  const allowBtnRef = useRef<HTMLButtonElement>(null)
   const backupsRef = useRef<Record<string, { path: string; content: string }>>({})
-  // 重生成 / 重发失败回滚快照
   const regenRollbackRef = useRef<{ sid: string; messages: AgentMessage[] } | null>(null)
-  // 系统提示词编辑器弹窗状态
   const [promptModalOpen, setPromptModalOpen] = useState(false)
   const [promptDraft, setPromptDraft] = useState('')
   const [approveWriteEditDraft, setApproveWriteEditDraft] = useState(false)
 
-  // 点击提示词面板外部 / Escape 关闭
   useEffect(() => {
     if (!promptModalOpen) return
     const close = (e: MouseEvent | KeyboardEvent) => {
@@ -1359,13 +1481,64 @@ export default function AgentCodeView() {
     setApprovalReq(null)
     if (r) r(approved)
   }, [])
+  // 审批面板键盘导航：方向键切换按钮，Enter 确认允许，Escape 拒绝
+  useEffect(() => {
+    if (!approvalReq) return
+    const btns = [rejectBtnRef.current, autoApproveBtnRef.current, allowBtnRef.current].filter(Boolean) as HTMLButtonElement[]
+    let idx = 2 // 默认聚焦「允许」按钮
+    const focusIdx = (i: number) => {
+      idx = (i + btns.length) % btns.length
+      btns[idx]?.focus()
+    }
+    focusIdx(idx)
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight') { e.preventDefault(); focusIdx(idx + 1) }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); focusIdx(idx - 1) }
+      else if (e.key === 'Escape') { e.preventDefault(); resolveApproval(false) }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [approvalReq, resolveApproval])
   const refreshTasks = useCallback(async () => {
-    if (!activeSessionId) { setTasks([]); return }
+    if (!activeSessionId) { setTasks([]); setCurrentPlanItems([]); return }
     try {
       const res = await window.api.agentTaskList(activeSessionId)
-      if (res.success) setTasks(res.tasks)
+      if (res.success) {
+        setTasks(res.tasks)
+        // 修复①：后端持久化状态为权威来源，回写 currentPlanItems，
+        // 使卡片渲染真实状态，而非仅依赖流式解析的临时快照。
+        setCurrentPlanItems(res.tasks.map(t => ({
+          id: t.id,
+          content: t.subject,
+          description: t.description,
+          status: t.status,
+          priority: t.priority,
+          activeForm: t.activeForm,
+          notes: t.notes,
+        })))
+      }
     } catch { /* 忽略：面板刷新失败不影响对话 */ }
   }, [activeSessionId])
+
+  // 计划自动推进（内核驱动，禁用手动完成）：模型成功执行一个真实工具（非 TodoWrite）后，
+  // 把当前 in_progress 翻 completed，并把第一个 pending 推进为 in_progress。
+  // 用后端 agentTaskList 返回的权威 id（与 String(i+1) 兜底一致），避免 merge 错位。
+  const advancePlan = useCallback(async (sid: string) => {
+    try {
+      const list = await window.api.agentTaskList(sid)
+      if (!list.success) return
+      const tasks = list.tasks
+      const idx = tasks.findIndex(t => t.status === 'in_progress')
+      if (idx < 0) return // 没有进行中的步骤，不推进
+      const next = tasks.findIndex(t => t.status === 'pending')
+      const updates: Array<{ id: string; status: 'completed' | 'in_progress' }> = [
+        { id: tasks[idx].id, status: 'completed' },
+      ]
+      if (next >= 0) updates.push({ id: tasks[next].id, status: 'in_progress' })
+      await window.api.agentTodoWrite(sid, { merge: true, todos: updates })
+      refreshTasksRef.current() // 回写 currentPlanItems，卡片刷新
+    } catch { /* 推进失败不影响对话 */ }
+  }, [])
   // 始终持有最新的 refreshTasks，避免 send 闭包使用过期引用
   const refreshTasksRef = useRef(refreshTasks)
   refreshTasksRef.current = refreshTasks
@@ -1376,17 +1549,12 @@ export default function AgentCodeView() {
   const [projRenameText, setProjRenameText] = useState('')
   const projRenameInputRef = useRef<HTMLInputElement>(null)
   const msgEndRef = useRef<HTMLDivElement>(null)
-  // 输入框区域高度（含附件托盘 / 上下文提示）：用于把「滚动到底部」按钮
-  // 精确悬浮在输入框正上方，而不遮挡输入框。
   const chatInputAreaRef = useRef<HTMLDivElement>(null)
+  const taskCardRef = useRef<HTMLDivElement>(null)
 
   const activeProject = projects.find(p => p.id === activeProjectId) || projects[0]!
   const activeSession = activeProject.sessions.find(s => s.id === activeSessionId) || activeProject.sessions[0] || null
-  // 工具调用组默认展开（显示工具卡片列表）；组内的单个工具卡片详情（参数/结果）
-  // 是否默认展开由「设置 → 界面 → 工具调用卡片默认展开」开关控制（持久化）。
   const toolCardExpandedDefault = useStore(s => s.agentToolCardsExpanded)
-
-  // 滚动时更新「是否贴底」标记（阈值 80px 内视为贴底）
   const onChatScroll = useCallback(() => {
     const el = chatScrollRef.current
     if (!el) return
@@ -1424,26 +1592,46 @@ export default function AgentCodeView() {
     return () => ro.disconnect()
   }, [])
 
-  // 切换会话时重置监控统计（请求数 / 累计 tokens）
+  // 测量计划卡片（agent-task-card-inline）高度，写入 CSS 变量 --task-card-h。
+  // 卡片是 absolute 浮层、脱离文档流，展开时会向上遮挡消息区；
+  // 把其高度作为 .chat-messages 的底部预留空间，消息区即可上移、不被遮挡。
+  // 卡片关闭（taskModalOpen=false）或收起时高度记为 0。
+  // 跟降策略：
+  //  - 收缩方向（收起/关闭动画）scrollHeight 减小，此处用「实时」贴底判断跟降，避免误判；
+  //  - 展开方向 scrollHeight 增大，实时判断会误判为离底，故不由这里滚，交由按钮 onClick 的双 rAF 兜底；
+  //  - 非用户触发的高度变化（如模型刷新计划项）守 atBottom，避免打断用户向上翻看。
+  useEffect(() => {
+    const root = chatScrollRef.current?.closest('.agent-code-chat') as HTMLElement | null
+    if (!root) return
+    const apply = () => {
+      const h = taskCardRef.current && taskModalOpen ? taskCardRef.current.offsetHeight : 0
+      root.style.setProperty('--task-card-h', `${h}px`)
+      const el = chatScrollRef.current
+      // 实时计算贴底（不依赖缓存的 atBottomRef，避免 padding 变化引发的 scroll 误判）
+      if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 80) scrollToBottom()
+    }
+    apply()
+    const ro = new ResizeObserver(apply)
+    if (taskCardRef.current) ro.observe(taskCardRef.current)
+    return () => ro.disconnect()
+  }, [taskModalOpen, scrollToBottom])
+
   useEffect(() => {
     setReqCount(0)
     setCumTokens(0)
-    // 切换会话后内容会变短/重置，先假定贴底（进入会话即滚到底部），
-    // 真实滚动事件会在用户上滚时把按钮显示出来
+    setPlanTitle('')
+    // 修复②：切换会话时清空计划项，避免上一个会话的待办残留显示在新会话
+    setCurrentPlanItems([])
     atBottomRef.current = true
     setAtBottom(true)
   }, [activeSessionId])
 
-  // 将当前项目目录设为 Glob/Grep/Bash 等工具的默认工作目录
   useEffect(() => {
-    setWorkspaceRoot(activeProject.workspaceDir)
+    setWorkspaceRootForSession(activeSessionId, activeProject.workspaceDir)
     window.api?.setBashCwd(activeProject.workspaceDir || '').catch(() => { })
-    // 同步到主进程，使 Read/Write/Edit/Delete/Glob/Grep 等工具将相对路径
-    // 解析到工作区根目录，避免错位到应用进程的工作目录（process.cwd()）
     window.api?.setAgentWorkspace(activeProject.workspaceDir || '').catch(() => { })
-  }, [activeProject.workspaceDir])
+  }, [activeProject.workspaceDir, activeSessionId])
 
-  // 将当前活动会话 id 写入工具上下文（Todo/Task 工具据此定位任务清单），并刷新面板
   useEffect(() => {
     setAgentSessionId(activeSessionId)
     refreshTasks()
@@ -1716,40 +1904,7 @@ export default function AgentCodeView() {
     setSessRenamingId(null)
   }
 
-  function buildApiMessages(messages: AgentMessage[]): ApiMessage[] {
-    const out: ApiMessage[] = []
-    for (const m of messages) {
-      if (m.toolCalls && m.toolCalls.length > 0) {
-        out.push({
-          role: 'assistant', content: m.content || null,
-          tool_calls: m.toolCalls.map(tc => ({ id: tc.id, type: 'function' as const, function: { name: tc.name, arguments: tc.args } }))
-        })
-      } else if (m.role === 'user' && m.attachments && m.attachments.length > 0) {
-        // 多模态：图片作为 image_url，文本文件拼接到正文
-        const hasImage = m.attachments.some(a => a.type === 'image' && a.dataUrl)
-        if (hasImage) {
-          const parts: Array<Record<string, unknown>> = []
-          if (m.content) parts.push({ type: 'text', text: m.content })
-          for (const a of m.attachments) {
-            if (a.type === 'image' && a.dataUrl) parts.push({ type: 'image_url', image_url: { url: a.dataUrl } })
-            else if (a.type === 'file' && a.content) parts.push({ type: 'text', text: `\n\nName: ${a.name}\nContents:\n\n=====\n${a.content}\n=====` })
-          }
-          out.push({ role: 'user', content: parts })
-        } else {
-          let text = m.content
-          for (const a of m.attachments) {
-            if (a.type === 'file' && a.content) text += `\n\nName: ${a.name}\nContents:\n\n=====\n${a.content}\n=====`
-          }
-          out.push({ role: 'user', content: text })
-        }
-      } else {
-        out.push({ role: m.role, content: m.content })
-      }
-    }
-    return out
-  }
-
-  // 与 buildApiMessages 类似，但会把工具调用结果（toolCalls[].result）补成 role:'tool' 消息，
+  // 构建发送给模型的消息序列，并把工具调用结果（toolCalls[].result）补成 role:'tool' 消息，
   // 用于「重新生成 / 重发」时基于已有历史（含工具执行记录）重建发送给模型的消息序列。
   function buildApiMessagesFull(messages: AgentMessage[]): ApiMessage[] {
     const out: ApiMessage[] = []
@@ -1784,10 +1939,6 @@ export default function AgentCodeView() {
     return out
   }
 
-  // ── 核心生成循环（流式 + 工具执行）────────────────────────────
-  // 从给定的「对话快照」（displayMsgs / apiMsgs）开始跑一轮：先流式生成，再按模型
-  // 返回的工具调用逐个执行（含破坏性工具审批、写前备份），直到无工具调用或达到轮次上限。
-  // handleSend / 重新生成 / 重发 都复用此函数，保证行为一致。
   const runAgentTurn = useCallback(async (
     pid: string,
     sid: string,
@@ -1807,32 +1958,68 @@ export default function AgentCodeView() {
     abortRef.current.aborted = false
     // 确保 Todo/Task 工具在工具循环执行前能定位到正确的会话任务清单
     setAgentSessionId(sid)
+    // 清空上一轮 agent 会话的提问记录，避免跨会话残留
+    askUserQuestionRegistry.reset()
 
     // 局部工具状态更新（直接改写闭包内的 displayMsgs，并同步提交 React）
     const patchToolCall = (liveId: string, tcId: string, patch: Partial<NonNullable<AgentMessage['toolCalls']>[number]>) => {
+      const patchedToolCalls = (m_toolCalls: NonNullable<AgentMessage['toolCalls']> | undefined) =>
+        (m_toolCalls || []).map(t => t.id === tcId ? { ...t, ...patch } : t)
       displayMsgs = displayMsgs.map(m => m.id === liveId ? {
         ...m,
-        toolCalls: (m.toolCalls || []).map(t => t.id === tcId ? { ...t, ...patch } : t)
+        toolCalls: patchedToolCalls(m.toolCalls),
+        // 同步更新 segments 里的 tools 段：toolCalls 数组经 .map 变成新引用，
+        // 若不回写，交错渲染拿到的仍是旧的 pending 数组（无结果）→ 结果丢失。
+        segments: m.segments?.map(seg => seg.kind === 'tools' ? { ...seg, toolCalls: patchedToolCalls(seg.toolCalls) } : seg)
       } : m)
+      // 同步更新本地 segments（最终落盘时直接用它，避免覆盖掉已写入的结果）
+      segments = segments.map(seg => seg.kind === 'tools' ? { ...seg, toolCalls: patchedToolCalls(seg.toolCalls) } : seg)
     }
     const commitToolCall = (liveId: string, tcId: string, patch: Partial<NonNullable<AgentMessage['toolCalls']>[number]>) => {
       patchToolCall(liveId, tcId, patch)
       flushSync(() => { updateSessionInProject(pid, sid, { messages: displayMsgs }) })
     }
 
+    // ── 交错渲染：按流式时间线把「思考/正文段」与「工具批段」切分为有序 segments ──
+    // 声明在 while 循环之外（与 patchToolCall 同作用域），否则 patchToolCall 闭包
+    // 引用不到内层声明的 segments，运行时会抛 "segments is not defined" 导致整个
+    // agent 循环中断（表现为「发送失败」、Bash 审批弹窗永不出现）。
+    // segments 跨轮累积（一条助手消息可能有多批工具）；pendingRaw 每轮重置。
+    let segments: AgentSegment[] = []
+    let pendingRaw = ''
+
     try {
       let turn = 0
-      // 整个对话轮（从用户消息到模型给出最终文本前）共享同一个助手消息 id，
-      // 这样无论模型分几轮返回工具调用，所有工具卡片都聚合在「一条」助手消息下、
-      // 只显示一个模型头像，而不是每个工具调用各成一条消息、各带一个头像。
+      const MAX_AGENT_TURNS = 40
+      // 硬性熔断：连续失败达到阈值时，强制中止工具循环，
+      // 避免模型在错误命令上反复空转。模型应停止重试、改用其他方案或向用户说明。
+      const MAX_TOOL_FAILS = 3            // 同一工具连续失败达此数 → 熔断
+      const FAIL_WINDOW = 6               // 滚动窗口大小（最近 N 次工具执行）
+      const FAIL_WINDOW_LIMIT = 4         // 窗口内失败数达此值 → 熔断（防“换写法反复失败”）
+      // 提问工具防抖：本地小模型常陷入「问→答→又问」的死循环。累计 AskUserQuestion 调用次数，
+      // 超过阈值即强制停止继续提问，要求模型基于已有答案推进，避免反复弹出提问面板。
+      const MAX_ASK_QUESTION = 3
+      let askQuestionCount = 0
+      let askQuestionBlown = false
       let liveId = ''
-      // 工具失败跟踪：防止模型无限重试同一工具调用
       const toolFailCount = new Map<string, number>()
       const failedCalls = new Set<string>()
-      // 不再限制工具调用轮次：循环在模型不再返回工具调用（break）或用户点击停止（abort）时自然结束，
-      // 避免“已达到最大工具调用轮次”打断本就需要多步工具协作的复杂任务。
+      const recentResults: boolean[] = [] // 最近若干次工具执行的成败（true=成功），用于滚动窗口判断
+      let fuseBlown = false
+      let fuseTool = ''
+      let fuseSummary = ''
       while (true) {
         if (abortRef.current.aborted) break
+        if (turn >= MAX_AGENT_TURNS) {
+          const note = `\n\n（已达到工具调用轮次上限 ${MAX_AGENT_TURNS}，自动停止探索并给出当前结论。）`
+          displayMsgs = displayMsgs.map(m =>
+            m.id === liveId
+              ? { ...m, content: (m.content || '') + note }
+              : m
+          )
+          updateSessionInProject(pid, sid, { messages: displayMsgs })
+          break
+        }
         const streamId = `agent-${sid}-${++turn}`
         currentStreamIdRef.current = streamId
         // 仅首轮（或上一轮已结束）新建助手消息；后续工具轮复用同一条，避免重复头像
@@ -1846,10 +2033,18 @@ export default function AgentCodeView() {
         let streamedText = ''
         let toolCalls: { id: string; function: { name: string; arguments: string } }[] | undefined
         let streamError: string | undefined
-        // 流式落盘节流：参考原生聊天，每 ~100ms 同步一次到 store，
-        // 避免长思考链逐 token 触发整页重渲染与 KaTeX 重解析导致卡顿
         let lastFlush = 0
-        const STREAM_FLUSH_MS = 100
+        // 落盘节流：每 ~30ms 把累积文本写回 store 一次。模型真实吐字约 20ms/token，
+        // 之前 100ms 的批量落盘会让文字「一顿一顿」地成批蹦出；压到 30ms 后显示节奏
+        // 接近模型真实速度（~33 次/秒更新），更跟手。解析侧另有 STREAM_MD_THROTTLE_MS
+        // 协调，二者配合避免逐 token 整页重渲染。
+        const STREAM_FLUSH_MS = 30
+        // ── 交错渲染：按流式时间线把「思考/正文段」与「工具批段」切分为有序 segments ──
+        // segments 跨轮累积（一条助手消息可能有多批工具）；pendingRaw 每轮重置，
+        // 只存「自上一工具批以来模型新产生的文本」，待工具批到达时切分为 think/text 段。
+        // 注意：segments / pendingRaw 已在循环外声明，这里仅赋值（恢复已有会话的 segments、重置 pendingRaw），不要重新用 const/let 声明。
+        segments = (displayMsgs.find(m => m.id === liveId)?.segments || []).slice()
+        pendingRaw = ''
 
         await new Promise<void>((resolve) => {
           abortRef.current.resolve = resolve
@@ -1857,9 +2052,12 @@ export default function AgentCodeView() {
             if (data.streamId !== streamId) return
             if (typeof data.delta === 'string' && data.delta) {
               streamedText += data.delta
-              // 保留该助手消息已有的 toolCalls（跨轮工具调用不被流式帧清空）
+              pendingRaw += data.delta
+              // 保留该助手消息已有的 toolCalls / segments（跨轮不被流式帧清空）
               const keepCalls = displayMsgs.find(m => m.id === liveId)?.toolCalls
-              displayMsgs = displayMsgs.slice(0, -1).concat({ id: liveId, role: 'assistant', content: streamedText, ...(keepCalls ? { toolCalls: keepCalls } : {}) })
+              const liveMsg = displayMsgs.find(m => m.id === liveId)
+              const keepSegments = liveMsg?.segments
+              displayMsgs = displayMsgs.slice(0, -1).concat({ id: liveId, role: 'assistant', content: streamedText, ...(keepCalls ? { toolCalls: keepCalls } : {}), ...(keepSegments ? { segments: keepSegments } : {}) })
               // 节流：仅每 ~100ms 落盘一次，避免逐 token 整页重渲染
               const now = performance.now()
               if (now - lastFlush >= STREAM_FLUSH_MS) {
@@ -1870,15 +2068,43 @@ export default function AgentCodeView() {
             if (data.done) {
               if (data.toolCalls?.length) {
                 toolCalls = data.toolCalls
-                // 在流式结束时检测 TodoWrite，提前打开计划卡片
-                //（与工具执行循环解耦，避免 React 18 批处理导致 true/false 合并）
-                const todoWriteCall = data.toolCalls.find((tc: any) => tc.function?.name === 'TodoWrite')
-                if (todoWriteCall) {
+                // 把「自上一工具批以来」的文本切分为已闭合的 think/text 段，追加进 segments；
+                // 未闭合的思考尾部留在 pendingRaw，等下一轮或最终答案时再收尾。
+                const { segments: flushed, rest } = segmentClosedThink(pendingRaw)
+                for (const s of flushed) segments.push({ kind: s.type, content: s.value })
+                pendingRaw = rest
+                // 修复④：同批次可能有多个 TodoWrite 调用（如初始化 + 后续 merge），逐个处理而非只取第一个
+                const todoWriteCalls = data.toolCalls.filter((tc: any) => tc.function?.name === 'TodoWrite')
+                for (const todoWriteCall of todoWriteCalls) {
                   setTaskModalOpen(true)
-                  // 解析本次 TodoWrite 的计划项（不累加历史任务）
+                  // 解析本次 TodoWrite 的计划项（支持 merge 合并）
                   try {
                     const args = JSON.parse(todoWriteCall.function.arguments)
-                    if (args.todos?.length) setCurrentPlanItems(args.todos)
+                    if (args.todos?.length) {
+                      // 计划总标题：plan 级别，model 可在调用时附带；替换模式无标题则清空
+                      if (typeof args.title === 'string' && args.title.trim()) {
+                        setPlanTitle(args.title.trim())
+                      } else if (args.merge === false) {
+                        setPlanTitle('')
+                      }
+                      const merge = args.merge !== false
+                      if (merge) {
+                        setCurrentPlanItems(prev => {
+                          // 修复⑤/⑥：key 与存储的 id 都按下标兜底 String(idx+1)，与后端
+                          // todoUpdateToAgentTask 的 `u.id || String(i+1)` 对齐，避免前后端失步、key 稳定。
+                          const map = new Map<string, TodoUpdate>()
+                          prev.forEach((t, idx) => { map.set(t.id || String(idx + 1), t) })
+                          args.todos.forEach((t, idx) => {
+                            const key = t.id || String(idx + 1)
+                            map.set(key, { ...(map.get(key) || {}), ...t, id: t.id || key })
+                          })
+                          return Array.from(map.values())
+                        })
+                      } else {
+                        // 替换模式：同样补齐兜底 id，保证 key 稳定
+                        setCurrentPlanItems(args.todos.map((t, idx) => ({ ...t, id: t.id || String(idx + 1) })))
+                      }
+                    }
                   } catch { /* 忽略解析错误 */ }
                 }
               }
@@ -1889,8 +2115,6 @@ export default function AgentCodeView() {
               updateSessionInProject(pid, sid, { messages: displayMsgs })
               window.api.removeChatStreamListener()
               abortRef.current.resolve = null
-              // 流式结束：进入工具执行阶段，停止「正在流式」标记，
-              // 让思考块停止转圈、工具卡片显示「Edit 编辑中」等执行中状态
               flushSync(() => {
                 setStreaming(false)
               })
@@ -1906,6 +2130,19 @@ export default function AgentCodeView() {
         })
         currentStreamIdRef.current = null
 
+        // 最终答案轮（无工具调用）：把剩余文本（收尾思考 + 正文）切分进 segments。
+        // 工具调用轮已在上面 push 过 tools 段，pendingRaw 也已 flush 过，这里仅处理最终轮。
+        if (!toolCalls || toolCalls.length === 0) {
+          const { segments: flushed, rest } = segmentClosedThink(pendingRaw)
+          for (const s of flushed) segments.push({ kind: s.type, content: s.value })
+          pendingRaw = rest
+        }
+        // 把已切分的 segments 落回当前助手消息（保证刷新/重开后仍是交错顺序）
+        if (segments.length) {
+          displayMsgs = displayMsgs.map(m => m.id === liveId ? { ...m, segments: segments.slice() } : m)
+          updateSessionInProject(pid, sid, { messages: displayMsgs })
+        }
+
         // 用户中止：标记当前助手消息为「已停止」并退出循环
         if (abortRef.current.aborted) {
           displayMsgs = displayMsgs.map(m => m.id === liveId ? { ...m, stopped: true } : m)
@@ -1914,12 +2151,11 @@ export default function AgentCodeView() {
         }
 
         if (toolCalls && toolCalls.length) {
-          // 第一阶段：展示工具调用计划（所有工具状态为 pending）
-          // 跨轮合并：若当前助手消息已含 toolCalls（上一轮的工具），则把本轮新调用追加进去，
-          // 而非覆盖——保证整段工具调用只显示在「一条」助手消息下、只一个头像。
           const prevCalls = displayMsgs.find(m => m.id === liveId)?.toolCalls || []
           const nextCalls = toolCalls.map(tc => ({ id: tc.id, name: tc.function.name, args: tc.function.arguments, status: 'pending' as const }))
-          const assistMsg: AgentMessage = { id: liveId, role: 'assistant', content: streamedText, toolCalls: [...prevCalls, ...nextCalls] }
+          // 把这批工具调用作为一个 tools 段追加进 segments（紧跟在刚切出的思考段之后）
+          segments.push({ kind: 'tools', toolCalls: nextCalls })
+          const assistMsg: AgentMessage = { id: liveId, role: 'assistant', content: streamedText, toolCalls: [...prevCalls, ...nextCalls], segments: segments.slice() }
           displayMsgs = displayMsgs.slice(0, -1).concat(assistMsg)
           // 强制同步提交 DOM，确保用户立即看到工具卡片列表（待执行状态）
           flushSync(() => {
@@ -1929,9 +2165,33 @@ export default function AgentCodeView() {
           scrollToBottom()
           apiMsgs.push({ role: 'assistant', content: streamedText || null, tool_calls: toolCalls.map(tc => ({ id: tc.id, type: 'function' as const, function: { name: tc.function.name, arguments: tc.function.arguments } })) } as ApiMessage)
           // 第二阶段：逐个执行工具（pi-web 风格：状态驱动）
+          // 本轮去重：模型偶会在同一 tool_calls 数组里把同一条调用发两遍（如 Bash 重复两次），
+          // 按「名称 + 归一化参数」去重，命中则跳过执行并复用本轮已得到的结果。
+          const batchExecuted = new Map<string, string>()
+          const toolCallKey = (name: string, argsStr: string): string => {
+            try {
+              const o = JSON.parse(argsStr || '{}')
+              const norm = JSON.stringify(Object.keys(o).sort().reduce((a: Record<string, unknown>, k) => (a[k] = o[k], a), {}))
+              return `${name}::${norm}`
+            } catch { return `${name}::${argsStr}` }
+          }
           for (const tc of toolCalls) {
-            // ── 破坏性工具审批：Delete / Bash 默认需要人工确认；Write / Edit 可由项目开关追加 ──
-            const needsApproval = APPROVAL_TOOLS.has(tc.function.name) || (approveWriteEdit && WRITE_EDIT_TOOLS.has(tc.function.name))
+            const dupKey = toolCallKey(tc.function.name, tc.function.arguments)
+            if (batchExecuted.has(dupKey)) {
+              const reused = batchExecuted.get(dupKey)!
+              commitToolCall(liveId, tc.id, { status: 'done', result: `${reused}\n\n（本轮已执行过相同调用，已跳过重复执行）`, resultTotal: reused.length, failed: false })
+              apiMsgs.push({ role: 'tool', tool_call_id: tc.id, content: reused })
+              continue
+            }
+            // ── 破坏性工具审批 ──
+            // Delete 永远需要人工确认（本质破坏性）。
+            // Bash：仅当命令被判定为「破坏性」（删除/格式化/终止进程/改系统状态）时才弹窗确认；
+            //        普通命令（dir、python/node 运行脚本、构建、git status/log、cat/type 等）直接执行，不弹窗。
+            // Write / Edit：可由项目开关追加确认（不变）。
+            const toolArgs = parseToolArgs(tc.function.arguments)
+            const bashCmd = tc.function.name === 'Bash' && typeof toolArgs.command === 'string' ? toolArgs.command : ''
+            const bashNeedsApproval = tc.function.name === 'Bash' && isDestructiveBashCommand(bashCmd)
+            const needsApproval = (APPROVAL_TOOLS.has(tc.function.name) && tc.function.name !== 'Bash') || bashNeedsApproval || (approveWriteEdit && WRITE_EDIT_TOOLS.has(tc.function.name))
             if (needsApproval && !autoApproveRef.current) {
               commitToolCall(liveId, tc.id, { status: 'await_approval' })
               const approved = await waitForApproval({ id: tc.id, name: tc.function.name, args: tc.function.arguments })
@@ -1959,8 +2219,39 @@ export default function AgentCodeView() {
 
             let toolResult: string
             let failed = false
-            try { const args = parseToolArgs(tc.function.arguments); toolResult = await executeToolCall(tc.function.name, args) } catch (e: any) { toolResult = JSON.stringify({ error: e?.message || String(e) }); failed = true }
+            // ── 提问工具防冗余 ──
+            // 命中任一条件即视为冗余提问，不再弹出面板：
+            //   1) 模型已输出正文（看起来像最终回答）却又追问（askQuestionCount >= 1）
+            //   2) 问题内容已在本次会话中问过（跨轮次内容去重）
+            const isAskAgain = tc.function.name === 'AskUserQuestion'
+            let redundantAsk = false
+            if (isAskAgain) {
+              const hasTextBefore = streamedText.trim().length > 0
+              if (askQuestionCount >= 1 && hasTextBefore) {
+                redundantAsk = true
+              } else {
+                // 内容级去重：解析参数中的问题文本，检查是否有已问过的
+                try {
+                  const parsed = JSON.parse(tc.function.arguments || '{}')
+                  const questions: Array<{ question: string }> = parsed.questions || []
+                  if (questions.some(q => askUserQuestionRegistry.wasAsked(q.question))) {
+                    redundantAsk = true
+                  }
+                } catch { /* 参数解析失败，走正常执行流程 */ }
+              }
+            }
+            if (redundantAsk) {
+              toolResult = 'You have already provided a final answer (and the user has answered your earlier questions). Do NOT ask again — proceed with the task using the information you have.'
+              failed = false
+            } else {
+              try { const args = parseToolArgs(tc.function.arguments); toolResult = await executeToolCall(tc.function.name, args) } catch (e: any) { toolResult = JSON.stringify({ error: e?.message || String(e) }); failed = true }
+            }
             if (!failed && isToolErrorResult(toolResult)) failed = true
+
+            // 工具执行完成：更新消息状态（flushSync 确保 DOM 即时提交后再滚动，防止布局偏移）
+            // grep 类用「丢弃超长行」策略，其余（bash/read 等）用「保留头尾」策略
+            const truncMode = tc.function.name === 'Grep' ? 'drop-long-lines' : 'keep-ends'
+            const capped = truncateToolResult(toolResult, toolResultCharLimit(opts.ctxBudget), truncMode)
 
             // ── 工具失败跟踪：防止模型无限重试 ──
             if (failed) {
@@ -1970,27 +2261,81 @@ export default function AgentCodeView() {
               const callKey = `${toolName}::${tc.function.arguments}`
               const isExactRetry = failedCalls.has(callKey)
               failedCalls.add(callKey)
+              // 滚动窗口：记录本次成败，仅保留最近 FAIL_WINDOW 次
+              recentResults.push(false)
+              while (recentResults.length > FAIL_WINDOW) recentResults.shift()
+              const windowFails = recentResults.filter(r => !r).length
               const warnings: string[] = []
               if (isExactRetry) warnings.push('该工具已使用完全相同参数尝试过并失败')
-              if (curFail >= 3) warnings.push(`${toolName} 已连续失败 ${curFail} 次`)
-              if (warnings.length > 0) {
-                toolResult += `\n\n【${warnings.join('；')}。请改用其他方法，或直接向用户说明情况。不要继续重试。】`
+              warnings.push(`${toolName} 已连续失败 ${curFail} 次`)
+              if (windowFails >= FAIL_WINDOW_LIMIT) warnings.push(`最近 ${recentResults.length} 次工具调用中有 ${windowFails} 次失败（换写法仍反复失败）`)
+              toolResult += `\n\n【${warnings.join('；')}。请改用其他方法，或直接向用户说明情况。不要继续重试。】`
+              // ★ 硬性熔断：满足任一条件即强制中止工具循环
+              //   1) 同一工具连续失败达 MAX_TOOL_FAILS；2) 滚动窗口内失败过多（防“换写法反复失败”）
+              if (curFail >= MAX_TOOL_FAILS || windowFails >= FAIL_WINDOW_LIMIT) {
+                fuseBlown = true
+                fuseTool = toolName
+                fuseSummary = `工具 ${toolName} 执行失败并已熔断（连续失败 ${curFail} 次；最近 ${recentResults.length} 次调用中 ${windowFails} 次失败）。最近一次错误：\n${String(toolResult).slice(0, 800)}`
+                // 强制中止本轮剩余工具，跳出 for 循环
+                flushSync(() => { commitToolCall(liveId, tc.id, { status: 'done', result: capped.text, truncated: capped.truncated, resultTotal: capped.total, failed: true }) })
+                apiMsgs.push({ role: 'tool', tool_call_id: tc.id, content: capped.text })
+                batchExecuted.set(dupKey, capped.text)
+                scrollToBottom()
+                break
               }
             } else {
               toolFailCount.set(tc.function.name, 0)
+              recentResults.push(true)
+              while (recentResults.length > FAIL_WINDOW) recentResults.shift()
             }
 
-            // 工具执行完成：更新消息状态（flushSync 确保 DOM 即时提交后再滚动，防止布局偏移）
-            const capped = truncateToolResult(toolResult, toolResultCharLimit(opts.ctxBudget))
             flushSync(() => { commitToolCall(liveId, tc.id, { status: 'done', result: capped.text, truncated: capped.truncated, resultTotal: capped.total, failed }) })
             apiMsgs.push({ role: 'tool', tool_call_id: tc.id, content: capped.text })
+            batchExecuted.set(dupKey, capped.text)
             scrollToBottom()
+            // ── 提问工具防抖：累计 AskUserQuestion 调用，超过阈值即停止继续提问 ──
+            if (tc.function.name === 'AskUserQuestion') {
+              askQuestionCount++
+              if (askQuestionCount >= MAX_ASK_QUESTION) {
+                askQuestionBlown = true
+                // 强制中止本轮剩余工具，跳出 for 循环
+                break
+              }
+            }
             // TodoWrite 执行完毕后立即刷新任务数据，弹窗内容随之更新
             if (tc.function.name === 'TodoWrite') {
               refreshTasksRef.current()
             }
+            // 计划自动推进：模型成功执行一个真实工具（非 TodoWrite）后，内核翻转
+            // in_progress→completed 并推进下一个 pending。模型不再手动标完成。
+            if (!failed && tc.function.name !== 'TodoWrite') {
+              await advancePlan(activeSessionId)
+            }
           }
           if (abortRef.current.aborted) break
+          // ★ 熔断：工具连续失败达阈值，强制中止整个工具循环，不再空转
+          if (fuseBlown) {
+            endedWithError = true
+            useStore.getState().setAgentPhase(null)
+            refreshTasksRef.current()
+            const note = `\n\n（工具「${fuseTool}」执行失败过多，已自动熔断并停止继续尝试，避免无意义的反复重试。请检查命令/路径是否正确，或换用其他方案。汇总：\n${fuseSummary}）`
+            displayMsgs = displayMsgs.map(m =>
+              m.id === liveId ? { ...m, content: (m.content || '') + note } : m
+            )
+            updateSessionInProject(pid, sid, { messages: displayMsgs })
+            break
+          }
+          // ★ 提问防抖：AskUserQuestion 累计调用达上限，停止继续提问，强制推进
+          if (askQuestionBlown) {
+            useStore.getState().setAgentPhase(null)
+            refreshTasksRef.current()
+            const note = `\n\n（已多次向你提问（${askQuestionCount} 次），为避免反复弹窗陷入死循环，已自动停止继续提问。请基于用户此前的回答推进任务，或换用其他方案获取所需信息。）`
+            displayMsgs = displayMsgs.map(m =>
+              m.id === liveId ? { ...m, content: (m.content || '') + note } : m
+            )
+            updateSessionInProject(pid, sid, { messages: displayMsgs })
+            break
+          }
           // ★ 工具执行完毕，清除 store 阶段状态
           useStore.getState().setAgentPhase(null)
           // 工具执行后刷新任务清单
@@ -2017,11 +2362,13 @@ export default function AgentCodeView() {
       useStore.getState().setAgentPhase(null)
       setLoading(false)
       setStreaming(false)
-      // 本轮结束后，自动发送排队中的消息
-      const pending = pendingSendRef.current
-      pendingSendRef.current = null
-      if (pending && (pending.text.trim() || pending.attachments.length)) {
-        setTimeout(() => handleSendRef.current(pending.text || undefined, pending.attachments), 0)
+      // 本轮结束后，自动发送排队中的消息（按入队顺序依次发出；每条发送时会自行决定是否再次排队）
+      const queue = pendingSendRef.current
+      pendingSendRef.current = []
+      for (const pending of queue) {
+        if (pending.text.trim() || pending.attachments.length) {
+          setTimeout(() => handleSendRef.current(pending.text || undefined, pending.attachments), 0)
+        }
       }
     }
     return { errored: endedWithError, aborted: abortRef.current.aborted }
@@ -2042,8 +2389,8 @@ export default function AgentCodeView() {
       return
     }
     if (loading) {
-      // 生成 / 工具执行期间：把当前输入排队，待本轮结束后自动发送
-      pendingSendRef.current = { text: overrideText ?? input, attachments: attachmentsForSend }
+      // 生成 / 工具执行期间：把当前输入加入队列，待本轮结束后按序自动发送
+      pendingSendRef.current.push({ text: overrideText ?? input, attachments: attachmentsForSend })
       setInput('')
       if (textareaRef.current) textareaRef.current.style.height = 'auto'
       setAttachedFiles([])
@@ -2092,14 +2439,10 @@ export default function AgentCodeView() {
       ...(shouldAutoTitle ? { title: (text || '附件对话').slice(0, 40) } : {})
     })
 
-    // 构建系统提示（含项目自定义指令）与工具集
-    const systemMsg: ApiMessage = { role: 'system', content: buildSystemContent(activeProject) }
-    const apiMsgs = [systemMsg, ...buildApiMessages(displayMsgs)]
-    // 上下文预算：依据服务端真实 n_ctx（取不到则兜底 4096）预留输出与安全余量，
-    // 用于发送前裁剪历史，避免超出本地模型的固定上下文窗口
+    const systemMsg: ApiMessage = { role: 'system', content: await buildSystemContent(activeProject) }
+    const apiMsgs = [systemMsg, ...buildApiMessagesFull(displayMsgs)]
     const ctxN = useStore.getState().modelMetrics[runningCard.template.id]?.nCtx || 0
     const ctxBudget = computeContextBudget(ctxN)
-    // 多模态（图片）与 tools 冲突，含图片时关闭工具调用；否则仅暴露文件操作类工具
     const tools = userHasImages ? [] : getToolDefinitions().filter(t => AGENT_FILE_TOOL_NAMES.includes(t.function.name))
 
     await runAgentTurn(pid, sid, displayMsgs, apiMsgs, {
@@ -2144,7 +2487,7 @@ export default function AgentCodeView() {
     if (base.length === 0) return
     regenRollbackRef.current = { sid: activeSessionId, messages: msgs.map(m => ({ ...m })) }
     updateSessionInProject(activeProjectId, activeSessionId, { messages: base })
-    const systemMsg: ApiMessage = { role: 'system', content: buildSystemContent(activeProject) }
+    const systemMsg: ApiMessage = { role: 'system', content: await buildSystemContent(activeProject) }
     const apiMsgs = [systemMsg, ...buildApiMessagesFull(base)]
     const lastUser = [...base].reverse().find(m => m.role === 'user')
     const userHasImages = !!(lastUser?.attachments?.some(a => a.type === 'image' && a.dataUrl))
@@ -2166,7 +2509,7 @@ export default function AgentCodeView() {
     const base = msgs.slice(0, idx + 1)
     regenRollbackRef.current = { sid: activeSessionId, messages: msgs.map(m => ({ ...m })) }
     updateSessionInProject(activeProjectId, activeSessionId, { messages: base })
-    const systemMsg: ApiMessage = { role: 'system', content: buildSystemContent(activeProject) }
+    const systemMsg: ApiMessage = { role: 'system', content: await buildSystemContent(activeProject) }
     const apiMsgs = [systemMsg, ...buildApiMessagesFull(base)]
     const userHasImages = !!(msgs[idx]!.attachments?.some(a => a.type === 'image' && a.dataUrl))
     const ctxN = useStore.getState().modelMetrics[runningCard.template.id]?.nCtx || 0
@@ -2214,7 +2557,13 @@ export default function AgentCodeView() {
   const handleUndo = useCallback(async (msgId: string, tcId: string) => {
     const b = backupsRef.current[tcId]
     if (!b) return
-    const res = await window.api.writeFile(b.path, b.content)
+    let res: { success: boolean; error?: string }
+    try {
+      res = await window.api.writeFile(b.path, b.content)
+    } catch (e: any) {
+      notify('恢复失败：' + (e?.message || '未知错误'), 'error')
+      return
+    }
     if (!res.success) { notify('恢复失败：' + (res.error || '未知错误'), 'error'); return }
     delete backupsRef.current[tcId]
     setProjects(prev => prev.map(p => p.id === activeProjectId ? {
@@ -2229,6 +2578,13 @@ export default function AgentCodeView() {
     } : p))
     notify('已恢复文件：' + dirName(b.path), 'success')
   }, [activeProjectId, activeSessionId, setProjects])
+
+  // 稳定的「可撤销判断 / 撤销回调」引用：直接内联箭头函数会导致每次父组件重渲染都生成
+  // 新函数身份，击穿 ToolCallGroup / ToolCallCard 的 React.memo，使工具卡片在流式每帧
+  // （~100ms）都重新挂载 → 展开状态下 ToolArgsView / ToolResultView 反复重算 → 工具栏卡顿跳动。
+  // 用 useCallback 固定身份后，memo 生效，非变化的卡片被跳过，抖动消除。
+  const canUndoFor = useCallback((tc: NonNullable<AgentMessage['toolCalls']>[number]) => !!backupsRef.current[tc.id], [])
+  const onUndoTool = useCallback((msgId: string, tc: NonNullable<AgentMessage['toolCalls']>[number]) => { void handleUndo(msgId, tc.id) }, [handleUndo])
 
   // 系统提示词编辑器
   const openPromptModal = useCallback(() => {
@@ -2290,11 +2646,10 @@ export default function AgentCodeView() {
     }
   }, [autoResize, detectAt, ensureWorkspaceFiles, filterAtFiles, activeProject.workspaceDir])
 
-  // 兼容 arguments 为字符串或已解析对象两种情况，避免 JSON.parse(object) 抛错
   function parseToolArgs(raw: unknown): Record<string, unknown> {
     if (raw && typeof raw === 'object') return raw as Record<string, unknown>
     if (typeof raw === 'string' && raw.trim()) {
-      try { return JSON.parse(raw) } catch { return {} }
+      try { return JSON.parse(raw) } catch { throw new Error('工具参数 JSON 解析失败（模型输出残缺或非 JSON）：' + raw.slice(0, 200)) }
     }
     return {}
   }
@@ -2304,15 +2659,10 @@ export default function AgentCodeView() {
       toolCalls={toolCalls}
       cardDefaultOpen={toolCardExpandedDefault}
       onPreviewFile={openPreview}
-      canUndoFor={(tc) => !!backupsRef.current[tc.id]}
-      onUndo={(tc) => handleUndo(msgId, tc.id)}
+      canUndoFor={canUndoFor}
+      onUndo={(tc) => onUndoTool(msgId, tc)}
     />
   )
-
-  // 工具组件（ToolArgsView / ToolResultView / ToolCallCard / ToolCallGroup）、
-  // 思考链组件（parseThinkSegments / ThinkBlock）已提升到模块作用域（见行 208 之前），
-  // 此处不再定义，避免身份不稳定导致的 React.memo 失效。
-
 
   return (
     <div className={`agent-code-view ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
@@ -2325,7 +2675,6 @@ export default function AgentCodeView() {
         </div>
         <div className="agent-code-topbar-right">
           <button ref={ctxBtnRef} className={`agent-code-topbar-btn ${contextModalOpen ? 'active' : ''}`} onClick={() => setContextModalOpen(v => !v)}>上下文</button>
-          <button className={`agent-code-topbar-btn ${taskModalOpen ? 'active' : ''}`} onClick={() => { const next = !taskModalOpen; setTaskModalOpen(next); if (next) refreshTasks() }}>计划</button>
           <button ref={promptBtnRef} className={`agent-code-topbar-btn ${promptModalOpen ? 'active' : ''}`} onClick={openPromptModal}><SlidersHorizontal size={12} /> 提示词</button>
           <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} style={{ marginTop: 0, width: 28, height: 28 }}>
             {treeOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
@@ -2431,6 +2780,15 @@ export default function AgentCodeView() {
               // 此时 ThinkBlock 绝不应再显示“思考中”转圈，无论 streaming 状态如何。
               const hasToolCalls = !!(msg.toolCalls?.length)
               const streamingThis = streaming && isLast && msg.role === 'assistant' && !hasToolCalls
+              // 流式消息（不限是否已产生工具批）：用于「流式期间实时渲染 content」与
+              // 「完成后切换为 segments 交错布局」的分流。流式时必须实时显示思考/工具状态，
+              // 否则思考链要等工具批到达才出现（延迟）；done 后才用 segments 交错。
+              const streamingMsg = streaming && isLast && msg.role === 'assistant'
+              // 已切分进 segments 的工具调用 id（用于流式时把「当前轮尚未切分」的工具卡
+              // 作为实时尾部追加，避免流式期所有工具卡堆在顶部、完成后才跳回交错）。
+              const segmentedToolIds = new Set<string>()
+              if (msg.segments) for (const seg of msg.segments) if (seg.kind === 'tools') for (const t of seg.toolCalls) segmentedToolIds.add(t.id)
+              const liveToolCalls = (msg.toolCalls || []).filter(t => !segmentedToolIds.has(t.id))
               return (
                 <div key={msg.id} className={`chat-msg chat-msg-${msg.role}`}>
                   {msg.role !== 'user' && (
@@ -2459,41 +2817,121 @@ export default function AgentCodeView() {
                       ) : null
                     ) : (
                       <>
-                        {/* 工具调用卡片显示在消息气泡（模型回复文本）之上 */}
-                        {hasToolCalls ? renderToolCalls(msg.toolCalls!, msg.id) : null}
-                        {msg.stopped && (
-                          <div className="chat-msg-stopped-badge">
-                            <Square size={10} />
-                            <span>已停止生成</span>
-                          </div>
-                        )}
-                        {/* 流式期间：模型名 + 预估 token + 实时 t/s 徽标（参考 pi-web） */}
-                        {streamingThis && (
-                          <StreamingBadge text={msg.content || ''} modelLabel={modelLabel} />
-                        )}
-                        {streamingThis && !msg.content ? (
-                          <div className="chat-msg-bubble chat-msg-thinking-wait">
-                            <Loader2 size={14} className="spin" />
-                            <span className="chat-msg-thinking-text">模型思考中…</span>
-                          </div>
+                        {/* 交错渲染：消息 finalized 后（非流式），若已按流式时间线切分为
+                            segments，则严格按 工具栏 → 思考链 → 工具栏 → 思考链 → … → 正文气泡
+                            的顺序排列。流式进行中一律走下面的实时 content 渲染（保证思考链/工具状态
+                            实时显示，不延迟到工具批到达才出现）；旧消息（无 segments）也走传统布局。 */}
+                        {streamingMsg && msg.segments && msg.segments.length > 0 ? (
+                          // 流式进行中：先渲染已 finalized 的 segments（按时间线交错，逐轮累积，
+                          // 不会把所有工具卡堆在顶部），再追加「当前轮实时尾部」（本轮尚未切分
+                          // 的工具卡 + 实时思考），避免完成后才从「全堆顶部」跳回交错布局。
+                          <>
+                            {msg.segments.map((seg, si) =>
+                              seg.kind === 'tools' ? (
+                                <ToolCallGroup
+                                  key={`seg-${si}`}
+                                  toolCalls={seg.toolCalls}
+                                  cardDefaultOpen={toolCardExpandedDefault}
+                                  onPreviewFile={openPreview}
+                                  canUndoFor={canUndoFor}
+                                  onUndo={(tc) => onUndoTool(msg.id, tc)}
+                                />
+                              ) : seg.kind === 'think' ? (
+                                <ThinkBlock key={`seg-${si}`} value={seg.content} closed={true} isStreaming={false} />
+                              ) : (
+                                <div key={`seg-${si}`} className="chat-msg-bubble chat-msg-markdown"><AgentMarkdown content={seg.content} /></div>
+                              )
+                            )}
+                            {liveToolCalls.length > 0 && renderToolCalls(liveToolCalls, msg.id)}
+                            {msg.stopped && (
+                              <div className="chat-msg-stopped-badge">
+                                <Square size={10} />
+                                <span>已停止生成</span>
+                              </div>
+                            )}
+                            {streamingThis && (
+                              <StreamingBadge text={msg.content || ''} modelLabel={modelLabel} />
+                            )}
+                            {streamingThis && !msg.content ? (
+                              <div className="chat-msg-bubble chat-msg-thinking-wait">
+                                <Loader2 size={14} className="spin" />
+                                <span className="chat-msg-thinking-text">模型思考中…</span>
+                              </div>
+                            ) : (
+                              <StreamingContent content={msg.content} streaming={streamingMsg} />
+                            )}
+                          </>
+                        ) : !streamingMsg && msg.segments && msg.segments.length > 0 ? (
+                          // 已完成：完整交错布局
+                          <>
+                            {msg.segments.map((seg, si) =>
+                              seg.kind === 'tools' ? (
+                                <ToolCallGroup
+                                  key={`seg-${si}`}
+                                  toolCalls={seg.toolCalls}
+                                  cardDefaultOpen={toolCardExpandedDefault}
+                                  onPreviewFile={openPreview}
+                                  canUndoFor={canUndoFor}
+                                  onUndo={(tc) => onUndoTool(msg.id, tc)}
+                                />
+                              ) : seg.kind === 'think' ? (
+                                <ThinkBlock key={`seg-${si}`} value={seg.content} closed={true} isStreaming={false} />
+                              ) : (
+                                <div key={`seg-${si}`} className="chat-msg-bubble chat-msg-markdown"><AgentMarkdown content={seg.content} /></div>
+                              )
+                            )}
+                            {msg.stopped && (
+                              <div className="chat-msg-stopped-badge">
+                                <Square size={10} />
+                                <span>已停止生成</span>
+                              </div>
+                            )}
+                            {/* 交错消息完成后展示操作按钮 */}
+                            {!streamingThis && (
+                              <div className="chat-msg-actions">
+                                <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content || '')}><Copy size={13} /></button>
+                                {isLast && !loading && (
+                                  <button className="chat-msg-action-btn" onClick={() => regenerateAt(msg.id)}><RotateCcw size={13} /></button>
+                                )}
+                                {isLast && (msg.stopped || (msg.content && (msg.content.startsWith('模型调用失败') || msg.content.startsWith('发送失败')))) && !loading && (
+                                  <button className="chat-msg-action-btn" onClick={() => regenerateAt(msg.id)}><RotateCcw size={13} /></button>
+                                )}
+                              </div>
+                            )}
+                          </>
                         ) : (
-                          parseThinkSegments(msg.content || '').map((seg, j) =>
-                            seg.type === 'think'
-                              ? <ThinkBlock key={`t-${j}`} value={seg.value} closed={seg.closed || !streamingThis || hasToolCalls} isStreaming={streamingThis && !seg.closed} />
-                              : <div key={`m-${j}`} className={`chat-msg-bubble chat-msg-markdown${streamingThis ? ' chat-msg-bubble--streaming' : ''}`}><AgentMarkdown content={seg.value} /></div>
-                          )
-                        )}
-                        {/* 流式进行中或工具调用消息不展示操作按钮 */}
-                        {!streamingThis && !hasToolCalls && (
-                          <div className="chat-msg-actions">
-                            <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content || '')}><Copy size={13} /></button>
-                            {isLast && !loading && (
-                              <button className="chat-msg-action-btn" onClick={() => regenerateAt(msg.id)}><RotateCcw size={13} /></button>
+                          // 旧消息（无 segments）或兜底：传统布局（工具卡在顶部）
+                          <>
+                            {hasToolCalls ? renderToolCalls(msg.toolCalls!, msg.id) : null}
+                            {msg.stopped && (
+                              <div className="chat-msg-stopped-badge">
+                                <Square size={10} />
+                                <span>已停止生成</span>
+                              </div>
                             )}
-                            {isLast && (msg.stopped || (msg.content && (msg.content.startsWith('模型调用失败') || msg.content.startsWith('发送失败')))) && !loading && (
-                              <button className="chat-msg-action-btn" onClick={() => regenerateAt(msg.id)}><RotateCcw size={13} /></button>
+                            {streamingThis && (
+                              <StreamingBadge text={msg.content || ''} modelLabel={modelLabel} />
                             )}
-                          </div>
+                            {streamingThis && !msg.content ? (
+                              <div className="chat-msg-bubble chat-msg-thinking-wait">
+                                <Loader2 size={14} className="spin" />
+                                <span className="chat-msg-thinking-text">模型思考中…</span>
+                              </div>
+                            ) : (
+                              <StreamingContent content={msg.content} streaming={streamingMsg} />
+                            )}
+                            {!streamingThis && !hasToolCalls && (
+                              <div className="chat-msg-actions">
+                                <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content || '')}><Copy size={13} /></button>
+                                {isLast && !loading && (
+                                  <button className="chat-msg-action-btn" onClick={() => regenerateAt(msg.id)}><RotateCcw size={13} /></button>
+                                )}
+                                {isLast && (msg.stopped || (msg.content && (msg.content.startsWith('模型调用失败') || msg.content.startsWith('发送失败')))) && !loading && (
+                                  <button className="chat-msg-action-btn" onClick={() => regenerateAt(msg.id)}><RotateCcw size={13} /></button>
+                                )}
+                              </div>
+                            )}
+                          </>
                         )}
                       </>
                     )}
@@ -2506,30 +2944,6 @@ export default function AgentCodeView() {
             })}
             <div ref={msgEndRef} />
           </div>
-          {/* 任务计划卡片（浮动在聊天区右上角） */}
-          {taskModalOpen && (
-            <div className="agent-task-card">
-              <div className="agent-task-card-header">
-                <span>任务计划</span>
-              </div>
-              <div className="agent-task-card-body">
-                {currentPlanItems.length === 0 ? (
-                  <div className="agent-task-card-empty">暂无计划</div>
-                ) : (
-                  currentPlanItems.map((item, i) => (
-                    <div key={item.id || i} className="agent-task-card-item">
-                      <div className="agent-task-card-row">
-                        <span className="agent-task-card-id">{item.id ? `#${item.id}` : `#${i + 1}`}</span>
-                        <span className={`task-status ${item.status || 'pending'}`}>{item.status || 'pending'}</span>
-                      </div>
-                      <div className="agent-task-card-subject">{item.content || item.description || ''}</div>
-                      {item.notes ? <div className="agent-task-card-notes">{item.notes}</div> : null}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
           {/* 上下文卡片（浮动在聊天区右上角） */}
           {contextModalOpen && (
             <div className="agent-task-card agent-card-ctx">
@@ -2575,6 +2989,102 @@ export default function AgentCodeView() {
             </button>
           )}
           <div className="chat-input-area" ref={chatInputAreaRef}>
+            {/* 破坏性工具审批面板：内联显示在输入框内（与提问工具 AskUserQuestionInline 同款位置/风格），不弹窗 */}
+            {approvalReq && (
+              <div className="agent-approve-inline">
+                <div className="agent-approve-inline-head">
+                  <AlertCircle size={15} className="agent-ask-question-icon" />
+                  <span className="agent-ask-question-title">需要确认：{TOOL_META[approvalReq.name]?.name || approvalReq.name}</span>
+                  <button className="agent-ask-question-close" onClick={() => resolveApproval(false)} title="拒绝">
+                    <X size={14} />
+                  </button>
+                </div>
+                <div className="agent-approve-inline-body">
+                  <div className="agent-approve-hint">该操作具有破坏性，执行前需你确认</div>
+                  <div className="agent-approve-detail-row"><span>工具</span><code>{approvalReq.name}</code></div>
+                  <div className="agent-approve-detail-row">
+                    <span>参数</span>
+                    <pre className="agent-approve-args">{formatToolArgs(approvalReq.args) || '(无)'}</pre>
+                  </div>
+                </div>
+                <div className="agent-approve-inline-footer">
+                  <button ref={rejectBtnRef} className="agent-prompt-btn agent-prompt-btn-ghost" onClick={() => resolveApproval(false)}>拒绝</button>
+                  <button ref={autoApproveBtnRef} className="agent-prompt-btn agent-prompt-btn-ghost" onClick={() => { autoApproveRef.current = true; resolveApproval(true) }}>本次全部允许</button>
+                  <button ref={allowBtnRef} className="agent-prompt-btn agent-prompt-btn-primary" onClick={() => resolveApproval(true)}>允许</button>
+                </div>
+              </div>
+            )}
+            {taskModalOpen && (
+              <div
+                ref={taskCardRef}
+                className={`agent-task-card agent-task-card-inline${taskPanelCollapsed ? ' collapsed' : ''}${taskCardClosing ? ' closing' : ''}`}
+                onTransitionEnd={(e) => {
+                  // 仅当收起动画结束（max-height 过渡完成）且确实处于关闭过渡态时，才真正卸载卡片
+                  if (e.propertyName === 'max-height' && taskCardClosing) {
+                    setTaskModalOpen(false)
+                    setTaskPanelCollapsed(false)
+                    setTaskCardClosing(false)
+                  }
+                }}
+              >
+                <div className="agent-task-card-head">
+                  <span className="agent-task-card-title">待办</span>
+                  <span className="agent-task-card-count">{currentPlanItems.filter(i => i.status === 'completed').length}/{currentPlanItems.length}</span>
+                  <div className="agent-task-card-head-actions">
+                    <button className="agent-task-card-head-btn" onClick={() => {
+                      setTaskPanelCollapsed(p => !p)
+                      // 用户主动展开/收起：双 rAF 等布局稳定（含 --task-card-h 写入）后滚到底，
+                      // 让消息区底部贴合卡片上边框。展开方向 scrollHeight 增大，必须无条件滚，
+                      // 不能依赖 atBottom 判断（否则会被误判为离底而不顶上去）。
+                      requestAnimationFrame(() => requestAnimationFrame(() => scrollToBottom()))
+                    }}>{taskPanelCollapsed ? '展开' : '收起'}</button>
+                    <button className="agent-task-card-head-btn" onClick={() => {
+                      setTaskCardClosing(true)
+                      // 关闭动画期间高度持续收缩，双 rAF 触发一次滚到底，后续由 RO 实时跟降
+                      requestAnimationFrame(() => requestAnimationFrame(() => scrollToBottom()))
+                    }}>关闭</button>
+                  </div>
+                </div>
+                {!taskPanelCollapsed && (
+                  planTitle && (
+                    <div className="agent-task-card-plan-title">{planTitle}</div>
+                  )
+                )}
+                {!taskPanelCollapsed && (
+                  <div className="agent-task-card-body">
+                    {currentPlanItems.length === 0 ? (
+                      <div className="agent-task-card-empty">暂无计划</div>
+                    ) : (
+                      currentPlanItems.map((item, i) => {
+                        // 修复③：显式覆盖全部状态枚举，避免 cancelled/deleted 被 fallback 成「待完成」
+                        const raw = item.status || 'pending'
+                        const statusLabel =
+                          raw === 'completed' ? '已完成'
+                            : raw === 'in_progress' ? '进行中'
+                              : raw === 'cancelled' ? '已取消'
+                                : raw === 'deleted' ? '已删除'
+                                  : '待完成'
+                        const isDone = raw === 'completed'
+                        // 仿 Reasonix：每条只显示一行。进行中且有备注(notes)时，备注作为 activeForm 显示；
+                        // 否则显示 content。notes 不再作为独立第二行渲染。
+                        const text = raw === 'in_progress' && item.notes
+                          ? item.notes
+                          : (item.content || item.description || '')
+                        // 修复④：用稳定 id 作为 key（无 id 时回退下标），减少 merge 导致顺序变化时 DOM 复用错乱
+                        return (
+                          <div key={item.id ?? i} className={`agent-task-card-item${isDone ? ' done' : ''}`}>
+                            <span className={`agent-task-card-status status-${raw}`}>{statusLabel}</span>
+                            <div className="agent-task-card-content">
+                              <div className="agent-task-card-text">{text}</div>
+                            </div>
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             <AskUserQuestionInline />
             {atQuery !== null && (
               <div className="chat-at-file-pop" ref={atPopRef}>
@@ -2589,11 +3099,6 @@ export default function AgentCodeView() {
                     </button>
                   ))
                 )}
-              </div>
-            )}
-            {ctxTrimInfo && (
-              <div className="agent-ctx-trim-note" title="为保证不超出本地模型的上下文窗口，已自动省略最早的若干条对话（仅影响发送给模型的内容，界面历史保持完整）">
-                <AlertCircle size={12} /> 已因上下文窗口限制自动省略最早 {ctxTrimInfo.dropped} 条消息
               </div>
             )}
             {attachedFiles.length > 0 && (
@@ -2678,33 +3183,6 @@ export default function AgentCodeView() {
           </div>
         </div>
       </div>
-
-      {/* 破坏性工具审批弹窗 */}
-      {approvalReq && (
-        <div className="modal-overlay" onClick={() => resolveApproval(false)}>
-          <div className="modal agent-approve-modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <AlertCircle size={20} style={{ color: 'var(--warning)', flexShrink: 0 }} />
-              <span className="modal-title">需要确认：{TOOL_META[approvalReq.name]?.name || approvalReq.name}</span>
-            </div>
-            <div className="modal-body">
-              <p className="agent-approve-desc">该操作具有破坏性，执行前需要你人工确认：</p>
-              <div className="agent-approve-detail">
-                <div className="agent-approve-detail-row"><span>工具</span><code>{approvalReq.name}</code></div>
-                <div className="agent-approve-detail-row">
-                  <span>参数</span>
-                  <pre className="agent-approve-args">{formatToolArgs(approvalReq.args) || '(无)'}</pre>
-                </div>
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-ghost" onClick={() => resolveApproval(false)}>拒绝</button>
-              <button className="btn btn-ghost" onClick={() => { autoApproveRef.current = true; resolveApproval(true) }}>本次全部允许</button>
-              <button className="btn btn-primary" onClick={() => resolveApproval(true)}>允许</button>
-            </div>
-          </div>
-        </div>
-      )}
 
     </div>
   )

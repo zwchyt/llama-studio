@@ -16,19 +16,20 @@ export const definition: Omit<ToolDefinition['function'], 'type'> = {
 
 export async function execute(args: Record<string, unknown>): Promise<string> {
   const { task_id } = args as unknown as GetBackgroundTaskOutputInput
-  if (!task_id) return 'Error: task_id is required'
+  if (!task_id) return '❌ 缺少参数：task_id'
   const res = await window.api.getBackgroundTask(task_id)
-  if (!res.success) return `Error: ${res.error}`
-  if (!res.status) return 'Error: task not found'
-  let output = `Status: ${res.status}\n`
+  if (!res.success) return `❌ 查询失败：${res.error}`
+  if (!res.status) return '❌ 任务不存在'
+  const statusEmoji = res.status === 'running' ? '🔄' : res.status === 'completed' ? '✅' : res.status === 'killed' ? '🛑' : '⏳'
+  let output = `${statusEmoji} 状态：${res.status}\n`
   if (res.stdout) output += `\n${res.stdout}`
   if (res.stderr) {
     if (res.stdout) output += '\n'
     output += `\nstderr:\n${res.stderr}`
   }
-  output += `\n\nExit code: ${res.code ?? '(running)'}`
+  output += `\n\n退出码：${res.code !== null && res.code !== undefined ? res.code : '(运行中)'}`
   if (res.truncated) {
-    output += `\n(Output truncated: total ${res.totalBytes ?? '?'} bytes)`
+    output += `\n(输出已被截断：共 ${res.totalBytes ?? '?'} 字节)`
   }
   return output
 }

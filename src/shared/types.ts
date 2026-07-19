@@ -210,7 +210,17 @@ export interface AgentMessage {
   toolCalls?: { id: string; name: string; args: string; status?: 'pending' | 'await_approval' | 'executing' | 'done'; result?: string; truncated?: boolean; resultTotal?: number; failed?: boolean; durationMs?: number; restored?: boolean; backupPath?: string }[]
   attachments?: Attachment[]  // 用户消息的附件（图片 / 文件）
   stopped?: boolean           // 用户手动停止生成，消息内容不完整
+  // 按流式时间线切分的有序片段：思考段 / 正文段 / 工具批段交错排列，
+  // 用于「工具栏 → 思考链 → 工具栏 → 思考链 → …」的交错渲染。
+  // 旧消息（无此字段）回退到「工具卡片在顶部 + 思考链在下方」的传统布局。
+  segments?: AgentSegment[]
 }
+
+// 助手消息的有序片段：严格按模型产生的先后顺序记录，
+// 工具批之后接什么（思考链 or 下一批工具）完全由模型真实行为决定。
+export type AgentSegment =
+  | { kind: 'think' | 'text'; content: string }
+  | { kind: 'tools'; toolCalls: NonNullable<AgentMessage['toolCalls']> }
 
 export interface AgentSession {
   id: string

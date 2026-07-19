@@ -1,7 +1,7 @@
 import type { ToolDefinition } from '../../utils/tools'
 import { GREP_TOOL_NAME } from './constants'
 import type { GrepInput } from './types'
-import { getWorkspaceRoot } from '../workspaceRoot'
+import { getWorkspaceRootForSession } from '../workspaceRoot'
 
 export const definition: Omit<ToolDefinition['function'], 'type'> = {
   name: GREP_TOOL_NAME,
@@ -25,7 +25,7 @@ export const definition: Omit<ToolDefinition['function'], 'type'> = {
 
 export async function execute(args: Record<string, unknown>): Promise<string> {
   const { pattern, path, glob, type, output_mode, head_limit, '-i': ci, context, '-n': lineNumbers } = args as unknown as GrepInput
-  const root = (typeof path === 'string' && path.trim()) ? path : getWorkspaceRoot()
+  const root = (typeof path === 'string' && path.trim()) ? path : getWorkspaceRootForSession()
   if (!root) return 'Error: 未设置搜索目录（请先在项目中创建或选择目录）'
   const res = await window.api.grep({
     pattern,
