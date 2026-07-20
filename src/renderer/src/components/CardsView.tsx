@@ -25,15 +25,17 @@ export default function CardsView() {
     return cards.filter(c => c.template.name.toLowerCase().startsWith(q))
   }, [cards, templateSearch])
   return (
-    <div>
+    <div className="templates-view">
       <div className="page-header">
         <div>
-          <h1 className="page-title">我的模板</h1>
-          <p className="page-subtitle">
-            {cards.length === 0
-              ? '创建第一个模板以开始使用'
-              : `${filtered.length} / ${cards.length} 个模板`}
-          </p>
+          <h1 className="page-title">
+            模型卡片
+            {cards.length > 0 && (
+              <span className="header-count-badge" title={`${filtered.length} / ${cards.length} 个模板`}>
+                {filtered.length}
+              </span>
+            )}
+          </h1>
         </div>
         <div className="page-actions">
           {cards.length > 0 && (
@@ -55,11 +57,11 @@ export default function CardsView() {
               )}
             </div>
           )}
-          <button className="btn btn-secondary" onClick={handleImport}>
+          <button className="btn header-input-btn" onClick={handleImport}>
             <Upload size={15} />
             导入
           </button>
-          <button className="btn btn-primary" onClick={() => setShowCreateModal(true)}>
+          <button className="btn header-input-btn" onClick={() => setShowCreateModal(true)}>
             <Plus size={15} />
             新建模板
           </button>

@@ -272,35 +272,21 @@ export default function ModelsView() {
     <div className="models-view">
       <div className="page-header">
         <div>
-          <h1 className="page-title">模型</h1>
-          <p className="page-subtitle">
-            {filter ? `${filteredModels.length} / ${allModels.length}` : allModels.length} 个模型已安装
-            {activeDownloads.length > 0 ? ` · ${activeDownloads.length} 正在下载` : ''}
-          </p>
+          <h1 className="page-title">
+            模型
+            <span
+              className="header-count-badge"
+              title={`${filter ? `${filteredModels.length} / ${allModels.length}` : allModels.length} 个模型已安装`}
+            >
+              {filter ? filteredModels.length : allModels.length}
+            </span>
+          </h1>
+          {activeDownloads.length > 0 && (
+            <p className="page-subtitle">{activeDownloads.length} 正在下载</p>
+          )}
         </div>
         <div className="page-actions">
-          <button className="btn btn-secondary" onClick={() => paths?.models && window.api.openFolder(paths.models)} disabled={!paths?.models}>
-            <FolderOpen size={15} /> 打开文件夹
-          </button>
-          <button className="btn btn-primary" onClick={() => setShowUrlModal(true)}>
-            <Download size={15} /> 通过 URL 下载
-          </button>
-        </div>
-      </div>
-      {activeDownloads.length > 0 && (
-        <div className="models-section">
-          <div className="models-section-title">
-            <Loader2 size={13} className="spin" /> 正在下载
-          </div>
-          {activeDownloads.map(dl => <DownloadRow key={dl.id} dl={dl} />)}
-        </div>
-      )}
-      <div className="models-section">
-        <div className="models-section-title">
-          <HardDrive size={13} /> 已安装的模型
-        </div>
-        {models.length > 0 && (
-          <div className="params-search-box">
+          <div className="params-search-box models-filter-inline">
             <Search size={16} style={{ color: 'var(--text-muted)' }} />
             <input
               type="text"
@@ -320,7 +306,24 @@ export default function ModelsView() {
               </button>
             )}
           </div>
-        )}
+          <button className="btn btn-secondary" onClick={() => paths?.models && window.api.openFolder(paths.models)} disabled={!paths?.models}>
+            <FolderOpen size={15} /> 打开文件夹
+          </button>
+          <button className="btn btn-primary" onClick={() => setShowUrlModal(true)}>
+            <Download size={15} /> 通过 URL 下载
+          </button>
+        </div>
+      </div>
+      <div className="models-scroll">
+      {activeDownloads.length > 0 && (
+        <div className="models-section">
+          <div className="models-section-title">
+            <Loader2 size={13} className="spin" /> 正在下载
+          </div>
+          {activeDownloads.map(dl => <DownloadRow key={dl.id} dl={dl} />)}
+        </div>
+      )}
+      <div className="models-section">
         {loading && models.length === 0 && (
           <div style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)', fontSize: 13 }}>
             <Loader2 size={16} className="spin" style={{ display: 'block', margin: '0 auto 8px' }} /> 加载中...
@@ -344,6 +347,7 @@ export default function ModelsView() {
           {filteredModels.map(m => (
             <ModelFileRow key={m.path} model={m} isImage={imageModels.some(im => im.path === m.path)} onDeleted={refresh} />
           ))}
+      </div>
       </div>
       {showUrlModal && <UrlDownloadModal onClose={() => { setShowUrlModal(false); refresh() }} />}
     </div>

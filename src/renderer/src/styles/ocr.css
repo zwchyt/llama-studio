@@ -1,5 +1,25 @@
 .ocr-view {
   max-width: 100%;
+  height: calc(100% - 48px);
+  margin: 24px;
+  padding: 24px;
+  background: var(--surface);
+  border: 2.5px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* 覆盖 global.css 高特异性规则，确保外框边距/高度生效 */
+.view-transition>:not(.chat-layout):not(.agent-code-view).ocr-view {
+  height: calc(100% - 48px);
+  margin: 24px;
+  padding: 24px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .ocr-notice {

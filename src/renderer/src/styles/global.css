@@ -913,6 +913,22 @@ select {
   color: var(--danger);
 }
 
+.dropdown-item.danger.confirming {
+  background: var(--danger);
+  color: #fff;
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+  margin: 0 4px;
+  width: calc(100% - 8px);
+  box-shadow: 0 1px 2px rgba(220, 38, 38, .35);
+  transition: background var(--transition), box-shadow var(--transition);
+}
+
+.dropdown-item.danger.confirming:hover {
+  background: #b91c1c;
+  box-shadow: 0 2px 6px rgba(185, 28, 28, .45);
+}
+
 .dropdown-item svg {
   width: 14px;
   height: 14px;

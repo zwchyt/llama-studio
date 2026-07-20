@@ -1,14 +1,81 @@
-empty-state/btn/form-input/params-search-box/hub-* 等通用类定义在 global.css，未搬移 */ .models-view {
+/* empty-state/btn/form-input/params-search-box/hub-* 等通用类定义在 global.css，未搬移 */
+.models-view {
   --content-pad: 24px;
-  max-width: 1100px;
-  margin: 0 auto;
+  margin: 24px;
   padding: var(--content-pad);
+  background: var(--surface);
+  border: 2.5px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  max-width: none;
+}
+
+/* 覆盖 global.css 中 .view-transition>:not(...):not(...) 的高特异性规则，
+   避免 .models-view 自身成为滚动容器（否则 sticky 顶部栏失效） */
+.view-transition>:not(.chat-layout):not(.agent-code-view).models-view {
+  padding: var(--content-pad);
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+
+.models-view .page-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  flex-shrink: 0;
+  background: var(--surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin-bottom: 20px;
+}
+
+.models-view .models-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0 calc(-1 * var(--content-pad));
+  padding: 0 var(--content-pad);
+}
+
+/* 顶部栏内的内联筛选框（与按钮同一行） */
+.models-view .models-filter-inline {
+  position: static;
+  width: 260px;
+  margin-bottom: 0;
+  box-shadow: none;
+  flex-shrink: 0;
+  background: #e1e1e1;
+}
+
+/* 顶部栏三个控件统一背景色 */
+.models-view .page-actions .btn,
+.models-view .page-actions .models-filter-inline {
+  background: #e1e1e1;
+  border-color: var(--border-strong);
+}
+
+.models-view .page-actions .btn:hover:not(:disabled) {
+  background: #dadada;
+  border-color: #b0b0b0;
+}
+
+.models-view .models-filter-inline .form-input {
+  padding: 8px 0;
 }
 
 @media (min-width: 1400px) {
   .models-view {
     --content-pad: 32px;
-    max-width: 1200px;
+  }
+  .models-view .page-header {
+    padding: 18px 22px;
   }
 }
 

@@ -8,7 +8,6 @@ import { safeCall } from '../utils/safeCall'
 import { Play, Square, Settings, MoreVertical, Copy, Trash, Download, Globe, Server, Terminal, Check, MessageSquare } from 'lucide-react'
 import type { CardState } from '../../../shared/types'
 import ParamsModal from './ParamsModal'
-import ConfirmModal from './ConfirmModal'
 interface Props { card: CardState }
 export default function ModelCard({ card }: Props) {
   const { updateCard, setCardStatus, removeCard, backends, activeBackend, commandsSchema, setShowCreateModal, clearModelMetrics } = useStore(
@@ -17,7 +16,7 @@ export default function ModelCard({ card }: Props) {
   )
   const [showMenu, setShowMenu] = useState(false)
   const [showParamsModal, setShowParamsModal] = useState(false)
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const hideTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   const isRunning = card.status === 'running'
@@ -143,7 +142,10 @@ export default function ModelCard({ card }: Props) {
   }, [card.template.modelPath])
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setShowMenu(false)
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false)
+        setConfirmingDelete(false)
+      }
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => {
@@ -217,17 +219,17 @@ export default function ModelCard({ card }: Props) {
       }
     } else { notify(`运行失败：${res.error}`, 'error'); setCardStatus(card.template.id, 'error') }
   }
-  const handleDelete = useCallback(async () => {
+  const handleDelete = useCallback(() => {
     if (isRunning) { notify('请先停止模型再删除。', 'error'); return }
-    setShowMenu(false)
-    setShowDeleteConfirm(true)
-  }, [isRunning])
-  const confirmDelete = useCallback(async () => {
-    const ok = await safeCall(() => window.api.deleteTemplate(card.template.id), '删除模板失败')
-    if (ok === null) return
-    removeCard(card.template.id)
-    setShowDeleteConfirm(false)
-  }, [card.template.id, removeCard])
+    if (!confirmingDelete) {
+      setConfirmingDelete(true)
+      return
+    }
+    safeCall(() => window.api.deleteTemplate(card.template.id), '删除模板失败').then((ok) => {
+      if (ok === null) return
+      removeCard(card.template.id)
+    })
+  }, [isRunning, confirmingDelete, card.template.id, removeCard])
   const handleExport = useCallback(async () => { await safeCall(() => window.api.exportTemplate(card.template), '导出模板失败'); setShowMenu(false) }, [card.template])
   const handleEdit = useCallback(() => { setShowCreateModal(true, card.template); setShowMenu(false) }, [card.template, setShowCreateModal])
   const handleDuplicate = useCallback(async () => {
@@ -274,7 +276,13 @@ export default function ModelCard({ card }: Props) {
               <button className="dropdown-item" onClick={handleDuplicate}><Copy size={14} /> 复制</button>
               <button className="dropdown-item" onClick={handleExport}><Download size={14} /> 导出</button>
               <div className="dropdown-divider" />
-              <button className="dropdown-item danger" onClick={handleDelete}><Trash size={14} /> 删除</button>
+              <button
+                className={`dropdown-item danger ${confirmingDelete ? 'confirming' : ''}`}
+                onClick={handleDelete}
+              >
+                <Trash size={14} />
+                {confirmingDelete ? '确认删除？' : '删除'}
+              </button>
             </div>
           )}
         </div>
@@ -413,15 +421,6 @@ export default function ModelCard({ card }: Props) {
           cardName={card.template.name}
         />
       )}
-      <ConfirmModal
-        open={showDeleteConfirm}
-        title="删除模板"
-        message={`确定要删除「${card.template.name}」吗？此操作不可撤销。`}
-        confirmLabel="删除"
-        danger
-        onConfirm={confirmDelete}
-        onCancel={() => setShowDeleteConfirm(false)}
-      />
     </div>
   )
 }

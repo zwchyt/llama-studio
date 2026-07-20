@@ -1408,8 +1408,8 @@ export default function AgentCodeView() {
   // 卡片关闭过渡态：关闭时先播放收起/淡出动画，动画结束再真正卸载（taskModalOpen=false）。
   // 过渡期间卡片真实高度仍由 ResizeObserver 写入 --task-card-h，消息区平滑跟降，无突跳/留缝。
   const [taskCardClosing, setTaskCardClosing] = useState(false)
-  // 上下文裁剪提示：当因窗口限制自动省略早期消息时显示（null = 未触发）
-  const [ctxTrimInfo, setCtxTrimInfo] = useState<{ dropped: number } | null>(null)
+  // 上下文裁剪提示：当因窗口限制自动省略早期消息时写入（目前仅记录，未做独立渲染）
+  const [, setCtxTrimInfo] = useState<{ dropped: number } | null>(null)
   // 当前 TodoWrite 计划项（每次新调用替换，不累加）
   const [currentPlanItems, setCurrentPlanItems] = useState<TodoUpdate[]>([])
   // 计划总标题（plan 级别，区别于每条待办 content）：仅用于内联卡片展示，不持久化
@@ -1507,15 +1507,17 @@ export default function AgentCodeView() {
         setTasks(res.tasks)
         // 修复①：后端持久化状态为权威来源，回写 currentPlanItems，
         // 使卡片渲染真实状态，而非仅依赖流式解析的临时快照。
-        setCurrentPlanItems(res.tasks.map(t => ({
-          id: t.id,
-          content: t.subject,
-          description: t.description,
-          status: t.status,
-          priority: t.priority,
-          activeForm: t.activeForm,
-          notes: t.notes,
-        })))
+        setCurrentPlanItems(res.tasks
+          .filter(t => t.status !== 'deleted')
+          .map((t): TodoUpdate => ({
+            id: t.id,
+            content: t.subject,
+            description: t.description,
+            status: t.status as TodoUpdate['status'],
+            priority: t.priority,
+            activeForm: t.activeForm,
+            notes: t.notes,
+          })))
       }
     } catch { /* 忽略：面板刷新失败不影响对话 */ }
   }, [activeSessionId])
@@ -3056,14 +3058,13 @@ export default function AgentCodeView() {
                       <div className="agent-task-card-empty">暂无计划</div>
                     ) : (
                       currentPlanItems.map((item, i) => {
-                        // 修复③：显式覆盖全部状态枚举，避免 cancelled/deleted 被 fallback 成「待完成」
+                        // 修复③：显式覆盖全部状态枚举，避免 cancelled 被 fallback 成「待完成」
                         const raw = item.status || 'pending'
                         const statusLabel =
                           raw === 'completed' ? '已完成'
                             : raw === 'in_progress' ? '进行中'
                               : raw === 'cancelled' ? '已取消'
-                                : raw === 'deleted' ? '已删除'
-                                  : '待完成'
+                                : '待完成'
                         const isDone = raw === 'completed'
                         // 仿 Reasonix：每条只显示一行。进行中且有备注(notes)时，备注作为 activeForm 显示；
                         // 否则显示 content。notes 不再作为独立第二行渲染。

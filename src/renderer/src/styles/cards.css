@@ -1,3 +1,31 @@
+.templates-view {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  box-shadow: var(--shadow);
+}
+
+@media (min-width: 1400px) {
+  .templates-view {
+    padding: 32px;
+  }
+}
+
+.templates-view .page-header {
+  background: var(--surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin-bottom: 20px;
+}
+
+@media (min-width: 1400px) {
+  .templates-view .page-header {
+    padding: 18px 22px;
+  }
+}
+
 .cards-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -43,17 +71,43 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  background: var(--surface);
-  border: 1.5px solid var(--border);
+  background: #e1e1e1;
+  border: 1.5px solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: 0 12px;
   width: 240px;
   flex-shrink: 0;
-  transition: border-color var(--transition);
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.header-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  margin-left: 10px;
+  padding: 0 7px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font);
+  color: var(--text-secondary);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 99px;
+  vertical-align: middle;
+  cursor: default;
+  transition: color var(--transition), background var(--transition);
+}
+
+.header-count-badge:hover {
+  color: var(--text);
+  background: var(--border);
 }
 
 .template-search-bar:focus-within {
-  border-color: var(--border-strong);
+  border-color: #b0b0b0;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, .06);
 }
 
 .template-search-input {
@@ -75,11 +129,39 @@
   font-size: 16px;
   padding: 2px 4px;
   line-height: 1;
-  transition: color var(--transition);
+  border-radius: 99px;
+  transition: color var(--transition), background var(--transition);
 }
 
 .template-search-clear:hover {
   color: var(--text);
+  background: var(--bg);
+}
+
+/* 顶部栏"导入/新建模板"按钮，统一为输入框样式，与搜索框一致 */
+.header-input-btn {
+  background: #e1e1e1;
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+  padding: 0 14px;
+  height: 37px;
+  box-shadow: none;
+  transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+}
+
+.header-input-btn:hover:not(:disabled) {
+  background: #dadada;
+  border-color: #b0b0b0;
+  transform: none;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, .06);
+  opacity: 1;
+}
+
+.header-input-btn:active:not(:disabled) {
+  background: #d2d2d2;
 }
 
 .model-card {
