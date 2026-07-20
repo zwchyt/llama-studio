@@ -332,6 +332,54 @@ function parseThinkSegments(content: string): ContentSegment[] {
   return segments
 }
 
+// ── 流式 Markdown 半截保护（借鉴 DeepSeek-Reasonix 的 flushableMarkdownPrefix）──
+// 流式输出时，正文可能以「未闭合的 Markdown」结尾（如未闭合的 ``` 代码块、
+// 未完成的表格行），直接交给 ReactMarkdown 会渲染出残缺/闪烁的样式。
+// 这里把内容切成「已安全闭合的前缀」+「末尾未闭合的残留」，残留部分用纯文本暂显，
+// 待流结束（isStreaming=false）再由原 renderSegments 用完整 ReactMarkdown 渲染。
+type SafeSplit = { safe: string; pending: string }
+
+// 判断文本中是否包含未闭合的围栏代码块（``` 出现奇数次）
+function hasUnclosedFence(text: string): boolean {
+  const fences = text.match(/^```/gm)?.length ?? 0
+  return fences % 2 === 1
+}
+
+// 在最后一个「完整块边界」处切分：优先在空行边界切，若末尾处于未闭合代码块内则回退到代码块起点。
+function splitMarkdownAtSafeBoundary(text: string): SafeSplit {
+  if (!text) return { safe: '', pending: '' }
+  // 没有未闭合代码块时，整段都是安全的（段落/列表在 ReactMarkdown 中增量渲染也稳定）
+  if (!hasUnclosedFence(text)) {
+    return { safe: text, pending: '' }
+  }
+  // 有未闭合代码块：找到最后一个 ``` 起始位置，把之前的完整内容作为 safe
+  const lastFence = text.lastIndexOf('```')
+  // 该 ``` 是未闭合的开围栏，其后的内容全部视为 pending
+  const safe = text.slice(0, lastFence)
+  const pending = text.slice(lastFence)
+  // 若 safe 末尾不洁净（紧接代码块），仍保留；safe 部分不含未闭合围栏，可安全渲染
+  return { safe, pending }
+}
+
+// 流式正文渲染：已闭合部分用 ReactMarkdown，未闭合残留用 <pre> 暂显，避免闪烁。
+const SafeStreamMarkdown = React.memo(function SafeStreamMarkdown({ text }: { text: string }) {
+  const { safe, pending } = useMemo(() => splitMarkdownAtSafeBoundary(text), [text])
+  return (
+    <>
+      {safe ? (
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any, pre: MarkdownPre as any }}>
+          {safe}
+        </ReactMarkdown>
+      ) : null}
+      {pending ? (
+        <pre className="streaming-raw" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>
+          {pending}
+        </pre>
+      ) : null}
+    </>
+  )
+})
+
 // 思考块：可折叠（流式时自动展开，完成后自动折叠）
 const THINK_THROTTLE_MS = 120 // 流式文本节流间隔，避免每个 delta 都重渲染长文本
 
@@ -674,6 +722,14 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
         // 流已中断时，未闭合的思考链视为已结束
         const effectiveClosed = streaming ? seg.closed : true
         return <ThinkBlock key={i} value={seg.value} closed={effectiveClosed} isStreaming={streaming && !seg.closed} />
+      }
+      if (streaming) {
+        // 流式阶段：用 SafeStreamMarkdown 保护未闭合的 Markdown（如半截代码块）
+        return (
+          <div key={i} className="chat-msg-markdown">
+            <SafeStreamMarkdown text={seg.value} />
+          </div>
+        )
       }
       return (
         <div key={i} className="chat-msg-markdown">

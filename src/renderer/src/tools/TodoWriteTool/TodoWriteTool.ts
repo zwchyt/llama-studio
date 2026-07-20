@@ -15,7 +15,7 @@ When merge=false, the provided list replaces the previous one entirely (use when
 
 Priority: high / medium / low (default medium). Status: pending / in_progress / completed / cancelled. Fields: id, content (subject), description, status, priority, activeForm, notes.
 
-IMPORTANT: Do NOT mark tasks as 'completed' yourself — the system automatically flips the current 'in_progress' task to 'completed' and promotes the next 'pending' task to 'in_progress' after you successfully execute the corresponding tool. You only need to set a task to 'in_progress' to begin it (or leave it 'pending').
+IMPORTANT: You are RESPONSIBLE for marking tasks as 'completed' yourself — do NOT rely on the system to do it for you. After the real tool(s) a task requires (Read/Write/Edit/Bash/...) have actually been executed and the work is genuinely done, send a TodoWrite update setting that task to 'completed' (and set the next task to 'in_progress'). NEVER mark a task completed just because you created it or planned it — only after the actual work was performed. Use {id, notes: "..."} to record the result/verification of the task.
 
 EXECUTION DISCIPLINE: After creating the plan, you MUST execute the tasks strictly IN ORDER, one by one — start from the first task, run the actual tool(s) it requires (Read/Write/Edit/Bash/...), and only move to the next task after the current one's work is genuinely done. NEVER skip a pending task, NEVER jump ahead, and DO NOT output a final answer until every task in the plan is completed. If a task turns out unnecessary, mark it cancelled explicitly rather than silently skipping it.`,
   parameters: {

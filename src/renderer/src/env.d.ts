@@ -164,15 +164,15 @@ interface LlamaCppApi {
   onAgentFileChanged: (cb: (data: { dir: string; filename: string }) => void) => void
   removeAgentFileListeners: () => void
   // ── Agent Code 目录操作 ──
-  listDir: (dirPath: string) => Promise<{ success: boolean; entries?: { name: string; isDir: boolean; fileCount: number }[]; truncated?: boolean; total?: number; error?: string }>
+  listDir: (dirPath: string) => Promise<{ success: boolean; entries?: { name: string; isDir: boolean; fileCount: number; size?: number }[]; truncated?: boolean; total?: number; error?: string }>
   // ── Agent Code 文件操作 ──
   readFile: (filePath: string, opts?: { maxBytes?: number; offset?: number; limit?: number; raw?: boolean }) => Promise<{ success: boolean; content?: string; lines?: number; totalLines?: number; startLine?: number; truncated?: boolean; error?: string; errorType?: string; fileSize?: number; suggestedCommand?: string }>
   readFileBase64: (filePath: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>
   getFilePath: (file: File) => string
   writeFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>
   editFile: (filePath: string, oldString: string, newString: string, replaceAll?: boolean) => Promise<{ success: boolean; content?: string; error?: string }>
-  glob: (opts: { pattern: string; path: string; limit?: number }) => Promise<{ success: boolean; filenames?: string[]; numFiles?: number; truncated?: boolean; error?: string }>
-  grep: (opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean; type?: string }) => Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }>
+  glob: (opts: { pattern: string; path: string; limit?: number }) => Promise<{ success: boolean; filenames?: string[]; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }>
+  grep: (opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean; type?: string; timeout_seconds?: number }) => Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }>
 	  // ── Agent Code 工作台 项目持久化 ──
 	  loadAgentProjects: () => Promise<AgentProject[]>
 	  saveAgentProjects: (projects: AgentProject[]) => Promise<{ success: boolean; error?: string }>

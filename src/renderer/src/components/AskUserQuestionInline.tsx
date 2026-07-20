@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react'
-import { HelpCircle, X } from 'lucide-react'
+import React, { useEffect, useRef, useState } from 'react'
+import { HelpCircle } from 'lucide-react'
 import { askUserQuestionRegistry } from '../utils/askUserQuestionRegistry'
 import type { Question } from '../tools/AskUserQuestionTool/types'
 
@@ -8,6 +8,8 @@ import type { Question } from '../tools/AskUserQuestionTool/types'
 // 而非覆盖式弹窗。
 export default function AskUserQuestionInline() {
   const [pending, setPending] = useState<Question[] | null>(null)
+  const cancelBtnRef = useRef<HTMLButtonElement>(null)
+  const submitBtnRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     return askUserQuestionRegistry.subscribe(() => {
@@ -23,6 +25,26 @@ export default function AskUserQuestionInline() {
       setSelected(new Map())
       setNotes(new Map())
     }
+  }, [pending])
+
+  // 键盘导航：与删除/Bash 审批面板一致——左右方向键在底部按钮间移动焦点，
+  // Enter 触发聚焦按钮（原生），Escape 取消。
+  useEffect(() => {
+    if (!pending) return
+    const btns = [cancelBtnRef.current, submitBtnRef.current].filter(Boolean) as HTMLButtonElement[]
+    let idx = 1 // 默认聚焦「提交答案」按钮
+    const focusIdx = (i: number) => {
+      idx = (i + btns.length) % btns.length
+      btns[idx]?.focus()
+    }
+    focusIdx(idx)
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight') { e.preventDefault(); focusIdx(idx + 1) }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); focusIdx(idx - 1) }
+      else if (e.key === 'Escape') { e.preventDefault(); handleCancel() }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
   }, [pending])
 
   if (!pending) return null
@@ -104,9 +126,6 @@ export default function AskUserQuestionInline() {
         <span className="agent-ask-question-title">
           需要你回答一些问题{questionCount > 1 ? `（${questionCount} 个）` : ''}
         </span>
-        <button className="agent-ask-question-close" onClick={handleCancel} title="取消">
-          <X size={14} />
-        </button>
       </div>
       <div className="agent-ask-question-body">
         {pending.map((q, qIdx) => (
@@ -150,8 +169,8 @@ export default function AskUserQuestionInline() {
         ))}
       </div>
       <div className="agent-ask-question-footer">
-        <button className="agent-prompt-btn agent-prompt-btn-ghost" onClick={handleCancel}>取消</button>
-        <button className="agent-prompt-btn agent-prompt-btn-primary" onClick={handleSubmit}>提交答案</button>
+        <button ref={cancelBtnRef} className="agent-prompt-btn agent-prompt-btn-ghost" onClick={handleCancel}>取消</button>
+        <button ref={submitBtnRef} className="agent-prompt-btn agent-prompt-btn-primary" onClick={handleSubmit}>提交答案</button>
       </div>
     </div>
   )

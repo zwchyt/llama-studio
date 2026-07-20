@@ -22,6 +22,17 @@ function formatFileCount(count: number): string {
   return `${count} item${count === 1 ? '' : 's'}`
 }
 
+// 人类可读的文件大小（借鉴 DeepSeek-Reasonix ls 工具显示字节大小）
+function formatSize(bytes?: number): string {
+  if (bytes == null) return ''
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let val = bytes / 1024
+  let i = 0
+  while (val >= 1024 && i < units.length - 1) { val /= 1024; i++ }
+  return `${val.toFixed(val < 10 ? 1 : 0)} ${units[i]}`
+}
+
 export async function execute(args: Record<string, unknown>): Promise<string> {
   const { path, dirsOnly, recursive } = args as unknown as ListDirInput & { dirsOnly?: boolean; recursive?: boolean }
   const targetPath = (typeof path === 'string' && path.trim()) ? path : getWorkspaceRootForSession()
@@ -37,21 +48,22 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
     // 递归收集子目录，按深度缩进，整棵树一次返回
     const lines: string[] = [`- ${targetPath}/`]
     const childPath = (parent: string, name: string) => `${parent}\\${name}`
+    const dirSummary = (fileCount: number): string => {
+      return fileCount > 0 ? `  [${formatFileCount(fileCount)}]` : ''
+    }
     const walk = async (dir: string, depth: number): Promise<void> => {
       const r = await window.api.listDir(dir)
       if (!r.success) return
       const subs = (r.entries ?? []).filter(e => e.isDir)
       for (const s of subs) {
         const indent = '  '.repeat(depth + 1)
-        const summary = s.fileCount > 0 ? `  [${formatFileCount(s.fileCount)}]` : ''
-        lines.push(`${indent}- ${s.name}/${summary}`)
+        lines.push(`${indent}- ${s.name}/${dirSummary(s.fileCount)}`)
         await walk(childPath(dir, s.name), depth + 1)
       }
     }
     for (const e of entries) {
       if (!e.isDir) continue
-      const summary = e.fileCount > 0 ? `  [${formatFileCount(e.fileCount)}]` : ''
-      lines.push(`  - ${e.name}/${summary}`)
+      lines.push(`  - ${e.name}/${dirSummary(e.fileCount)}`)
       await walk(childPath(targetPath, e.name), 1)
     }
     return lines.join('\n')
@@ -64,7 +76,10 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
   const dirs = entries.filter(e => e.isDir)
   const files = entries.filter(e => !e.isDir)
   const renderDirs = () => dirs.map(e => `  - ${e.name}/`).join('\n')
-  const renderFiles = () => files.map(e => `  - ${e.name}`).join('\n')
+  const renderFiles = () => files.map(e => {
+    const sz = formatSize(e.size)
+    return sz ? `  - ${e.name}  (${sz})` : `  - ${e.name}`
+  }).join('\n')
 
   let output = ''
   if (path) output += `- ${targetPath}/\n`

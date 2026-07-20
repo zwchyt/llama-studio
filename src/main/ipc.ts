@@ -1,8 +1,10 @@
 import { ipcMain, dialog, shell, BrowserWindow, net } from 'electron'
 import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
-  unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, watch, promises as fsPromises
+  unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, watch, promises as fsPromises,
+  createReadStream
 } from 'fs'
+import * as readline from 'readline'
 import { join, extname, basename, dirname, resolve, sep, relative, isAbsolute } from 'path'
 import { spawn, execSync, ChildProcess } from 'child_process'
 import { tmpdir } from 'os'
@@ -2258,6 +2260,28 @@ export function registerIpcHandlers(): void {
       let lastUsage: { promptTokens: number; completionTokens: number } | null = null
       let lastFinishReason: string | undefined
       let endMetricsPromise: Promise<{ decodeTokS?: number; completionTokens?: number }> | null = null
+      // ── idle 看门狗（借鉴 DeepSeek-Reasonix 的 defaultStreamIdleTimeout）──
+      // 流已开始（已收到首个数据块）后，若连续 IDLE_TIMEOUT_MS 无任何新数据，则判定为服务假死并主动中止，
+      // 避免半开连接永久阻塞前端转圈。整体请求兜底仍为下方 300000ms。
+      const IDLE_TIMEOUT_MS = 120000
+      let idleTimer: ReturnType<typeof setTimeout> | null = null
+      let streamStarted = false
+      const resetIdleTimer = (): void => {
+        if (idleTimer) { clearTimeout(idleTimer); idleTimer = null }
+        idleTimer = setTimeout(() => {
+          req.destroy()
+          chatStreamInReasoning.delete(streamId)
+          chatStreamToolCalls.delete(streamId)
+          flushStreamNow(streamId)
+          e.sender.send('chat-stream-chunk', { streamId, done: true, error: '流式响应空闲超时（服务可能已停止输出）' })
+          abortedChatStreams.delete(streamId)
+          activeChatStreams.delete(streamId)
+          resolve({ success: false, error: 'idle timeout' })
+        }, IDLE_TIMEOUT_MS)
+      }
+      const clearIdleTimer = (): void => {
+        if (idleTimer) { clearTimeout(idleTimer); idleTimer = null }
+      }
       const req = http.request(`http://127.0.0.1:${port}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
@@ -2352,10 +2376,13 @@ export function registerIpcHandlers(): void {
           }
         }
         res.on('data', (chunk: Buffer) => {
+          if (!streamStarted) { streamStarted = true; resetIdleTimer() }
+          else { resetIdleTimer() }
           buf += chunk.toString()
           processBuf()
         })
         res.on('end', () => {
+          clearIdleTimer()
           // 处理缓冲区中可能残留的未以 \n\n 结尾的 SSE 事件（如 usage chunk）
           if (buf.trim()) {
             buf += '\n\n'
@@ -2403,8 +2430,9 @@ export function registerIpcHandlers(): void {
           }
         })
       })
-	      req.on('error', (err) => {
-	        chatStreamInReasoning.delete(streamId)
+      req.on('error', (err) => {
+        clearIdleTimer()
+        chatStreamInReasoning.delete(streamId)
 	        chatStreamToolCalls.delete(streamId)
 	        // 主动中止的流不发 error 事件，避免前端误显示
 	        if (!abortedChatStreams.has(streamId)) {
@@ -2415,9 +2443,10 @@ export function registerIpcHandlers(): void {
 	        activeChatStreams.delete(streamId)
 	        resolve({ success: false, error: err.message })
 	      })
-	      // 流式生成可能很久，给一个较长的超时（5 分钟），超时则中止
-	      req.setTimeout(300000, () => {
-	        req.destroy()
+      // 流式生成可能很久，给一个较长的超时（5 分钟），超时则中止
+      req.setTimeout(300000, () => {
+        clearIdleTimer()
+        req.destroy()
 	        chatStreamInReasoning.delete(streamId)
 	        chatStreamToolCalls.delete(streamId)
 	        flushStreamNow(streamId)
@@ -3220,15 +3249,83 @@ export function registerIpcHandlers(): void {
   const MAX_FILE_SIZE = 1024 * 1024 * 1024 // 1 GiB
   const MAX_READ_TOKENS = 25_000
   const CHARS_PER_TOKEN = 4
+  // 超过该大小的文件采用流式逐行读取（仅取所需行），避免整文件载入内存
+  const STREAM_READ_THRESHOLD = 32 * 1024 * 1024 // 32 MiB
+  // 禁止读取的敏感/系统根目录（绝对路径，匹配前缀即拒绝）
+  const FORBID_READ_ROOTS: string[] = [
+    'C:\\Windows', 'C:\\Program Files', 'C:\\ProgramData',
+    '/etc', '/proc', '/sys', '/boot', '/usr/lib', '/Library'
+  ]
 
   function detectEncoding(buffer: Buffer): 'utf16le' | 'utf8' {
     return buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe ? 'utf16le' : 'utf8'
   }
 
-  function readFileContent(filePath: string): { content: string; encoding: string; fileExists: boolean } {
+  // 借鉴 DeepSeek-Reasonix read_file 的编码/二进制探测：
+  // 1) BOM UTF-16LE (FF FE) → utf16le
+  // 2) 无 BOM 的 UTF-16（Windows 源码常见：ASCII 字符呈 X\0X\0 模式）→ utf16le
+  // 3) 采样段含 NUL 字节 → 判定为二进制文件（非文本）
+  // 返回 { binary, encoding }。encoding 在 binary=true 时无意义。
+  function analyzeBuffer(buf: Buffer): { binary: boolean; encoding: 'utf16le' | 'utf8' } {
+    const sampleLen = Math.min(buf.length, 256 * 1024)
+    const sample = buf.subarray(0, sampleLen)
+    // BOM UTF-16
+    if (sample.length >= 2 && sample[0] === 0xff && sample[1] === 0xfe) {
+      return { binary: false, encoding: 'utf16le' }
+    }
+    // 无 BOM UTF-16：前若干字节呈 X 0x00 X 0x00 模式（ASCII 透明）
+    if (sample.length >= 4 && sample[1] === 0x00 && sample[3] === 0x00 && sample[0] !== 0x00) {
+      let utf16ish = 0
+      let total = 0
+      const probe = Math.min(sample.length, 512)
+      for (let i = 0; i + 1 < probe; i += 2) {
+        total++
+        if (sample[i + 1] === 0x00) utf16ish++
+      }
+      if (total > 0 && utf16ish / total > 0.8) {
+        return { binary: false, encoding: 'utf16le' }
+      }
+    }
+    // NUL 字节 → 二进制（如 .exe/.png/.zip）
+    for (let i = 0; i < sampleLen; i++) {
+      if (sample[i] === 0x00) return { binary: true, encoding: 'utf8' }
+    }
+    return { binary: false, encoding: 'utf8' }
+  }
+
+  function confineRead(target: string): boolean {
+    const norm = resolve(target).toLowerCase()
+    return FORBID_READ_ROOTS.some(r => norm.startsWith(r.toLowerCase()))
+  }
+
+  // 流式读取指定行范围（仅收集 offset..offset+limit-1 行，不整文件载入），
+  // 同时统计总行数（继续读到文件末尾计数，但不保留多余行内容）。
+  function readFileLinesStream(filePath: string, encoding: 'utf16le' | 'utf8', offset: number, limit: number): Promise<{ lines: string[]; totalLines: number }> {
+    const out: string[] = []
+    const wantStart = Math.max(1, offset)
+    const wantEnd = wantStart + limit - 1
+    const rl = readline.createInterface({
+      input: createReadStream(filePath, { encoding: encoding === 'utf16le' ? 'utf16le' : 'utf8' }),
+      crlfDelay: Infinity
+    })
+    let lineNo = 0
+    return new Promise<{ lines: string[]; totalLines: number }>((resolve, reject) => {
+      rl.on('line', (line: string) => {
+        lineNo++
+        if (lineNo < wantStart) return
+        if (lineNo > wantEnd) { rl.close(); return }
+        out.push(line)
+      })
+      rl.on('close', () => resolve({ lines: out, totalLines: lineNo }))
+      rl.on('error', (e: Error) => reject(e))
+    })
+  }
+
+  function readFileContent(filePath: string): { content: string; encoding: string; fileExists: boolean; binary?: boolean } {
     try {
       const buf = readFileSync(filePath)
-      const encoding = detectEncoding(buf)
+      const { binary, encoding } = analyzeBuffer(buf)
+      if (binary) return { content: '', encoding: 'utf8', fileExists: true, binary: true }
       const content = buf.toString(encoding as BufferEncoding).replaceAll('\r\n', '\n')
       return { content, encoding, fileExists: true }
     } catch (e) {
@@ -3246,6 +3343,23 @@ export function registerIpcHandlers(): void {
     const straight = curly.replace(/\u2018/g, "'").replace(/\u2019/g, "'").replace(/\u201c/g, '"').replace(/\u201d/g, '"')
     if (straight !== curly && fileContent.includes(straight)) return straight
     return null
+  }
+
+  // 友好的"未找到 old_string"提示（借鉴 Reasonix oldStringNotFoundError）：
+  // 给出与 old_string 首行最接近的文件行号与内容，并建议重新 Read 再编辑。
+  function buildEditNotFoundHint(fileContent: string, oldString: string, filePath: string): string {
+    const norm = oldString.replace(/\r\n/g, '\n')
+    const firstLine = norm.split('\n')[0] ?? ''
+    const lines = fileContent.split('\n')
+    if (firstLine.trim()) {
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i]!.includes(firstLine)) {
+          const snippet = lines[i]!.trim().slice(0, 200)
+          return `未在文件中找到要替换的字符串。最近匹配行 ${i + 1}: ${snippet}\n请重新 Read 文件获取最新内容后再编辑；若多处相似，请提供更多上下文以精确定位。\n路径: ${filePath}`
+        }
+      }
+    }
+    return `未在文件中找到要替换的字符串:\n${oldString}\n请重新 Read 文件获取最新内容后再编辑，并确保 old_string 与文件当前内容完全一致（含空白与行尾）。\n路径: ${filePath}`
   }
 
   // 跟踪读取时间戳，用于 edit 防竞态检测
@@ -3286,12 +3400,17 @@ export function registerIpcHandlers(): void {
       filePath = resolveAgentPath(filePath)
       filePath = redirectToWorkspaceIfMissing(filePath)
 
+      // 显式沙箱：拒绝读取禁止目录（借鉴 DeepSeek-Reasonix 的 confineRead / forbidRoots）
+      if (confineRead(filePath)) {
+        return { success: false, error: `权限不足，禁止读取受保护的系统目录：${filePath}`, errorType: 'PermissionDenied' }
+      }
+
       // 结构化错误：检查路径是否存在、是否为目录、权限等
       let fileStat: import('fs').Stats
       try {
         fileStat = statSync(filePath)
         if (fileStat.isDirectory()) {
-          return { success: false, error: `路径是目录，无法读取：${filePath}`, errorType: 'IsADirectory' }
+          return { success: false, error: `路径是目录，无法作为文件读取。请使用 ListDir 工具列出其内容，或读取其中的具体文件：${filePath}`, errorType: 'IsADirectory' }
         }
       } catch (e) {
         const err = e as NodeJS.ErrnoException
@@ -3320,6 +3439,7 @@ export function registerIpcHandlers(): void {
       const maxBytes = opts?.maxBytes ?? 0
       const previewLarge = maxBytes > 0 && fileSize > maxBytes
       let content: string
+      let totalLines = 0
       if (previewLarge) {
         const fh = await fsPromises.open(filePath, 'r')
         try {
@@ -3330,16 +3450,36 @@ export function registerIpcHandlers(): void {
           await fh.close()
         }
         content = content.replace(/[\uD800-\uDBFF]$/u, '')
+        totalLines = content.split('\n').length
       } else {
         const r = readFileContent(filePath)
         if (!r.fileExists) {
           return { success: false, error: `文件不存在：${filePath}`, errorType: 'FileNotFound' }
         }
-        content = r.content
+        // 二进制文件早拒（借鉴 DeepSeek-Reasonix 的 NUL 检测），避免乱码 token 污染上下文
+        if (r.binary) {
+          return {
+            success: false,
+            error: `文件为二进制文件（检测到 NUL 字节），read_file 不展示其内容。如需查看，请使用 Bash 的 hexdump 或 base64 命令：${filePath}`,
+            errorType: 'BinaryFile',
+            fileSize
+          }
+        }
+        // 大文件（> 阈值）采用流式读取，仅取所需行，不整文件载入内存（借鉴 Reasonix 的流式 scan）
+        if (fileSize > STREAM_READ_THRESHOLD) {
+          const enc = (r.encoding === 'utf16le' ? 'utf16le' : 'utf8') as 'utf16le' | 'utf8'
+          const offsetForStream = opts?.offset ?? 1
+          const limitForStream = opts?.limit ?? 2000
+          const streamed = await readFileLinesStream(filePath, enc, offsetForStream, limitForStream)
+          content = streamed.lines.join('\n')
+          totalLines = streamed.totalLines
+        } else {
+          content = r.content
+          totalLines = content.split('\n').length
+        }
       }
 
       const allLines = content.split('\n')
-      const totalLines = allLines.length
 
       // offset/limit 行级分片
       let offset = opts?.offset ?? 1
@@ -3458,21 +3598,34 @@ export function registerIpcHandlers(): void {
 
       const { content: fileContent, encoding } = readFileContent(filePath)
 
+      // 行尾对齐（借鉴 Reasonix edit_file 的 matchLineEndings / CRLF 归一）：
+      // Windows 项目文件常为 CRLF，而模型给出的 old_string/new_string 多用 LF。
+      // 若文件行尾与给定串不一致，先把串对齐到文件行尾再匹配/替换，避免"找不到"误失败。
+      const fileHasCRLF = fileContent.includes('\r\n')
+      const alignLE = (s: string): string => {
+        if (s == null) return s
+        return fileHasCRLF ? s.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n') : s.replace(/\r\n/g, '\n')
+      }
+      const oldNorm = alignLE(oldString ?? '')
+      const newNorm = alignLE(newString ?? '')
+
       if (!oldString && fileContent.trim() !== '') {
         return { success: false, error: '文件已存在且非空，无法创建' }
       }
 
       if (!oldString && !fileContent.trim()) {
         // 空文件 + 空 oldString = 创建新内容
-        const updated = newString
+        const updated = newNorm
         await fsPromises.writeFile(filePath, updated, encoding as BufferEncoding)
         readFileTimestamps.set(filePath, getFileModificationTime(filePath))
         return { success: true, content: updated }
       }
 
-      const actualOldString = findActualString(fileContent, oldString)
+      const actualOldString = findActualString(fileContent, oldNorm)
       if (!actualOldString) {
-        return { success: false, error: `未在文件中找到要替换的字符串:\n${oldString}` }
+        // 友好错误提示（借鉴 Reasonix oldStringNotFoundError：给出最近匹配行 + 内容 + 重读建议）
+        const hint = buildEditNotFoundHint(fileContent, oldNorm, filePath)
+        return { success: false, error: hint }
       }
 
       // 多匹配检测
@@ -3482,8 +3635,8 @@ export function registerIpcHandlers(): void {
       }
 
       const updated = replaceAll
-        ? fileContent.replaceAll(actualOldString, newString)
-        : fileContent.replace(actualOldString, newString)
+        ? fileContent.replaceAll(actualOldString, newNorm)
+        : fileContent.replace(actualOldString, newNorm)
 
       await fsPromises.writeFile(filePath, updated, encoding as BufferEncoding)
       readFileTimestamps.set(filePath, getFileModificationTime(filePath))
@@ -3607,21 +3760,59 @@ export function registerIpcHandlers(): void {
     }
   }
 
-  ipcMain.handle('glob', async (_e, opts: { pattern: string; path: string; limit?: number }): Promise<{ success: boolean; filenames?: string[]; numFiles?: number; truncated?: boolean; error?: string }> => {
+  ipcMain.handle('glob', async (_e, opts: { pattern: string; path: string; limit?: number }): Promise<{ success: boolean; filenames?: string[]; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }> => {
     try {
       if (!opts || !opts.path) return { success: false, error: '缺少搜索目录' }
       opts.path = resolveAgentPath(opts.path)
       if (opts.path.startsWith('\\\\') || opts.path.startsWith('//')) return { success: false, error: '不支持 UNC 路径' }
       if (!existsSync(opts.path)) return { success: false, error: '目录不存在' }
       const limit = Math.max(1, Math.min(opts.limit ?? 100, 2000))
-      const re = globToRegExp(opts.pattern)
+      // 遍历预算超时（借鉴 DeepSeek-Reasonix glob 的 ctx 可取消）：超大 monorepo 搜 ** 时，
+      // 同步递归 walk 无法被异步信号真正中断，这里用协作式超时标志——超时后停止继续遍历，
+      // 保留已收集结果并返回 timedOut，避免主进程长时间阻塞。
+      const GLOB_TIMEOUT_MS = 10_000
+      let timedOut = false
+      const timeoutId = setTimeout(() => { timedOut = true }, GLOB_TIMEOUT_MS)
+      // 敏感文件过滤（借鉴 Reasonix 的 secrets.ProtectSensitiveFiles）：搜到的密钥/凭证类文件
+      // 不进入结果，避免模型把 .env / 私钥路径暴露进上下文。
+      const SENSITIVE_FILES = new Set([
+        '.env', '.env.local', '.env.development', '.env.production', '.env.example',
+        'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'known_hosts',
+        'credentials.json', 'credentials.yml', 'credentials.yaml',
+        '.npmrc', '.pypirc', '.netrc', '*.key', '*.pem', '*.p12', '*.pfx', '*.keystore', '*.jks'
+      ])
+      const isSensitive = (name: string): boolean => {
+        if (SENSITIVE_FILES.has(name)) return true
+        // 通配项（含 *）按需匹配
+        return [...SENSITIVE_FILES].some(p => p.includes('*') && matchSimple(name, p))
+      }
+      // 简单通配匹配（仅 * 后缀，如 "*.key"）
+      function matchSimple(name: string, pat: string): boolean {
+        if (!pat.includes('*')) return name === pat
+        const prefix = pat.slice(0, pat.indexOf('*'))
+        const suffix = pat.slice(pat.indexOf('*') + 1)
+        return name.startsWith(prefix) && (suffix === '' || name.endsWith(suffix))
+      }
+      // 简单文件名回退（借鉴 DeepSeek-Reasonix glob 的 bare-filename fallback）：
+      // 模型常只给 "*.ts" / "foo.ts" 这类不含路径分隔符的 pattern，却希望搜到全树任意层级的文件。
+      // 由于 globToRegExp 用 [^/]* 匹配 *（不跨 /），裸 "*.ts" 只能命中搜索根直接下层。
+      // 这里对「不含路径分隔符且非显式 ** 递归」的 pattern 自动改写为 "**/<pattern>"，
+      // 使正则可跨目录深度匹配（等价于在整棵树中查找该文件名）。
+      let effectivePattern = opts.pattern
+      const hasSep = opts.pattern.includes('/') || opts.pattern.includes('\\')
+      const isExplicitRecursive = opts.pattern.includes('**')
+      if (!hasSep && !isExplicitRecursive) {
+        effectivePattern = '**/' + opts.pattern
+      }
+      const re = globToRegExp(effectivePattern)
       const giPatterns = loadGitignorePatterns(opts.path)
       const found: string[] = []
       const walk = (dir: string) => {
-        if (found.length >= limit) return
+        if (timedOut || found.length >= limit) return
         let entries: any[]
         try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
         for (const e of entries) {
+          if (timedOut || found.length >= limit) return
           const full = join(dir, e.name)
           const rel = relative(opts.path, full).split('\\').join('/')
           if (isGitignored(rel, giPatterns)) continue
@@ -3629,21 +3820,21 @@ export function registerIpcHandlers(): void {
             if (GLOB_GREP_IGNORE_DIRS.has(e.name)) continue
             walk(full)
           } else if (e.isFile()) {
-            if (re.test(rel)) found.push(full)
+            if (re.test(rel) && !isSensitive(e.name)) found.push(full)
           }
-          if (found.length >= limit) return
         }
       }
       // path 既可为目录，也可为单个文件；为文件时若匹配模式则直接返回该文件
       const rootStat = statSync(opts.path)
       if (rootStat.isFile()) {
-        if (re.test(basename(opts.path))) found.push(opts.path)
+        if (re.test(basename(opts.path)) && !isSensitive(basename(opts.path))) found.push(opts.path)
       } else {
         walk(opts.path)
       }
+      clearTimeout(timeoutId)
       found.sort()
       const truncated = found.length >= limit
-      return { success: true, filenames: found, numFiles: found.length, truncated }
+      return { success: true, filenames: found, numFiles: found.length, truncated, timedOut }
     } catch (e) {
       return { success: false, error: `搜索失败：${e instanceof Error ? e.message : String(e)}` }
     }
@@ -3651,7 +3842,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('list-dir', async (_e, dirPath: string): Promise<{
     success: boolean
-    entries?: { name: string; isDir: boolean; fileCount: number }[]
+    entries?: { name: string; isDir: boolean; fileCount: number; size?: number }[]
     truncated?: boolean
     total?: number
     error?: string
@@ -3679,10 +3870,13 @@ export function registerIpcHandlers(): void {
         .map(e => {
           const isDir = e.isDirectory()
           let fileCount = 0
+          let size: number | undefined
           if (isDir) {
             try { fileCount = readdirSync(join(resolved, e.name)).length } catch { }
+          } else {
+            try { size = statSync(join(resolved, e.name)).size } catch { }
           }
-          return { name: e.name, isDir, fileCount }
+          return { name: e.name, isDir, fileCount, size }
         })
         .sort((a, b) => {
           if (a.isDir && !b.isDir) return -1
@@ -3698,7 +3892,6 @@ export function registerIpcHandlers(): void {
   })
 
   const DEFAULT_MAX_CHARS_PER_LINE = 1_000
-  const GREP_TIMEOUT_MS = 20_000
   const TYPE_GLOB_MAP: Record<string, string> = {
     py: '*.py', js: '*.js', ts: '*.{ts,tsx}', 'c++': '*.{cpp,cc,cxx}',
     cpp: '*.{cpp,cc,cxx}', cc: '*.{cpp,cc,cxx}', c: '*.{c,h}',
@@ -3710,15 +3903,41 @@ export function registerIpcHandlers(): void {
     makefile: 'Makefile', gitignore: '.gitignore',
   }
 
+  // 敏感文件过滤（与 glob 工具一致，借鉴 Reasonix 的 secrets.ProtectSensitiveFiles）：
+  // grep 会读取文件内容，若命中 .env / 私钥会把它的值展示进上下文，风险更高，必须剔除。
+  const SENSITIVE_FILES = new Set([
+    '.env', '.env.local', '.env.development', '.env.production', '.env.example',
+    'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'known_hosts',
+    'credentials.json', 'credentials.yml', 'credentials.yaml',
+    '.npmrc', '.pypirc', '.netrc', '*.key', '*.pem', '*.p12', '*.pfx', '*.keystore', '*.jks'
+  ])
+  function matchSimple(name: string, pat: string): boolean {
+    if (!pat.includes('*')) return name === pat
+    const prefix = pat.slice(0, pat.indexOf('*'))
+    const suffix = pat.slice(pat.indexOf('*') + 1)
+    return name.startsWith(prefix) && (suffix === '' || name.endsWith(suffix))
+  }
+  function isSensitiveName(name: string): boolean {
+    if (SENSITIVE_FILES.has(name)) return true
+    return [...SENSITIVE_FILES].some(p => p.includes('*') && matchSimple(name, p))
+  }
+
   /** 截断过长的行 */
   function trimLine(line: string, maxChars: number): string {
     if (line.length <= maxChars) return line
     return line.slice(0, maxChars) + ` [... truncated ${line.length - maxChars} chars]`
   }
 
-  ipcMain.handle('grep', async (_e, opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean; type?: string }): Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }> => {
+  ipcMain.handle('grep', async (_e, opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean; type?: string; timeout_seconds?: number }): Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }> => {
+    // timeout_seconds 可调（借鉴 Reasonix grep 的 timeout_seconds，1-300s 封顶），
+    // 0/省略回退默认 20s，避免大仓库搜索被固定超时截断、也防止模型设极大值挂起。
+    const DEFAULT_GREP_TIMEOUT_MS = 20_000
+    const reqSec = typeof opts.timeout_seconds === 'number' && opts.timeout_seconds > 0 ? opts.timeout_seconds : 0
+    const timeoutMs = reqSec > 0
+      ? Math.min(Math.max(reqSec * 1000, 1000), 300_000)
+      : DEFAULT_GREP_TIMEOUT_MS
     let timedOut = false
-    const timeoutId = setTimeout(() => { timedOut = true }, GREP_TIMEOUT_MS)
+    const timeoutId = setTimeout(() => { timedOut = true }, timeoutMs)
 
     const returnResult = (result: { success: boolean; content?: string; numFiles?: number; truncated?: boolean; error?: string }) => {
       clearTimeout(timeoutId)
@@ -3761,13 +3980,14 @@ export function registerIpcHandlers(): void {
             walk(full)
           } else if (e.isFile()) {
             if (globRe && !globRe.test(rel)) continue
+            if (isSensitiveName(e.name)) continue
             files.push(full)
           }
         }
       }
       const rootStat = statSync(root)
       if (rootStat.isFile()) {
-        if (!globRe || globRe.test(basename(root))) files.push(root)
+        if ((!globRe || globRe.test(basename(root))) && !isSensitiveName(basename(root))) files.push(root)
       } else {
         walk(root)
       }
@@ -4365,6 +4585,33 @@ export function registerIpcHandlers(): void {
   const DEFAULT_EXEC_TIMEOUT = 120_000
   const DEFAULT_MAX_OUTPUT_CHARS = 100_000
 
+  // 敏感环境变量名过滤（借鉴 Reasonix 的 secrets.ProcessEnv）：执行命令前剔除凭证类
+  // 环境变量，避免模型通过 echo $SECRET / %TOKEN% 读取并泄漏进上下文或日志。
+  const SENSITIVE_ENV_PATTERN = /(^|[-_])(?:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL|\.ENV|ENV_?FILE)($|[-_])/i
+  function sanitizeCommandEnv(): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = {}
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v === undefined) continue
+      if (SENSITIVE_ENV_PATTERN.test(k)) continue // 剔除敏感变量
+      env[k] = v
+    }
+    return env
+  }
+
+  // 杀进程树（借鉴 Reasonix 的 reapShellProcess / KillTree）：前台命令超时或主动终止时，
+  // 仅 kill 主进程会遗留子进程（如 `npm run dev` 派生的 node）。按平台杀整棵树：
+  // Windows 用 taskkill /T /F；类 Unix 用 kill(-pid) 杀进程组（需 detached 使组可见）。
+  function killProcessTree(pid: number | undefined): void {
+    if (!pid) return
+    try {
+      if (process.platform === 'win32') {
+        spawn('taskkill', ['/T', '/F', '/PID', String(pid)], { windowsHide: true, stdio: 'ignore' })
+      } else {
+        process.kill(-pid, 'SIGKILL')
+      }
+    } catch { /* 进程可能已退出 */ }
+  }
+
   function spawnCommand(command: string) {
     const isWin = process.platform === 'win32'
     if (isWin) {
@@ -4376,9 +4623,11 @@ export function registerIpcHandlers(): void {
       // 「文件名、目录名或卷标语法不正确」。shell:true 下 Node 不再额外加引号，
       // cmd 收到的是字面值，引号得以原样保留（与 PowerShell 中直接执行一致）。
       const full = `@chcp 65001 >NUL && ${command}`
-      return spawn(full, [], { cwd: bashCwd ?? undefined, windowsHide: true, shell: true })
+      return spawn(full, [], { cwd: bashCwd ?? undefined, windowsHide: true, shell: true, env: sanitizeCommandEnv() })
     }
-    return spawn('/bin/sh', ['-c', command], { cwd: bashCwd ?? undefined })
+    // detached: true 使子进程进入独立进程组，超时/终止时可用 kill(-pid) 杀整组，
+    // 避免 `npm run dev` 类命令遗留孤儿进程（借鉴 Reasonix 的进程组回收）。
+    return spawn('/bin/sh', ['-c', command], { cwd: bashCwd ?? undefined, detached: true, env: sanitizeCommandEnv() })
   }
 
   ipcMain.handle('execute-command', async (_e, opts: {
@@ -4463,7 +4712,7 @@ export function registerIpcHandlers(): void {
             totalBytes: stdout.length
           })
         } else {
-          child.kill()
+          killProcessTree(child.pid)
         }
       }, timeout)
 
@@ -4549,7 +4798,7 @@ export function registerIpcHandlers(): void {
     if (!task) return { success: false, error: `Task ${taskId} not found` }
     if (task.status !== 'running') return { success: false, error: `Task ${taskId} is not running (${task.status})` }
     try {
-      process.kill(task.pid)
+      killProcessTree(task.pid)
       task.status = 'killed'
       return { success: true }
     } catch (e) {
@@ -4576,7 +4825,7 @@ export function registerIpcHandlers(): void {
       const isDir = statSync(resolved).isDirectory()
       if (!isDir) {
         unlinkSync(resolved)
-        return { success: true, message: 'File deleted successfully.' }
+        return { success: true, message: `✅ 已删除文件：${resolved}` }
       }
       // isDirectory
       if (!recursive) {
@@ -4586,7 +4835,7 @@ export function registerIpcHandlers(): void {
       } else {
         rmSync(resolved, { recursive: true, force: true })
       }
-      return { success: true, message: 'Directory deleted successfully.' }
+      return { success: true, message: `✅ 已删除目录：${resolved}${recursive ? '（含所有子内容）' : ''}` }
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) }
     }

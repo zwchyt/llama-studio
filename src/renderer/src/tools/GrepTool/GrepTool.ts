@@ -17,14 +17,15 @@ export const definition: Omit<ToolDefinition['function'], 'type'> = {
       head_limit: { type: 'number', description: 'Max lines/entries to return (default 250, 0 = unlimited).' },
       '-i': { type: 'boolean', description: 'Case insensitive search.' },
       context: { type: 'number', description: 'Lines of context before/after each match (content mode).' },
-      '-n': { type: 'boolean', description: 'Show line numbers in content mode (default true).' }
+      '-n': { type: 'boolean', description: 'Show line numbers in content mode (default true).' },
+      timeout_seconds: { type: 'number', description: 'Abort and return partial matches after this many seconds (default 20, max 300). Raise it for a large tree; lower it for a quick probe.' }
     },
     required: ['pattern']
   }
 }
 
 export async function execute(args: Record<string, unknown>): Promise<string> {
-  const { pattern, path, glob, type, output_mode, head_limit, '-i': ci, context, '-n': lineNumbers } = args as unknown as GrepInput
+  const { pattern, path, glob, type, output_mode, head_limit, '-i': ci, context, '-n': lineNumbers, timeout_seconds } = args as unknown as GrepInput
   const root = (typeof path === 'string' && path.trim()) ? path : getWorkspaceRootForSession()
   if (!root) return 'Error: 未设置搜索目录（请先在项目中创建或选择目录）'
   const res = await window.api.grep({
@@ -36,7 +37,8 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
     head_limit: head_limit,
     '-i': ci,
     context,
-    '-n': lineNumbers
+    '-n': lineNumbers,
+    timeout_seconds: typeof timeout_seconds === 'number' ? timeout_seconds : undefined
   })
   if (!res.success) return `Error: ${res.error}`
   let result = res.content || 'No matches found.'

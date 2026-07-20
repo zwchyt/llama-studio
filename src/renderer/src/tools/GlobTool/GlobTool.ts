@@ -24,7 +24,8 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
   if (!res.success) return `❌ 搜索失败：${res.error}`
   const files = res.filenames ?? []
   if (files.length === 0) return '未找到匹配的文件。\n（注意：搜索结果已自动排除 .gitignore 中的文件、node_modules 及隐藏文件）'
-  const note = '\n（注意：搜索结果已自动排除 .gitignore 中的文件与隐藏文件）'
+  const note = '\n（注意：搜索结果已自动排除 .gitignore 中的文件、隐藏文件与敏感凭证文件如 .env / 私钥）'
   const truncated = res.truncated ? '\n(结果已截断，请使用更具体的 pattern)' : ''
-  return `找到 ${files.length} 个文件：\n${files.join('\n')}${truncated}${note}`
+  const timeoutHint = res.timedOut ? '\n(搜索超时，仅返回部分结果；请缩小搜索范围或使用更具体的 pattern)' : ''
+  return `找到 ${files.length} 个文件：\n${files.join('\n')}${truncated}${timeoutHint}${note}`
 }

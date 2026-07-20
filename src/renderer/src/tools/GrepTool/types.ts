@@ -8,4 +8,5 @@ export interface GrepInput {
   context?: number
   '-n'?: boolean
   type?: string
+  timeout_seconds?: number
 }

@@ -7,6 +7,7 @@ import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import 'katex/dist/katex.min.css'
+import '../styles/monitoring.css'
 import { Send, Square, Paperclip, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, RefreshCw, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
@@ -406,7 +407,7 @@ async function buildSystemContent(project: AgentProject): Promise<string> {
 - **顺序执行**：从第一个任务开始，运行它真正需要的工具（Read / Write / Edit / Bash / …），确认该任务的工作确实完成，再进入下一个任务。
 - **禁止跳过**：绝不允许跳过任何一个 pending / in_progress 的任务，也不允许"跳着做"或只做其中几个。
 - **禁止提前结束**：在所有任务都标记为 completed 之前，不得输出最终答案。若某个任务确实不再需要，必须显式将其标记为 cancelled，而不是悄悄跳过。
-- **状态跟随**：任务进行中用 in_progress 标记，完成后系统会自动将其翻为 completed 并推进下一项；你无需手动标 completed，但要保证每个任务对应的工具都真实执行过。
+- **状态跟随（你负责）**：任务进行中用 in_progress 标记；当该任务对应的真实工具（Read/Write/Edit/Bash/…）**确实执行完成**后，你必须自己用 TodoWrite 把它标为 completed、并把下一个 pending 任务标为 in_progress。系统不会替你标 completed——只有你真正做完工作才能标，绝不可只创建/规划任务就标完成。可用 notes 字段记录验证结果。
 
 这条纪律优先于"尽早给出结论"的倾向——计划未跑完就收尾属于未完成工作。
 
@@ -1097,6 +1098,11 @@ const ToolCallGroup = React.memo(function ToolCallGroup({ toolCalls, onPreviewFi
 export default function AgentCodeView() {
   const cards = useStore(s => s.cards)
   const runningCard = cards.find(c => c.status === 'running')
+  // 订阅模型运行指标，复用与「模型运行数据」面板完全相同的 prefill 进度数据源。
+  const modelMetrics = useStore(s => s.modelMetrics)
+  const prefillProgress = runningCard ? (modelMetrics[runningCard.template.id]?.prefillProgress ?? null) : null
+  const prefillActive = prefillProgress !== null && prefillProgress < 1
+  const prefillDone = prefillProgress !== null && prefillProgress >= 1
   const apiBaseUrl = runningCard ? `http://127.0.0.1:${runningCard.template.serverPort}` : null
   const modelLabel = runningCard?.template.modelPath?.split(/[\\/]/).pop() || runningCard?.template.name || '模型'
   const storedProjects = useStore(s => s.agentProjects)
@@ -1522,10 +1528,13 @@ export default function AgentCodeView() {
     } catch { /* 忽略：面板刷新失败不影响对话 */ }
   }, [activeSessionId])
 
-  // 计划自动推进（内核驱动，禁用手动完成）：模型成功执行一个真实工具（非 TodoWrite）后，
-  // 把当前 in_progress 翻 completed，并把第一个 pending 推进为 in_progress。
+  // 计划推进（兜底，非主控）：状态归属已交还给模型——模型应自己用 TodoWrite 标 completed/in_progress。
+  // 此函数仅在「边缘情况」下轻量辅助：当本轮模型执行了真实工具（非 TodoWrite）却完全没碰 TodoWrite
+  // （即模型没有自己维护状态），才把第一个 in_progress 翻 completed、并把第一个 pending 推 in_progress，
+  // 避免计划彻底卡死。若模型本轮已通过 TodoWrite 自行维护状态，则不干预，避免与模型自检打架。
   // 用后端 agentTaskList 返回的权威 id（与 String(i+1) 兜底一致），避免 merge 错位。
-  const advancePlan = useCallback(async (sid: string) => {
+  const advancePlan = useCallback(async (sid: string, modelTouchedTodoThisRound: boolean) => {
+    if (modelTouchedTodoThisRound) return // 模型已自行维护状态，内核不干预
     try {
       const list = await window.api.agentTaskList(sid)
       if (!list.success) return
@@ -1540,6 +1549,24 @@ export default function AgentCodeView() {
       await window.api.agentTodoWrite(sid, { merge: true, todos: updates })
       refreshTasksRef.current() // 回写 currentPlanItems，卡片刷新
     } catch { /* 推进失败不影响对话 */ }
+  }, [])
+
+  // 收尾清理孤儿 in_progress：模型只用 TodoWrite 把任务标成 in_progress 然后直接返回
+  // 文本（未执行任何真实工具），advancePlan 永远不会被触发，导致该任务永久卡在 in_progress、
+  // 后续 pending 也无法推进。此函数在「模型返回最终文本且无工具调用」时调用：若存在 in_progress
+  // 任务，说明它没有被任何真实工具支撑，将孤儿 in_progress 回退为 pending，使计划可继续推进或提示模型。
+  // 仅回退「孤立」的 in_progress（本轮无真实工具执行），若 in_progress 确实由 advancePlan 正常推进产生，
+  // 则此处不会被调用（advancePlan 已在同一轮把它翻成 completed）。
+  const cleanupOrphanInProgress = useCallback(async (sid: string) => {
+    try {
+      const list = await window.api.agentTaskList(sid)
+      if (!list.success) return
+      const orphan = list.tasks.filter(t => t.status === 'in_progress')
+      if (orphan.length === 0) return
+      const updates = orphan.map((t) => ({ id: t.id, status: 'pending' as const }))
+      await window.api.agentTodoWrite(sid, { merge: true, todos: updates })
+      refreshTasksRef.current() // 回写 currentPlanItems，卡片刷新
+    } catch { /* 清理失败不影响对话 */ }
   }, [])
   // 始终持有最新的 refreshTasks，避免 send 闭包使用过期引用
   const refreshTasksRef = useRef(refreshTasks)
@@ -2170,6 +2197,8 @@ export default function AgentCodeView() {
           // 本轮去重：模型偶会在同一 tool_calls 数组里把同一条调用发两遍（如 Bash 重复两次），
           // 按「名称 + 归一化参数」去重，命中则跳过执行并复用本轮已得到的结果。
           const batchExecuted = new Map<string, string>()
+          // 追踪本轮模型是否自己维护过计划状态（调过 TodoWrite），用于决定 advancePlan 是否兜底干预
+          let todoTouchedThisRound = false
           const toolCallKey = (name: string, argsStr: string): string => {
             try {
               const o = JSON.parse(argsStr || '{}')
@@ -2306,12 +2335,13 @@ export default function AgentCodeView() {
             }
             // TodoWrite 执行完毕后立即刷新任务数据，弹窗内容随之更新
             if (tc.function.name === 'TodoWrite') {
+              todoTouchedThisRound = true
               refreshTasksRef.current()
             }
-            // 计划自动推进：模型成功执行一个真实工具（非 TodoWrite）后，内核翻转
-            // in_progress→completed 并推进下一个 pending。模型不再手动标完成。
+            // 计划推进（兜底）：仅当模型本轮完全没碰 TodoWrite（未自行维护状态）、且成功执行了
+            // 一个真实工具时，内核才轻量辅助翻 completed / 推 in_progress。若模型已自行标状态则不干预。
             if (!failed && tc.function.name !== 'TodoWrite') {
-              await advancePlan(activeSessionId)
+              await advancePlan(activeSessionId, todoTouchedThisRound)
             }
           }
           if (abortRef.current.aborted) break
@@ -2345,7 +2375,12 @@ export default function AgentCodeView() {
           continue
         }
 
-        // 最终文本回复
+        // 最终文本回复：本轮无工具调用。若计划里仍有孤儿 in_progress（模型只发 TodoWrite
+        // 设 in_progress 却未执行真实工具），回退为 pending，避免永久卡死、后续 pending 无法推进。
+        if (!streamError) {
+          await cleanupOrphanInProgress(sid)
+        }
+
         if (!streamedText) {
           const errText = streamError ? `模型调用失败：${streamError}` : '（无内容返回）'
           if (streamError) endedWithError = true
@@ -2676,13 +2711,26 @@ export default function AgentCodeView() {
           <span className="agent-code-topbar-title">{activeSession?.title || '新会话'}</span>
         </div>
         <div className="agent-code-topbar-right">
+          {/* Prefill 进度条：直接复用「模型运行数据」面板的同一数据源（modelMetrics[].prefillProgress），
+              作为顶部栏行内条目显示，样式照搬 metric-bar-wrap / metric-bar-fill。
+              仅在 prefill 进行中（pp < 1）显示，完成后自动消失。 */}
+          {prefillActive && (
+            <div
+              className="metric-bar-wrap agent-prompt-build-bar"
+              title={prefillDone ? '提示词加载完成' : '正在加载提示词…'}
+            >
+              <div
+                className="metric-bar-fill"
+                style={{ width: `${Math.min(100, (prefillProgress ?? 0) * 100)}%`, background: '#7c3aed', opacity: 0.7 }}
+              />
+            </div>
+          )}
           <button ref={ctxBtnRef} className={`agent-code-topbar-btn ${contextModalOpen ? 'active' : ''}`} onClick={() => setContextModalOpen(v => !v)}>上下文</button>
           <button ref={promptBtnRef} className={`agent-code-topbar-btn ${promptModalOpen ? 'active' : ''}`} onClick={openPromptModal}><SlidersHorizontal size={12} /> 提示词</button>
           <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} style={{ marginTop: 0, width: 28, height: 28 }}>
             {treeOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
           </button>
         </div>
-
       </div>
 
       <div className={`agent-code-body ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
@@ -2997,9 +3045,6 @@ export default function AgentCodeView() {
                 <div className="agent-approve-inline-head">
                   <AlertCircle size={15} className="agent-ask-question-icon" />
                   <span className="agent-ask-question-title">需要确认：{TOOL_META[approvalReq.name]?.name || approvalReq.name}</span>
-                  <button className="agent-ask-question-close" onClick={() => resolveApproval(false)} title="拒绝">
-                    <X size={14} />
-                  </button>
                 </div>
                 <div className="agent-approve-inline-body">
                   <div className="agent-approve-hint">该操作具有破坏性，执行前需你确认</div>
