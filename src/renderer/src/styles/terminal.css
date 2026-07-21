@@ -204,19 +204,26 @@
 .terminal-screens {
   flex: 1;
   min-height: 0;
-  position: relative;
+  display: flex;
 }
 
 .terminal-screen {
-  position: absolute;
-  inset: 0;
-  background: #000;
+  flex: 1;
+  min-height: 0;
+  background: var(--color-terminal-bg, #1e1e1e);
   overflow: hidden;
-  padding: 0;
+  display: flex;
+  padding: 10px;
 }
 
 .terminal-screen .xterm {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
+}
+
+.terminal-screen .xterm-viewport {
+  /* 避免 xterm 默认滚动条遮盖内容 */
+  scrollbar-width: thin;
 }
 
 .terminal-view {

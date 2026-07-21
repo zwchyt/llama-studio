@@ -129,10 +129,11 @@ interface LlamaCppApi {
   webSearch: (query: string) => Promise<string>
   fetchWebpage: (url: string) => Promise<string>
   // ── 终端控制台 ──
-  terminalCreate: (opts: { cwd?: string; cols?: number; rows?: number }) => Promise<{ success: boolean; id?: string; shell?: string; error?: string }>
+  terminalCreate: (opts: { id?: string; cwd?: string; cols?: number; rows?: number; ownerKey?: string }) => Promise<{ success: boolean; id?: string; shell?: string; error?: string; replay?: string; reused?: boolean }>
   terminalInput: (id: string, data: string) => Promise<void>
   terminalResize: (id: string, cols: number, rows: number) => Promise<void>
   terminalKill: (id: string) => Promise<void>
+  terminalExec: (opts: { command: string; cwd?: string }) => Promise<{ success: boolean; stdout?: string; stderr?: string; exitCode?: number | null; error?: string }>
   onTerminalData: (cb: (d: { id: string; data: string }) => void) => void
   onTerminalExited: (cb: (d: { id: string; exitCode: number }) => void) => void
   onTerminalTitle: (cb: (d: { id: string; title: string }) => void) => void

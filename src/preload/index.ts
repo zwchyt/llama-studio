@@ -170,10 +170,11 @@ const fullApi = {
   fetchWebpage: (url: string) => ipcRenderer.invoke('fetch-webpage', url),
 
   // ── 终端控制台 ──
-  terminalCreate: (opts: { cwd?: string; cols?: number; rows?: number }) => ipcRenderer.invoke('terminal:create', opts),
+  terminalCreate: (opts: { cwd?: string; cols?: number; rows?: number; ownerKey?: string }) => ipcRenderer.invoke('terminal:create', opts),
   terminalInput: (id: string, data: string) => ipcRenderer.invoke('terminal:input', { id, data }),
   terminalResize: (id: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', { id, cols, rows }),
   terminalKill: (id: string) => ipcRenderer.invoke('terminal:kill', { id }),
+  terminalExec: (opts: { command: string; cwd?: string }) => ipcRenderer.invoke('terminal:exec', opts),
   onTerminalData: (cb: (d: { id: string; data: string }) => void) => {
     ipcRenderer.removeAllListeners('terminal:data')
     ipcRenderer.on('terminal:data', (_e, d) => cb(d))

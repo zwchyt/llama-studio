@@ -34,6 +34,7 @@ function countExtractedFiles(dir: string): number {
 
 interface TerminalSession {
   id: string
+  ownerKey: string | null
   pty: ptyNs.IPty
   cols: number
   rows: number
@@ -44,8 +45,10 @@ interface TerminalSession {
   flushTimer: NodeJS.Timeout | null
   paused: boolean
   oscBuf?: string
+  replay: string
 }
 const sessions = new Map<string, TerminalSession>()
+const sessionsByOwner = new Map<string, string>()
 
 const terminalSend = (channel: string, payload: unknown): void => {
   BrowserWindow.getAllWindows().forEach(w => { if (!w.isDestroyed()) w.webContents.send(channel, payload) })
@@ -775,6 +778,7 @@ export function cleanupRunningProcesses(): void {
     try { s.pty.kill() } catch {}
   }
   sessions.clear()
+  sessionsByOwner.clear()
 }
 
 export function registerIpcHandlers(): void {
@@ -3082,15 +3086,40 @@ export function registerIpcHandlers(): void {
 
   // ── 终端控制台 ──
   const MAX_PTY_SESSIONS = 64
-  ipcMain.handle('terminal:create', async (_e, opts: { cwd?: string; cols?: number; rows?: number }) => {
-    // 限制同时存在的 PTY 数量，防止失控的渲染端循环创建把主机 fork-bomb。
-    if (sessions.size >= MAX_PTY_SESSIONS) {
-      return { success: false, error: `PTY 数量已达上限（${MAX_PTY_SESSIONS}）` }
-    }
-    const id = `term_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const MAX_REPLAY_CHARS = 200_000
+
+  function ownedSession(ownerKey: string): TerminalSession | null {
+    const id = sessionsByOwner.get(ownerKey)
+    const session = id ? sessions.get(id) : null
+    if (!session) sessionsByOwner.delete(ownerKey)
+    return session ?? null
+  }
+
+  ipcMain.handle('terminal:create', async (_e, opts: { id?: string; cwd?: string; cols?: number; rows?: number; ownerKey?: string }) => {
+    const ownerKey = (opts.ownerKey || '').trim() || null
     const cols = opts.cols ?? 80
     const rows = opts.rows ?? 24
     const cwd = opts.cwd && existsSync(opts.cwd) ? opts.cwd : app.getPath('home')
+
+    // 若已有该 owner 的活跃 session，直接 attach 并返回 replay
+    if (ownerKey) {
+      const existing = ownedSession(ownerKey)
+      if (existing) {
+        if (existing.cols !== cols || existing.rows !== rows) {
+          existing.cols = cols
+          existing.rows = rows
+          try { existing.pty.resize(cols, rows) } catch {}
+        }
+        return { success: true, id: existing.id, replay: existing.replay, reused: true, shell: existing.shell }
+      }
+    }
+
+    // 限制同时存在的 PTY 数量
+    if (sessions.size >= MAX_PTY_SESSIONS) {
+      return { success: false, error: `PTY 数量已达上限（${MAX_PTY_SESSIONS}）` }
+    }
+
+    const id = opts.id || `term_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     try {
       const shell = process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : (process.env.SHELL || '/bin/bash')
       const pty = await getPty()
@@ -3099,11 +3128,15 @@ export function registerIpcHandlers(): void {
         cols, rows, cwd,
         env: { ...process.env, TERM: 'xterm-256color' } as any,
       })
-      // 从数据流中解析 OSC 标题变更序列（\x1b]0;title\x07 或 \x1b]2;title\x07）
       p.onData((data) => {
         const s = sessions.get(id)
         if (!s) return
         s.pendingData.push(data)
+        // Replay buffer：累积输出供重新 attach 时回放
+        s.replay += data
+        if (s.replay.length > MAX_REPLAY_CHARS) {
+          s.replay = s.replay.slice(-MAX_REPLAY_CHARS)
+        }
         // OSC 标题解析：累积缓冲区并匹配 \x1b][02];<title>\x07
         s.oscBuf = (s.oscBuf || '') + data
         const oscRe = /\x1b\][02];([^\x07\x1b]*)\x07/g
@@ -3135,10 +3168,11 @@ export function registerIpcHandlers(): void {
         }
         flushTerminalData(id)
         terminalSend('terminal:exited', { id, exitCode })
+        if (s?.ownerKey) sessionsByOwner.delete(s.ownerKey)
         sessions.delete(id)
       })
-      // 监听 OSC 标题变更序列已通过 onData 解析实现
-      sessions.set(id, { id, pty: p, cols, rows, cwd, shell, title: shell, pendingData: [], flushTimer: null, paused: false, oscBuf: '' })
+      sessions.set(id, { id, ownerKey, pty: p, cols, rows, cwd, shell, title: shell, pendingData: [], flushTimer: null, paused: false, oscBuf: '', replay: '' })
+      if (ownerKey) sessionsByOwner.set(ownerKey, id)
       return { success: true, id, shell }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -3155,7 +3189,29 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('terminal:kill', (_e, { id }: { id: string }) => {
     try { sessions.get(id)?.pty.kill() } catch {}
+    const s = sessions.get(id)
+    if (s?.ownerKey) sessionsByOwner.delete(s.ownerKey)
     sessions.delete(id)
+  })
+
+  // ── 终端回退模式：无 PTY 时逐条执行命令 ──
+  ipcMain.handle('terminal:exec', async (_e, { command, cwd }: { command: string; cwd?: string }) => {
+    try {
+      const execCwd = cwd && existsSync(cwd) ? cwd : app.getPath('home')
+      let stdout = ''
+      let stderr = ''
+      let exitCode: number | null = null
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(command, [], { shell: true, cwd: execCwd, windowsHide: true })
+        child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
+        child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+        child.on('error', (err) => reject(err))
+        child.on('close', (code) => { exitCode = code; resolve() })
+      })
+      return { success: true, stdout, stderr, exitCode }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
   })
 
   // ── 网络搜索工具 ──────────────────────────────────────────

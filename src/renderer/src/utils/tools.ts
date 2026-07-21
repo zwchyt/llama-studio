@@ -1,6 +1,6 @@
 // ── 工具注册中心（类似 textgen 的 tool_use.py + 各 tools/*.py）────
 import type { ComponentType } from 'react'
-import { Eye, FilePlus2, Pencil, Search, FileSearch, TerminalSquare, Clock, HelpCircle, FileText, Trash2, List, CheckSquare, ListChecks, TerminalSquare as TaskOutputIcon, FolderOpen, Layers } from 'lucide-react'
+import { Eye, FilePlus2, Pencil, Search, FileSearch, TerminalSquare, Clock, HelpCircle, FileText, Trash2, List, ListChecks, TerminalSquare as TaskOutputIcon, FolderOpen, Layers } from 'lucide-react'
 
 export interface ToolDefinition {
   type: 'function'

@@ -42,6 +42,29 @@
 
   --table-head-bg: #f1f1f2;
   --quote-bg: #f4f4f5;
+
+  /* ── 终端主题（全局深色，不论 app 亮暗模式） ── */
+  --color-terminal-bg: #1e1e1e;
+  --color-terminal-fg: #d4d4d4;
+  --color-terminal-cursor: #f8f8f8;
+  --color-terminal-cursor-accent: #1e1e1e;
+  --color-terminal-selection: #339cff47;
+  --color-terminal-black: #363636;
+  --color-terminal-red: #f67576;
+  --color-terminal-green: #85df7b;
+  --color-terminal-yellow: #fa994c;
+  --color-terminal-blue: #3d8dff;
+  --color-terminal-magenta: #b06dff;
+  --color-terminal-cyan: #6dcbf4;
+  --color-terminal-white: #adadad;
+  --color-terminal-bright-black: #747474;
+  --color-terminal-bright-red: #f99;
+  --color-terminal-bright-green: #87d9a4;
+  --color-terminal-bright-yellow: #ffb26b;
+  --color-terminal-bright-blue: #55a2ff;
+  --color-terminal-bright-magenta: #a888f2;
+  --color-terminal-bright-cyan: #8ee5e5;
+  --color-terminal-bright-white: #f8f8f8;
 }
 
 #splash-screen {
