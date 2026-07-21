@@ -203,12 +203,13 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
     return Promise.resolve()
   }
 }
-interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean }
+interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean;       notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean }
+const UI_KEYS = new Set(['splashEnabled', 'soundEnabled', 'notificationSound', 'chatSidebarCollapsed', 'agentToolCardsExpanded'])
 let settingsCache: AppSettings | null = null
 async function loadSettings(): Promise<AppSettings> {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
     const data = JSON.parse(await fsPromises.readFile(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
@@ -216,11 +217,12 @@ async function loadSettings(): Promise<AppSettings> {
       metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true,
       splashEnabled: data.splashEnabled !== undefined ? data.splashEnabled : true,
       soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
+      notificationSound: data.notificationSound !== undefined ? data.notificationSound : 'chime',
       chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? data.chatSidebarCollapsed : false,
       agentToolCardsExpanded: data.agentToolCardsExpanded !== undefined ? data.agentToolCardsExpanded : true
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
 }
 async function saveSettings(s: AppSettings): Promise<void> {
   await fsPromises.writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2))
@@ -237,11 +239,12 @@ function loadSettingsSync(): AppSettings {
       metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true,
       splashEnabled: data.splashEnabled !== undefined ? data.splashEnabled : true,
       soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
+      notificationSound: data.notificationSound !== undefined ? data.notificationSound : 'chime',
       chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? data.chatSidebarCollapsed : false,
       agentToolCardsExpanded: data.agentToolCardsExpanded !== undefined ? data.agentToolCardsExpanded : true
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
 }
 interface RunningProcess { proc: ChildProcess; port: number }
 const runningProcesses = new Map<string, RunningProcess>()
@@ -2120,11 +2123,11 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('get-ui-settings', async () => {
     const s = await loadSettings()
-    return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, chatSidebarCollapsed: s.chatSidebarCollapsed ?? false, agentToolCardsExpanded: s.agentToolCardsExpanded ?? true }
+    return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, notificationSound: s.notificationSound ?? 'chime', chatSidebarCollapsed: s.chatSidebarCollapsed ?? false, agentToolCardsExpanded: s.agentToolCardsExpanded ?? true }
   })
-  ipcMain.handle('set-ui-setting', async (_e, key: string, value: boolean) => {
+  ipcMain.handle('set-ui-setting', async (_e, key: string, value: boolean | string) => {
     const s = await loadSettings()
-    if (key === 'splashEnabled' || key === 'soundEnabled' || key === 'chatSidebarCollapsed' || key === 'agentToolCardsExpanded') {
+    if (UI_KEYS.has(key)) {
       ;(s as any)[key] = value
       await saveSettings(s)
     }

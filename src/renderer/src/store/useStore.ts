@@ -135,6 +135,8 @@ interface AppStore {
   // ── 提示音 ──
   soundEnabled: boolean
   setSoundEnabled: (v: boolean) => void
+  notificationSound: string
+  setNotificationSound: (v: string) => void
   // ── 聊天界面 ──
   chatSidebarCollapsed: boolean
   setChatSidebarCollapsed: (v: boolean) => void
@@ -349,6 +351,14 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
     try { localStorage.setItem('soundEnabled', String(v)) } catch { /* ignore */ }
     window.api?.setUiSetting('soundEnabled', v)
   },
+  notificationSound: (() => {
+    try { return localStorage.getItem('notificationSound') || 'chime' } catch { return 'chime' }
+  })(),
+  setNotificationSound: (v: string) => {
+    set({ notificationSound: v })
+    try { localStorage.setItem('notificationSound', v) } catch { /* ignore */ }
+    window.api?.setUiSetting('notificationSound', v)
+  },
   // ── 基准测试持久结果 ──
   benchmarkResult: null,
   setBenchmarkResult: (r) => set({ benchmarkResult: r }),
@@ -407,6 +417,10 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
       if (s.soundEnabled !== undefined) {
         try { localStorage.setItem('soundEnabled', String(s.soundEnabled)) } catch { /* ignore */ }
         set({ soundEnabled: s.soundEnabled })
+      }
+      if (s.notificationSound !== undefined) {
+        try { localStorage.setItem('notificationSound', s.notificationSound) } catch { /* ignore */ }
+        set({ notificationSound: s.notificationSound })
       }
       if (s.chatSidebarCollapsed !== undefined) {
         try { localStorage.setItem('chatSidebarCollapsed', String(s.chatSidebarCollapsed)) } catch { /* ignore */ }

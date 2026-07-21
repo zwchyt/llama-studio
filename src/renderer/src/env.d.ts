@@ -109,8 +109,8 @@ interface LlamaCppApi {
   getMetricsPolling: () => Promise<boolean>
   setMetricsPolling: (enabled: boolean) => Promise<{ success: boolean }>
   getRunningProcesses: () => Promise<string[]>
-  getUiSettings: () => Promise<{ splashEnabled?: boolean; soundEnabled?: boolean; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean }>
-  setUiSetting: (key: string, value: boolean) => Promise<void>
+  getUiSettings: () => Promise<{ splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean }>
+  setUiSetting: (key: string, value: boolean | string) => Promise<void>
   listGlobalAgents: () => Promise<{ name: string; pkg: string; cmd: string; installed: boolean; version: string | null; website?: string }[]>
   launchAgent: (cmd: string, cwd: string) => Promise<{ success: boolean; error?: string }>
   installAgent: (pkg: string) => Promise<{ success: boolean; error?: string }>
@@ -173,7 +173,7 @@ interface LlamaCppApi {
   editFile: (filePath: string, oldString: string, newString: string, replaceAll?: boolean) => Promise<{ success: boolean; content?: string; error?: string }>
   glob: (opts: { pattern: string; path: string; limit?: number }) => Promise<{ success: boolean; filenames?: string[]; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }>
   grep: (opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean; type?: string; timeout_seconds?: number }) => Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }>
-	  // ── Agent Code 工作台 项目持久化 ──
+	  // ── Agent Code 工作台项目持久化 ──
 	  loadAgentProjects: () => Promise<AgentProject[]>
 	  saveAgentProjects: (projects: AgentProject[]) => Promise<{ success: boolean; error?: string }>
 		  // ── Agent Code Bash 执行 ──

@@ -11,6 +11,7 @@ import '../styles/monitoring.css'
 import { Send, Square, Paperclip, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, RefreshCw, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
+import { playNotificationSound } from '../utils/sound'
 import { safeCall } from '../utils/safeCall'
 import { getToolDefinitions, executeToolCall, TOOL_METAS, APPROVAL_TOOLS, WRITE_EDIT_TOOLS, BACKUP_TOOLS } from '../utils/tools'
 import { setWorkspaceRootForSession, getWorkspaceRootForSession } from '../tools/workspaceRoot'
@@ -2399,6 +2400,7 @@ export default function AgentCodeView() {
       useStore.getState().setAgentPhase(null)
       setLoading(false)
       setStreaming(false)
+      if (useStore.getState().soundEnabled) playNotificationSound(useStore.getState().notificationSound)
       // 本轮结束后，自动发送排队中的消息（按入队顺序依次发出；每条发送时会自行决定是否再次排队）
       const queue = pendingSendRef.current
       pendingSendRef.current = []

@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown, AlertTriangle } from 'lucide-react'
+import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown, AlertTriangle, Check } from 'lucide-react'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
+import { SOUND_OPTIONS, previewSound } from '../utils/sound'
+
 import CommandsEditor from './CommandsEditor'
 import { CURSOR_SCHEMES, getCursorSchemeId, applyCursorScheme, CURSOR_STORAGE_KEY, schemeCursorValue, type CursorRole } from '../cursor-theme'
 import '../styles/settings.css'
@@ -21,8 +23,8 @@ function getNotifPref(): 'banner' | 'manual' {
 export default function SettingsView() {
 	  const { backends, activeBackend, setActiveBackend, setCommandsSchema, setBackends,
 	    releaseInfo, checkingUpdate, downloadProgress, setDownloadProgress, setCheckingUpdate, setReleaseInfo,
-    setModels, setImageModels, soundEnabled, setSoundEnabled, splashEnabled, setSplashEnabled, agentToolCardsExpanded, setAgentToolCardsExpanded, paramTooltipEnabled, setParamTooltipEnabled } = useStore(
-    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, setModels: s.setModels, setImageModels: s.setImageModels, soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, chatSidebarCollapsed: s.chatSidebarCollapsed, setChatSidebarCollapsed: s.setChatSidebarCollapsed, splashEnabled: s.splashEnabled, setSplashEnabled: s.setSplashEnabled, agentToolCardsExpanded: s.agentToolCardsExpanded, setAgentToolCardsExpanded: s.setAgentToolCardsExpanded, paramTooltipEnabled: s.paramTooltipEnabled, setParamTooltipEnabled: s.setParamTooltipEnabled }),
+    setModels, setImageModels, soundEnabled, setSoundEnabled, notificationSound, setNotificationSound, splashEnabled, setSplashEnabled, agentToolCardsExpanded, setAgentToolCardsExpanded, paramTooltipEnabled, setParamTooltipEnabled } = useStore(
+    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, setModels: s.setModels, setImageModels: s.setImageModels, soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, notificationSound: s.notificationSound, setNotificationSound: s.setNotificationSound, chatSidebarCollapsed: s.chatSidebarCollapsed, setChatSidebarCollapsed: s.setChatSidebarCollapsed, splashEnabled: s.splashEnabled, setSplashEnabled: s.setSplashEnabled, agentToolCardsExpanded: s.agentToolCardsExpanded, setAgentToolCardsExpanded: s.setAgentToolCardsExpanded, paramTooltipEnabled: s.paramTooltipEnabled, setParamTooltipEnabled: s.setParamTooltipEnabled }),
     shallow
   )
   const [downloading, setDownloading] = useState(false)
@@ -255,6 +257,30 @@ export default function SettingsView() {
 	            <span className="toggle-thumb"></span>
 	          </label>
         </div>
+        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            选择助手回复完成时的提示音类型。点击会自动预览。
+          </p>
+          <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap' }}>
+            {SOUND_OPTIONS.map(opt => {
+              const selected = notificationSound === opt.id
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className={`launch-mode-btn${selected ? ' active' : ''}`}
+                  style={{ flex: '1 1 auto', minWidth: 0, padding: '5px 8px', fontSize: 12, lineHeight: 1.3, textAlign: 'center' }}
+                  onClick={() => { setNotificationSound(opt.id); previewSound(opt.id) }}
+                  title={opt.description}
+                >
+                  {selected && <Check size={12} style={{ marginRight: 4, verticalAlign: 'middle' }} />}
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+        
         <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
             开启：启动时播放开屏动画。关闭：直接进入主界面。

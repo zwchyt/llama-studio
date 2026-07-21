@@ -283,7 +283,7 @@ function MarkdownPre({ children }: { children?: React.ReactNode }) {
 // 文件预览图片渲染器：处理相对路径图片（通过 ref 读取 fileBaseDirs）
 let _fileBaseDirs = new Map<number, string>()
 let _previewFileIdx = 0
-export function setPreviewFileBaseDirs(dirs: Map<number, string>, idx: number) {
+function setPreviewFileBaseDirs(dirs: Map<number, string>, idx: number) {
   _fileBaseDirs = dirs
   _previewFileIdx = idx
 }
@@ -2163,7 +2163,7 @@ export default function ChatView() {
         }
 
         // 无工具调用：正常结束流程
-        if (useStore.getState().soundEnabled) playNotificationSound()
+        if (useStore.getState().soundEnabled) playNotificationSound(useStore.getState().notificationSound)
         st.persist(targetSession.id)
         st.clearStreamForSession(targetSession.id)
       }
