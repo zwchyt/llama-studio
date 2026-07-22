@@ -8,7 +8,7 @@ import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import 'katex/dist/katex.min.css'
 import '../styles/monitoring.css'
-import { Send, Square, Paperclip, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, RefreshCw, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles } from 'lucide-react'
+import { Send, Square, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, RefreshCw, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles, Cpu, Play } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
 import { playNotificationSound } from '../utils/sound'
@@ -37,8 +37,9 @@ import AgentFileTree from './AgentFileTree'
 import AgentContextPanel from './AgentContextPanel'
 import CodeBlock from './CodeBlock'
 import AskUserQuestionInline from './AskUserQuestionInline'
+import AgentFilePicker from './AgentFilePicker'
 
-import type { AgentMessage, AgentSession, AgentProject, Attachment, AgentTask, TodoUpdate, AgentSegment } from '../../../shared/types'
+import type { AgentMessage, AgentSession, AgentProject, Attachment, AgentTask, TodoUpdate, AgentSegment, CardState } from '../../../shared/types'
 import '../styles/agent-code.css'
 
 type ApiMessage =
@@ -1379,6 +1380,12 @@ export default function AgentCodeView() {
   const ctxBtnRef = useRef<HTMLButtonElement>(null)
   const promptBtnRef = useRef<HTMLButtonElement>(null)
   const [attachedFiles, setAttachedFiles] = useState<Array<{ id: string; name: string; isImage: boolean; dataUrl?: string; content?: string }>>([])
+  const [filePickerAttached, setFilePickerAttached] = useState<Array<{ id: string; path: string; name: string; isDir: boolean }>>([])
+  const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const modelPickerRef = useRef<HTMLDivElement>(null)
+  const modelBtnRef = useRef<HTMLButtonElement>(null)
+  const attachBtnRef = useRef<HTMLButtonElement>(null)
+  const [filePickerOpen, setFilePickerOpen] = useState(false)
   const [treeOpen, setTreeOpen] = useState(true)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [contextModalOpen, setContextModalOpen] = useState(false)
@@ -1387,6 +1394,87 @@ export default function AgentCodeView() {
   useEffect(() => {
     setSidebarOpen(openTabs.length === 0)
   }, [openTabs.length])
+
+  const toggleBothSidebars = useCallback((e: React.MouseEvent) => {
+    if (e.type === 'contextmenu') e.preventDefault()
+    setSidebarOpen(v => !v)
+    setTreeOpen(v => !v)
+  }, [])
+
+  const handleModelAction = useCallback(async (card: CardState) => {
+    if (card.status === 'running') {
+      const { setCardStatus, clearModelMetrics, activeChatPort, clearActiveChat } = useStore.getState()
+      setCardStatus(card.template.id, 'idle')
+      clearModelMetrics(card.template.id)
+      if (activeChatPort === card.template.serverPort) clearActiveChat()
+      const res = await safeCall(() => window.api.stopModel(card.template.id), '停止模型失败')
+      if (res === null) { setCardStatus(card.template.id, 'running'); return }
+      if (!res.success) notify(`停止失败：${res.error}`, 'error')
+      return
+    }
+    const { backends, activeBackend, commandsSchema, clearModelLogs } = useStore.getState()
+    let targetBackend = backends.find(b => b.name === card.template.backendVersion)
+    if (!targetBackend && activeBackend) targetBackend = activeBackend
+    if (!targetBackend || !targetBackend.exe) {
+      notify('未找到后端或无可执行文件。', 'error')
+      return
+    }
+    const args: string[] = []
+    const tArgs = card.template.args || {}
+    if (card.template.modelPath) args.push('-m', card.template.modelPath)
+    if (commandsSchema) {
+      for (const cat of commandsSchema.categories) {
+        for (const cmd of cat.commands) {
+          if (cmd.arg === '--port' || cmd.arg === '--model') continue
+          const val = tArgs[cmd.arg]
+          if (val !== undefined && val !== null && val !== '') {
+            if (cmd.type === 'boolean') { if (val === true || val === 'true' || val === '1') args.push(cmd.arg) }
+            else if (cmd.type === 'select' && cmd.options && !cmd.options.includes(String(val))) continue
+            else args.push(cmd.arg, String(val))
+          }
+        }
+      }
+    } else {
+      const fallbackAllowed = new Set(['--host', '--no-webui', '--ctx-size', '-c', '--gpu-layers', '-ngl', '--threads', '-t', '--batch-size', '-b', '--flash-attn', '-fa', '--mlock', '--mmap', '--verbose'])
+      for (const [k, v] of Object.entries(tArgs)) {
+        if (!fallbackAllowed.has(k)) continue
+        if (v === true) args.push(k)
+        else if (v !== false && v !== null && v !== '') args.push(k, String(v))
+      }
+    }
+    if (card.template.serverPort) args.push('--port', String(card.template.serverPort))
+    const port = card.template.serverPort || 8080
+    useStore.getState().setCardStatus(card.template.id, 'running')
+    const res = await safeCall(() => window.api.runModel({
+      id: card.template.id,
+      backendPath: targetBackend.path,
+      exe: targetBackend.exe!,
+      args,
+      openBrowser: false,
+      port
+    }), '启动模型失败')
+    if (res === null) { useStore.getState().setCardStatus(card.template.id, 'error'); return }
+    if (res.success) {
+      clearModelLogs(card.template.id)
+      useStore.getState().setCardStatus(card.template.id, 'running', res.pid)
+    } else {
+      notify(`运行失败：${res.error}`, 'error')
+      useStore.getState().setCardStatus(card.template.id, 'error')
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!modelPickerOpen) return
+    function onDown(e: MouseEvent) {
+      const target = e.target as Node
+      if (modelBtnRef.current?.contains(target)) return
+      if (modelPickerRef.current && !modelPickerRef.current.contains(target)) {
+        setModelPickerOpen(false)
+      }
+    }
+    document.addEventListener('pointerdown', onDown)
+    return () => document.removeEventListener('pointerdown', onDown)
+  }, [modelPickerOpen])
 
   useEffect(() => {
     if (!contextModalOpen) return
@@ -1877,6 +1965,33 @@ export default function AgentCodeView() {
 
   const removeAttachment = useCallback((id: string) => {
     setAttachedFiles(prev => prev.filter(a => a.id !== id))
+  }, [])
+
+  const handleFilePickerAttach = useCallback(async (entry: { name: string; path: string; isDir: boolean }) => {
+    if (entry.isDir) return
+    setFilePickerAttached(prev => {
+      if (prev.some(a => a.path === entry.path)) return prev
+      return [...prev, { id: newId('fp-att'), path: entry.path, name: entry.name, isDir: false }]
+    })
+    try {
+      const res = await window.api.readFile(entry.path, { maxBytes: 128 * 1024 })
+      if (res.success && typeof res.content === 'string') {
+        setAttachedFiles(prev => {
+          if (prev.some(a => a.name === entry.name)) return prev
+          return [...prev, { id: newId('fp-read'), name: entry.name, isImage: false, content: res.content! }]
+        })
+      }
+    } catch { /* 读取失败，静默跳过 */ }
+  }, [])
+
+  const handleFilePickerRemove = useCallback((path: string) => {
+    setFilePickerAttached(prev => prev.filter(a => a.path !== path))
+    const name = path.replace(/\\/g, '/').split('/').pop() || path
+    setAttachedFiles(prev => prev.filter(a => a.name !== name))
+  }, [])
+
+  const toggleFilePicker = useCallback(() => {
+    setFilePickerOpen(v => !v)
   }, [])
 
   // ── 历史输入回溯（↑ / ↓）──
@@ -2712,6 +2827,7 @@ export default function AgentCodeView() {
           </button>
           <span className="agent-code-topbar-title">{activeSession?.title || '新会话'}</span>
         </div>
+        <div className="agent-code-topbar-toggle" onDoubleClick={toggleBothSidebars} onContextMenu={toggleBothSidebars} />
         <div className="agent-code-topbar-right">
           {/* Prefill 进度条：直接复用「模型运行数据」面板的同一数据源（modelMetrics[].prefillProgress），
               作为顶部栏行内条目显示，样式照搬 metric-bar-wrap / metric-bar-fill。
@@ -3036,7 +3152,7 @@ export default function AgentCodeView() {
           {/* 滚动到底部浮动按钮：仅当消息列表较长且用户已向上滚动（非贴底）时显示。
               置于 .agent-code-chat（非滚动容器）内，用 --chat-input-h 变量精确浮在输入框上方。 */}
           {!atBottom && (
-            <button className="agent-code-scroll-bottom-btn" onClick={() => scrollToBottom(true)} title="滚动到底部">
+            <button className="agent-code-scroll-bottom-btn" onClick={() => scrollToBottom(true)} >
               <ChevronDown size={18} />
             </button>
           )}
@@ -3149,6 +3265,17 @@ export default function AgentCodeView() {
                 )}
               </div>
             )}
+            {filePickerOpen && activeProject.workspaceDir && (
+              <AgentFilePicker
+                workspaceDir={activeProject.workspaceDir}
+                attached={filePickerAttached}
+                onAttach={handleFilePickerAttach}
+                onRemove={handleFilePickerRemove}
+                onClose={() => setFilePickerOpen(false)}
+                onOpenFile={openPreview}
+                triggerRef={attachBtnRef}
+              />
+            )}
             {attachedFiles.length > 0 && (
               <div className="chat-attach-tray">
                 {attachedFiles.map(att => (
@@ -3157,18 +3284,36 @@ export default function AgentCodeView() {
                       ? <img src={att.dataUrl} className="chat-attach-thumb" alt={att.name} />
                       : <FileText size={14} className="chat-attach-fileicon" />}
                     <span className="chat-attach-name" title={att.name}>{att.name}</span>
-                    <button className="chat-attach-remove" onClick={() => removeAttachment(att.id)} title="移除附件" disabled={loading}><X size={11} /></button>
+                    <button className="chat-attach-remove" onClick={() => removeAttachment(att.id)} disabled={loading}><X size={11} /></button>
                   </div>
                 ))}
               </div>
             )}
+            <div ref={modelPickerRef} className={`chat-model-picker${modelPickerOpen ? ' open' : ''}`}>
+              {cards.map(card => (
+                <div key={card.template.id} className={`chat-model-item ${card.status}`} onClick={() => handleModelAction(card)}>
+                  <div className="chat-model-item-avatar">{card.template.name[0]?.toUpperCase() || '?'}</div>
+                  <div className="chat-model-item-info">
+                    <div className="chat-model-item-name">{card.template.name}</div>
+                    <div className="chat-model-item-status">
+                      <span className={`chat-model-item-dot ${card.status === 'running' && card.ready ? 'ready' : card.status === 'running' ? 'running' : card.status === 'error' ? 'error' : 'idle'}`} />
+                      {card.ready ? '就绪' : card.status === 'running' ? '启动中' : card.status === 'error' ? '错误' : '未启动'}
+                    </div>
+                  </div>
+                  <button className="chat-model-item-action" onClick={e => { e.stopPropagation(); handleModelAction(card) }}>
+                    {card.status === 'running' ? <Square size={12} /> : <Play size={12} />}
+                  </button>
+                </div>
+              ))}
+            </div>
             <div className="chat-input-row">
-              <button className="chat-attach-btn" onClick={() => fileInputRef.current?.click()} title="添加附件 / 图片"><Paperclip size={15} /></button>
+              <button ref={attachBtnRef} className={`chat-attach-btn${filePickerOpen ? ' active' : ''}`} onClick={toggleFilePicker} ><FolderOpen size={14} /></button>
+              <button ref={modelBtnRef} className={`chat-model-btn${modelPickerOpen ? ' active' : ''}`} onClick={() => setModelPickerOpen(v => !v)} ><Cpu size={14} /></button>
               <textarea ref={textareaRef} className="chat-input" placeholder={apiBaseUrl ? '输入自然语言指令，或添加附件 / 图片…' : '请先启动模型，输入内容将在启动后可发送'} rows={1} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown} />
               {loading ? (
-                <button className="btn btn-primary chat-send-btn" onClick={handleStop} title="停止生成"><Square size={16} /></button>
+                <button className="btn btn-primary chat-send-btn" onClick={handleStop} ><Square size={16} /></button>
               ) : (
-                <button className="btn btn-primary chat-send-btn" onClick={() => handleSend()} disabled={!input.trim() && attachedFiles.length === 0 || !apiBaseUrl} title="发送"><Send size={16} /></button>
+                <button className="btn btn-primary chat-send-btn" onClick={() => handleSend()} disabled={!input.trim() && attachedFiles.length === 0 || !apiBaseUrl} ><Send size={16} /></button>
               )}
             </div>
             <input ref={fileInputRef} type="file" multiple hidden onChange={handleAttachmentSelect} />
@@ -3180,7 +3325,7 @@ export default function AgentCodeView() {
             <div className="agent-code-tree">
               <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={(name) => insertAtCursor(name)} />
             </div>
-            <div className={`agent-code-resize-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startResize('preview')} title="拖动调整预览宽度" />
+            <div className={`agent-code-resize-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startResize('preview')} />
             <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''}`}>
               <div className="agent-code-preview">
                 <div className="agent-code-preview-header">
