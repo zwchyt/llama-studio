@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react'
-import { createTerminal, attach, fitTerminal, disposeTerminal, updateTerminalTheme, getTerminalFontSize, setTerminalFontSize, TERMINAL_FONT_SIZE_DEFAULT, detachTerminal, isTerminalReady, writeDirectToTerminal } from '../utils/terminalRegistry'
+import { createTerminal, attach, fitTerminal, disposeTerminal, updateTerminalTheme, getTerminalFontSize, setTerminalFontSize, TERMINAL_FONT_SIZE_DEFAULT, detachTerminal, isTerminalReady, beginReplayGate, applyReplayAndFlush, endReplayGate } from '../utils/terminalRegistry'
 import { useTerminalStore } from '../store/terminalStore'
 import { Terminal, FolderOpen, Plus, Minus, RotateCcw } from 'lucide-react'
 import { safeCall } from '../utils/safeCall'
@@ -133,6 +133,9 @@ function TermScreen({ id, visible }: { id: string; visible: boolean }): React.JS
     if (!el) return
     let ptyReady = false
 
+    // 进入 (re)attach：先挂起 pending 刷写，待 terminalCreate 返回后再决定用 replay 还是照常刷写，
+    // 避免切回终端时先刷写 backlog、随后又写 replay 造成 cat 大文件内容重复显示
+    beginReplayGate(id)
     const term = createTerminal(id, el)
     const onResize = term.onResize(({ cols, rows }) => {
       if (!ptyReady) return
@@ -146,17 +149,26 @@ function TermScreen({ id, visible }: { id: string; visible: boolean }): React.JS
         .then((result) => {
           ptyReady = true
           if (result.success) {
-            if (result.reused && result.replay) writeDirectToTerminal(id, result.replay)
+            if (result.reused && result.replay) {
+              // 复用会话：丢弃门控期间累积的 backlog，仅回放 replay（权威历史），避免重复
+              applyReplayAndFlush(id, result.replay)
+            } else {
+              // 新建会话：无 replay，解除门控并刷写首屏缓冲
+              endReplayGate(id)
+            }
             setPtyReady(id)
           } else {
+            endReplayGate(id)
             setFallback(id)
           }
         })
         .catch(() => {
           ptyReady = true
+          endReplayGate(id)
           setFallback(id)
         })
     } else {
+      endReplayGate(id)
       ptyReady = true
     }
 

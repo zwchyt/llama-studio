@@ -226,6 +226,13 @@ export interface AgentSession {
   id: string
   title: string
   messages: AgentMessage[]
+  // 上下文摘要/压缩记忆：超过预算高水位时，最早若干轮对话被模型压缩为摘要。
+  // 发送时以摘要替代被覆盖的最早连续前缀消息，无此字段的旧会话不受影响。
+  memory?: {
+    summary: string          // 累积的历史摘要文本
+    coveredMsgIds: string[]  // 已被摘要覆盖、发送时省略的消息 id（会话最早的连续前缀）
+    updatedAt: number
+  }
 }
 
 export interface AgentProject {

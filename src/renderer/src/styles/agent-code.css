@@ -450,6 +450,17 @@
   border-color: var(--border-strong);
 }
 
+.agent-code-topbar-btn:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.agent-code-topbar-btn:disabled:hover {
+  background: var(--bg);
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+
 .agent-code-topbar-btn.active {
   background: var(--surface-hover);
   color: var(--text);
@@ -2617,6 +2628,28 @@
   display: flex;
   gap: 10px;
   padding: 0 16px;
+}
+
+/* 历史压缩中的顶部轻量提示 */
+.agent-code-view .chat-messages .agent-condensing {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 16px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  align-self: flex-start;
+}
+
+/* 会话顶部的历史摘要气泡：与消息区左右内边距对齐 */
+.agent-code-view .chat-messages .agent-history-summary {
+  margin: 0 16px 4px;
+  max-width: calc(100% - 32px);
+  align-self: stretch;
 }
 
 .agent-code-view .chat-messages .chat-msg-avatar {

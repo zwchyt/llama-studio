@@ -163,6 +163,10 @@ register(AskUserQuestionDef, AskUserQuestionExec)
 
 // ── 导出 API（类似 textgen 的 load_tools / execute_tool）──
 
+// 工具统一执行超时（毫秒）与适用白名单（仅本地 IO 类，详见 executeToolCall）。
+const TOOL_EXEC_TIMEOUT_MS = 30000
+const TIMEOUT_TOOLS = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep', 'ListDir', 'AnalyzeDir', 'Delete'])
+
 /** 获取所有已注册工具的定义列表（OpenAI 格式） */
 export function getToolDefinitions(): ToolDefinition[] {
   return registry.map(e => e.definition)
@@ -175,5 +179,20 @@ export async function executeToolCall(
 ): Promise<string> {
   const entry = registry.find(e => e.definition.function.name === name)
   if (!entry) return JSON.stringify({ error: `Unknown tool: ${name}` })
-  return entry.execute(args)
+  // 本地 IO 类工具统一超时：防止个别调用（超大文件、锁文件、异常 IPC）无限期挂起整个工具循环。
+  // 不覆盖 Bash（主进程已有 timeout + 自动转后台）、AskUserQuestion（等待人工）、后台/任务查询类、
+  // 以及网络类聊天工具（web_search/fetch_webpage，网络耗时属正常）。
+  if (!TIMEOUT_TOOLS.has(name)) return entry.execute(args)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<string>((resolve) => {
+    timer = setTimeout(
+      () => resolve(JSON.stringify({ error: `工具 ${name} 执行超时（${TOOL_EXEC_TIMEOUT_MS / 1000}s），已中止。如确需更久，请拆分任务或改用后台方式。` })),
+      TOOL_EXEC_TIMEOUT_MS
+    )
+  })
+  try {
+    return await Promise.race([entry.execute(args), timeout])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }

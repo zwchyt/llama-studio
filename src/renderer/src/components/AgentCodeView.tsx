@@ -275,7 +275,10 @@ const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { content: 
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath, remarkLinkifyUrls]}
-      rehypePlugins={[rehypeKatex, rehypeRaw, [rehypeSanitize, SANITIZE_SCHEMA]]}
+      // 顺序关键：先 rehypeRaw 解析原始 HTML，再 rehypeSanitize 清洗（含模型注入的 HTML），
+      // 最后由 rehypeKatex 渲染数学公式。KaTeX 的产物（大量 class 与 MathML 标签）不再经过
+      // sanitize，避免被默认 schema 剥离导致公式无法渲染；同时未信任内容仍被 sanitize 保护。
+      rehypePlugins={[rehypeRaw, [rehypeSanitize, SANITIZE_SCHEMA], rehypeKatex]}
       remarkRehypeOptions={{ allowDangerousHtml: true }}
       urlTransform={(url) => /^(https?:|mailto:|file:|data:)/i.test(url) ? url : defaultUrlTransform(url)}
       components={{ code: MarkdownCode as any, pre: MarkdownPre as any, a: MarkdownLink as any }}
@@ -695,6 +698,70 @@ function repairDanglingToolCalls(msgs: ApiMessage[]): ApiMessage[] {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 上下文摘要/压缩：当会话历史逼近预算高水位时，把最早若干轮压缩为摘要，替代直接丢弃。
+// ═══════════════════════════════════════════════════════════════════════════
+const CONDENSE_TRIGGER_RATIO = 0.8   // 送入 token 超过 ctxBudget*RATIO 时触发压缩
+const KEEP_RECENT_TURNS = 3          // 最近若干轮永远逐字保留（不参与压缩）
+const SUMMARY_MAX_TOKENS = 1024      // 摘要生成的 max_tokens
+const SUMMARY_TEMPERATURE = 0.2
+const SUMMARY_TURN_RESULT_CAP = 600  // 序列化待压缩内容时，单条工具结果的最大保留字符
+
+const SUMMARY_PROMPT = `你是对话历史压缩助手。请把下面的早期对话（可能含既有摘要）压缩成一段简明的中文摘要，供后续对话继续参考。
+必须保留：
+1) 任务目标与用户的关键需求；
+2) 已发现的关键事实（文件路径、配置值、接口/函数名等具体信息）；
+3) 已做出的决策与结论；
+4) 已尝试并排除的方向（避免重复走弯路）。
+要求：只输出摘要正文本身，不要客套或解释；用简洁要点式；总长度控制在约 600 tokens 以内。`
+
+// 按「user 消息为界」把消息切分为轮次（与 trimApiMessages 一致），保证工具配对不被拆散
+function splitAgentTurns(messages: AgentMessage[]): AgentMessage[][] {
+  const turns: AgentMessage[][] = []
+  let cur: AgentMessage[] | null = null
+  for (const m of messages) {
+    if (m.role === 'user' || cur === null) { cur = [m]; turns.push(cur) }
+    else { cur.push(m) }
+  }
+  return turns
+}
+
+// 把待压缩的消息序列化成可读文本（工具结果按上限截断，避免摘要输入本身超长）
+function serializeMessagesForSummary(messages: AgentMessage[]): string {
+  const cap = (s: string) => (s.length > SUMMARY_TURN_RESULT_CAP ? s.slice(0, SUMMARY_TURN_RESULT_CAP) + ' …(已截断)' : s)
+  const stripThink = (s: string) => s.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+  const parts: string[] = []
+  for (const m of messages) {
+    if (m.role === 'user') {
+      const attach = m.attachments?.length ? `（附件 ${m.attachments.length} 个）` : ''
+      parts.push(`用户${attach}: ${m.content || ''}`.trim())
+    } else if (m.toolCalls && m.toolCalls.length > 0) {
+      if (m.content && stripThink(m.content)) parts.push(`助手: ${stripThink(m.content)}`)
+      for (const tc of m.toolCalls) {
+        parts.push(`助手调用工具 ${tc.name}(${cap(tc.args || '')})`)
+        if (tc.result) parts.push(`工具结果: ${cap(tc.result)}`)
+      }
+    } else {
+      const t = stripThink(m.content || '')
+      if (t) parts.push(`助手: ${t}`)
+    }
+  }
+  return parts.join('\n')
+}
+
+// 复杂任务启发式：文本较长或含枚举/多步信号即视为复杂（保守，宁可少判）。
+// 用于“任务分解提示强化”：命中时且会话无任务，提醒模型先用 TodoWrite 拆解再执行。
+function isComplexRequest(text: string): boolean {
+  const t = (text || '').trim()
+  if (!t) return false
+  if (t.length >= 120) return true
+  if (/(^|\n)\s*\d+[.)、]/.test(t)) return true                                   // 1. / 2) / 3、
+  if (/(步骤|然后|接着|之后|并且|同时|分别|依次|首先|其次|最后)/.test(t)) return true
+  const bulletLines = t.split('\n').filter(l => /^\s*[-*·]\s+/.test(l)).length
+  if (bulletLines >= 2) return true
+  return false
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 以下展示组件提升到「模块作用域」，保证 React.memo 身份稳定。
 // 流式期间 AgentCodeView 整页会以 ~100ms 频率重渲染；若这些组件定义在组件内部，
 // 每次重渲染都会拿到新的函数身份 → React 视为不同组件而重新挂载，导致：
@@ -833,6 +900,31 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming }
 	              流式期间父组件已不会再高频重渲染（store 节流 + 模块级 memo），
 	              因此过渡期间 Markdown 不会被重解析，不会卡。 */}
           {renderValue ? <AgentMarkdown content={renderValue} /> : '（空）'}
+        </div>
+      )}
+    </div>
+  )
+})
+
+// ── 历史摘要气泡：会话顶部展示「发送给模型的早期对话压缩摘要」──
+// 默认折叠，展开后用 AgentMarkdown 渲染摘要。原始历史消息在界面上仍全部保留，
+// 本气泡仅额外展示被压缩、发送时省略的内容，参照 ThinkBlock 的折叠交互与样式。
+const HistorySummaryBubble = React.memo(function HistorySummaryBubble({ summary, count }: { summary: string; count: number }) {
+  const [expanded, setExpanded] = useState(false)
+  const [visible, setVisible] = useState(false)
+  const handleToggle = () => {
+    if (expanded) { setExpanded(false); setVisible(false) }
+    else { setVisible(true); requestAnimationFrame(() => setExpanded(true)) }
+  }
+  return (
+    <div className={`chat-think agent-history-summary ${expanded ? 'expanded' : ''}`}>
+      <button className="chat-think-toggle" onClick={handleToggle}>
+        <span className="chat-think-status"><Brain size={12} /> 历史摘要（已压缩 {count} 条早期消息）</span>
+        <ChevronDown size={13} className={`chat-think-chevron ${expanded ? 'open' : ''}`} />
+      </button>
+      {visible && (
+        <div className={`chat-think-body ${expanded ? 'open' : ''}`}>
+          {summary ? <AgentMarkdown content={summary} /> : '（空）'}
         </div>
       )}
     </div>
@@ -1366,6 +1458,7 @@ export default function AgentCodeView() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [streaming, setStreaming] = useState(false)
+  const [condensing, setCondensing] = useState(false)  // 正在压缩历史（顶部轻量提示）
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)
@@ -2051,9 +2144,22 @@ export default function AgentCodeView() {
 
   // 构建发送给模型的消息序列，并把工具调用结果（toolCalls[].result）补成 role:'tool' 消息，
   // 用于「重新生成 / 重发」时基于已有历史（含工具执行记录）重建发送给模型的消息序列。
-  function buildApiMessagesFull(messages: AgentMessage[]): ApiMessage[] {
+  // 传入 memory 时：先注入一条「早期对话摘要」系统消息，并省略被摘要覆盖的最早连续前缀消息
+  // （按 coveredMsgIds 前缀匹配，前缀一旦断裂即停止跳过）。以整条 AgentMessage 为覆盖单位，
+  // 其 assistant tool_calls 与 tool 结果由同一条消息生成，故 tool 配对不会被破坏。
+  function buildApiMessagesFull(messages: AgentMessage[], memory?: AgentSession['memory']): ApiMessage[] {
     const out: ApiMessage[] = []
-    for (const m of messages) {
+    // 计算被覆盖的最早连续前缀长度
+    let coveredPrefix = 0
+    if (memory?.summary && memory.coveredMsgIds?.length) {
+      const coveredSet = new Set(memory.coveredMsgIds)
+      while (coveredPrefix < messages.length && coveredSet.has(messages[coveredPrefix]!.id)) coveredPrefix++
+      if (coveredPrefix > 0) {
+        out.push({ role: 'system', content: `## 早期对话摘要\n以下是本会话较早轮次的压缩摘要（原始消息已省略以节省上下文）：\n\n${memory.summary}` })
+      }
+    }
+    for (let mi = coveredPrefix; mi < messages.length; mi++) {
+      const m = messages[mi]!
       if (m.toolCalls && m.toolCalls.length > 0) {
         out.push({
           role: 'assistant', content: m.content || null,
@@ -2083,6 +2189,77 @@ export default function AgentCodeView() {
     }
     return out
   }
+
+  // 上下文摘要压缩：在发送前自动触发，或由用户手动触发（force=true）。
+  // 用与 trimApiMessages 一致的分轮规则估算总 token：自动模式下未超 budget*RATIO 直接返回原 memory；
+  // force 模式跳过水位判断，只要存在「最近 KEEP_RECENT_TURNS 轮之前」的更早轮次就压缩。
+  // 把该批轮次交给同一本地模型压缩成摘要，持久化到会话并返回新 memory。
+  // 失败/超时/空返回一律吞掉异常、返回原 memory（引用不变，供调用方判断是否成功）。
+  const condenseSessionMemory = useCallback(async (
+    pid: string, sid: string, messages: AgentMessage[],
+    memory: AgentSession['memory'], budget: number, port: number, force = false
+  ): Promise<AgentSession['memory']> => {
+    try {
+      if (abortRef.current.aborted) return memory
+      const apiMsgs = buildApiMessagesFull(messages, memory)
+      const total = apiMsgs.reduce((s, m) => s + estimateApiMsgTokens(m), 0)
+      if (!force && total <= budget * CONDENSE_TRIGGER_RATIO) return memory
+      // 定位「已覆盖前缀之后」的消息，切分轮次，保留最近 KEEP_RECENT_TURNS 轮不压缩
+      const coveredSet = new Set(memory?.coveredMsgIds || [])
+      let coveredPrefix = 0
+      while (coveredPrefix < messages.length && coveredSet.has(messages[coveredPrefix]!.id)) coveredPrefix++
+      const uncovered = messages.slice(coveredPrefix)
+      const turns = splitAgentTurns(uncovered)
+      if (turns.length <= KEEP_RECENT_TURNS) return memory
+      const batch = turns.slice(0, turns.length - KEEP_RECENT_TURNS).flat()
+      if (batch.length === 0) return memory
+      const priorSummary = memory?.summary ? `已有摘要：\n${memory.summary}\n\n新增对话：\n` : ''
+      const userContent = priorSummary + serializeMessagesForSummary(batch)
+      setCondensing(true)
+      const res = await window.api.chatCompletion({ port, body: {
+        messages: [{ role: 'system', content: SUMMARY_PROMPT }, { role: 'user', content: userContent }],
+        temperature: SUMMARY_TEMPERATURE, max_tokens: SUMMARY_MAX_TOKENS, stream: false,
+      } })
+      const data: any = (res as any)?.ok ? (res as any).data : null
+      const summary = data?.choices?.[0]?.message?.content
+      if (!(res as any)?.ok || typeof summary !== 'string' || !summary.trim()) return memory
+      const newMemory = {
+        summary: summary.trim(),
+        coveredMsgIds: [...(memory?.coveredMsgIds || []), ...batch.map(m => m.id)],
+        updatedAt: Date.now(),
+      }
+      updateSessionInProject(pid, sid, { memory: newMemory })
+      return newMemory
+    } catch {
+      return memory
+    } finally {
+      setCondensing(false)
+    }
+  }, [updateSessionInProject])
+
+  // 手动压缩：用户从顶部按钮主动触发，不等高水位。force 方式调用 condenseSessionMemory，
+  // 并根据返回值是否变化给出反馈（无可压缩 / 已压缩 N 条 / 未完成）。
+  const handleManualCondense = useCallback(async () => {
+    if (loading || condensing) return
+    if (!runningCard || !apiBaseUrl) { notify('模型未启动，无法压缩历史', 'error'); return }
+    if (!activeSession || activeSession.messages.length === 0) { notify('当前会话无可压缩的历史', 'info'); return }
+    // 预检是否存在「最近保留轮之前」的更早轮次，避免无意义的模型调用
+    const msgs = activeSession.messages
+    const coveredSet = new Set(activeSession.memory?.coveredMsgIds || [])
+    let coveredPrefix = 0
+    while (coveredPrefix < msgs.length && coveredSet.has(msgs[coveredPrefix]!.id)) coveredPrefix++
+    if (splitAgentTurns(msgs.slice(coveredPrefix)).length <= KEEP_RECENT_TURNS) {
+      notify(`暂无可压缩的更早历史（最近 ${KEEP_RECENT_TURNS} 轮会保留）`, 'info')
+      return
+    }
+    const ctxN = useStore.getState().modelMetrics[runningCard.template.id]?.nCtx || 0
+    const ctxBudget = computeContextBudget(ctxN)
+    const prevCovered = activeSession.memory?.coveredMsgIds?.length || 0
+    const next = await condenseSessionMemory(activeProjectId, activeSessionId, msgs, activeSession.memory, ctxBudget, runningCard.template.serverPort, true)
+    const nextCovered = next?.coveredMsgIds?.length || 0
+    if (nextCovered > prevCovered) notify(`已压缩 ${nextCovered - prevCovered} 条早期消息`, 'success')
+    else notify('压缩未完成（模型无响应或返回为空）', 'error')
+  }, [loading, condensing, runningCard, apiBaseUrl, activeSession, activeProjectId, activeSessionId, condenseSessionMemory])
 
   const runAgentTurn = useCallback(async (
     pid: string,
@@ -2153,6 +2330,22 @@ export default function AgentCodeView() {
       let fuseBlown = false
       let fuseTool = ''
       let fuseSummary = ''
+      // ── 复杂任务分解提示强化（一次性）──
+      // 收到复杂指令且该会话当前无任务时，向本轮 apiMsgs 追加一条 system 提示，
+      // 促使模型先用 TodoWrite 分步再执行。仅注入当轮（不写入 displayMsgs、不持久化），
+      // 已有任务或简单任务不注入。图片模式（无工具）不适用。
+      if (!userHasImages && tools.length > 0) {
+        const lastUser = [...startDisplay].reverse().find(m => m.role === 'user')
+        if (lastUser && isComplexRequest(lastUser.content || '')) {
+          try {
+            const list = await window.api.agentTaskList(sid)
+            const noTasks = !list?.success || (list.tasks?.length ?? 0) === 0
+            if (noTasks) {
+              apiMsgs = [...apiMsgs, { role: 'system', content: '此任务较复杂：请先用 TodoWrite 制定 ≥3 步的分步计划，再逐步执行；每完成一步用 TodoWrite 更新任务状态。' }]
+            }
+          } catch { /* 查询失败不阻塞对话 */ }
+        }
+      }
       while (true) {
         if (abortRef.current.aborted) break
         if (turn >= MAX_AGENT_TURNS) {
@@ -2322,6 +2515,38 @@ export default function AgentCodeView() {
               return `${name}::${norm}`
             } catch { return `${name}::${argsStr}` }
           }
+          // ── 只读批并发预取 ──
+          // 整批均为只读工具（Read/Glob/Grep/ListDir/AnalyzeDir）且 >1 个时，先并发执行（去重后
+          // 仅执行唯一调用），结果存入 preRun 供下方顺序循环直接取用；顺序循环的去重/截断/
+          // 失败跟踪/熔断/提交逻辑完全不变，保证顺序与因果与串行路径一致。只读工具无需审批/备份。
+          const preRun = new Map<string, { result: string; failed: boolean }>()
+          const parallelReadBatch = toolCalls.length > 1 && !userHasImages &&
+            toolCalls.every(tc => TOOL_METAS[tc.function.name]?.readOnly === true)
+          if (parallelReadBatch) {
+            const batch = toolCalls
+            for (const tc of batch) commitToolCall(liveId, tc.id, { status: 'executing' })
+            const phaseTools = batch.map(tc => ({ name: tc.function.name, verb: toolRunVerb(tc.function.name) }))
+            flushSync(() => { useStore.getState().setAgentPhase({ kind: 'running_tools', tools: phaseTools }) })
+            scrollToBottom()
+            const runOne = async (name: string, argsStr: string): Promise<{ result: string; failed: boolean }> => {
+              try {
+                const args = parseToolArgs(argsStr)
+                const r = await executeToolCall(name, args)
+                return { result: r, failed: isToolErrorResult(r) }
+              } catch (e: any) {
+                return { result: JSON.stringify({ error: e?.message || String(e) }), failed: true }
+              }
+            }
+            // 去重：相同 key 仅执行一次，多个相同调用共享同一 Promise
+            const keyPromise = new Map<string, Promise<{ result: string; failed: boolean }>>()
+            const idKeys = batch.map(tc => {
+              const key = toolCallKey(tc.function.name, tc.function.arguments)
+              if (!keyPromise.has(key)) keyPromise.set(key, runOne(tc.function.name, tc.function.arguments))
+              return { id: tc.id, key }
+            })
+            await Promise.allSettled([...keyPromise.values()])
+            for (const { id, key } of idKeys) preRun.set(id, await keyPromise.get(key)!)
+          }
           for (const tc of toolCalls) {
             const dupKey = toolCallKey(tc.function.name, tc.function.arguments)
             if (batchExecuted.has(dupKey)) {
@@ -2390,6 +2615,11 @@ export default function AgentCodeView() {
             if (redundantAsk) {
               toolResult = 'You have already provided a final answer (and the user has answered your earlier questions). Do NOT ask again — proceed with the task using the information you have.'
               failed = false
+            } else if (preRun.has(tc.id)) {
+              // 只读批已并发预取，直接取用（failed 已由 isToolErrorResult 判定）
+              const pre = preRun.get(tc.id)!
+              toolResult = pre.result
+              failed = pre.failed
             } else {
               try { const args = parseToolArgs(tc.function.arguments); toolResult = await executeToolCall(tc.function.name, args) } catch (e: any) { toolResult = JSON.stringify({ error: e?.message || String(e) }); failed = true }
             }
@@ -2594,9 +2824,11 @@ export default function AgentCodeView() {
     })
 
     const systemMsg: ApiMessage = { role: 'system', content: await buildSystemContent(activeProject) }
-    const apiMsgs = [systemMsg, ...buildApiMessagesFull(displayMsgs)]
     const ctxN = useStore.getState().modelMetrics[runningCard.template.id]?.nCtx || 0
     const ctxBudget = computeContextBudget(ctxN)
+    // 发送前先尝试压缩历史（超高水位时）；失败则回退原 memory
+    const mem = await condenseSessionMemory(pid, sid, displayMsgs, activeSession?.memory, ctxBudget, runningCard.template.serverPort)
+    const apiMsgs = [systemMsg, ...buildApiMessagesFull(displayMsgs, mem)]
     const tools = userHasImages ? [] : getToolDefinitions().filter(t => AGENT_FILE_TOOL_NAMES.includes(t.function.name))
 
     await runAgentTurn(pid, sid, displayMsgs, apiMsgs, {
@@ -2606,7 +2838,7 @@ export default function AgentCodeView() {
       ctxBudget,
       approveWriteEdit: !!activeProject.approveWriteEdit,
     })
-  }, [input, attachedFiles, loading, apiBaseUrl, runningCard, activeProjectId, activeSessionId, activeSession, activeProject, updateSessionInProject, runAgentTurn])
+  }, [input, attachedFiles, loading, apiBaseUrl, runningCard, activeProjectId, activeSessionId, activeSession, activeProject, updateSessionInProject, runAgentTurn, condenseSessionMemory])
 
   // 始终持有最新的 handleSend，供排队回调使用，避免过期闭包
   handleSendRef.current = handleSend
@@ -2642,17 +2874,18 @@ export default function AgentCodeView() {
     regenRollbackRef.current = { sid: activeSessionId, messages: msgs.map(m => ({ ...m })) }
     updateSessionInProject(activeProjectId, activeSessionId, { messages: base })
     const systemMsg: ApiMessage = { role: 'system', content: await buildSystemContent(activeProject) }
-    const apiMsgs = [systemMsg, ...buildApiMessagesFull(base)]
     const lastUser = [...base].reverse().find(m => m.role === 'user')
     const userHasImages = !!(lastUser?.attachments?.some(a => a.type === 'image' && a.dataUrl))
     const ctxN = useStore.getState().modelMetrics[runningCard.template.id]?.nCtx || 0
     const ctxBudget = computeContextBudget(ctxN)
+    const mem = await condenseSessionMemory(activeProjectId, activeSessionId, base, activeSession.memory, ctxBudget, runningCard.template.serverPort)
+    const apiMsgs = [systemMsg, ...buildApiMessagesFull(base, mem)]
     const tools = userHasImages ? [] : getToolDefinitions().filter(t => AGENT_FILE_TOOL_NAMES.includes(t.function.name))
     const r = await runAgentTurn(activeProjectId, activeSessionId, base, apiMsgs, {
       port: runningCard.template.serverPort, tools, userHasImages, ctxBudget, approveWriteEdit: !!activeProject.approveWriteEdit,
     })
     rollbackIfFailed(r)
-  }, [loading, runningCard, activeSession, activeProject, activeProjectId, activeSessionId, updateSessionInProject, runAgentTurn])
+  }, [loading, runningCard, activeSession, activeProject, activeProjectId, activeSessionId, updateSessionInProject, runAgentTurn, condenseSessionMemory])
 
   // 重发：截断保留到该 user 消息（含），重新生成其回复
   const resendAt = useCallback(async (msgId: string) => {
@@ -2664,16 +2897,17 @@ export default function AgentCodeView() {
     regenRollbackRef.current = { sid: activeSessionId, messages: msgs.map(m => ({ ...m })) }
     updateSessionInProject(activeProjectId, activeSessionId, { messages: base })
     const systemMsg: ApiMessage = { role: 'system', content: await buildSystemContent(activeProject) }
-    const apiMsgs = [systemMsg, ...buildApiMessagesFull(base)]
     const userHasImages = !!(msgs[idx]!.attachments?.some(a => a.type === 'image' && a.dataUrl))
     const ctxN = useStore.getState().modelMetrics[runningCard.template.id]?.nCtx || 0
     const ctxBudget = computeContextBudget(ctxN)
+    const mem = await condenseSessionMemory(activeProjectId, activeSessionId, base, activeSession.memory, ctxBudget, runningCard.template.serverPort)
+    const apiMsgs = [systemMsg, ...buildApiMessagesFull(base, mem)]
     const tools = userHasImages ? [] : getToolDefinitions().filter(t => AGENT_FILE_TOOL_NAMES.includes(t.function.name))
     const r = await runAgentTurn(activeProjectId, activeSessionId, base, apiMsgs, {
       port: runningCard.template.serverPort, tools, userHasImages, ctxBudget, approveWriteEdit: !!activeProject.approveWriteEdit,
     })
     rollbackIfFailed(r)
-  }, [loading, runningCard, activeSession, activeProject, activeProjectId, activeSessionId, updateSessionInProject, runAgentTurn])
+  }, [loading, runningCard, activeSession, activeProject, activeProjectId, activeSessionId, updateSessionInProject, runAgentTurn, condenseSessionMemory])
 
   // 分支：从指定 user 消息处复制出一条新会话（不自动运行）
   const branchAt = useCallback((msgId: string) => {
@@ -2703,7 +2937,8 @@ export default function AgentCodeView() {
     if (idx < 0) { setEditingMsgId(null); return }
     const newContent = editDraft
     const updated = msgs.slice(0, idx).concat({ ...msgs[idx]!, content: newContent })
-    updateSessionInProject(activeProjectId, activeSessionId, { messages: updated })
+    // 编辑历史消息会改动/截断历史，旧摘要可能失真：清除 memory，下次发送按需重新压缩
+    updateSessionInProject(activeProjectId, activeSessionId, { messages: updated, memory: undefined })
     setEditingMsgId(null)
   }, [editingMsgId, editDraft, activeSession, activeProjectId, activeSessionId, updateSessionInProject])
 
@@ -2844,6 +3079,13 @@ export default function AgentCodeView() {
             </div>
           )}
           <button ref={ctxBtnRef} className={`agent-code-topbar-btn ${contextModalOpen ? 'active' : ''}`} onClick={() => setContextModalOpen(v => !v)}>上下文</button>
+          <button
+            className="agent-code-topbar-btn"
+            onClick={handleManualCondense}
+            disabled={loading || condensing || !runningCard}
+          >
+            {condensing ? <Loader2 size={12} className="spin" /> : <Brain size={12} />} 压缩历史
+          </button>
           <button ref={promptBtnRef} className={`agent-code-topbar-btn ${promptModalOpen ? 'active' : ''}`} onClick={openPromptModal}><SlidersHorizontal size={12} /> 提示词</button>
           <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} style={{ marginTop: 0, width: 28, height: 28 }}>
             {treeOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
@@ -2922,6 +3164,12 @@ export default function AgentCodeView() {
 
         <div className="agent-code-chat">
           <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll}>
+            {condensing && (
+              <div className="agent-condensing"><Loader2 size={13} className="spin" /> 正在压缩历史…</div>
+            )}
+            {activeSession?.memory?.summary && (
+              <HistorySummaryBubble summary={activeSession.memory.summary} count={activeSession.memory.coveredMsgIds.length} />
+            )}
             {!activeSession || activeSession.messages.length === 0 ? (
               <div className="agent-welcome">
                 <div className="agent-welcome-title">

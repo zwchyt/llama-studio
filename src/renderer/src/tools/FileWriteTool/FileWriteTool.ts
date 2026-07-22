@@ -29,6 +29,27 @@ function classifyFileError(err: string): string {
 export async function execute(args: Record<string, unknown>): Promise<string> {
   const { file_path, content } = args as unknown as FileWriteInput
   const res = await window.api.writeFile(file_path, content)
-  if (res.success) { invalidateReadCache(file_path); return '✅ 文件写入成功。' }
-  return classifyFileError(res.error || '')
+  if (!res.success) return classifyFileError(res.error || '')
+  invalidateReadCache(file_path)
+  // 轻量回读校验：写入成功后回读确认内容已落盘（统一换行后比对）。
+  // 仅追加提示供模型参考，不改变成功语义（避免编码/换行差异造成误熔断）。
+  let note = ''
+  try {
+    const rb = await window.api.readFile(file_path, { raw: true })
+    if (rb.success && typeof rb.content === 'string') {
+      if (rb.truncated) {
+        note = '（回读校验跳过：文件较大已截断）'
+      } else {
+        const norm = (s: string) => s.replace(/\r\n/g, '\n')
+        note = norm(rb.content) === norm(content)
+          ? '（已回读校验：内容一致）'
+          : '（提醒：回读内容与写入不一致，可能存在编码/换行差异，请 Read 复核）'
+      }
+    } else {
+      note = `（回读校验跳过：${rb.error || '读取失败'}）`
+    }
+  } catch (e: any) {
+    note = `（回读校验跳过：${e?.message || String(e)}）`
+  }
+  return `✅ 文件写入成功。${note}`
 }

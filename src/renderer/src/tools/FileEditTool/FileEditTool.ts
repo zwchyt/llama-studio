@@ -22,7 +22,24 @@ export const definition: Omit<ToolDefinition['function'], 'type'> = {
 export async function execute(args: Record<string, unknown>): Promise<string> {
   const { file_path, old_string, new_string, replace_all } = args as unknown as FileEditInput & { replace_all?: boolean }
   const res = await window.api.editFile(file_path, old_string, new_string, replace_all)
-  if (res.success) { invalidateReadCache(file_path); return '✅ 文件编辑成功。' }
+  if (res.success) {
+    invalidateReadCache(file_path)
+    // 轻量回读校验：editFile 成功时已返回完整新内容，直接校验 new_string 是否已写入；
+    // 缺失时回退到一次 readFile。仅追加提示，不改变成功语义。
+    let note = ''
+    const checkIncludes = (full: string) => full.includes(new_string)
+      ? '（已回读校验：new_string 已写入）'
+      : '（提醒：回读未发现 new_string，请重新 Read 确认）'
+    if (typeof res.content === 'string') {
+      note = checkIncludes(res.content)
+    } else {
+      try {
+        const rb = await window.api.readFile(file_path, { raw: true })
+        if (rb.success && typeof rb.content === 'string' && !rb.truncated) note = checkIncludes(rb.content)
+      } catch { /* 回读失败则跳过校验，不影响主结果 */ }
+    }
+    return `✅ 文件编辑成功。${note}`
+  }
   const err = res.error || ''
   if (/not found|no match|unable to locate|未找到|找不到/.test(err)) return `❌ 编辑失败：未找到匹配的 old_string，请对照 Read 返回的 hashline 重新检查。\n${err}`
   if (/ENOENT|no such|does not exist/.test(err)) return `❌ 编辑失败：文件不存在\n${err}`

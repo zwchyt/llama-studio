@@ -7,6 +7,8 @@ interface PendingWrite { data: string[]; timer: ReturnType<typeof setTimeout> | 
 
 const registry = new Map<string, Entry>()
 const pendingWrites = new Map<string, PendingWrite>()
+// reattach 期间处于 replay 等待态的终端 id：期间挂起 pending 刷写，避免与 replay 重复输出
+const awaitingReplay = new Set<string>()
 
 function fitWithBuffer(e: Entry): void {
   const c = e.container
@@ -32,6 +34,7 @@ function flushWrite(_id: string, pw: PendingWrite, e: Entry): void {
  *  2. 视图切换期间缓冲——切换走终端视图时实例被销毁，期间到达的输出先入缓冲，切回时回写。
  */
 function flushPendingIfReady(id: string): void {
+  if (awaitingReplay.has(id)) return // 等待 replay 期间不刷写，待 applyReplayAndFlush/endReplayGate 决定
   const e = registry.get(id)
   if (!e) return
   const pw = pendingWrites.get(id)
@@ -143,6 +146,7 @@ export function updateTerminalTheme(id: string): void {
 }
 
 export function disposeTerminal(id: string): void {
+  awaitingReplay.delete(id)
   const pw = pendingWrites.get(id)
   if (pw) {
     if (pw.timer) clearTimeout(pw.timer)
@@ -173,10 +177,38 @@ export function writeDirectToTerminal(id: string, data: string): void {
 }
 
 /**
+ * reattach 时的 replay 门控，消除“backlog 刷写 + replay 回放”重复输出：
+ *  - beginReplayGate：进入等待态，挂起 flushPendingIfReady 与实时刷写；
+ *  - applyReplayAndFlush：复用会话时丢弃等待期累积的 backlog（已被 replay 覆盖），仅写入 replay 后解除等待态；
+ *  - endReplayGate：新建会话/回退（无 replay）时解除等待态并照常刷写缓冲。
+ */
+export function beginReplayGate(id: string): void {
+  awaitingReplay.add(id)
+}
+
+export function applyReplayAndFlush(id: string, replay: string): void {
+  awaitingReplay.delete(id)
+  const pw = pendingWrites.get(id)
+  if (pw) {
+    if (pw.timer) { clearTimeout(pw.timer); pw.timer = null }
+    if (pw.raf) { cancelAnimationFrame(pw.raf); pw.raf = null }
+    pw.data = [] // backlog 已包含于 replay，丢弃以避免重复输出
+  }
+  const e = registry.get(id)
+  if (e) { try { e.term.write(replay) } catch {} }
+}
+
+export function endReplayGate(id: string): void {
+  awaitingReplay.delete(id)
+  flushPendingIfReady(id)
+}
+
+/**
  * 分离 xterm 实例但不销毁 PTY（与 disposeTerminal 不同）。
  * 用于 MRU 策略：释放 xterm 内存，保留 ownerKey 关联的 PTY 进程。
  */
 export function detachTerminal(id: string): void {
+  awaitingReplay.delete(id)
   const pw = pendingWrites.get(id)
   if (pw) {
     if (pw.timer) clearTimeout(pw.timer)
@@ -197,19 +229,20 @@ export function writeToTerminal(id: string, data: string): void {
   }
   pw.data.push(data)
   const e = registry.get(id)
+  const gated = awaitingReplay.has(id)
   const totalBytes = pw.data.reduce((sum, d) => sum + d.length, 0)
   if (totalBytes > MAX_PENDING_BYTES) {
-    if (e) {
+    if (e && !gated) {
       flushWrite(id, pw, e)
     } else {
-      // 实例未就绪时只保留最近的缓冲，避免内存无限增长
+      // 实例未就绪或处于 replay 等待期：只保留最近的缓冲，避免内存无限增长
       while (pw.data.length > 1 && pw.data.reduce((s, d) => s + d.length, 0) > MAX_PENDING_BYTES) {
         pw.data.shift()
       }
     }
     return
   }
-  if (!e) return // 实例尚未创建，先缓存在 pendingWrites，待 attach 时回写
+  if (!e || gated) return // 实例尚未创建或等待 replay，先缓存在 pendingWrites，待 attach/replay 时回写
   if (!pw.raf) {
     pw.raf = requestAnimationFrame(() => {
       if (pw) {
