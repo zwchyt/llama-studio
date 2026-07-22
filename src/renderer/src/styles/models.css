@@ -1,12 +1,5 @@
 /* empty-state/btn/form-input/params-search-box/hub-* 等通用类定义在 global.css，未搬移 */
 .models-view {
-  --content-pad: 24px;
-  margin: 24px;
-  padding: var(--content-pad);
-  background: var(--surface);
-  border: 2.5px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -30,7 +23,7 @@
   z-index: 5;
   flex-shrink: 0;
   background: var(--surface);
-  border: 1.5px solid var(--border-strong);
+  border: -1.5px solid var(--border-strong);
   border-radius: var(--radius);
   padding: 16px 18px;
   margin-bottom: 20px;
@@ -396,7 +389,7 @@
 }
 
 .toggle input:checked~.toggle-track {
-  background: #7a8978;
+  background: #93b0b7;
 }
 
 .toggle-thumb {

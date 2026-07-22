@@ -3,6 +3,11 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
 .llama-chat-header {
@@ -12,7 +17,7 @@
   padding: 10px 16px;
   background: var(--surface);
   border-bottom: 1.5px solid var(--border);
-  border-radius: var(--radius) var(--radius) 0 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   flex-shrink: 0;
   gap: 12px;
 }
@@ -59,7 +64,7 @@
   display: flex;
   flex-direction: column;
   background: #fff;
-  border-radius: 0 0 var(--radius) var(--radius);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
   overflow: hidden;
 }
 

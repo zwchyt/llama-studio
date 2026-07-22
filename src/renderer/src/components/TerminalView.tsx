@@ -172,8 +172,14 @@ function TermScreen({ id, visible }: { id: string; visible: boolean }): React.JS
       return false
     })
 
+    let fitTimer: ReturnType<typeof setTimeout> | null = null
     const ro = new ResizeObserver(() => {
-      if (ptyReady) fitTerminal(id)
+      if (!ptyReady) return
+      if (fitTimer !== null) clearTimeout(fitTimer)
+      fitTimer = setTimeout(() => {
+        fitTimer = null
+        fitTerminal(id)
+      }, 250)
     })
     ro.observe(el)
     const mq = window.matchMedia('(prefers-color-scheme: dark)')

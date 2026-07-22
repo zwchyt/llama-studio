@@ -17,7 +17,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 10px 0;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid #c7c7c7;
   gap: 8px;
 }
 
@@ -60,12 +60,6 @@
   color: var(--accent-fg);
   border-color: var(--border-strong);
 }
-
-.max-w-3xl {
-  max-width: 48rem;
-  margin: 0 auto;
-}
-
 .ce-panel {
   border: 1.5px solid var(--border);
   border-radius: var(--radius-sm);
@@ -165,7 +159,7 @@
 }
 
 .settings-section {
-  background: var(--surface);
+  background: #e3e3e3;
   border: 1.5px solid var(--border);
   border-radius: var(--radius);
   padding: 20px;

@@ -4,6 +4,7 @@
   width: 220px;
   transition: width 0.25s cubic-bezier(.25, 0.1, .25, 1);
   z-index: 10;
+  will-change: width;
 }
 
 .sidebar-wrapper.collapsed {

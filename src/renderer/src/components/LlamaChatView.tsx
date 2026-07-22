@@ -71,69 +71,69 @@ export default function LlamaChatView() {
     setView('cards')
   }
 
-  if (!activeChatUrl) {
-    return (
-      <div className="llama-empty">
-        <button className="llama-empty-close" onClick={handleClose}>
-          <X size={16} />
-        </button>
-        <Globe size={48} style={{ opacity: 0.4 }} />
-        <span style={{ fontSize: 14, opacity: 0.7 }}>暂无活跃的聊天会话</span>
-        <button className="btn btn-primary" onClick={() => setView('cards')}>
-          前往启动模型
-        </button>
-      </div>
-    )
-  }
-
   return (
     <div className="llama-chat-container">
-      <div className="llama-chat-header">
-        <div className="llama-chat-header-left">
-          <Globe size={16} />
-          <span className="llama-chat-title">Llama-UI</span>
-          <span className="llama-chat-url">{activeChatUrl}</span>
-        </div>
-        <div className="llama-chat-header-actions">
-          <button className="btn btn-danger btn-sm" onClick={handleStop}>
-            <Square size={13} /> 停止
+      {!activeChatUrl ? (
+        <div className="llama-empty">
+          <button className="llama-empty-close" onClick={handleClose}>
+            <X size={16} />
           </button>
-          <span className="llama-chat-sep" />
-          <button className="btn btn-ghost btn-sm" onClick={handleReload}>
-            <RefreshCw size={13} />
-          </button>
-          <button className="btn btn-ghost btn-sm" onClick={handleCopy}>
-            {copied ? <Check size={13} /> : <Copy size={13} />}
-          </button>
-          <button className="btn btn-ghost btn-sm" onClick={handleOpenBrowser}>
-            <ExternalLink size={13} />
-          </button>
-          <button className="btn btn-ghost btn-sm" onClick={handleClose}>
-            <X size={13} />
+          <Globe size={48} style={{ opacity: 0.4 }} />
+          <span style={{ fontSize: 14, opacity: 0.7 }}>暂无活跃的聊天会话</span>
+          <button className="btn btn-primary" onClick={() => setView('cards')}>
+            前往启动模型
           </button>
         </div>
-      </div>
-      <div className="llama-chat-body">
-        {!showIframe ? (
-          <div className="llama-chat-status">
-            {waiting ? (
-              <div className="llama-waiting">
-                <Loader size={28} className="spin" style={{ opacity: 0.5 }} />
-                <span>正在连接服务器…</span>
+      ) : (
+        <>
+          <div className="llama-chat-header">
+            <div className="llama-chat-header-left">
+              <Globe size={16} />
+              <span className="llama-chat-title">Llama-UI</span>
+              <span className="llama-chat-url">{activeChatUrl}</span>
+            </div>
+            <div className="llama-chat-header-actions">
+              <button className="btn btn-danger btn-sm" onClick={handleStop}>
+                <Square size={13} /> 停止
+              </button>
+              <span className="llama-chat-sep" />
+              <button className="btn btn-ghost btn-sm" onClick={handleReload}>
+                <RefreshCw size={13} />
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={handleCopy}>
+                {copied ? <Check size={13} /> : <Copy size={13} />}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={handleOpenBrowser}>
+                <ExternalLink size={13} />
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={handleClose}>
+                <X size={13} />
+              </button>
+            </div>
+          </div>
+          <div className="llama-chat-body">
+            {!showIframe ? (
+              <div className="llama-chat-status">
+                {waiting ? (
+                  <div className="llama-waiting">
+                    <Loader size={28} className="spin" style={{ opacity: 0.5 }} />
+                    <span>正在连接服务器…</span>
+                  </div>
+                ) : (
+                  <>
+                    <span>无法连接到服务器</span>
+                    <button className="btn btn-secondary btn-sm" onClick={handleReload}>
+                      <RefreshCw size={13} /> 重新连接
+                    </button>
+                  </>
+                )}
               </div>
             ) : (
-              <>
-                <span>无法连接到服务器</span>
-                <button className="btn btn-secondary btn-sm" onClick={handleReload}>
-                  <RefreshCw size={13} /> 重新连接
-                </button>
-              </>
+              <iframe key={iframeKey} src={activeChatUrl} className="llama-chat-iframe" title="Llama Chat" />
             )}
           </div>
-        ) : (
-          <iframe key={iframeKey} src={activeChatUrl} className="llama-chat-iframe" title="Llama Chat" />
-        )}
-      </div>
+        </>
+      )}
     </div>
   )
 }

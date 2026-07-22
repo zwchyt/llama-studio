@@ -3,6 +3,7 @@ import { ExternalLink, Info, ShieldAlert, FileText, Heart, RotateCw } from 'luci
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
+import '../styles/about.css'
 
 export default function AboutView() {
   const openLink = (url: string) => {
@@ -39,8 +40,8 @@ export default function AboutView() {
     }
   }
   return (
-    <div className="about-container" style={{ padding: 24, maxWidth: 800, margin: '0 auto', color: 'var(--text)' }}>
-      <div className="page-header" style={{ marginBottom: 32 }}>
+    <div className="about-container">
+      <div className="page-header">
         <div>
           <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <img src="./full-logo.png" alt="hexllama" style={{ height: 32, imageRendering: 'crisp-edges' }} draggable={false} />
@@ -49,23 +50,18 @@ export default function AboutView() {
         </div>
       </div>
 
-      {/* 版本信息 */}
       <section className="about-section" style={{ marginBottom: 16 }}>
-        <div className="about-card" style={{
-          background: 'var(--surface)', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)', padding: '16px 20px',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16
-        }}>
+        <div className="about-card about-card-version">
           <div>
-            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>
+            <div className="about-version-label">
               llama-studio {currentVersion}
             </div>
             {appReleaseInfo?.available ? (
-              <div style={{ fontSize: 12, color: 'var(--accent)' }}>
+              <div className="about-version-status available">
                 新版本 {appReleaseInfo.latestVersion} 可用
               </div>
             ) : appReleaseInfo?.currentVersion && (
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              <div className="about-version-status latest">
                 已是最新版本
               </div>
             )}
@@ -85,17 +81,16 @@ export default function AboutView() {
         </div>
       </section>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
-        { }
         <section className="about-section">
-          <h2 style={{ fontSize: 16, display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <h2 className="about-section-title">
             <Heart size={16} style={{ color: 'var(--danger)' }} /> 鸣谢
           </h2>
-          <div className="about-card" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 20 }}>
-            <p style={{ marginBottom: 16, lineHeight: 1.6 }}>
+          <div className="about-card">
+            <p>
               本项目之所以存在，完全归功于 <strong>llama.cpp</strong>，由 <strong>Georgi Gerganov</strong> 创建。
               请考虑支持 llama.cpp 社区所做的出色工作。
             </p>
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            <div className="about-card-actions gap-16">
               <button className="btn btn-ghost btn-sm" onClick={() => openLink('https://github.com/ggerganov')}>
                 <ExternalLink size={14} /> @ggerganov
               </button>
@@ -105,16 +100,15 @@ export default function AboutView() {
             </div>
           </div>
         </section>
-        { }
         <section className="about-section">
-          <h2 style={{ fontSize: 16, display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <h2 className="about-section-title">
             <Info size={16} /> 关于开发者
           </h2>
-          <div className="about-card" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 20 }}>
-            <p style={{ marginBottom: 16, lineHeight: 1.6 }}>
+          <div className="about-card">
+            <p>
               <strong>Hexllama</strong> 由 <strong>Anderson Nascimento</strong> 开发，他是一位热爱本地 AI 的巴西软件工程师。
             </p>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <div className="about-card-actions">
               <button className="btn btn-ghost btn-sm" onClick={() => openLink('https://github.com/andersondanieln')}>
                 <ExternalLink size={14} /> GitHub
               </button>
@@ -130,44 +124,41 @@ export default function AboutView() {
             </div>
           </div>
         </section>
-        {}
         <section className="about-section">
-          <h2 style={{ fontSize: 16, display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <h2 className="about-section-title">
             <ExternalLink size={16} /> 本分支
           </h2>
-          <div className="about-card" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 20 }}>
-            <p style={{ marginBottom: 16, lineHeight: 1.6 }}>
+          <div className="about-card">
+            <p>
               <strong>llama-studio</strong> 是 hexllama 的中文定制分支，由 <strong>zwchyt</strong> 维护。
               在原版基础上增加了 GLM-OCR 图片识别、自定义提示词、外部/图片模型管理等本地化功能。
             </p>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <div className="about-card-actions">
               <button className="btn btn-ghost btn-sm" onClick={() => openLink('https://github.com/zwchyt/llama-studio')}>
                 <ExternalLink size={14} /> GitHub 仓库
               </button>
             </div>
           </div>
         </section>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
-          { }
+        <div className="about-grid">
           <section className="about-section">
-            <h2 style={{ fontSize: 16, display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <h2 className="about-section-title">
               <FileText size={16} /> 使用条款
             </h2>
-            <div className="about-card" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 20, height: '100%', fontSize: 13, color: 'var(--text-secondary)' }}>
-              <p style={{ lineHeight: 1.6 }}>
+            <div className="about-card tall">
+              <p>
                 本软件按<strong>"原样"</strong>提供，不提供任何明示或暗示的担保。
                 在任何情况下，作者或版权持有人均不对任何索赔、损害或其他责任负责，
                 无论是因软件或软件的使用或其他交易而产生的合同、侵权或其他方面的责任。
               </p>
             </div>
           </section>
-          { }
           <section className="about-section">
-            <h2 style={{ fontSize: 16, display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <h2 className="about-section-title">
               <ShieldAlert size={16} /> 隐私政策
             </h2>
-            <div className="about-card" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 20, height: '100%', fontSize: 13, color: 'var(--text-secondary)' }}>
-              <p style={{ lineHeight: 1.6 }}>
+            <div className="about-card tall">
+              <p>
                 <strong>Hexllama 不会收集或传输任何用户数据。</strong> 本应用程序中绝对没有遥测、跟踪或分析功能。
                 <br /><br />
                 但是，请注意，下载模型或执行第三方二进制文件（如 Hugging Face API 或 llama.cpp 可执行文件）可能会受其各自的隐私政策约束。

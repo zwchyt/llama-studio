@@ -205,6 +205,7 @@
   flex: 1;
   min-height: 0;
   display: flex;
+  contain: layout style;
 }
 
 .terminal-screen {
@@ -213,7 +214,6 @@
   background: var(--color-terminal-bg, #1e1e1e);
   overflow: hidden;
   display: flex;
-  padding: 10px;
 }
 
 .terminal-screen .xterm {

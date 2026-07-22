@@ -1,11 +1,5 @@
 .hub-container {
-  height: calc(100% - 48px);
-  margin: 24px;
-  padding: 24px;
-  background: var(--surface);
-  border: 2.5px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
+  height: 100%;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -13,8 +7,6 @@
 
 /* 覆盖 global.css 高特异性规则，确保外框边距/高度生效 */
 .view-transition>:not(.chat-layout):not(.agent-code-view).hub-container {
-  height: calc(100% - 48px);
-  margin: 24px;
   padding: 24px;
   flex: 1 1 auto;
   min-height: 0;

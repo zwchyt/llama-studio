@@ -215,6 +215,10 @@ select {
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
 }
 
 @keyframes view-fade-in {
