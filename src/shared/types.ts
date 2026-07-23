@@ -243,6 +243,11 @@ export interface AgentProject {
   sessions: AgentSession[]
   systemPrompt?: string      // 自定义系统提示词（按项目）；为空则用默认工具指引
   approveWriteEdit?: boolean  // 是否对 Write / Edit 也要求人工确认（Delete / Bash 始终要求）
+  // 跨会话项目记忆：用户沉淀的关键结论/约定，发送时注入系统提示，对该项目所有会话生效。
+  memory?: {
+    notes: string      // 跨会话项目记忆（用户可编辑的关键结论/约定）
+    updatedAt: number
+  }
 }
 
 // ── Agent Code 任务清单（Todo / Task 工具）──

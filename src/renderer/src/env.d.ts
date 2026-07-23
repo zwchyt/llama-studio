@@ -177,8 +177,12 @@ interface LlamaCppApi {
 	  // ── Agent Code 工作台项目持久化 ──
 	  loadAgentProjects: () => Promise<AgentProject[]>
 	  saveAgentProjects: (projects: AgentProject[]) => Promise<{ success: boolean; error?: string }>
+	  // ── Agent Tracing 落盘 ──
+	  agentTraceAppend: (sessionId: string, entry: object) => Promise<{ success: boolean; error?: string }>
 		  // ── Agent Code Bash 执行 ──
-		  executeCommand: (opts: { command: string; timeout?: number; isBackground?: boolean; maxOutputChars?: number; autoBackground?: boolean }) => Promise<{ stdout: string; stderr: string; code: number; truncated?: boolean; totalBytes?: number; outputFile?: string; autoBackgrounded?: boolean; taskId?: string }>
+		  executeCommand: (opts: { command: string; timeout?: number; isBackground?: boolean; maxOutputChars?: number; autoBackground?: boolean; execId?: string }) => Promise<{ stdout: string; stderr: string; code: number; truncated?: boolean; totalBytes?: number; outputFile?: string; autoBackgrounded?: boolean; taskId?: string }>
+		  onCommandChunk: (cb: (data: { execId: string; chunk: string }) => void) => void
+		  removeCommandChunkListener: () => void
 		  writeTempFile: (content: string, ext?: string) => Promise<{ success: boolean; path?: string; error?: string }>
 		  setBashCwd: (dir: string) => Promise<{ success: boolean }>
 		  getBackgroundTask: (taskId: string) => Promise<{ success: boolean; stdout?: string; stderr?: string; code?: number | null; status?: string; truncated?: boolean; totalBytes?: number; error?: string }>
@@ -186,6 +190,7 @@ interface LlamaCppApi {
 		  killBackgroundTask: (taskId: string) => Promise<{ success: boolean; error?: string }>
 		  // ── Agent Code 文件删除 ──
 		  deletePath: (targetPath: string, recursive: boolean) => Promise<{ success: boolean; message?: string; error?: string }>
+		  gitChanges: (dir: string) => Promise<{ isRepo: boolean; staged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>; unstaged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>; error?: string }>
 		  setAgentWorkspace: (dir: string) => Promise<{ success: boolean }>
 		  // ── Agent Code 任务清单（Todo / Task）──
 		  agentTodoWrite: (sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }) => Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }>

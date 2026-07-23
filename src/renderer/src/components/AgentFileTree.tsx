@@ -1,9 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
-  ChevronRight, ChevronDown, File, Folder, FolderOpen, Loader2, AlertCircle, Copy,
-  Code, Braces, FileText, Image, Palette, Settings, Terminal, FileCode, CornerDownLeft
+  ChevronRight, ChevronDown, Folder, FolderOpen, Loader2, AlertCircle, Copy, CornerDownLeft, Search, X
 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
+import { fileMeta } from '../utils/fileIcon'
 import { notify } from '../store/notificationStore'
 
 interface FileNode {
@@ -16,28 +15,6 @@ interface FileNode {
   total?: number
 }
 
-interface FileMeta { Icon: LucideIcon; color: string }
-
-// 按扩展名映射图标与配色，避免所有文件都用统一的 File 图标
-function fileMeta(name: string): FileMeta {
-  const dot = name.lastIndexOf('.')
-  const ext = dot >= 0 ? name.slice(dot).toLowerCase() : ''
-  switch (ext) {
-    case '.ts': case '.tsx': return { Icon: FileCode, color: '#3178c6' }
-    case '.js': case '.jsx': case '.mjs': case '.cjs': return { Icon: FileCode, color: '#e8a33d' }
-    case '.json': return { Icon: Braces, color: '#cbcb41' }
-    case '.md': case '.markdown': case '.txt': case '.rst': case '.log': return { Icon: FileText, color: '#9aa0a6' }
-    case '.css': case '.scss': case '.less': case '.sass': return { Icon: Palette, color: '#563d7c' }
-    case '.html': case '.htm': return { Icon: Code, color: '#e34c26' }
-    case '.py': case '.go': case '.rs': case '.java': case '.c': case '.cpp': case '.h': return { Icon: Code, color: '#519aba' }
-    case '.png': case '.jpg': case '.jpeg': case '.gif': case '.svg': case '.webp': case '.bmp': case '.ico': return { Icon: Image, color: '#a074c4' }
-    case '.yml': case '.yaml': return { Icon: Settings, color: '#cb171e' }
-    case '.sh': case '.bash': case '.zsh': case '.ps1': return { Icon: Terminal, color: '#4eaa25' }
-    case '.pdf': return { Icon: FileText, color: '#d40f0f' }
-    default: return { Icon: File, color: 'var(--text-muted)' }
-  }
-}
-
 function updateNodeInTree(root: FileNode, targetPath: string, updates: Partial<FileNode>): FileNode {
   if (root.path === targetPath) return { ...root, ...updates }
   if (root.children) {
@@ -46,7 +23,7 @@ function updateNodeInTree(root: FileNode, targetPath: string, updates: Partial<F
   return root
 }
 
-export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileName }: { workspaceDir: string; onPreviewFile?: (path: string) => void; onSendFileName?: (name: string) => void }) {
+export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileName, onFilesChanged }: { workspaceDir: string; onPreviewFile?: (path: string) => void; onSendFileName?: (name: string) => void; onFilesChanged?: () => void }) {
   const [tree, setTree] = useState<FileNode | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [loadingSet, setLoadingSet] = useState<Set<string>>(new Set())
@@ -130,11 +107,15 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
   useEffect(() => {
     if (!workspaceDir) return
     window.api.startAgentFileWatch(workspaceDir)
-    const onChange = () => {
+    const onChange = (data?: { dir: string; filename: string }) => {
+      // 忽略 .git 内部写入：git status/diff 等会刷新 .git/index，否则会与 Git 变更面板刷新形成回环。
+      const fn = data?.filename || ''
+      if (fn === '.git' || fn.startsWith('.git/') || fn.startsWith('.git\\')) return
       if (refreshTimer.current) clearTimeout(refreshTimer.current)
       refreshTimer.current = setTimeout(() => {
         const dirs = [workspaceDir, ...Array.from(expandedRef.current).filter(p => p !== workspaceDir)]
         dirs.forEach(p => refreshDir(p))
+        onFilesChanged?.()
       }, 300)
     }
     window.api.onAgentFileChanged(onChange)
@@ -143,7 +124,7 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
       window.api.removeAgentFileListeners()
       window.api.stopAgentFileWatch()
     }
-  }, [workspaceDir, refreshDir])
+  }, [workspaceDir, refreshDir, onFilesChanged])
 
   // 复制文件完整路径到剪贴板（优先 navigator.clipboard，失败回退 execCommand）
   const copyPath = useCallback(async (path: string) => {
@@ -237,6 +218,26 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
     )
   }
 
+  // ── 文件搜索/过滤：非空查询时用 listFlatFiles 拉平并按名称过滤，空查询回到树 ──
+  const [query, setQuery] = useState('')
+  const [flat, setFlat] = useState<{ name: string; path: string; relPath: string }[] | null>(null)
+  const [flatLoading, setFlatLoading] = useState(false)
+  const ensureFlat = useCallback(async () => {
+    if (!workspaceDir) return
+    setFlatLoading(true)
+    try {
+      const res = await window.api.listFlatFiles(workspaceDir, { maxDepth: 12, maxFiles: 3000 })
+      setFlat(res.success && res.files ? res.files : [])
+    } catch { setFlat([]) } finally { setFlatLoading(false) }
+  }, [workspaceDir])
+  useEffect(() => { setQuery(''); setFlat(null) }, [workspaceDir])
+  useEffect(() => { if (query.trim() && flat === null && !flatLoading) void ensureFlat() }, [query, flat, flatLoading, ensureFlat])
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q || !flat) return []
+    return flat.filter(f => f.relPath.toLowerCase().includes(q) || f.name.toLowerCase().includes(q)).slice(0, 300)
+  }, [query, flat])
+
   return (
     <div className="file-tree">
       <div className="file-tree-header">
@@ -246,9 +247,40 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
         </span>
       </div>
       <div className="file-tree-path">{workspaceDir}</div>
+      {workspaceDir && (
+        <div className="file-tree-search">
+          <Search size={12} className="file-tree-search-icon" />
+          <input
+            className="file-tree-search-input"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索文件…"
+            spellCheck={false}
+          />
+          {query && (
+            <button className="file-tree-search-clear" onClick={() => setQuery('')} title="清除"><X size={11} /></button>
+          )}
+        </div>
+      )}
       <div className="file-tree-content">
         {!workspaceDir ? (
           <div className="file-tree-empty">点击上方的文件夹图标选择目录</div>
+        ) : query.trim() ? (
+          flatLoading && flat === null ? (
+            <div className="file-tree-loading">搜索中…</div>
+          ) : results.length === 0 ? (
+            <div className="file-tree-empty">无匹配文件</div>
+          ) : (
+            <div className="file-tree-nodes">
+              {results.map(f => (
+                <div className="file-tree-result" key={f.path} title={f.relPath} onClick={() => onPreviewFile?.(f.path)}>
+                  {(() => { const { Icon, color } = fileMeta(f.name); return <Icon size={14} style={{ color }} /> })()}
+                  <span className="file-tree-result-name">{f.name}</span>
+                  <span className="file-tree-result-dir">{f.relPath.includes('/') ? f.relPath.slice(0, f.relPath.lastIndexOf('/')) : ''}</span>
+                </div>
+              ))}
+            </div>
+          )
         ) : tree ? (
           <div className="file-tree-nodes">{renderNode(tree, 0)}</div>
         ) : (

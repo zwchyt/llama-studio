@@ -11,7 +11,7 @@ import { tmpdir } from 'os'
 import iconv from 'iconv-lite'
 import http from 'http'
 import { app } from 'electron'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHash } from 'crypto'
 import type * as ptyNs from 'node-pty'
 import type { AgentProject, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus } from '../shared/types'
 
@@ -3251,7 +3251,7 @@ export function registerIpcHandlers(): void {
       validateUrl(url)
       const html = await fetchText(url, 15_000)
       const text = stripHtml(html)
-        .replace(/\s*\n\s*\n\s*/g, '\n\n')
+        .replace(/\s*\x0a\s*\x0a\s*/g, '\x0a\x0a')
         .replace(/[ \t]+/g, ' ')
         .trim()
       // 截取前 8192 个字符（约 2048 token）
@@ -3421,10 +3421,28 @@ export function registerIpcHandlers(): void {
     return `未在文件中找到要替换的字符串:\n${oldString}\n请重新 Read 文件获取最新内容后再编辑，并确保 old_string 与文件当前内容完全一致（含空白与行尾）。\n路径: ${filePath}`
   }
 
-  // 跟踪读取时间戳，用于 edit 防竞态检测
-  const readFileTimestamps = new Map<string, number>()
-  function getFileModificationTime(filePath: string): number {
-    try { return statSync(filePath).mtimeMs } catch { return 0 }
+  // 跨批冲突检测：记录文件内容快照（hash+mtime+size），edit 前比对以发现上次读取后被其他轮次/外部改动。
+  interface FileSnapshot { mtimeMs: number; size: number; hash?: string }
+  const fileSnapshots = new Map<string, FileSnapshot>()
+  const SNAPSHOT_HASH_MAX = 5 * 1024 * 1024 // 仅对 <=5MB 文件算内容 hash，超出退回 mtime+size
+  function computeFileSnapshot(fp: string): FileSnapshot | null {
+    try {
+      const st = statSync(fp)
+      const snap: FileSnapshot = { mtimeMs: st.mtimeMs, size: st.size }
+      if (st.size <= SNAPSHOT_HASH_MAX) {
+        try { snap.hash = createHash('sha1').update(readFileSync(fp)).digest('hex') } catch { /* 忽略，退回 mtime */ }
+      }
+      return snap
+    } catch { return null }
+  }
+  function recordFileSnapshot(fp: string): void { const s = computeFileSnapshot(fp); if (s) fileSnapshots.set(fp, s) }
+  // 有旧快照且当前与之不一致 → 冲突；无旧快照 → 不判冲突（不强制先 Read）
+  function detectFileConflict(fp: string): boolean {
+    const prev = fileSnapshots.get(fp); if (!prev) return false
+    const cur = computeFileSnapshot(fp); if (!cur) return false
+    if (cur.size !== prev.size) return true
+    if (prev.hash && cur.hash) return prev.hash !== cur.hash
+    return cur.mtimeMs > prev.mtimeMs // 大文件无 hash → 退回 mtime
   }
 
   /** 用 ~4 chars/token 估算 token 数 */
@@ -3492,7 +3510,10 @@ export function registerIpcHandlers(): void {
         }
       }
 
-      readFileTimestamps.set(filePath, getFileModificationTime(filePath))
+      // 仅「完整读取」（模型 Read 工具无 maxBytes）才更新内容快照作为编辑冲突基准；
+      // 带 maxBytes 的部分/预览读取（UI 预览、Edit 前撤销备份读）不刷新快照，
+      // 否则会覆盖模型 Read 时建立的基准，使 edit-file 的跨批冲突检测形同虚设。
+      if (!(opts?.maxBytes && opts.maxBytes > 0)) recordFileSnapshot(filePath)
 
       // 预览场景（UI 文件浏览器）：仅读取前 maxBytes 字节
       const maxBytes = opts?.maxBytes ?? 0
@@ -3622,6 +3643,10 @@ export function registerIpcHandlers(): void {
       if (filePath.startsWith('\\\\') || filePath.startsWith('//')) {
         return { success: false, error: '不支持 UNC 路径' }
       }
+      // SECURITY: 写入必须落在工作区/应用范围内，防止模型把文件写到工作区之外
+      if (!isAgentPathInScope(resolve(filePath))) {
+        return { success: false, error: '写入被拒绝：目标路径不在工作区/应用范围内，请改用工作区内的相对路径。' }
+      }
       mkdirSync(dirname(filePath), { recursive: true })
       // 检测原文件编码并保留
       let encoding: string = 'utf8'
@@ -3630,7 +3655,7 @@ export function registerIpcHandlers(): void {
         encoding = detectEncoding(buf)
       }
       await fsPromises.writeFile(filePath, content, encoding as BufferEncoding)
-      readFileTimestamps.set(filePath, getFileModificationTime(filePath))
+      recordFileSnapshot(filePath)
       return { success: true }
     } catch (e) {
       return { success: false, error: `写入失败：${e instanceof Error ? e.message : String(e)}` }
@@ -3640,13 +3665,13 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('edit-file', async (_e, filePath: string, oldString: string, newString: string, replaceAll?: boolean): Promise<{ success: boolean; content?: string; error?: string }> => {
     try {
       filePath = resolveAgentPath(filePath)
+      // SECURITY: 编辑目标必须落在工作区/应用范围内
+      if (!isAgentPathInScope(resolve(filePath))) return { success: false, error: '编辑被拒绝：目标路径不在工作区/应用范围内。' }
       if (!existsSync(filePath)) return { success: false, error: '文件不存在' }
 
-      // 防竞态检测：文件在上次读取后被修改
-      const lastRead = readFileTimestamps.get(filePath)
-      const currentMtime = getFileModificationTime(filePath)
-      if (lastRead && currentMtime > lastRead) {
-        return { success: false, error: '文件已被外部修改，请重新读取后再编辑' }
+      // 跨批冲突检测：文件在上次读取/写入后被其他轮次或外部改动（内容 hash 快照比对）
+      if (detectFileConflict(filePath)) {
+        return { success: false, error: '文件在你上次读取后已被修改（可能由其他工具轮次或外部改动），请重新 Read 获取最新内容与 hashline 后再编辑。' }
       }
 
       // 文件大小限制
@@ -3663,7 +3688,7 @@ export function registerIpcHandlers(): void {
       const fileHasCRLF = fileContent.includes('\r\n')
       const alignLE = (s: string): string => {
         if (s == null) return s
-        return fileHasCRLF ? s.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n') : s.replace(/\r\n/g, '\n')
+        return fileHasCRLF ? s.replace(/\r\x0a/g, '\x0a').replace(/\x0a/g, '\r\x0a') : s.replace(/\r\x0a/g, '\x0a')
       }
       const oldNorm = alignLE(oldString ?? '')
       const newNorm = alignLE(newString ?? '')
@@ -3676,7 +3701,7 @@ export function registerIpcHandlers(): void {
         // 空文件 + 空 oldString = 创建新内容
         const updated = newNorm
         await fsPromises.writeFile(filePath, updated, encoding as BufferEncoding)
-        readFileTimestamps.set(filePath, getFileModificationTime(filePath))
+        recordFileSnapshot(filePath)
         return { success: true, content: updated }
       }
 
@@ -3698,7 +3723,7 @@ export function registerIpcHandlers(): void {
         : fileContent.replace(actualOldString, newNorm)
 
       await fsPromises.writeFile(filePath, updated, encoding as BufferEncoding)
-      readFileTimestamps.set(filePath, getFileModificationTime(filePath))
+      recordFileSnapshot(filePath)
       return { success: true, content: updated }
     } catch (e) {
       return { success: false, error: `编辑失败：${e instanceof Error ? e.message : String(e)}` }
@@ -4244,6 +4269,25 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('start-agent-file-watch', (_e, dir: string) => startAgentFileWatch(dir))
   ipcMain.handle('stop-agent-file-watch', () => { stopAgentFileWatch(); return { success: true } })
 
+  // ── Agent Tracing 落盘 ──
+  // 把每次工具执行的审计条目追加到 Agent session/traces/<sessionId>.jsonl，
+  // 供进程重启后复现问题（内存环形缓冲重启即丢）。单文件超过上限做一次轮转（.1），最多占 2×上限。
+  const AGENT_TRACES_DIR = join(APP_ROOT, 'Agent session', 'traces')
+  const TRACE_MAX_BYTES = 4 * 1024 * 1024
+  ipcMain.handle('agent-trace-append', (_e, sessionId: string, entry: unknown): { success: boolean; error?: string } => {
+    try {
+      if (!sessionId || /[\\/]/.test(sessionId) || sessionId.includes('..')) return { success: false, error: '无效的 sessionId' }
+      if (!existsSync(AGENT_TRACES_DIR)) mkdirSync(AGENT_TRACES_DIR, { recursive: true })
+      const file = join(AGENT_TRACES_DIR, `${sessionId}.jsonl`)
+      if (!isSafePath(AGENT_TRACES_DIR, file)) return { success: false, error: '访问被拒绝' }
+      try { if (existsSync(file) && statSync(file).size > TRACE_MAX_BYTES) renameSync(file, file + '.1') } catch { /* 轮转失败则直接追加 */ }
+      writeFileSync(file, JSON.stringify(entry) + '\n', { flag: 'a' })
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+
   // ── Agent Code 工作台：项目（含会话）持久化 ──
   // 每个会话独立存储为一个 JSON 文件，统一放在 `Agent session/` 文件夹下：
   //   Agent session/<sessionId>.json  —— 单个会话的全部消息 + 所属项目信息
@@ -4695,6 +4739,7 @@ export function registerIpcHandlers(): void {
     isBackground?: boolean
     maxOutputChars?: number
     autoBackground?: boolean
+    execId?: string
   }): Promise<{
     stdout: string
     stderr: string
@@ -4749,6 +4794,11 @@ export function registerIpcHandlers(): void {
       const errBufs: Buffer[] = []
       let timedOut = false
       let resolved = false
+      // 实时进度：有 execId 时按块把输出推送给渲染进程（仅用于实时预览，最终结果仍用全量解码）。
+      const sendChunk = (chunk: string) => {
+        if (!opts.execId || !chunk) return
+        try { if (!_e.sender.isDestroyed()) _e.sender.send('agent-command-chunk', { execId: opts.execId, chunk }) } catch { /* ok */ }
+      }
 
       const timeoutId = setTimeout(() => {
         timedOut = true
@@ -4775,8 +4825,8 @@ export function registerIpcHandlers(): void {
         }
       }, timeout)
 
-      child.stdout?.on('data', (d: Buffer) => { outBufs.push(d) })
-      child.stderr?.on('data', (d: Buffer) => { errBufs.push(d) })
+      child.stdout?.on('data', (d: Buffer) => { outBufs.push(d); sendChunk(decodeCommandOutput(d)) })
+      child.stderr?.on('data', (d: Buffer) => { errBufs.push(d); sendChunk(decodeCommandOutput(d)) })
       child.on('error', () => {
         if (resolved) return
         clearTimeout(timeoutId)
@@ -4873,13 +4923,15 @@ export function registerIpcHandlers(): void {
     if (agentWorkspaceRoot) bases.push(agentWorkspaceRoot)
     return bases
   }
-  function isDeletePathSafe(target: string): boolean {
+  // 写/改/删的路径安全边界：限制在 App 根 / 当前 bash 工作目录 / Agent 工作区根之内，
+  // 防止模型用越界的绝对/相对路径把文件写到工作区之外（读取另有 confineRead 保护）。
+  function isAgentPathInScope(target: string): boolean {
     return DELETE_BASES().some(base => isSafePath(base, target))
   }
   ipcMain.handle('delete-path', async (_e, targetPath: string, recursive: boolean): Promise<{ success: boolean; message?: string; error?: string }> => {
     try {
       const resolved = resolve(resolveAgentPath(targetPath))
-      if (!isDeletePathSafe(resolved)) return { success: false, error: '访问被拒绝：路径不在安全范围内' }
+      if (!isAgentPathInScope(resolved)) return { success: false, error: '访问被拒绝：路径不在安全范围内' }
       if (!existsSync(resolved)) return { success: false, error: '路径不存在' }
       const isDir = statSync(resolved).isDirectory()
       if (!isDir) {
@@ -4897,6 +4949,134 @@ export function registerIpcHandlers(): void {
       return { success: true, message: `✅ 已删除目录：${resolved}${recursive ? '（含所有子内容）' : ''}` }
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  // ── Agent Code：Git 变更（只读 diff 查看）────────────────
+  // 在工作区跑 git，返回改动文件清单 + 相对 HEAD 的 unified diff（含未跟踪文件内容）。
+  // 严格只读：不做 add/commit/checkout 等写操作。
+  function runGit(args: string[], cwd: string, timeoutMs = 15000): Promise<{ ok: boolean; code: number; stdout: string; stderr: string }> {
+    return new Promise((resolve) => {
+      let done = false
+      let child: ReturnType<typeof spawn>
+      try {
+        child = spawn('git', args, { cwd, windowsHide: true, env: sanitizeCommandEnv() })
+      } catch (e) {
+        resolve({ ok: false, code: -1, stdout: '', stderr: e instanceof Error ? e.message : String(e) })
+        return
+      }
+      const out: Buffer[] = []
+      const err: Buffer[] = []
+      const timer = setTimeout(() => {
+        if (done) return
+        done = true
+        try { child.kill() } catch { /* ok */ }
+        resolve({ ok: false, code: -1, stdout: decodeCommandOutput(Buffer.concat(out)), stderr: 'git 命令超时' })
+      }, timeoutMs)
+      child.stdout?.on('data', (d: Buffer) => out.push(d))
+      child.stderr?.on('data', (d: Buffer) => err.push(d))
+      child.on('error', (e) => { if (done) return; done = true; clearTimeout(timer); resolve({ ok: false, code: -1, stdout: '', stderr: e instanceof Error ? e.message : String(e) }) })
+      child.on('close', (code) => { if (done) return; done = true; clearTimeout(timer); resolve({ ok: code === 0, code: code ?? -1, stdout: decodeCommandOutput(Buffer.concat(out)), stderr: decodeCommandOutput(Buffer.concat(err)) }) })
+    })
+  }
+
+  // 把 `git diff` 的整段 unified 输出按文件切分为 { 路径 -> diff 块 }。
+  // 路径优先取 `+++ b/<path>`；删除文件（+++ /dev/null）时取 `--- a/<path>`。
+  function splitGitDiff(diff: string): Record<string, string> {
+    const map: Record<string, string> = {}
+    if (!diff) return map
+    const lines = diff.split('\n')
+    let cur: string[] | null = null
+    let curPath = ''
+    let oldPath = ''
+    const flush = () => { if (cur && curPath) map[curPath] = cur.join('\n') }
+    for (const line of lines) {
+      if (line.startsWith('diff --git ')) {
+        flush()
+        cur = [line]; curPath = ''; oldPath = ''
+        // 兜底：二进制/模式变更块没有 +++ b/ 行，先从头部 `a/x b/y` 取路径（+++ b/ 会覆盖之，更可靠）
+        const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(line)
+        if (m) curPath = m[2]
+      } else if (cur) {
+        cur.push(line)
+        if (line.startsWith('--- a/')) oldPath = line.slice(6)
+        else if (line.startsWith('+++ b/')) curPath = line.slice(6)
+        else if (line.startsWith('+++ ') && line.includes('/dev/null')) curPath = oldPath
+      }
+    }
+    flush()
+    return map
+  }
+
+  // 解析 porcelain v1 状态行：'XY path' 或 'XY orig -> new'（重命名取 new）。X=暂存态，Y=工作区态。
+  function parseGitPorcelain(text: string): Array<{ path: string; x: string; y: string; untracked: boolean }> {
+    const entries: Array<{ path: string; x: string; y: string; untracked: boolean }> = []
+    for (const raw of text.split('\n')) {
+      if (!raw) continue
+      const xy = raw.slice(0, 2)
+      let rest = raw.slice(3)
+      if (xy === '??') { entries.push({ path: rest, x: '?', y: '?', untracked: true }); continue }
+      const arrow = rest.indexOf(' -> ')
+      if (arrow >= 0) rest = rest.slice(arrow + 4)
+      entries.push({ path: rest, x: xy[0], y: xy[1], untracked: false })
+    }
+    return entries
+  }
+
+  // 二进制 diff 判定：git 的标记行「Binary files a/x and b/x differ」位于行首（列 0）；
+  // 文本 diff 的内容行都带 +/-/空格 前缀，故用行首锚定，避免把「内容里出现 Binary files 字样」误判为二进制。
+  function isBinaryDiff(diff: string): boolean {
+    return /(?:^|\n)Binary files .+ differ/.test(diff)
+  }
+
+  ipcMain.handle('git-changes', async (_e, dir: string): Promise<{
+    isRepo: boolean
+    staged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>
+    unstaged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>
+    error?: string
+  }> => {
+    type F = { path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }
+    try {
+      const cwd = resolveAgentPath(dir || '')
+      if (!cwd || !existsSync(cwd)) return { isRepo: false, staged: [], unstaged: [] }
+      // --no-optional-locks：让 git 仅读，不刷新/写入 .git/index，避免触发文件监听造成刷新回环。
+      const base = ['-c', 'core.quotepath=false', '--no-optional-locks']
+      const inside = await runGit([...base, 'rev-parse', '--is-inside-work-tree'], cwd)
+      if (!inside.ok || inside.stdout.trim() !== 'true') return { isRepo: false, staged: [], unstaged: [] }
+      const st = await runGit([...base, 'status', '--porcelain=v1', '-uall'], cwd)
+      const stagedDiff = await runGit([...base, 'diff', '--cached', '--no-color'], cwd)
+      const unstagedDiff = await runGit([...base, 'diff', '--no-color'], cwd)
+      const stagedByPath = splitGitDiff(stagedDiff.stdout)
+      const unstagedByPath = splitGitDiff(unstagedDiff.stdout)
+      const CONTENT_CAP = 200 * 1024
+      const staged: F[] = []
+      const unstaged: F[] = []
+      for (const e of parseGitPorcelain(st.stdout)) {
+        if (e.untracked) {
+          const abs = join(cwd, e.path)
+          let binary = false; let content = ''
+          try {
+            const buf = readFileSync(abs)
+            const a = analyzeBuffer(buf)
+            if (a.binary) binary = true
+            else content = buf.subarray(0, CONTENT_CAP).toString(a.encoding as BufferEncoding).replace(/\r\n/g, '\n')
+          } catch { /* 读不到（目录/权限）→ 忽略内容 */ }
+          unstaged.push({ path: e.path, status: '?', staged: false, untracked: true, binary, diff: '', content })
+          continue
+        }
+        // X（暂存态）非空 → 已暂存组；Y（工作区态）非空 → 更改组。同一文件可同时出现在两组。
+        if (e.x !== ' ' && e.x !== '?') {
+          const diff = stagedByPath[e.path] || ''
+          staged.push({ path: e.path, status: e.x, staged: true, untracked: false, binary: isBinaryDiff(diff), diff })
+        }
+        if (e.y !== ' ' && e.y !== '?') {
+          const diff = unstagedByPath[e.path] || ''
+          unstaged.push({ path: e.path, status: e.y, staged: false, untracked: false, binary: isBinaryDiff(diff), diff })
+        }
+      }
+      return { isRepo: true, staged, unstaged }
+    } catch (e) {
+      return { isRepo: false, staged: [], unstaged: [], error: e instanceof Error ? e.message : String(e) }
     }
   })
 }

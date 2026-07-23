@@ -3206,7 +3206,7 @@
 	}
 	
 	.chat-think-body pre {
-	  margin: 0 0 8px;
+	  margin: 0 0 -1px;
 	  border-radius: 4px;
 	  overflow-x: auto;
 	}

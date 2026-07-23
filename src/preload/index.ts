@@ -150,13 +150,21 @@ const fullApi = {
   // ── Agent Code 工作台 项目持久化 ──
   loadAgentProjects: () => ipcRenderer.invoke('load-agent-projects'),
   saveAgentProjects: (projects: object) => ipcRenderer.invoke('save-agent-projects', projects),
-	  executeCommand: (opts: { command: string; timeout?: number; isBackground?: boolean; maxOutputChars?: number; autoBackground?: boolean }) => ipcRenderer.invoke('execute-command', opts),
+  // ── Agent Tracing 落盘 ──
+  agentTraceAppend: (sessionId: string, entry: object) => ipcRenderer.invoke('agent-trace-append', sessionId, entry),
+	  executeCommand: (opts: { command: string; timeout?: number; isBackground?: boolean; maxOutputChars?: number; autoBackground?: boolean; execId?: string }) => ipcRenderer.invoke('execute-command', opts),
+	  onCommandChunk: (cb: (data: { execId: string; chunk: string }) => void) => {
+	    ipcRenderer.removeAllListeners('agent-command-chunk')
+	    ipcRenderer.on('agent-command-chunk', (_e, data) => cb(data))
+	  },
+	  removeCommandChunkListener: () => ipcRenderer.removeAllListeners('agent-command-chunk'),
 	  writeTempFile: (content: string, ext?: string) => ipcRenderer.invoke('write-temp-file', content, ext),
 	  setBashCwd: (dir: string) => ipcRenderer.invoke('set-bash-cwd', dir),
 	  getBackgroundTask: (taskId: string) => ipcRenderer.invoke('get-background-task', taskId),
 	  listBackgroundTasks: () => ipcRenderer.invoke('list-background-tasks'),
 	  killBackgroundTask: (taskId: string) => ipcRenderer.invoke('kill-background-task', taskId),
 	  deletePath: (targetPath: string, recursive: boolean) => ipcRenderer.invoke('delete-path', targetPath, recursive),
+	  gitChanges: (dir: string) => ipcRenderer.invoke('git-changes', dir),
   setAgentWorkspace: (dir: string) => ipcRenderer.invoke('set-agent-workspace', dir),
 
   // ── Agent Code 任务清单（Todo / Task）──

@@ -5,7 +5,7 @@ import { invalidateReadCache } from '../FileReadTool/FileReadTool'
 
 export const definition: Omit<ToolDefinition['function'], 'type'> = {
   name: FILE_WRITE_TOOL_NAME,
-  description: 'Write content to a file (overwrites existing!). Creates parent directories automatically. For partial edits use Edit, not Write. For file/directory deletion use Delete, not Write. Path is resolved relative to the project directory, so relative paths like "subdir/file.py" work (absolute paths also work).',
+  description: 'Create a NEW file only. If the target file already exists (non-empty), Write is rejected — use Edit for precise modifications instead (Read first, then Edit). Creates parent directories automatically. For file/directory deletion use Delete, not Write. Path is resolved relative to the project directory, so relative paths like "subdir/file.py" work (absolute paths also work).',
   parameters: {
     type: 'object',
     properties: {
@@ -28,6 +28,19 @@ function classifyFileError(err: string): string {
 
 export async function execute(args: Record<string, unknown>): Promise<string> {
   const { file_path, content } = args as unknown as FileWriteInput
+  // 系统级强制：Write 仅用于新建文件。目标若已存在且非空，禁止整体重写，
+  // 强制改用 Edit 精准修改（避免模型懒散地重写整文件）。探测仅读 64 字节，开销极小。
+  try {
+    const probe = await window.api.readFile(file_path, { raw: true, maxBytes: 64 })
+    const existsNonEmpty = probe.success && typeof probe.content === 'string' && probe.content.length > 0
+    if (existsNonEmpty) {
+      return [
+        '❌ 目标文件已存在，禁止用 Write 整体重写。',
+        '请改用 Edit 工具精准修改：先用 Read 获取最新 hashline 锚点，再用 Edit 只替换需要改动的片段。',
+        '（若确需整体替换此文件，请先用 Delete 删除再用 Write 新建；但通常应优先 Edit。）',
+      ].join('\n')
+    }
+  } catch { /* 探测失败则按新文件处理，继续写入 */ }
   const res = await window.api.writeFile(file_path, content)
   if (!res.success) return classifyFileError(res.error || '')
   invalidateReadCache(file_path)

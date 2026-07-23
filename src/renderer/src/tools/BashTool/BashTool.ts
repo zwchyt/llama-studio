@@ -2,6 +2,7 @@ import type { ToolDefinition } from '../../utils/tools'
 import { BASH_TOOL_NAME } from './constants'
 import type { BashInput } from './types'
 import { getWorkspaceRootForSession } from '../workspaceRoot'
+import { startBashLive, stopBashLive } from './bashLiveStore'
 
 export const definition: Omit<ToolDefinition['function'], 'type'> = {
   name: BASH_TOOL_NAME,
@@ -75,13 +76,18 @@ function resolveCdTarget(raw: string, currentCwd: string): string | null {
 
 export async function execute(args: Record<string, unknown>): Promise<string> {
   const { command, description, timeout, is_background, max_output_chars, auto_background } = args as unknown as BashInput
+  // 前台命令开启实时输出流式推送（后台命令立即返回 taskId，无需实时）。
+  const streaming = !is_background
+  const execId = streaming ? `bash-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : undefined
+  if (execId) startBashLive(execId)
   try {
     const res = await window.api.executeCommand({
       command,
       timeout: typeof timeout === 'number' ? Math.min(timeout, 300000) : 120000,
       isBackground: is_background ?? undefined,
       maxOutputChars: max_output_chars ?? undefined,
-      autoBackground: auto_background ?? undefined
+      autoBackground: auto_background ?? undefined,
+      execId,
     })
 
     // ── cd 持久化（#1） ──
@@ -159,6 +165,8 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
     return output || '(no output)'
   } catch (e: any) {
     return `💥 命令执行异常：${e?.message || String(e)}`
+  } finally {
+    if (execId) stopBashLive(execId)
   }
 }
 
