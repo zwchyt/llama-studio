@@ -219,7 +219,8 @@ export interface AgentMessage {
 // 助手消息的有序片段：严格按模型产生的先后顺序记录，
 // 工具批之后接什么（思考链 or 下一批工具）完全由模型真实行为决定。
 export type AgentSegment =
-  | { kind: 'think' | 'text'; content: string }
+  | { kind: 'think'; content: string; durationMs?: number }
+  | { kind: 'text'; content: string }
   | { kind: 'tools'; toolCalls: NonNullable<AgentMessage['toolCalls']> }
 
 export interface AgentSession {

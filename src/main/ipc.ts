@@ -119,6 +119,10 @@ const abortedChatStreams = new Set<string>()
 const chatStreamInReasoning = new Map<string, boolean>()
 // 每个流累积的 tool_calls（流式传输时按 index 拼接增量片段）
 const chatStreamToolCalls = new Map<string, Array<{ index: number; id: string; type: string; function: { name: string; arguments: string } }>>()
+// 每个流已上报给前端的「工具名称签名」（done 之前，tool_calls 的 arguments（如 Write
+// 的整份文件内容）会逐 token 到达，前端看不到任何工具信号 → 表现为“一直思考中”。
+// 记录已上报的工具名签名，仅当新工具名出现时才推一次 toolCallsProgress 事件（避免逐 token 洪水）。
+const chatStreamToolProgress = new Map<string, string>()
 // isSafePath 函数用于防止路径遍历攻击（Path Traversal Attack），也称为目录遍历攻击。
 function isSafePath(base: string, target: string): boolean {
   const rBase = resolve(base)
@@ -2279,6 +2283,7 @@ export function registerIpcHandlers(): void {
           req.destroy()
           chatStreamInReasoning.delete(streamId)
           chatStreamToolCalls.delete(streamId)
+          chatStreamToolProgress.delete(streamId)
           flushStreamNow(streamId)
           e.sender.send('chat-stream-chunk', { streamId, done: true, error: '流式响应空闲超时（服务可能已停止输出）' })
           abortedChatStreams.delete(streamId)
@@ -2376,6 +2381,17 @@ export function registerIpcHandlers(): void {
                   if (tc.function?.name) acc[idx].function.name += tc.function.name
                   if (tc.function?.arguments) acc[idx].function.arguments += tc.function.arguments
                 }
+                // ── 流式期工具调用进度上报（非 done 事件）──
+                // 一旦某个工具的名称已知，就把当前已知的工具名推给前端，用于在 arguments
+                // 仍在生成时就显示“正在生成…”卡片并及时收起“思考中”转圈。仅当名称集变化时发送。
+                const names = acc.map(a => a.function.name).filter(Boolean).join('|')
+                if (names && names !== chatStreamToolProgress.get(streamId)) {
+                  chatStreamToolProgress.set(streamId, names)
+                  e.sender.send('chat-stream-chunk', {
+                    streamId, done: false,
+                    toolCallsProgress: acc.filter(a => a.function.name).map(a => ({ name: a.function.name })),
+                  })
+                }
               }
               // 记录 finish_reason（通常只在最后一个有 choices 的 chunk 中出现）
               if (choice?.finish_reason) lastFinishReason = choice.finish_reason
@@ -2408,6 +2424,7 @@ export function registerIpcHandlers(): void {
           // 先取出累积的 tool_calls，done 事件要立即携带它们，绝不能等 /metrics
           const accToolCalls = chatStreamToolCalls.get(streamId)
           chatStreamToolCalls.delete(streamId)
+          chatStreamToolProgress.delete(streamId)
 
           // 立即发送 done + toolCalls：usage / msFirstToken 已在流内同步解析得到，
           // 唯有 decodeTokS（来自 /metrics 异步请求）可能尚未就绪。done 不等待 /metrics，
@@ -2441,6 +2458,7 @@ export function registerIpcHandlers(): void {
         clearIdleTimer()
         chatStreamInReasoning.delete(streamId)
 	        chatStreamToolCalls.delete(streamId)
+	        chatStreamToolProgress.delete(streamId)
 	        // 主动中止的流不发 error 事件，避免前端误显示
 	        if (!abortedChatStreams.has(streamId)) {
 	          flushStreamNow(streamId)
@@ -2456,6 +2474,7 @@ export function registerIpcHandlers(): void {
         req.destroy()
 	        chatStreamInReasoning.delete(streamId)
 	        chatStreamToolCalls.delete(streamId)
+	        chatStreamToolProgress.delete(streamId)
 	        flushStreamNow(streamId)
 	        e.sender.send('chat-stream-chunk', { streamId, done: true, error: '超时' })
         activeChatStreams.delete(streamId)
@@ -4572,12 +4591,6 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('agent-task-list', async (_e, sessionId: string): Promise<{ success: boolean; tasks: AgentTask[] }> => {
     return { success: true, tasks: loadAgentTasks(sessionId) }
-  })
-
-  ipcMain.handle('agent-task-output', async (_e, sessionId: string, taskId: string): Promise<{ success: boolean; task?: AgentTask; output?: string; error?: string }> => {
-    const task = loadAgentTasks(sessionId).find(t => t.id === String(taskId))
-    if (!task) return { success: false, error: `Task ${taskId} not found` }
-    return { success: true, task, output: task.notes || '' }
   })
 
   // ── Agent Code Bash 执行 ────────────────────────────

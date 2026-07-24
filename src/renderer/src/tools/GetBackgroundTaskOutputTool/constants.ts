@@ -1,1 +1,1 @@
-export const GET_BACKGROUND_TASK_OUTPUT_TOOL_NAME = 'get_background_task_output'
+export const GET_BACKGROUND_TASK_OUTPUT_TOOL_NAME = 'GetBackgroundTaskOutput'

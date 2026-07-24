@@ -5,7 +5,7 @@ import { getAgentSessionId } from '../agentSession'
 
 export const definition: Omit<ToolDefinition['function'], 'type'> = {
   name: TASK_GET_TOOL_NAME,
-  description: 'Get a single task by id, including its full subject, description, status, and notes. Use before starting or updating a task.',
+  description: 'Get a single task by id, including its full subject, description, status, notes (output/result), and priority. Use to check a task\'s progress or read its result notes.',
   parameters: {
     type: 'object',
     properties: {

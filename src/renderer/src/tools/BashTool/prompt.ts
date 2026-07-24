@@ -1,61 +1,24 @@
 import { BASH_TOOL_NAME } from './constants'
 
 export function getBashPrompt(): string {
-  return `# ${BASH_TOOL_NAME} 工具使用说明
+  return `# ${BASH_TOOL_NAME} 工具
+执行 shell 命令（当前为 **Windows cmd.exe**，非 PowerShell/bash）。仅用于真正需要 shell 的场景（运行程序/脚本/构建/git）。
 
-执行 shell 命令并返回标准输出/错误。
+## 环境替代（Unix 命令不可用）
+\`ls\`→\`dir\`（但列目录优先用 ListDir/AnalyzeDir）；\`pwd\`→\`cd\`；\`which\`→\`where\`；\`export\`→\`set\`；\`cat/head/tail\`→Read；\`grep\`→Grep；\`cp/mv/rm\`→Delete/\`copy\`/\`move\`；\`chmod\` 无。路径用 \`/\`，含空格加双引号。
 
-## 运行环境（重要）
-当前为 **Windows cmd.exe**（非 PowerShell/bash）。以下 Unix 命令不可用：
+## 硬规则
+- **禁止重定向** \`>\`/\`>>\`（易卡死，存输出用 Write）。
+- 长任务拆成多次调用，别拼超长复合命令；有依赖用 \`&&\`（≤3 个），别用换行分隔，慎用 \`if\`/\`for\` 中的括号。
+- 命令出错先看 \`echo %errorlevel%\` 再调整；同一命令连续失败就换方案。
 
-| 不可用 | 替代方案 | 说明 |
-|--------|----------|------|
-| \`pwd\` | \`cd\` | 无参数时显示当前目录 |
-| \`ls\`, \`ll\` | \`dir\` | 列出目录内容 |
-| \`cat\`, \`head\`, \`tail\` | Read 工具 | 读文件强制用 Read |
-| \`grep\` | Grep 工具 | 搜内容强制用 Grep |
-| \`cp\`, \`mv\`, \`rm\` | Delete 工具、\`copy\`、\`move\` | 删除文件/目录强制用 Delete 工具 |
-| \`which\` | \`where\` | 查找程序路径 |
-| \`export\` | \`set\` | 但进程间不保持 |
-| \`chmod\` | 无 | Windows 权限模型不同，不可用 |
+## 后台与超时
+- 默认超时 120s（最大 300s）；\`auto_background: true\` 让超时命令转后台而非被杀。
+- \`is_background: true\` 放后台（dev server/长构建），返回 task_id；用 \`get_background_task_output\`/\`list_background_tasks\` 查看；后台下 \`timeout: 0\` 不超时。
+- 输出超约 100K 字符自动截断，完整存临时文件。
 
-文件路径建议用正斜杠 \`/\`（cmd 支持），含空格时用双引号包裹。
-
-## 核心规则（必须遵守）
-1. **禁止重定向**：绝对不要使用 \`> file.txt\` 或 \`>>\`，任务卡死风险极高。保存输出请使用 **Write 工具**。
-2. **拆分长任务**：如果操作步骤超过 3 步，请**多次调用本工具**，不要拼一个超长复合命令（cmd 报错信息极难解析）。
-3. **检查错误码**：命令执行后，若输出包含错误信息，立即检查 \`echo %errorlevel%\`，并据此调整策略。
-
-## 多命令处理
-- 互相独立的命令：**并行多次调用**本工具（性能最佳）。
-- 有依赖的命令：用 \`&&\` 连接（cmd 支持），但链长不超过 3 个。
-- **禁止**用换行符分隔命令（cmd 会逐行执行，但逻辑混乱，易报错）。
-- **危险警告**：避免在 \`if\` 或 \`for\` 循环中使用括号 \`()\`，极易因空格解析报错。如需循环，务必先测试语法。
-
-## 超时
-- 默认超时 120s，可调（最大 300s）。
-- 设置 \`auto_background: true\` 可让超时命令自动转后台继续运行，而非被杀死。
-
-## 后台执行
-- 设置 \`is_background: true\` 将命令放到后台运行（适合 dev server、long build 等），立即返回 task_id。
-- 后台任务完成后：用 \`get_background_task_output\` 工具检索输出。
-- 后台任务列表：用 \`list_background_tasks\` 查看所有任务状态。
-- \`timeout: 0\` 在后台模式下禁用超时（一直运行到完成或手动终止）。
-
-## 输出截断
-- 输出超过约 100K 字符时会自动截断，完整输出保存到临时文件。
-- 截断信息会显示在结果中。
-
-## 人工确认（审批）
-- **普通命令直接执行，不弹窗**：列目录（\`dir\`）、运行脚本（\`python\`/\`node\`）、构建、查询类命令（\`git status\`/\`git log\`/\`where\` 等）无需确认，放心调用。
-- **仅破坏性命令会弹窗等待确认**：涉及删除（\`del\`/\`rmdir\`/\`rm\`/\`erase\`）、格式化（\`format\`/\`diskpart\`）、终止进程（\`taskkill\`/\`shutdown\`）、改动系统状态（\`reg delete\`/\`sc\`/\`net stop\`/\`bcdedit\`/\`icacls\` 等）时才需用户审批。
-- 不要因为"怕弹窗"而回避使用非破坏性命令；也不要为绕过审批把破坏性操作伪装成普通命令。
-
-## 最佳实践总结
-- **读文件/搜内容**：强制用 Read/Grep 工具。
-- **写文件**：强制用 Write/Edit 工具。
-- **git 操作**：优先新建 commit 而非 amend，永远不要 \`--no-verify\` 跳过 hooks。
-- **路径处理**：优先用 \`/\`，绝对路径含空格时用 \`"C:/Program Files/..."\`。
-- **静默操作**：非必要不输出，减少 token 消耗。
-- **传信息给工具链**：直接返回文本即可，不要用 echo/printf。`
+## 审批
+- 普通命令（dir/python/node/构建/git status 等）直接执行，不弹窗，放心用。
+- 仅破坏性命令（del/rmdir/format/taskkill/shutdown/reg delete/net stop 等）需用户审批；别为绕审批把破坏性操作伪装成普通命令。
+- git：优先新建 commit 而非 amend，禁止 \`--no-verify\`。非必要不输出，别用 echo 传信息给工具链。`
 }

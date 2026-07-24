@@ -97,6 +97,8 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
       if (newCwd) {
         trackedCwd = newCwd
         window.api.setBashCwd(newCwd).catch(() => {})
+        // 给模型明确反馈：cd 已成功，当前目录已变更，无需重复调用
+        return `✅ 已切换工作目录到：${newCwd}\n（后续命令将在此目录下执行，无需再次 cd）`
       }
     }
 

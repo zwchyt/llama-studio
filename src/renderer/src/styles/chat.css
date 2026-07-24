@@ -1709,7 +1709,7 @@
   flex-direction: column;
   background: var(--surface);
   border-left: 1.5px solid var(--border-strong);
-  
+
   border-top-left-radius: var(--radius, 10px);
   border-bottom-left-radius: var(--radius, 10px);
   overflow: hidden;
@@ -1735,7 +1735,7 @@
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  
+
   background: var(--text-muted);
   box-shadow:
     0 -7px 0 var(--text-muted),
@@ -3106,12 +3106,20 @@
 }
 
 .chat-think-chevron.open {
-  transform: rotate(180deg);
+  transform: rotate(90deg);
 }
 
+/* 思考时长（「思考过程」后的 Xs 标注）：弱化的等宽数字，不抢主状态文案 */
+.chat-think-dur {
+  margin-left: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 文字比模型气泡（.chat-msg-markdown，14px）小一号（13px），颜色更弱（--text-secondary），体现「思考链是次要推理层」的层级感；左右内边距与气泡一致（16px），不贴边。 */
 .chat-think-body {
-  /* 文字比模型气泡（.chat-msg-markdown，14px）小一号（13px），颜色更弱（--text-secondary），
-     体现「思考链是次要推理层」的层级感；左右内边距与气泡一致（16px），不贴边。 */
   padding: 8px 16px 14px;
   font-size: 13px;
   line-height: 1.7;
@@ -3122,9 +3130,6 @@
   border-top: 1px solid var(--border);
   max-height: 0;
   overflow: hidden;
-  /* 注意：不在做 max-height 过渡的元素上使用 contain: content，
-     否则展开过渡期间会裁切/错位渲染内容。 */
-
   transition: opacity 0.25s ease;
   opacity: 0;
 }
@@ -3148,109 +3153,121 @@
 }
 
 .chat-think-body.chat-msg-markdown {
-	  background: transparent;
-	  border-radius: 0;
-	  max-width: 100%;
-	  min-width: 0;
-	  /* 字号/内边距/行距/颜色统一由 .chat-think-body 控制（已对齐模型气泡），
+  background: transparent;
+  border-radius: 0;
+  max-width: 100%;
+  min-width: 0;
+  /* 字号/内边距/行距/颜色统一由 .chat-think-body 控制（已对齐模型气泡），
 	     此处不再覆盖，避免文字偏小、贴边、与气泡观感不一致。 */
-	}
+}
 
-	/* ── 思考链内容排版层次 ──
+/* ── 思考链内容排版层次 ──
 	   .chat-think-body 整体使用 --text-secondary（次要色）体现「推理层」定位，
 	   但标题/强调/代码内需恢复主色/专属色，否则所有文字一色平铺，丧失结构化层次。
 	   此处为 chat-think-body 内的 Markdown 元素补充专属样式。 */
-	.chat-think-body h1,
-	.chat-think-body h2,
-	.chat-think-body h3,
-	.chat-think-body h4 {
-	  margin: 14px 0 6px;
-	  font-weight: 700;
-	  line-height: 1.3;
-	  color: var(--text);
-	}
-	.chat-think-body h1 { font-size: 16px; }
-	.chat-think-body h2 { font-size: 15px; }
-	.chat-think-body h3 { font-size: 14px; }
-	.chat-think-body h4 { font-size: 13px; }
-	
-	.chat-think-body p {
-	  margin: 0 0 8px;
-	}
-	
-	.chat-think-body ul,
-	.chat-think-body ol {
-	  margin: 0 0 8px;
-	  padding-left: 20px;
-	}
-	
-	.chat-think-body li {
-	  margin: 2px 0;
-	}
-	
-	.chat-think-body blockquote {
-	  margin: 0 0 8px;
-	  padding: 3px 12px;
-	  border-left: 3px solid var(--border-strong);
-	  border-radius: 0 4px 4px 0;
-	  background: rgba(128,128,128,0.06);
-	  color: var(--text-secondary);
-	}
-	
-	.chat-think-body code {
-	  background: rgba(128,128,128,0.1);
-	  border-radius: 3px;
-	  padding: 1px 4px;
-	  font-size: 12.5px;
-	  font-family: var(--font-mono, monospace);
-	}
-	
-	.chat-think-body pre {
-	  margin: 0 0 -1px;
-	  border-radius: 4px;
-	  overflow-x: auto;
-	}
-	
-	.chat-think-body pre code {
-	  background: none;
-	  padding: 0;
-	  font-size: inherit;
-	}
-	
-	.chat-think-body hr {
-	  border: none;
-	  border-top: 1px solid var(--border);
-	  margin: 12px 0;
-	}
-	
-	.chat-think-body strong,
-	.chat-think-body b {
-	  color: var(--text);
-	  font-weight: 700;
-	}
-	
-	.chat-think-body a {
-	  color: var(--accent);
-	  text-decoration: underline;
-	}
-	
-	.chat-think-body table {
-	  border-collapse: collapse;
-	  margin: 0 0 8px;
-	  font-size: 12.5px;
-	  width: 100%;
-	  display: block;
-	  overflow-x: auto;
-	}
-	
-	.chat-think-body th,
-	.chat-think-body td {
-	  border: 1px solid var(--border);
-	  padding: 5px 8px;
-	  text-align: left;
-	}
-	
-	.chat-think-body th {
-	  font-weight: 600;
-	  background: rgba(128,128,128,0.08);
-	}
+.chat-think-body h1,
+.chat-think-body h2,
+.chat-think-body h3,
+.chat-think-body h4 {
+  margin: 14px 0 6px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.chat-think-body h1 {
+  font-size: 16px;
+}
+
+.chat-think-body h2 {
+  font-size: 15px;
+}
+
+.chat-think-body h3 {
+  font-size: 14px;
+}
+
+.chat-think-body h4 {
+  font-size: 13px;
+}
+
+.chat-think-body p {
+  margin: 0 0 8px;
+}
+
+.chat-think-body ul,
+.chat-think-body ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+.chat-think-body li {
+  margin: 2px 0;
+}
+
+.chat-think-body blockquote {
+  margin: 0 0 8px;
+  padding: 3px 12px;
+  border-left: 3px solid var(--border-strong);
+  border-radius: 0 4px 4px 0;
+  background: rgba(128, 128, 128, 0.06);
+  color: var(--text-secondary);
+}
+
+.chat-think-body code {
+  background: rgba(128, 128, 128, 0.1);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 12.5px;
+  font-family: var(--font-mono, monospace);
+}
+
+.chat-think-body pre {
+  margin: 0 0 -1px;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.chat-think-body pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+.chat-think-body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+.chat-think-body strong,
+.chat-think-body b {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.chat-think-body a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.chat-think-body table {
+  border-collapse: collapse;
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  width: 100%;
+  display: block;
+  overflow-x: auto;
+}
+
+.chat-think-body th,
+.chat-think-body td {
+  border: 1px solid var(--border);
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.chat-think-body th {
+  font-weight: 600;
+  background: rgba(128, 128, 128, 0.08);
+}

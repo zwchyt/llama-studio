@@ -3306,13 +3306,7 @@ ${msgsHtml}
                 spellCheck={false}
                 autoComplete="off"
                 autoCorrect="off"
-                placeholder={
-                  activeStreamId
-                    ? '正在生成，可发送新消息（将自动停止当前流）…'
-                    : activeModel
-                      ? `给 ${activeModel.name} 发消息（Enter 发送，Shift+Enter 换行）`
-                      : '请先启动模型，输入内容将在启动后可发送'
-                }
+                placeholder=""
                 value={input}
                 onChange={handleInputChange}
                 onPaste={handlePaste}

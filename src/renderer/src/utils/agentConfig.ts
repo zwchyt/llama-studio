@@ -17,6 +17,12 @@ export interface AgentConfig {
   spinLimit: number               // 同一「工具+参数」成功调用重复达此数 → 熔断
   textSpinLimit: number           // 连续多轮助手正文完全相同达此数 → 停止
   textSpinMinLen: number          // 正文短于此长度不参与复读检测（防误伤）
+  // ── Bash 连续调用频率限制 ──
+  bashConsecutiveWarn: number     // 连续 Bash 调用（无实质写操作间隔）达此数 → 追加警告
+  bashConsecutiveFuse: number     // 连续 Bash 调用达此数 → 硬性熔断
+  bashBaseCmdLimit: number        // 同一基础命令词（如 dir/type/git）累计调用达此数 → 警告
+  // ── 工具「执行中」状态最小显示时长 ──
+  minExecDisplayMs: number        // 快工具执行完后保持「执行中」直到满此时长再显示「完成」（慢工具不额外等待）
   // ── 上下文预算 ──
   ctxDefault: number              // 取不到真实 n_ctx 时的兜底上下文大小
   maxOutput: number               // 与 chatStream 实际 max_tokens 一致
@@ -37,6 +43,10 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   spinLimit: 3,
   textSpinLimit: 3,
   textSpinMinLen: 24,
+  bashConsecutiveWarn: 4,
+  bashConsecutiveFuse: 7,
+  bashBaseCmdLimit: 5,
+  minExecDisplayMs: 2000,
   ctxDefault: 4096,
   maxOutput: 4096,
   ctxSafety: 256,

@@ -118,7 +118,7 @@ const fullApi = {
   chatStream: (opts: { streamId: string; port: number; body: object }) => ipcRenderer.invoke('chat-completion-stream', opts),
   chatCompletion: (opts: { port: number; body: object }) => ipcRenderer.invoke('chat-completion', opts),
   abortChatStream: (streamId: string) => ipcRenderer.invoke('chat-stream-abort', streamId),
-  onChatStreamChunk: (callback: (data: { streamId: string; delta?: string; done: boolean; error?: string; usage?: { promptTokens: number; completionTokens: number }; msFirstToken?: number; decodeTokS?: number; toolCalls?: Array<{ id: string; function: { name: string; arguments: string } }>; finishReason?: string }) => void) => {
+  onChatStreamChunk: (callback: (data: { streamId: string; delta?: string; done: boolean; error?: string; usage?: { promptTokens: number; completionTokens: number }; msFirstToken?: number; decodeTokS?: number; toolCalls?: Array<{ id: string; function: { name: string; arguments: string } }>; toolCallsProgress?: Array<{ name: string }>; finishReason?: string }) => void) => {
     ipcRenderer.removeAllListeners('chat-stream-chunk')
     ipcRenderer.on('chat-stream-chunk', (_event, data) => callback(data))
   },
@@ -171,8 +171,6 @@ const fullApi = {
   agentTodoWrite: (sessionId: string, input: object) => ipcRenderer.invoke('agent-todo-write', sessionId, input),
   agentTaskGet: (sessionId: string, taskId: string) => ipcRenderer.invoke('agent-task-get', sessionId, taskId),
   agentTaskList: (sessionId: string) => ipcRenderer.invoke('agent-task-list', sessionId),
-  agentTaskOutput: (sessionId: string, taskId: string) => ipcRenderer.invoke('agent-task-output', sessionId, taskId),
-
   // ── 工具调用（网络搜索）──
   webSearch: (query: string) => ipcRenderer.invoke('web-search', query),
   fetchWebpage: (url: string) => ipcRenderer.invoke('fetch-webpage', url),

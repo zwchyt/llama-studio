@@ -196,7 +196,6 @@ interface LlamaCppApi {
 		  agentTodoWrite: (sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }) => Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }>
 		  agentTaskGet: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
 		  agentTaskList: (sessionId: string) => Promise<{ success: boolean; tasks: AgentTask[] }>
-		  agentTaskOutput: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; output?: string; error?: string }>
 	}
 declare global {
   interface Window { api: LlamaCppApi }

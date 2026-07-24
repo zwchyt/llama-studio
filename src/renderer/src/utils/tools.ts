@@ -1,6 +1,6 @@
 // ── 工具注册中心（类似 textgen 的 tool_use.py + 各 tools/*.py）────
 import type { ComponentType } from 'react'
-import { Eye, FilePlus2, Pencil, Search, FileSearch, TerminalSquare, Clock, HelpCircle, FileText, Trash2, List, ListChecks, TerminalSquare as TaskOutputIcon, FolderOpen, Layers, Lightbulb } from 'lucide-react'
+import { Eye, FilePlus2, Pencil, Search, FileSearch, TerminalSquare, Clock, HelpCircle, FileText, Trash2, List, ListChecks, TerminalSquare as BgTaskIcon, FolderOpen, Layers, Lightbulb } from 'lucide-react'
 
 export interface ToolDefinition {
   type: 'function'
@@ -45,8 +45,7 @@ export const TOOL_METAS: Record<string, ToolMeta> = {
   TodoWrite:       { kind: 'plan',   label: '计划任务', verb: '计划中', icon: ListChecks,      readOnly: false, needsApproval: false, canUndo: false },
   TaskGet:         { kind: 'task',   label: '查询任务', verb: '查询任务中', icon: List,        readOnly: true,  needsApproval: false, canUndo: false },
   TaskList:        { kind: 'task',   label: '列出任务', verb: '列出任务中', icon: ListChecks,   readOnly: true,  needsApproval: false, canUndo: false },
-  TaskOutput:      { kind: 'task',   label: '读取任务输出', verb: '读取输出中', icon: TaskOutputIcon, readOnly: true, needsApproval: false, canUndo: false },
-  GetBackgroundTaskOutput: { kind: 'task', label: '读取后台输出', verb: '读取输出中', icon: TaskOutputIcon, readOnly: true, needsApproval: false, canUndo: false },
+  GetBackgroundTaskOutput: { kind: 'task', label: '读取后台输出', verb: '读取输出中', icon: BgTaskIcon, readOnly: true, needsApproval: false, canUndo: false },
   ListBackgroundTasks:     { kind: 'task', label: '列出后台任务', verb: '列出任务中', icon: ListChecks, readOnly: true, needsApproval: false, canUndo: false },
 }
 
@@ -70,7 +69,7 @@ export function getToolMeta(name: string): ToolMeta | undefined {
 // 去掉冗长描述），需要完整参数说明时由模型调用 view_tool 展开。可显著降低 system
 // prompt 的 token 占用，减少弱模型的注意力干扰。
 export const AGENT_RARE_TOOLS = new Set<string>([
-  'Reflect', 'TaskGet', 'TaskList', 'TaskOutput', 'GetBackgroundTaskOutput', 'ListBackgroundTasks',
+  'Reflect', 'TaskGet', 'TaskList', 'GetBackgroundTaskOutput', 'ListBackgroundTasks',
 ])
 
 interface ToolEntry {
@@ -172,7 +171,6 @@ import { definition as FileDeleteDef, execute as FileDeleteExec } from '../tools
 import { definition as TodoWriteDef, execute as TodoWriteExec } from '../tools/TodoWriteTool'
 import { definition as TaskGetDef, execute as TaskGetExec } from '../tools/TaskGetTool'
 import { definition as TaskListDef, execute as TaskListExec } from '../tools/TaskListTool'
-import { definition as TaskOutputDef, execute as TaskOutputExec } from '../tools/TaskOutputTool'
 import { definition as GetBackgroundTaskOutputDef, execute as GetBackgroundTaskOutputExec } from '../tools/GetBackgroundTaskOutputTool'
 import { definition as ListBackgroundTasksDef, execute as ListBackgroundTasksExec } from '../tools/ListBackgroundTasksTool'
 import { definition as AskUserQuestionDef, execute as AskUserQuestionExec } from '../tools/AskUserQuestionTool'
@@ -189,7 +187,6 @@ register(FileDeleteDef, FileDeleteExec)
 register(TodoWriteDef, TodoWriteExec)
 register(TaskGetDef, TaskGetExec)
 register(TaskListDef, TaskListExec)
-register(TaskOutputDef, TaskOutputExec)
 register(GetBackgroundTaskOutputDef, GetBackgroundTaskOutputExec)
 register(ListBackgroundTasksDef, ListBackgroundTasksExec)
 register(AskUserQuestionDef, AskUserQuestionExec)
