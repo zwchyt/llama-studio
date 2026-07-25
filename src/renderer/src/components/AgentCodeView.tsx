@@ -7,8 +7,11 @@ import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import 'katex/dist/katex.min.css'
+import katex from 'katex'
+import katexCssInline from 'katex/dist/katex.min.css?inline'
+import katexJsInline from 'katex/dist/katex.min.js?raw'
 import '../styles/monitoring.css'
-import { Send, Square, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles, Cpu, Play, ChevronsDownUp, ChevronsUpDown, Quote, Eye } from 'lucide-react'
+import { Send, Square, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles, Cpu, Play, ChevronsDownUp, ChevronsUpDown, Quote, Eye, Globe } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import hljs from 'highlight.js/lib/common'
@@ -39,6 +42,7 @@ import { getBashLiveText, subscribeBashLive } from '../tools/BashTool/bashLiveSt
 import { getTaskGetPrompt } from '../tools/TaskGetTool/prompt'
 import { getTaskListPrompt } from '../tools/TaskListTool/prompt'
 import AgentFileTree from './AgentFileTree'
+import AgentBrowser from './AgentBrowser'
 
 import AgentContextPanel from './AgentContextPanel'
 import CodeBlock from './CodeBlock'
@@ -301,6 +305,37 @@ const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { content: 
 
 function preprocessReadmeHtml(src: string): string {
   return src ?? ''
+}
+
+// HTML 预览数学公式预渲染：扫描 HTML 内容中的数学公式，用 KaTeX 渲染为 HTML。
+// 支持分隔符：$$...$$、$...$、\\[...\\]、\\(...\\)
+// 跳过 <script>/<style>/<code>/<pre> 块内的内容。
+function renderMathInHtml(html: string): string {
+  const SKIP_RE = /<(script|style|code|pre|textarea)[\s\S]*?<\/\1>/gi
+  const protected_: string[] = []
+  let work = html.replace(SKIP_RE, (m) => { protected_.push(m); return `\x00SKIP${protected_.length - 1}\x00` })
+  // 块级公式 $$...$$ 和 \\[...\\]
+  work = work.replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => {
+    try { return katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false }) }
+    catch { return `$$${tex}$$` }
+  })
+  work = work.replace(/\\\[([\s\S]+?)\\\]/g, (_, tex) => {
+    try { return katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false }) }
+    catch { return `\\[${tex}\\]` }
+  })
+  // 行内公式 $...$ 和 \\(...\\)
+  work = work.replace(/\$([^$\n]+?)\$/g, (full, tex) => {
+    if (/^\d/.test(tex.trim())) return full
+    try { return katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false }) }
+    catch { return full }
+  })
+  work = work.replace(/\\\((.+?)\\\)/g, (full, tex) => {
+    try { return katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false }) }
+    catch { return full }
+  })
+  // 还原保护块
+  work = work.replace(/\x00SKIP(\d+)\x00/g, (_, i) => protected_[Number(i)])
+  return work
 }
 
 const pathDir = (p: string) => p.replace(/[\\/][^\\/]*$/, '').replace(/\\/g, '/')
@@ -1595,9 +1630,12 @@ export default function AgentCodeView() {
     const dir = filePath.replace(/[\\/][^\\/]*$/, '').replace(/\\/g, '/')
     const baseHref = 'file:///' + dir.replace(/^\/+/, '') + '/'
     const baseTag = `<base href="${baseHref}">`
-    if (/<head[^>]*>/i.test(content)) return content.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`)
-    if (/<html[^>]*>/i.test(content)) return content.replace(/<html([^>]*)>/i, `<html$1><head>${baseTag}</head>`)
-    return `<head>${baseTag}</head>` + content
+    // 注入本地 KaTeX CSS + JS，避免依赖 CDN。同时预渲染 $/$$ 公式。
+    const katexInject = `<style>${katexCssInline}</style><script>${katexJsInline}<\/script>`
+    const rendered = renderMathInHtml(content)
+    if (/<head[^>]*>/i.test(rendered)) return rendered.replace(/<head([^>]*)>/i, `<head$1>${baseTag}${katexInject}`)
+    if (/<html[^>]*>/i.test(rendered)) return rendered.replace(/<html([^>]*)>/i, `<html$1><head>${baseTag}${katexInject}</head>`)
+    return `<head>${baseTag}${katexInject}</head>` + rendered
   }
 
   const inlineLocalImages = useCallback(async (markdown: string, baseFilePath: string): Promise<string> => {
@@ -1649,6 +1687,8 @@ export default function AgentCodeView() {
     const name = dirName(path)
     const ext = (/\.([a-z0-9]+)$/i.exec(path)?.[1] || '').toLowerCase()
     const isImage = IMG_EXT.has(ext)
+    // 切回文件预览模式（若当前是浏览器）
+    setRightPanelMode('files')
     // 已打开则仅切换到该标签，不重复读取
     setOpenTabs(prev => {
       if (prev.some(t => t.path === path)) return prev
@@ -1718,7 +1758,7 @@ export default function AgentCodeView() {
   const rafRef = useRef<number | null>(null)
   const applyPreviewWidth = useCallback((w: number) => {
     const clamped = Math.max(PREVIEW_MIN, Math.min(PREVIEW_MAX, w))
-    const root = document.querySelector('.agent-code-preview') as HTMLElement | null
+    const root = document.querySelector('.agent-code-right-body') as HTMLElement | null
     if (root) root.style.setProperty('--agent-preview-width', `${clamped}px`)
   }, [])
 
@@ -1862,6 +1902,9 @@ export default function AgentCodeView() {
   // 「引用」引用块：以胶囊（图标 + 缩写）形式内嵌在输入框内，
   // 发送时作为引用块（> …）拼入正文。
   const [refChips, setRefChips] = useState<Array<{ id: string; text: string }>>([])
+  // 代码片段胶囊：从源码预览中选中代码后引用，发送时以 fenced code block 注入正文。
+  interface CodeSnippet { id: string; filePath: string; fileName: string; startLine: number; endLine: number; code: string; preview: string }
+  const [codeSnippets, setCodeSnippets] = useState<CodeSnippet[]>([])
   const [filePickerAttached, setFilePickerAttached] = useState<Array<{ id: string; path: string; name: string; isDir: boolean }>>([])
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const modelPickerRef = useRef<HTMLDivElement>(null)
@@ -1869,6 +1912,8 @@ export default function AgentCodeView() {
   const attachBtnRef = useRef<HTMLButtonElement>(null)
   const [filePickerOpen, setFilePickerOpen] = useState(false)
   const [treeOpen, setTreeOpen] = useState(true)
+  // 右侧面板模式：files=文件树+预览 / browser=内嵌浏览器
+  const [rightPanelMode, setRightPanelMode] = useState<'files' | 'browser'>('files')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [contextModalOpen, setContextModalOpen] = useState(false)
   const [auditOpen, setAuditOpen] = useState(false)  // 操作审计面板开关
@@ -2105,6 +2150,9 @@ export default function AgentCodeView() {
   // 选中「模型输出」文字后浮现的操作条（引用 / 复制 / 追问）。
   // text=选中的纯文本，x/y=选区外接矩形的视口坐标（用 position:fixed 定位）。
   const [selectionPopover, setSelectionPopover] = useState<{ text: string; x: number; y: number } | null>(null)
+  // 源码预览选区浮动按钮：选中代码后弹出「引用代码」按钮。
+  const [previewSelPopover, setPreviewSelPopover] = useState<{ x: number; y: number; startLine: number; endLine: number; text: string } | null>(null)
+  const previewSelRef = useRef<HTMLDivElement>(null)
   const selectionPopoverRef = useRef<HTMLDivElement>(null)
   // 弹出审批弹窗并等待用户决定：true=允许，false=拒绝
   const waitForApproval = useCallback((info: { id: string; name: string; args: string }) => {
@@ -2239,6 +2287,7 @@ export default function AgentCodeView() {
   const openGitDiff = useCallback(() => {
     setTreeOpen(true)
     setContextModalOpen(false)
+    setRightPanelMode('files')
     setOpenTabs(prev => prev.some(t => t.path === GIT_DIFF_TAB)
       ? prev
       : [...prev, { path: GIT_DIFF_TAB, name: 'Git 变更', content: null, lines: null, truncated: false, loading: false, error: null }])
@@ -2491,6 +2540,72 @@ export default function AgentCodeView() {
     closeSelectionPopover()
   }, [addRefChip, closeSelectionPopover])
 
+  // ── 代码片段胶囊：从源码预览中选中代码后引用 ──
+  const addCodeSnippet = useCallback((startLine: number, endLine: number, text: string) => {
+    const path = activeTabPath || ''
+    const fileName = path.replace(/\\/g, '/').split('/').pop() || 'code'
+    // 缩略生成：取第一行非空内容，超30字符截断
+    const lines = text.split('\n').filter(l => l.trim())
+    let preview = lines[0]?.trim() || ''
+    if (preview.length > 30) preview = preview.slice(0, 30) + '···'
+    // 去重：同一文件同一行范围不重复添加
+    setCodeSnippets(prev => {
+      if (prev.some(s => s.filePath === path && s.startLine === startLine && s.endLine === endLine)) return prev
+      return [...prev, { id: uniqueId('snip'), filePath: path, fileName, startLine, endLine, code: text, preview }]
+    })
+    setPreviewSelPopover(null)
+    try { window.getSelection()?.removeAllRanges() } catch { /* ignore */ }
+  }, [activeTabPath])
+
+  const removeCodeSnippet = useCallback((id: string) => {
+    setCodeSnippets(prev => prev.filter(s => s.id !== id))
+  }, [])
+
+  // 源码预览 mouseup：检测选区是否在预览代码容器内，提取行号并弹出浮动按钮
+  const handlePreviewMouseUp = useCallback(() => {
+    requestAnimationFrame(() => {
+      const sel = window.getSelection()
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) { setPreviewSelPopover(null); return }
+      const text = sel.toString()
+      if (!text.trim()) { setPreviewSelPopover(null); return }
+      const anchor = sel.anchorNode
+      const focus = sel.focusNode
+      const anchorEl = anchor instanceof Element ? anchor : anchor?.parentElement
+      const focusEl = focus instanceof Element ? focus : focus?.parentElement
+      // 必须在源码预览容器内
+      const codeContainer = anchorEl?.closest('.agent-code-preview-code')
+      if (!codeContainer || !focusEl?.closest('.agent-code-preview-code')) { setPreviewSelPopover(null); return }
+      // 提取行号：从 id="agent-preview-line-N" 中解析
+      const anchorLine = anchorEl?.closest('.agent-code-preview-line')
+      const focusLine = focusEl?.closest('.agent-code-preview-line')
+      if (!anchorLine || !focusLine) { setPreviewSelPopover(null); return }
+      const getLineNo = (el: Element): number => {
+        const id = el.id || ''
+        const m = /agent-preview-line-(\d+)/.exec(id)
+        return m ? Number(m[1]) : 0
+      }
+      const l1 = getLineNo(anchorLine)
+      const l2 = getLineNo(focusLine)
+      if (!l1 || !l2) { setPreviewSelPopover(null); return }
+      const startLine = Math.min(l1, l2)
+      const endLine = Math.max(l1, l2)
+      const rect = sel.getRangeAt(0).getBoundingClientRect()
+      if (!rect || (rect.width === 0 && rect.height === 0)) { setPreviewSelPopover(null); return }
+      setPreviewSelPopover({ x: rect.left + rect.width / 2, y: rect.top, startLine, endLine, text })
+    })
+  }, [])
+
+  // 源码预览浮动按钮关闭
+  useEffect(() => {
+    if (!previewSelPopover) return
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (previewSelRef.current?.contains(e.target as Node)) return
+      setPreviewSelPopover(null)
+    }
+    window.addEventListener('mousedown', onDocMouseDown)
+    return () => window.removeEventListener('mousedown', onDocMouseDown)
+  }, [previewSelPopover])
+
   // 鼠标松开时读取选区：仅当选区落在「助手消息气泡」或「思考链」内且非空，才在选区上方弹出操作条。
   const handleMessagesMouseUp = useCallback(() => {
     // 延后一帧读取，确保浏览器已提交本次选区。
@@ -2670,6 +2785,35 @@ export default function AgentCodeView() {
       }
     } catch { /* 读取失败，静默跳过 */ }
   }, [])
+
+  // 拖拽文件到输入框：从文件树拖拽文件直接作为附件添加
+  const handleInputDragOver = useCallback((e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('application/x-agent-file-path')) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'copy'
+    }
+  }, [])
+  const handleInputDrop = useCallback((e: React.DragEvent) => {
+    // 多文件拖入支持
+    const filesJson = e.dataTransfer.getData('application/x-agent-files')
+    if (filesJson) {
+      e.preventDefault()
+      try {
+        const files: { path: string; name: string }[] = JSON.parse(filesJson)
+        for (const f of files) handleFilePickerAttach({ name: f.name, path: f.path, isDir: false })
+      } catch { /* 解析失败回退单文件 */ }
+      // 通知文件树清除多选高亮
+      window.dispatchEvent(new CustomEvent('agent-file-drop-done'))
+      return
+    }
+    // 单文件回退
+    const path = e.dataTransfer.getData('application/x-agent-file-path')
+    const name = e.dataTransfer.getData('application/x-agent-file-name')
+    if (!path || !name) return
+    e.preventDefault()
+    handleFilePickerAttach({ name, path, isDir: false })
+    window.dispatchEvent(new CustomEvent('agent-file-drop-done'))
+  }, [handleFilePickerAttach])
 
   const handleFilePickerRemove = useCallback((path: string) => {
     setFilePickerAttached(prev => prev.filter(a => a.path !== path))
@@ -3653,11 +3797,16 @@ export default function AgentCodeView() {
     // 引用胶囊：仅在非 override（非重新生成/重发）时拼入正文，作为引用块；最后接用户自己输入的正文。
     const rawBody = overrideText ?? input
     let outgoing = rawBody
-    if (overrideText === undefined && refChips.length > 0) {
+    if (overrideText === undefined && (refChips.length > 0 || codeSnippets.length > 0)) {
+      const parts: string[] = []
+      // 代码片段胶囊：以 fenced code block + 文件行号标注注入
+      for (const snip of codeSnippets) {
+        const ext = (/\.([a-z0-9]+)$/i.exec(snip.fileName)?.[1] || '').toLowerCase()
+        parts.push(`[代码引用: ${snip.fileName} L${snip.startLine}-L${snip.endLine}]\n\`\`\`${ext}\n${snip.code}\n\`\`\``)
+      }
+      // 引用胶囊
       const toQ = (t: string) => t.split('\n').map(l => `> ${l}`).join('\n')
-      const parts = refChips
-        .filter(c => c.text.trim())
-        .map(c => toQ(c.text.trim()))
+      for (const c of refChips) { if (c.text.trim()) parts.push(toQ(c.text.trim())) }
       if (rawBody.trim()) parts.push(rawBody.trim())
       outgoing = parts.join('\n\n')
     }
@@ -3665,7 +3814,7 @@ export default function AgentCodeView() {
     const hasAttach = attachmentsForSend.length > 0
     if (!apiBaseUrl || !runningCard) {
       // 模型未启动：把建议文本保留在输入框，待启动后手动发送（胶囊已合入文本，清空避免重复）
-      if (text) { setInput(text); setRefChips([]) }
+      if (text) { setInput(text); setRefChips([]); setCodeSnippets([]) }
       return
     }
     if (loading) {
@@ -3674,7 +3823,7 @@ export default function AgentCodeView() {
       setInput('')
       if (textareaRef.current) textareaRef.current.style.height = 'auto'
       setAttachedFiles([])
-      if (overrideText === undefined) { setRefChips([]) }
+      if (overrideText === undefined) { setRefChips([]); setCodeSnippets([]) }
       return
     }
     if (!text && !hasAttach) return
@@ -3709,7 +3858,7 @@ export default function AgentCodeView() {
     // 构建附件（已在上文算好 attachmentsForSend）
     const attachments = attachmentsForSend
     const userHasImages = attachments.some(a => a.type === 'image' && a.dataUrl)
-    if (overrideText === undefined) { setAttachedFiles([]); setRefChips([]) }
+    if (overrideText === undefined) { setAttachedFiles([]); setRefChips([]); setCodeSnippets([]) }
 
     const userMsg: AgentMessage = { id: newMsgId(), role: 'user', content: text, attachments: attachments.length ? attachments : undefined }
     // 仅在该会话尚无任何用户消息时，用首条消息自动生成标题（后续不再覆盖，保留手动重命名）
@@ -3911,12 +4060,14 @@ export default function AgentCodeView() {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // IME 组合输入中（中文/日文输入法选词）不触发发送，避免误发消息
     if (e.nativeEvent.isComposing || e.keyCode === 229) return
-    // 光标在最开头且无选区时按退格：像删文字一样删掉最后一个引用/追问胶囊
-    if ((e.key === 'Backspace' || e.key === 'Delete') && refChips.length > 0 && !input) {
+    // 光标在最开头且无选区时按退格：像删文字一样删掉最后一个引用/代码片段胶囊
+    if ((e.key === 'Backspace' || e.key === 'Delete') && (refChips.length > 0 || codeSnippets.length > 0) && !input) {
       const el = e.currentTarget
       if ((el.selectionStart ?? 0) === 0 && (el.selectionEnd ?? 0) === 0) {
         e.preventDefault()
-        setRefChips(prev => prev.slice(0, -1))
+        // 优先删引用胶囊，引用删完后删代码片段胶囊
+        if (refChips.length > 0) setRefChips(prev => prev.slice(0, -1))
+        else setCodeSnippets(prev => prev.slice(0, -1))
         return
       }
     }
@@ -4028,6 +4179,7 @@ export default function AgentCodeView() {
           <button ref={auditBtnRef} className={`agent-code-topbar-btn ${auditOpen ? 'active' : ''}`} onClick={() => setAuditOpen(v => !v)}><TerminalSquare size={12} /> 审计</button>
           <button ref={debugBtnRef} className={`agent-code-topbar-btn ${debugOpen ? 'active' : ''}`} onClick={() => setDebugOpen(v => !v)}><Bug size={12} /> 调试</button>
           <button className={`agent-code-topbar-btn ${activeTabPath === GIT_DIFF_TAB ? 'active' : ''}`} onClick={openGitDiff}><GitBranch size={12} /> 变更</button>
+          <button className={`agent-code-topbar-btn ${rightPanelMode === 'browser' ? 'active' : ''}`} onClick={() => { setRightPanelMode(m => m === 'browser' ? 'files' : 'browser'); if (!treeOpen) setTreeOpen(true) }}><Globe size={12} /> 浏览器</button>
           <button className="agent-code-topbar-btn" onClick={() => setToolCardsExpanded(!toolCardExpandedDefault)} title={toolCardExpandedDefault ? '折叠所有工具卡片' : '展开所有工具卡片'}>
             {toolCardExpandedDefault ? <ChevronsDownUp size={12} /> : <ChevronsUpDown size={12} />} 工具卡
           </button>
@@ -4580,6 +4732,11 @@ export default function AgentCodeView() {
                     <button className="chat-attach-remove" onClick={() => removeAttachment(att.id)} disabled={loading}><X size={11} /></button>
                   </div>
                 ))}
+                {attachedFiles.length > 1 && (
+                  <button className="chat-attach-clear-all" onClick={() => { setAttachedFiles([]); setFilePickerAttached([]) }} disabled={loading} title="清除全部附件">
+                    <X size={12} />全部清除
+                  </button>
+                )}
               </div>
             )}
             <div ref={modelPickerRef} className={`chat-model-picker${modelPickerOpen ? ' open' : ''}`}>
@@ -4600,7 +4757,7 @@ export default function AgentCodeView() {
               ))}
             </div>
             <div className="chat-input-row">
-              <div className="chat-input-field">
+              <div className="chat-input-field" onDragOver={handleInputDragOver} onDrop={handleInputDrop}>
                 {/* ① 状态栏：并入输入框顶部，无框无底；默认只显示 orb 图标，模型运行时才显示文字 */}
                 {(() => {
                   let kind: 'running' | 'idle' = 'idle'
@@ -4643,6 +4800,13 @@ export default function AgentCodeView() {
                         <span className="agent-ref-chip-tip">{chip.text}</span>
                       </div>
                     ))}
+                    {codeSnippets.map(snip => (
+                      <div className="code-snippet-chip" key={snip.id}>
+                        <Code2 size={12} className="code-snippet-chip-icon" />
+                        <span className="code-snippet-file">{snip.fileName}:L{snip.startLine}-L{snip.endLine}</span>
+                        <button className="agent-ref-chip-remove" onClick={() => removeCodeSnippet(snip.id)} disabled={loading}><X size={10} /></button>
+                      </div>
+                    ))}
                     <textarea ref={textareaRef} className="chat-input" placeholder="" rows={1} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown} />
                   </div>
                 </div>
@@ -4672,16 +4836,39 @@ export default function AgentCodeView() {
               <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={(name) => insertAtCursor(name)} onFilesChanged={onWorkspaceFilesChanged} />
             </div>
             <div className={`agent-code-resize-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startResize('preview')} />
-            <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''}`}>
+            <div className={`agent-browser-wrap ${rightPanelMode === 'browser' ? '' : 'hidden'}`}>
+              <AgentBrowser />
+            </div>
+            <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''} ${rightPanelMode === 'browser' ? 'hidden' : ''}`}>
               <div className="agent-code-preview">
                 <div className="agent-code-preview-header">
                   <div className="agent-code-preview-tabs">
-                    {openTabs.map(t => (
+                    {openTabs.map((t, tabIdx) => (
                       <div
                         key={t.path}
                         className={`agent-code-preview-tab ac-icon-btn ${t.path === activeTabPath ? 'active' : ''}`}
                         onClick={() => setActiveTabPath(t.path)}
                         onContextMenu={(e) => { e.preventDefault(); setTabMenu({ x: e.clientX, y: e.clientY, path: t.path }) }}
+                        onMouseDown={(e) => {
+                          const el = e.currentTarget
+                          el.setAttribute('draggable', 'true')
+                          const cleanup = () => { el.removeAttribute('draggable'); document.removeEventListener('mouseup', cleanup) }
+                          document.addEventListener('mouseup', cleanup)
+                        }}
+                        onDragStart={(e) => { e.dataTransfer.setData('text/x-tab-idx', String(tabIdx)); e.dataTransfer.effectAllowed = 'move' }}
+                        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
+                        onDrop={(e) => {
+                          e.preventDefault()
+                          const fromIdx = Number(e.dataTransfer.getData('text/x-tab-idx'))
+                          if (isNaN(fromIdx) || fromIdx === tabIdx) return
+                          setOpenTabs(prev => {
+                            const next = [...prev]
+                            const [moved] = next.splice(fromIdx, 1)
+                            next.splice(tabIdx, 0, moved)
+                            return next
+                          })
+                        }}
+                        onDragEnd={(e) => { (e.currentTarget as HTMLElement).removeAttribute('draggable') }}
                       >
                         <span className="agent-code-preview-tab-name">{t.name}</span>
                         <button
@@ -4747,13 +4934,25 @@ export default function AgentCodeView() {
                             <AgentMarkdown content={renderPreviewMarkdown(activeTab.content ?? '')} />
                           </div>
                         ) : (
-                          <div className="agent-code-preview-code hljs">
+                          <div className="agent-code-preview-code hljs" onMouseUp={handlePreviewMouseUp}>
                             {previewCodeLines.map((lineHtml, i) => (
                               <div className={`agent-code-preview-line${previewHighlightLine === i + 1 ? ' highlight' : ''}`} id={`agent-preview-line-${i + 1}`} key={i}>
                                 <span className="agent-code-preview-ln">{i + 1}</span>
                                 <span className="agent-code-preview-lc" dangerouslySetInnerHTML={{ __html: lineHtml || ' ' }} />
                               </div>
                             ))}
+                            {previewSelPopover && (
+                              <div
+                                ref={previewSelRef}
+                                className="agent-sel-popover agent-sel-popover--preview"
+                                style={{ left: previewSelPopover.x, top: previewSelPopover.y }}
+                                onMouseDown={e => e.preventDefault()}
+                              >
+                                <button className="agent-sel-btn" onClick={() => addCodeSnippet(previewSelPopover.startLine, previewSelPopover.endLine, previewSelPopover.text)}>
+                                  <Code2 size={13} /> 引用代码 L{previewSelPopover.startLine}-L{previewSelPopover.endLine}
+                                </button>
+                              </div>
+                            )}
                           </div>
                         )}
                 </div>

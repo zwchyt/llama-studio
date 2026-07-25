@@ -165,6 +165,8 @@ const fullApi = {
 	  killBackgroundTask: (taskId: string) => ipcRenderer.invoke('kill-background-task', taskId),
 	  deletePath: (targetPath: string, recursive: boolean) => ipcRenderer.invoke('delete-path', targetPath, recursive),
 	  gitChanges: (dir: string) => ipcRenderer.invoke('git-changes', dir),
+	  gitStageFile: (dir: string, path: string) => ipcRenderer.invoke('git-stage-file', dir, path),
+	  gitUnstageFile: (dir: string, path: string) => ipcRenderer.invoke('git-unstage-file', dir, path),
   setAgentWorkspace: (dir: string) => ipcRenderer.invoke('set-agent-workspace', dir),
 
   // ── Agent Code 任务清单（Todo / Task）──

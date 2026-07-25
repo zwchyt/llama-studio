@@ -2531,8 +2531,35 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
   margin-bottom: 8px;
   width: 100%;
+}
+
+.chat-attach-clear-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s, color .15s, border-color .15s;
+}
+
+.chat-attach-clear-all:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.chat-attach-clear-all:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .chat-tool-calls {

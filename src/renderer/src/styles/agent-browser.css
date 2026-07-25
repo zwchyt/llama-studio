@@ -1,0 +1,158 @@
+/* ── Agent Code 工作台 · 内嵌浏览器 ─────────── */
+
+.agent-browser-wrap {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.agent-browser-wrap.hidden {
+  display: none;
+}
+
+.agent-browser {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  width: var(--agent-preview-width, 480px);
+  min-width: 240px;
+  max-width: 760px;
+  min-height: 0;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/* 顶部工具栏：导航按钮 + URL 栏 */
+.agent-browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.agent-browser-nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background .15s, color .15s;
+}
+
+.agent-browser-nav-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.agent-browser-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* URL 输入栏 */
+.agent-browser-urlbar {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  transition: border-color .15s;
+}
+
+.agent-browser-urlbar:focus-within {
+  border-color: var(--accent);
+}
+
+.agent-browser-urlbar-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.agent-browser-urlbar-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font);
+}
+
+.agent-browser-urlbar-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* 加载指示器 */
+.agent-browser-loading-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  animation: browserPulse 0.8s ease-in-out infinite;
+}
+
+@keyframes browserPulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+/* 页面标题 */
+.agent-browser-title {
+  padding: 3px 12px;
+  font-size: 10px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  background: var(--surface);
+}
+
+/* webview 区域 */
+.agent-browser-webview {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: none;
+}
+
+.agent-browser-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.agent-browser-error {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: #e55;
+  background: color-mix(in srgb, #e55 8%, transparent);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* 拖拽调整宽度时禁用 webview 交互，避免卡顿 */
+body[style*="col-resize"] .agent-browser-webview {
+  pointer-events: none;
+}

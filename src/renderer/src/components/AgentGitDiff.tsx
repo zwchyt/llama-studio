@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, GitBranch, RefreshCw } from 'lucide-react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, GitBranch, Minus, Plus, RefreshCw } from 'lucide-react'
 import { fileMeta } from '../utils/fileIcon'
 
 // Git 变更（只读 diff 查看）：解析 `git diff HEAD` 的 unified 输出并按行渲染。
@@ -20,7 +20,7 @@ export interface GitChangesData {
   error?: string
 }
 
-type DiffRow = { type: 'ctx' | 'add' | 'del'; text: string; oldLine?: number; newLine?: number }
+type DiffRow = { type: 'ctx' | 'add' | 'del'; text: string; oldLine?: number; newLine?: number; highlights?: { start: number; end: number }[] }
 
 const HUNK_RE = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/
 
@@ -58,7 +58,106 @@ const STATUS_LABEL: Record<string, string> = { M: '修改', A: '新增', D: '删
 
 const MAX_ROWS = 40
 
-const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceCollapsed }: { file: GitFileChange; onOpen: (relPath: string, line?: number) => void; forceCollapsed: boolean }) {
+// ── 行内单词级差异高亮 ──
+// 按单词/空白/标点拆分为 token
+function tokenize(text: string): string[] {
+  return text.match(/(\s+|[^\s\w]|\w+)/g) || []
+}
+
+// 简化版 LCS diff：对两个 token 序列求最长公共子序列，返回「变更区间」
+function diffTokens(oldTokens: string[], newTokens: string[]): { oldHl: { start: number; end: number }[]; newHl: { start: number; end: number }[] } {
+  const m = oldTokens.length
+  const n = newTokens.length
+  // DP 求 LCS 长度矩阵
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0))
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = oldTokens[i - 1] === newTokens[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1])
+    }
+  }
+  // 回溯标记哪些 token 属于公共子序列
+  const oldMatch = new Array(m).fill(false)
+  const newMatch = new Array(n).fill(false)
+  let i = m, j = n
+  while (i > 0 && j > 0) {
+    if (oldTokens[i - 1] === newTokens[j - 1]) {
+      oldMatch[i - 1] = true
+      newMatch[j - 1] = true
+      i--; j--
+    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+      i--
+    } else {
+      j--
+    }
+  }
+  // 把非公共 token 转为字符索引区间
+  function toHighlights(tokens: string[], matched: boolean[]): { start: number; end: number }[] {
+    const hl: { start: number; end: number }[] = []
+    let pos = 0
+    for (let k = 0; k < tokens.length; k++) {
+      const len = tokens[k].length
+      if (!matched[k]) {
+        // 合并相邻区间
+        if (hl.length > 0 && hl[hl.length - 1].end === pos) {
+          hl[hl.length - 1].end = pos + len
+        } else {
+          hl.push({ start: pos, end: pos + len })
+        }
+      }
+      pos += len
+    }
+    return hl
+  }
+  return { oldHl: toHighlights(oldTokens, oldMatch), newHl: toHighlights(newTokens, newMatch) }
+}
+
+// 遍历 rows，找连续 del/add 配对，计算行内高亮区间
+function computeInlineHighlights(rows: DiffRow[]): DiffRow[] {
+  const result = rows.map(r => ({ ...r }))
+  let i = 0
+  while (i < result.length) {
+    // 找连续 del 块
+    if (result[i].type !== 'del') { i++; continue }
+    const delStart = i
+    while (i < result.length && result[i].type === 'del') i++
+    const delEnd = i
+    // 紧跟连续 add 块
+    const addStart = i
+    while (i < result.length && result[i].type === 'add') i++
+    const addEnd = i
+    const delCount = delEnd - delStart
+    const addCount = addEnd - addStart
+    // 仅当 del 和 add 行数相等时配对（单行或等量多行修改）
+    if (delCount === 0 || addCount === 0 || delCount !== addCount) continue
+    for (let k = 0; k < delCount; k++) {
+      const oldToks = tokenize(result[delStart + k].text)
+      const newToks = tokenize(result[addStart + k].text)
+      const { oldHl, newHl } = diffTokens(oldToks, newToks)
+      if (oldHl.length > 0) result[delStart + k].highlights = oldHl
+      if (newHl.length > 0) result[addStart + k].highlights = newHl
+    }
+  }
+  return result
+}
+
+// 渲染带高亮的代码文本
+function renderCodeWithHighlights(text: string, highlights?: { start: number; end: number }[]): React.ReactNode {
+  if (!highlights || highlights.length === 0) return text || ' '
+  const parts: React.ReactNode[] = []
+  let lastEnd = 0
+  for (let i = 0; i < highlights.length; i++) {
+    const { start, end } = highlights[i]
+    if (start > lastEnd) parts.push(text.slice(lastEnd, start))
+    parts.push(<span key={i} className="agent-git-hl">{text.slice(start, end)}</span>)
+    lastEnd = end
+  }
+  if (lastEnd < text.length) parts.push(text.slice(lastEnd))
+  return parts.length > 0 ? parts : ' '
+}
+
+const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceCollapsed, onStage, onUnstage }: { file: GitFileChange; onOpen: (relPath: string, line?: number) => void; forceCollapsed: boolean; onStage?: (path: string) => void; onUnstage?: (path: string) => void }) {
   const rows = useMemo(() => (file.untracked ? contentToRows(file.content || '') : parseUnifiedDiff(file.diff)), [file])
   const [collapsed, setCollapsed] = useState(forceCollapsed)
   // 顶部「全部展开/收起」变化时同步各文件的折叠态；单文件手动折叠不受影响（forceCollapsed 未变）。
@@ -67,6 +166,8 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
   const added = rows.filter(r => r.type === 'add').length
   const removed = rows.filter(r => r.type === 'del').length
   const visible = showAll ? rows : rows.slice(0, MAX_ROWS)
+  // 对可见行计算行内单词级高亮（仅对展示的行计算，避免大文件全量计算）
+  const highlighted = useMemo(() => computeInlineHighlights(visible), [visible])
   const hidden = rows.length - visible.length
   const dir = dirName(file.path)
   const { Icon: FileIcon, color: fileColor } = fileMeta(file.path)
@@ -100,6 +201,16 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
             {copied ? <Check size={12} /> : <Copy size={12} />}
           </button>
         )}
+        {!file.staged && onStage && (
+          <button className="agent-git-copy agent-git-stage-add" title="暂存此文件" onClick={(e) => { e.stopPropagation(); onStage(file.path) }}>
+            <Plus size={12} />
+          </button>
+        )}
+        {file.staged && onUnstage && (
+          <button className="agent-git-copy agent-git-stage-remove" title="取消暂存" onClick={(e) => { e.stopPropagation(); onUnstage(file.path) }}>
+            <Minus size={12} />
+          </button>
+        )}
       </div>
       {!collapsed && (
         file.binary ? (
@@ -108,7 +219,7 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
           <div className="agent-git-note">无文本差异（可能仅为模式/重命名变更）。</div>
         ) : (
           <div className="agent-git-diff-body">
-            {visible.map((r, i) => (
+            {highlighted.map((r, i) => (
               <div
                 className={`agent-git-row ${r.type}`}
                 key={i}
@@ -118,7 +229,7 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
                 <span className="agent-git-ln">{r.oldLine ?? ''}</span>
                 <span className="agent-git-ln">{r.newLine ?? ''}</span>
                 <span className="agent-git-sign">{r.type === 'add' ? '+' : r.type === 'del' ? '−' : ' '}</span>
-                <span className="agent-git-code">{r.text || ' '}</span>
+                <span className="agent-git-code">{renderCodeWithHighlights(r.text, r.highlights)}</span>
               </div>
             ))}
             {hidden > 0 && (
@@ -148,6 +259,15 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
     const root = workspaceDir.replace(/[\\/]+$/, '')
     onOpenFile(`${root}/${relPath}`, line)
   }
+  // 暂存/取消暂存操作
+  const handleStage = useCallback(async (path: string) => {
+    const res = await window.api.gitStageFile(workspaceDir, path)
+    if (res.success) onRefresh()
+  }, [workspaceDir, onRefresh])
+  const handleUnstage = useCallback(async (path: string) => {
+    const res = await window.api.gitUnstageFile(workspaceDir, path)
+    if (res.success) onRefresh()
+  }, [workspaceDir, onRefresh])
   const staged = data?.staged ?? []
   const unstaged = data?.unstaged ?? []
   const total = staged.length + unstaged.length
@@ -171,7 +291,7 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
           <span className="agent-git-section-title">{title}</span>
           <span className="agent-git-section-count">{list.length}</span>
         </div>
-        {!collapsed && list.map(f => <GitFileBlock key={`${key}-${f.path}`} file={f} onOpen={openFile} forceCollapsed={!allExpanded} />)}
+        {!collapsed && list.map(f => <GitFileBlock key={`${key}-${f.path}`} file={f} onOpen={openFile} forceCollapsed={!allExpanded} onStage={handleStage} onUnstage={handleUnstage} />)}
       </div>
     )
   }

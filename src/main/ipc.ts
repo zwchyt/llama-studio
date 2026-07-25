@@ -4203,13 +4203,18 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('expand-file-tree', async (_e, dir: string, limit = 500): Promise<{ success: boolean; children?: { name: string; path: string; isDir: boolean }[]; truncated?: boolean; total?: number; error?: string }> => {
+  ipcMain.handle('expand-file-tree', async (_e, dir: string, limit = 500): Promise<{ success: boolean; children?: { name: string; path: string; isDir: boolean; size?: number }[]; truncated?: boolean; total?: number; error?: string }> => {
     try {
       if (!existsSync(dir)) return { success: false, error: '目录不存在' }
       const entries = readdirSync(dir, { withFileTypes: true })
       const all = entries
         .filter(e => e.isDirectory() || e.isFile())
-        .map(e => ({ name: e.name, path: join(dir, e.name), isDir: e.isDirectory() }))
+        .map(e => {
+          const isDir = e.isDirectory()
+          let size: number | undefined
+          if (!isDir) { try { size = statSync(join(dir, e.name)).size } catch { /* ignore */ } }
+          return { name: e.name, path: join(dir, e.name), isDir, size }
+        })
         .sort((a, b) => {
           if (a.isDir && !b.isDir) return -1
           if (!a.isDir && b.isDir) return 1
@@ -5090,6 +5095,29 @@ export function registerIpcHandlers(): void {
       return { isRepo: true, staged, unstaged }
     } catch (e) {
       return { isRepo: false, staged: [], unstaged: [], error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  // ── Agent Code：Git 暂存/取消暂存（单文件）────────────
+  ipcMain.handle('git-stage-file', async (_e, dir: string, filePath: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const cwd = resolveAgentPath(dir || '')
+      if (!cwd || !existsSync(cwd)) return { success: false, error: '目录不存在' }
+      const r = await runGit(['add', '--', filePath], cwd)
+      return { success: r.ok, error: r.ok ? undefined : r.stderr }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('git-unstage-file', async (_e, dir: string, filePath: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const cwd = resolveAgentPath(dir || '')
+      if (!cwd || !existsSync(cwd)) return { success: false, error: '目录不存在' }
+      const r = await runGit(['restore', '--staged', '--', filePath], cwd)
+      return { success: r.ok, error: r.ok ? undefined : r.stderr }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
   })
 }

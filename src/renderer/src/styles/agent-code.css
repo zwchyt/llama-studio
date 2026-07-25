@@ -682,6 +682,10 @@
   border-left: none;
 }
 
+.agent-code-preview-group.hidden {
+  display: none;
+}
+
 .agent-code-sidebar-header {
   display: flex;
   align-items: center;
@@ -2124,6 +2128,12 @@
   background: var(--surface-hover);
   border-color: var(--border-strong);
   color: var(--text);
+}
+
+.agent-code-preview-tab:drag,
+.agent-code-preview-tab[draggable="true"] {
+  opacity: 0.6;
+  cursor: grabbing;
 }
 
 .agent-code-preview-tab-name {
@@ -3874,6 +3884,77 @@
   transform: translateY(0);
 }
 
+/* ── 代码片段胶囊（源码预览引用） ── */
+.code-snippet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 260px;
+  padding: 3px 6px 3px 7px;
+  margin: 2px 4px 2px 0;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.code-snippet-chip-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.code-snippet-file {
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.code-snippet-sep {
+  width: 1px;
+  height: 12px;
+  background: var(--border-strong);
+  flex-shrink: 0;
+}
+
+.code-snippet-preview {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* 源码预览浮动按钮：使用主题色而非黑色背景 */
+.agent-sel-popover--preview {
+  background: var(--bg);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+
+.agent-sel-popover--preview .agent-sel-btn {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.agent-sel-popover--preview .agent-sel-btn:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+
+/* 源码预览选区高亮色 */
+.agent-code-preview-code ::selection,
+.agent-code-preview-code::selection {
+  background: var(--agent-selection-bg, rgba(188, 201, 184, 0.22));
+}
+
+.agent-code-preview-code ::-moz-selection,
+.agent-code-preview-code::-moz-selection {
+  background: var(--agent-selection-bg, rgba(188, 201, 184, 0.22));
+}
+
 .agent-code-view .chat-send-btn.btn {
   position: static;
   flex: none;
@@ -4258,6 +4339,14 @@
   color: var(--text);
 }
 
+.agent-git-stage-add:hover {
+  color: var(--success, #22c55e);
+}
+
+.agent-git-stage-remove:hover {
+  color: var(--danger, #ef4444);
+}
+
 .agent-git-spacer {
   flex: 1;
 }
@@ -4495,6 +4584,7 @@
   display: flex;
   white-space: pre;
   cursor: pointer;
+  min-width: fit-content;
 }
 
 .agent-git-row:hover {
@@ -4507,6 +4597,17 @@
 
 .agent-git-row.del {
   background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent);
+}
+
+/* 行内单词级差异高亮：变更部分加深背景色 */
+.agent-git-row.add .agent-git-hl {
+  background: color-mix(in srgb, var(--success, #22c55e) 28%, transparent);
+  border-radius: 2px;
+}
+
+.agent-git-row.del .agent-git-hl {
+  background: color-mix(in srgb, var(--danger, #ef4444) 28%, transparent);
+  border-radius: 2px;
 }
 
 .agent-git-ln {
@@ -4992,6 +5093,11 @@
   transition: background .15s ease, transform .12s ease;
 }
 
+/* 可拖拽文件节点：拖拽中显示抓取光标 */
+.file-tree-node[draggable="true"] {
+  cursor: grabbing;
+}
+
 .file-tree-node--sub:hover {
   background: var(--surface-hover);
   transform: translateX(4px);
@@ -5000,6 +5106,11 @@
 .file-tree-node--pinned {
   background: var(--surface-hover);
   transform: translateX(4px);
+}
+
+.file-tree-node--selected {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-right: 2px solid var(--accent);
 }
 
 .file-tree-children {
@@ -5035,6 +5146,16 @@
 .file-tree-name {
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.file-tree-size {
+  margin-left: auto;
+  padding-left: 8px;
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.7;
 }
 
 .file-tree-node-error .file-tree-name {
@@ -5101,6 +5222,30 @@
 
 .file-tree-ctx-item:hover {
   background: var(--surface-hover);
+}
+
+/* 图片文件悬停缩略图：显示在文件节点正上方 */
+.file-tree-img-tooltip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 200px;
+  max-height: 160px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .28);
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 8px));
+  animation: agentSelPop 120ms ease;
+}
+
+.file-tree-img-tooltip img {
+  display: block;
+  max-width: 100%;
+  max-height: 148px;
+  border-radius: 4px;
+  object-fit: contain;
 }
 
 /* ── 会话内消息搜索栏（Ctrl/Cmd+F）────────────── */

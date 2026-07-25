@@ -5,10 +5,20 @@ import {
 import { fileMeta } from '../utils/fileIcon'
 import { notify } from '../store/notificationStore'
 
+const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico', 'avif'])
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
 interface FileNode {
   name: string
   path: string
   isDir: boolean
+  size?: number
   children?: FileNode[]
   loaded?: boolean
   truncated?: boolean
@@ -28,9 +38,15 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [loadingSet, setLoadingSet] = useState<Set<string>>(new Set())
   const [errorSet, setErrorSet] = useState<Set<string>>(new Set())
+  // 多文件选中（Ctrl+Click），用于拖拽多文件一次性拖入输入框
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
   // 右键菜单：文件与文件夹节点均可触发，{ x, y } 为屏幕坐标，name/path 为当前节点
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; name: string; path: string } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  // 图片悬停缩略图
+  const [imgTooltip, setImgTooltip] = useState<{ x: number; y: number; dataUrl: string } | null>(null)
+  const imgHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const imgHoverPath = useRef<string | null>(null)
 
   const expandedRef = useRef(expanded)
   expandedRef.current = expanded
@@ -39,7 +55,7 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
   const fetchChildren = useCallback(async (path: string): Promise<{ children: FileNode[]; truncated: boolean; total: number } | { error: string }> => {
     const res = await window.api.expandFileTree(path)
     if (res.success && res.children) {
-      const children: FileNode[] = res.children.map(c => ({ name: c.name, path: c.path, isDir: c.isDir }))
+      const children: FileNode[] = res.children.map(c => ({ name: c.name, path: c.path, isDir: c.isDir, size: c.size }))
       return { children, truncated: !!res.truncated, total: res.total ?? children.length }
     }
     return { error: res.error || '展开目录失败' }
@@ -51,9 +67,20 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
     setTree(prev => prev ? updateNodeInTree(prev, path, { children: r.children, loaded: true, truncated: r.truncated, total: r.total }) : prev)
   }, [fetchChildren])
 
-  const toggleExpand = useCallback(async (node: FileNode) => {
+  const toggleExpand = useCallback(async (node: FileNode, e?: React.MouseEvent) => {
     if (!node.isDir) {
-      // 文件：仅触发预览，不再把路径发到输入框
+      // Ctrl/Cmd+Click：切换多选（不触发预览）
+      if (e && (e.ctrlKey || e.metaKey)) {
+        setSelectedFiles(prev => {
+          const next = new Set(prev)
+          if (next.has(node.path)) next.delete(node.path)
+          else next.add(node.path)
+          return next
+        })
+        return
+      }
+      // 文件：仅触发预览，清除多选
+      setSelectedFiles(new Set())
       onPreviewFile?.(node.path)
       return
     }
@@ -126,6 +153,13 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
     }
   }, [workspaceDir, refreshDir, onFilesChanged])
 
+  // 拖入输入框完成后清除多选高亮
+  useEffect(() => {
+    const clear = () => setSelectedFiles(new Set())
+    window.addEventListener('agent-file-drop-done', clear)
+    return () => window.removeEventListener('agent-file-drop-done', clear)
+  }, [])
+
   // 复制文件完整路径到剪贴板（优先 navigator.clipboard，失败回退 execCommand）
   const copyPath = useCallback(async (path: string) => {
     try {
@@ -171,19 +205,62 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
     const isExpanded = expanded.has(node.path)
     const isLoading = loadingSet.has(node.path)
     const isError = errorSet.has(node.path)
+    // 图片文件检测（用于悬停缩略图）
+    const ext = (!node.isDir ? (/\.([a-z0-9]+)$/i.exec(node.name)?.[1] || '').toLowerCase() : '')
+    const isImage = IMG_EXT.has(ext)
     // 文件 / 文件夹节点右键：弹出自定义菜单（目录同样支持，菜单项对两者均适用）
     const onNodeContextMenu = (e: React.MouseEvent) => {
       e.preventDefault()
       e.stopPropagation()
       setCtxMenu({ x: e.clientX, y: e.clientY, name: node.name, path: node.path })
     }
+    const onNodeMouseEnter = isImage ? (e: React.MouseEvent) => {
+      const rect = e.currentTarget.getBoundingClientRect()
+      imgHoverPath.current = node.path
+      if (imgHoverTimer.current) clearTimeout(imgHoverTimer.current)
+      imgHoverTimer.current = setTimeout(async () => {
+        if (imgHoverPath.current !== node.path) return
+        const r = await window.api.readFileBase64(node.path)
+        if (r.success && r.dataUrl && imgHoverPath.current === node.path) {
+          setImgTooltip({ x: rect.left + rect.width / 2, y: rect.top, dataUrl: r.dataUrl })
+        }
+      }, 350)
+    } : undefined
+    const onNodeMouseLeave = isImage ? () => {
+      imgHoverPath.current = null
+      if (imgHoverTimer.current) { clearTimeout(imgHoverTimer.current); imgHoverTimer.current = null }
+      setImgTooltip(null)
+    } : undefined
     return (
       <div key={node.path}>
         <div
-          className={`file-tree-node ${isError ? 'file-tree-node-error' : ''} ${level > 0 ? 'file-tree-node--sub' : ''} ${ctxMenu?.path === node.path ? 'file-tree-node--pinned' : ''}`}
+          className={`file-tree-node ${isError ? 'file-tree-node-error' : ''} ${level > 0 ? 'file-tree-node--sub' : ''} ${ctxMenu?.path === node.path ? 'file-tree-node--pinned' : ''} ${!node.isDir && selectedFiles.has(node.path) ? 'file-tree-node--selected' : ''}`}
           style={{ paddingLeft: level * 16 }}
-          onClick={() => toggleExpand(node)}
+          onClick={(e) => toggleExpand(node, e)}
           onContextMenu={onNodeContextMenu}
+          onMouseDown={!node.isDir ? (e) => {
+            // 仅按下时启用 draggable，避免悬停时浏览器强制显示拓拽光标
+            const el = e.currentTarget
+            el.setAttribute('draggable', 'true')
+            const cleanup = () => { el.removeAttribute('draggable'); document.removeEventListener('mouseup', cleanup) }
+            document.addEventListener('mouseup', cleanup)
+          } : undefined}
+          onDragStart={!node.isDir ? (e) => {
+            // 多文件拖拽：若当前文件在多选中，拖动所有选中文件；否则只拖当前一个
+            const paths = selectedFiles.has(node.path) && selectedFiles.size > 1
+              ? Array.from(selectedFiles)
+              : [node.path]
+            const names = paths.map(p => p.replace(/\\/g, '/').split('/').pop() || p)
+            e.dataTransfer.setData('application/x-agent-file-path', paths[0])
+            e.dataTransfer.setData('application/x-agent-file-name', names[0])
+            e.dataTransfer.setData('application/x-agent-files', JSON.stringify(paths.map((p, i) => ({ path: p, name: names[i] }))))
+            e.dataTransfer.effectAllowed = 'copy'
+          } : undefined}
+          onDragEnd={!node.isDir ? (e) => {
+            (e.currentTarget as HTMLElement).removeAttribute('draggable')
+          } : undefined}
+          onMouseEnter={onNodeMouseEnter}
+          onMouseLeave={onNodeMouseLeave}
         >
           <span className="file-tree-arrow">
             {node.isDir ? (
@@ -197,6 +274,7 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
               : (() => { const { Icon, color } = fileMeta(node.name); return <Icon size={14} style={{ color }} /> })()}
           </span>
           <span className="file-tree-name">{node.name}</span>
+          {!node.isDir && node.size != null && <span className="file-tree-size">{formatFileSize(node.size)}</span>}
           {isError && <AlertCircle size={12} className="file-tree-error-icon" />}
         </div>
         {isError && (
@@ -316,6 +394,11 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
           </div>
         )
       })()}
+      {imgTooltip && (
+        <div className="file-tree-img-tooltip" style={{ left: imgTooltip.x, top: imgTooltip.y }}>
+          <img src={imgTooltip.dataUrl} alt="preview" />
+        </div>
+      )}
     </div>
   )
 }

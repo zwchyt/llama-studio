@@ -157,7 +157,7 @@ interface LlamaCppApi {
   removeBenchmarkErrorListener: () => void
   // ── Agent Code 文件树 ──
   buildFileTree: (dir: string, maxDepth?: number) => Promise<{ success: boolean; tree?: { name: string; path: string; isDir: boolean; children?: any[] }; error?: string }>
-  expandFileTree: (dir: string, limit?: number) => Promise<{ success: boolean; children?: { name: string; path: string; isDir: boolean }[]; truncated?: boolean; total?: number; error?: string }>
+  expandFileTree: (dir: string, limit?: number) => Promise<{ success: boolean; children?: { name: string; path: string; isDir: boolean; size?: number }[]; truncated?: boolean; total?: number; error?: string }>
   listFlatFiles: (dir: string, opts?: { maxDepth?: number; maxFiles?: number }) => Promise<{ success: boolean; files?: { name: string; path: string; relPath: string }[]; truncated?: boolean; total?: number; error?: string }>
   // ── Agent Code 文件树自动刷新（目录监听）──
   startAgentFileWatch: (dir: string) => Promise<{ success: boolean; error?: string }>
@@ -191,6 +191,8 @@ interface LlamaCppApi {
 		  // ── Agent Code 文件删除 ──
 		  deletePath: (targetPath: string, recursive: boolean) => Promise<{ success: boolean; message?: string; error?: string }>
 		  gitChanges: (dir: string) => Promise<{ isRepo: boolean; staged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>; unstaged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>; error?: string }>
+		  gitStageFile: (dir: string, path: string) => Promise<{ success: boolean; error?: string }>
+		  gitUnstageFile: (dir: string, path: string) => Promise<{ success: boolean; error?: string }>
 		  setAgentWorkspace: (dir: string) => Promise<{ success: boolean }>
 		  // ── Agent Code 任务清单（Todo / Task）──
 		  agentTodoWrite: (sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }) => Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }>
