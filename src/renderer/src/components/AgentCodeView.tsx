@@ -1,3 +1,6 @@
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║ 区域：导入声明                                                              ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { flushSync } from 'react-dom'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
@@ -54,6 +57,10 @@ import AgentMessageSearch from './AgentMessageSearch'
 import type { AgentMessage, AgentSession, AgentProject, Attachment, AgentTask, TodoUpdate, AgentSegment, CardState } from '../../../shared/types'
 import '../styles/agent-code.css'
 
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║ 区域：基础工具函数（ID生成、路径处理、工具预览摘要）                         ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
 // Git 变更面板以「特殊预览标签」形式复用预览区；此哨兵路径标识该标签。
 const GIT_DIFF_TAB = '__agent_git_changes__'
 
@@ -62,8 +69,6 @@ type ApiMessage =
   | { role: 'assistant'; content: string | null; tool_calls: { id: string; type: 'function'; function: { name: string; arguments: string } }[] }
   | { role: 'tool'; tool_call_id: string; content: string }
 
-let idCounter = 0
-function newId(prefix = 'x') { return `${prefix}-${++idCounter}` }
 function newMsgId() { return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }
 function uniqueId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -87,11 +92,24 @@ function getToolPreview(input: unknown): string {
   return typeof first === 'string' ? first.slice(0, 120) : ''
 }
 
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║ 区域：Diff 计算与展示组件（分栏对比、行号渲染）                              ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
 type DiffRow = { type: 'equal' | 'del' | 'ins' | 'replace'; left: string | null; right: string | null; leftNum: number | null; rightNum: number | null }
 function computeSplitDiff(oldText: string, newText: string): DiffRow[] {
   const a = oldText.split('\n')
   const b = newText.split('\n')
   const n = a.length, m = b.length
+  // 大文件保护：LCS DP 表为 O(n×m)，超过阈值时直接退化为「全删+全增」展示，
+  // 避免内存溢出或长时间卡顿渲染线程。阈值 500k ≈ 700×700 行。
+  const MAX_DIFF_CELLS = 500_000
+  if (n * m > MAX_DIFF_CELLS) {
+    const rows: DiffRow[] = []
+    let lnum = 1, rnum = 1
+    for (let i = 0; i < n; i++) rows.push({ type: 'del', left: a[i]!, right: null, leftNum: lnum++, rightNum: null })
+    for (let j = 0; j < m; j++) rows.push({ type: 'ins', left: null, right: b[j]!, leftNum: null, rightNum: rnum++ })
+    return rows
+  }
   // LCS 动态规划
   const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
   for (let i = n - 1; i >= 0; i--) {
@@ -184,6 +202,9 @@ function LinedPre({ text, maxHeight }: { text: string; maxHeight?: number }) {
   )
 }
 
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║ 区域：Markdown 渲染组件（链接、代码块、公式、安全清洗）                      ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
 function MarkdownPre({ children }: { children?: React.ReactNode }) {
   return <>{children}</>
 }
@@ -233,7 +254,7 @@ function remarkLinkifyUrls() {
     if (Array.isArray(node.children)) {
       for (let i = 0; i < node.children.length; i++) {
         const child = node.children[i]
-        if (child && child.type === 'text' && typeof child.value === 'string' && URL_RE.test(child.value)) {
+        if (child && child.type === 'text' && typeof child.value === 'string' && (URL_RE.lastIndex = 0, URL_RE.test(child.value))) {
           URL_RE.lastIndex = 0
           node.children.splice(i, 1, ...splitText(child.value))
           i += splitText(child.value).length - 1
@@ -303,9 +324,9 @@ const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { content: 
   )
 })
 
-function preprocessReadmeHtml(src: string): string {
-  return src ?? ''
-}
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║ 区域：文件预览辅助（HTML预处理、数学公式、源码高亮、行拆分）                  ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
 
 // HTML 预览数学公式预渲染：扫描 HTML 内容中的数学公式，用 KaTeX 渲染为 HTML。
 // 支持分隔符：$$...$$、$...$、\\[...\\]、\\(...\\)
@@ -339,10 +360,11 @@ function renderMathInHtml(html: string): string {
 }
 
 const pathDir = (p: string) => p.replace(/[\\/][^\\/]*$/, '').replace(/\\/g, '/')
-function renderPreviewMarkdown(content: string): string {
-  return preprocessReadmeHtml(content ?? '')
-}
 
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║ 区域：工具元数据与工具调用解析（工具名映射、文本解析兆底）                      ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
 
 // ── 工具元信息：中文名 / 描述 / 图标（用于工具调用块展示）────
 // 工具分类/展示/权限元数据已集中到 utils/tools.ts 的 TOOL_METAS（单一事实来源）。
@@ -476,6 +498,10 @@ function parseTextToolCalls(text: string): { calls: { id: string; function: { na
   return { calls, cleanedText: cleaned.trim() }
 }
 
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║ 区域：系统提示词构建（项目文档发现、记忆注入、工具说明拼装）                  ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
 // 发现项目说明文件（README / AGENTS.md / CLAUDE.md 等），并将其内容注入系统提示，
 // 让模型开箱即知项目类型/约定/架构概览（参考 grok-build 的 AGENTS.md 逐级发现）。
 // 仅在 workspaceDir 非空时尝试，失败/无文件时不阻断。
@@ -593,6 +619,9 @@ async function backupBeforeTool(args: Record<string, unknown>): Promise<{ path: 
   return null
 }
 
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║ 区域：工具结果截断与格式化（字符上限、截断策略、耗时格式）                    ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
 const TOOL_RESULT_LIMIT = 6000
 // 单条工具结果的硬上限（字符）：无论上下文多大都不超过此值。
 // 关键护栏：32k 这类小上下文模型上，toolResultCharLimit 原随预算放大到 ~68k 字符，
@@ -697,6 +726,9 @@ function resolveWorkspacePath(p: string): string {
   return root.replace(/[\\/]+$/, '') + '/' + p.replace(/^[\\/]+/, '')
 }
 
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║ 区域：上下文管理（Token估算、预算计算、轮次裁剪、配对修复）                  ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
 const AGENT_CTX_DEFAULT = agentConfig.ctxDefault    // 取不到真实 n_ctx 时的兜底上下文大小
 const AGENT_MAX_OUTPUT = agentConfig.maxOutput     // 与 chatStream 实际 max_tokens 一致
 const AGENT_CTX_SAFETY = agentConfig.ctxSafety      // 预留安全余量（token）
@@ -833,6 +865,9 @@ function repairDanglingToolCalls(msgs: ApiMessage[]): ApiMessage[] {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║ 区域：上下文摘要压缩（分轮序列化、摘要生成、复杂任务检测、注入检测）          ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
 // 上下文摘要/压缩：当会话历史逼近预算高水位时，把最早若干轮压缩为摘要，替代直接丢弃。
 // ═══════════════════════════════════════════════════════════════════════════
 const CONDENSE_TRIGGER_RATIO = 0.8   // 送入 token 超过 ctxBudget*RATIO 时触发压缩
@@ -908,6 +943,9 @@ function wrapUntrustedFileContent(name: string, content: string): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║ 区域：模块级 UI 子组件（ThinkBlock、审计、调试、流式渲染、工具卡片）          ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
 // 以下展示组件提升到「模块作用域」，保证 React.memo 身份稳定。
 // 流式期间 AgentCodeView 整页会以 ~100ms 频率重渲染；若这些组件定义在组件内部，
 // 每次重渲染都会拿到新的函数身份 → React 视为不同组件而重新挂载，导致：
@@ -1526,6 +1564,46 @@ const ToolCallGroup = React.memo(function ToolCallGroup({ toolCalls, onPreviewFi
   )
 })
 
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║ 区域：主组件 AgentCodeView（状态、会话管理、Agent 循环、JSX 渲染）         ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// 通用弹窗关闭 hook：点击弹窗/触发按钮外部 或 Escape 键时关闭。
+// btnRef: 触发按钮 ref（点它不关闭）；popSelector: 弹窗 DOM 选择器（点内部不关闭）。
+function usePopoverDismiss(
+  open: boolean,
+  setOpen: (v: boolean) => void,
+  btnRef: React.RefObject<HTMLElement | null>,
+  popSelector: string
+) {
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e.type === 'keydown' && (e as KeyboardEvent).key === 'Escape') { setOpen(false); return }
+      const target = e.target as Node
+      if (btnRef.current?.contains(target)) return
+      const pop = document.querySelector(popSelector)
+      if (pop?.contains(target)) return
+      setOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', close)
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close) }
+  }, [open, setOpen, btnRef, popSelector])
+}
+
+// 静态扩展名集合（提升到模块作用域避免每次渲染重建）
+const CODE_EXT = new Set([
+  'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'cc', 'hh',
+  'cs', 'go', 'rs', 'rb', 'php', 'swift', 'kt', 'kts', 'scala', 'html', 'htm',
+  'css', 'scss', 'less', 'sass', 'json', 'jsonc', 'xml', 'yaml', 'yml', 'toml',
+  'ini', 'cfg', 'conf', 'env', 'sh', 'bash', 'zsh', 'bat', 'ps1', 'cmd', 'sql',
+  'r', 'R', 'lua', 'pl', 'pm', 'dart', 'vue', 'svelte', 'gradle', 'makefile',
+  'lock', 'log', 'csv', 'tsv', 'diff', 'patch',
+])
+const MD_EXT = new Set(['md', 'markdown', 'mdx', 'mkd', 'mdwn', 'mkdn', 'text', 'txt', 'rst', 'adoc', 'asciidoc', 'ronn'])
+const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico', 'avif'])
+
 export default function AgentCodeView() {
   const cards = useStore(s => s.cards)
   const runningCard = cards.find(c => c.status === 'running')
@@ -1588,17 +1666,7 @@ export default function AgentCodeView() {
   const openTabsRef = useRef<PreviewTab[]>([])
   useEffect(() => { openTabsRef.current = openTabs }, [openTabs])
   const activeTab = openTabs.find(t => t.path === activeTabPath) || null
-  const CODE_EXT = new Set([
-    'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'cc', 'hh',
-    'cs', 'go', 'rs', 'rb', 'php', 'swift', 'kt', 'kts', 'scala', 'html', 'htm',
-    'css', 'scss', 'less', 'sass', 'json', 'jsonc', 'xml', 'yaml', 'yml', 'toml',
-    'ini', 'cfg', 'conf', 'env', 'sh', 'bash', 'zsh', 'bat', 'ps1', 'cmd', 'sql',
-    'r', 'R', 'lua', 'pl', 'pm', 'dart', 'vue', 'svelte', 'gradle', 'makefile',
-    'lock', 'log', 'csv', 'tsv', 'diff', 'patch',
-  ])
-  const MD_EXT = new Set(['md', 'markdown', 'mdx', 'mkd', 'mdwn', 'mkdn', 'text', 'txt', 'rst', 'adoc', 'asciidoc', 'ronn'])
-  const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico', 'avif'])
-  const isPreviewMarkdown = (() => {
+  const isPreviewMarkdown = useMemo(() => {
     const p = activeTabPath || ''
     const extMatch = /\.([a-z0-9]+)$/i.exec(p)
     const ext = extMatch ? extMatch[1].toLowerCase() : ''
@@ -1611,13 +1679,13 @@ export default function AgentCodeView() {
 
     const base = dirName(p).toLowerCase()
     return /^(readme|changelog|license|licence|contributing|notice|authors|code_of_conduct|security|todo|notes?)$/.test(base)
-  })()
+  }, [activeTabPath, activeTab?.content])
 
   // 是否为 HTML 文件（可切换“渲染预览 / 源码”）。
-  const isPreviewHtml = (() => {
+  const isPreviewHtml = useMemo(() => {
     const ext = (/\.([a-z0-9]+)$/i.exec(activeTabPath || '')?.[1] || '').toLowerCase()
     return ext === 'html' || ext === 'htm'
-  })()
+  }, [activeTabPath])
 
   // 源码预览逐行高亮 HTML（整文高亮一次后拆行，随内容/路径变化重算）。
   const previewCodeLines = useMemo(
@@ -1749,6 +1817,7 @@ export default function AgentCodeView() {
     return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey) }
   }, [tabMenu])
 
+  // ── 区域：预览面板拖拽与侧边栏宽度管理 ──
   // 预览面板宽度：拖拽预览左边框时调整，文件树宽度固定不动
   const PREVIEW_MIN = 240, PREVIEW_MAX = 760
   const [previewWidth, setPreviewWidth] = useState(PREVIEW_MIN)
@@ -1845,6 +1914,18 @@ export default function AgentCodeView() {
     window.addEventListener('pointermove', onSidebarDragMove)
     window.addEventListener('pointerup', onSidebarDragEnd)
   }
+
+  // 拖拽监听器卸载安全网：若组件在拖拽过程中卸载，确保清理残留的 window 监听器和 body 样式。
+  useEffect(() => {
+    return () => {
+      window.removeEventListener('pointermove', onDragMove)
+      window.removeEventListener('pointerup', onDragEnd)
+      window.removeEventListener('pointermove', onSidebarDragMove)
+      window.removeEventListener('pointerup', onSidebarDragEnd)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+  }, [onDragMove, onDragEnd, onSidebarDragMove, onSidebarDragEnd])
 
   // Persist to store on every change（跳过纯占位项目，防止干扰 seededRef 逻辑）
   useEffect(() => {
@@ -2005,80 +2086,10 @@ export default function AgentCodeView() {
     return () => document.removeEventListener('pointerdown', onDown)
   }, [modelPickerOpen])
 
-  useEffect(() => {
-    if (!contextModalOpen) return
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e.type === 'keydown' && (e as KeyboardEvent).key === 'Escape') {
-        setContextModalOpen(false)
-        return
-      }
-      const target = e.target as Node
-      if (ctxInlineRef.current?.contains(target)) return
-      const pop = document.querySelector('.agent-card-ctx')
-      if (pop?.contains(target)) return
-      setContextModalOpen(false)
-    }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', close)
-    return () => {
-      document.removeEventListener('pointerdown', close)
-      document.removeEventListener('keydown', close)
-    }
-  }, [contextModalOpen])
-
-  useEffect(() => {
-    if (!condenseOpen) return
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e.type === 'keydown' && (e as KeyboardEvent).key === 'Escape') { setCondenseOpen(false); return }
-      const target = e.target as Node
-      if (condenseBtnRef.current?.contains(target)) return
-      const pop = document.querySelector('.agent-card-condense')
-      if (pop?.contains(target)) return
-      setCondenseOpen(false)
-    }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', close)
-    return () => {
-      document.removeEventListener('pointerdown', close)
-      document.removeEventListener('keydown', close)
-    }
-  }, [condenseOpen])
-
-  useEffect(() => {
-    if (!auditOpen) return
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e.type === 'keydown' && (e as KeyboardEvent).key === 'Escape') { setAuditOpen(false); return }
-      const target = e.target as Node
-      if (auditBtnRef.current?.contains(target)) return
-      const pop = document.querySelector('.agent-card-audit')
-      if (pop?.contains(target)) return
-      setAuditOpen(false)
-    }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', close)
-    return () => {
-      document.removeEventListener('pointerdown', close)
-      document.removeEventListener('keydown', close)
-    }
-  }, [auditOpen])
-
-  useEffect(() => {
-    if (!debugOpen) return
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e.type === 'keydown' && (e as KeyboardEvent).key === 'Escape') { setDebugOpen(false); return }
-      const target = e.target as Node
-      if (debugBtnRef.current?.contains(target)) return
-      const pop = document.querySelector('.agent-card-debug')
-      if (pop?.contains(target)) return
-      setDebugOpen(false)
-    }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', close)
-    return () => {
-      document.removeEventListener('pointerdown', close)
-      document.removeEventListener('keydown', close)
-    }
-  }, [debugOpen])
+  usePopoverDismiss(contextModalOpen, setContextModalOpen, ctxInlineRef, '.agent-card-ctx')
+  usePopoverDismiss(condenseOpen, setCondenseOpen, condenseBtnRef, '.agent-card-condense')
+  usePopoverDismiss(auditOpen, setAuditOpen, auditBtnRef, '.agent-card-audit')
+  usePopoverDismiss(debugOpen, setDebugOpen, debugBtnRef, '.agent-card-debug')
 
   // 任务清单（Todo / Task 工具的可视化面板）
   const [, setTasks] = useState<AgentTask[]>([])
@@ -2124,25 +2135,7 @@ export default function AgentCodeView() {
   const [approveWriteEditDraft, setApproveWriteEditDraft] = useState(false)
   const [memoryDraft, setMemoryDraft] = useState('')  // 提示词卡片内的项目记忆草稿
 
-  useEffect(() => {
-    if (!promptModalOpen) return
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e.type === 'keydown' && (e as KeyboardEvent).key === 'Escape') {
-        setPromptModalOpen(false)
-        return
-      }
-      const pop = document.querySelector('.agent-card-prompt')
-      if (pop?.contains(e.target as Node)) return
-      if (promptBtnRef.current?.contains(e.target as Node)) return
-      setPromptModalOpen(false)
-    }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', close)
-    return () => {
-      document.removeEventListener('pointerdown', close)
-      document.removeEventListener('keydown', close)
-    }
-  }, [promptModalOpen])
+  usePopoverDismiss(promptModalOpen, setPromptModalOpen, promptBtnRef, '.agent-card-prompt')
 
   // 用户消息内联编辑中的消息 id（null = 无）
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null)
@@ -2756,7 +2749,7 @@ export default function AgentCodeView() {
     if (files.length === 0) return
     const read = await Promise.all(files.map(readAttachmentFile))
     const next = files.map((f, i) => ({
-      id: newId('att'),
+      id: uniqueId('att'),
       name: f.name,
       isImage: read[i]!.isImage,
       dataUrl: read[i]!.dataUrl,
@@ -2773,14 +2766,14 @@ export default function AgentCodeView() {
     if (entry.isDir) return
     setFilePickerAttached(prev => {
       if (prev.some(a => a.path === entry.path)) return prev
-      return [...prev, { id: newId('fp-att'), path: entry.path, name: entry.name, isDir: false }]
+      return [...prev, { id: uniqueId('fp-att'), path: entry.path, name: entry.name, isDir: false }]
     })
     try {
       const res = await window.api.readFile(entry.path, { maxBytes: 128 * 1024 })
       if (res.success && typeof res.content === 'string') {
         setAttachedFiles(prev => {
           if (prev.some(a => a.name === entry.name)) return prev
-          return [...prev, { id: newId('fp-read'), name: entry.name, isImage: false, content: res.content! }]
+          return [...prev, { id: uniqueId('fp-read'), name: entry.name, isImage: false, content: res.content! }]
         })
       }
     } catch { /* 读取失败，静默跳过 */ }
@@ -3032,6 +3025,7 @@ export default function AgentCodeView() {
     }
   }, [loading, condensing, runningCard, apiBaseUrl, activeSession, activeProjectId, activeSessionId, condenseSessionMemory])
 
+  // ── 区域：Agent 核心循环（流式调用、工具执行、熔断控制、审批） ──
   const runAgentTurn = useCallback(async (
     pid: string,
     sid: string,
@@ -3308,7 +3302,7 @@ export default function AgentCodeView() {
                         setCurrentPlanItems(args.todos.map((t, idx) => ({ ...t, id: t.id || String(idx + 1) })))
                       }
                     }
-                  } catch { /* 忽略解析错误 */ }
+                  } catch (e) { console.warn('[AgentCode] TodoWrite args parse failed:', e, todoWriteCall.function.arguments?.slice(0, 200)) }
                 }
               }
               if (data.error) streamError = data.error
@@ -3712,7 +3706,7 @@ export default function AgentCodeView() {
             const advMeta = TOOL_METAS[tc.function.name]
             const isSubstantiveTool = !!advMeta && (advMeta.kind === 'write' || advMeta.kind === 'edit' || advMeta.kind === 'delete' || advMeta.kind === 'execute')
             if (!failed && tc.function.name !== 'TodoWrite' && isSubstantiveTool) {
-              await advancePlan(activeSessionId, todoTouchedThisRound)
+              await advancePlan(sid, todoTouchedThisRound)
             }
           }
           flushTurnDebug()
@@ -3787,6 +3781,7 @@ export default function AgentCodeView() {
     return { errored: endedWithError, aborted: abortRef.current.aborted }
   }, [updateSessionInProject, waitForApproval])
 
+  // ── 区域：发送消息（构建附件、创建会话、调用 runAgentTurn） ──
   const handleSend = useCallback(async (overrideText?: string, overrideAttachments?: Attachment[]) => {
     const attachmentsForSend: Attachment[] = overrideAttachments ?? attachedFiles.map(a => ({
       name: a.name,
@@ -4127,6 +4122,7 @@ export default function AgentCodeView() {
     />
   )
 
+  // ── 区域：JSX 渲染（顶栏、侧边栏、聊天区、预览区、弹层） ──
   return (
     <div className={`agent-code-view ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
       <div className="agent-code-topbar">
@@ -4837,7 +4833,7 @@ export default function AgentCodeView() {
             </div>
             <div className={`agent-code-resize-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startResize('preview')} />
             <div className={`agent-browser-wrap ${rightPanelMode === 'browser' ? '' : 'hidden'}`}>
-              <AgentBrowser />
+              <AgentBrowser visible={rightPanelMode === 'browser' && treeOpen} />
             </div>
             <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''} ${rightPanelMode === 'browser' ? 'hidden' : ''}`}>
               <div className="agent-code-preview">
@@ -4931,7 +4927,7 @@ export default function AgentCodeView() {
                         )
                         : isPreviewMarkdown ? (
                           <div className="agent-code-preview-md chat-msg-markdown">
-                            <AgentMarkdown content={renderPreviewMarkdown(activeTab.content ?? '')} />
+                            <AgentMarkdown content={activeTab.content ?? ''} />
                           </div>
                         ) : (
                           <div className="agent-code-preview-code hljs" onMouseUp={handlePreviewMouseUp}>

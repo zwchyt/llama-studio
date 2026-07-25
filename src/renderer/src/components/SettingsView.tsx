@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
+import { useSidebarStore } from '../store/sidebarStore'
 import { shallow } from 'zustand/shallow'
 import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown, AlertTriangle, Check } from 'lucide-react'
 import { notify } from '../store/notificationStore'
@@ -27,6 +28,7 @@ export default function SettingsView() {
     s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, setModels: s.setModels, setImageModels: s.setImageModels, soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, notificationSound: s.notificationSound, setNotificationSound: s.setNotificationSound, chatSidebarCollapsed: s.chatSidebarCollapsed, setChatSidebarCollapsed: s.setChatSidebarCollapsed, splashEnabled: s.splashEnabled, setSplashEnabled: s.setSplashEnabled, agentToolCardsExpanded: s.agentToolCardsExpanded, setAgentToolCardsExpanded: s.setAgentToolCardsExpanded, paramTooltipEnabled: s.paramTooltipEnabled, setParamTooltipEnabled: s.setParamTooltipEnabled }),
     shallow
   )
+  const { hoverExpandEnabled, setHoverExpandEnabled } = useSidebarStore()
   const [downloading, setDownloading] = useState(false)
   const [selectedAssetUrl, setSelectedAssetUrl] = useState('')
   const [expandedEditor, setExpandedEditor] = useState<string | null>(null)
@@ -290,6 +292,20 @@ export default function SettingsView() {
               type="checkbox"
               checked={splashEnabled}
               onChange={() => setSplashEnabled(!splashEnabled)}
+            />
+            <span className="toggle-track"></span>
+            <span className="toggle-thumb"></span>
+          </label>
+        </div>
+        <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            开启：鼠标悬停在收起的导航栏上时自动展开。关闭：仅通过点击按钮展开。
+          </p>
+          <label className="toggle" style={{ marginTop: 4 }}>
+            <input
+              type="checkbox"
+              checked={hoverExpandEnabled}
+              onChange={() => setHoverExpandEnabled(!hoverExpandEnabled)}
             />
             <span className="toggle-track"></span>
             <span className="toggle-thumb"></span>

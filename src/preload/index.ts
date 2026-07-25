@@ -228,6 +228,10 @@ const fullApi = {
     ipcRenderer.on('benchmark-error', (_e, data) => cb(data))
   },
   removeBenchmarkErrorListener: () => ipcRenderer.removeAllListeners('benchmark-error'),
+  // ── 窗口控制 ──
+  windowMinimize: () => ipcRenderer.invoke('window-minimize'),
+  windowMaximize: () => ipcRenderer.invoke('window-maximize'),
+  windowClose: () => ipcRenderer.invoke('window-close'),
 }
 
 const chatApi = {

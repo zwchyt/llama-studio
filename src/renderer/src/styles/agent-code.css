@@ -59,10 +59,9 @@
   margin: 0 8px;
   height: 40px;
   flex-shrink: 0;
-  border-bottom: 1.5px solid var(--border-strong);
+  border: 1.5px solid var(--border-strong);
   background: var(--surface);
-  border-bottom-left-radius: var(--radius, 10px);
-  border-bottom-right-radius: var(--radius, 10px);
+  border-radius: var(--radius-lg, 20px);
 }
 
 .agent-code-topbar-left {
@@ -255,7 +254,7 @@
   touch-action: none;
   transition: background .2s;
   position: relative;
-  z-index: 2;
+  z-index: var(--z-above);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -292,7 +291,7 @@
   background: transparent;
   touch-action: none;
   transition: background .15s, opacity .2s ease;
-  z-index: 3;
+  z-index: calc(var(--z-above) + 1);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -355,15 +354,6 @@
   opacity: 0;
 }
 
-.sidebar-collapsed .agent-code-chat {
-  margin-left: 0;
-}
-
-
-.sidebar-collapsed .agent-code-topbar {
-  margin-left: 0;
-}
-
 .agent-code-sidebar {
   width: var(--agent-sidebar-width, 200px);
   flex-shrink: 0;
@@ -382,7 +372,7 @@
   flex-shrink: 0;
   overflow: hidden;
   max-width: 2000px;
-  transition: max-width 0.35s ease, opacity 0.2s ease, margin 0.35s ease;
+  transition: max-width 0.25s ease, opacity 0.2s ease, margin 0.25s ease;
   margin: 8px 8px 8px 0;
   border-radius: var(--radius, 10px);
   border: 1.5px solid var(--border-strong);
@@ -1134,12 +1124,15 @@
   line-height: 1.4;
   transition: color .25s ease;
 }
+
 .agent-status-bar--running {
   color: var(--accent);
 }
+
 .agent-status-bar--idle {
   color: var(--text-muted);
 }
+
 .agent-status-bar-dot {
   width: 7px;
   height: 7px;
@@ -1147,6 +1140,7 @@
   background: color-mix(in srgb, var(--text-muted) 55%, transparent);
   flex: none;
 }
+
 /* thinking-orbs 画布：内联 20px 预设；空闲态淡化（静止帧）。 */
 .agent-status-orb {
   width: 20px;
@@ -1154,15 +1148,19 @@
   flex: none;
   display: block;
 }
+
 .agent-status-bar--idle .agent-status-orb {
   opacity: .45;
 }
+
 .agent-status-bar-name {
   font-weight: 700;
 }
+
 .agent-status-bar-text {
   font-weight: 500;
 }
+
 .agent-status-bar--running .agent-status-bar-text {
   animation: agent-statusline-pulse 1.6s ease-in-out infinite;
 }
@@ -1438,7 +1436,7 @@
   bottom: 100%;
   top: auto;
   width: auto;
-  z-index: 30;
+  z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -2378,7 +2376,7 @@
   max-width: calc(100% - 108px);
   bottom: calc(100% + 8px);
   top: auto;
-  z-index: 72;
+  z-index: var(--z-toast);
   height: min(378px, calc(100vh - 12rem));
   min-height: 220px;
   display: flex;
@@ -2724,7 +2722,7 @@
   position: absolute;
   top: 8px;
   right: 8px;
-  z-index: 50;
+  z-index: var(--z-panel);
   width: 320px;
   max-height: 50vh;
   display: flex;
@@ -3049,7 +3047,7 @@
   border-bottom: none;
   border-radius: var(--radius) var(--radius) 0 0;
   box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.06);
-  z-index: 30;
+  z-index: var(--z-popover);
   /* 关闭/收起时平滑过渡高度与透明度；真实像素高度由 ResizeObserver 同步到 --task-card-h，
      故消息区底部预留空间会跟随卡片实际高度平滑变化，关闭后严丝合缝贴回输入框。 */
   transition: max-height .2s ease, opacity .2s ease, transform .2s ease;
@@ -3342,7 +3340,7 @@
 /* 选中文字后的浮动操作条（position:fixed，基于选区外接矩形定位） */
 .agent-sel-popover {
   position: fixed;
-  z-index: 60;
+  z-index: var(--z-overlay);
   transform: translate(-50%, calc(-100% - 8px));
   display: flex;
   align-items: center;
@@ -3853,7 +3851,7 @@
   position: absolute;
   left: 0;
   bottom: calc(100% + 8px);
-  z-index: 80;
+  z-index: var(--z-tooltip);
   width: max-content;
   max-width: 340px;
   max-height: 200px;
@@ -3958,7 +3956,7 @@
 .agent-code-view .chat-send-btn.btn {
   position: static;
   flex: none;
-  z-index: 2;
+  z-index: var(--z-above);
   width: 32px;
   height: 32px;
   display: flex;
@@ -3991,7 +3989,7 @@
 .agent-code-view .chat-input-row .chat-attach-btn {
   position: static;
   transform: none;
-  z-index: 2;
+  z-index: var(--z-above);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4034,7 +4032,7 @@
   flex-shrink: 0;
   transition: background var(--transition), color var(--transition);
   padding: 0;
-  z-index: 2;
+  z-index: var(--z-above);
 }
 
 .agent-code-view .chat-input-row .chat-model-btn:hover,
@@ -4110,7 +4108,7 @@
   border: none;
   border-radius: var(--radius, 10px);
   box-shadow: none;
-  z-index: 72;
+  z-index: var(--z-toast);
   opacity: 0;
   visibility: hidden;
   transform: translateY(8px);
@@ -4180,7 +4178,7 @@
 .chat-model-item-name {
   font-size: 12px;
   font-weight: 600;
-  color: var(--text);
+  color: #878787;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4691,7 +4689,7 @@
   bottom: 100%;
   top: auto;
   width: auto;
-  z-index: 30;
+  z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -4874,7 +4872,7 @@
   left: 50%;
   bottom: calc(var(--chat-input-h, 70px) + 14px);
   transform: translateX(-50%);
-  z-index: 20;
+  z-index: var(--z-dropdown);
   width: 38px;
   height: 38px;
   border-radius: 50%;
@@ -4921,7 +4919,7 @@
   opacity: 0;
   transform: translateX(-50%) translateY(4px);
   transition: opacity .15s ease, transform .15s ease;
-  z-index: 50;
+  z-index: var(--z-panel);
 }
 
 .ac-icon-btn:hover .ac-tip {
@@ -5253,7 +5251,7 @@
   position: absolute;
   top: 10px;
   right: 16px;
-  z-index: 80;
+  z-index: var(--z-tooltip);
   display: flex;
   align-items: center;
   gap: 4px;

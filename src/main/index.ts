@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, Menu } from 'electron'
+import { app, shell, BrowserWindow, Menu, ipcMain } from 'electron'
 import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { tmpdir } from 'os'
@@ -14,6 +14,8 @@ try { mkdirSync(join(tmpdir(), 'hexllama-cache'), { recursive: true }) } catch {
 app.commandLine.appendSwitch('--disk-cache-dir', join(tmpdir(), 'hexllama-cache'))
 app.commandLine.appendSwitch('--disable-gpu-cache')
 app.commandLine.appendSwitch('--disable-disk-cache')
+// 禁用 WebRTC 的 STUN/TURN 网络请求，消除控制台 "Failed to resolve address for stun.*" 日志
+app.commandLine.appendSwitch('webrtc-ip-handling-policy', 'disable_non_proxied_udp')
 
 // 单实例锁：打包后的应用保持单实例；dev 模式放宽，避免残留进程占用锁导致新实例秒退
 const gotLock = app.requestSingleInstanceLock()
@@ -37,6 +39,7 @@ function createWindow(): BrowserWindow {
     minWidth: 960,
     minHeight: 600,
     show: false,
+    frame: false,
     autoHideMenuBar: true,
     backgroundColor: '#e5e5e5',
     ...(icon ? { icon } : {}),
@@ -106,6 +109,24 @@ function createWindow(): BrowserWindow {
 }
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.hexllama')
+  // ── 窗口控制 IPC ──
+  ipcMain.handle('window-minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize())
+  ipcMain.handle('window-maximize', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (win?.isMaximized()) win.unmaximize(); else win?.maximize()
+  })
+  ipcMain.handle('window-close', (e) => BrowserWindow.fromWebContents(e.sender)?.close())
+  // ── 拦截 webview guest contents 的新窗口请求，在当前 webview 中导航 ──
+  app.on('web-contents-created', (_event, contents) => {
+    if (contents.getType() === 'webview') {
+      contents.setWindowOpenHandler(({ url }) => {
+        if (url.startsWith('https:') || url.startsWith('http:')) {
+          setImmediate(() => contents.loadURL(url).catch(() => {}))
+        }
+        return { action: 'deny' }
+      })
+    }
+  })
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })

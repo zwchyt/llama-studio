@@ -3,7 +3,7 @@
   flex-shrink: 0;
   width: 220px;
   transition: width 0.25s cubic-bezier(.25, 0.1, .25, 1);
-  z-index: 10;
+  z-index: var(--z-sticky);
   will-change: width;
 }
 
@@ -14,7 +14,7 @@
 .sidebar-wrapper.collapsed .sidebar {
   overflow: hidden;
   align-items: center;
-  padding: 16px 6px;
+  padding: 8px 6px;
 }
 
 .sidebar-wrapper.collapsed .sidebar-toggle {
@@ -23,7 +23,8 @@
 
 .sidebar-wrapper.collapsed .nav-item {
   justify-content: center;
-  padding: 8px 6px;
+  padding: 6px 0;
+  height: 32px;
 }
 
 .sidebar-wrapper.collapsed .nav-item> :not(svg:first-child) {
@@ -57,7 +58,7 @@
   bottom: 0;
   left: 0;
   width: 220px;
-  z-index: 50;
+  z-index: var(--z-panel);
   box-shadow: 4px 0 16px rgba(0, 0, 0, 0.08);
   animation: sidebar-flyout-in 0.2s cubic-bezier(.4, 0, .2, 1) both;
 }
@@ -109,15 +110,15 @@
 
 .sidebar {
   width: 100%;
-  height: calc(100% - 16px);
+  height: calc(100% - 8px);
   flex-shrink: 0;
   background: var(--surface);
-  margin: 8px;
-  border-radius: var(--radius, 10px);
+  margin: 0 8px 8px 8px;
+  border-radius: var(--radius, 14px);
   border: 1.5px solid var(--border-strong);
   display: flex;
   flex-direction: column;
-  padding: 16px 12px;
+  padding: 12px 12px;
   gap: 0px;
   overflow-x: hidden;
   overflow-y: auto;
@@ -138,6 +139,7 @@
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
+  height: 32px;
   border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 500;

@@ -198,6 +198,10 @@ interface LlamaCppApi {
 		  agentTodoWrite: (sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }) => Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }>
 		  agentTaskGet: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
 		  agentTaskList: (sessionId: string) => Promise<{ success: boolean; tasks: AgentTask[] }>
+		  // ── 窗口控制 ──
+		  windowMinimize: () => Promise<void>
+		  windowMaximize: () => Promise<void>
+		  windowClose: () => Promise<void>
 	}
 declare global {
   interface Window { api: LlamaCppApi }

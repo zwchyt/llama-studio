@@ -29,6 +29,19 @@
   --transition: 180ms cubic-bezier(.4, 0, .2, 1);
   --font: 'Inter', system-ui, sans-serif;
 
+  /* z-index 层级体系：按角色分层，避免散落的魔法数字 */
+  --z-base: 1;           /* 内容层普通堆叠 */
+  --z-above: 2;          /* 略高于内容（行号、拖拽手柄） */
+  --z-float: 5;          /* 浮动元素（滚到底按钮、badge） */
+  --z-sticky: 10;        /* 粘性元素（侧边栏、粘性头） */
+  --z-dropdown: 20;      /* 下拉/弹出菜单 */
+  --z-popover: 30;       /* 弹出卡片（审计、压缩、提示词） */
+  --z-panel: 50;         /* 浮动面板（模型选择、地址补全） */
+  --z-overlay: 60;       /* 遮罩层（全屏遮罩、审批弹窗） */
+  --z-toast: 72;         /* Toast/通知 */
+  --z-tooltip: 80;       /* 工具提示 */
+  --z-modal: 1000;       /* 模态弹窗（最高优先） */
+
   --code-bg: #f7f7f8;
   --code-header-bg: #efeff1;
   --code-border: #e6e6e8;
@@ -219,6 +232,7 @@ select {
   border: 1.5px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
+  margin: 0 8px 8px 0;
 }
 
 @keyframes view-fade-in {

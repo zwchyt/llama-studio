@@ -1,0 +1,60 @@
+/* ── 自定义无框标题栏 ── */
+.titlebar {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  flex-shrink: 0;
+  background: var(--bg);
+  position: relative;
+  z-index: 9999;
+}
+
+.titlebar-drag {
+  flex: 1;
+  height: 100%;
+  -webkit-app-region: drag;
+}
+
+.titlebar-controls {
+  display: flex;
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.titlebar-btn:hover {
+  background: var(--hover-bg, rgba(128, 128, 128, 0.15));
+  color: var(--text);
+}
+
+.titlebar-btn-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+.titlebar-btn-sidebar {
+  width: 32px;
+  height: 26px;
+  margin-left: 17px;
+  border-radius: 6px;
+  padding: 0;
+  color: var(--text-secondary);
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-btn-sidebar:hover {
+  color: var(--text);
+  background: var(--hover-bg, rgba(128, 128, 128, 0.15));
+}

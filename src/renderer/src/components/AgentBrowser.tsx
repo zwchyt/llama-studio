@@ -2,7 +2,22 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { ArrowLeft, ArrowRight, RotateCcw, Globe, X, ExternalLink, ZoomIn, ZoomOut, Home } from 'lucide-react'
 import '../styles/agent-browser.css'
 
-export default function AgentBrowser() {
+// Electron webview 元素的最小类型接口（仅声明组件实际使用的 API）
+interface WebviewElement extends HTMLElement {
+  setZoomFactor(factor: number): void
+  canGoBack(): boolean
+  canGoForward(): boolean
+  loadURL(url: string): Promise<void>
+  goBack(): void
+  goForward(): void
+  reload(): void
+  stop(): void
+  getURL(): string
+  focus(): void
+  setAudioMuted(muted: boolean): void
+}
+
+export default function AgentBrowser({ visible = true }: { visible?: boolean }) {
   const [initialUrl, setInitialUrl] = useState('')
   const [inputUrl, setInputUrl] = useState('')
   const [title, setTitle] = useState('')
@@ -10,8 +25,12 @@ export default function AgentBrowser() {
   const [canGoBack, setCanGoBack] = useState(false)
   const [canGoForward, setCanGoForward] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [crashed, setCrashed] = useState(false)
+  const [unresponsive, setUnresponsive] = useState(false)
   const [zoom, setZoom] = useState(1)
-  const webviewRef = useRef<any>(null)
+  const zoomRef = useRef(zoom)
+  useEffect(() => { zoomRef.current = zoom }, [zoom])
+  const webviewRef = useRef<WebviewElement | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // webview dom-ready 后绑定事件
@@ -21,8 +40,8 @@ export default function AgentBrowser() {
     if (!wv) return
 
     const onDomReady = () => {
-      // 设置缩放
-      try { wv.setZoomFactor(zoom) } catch {}
+      // 设置缩放（从 ref 读取最新值，避免将 zoom 加入 effect 依赖导致所有监听重绑）
+      try { wv.setZoomFactor(zoomRef.current) } catch {}
     }
     const onStartLoad = () => { setLoading(true); setError(null) }
     const onStopLoad = () => {
@@ -50,6 +69,19 @@ export default function AgentBrowser() {
       const targetUrl = e.url
       if (targetUrl) wv.loadURL(targetUrl).catch(() => {})
     }
+    // 渲染进程崩溃恢复
+    const onCrashed = () => {
+      setCrashed(true)
+      setLoading(false)
+    }
+    // 页面无响应提示
+    const onUnresponsive = () => setUnresponsive(true)
+    const onResponsive = () => setUnresponsive(false)
+    // 渲染进程异常退出
+    const onProcessGone = () => {
+      setCrashed(true)
+      setLoading(false)
+    }
 
     wv.addEventListener('dom-ready', onDomReady)
     wv.addEventListener('did-start-loading', onStartLoad)
@@ -59,6 +91,10 @@ export default function AgentBrowser() {
     wv.addEventListener('page-title-updated', onTitleUpdate)
     wv.addEventListener('did-fail-load', onFailLoad)
     wv.addEventListener('new-window', onNewWindow)
+    wv.addEventListener('crashed', onCrashed)
+    wv.addEventListener('unresponsive', onUnresponsive)
+    wv.addEventListener('responsive', onResponsive)
+    wv.addEventListener('render-process-gone', onProcessGone)
 
     return () => {
       wv.removeEventListener('dom-ready', onDomReady)
@@ -69,8 +105,39 @@ export default function AgentBrowser() {
       wv.removeEventListener('page-title-updated', onTitleUpdate)
       wv.removeEventListener('did-fail-load', onFailLoad)
       wv.removeEventListener('new-window', onNewWindow)
+      wv.removeEventListener('crashed', onCrashed)
+      wv.removeEventListener('unresponsive', onUnresponsive)
+      wv.removeEventListener('responsive', onResponsive)
+      wv.removeEventListener('render-process-gone', onProcessGone)
     }
-  }, [initialUrl, zoom])
+  }, [initialUrl])
+
+  // 隐藏时暂停 webview 后台活动，可见时恢复
+  useEffect(() => {
+    const wv = webviewRef.current
+    if (!wv || !initialUrl) return
+    try {
+      if (!visible) {
+        wv.setAudioMuted(true)
+      } else {
+        wv.setAudioMuted(false)
+      }
+    } catch {}
+  }, [visible, initialUrl])
+
+  // 崩溃后重新加载
+  const handleRecover = useCallback(() => {
+    setCrashed(false)
+    setUnresponsive(false)
+    setError(null)
+    const wv = webviewRef.current
+    if (wv) {
+      try { wv.reload() } catch {
+        // 如果 reload 失败，重新加载 URL
+        try { wv.loadURL(inputUrl || initialUrl) } catch {}
+      }
+    }
+  }, [inputUrl, initialUrl])
 
   const navigate = useCallback((targetUrl?: string) => {
     let final = (targetUrl ?? inputUrl).trim()
@@ -144,7 +211,7 @@ export default function AgentBrowser() {
         <button className="agent-browser-nav-btn" onClick={loading ? stop : reload} title={loading ? '停止' : '刷新'}>
           {loading ? <X size={14} /> : <RotateCcw size={14} />}
         </button>
-        <button className="agent-browser-nav-btn" onClick={() => { setInitialUrl(''); setInputUrl(''); setTitle(''); setError(null); setCanGoBack(false); setCanGoForward(false) }} title="重置">
+        <button className="agent-browser-nav-btn" onClick={() => { try { webviewRef.current?.stop() } catch {} setInitialUrl(''); setInputUrl(''); setTitle(''); setError(null); setCanGoBack(false); setCanGoForward(false) }} title="重置">
           <Home size={14} />
         </button>
         <div className="agent-browser-urlbar">
@@ -175,10 +242,24 @@ export default function AgentBrowser() {
       {initialUrl ? (
         <>
           {error && <div className="agent-browser-error">{error}</div>}
+          {crashed && (
+            <div className="agent-browser-error" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span>页面进程已崩溃</span>
+              <button className="agent-browser-nav-btn" onClick={handleRecover} title="重新加载" style={{ width: 'auto', padding: '2px 8px', fontSize: 11 }}>
+                <RotateCcw size={11} /> 恢复
+              </button>
+            </div>
+          )}
+          {unresponsive && !crashed && (
+            <div className="agent-browser-error" style={{ background: 'color-mix(in srgb, #f90 10%, transparent)', color: '#d97706' }}>
+              页面无响应，等待恢复中…
+            </div>
+          )}
           <webview
             ref={webviewRef as any}
             className="agent-browser-webview"
             src={initialUrl}
+            partition="persist:agent-browser"
             /* @ts-ignore */
             allowpopups="true"
           />

@@ -1,5 +1,6 @@
-import React, { useState, useCallback, useRef } from 'react'
+import React, { useCallback, useRef } from 'react'
 import { useStore } from '../store/useStore'
+import { useSidebarStore } from '../store/sidebarStore'
 import { shallow } from 'zustand/shallow'
 import { safeCall } from '../utils/safeCall'
 import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Server, Bot, MessageSquare, Terminal, Info, FileText, Gauge, PanelLeftClose, PanelLeftOpen, Code } from 'lucide-react'
@@ -8,7 +9,7 @@ import '../styles/sidebar.css'
 function BackendNavItem({ b, isActive, onSwitch }: { b: { name: string; path?: string }; isActive: boolean; onSwitch: () => void }) {
   return (
     <button
-      className={`nav-item ${isActive ? 'active' : ''}`}
+      className="nav-item"
       onClick={onSwitch}
     >
       <HardDrive size={16} />
@@ -21,54 +22,27 @@ function BackendNavItem({ b, isActive, onSwitch }: { b: { name: string; path?: s
 }
 
 export default function Sidebar() {
-  const [collapsed, setCollapsed] = useState(false)
-  const [collapsing, setCollapsing] = useState(false)
-  const [hoverExpanded, setHoverExpanded] = useState(false)
+  const { collapsed, collapsing, hoverExpanded, hoverExpandEnabled, setHoverExpanded } = useSidebarStore()
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { view, setView, backends, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, hasRunningModels } = useStore(
     s => ({ view: s.view, setView: s.setView, backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
     shallow
   )
 
-  // 手动切换收起/展开
-  function toggleCollapse() {
-    if (hoverTimer.current) { clearTimeout(hoverTimer.current); hoverTimer.current = null }
-    if (collapseTimer.current) { clearTimeout(collapseTimer.current); collapseTimer.current = null }
-
-    if (collapsed) {
-      // 展开：用浮层飞入（sidebar 保持 220px 布局，不跟随 wrapper 宽度过渡），
-      // wrapper 过渡到 220px 结束后，切回正常流——宽度一致无重排
-      setHoverExpanded(true)
-      setCollapsed(false)
-      setCollapsing(false)
-      hoverTimer.current = setTimeout(() => setHoverExpanded(false), 250)
-    } else {
-      // 收起：分两步避免图标跳动
-      // 1. 立即加 collapsed 让 wrapper 开始宽度过渡（220→50），但 collapsing=true 阻止内部样式突变
-      // 2. 过渡结束（250ms）后去掉 collapsing，内部样式瞬间生效——此时 wrapper 已 50px，
-      //    图标从左边缘跳到居中仅 15px，远小于之前的 100px，基本不可见
-      setCollapsed(true)
-      setCollapsing(true)
-      setHoverExpanded(false)
-      collapseTimer.current = setTimeout(() => setCollapsing(false), 250)
-    }
-  }
-
   // 鼠标进入收起的侧边栏 → 延迟后展开
   const handleMouseEnter = useCallback(() => {
-    if (!collapsed) return
+    if (!collapsed || !hoverExpandEnabled) return
     if (hoverTimer.current) clearTimeout(hoverTimer.current)
     hoverTimer.current = setTimeout(() => setHoverExpanded(true), 120)
-  }, [collapsed])
+  }, [collapsed, hoverExpandEnabled, setHoverExpanded])
 
-  // 鼠标离开 → 立即收起（仅收起状态下的悬浮展开；展开过渡中不干扰）
+  // 鼠标离开 → 立即收起（仅收起状态下的悬浮展开）
   const handleMouseLeave = useCallback(() => {
     if (!collapsed) return
     if (hoverTimer.current) { clearTimeout(hoverTimer.current); hoverTimer.current = null }
     if (hoverExpanded) setHoverExpanded(false)
-  }, [collapsed, hoverExpanded])
+  }, [collapsed, hoverExpanded, setHoverExpanded])
 
   const isCollapsed = collapsed && !hoverExpanded
   const isHoverExpanded = hoverExpanded
@@ -87,13 +61,6 @@ export default function Sidebar() {
       onMouseLeave={handleMouseLeave}
     >
       <nav className="sidebar">
-      {/* 收起/展开切换按钮 */}
-      <button
-        className="sidebar-toggle"
-        onClick={toggleCollapse}
-      >
-        {collapsed && !hoverExpanded ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
-      </button>
       {/* ── 导航 ── */}
       <span className="nav-section-label">导航</span>
       <button

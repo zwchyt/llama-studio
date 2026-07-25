@@ -22,6 +22,8 @@ import TerminalView from './components/TerminalView'
 import OcrView from './components/OcrView'
 import BenchmarkView from './components/BenchmarkView'
 import AgentCodeView from './components/AgentCodeView'
+import TitleBar from './components/TitleBar'
+import './styles/titlebar.css'
   import { buildDefaultTemplate } from './utils/defaultTemplate'
 import { writeToTerminal } from './utils/terminalRegistry'
 import { useTerminalStore } from './store/terminalStore'
@@ -469,6 +471,7 @@ function AppMain() {
   return (
     <>
     <div className="app">
+      <TitleBar />
       <UpdateBanner />
       <AppUpdateBanner />
       <BackendDownloadBanner />
