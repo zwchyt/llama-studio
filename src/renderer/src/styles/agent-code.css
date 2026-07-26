@@ -1094,8 +1094,14 @@
 .agent-tool-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 8px;
+  /* 去框后工具行更轻，同一批内收紧行距形成「清单」观感 */
+  gap: 2px;
+}
+
+/* 流式期间卡片全部未到「完成」状态时列表为空：隐藏空容器，
+   避免它仍占一份消息体 gap 产生「幽灵间距」。 */
+.agent-tool-list:empty {
+  display: none;
 }
 
 /* ── 工具执行状态行（卡片外独立显示，先于工具卡片出现）──
@@ -1211,11 +1217,11 @@
   }
 }
 
+/* 工具块「去框平铺」：无背景/边框，折叠态只是一行带工具色的文字；
+   展开内容靠左侧细竖线 + 缩进作为最小结构锚点（与思考链一致）。 */
 .agent-tool-call {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
+  background: transparent;
+  border: none;
 }
 
 .agent-tool-call.tool-read {
@@ -1290,14 +1296,17 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
-  background: var(--surface-hover);
-  border-bottom: 1px solid var(--border);
+  padding: 3px 0;
   color: var(--tool-accent, var(--accent));
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   user-select: none;
+  transition: opacity var(--transition);
+}
+
+.agent-tool-call-head:hover {
+  opacity: .8;
 }
 
 .agent-tool-call-name {
@@ -1608,29 +1617,51 @@
   cursor: pointer;
 }
 
+/* 用户消息改写编辑器：去掉外层气泡包裹（避免框中框），textarea 自身即卡片；
+   铺满消息列全宽，不随右对齐布局收缩；外观对齐底部输入框（--bg 底 +
+   强边框 + 聚焦光环）；字号与消息正文一致，避免进入编辑时字大小跳变；
+   高度由组件随内容自动撑高，max-height 封顶后内部滚动。 */
+.agent-code-view .chat-msg-edit {
+  align-self: stretch;
+}
+
 .agent-msg-edit-area {
   width: 100%;
-  min-height: 80px;
-  resize: vertical;
+  min-height: 60px;
+  max-height: 360px;
+  overflow-y: auto;
+  resize: none;
   padding: 10px 12px;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--border-strong);
   border-radius: 10px;
-  background: var(--surface);
+  background: var(--bg);
   color: var(--text);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.6;
   font-family: inherit;
+  box-sizing: border-box;
+  transition: border-color .15s ease, box-shadow .15s ease;
 }
 
 .agent-msg-edit-area:focus {
   outline: none;
+  border-color: var(--border-strong);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .agent-msg-edit-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* 快捷键提示：靠左弱化展示，不与右侧操作按钮争夺视线 */
+.agent-msg-edit-hint {
+  margin-right: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  user-select: none;
 }
 
 .agent-tool-call-dur {
@@ -1680,11 +1711,24 @@
 }
 
 .agent-tool-args {
-  padding: 4px 10px 0;
+  /* 去框后横向缩进由展开体（左竖线 + 12px）统一提供，这里不再叠加 */
+  padding: 4px 0 0;
 }
 
+/* 展开/收起动画裁剪层：与思考链 .agent-think-anim 同方案——无 padding/border，
+   仅做 max-height 像素过渡；像素值由组件按 scrollHeight 动态设置，
+   展开完成后置 none 自适应后续高度（结果展开、实时输出增长）。 */
+.agent-tool-call-anim {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 展开体：左侧细竖线 + 缩进，替代原卡片分隔线，视觉重量接近纯文字 */
 .agent-tool-call-body {
-  border-top: 1px solid var(--border);
+  margin-left: 6px;
+  border-left: 2px solid var(--border-strong);
+  padding: 4px 0 6px 12px;
 }
 
 .agent-tool-content {
@@ -1914,7 +1958,7 @@
 }
 
 .agent-tool-result {
-  padding: 6px 10px 10px;
+  padding: 6px 0 2px;
   border-top: 1px solid var(--border);
 }
 
@@ -1952,7 +1996,7 @@
 }
 
 .agent-tool-bash {
-  margin: 0 10px 8px;
+  margin: 0 0 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   overflow: hidden;
@@ -3293,7 +3337,9 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  /* 消息体内块间距的唯一来源：思考链/工具卡/输出气泡均不自带 margin，
+     全部由此 gap 统一控距，任意相邻组合间距完全相等。 */
+  gap: 8px;
 }
 
 .agent-code-view .chat-messages .chat-msg-user .chat-msg-body {
@@ -3317,8 +3363,11 @@
    2) 选中后弹出的浮动操作条 .agent-sel-popover。
    ============================================================ */
 .agent-code-view {
-  --agent-selection-bg: rgba(188, 201, 184, 0.22);
+  --agent-selection-bg: rgba(129, 147, 230, 0.22);
   --agent-selection-fg: inherit;
+  /* 消息气泡底色：比背景（#e5e5e5）略深一档，靠边框 + 投影勾勒卡片轮廓；
+     集中定义便于随主题调整。 */
+  --agent-bubble-bg: #e3e3e3;
 }
 
 .agent-code-view .chat-messages .chat-msg-markdown ::selection,
@@ -3413,63 +3462,35 @@
 /* ============================================================
    Agent 思考链样式（.agent-think*）——与原生聊天 .chat-think*（chat.css）完全解耦，
    独立命名、独立维护。改动本块只影响 Agent 工作台，不波及原生聊天；反之亦然。
-   关键帧 thinkBorderPulse / thinkTextPulse 定义在 global.css（全局共享，非 chat.css 私有）。
+   配色完全由主题变量驱动（中性灰 + --accent），思考中状态用本文件私有关键帧
+   agentThinkShimmer / agentThinkBrainPulse（不再使用 global.css 的紫色系关键帧）。
    ============================================================ */
 
-/* 容器：思考链采用「虚线描边 + 透明填充」的注解式外观，与模型输出气泡（实心 surface 卡片）
-   明确区分——思考链是过程/旁注，输出气泡才是正式答案。 */
+/* 容器：思考链「去框平铺」——无边框/背景，折叠态只是一行状态文字，
+   展开体靠左侧细竖线 + 缩进作为最小结构锚点（与工具块一致）；
+   不自带外边距：消息体内块间距统一由 .chat-msg-body 的 gap 控制。 */
 .agent-think {
-  margin: 0 0 10px;
-  border: 1px dashed var(--border-strong);
-  border-left: 3px solid var(--text-muted);
-  border-radius: var(--radius-sm);
+  margin: 0;
   background: transparent;
-  overflow: hidden;
-  transition: border-color var(--transition), background var(--transition);
   max-width: 100%;
 }
 
-.agent-think:not(:first-child) {
-  margin-top: 12px;
-}
-
-/* 思考中 / 已展开 / 已中断 状态 */
-.agent-think.thinking:not(.expanded) {
-  border-color: rgba(124, 58, 237, .2);
-  border-left-color: #7c3aed;
-  background: rgba(124, 58, 237, .03);
-  animation: thinkBorderPulse 2.4s ease-in-out infinite;
-  animation-delay: 0.1s;
-}
-
-.agent-think.thinking.expanded {
-  border-color: rgba(124, 58, 237, .2);
-  border-left-color: #7c3aed;
-  background: rgba(124, 58, 237, .02);
-}
-
-.agent-think.stopped {
-  border-color: var(--border-strong);
-  border-left-color: var(--text-muted);
-  background: transparent;
-}
-
-/* 头部按钮 */
+/* 头部按钮：去框后即一行状态文字，hover 用透明度反馈可点击 */
 .agent-think-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 7px 11px;
+  padding: 3px 0;
   border: none;
   background: transparent;
   cursor: pointer;
   font-family: var(--font);
-  transition: background var(--transition);
+  transition: opacity var(--transition);
 }
 
 .agent-think-toggle:hover {
-  background: rgba(124, 58, 237, .04);
+  opacity: .8;
 }
 
 /* 状态文案：大脑图标 + 文本 + 时长 + 箭头，靠 gap 排列，箭头紧跟时长右侧 */
@@ -3482,14 +3503,30 @@
   color: var(--text-secondary);
 }
 
-.agent-think.thinking.expanded .agent-think-status {
-  color: #7c3aed;
+/* 思考中：文字用「流光扫过」效果——单色渐变在文字上循环滑动，
+   替代原紫色呼吸；渐变端点取主题文字色，随主题自动适配。
+   展开/折叠两态都生效：流式期间思考块自动展开，保持反馈连贯。 */
+.agent-think.thinking .agent-think-status {
+  color: var(--text-secondary);
+  background: linear-gradient(90deg,
+      var(--text-muted) 0%,
+      var(--text) 50%,
+      var(--text-muted) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: agentThinkShimmer 2.2s linear infinite;
 }
 
-.agent-think.thinking:not(.expanded) .agent-think-status {
-  color: #7c3aed;
-  animation: thinkTextPulse 2s ease-in-out infinite;
-  animation-delay: 0.1s;
+@keyframes agentThinkShimmer {
+  from {
+    background-position: 200% 0;
+  }
+
+  to {
+    background-position: -200% 0;
+  }
 }
 
 .agent-think.stopped .agent-think-status {
@@ -3502,7 +3539,7 @@
 }
 
 .agent-think.thinking .agent-think-brain {
-  color: #7c3aed;
+  color: var(--text);
   animation: agentThinkBrainPulse 1.6s ease-in-out infinite;
 }
 
@@ -3530,7 +3567,7 @@
 }
 
 .agent-think.thinking .agent-think-dur {
-  color: #7c3aed;
+  color: var(--text-secondary);
   font-weight: 600;
 }
 
@@ -3554,16 +3591,18 @@
   transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* 内容层：承载 padding/边框/字体/颜色（次要色，体现「推理层」层级） */
+/* 内容层：左侧细竖线 + 缩进替代原卡片分隔线（与工具块展开体一致），
+   次要色体现「推理层」层级 */
 .agent-think-body {
-  padding: 8px 16px 14px;
+  margin-left: 6px;
+  border-left: 2px solid var(--border-strong);
+  padding: 4px 0 6px 12px;
   font-size: 13px;
   line-height: 1.7;
   color: var(--text-secondary);
   word-wrap: break-word;
   overflow-wrap: break-word;
   min-width: 0;
-  border-top: 1px solid var(--border);
 }
 
 /* 历史摘要气泡：沿用简单的 max-height 0↔none + 透明度切换（无流式、无逐帧动画需求） */
@@ -3692,13 +3731,56 @@
   max-width: 85%;
 }
 
+/* 消息气泡基础卡片外观（用户气泡/编辑框/等待提示仍使用）。 */
 .agent-code-view .chat-messages .chat-msg-bubble {
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--agent-bubble-bg);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  padding: 10px 14px;
+  padding: 12px 16px;
   font-size: 13px;
   line-height: 1.6;
+  box-shadow: var(--shadow);
+}
+
+/* 模型正文「去框平铺」：去掉背景/边框/投影直接平铺在页面背景上，
+   只保留工具卡/思考链这类结构块的框——正文是答案本体，不需要容器感；
+   保留少量垂直内边距维持与相邻结构块的呼吸，水平方向与卡片边缘齐平。
+   仅限模型消息的正文；用户气泡、编辑框、「模型思考中…」等待提示仍为卡片。 */
+.agent-code-view .chat-messages .chat-msg-assistant .chat-msg-bubble.chat-msg-markdown {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 2px 0;
+  box-shadow: none;
+}
+
+/* 消息操作按钮禁用态（流式生成中）：置灰 + 禁止光标，屏蔽 hover 高亮，
+   与既定的流式禁用反馈规范一致（opacity .35 / disabled / not-allowed）。 */
+.agent-code-view .chat-msg-action-btn:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
+
+.agent-code-view .chat-msg-action-btn:disabled:hover {
+  background: var(--surface);
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+/* 「模型思考中…」等待占位：去框平铺——覆盖 chat.css 的卡片底色/内衬，
+   只是一行安静的灰色文字，避免首字到达前闪现一个突兀的卡片框。 */
+.agent-code-view .chat-messages .chat-msg-thinking-wait {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .agent-code-view .chat-messages .chat-msg-text {
@@ -4669,6 +4751,13 @@
 
 .agent-code-preview-line.highlight {
   background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+/* 引用范围高亮：弹出「引用代码」按钮时，捕获范围内每一行着色——
+   原生文本选区在行号槽拖选时覆盖不到末行，由此保证高亮与实际引用范围一致。
+   只给代码内容区着色，行号槽不参与（行号非引用内容）。 */
+.agent-code-preview-line.sel-range .agent-code-preview-lc {
+  background: var(--agent-selection-bg);
 }
 
 .chat-attach-chip {
