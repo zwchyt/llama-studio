@@ -32,6 +32,19 @@ export interface AgentConfig {
   compactRareTools: boolean       // 低频工具是否只注入精简 schema
   // ── Tracing 落盘（④ 本档）──
   traceToDisk: boolean            // 是否把每次工具执行的审计条目追加落盘，便于事后复现
+  // ── 认知地图（模块一 · 上下文感知引擎）──
+  codeMapEnabled: boolean         // 开关：项目打开时后台构建认知地图 + 写工具成功后同步失效
+  contextPackEnabled: boolean     // 开关：发送前按锚点查地图、注入「参考材料」上下文包（阶段 1.3）
+  contextPackRatio: number        // 上下文包占 prompt 预算的比例上限（0~1）
+  ctxImportanceEnabled: boolean   // 开关：重要性裁剪——同文件重复 Read 结果只保最新、旧版折叠为占位
+  // ── 短期台账（模块二 · 记忆系统）──
+  toolLedgerEnabled: boolean      // 开关：只读工具跨轮重复调用命中台账缓存时直接返回、不重复执行
+  ledgerResultCap: number         // 台账单条缓存结果的最大字符数（超长结果不缓存，避免内存膨胀）
+  condenseFactsEnabled: boolean   // 开关：压缩时机械提取「结构化事实附录」逐字保留，不经 LLM 转写（阶段 2.2）
+  // ── 代码混合检索（模块三 · RAG，阶段 3.1/3.2）──
+  codeSearchEnabled: boolean      // 开关：注册 CodeSearch 工具（BM25 词法 + 符号精确混合检索）
+  // ── 长期记忆（模块二 · 阶段 2.3）──
+  longTermMemoryEnabled: boolean  // 开关：分类条目沉淀（四触发点）+ 注入侧升级 + 矛盾仲裁
 }
 
 export const DEFAULT_AGENT_CONFIG: AgentConfig = {
@@ -53,6 +66,15 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   projectMemoryInjectCap: 4000,
   compactRareTools: true,
   traceToDisk: true,
+  codeMapEnabled: true,
+  contextPackEnabled: true,
+  contextPackRatio: 0.2,
+  ctxImportanceEnabled: true,
+  toolLedgerEnabled: true,
+  ledgerResultCap: 16000,
+  condenseFactsEnabled: true,
+  codeSearchEnabled: true,
+  longTermMemoryEnabled: true,
 }
 
 function loadAgentConfig(): AgentConfig {

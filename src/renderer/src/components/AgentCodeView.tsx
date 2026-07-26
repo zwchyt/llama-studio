@@ -23,6 +23,13 @@ import { playNotificationSound } from '../utils/sound'
 import { safeCall } from '../utils/safeCall'
 import { getToolDefinitions, executeToolCall, TOOL_METAS, APPROVAL_TOOLS, WRITE_EDIT_TOOLS, BACKUP_TOOLS } from '../utils/tools'
 import { agentConfig } from '../utils/agentConfig'
+import { createToolLedger } from '../utils/toolLedger'
+import { buildContextPack } from '../utils/contextEngine'
+import {
+  type ApiMessage, estimateTextTokens, estimateApiMsgTokens, computeContextBudget, toolResultCharLimit,
+  trimApiMessages, splitAgentTurns, extractFactsAppendix, CONDENSE_FACTS_CAP, TOOL_RESULT_LIMIT,
+} from '../utils/contextBudget'
+import { noteApprovalRejected, noteUserCorrection, noteMilestone, noteCondenseFacts, noteSessionEnd, probeContradiction } from '../utils/memoryWriter'
 import { setWorkspaceRootForSession, getWorkspaceRootForSession } from '../tools/workspaceRoot'
 import { setAgentSessionId } from '../tools/agentSession'
 import { getFileReadPrompt } from '../tools/FileReadTool/prompt'
@@ -38,6 +45,7 @@ import { getFileDeletePrompt } from '../tools/FileDeleteTool/prompt'
 import { getTodoWritePrompt } from '../tools/TodoWriteTool/prompt'
 import { getAskUserQuestionPrompt } from '../tools/AskUserQuestionTool/prompt'
 import { getReflectPrompt } from '../tools/ReflectTool/prompt'
+import { getCodeSearchPrompt } from '../tools/CodeSearchTool/prompt'
 import { askUserQuestionRegistry } from '../utils/askUserQuestionRegistry'
 import { recordAudit, getAuditEntries, subscribeAudit, clearAudit, type AuditEntry } from '../utils/auditLog'
 import { recordDebugTurn, getDebugTurns, subscribeDebug, clearDebug, type DebugTurn } from '../utils/debugLog'
@@ -64,10 +72,7 @@ import '../styles/agent-code.css'
 // Git 变更面板以「特殊预览标签」形式复用预览区；此哨兵路径标识该标签。
 const GIT_DIFF_TAB = '__agent_git_changes__'
 
-type ApiMessage =
-  | { role: 'system' | 'user' | 'assistant'; content: string | Array<Record<string, unknown>> }
-  | { role: 'assistant'; content: string | null; tool_calls: { id: string; type: 'function'; function: { name: string; arguments: string } }[] }
-  | { role: 'tool'; tool_call_id: string; content: string }
+// ApiMessage 类型与上下文预算/裁剪纯函数已抽至 utils/contextBudget.ts（M4 离线压测需要）
 
 function newMsgId() { return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }
 function uniqueId(prefix: string) {
@@ -562,6 +567,7 @@ async function buildSystemContent(project: AgentProject): Promise<string> {
     getReflectPrompt(),
     getTaskGetPrompt(),
     getTaskListPrompt(),
+    ...(agentConfig.codeSearchEnabled ? [getCodeSearchPrompt()] : []),
   ].join('\n\n---\n\n')
   const base = `你是 llama-studio 的编码智能体，运行在桌面 GUI 中，工作目录由用户在界面选择。通过工具调用协助用户完成软件工程任务。
 
@@ -588,7 +594,7 @@ async function buildSystemContent(project: AgentProject): Promise<string> {
 - 分析项目/目录：直接用一次 \`AnalyzeDir\`（已含全树概览），配合 \`Grep\`/\`Glob\` 定位，再针对性 \`Read\`。
 - 别逐个 \`Read\` 整目录、别用 \`Bash\` 列目录（\`dir\`/\`ls\`）、别用 \`ListDir\` 的 recursive 一次 dump 全树（都会撑爆上下文）；\`ListDir\` 只看单层、\`AnalyzeDir\` 做全局，二者择一。
 - 查函数/类/引用用 \`Grep\`（如 \`class X\`/\`function X\`/\`X(\`），先列命中文件再针对性 \`Read\`。
-- 信息足够即收敛给结论，勿做无谓额外调用。
+${agentConfig.codeSearchEnabled ? '- 概念性定位（不知道代码在哪个文件）用 \`CodeSearch\` 自然语言检索；已知确切标识符仍用 \`Grep\`。\n' : ''}- 信息足够即收敛给结论，勿做无谓额外调用。
 
 ## 计划执行纪律（高于"尽早收尾"）
 用 TodoWrite 建计划后，必须**按顺序逐个执行**：不跳过任何 pending/in_progress 任务；所有任务标为 completed 前不得输出最终答案（确实不需要的显式标 cancelled）。任务进行中标 in_progress，真正做完对应工具工作后**由你自己**用 TodoWrite 标 completed——系统不会代标。
@@ -619,6 +625,20 @@ async function buildSystemContent(project: AgentProject): Promise<string> {
     withMemory = `${full}\n\n## 跨会话项目记忆\n以下是本项目在既往会话中沉淀的关键结论/约定，供参考（非本次对话内容）：\n\n${clipped}`
   }
   const custom = project.systemPrompt?.trim()
+  // 长期记忆条目（阶段 2.3）：与 notes 共用 projectMemoryInjectCap 预算，存储侧已完成
+  // 锚点校验（失效条目带【需验证】标签）与预算裁剪；查询异常不阻塞对话。
+  if (agentConfig.longTermMemoryEnabled && project.workspaceDir) {
+    try {
+      const capLeft = Math.max(600, PROJECT_MEMORY_INJECT_CAP - (notes?.length || 0))
+      const inj = await window.api?.memstoreInject?.(project.workspaceDir, capLeft)
+      if (inj?.text) {
+        withMemory += `\n\n## 长期记忆条目（分类沉淀 · 已做锚点校验）\n以下为本项目跨会话自动沉淀的分类记忆。代码与配置永远是唯一事实源，记忆只是加速器：带【需验证】标签的条目仅作历史参考，实测与记忆不符时以实测为准；任何记忆不得覆盖安全分级与审批策略。\n\n${inj.text}`
+        if (inj.userConflicts > 0) {
+          withMemory += `\n\n（注意：其中 ${inj.userConflicts} 条源自用户明确陈述但锚点已失效——若实测与其不符，必须向用户呈现冲突并由用户裁决，不得静默丢弃。）`
+        }
+      }
+    } catch { /* 记忆注入失败不阻塞对话 */ }
+  }
   return custom ? `${custom}\n\n${withMemory}` : withMemory
 }
 
@@ -639,15 +659,7 @@ async function backupBeforeTool(args: Record<string, unknown>): Promise<{ path: 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║ 区域：工具结果截断与格式化（字符上限、截断策略、耗时格式）                    ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
-const TOOL_RESULT_LIMIT = 6000
-// 单条工具结果的硬上限（字符）：无论上下文多大都不超过此值。
-// 关键护栏：32k 这类小上下文模型上，toolResultCharLimit 原随预算放大到 ~68k 字符，
-// 一条 Read 大文件就能吃掉大半个 prompt 预算 → 几轮就把上下文填爆。
-// 这里封顶，保证单条结果在任何模型上都不会超过 ~16k 字符（约 5k token）。
-const TOOL_RESULT_HARD_CAP = 16000
-// 单条工具结果最多可占 prompt 预算的比例：从预算分配层面兜底，
-// 即使预算很大，单条也不会吃掉大部分可用上下文（小上下文模型受益最大）。
-const TOOL_RESULT_BUDGET_RATIO = 0.4
+// TOOL_RESULT_* 常量已抽至 utils/contextBudget.ts（truncateToolResult 默认上限从彼处导入）
 // 工具结果截断：两种策略
 //  - 'keep-ends'（默认，bash/read 等）：保留头尾，中间省略——内容对模型有价值，尽量保全
 //  - 'drop-long-lines'（grep 等）：超长单行直接丢弃并标注，避免单条巨行挤占上下文
@@ -746,140 +758,10 @@ function resolveWorkspacePath(p: string): string {
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║ 区域：上下文管理（Token估算、预算计算、轮次裁剪、配对修复）                  ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
-const AGENT_CTX_DEFAULT = agentConfig.ctxDefault    // 取不到真实 n_ctx 时的兜底上下文大小
-const AGENT_MAX_OUTPUT = agentConfig.maxOutput     // 与 chatStream 实际 max_tokens 一致
-const AGENT_CTX_SAFETY = agentConfig.ctxSafety      // 预留安全余量（token）
+// 与 chatStream 实际 max_tokens 一致；其余 Token 估算 / 预算 / 截断上限函数已抽至 utils/contextBudget.ts
+const AGENT_MAX_OUTPUT = agentConfig.maxOutput
 
-function estimateTextTokens(text: string): number {
-  if (!text) return 0
-  let ascii = 0
-  let cjk = 0
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i)
-    if (c < 0x80) ascii++
-    else if (c >= 0x4e00 && c <= 0x9fff) cjk++
-    else ascii += 0.5
-  }
-  return Math.ceil(ascii * 0.3 + cjk * 1.6) + 2
-}
-
-function estimateApiMsgTokens(m: ApiMessage): number {
-  let text = ''
-  if (typeof m.content === 'string') text = m.content
-  else if (Array.isArray(m.content)) text = m.content.map(p => String((p as Record<string, unknown>).text ?? '')).join('')
-  let extra = 0
-  const tcs = (m as { tool_calls?: Array<{ function: { arguments: string } }> }).tool_calls
-  if (Array.isArray(tcs)) extra = tcs.reduce((s, tc) => s + estimateTextTokens(tc.function?.arguments || ''), 0)
-  return estimateTextTokens(text) + extra + 4
-}
-
-// 本次发送可用的 prompt token 预算（扣除输出预留 + 安全余量）
-function computeContextBudget(nCtx: number): number {
-  const ctx = nCtx && nCtx > 0 ? nCtx : AGENT_CTX_DEFAULT
-  const reserve = Math.min(AGENT_MAX_OUTPUT, Math.max(1024, Math.floor(ctx * 0.3)))
-  return Math.max(512, ctx - reserve - AGENT_CTX_SAFETY)
-}
-
-// 单条工具结果允许的最大字符数：随模型上下文预算伸缩（不再固定 6000），
-// 避免大上下文模型也被无意义截断；同时受「硬上限 + 预算占比上限」双重封顶，
-// 防止小上下文模型（如 32k）因单条结果过大而几轮内就把 prompt 预算吃爆。
-function toolResultCharLimit(budgetTokens: number): number {
-  const n = Number.isFinite(budgetTokens) && budgetTokens > 0 ? budgetTokens : AGENT_CTX_DEFAULT
-  const scaled = Math.floor(n * 3)
-  const byBudget = Math.floor(n * TOOL_RESULT_BUDGET_RATIO)
-  return Math.max(TOOL_RESULT_LIMIT, Math.min(scaled, TOOL_RESULT_HARD_CAP, byBudget))
-}
-
-// 按「轮次」裁剪：保留 system + 最新的若干完整轮次，丢弃最早的轮次；
-// 轮次以 user 消息为界切分，保证 tool_calls 与其 tool 结果不被拆散。
-// 若仅剩的最新一轮仍超限，则进一步从最早的 tool 结果起截断内容（安全阀）。
-function trimApiMessages(messages: ApiMessage[], budget: number): { messages: ApiMessage[]; dropped: number } {
-  if (messages.length === 0) return { messages, dropped: 0 }
-  const sys = messages[0] && messages[0].role === 'system' ? messages[0] : null
-  const rest = sys ? messages.slice(1) : messages
-  const turns: ApiMessage[][] = []
-  let cur: ApiMessage[] | null = null
-  for (const m of rest) {
-    if (m.role === 'user') { cur = [m]; turns.push(cur) }
-    else { (cur ??= []).push(m) }
-  }
-  const sysTok = sys ? estimateApiMsgTokens(sys) : 0
-  const turnTok = turns.map(t => t.reduce((s, m) => s + estimateApiMsgTokens(m), 0))
-  const kept: ApiMessage[][] = []
-  let used = sysTok
-  for (let i = turns.length - 1; i >= 0; i--) {
-    if (used + turnTok[i] <= budget) { used += turnTok[i]; kept.unshift(turns[i]) }
-    else { if (kept.length === 0) kept.unshift(turns[i]); break }
-  }
-  let result = sys ? [sys, ...kept.flat()] : kept.flat()
-  const dropped = messages.length - result.length
-  // 安全阀：最新一轮仍超预算时，从最旧起截断 tool 结果内容。
-  // 仅截断、绝不丢弃 tool 消息——丢弃会破坏「tool_calls ↔ tool 结果」配对导致 API 400。
-  // 单条压到 120 字符后若仍超预算（极端小上下文 + 极长结果的罕见情况），保留轻微超限：
-  // 本地模型通常对少量 token 溢出有容忍度，且继续裁剪会损害可读性，故在此止步。
-  used = result.reduce((s, m) => s + estimateApiMsgTokens(m), 0)
-  // 安全阀：最新一轮仍超预算时，从最早的 tool 结果起压缩内容。
-  // 两阶段策略，避免「读 → 被裁没 → 再读」死循环：
-  //   1) 先压缩所有「非 Read」工具结果（Bash/Grep 等），Read 结果暂时保全；
-  //   2) 仅当非 Read 结果已无可压、仍超限时，才最后压缩 Read 结果（保头尾、留底限），
-  //      保证小上下文模型（如 32k）的上下文最终能被压回预算内，而非单调撑爆。
-  const READ_FLOOR = 2000 // Read 结果压缩后的最小保留字符（头尾各半，足以让模型「看见」关键片段）
-  const isReadContent = (c: string) => /"File: /.test(c) || c.startsWith('File: ')
-  const compressTo = (m: ApiMessage, floor: number) => {
-    if (m.role !== 'tool' || typeof m.content !== 'string') return
-    let text = m.content
-    while (used > budget && text.length > floor) {
-      text = text.slice(0, Math.floor(text.length * 0.6))
-      result[result.indexOf(m)] = { ...m, content: text }
-      used = result.reduce((s, mm) => s + estimateApiMsgTokens(mm), 0)
-    }
-  }
-  // 阶段一：非 Read 结果
-  for (let i = 0; i < result.length && used > budget; i++) {
-    const m = result[i]
-    if (m.role === 'tool' && typeof m.content === 'string' && !isReadContent(m.content)) {
-      compressTo(m, 120)
-    }
-  }
-  // 阶段二：Read 结果（最后手段，保留头尾足够内容让模型仍可定位）
-  for (let i = 0; i < result.length && used > budget; i++) {
-    const m = result[i]
-    if (m.role === 'tool' && typeof m.content === 'string' && isReadContent(m.content)) {
-      compressTo(m, READ_FLOOR)
-    }
-  }
-  // ── 配对兜底（参考 grok-build 的 repair_dangling_tool_calls）──
-  // 若某条 assistant 的 tool_calls 中，有 id 找不到对应的 tool 结果消息（例如熔断/中止时
-  // 提前 break 导致后续调用未产生结果、或裁剪时丢掉了结果轮次），会破坏
-  // 「tool_calls ↔ tool 结果」配对，发送给模型即触发 API 400。此处补一条合成结果，保证配对完整。
-  result = repairDanglingToolCalls(result)
-  return { messages: result, dropped }
-}
-
-// 纯函数：扫描所有 assistant 的 tool_calls，对缺少对应 tool 结果的 id 补一条合成结果。
-// 合成结果标注来源，避免模型误以为是真实执行产出。幂等、不改原数组。
-function repairDanglingToolCalls(msgs: ApiMessage[]): ApiMessage[] {
-  const presentIds = new Set<string>()
-  for (const m of msgs) {
-    if (m.role === 'tool') presentIds.add(m.tool_call_id)
-  }
-  const synthetic: ApiMessage[] = []
-  for (const m of msgs) {
-    if (m.role !== 'assistant' || !('tool_calls' in m) || !m.tool_calls || m.tool_calls.length === 0) continue
-    for (const tc of m.tool_calls) {
-      if (!presentIds.has(tc.id)) {
-        presentIds.add(tc.id)
-        synthetic.push({
-          role: 'tool',
-          tool_call_id: tc.id,
-          content: JSON.stringify({ error: '该工具调用未产生结果（可能因达到熔断/轮次上限被提前中止）。请换用其他方案或向用户说明。' })
-        })
-      }
-    }
-  }
-  if (synthetic.length === 0) return msgs
-  return [...msgs, ...synthetic]
-}
+// trimApiMessages / repairDanglingToolCalls 已抽至 utils/contextBudget.ts（逻辑未变）
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -901,16 +783,7 @@ const SUMMARY_PROMPT = `你是对话历史压缩助手。请把下面的早期�
 要求：只输出摘要正文本身，不要客套或解释；用简洁要点式；总长度控制在约 600 tokens 以内。
 不要输出任何思考过程或 <think> 标签，直接给出摘要。`
 
-// 按「user 消息为界」把消息切分为轮次（与 trimApiMessages 一致），保证工具配对不被拆散
-function splitAgentTurns(messages: AgentMessage[]): AgentMessage[][] {
-  const turns: AgentMessage[][] = []
-  let cur: AgentMessage[] | null = null
-  for (const m of messages) {
-    if (m.role === 'user' || cur === null) { cur = [m]; turns.push(cur) }
-    else { cur.push(m) }
-  }
-  return turns
-}
+// splitAgentTurns / extractFactsAppendix（含 CONDENSE_FACTS_CAP）已抽至 utils/contextBudget.ts（逻辑未变）
 
 // 把待压缩的消息序列化成可读文本（工具结果按上限截断，避免摘要输入本身超长）
 function serializeMessagesForSummary(messages: AgentMessage[]): string {
@@ -2282,6 +2155,7 @@ export default function AgentCodeView() {
         setTasks(res.tasks)
         // 修复①：后端持久化状态为权威来源，回写 currentPlanItems，
         // 使卡片渲染真实状态，而非仅依赖流式解析的临时快照。
+        planItemsSidRef.current = activeSessionId // 记录这批计划项的归属会话（里程碑沉淀防串写用）
         setCurrentPlanItems(res.tasks
           .filter(t => t.status !== 'deleted')
           .map((t): TodoUpdate => ({
@@ -2502,6 +2376,7 @@ export default function AgentCodeView() {
     setCumTokens(0)
     setPlanTitle('')
     // 修复②：切换会话时清空计划项，避免上一个会话的待办残留显示在新会话
+    planItemsSidRef.current = '' // 计划项已清空，无归属会话；待 refreshTasks 回写后重新登记
     setCurrentPlanItems([])
     atBottomRef.current = true
     setAtBottom(true)
@@ -2511,7 +2386,46 @@ export default function AgentCodeView() {
     setWorkspaceRootForSession(activeSessionId, activeProject.workspaceDir)
     window.api?.setBashCwd(activeProject.workspaceDir || '').catch(() => { })
     window.api?.setAgentWorkspace(activeProject.workspaceDir || '').catch(() => { })
+    // ── 认知地图：工作区就绪后后台构建（幂等；主进程内部有快照增量校验）──
+    if (agentConfig.codeMapEnabled && activeProject.workspaceDir) {
+      window.api?.codemapBuild?.(activeProject.workspaceDir).catch(() => { })
+    }
   }, [activeProject.workspaceDir, activeSessionId])
+
+  // ── 里程碑写（阶段 2.3）：Todo 计划全部收束（completed/cancelled 且至少一项完成）
+  // 时沉淀一条决策记录。两层防护：
+  //  · 归属校验：切换会话的瞬时渲染里 currentPlanItems 还是旧会话的（清空 setState
+  //    下一轮才生效），若不校验会把旧计划写进新项目的记忆库；
+  //  · 指纹防重：refreshTasks 每次回写新数组引用都会重触发 effect，存储侧合并虽
+  //    不重复建条但每次 +0.05 置信度，反复触发会把 agent 条目虚推到 1.0，
+  //    同一份收束状态（会话+条目+状态指纹）只沉淀一次。
+  const planItemsSidRef = useRef('')
+  const milestoneNotedRef = useRef('')
+  useEffect(() => {
+    if (!agentConfig.longTermMemoryEnabled || currentPlanItems.length === 0) return
+    if (planItemsSidRef.current !== activeSessionId) return // 计划项尚属另一会话的陈旧渲染，不沉淀
+    const allSettled = currentPlanItems.every(t => t.status === 'completed' || t.status === 'cancelled')
+    const anyDone = currentPlanItems.some(t => t.status === 'completed')
+    if (allSettled && anyDone && activeProject.workspaceDir) {
+      const fp = `${activeSessionId}|${currentPlanItems.map(t => `${t.id}:${t.status}`).join(',')}`
+      if (milestoneNotedRef.current === fp) return
+      milestoneNotedRef.current = fp
+      noteMilestone(activeProject.workspaceDir, activeSessionId, planTitle, currentPlanItems)
+    }
+  }, [currentPlanItems, planTitle, activeProject.workspaceDir, activeSessionId])
+
+  // ── 会话终局写（阶段 2.3）：切换会话 / 项目时对旧会话做机械提炼沉淀。
+  // projects 在依赖中仅为取最新快照；未切换时（pid/sid 未变）直接早退，不重复沉淀。
+  const prevSessionRef = useRef<{ pid: string; sid: string; dir: string } | null>(null)
+  useEffect(() => {
+    const prev = prevSessionRef.current
+    prevSessionRef.current = { pid: activeProjectId, sid: activeSessionId, dir: activeProject.workspaceDir || '' }
+    if (!agentConfig.longTermMemoryEnabled || !prev?.dir) return
+    if (prev.pid === activeProjectId && prev.sid === activeSessionId) return
+    const oldProj = projects.find(p => p.id === prev.pid)
+    const oldSess = oldProj?.sessions.find(s => s.id === prev.sid)
+    if (oldSess) noteSessionEnd(prev.dir, prev.sid, oldSess.title, oldSess.messages)
+  }, [activeProjectId, activeSessionId, activeProject.workspaceDir, projects])
 
   useEffect(() => {
     setAgentSessionId(activeSessionId)
@@ -3034,7 +2948,9 @@ export default function AgentCodeView() {
       const coveredSet = new Set(memory.coveredMsgIds)
       while (coveredPrefix < messages.length && coveredSet.has(messages[coveredPrefix]!.id)) coveredPrefix++
       if (coveredPrefix > 0) {
-        out.push({ role: 'system', content: `## 早期对话摘要\n以下是本会话较早轮次的压缩摘要（原始消息已省略以节省上下文）：\n\n${memory.summary}` })
+        // 摘要正文 + 结构化事实附录（附录逐字保留、不经 LLM 转写，路径/原话不失真）
+        const factsPart = memory.facts ? `\n\n## 结构化事实附录（机械提取 · 逐字保留）\n${memory.facts}` : ''
+        out.push({ role: 'system', content: `## 早期对话摘要\n以下是本会话较早轮次的压缩摘要（原始消息已省略以节省上下文）：\n\n${memory.summary}${factsPart}` })
       }
     }
     for (let mi = coveredPrefix; mi < messages.length; mi++) {
@@ -3130,12 +3046,27 @@ export default function AgentCodeView() {
         return memory
       }
       condenseErrorRef.current = ''
+      // 结构化事实附录：与既有附录滚动合并（不送 LLM），超限保留最新并标注截断
+      let facts = memory?.facts || ''
+      if (agentConfig.condenseFactsEnabled) {
+        const appendix = extractFactsAppendix(batch)
+        if (appendix) facts = facts ? `${facts}\n\n${appendix}` : appendix
+        if (facts.length > CONDENSE_FACTS_CAP) {
+          facts = '…（较早附录已截断）\n' + facts.slice(facts.length - CONDENSE_FACTS_CAP)
+        }
+      }
       const newMemory = {
         summary: summary,
         coveredMsgIds: [...(memory?.coveredMsgIds || []), ...batch.map(m => m.id)],
         updatedAt: Date.now(),
+        ...(facts ? { facts } : {}),
       }
       updateSessionInProject(pid, sid, { memory: newMemory })
+      // ── 压缩伴生写（阶段 2.3）：被压缩批次里的已验证命令 / 改动热点移交长期记忆 ──
+      if (agentConfig.longTermMemoryEnabled) {
+        const memRoot = getWorkspaceRootForSession()
+        if (memRoot) noteCondenseFacts(memRoot, sid, batch)
+      }
       return newMemory
     } catch (e: any) {
       condenseErrorRef.current = e?.message || String(e)
@@ -3252,6 +3183,9 @@ export default function AgentCodeView() {
       //   2) 连续多轮助手正文归一化后完全相同达 TEXT_SPIN_LIMIT 次 → 停止（复读）。
       const SPIN_LIMIT = agentConfig.spinLimit
       const spinCount = new Map<string, number>()
+      // ── 短期台账：「工具+参数」指纹 → 结果缓存（只读工具跨轮重复调用直接回放，不重复执行）──
+      // 生命周期与 spinCount 对齐：每次生成运行各自新建，避免跨用户轮的陈旧缓存。
+      const ledger = createToolLedger()
       // 轮询/查询类工具合理重复，排除在打转检测之外；提问工具已有独立防抖。
       const SPIN_EXCLUDE = new Set(['TaskList', 'TaskGet', 'GetBackgroundTaskOutput', 'ListBackgroundTasks', 'AskUserQuestion', 'view_tool'])
       const TEXT_SPIN_LIMIT = agentConfig.textSpinLimit
@@ -3287,6 +3221,21 @@ export default function AgentCodeView() {
               apiMsgs = [...apiMsgs, { role: 'system', content: '此任务较复杂：请先用 TodoWrite 制定 ≥3 步的分步计划，再逐步执行；每完成一步用 TodoWrite 更新任务状态。' }]
             }
           } catch { /* 查询失败不阻塞对话 */ }
+        }
+      }
+      // ── 上下文包注入（模块一 · 影响域预加载，阶段 1.3）──
+      // 从最近一条用户消息提取锚点查认知地图，组装「参考材料」以 system 消息注入当轮
+      //（仅当轮生效、不写入 displayMsgs、不持久化；随后被下方 system 折叠合并进首条）。
+      // 地图未就绪 / 无锚点命中时 pack 为 null，静默跳过，行为与关闭开关完全一致。
+      if (agentConfig.contextPackEnabled && !userHasImages && tools.length > 0) {
+        const lastUser = [...startDisplay].reverse().find(m => m.role === 'user')
+        const packRoot = getWorkspaceRootForSession()
+        if (lastUser && packRoot) {
+          try {
+            const packBudget = Math.floor(ctxBudget * Math.min(Math.max(agentConfig.contextPackRatio, 0), 0.5))
+            const pack = await buildContextPack({ workspaceDir: packRoot, queryText: lastUser.content || '', budgetTokens: packBudget })
+            if (pack) apiMsgs = [...apiMsgs, { role: 'system', content: pack }]
+          } catch { /* 地图查询异常不阻塞对话 */ }
         }
       }
       // ── system 消息折叠（模板兼容性护栏）──
@@ -3603,11 +3552,13 @@ export default function AgentCodeView() {
             const keyPromise = new Map<string, Promise<{ result: string; failed: boolean; durationMs: number }>>()
             const idKeys = batch.map(tc => {
               const key = toolCallKey(tc.function.name, tc.function.arguments)
-              if (!keyPromise.has(key)) keyPromise.set(key, runOne(tc.function.name, tc.function.arguments))
+              // 台账已有缓存的调用不预取：顺序循环里会直接回放缓存，预取属白费执行
+              const ledgerHit = agentConfig.toolLedgerEnabled && !SPIN_EXCLUDE.has(tc.function.name) && ledger.getCached(key)
+              if (!ledgerHit && !keyPromise.has(key)) keyPromise.set(key, runOne(tc.function.name, tc.function.arguments))
               return { id: tc.id, key }
             })
             await Promise.allSettled([...keyPromise.values()])
-            for (const { id, key } of idKeys) preRun.set(id, await keyPromise.get(key)!)
+            for (const { id, key } of idKeys) { const pr = keyPromise.get(key); if (pr) preRun.set(id, await pr) }
           }
           for (const tc of toolCalls) {
             const dupKey = toolCallKey(tc.function.name, tc.function.arguments)
@@ -3640,6 +3591,31 @@ export default function AgentCodeView() {
                 continue
               }
             }
+            // ── 台账跨轮重复拦截（只读工具）──
+            // 同一「工具+参数」在本次生成中已成功执行过 → 直接回放台账缓存，不重复执行；
+            // 重复仍计入 spinCount，达 SPIN_LIMIT 照旧触发原有打转熔断。Bash 已有更严的独立拦截。
+            if (agentConfig.toolLedgerEnabled && tc.function.name !== 'Bash' &&
+                TOOL_METAS[tc.function.name]?.readOnly === true && !SPIN_EXCLUDE.has(tc.function.name)) {
+              const hit = ledger.getCached(dupKey)
+              if (hit) {
+                ledger.bumpRepeat(dupKey)
+                const spins = (spinCount.get(dupKey) || 0) + 1
+                spinCount.set(dupKey, spins)
+                const served = `${hit.result}\n\n（台账命中：该调用已在第 ${hit.firstTurn} 轮以完全相同参数成功执行过，此为缓存结果（累计第 ${hit.count} 次调用），未重复执行。请基于已有结果继续，不要再重复此调用。）`
+                commitToolCall(liveId, tc.id, { status: 'done', result: served, resultTotal: hit.result.length, failed: false })
+                apiMsgs.push({ role: 'tool', tool_call_id: tc.id, content: served })
+                batchExecuted.set(dupKey, hit.result)
+                turnToolTrace.push({ name: tc.function.name, durationMs: 0, failed: false })
+                scrollToBottom()
+                if (spins >= SPIN_LIMIT) {
+                  fuseBlown = true
+                  fuseTool = tc.function.name
+                  fuseSummary = `检测到原地打转：工具 ${tc.function.name} 以完全相同的参数重复调用了 ${spins} 次（后续调用均由台账缓存拦截，未重复执行）。请改变策略（换参数/换工具/直接给出结论），不要重复相同调用。`
+                  break
+                }
+                continue
+              }
+            }
             // ── 破坏性工具审批 ──
             // Delete 永远需要人工确认（本质破坏性）。
             // Bash：仅当命令被判定为「破坏性」（删除/格式化/终止进程/改系统状态）时才弹窗确认；
@@ -3660,6 +3636,11 @@ export default function AgentCodeView() {
                 const rejected = JSON.stringify({ error: '用户已拒绝该工具调用（需要人工确认的操作）' })
                 commitToolCall(liveId, tc.id, { status: 'done', result: rejected, failed: true })
                 apiMsgs.push({ role: 'tool', tool_call_id: tc.id, content: rejected })
+                // ── 即时沉淀（阶段 2.3）：审批被拒 = 一条偏好信号，火忘式写入长期记忆 ──
+                if (agentConfig.longTermMemoryEnabled) {
+                  const memRoot = getWorkspaceRootForSession()
+                  if (memRoot) noteApprovalRejected(memRoot, sid, tc.function.name, tc.function.arguments)
+                }
                 continue
               }
             }
@@ -3793,11 +3774,23 @@ export default function AgentCodeView() {
               const meta = TOOL_METAS[tc.function.name]
               if (meta && (meta.kind === 'write' || meta.kind === 'edit' || meta.kind === 'delete')) {
                 bashConsecutive = 0
+                // ── 认知地图失效钩子：写/改/删成功后同步失效对应文件（不等 fs.watch 回调）──
+                if (!failed && agentConfig.codeMapEnabled) {
+                  const invRoot = getWorkspaceRootForSession()
+                  const invPath = typeof toolArgs.file_path === 'string' ? toolArgs.file_path : typeof toolArgs.path === 'string' ? toolArgs.path : ''
+                  if (invRoot && invPath) window.api.codemapInvalidate?.(invRoot, [resolveWorkspacePath(invPath)]).catch(() => { })
+                }
               }
             }
 
             // ── 工具失败跟踪：防止模型无限重试 ──
             if (failed) {
+              // ── 矛盾探针（阶段 2.3）：Bash 实测失败 → 对相似的「已验证命令」记忆记矛盾标记
+              // （当前证据立即获胜：降置信度，累计两次自动归档；用户来源条目不自动归档）
+              if (tc.function.name === 'Bash' && typeof toolArgs.command === 'string' && toolArgs.command) {
+                const memRoot = getWorkspaceRootForSession()
+                if (memRoot) probeContradiction(memRoot, toolArgs.command)
+              }
               const toolName = tc.function.name
               const curFail = (toolFailCount.get(toolName) || 0) + 1
               toolFailCount.set(toolName, curFail)
@@ -3811,6 +3804,8 @@ export default function AgentCodeView() {
               const warnings: string[] = []
               if (isExactRetry) warnings.push('该工具已使用完全相同参数尝试过并失败')
               warnings.push(`${toolName} 已连续失败 ${curFail} 次`)
+              // 连败达 2 次：建议模型先反思再行动，而非机械换写法重试
+              if (curFail >= 2) warnings.push('建议先调用 Reflect 工具反思当前策略（哪里出错、有何替代方案），再决定下一步')
               if (windowFails >= FAIL_WINDOW_LIMIT) warnings.push(`最近 ${recentResults.length} 次工具调用中有 ${windowFails} 次失败（换写法仍反复失败）`)
               toolResult += `\n\n【${warnings.join('；')}。请改用其他方法，或直接向用户说明情况。不要继续重试。】`
               // ★ 硬性熔断：满足任一条件即强制中止工具循环
@@ -3835,6 +3830,10 @@ export default function AgentCodeView() {
             flushSync(() => { commitToolCall(liveId, tc.id, { status: 'done', result: capped.text, truncated: capped.truncated, resultTotal: capped.total, failed }) })
             apiMsgs.push({ role: 'tool', tool_call_id: tc.id, content: capped.text })
             batchExecuted.set(dupKey, capped.text)
+            // ── 台账入账：真实执行的结果记录指纹（只读且成功的结果参与后续缓存拦截）──
+            if (agentConfig.toolLedgerEnabled) {
+              ledger.record(dupKey, { result: capped.text, failed, turn, cacheable: TOOL_METAS[tc.function.name]?.readOnly === true })
+            }
             scrollToBottom()
             // ── 提问工具防抖：累计 AskUserQuestion 调用，超过阈值即停止继续提问 ──
             if (tc.function.name === 'AskUserQuestion') {
@@ -4013,6 +4012,12 @@ export default function AgentCodeView() {
       messages: displayMsgs,
       ...(shouldAutoTitle ? { title: (text || '附件对话').slice(0, 40) } : {})
     })
+
+    // ── 即时沉淀（阶段 2.3）：启发式识别用户纠正 / 约束语气，原话逐字写入长期记忆
+    // （仅当会话已有助手回复时才可能是「纠正」，首条消息不触发）──
+    if (agentConfig.longTermMemoryEnabled && text && activeProject.workspaceDir && baseMessages.some(m => m.role === 'assistant')) {
+      noteUserCorrection(activeProject.workspaceDir, sid, text)
+    }
 
     const systemMsg: ApiMessage = { role: 'system', content: await buildSystemContent(activeProject) }
     const ctxN = useStore.getState().modelMetrics[runningCard.template.id]?.nCtx || 0

@@ -1,6 +1,7 @@
 // ── 工具注册中心（类似 textgen 的 tool_use.py + 各 tools/*.py）────
 import type { ComponentType } from 'react'
-import { Eye, FilePlus2, Pencil, Search, FileSearch, TerminalSquare, Clock, HelpCircle, FileText, Trash2, List, ListChecks, TerminalSquare as BgTaskIcon, FolderOpen, Layers, Lightbulb } from 'lucide-react'
+import { Eye, FilePlus2, Pencil, Search, FileSearch, TerminalSquare, Clock, HelpCircle, FileText, Trash2, List, ListChecks, TerminalSquare as BgTaskIcon, FolderOpen, Layers, Lightbulb, Sparkles } from 'lucide-react'
+import { agentConfig } from './agentConfig'
 
 export interface ToolDefinition {
   type: 'function'
@@ -32,6 +33,7 @@ export const TOOL_METAS: Record<string, ToolMeta> = {
   Edit:            { kind: 'edit',   label: '编辑文件', verb: '编辑中', icon: Pencil,          readOnly: false, needsApproval: false, canUndo: true },
   Glob:            { kind: 'search', label: '查找文件', verb: '查找中', icon: Search,          readOnly: true,  needsApproval: false, canUndo: false },
   Grep:            { kind: 'search', label: '搜索内容', verb: '搜索中', icon: FileSearch,      readOnly: true,  needsApproval: false, canUndo: false },
+  CodeSearch:      { kind: 'search', label: '智能检索', verb: '检索中', icon: Sparkles,        readOnly: true,  needsApproval: false, canUndo: false },
   ListDir:         { kind: 'list',   label: '列出目录', verb: '列目录中', icon: FolderOpen,    readOnly: true,  needsApproval: false, canUndo: false },
   AnalyzeDir:      { kind: 'list',   label: '分析目录', verb: '分析中', icon: Layers,          readOnly: true,  needsApproval: false, canUndo: false },
   Bash:            { kind: 'execute', label: '执行命令', verb: '执行中', icon: TerminalSquare,  readOnly: false, needsApproval: true,  canUndo: false },
@@ -175,6 +177,7 @@ import { definition as GetBackgroundTaskOutputDef, execute as GetBackgroundTaskO
 import { definition as ListBackgroundTasksDef, execute as ListBackgroundTasksExec } from '../tools/ListBackgroundTasksTool'
 import { definition as AskUserQuestionDef, execute as AskUserQuestionExec } from '../tools/AskUserQuestionTool'
 import { definition as ReflectDef, execute as ReflectExec } from '../tools/ReflectTool'
+import { definition as CodeSearchDef, execute as CodeSearchExec } from '../tools/CodeSearchTool'
 register(FileReadDef, FileReadExec)
 register(FileWriteDef, FileWriteExec)
 register(FileEditDef, FileEditExec)
@@ -191,12 +194,14 @@ register(GetBackgroundTaskOutputDef, GetBackgroundTaskOutputExec)
 register(ListBackgroundTasksDef, ListBackgroundTasksExec)
 register(AskUserQuestionDef, AskUserQuestionExec)
 register(ReflectDef, ReflectExec)
+// CodeSearch（混合检索）：受开关门控——关闭时不注册，模型看不到该工具，行为与现状一致
+if (agentConfig.codeSearchEnabled) register(CodeSearchDef, CodeSearchExec)
 
 // ── 导出 API（类似 textgen 的 load_tools / execute_tool）──
 
 // 工具统一执行超时（毫秒）与适用白名单（仅本地 IO 类，详见 executeToolCall）。
 const TOOL_EXEC_TIMEOUT_MS = 30000
-const TIMEOUT_TOOLS = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep', 'ListDir', 'AnalyzeDir', 'Delete'])
+const TIMEOUT_TOOLS = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep', 'ListDir', 'AnalyzeDir', 'Delete', 'CodeSearch'])
 
 // 可自动重试的工具（本地 IO + 网络类）：仅对「瞬时性」错误重试一次，避免让模型为偶发抖动放弃。
 const RETRY_TOOLS = new Set([...TIMEOUT_TOOLS, 'web_search', 'fetch_webpage'])

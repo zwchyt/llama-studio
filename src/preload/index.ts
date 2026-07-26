@@ -171,6 +171,22 @@ const fullApi = {
 	  gitUnstageFile: (dir: string, path: string) => ipcRenderer.invoke('git-unstage-file', dir, path),
   setAgentWorkspace: (dir: string) => ipcRenderer.invoke('set-agent-workspace', dir),
 
+  // ── 认知地图（codeMapService）──
+  codemapBuild: (dir: string) => ipcRenderer.invoke('codemap-build', dir),
+  codemapStatus: (dir: string) => ipcRenderer.invoke('codemap-status', dir),
+  codemapSymbol: (dir: string, name: string, limit?: number) => ipcRenderer.invoke('codemap-symbol', dir, name, limit),
+  codemapSkeleton: (dir: string, relPath: string) => ipcRenderer.invoke('codemap-skeleton', dir, relPath),
+  codemapNeighbors: (dir: string, relPath: string) => ipcRenderer.invoke('codemap-neighbors', dir, relPath),
+  codemapInvalidate: (dir: string, absPaths: string[]) => ipcRenderer.invoke('codemap-invalidate', dir, absPaths),
+  // ── 代码混合检索（retrievalService）──
+  codesearchQuery: (dir: string, query: string, limit?: number) => ipcRenderer.invoke('codesearch-query', dir, query, limit),
+  // ── 长期记忆（memoryStore）──
+  memstoreUpsert: (dir: string, candidates: object[]) => ipcRenderer.invoke('memstore-upsert', dir, candidates),
+  memstoreInject: (dir: string, capChars: number) => ipcRenderer.invoke('memstore-inject', dir, capChars),
+  memstoreContradict: (dir: string, probeText: string) => ipcRenderer.invoke('memstore-contradict', dir, probeText),
+  memstoreList: (dir: string) => ipcRenderer.invoke('memstore-list', dir),
+  memstoreArchive: (dir: string, id: string) => ipcRenderer.invoke('memstore-archive', dir, id),
+
   // ── Agent Code 任务清单（Todo / Task）──
   agentTodoWrite: (sessionId: string, input: object) => ipcRenderer.invoke('agent-todo-write', sessionId, input),
   agentTaskGet: (sessionId: string, taskId: string) => ipcRenderer.invoke('agent-task-get', sessionId, taskId),

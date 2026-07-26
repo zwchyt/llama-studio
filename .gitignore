@@ -81,5 +81,12 @@ Agent session/*
 # Windows reserved device name (some tools may create this accidentally)
 nul
 
+# Agent 认知模块离线验收/压测脚本（本地回归工具）及其运行产物；
+# 注意：scripts/build-filtered.js 被 npm run build 引用，必须保留入库
+scripts/electron-stub.ts
+scripts/lucide-stub.cjs
+scripts/test-*-entry.ts
+scripts/.test-*
+
 # Bundled node runtime (build artifact)
 

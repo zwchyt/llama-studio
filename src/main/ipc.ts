@@ -14,6 +14,9 @@ import { app } from 'electron'
 import { randomUUID, createHash } from 'crypto'
 import type * as ptyNs from 'node-pty'
 import type { AgentProject, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus } from '../shared/types'
+import { registerCodeMapIpc, disposeCodeMaps } from './services/codeMapService'
+import { registerRetrievalIpc } from './services/retrievalService'
+import { registerMemoryStoreIpc } from './services/memoryStore'
 
 let ptyModule: typeof ptyNs | null = null
 async function getPty(): Promise<typeof ptyNs> {
@@ -768,6 +771,7 @@ const MAX_MODELS_FILES = 5000
 
 export function cleanupRunningProcesses(): void {
   if (metricsInterval) { clearInterval(metricsInterval); metricsInterval = null }
+  disposeCodeMaps()
   for (const [, { proc }] of runningProcesses) {
     killProcessTreeAsync(proc)
   }
@@ -4310,6 +4314,13 @@ export function registerIpcHandlers(): void {
   }
   ipcMain.handle('start-agent-file-watch', (_e, dir: string) => startAgentFileWatch(dir))
   ipcMain.handle('stop-agent-file-watch', () => { stopAgentFileWatch(); return { success: true } })
+
+  // ── 认知地图服务（codeMapService）：codemap-* 通道集中注册 ──
+  registerCodeMapIpc(APP_ROOT)
+  // ── 代码混合检索服务（retrievalService）：codesearch-* 通道 ──
+  registerRetrievalIpc()
+  // 长期记忆存储（模块二 · 阶段 2.3）：分类条目沉淀 / 注入 / 矛盾仲裁
+  registerMemoryStoreIpc(APP_ROOT)
 
   // ── Agent Tracing 落盘 ──
   // 把每次工具执行的审计条目追加到 Agent session/traces/<sessionId>.jsonl，

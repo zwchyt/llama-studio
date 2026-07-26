@@ -233,6 +233,9 @@ export interface AgentSession {
     summary: string          // 累积的历史摘要文本
     coveredMsgIds: string[]  // 已被摘要覆盖、发送时省略的消息 id（会话最早的连续前缀）
     updatedAt: number
+    // 结构化事实附录：压缩时机械提取的「不可转写」事实（文件操作清单 + 用户原话），
+    // 逐字保留、不经 LLM 精炼；无此字段的旧会话不受影响。
+    facts?: string
   }
 }
 
@@ -249,6 +252,54 @@ export interface AgentProject {
     notes: string      // 跨会话项目记忆（用户可编辑的关键结论/约定）
     updatedAt: number
   }
+}
+
+// ── 长期记忆（模块二 · 阶段 2.3）──
+// 跨会话分类记忆条目：由主进程 memoryStore 按工作区持久化。
+export type AgentMemoryCategory =
+  | 'correction'   // 用户纠正 / 审批拒绝归纳的偏好
+  | 'convention'   // 项目约定（命名 / 格式 / 架构规则）
+  | 'command'      // 已验证命令（构建 / 运行 / 测试）
+  | 'error_fix'    // 错误指纹 → 已验证解法
+  | 'decision'     // 决策记录（选定方案与理由）
+  | 'file_role'    // 文件角色标注（生成物勿改 / 入口 / 热点）
+
+export interface AgentMemoryEntry {
+  id: string
+  category: AgentMemoryCategory
+  content: string          // 条目正文（单条精炼结论，非转储）
+  confidence: number       // 置信度 0~1（矛盾降半，合并上调）
+  source: 'user' | 'agent' // user=源自用户明确陈述（冲突时须用户裁决，不自动淘汰）
+  origin: string           // 出处（触发点 + 会话 id）
+  createdAt: number
+  updatedAt: number
+  lastUsedAt: number       // 注入即视为使用（LRU 淘汰依据）
+  hits: number             // 被沉淀 / 确认次数（相似合并时 +1）
+  contradictions: number   // 矛盾标记次数，累计达阈值自动归档
+  archived?: boolean       // 软删除（留审计）
+  anchorPath?: string      // 校验锚点：工作区相对路径（文件还在吗）
+  anchorSymbol?: string    // 校验锚点：锚点文件内应存在的符号 / 子串
+}
+
+// 渲染层沉淀写入时的候选条目（id / 时间戳等由存储侧补全）
+export interface AgentMemoryCandidate {
+  category: AgentMemoryCategory
+  content: string
+  source: 'user' | 'agent'
+  origin: string
+  confidence?: number
+  anchorPath?: string
+  anchorSymbol?: string
+}
+
+export interface AgentMemoryUpsertResult { added: number; merged: number; evicted: number; total: number }
+
+// 注入结果：已完成锚点校验与预算裁剪的分类条目文本
+export interface AgentMemoryInjection {
+  text: string
+  entries: number       // 实际注入条目数
+  stale: number         // 带「需验证」标签（锚点失效）的条目数
+  userConflicts: number // 其中源自用户陈述、需向用户呈现冲突的条目数
 }
 
 // ── Agent Code 任务清单（Todo / Task 工具）──
@@ -287,4 +338,76 @@ export interface TodoUpdate {
   priority?: 'high' | 'medium' | 'low'
   activeForm?: string
   notes?: string
+}
+
+// ── Agent Code 认知地图（codeMapService，主进程 ↔ 渲染层 IPC 载荷）──
+// 轻量级代码库认知地图：每文件只存「骨架」（符号签名 + import 清单），不存文件体。
+
+/** 地图中单个符号（函数/类/接口等声明，仅签名级信息） */
+export interface CodeMapSymbol {
+  name: string
+  kind: 'function' | 'class' | 'interface' | 'type' | 'enum' | 'const' | 'var' | 'section'
+  line: number          // 1-based 行号
+  exported: boolean
+  signature?: string    // 声明行原文（截断），供预览定位
+}
+
+/** 单文件骨架记录：路径 + 指纹（mtime/size/hash）+ 符号清单 + import 清单 */
+export interface CodeMapFileSkeleton {
+  relPath: string       // 相对工作区根，统一 '/' 分隔
+  lang: string          // 扩展名小写（如 '.ts'）
+  size: number
+  mtimeMs: number
+  hash: string          // 内容 sha1，失效判定以此为准
+  symbols: CodeMapSymbol[]
+  imports: string[]     // 相对导入解析为地图内 relPath；解析不到则保留原始说明符
+}
+
+/** 地图构建状态（codemap-status 查询返回） */
+export interface CodeMapStatus {
+  workspaceDir: string
+  state: 'idle' | 'building' | 'ready' | 'error'
+  filesIndexed: number
+  totalFiles: number
+  symbolCount: number
+  builtAt?: number
+  fromSnapshot?: boolean  // 本次构建是否命中落盘快照（增量校验而非全量解析）
+  error?: string
+}
+
+/** 符号查询命中项 */
+export interface CodeMapSymbolHit {
+  name: string
+  kind: CodeMapSymbol['kind']
+  relPath: string
+  line: number
+  signature?: string
+}
+
+/** 依赖邻居查询结果（影响域扩散的一跳数据） */
+export interface CodeMapNeighbors {
+  relPath: string
+  dependsOn: string[]   // 正向：该文件 import 的地图内文件
+  dependedBy: string[]  // 反向：import 了该文件的地图内文件
+}
+
+// ── 代码混合检索（retrievalService，BM25 词法 + 符号精确）──
+
+/** 检索命中的代码块（逻辑单元分块：函数/类方法/模块段） */
+export interface CodeSearchHit {
+  relPath: string
+  startLine: number     // 1-based，含
+  endLine: number       // 1-based，含
+  symbol: string        // 所属逻辑单元面包屑（符号名 / 模块头 / 分片标记）
+  kind: string
+  score: number
+  snippet: string       // 块首部摘要（截断）
+}
+
+/** codesearch-query 返回：status 非 ready 时 results 为空，调用方按降级策略处理 */
+export interface CodeSearchResponse {
+  status: 'ready' | 'building' | 'no-map'
+  results: CodeSearchHit[]
+  lowConfidence: boolean   // 置信度低：建议降级到精确通道（Grep）或结构导航
+  indexedChunks: number
 }

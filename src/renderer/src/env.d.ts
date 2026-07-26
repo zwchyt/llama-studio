@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, ChatStreamChunk, AgentProject, AgentTask, TodoItem, TodoUpdate } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, ChatStreamChunk, AgentProject, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection } from '../../shared/types'
 // 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
 interface ModelFileInfo {
   name: string
@@ -196,6 +196,21 @@ interface LlamaCppApi {
 		  gitStageFile: (dir: string, path: string) => Promise<{ success: boolean; error?: string }>
 		  gitUnstageFile: (dir: string, path: string) => Promise<{ success: boolean; error?: string }>
 		  setAgentWorkspace: (dir: string) => Promise<{ success: boolean }>
+		  // ── 认知地图（codeMapService）──
+		  codemapBuild: (dir: string) => Promise<CodeMapStatus | { error: string }>
+		  codemapStatus: (dir: string) => Promise<CodeMapStatus>
+		  codemapSymbol: (dir: string, name: string, limit?: number) => Promise<CodeMapSymbolHit[]>
+		  codemapSkeleton: (dir: string, relPath: string) => Promise<CodeMapFileSkeleton | null>
+		  codemapNeighbors: (dir: string, relPath: string) => Promise<CodeMapNeighbors>
+		  codemapInvalidate: (dir: string, absPaths: string[]) => Promise<{ success: boolean }>
+		  // ── 代码混合检索（retrievalService）──
+		  codesearchQuery: (dir: string, query: string, limit?: number) => Promise<CodeSearchResponse>
+		  // ── 长期记忆（memoryStore）──
+		  memstoreUpsert: (dir: string, candidates: AgentMemoryCandidate[]) => Promise<AgentMemoryUpsertResult>
+		  memstoreInject: (dir: string, capChars: number) => Promise<AgentMemoryInjection>
+		  memstoreContradict: (dir: string, probeText: string) => Promise<{ marked: number; archived: number }>
+		  memstoreList: (dir: string) => Promise<AgentMemoryEntry[]>
+		  memstoreArchive: (dir: string, id: string) => Promise<{ success: boolean }>
 		  // ── Agent Code 任务清单（Todo / Task）──
 		  agentTodoWrite: (sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }) => Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }>
 		  agentTaskGet: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
