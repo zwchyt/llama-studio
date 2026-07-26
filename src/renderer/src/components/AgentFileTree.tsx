@@ -208,10 +208,12 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
     // 图片文件检测（用于悬停缩略图）
     const ext = (!node.isDir ? (/\.([a-z0-9]+)$/i.exec(node.name)?.[1] || '').toLowerCase() : '')
     const isImage = IMG_EXT.has(ext)
-    // 文件 / 文件夹节点右键：弹出自定义菜单（目录同样支持，菜单项对两者均适用）
+    // 仅文件节点右键弹出自定义菜单（发送到输入框/复制路径）；
+    // 目录节点不提供右键交互，只屏蔽默认菜单，避免误把目录名发进输入框。
     const onNodeContextMenu = (e: React.MouseEvent) => {
       e.preventDefault()
       e.stopPropagation()
+      if (node.isDir) return
       setCtxMenu({ x: e.clientX, y: e.clientY, name: node.name, path: node.path })
     }
     const onNodeMouseEnter = isImage ? (e: React.MouseEvent) => {

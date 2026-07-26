@@ -1104,20 +1104,6 @@
   display: none;
 }
 
-/* ── 工具执行状态行（卡片外独立显示，先于工具卡片出现）──
-   pending/executing 的非 Bash 工具仅显示此状态行，完成后才替换为工具卡片；
-   Bash 执行中此状态行置于卡片上方（卡片保留实时输出）。 */
-.agent-tool-statusline {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 12px;
-  border-radius: var(--radius-sm);
-  font-size: 12.5px;
-  border-left: 3px solid transparent;
-  transition: background .25s ease, border-color .25s ease;
-}
-
 /* ── 状态栏（并入输入框顶部）──
    无框、无底色：默认只显示 orb 图标；模型运行时才渲出名称/文字（由 JSX 条件控制）。 */
 .agent-status-bar {
@@ -1169,40 +1155,6 @@
 
 .agent-status-bar--running .agent-status-bar-text {
   animation: agent-statusline-pulse 1.6s ease-in-out infinite;
-}
-
-.agent-tool-statusline.running {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  border-left-color: var(--accent);
-}
-
-.agent-tool-statusline.waiting {
-  color: var(--text-muted);
-  background: color-mix(in srgb, var(--text-muted) 6%, transparent);
-  border-left-color: color-mix(in srgb, var(--text-muted) 40%, transparent);
-}
-
-.agent-tool-statusline-name {
-  font-weight: 700;
-}
-
-.agent-tool-statusline-verb {
-  font-weight: 500;
-}
-
-.agent-tool-statusline.running .agent-tool-statusline-verb {
-  animation: agent-statusline-pulse 1.6s ease-in-out infinite;
-}
-
-.agent-tool-statusline-preview {
-  color: var(--text-muted);
-  font-size: 11.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 340px;
-  font-family: var(--font-mono, ui-monospace, monospace);
 }
 
 @keyframes agent-statusline-pulse {
@@ -1292,21 +1244,29 @@
   --tool-accent: #65a30d;
 }
 
+/* 失败态整行转红：覆盖工具色变量，头部文字/图标/路径按钮随之变红，扫视时可直接定位出错步骤 */
+.agent-tool-call.failed {
+  --tool-accent: var(--danger);
+}
+
 .agent-tool-call-head {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 0;
+  /* 横向 padding + 负 margin 抵消：hover 底色不贴字，文字左缘仍与展开体对齐 */
+  padding: 3px 6px;
+  margin: 0 -6px;
+  border-radius: var(--radius-sm);
   color: var(--tool-accent, var(--accent));
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   user-select: none;
-  transition: opacity var(--transition);
+  transition: background var(--transition);
 }
 
 .agent-tool-call-head:hover {
-  opacity: .8;
+  background: color-mix(in srgb, var(--tool-accent, var(--accent)) 7%, transparent);
 }
 
 .agent-tool-call-name {
@@ -1731,6 +1691,11 @@
   padding: 4px 0 6px 12px;
 }
 
+/* 失败态展开体竖线同步转红，与头部信号连贯 */
+.agent-tool-call.failed .agent-tool-call-body {
+  border-left-color: color-mix(in srgb, var(--danger) 55%, var(--border-strong));
+}
+
 .agent-tool-content {
   margin: 4px 0 8px;
 }
@@ -1744,33 +1709,30 @@
   color: var(--text-dim);
 }
 
-.agent-tool-content-pre {
+/* 四个内容块共用基底：底色/边框/圆角/等宽排版/限高滚动，差异项在各自规则内覆盖 */
+.agent-tool-args-pre,
+.agent-tool-content-pre,
+.agent-tool-result-pre,
+.agent-tool-lined {
   margin: 0;
-  padding: 8px 10px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
   font-size: 11px;
   line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
   color: var(--text);
   max-height: 360px;
   overflow: auto;
 }
 
-.agent-tool-lined {
-  margin: 0;
-  max-height: 360px;
-  overflow: auto;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--text);
+/* 纯文本形态补齐内边距与换行（lined 的内边距由行号/代码列自行提供） */
+.agent-tool-args-pre,
+.agent-tool-content-pre,
+.agent-tool-result-pre {
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .agent-tool-lined-row {
@@ -1942,19 +1904,9 @@
 }
 
 .agent-tool-args-pre {
+  /* 差异项：参数块带上下外边距且限高稍低 */
   margin: 4px 0 8px;
-  padding: 8px 10px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  color: var(--text);
   max-height: 320px;
-  overflow: auto;
 }
 
 .agent-tool-result {
@@ -1975,24 +1927,19 @@
   color: var(--text-dim);
 }
 
-.agent-tool-result-pre {
-  margin: 0;
-  max-height: 360px;
-  overflow: auto;
-  padding: 8px 10px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  color: var(--text);
-}
-
 .agent-tool-result-running {
   padding: 8px 10px;
+}
+
+/* 失败态结果块：红色左边框 + 淡红底，展开后快速定位错误输出（覆盖普通 pre 与带行号两种形态） */
+.agent-tool-call.failed .agent-tool-result-pre,
+.agent-tool-call.failed .agent-tool-result .agent-tool-lined {
+  border-left: 3px solid var(--danger);
+  background: color-mix(in srgb, var(--danger) 5%, var(--bg));
+}
+
+.agent-tool-call.failed .agent-tool-result-label {
+  color: var(--danger);
 }
 
 .agent-tool-bash {
@@ -2002,22 +1949,25 @@
   overflow: hidden;
 }
 
-.agent-tool-bash-bar {
+/* 命令栏与实时输出栏共用：用 Bash 工具色轻着色，强化终端身份 */
+.agent-tool-bash-bar,
+.agent-tool-bash-live-bar {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  background: var(--surface-hover);
+  background: color-mix(in srgb, var(--tool-accent, var(--accent)) 7%, var(--surface));
   border-bottom: 1px solid var(--border);
   font-size: 10px;
-  color: var(--text-dim);
+  color: color-mix(in srgb, var(--tool-accent, var(--accent)) 60%, var(--text-dim));
 }
 
+/* 命令/输出块统一终端深色底（两种主题下保持一致），避免随主题变色破坏终端观感 */
 .agent-tool-bash-cmd {
   margin: 0;
   padding: 8px 10px;
-  background: #b3b3b3;
-  color: #0c0606;
+  background: #16161e;
+  color: #e2e8f0;
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
   font-size: 11px;
   line-height: 1.5;
@@ -2025,29 +1975,27 @@
   overflow-wrap: anywhere;
 }
 
+/* 命令前缀 $ 提示符：用工具色区分命令与输出，不参与选中复制 */
+.agent-tool-bash-cmd::before {
+  content: '$ ';
+  color: var(--tool-accent, #ea580c);
+  font-weight: 700;
+  user-select: none;
+}
+
 /* Bash 实时输出（执行中）*/
 .agent-tool-bash-live {
-  margin: 0 10px 8px;
+  /* 与命令块左右对齐（原 0 10px 8px 会比命令块窄一截） */
+  margin: 0 0 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
-.agent-tool-bash-live-bar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  background: var(--surface-hover);
-  border-bottom: 1px solid var(--border);
-  font-size: 10px;
-  color: var(--text-dim);
-}
-
 .agent-tool-bash-live-pre {
   margin: 0;
   padding: 8px 10px;
-  background: #1a1a2e;
+  background: #16161e;
   color: #d4d4d4;
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
   font-size: 11px;
@@ -2056,6 +2004,20 @@
   overflow-wrap: anywhere;
   max-height: 220px;
   overflow-y: auto;
+}
+
+/* 深色底上的滚动条用浅色半透明，避免亮色主题滚动条突兀 */
+.agent-tool-bash-live-pre::-webkit-scrollbar {
+  width: 8px;
+}
+
+.agent-tool-bash-live-pre::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, .18);
+  border-radius: 4px;
+}
+
+.agent-tool-bash-live-pre::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, .3);
 }
 
 .agent-tool-dots {
@@ -3765,22 +3727,6 @@
   background: var(--surface);
   color: var(--text-muted);
   box-shadow: none;
-}
-
-/* 「模型思考中…」等待占位：去框平铺——覆盖 chat.css 的卡片底色/内衬，
-   只是一行安静的灰色文字，避免首字到达前闪现一个突兀的卡片框。 */
-.agent-code-view .chat-messages .chat-msg-thinking-wait {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 0;
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
 }
 
 .agent-code-view .chat-messages .chat-msg-text {

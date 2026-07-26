@@ -52,6 +52,8 @@ interface LlamaCppApi {
   checkFileExists: (filePath: string) => Promise<boolean>
   pickModelFile: () => Promise<{ name: string; path: string } | null>
   selectDirectory: () => Promise<{ path: string | null }>
+  selectFiles: () => Promise<{ paths: string[] }>
+  listDrives: () => Promise<{ drives: string[] }>
   runModel: (opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number }) => Promise<{ success: boolean; pid?: number; error?: string }>
   stopModel: (id: string) => Promise<{ success: boolean; error?: string }>
   onModelError: (cb: (data: { id: string; error: string }) => void) => void

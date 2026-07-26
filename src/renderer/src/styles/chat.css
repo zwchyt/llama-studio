@@ -1013,21 +1013,6 @@
   border-radius: 1px;
 }
 
-.chat-msg-thinking-wait {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background: var(--surface);
-  border-radius: 4px var(--radius) var(--radius) var(--radius);
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.chat-msg-thinking-text {
-  animation: pulse 1.6s ease-in-out infinite;
-}
-
 .chat-msg-bubble--streaming {
   border-left: 2px solid var(--success);
   background: color-mix(in srgb, var(--success) 7%, var(--surface));

@@ -307,7 +307,23 @@ const SANITIZE_SCHEMA = {
   },
 }
 
+// 数学定界符归一：remark-math 只识别 $...$ / $$...$$，而模型普遍输出 \(...\) / \[...\]。
+// 渲染前将后者转为前者；围栏/行内代码先占位保护，避免误改代码里的转义序列。
+function normalizeMathDelimiters(md: string): string {
+  if (!md.includes('\\(') && !md.includes('\\[')) return md
+  const protected_: string[] = []
+  const work = md.replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`/g, m => {
+    protected_.push(m)
+    return `\x00MATH${protected_.length - 1}\x00`
+  })
+  const out = work
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_, tex) => `\n$$\n${tex}\n$$\n`)
+    .replace(/\\\((.+?)\\\)/g, (_, tex) => `$${tex}$`)
+  return out.replace(/\x00MATH(\d+)\x00/g, (_, i) => protected_[Number(i)]!)
+}
+
 const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { content: string }) {
+  const normalized = useMemo(() => normalizeMathDelimiters(content), [content])
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath, remarkLinkifyUrls]}
@@ -319,7 +335,7 @@ const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { content: 
       urlTransform={(url) => /^(https?:|mailto:|file:|data:)/i.test(url) ? url : defaultUrlTransform(url)}
       components={{ code: MarkdownCode as any, pre: MarkdownPre as any, a: MarkdownLink as any }}
     >
-      {content}
+      {normalized}
     </ReactMarkdown>
   )
 })
@@ -579,6 +595,7 @@ async function buildSystemContent(project: AgentProject): Promise<string> {
 
 ## 输出与思考链
 - 用 GitHub Flavored Markdown：列表、粗体强调、行内代码标注路径/命令、表格呈现枚举数据、代码块标语言。回复精确、结构化，长度与任务复杂度匹配。
+- 数学公式必须用 LaTeX 源码配合定界符输出：行内 \`$...$\`、块级 \`$$...$$\`（如 $e^{i\\pi}+1=0$）。**禁止**用反引号包裹公式（会被当代码原样显示），也不要用 Unicode 符号（∀∫√Σ 等）拼凑公式；仅展示 LaTeX 源码本身时才用代码包裹。
 - 调用 Write/Edit 写文件后，正文里**不要再整段粘贴文件内容/写入代码**（工具卡片已完整展示，重复粘贴既冗余又浪费上下文）；只用一两句说明做了什么、改在哪，需要时用行内代码点出关键改动。
 - \`<think>\` 内推理保持结构化、分层次：按阶段组织（如 定位→根因→方案），关键结论用加粗或引用块突出，路径/函数用行内代码；避免大段纯文本堆砌。
 
@@ -1359,7 +1376,9 @@ const StreamingContent = React.memo(function StreamingContent({ content, streami
           // thinkDone：本轮已进入工具生成阶段时，把当前思考段视为正常收尾（closed 且非流式），
           // 呈现「思考过程」折叠态而非「思考中」转圈，也不会误判为「思考已中断」。
           ? <ThinkBlock key={`t-${j}`} value={seg.value} closed={seg.closed || !!thinkDone} isStreaming={!!streaming && !seg.closed && !thinkDone} />
-          : <div key={`m-${j}`} className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}><StreamingMarkdown content={seg.value} isStreaming={streaming} /></div>
+          // 非流式（已完成）切换到 AgentMarkdown 完整栈：补齐 KaTeX 公式/raw HTML/sanitize，
+          // 否则无 segments 的消息完成后会永远停在轻量栈，公式不渲染。
+          : <div key={`m-${j}`} className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>{streaming ? <StreamingMarkdown content={seg.value} isStreaming={streaming} /> : <AgentMarkdown content={seg.value} />}</div>
       )}
     </>
   )
@@ -1555,7 +1574,7 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
 
   return (
     <>
-      <div className={`agent-tool-call tool-${tc.name.toLowerCase()}`}>
+      <div className={`agent-tool-call tool-${tc.name.toLowerCase()}${failed ? ' failed' : ''}`}>
         <div className="agent-tool-call-head" onClick={handleToggle}>
           <Icon size={13} />
           <span className="agent-tool-call-name">{tc.name}</span>
@@ -2886,9 +2905,9 @@ export default function AgentCodeView() {
     } catch { /* 读取失败，静默跳过 */ }
   }, [])
 
-  // 拖拽文件到输入框：从文件树拖拽文件直接作为附件添加
+  // 拖拽文件到输入框：支持内部文件树拖拽与系统资源管理器拖入，均作为附件添加
   const handleInputDragOver = useCallback((e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes('application/x-agent-file-path')) {
+    if (e.dataTransfer.types.includes('application/x-agent-file-path') || e.dataTransfer.types.includes('Files')) {
       e.preventDefault()
       e.dataTransfer.dropEffect = 'copy'
     }
@@ -2906,13 +2925,35 @@ export default function AgentCodeView() {
       window.dispatchEvent(new CustomEvent('agent-file-drop-done'))
       return
     }
-    // 单文件回退
+    // 单文件回退（内部文件树拖拽）
     const path = e.dataTransfer.getData('application/x-agent-file-path')
     const name = e.dataTransfer.getData('application/x-agent-file-name')
-    if (!path || !name) return
-    e.preventDefault()
-    handleFilePickerAttach({ name, path, isDir: false })
-    window.dispatchEvent(new CustomEvent('agent-file-drop-done'))
+    if (path && name) {
+      e.preventDefault()
+      handleFilePickerAttach({ name, path, isDir: false })
+      window.dispatchEvent(new CustomEvent('agent-file-drop-done'))
+      return
+    }
+    // 系统资源管理器拖入：经 webUtils 取真实路径后逐个作为附件（目录/取路径失败跳过）
+    if (e.dataTransfer.files.length > 0) {
+      e.preventDefault()
+      for (const f of Array.from(e.dataTransfer.files)) {
+        try {
+          const p = window.api.getFilePath(f)
+          if (p) void handleFilePickerAttach({ name: f.name, path: p, isDir: false })
+        } catch { /* 取路径失败，跳过该项 */ }
+      }
+    }
+  }, [handleFilePickerAttach])
+
+  // 浏览系统文件：原生对话框选取任意磁盘文件（多选），逐个作为附件加入
+  const handleBrowseSystemFiles = useCallback(async () => {
+    const res = await safeCall<{ paths: string[] }>(() => window.api.selectFiles(), '选择文件')
+    if (!res?.paths?.length) return
+    for (const p of res.paths) {
+      const name = p.replace(/\\/g, '/').split('/').pop() || p
+      void handleFilePickerAttach({ name, path: p, isDir: false })
+    }
   }, [handleFilePickerAttach])
 
   const handleFilePickerRemove = useCallback((path: string) => {
@@ -4478,12 +4519,8 @@ export default function AgentCodeView() {
                             {genActive ? (
                               // 生成期不在会话区显示工具状态（改由输入框上方常驻状态栏展示），仅收起思考链
                               (msg.content ? <StreamingContent content={msg.content} streaming={streamingMsg} thinkDone={genThinkDone} /> : null)
-                            ) : streamingThis && !msg.content ? (
-                              <div className="chat-msg-thinking-wait">
-                                <Loader2 size={14} className="spin" />
-                                <span className="chat-msg-thinking-text">模型思考中…</span>
-                              </div>
                             ) : (
+                              // 首 token 前不再渲染「模型思考中…」占位：该窗口的状态已由输入框上方常驻状态栏统一展示
                               <StreamingContent content={msg.content} streaming={streamingMsg} />
                             )}
                           </>
@@ -4539,12 +4576,8 @@ export default function AgentCodeView() {
                             {genActive ? (
                               // 生成期不在会话区显示工具状态（改由输入框上方常驻状态栏展示），仅收起思考链
                               (msg.content ? <StreamingContent content={msg.content} streaming={streamingMsg} thinkDone={genThinkDone} /> : null)
-                            ) : streamingThis && !msg.content ? (
-                              <div className="chat-msg-thinking-wait">
-                                <Loader2 size={14} className="spin" />
-                                <span className="chat-msg-thinking-text">模型思考中…</span>
-                              </div>
                             ) : (
+                              // 首 token 前不再渲染「模型思考中…」占位：该窗口的状态已由输入框上方常驻状态栏统一展示
                               <StreamingContent content={msg.content} streaming={streamingMsg} />
                             )}
                             {!streamingThis && !hasToolCalls && (
@@ -4821,6 +4854,7 @@ export default function AgentCodeView() {
                 onClose={() => setFilePickerOpen(false)}
                 onOpenFile={openPreview}
                 triggerRef={attachBtnRef}
+                onBrowseSystem={handleBrowseSystemFiles}
               />
             )}
             {attachedFiles.length > 0 && (

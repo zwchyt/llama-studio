@@ -1942,6 +1942,24 @@ export function registerIpcHandlers(): void {
     return { path: r.filePaths[0] }
   })
 
+  // 原生文件选择对话框（多选）：供 Agent Code 输入框附件选取任意磁盘文件
+  ipcMain.handle('select-files', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const r = await dialog.showOpenDialog(win!, { title: '选择文件', properties: ['openFile', 'multiSelections'] })
+    if (r.canceled || !r.filePaths.length) return { paths: [] }
+    return { paths: r.filePaths }
+  })
+
+  // 枚举可用磁盘（Windows A:-Z:）：供文件选择面板「此电脑」视图列出盘符
+  ipcMain.handle('list-drives', async () => {
+    const drives: string[] = []
+    for (let i = 65; i <= 90; i++) {
+      const root = String.fromCharCode(i) + ':\\'
+      try { if (existsSync(root)) drives.push(root) } catch { /* 不可访问盘符跳过 */ }
+    }
+    return { drives }
+  })
+
   // --- metrics ---
   const lastCacheHit = new Map<string, { cached: number; total: number }>()
   const lastDecodeCount = new Map<string, { count: number; time: number }>()

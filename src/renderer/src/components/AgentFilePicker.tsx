@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { ChevronLeft, Search, X, File, Folder, FolderOpen, Check, Loader2 } from 'lucide-react'
+import { ChevronLeft, Search, X, File, Folder, FolderOpen, Check, Loader2, HardDrive } from 'lucide-react'
 
 interface FileEntry {
   name: string
@@ -22,19 +22,27 @@ interface AgentFilePickerProps {
   onClose: () => void
   onOpenFile: (path: string) => void
   triggerRef?: React.RefObject<HTMLElement | null>
+  // 浏览系统文件：调原生对话框选取任意磁盘文件（面板导航只能到当前盘符根）
+  onBrowseSystem?: () => void
 }
 
 function dirName(p: string) {
   return p.replace(/\\/g, '/').split('/').filter(Boolean).pop() || p
 }
 
+// 「此电脑」磁盘列表视图的路径哨兵：盘符根再向上导航时进入
+const DRIVES_VIEW = '::drives::'
+
 function parentDir(p: string) {
   const norm = p.replace(/\\/g, '/').replace(/\/+$/, '')
   const idx = norm.lastIndexOf('/')
-  return idx > 0 ? norm.slice(0, idx) : ''
+  if (idx <= 0) return ''
+  const parent = norm.slice(0, idx)
+  // 盘符根补斜杠（'C:' → 'C:/'）：避免 Node 端把 'C:' 解析为该盘当前目录
+  return /^[A-Za-z]:$/.test(parent) ? parent + '/' : parent
 }
 
-export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRemove, onClose, triggerRef}: AgentFilePickerProps) {
+export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRemove, onClose, triggerRef, onBrowseSystem }: AgentFilePickerProps) {
   const [currentPath, setCurrentPath] = useState(workspaceDir)
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(false)
@@ -51,11 +59,17 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
     setSearchQuery('')
     setSearchExpanded(false)
     try {
-      const res = await window.api.expandFileTree(dir)
-      if (res.success && res.children) {
-        setEntries(res.children)
+      if (dir === DRIVES_VIEW) {
+        // 「此电脑」视图：列出所有可用磁盘
+        const res = await window.api.listDrives()
+        setEntries((res.drives || []).map(d => ({ name: d.replace(/[\\/]+$/, ''), path: d.replace(/\\/g, '/'), isDir: true })))
       } else {
-        setEntries([])
+        const res = await window.api.expandFileTree(dir)
+        if (res.success && res.children) {
+          setEntries(res.children)
+        } else {
+          setEntries([])
+        }
       }
     } catch {
       setEntries([])
@@ -65,6 +79,7 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
 
   // Build breadcrumb trail
   useEffect(() => {
+    if (currentPath === DRIVES_VIEW) { setBreadcrumbs([]); return }
     const parts = currentPath.replace(/\\/g, '/').split('/').filter(Boolean)
     const crumbs: string[] = []
     for (let i = 0; i < parts.length; i++) {
@@ -92,8 +107,11 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
   }
 
   const handleGoUp = () => {
+    if (currentPath === DRIVES_VIEW) return
     const parent = parentDir(currentPath)
+    // 盘符根再向上：进入「此电脑」磁盘列表
     if (parent && parent !== currentPath) setCurrentPath(parent)
+    else setCurrentPath(DRIVES_VIEW)
   }
 
   const handleEntryClick = (entry: FileEntry) => {
@@ -131,12 +149,22 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
     <div className="agent-file-picker" ref={panelRef}>
       <div className="agent-file-picker-header">
         <div className="agent-file-picker-bread">
-          {currentPath !== workspaceDir && (
+          {currentPath !== workspaceDir && currentPath !== DRIVES_VIEW && (
             <button className="agent-file-picker-up" onClick={handleGoUp} title="上级目录">
               <ChevronLeft size={13} />
             </button>
           )}
-          {breadcrumbs.length > 3 ? (
+          {currentPath === DRIVES_VIEW ? (
+            <>
+              <button className="agent-file-picker-crumb agent-file-picker-crumb-root" onClick={() => setCurrentPath(workspaceDir)} title="回到工作目录">
+                <FolderOpen size={11} />
+              </button>
+              <span className="agent-file-picker-sep">/</span>
+              <span className="agent-file-picker-crumb agent-file-picker-crumb-active" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <HardDrive size={11} /> 此电脑
+              </span>
+            </>
+          ) : breadcrumbs.length > 3 ? (
             <>
               <button className="agent-file-picker-crumb agent-file-picker-crumb-root" onClick={() => setCurrentPath(workspaceDir)}>
                 <FolderOpen size={11} />
@@ -171,6 +199,11 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
           )}
         </div>
         <div className="agent-file-picker-search-area">
+          {onBrowseSystem && (
+            <button className="agent-file-picker-search-btn" onClick={onBrowseSystem} title="浏览系统文件（任意磁盘）">
+              <HardDrive size={13} />
+            </button>
+          )}
           {searchExpanded || searchQuery ? (
             <div className="agent-file-picker-search-wrap">
               <Search size={11} className="agent-file-picker-search-icon" />
@@ -229,7 +262,7 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
                     {attachedByPath.has(entry.path) ? (
                       <Check size={11} />
                     ) : entry.isDir ? (
-                      <Folder size={11} />
+                      currentPath === DRIVES_VIEW ? <HardDrive size={11} /> : <Folder size={11} />
                     ) : (
                       <File size={11} />
                     )}
