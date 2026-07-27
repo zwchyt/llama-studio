@@ -466,8 +466,10 @@ function highlightPreviewLines(content: string, path: string): string[] {
   return splitHighlightedLines(html)
 }
 
-// Agent 工作台暴露文件操作类工具 + Bash 执行（不调用联网 / 时间类工具）
-const AGENT_FILE_TOOL_NAMES = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'ListDir', 'AnalyzeDir', 'Delete', 'TodoWrite', 'AskUserQuestion', 'Reflect', 'TaskGet', 'TaskList', 'GetBackgroundTaskOutput', 'ListBackgroundTasks', 'view_tool']
+// Agent 工作台暴露文件操作类工具 + Bash 执行（不调用联网 / 时间类工具）；
+// CodeSearch 受开关门控：开启时必须同步加入白名单，否则系统提示词宣传了该工具、
+// tools 列表却把它过滤掉，模型被引导调用一个不存在于 schema 的工具。
+const AGENT_FILE_TOOL_NAMES = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'ListDir', 'AnalyzeDir', 'Delete', 'TodoWrite', 'AskUserQuestion', 'Reflect', 'TaskGet', 'TaskList', 'GetBackgroundTaskOutput', 'ListBackgroundTasks', 'view_tool', ...(agentConfig.codeSearchEnabled ? ['CodeSearch'] : [])]
 
 const BACKUP_MAX_BYTES = 2 * 1024 * 1024
 
@@ -573,7 +575,7 @@ async function buildSystemContent(project: AgentProject): Promise<string> {
 
 ## 操作安全分级
 - **自由执行**：读取/搜索/glob/查目录等只读操作。
-- **需用户审批**：\`Delete\`、\`Bash\` 始终需确认；\`Write\`、\`Edit\` 取决于项目设置。发起后弹审批窗，被拒则据反馈调整。
+- **需用户审批**：\`Delete\` 始终需确认；\`Bash\` 仅在命令具破坏性（删除/格式化/终止进程/改系统状态/git push 等）时需确认，普通命令直接执行；\`Write\`、\`Edit\` 取决于项目设置。发起后弹审批窗，被拒则据反馈调整。
 - **自动备份**：\`Write\`/\`Edit\`/\`Delete\` 执行前自动备份，支持一键撤销。
 - 一次同意≠长期授权，每次调用仍独立审批。
 
@@ -738,12 +740,29 @@ function isToolErrorResult(s: string): boolean {
   if (!s) return false
   const trimmed = s.trimStart()
   if (/^error:/i.test(trimmed)) return true
+  // 各工具的统一失败前缀（Edit/Write/Delete/Bash 异常等以表情标记开头）；
+  // 此前只认 Error:/JSON，导致最易失败的 Bash/Edit/Write 永远 failed=false，
+  // 连续失败熔断、失败警告全部失效，且失败调用被打转检测当成「成功」。
+  if (/^(?:❌|💥|🔒|📁|⚠️)/.test(trimmed)) return true
+  // Bash：失败/超时标记附加在输出末尾（前面可能带 stdout/stderr），匹配 BashTool
+  // 生成的精确文案，避免误伤碰巧含相似词的普通输出。
+  if (/\n\n❌ 命令失败，退出码: -?\d+/.test(s)) return true
+  if (/^命令失败，退出码 /.test(trimmed)) return true
+  if (/^⏱ 命令执行超时/.test(trimmed) || /\n\n⏱ 命令执行超时（/.test(s)) return true
   try {
     const o = JSON.parse(s)
     return !!(o && typeof o === 'object' && 'error' in o)
   } catch {
     return false
   }
+}
+
+// 发送给模型的历史消息中剥离思考链（闭合的 <think>…</think> 与未闭合的尾部）：
+// 推理模型的历史轮思考链回传既白耗本地小上下文预算，也不符合 chat 模板惯例。
+// 仅影响 api 消息，UI 展示的 displayMsgs 仍保留原文。
+function stripThinkForApi(s: string): string {
+  if (!s || !s.includes('<think>')) return s
+  return s.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/, '').trim()
 }
 
 // 将工具参数中的相对路径按当前工作区解析为绝对路径（用于点击预览）
@@ -2957,10 +2976,12 @@ export default function AgentCodeView() {
       const m = messages[mi]!
       if (m.toolCalls && m.toolCalls.length > 0) {
         out.push({
-          role: 'assistant', content: m.content || null,
+          role: 'assistant', content: stripThinkForApi(m.content || '') || null,
           tool_calls: m.toolCalls.map(tc => ({ id: tc.id, type: 'function' as const, function: { name: tc.name, arguments: tc.args } }))
         })
-        for (const tc of m.toolCalls) out.push({ role: 'tool', tool_call_id: tc.id, content: tc.result ?? '' })
+        // 无结果的调用（生成被中止/熔断时未执行）补明确说明而非空串，
+        // 空串对模型零信息量，易被误解为「成功但无输出」。
+        for (const tc of m.toolCalls) out.push({ role: 'tool', tool_call_id: tc.id, content: tc.result ?? JSON.stringify({ error: '该工具调用未实际执行（生成被中止或熔断），无结果。' }) })
       } else if (m.role === 'user' && m.attachments && m.attachments.length > 0) {
         const hasImage = m.attachments.some(a => a.type === 'image' && a.dataUrl)
         if (hasImage) {
@@ -2979,7 +3000,7 @@ export default function AgentCodeView() {
           out.push({ role: 'user', content: text })
         }
       } else {
-        out.push({ role: m.role, content: m.content })
+        out.push({ role: m.role, content: m.role === 'assistant' ? stripThinkForApi(m.content) : m.content })
       }
     }
     return out
@@ -3503,7 +3524,7 @@ export default function AgentCodeView() {
           })
           // 立即滚动到底部，确保工具卡片在视口内可见
           scrollToBottom()
-          apiMsgs.push({ role: 'assistant', content: streamedText || null, tool_calls: toolCalls.map(tc => ({ id: tc.id, type: 'function' as const, function: { name: tc.function.name, arguments: tc.function.arguments } })) } as ApiMessage)
+          apiMsgs.push({ role: 'assistant', content: stripThinkForApi(streamedText) || null, tool_calls: toolCalls.map(tc => ({ id: tc.id, type: 'function' as const, function: { name: tc.function.name, arguments: tc.function.arguments } })) } as ApiMessage)
           // 第二阶段：逐个执行工具（pi-web 风格：状态驱动）
           // 本轮去重：模型偶会在同一 tool_calls 数组里把同一条调用发两遍（如 Bash 重复两次），
           // 按「名称 + 归一化参数」去重，命中则跳过执行并复用本轮已得到的结果。
@@ -3529,8 +3550,12 @@ export default function AgentCodeView() {
           // 仅执行唯一调用），结果存入 preRun 供下方顺序循环直接取用；顺序循环的去重/截断/
           // 失败跟踪/熔断/提交逻辑完全不变，保证顺序与因果与串行路径一致。只读工具无需审批/备份。
           const preRun = new Map<string, { result: string; failed: boolean; durationMs: number }>()
+          // 并发预取仅限纯文件系统只读工具（read/search/list）：readOnly 元数据还覆盖
+          // AskUserQuestion/Reflect/Task 查询等，若一并预取会绕过提问防抖/去重，
+          // 提问面板会在其他工具执行时并发弹出。
+          const PARALLEL_SAFE_KINDS = new Set(['read', 'search', 'list'])
           const parallelReadBatch = toolCalls.length > 1 && !userHasImages &&
-            toolCalls.every(tc => TOOL_METAS[tc.function.name]?.readOnly === true)
+            toolCalls.every(tc => { const meta = TOOL_METAS[tc.function.name]; return !!meta && meta.readOnly && PARALLEL_SAFE_KINDS.has(meta.kind) })
           if (parallelReadBatch) {
             const batch = toolCalls
             const batchShownAt = Date.now()
@@ -3575,7 +3600,8 @@ export default function AgentCodeView() {
             if (tc.function.name === 'Bash') {
               const prevRuns = spinCount.get(dupKey) || 0
               if (prevRuns >= 1) {
-                const blocked = `⛔ 命令已执行过且成功完成，不再重复执行。\n\n你之前已经成功执行了完全相同的命令，结果如下：\n${batchExecuted.get(dupKey) || '（见上方历史结果）'}\n\n【请立即停止重复。请基于已有结果进行思考和下一步操作：\n- 如果命令已成功，直接使用其输出结果继续工作\n- 如果结果不符合预期，分析原因后换用不同的命令或工具\n- 如果需要查看更多信息，使用 Read/Grep/Glob 等专用工具\n- 绝不要再次执行相同的命令】`
+                const prevResult = batchExecuted.get(dupKey)
+                const blocked = `⛔ 检测到重复执行：完全相同的 Bash 命令在本次生成中已执行过，且期间没有任何文件修改，已跳过重复执行。\n${prevResult ? `此前结果：\n${prevResult}\n` : '（结果见此前轮次中该命令的输出）'}\n【请基于已有结果思考下一步：\n- 结果已满足需要 → 直接使用它继续工作\n- 结果不符预期 → 分析原因后换用不同的命令或工具\n- 确需重跑（如重新测试/构建） → 先完成代码修改（Write/Edit），修改后即可重新执行同一命令】`
                 commitToolCall(liveId, tc.id, { status: 'done', result: blocked, failed: false })
                 apiMsgs.push({ role: 'tool', tool_call_id: tc.id, content: blocked })
                 batchExecuted.set(dupKey, blocked)
@@ -3774,6 +3800,11 @@ export default function AgentCodeView() {
               const meta = TOOL_METAS[tc.function.name]
               if (meta && (meta.kind === 'write' || meta.kind === 'edit' || meta.kind === 'delete')) {
                 bashConsecutive = 0
+                // 文件状态已改变：清除 Bash 的跨轮重复拦截记录，允许重新运行同一命令
+                //（如「改代码 → 重跑测试/构建」的正常循环，否则第二次 npm test 会被⛔拦截）。
+                if (!failed) {
+                  for (const k of [...spinCount.keys()]) { if (k.startsWith('Bash::')) spinCount.delete(k) }
+                }
                 // ── 认知地图失效钩子：写/改/删成功后同步失效对应文件（不等 fs.watch 回调）──
                 if (!failed && agentConfig.codeMapEnabled) {
                   const invRoot = getWorkspaceRootForSession()

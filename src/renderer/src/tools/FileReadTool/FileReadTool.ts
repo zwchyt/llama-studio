@@ -1,6 +1,7 @@
 import type { ToolDefinition } from '../../utils/tools'
 import { FILE_READ_TOOL_NAME } from './constants'
 import type { FileReadInput } from './types'
+import { getWorkspaceRootForSession } from '../workspaceRoot'
 
 export const definition: Omit<ToolDefinition['function'], 'type'> = {
   name: FILE_READ_TOOL_NAME,
@@ -22,22 +23,37 @@ export const definition: Omit<ToolDefinition['function'], 'type'> = {
 const readCache = new Map<string, string>()
 const READ_CACHE_MAX = 200
 
-function readCacheKey(file_path: string, offset?: number, limit?: number): string {
-  return `${file_path}|${offset ?? ''}|${limit ?? ''}`
+// 缓存 key 使用归一化绝对路径（相对路径按当前会话工作区解析、统一分隔符、小写）：
+// 1) 避免「Read 用相对路径、Edit 用绝对路径（或 \\ vs / 、大小写差异）」导致
+//    invalidateReadCache 前缀不命中、后续 Read 返回陈旧内容与陈旧 hashline；
+// 2) 避免不同项目的相同相对路径（如都有 src/index.ts）互相串缓存。
+function normalizeCachePath(p: string): string {
+  let abs = p || ''
+  const isAbs = /^[a-zA-Z]:[\\/]/.test(abs) || abs.startsWith('/') || abs.startsWith('\\')
+  if (!isAbs) {
+    const root = getWorkspaceRootForSession()
+    if (root) abs = root.replace(/[\\/]+$/, '') + '/' + abs.replace(/^[\\/]+/, '')
+  }
+  return abs.replace(/\\/g, '/').toLowerCase()
 }
 
-/** 文件被写入/编辑/删除后调用，使该路径的缓存失效 */
+function readCacheKey(file_path: string, offset?: number, limit?: number): string {
+  return `${normalizeCachePath(file_path)}|${offset ?? ''}|${limit ?? ''}`
+}
+
+/** 文件被写入/编辑/删除后调用，使该路径的缓存失效；不传路径则清空全部缓存 */
 export function invalidateReadCache(file_path?: string): void {
   if (!file_path) { readCache.clear(); return }
+  const prefix = `${normalizeCachePath(file_path)}|`
   for (const key of readCache.keys()) {
-    if (key.startsWith(`${file_path}|`)) readCache.delete(key)
+    if (key.startsWith(prefix)) readCache.delete(key)
   }
 }
 
 // ── Hashline：行内容指纹锚点 ──
 // 每行的内容指纹（FNV-1a 哈希前 7 位），用于 Edit 时精确定位。
 // 模型不可自行编造或修改锚点字符串；锚点由 Read 工具生成，Edit 工具校验。
-function lineHash(text: string): string {
+export function lineHash(text: string): string {
   let hash = 0x811c9dc5
   for (let i = 0; i < text.length; i++) {
     hash ^= text.charCodeAt(i)

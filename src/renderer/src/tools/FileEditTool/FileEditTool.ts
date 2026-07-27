@@ -1,7 +1,7 @@
 import type { ToolDefinition } from '../../utils/tools'
 import { FILE_EDIT_TOOL_NAME } from './constants'
 import type { FileEditInput } from './types'
-import { invalidateReadCache } from '../FileReadTool/FileReadTool'
+import { invalidateReadCache, lineHash } from '../FileReadTool/FileReadTool'
 
 // ③ 生成紧凑的变更摘要（± 行 diff）：去掉 old/new 的公共前后缀行，只展示真正变化的
 // 中间片段，并在新文件中定位起始行号。使模型无需重新 Read 即可确认改对了什么、改在哪里，
@@ -51,7 +51,25 @@ export const definition: Omit<ToolDefinition['function'], 'type'> = {
 }
 
 export async function execute(args: Record<string, unknown>): Promise<string> {
-  const { file_path, old_string, new_string, replace_all } = args as unknown as FileEditInput & { replace_all?: boolean }
+  const { file_path, old_string, new_string, replace_all, hashline } = args as unknown as FileEditInput & { replace_all?: boolean; hashline?: string }
+  // hashline 交叉校验（schema 中承诺的能力，此前未实现）：给出「行号 哈希」锚点时，
+  // 先回读文件校验该行指纹是否仍一致；不一致说明模型手里的内容已过时，
+  // 直接拒绝并要求重新 Read，避免基于陈旧锚点误改。回读失败/截断则跳过校验，不阻塞编辑。
+  if (typeof hashline === 'string' && hashline.trim()) {
+    const m = /^(\d+)\s+([0-9a-f]{7})$/i.exec(hashline.trim())
+    if (m) {
+      try {
+        const pre = await window.api.readFile(file_path, { raw: true })
+        if (pre.success && typeof pre.content === 'string' && !pre.truncated) {
+          const lineNo = parseInt(m[1]!, 10)
+          const line = pre.content.split('\n')[lineNo - 1]
+          if (line === undefined || lineHash(line) !== m[2]!.toLowerCase()) {
+            return `❌ 编辑失败：hashline 锚点「${hashline.trim()}」与文件当前内容不符（文件可能已被修改）。请重新 Read 获取最新 hashline 后再 Edit。`
+          }
+        }
+      } catch { /* 回读异常则跳过校验，不阻塞编辑 */ }
+    }
+  }
   const res = await window.api.editFile(file_path, old_string, new_string, replace_all)
   if (res.success) {
     invalidateReadCache(file_path)

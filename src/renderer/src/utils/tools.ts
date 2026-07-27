@@ -202,9 +202,13 @@ if (agentConfig.codeSearchEnabled) register(CodeSearchDef, CodeSearchExec)
 // 工具统一执行超时（毫秒）与适用白名单（仅本地 IO 类，详见 executeToolCall）。
 const TOOL_EXEC_TIMEOUT_MS = 30000
 const TIMEOUT_TOOLS = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep', 'ListDir', 'AnalyzeDir', 'Delete', 'CodeSearch'])
+// 有副作用的写入类工具：超时后底层操作可能仍在进行（Promise.race 只放弃等待、不中断 IPC），
+// 超时文案须明示「结果未知」并要求回读确认；且不参与自动重试（重试可能造成重复写入）。
+const MUTATING_TIMEOUT_TOOLS = new Set(['Write', 'Edit', 'Delete'])
 
-// 可自动重试的工具（本地 IO + 网络类）：仅对「瞬时性」错误重试一次，避免让模型为偶发抖动放弃。
-const RETRY_TOOLS = new Set([...TIMEOUT_TOOLS, 'web_search', 'fetch_webpage'])
+// 可自动重试的工具（只读本地 IO + 网络类）：仅对「瞬时性」错误重试一次，避免让模型为偶发抖动放弃。
+// 写入类（Write/Edit/Delete）不重试：第一次可能已部分生效，盲重试会双重写入或误报「未找到匹配」。
+const RETRY_TOOLS = new Set([...[...TIMEOUT_TOOLS].filter(n => !MUTATING_TIMEOUT_TOOLS.has(n)), 'web_search', 'fetch_webpage'])
 const TOOL_RETRY_DELAY_MS = 300
 // 瞬时错误特征（文件被占用 / 资源忙 / 网络抖动等）；确定性错误（不存在/无权限/未匹配）不重试。
 const RETRYABLE_ERROR_RE = /(EBUSY|EAGAIN|EMFILE|ENFILE|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EPIPE|network|socket hang up|temporarily unavailable|resource busy|being used by another process|正由另一(?:个)?进程使用|resource temporarily)/i
@@ -212,9 +216,13 @@ const RETRYABLE_ERROR_RE = /(EBUSY|EAGAIN|EMFILE|ENFILE|ETIMEDOUT|ECONNRESET|ECO
 const TIMEOUT_SENTINEL = '执行超时'
 
 function extractErrorText(result: string): string | null {
-  let msg = result
-  try { const o = JSON.parse(result); if (o && typeof o.error === 'string') msg = o.error } catch { /* 非 JSON，直接用原文匹配 */ }
-  return /"error"|error|失败|超时|Error/i.test(msg) ? msg : null
+  // 只认显式失败约定：JSON { error } 或 Error:/❌/💥/🔒 等统一失败前缀。
+  // 不再对正文做松散词匹配，避免 Grep/Read 结果里恰好含 error/network 等词的
+  // 成功结果被误判为失败而触发无意义重试、并附加误导性的「重试仍失败」提示。
+  try { const o = JSON.parse(result); if (o && typeof o.error === 'string') return o.error } catch { /* 非 JSON，按前缀判定 */ }
+  const t = result.trimStart()
+  if (/^(?:error:|❌|💥|🔒)/i.test(t)) return t.slice(0, 500)
+  return null
 }
 
 function isRetryableResult(result: string): boolean {
@@ -308,6 +316,9 @@ export function validateAndRepairArgs(
     const aliases = ARG_ALIASES[canon]
     if (!aliases) continue
     for (const a of aliases) {
+      // 别名本身就是该工具的合法参数时不得重映射（如 Grep 的 glob 是独立过滤参数，
+      // 若因 pattern 缺失被改写为 pattern，会把通配符当正则执行）
+      if (propNames.includes(a)) continue
       if (a in out && out[a] !== undefined) {
         out[canon] = out[a]
         delete out[a]
@@ -358,7 +369,11 @@ async function runToolOnce(name: string, entry: ToolEntry, args: Record<string, 
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<string>((resolve) => {
     timer = setTimeout(
-      () => resolve(JSON.stringify({ error: `工具 ${name} ${TIMEOUT_SENTINEL}（${TOOL_EXEC_TIMEOUT_MS / 1000}s），已中止。如确需更久，请拆分任务或改用后台方式。` })),
+      () => resolve(JSON.stringify({
+        error: MUTATING_TIMEOUT_TOOLS.has(name)
+          ? `工具 ${name} ${TIMEOUT_SENTINEL}（${TOOL_EXEC_TIMEOUT_MS / 1000}s）。注意：底层操作可能仍在进行、结果未知——请先用 Read 回读目标文件确认实际状态，再决定下一步，不要盲目重试。`
+          : `工具 ${name} ${TIMEOUT_SENTINEL}（${TOOL_EXEC_TIMEOUT_MS / 1000}s），已中止。如确需更久，请拆分任务或改用后台方式。`
+      })),
       TOOL_EXEC_TIMEOUT_MS
     )
   })

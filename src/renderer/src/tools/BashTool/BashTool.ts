@@ -3,6 +3,7 @@ import { BASH_TOOL_NAME } from './constants'
 import type { BashInput } from './types'
 import { getWorkspaceRootForSession } from '../workspaceRoot'
 import { startBashLive, stopBashLive } from './bashLiveStore'
+import { invalidateReadCache } from '../FileReadTool/FileReadTool'
 
 export const definition: Omit<ToolDefinition['function'], 'type'> = {
   name: BASH_TOOL_NAME,
@@ -54,24 +55,30 @@ function isBarePrintf(command: string): boolean {
 let trackedCwd = ''
 
 function resolveCdTarget(raw: string, currentCwd: string): string | null {
-  // 取最后一段 cd xxx（忽略 && 等连接符）
-  const segments = raw.split(/[&|]{2}|[;]/)
+  // 按 cmd 连接符（&& || 单 & ;）切段，按顺序依次应用每一段 cd，返回最终目录
+  //（如 cd a && cd b 应落在 a\b）；未出现 cd 则返回 null。
+  const segments = raw.split(/&&|\|\||[&;]/)
+  let cur = currentCwd
+  let changed = false
   for (const seg of segments) {
     const trimmed = seg.trim()
-    const m = trimmed.match(/^cd\s+(.+)/i)
+    const m = trimmed.match(/^cd\s+(?:\/d\s+)?(.+)/i)
     if (!m) continue
-    const target = m[1]!.trim()
-    if (target.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(target)) return target
-    if (target === '..' || target === '../') {
-      const parent = currentCwd.replace(/[\\/]+$/, '').split(/[\\/]/)
-      parent.pop()
-      return parent.length ? parent.join('\\') : currentCwd
-    }
+    const target = m[1]!.trim().replace(/^"(.*)"$/, '$1')
     if (target === '.' || target === './') continue
+    if (target.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(target)) { cur = target; changed = true; continue }
+    if (target === '..' || target === '../') {
+      const parent = cur.replace(/[\\/]+$/, '').split(/[\\/]/)
+      parent.pop()
+      if (parent.length) cur = parent.join('\\')
+      changed = true
+      continue
+    }
     // 相对路径：拼到当前 cwd
-    return currentCwd.replace(/[\\/]+$/, '') + '\\' + target.replace(/[\\/]/g, '\\').replace(/^[\\/]+/, '')
+    cur = cur.replace(/[\\/]+$/, '') + '\\' + target.replace(/[\\/]/g, '\\').replace(/^[\\/]+/, '')
+    changed = true
   }
-  return null
+  return changed ? cur : null
 }
 
 export async function execute(args: Record<string, unknown>): Promise<string> {
@@ -90,15 +97,26 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
       execId,
     })
 
+    // Bash 可能修改任意文件（脚本/git/重定向等），保守清空 Read 缓存，
+    // 避免后续 Read 命中陈旧内容与陈旧 hashline 锚点。
+    invalidateReadCache()
+
     // ── cd 持久化（#1） ──
+    // 纯 cd 命令：仅返回目录切换反馈；复合命令（cd xxx && 其他）：正常返回命令输出，
+    // 目录变更以附注形式追加，绝不吞掉真实输出。
+    let cwdNote = ''
     if (res.code === 0) {
       if (!trackedCwd) trackedCwd = getWorkspaceRootForSession()
       const newCwd = resolveCdTarget(command, trackedCwd)
       if (newCwd) {
         trackedCwd = newCwd
         window.api.setBashCwd(newCwd).catch(() => {})
-        // 给模型明确反馈：cd 已成功，当前目录已变更，无需重复调用
-        return `✅ 已切换工作目录到：${newCwd}\n（后续命令将在此目录下执行，无需再次 cd）`
+        const isPureCd = /^cd\s+(?:\/d\s+)?[^&|;]+$/i.test(command.trim())
+        if (isPureCd) {
+          // 给模型明确反馈：cd 已成功，当前目录已变更，无需重复调用
+          return `✅ 已切换工作目录到：${newCwd}\n（后续命令将在此目录下执行，无需再次 cd）`
+        }
+        cwdNote = `\n\n（工作目录已切换到：${newCwd}，后续命令将在此目录下执行）`
       }
     }
 
@@ -164,7 +182,7 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
       } catch { /* 写临时文件失败不影响主结果返回 */ }
     }
 
-    return output || '(no output)'
+    return (output || '(no output)') + cwdNote
   } catch (e: any) {
     return `💥 命令执行异常：${e?.message || String(e)}`
   } finally {
@@ -197,6 +215,11 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = [
   /\bwmic\b/i,                                          // WMI 改系统状态（常被用于删/停）
   /\bmv\b/i,                                            // unix 移动（可能覆盖/丢失）
   /\bmove\b/i,                                          // 移动文件（可能覆盖）
+  /\bremove-item\b/i,                                   // PowerShell 删除（用户 shell 为 pwsh，模型常发 PS 命令）
+  /\brimraf\b/i,                                        // node 生态递归删除工具
+  /\bgit\s+reset\s+--hard\b/i,                          // 丢弃工作区改动（不可逆）
+  /\bgit\s+clean\b/i,                                   // 删除未跟踪文件（不可逆）
+  /\bgit\s+push\b/i,                                    // 推送远端（外发操作，一律人工确认）
 ]
 
 export function isDestructiveBashCommand(command: string): boolean {

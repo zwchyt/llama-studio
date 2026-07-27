@@ -47,8 +47,8 @@
       "name": "KV缓存和权重",
       "icon": "Database",
       "commands": [
-        { "arg": "--cache-type-k", "short": "-ctk", "label": "KV Cache Type (K)", "description": "键（Keys）的 KV 缓存数据类型", "type": "select", "options": ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], "default": "f16", "env": "LLAMA_ARG_CACHE_TYPE_K" },
-        { "arg": "--cache-type-v", "short": "-ctv", "label": "KV Cache Type (V)", "description": "值（Values）的 KV 缓存数据类型", "type": "select", "options": ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], "default": "f16", "env": "LLAMA_ARG_CACHE_TYPE_V" },
+        { "arg": "--cache-type-k", "short": "-ctk", "label": "KV Cache Type (K)", "description": "键（Keys）的 KV 缓存数据类型", "type": "select", "options": ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1","turbo2","turbo3","turbo4"], "default": "f16", "env": "LLAMA_ARG_CACHE_TYPE_K" },
+        { "arg": "--cache-type-v", "short": "-ctv", "label": "KV Cache Type (V)", "description": "值（Values）的 KV 缓存数据类型", "type": "select", "options": ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1","turbo2","turbo3","turbo4"], "default": "f16", "env": "LLAMA_ARG_CACHE_TYPE_V" },
         { "arg": "--repack", "label": "Weight Repacking", "description": "启用权重重新打包以提高性能", "type": "boolean", "default": true, "env": "LLAMA_ARG_REPACK" },
         { "arg": "--kv-unified", "short": "-kvu", "label": "Unified KV Buffer", "description": "使用统一 KV 缓冲跨所有序列（auto 时默认启用）", "type": "boolean", "default": true, "env": "LLAMA_ARG_KV_UNIFIED" }
       ]
