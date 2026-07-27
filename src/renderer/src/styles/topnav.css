@@ -1,0 +1,235 @@
+/* ══════════════════════════════════════════════════════════
+   顶部导航布局（方案 B）：导航横向置顶，内容区全宽
+   全部为新增样式，不覆盖旧侧边栏布局的任何规则；
+   仅当根节点带 .layout-topnav 时才生效的适配规则集中在文件末尾。
+   ══════════════════════════════════════════════════════════ */
+
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  height: 46px;
+  margin: 0 8px 8px 8px;
+  padding: 0 8px;
+  background: var(--surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius, 14px);
+  box-shadow: var(--shadow);
+}
+
+/* 左侧导航项区域：窗口过窄时可横向滚动，不换行 */
+.topnav-scroll {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.topnav-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.topnav-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px 4px 5px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 500;
+  font-family: var(--font);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition), color var(--transition);
+  border: none;
+  background: none;
+}
+
+.topnav-item:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.topnav-item.active {
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.topnav-item svg {
+  flex-shrink: 0;
+}
+
+/* 彩色图标胶囊：每个入口专属色的圆角底托，激活时实心点亮（颜色由内联样式传入） */
+.topnav-ico {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background var(--transition), color var(--transition), box-shadow var(--transition), transform var(--transition);
+}
+
+.topnav-item:hover .topnav-ico {
+  transform: translateY(-1px);
+}
+
+.topnav-item.active .topnav-ico {
+  transform: none;
+}
+
+/* 分组分隔线 */
+.topnav-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border-strong);
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+
+/* 当前页指示点（沿用侧边栏的绿点语言） */
+.topnav-active-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #6ab785;
+  box-shadow: 0 0 0 3px rgb(1 65 24 / 22%);
+  flex-shrink: 0;
+  margin-left: 2px;
+  animation: fadeIn 150ms ease, navPulse 1.6s ease-in-out infinite;
+}
+
+/* 运行中指示点 */
+.topnav-run-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+}
+
+/* ── 右侧：后端切换 / 目录下拉 ── */
+.topnav-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.topnav-menu-host {
+  position: relative;
+}
+
+.topnav-dd.open {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.topnav-backend-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topnav-no-backend {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  padding: 0 6px;
+}
+
+.topnav-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 200px;
+  max-width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  z-index: var(--z-dropdown);
+  animation: fadeIn 120ms ease;
+}
+
+.topnav-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-family: var(--font);
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition), color var(--transition);
+}
+
+.topnav-menu-item:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.topnav-menu-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 布局模式切换按钮：悬浮于标题栏右侧（窗口控制按钮左边） ── */
+.layout-mode-toggle {
+  position: fixed;
+  top: 3px;
+  right: 146px;
+  width: 32px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  z-index: 10000;
+  -webkit-app-region: no-drag;
+  transition: background 0.15s, color 0.15s;
+}
+
+.layout-mode-toggle:hover {
+  background: var(--hover-bg, rgba(128, 128, 128, 0.15));
+  color: var(--text);
+}
+
+/* ══════════════════════════════════════════════════════════
+   仅在顶部导航布局下生效的适配（根节点 .app.layout-topnav）
+   ══════════════════════════════════════════════════════════ */
+
+/* 没有侧边栏时，标题栏上的侧边栏折叠按钮无意义，隐藏之 */
+.app.layout-topnav .titlebar-btn-sidebar {
+  visibility: hidden;
+}
+
+/* 内容卡片面板：补上原先由侧边栏提供的左侧留缝，保持四周缝隙一致 */
+.app.layout-topnav .view-transition>:not(.chat-layout):not(.agent-code-view) {
+  margin: 0 8px 8px 8px;
+}

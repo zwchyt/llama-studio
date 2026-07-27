@@ -23,6 +23,10 @@ import OcrView from './components/OcrView'
 import BenchmarkView from './components/BenchmarkView'
 import AgentCodeView from './components/AgentCodeView'
 import TitleBar from './components/TitleBar'
+import TopNavBar from './components/TopNavBar'
+import LayoutModeToggle from './components/LayoutModeToggle'
+import ThemeToggle from './components/ThemeToggle'
+import { useLayoutStore } from './store/layoutStore'
 import './styles/titlebar.css'
   import { buildDefaultTemplate } from './utils/defaultTemplate'
 import { writeToTerminal } from './utils/terminalRegistry'
@@ -53,6 +57,7 @@ function AppMain() {
   const timeoutsRef = React.useRef<ReturnType<typeof setTimeout>[]>([])
 
   const view = useStore(s => s.view)
+  const layoutMode = useLayoutStore(s => s.mode)
   const showCreateModal = useStore(s => s.showCreateModal)
   const activeBackend = useStore(s => s.activeBackend)
   const activeChatUrl = useStore(s => s.activeChatUrl)
@@ -414,6 +419,13 @@ function AppMain() {
           const { setCardStatus, cards, setCardReady } = useStore.getState()
           runningIds.forEach((id) => {
             setCardStatus(id, 'running')
+            // 刷新后从主进程拉回日志缓存（仅当本地日志为空，避免与实时推送重复追加）
+            if (!useStore.getState().modelLogs[id]?.length) {
+              window.api.getModelLogs(id).then((entries) => {
+                if (!entries?.length || useStore.getState().modelLogs[id]?.length) return
+                entries.forEach(e => useStore.getState().appendModelLog(id, e.stream, e.text))
+              }).catch(() => { /* ignore */ })
+            }
             // 已运行的进程无法直接拿到日志，轮询端口判断是否已就绪
             const port = cards.find(c => c.template.id === id)?.template.serverPort
             if (port) {
@@ -470,13 +482,16 @@ function AppMain() {
 
   return (
     <>
-    <div className="app">
+    <div className={layoutMode === 'topnav' ? 'app layout-topnav' : 'app'}>
       <TitleBar />
+      <LayoutModeToggle />
+      <ThemeToggle />
       <UpdateBanner />
       <AppUpdateBanner />
       <BackendDownloadBanner />
+      {layoutMode === 'topnav' && <TopNavBar />}
       <div className="main-layout">
-        <Sidebar />
+        {layoutMode === 'sidebar' && <Sidebar />}
         <main className="content" style={view === 'llama' ? { display: 'none' } : {}}>
           <div
             className="view-transition"

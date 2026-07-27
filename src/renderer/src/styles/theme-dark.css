@@ -1,0 +1,324 @@
+/* ══════════════════════════════════════════════════════════
+   应用黑暗主题（html.theme-dark）
+   实现方式：整套 CSS 变量换值 → 所有基于变量的旧样式自动变深色；
+   另对旧样式中绕过变量的硬编码浅色做定点压制。
+   本文件为纯新增，不修改任何旧样式文件；浅色主题下完全不生效。
+   ══════════════════════════════════════════════════════════ */
+
+/* ── 切换主题的瞬间禁用一切过渡：类挂在 <html> 上、不依赖 .theme-dark，
+   浅↔深两个方向都生效。避免各元素以不同步的 transition 时长渐变造成整屏闪烁。
+   切换落定后下一帧即移除，hover 等常规过渡不受影响。 ── */
+html.theme-switching,
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: none !important;
+}
+
+/* ── 圆形揭示过渡：关闭 View Transitions 默认的整屏淡入淡出，改由 JS 对
+   ::view-transition-new(root) 做 clip-path 圆形放大动画，新主题从按钮位置扩散铺满。
+   仅在主题切换的一瞬存在，平时无副作用。 ── */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) { z-index: 0; }
+::view-transition-new(root) { z-index: 1; }
+
+/* ── 核心变量整体换值（柔和石墨灰调：背景不纯黑、文字不刺眼） ── */
+html.theme-dark {
+  --bg: #202227;
+  --surface: #2a2d33;
+  --surface-hover: #33363d;
+  --border: #383c44;
+  --border-strong: #4b505b;
+  --text: #ced2d9;
+  --text-secondary: #9298a2;
+  --text-muted: #71767f;
+  --accent: #c6cad2;
+  --accent-fg: #24262b;
+  --shadow: 0 1px 3px rgba(0, 0, 0, .25), 0 1px 2px rgba(0, 0, 0, .18);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, .3), 0 2px 4px rgba(0, 0, 0, .2);
+  --shadow-lg: 0 10px 32px rgba(0, 0, 0, .38), 0 4px 8px rgba(0, 0, 0, .24);
+
+  /* 代码块深色配色（随整体提亮一档，文字降亮防刺眼） */
+  --code-bg: #26292f;
+  --code-header-bg: #2b2e35;
+  --code-border: #3a3e47;
+  --code-text: #ccd2da;
+  --code-comment: #858c97;
+  --code-keyword: #e88a84;
+  --code-string: #9cc5ea;
+  --code-number: #83b6e8;
+  --code-attr: #c3a3e8;
+  --code-deletion: #e8968f;
+
+  --table-head-bg: #2e3138;
+  --quote-bg: #2c2f36;
+  --hover-bg: rgba(255, 255, 255, .07);
+}
+
+html.theme-dark body {
+  color: #9298a2;
+}
+
+/* ══════════════════════════════════════════════════════════
+   定点压制：旧样式中硬编码的浅色背景
+   ══════════════════════════════════════════════════════════ */
+
+/* ── 全局按钮 / 提示 / 标签页 ── */
+/* 主按钮（启动等）：深灰抬升底 + 柔白字，不再反白 */
+.theme-dark .btn-primary {
+  background: #4b505b;
+  color: #e2e5ea;
+  border-color: #565c68;
+}
+
+/* 停止等危险按钮：浅灰描边 #cdcacc 在深底下像个亮圈，改为无描边，
+   红色底在深色卡片上本身已足够醒目 */
+.theme-dark .btn-danger {
+  border-color: transparent;
+}
+
+.theme-dark .tooltip {
+  background: #33363d;
+  color: var(--text);
+}
+
+.theme-dark .param-tab.active {
+  background: #4b505b;
+  color: var(--text);
+}
+
+/* ── 我的模板：搜索框与头部按钮 ── */
+.theme-dark .template-search-bar,
+.theme-dark .header-input-btn {
+  background: #33363d;
+}
+
+.theme-dark .header-input-btn:hover:not(:disabled) {
+  background: #383c44;
+  border-color: #565c68;
+}
+
+.theme-dark .header-input-btn:active:not(:disabled) {
+  background: #3b3f47;
+}
+
+.theme-dark .template-search-bar:focus-within {
+  border-color: #565c68;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, .05);
+}
+
+/* ── 模型页：筛选框与头部按钮 ── */
+.theme-dark .models-view .models-filter-inline,
+.theme-dark .models-view .page-actions .btn,
+.theme-dark .models-view .page-actions .models-filter-inline {
+  background: #33363d;
+}
+
+.theme-dark .models-view .page-actions .btn:hover:not(:disabled) {
+  background: #383c44;
+}
+
+/* ── 模型卡片：启动模式选中态（深灰选中胶囊，不再反白） ── */
+.theme-dark .launch-mode-btn.active {
+  background: #4b505b;
+  color: #e2e5ea;
+  border-color: #565c68;
+}
+
+/* ── 模型卡片：运行中描边为写死的浅灰 #d4d5d3，深底下换成绿色半透描边，
+   与既有的绿色辉光呢光语义一致 ── */
+.theme-dark .model-card.running {
+  border-color: rgba(74, 222, 128, .35);
+}
+
+/* ── 模型卡片：彩色字母头像是行内浅色系配色，深底下整体压暗一档防刺眼
+   （用滤镜统一处理，不破坏每张卡片的专属色相） ── */
+.theme-dark .card-icon {
+  filter: brightness(.85) saturate(.9);
+}
+
+/* ── “添加模板”虚线卡：悬停增亮原为黑色半透，深底下不可见，换成白色半透 ── */
+.theme-dark .add-card:hover {
+  background: rgba(255, 255, 255, .04);
+}
+
+/* ── 参数弹窗：参数名的绿色为写死的暗橄榄绿 #4f5f4f，深底下几乎不可读，
+   提亮为柔和浅绿（保持绿色语义，亮度适配深底且不刺眼） ── */
+.theme-dark .cmd-label {
+  color: #a4c5a4;
+}
+
+/* ── 性能测试：日志区为写死的浅灰底 #cfcfcf + 纯黑文字，深底下整块发亮；
+   换成与代码块一致的深底，文字提亮为柔白，stderr 的绿色同步提亮 ── */
+.theme-dark .benchmark-log {
+  background: #26292f;
+}
+
+.theme-dark .benchmark-log-stdout {
+  color: #ccd2da;
+}
+
+.theme-dark .benchmark-log-stderr {
+  color: #7fbf9a;
+}
+
+/* ── OCR 页：黄色提示横幅为写死的浅黄底 #fff3cd + 深黄字，深底下是一块刺眼亮黄；
+   换成琥珀色半透深底 + 柔黄字（保留警示语义） ── */
+.theme-dark .ocr-notice {
+  background: rgba(217, 119, 6, .14);
+  color: #e0b86a;
+}
+
+/* OCR 页：内联错误提示的浅红底 #fef2f2 → 红色半透深底 */
+.theme-dark .ocr-error-inline {
+  background: rgba(220, 38, 38, .14);
+}
+
+/* ── 设置页 / 关于页卡片 ── */
+.theme-dark .settings-section,
+.theme-dark .about-card {
+  background: #2a2d33;
+}
+
+/* ── 聊天视图：代码块、引用、表格头、预览 ── */
+.theme-dark .chat-code-pre {
+  background: var(--code-bg);
+}
+
+.theme-dark .chat-msg-markdown blockquote {
+  background: var(--quote-bg);
+  border-left-color: #4b505b;
+}
+
+.theme-dark .chat-msg-markdown th {
+  background: var(--table-head-bg);
+}
+
+.theme-dark .chat-file-preview-markdown blockquote {
+  background: var(--quote-bg);
+  border-left-color: #4b505b;
+}
+
+.theme-dark .chat-file-preview-markdown pre {
+  background: var(--code-bg) !important;
+}
+
+.theme-dark .chat-file-preview-html-btn.active {
+  background: #4b505b;
+  color: var(--text);
+}
+
+/* ── Agent Code 工作台：上下文面板 ── */
+.theme-dark .agent-ctx-panel {
+  background: #2a2d33;
+}
+
+/* ── Agent Code 工作台：用户消息气泡 ──
+   气泡底色由局部变量 --agent-bubble-bg 写死为浅灰 #e3e3e3，
+   黑暗下文字已变浅而气泡仍是浅底，导致浅底浅字看不清；
+   这里整体换成深灰，气泡内的文字/代码卡片随全局变量自动协调 */
+.theme-dark .agent-code-view {
+  --agent-bubble-bg: #33363d;
+  --agent-selection-bg: rgba(129, 147, 230, 0.32);
+}
+
+/* ── 顶部导航布局（新布局同步适配） ── */
+.theme-dark .topnav-item.active,
+.theme-dark .topnav-item:hover {
+  background: #33363d;
+}
+
+/* ── 聊天视图：预览激活态按钮、代码块头部、文件标签选中态 ── */
+.theme-dark .chat-settings-btn.preview-active {
+  background: #4b505b;
+  color: var(--text);
+}
+
+.theme-dark .chat-code-header {
+  background: var(--code-header-bg);
+}
+
+.theme-dark .chat-file-tab.active {
+  background: #4b505b;
+  color: var(--text);
+  border-color: #565c68;
+}
+
+/* ── Agent Code 工作台：上下文进度条、标签页选中态、引用胶囊 ── */
+.theme-dark .agent-ctx-inline-bar,
+.theme-dark .agent-ctx-bar {
+  background: #3a3e47;
+}
+
+.theme-dark .agent-code-tab-switch .btn-xs.active {
+  background: #4b505b;
+  color: var(--text);
+}
+
+.theme-dark .agent-ref-chip {
+  background: #33363d;
+  border-color: #4b505b;
+}
+
+.theme-dark .agent-ref-chip-icon {
+  color: #9298a2;
+}
+
+.theme-dark .agent-ref-chip-label {
+  color: var(--text);
+}
+
+.theme-dark .agent-ref-chip-remove {
+  color: var(--text-secondary);
+}
+
+.theme-dark .agent-ref-chip-remove:hover:not(:disabled) {
+  background: rgba(255, 255, 255, .08);
+}
+
+/* ── 组件行内样式压制（无法改旧组件，用 !important + 属性选择器从外部覆盖；
+   属性内的颜色会被浏览器序列化为 rgb 形式） ── */
+
+/* 模型卡片“打开聊天”按钮：行内浅灰底 #c1c1c1 → 深色 */
+.theme-dark .card-run-btn[style*="193, 193, 193"] {
+  background: #4b505b !important;
+  color: var(--text) !important;
+}
+
+/* AI Agent 页“可更新”奶油色 #fef3e2（页头徽章 / 卡片版本徽章 / 更新按钮共用）
+   → 橙色半透深底（保留橙色文字语义）；去掉标签限定以同时覆盖 span 徽章与 button 更新按钮 */
+.theme-dark [style*="254, 243, 226"] {
+  background: rgba(230, 126, 34, .14) !important;
+  border-color: rgba(230, 126, 34, .38) !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+   主题切换按钮：悬浮于标题栏右侧（布局切换按钮左边）
+   ══════════════════════════════════════════════════════════ */
+.app-theme-toggle {
+  position: fixed;
+  top: 3px;
+  right: 182px;
+  width: 32px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  z-index: 10000;
+  -webkit-app-region: no-drag;
+  transition: background 0.15s, color 0.15s;
+}
+
+.app-theme-toggle:hover {
+  background: var(--hover-bg, rgba(128, 128, 128, 0.15));
+  color: var(--text);
+}

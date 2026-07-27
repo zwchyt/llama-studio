@@ -103,6 +103,7 @@ const fullApi = {
   removeModelReadyListener: () => ipcRenderer.removeAllListeners('model-ready'),
   getMetrics: () => ipcRenderer.invoke('get-metrics'),
   getRunningProcesses: () => ipcRenderer.invoke('get-running-processes'),
+  getModelLogs: (id: string) => ipcRenderer.invoke('get-model-logs', id),
   onMetricsUpdate: (callback: (data: Record<string, unknown>) => void) => {
     ipcRenderer.removeAllListeners('metrics-update')
     ipcRenderer.on('metrics-update', (_event, data) => callback(data))

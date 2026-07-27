@@ -258,6 +258,15 @@ function loadSettingsSync(): AppSettings {
 }
 interface RunningProcess { proc: ChildProcess; port: number }
 const runningProcesses = new Map<string, RunningProcess>()
+// 模型日志缓存：主进程留存每个模型的输出块，界面刷新后可拉回历史日志（每模型限量，防内存膨胀）
+const MODEL_LOG_BUFFER_MAX = 1000
+const modelLogBuffers = new Map<string, { stream: string; text: string }[]>()
+function pushModelLog(id: string, stream: string, text: string): void {
+  let buf = modelLogBuffers.get(id)
+  if (!buf) { buf = []; modelLogBuffers.set(id, buf) }
+  buf.push({ stream, text })
+  if (buf.length > MODEL_LOG_BUFFER_MAX) buf.splice(0, buf.length - MODEL_LOG_BUFFER_MAX)
+}
 interface DownloadTask {
   id: string
   url: string
@@ -1294,6 +1303,7 @@ export function registerIpcHandlers(): void {
     if (r.canceled || !r.filePaths.length) return null
     return { name: basename(r.filePaths[0]), path: r.filePaths[0] }
   })
+  ipcMain.handle('get-model-logs', (_e, id: string) => modelLogBuffers.get(String(id)) ?? [])
   ipcMain.handle('run-model', (_e, opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number }) => {
     if (runningProcesses.has(opts.id)) return { success: false, error: '已在运行中' }
     const exePath = join(opts.backendPath, opts.exe)
@@ -1303,12 +1313,14 @@ export function registerIpcHandlers(): void {
       const { allowed, boolean } = loadSchemaArgs(opts.backendPath)
       const safeArgs = validateArgs(opts.args, allowed, boolean)
       const proc = spawn(exePath, safeArgs, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: false })
+      modelLogBuffers.delete(opts.id) // 新一轮启动：丢弃上一轮的日志缓存
       let prefillResetTimer: ReturnType<typeof setTimeout> | null = null
       let stderrBuf = ''
       const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
       proc.stderr?.on('data', (d) => {
         const text = d.toString()
         console.error('[llama-server]', text)
+        pushModelLog(opts.id, 'stderr', text)
         BrowserWindow.getAllWindows().forEach(win => {
           if (!win.isDestroyed()) win.webContents.send('model-log', { id: opts.id, stream: 'stderr', text })
         })
@@ -1351,6 +1363,7 @@ export function registerIpcHandlers(): void {
       proc.stdout?.on('data', (d) => {
         const text = d.toString()
         console.log('[llama-server]', text)
+        pushModelLog(opts.id, 'stdout', text)
         BrowserWindow.getAllWindows().forEach(win => {
           if (!win.isDestroyed()) win.webContents.send('model-log', { id: opts.id, stream: 'stdout', text })
         })

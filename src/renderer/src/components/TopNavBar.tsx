@@ -1,0 +1,184 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { useStore } from '../store/useStore'
+import { shallow } from 'zustand/shallow'
+import { safeCall } from '../utils/safeCall'
+import {
+  LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Server, Bot,
+  MessageSquare, Terminal, Info, FileText, Gauge, Code, ChevronDown
+} from 'lucide-react'
+import '../styles/topnav.css'
+
+type ViewKey = ReturnType<typeof useStore.getState>['view']
+
+interface NavDef {
+  key: ViewKey
+  label: string
+  icon: React.ReactNode
+  /** 图标胶囊专属色：常态淡色底托，激活时实心点亮 */
+  color: string
+  /** 'models' = 有模型运行时点亮；'llama' = llama-server 连接时点亮 */
+  runningSource?: 'models' | 'llama'
+}
+
+// 与旧侧边栏完全相同的入口集合，仅排布方式不同（横向分组），每项配一个专属色
+const NAV_GROUPS: NavDef[][] = [
+  [
+    { key: 'cards', label: '我的模板', icon: <LayoutGrid size={14} />, color: '#8b5cf6', runningSource: 'models' },
+    { key: 'models', label: '模型', icon: <HardDrive size={14} />, color: '#3b82f6' },
+    { key: 'hub', label: '模型中心', icon: <Search size={14} />, color: '#0ea5e9' },
+  ],
+  [
+    { key: 'llama', label: 'llama-server', icon: <Server size={14} />, color: '#14b8a6', runningSource: 'llama' },
+    { key: 'chat', label: '聊天', icon: <MessageSquare size={14} />, color: '#ec4899', runningSource: 'models' },
+    { key: 'monitoring', label: '运行数据', icon: <Activity size={14} />, color: '#ef4444', runningSource: 'models' },
+    { key: 'benchmark', label: '性能测试', icon: <Gauge size={14} />, color: '#f59e0b' },
+    { key: 'terminal', label: '终端', icon: <Terminal size={14} />, color: '#64748b' },
+    { key: 'ocr', label: 'OCR', icon: <FileText size={14} />, color: '#a855f7', runningSource: 'models' },
+  ],
+  [
+    { key: 'agent-code', label: 'Agent Code', icon: <Code size={14} />, color: '#10b981' },
+  ],
+  [
+    { key: 'agents', label: 'AI Agent', icon: <Bot size={14} />, color: '#d946ef' },
+    { key: 'settings', label: '设置', icon: <Settings size={14} />, color: '#6b7280' },
+    { key: 'about', label: '关于', icon: <Info size={14} />, color: '#6366f1' },
+  ],
+]
+
+export default function TopNavBar() {
+  const { view, setView, backends, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, hasRunningModels } = useStore(
+    s => ({ view: s.view, setView: s.setView, backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
+    shallow
+  )
+  const [openMenu, setOpenMenu] = useState<null | 'backend' | 'folders'>(null)
+  const rightRef = useRef<HTMLDivElement>(null)
+
+  // 点击下拉菜单外部时关闭
+  useEffect(() => {
+    if (!openMenu) return
+    const onDown = (e: MouseEvent) => {
+      if (rightRef.current && !rightRef.current.contains(e.target as Node)) setOpenMenu(null)
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [openMenu])
+
+  const switchBackend = useCallback(async (name: string) => {
+    const b = backends.find((x) => x.name === name)
+    if (!b) return
+    setActiveBackend(b)
+    setOpenMenu(null)
+    const cmds = await safeCall(() => window.api.getCommands(name), '切换后端失败')
+    if (cmds) setCommandsSchema(cmds)
+  }, [backends, setActiveBackend, setCommandsSchema])
+
+  const isRunning = (item: NavDef) =>
+    (item.runningSource === 'models' && hasRunningModels) ||
+    (item.runningSource === 'llama' && !!activeChatUrl)
+
+  const folders: { label: string; path: string }[] = paths ? [
+    { label: '/backend', path: paths.backend },
+    { label: '/models', path: paths.models },
+    { label: '/images', path: paths.chatImages },
+    { label: '/pdf_exports', path: paths.chatPdfExports },
+    { label: '/chat-templates', path: paths.chatTemplates },
+  ] : []
+
+  return (
+    <div className="topnav">
+      <div className="topnav-scroll">
+        {NAV_GROUPS.map((group, gi) => (
+          <React.Fragment key={gi}>
+            {gi > 0 && <span className="topnav-divider" />}
+            {group.map((item) => (
+              <button
+                key={item.key}
+                className={`topnav-item ${view === item.key ? 'active' : ''}`}
+                onClick={() => setView(item.key)}
+                style={isRunning(item) && view !== item.key ? { color: 'var(--success)' } : {}}
+              >
+                <span
+                  className="topnav-ico"
+                  style={view === item.key
+                    ? { background: item.color, color: '#fff', boxShadow: `0 2px 8px ${item.color}55` }
+                    : { background: `${item.color}1c`, color: item.color }}
+                >
+                  {item.icon}
+                </span>
+                <span>{item.label}</span>
+                {view === item.key && (
+                  <span
+                    className="topnav-active-dot"
+                    style={{ background: item.color, boxShadow: `0 0 0 3px ${item.color}38` }}
+                  />
+                )}
+                {isRunning(item) && view !== item.key && <span className="topnav-run-dot" />}
+              </button>
+            ))}
+          </React.Fragment>
+        ))}
+      </div>
+
+      {/* 右侧：后端切换 + 目录快捷入口（下拉，避免横向占位） */}
+      <div className="topnav-right" ref={rightRef}>
+        {backends.length > 0 && (
+          <div className="topnav-menu-host">
+            <button
+              className={`topnav-item topnav-dd ${openMenu === 'backend' ? 'open' : ''}`}
+              onClick={() => setOpenMenu(openMenu === 'backend' ? null : 'backend')}
+              title="切换后端"
+            >
+              <span className="topnav-ico" style={{ background: '#3b82f61c', color: '#3b82f6' }}>
+                <HardDrive size={14} />
+              </span>
+              <span className="topnav-backend-name">{activeBackend?.name || '后端'}</span>
+              <ChevronDown size={13} />
+            </button>
+            {openMenu === 'backend' && (
+              <div className="topnav-menu">
+                {backends.map((b) => (
+                  <button key={b.name} className="topnav-menu-item" onClick={() => switchBackend(b.name)}>
+                    <HardDrive size={14} style={{ color: '#3b82f6' }} />
+                    <span className="topnav-menu-item-label">{b.name}</span>
+                    {activeBackend?.name === b.name && <span className="topnav-active-dot" />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {backends.length === 0 && (
+          <span className="topnav-no-backend">未找到后端，请在设置中下载</span>
+        )}
+        {paths && (
+          <div className="topnav-menu-host">
+            <button
+              className={`topnav-item topnav-dd ${openMenu === 'folders' ? 'open' : ''}`}
+              onClick={() => setOpenMenu(openMenu === 'folders' ? null : 'folders')}
+              title="打开目录"
+            >
+              <span className="topnav-ico" style={{ background: '#f59e0b1c', color: '#f59e0b' }}>
+                <FolderOpen size={14} />
+              </span>
+              <ChevronDown size={13} />
+            </button>
+            {openMenu === 'folders' && (
+              <div className="topnav-menu">
+                {folders.map((f) => (
+                  <button
+                    key={f.label}
+                    className="topnav-menu-item"
+                    onClick={() => { window.api.openFolder(f.path); setOpenMenu(null) }}
+                  >
+                    <FolderOpen size={14} style={{ color: '#f59e0b' }} />
+                    <span className="topnav-menu-item-label">打开 {f.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

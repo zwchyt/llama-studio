@@ -87,26 +87,32 @@ export default function ModelCard({ card }: Props) {
   function handleClearLogs() {
     clearModelLogs(card.template.id)
   }
+  const POPOVER_W = 380
+  const POPOVER_H = 460
+  // 按日志按钮的当前位置计算弹窗坐标（优先贴在按钮下方，放不下则翻到上方，并限制在视口内）
+  const computePopoverPos = useCallback(() => {
+    const el = logsBtnRef.current
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    let left = r.left
+    if (left + POPOVER_W > window.innerWidth - 8) left = window.innerWidth - 8 - POPOVER_W
+    if (left < 8) left = 8
+    let top = r.bottom + 6
+    if (top + POPOVER_H > window.innerHeight - 8) {
+      top = r.top - 6 - POPOVER_H
+      if (top < 8) top = 8
+    }
+    return { top, left }
+  }, [])
   function toggleLogs() {
     if (cardLogsExpanded) {
       setCardLogsExpanded(false)
       setPopoverPos(null)
       return
     }
-    const el = logsBtnRef.current
-    if (!el) return
-    const r = el.getBoundingClientRect()
-    const PW = 380
-    const PH = 460
-    let left = r.left
-    if (left + PW > window.innerWidth - 8) left = window.innerWidth - 8 - PW
-    if (left < 8) left = 8
-    let top = r.bottom + 6
-    if (top + PH > window.innerHeight - 8) {
-      top = r.top - 6 - PH
-      if (top < 8) top = 8
-    }
-    setPopoverPos({ top, left })
+    const pos = computePopoverPos()
+    if (!pos) return
+    setPopoverPos(pos)
     setCardLogsExpanded(true)
   }
   useEffect(() => {
@@ -121,20 +127,34 @@ export default function ModelCard({ card }: Props) {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') { setCardLogsExpanded(false); setPopoverPos(null) }
     }
-    function onScroll(e: Event) {
-      if (popoverRef.current && popoverRef.current.contains(e.target as Node)) return
-      setCardLogsExpanded(false)
-      setPopoverPos(null)
+    // 弹窗持续锚定在日志按钮旁：每帧重算位置，滚动/缩放/侧边栏收展等任何布局变化都跟随，
+    // 仅当按钮完全滚出视口时才收起；位置无变化时不触发重渲染
+    let rafId = 0
+    const track = () => {
+      const el = logsBtnRef.current
+      if (el) {
+        const r = el.getBoundingClientRect()
+        if (r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth) {
+          setCardLogsExpanded(false)
+          setPopoverPos(null)
+          return
+        }
+        const pos = computePopoverPos()
+        if (pos) {
+          setPopoverPos(prev => (prev && prev.top === pos.top && prev.left === pos.left) ? prev : pos)
+        }
+      }
+      rafId = requestAnimationFrame(track)
     }
+    rafId = requestAnimationFrame(track)
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
-    window.addEventListener('scroll', onScroll, true)
     return () => {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
-      window.removeEventListener('scroll', onScroll, true)
+      cancelAnimationFrame(rafId)
     }
-  }, [cardLogsExpanded])
+  }, [cardLogsExpanded, computePopoverPos])
   const [modelExists, setModelExists] = useState(true)
   useEffect(() => {
     if (!card.template.modelPath) { setModelExists(true); return }
