@@ -104,7 +104,7 @@ export const CURSOR_SCHEMES: CursorScheme[] = [
     })
 ]
 
-export const CURSOR_STORAGE_KEY = 'hexllama_cursor_scheme'
+export const CURSOR_STORAGE_KEY = 'llama_studio_cursor_scheme'
 
 export function getCursorSchemeId(): string {
   try {

@@ -9,8 +9,8 @@ export default function WelcomeView() {
   return (
     <div className="welcome-view">
       <div className="welcome-content">
-        <img src="./icon.png" alt="Hexllama Icon" className="welcome-icon" />
-        <h1 className="welcome-title">Hexllama</h1>
+        <img src="./icon.png" alt="llama-studio Icon" className="welcome-icon" />
+        <h1 className="welcome-title">llama-studio</h1>
         <p className="welcome-subtitle">All AI-Glory to the Llama.cpp</p>
         <p className="welcome-desc">管理并一键运行 llama.cpp 模型的图形化界面</p>
         <div className="welcome-actions">

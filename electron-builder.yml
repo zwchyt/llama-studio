@@ -1,5 +1,5 @@
-appId: com.hexllama.app
-productName: Hexllama
+appId: com.llama-studio.app
+productName: llama-studio
 directories:
   buildResources: build
 files:
@@ -10,6 +10,8 @@ nodeGypRebuild: false
 extraResources:
   - from: resources
     to: resources
+  - from: assets/llama-studio-icon.png
+    to: assets/llama-studio-icon.png
 win:
   target:
     - target: nsis
@@ -18,7 +20,7 @@ win:
     - target: zip
       arch:
         - x64
-  icon: assets/icon_256.png
+  icon: assets/llama-studio-icon.png
 nsis:
   oneClick: false
   perMachine: false
@@ -26,7 +28,7 @@ nsis:
   deleteAppDataOnUninstall: false
 mac:
   target: dmg
-  icon: assets/icon_1024.png
+  icon: assets/llama-studio-icon-1024.png
 linux:
   target: AppImage
-  icon: assets/icon_256.png
+  icon: assets/llama-studio-icon.png

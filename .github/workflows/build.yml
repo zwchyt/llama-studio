@@ -90,7 +90,7 @@ jobs:
           tag_name: ${{ steps.release_tag.outputs.tag }}
           name: Release ${{ steps.release_tag.outputs.tag }}
           body: |
-            ![Hexllama Logo](https://github.com/${{ github.repository }}/raw/main/assets/github-logo-hexllama.png)
+            ![llama-studio Logo](https://github.com/${{ github.repository }}/raw/main/assets/llama-studio.png)
 
             ### What's Changed:
             ${{ steps.release_notes.outputs.notes }}

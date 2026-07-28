@@ -379,7 +379,7 @@ function startDownload(
   let lastSpeedCheck = Date.now()
   let currentSpeed = 0
 
-  const headers: Record<string, string> = { 'User-Agent': 'hexllama/1.0' }
+  const headers: Record<string, string> = { 'User-Agent': 'llama-studio/1.0' }
   if (startByte > 0) headers['Range'] = `bytes=${startByte}-`
   const req = net.request({ url, headers })
   currentReq = req
@@ -450,7 +450,7 @@ function startParallelDownload(
   onDone: () => void,
   onError: (err: Error) => void
 ): () => void {
-  const USER_AGENT = 'hexllama/1.0'
+  const USER_AGENT = 'llama-studio/1.0'
   const MIN_CHUNK = 1 * 1024 * 1024
   const MAX_CHUNKS = 6
   const CHUNK_RETRIES = 3
@@ -1437,15 +1437,17 @@ export function registerIpcHandlers(): void {
     if (!Number.isInteger(port) || port < 1024 || port > 65535) return
     const chatUrl = `http://127.0.0.1:${port}`
     const candidates = [
-      join(process.cwd(), 'assets', 'icon.png'),
-      join(__dirname, '../../assets/icon.png'),
-      join(app.getAppPath(), 'assets', 'icon.png')
+      join(process.cwd(), 'assets', 'llama-studio-icon.png'),
+      join(__dirname, '../../assets/llama-studio-icon.png'),
+      join(app.getAppPath(), 'assets', 'llama-studio-icon.png'),
+      // 打包后 assets 不在应用目录内，图标通过 extraResources 随安装包分发
+      join(process.resourcesPath, 'assets', 'llama-studio-icon.png')
     ]
     const icon = candidates.find(existsSync)
 
     const chatWin = new BrowserWindow({
       width: 1024, height: 768, show: true, autoHideMenuBar: true,
-      title: 'Hexllama - Llama-UI',
+      title: 'llama-studio - Llama-UI',
       backgroundColor: '#ffffff',
       ...(icon ? { icon } : {}),
       webPreferences: {
@@ -1453,7 +1455,9 @@ export function registerIpcHandlers(): void {
         sandbox: false,
         contextIsolation: true,
         nodeIntegration: false,
-        additionalArguments: ['--window-mode=chat']
+        additionalArguments: ['--window-mode=chat'],
+        // 打包版彻底禁用 DevTools，与主窗口策略一致
+        devTools: !app.isPackaged
       }
     })
     const rendererUrl = process.env['ELECTRON_RENDERER_URL']
@@ -1613,7 +1617,7 @@ export function registerIpcHandlers(): void {
           if (parseInt(m[1], 10) >= latestNum || d.name.includes(release.tag_name)) { isNewer = false; break }
         }
       }
-      return { tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at, isNewer, assets: platformAssets.map((a: any) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size })) }
+      return { tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at, isNewer, noPackage: platformAssets.length === 0, assets: platformAssets.map((a: any) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size })) }
     } catch (err) { return { error: String(err) } }
   })
   ipcMain.handle('download-release', async (event, opts: { url: string; version: string; assetName: string }) => {

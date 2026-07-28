@@ -11,7 +11,7 @@ import CommandsEditor from './CommandsEditor'
 import { CURSOR_SCHEMES, getCursorSchemeId, applyCursorScheme, CURSOR_STORAGE_KEY, schemeCursorValue, type CursorRole } from '../cursor-theme'
 import '../styles/settings.css'
 
-const NOTIF_KEY = 'hexllama_update_notify'
+const NOTIF_KEY = 'llama_studio_update_notify'
 
 function getNotifPref(): 'banner' | 'manual' {
   try {

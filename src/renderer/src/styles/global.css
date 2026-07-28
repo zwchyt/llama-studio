@@ -815,16 +815,51 @@ select {
 }
 
 .update-banner {
-  background: var(--accent);
-  color: var(--accent-fg);
-  padding: 10px 24px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 8px 14px;
   display: flex;
   align-items: center;
   gap: 10px;
   font-size: 13px;
   font-weight: 500;
   flex-shrink: 0;
+  margin: 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  /* 建立层叠上下文，保证内部下拉菜单浮于下方内容之上 */
+  position: relative;
+  z-index: var(--z-dropdown);
   animation: slideDown 300ms cubic-bezier(.4, 0, .2, 1);
+}
+
+/* 多条横幅堆叠时紧凑间距 */
+.update-banner + .update-banner {
+  margin-top: 0;
+}
+
+/* 关闭时向上收起 */
+.update-banner.closing {
+  animation: bannerCollapse 280ms cubic-bezier(.4, 0, .2, 1) forwards;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+@keyframes bannerCollapse {
+  from {
+    opacity: 1;
+    max-height: 48px;
+  }
+
+  to {
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+    border-width: 0;
+  }
 }
 
 @keyframes slideDown {
@@ -839,25 +874,169 @@ select {
   }
 }
 
-.update-banner a,
-.update-banner button {
-  color: inherit;
-  text-decoration: underline;
-  background: none;
-  border: none;
-  cursor: pointer;
+/* 来源徽章：llama.cpp / llama-studio */
+.update-banner .ub-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .2px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* 版本对比：v1 → v2 */
+.update-banner .ub-version {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.update-banner .ub-version .ub-arrow {
+  color: var(--text-muted);
+}
+
+.update-banner .ub-version .ub-new {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.update-banner .ub-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 统一进度条 */
+.update-banner .ub-progress {
+  width: 120px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border-strong);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.update-banner .ub-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--success);
+  transition: width .3s;
+}
+
+.update-banner .ub-progress-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 后端版本选择下拉 */
+.update-banner .ub-select {
   font: inherit;
-  padding: 0;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: 4px 8px;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: border-color var(--transition);
+}
+
+.update-banner .ub-select:hover {
+  border-color: var(--text-muted);
+}
+
+.update-banner .ub-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  min-width: 300px;
+  max-width: 420px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  max-height: 240px;
+  overflow-y: auto;
+  /* 需高于主内容区各类浮层，否则菜单被遮挡无法点选 */
+  z-index: var(--z-modal);
+  color: var(--text);
+}
+
+.update-banner .ub-menu-item {
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.update-banner .ub-menu-item:hover {
+  background: var(--surface-hover);
+}
+
+.update-banner .ub-menu-item.selected {
+  background: var(--bg);
+  font-weight: 600;
+}
+
+/* 右侧操作区：跳过此版本 / 关闭 */
+.update-banner .ub-right {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* 合并模式下的多条更新切换器 */
+.update-banner .ub-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 4px;
+  padding-right: 8px;
+  border-right: 1px solid var(--border-strong);
+}
+
+.update-banner .ub-switch-count {
+  min-width: 26px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 .update-banner .dismiss {
-  margin-left: auto;
-  opacity: .7;
-  text-decoration: none !important;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  transition: all var(--transition);
 }
 
 .update-banner .dismiss:hover {
-  opacity: 1;
+  color: var(--text);
+  background: var(--surface-hover);
 }
 
 .empty-state {

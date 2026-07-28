@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/github-logo-hexllama.png" alt="llama-studio Logo" width="400" />
+  <img src="assets/llama-studio.png" alt="llama-studio Logo" width="400" />
 </div>
 
 <p align="center">

@@ -44,7 +44,7 @@ export default function AboutView() {
       <div className="page-header">
         <div>
           <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <img src="./full-logo.png" alt="hexllama" style={{ height: 32, imageRendering: 'crisp-edges' }} draggable={false} />
+            <img src="./full-logo.png" alt="llama-studio" style={{ height: 32, imageRendering: 'crisp-edges' }} draggable={false} />
           </h1>
           <p className="page-subtitle">一个快速、美观的本地 LLM 管理图形界面</p>
         </div>
@@ -159,7 +159,7 @@ export default function AboutView() {
             </h2>
             <div className="about-card tall">
               <p>
-                <strong>Hexllama 不会收集或传输任何用户数据。</strong> 本应用程序中绝对没有遥测、跟踪或分析功能。
+                <strong>llama-studio 不会收集或传输任何用户数据。</strong> 本应用程序中绝对没有遥测、跟踪或分析功能。
                 <br /><br />
                 但是，请注意，下载模型或执行第三方二进制文件（如 Hugging Face API 或 llama.cpp 可执行文件）可能会受其各自的隐私政策约束。
               </p>

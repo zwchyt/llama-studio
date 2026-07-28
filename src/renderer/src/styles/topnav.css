@@ -233,3 +233,9 @@
 .app.layout-topnav .view-transition>:not(.chat-layout):not(.agent-code-view) {
   margin: 0 8px 8px 8px;
 }
+
+/* Agent Code 工作台：取消为侧边栏布局预留的额外左边距，
+   使顶栏与各容器左边缘与顶部导航栏对齐（均为 8px 缝隙） */
+.app.layout-topnav .agent-code-view {
+  margin-left: 0;
+}

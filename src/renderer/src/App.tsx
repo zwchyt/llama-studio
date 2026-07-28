@@ -13,8 +13,7 @@ import WelcomeView from './components/WelcomeView'
 import ChatView from './components/ChatView'
 import CreateModal from './components/CreateModal'
 import SplashScreen from './components/SplashScreen'
-import UpdateBanner from './components/UpdateBanner'
-import AppUpdateBanner from './components/AppUpdateBanner'
+import UpdateBannerGroup from './components/UpdateBannerGroup'
 import BackendDownloadBanner from './components/BackendDownloadBanner'
 import ChatWindow from './components/ChatWindow'
 import LlamaChatView from './components/LlamaChatView'
@@ -486,8 +485,7 @@ function AppMain() {
       <TitleBar />
       <LayoutModeToggle />
       <ThemeToggle />
-      <UpdateBanner />
-      <AppUpdateBanner />
+      <UpdateBannerGroup />
       <BackendDownloadBanner />
       {layoutMode === 'topnav' && <TopNavBar />}
       <div className="main-layout">

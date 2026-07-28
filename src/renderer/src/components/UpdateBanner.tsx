@@ -3,15 +3,33 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
-import { X, Download, Loader2 } from 'lucide-react'
-export default function UpdateBanner() {
-  const { releaseInfo, updateDismissed, setUpdateDismissed, downloadProgress, setDownloadProgress, setBackends } = useStore(
-    s => ({ releaseInfo: s.releaseInfo, updateDismissed: s.updateDismissed, setUpdateDismissed: s.setUpdateDismissed, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setBackends: s.setBackends }),
+import { X, Download, Loader2, ExternalLink, ChevronDown, ArrowUpCircle } from 'lucide-react'
+import { type BannerSlotProps, useBannerClose, isVersionSkipped, skipVersion, UbProgress } from './updateBannerShared'
+
+const SKIP_KEY = 'llama_studio_skip_backend_version'
+
+/** llama.cpp 后端更新横幅是否应展示（供合并调度与组件自身共用同一判断） */
+export function useBackendUpdateVisible(): boolean {
+  const { releaseInfo, updateDismissed } = useStore(
+    s => ({ releaseInfo: s.releaseInfo, updateDismissed: s.updateDismissed }),
     shallow
   )
+  if (!releaseInfo || releaseInfo.error || releaseInfo.noRelease || releaseInfo.noPackage || updateDismissed || releaseInfo.isNewer === false) return false
+  try { if (localStorage.getItem('llama_studio_update_notify') === 'manual') return false } catch { /* ignore */ }
+  if (isVersionSkipped(SKIP_KEY, releaseInfo.tagName)) return false
+  return true
+}
+
+export default function UpdateBanner({ hidden, switcher }: BannerSlotProps = {}) {
+  const { releaseInfo, setUpdateDismissed, downloadProgress, setDownloadProgress, setBackends } = useStore(
+    s => ({ releaseInfo: s.releaseInfo, setUpdateDismissed: s.setUpdateDismissed, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setBackends: s.setBackends }),
+    shallow
+  )
+  const visible = useBackendUpdateVisible()
   const [downloading, setDownloading] = useState(false)
   const [selectedAssetUrl, setSelectedAssetUrl] = useState('')
   const [showDropdown, setShowDropdown] = useState(false)
+  const { closing, closeWithAnim } = useBannerClose(() => setUpdateDismissed(true))
   const dropdownRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (releaseInfo?.assets?.length && !selectedAssetUrl) {
@@ -25,11 +43,13 @@ export default function UpdateBanner() {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
-  const [notifPref] = useState(() => {
-    try { return localStorage.getItem('hexllama_update_notify') || 'banner' } catch { return 'banner' }
-  })
-  if (!releaseInfo || releaseInfo.error || releaseInfo.noRelease || releaseInfo.noPackage || updateDismissed || releaseInfo.isNewer === false || notifPref === 'manual') return null
+  if (!visible || !releaseInfo) return null
   const selectedAsset = releaseInfo.assets?.find(a => a.downloadUrl === selectedAssetUrl)
+  const isBusy = downloading || !!downloadProgress
+  const handleSkipVersion = () => {
+    skipVersion(SKIP_KEY, releaseInfo.tagName)
+    closeWithAnim()
+  }
   const handleDownload = async () => {
     if (!releaseInfo.assets?.length) return
     const asset = selectedAsset || releaseInfo.assets[0]
@@ -52,93 +72,73 @@ export default function UpdateBanner() {
     }
   }
   return (
-    <div className="update-banner" style={downloadProgress || downloading ? { whiteSpace: 'nowrap', justifyContent: 'flex-start' } : {}}>
-      {downloadProgress || downloading ? <Loader2 size={14} className="spin" /> : <Download size={14} />}
-      <span>
-        <strong>{releaseInfo.name || releaseInfo.tagName}</strong> 可用 —{' '}
-        <button onClick={() => window.api.openExternal(releaseInfo.url)}>
-          查看发布
-        </button>
-        {releaseInfo.assets?.length > 0 && (
-          <>
-            {' '}·{' '}
-            {downloading || downloadProgress ? (
-              <>
-                <span>下载中...</span>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, verticalAlign: 'middle', margin: '0 4px' }}>
-                  <div style={{ width: 80, height: 6, background: 'rgba(255,255,255,0.25)', borderRadius: 3, overflow: 'hidden', flexShrink: 0 }}>
-                    <div style={{ width: `${downloadProgress?.percent || 0}%`, height: '100%', background: 'rgba(255,255,255,0.8)', borderRadius: 3, transition: 'width .3s' }} />
+    <div className={`update-banner${closing ? ' closing' : ''}`} style={hidden ? { display: 'none' } : undefined}>
+      <span className="ub-badge">
+        {isBusy ? <Loader2 size={11} className="spin" /> : <ArrowUpCircle size={11} />}
+        llama.cpp
+      </span>
+      {isBusy ? (
+        <div className="ub-actions">
+          <span>正在下载 <strong>{selectedAsset?.name || releaseInfo.tagName}</strong></span>
+          <UbProgress percent={downloadProgress?.percent || 0} received={downloadProgress?.received} total={downloadProgress?.total} />
+        </div>
+      ) : (
+        <div className="ub-actions">
+          <span className="ub-version">
+            新版本 <span className="ub-new">{releaseInfo.name || releaseInfo.tagName}</span> 可用
+          </span>
+          {releaseInfo.assets?.length > 0 ? (
+            <>
+              <span style={{ position: 'relative', display: 'inline-flex' }} ref={dropdownRef}>
+                <button className="ub-select" onClick={() => setShowDropdown(!showDropdown)} title={selectedAsset?.name}>
+                  {selectedAsset?.name || '选择版本'} <ChevronDown size={11} style={{ verticalAlign: -1 }} />
+                </button>
+                {showDropdown && (
+                  <div className="ub-menu">
+                    {releaseInfo.assets.map(a => (
+                      <div
+                        key={a.downloadUrl}
+                        className={`ub-menu-item${a.downloadUrl === selectedAssetUrl ? ' selected' : ''}`}
+                        onClick={() => { setSelectedAssetUrl(a.downloadUrl); setShowDropdown(false) }}
+                      >
+                        {a.name}
+                      </div>
+                    ))}
                   </div>
-                  <span>{downloadProgress?.received ? formatSize(downloadProgress.received) : '0 B'}{downloadProgress?.total ? '/' + formatSize(downloadProgress.total) : ''}</span>
-                </span>
-              </>
-            ) : (
-              <>
-                <span style={{ position: 'relative', display: 'inline-block', marginRight: 8 }} ref={dropdownRef}>
-                  <button
-                    style={{
-                      font: 'inherit', fontSize: 12, color: 'inherit',
-                      background: 'rgba(255,255,255,0.15)', border: '1.5px solid rgba(255,255,255,0.3)',
-                      borderRadius: 'var(--radius-sm)', outline: 'none', cursor: 'pointer',
-                      padding: '3px 8px', textAlign: 'center',
-                      whiteSpace: 'nowrap', maxWidth: 400
-                    }}
-                    onClick={() => setShowDropdown(!showDropdown)}
-                    title={selectedAsset?.name}
-                  >
-                    {selectedAsset?.name || '选择版本'}
-                  </button>
-                  {showDropdown && (
-                    <div style={{
-                      position: 'absolute' as const, left: 0, right: 0, minWidth: 300, maxWidth: 400,
-                      background: 'var(--surface)', border: '1.5px solid var(--border)',
-                      borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-md)',
-                      maxHeight: 240, overflowY: 'auto' as const, zIndex: 300, color: 'var(--text)',
-                      top: 'calc(100% + 2px)'
-                    }}>
-                      {releaseInfo.assets.map(a => (
-                        <div
-                          key={a.downloadUrl}
-                          style={{
-                            padding: '6px 10px', fontSize: 12, cursor: 'pointer',
-                            background: a.downloadUrl === selectedAssetUrl ? 'var(--bg)' : 'transparent',
-                            color: 'var(--text)',
-                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
-                          }}
-                          onClick={() => { setSelectedAssetUrl(a.downloadUrl); setShowDropdown(false) }}
-                          onMouseEnter={(e) => { if (a.downloadUrl !== selectedAssetUrl) e.currentTarget.style.background = 'var(--surface-hover)' }}
-                          onMouseLeave={(e) => { if (a.downloadUrl !== selectedAssetUrl) e.currentTarget.style.background = 'transparent' }}
-                        >
-                          {a.name}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </span>
-                <button onClick={handleDownload}>下载</button>
-              </>
-            )}
+                )}
+              </span>
+              <button className="btn btn-primary btn-xs" onClick={handleDownload}>
+                <Download size={12} /> 下载
+              </button>
+            </>
+          ) : (
+            <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>安装包尚未就绪，可稍后再检查更新</span>
+          )}
+          <button className="btn btn-ghost btn-xs" onClick={() => window.api.openExternal(releaseInfo.url)}>
+            <ExternalLink size={12} /> 查看发布
+          </button>
+        </div>
+      )}
+      <div className="ub-right">
+        {switcher}
+        {isBusy ? (
+          <button
+            className="btn btn-ghost btn-xs"
+            onClick={() => { window.api.cancelBackendDownload(); setDownloading(false); setDownloadProgress(null) }}
+          >
+            取消
+          </button>
+        ) : (
+          <>
+            <button className="btn btn-ghost btn-xs" onClick={handleSkipVersion} title="不再提醒此版本，有新版本时仍会通知">
+              跳过此版本
+            </button>
+            <button className="dismiss" onClick={() => closeWithAnim()} title="关闭">
+              <X size={14} />
+            </button>
           </>
         )}
-      </span>
-      {downloadProgress || downloading ? (
-        <button
-          style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', font: 'inherit', textDecoration: 'underline', padding: 0, flexShrink: 0 }}
-          onClick={() => { window.api.cancelBackendDownload(); setDownloading(false); setDownloadProgress(null); }}
-          title="取消下载"
-        >
-          取消
-        </button>
-      ) : (
-        <button className="dismiss" onClick={() => setUpdateDismissed(true)} title="关闭">
-          <X size={14} />
-        </button>
-      )}
+      </div>
     </div>
   )
-}
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }

@@ -10,8 +10,8 @@ import { mkdirSync } from 'fs'
 
 process.noDeprecation = true
 
-try { mkdirSync(join(tmpdir(), 'hexllama-cache'), { recursive: true }) } catch {}
-app.commandLine.appendSwitch('--disk-cache-dir', join(tmpdir(), 'hexllama-cache'))
+try { mkdirSync(join(tmpdir(), 'llama-studio-cache'), { recursive: true }) } catch {}
+app.commandLine.appendSwitch('--disk-cache-dir', join(tmpdir(), 'llama-studio-cache'))
 app.commandLine.appendSwitch('--disable-gpu-cache')
 app.commandLine.appendSwitch('--disable-disk-cache')
 // 禁用 WebRTC 的 STUN/TURN 网络请求，消除控制台 "Failed to resolve address for stun.*" 日志
@@ -25,9 +25,11 @@ if (!gotLock && app.isPackaged) {
 
 function resolveIcon(): string | undefined {
   const candidates = [
-    join(process.cwd(), 'assets', 'icon.png'),                  
-    join(__dirname, '../../assets/icon.png'),                    
-    join(app.getAppPath(), 'assets', 'icon.png')                 
+    join(process.cwd(), 'assets', 'llama-studio-icon.png'),
+    join(__dirname, '../../assets/llama-studio-icon.png'),
+    join(app.getAppPath(), 'assets', 'llama-studio-icon.png'),
+    // 打包后 assets 不在应用目录内，图标通过 extraResources 随安装包分发
+    join(process.resourcesPath, 'assets', 'llama-studio-icon.png')
   ]
   return candidates.find(existsSync)
 }
@@ -48,7 +50,9 @@ function createWindow(): BrowserWindow {
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
-      webviewTag: true
+      webviewTag: true,
+      // 打包版彻底禁用 DevTools（F12 / Ctrl+Shift+I 均无效），开发模式保留
+      devTools: !app.isPackaged
     }
   })
   mainWindow.on('ready-to-show', () => {
@@ -60,7 +64,7 @@ function createWindow(): BrowserWindow {
     try { appendFileSync(join(app.getPath('userData'), 'debug.log'), msg) } catch {}
   })
   mainWindow.webContents.on('before-input-event', (_e, input) => {
-    if (input.key === 'F12') {
+    if (input.key === 'F12' && !app.isPackaged) {
       mainWindow.webContents.toggleDevTools()
     }
   })
@@ -108,7 +112,7 @@ function createWindow(): BrowserWindow {
   return mainWindow
 }
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.hexllama')
+  electronApp.setAppUserModelId('com.llama-studio')
   // ── 窗口控制 IPC ──
   ipcMain.handle('window-minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize())
   ipcMain.handle('window-maximize', (e) => {
