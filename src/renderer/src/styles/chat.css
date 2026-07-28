@@ -268,6 +268,18 @@
   box-shadow: 0 0 0 3px rgba(var(--accent-rgb, 99, 102, 241), .25);
 }
 
+/* 顶栏 + 会话区的纵向容器：使二者成为上下并列、各自独立的圆角卡片，
+   顶栏（.chat-header）不再嵌套在会话大框（.chat-main）的圆角边框内部。
+   接管 .chat-main 原先在 .chat-layout 行布局中的 flex:1 占位。 */
+.chat-main-wrapper {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 会话大框：现嵌套于 .chat-main-wrapper 内，flex:1 在纵向容器中向下填充剩余高度。 */
 .chat-main {
   flex: 1;
   min-width: 0;
@@ -339,19 +351,27 @@
 
 .chat-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 8px 18px;
-  border-bottom: 1.5px solid var(--border-strong);
+  /* 顶栏是独立圆角卡片，位于会话大框（.chat-main）之上、之外（二者为 .chat-main-wrapper
+     的并列子级）。左右外边距与 .chat-main 一致（left 0 贴侧栏、right 8），margin-bottom 8
+     与下方会话框留出间距。水平内边距保持 18px，与参数/工具弹窗右缘对齐的 +18 内缩量一致。 */
+  margin: 0 8px 8px 0;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 12px;
   background: var(--surface);
   flex-shrink: 0;
 }
 
 .chat-header-info {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  /* 标题与模型选择框同处一行（原为纵向两行，“模型未运行”框单独占一行）；
+     标题可收缩省略、选择框保持宽度不被挤压。 */
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
   flex: 1;
 }
@@ -363,6 +383,9 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* 行内布局下允许收缩并省略，避免把模型选择框挤出可视区 */
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .context-bar {
@@ -402,6 +425,8 @@
 
 .chat-model-select {
   max-width: 240px;
+  /* 与标题同行，固定不被压缩 */
+  flex-shrink: 0;
 }
 
 .chat-model-select button {
@@ -3045,55 +3070,35 @@
   background: var(--surface);
 }
 
+/* 思考链「去框平铺」——参考 Agent 工作台风格：无边框/背景/圆角，折叠态即一行状态文字，
+   展开体靠左侧细竖线 + 缩进作为结构锚点。配色纯由主题变量驱动（中性灰），
+   思考中用「流光文字 + 大脑脉冲」替代原紫色呼吸，随主题自动适配。 */
 .chat-think {
   margin: 0 0 10px;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  overflow: hidden;
-  transition: border-color var(--transition), background var(--transition);
-  max-width: 85%;
+  background: transparent;
+  max-width: 100%;
 }
 
 .chat-think:not(:first-child) {
   margin-top: 12px;
 }
 
-.chat-think.thinking:not(.expanded) {
-  border-color: rgba(124, 58, 237, .2);
-  border-left-color: #7c3aed;
-  background: rgba(124, 58, 237, .03);
-  animation: thinkBorderPulse 2.4s ease-in-out infinite;
-  animation-delay: 0.1s;
-}
-
-.chat-think.thinking.expanded {
-  border-color: rgba(124, 58, 237, .2);
-  border-left-color: #7c3aed;
-  background: rgba(124, 58, 237, .02);
-}
-
-.chat-think.thinking.expanded .chat-think-status {
-  color: #7c3aed;
-}
-
-
+/* 头部按钮：去框后即一行状态文字，hover 用透明度反馈可点击 */
 .chat-think-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 7px 11px;
+  padding: 3px 0;
   border: none;
   background: transparent;
   cursor: pointer;
   font-family: var(--font);
-  transition: background var(--transition);
+  transition: opacity var(--transition);
 }
 
 .chat-think-toggle:hover {
-  background: rgba(124, 58, 237, .04);
+  opacity: .8;
 }
 
 .chat-think-status {
@@ -3105,12 +3110,54 @@
   color: var(--text-secondary);
 }
 
-.chat-think.thinking:not(.expanded) .chat-think-status {
-  color: #7c3aed;
-  animation: thinkTextPulse 2s ease-in-out infinite;
-  animation-delay: 0.1s;
+/* 思考中：文字用「流光扫过」效果——中性灰渐变在文字上循环滑动，端点取主题文字色。
+   展开/折叠两态都生效（流式期间思考块自动展开），保持反馈连贯。 */
+.chat-think.thinking .chat-think-status {
+  color: var(--text-secondary);
+  background: linear-gradient(90deg,
+      var(--text-muted) 0%,
+      var(--text) 50%,
+      var(--text-muted) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: chatThinkShimmer 2.2s linear infinite;
 }
 
+@keyframes chatThinkShimmer {
+  from {
+    background-position: 200% 0;
+  }
+
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* 大脑图标：思考中做呼吸脉冲 */
+.chat-think-brain {
+  flex-shrink: 0;
+}
+
+.chat-think.thinking .chat-think-brain {
+  color: var(--text);
+  animation: chatThinkBrainPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes chatThinkBrainPulse {
+
+  0%,
+  100% {
+    opacity: .55;
+    transform: scale(.92);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
 
 .chat-think-chevron {
   color: var(--text-muted);
@@ -3121,7 +3168,7 @@
   transform: rotate(90deg);
 }
 
-/* 思考时长（「思考过程」后的 Xs 标注）：弱化的等宽数字，不抢主状态文案 */
+/* 思考时长（「思考过程」后的 Xs 标注）：弱化的等宽数字；思考中随文字一起流光 */
 .chat-think-dur {
   margin-left: 2px;
   font-size: 11px;
@@ -3130,36 +3177,38 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 文字比模型气泡（.chat-msg-markdown，14px）小一号（13px），颜色更弱（--text-secondary），体现「思考链是次要推理层」的层级感；左右内边距与气泡一致（16px），不贴边。 */
+.chat-think.thinking .chat-think-dur {
+  font-weight: 600;
+}
+
+/* 内容层：参考 Agent——左侧细竖线 + 缩进替代卡片分隔线，次要色体现「推理层」层级。
+   字号 13px（比正文小一号），padding 主要留在左侧给竖线让位。
+   收起态（非 .open）把上下 padding 收为 0，避免 max-height:0 时残留竖线/空隙。 */
 .chat-think-body {
-  padding: 8px 16px 14px;
+  margin-left: 6px;
+  border-left: 2px solid var(--border-strong);
+  padding: 0 0 0 12px;
   font-size: 13px;
   line-height: 1.7;
   color: var(--text-secondary);
   word-wrap: break-word;
   overflow-wrap: break-word;
   min-width: 0;
-  border-top: 1px solid var(--border);
   max-height: 0;
   overflow: hidden;
-  transition: opacity 0.25s ease;
+  /* max-height 由 JS 逐帧写入像素值驱动过渡（与 ThinkBlock 的 animExpand/animCollapse 配合）；
+     首次展开后保持挂载，收起只收到 0、不卸载 DOM，避免重解析 Markdown/公式。 */
+  transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.25s ease;
   opacity: 0;
 }
 
 .chat-think-body.open {
-  /* 不写死 max-height：思考链常较长，写死 400px 会把长推理截成小滚动框。
-     此处仅开放高度与滚动，由内容自然撑开（过长时由外层消息区滚动兜底）。 */
-  max-height: none;
+  padding: 4px 0 6px 12px;
   overflow-y: auto;
   opacity: 1;
 }
 
-.chat-think.stopped {
-  border-color: var(--border);
-  border-left-color: var(--text-muted);
-  background: var(--surface);
-}
-
+/* 中断态：去框后仅状态文字转灰 */
 .chat-think.stopped .chat-think-status {
   color: var(--text-muted);
 }

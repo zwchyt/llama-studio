@@ -149,6 +149,7 @@ export interface ChatMessage {
   stopped?: boolean  // 用户手动停止生成，消息内容不完整
   toolCalls?: ToolCallInfo[]  // 模型发起的工具调用
   preToolContentLen?: number  // 工具调用前的内容长度
+  thinkDurations?: number[]   // 各思考链（<think>）的耗时（ms），按出现顺序，流结束后填充
 }
 export interface ChatParams {
   temperature?: number

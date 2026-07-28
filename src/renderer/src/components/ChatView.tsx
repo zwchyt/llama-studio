@@ -12,7 +12,7 @@ import remarkRehype from 'remark-rehype'
 import rehypeStringify from 'rehype-stringify'
 import {
   Plus, Send, Square, Trash2, Pencil, MessageSquare,
-  ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain, RefreshCw,
+  ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain,
   Copy, Check, RotateCcw, ArrowDown, X, Eye, SlidersHorizontal, List, Play, Wrench,
   Paperclip, FileText, GitBranch, Search, Download, Volume2, ImageDown, Star
 } from 'lucide-react'
@@ -95,6 +95,38 @@ function lightStreamSync(sessionId: string, streamId: string): void {
   }, 50))
 }
 
+// ── 思考耗时跟踪 ──────────────────────────────────────────
+// 按流累计 <think>…</think> 的起止时间；流结束后把时长队列写入消息持久化，
+// 供 ThinkBlock 在「思考过程」标题旁定格显示「思考了 Xs」。
+const streamThinkMeta = new Map<string, { opens: number; closes: number; openAt: number | null; durations: number[] }>()
+
+function countTag(text: string, tag: string): number {
+  let n = 0
+  let idx = 0
+  while ((idx = text.indexOf(tag, idx)) !== -1) { n++; idx += tag.length }
+  return n
+}
+
+// 每次 delta 后基于累积缓冲区的标签计数增量，判断思考块的打开/闭合时刻
+function trackThinkTiming(streamId: string, buf: string): void {
+  let meta = streamThinkMeta.get(streamId)
+  if (!meta) {
+    meta = { opens: 0, closes: 0, openAt: null, durations: [] }
+    streamThinkMeta.set(streamId, meta)
+  }
+  const opens = countTag(buf, '<think>')
+  const closes = countTag(buf, '</think>')
+  if (opens > meta.opens) {
+    if (meta.openAt == null) meta.openAt = Date.now()
+    meta.opens = opens
+  }
+  while (meta.closes < closes) {
+    meta.durations.push(meta.openAt != null ? Date.now() - meta.openAt : 0)
+    meta.openAt = null
+    meta.closes++
+  }
+}
+
 // 原生聊天仅允许使用 3 个只读/联网工具，绝不暴露 Agent Code 的文件/命令类工具
 // （Write/Edit/Read/Bash 等）。白名单写死，确保无论全局注册了什么工具都不会泄露。
 const CHAT_ALLOWED_TOOLS = ['get_datetime', 'web_search', 'fetch_webpage']
@@ -158,9 +190,8 @@ const TOOL_LABELS: Record<string, string> = {
 }
 const TOOL_ORDER = ['get_datetime', 'web_search', 'fetch_webpage']
 
-function ToolToggleCard({ config, anchorRect, onClose, onChange }: {
+function ToolToggleCard({ config, onClose, onChange }: {
   config: { enabled: boolean; tools: Record<string, boolean> }
-  anchorRect: DOMRect | null
   onClose: () => void
   onChange: (config: { enabled: boolean; tools: Record<string, boolean> }) => void
 }) {
@@ -184,10 +215,11 @@ function ToolToggleCard({ config, anchorRect, onClose, onChange }: {
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
 
-  const style: React.CSSProperties = { position: 'fixed', zIndex: 1100 }
-  if (anchorRect) {
-    style.top = anchorRect.bottom + 6
-    style.right = window.innerWidth - anchorRect.right
+  // 弹窗渲染在会话大框（.chat-main，position:relative）内部，绝对定位钉在其右上角内侧
+  // （距顶、距右各 8px）。不依赖视口坐标，天然适配左侧栏/顶部导航两种布局与尺寸变化。
+  const style: React.CSSProperties = {
+    position: 'absolute', top: 8, right: 8, zIndex: 1100,
+    maxHeight: 'calc(100% - 16px)', overflowY: 'auto',
   }
 
   const toggleMaster = () => onChange({ ...config, enabled: !config.enabled })
@@ -362,12 +394,14 @@ function splitMarkdownAtSafeBoundary(text: string): SafeSplit {
 }
 
 // 流式正文渲染：已闭合部分用 ReactMarkdown，未闭合残留用 <pre> 暂显，避免闪烁。
+// 分级渲染：流式期间只用轻量插件栈（仅 gfm，跳过数学公式等重插件），单帧解析
+// 开销大幅下降、长回复不卡顿；流结束后由 FinalMarkdown 完整栈精确重渲一次。
 const SafeStreamMarkdown = React.memo(function SafeStreamMarkdown({ text }: { text: string }) {
   const { safe, pending } = useMemo(() => splitMarkdownAtSafeBoundary(text), [text])
   return (
     <>
       {safe ? (
-        <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any, pre: MarkdownPre as any }}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any, pre: MarkdownPre as any }}>
           {safe}
         </ReactMarkdown>
       ) : null}
@@ -380,16 +414,51 @@ const SafeStreamMarkdown = React.memo(function SafeStreamMarkdown({ text }: { te
   )
 })
 
+// ── 最终渲染（完整插件栈）─────────────────────────────────
+// 数学定界符归一：remark-math 只识别 $...$ / $$...$$，而模型普遍输出 \(...\) / \[...\]。
+// 渲染前把后者转为前者；围栏/行内代码先占位保护，避免误改代码里的转义序列。
+function normalizeMathDelimiters(md: string): string {
+  if (!md.includes('\\(') && !md.includes('\\[')) return md
+  const shielded: string[] = []
+  const work = md.replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`/g, m => {
+    shielded.push(m)
+    return `\x00MD${shielded.length - 1}\x00`
+  })
+  const out = work
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_, tex) => `\n$$\n${tex}\n$$\n`)
+    .replace(/\\\((.+?)\\\)/g, (_, tex) => `$${tex}$`)
+  return out.replace(/\x00MD(\d+)\x00/g, (_, i) => shielded[Number(i)]!)
+}
+
+// 消息/思考完成后的精确渲染：补齐数学公式（含定界符归一）；流式期间走轻量栈
+const FinalMarkdown = React.memo(function FinalMarkdown({ content }: { content: string }) {
+  const normalized = useMemo(() => normalizeMathDelimiters(content), [content])
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any, pre: MarkdownPre as any }}>
+      {normalized}
+    </ReactMarkdown>
+  )
+})
+
 // 思考块：可折叠（流式时自动展开，完成后自动折叠）
 const THINK_THROTTLE_MS = 120 // 流式文本节流间隔，避免每个 delta 都重渲染长文本
 
-const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, autoExpand }: { value: string; closed: boolean; isStreaming?: boolean; autoExpand?: boolean }) {
+// 思考耗时显示：短耗时保留一位小数，长耗时用整秒 / 分秒
+function fmtThinkDur(ms: number): string {
+  const s = ms / 1000
+  if (s < 10) return `${s.toFixed(1)}s`
+  if (s < 60) return `${Math.round(s)}s`
+  return `${Math.floor(s / 60)}m${Math.round(s % 60)}s`
+}
+
+const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, autoExpand, durationMs }: { value: string; closed: boolean; isStreaming?: boolean; autoExpand?: boolean; durationMs?: number }) {
   const [expanded, setExpanded] = useState(autoExpand ?? false)
   const [visible, setVisible] = useState(autoExpand ?? false)
   const userToggledRef = useRef(false)
   const thinking = !closed || isStreaming
   const bodyRef = useRef<HTMLDivElement>(null)
-  const collapseTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const expandedRef = useRef(expanded)
+  useEffect(() => { expandedRef.current = expanded }, [expanded])
 
   // 节流显示文本：流式时按固定间隔更新，避免每个 token 都触发长文本重排
   const [displayValue, setDisplayValue] = useState(value)
@@ -405,6 +474,18 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
     return () => clearInterval(timer)
   }, [value, thinking])
 
+  // 「思考中」实时计时：进入思考时记录起点，每 100ms 刷新已用时长；
+  // 结束后由 durationMs（流结束时随消息持久化）接管定格显示
+  const [elapsedMs, setElapsedMs] = useState(0)
+  const thinkStartRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!thinking) { thinkStartRef.current = null; return }
+    if (thinkStartRef.current == null) thinkStartRef.current = Date.now()
+    setElapsedMs(Date.now() - thinkStartRef.current)
+    const timer = setInterval(() => setElapsedMs(Date.now() - (thinkStartRef.current ?? Date.now())), 100)
+    return () => clearInterval(timer)
+  }, [thinking])
+
   // 流式思考时自动滚动到底部
   useEffect(() => {
     if (thinking && expanded && bodyRef.current) {
@@ -412,19 +493,61 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
     }
   }, [displayValue, thinking, expanded])
 
-  // 展开/折叠动画：展开时先设 visible=true 再设 expanded=true；
-  // 折叠时先设 expanded=false 触发 CSS 过渡，等动画结束后再设 visible=false 移除 DOM
+  // 展开/收起动画：像素级 max-height 过渡。关键：首次展开挂载后【保持挂载】，
+  // 收起只把 max-height 收到 0（不卸载 DOM），再次展开无需重解析 Markdown/公式，
+  // 展开瞬间不卡顿；透明度过渡仍由 .open 类的 CSS 负责。
+  const animExpand = useCallback(() => {
+    const el = bodyRef.current
+    if (el) {
+      // 已挂载：直接从当前高度过渡到内容高度
+      setExpanded(true)
+      el.style.maxHeight = el.scrollHeight + 'px'
+    } else {
+      // 首次展开：先挂载，待下一帧布局完成再从 0 过渡到内容高度
+      setVisible(true)
+      requestAnimationFrame(() => {
+        setExpanded(true)
+        const el2 = bodyRef.current
+        if (el2) el2.style.maxHeight = el2.scrollHeight + 'px'
+      })
+    }
+  }, [])
+
+  const animCollapse = useCallback(() => {
+    setExpanded(false)
+    const el = bodyRef.current
+    if (el) {
+      // 固定当前像素高度 → 强制回流 → 过渡到 0；DOM 保持挂载
+      el.style.maxHeight = el.scrollHeight + 'px'
+      void el.offsetHeight
+      el.style.maxHeight = '0px'
+    }
+  }, [])
+
+  // 初始即展开（autoExpand）：跳过动画直接自适应高度
+  useLayoutEffect(() => {
+    if (expandedRef.current && bodyRef.current) bodyRef.current.style.maxHeight = 'none'
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 思考进行/结束时自动展开/收起（用户手动切换过则不干预）
   useEffect(() => {
     if (userToggledRef.current) return
-    if (thinking) {
-      clearTimeout(collapseTimerRef.current)
-      setVisible(true)
-      requestAnimationFrame(() => setExpanded(true))
-    } else {
-      setExpanded(false)
-      collapseTimerRef.current = setTimeout(() => setVisible(false), 300)
-    }
-  }, [thinking])
+    if (thinking) animExpand()
+    else animCollapse()
+  }, [thinking, animExpand, animCollapse])
+
+  // 流式思考中内容持续增长：置 max-height:none 让其自适应，不做高度动画
+  useEffect(() => {
+    const el = bodyRef.current
+    if (thinking && visible && expanded && el) el.style.maxHeight = 'none'
+  }, [thinking, visible, expanded, displayValue])
+
+  // 展开过渡结束后置 none 以自适应后续高度变化；收起结束保持挂载、停在 0
+  const onBodyTransitionEnd = (e: React.TransitionEvent<HTMLDivElement>) => {
+    if (e.propertyName !== 'max-height') return
+    if (bodyRef.current && expandedRef.current) bodyRef.current.style.maxHeight = 'none'
+  }
 
   // 思考阶段结束时重置手动标记，下次可再次自动展开
   const prevThinkingRef = useRef(thinking)
@@ -437,13 +560,8 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
 
   const handleToggle = () => {
     userToggledRef.current = true
-    if (expanded) {
-      setExpanded(false)
-      collapseTimerRef.current = setTimeout(() => setVisible(false), 300)
-    } else {
-      setVisible(true)
-      requestAnimationFrame(() => setExpanded(true))
-    }
+    if (expandedRef.current) animCollapse()
+    else animExpand()
   }
 
   // 停止生成但思考链未闭合 → 显示"已停止"
@@ -454,8 +572,9 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
       <button className="chat-think-toggle" onClick={handleToggle}>
         {thinking ? (
           <span className="chat-think-status">
-            <RefreshCw size={12} className="spin" />
+            <Brain size={12} className="chat-think-brain" />
             思考中
+            <span className="chat-think-dur">{fmtThinkDur(elapsedMs)}</span>
           </span>
         ) : wasStopped ? (
           <span className="chat-think-status">
@@ -466,16 +585,22 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
           <span className="chat-think-status">
             <Brain size={12} />
             思考过程
+            {durationMs != null && <span className="chat-think-dur">思考了 {fmtThinkDur(durationMs)}</span>}
           </span>
         )}
         <ChevronDown size={13} className={`chat-think-chevron ${expanded ? 'open' : ''}`} />
       </button>
       {visible && (
-        <div className={`chat-think-body chat-msg-markdown ${expanded ? 'open' : ''}`} ref={bodyRef}>
+        <div className={`chat-think-body chat-msg-markdown ${expanded ? 'open' : ''}`} ref={bodyRef} onTransitionEnd={onBodyTransitionEnd}>
           {displayValue ? (
-            <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any, pre: MarkdownPre as any }}>
-              {displayValue}
-            </ReactMarkdown>
+            thinking ? (
+              // 思考中走轻量插件栈（跳过公式渲染），结束后由 FinalMarkdown 完整栈精确重渲
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any, pre: MarkdownPre as any }}>
+                {displayValue}
+              </ReactMarkdown>
+            ) : (
+              <FinalMarkdown content={displayValue} />
+            )
           ) : '（空）'}
         </div>
       )}
@@ -715,13 +840,15 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
     onCopy?.()
   }
 
-  // 共享：渲染思考链 + 正文片段序列
-  const renderSegments = (streaming: boolean) => (
-    segments.map((seg, i) => {
+  // 共享：渲染思考链 + 正文片段序列（思考时长按思考片段顺序从消息上取）
+  const renderSegments = (streaming: boolean) => {
+    let thinkIdx = -1
+    return segments.map((seg, i) => {
       if (seg.type === 'think') {
+        thinkIdx++
         // 流已中断时，未闭合的思考链视为已结束
         const effectiveClosed = streaming ? seg.closed : true
-        return <ThinkBlock key={i} value={seg.value} closed={effectiveClosed} isStreaming={streaming && !seg.closed} />
+        return <ThinkBlock key={i} value={seg.value} closed={effectiveClosed} isStreaming={streaming && !seg.closed} durationMs={msg.thinkDurations?.[thinkIdx]} />
       }
       if (streaming) {
         // 流式阶段：用 SafeStreamMarkdown 保护未闭合的 Markdown（如半截代码块）
@@ -733,13 +860,11 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
       }
       return (
         <div key={i} className="chat-msg-markdown">
-          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any, pre: MarkdownPre as any }}>
-            {seg.value}
-          </ReactMarkdown>
+          <FinalMarkdown content={seg.value} />
         </div>
       )
     })
-  )
+  }
 
   // 流式中不显示操作栏
   if (isStreaming) {
@@ -818,9 +943,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
                       }
                       return (
                         <div key={`post-${i}`} className="chat-msg-markdown">
-                          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any, pre: MarkdownPre as any }}>
-                            {seg.value}
-                          </ReactMarkdown>
+                          <FinalMarkdown content={seg.value} />
                         </div>
                       )
                     })
@@ -1136,9 +1259,8 @@ const PARAM_CONFIG: Array<{
     { key: 'repeat_penalty', label: 'Repeat Penalty', min: 0, max: 2, step: 0.1, defaultVal: DEFAULT_PARAMS.repeat_penalty ?? 1.1 },
   ]
 
-function ChatSettingsCard({ session, anchorRect, onClose, onSetSystemPrompt, onSetParams }: {
+function ChatSettingsCard({ session, onClose, onSetSystemPrompt, onSetParams }: {
   session: ChatSession | null
-  anchorRect: DOMRect | null
   onClose: () => void
   onSetSystemPrompt: (prompt: string) => void
   onSetParams: (params: Partial<ChatParams>) => void
@@ -1196,11 +1318,11 @@ function ChatSettingsCard({ session, anchorRect, onClose, onSetSystemPrompt, onS
     return () => window.removeEventListener('keydown', handler)
   }, [handleClose])
 
-  // 计算卡片位置：在按钮下方，右对齐
-  const style: React.CSSProperties = { position: 'fixed', zIndex: 1100 }
-  if (anchorRect) {
-    style.top = anchorRect.bottom + 6
-    style.right = window.innerWidth - anchorRect.right
+  // 弹窗渲染在会话大框（.chat-main，position:relative）内部，绝对定位钉在其右上角内侧
+  // （距顶、距右各 8px）。不依赖视口坐标，天然适配左侧栏/顶部导航两种布局与尺寸变化。
+  const style: React.CSSProperties = {
+    position: 'absolute', top: 8, right: 8, zIndex: 1100,
+    maxHeight: 'calc(100% - 16px)', overflowY: 'auto',
   }
 
   return (
@@ -1472,17 +1594,20 @@ export default function ChatView() {
   const throttledScroll = useRef<(() => void) | null>(null)
   const lastScrollSessionRef = useRef<string | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
+  // rAF 贴底循环需免重渲染读取跟随状态，故双写 ref + state；
+  // 滚动事件中必须【同步】写 ref（不经 rAF 节流），否则用户上滑后钉底循环
+  // 抢先把滚动条拉回底部，导致流式期间无法向上翻阅。
+  const autoScrollRef = useRef(true)
+  useEffect(() => { autoScrollRef.current = autoScroll }, [autoScroll])
   const [atBottom, setAtBottom] = useState(true)
   const [activeNavMsgId, setActiveNavMsgId] = useState<string | null>(null)
   // 输入框代码预览：用户手动关闭后，任意输入变化即可重新触发
   const [inputPreviewDismissed, setInputPreviewDismissed] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const settingsBtnRef = useRef<HTMLButtonElement>(null)
-  const [settingsAnchor, setSettingsAnchor] = useState<DOMRect | null>(null)
   // 工具开关面板
   const [showTools, setShowTools] = useState(false)
   const toolsBtnRef = useRef<HTMLButtonElement>(null)
-  const [toolsAnchor, setToolsAnchor] = useState<DOMRect | null>(null)
   const toolConfig = useStore(s => s.toolConfig)
   const setToolConfig = useStore(s => s.setToolConfig)
   const { speakingId, speak, stop: stopTts } = useTts()
@@ -1966,7 +2091,7 @@ export default function ChatView() {
     window.api.onChatStreamChunk(async (data) => {
       // 已中止的流：忽略所有后续事件（包括异步到达的 done）
       if (abortedStreamsRef.current.has(data.streamId)) {
-        if (data.done) abortedStreamsRef.current.delete(data.streamId)
+        if (data.done) { abortedStreamsRef.current.delete(data.streamId); streamThinkMeta.delete(data.streamId) }
         return
       }
       // 工具调用后续流：将 followStreamId 映射回原始 streamId，使内容追加到同一条消息
@@ -1987,6 +2112,8 @@ export default function ChatView() {
         // 写入模块级缓冲区，StreamingText 用 rAF 读取
         const prev = streamingBuffer[data.streamId] || ''
         streamingBuffer[data.streamId] = prev + data.delta
+        // 跟踪思考链起止时间（供「思考了 Xs」定格显示）
+        trackThinkTiming(data.streamId, streamingBuffer[data.streamId]!)
         // 轻量同步到 store（100ms 一次），触发思考链重新渲染
         lightStreamSync(targetSession.id, data.streamId)
       }
@@ -2001,6 +2128,7 @@ export default function ChatView() {
         streamReceivedRef.current.delete(data.streamId)
 
         if (data.error) {
+          streamThinkMeta.delete(data.streamId)
           st.clearStreamForSession(targetSession.id)
           // 如果是重新生成失败，回滚恢复旧消息
           const rollback = regenerateRollbackRef.current
@@ -2020,11 +2148,17 @@ export default function ChatView() {
         // 成功：流结束，同步缓冲区到 Zustand store
         const finalContent = streamingBuffer[data.streamId]
         delete streamingBuffer[data.streamId]
+        // 取出思考耗时队列（未闭合的思考不计入），随消息持久化
+        const thinkMeta = streamThinkMeta.get(data.streamId)
+        const finalThinkDurations = thinkMeta ? thinkMeta.durations.slice() : undefined
+        streamThinkMeta.delete(data.streamId)
         if (finalContent != null) {
           const s = useChatStore.getState()
           const sess = s.sessions.find(s => s.id === targetSession.id)
           if (sess) {
-            const msgs = sess.messages.map(m => m.id === data.streamId ? { ...m, content: finalContent } : m)
+            const msgs = sess.messages.map(m => m.id === data.streamId
+              ? { ...m, content: finalContent, ...(finalThinkDurations && finalThinkDurations.length ? { thinkDurations: finalThinkDurations } : {}) }
+              : m)
             s.replaceMessages(targetSession.id, msgs)
           }
         }
@@ -2201,6 +2335,22 @@ export default function ChatView() {
     container.scrollTop = container.scrollHeight
   }, [activeSessionId, activeMessages.length, activeMessages[activeMessages.length - 1]?.content, autoScroll])
 
+  // 流式期间用 requestAnimationFrame 持续贴底，消除气泡底部“一卡一卡”。
+  // 原因：正文经节流的缓冲区“晚一拍”才增高，而 messages 变更触发的滚动在增高前已执行，
+  // 两者相位错开 → 滞后一拍的追赶式跳动。改为每帧把滚动条钉到底（仅当用户处于底部），
+  // 滚动便与真实内容高度同步增长；用户上滑查看时（autoScrollRef=false）不打断。
+  useEffect(() => {
+    if (!activeStreamId) return
+    let raf = 0
+    const pin = () => {
+      const el = messagesContainerRef.current
+      if (el && autoScrollRef.current) el.scrollTop = el.scrollHeight
+      raf = requestAnimationFrame(pin)
+    }
+    raf = requestAnimationFrame(pin)
+    return () => cancelAnimationFrame(raf)
+  }, [activeStreamId])
+
   // 测量输入框区域高度，写入 CSS 变量，使浮动按钮精确浮在输入框上方
   useEffect(() => {
     const el = chatInputWrapRef.current
@@ -2218,6 +2368,8 @@ export default function ChatView() {
   const handleScrollThrottled = useCallback(() => {
     const el = messagesContainerRef.current
     if (!el) return
+    // 同步写 ref（不等 rAF）：供流式钉底循环即时感知用户是否上滑离底。
+    autoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
     if (!throttledScroll.current) {
       throttledScroll.current = () => {
         throttledScroll.current = null
@@ -2959,28 +3111,10 @@ ${msgsHtml}
         />
       </div>
 
-      <div
-        className="chat-main"
-        onDragEnter={handleDragEnter}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-        <div className="chat-main-col">
-          {/* 拖拽上传遮罩 */}
-          {dragOverCount > 0 && (
-            <div className="chat-drop-overlay">
-              <div className="chat-drop-overlay-inner">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="17 8 12 3 7 8" />
-                  <line x1="12" y1="3" x2="12" y2="15" />
-                </svg>
-                <span>释放文件以上传</span>
-                <span className="chat-drop-overlay-hint">支持图片、文本、PDF、代码文件等</span>
-              </div>
-            </div>
-          )}
+      {/* 顶栏与会话区改为上下并列的两张独立圆角卡片（参考 Agent Code 工作台）：
+          .chat-main-wrapper 为纵向容器，顶栏卡片在上、会话大框（.chat-main）在下，
+          顶栏不再嵌套在会话框圆角边框内部。 */}
+      <div className="chat-main-wrapper">
           <div className="chat-header">
             <button
               className="chat-collapse-btn"
@@ -3010,24 +3144,14 @@ ${msgsHtml}
             <button
               ref={settingsBtnRef}
               className="chat-settings-btn"
-              onClick={() => {
-                if (settingsBtnRef.current) {
-                  setSettingsAnchor(settingsBtnRef.current.getBoundingClientRect())
-                }
-                setShowSettings((v) => !v)
-              }}
+              onClick={() => setShowSettings((v) => !v)}
             >
               <SlidersHorizontal size={16} />
             </button>
             <button
               ref={toolsBtnRef}
               className="chat-settings-btn"
-              onClick={() => {
-                if (toolsBtnRef.current) {
-                  setToolsAnchor(toolsBtnRef.current.getBoundingClientRect())
-                }
-                setShowTools((v) => !v)
-              }}
+              onClick={() => setShowTools((v) => !v)}
             >
               <Wrench size={16} />
             </button>
@@ -3055,6 +3179,44 @@ ${msgsHtml}
             </button>
           </div>
 
+      <div
+        className="chat-main"
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {/* 参数/工具弹窗：渲染在会话框内部，绝对定位钉在其右上角内侧（见各卡片 style） */}
+        {showSettings && (
+          <ChatSettingsCard
+            session={activeSession}
+            onClose={() => setShowSettings(false)}
+            onSetSystemPrompt={(prompt) => activeSession && setSystemPrompt(activeSession.id, prompt)}
+            onSetParams={(params) => activeSession && setParams(activeSession.id, params)}
+          />
+        )}
+        {showTools && (
+          <ToolToggleCard
+            config={toolConfig}
+            onClose={() => setShowTools(false)}
+            onChange={setToolConfig}
+          />
+        )}
+        <div className="chat-main-col">
+          {/* 拖拽上传遮罩 */}
+          {dragOverCount > 0 && (
+            <div className="chat-drop-overlay">
+              <div className="chat-drop-overlay-inner">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                <span>释放文件以上传</span>
+                <span className="chat-drop-overlay-hint">支持图片、文本、PDF、代码文件等</span>
+              </div>
+            </div>
+          )}
           <div className="chat-messages" ref={messagesContainerRef} onScroll={handleScrollThrottled} onContextMenu={handleChatContextMenu}>
             {activeSession ? (
               activeMessages.length === 0 ? (
@@ -3522,26 +3684,9 @@ ${msgsHtml}
             </div>
           </>)}
       </div>
+      </div>
 
-      {/* 参数/系统提示词设置卡片 */}
-      {showSettings && (
-        <ChatSettingsCard
-          session={activeSession}
-          anchorRect={settingsAnchor}
-          onClose={() => setShowSettings(false)}
-          onSetSystemPrompt={(prompt) => activeSession && setSystemPrompt(activeSession.id, prompt)}
-          onSetParams={(params) => activeSession && setParams(activeSession.id, params)}
-        />
-      )}
-
-      {showTools && (
-        <ToolToggleCard
-          config={toolConfig}
-          anchorRect={toolsAnchor}
-          onClose={() => setShowTools(false)}
-          onChange={setToolConfig}
-        />
-      )}
+      {/* 参数/工具弹窗已移入会话框 .chat-main 内部渲染（绝对定位于其右上角，见上方 chat-main） */}
 
       <ConfirmModal
         open={deletingMsgId !== null}
