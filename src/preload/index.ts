@@ -155,12 +155,7 @@ const fullApi = {
   saveAgentProjects: (projects: object) => ipcRenderer.invoke('save-agent-projects', projects),
   // ── Agent Tracing 落盘 ──
   agentTraceAppend: (sessionId: string, entry: object) => ipcRenderer.invoke('agent-trace-append', sessionId, entry),
-	  executeCommand: (opts: { command: string; timeout?: number; isBackground?: boolean; maxOutputChars?: number; autoBackground?: boolean; execId?: string }) => ipcRenderer.invoke('execute-command', opts),
-	  onCommandChunk: (cb: (data: { execId: string; chunk: string }) => void) => {
-	    ipcRenderer.removeAllListeners('agent-command-chunk')
-	    ipcRenderer.on('agent-command-chunk', (_e, data) => cb(data))
-	  },
-	  removeCommandChunkListener: () => ipcRenderer.removeAllListeners('agent-command-chunk'),
+	  executeCommand: (opts: { command: string; timeout?: number; isBackground?: boolean; maxOutputChars?: number; autoBackground?: boolean }) => ipcRenderer.invoke('execute-command', opts),
 	  writeTempFile: (content: string, ext?: string) => ipcRenderer.invoke('write-temp-file', content, ext),
 	  setBashCwd: (dir: string) => ipcRenderer.invoke('set-bash-cwd', dir),
 	  getBackgroundTask: (taskId: string) => ipcRenderer.invoke('get-background-task', taskId),

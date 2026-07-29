@@ -20,7 +20,6 @@ interface AgentFilePickerProps {
   onAttach: (entry: FileEntry) => void
   onRemove: (path: string) => void
   onClose: () => void
-  onOpenFile: (path: string) => void
   triggerRef?: React.RefObject<HTMLElement | null>
   // 浏览系统文件：调原生对话框选取任意磁盘文件（面板导航只能到当前盘符根）
   onBrowseSystem?: () => void

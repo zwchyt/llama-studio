@@ -2,7 +2,7 @@ import type { ToolDefinition } from '../../utils/tools'
 import { BASH_TOOL_NAME } from './constants'
 import type { BashInput } from './types'
 import { getWorkspaceRootForSession } from '../workspaceRoot'
-import { startBashLive, stopBashLive } from './bashLiveStore'
+import { getAgentSessionId } from '../agentSession'
 import { invalidateReadCache } from '../FileReadTool/FileReadTool'
 
 export const definition: Omit<ToolDefinition['function'], 'type'> = {
@@ -52,7 +52,16 @@ function isBarePrintf(command: string): boolean {
 // ── 工作目录跟踪（cd 跨命令持久化）──
 // 模型常期望「cd dir」后后续命令在 dir 中执行；我们为每次 bash
 // 新开 cmd.exe，故需手动追踪目录并通过 setBashCwd 同步给主进程。
-let trackedCwd = ''
+// 按会话 id 隔离（与 workspaceRoot.ts 同构）：全局单例会在切换项目/会话后
+// 残留旧目录，导致命令跑错目录甚至误改另一项目的文件。
+const trackedCwdBySession = new Map<string, string>()
+
+/** 取某会话已追踪的工作目录（cd 持久化结果）；未 cd 过则返回 undefined。
+ * 供切换会话时按会话恢复主进程 bashCwd：若硬重置为工作区根而不回灌，
+ * 切回时渲染层/模型认知（已 cd 到子目录）与实际执行目录会双向失步。 */
+export function getTrackedCwd(sessionId: string): string | undefined {
+  return trackedCwdBySession.get(sessionId)
+}
 
 function resolveCdTarget(raw: string, currentCwd: string): string | null {
   // 按 cmd 连接符（&& || 单 & ;）切段，按顺序依次应用每一段 cd，返回最终目录
@@ -83,10 +92,6 @@ function resolveCdTarget(raw: string, currentCwd: string): string | null {
 
 export async function execute(args: Record<string, unknown>): Promise<string> {
   const { command, description, timeout, is_background, max_output_chars, auto_background } = args as unknown as BashInput
-  // 前台命令开启实时输出流式推送（后台命令立即返回 taskId，无需实时）。
-  const streaming = !is_background
-  const execId = streaming ? `bash-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : undefined
-  if (execId) startBashLive(execId)
   try {
     const res = await window.api.executeCommand({
       command,
@@ -94,7 +99,6 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
       isBackground: is_background ?? undefined,
       maxOutputChars: max_output_chars ?? undefined,
       autoBackground: auto_background ?? undefined,
-      execId,
     })
 
     // Bash 可能修改任意文件（脚本/git/重定向等），保守清空 Read 缓存，
@@ -106,10 +110,11 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
     // 目录变更以附注形式追加，绝不吞掉真实输出。
     let cwdNote = ''
     if (res.code === 0) {
-      if (!trackedCwd) trackedCwd = getWorkspaceRootForSession()
+      const sid = getAgentSessionId()
+      const trackedCwd = trackedCwdBySession.get(sid) || getWorkspaceRootForSession()
       const newCwd = resolveCdTarget(command, trackedCwd)
       if (newCwd) {
-        trackedCwd = newCwd
+        trackedCwdBySession.set(sid, newCwd)
         window.api.setBashCwd(newCwd).catch(() => {})
         const isPureCd = /^cd\s+(?:\/d\s+)?[^&|;]+$/i.test(command.trim())
         if (isPureCd) {
@@ -126,8 +131,8 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
         `[${description || command}]`,
         `Background task started: ${res.taskId}`,
         `Command is running in the background.`,
-        `Use get_background_task_output with task_id="${res.taskId}" to retrieve the output later.`,
-        `Use list_background_tasks to see all running/completed tasks.`
+        `Use GetBackgroundTaskOutput with task_id="${res.taskId}" to retrieve the output later.`,
+        `Use ListBackgroundTasks to see all running/completed tasks.`
       ].join('\n')
     }
 
@@ -142,7 +147,7 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
         output += `stderr:\n${res.stderr}`
       }
       output += `\n\nTask ID: ${res.taskId}（仍在后台运行）`
-      output += `\n可使用 get_background_task_output 获取完整输出。`
+      output += `\n可使用 GetBackgroundTaskOutput 获取完整输出。`
       return output
     }
 
@@ -185,8 +190,6 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
     return (output || '(no output)') + cwdNote
   } catch (e: any) {
     return `💥 命令执行异常：${e?.message || String(e)}`
-  } finally {
-    if (execId) stopBashLive(execId)
   }
 }
 

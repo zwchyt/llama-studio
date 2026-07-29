@@ -1376,14 +1376,6 @@
   color: var(--danger);
 }
 
-.agent-tool-call-status.run {
-  color: var(--tool-accent, var(--accent));
-}
-
-.agent-tool-call-status.wait {
-  color: var(--text-muted);
-}
-
 .agent-tool-call-status.confirm {
   color: var(--warning);
 }
@@ -2067,10 +2059,6 @@
   color: var(--text-dim);
 }
 
-.agent-tool-result-running {
-  padding: 8px 10px;
-}
-
 /* 失败态结果块：红色左边框 + 淡红底，展开后快速定位错误输出（覆盖普通 pre 与带行号两种形态） */
 .agent-tool-call.failed .agent-tool-result-pre,
 .agent-tool-call.failed .agent-tool-result .agent-tool-lined {
@@ -2089,9 +2077,8 @@
   overflow: hidden;
 }
 
-/* 命令栏与实时输出栏共用：用 Bash 工具色轻着色，强化终端身份 */
-.agent-tool-bash-bar,
-.agent-tool-bash-live-bar {
+/* 命令栏：用 Bash 工具色轻着色，强化终端身份 */
+.agent-tool-bash-bar {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -2121,52 +2108,6 @@
   color: var(--tool-accent, #ea580c);
   font-weight: 700;
   user-select: none;
-}
-
-/* Bash 实时输出（执行中）*/
-.agent-tool-bash-live {
-  /* 与命令块左右对齐（原 0 10px 8px 会比命令块窄一截） */
-  margin: 0 0 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.agent-tool-bash-live-pre {
-  margin: 0;
-  padding: 8px 10px;
-  background: #16161e;
-  color: #d4d4d4;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 220px;
-  overflow-y: auto;
-}
-
-/* 深色底上的滚动条用浅色半透明，避免亮色主题滚动条突兀 */
-.agent-tool-bash-live-pre::-webkit-scrollbar {
-  width: 8px;
-}
-
-.agent-tool-bash-live-pre::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, .18);
-  border-radius: 4px;
-}
-
-.agent-tool-bash-live-pre::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, .3);
-}
-
-.agent-tool-dots {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: agent-tool-pulse 1s ease-in-out infinite;
 }
 
 .agent-code-preview-md img {
@@ -3009,6 +2950,128 @@
 
 .agent-card-debug-body {
   overflow-y: auto;
+}
+
+/* 长期记忆卡片：查看 / 归档智能体沉淀的跨会话记忆 */
+.agent-card-memstore {
+  width: 440px;
+  max-height: 62vh;
+}
+
+.agent-card-memstore-body {
+  overflow-y: auto;
+}
+
+.agent-mem-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px;
+}
+
+.agent-mem-row {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  background: var(--bg);
+}
+
+/* 已归档条目：整体压淡，与活跃条目区分 */
+.agent-mem-row.archived {
+  opacity: .55;
+  border-left-color: var(--border-strong);
+}
+
+.agent-mem-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+
+.agent-mem-cat {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(124, 58, 237, .15);
+  color: #7c3aed;
+}
+
+.agent-mem-src {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+/* 用户来源条目：绿色标识（冲突时须用户裁决，不自动淘汰） */
+.agent-mem-src.user {
+  background: rgba(155, 197, 61, .18);
+  color: #6a8f1f;
+}
+
+.agent-mem-conf {
+  color: var(--text-muted);
+}
+
+.agent-mem-contra {
+  color: #e01a4f;
+}
+
+.agent-mem-time {
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
+.agent-mem-archive {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.agent-mem-archive:hover {
+  color: #e01a4f;
+}
+
+.agent-mem-content {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.agent-mem-anchor {
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-mem-archived-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  padding: 4px 2px;
+  cursor: pointer;
+}
+
+.agent-mem-archived-toggle:hover {
+  color: var(--text);
 }
 
 .agent-debug-list {

@@ -777,10 +777,15 @@ let modelsCache: { ts: number; result: ModelFileInfo[] } | null = null
 let modelsScanPromise: Promise<ModelFileInfo[]> | null = null
 const MODELS_CACHE_TTL = 30000
 const MAX_MODELS_FILES = 5000
+// 退出清理钩子：registerIpcHandlers 内的后台任务表在此登记，
+// 供 cleanupRunningProcesses 在应用退出时终止残留子进程
+let killAllBackgroundTasks: (() => void) | null = null
 
 export function cleanupRunningProcesses(): void {
   if (metricsInterval) { clearInterval(metricsInterval); metricsInterval = null }
   disposeCodeMaps()
+  // 终止残留的后台任务子进程（dev server 等），避免退出后成为孤儿进程占用端口
+  if (killAllBackgroundTasks) { try { killAllBackgroundTasks() } catch { /* ignore */ } }
   for (const [, { proc }] of runningProcesses) {
     killProcessTreeAsync(proc)
   }
@@ -3910,31 +3915,18 @@ export function registerIpcHandlers(): void {
       if (!existsSync(opts.path)) return { success: false, error: '目录不存在' }
       const limit = Math.max(1, Math.min(opts.limit ?? 100, 2000))
       // 遍历预算超时（借鉴 DeepSeek-Reasonix glob 的 ctx 可取消）：超大 monorepo 搜 ** 时，
-      // 同步递归 walk 无法被异步信号真正中断，这里用协作式超时标志——超时后停止继续遍历，
+      // 同步递归 walk 会独占事件循环，setTimeout 回调根本没机会执行，故改用
+      // Date.now() 截止时间在循环内主动比较——超时后停止继续遍历，
       // 保留已收集结果并返回 timedOut，避免主进程长时间阻塞。
       const GLOB_TIMEOUT_MS = 10_000
+      const globDeadline = Date.now() + GLOB_TIMEOUT_MS
       let timedOut = false
-      const timeoutId = setTimeout(() => { timedOut = true }, GLOB_TIMEOUT_MS)
-      // 敏感文件过滤（借鉴 Reasonix 的 secrets.ProtectSensitiveFiles）：搜到的密钥/凭证类文件
-      // 不进入结果，避免模型把 .env / 私钥路径暴露进上下文。
-      const SENSITIVE_FILES = new Set([
-        '.env', '.env.local', '.env.development', '.env.production', '.env.example',
-        'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'known_hosts',
-        'credentials.json', 'credentials.yml', 'credentials.yaml',
-        '.npmrc', '.pypirc', '.netrc', '*.key', '*.pem', '*.p12', '*.pfx', '*.keystore', '*.jks'
-      ])
-      const isSensitive = (name: string): boolean => {
-        if (SENSITIVE_FILES.has(name)) return true
-        // 通配项（含 *）按需匹配
-        return [...SENSITIVE_FILES].some(p => p.includes('*') && matchSimple(name, p))
+      const checkGlobTimeout = (): boolean => {
+        if (!timedOut && Date.now() > globDeadline) timedOut = true
+        return timedOut
       }
-      // 简单通配匹配（仅 * 后缀，如 "*.key"）
-      function matchSimple(name: string, pat: string): boolean {
-        if (!pat.includes('*')) return name === pat
-        const prefix = pat.slice(0, pat.indexOf('*'))
-        const suffix = pat.slice(pat.indexOf('*') + 1)
-        return name.startsWith(prefix) && (suffix === '' || name.endsWith(suffix))
-      }
+      // 敏感文件过滤：与 grep 共用同一份 isSensitiveName 名单（见下方定义），
+      // 避免两处名单各自维护时漂移。
       // 简单文件名回退（借鉴 DeepSeek-Reasonix glob 的 bare-filename fallback）：
       // 模型常只给 "*.ts" / "foo.ts" 这类不含路径分隔符的 pattern，却希望搜到全树任意层级的文件。
       // 由于 globToRegExp 用 [^/]* 匹配 *（不跨 /），裸 "*.ts" 只能命中搜索根直接下层。
@@ -3950,11 +3942,11 @@ export function registerIpcHandlers(): void {
       const giPatterns = loadGitignorePatterns(opts.path)
       const found: string[] = []
       const walk = (dir: string) => {
-        if (timedOut || found.length >= limit) return
+        if (checkGlobTimeout() || found.length >= limit) return
         let entries: any[]
         try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
         for (const e of entries) {
-          if (timedOut || found.length >= limit) return
+          if (checkGlobTimeout() || found.length >= limit) return
           const full = join(dir, e.name)
           const rel = relative(opts.path, full).split('\\').join('/')
           if (isGitignored(rel, giPatterns)) continue
@@ -3962,18 +3954,17 @@ export function registerIpcHandlers(): void {
             if (GLOB_GREP_IGNORE_DIRS.has(e.name)) continue
             walk(full)
           } else if (e.isFile()) {
-            if (re.test(rel) && !isSensitive(e.name)) found.push(full)
+            if (re.test(rel) && !isSensitiveName(e.name)) found.push(full)
           }
         }
       }
       // path 既可为目录，也可为单个文件；为文件时若匹配模式则直接返回该文件
       const rootStat = statSync(opts.path)
       if (rootStat.isFile()) {
-        if (re.test(basename(opts.path)) && !isSensitive(basename(opts.path))) found.push(opts.path)
+        if (re.test(basename(opts.path)) && !isSensitiveName(basename(opts.path))) found.push(opts.path)
       } else {
         walk(opts.path)
       }
-      clearTimeout(timeoutId)
       found.sort()
       const truncated = found.length >= limit
       return { success: true, filenames: found, numFiles: found.length, truncated, timedOut }
@@ -4045,8 +4036,9 @@ export function registerIpcHandlers(): void {
     makefile: 'Makefile', gitignore: '.gitignore',
   }
 
-  // 敏感文件过滤（与 glob 工具一致，借鉴 Reasonix 的 secrets.ProtectSensitiveFiles）：
-  // grep 会读取文件内容，若命中 .env / 私钥会把它的值展示进上下文，风险更高，必须剔除。
+  // 敏感文件过滤（glob / grep 共用单一名单，借鉴 Reasonix 的 secrets.ProtectSensitiveFiles）：
+  // 命中的密钥/凭证类文件不进入结果；grep 会读取文件内容，若命中 .env / 私钥
+  // 会把它的值展示进上下文，风险更高，必须剔除。更新名单只改这一处。
   const SENSITIVE_FILES = new Set([
     '.env', '.env.local', '.env.development', '.env.production', '.env.example',
     'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'known_hosts',
@@ -4079,10 +4071,15 @@ export function registerIpcHandlers(): void {
       ? Math.min(Math.max(reqSec * 1000, 1000), 300_000)
       : DEFAULT_GREP_TIMEOUT_MS
     let timedOut = false
-    const timeoutId = setTimeout(() => { timedOut = true }, timeoutMs)
+    // 同步遍历/逐文件匹配全程不让出事件循环，setTimeout 置标志永远不会触发，
+    // 改用截止时间在循环内主动比较，超时后返回部分结果。
+    const grepDeadline = Date.now() + timeoutMs
+    const checkGrepTimeout = (): boolean => {
+      if (!timedOut && Date.now() > grepDeadline) timedOut = true
+      return timedOut
+    }
 
     const returnResult = (result: { success: boolean; content?: string; numFiles?: number; truncated?: boolean; error?: string }) => {
-      clearTimeout(timeoutId)
       return { ...result, timedOut }
     }
 
@@ -4113,7 +4110,7 @@ export function registerIpcHandlers(): void {
         let entries: any[]
         try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
         for (const e of entries) {
-          if (timedOut) return
+          if (checkGrepTimeout()) return
           const full = join(dir, e.name)
           const rel = relative(root, full).split('\\').join('/')
           if (isGitignored(rel, giPatterns)) continue
@@ -4141,7 +4138,7 @@ export function registerIpcHandlers(): void {
       if (mode === 'files_with_matches') {
         const matched: string[] = []
         for (const f of files) {
-          if (timedOut) break
+          if (checkGrepTimeout()) break
           if (headLimit !== 0 && matched.length >= processLimit) break
           const text = readTextSafe(f, maxBytes)
           if (text === null) continue
@@ -4161,7 +4158,7 @@ export function registerIpcHandlers(): void {
         const lines: string[] = []
         let total = 0
         for (const f of files) {
-          if (timedOut) break
+          if (checkGrepTimeout()) break
           if (headLimit !== 0 && lines.length >= processLimit) break
           const text = readTextSafe(f, maxBytes)
           if (text === null) continue
@@ -4182,7 +4179,7 @@ export function registerIpcHandlers(): void {
       const outLines: string[] = []
       let fileCount = 0
       for (const f of files) {
-        if (timedOut) break
+        if (checkGrepTimeout()) break
         if (headLimit !== 0 && outLines.length >= processLimit) break
         const text = readTextSafe(f, maxBytes)
         if (text === null) continue
@@ -4751,6 +4748,22 @@ export function registerIpcHandlers(): void {
 
   const DEFAULT_EXEC_TIMEOUT = 120_000
   const DEFAULT_MAX_OUTPUT_CHARS = 100_000
+  // 输出缓冲上限：超过后丢弃最旧数据，防止长时间运行/输出巨大的进程把主进程内存撞爆
+  const MAX_BUFFERED_OUTPUT_BYTES = 8 * 1024 * 1024
+  function pushCapped(bufs: Buffer[], sizeRef: { total: number; dropped?: boolean }, d: Buffer): void {
+    bufs.push(d)
+    sizeRef.total += d.length
+    while (sizeRef.total > MAX_BUFFERED_OUTPUT_BYTES && bufs.length > 1) {
+      sizeRef.total -= bufs[0]!.length
+      bufs.shift()
+      sizeRef.dropped = true
+    }
+  }
+  // 解码时若发生过头部丢弃，在输出开头显式标注，避免模型/用户误信为完整输出
+  function decodeCapped(bufs: Buffer[], sizeRef: { total: number; dropped?: boolean }): string {
+    const text = decodeCommandOutput(Buffer.concat(bufs))
+    return sizeRef.dropped ? `[输出超出 8MB 缓冲上限，较早部分已丢弃，以下为尾部输出]\n${text}` : text
+  }
 
   // 敏感环境变量名过滤（借鉴 Reasonix 的 secrets.ProcessEnv）：执行命令前剔除凭证类
   // 环境变量，避免模型通过 echo $SECRET / %TOKEN% 读取并泄漏进上下文或日志。
@@ -4779,6 +4792,14 @@ export function registerIpcHandlers(): void {
     } catch { /* 进程可能已退出 */ }
   }
 
+  // 应用退出时终止所有仍在运行的后台任务子进程（由 cleanupRunningProcesses 调用），
+  // 否则 dev server 等后台命令在 Windows 上不会随父进程退出，残留孤儿进程占用端口
+  killAllBackgroundTasks = () => {
+    for (const [, task] of backgroundTasks) {
+      if (task.status === 'running') killProcessTree(task.pid)
+    }
+  }
+
   function spawnCommand(command: string) {
     const isWin = process.platform === 'win32'
     if (isWin) {
@@ -4803,7 +4824,6 @@ export function registerIpcHandlers(): void {
     isBackground?: boolean
     maxOutputChars?: number
     autoBackground?: boolean
-    execId?: string
   }): Promise<{
     stdout: string
     stderr: string
@@ -4824,11 +4844,13 @@ export function registerIpcHandlers(): void {
 
       const outBufs: Buffer[] = []
       const errBufs: Buffer[] = []
-      child.stdout?.on('data', (d: Buffer) => { outBufs.push(d) })
-      child.stderr?.on('data', (d: Buffer) => { errBufs.push(d) })
+      const outSize = { total: 0 }
+      const errSize = { total: 0 }
+      child.stdout?.on('data', (d: Buffer) => { pushCapped(outBufs, outSize, d) })
+      child.stderr?.on('data', (d: Buffer) => { pushCapped(errBufs, errSize, d) })
       child.on('close', (code) => {
-        const stdout = decodeCommandOutput(Buffer.concat(outBufs))
-        const stderr = decodeCommandOutput(Buffer.concat(errBufs))
+        const stdout = decodeCapped(outBufs, outSize)
+        const stderr = decodeCapped(errBufs, errSize)
         task.stdout = stdout
         task.stderr = stderr
         task.code = code
@@ -4856,23 +4878,23 @@ export function registerIpcHandlers(): void {
       const child = spawnCommand(opts.command)
       const outBufs: Buffer[] = []
       const errBufs: Buffer[] = []
+      const outSize = { total: 0 }
+      const errSize = { total: 0 }
       let timedOut = false
       let resolved = false
-      // 实时进度：有 execId 时按块把输出推送给渲染进程（仅用于实时预览，最终结果仍用全量解码）。
-      const sendChunk = (chunk: string) => {
-        if (!opts.execId || !chunk) return
-        try { if (!_e.sender.isDestroyed()) _e.sender.send('agent-command-chunk', { execId: opts.execId, chunk }) } catch { /* ok */ }
-      }
+      // auto-background 转后台后的任务引用：close/error 时补写终态
+      let bgTask: BackgroundTask | null = null
 
       const timeoutId = setTimeout(() => {
         timedOut = true
         if (opts.autoBackground) {
           const { taskId, task } = registerBackgroundTask(opts.command, child.pid || 0, false, true)
-          const stdout = decodeCommandOutput(Buffer.concat(outBufs))
-          const stderr = decodeCommandOutput(Buffer.concat(errBufs))
+          const stdout = decodeCapped(outBufs, outSize)
+          const stderr = decodeCapped(errBufs, errSize)
           task.stdout = stdout
           task.stderr = stderr
           task.status = 'running'
+          bgTask = task
           resolved = true
           const truncated = stdout.length > maxOutputChars
           resolve({
@@ -4889,20 +4911,43 @@ export function registerIpcHandlers(): void {
         }
       }, timeout)
 
-      child.stdout?.on('data', (d: Buffer) => { outBufs.push(d); sendChunk(decodeCommandOutput(d)) })
-      child.stderr?.on('data', (d: Buffer) => { errBufs.push(d); sendChunk(decodeCommandOutput(d)) })
+      child.stdout?.on('data', (d: Buffer) => { pushCapped(outBufs, outSize, d) })
+      child.stderr?.on('data', (d: Buffer) => { pushCapped(errBufs, errSize, d) })
       child.on('error', () => {
-        if (resolved) return
+        if (resolved) {
+          // 已转后台：进程异常时同步任务终态，避免状态永远停在 running
+          if (bgTask && bgTask.status === 'running') { bgTask.status = 'killed'; bgTask.code = 1 }
+          return
+        }
         clearTimeout(timeoutId)
         resolved = true
         resolve({ stdout: '', stderr: 'command execution error', code: 1 })
       })
       child.on('close', (code) => {
-        if (resolved) return
+        if (resolved) {
+          // 已转后台（auto-background）：进程真正结束时补写任务终态并落盘输出，
+          // 否则任务状态永远停在超时瞬间的 running 快照（模型会反复轮询误判）。
+          // status 已被 kill-background-task 改成 killed 时不覆盖。
+          if (bgTask && bgTask.status === 'running') {
+            const stdout = decodeCapped(outBufs, outSize)
+            const stderr = decodeCapped(errBufs, errSize)
+            bgTask.stdout = stdout
+            bgTask.stderr = stderr
+            bgTask.code = code
+            bgTask.status = 'completed'
+            bgTask.totalBytes = stdout.length
+            if (stdout.length > maxOutputChars) {
+              bgTask.truncated = true
+              bgTask.stdout = stdout.slice(0, maxOutputChars) + `\n[... truncated: showing ${formatChars(maxOutputChars)} of ${formatChars(stdout.length)} chars]`
+            }
+            try { writeFileSync(bgTask.outputFile, stdout, 'utf-8') } catch { /* ok */ }
+          }
+          return
+        }
         clearTimeout(timeoutId)
         resolved = true
-        const stdout = decodeCommandOutput(Buffer.concat(outBufs))
-        const stderr = decodeCommandOutput(Buffer.concat(errBufs))
+        const stdout = decodeCapped(outBufs, outSize)
+        const stderr = decodeCapped(errBufs, errSize)
         const totalBytes = stdout.length
         let displayStdout = stdout
         let truncated = false

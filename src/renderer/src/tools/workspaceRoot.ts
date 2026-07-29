@@ -18,12 +18,6 @@ export function setWorkspaceRootForSession(sessionId: string, dir: string): void
   rootsBySession.set(sessionId, dir || '')
 }
 
-/** 清除某个会话的根（会话销毁/切换时调用，避免 Map 无限增长）。 */
-export function clearWorkspaceRootForSession(sessionId: string): void {
-  if (!sessionId) return
-  rootsBySession.delete(sessionId)
-}
-
 /**
  * 取当前活动会话绑定的工作区根目录。
  * 若当前会话未绑定根，回退到全局兜底（空串），由调用方提示用户先选择目录。

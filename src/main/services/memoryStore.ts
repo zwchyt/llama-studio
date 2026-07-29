@@ -73,6 +73,21 @@ function saveStore(store: MemoryFile): void {
   }
 }
 
+// LRU 时钟落盘去抖：注入发生在每条用户消息的热路径上，同步整库写盘在条目多时有感。
+// lastUsedAt 仅影响淘汰排序，丢失最近几秒的刷新无实质影响，故延迟合并写入。
+// 其余写路径（沉淀/矛盾/归档）语义重要且低频，仍保持同步落盘。
+const pendingSaves = new Map<string, NodeJS.Timeout>()
+const SAVE_DEBOUNCE_MS = 3000
+function scheduleSaveStore(store: MemoryFile): void {
+  const key = resolve(store.dir).toLowerCase()
+  const prev = pendingSaves.get(key)
+  if (prev) clearTimeout(prev)
+  pendingSaves.set(key, setTimeout(() => {
+    pendingSaves.delete(key)
+    saveStore(store)
+  }, SAVE_DEBOUNCE_MS))
+}
+
 // ── 相似度：小写去标点分词（驼峰/下划线切子词 + CJK 二元组），Jaccard 系数 ──
 
 function tokenize(s: string): Set<string> {
@@ -270,9 +285,9 @@ function buildInjection(dir: string, capChars: number): AgentMemoryInjection {
     const lines = groups.get(label)
     if (lines?.length) parts.push(`### ${label}\n${lines.join('\n')}`)
   }
-  // 注入即视为使用：刷新 LRU 时钟并落盘
+  // 注入即视为使用：刷新 LRU 时钟；落盘去抖（热路径，避免每条消息同步整库写盘）
   for (const e of touched) e.lastUsedAt = now
-  saveStore(store)
+  scheduleSaveStore(store)
   return { text: parts.join('\n\n'), entries: injected, stale, userConflicts }
 }
 

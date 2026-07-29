@@ -180,7 +180,9 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
   const [showAll, setShowAll] = useState(false)
   const added = rows.filter(r => r.type === 'add').length
   const removed = rows.filter(r => r.type === 'del').length
-  const visible = showAll ? rows : rows.slice(0, MAX_ROWS)
+  // 可见行用 useMemo 固定引用：此前每次渲染新建数组，下方行内高亮的
+  // useMemo 缓存永远失效，任意局部 state 变化（如复制按钮）都会全量重跑 LCS 高亮。
+  const visible = useMemo(() => (showAll ? rows : rows.slice(0, MAX_ROWS)), [showAll, rows])
   // 对可见行计算行内单词级高亮（仅对展示的行计算，避免大文件全量计算）
   const highlighted = useMemo(() => computeInlineHighlights(visible), [visible])
   const hidden = rows.length - visible.length
@@ -273,10 +275,11 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
   const [allExpanded, setAllExpanded] = useState(false)  // 默认全部折叠（单文件级）
   // 分区级折叠：整段「已暂存的更改 / 更改」可各自收起
   const [sectionCollapsed, setSectionCollapsed] = useState<{ staged: boolean; unstaged: boolean }>({ staged: false, unstaged: false })
-  const openFile = (relPath: string, line?: number) => {
+  // 打开文件回调固定引用：内联函数会击穿 GitFileBlock 的 memo，任意父层重渲染都会重渲染全部文件块
+  const openFile = useCallback((relPath: string, line?: number) => {
     const root = workspaceDir.replace(/[\\/]+$/, '')
     onOpenFile(`${root}/${relPath}`, line)
-  }
+  }, [workspaceDir, onOpenFile])
   // 暂存/取消暂存操作
   const handleStage = useCallback(async (path: string) => {
     const res = await window.api.gitStageFile(workspaceDir, path)

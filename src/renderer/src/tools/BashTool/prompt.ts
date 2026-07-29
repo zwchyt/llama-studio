@@ -14,7 +14,7 @@ export function getBashPrompt(): string {
 
 ## 后台与超时
 - 默认超时 120s（最大 300s）；\`auto_background: true\` 让超时命令转后台而非被杀。
-- \`is_background: true\` 放后台（dev server/长构建），返回 task_id；用 \`get_background_task_output\`/\`list_background_tasks\` 查看；后台下 \`timeout: 0\` 不超时。
+- \`is_background: true\` 放后台（dev server/长构建），返回 task_id；用 \`GetBackgroundTaskOutput\`/\`ListBackgroundTasks\` 查看；后台下 \`timeout: 0\` 不超时。
 - 输出超约 100K 字符自动截断，完整存临时文件。
 
 ## 审批

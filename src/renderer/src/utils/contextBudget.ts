@@ -119,8 +119,11 @@ export function trimApiMessages(messages: ApiMessage[], budget: number): { messa
   const turns: ApiMessage[][] = []
   let cur: ApiMessage[] | null = null
   for (const m of rest) {
-    if (m.role === 'user') { cur = [m]; turns.push(cur) }
-    else { (cur ??= []).push(m) }
+    // cur 为 null 时也要新建轮次（与 splitAgentTurns 对齐）：否则 system 之后、
+    // 首个 user 之前的消息（如恢复会话时的 assistant/tool）会被静默丢弃，
+    // 破坏 tool_calls ↔ tool 结果配对。
+    if (m.role === 'user' || cur === null) { cur = [m]; turns.push(cur) }
+    else { cur.push(m) }
   }
   const sysTok = sys ? estimateApiMsgTokens(sys) : 0
   const turnTok = turns.map(t => t.reduce((s, m) => s + estimateApiMsgTokens(m), 0))

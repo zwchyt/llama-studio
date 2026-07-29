@@ -1871,18 +1871,6 @@ input[type="reset"]:not(:disabled) {
   }
 }
 
-@keyframes agent-tool-pulse {
-
-  0%,
-  100% {
-    opacity: .3;
-  }
-
-  50% {
-    opacity: 1;
-  }
-}
-
 @keyframes taskCardIn {
   from {
     opacity: 0;

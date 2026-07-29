@@ -62,10 +62,6 @@ export const WRITE_EDIT_TOOLS = new Set(
   Object.entries(TOOL_METAS).filter(([, m]) => m.kind === 'write' || m.kind === 'edit').map(([n]) => n)
 )
 
-export function getToolMeta(name: string): ToolMeta | undefined {
-  return TOOL_METAS[name]
-}
-
 // ── 渐进工具暴露（frequent / rare 分级）─────────────────────
 // 本地小模型上下文紧张：低频工具默认只注入「精简 schema」（一行摘要 + 参数名/类型，
 // 去掉冗长描述），需要完整参数说明时由模型调用 view_tool 展开。可显著降低 system
@@ -215,14 +211,34 @@ const RETRYABLE_ERROR_RE = /(EBUSY|EAGAIN|EMFILE|ENFILE|ETIMEDOUT|ECONNRESET|ECO
 // 我方超时哨兵：超时后再重试大概率仍超时，故不重试。
 const TIMEOUT_SENTINEL = '执行超时'
 
+// 工具结果统一失败判定（渲染层 failed 标记与本文件的重试判定共用同一份实现）：
+// 此前两处前缀集合分叉，Write/Edit/Delete 用 📁/⚠️ 前缀返回的错误在重试路径被当成功。
+export function isToolErrorResult(s: string): boolean {
+  if (!s) return false
+  const trimmed = s.trimStart()
+  if (/^error:/i.test(trimmed)) return true
+  // 各工具的统一失败前缀（Edit/Write/Delete/Bash 异常等以表情标记开头）
+  if (/^(?:❌|💥|🔒|📁|⚠️)/.test(trimmed)) return true
+  // Bash：失败/超时标记附加在输出末尾（前面可能带 stdout/stderr），匹配 BashTool
+  // 生成的精确文案，避免误伤碰巧含相似词的普通输出。
+  if (/\n\n❌ 命令失败，退出码: -?\d+/.test(s)) return true
+  if (/^命令失败，退出码 /.test(trimmed)) return true
+  if (/^⏱ 命令执行超时/.test(trimmed) || /\n\n⏱ 命令执行超时（/.test(s)) return true
+  try {
+    const o = JSON.parse(s)
+    return !!(o && typeof o === 'object' && 'error' in o)
+  } catch {
+    return false
+  }
+}
+
 function extractErrorText(result: string): string | null {
-  // 只认显式失败约定：JSON { error } 或 Error:/❌/💥/🔒 等统一失败前缀。
-  // 不再对正文做松散词匹配，避免 Grep/Read 结果里恰好含 error/network 等词的
+  // 只认显式失败约定（与 isToolErrorResult 共用同一套判定）。
+  // 不对正文做松散词匹配，避免 Grep/Read 结果里恰好含 error/network 等词的
   // 成功结果被误判为失败而触发无意义重试、并附加误导性的「重试仍失败」提示。
-  try { const o = JSON.parse(result); if (o && typeof o.error === 'string') return o.error } catch { /* 非 JSON，按前缀判定 */ }
-  const t = result.trimStart()
-  if (/^(?:error:|❌|💥|🔒)/i.test(t)) return t.slice(0, 500)
-  return null
+  if (!isToolErrorResult(result)) return null
+  try { const o = JSON.parse(result); if (o && typeof o.error === 'string') return o.error } catch { /* 非 JSON，用原文前缀 */ }
+  return result.trimStart().slice(0, 500)
 }
 
 function isRetryableResult(result: string): boolean {

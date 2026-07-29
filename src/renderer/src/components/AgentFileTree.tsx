@@ -118,11 +118,12 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
       return
     }
 
-    const newExpanded = new Set(expanded)
-    if (newExpanded.has(node.path)) {
+    // 展开/收起一律用函数式更新：未加载目录需 await 网络加载，若用闭包内的
+    // expanded 快照整体覆盖，快速连续展开两个目录时后完成的一次会把
+    // 先完成的展开状态抹掉（lost update，目录「自动收回」）。
+    if (expandedRef.current.has(node.path)) {
       markPanelWidth()
-      newExpanded.delete(node.path)
-      setExpanded(newExpanded)
+      setExpanded(prev => { const s = new Set(prev); s.delete(node.path); return s })
       return
     }
 
@@ -141,9 +142,8 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
 
     // 展开：与收起对称——内容即时出现，宽度变化由 FLIP 做同帧平滑变宽
     markPanelWidth()
-    newExpanded.add(node.path)
-    setExpanded(newExpanded)
-  }, [expanded, onPreviewFile, fetchChildren, markPanelWidth])
+    setExpanded(prev => new Set(prev).add(node.path))
+  }, [onPreviewFile, fetchChildren, markPanelWidth])
 
   // 根目录加载（workspaceDir 变化时）
   useEffect(() => {

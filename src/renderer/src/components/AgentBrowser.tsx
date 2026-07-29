@@ -186,8 +186,10 @@ export default function AgentBrowser({ visible = true }: { visible?: boolean }) 
     }
   }, [navigate])
 
-  // Ctrl+L 聚焦地址栏
+  // Ctrl+L 聚焦地址栏（仅浏览器面板可见时：组件常驻隐藏挂载，
+  // 不门控会在全应用任意界面劫持 Ctrl+L，把焦点抢到不可见的地址栏）
   useEffect(() => {
+    if (!visible) return
     const onGlobalKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
         e.preventDefault()
@@ -197,7 +199,7 @@ export default function AgentBrowser({ visible = true }: { visible?: boolean }) 
     }
     window.addEventListener('keydown', onGlobalKey)
     return () => window.removeEventListener('keydown', onGlobalKey)
-  }, [])
+  }, [visible])
 
   return (
     <div className="agent-browser">
