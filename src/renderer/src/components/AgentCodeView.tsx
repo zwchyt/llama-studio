@@ -14,7 +14,7 @@ import katex from 'katex'
 import katexCssInline from 'katex/dist/katex.min.css?inline'
 import katexJsInline from 'katex/dist/katex.min.js?raw'
 import '../styles/monitoring.css'
-import { Send, Square, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles, Cpu, Play, ChevronsDownUp, ChevronsUpDown, Quote, Eye, Globe } from 'lucide-react'
+import { Send, Square, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles, Cpu, Play, ChevronsDownUp, ChevronsUpDown, Quote, Eye, Globe, FileDiff } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import hljs from 'highlight.js/lib/common'
@@ -22,6 +22,7 @@ import { notify } from '../store/notificationStore'
 import { playNotificationSound } from '../utils/sound'
 import { safeCall } from '../utils/safeCall'
 import { getToolDefinitions, executeToolCall, TOOL_METAS, APPROVAL_TOOLS, WRITE_EDIT_TOOLS, BACKUP_TOOLS } from '../utils/tools'
+import { fileMeta } from '../utils/fileIcon'
 import { agentConfig } from '../utils/agentConfig'
 import { createToolLedger } from '../utils/toolLedger'
 import { buildContextPack } from '../utils/contextEngine'
@@ -1292,13 +1293,7 @@ const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPreviewFil
         {name === 'Edit' && typeof parsed!.old_string === 'string' && typeof parsed!.new_string === 'string' && (
           <ToolEditDiff oldText={parsed!.old_string} newText={parsed!.new_string} />
         )}
-        {filePath && (
-          <div className="agent-tool-filebar">
-            <button className="agent-tool-call-path" title={filePath} onClick={(e) => { e.stopPropagation(); onPreviewFile(resolveWorkspacePath(filePath)) }}>
-              <FileText size={11} /> {dirName(filePath)}
-            </button>
-          </div>
-        )}
+        {/* Write/Edit 的文件名已内联到卡片头部（可点跳预览），展开体不再重复渲染文件名行 */}
       </div>
     )
   }
@@ -1310,7 +1305,7 @@ const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPreviewFil
       {filePath && (
         <div className="agent-tool-filebar">
           <button className="agent-tool-call-path" title={filePath} onClick={(e) => { e.stopPropagation(); onPreviewFile(resolveWorkspacePath(filePath)) }}>
-            <FileText size={11} /> {dirName(filePath)}
+            {(() => { const { Icon: FIcon, color } = fileMeta(dirName(filePath)); return <FIcon size={12} style={{ color }} /> })()} {dirName(filePath)}
           </button>
         </div>
       )}
@@ -1431,13 +1426,25 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
     if (el && expandedRef.current) el.style.maxHeight = 'none'
   }
 
-  // 顶栏「工具卡」按钮切换全局默认时，同步所有已挂载卡片的展开态（带动画）
+  // 顶栏「工具卡」按钮切换全局默认时，同步所有已挂载卡片的展开态。
+  // 注意：批量切换不走逐卡 scrollHeight 动画——几十张卡同帧交错读(scrollHeight 强制回流)
+  // 写(max-height)会引发布局抖动/掉帧（表现为闪烁），且首次挂载路径依赖 rAF 存在提交时序竞态。
+  // 改为同一次 commit 内直接到位（useLayoutEffect 在绘制前放开/归零高度）；单卡手动点击仍保留动画。
+  const batchToggleRef = useRef(false)
   useEffect(() => {
     const open = defaultOpen ?? false
     if (open === expandedRef.current) return
-    if (open) animExpand(); else animCollapse()
+    batchToggleRef.current = true
+    if (open) { setVisible(true); setExpanded(true) } else { setExpanded(false) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultOpen])
+  useLayoutEffect(() => {
+    if (!batchToggleRef.current) return
+    batchToggleRef.current = false
+    const el = bodyRef.current
+    // 绘制前直接定高：展开置 none 自适应、收起归 0；none↔0 不可插值，天然跳过过渡不会闪
+    if (el) el.style.maxHeight = expanded ? 'none' : '0px'
+  }, [expanded])
   const parsed = (() => { try { return JSON.parse(tc.args || '{}') } catch { return null } })()
   const preview = getToolPreview(parsed)
   // 编辑工具的增删行数统计（显示在工具卡片上方，类似 git diff 的 +N -M）
@@ -1457,6 +1464,16 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
     const c = parsed && typeof parsed.command === 'string' ? parsed.command : null
     return c && c.length > 400 ? c.slice(0, 400) + '\n…' : c
   })()
+  // Read 成功后展开体不再回显文件全文（内容用户可点文件名跳预览面板查看，避免会话区重复渲染大段代码），
+  // 只显示「图标 + 文件名」一行；失败时仍走原结果块展示错误信息。
+  const readFilePath = tc.name === 'Read' && parsed && typeof (parsed.file_path ?? parsed.path) === 'string' ? (parsed.file_path ?? parsed.path) as string : ''
+  const readNameOnly = done && !failed && !!readFilePath
+  // Read/Write/Edit 统一：文件名内联到头部（文件树同款图标 + 可点跳预览），替代纯文字参数预览，
+  // 展开体内不再重复渲染文件名行。
+  const headFilePath = readFilePath || (WRITE_EDIT_TOOLS.has(tc.name) && parsed && typeof parsed.file_path === 'string' ? parsed.file_path as string : '')
+  // Write/Edit 成功结果只是一句确认文案，与头部绿勾「完成」重复，隐藏结果块；
+  // 写入内容预览 / diff（来自参数）照常展示，失败时仍显示错误结果块。
+  const hideResult = readNameOnly || (done && !failed && WRITE_EDIT_TOOLS.has(tc.name))
 
   // ── 卡片渲染门控 ──
   // 工具「待执行/执行中」状态已由输入框上方的常驻状态栏统一展示，会话区不再重复显示状态行；
@@ -1467,10 +1484,17 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
   return (
     <>
       <div className={`agent-tool-call tool-${tc.name.toLowerCase()}${failed ? ' failed' : ''}`}>
-        <div className="agent-tool-call-head" onClick={handleToggle}>
+        <div className="agent-tool-call-head" onClick={readNameOnly ? undefined : handleToggle} style={readNameOnly ? { cursor: 'default' } : undefined}>
           <Icon size={13} />
           <span className="agent-tool-call-name">{tc.name}</span>
-          {preview && <span className="agent-tool-call-preview">{preview}</span>}
+          {/* Read 成功：文件名直接内联到头部（文件树同款图标 + 可点跳预览），不再另渲展开体，避免文件名重复显示 */}
+          {headFilePath ? (
+            <button className="agent-tool-call-path" title={headFilePath} onClick={(e) => { e.stopPropagation(); onPreviewFile(resolveWorkspacePath(headFilePath)) }}>
+              {(() => { const { Icon: FIcon, color } = fileMeta(dirName(headFilePath)); return <FIcon size={12} style={{ color }} /> })()} {dirName(headFilePath)}
+            </button>
+          ) : (
+            preview && <span className="agent-tool-call-preview">{preview}</span>
+          )}
           {total > 1 && <span className="agent-tool-call-step">步骤 {index + 1}/{total}</span>}
           <span className="agent-tool-call-meta">
             {editDiffStat && (
@@ -1503,10 +1527,10 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
             {tc.restored && (
               <span className="agent-tool-restored"><Check size={12} /> 已恢复</span>
             )}
-            <ChevronRight size={12} className={`agent-tool-chev ${expanded ? 'open' : ''}`} />
+            {!readNameOnly && <ChevronRight size={12} className={`agent-tool-chev ${expanded ? 'open' : ''}`} />}
           </span>
         </div>
-        {visible && (
+        {visible && !readNameOnly && (
           <div className="agent-tool-call-anim" ref={bodyRef} onTransitionEnd={onBodyTransitionEnd}>
             <div className="agent-tool-call-body">
               {tc.name === 'Bash' && bashCmd && (
@@ -1515,12 +1539,12 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
                   <pre className="agent-tool-bash-cmd">{bashCmd}</pre>
                 </div>
               )}
-              {tc.name !== 'Bash' && <ToolArgsView name={tc.name} args={tc.args} onPreviewFile={onPreviewFile} />}
+              {tc.name !== 'Bash' && !readNameOnly && <ToolArgsView name={tc.name} args={tc.args} onPreviewFile={onPreviewFile} />}
               {executing ? (
                 tc.name === 'Bash'
                   ? <BashLiveOutput />
                   : <div className="agent-tool-result agent-tool-result-running"><span className="agent-tool-dots" /></div>
-              ) : done ? (
+              ) : done && !hideResult ? (
                 <ToolResultView result={tc.result!} truncated={tc.truncated} total={tc.resultTotal} lined={tc.name === 'Read'} />
               ) : null}
             </div>
@@ -1535,6 +1559,87 @@ const ToolCallGroup = React.memo(function ToolCallGroup({ toolCalls, onPreviewFi
   return (
     <div className="agent-tool-list">
       {toolCalls.map((tc, i) => <ToolCallCard key={tc.id || i} tc={tc} index={i} total={toolCalls.length} onPreviewFile={onPreviewFile} canUndo={canUndoFor ? canUndoFor(tc) : false} onUndo={onUndo ? () => onUndo(tc) : undefined} defaultOpen={cardDefaultOpen} />)}
+    </div>
+  )
+})
+
+// ── 消息底部「文件变更汇总」──
+// 一条助手消息内所有成功且未被撤销的 Write/Edit 按文件聚合增删行数，
+// 在消息底部统一展示：头部「N 个文件已变更 +X -Y」，每个文件一行
+// （文件树同款图标 + 文件名 + 该文件增删，点击跳「变更」面板定位到该文件的 diff；右上角「审查」按钮打开变更界面）。
+const FileChangeSummary = React.memo(function FileChangeSummary({ toolCalls, onOpenChange, onReview }: { toolCalls?: AgentMessage['toolCalls']; onOpenChange: (p: string) => void; onReview: () => void }) {
+  const files = useMemo(() => {
+    if (!toolCalls?.length) return []
+    // status：Write 仅能新建文件（已存在会被拒）→ A；只有 Edit → M；先 Write 后 Edit 仍算新增 A
+    const map = new Map<string, { path: string; added: number; removed: number; status: 'A' | 'M' }>()
+    for (const tc of toolCalls) {
+      const status = tc.status || (tc.result != null ? 'done' : 'pending')
+      if (status !== 'done' || tc.failed || tc.restored || !WRITE_EDIT_TOOLS.has(tc.name)) continue
+      let parsed: Record<string, unknown> | null = null
+      try { parsed = JSON.parse(tc.args || '{}') } catch { continue }
+      if (!parsed || typeof parsed !== 'object') continue
+      const fp = typeof parsed.file_path === 'string' ? parsed.file_path : ''
+      if (!fp) continue
+      let added = 0
+      let removed = 0
+      if (tc.name === 'Edit' && typeof parsed.old_string === 'string' && typeof parsed.new_string === 'string') {
+        const rows = computeSplitDiff(parsed.old_string, parsed.new_string)
+        added = rows.filter(r => r.type === 'ins' || r.type === 'replace').length
+        removed = rows.filter(r => r.type === 'del' || r.type === 'replace').length
+      } else if (tc.name === 'Write' && typeof parsed.content === 'string') {
+        // Write 无旧内容可比，按写入行数计为新增
+        added = parsed.content.split('\n').length
+      }
+      if (added === 0 && removed === 0) continue
+      const prev = map.get(fp)
+      if (prev) {
+        prev.added += added
+        prev.removed += removed
+        if (tc.name === 'Write') prev.status = 'A'
+      } else {
+        map.set(fp, { path: fp, added, removed, status: tc.name === 'Write' ? 'A' : 'M' })
+      }
+    }
+    return [...map.values()]
+  }, [toolCalls])
+  if (files.length === 0) return null
+  const totalAdded = files.reduce((s, f) => s + f.added, 0)
+  const totalRemoved = files.reduce((s, f) => s + f.removed, 0)
+  return (
+    <div className="agent-file-changes">
+      <div className="agent-file-changes-head">
+        {/* 文件差异图标：与「变更」语义对应，强化卡片身份 */}
+        <FileDiff size={13} className="agent-file-changes-head-icon" />
+        <span>{files.length} 个文件已变更</span>
+        <span className="agent-tool-diffstat">
+          {totalAdded > 0 && <span className="diff-add">+{totalAdded}</span>}
+          {totalRemoved > 0 && <span className="diff-del">-{totalRemoved}</span>}
+        </span>
+        {/* 右上角审查入口：打开「变更」面板总览本轮改动 */}
+        <button className="agent-file-changes-review" onClick={onReview} title="在变更面板中审查本轮改动">
+          <GitBranch size={11} /> 审查
+        </button>
+      </div>
+      {files.map(f => {
+        // 文件名 + 淡化目录前缀（与 Git 变更面板同构），同名文件可区分归属
+        const norm = f.path.replace(/\\/g, '/')
+        const cut = norm.lastIndexOf('/')
+        const parent = cut > 0 ? norm.slice(0, cut) : ''
+        return (
+          <button className="agent-file-changes-row" key={f.path} title={f.path} onClick={() => onOpenChange(resolveWorkspacePath(f.path))}>
+            {(() => { const { Icon: FIcon, color } = fileMeta(dirName(f.path)); return <FIcon size={13} style={{ color }} /> })()}
+            <span className="agent-file-changes-name">{dirName(f.path)}</span>
+            {/* 增删行数与 A/M 徽标紧跟文件名，扫视时名称、数字、状态一眼对应 */}
+            <span className="agent-tool-diffstat">
+              {f.added > 0 && <span className="diff-add">+{f.added}</span>}
+              {f.removed > 0 && <span className="diff-del">-{f.removed}</span>}
+            </span>
+            {/* 状态徽标：复用 Git 变更面板同款配色（A 新增 / M 修改） */}
+            <span className={`agent-git-badge s-${f.status}`} title={f.status === 'A' ? '新增文件' : '修改文件'}>{f.status}</span>
+            {parent && <span className="agent-file-changes-dir">{parent}</span>}
+          </button>
+        )
+      })}
     </div>
   )
 })
@@ -2276,6 +2381,20 @@ export default function AgentCodeView() {
     setActiveTabPath(GIT_DIFF_TAB)
     void refreshGitChanges()
   }, [refreshGitChanges])
+
+  // 消息底部文件变更汇总的跳转：打开变更面板并定位到指定文件的 diff（自动展开+滚动+短暂高亮）
+  const [gitFocusPath, setGitFocusPath] = useState<string | null>(null)
+  const openGitDiffAt = useCallback((absPath: string) => {
+    setGitFocusPath(absPath)
+    openGitDiff()
+  }, [openGitDiff])
+  const onGitFocusHandled = useCallback(() => setGitFocusPath(null), [])
+
+  // 顶栏「变更」按钮切换态：变更标签已激活时再点即关闭该标签（收起变更界面），否则打开
+  const toggleGitDiff = useCallback(() => {
+    if (activeTabPath === GIT_DIFF_TAB) closeTab(GIT_DIFF_TAB)
+    else openGitDiff()
+  }, [activeTabPath, closeTab, openGitDiff])
 
   // 文件监听回调：仅当 Git 变更标签已打开时，随文件改动静默刷新变更列表（不转圈）。
   const onWorkspaceFilesChanged = useCallback(() => {
@@ -4360,7 +4479,7 @@ export default function AgentCodeView() {
           <button ref={promptBtnRef} className={`agent-code-topbar-btn ${promptModalOpen ? 'active' : ''}`} onClick={openPromptModal}><SlidersHorizontal size={12} /> 提示词</button>
           <button ref={auditBtnRef} className={`agent-code-topbar-btn ${auditOpen ? 'active' : ''}`} onClick={() => setAuditOpen(v => !v)}><TerminalSquare size={12} /> 审计</button>
           <button ref={debugBtnRef} className={`agent-code-topbar-btn ${debugOpen ? 'active' : ''}`} onClick={() => setDebugOpen(v => !v)}><Bug size={12} /> 调试</button>
-          <button className={`agent-code-topbar-btn ${activeTabPath === GIT_DIFF_TAB ? 'active' : ''}`} onClick={openGitDiff}><GitBranch size={12} /> 变更</button>
+          <button className={`agent-code-topbar-btn ${activeTabPath === GIT_DIFF_TAB ? 'active' : ''}`} onClick={toggleGitDiff}><GitBranch size={12} /> 变更</button>
           <button className={`agent-code-topbar-btn ${rightPanelMode === 'browser' ? 'active' : ''}`} onClick={() => { setRightPanelMode(m => m === 'browser' ? 'files' : 'browser'); if (!treeOpen) setTreeOpen(true) }}><Globe size={12} /> 浏览器</button>
           <button className="agent-code-topbar-btn" onClick={() => setToolCardsExpanded(!toolCardExpandedDefault)} title={toolCardExpandedDefault ? '折叠所有工具卡片' : '展开所有工具卡片'}>
             {toolCardExpandedDefault ? <ChevronsDownUp size={12} /> : <ChevronsUpDown size={12} />} 工具卡
@@ -4585,6 +4704,8 @@ export default function AgentCodeView() {
                                 <span>已停止生成</span>
                               </div>
                             )}
+                            {/* 消息完成后：底部统一展示本轮修改过的文件汇总（按文件聚合增删行） */}
+                            {!streamingThis && <FileChangeSummary toolCalls={msg.toolCalls} onOpenChange={openGitDiffAt} onReview={openGitDiff} />}
                             {/* 交错消息完成后展示操作按钮；重新生成常驻渲染，
                                 流式中置灰禁用（而非隐藏），避免操作栏宽度跳变 */}
                             {!streamingThis && (
@@ -4616,6 +4737,7 @@ export default function AgentCodeView() {
                               // 首 token 前不再渲染「模型思考中…」占位：该窗口的状态已由输入框上方常驻状态栏统一展示
                               <StreamingContent content={msg.content} streaming={streamingMsg} />
                             )}
+                            {!streamingThis && hasToolCalls && <FileChangeSummary toolCalls={msg.toolCalls} onOpenChange={openGitDiffAt} onReview={openGitDiff} />}
                             {!streamingThis && !hasToolCalls && (
                               <div className="chat-msg-actions">
                                 <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content || '')}><Copy size={13} /></button>
@@ -5084,7 +5206,7 @@ export default function AgentCodeView() {
                 })()}
                 <div className="agent-code-preview-body">
                   {activeTabPath === GIT_DIFF_TAB ? (
-                    <AgentGitDiff data={gitChanges} loading={gitLoading} onRefresh={refreshGitChanges} onOpenFile={(abs, line) => { if (line != null) void openPreviewAtLine(abs, line); else void openPreview(abs) }} workspaceDir={activeProject.workspaceDir} />
+                    <AgentGitDiff data={gitChanges} loading={gitLoading} onRefresh={refreshGitChanges} onOpenFile={(abs, line) => { if (line != null) void openPreviewAtLine(abs, line); else void openPreview(abs) }} workspaceDir={activeProject.workspaceDir} focusPath={gitFocusPath} onFocusHandled={onGitFocusHandled} />
                   ) : !activeTab ? null
                     : activeTab.loading ? <div className="file-tree-loading">读取中…</div>
                       : activeTab.error ? <div className="agent-code-preview-error">{activeTab.error}</div>

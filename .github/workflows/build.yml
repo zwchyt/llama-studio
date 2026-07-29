@@ -90,7 +90,7 @@ jobs:
           tag_name: ${{ steps.release_tag.outputs.tag }}
           name: Release ${{ steps.release_tag.outputs.tag }}
           body: |
-            ![llama-studio Logo](https://github.com/${{ github.repository }}/raw/main/assets/llama-studio.png)
+            <img src="https://github.com/${{ github.repository }}/raw/main/assets/llama-studio.png" alt="llama-studio Logo" width="400" />
 
             ### What's Changed:
             ${{ steps.release_notes.outputs.notes }}

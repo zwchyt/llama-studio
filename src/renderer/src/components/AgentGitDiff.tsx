@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, GitBranch, Minus, Plus, RefreshCw } from 'lucide-react'
 import { fileMeta } from '../utils/fileIcon'
 
@@ -157,11 +157,26 @@ function renderCodeWithHighlights(text: string, highlights?: { start: number; en
   return parts.length > 0 ? parts : ' '
 }
 
-const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceCollapsed, onStage, onUnstage }: { file: GitFileChange; onOpen: (relPath: string, line?: number) => void; forceCollapsed: boolean; onStage?: (path: string) => void; onUnstage?: (path: string) => void }) {
+const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceCollapsed, onStage, onUnstage, focused }: { file: GitFileChange; onOpen: (relPath: string, line?: number) => void; forceCollapsed: boolean; onStage?: (path: string) => void; onUnstage?: (path: string) => void; focused?: boolean }) {
   const rows = useMemo(() => (file.untracked ? contentToRows(file.content || '') : parseUnifiedDiff(file.diff)), [file])
   const [collapsed, setCollapsed] = useState(forceCollapsed)
   // 顶部「全部展开/收起」变化时同步各文件的折叠态；单文件手动折叠不受影响（forceCollapsed 未变）。
   useEffect(() => { setCollapsed(forceCollapsed) }, [forceCollapsed])
+  // 定位聚焦（来自消息底部文件变更汇总的跳转）：自动展开 + 滚动到位 + 短暂高亮
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [flash, setFlash] = useState(false)
+  useEffect(() => {
+    if (!focused) return
+    setCollapsed(false)
+    setFlash(true)
+    requestAnimationFrame(() => rootRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+  }, [focused])
+  // 高亮自行退场：与 focused 生命周期解耦，避免聚焦被父层提前消费时定时器被清、高亮永不结束
+  useEffect(() => {
+    if (!flash) return
+    const t = setTimeout(() => setFlash(false), 1600)
+    return () => clearTimeout(t)
+  }, [flash])
   const [showAll, setShowAll] = useState(false)
   const added = rows.filter(r => r.type === 'add').length
   const removed = rows.filter(r => r.type === 'del').length
@@ -179,7 +194,7 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
     try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1200) } catch { /* 剪贴板不可用 */ }
   }
   return (
-    <div className={`agent-git-file s-${file.status}`}>
+    <div className={`agent-git-file s-${file.status}${flash ? ' focus-flash' : ''}`} ref={rootRef}>
       <div className="agent-git-file-head" onClick={() => setCollapsed(c => !c)}>
         <ChevronRight size={12} className={`agent-git-chev ${collapsed ? '' : 'open'}`} />
         <button
@@ -245,12 +260,15 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
   )
 })
 
-export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, workspaceDir }: {
+export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, workspaceDir, focusPath, onFocusHandled }: {
   data: GitChangesData | null
   loading: boolean
   onRefresh: () => void
   onOpenFile: (absPath: string, line?: number) => void
   workspaceDir: string
+  // 定位目标（绝对路径）：打开面板后自动展开并滚到该文件的 diff；处理完毕后回调清除
+  focusPath?: string | null
+  onFocusHandled?: () => void
 }) {
   const [allExpanded, setAllExpanded] = useState(false)  // 默认全部折叠（单文件级）
   // 分区级折叠：整段「已暂存的更改 / 更改」可各自收起
@@ -272,6 +290,22 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
   const unstaged = data?.unstaged ?? []
   const total = staged.length + unstaged.length
   const hasFiles = !!data?.isRepo && total > 0
+  // 定位目标匹配：绝对路径归一化（反斜杠→正斜杠、小写）后与各变更文件比对
+  const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  const focusRel = useMemo(() => {
+    if (!focusPath || !data?.isRepo) return null
+    const root = normPath(workspaceDir)
+    const target = normPath(focusPath)
+    const hit = [...staged, ...unstaged].find(f => `${root}/${normPath(f.path)}` === target || normPath(f.path) === target)
+    return hit ? hit.path : null
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusPath, data, workspaceDir])
+  // 数据就绪后消费定位请求（子组件已先完成展开+滚动）；未命中也消费，避免陈旧聚焦残留
+  useEffect(() => {
+    if (!focusPath || loading || !data) return
+    const t = setTimeout(() => onFocusHandled?.(), 100)
+    return () => clearTimeout(t)
+  }, [focusPath, loading, data, onFocusHandled])
   // 顶部总览：汇总所有文件的新增/删除行数
   const totals = useMemo(() => {
     let added = 0, removed = 0
@@ -291,7 +325,7 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
           <span className="agent-git-section-title">{title}</span>
           <span className="agent-git-section-count">{list.length}</span>
         </div>
-        {!collapsed && list.map(f => <GitFileBlock key={`${key}-${f.path}`} file={f} onOpen={openFile} forceCollapsed={!allExpanded} onStage={handleStage} onUnstage={handleUnstage} />)}
+        {!collapsed && list.map(f => <GitFileBlock key={`${key}-${f.path}`} file={f} onOpen={openFile} forceCollapsed={!allExpanded} onStage={handleStage} onUnstage={handleUnstage} focused={focusRel === f.path} />)}
       </div>
     )
   }

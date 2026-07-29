@@ -1,0 +1,90 @@
+/* ═══════════════════════════════════════════════════════════════
+   应用字体系统（fonts.css）
+   与 theme-dark.css 同构：根节点挂 data-font 属性启用对应字体预设，
+   仅覆盖 --font / --font-mono 两个 CSS 变量，不改动任何旧样式文件。
+   default 预设不挂属性 → global.css 的 --font 原样生效（默认零变化）。
+   所有字体栈只使用 Windows 自带/常见字体，无需下载、离线可用。
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 系统原生：跟随 Windows 的 Segoe UI + 微软雅黑 ── */
+html[data-font='system'] {
+  --font: 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+}
+
+/* ── 衬线阅读：Georgia 衬线体，适合长文沉浸阅读 ── */
+html[data-font='serif'] {
+  --font: Georgia, 'Times New Roman', 'Noto Serif SC', 'SimSun', serif;
+  --font-mono: Consolas, 'Courier New', monospace;
+}
+
+/* ── 极客等宽：全界面等宽字体，终端/代码质感 ── */
+html[data-font='geek'] {
+  --font: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  --font-mono: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+}
+
+/* ── 人文简约：Verdana 人文无衬线，字形开阔、小字号清晰 ── */
+html[data-font='humanist'] {
+  --font: Verdana, 'Segoe UI', Tahoma, 'Microsoft YaHei UI', sans-serif;
+  --font-mono: 'Fira Code', Consolas, 'Courier New', monospace;
+}
+
+/* ═══ 设置页字体选择器（FontSelector）卡片样式 ═══ */
+
+.font-selector {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.font-selector-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--transition), background var(--transition), box-shadow var(--transition);
+}
+
+.font-selector-card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.font-selector-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.font-selector-sample {
+  font-size: 20px;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.font-selector-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.font-selector-name .font-selector-check {
+  color: var(--accent);
+  display: inline-flex;
+}
+
+.font-selector-desc {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}

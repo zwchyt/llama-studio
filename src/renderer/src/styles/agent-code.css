@@ -1208,8 +1208,42 @@
   --tool-accent: #a855f7;
 }
 
-.agent-tool-call.tool-taskcreate {
+/* 智能检索：青绿，与 Grep 青蓝区分语义相近的两种搜索 */
+.agent-tool-call.tool-codesearch {
   --tool-accent: #0d9488;
+}
+
+/* 目录类统一棕褐系：列目录浅棕、分析目录深棕 */
+.agent-tool-call.tool-listdir {
+  --tool-accent: #b45309;
+}
+
+.agent-tool-call.tool-analyzedir {
+  --tool-accent: #78350f;
+}
+
+/* 提问用户：玫红，暖色传达「需要人工介入」 */
+.agent-tool-call.tool-askuserquestion {
+  --tool-accent: #e11d48;
+}
+
+/* 自我反思：金黄，呼应灯泡图标 */
+.agent-tool-call.tool-reflect {
+  --tool-accent: #ca8a04;
+}
+
+/* 查看工具：紫罗兰 */
+.agent-tool-call.tool-view_tool {
+  --tool-accent: #9333ea;
+}
+
+/* 后台任务类统一蓝灰系：读输出浅、列任务深 */
+.agent-tool-call.tool-getbackgroundtaskoutput {
+  --tool-accent: #64748b;
+}
+
+.agent-tool-call.tool-listbackgroundtasks {
+  --tool-accent: #475569;
 }
 
 .agent-tool-call.tool-taskget {
@@ -1218,18 +1252,6 @@
 
 .agent-tool-call.tool-tasklist {
   --tool-accent: #0ea5e9;
-}
-
-.agent-tool-call.tool-taskupdate {
-  --tool-accent: #ca8a04;
-}
-
-.agent-tool-call.tool-taskstop {
-  --tool-accent: #dc2626;
-}
-
-.agent-tool-call.tool-taskoutput {
-  --tool-accent: #9333ea;
 }
 
 .agent-tool-call.tool-get_datetime {
@@ -1395,6 +1417,124 @@
   font-size: 11px;
   font-weight: 500;
   color: var(--success);
+}
+
+/* ── 消息底部「文件变更汇总」──
+   头部「N 个文件已变更 +X -Y」+ 每文件一行（图标 + 文件名 + 淡化目录 + 增删 + A/M 徽标）；
+   圆角容器配合 overflow: hidden，行可点击跳「变更」面板定位 diff。 */
+.agent-file-changes {
+  margin-top: 6px;
+  /* 与会话区对齐：铺满消息列全宽（与思考链/输出正文同宽），不再限定固定上限 */
+  width: 100%;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  overflow: hidden;
+  transition: border-color var(--transition);
+}
+
+.agent-file-changes:hover {
+  border-color: var(--border-strong);
+}
+
+.agent-file-changes-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-file-changes-head .agent-tool-diffstat {
+  font-weight: 600;
+}
+
+/* 头部文件差异图标：随标题文字同色，不参与压缩 */
+.agent-file-changes-head-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+/* 右上角「审查」按钮：幽灵态小按钮，悬停转强调色，跳转变更功能界面 */
+.agent-file-changes-review {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--transition), border-color var(--transition), background var(--transition);
+}
+
+.agent-file-changes-review:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.agent-file-changes-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.agent-file-changes-row:hover {
+  background: var(--surface-hover);
+}
+
+.agent-file-changes-row:hover .agent-file-changes-name {
+  color: var(--accent);
+}
+
+.agent-file-changes-row+.agent-file-changes-row {
+  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.agent-file-changes-row svg {
+  flex-shrink: 0;
+}
+
+.agent-file-changes-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  transition: color var(--transition);
+}
+
+/* 目录前缀：淡化小字，居右收尾并优先被压缩省略（左侧信息区：名称+增删+徽标） */
+.agent-file-changes-dir {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  text-align: right;
 }
 
 /* 破坏性工具审批面板：居中浮在输入框上方，固定较窄宽度（不撑满输入框） */
@@ -4476,6 +4616,13 @@
   margin-bottom: 8px;
   overflow: hidden;
   background: var(--surface);
+  transition: border-color .4s ease, box-shadow .4s ease;
+}
+
+/* 从消息底部文件变更汇总跳转定位时的短暂高亮：强调边框 + 光环，随 flash 移除淡出 */
+.agent-git-file.focus-flash {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .agent-git-file-head {
@@ -5013,13 +5160,45 @@
 }
 
 .file-tree-path {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   padding: 6px 12px;
   font-size: 10px;
   color: var(--text-muted);
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
   overflow: hidden;
+}
+
+.file-tree-path-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 目录名称行右侧「收起所有子目录」按钮：幽灵态小图标，悬停提亮 */
+.file-tree-collapse-dirs {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--transition), background var(--transition);
+}
+
+.file-tree-collapse-dirs:hover {
+  color: var(--text);
+  background: var(--surface-hover);
 }
 
 .file-tree-content {
@@ -5150,13 +5329,16 @@
   max-height: 0;
   opacity: 0;
   overflow: hidden;
-  transition: max-height .22s cubic-bezier(.4, 0, .2, 1),
-    opacity .22s cubic-bezier(.4, 0, .2, 1);
+  /* 展开/收起均不播折叠动画（长目录逐帧重排很贵）：内容同帧即时出现/退出，
+     观感由面板宽度的 FLIP 平滑过渡接管；
+     content-visibility 保证收起内容退出宽度测量（长文件名不再撑住面板）。 */
+  content-visibility: hidden;
 }
 
 .file-tree-children.open {
-  max-height: 9999px;
+  max-height: none;
   opacity: 1;
+  content-visibility: visible;
 }
 
 .file-tree-arrow {

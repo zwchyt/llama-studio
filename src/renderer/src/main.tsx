@@ -4,6 +4,8 @@ import App from './App'
 import ToastContainer from './components/ToastContainer'
 import { notify } from './store/notificationStore'
 import './styles/global.css'
+import './styles/fonts.css'
+import './store/fontStore' // 启动时应用已保存的字体预设（模块副作用）
 import './cursor-theme'
 
 // 全局兜底：捕获未处理的 Promise rejection（防止 IPC 裸 await 导致界面卡死）

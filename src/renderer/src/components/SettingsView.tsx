@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { useSidebarStore } from '../store/sidebarStore'
 import { shallow } from 'zustand/shallow'
-import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown, AlertTriangle, Check } from 'lucide-react'
+import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown, AlertTriangle, Check, Type } from 'lucide-react'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { SOUND_OPTIONS, previewSound } from '../utils/sound'
 
 import CommandsEditor from './CommandsEditor'
+import FontSelector from './FontSelector'
 import { CURSOR_SCHEMES, getCursorSchemeId, applyCursorScheme, CURSOR_STORAGE_KEY, schemeCursorValue, type CursorRole } from '../cursor-theme'
 import '../styles/settings.css'
 
@@ -239,6 +240,17 @@ export default function SettingsView() {
             <span className="toggle-track"></span>
             <span className="toggle-thumb"></span>
           </label>
+        </div>
+      </div>
+
+      { }
+      <div className="settings-section">
+        <div className="settings-section-title"><Type /> 字体</div>
+        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            选择全局字体预设，即时生效并自动保存。均为系统自带字体，无需下载。
+          </p>
+          <FontSelector />
         </div>
       </div>
 

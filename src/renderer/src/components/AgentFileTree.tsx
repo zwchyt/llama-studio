@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import {
-  ChevronRight, ChevronDown, Folder, FolderOpen, Loader2, AlertCircle, Copy, CornerDownLeft, Search, X
+  ChevronRight, ChevronDown, ChevronsDownUp, ChevronsUpDown, Folder, FolderOpen, Loader2, AlertCircle, Copy, CornerDownLeft, Search, X
 } from 'lucide-react'
 import { fileMeta } from '../utils/fileIcon'
 import { notify } from '../store/notificationStore'
@@ -52,6 +52,39 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
   expandedRef.current = expanded
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // ── 面板宽度 FLIP 过渡（双向）：外层面板是 fit-content，内在尺寸变化无法被 CSS transition 补间。
+  // 展开/收起时内容都在同帧即时出现/退出（不播折叠动画——长目录逐帧重排很贵），
+  // 旧宽→新宽的差值当帧可测，用像素宽做一段 0.2s 平滑过渡后释放回 fit-content。
+  // 全程只有这一段轻量动画；严禁与折叠动画串行或叠加（那是此前卡顿的根因）。
+  const rootElRef = useRef<HTMLDivElement>(null)
+  const panelWidthBeforeRef = useRef<number | null>(null)
+  const markPanelWidth = useCallback(() => {
+    const panel = rootElRef.current?.closest('.agent-code-tree') as HTMLElement | null
+    panelWidthBeforeRef.current = panel ? panel.offsetWidth : null
+  }, [])
+  useLayoutEffect(() => {
+    const before = panelWidthBeforeRef.current
+    panelWidthBeforeRef.current = null
+    if (before == null) return
+    const panel = rootElRef.current?.closest('.agent-code-tree') as HTMLElement | null
+    if (!panel) return
+    // FLIP：先钉回旧宽→强制回流→带过渡过到新宽；结束后清空内联样式回到 fit-content
+    const to = panel.offsetWidth
+    if (to === before) return
+    panel.style.transition = 'none'
+    panel.style.width = before + 'px'
+    void panel.offsetWidth
+    panel.style.transition = 'width .2s cubic-bezier(.4, 0, .2, 1)'
+    panel.style.width = to + 'px'
+    const done = (e: TransitionEvent) => {
+      if (e.propertyName !== 'width') return
+      panel.style.transition = ''
+      panel.style.width = ''
+      panel.removeEventListener('transitionend', done)
+    }
+    panel.addEventListener('transitionend', done)
+  }, [expanded])
+
   const fetchChildren = useCallback(async (path: string): Promise<{ children: FileNode[]; truncated: boolean; total: number } | { error: string }> => {
     const res = await window.api.expandFileTree(path)
     if (res.success && res.children) {
@@ -87,6 +120,7 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
 
     const newExpanded = new Set(expanded)
     if (newExpanded.has(node.path)) {
+      markPanelWidth()
       newExpanded.delete(node.path)
       setExpanded(newExpanded)
       return
@@ -105,12 +139,15 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
       setLoadingSet(prev => { const s = new Set(prev); s.delete(node.path); return s })
     }
 
+    // 展开：与收起对称——内容即时出现，宽度变化由 FLIP 做同帧平滑变宽
+    markPanelWidth()
     newExpanded.add(node.path)
     setExpanded(newExpanded)
-  }, [expanded, onPreviewFile, fetchChildren])
+  }, [expanded, onPreviewFile, fetchChildren, markPanelWidth])
 
   // 根目录加载（workspaceDir 变化时）
   useEffect(() => {
+    savedExpandRef.current = null
     if (!workspaceDir) { setTree(null); setExpanded(new Set()); setErrorSet(new Set()); return }
     const name = workspaceDir.split('\\').pop()?.split('/').pop() || workspaceDir
     const root: FileNode = { name, path: workspaceDir, isDir: true, children: [], loaded: false }
@@ -300,6 +337,36 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
 
   // ── 文件搜索/过滤：非空查询时用 listFlatFiles 拉平并按名称过滤，空查询回到树 ──
   const [query, setQuery] = useState('')
+  // 双态折叠按钮：有展开的子目录时一键收起（仅保留根目录，第一层仍可见）；
+  // 全收起后变为展开态，点击恢复收起前的目录层级快照；无快照时展开所有已加载目录
+  const hasExpandedSubdirs = useMemo(() => {
+    for (const p of expanded) if (p !== workspaceDir) return true
+    return false
+  }, [expanded, workspaceDir])
+  const savedExpandRef = useRef<Set<string> | null>(null)
+  const toggleAllDirs = useCallback(() => {
+    markPanelWidth()
+    if (hasExpandedSubdirs) {
+      savedExpandRef.current = new Set(expandedRef.current)
+      setExpanded(workspaceDir ? new Set([workspaceDir]) : new Set())
+      return
+    }
+    const saved = savedExpandRef.current
+    if (saved && saved.size > 1) {
+      setExpanded(new Set(saved))
+      return
+    }
+    // 无快照：展开树中所有已加载的目录（未加载的需异步拉取，不在此自动触发）
+    if (!tree) return
+    const all = new Set<string>()
+    const walk = (n: FileNode) => {
+      if (!n.isDir) return
+      if (n.loaded) all.add(n.path)
+      n.children?.forEach(walk)
+    }
+    walk(tree)
+    if (all.size) setExpanded(all)
+  }, [hasExpandedSubdirs, workspaceDir, tree, markPanelWidth])
   const [flat, setFlat] = useState<{ name: string; path: string; relPath: string }[] | null>(null)
   const [flatLoading, setFlatLoading] = useState(false)
   const ensureFlat = useCallback(async () => {
@@ -319,14 +386,26 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
   }, [query, flat])
 
   return (
-    <div className="file-tree">
+    <div className="file-tree" ref={rootElRef}>
       <div className="file-tree-header">
         <span className="file-tree-title">
           <FolderOpen size={14} />
           文件浏览器
         </span>
       </div>
-      <div className="file-tree-path">{workspaceDir}</div>
+      {/* 目录名称行：右侧双态按钮——有展开子目录时一键收起，全收起后可展开恢复 */}
+      <div className="file-tree-path">
+        <span className="file-tree-path-text" title={workspaceDir}>{workspaceDir}</span>
+        {workspaceDir && (
+          <button
+            className="file-tree-collapse-dirs"
+            title={hasExpandedSubdirs ? '收起所有展开的子目录' : '展开子目录（恢复上次层级）'}
+            onClick={toggleAllDirs}
+          >
+            {hasExpandedSubdirs ? <ChevronsDownUp size={12} /> : <ChevronsUpDown size={12} />}
+          </button>
+        )}
+      </div>
       {workspaceDir && (
         <div className="file-tree-search">
           <Search size={12} className="file-tree-search-icon" />
