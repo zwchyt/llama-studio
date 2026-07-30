@@ -2627,34 +2627,36 @@ export default function AgentCodeView() {
   }, [])
 
   const deleteProject = useCallback((id: string) => {
-    const fallbackProj = freshProject('新项目')
-    setProjects(prev => {
-      const next = prev.filter(p => p.id !== id)
-      if (next.length === 0) return [fallbackProj]
-      return next
-    })
-    setActiveProjectId(prev => prev === id ? fallbackProj.id : prev)
-    setActiveSessionId(prev => prev === id ? '' : prev)
-  }, [])
+    // 基于删除后的真实列表修正活动指针：此前 fallback 项目仅在列表清空时才真正插入，
+    // 但 activeProjectId 却无条件指向它 → 悬空 id，后续发送的消息全部写不进任何项目（静默丢失）。
+    const next = projects.filter(p => p.id !== id)
+    const result = next.length === 0 ? [freshProject('新项目')] : next
+    setProjects(result)
+    if (activeProjectId === id) {
+      const fallback = result[0]!
+      setActiveProjectId(fallback.id)
+      setActiveSessionId(fallback.sessions[0]?.id ?? '')
+    }
+  }, [projects, activeProjectId])
 
   const addSessionToProject = useCallback((projId: string) => {
     const sess: AgentSession = { id: uniqueId('sess'), title: '新会话', messages: [] }
     setProjects(prev => prev.map(p => p.id === projId ? { ...p, sessions: [...p.sessions, sess] } : p))
+    // 在非活动项目上新建会话时同步切换项目：否则会话指针指向另一项目的会话（悬空组合）。
+    setActiveProjectId(projId)
     setActiveSessionId(sess.id)
   }, [])
 
   const deleteSession = useCallback((projId: string, sessId: string) => {
-    const fallbackId = uniqueId('sess')
-    setProjects(prev => prev.map(p => p.id !== projId ? p : {
-      ...p,
-      sessions: (() => {
-        const next = p.sessions.filter(s => s.id !== sessId)
-        if (next.length === 0) next.push({ id: fallbackId, title: '新会话', messages: [] })
-        return next
-      })()
-    }))
-    setActiveSessionId(prev => prev === sessId ? fallbackId : prev)
-  }, [])
+    // 同 deleteProject：先算出删除后的会话列表，activeSessionId 只能指向真实存在的会话，
+    // 避免 fallback 会话未插入时指针悬空导致消息写进虚空。
+    const proj = projects.find(p => p.id === projId)
+    if (!proj) return
+    let next = proj.sessions.filter(s => s.id !== sessId)
+    if (next.length === 0) next = [{ id: uniqueId('sess'), title: '新会话', messages: [] }]
+    setProjects(prev => prev.map(p => p.id === projId ? { ...p, sessions: next } : p))
+    if (activeSessionId === sessId) setActiveSessionId(next[0]!.id)
+  }, [projects, activeSessionId])
 
   // ── 输入框自动增高 ──
   const autoResize = useCallback(() => {
@@ -3649,7 +3651,19 @@ export default function AgentCodeView() {
 
         // 用户中止：标记当前助手消息为「已停止」并退出循环
         if (abortRef.current.aborted) {
-          displayMsgs = displayMsgs.map(m => m.id === liveId ? { ...m, stopped: true } : m)
+          // 把仍留在 pendingRaw 里的未闭合思考尾部落进 segments：segmentClosedThink 只吐出闭合段，
+          // 而完成态只渲染 segments —— 不落盘的话，中断瞬间「想到一半」的思考链会从 UI 整段消失。
+          if (pendingRaw.trim()) {
+            const isThink = pendingRaw.startsWith('<think>')
+            const tail = isThink ? pendingRaw.slice('<think>'.length) : pendingRaw
+            if (tail.trim()) segments.push(isThink
+              ? { kind: 'think', content: tail, durationMs: thinkDurations.shift() }
+              : { kind: 'text', content: tail })
+            pendingRaw = ''
+          }
+          displayMsgs = displayMsgs.map(m => m.id === liveId
+            ? { ...m, ...(segments.length ? { segments: segments.slice() } : {}), stopped: true }
+            : m)
           updateSessionInProject(pid, sid, { messages: displayMsgs })
           break
         }
@@ -3743,6 +3757,12 @@ export default function AgentCodeView() {
             for (const { id, key } of idKeys) { const pr = keyPromise.get(key); if (pr) preRun.set(id, await pr) }
           }
           for (const tc of toolCalls) {
+            // 用户点击停止后立即终止本批剩余工具：此前只在审批返回后检查一次，
+            // 停止时本批未执行的 Write/Edit/Delete 仍会照常落盘。
+            if (abortRef.current.aborted) {
+              commitToolCall(liveId, tc.id, { status: 'done', result: JSON.stringify({ error: '已停止' }), failed: true })
+              continue
+            }
             const dupKey = toolCallKey(tc.function.name, tc.function.arguments)
             if (batchExecuted.has(dupKey)) {
               const reused = batchExecuted.get(dupKey)!
@@ -3806,6 +3826,7 @@ export default function AgentCodeView() {
             // Write / Edit：可由项目开关追加确认（不变）。
             const toolArgs = parseToolArgs(tc.function.arguments)
             const bashCmd = tc.function.name === 'Bash' && typeof toolArgs.command === 'string' ? toolArgs.command : ''
+            // 越界 cd 不在此处弹窗：BashTool.execute 入口已直接拒绝（cd 出工作区无正当用途）。
             const bashNeedsApproval = tc.function.name === 'Bash' && isDestructiveBashCommand(bashCmd)
             const needsApproval = (APPROVAL_TOOLS.has(tc.function.name) && tc.function.name !== 'Bash') || bashNeedsApproval || (approveWriteEdit && WRITE_EDIT_TOOLS.has(tc.function.name))
             if (needsApproval && !autoApproveRef.current) {
@@ -4107,12 +4128,15 @@ export default function AgentCodeView() {
       setGenToolCalls(null)
       setStreamThinking(false)
       if (useStore.getState().soundEnabled) playNotificationSound(useStore.getState().notificationSound)
-      // 本轮结束后，自动发送排队中的消息（按入队顺序依次发出；每条发送时会自行决定是否再次排队）
+      // 本轮结束后，自动发送排队中的消息（按入队顺序依次发出；每条发送时会自行决定是否再次排队）。
+      // 用户主动停止时不重放：点停止的语义是「全部停下」，排队消息立即触发新一轮生成违背预期。
       const queue = pendingSendRef.current
       pendingSendRef.current = []
-      for (const pending of queue) {
-        if (pending.text.trim() || pending.attachments.length) {
-          setTimeout(() => handleSendRef.current(pending.text || undefined, pending.attachments), 0)
+      if (!abortRef.current.aborted) {
+        for (const pending of queue) {
+          if (pending.text.trim() || pending.attachments.length) {
+            setTimeout(() => handleSendRef.current(pending.text || undefined, pending.attachments), 0)
+          }
         }
       }
     }
@@ -4587,7 +4611,15 @@ export default function AgentCodeView() {
             <div className="agent-code-session-list">
               {projects.map(p => (
                 <div key={p.id} className="agent-code-project-group">
-                  <div className={`agent-code-project-item ${p.id === activeProjectId ? 'active' : ''}`} onClick={() => { updateProject(p.id, { expanded: !p.expanded }); setActiveProjectId(p.id); }}>
+                  <div className={`agent-code-project-item ${p.id === activeProjectId ? 'active' : ''}`} onClick={() => {
+                    updateProject(p.id, { expanded: !p.expanded })
+                    // 切到其他项目时必须同步会话指针：否则 activeSessionId 仍指向旧项目的会话，
+                    // 界面靠 || sessions[0] 兜底显示正常，但 handleSend 用悬空 sid 写会话 = 消息静默丢失。
+                    if (p.id !== activeProjectId) {
+                      setActiveProjectId(p.id)
+                      setActiveSessionId(p.sessions[0]?.id ?? '')
+                    }
+                  }}>
                     {projRenamingId === p.id ? (
                       <input
                         ref={projRenameInputRef}

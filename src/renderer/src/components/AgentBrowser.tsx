@@ -53,6 +53,12 @@ export default function AgentBrowser({ visible = true }: { visible?: boolean }) 
     }
     const onNavigate = (e: any) => {
       setInputUrl(e.url)
+      // SPA 页内跳转（did-navigate-in-page）不触发加载事件，仅靠 did-stop-loading
+      // 更新会让后退/前进按钮状态滞后（有历史可退但按钮灰着），这里同步刷新。
+      try {
+        setCanGoBack(wv.canGoBack())
+        setCanGoForward(wv.canGoForward())
+      } catch {}
     }
     const onTitleUpdate = (e: any) => {
       setTitle(e.title || '')

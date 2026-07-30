@@ -93,6 +93,13 @@ function resolveCdTarget(raw: string, currentCwd: string): string | null {
 export async function execute(args: Record<string, unknown>): Promise<string> {
   const { command, description, timeout, is_background, max_output_chars, auto_background } = args as unknown as BashInput
   try {
+    // ── 越界 cd 拦截（执行前）──
+    // cd 出工作区在本应用里没有正当用途（查看其他目录用绝对路径即可，如 dir "C:\xxx"），
+    // 且 cd 成功会持久化并同步主进程 bashCwd，因此直接拒绝整条命令，引导模型改用绝对路径。
+    const escaped = cdEscapeTarget(command, getAgentSessionId())
+    if (escaped) {
+      return `⛔ 命令已拒绝：cd 目标目录「${escaped}」越出了当前工作区，不允许切换到工作区之外。\n如需查看工作区外的内容，请直接在命令中使用绝对路径（如 dir "${escaped}"），不要 cd 过去。`
+    }
     const res = await window.api.executeCommand({
       command,
       timeout: typeof timeout === 'number' ? Math.min(timeout, 300000) : 120000,
@@ -237,4 +244,23 @@ export function isDestructiveBashCommand(command: string): boolean {
     if (re.test(stripped)) return true
   }
   return false
+}
+
+// 判断命令中的 cd 是否会把工作目录切到工作区根之外。
+// 背景：cd 成功后会通过 setBashCwd 持久化同步主进程，影响后续所有命令的执行目录；
+// 而 cd 出工作区在本应用里没有正当用途（查看用绝对路径即可），故 execute 入口处
+// 直接拒绝越界 cd，不弹窗、不执行；工作区内的 cd 照旧自由使用。
+// 返回越界后的目标目录（供拒绝提示展示）；null = 无 cd 或未越界。
+// 未绑定工作区根时不判越界（此时无边界可言，交由主进程其余校验把关）。
+export function cdEscapeTarget(command: string, sessionId: string): string | null {
+  if (!command || typeof command !== 'string') return null
+  const root = getWorkspaceRootForSession(sessionId)
+  if (!root) return null
+  const cur = trackedCwdBySession.get(sessionId) || root
+  const target = resolveCdTarget(command, cur)
+  if (!target) return null
+  const norm = (p: string) => p.replace(/[\\/]+/g, '\\').replace(/\\+$/, '').toLowerCase()
+  const t = norm(target)
+  const r = norm(root)
+  return (t === r || t.startsWith(r + '\\')) ? null : target
 }

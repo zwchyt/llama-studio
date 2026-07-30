@@ -25,6 +25,8 @@ export default function OcrView() {
 
   useEffect(() => {
     window.api.onOcrChunk((data) => {
+      // 仅处理当前活动流的事件：停止/切模式后旧流残留的 delta/done 会误改新一轮状态
+      if (data.streamId !== streamIdRef.current) return
       if (data.delta) {
         setOcrResult(prev => prev + data.delta)
       }
@@ -103,6 +105,12 @@ export default function OcrView() {
       setCustomPrompt('详细描述这张图片的内容')
     }
     if (status !== 'idle') {
+      // 识别进行中切模式必须中止旧流：否则旧流 delta 继续到达，
+      // 结果在后台重新累积，完成后新模式标题下弹出上一轮的旧结果。
+      if (streamIdRef.current) {
+        window.api.abortOcrStream(streamIdRef.current)
+        streamIdRef.current = null
+      }
       setOcrResult('')
       setStatus('idle')
       setErrorMsg('')
@@ -136,7 +144,9 @@ export default function OcrView() {
       window.api.abortOcrStream(streamIdRef.current)
       streamIdRef.current = null
     }
-    setStatus('idle')
+    // 已流出部分结果时置 done 保留展示（可复制）：置 idle 会让右侧面板
+    // 退回占位图，「识别到需要的部分就停」拿不到已出的文字。
+    setStatus(ocrResult ? 'done' : 'idle')
   }
 
   function handleCopy() {

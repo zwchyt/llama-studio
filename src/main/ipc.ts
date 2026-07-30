@@ -3781,9 +3781,11 @@ export function registerIpcHandlers(): void {
         return { success: false, error: `找到 ${matches} 处匹配，请设置 replaceAll=true 或提供更多上下文精确定位` }
       }
 
+      // 用函数形式替换：字符串形式的替换串中 $$/$&/$`/$' 会被 JS 解释为特殊模式，
+      // new_string 含这些序列（jQuery $(...)、shell $$、正则 $& 等）时会静默写入损坏的内容。
       const updated = replaceAll
-        ? fileContent.replaceAll(actualOldString, newNorm)
-        : fileContent.replace(actualOldString, newNorm)
+        ? fileContent.replaceAll(actualOldString, () => newNorm)
+        : fileContent.replace(actualOldString, () => newNorm)
 
       await fsPromises.writeFile(filePath, updated, encoding as BufferEncoding)
       recordFileSnapshot(filePath)
@@ -4728,6 +4730,12 @@ export function registerIpcHandlers(): void {
     outputFile: string
     isBackground: boolean
     autoBackgrounded: boolean
+    // 运行期输出缓冲区引用：stdout/stderr 字段只在 close 时回填，而 dev server 等核心场景
+    // 永不退出 → 查询接口运行期永远拿到空输出。挂上缓冲区，查询时对 running 任务实时解码。
+    live?: {
+      outBufs: Buffer[]; outSize: { total: number; dropped?: boolean }
+      errBufs: Buffer[]; errSize: { total: number; dropped?: boolean }
+    }
   }
   const BASH_OUTPUT_DIR = join(tmpdir(), 'llama-studio-bash')
   try { mkdirSync(BASH_OUTPUT_DIR, { recursive: true }) } catch { /* ok */ }
@@ -4846,9 +4854,11 @@ export function registerIpcHandlers(): void {
       const errBufs: Buffer[] = []
       const outSize = { total: 0 }
       const errSize = { total: 0 }
+      task.live = { outBufs, outSize, errBufs, errSize }
       child.stdout?.on('data', (d: Buffer) => { pushCapped(outBufs, outSize, d) })
       child.stderr?.on('data', (d: Buffer) => { pushCapped(errBufs, errSize, d) })
       child.on('close', (code) => {
+        task.live = undefined
         const stdout = decodeCapped(outBufs, outSize)
         const stderr = decodeCapped(errBufs, errSize)
         task.stdout = stdout
@@ -4894,6 +4904,7 @@ export function registerIpcHandlers(): void {
           task.stdout = stdout
           task.stderr = stderr
           task.status = 'running'
+          task.live = { outBufs, outSize, errBufs, errSize }
           bgTask = task
           resolved = true
           const truncated = stdout.length > maxOutputChars
@@ -4928,6 +4939,7 @@ export function registerIpcHandlers(): void {
           // 已转后台（auto-background）：进程真正结束时补写任务终态并落盘输出，
           // 否则任务状态永远停在超时瞬间的 running 快照（模型会反复轮询误判）。
           // status 已被 kill-background-task 改成 killed 时不覆盖。
+          if (bgTask) bgTask.live = undefined
           if (bgTask && bgTask.status === 'running') {
             const stdout = decodeCapped(outBufs, outSize)
             const stderr = decodeCapped(errBufs, errSize)
@@ -4982,6 +4994,24 @@ export function registerIpcHandlers(): void {
   }> => {
     const task = backgroundTasks.get(taskId)
     if (!task) return { success: false, error: `Task ${taskId} not found` }
+    // running 任务：从运行期缓冲区实时解码，让模型能看到 dev server 等不退出进程的当前输出；
+    // 超长时保留尾部（启动日志/报错通常在尾部）。
+    if (task.status === 'running' && task.live) {
+      const stdout = decodeCapped(task.live.outBufs, task.live.outSize)
+      const stderr = decodeCapped(task.live.errBufs, task.live.errSize)
+      const clip = (s: string) => s.length > DEFAULT_MAX_OUTPUT_CHARS
+        ? `[... 输出过长，仅显示尾部 ${formatChars(DEFAULT_MAX_OUTPUT_CHARS)}]\n` + s.slice(-DEFAULT_MAX_OUTPUT_CHARS)
+        : s
+      return {
+        success: true,
+        stdout: clip(stdout),
+        stderr: clip(stderr),
+        code: task.code,
+        status: task.status,
+        truncated: stdout.length > DEFAULT_MAX_OUTPUT_CHARS,
+        totalBytes: stdout.length
+      }
+    }
     return {
       success: true,
       stdout: task.stdout,
@@ -5028,7 +5058,8 @@ export function registerIpcHandlers(): void {
   // 使用 isSafePath 确保删除操作不会越出项目目录（或 App 根目录）
   const DELETE_BASES = (): string[] => {
     const bases = [APP_ROOT]
-    if (bashCwd) bases.push(bashCwd)
+    // 注意：bashCwd 不在合法根之列——写/改/删边界永远锁死在工作区根，
+    // 不随 cd 移动（渲染层已拒绝越界 cd，此处双重保险）。
     if (agentWorkspaceRoot) bases.push(agentWorkspaceRoot)
     return bases
   }
