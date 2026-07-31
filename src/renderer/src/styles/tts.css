@@ -1,0 +1,150 @@
+/* ── 语音合成视图（tts- 前缀）─────────────────────────── */
+.tts-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 28px;
+  overflow-y: auto;
+}
+
+.tts-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 860px;
+  width: 100%;
+}
+
+.tts-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 10px);
+  padding: 16px 18px;
+}
+
+.tts-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+.tts-model-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 720px) {
+  .tts-model-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tts-model-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.tts-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.tts-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.tts-hint.warn {
+  color: #f59e0b;
+}
+
+.tts-hint.inline {
+  margin-top: 0;
+}
+
+.tts-textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 96px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+  font-family: inherit;
+}
+
+.tts-textarea:focus {
+  outline: none;
+  border-color: var(--border-strong, var(--border));
+}
+
+.tts-input-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+  min-height: 18px;
+}
+
+.tts-char-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.tts-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.tts-actions .spin {
+  animation: tts-spin 1s linear infinite;
+}
+
+@keyframes tts-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tts-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, 'SF Mono', monospace);
+}
+
+.tts-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 9px 12px;
+  border: 1px solid rgba(239, 68, 68, .35);
+  border-radius: var(--radius-sm, 8px);
+  background: rgba(239, 68, 68, .08);
+  color: #ef4444;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.tts-error svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}

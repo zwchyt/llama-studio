@@ -165,6 +165,7 @@ export interface ChatSession {
   templateId: string   // 关联的模板（模型）
   port: number         // llama-server 端口
   systemPrompt?: string
+  knowledgeBaseId?: string  // 附加的本地知识库 ID（空则不启用 RAG）
   params: ChatParams
   messages: ChatMessage[]
   starred?: boolean  // 会话星标
@@ -411,4 +412,82 @@ export interface CodeSearchResponse {
   results: CodeSearchHit[]
   lowConfidence: boolean   // 置信度低：建议降级到精确通道（Grep）或结构导航
   indexedChunks: number
+}
+
+// ── 模型工具（GGUF 检查器 / Token 可视化 / 显存计算器）──
+
+/** GGUF 头部单个 KV 条目；数组类型只保留前若干项预览 + 总长度 */
+export interface GgufKvEntry {
+  key: string
+  type: string
+  value: string | number | boolean | null
+  arrayLength?: number
+  arrayPreview?: (string | number | boolean)[]
+}
+
+/** GGUF 头部元数据（便捷字段 + 完整 KV 表 + tensor 类型分布） */
+export interface GgufMetadata {
+  path: string
+  fileSize: number
+  version: number
+  tensorCount: number
+  kvCount: number
+  paramCount: number        // 全部 tensor 元素数之和（≈ 参数量）
+  architecture?: string
+  modelName?: string
+  fileTypeName?: string     // 量化类型（如 Q4_K_M）
+  contextLength?: number
+  blockCount?: number
+  headCount?: number
+  headCountKv?: number
+  embeddingLength?: number
+  expertCount?: number
+  vocabSize?: number
+  chatTemplate?: string
+  kv: GgufKvEntry[]
+  tensorTypes: { type: string; count: number; params: number }[]
+}
+
+/** tokenize-text 返回：服务模式（/tokenize）与二进制模式（llama-tokenize）统一结构 */
+export interface TokenizeResult {
+  success: boolean
+  error?: string
+  tokens: { id: number; piece: string }[]
+}
+
+/** fit-params 返回：拟合参数 + GPU 显存信息（nvidia-smi 不可用时 gpus 为 null） */
+export interface FitParamsResult {
+  success: boolean
+  error?: string
+  fittedArgs?: string       // stdout 末行原文，如 "-c 72448 -ngl -1"
+  ctxSize?: number          // 从 fittedArgs 解析的 -c
+  gpuLayers?: number        // 从 fittedArgs 解析的 -ngl
+  log?: string              // 完整 stderr 日志
+  gpus?: { name: string; totalMiB: number; usedMiB: number }[] | null
+}
+
+// ── 本地知识库 RAG（knowledgeService，BM25 关键词检索）──
+
+/** 知识库元信息（列表展示，不含分块正文） */
+export interface KnowledgeBaseMeta {
+  id: string
+  name: string
+  createdAt: string
+  docCount: number
+  chunkCount: number
+}
+
+/** 知识库内单个文档（knowledge-get 返回） */
+export interface KnowledgeDoc {
+  id: string
+  name: string
+  chunkCount: number
+}
+
+/** knowledge-query 命中的文档段落 */
+export interface KnowledgeHit {
+  docName: string
+  ordinal: number      // 该段在文档内的块序号
+  text: string
+  score: number
 }

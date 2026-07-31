@@ -17,6 +17,8 @@ import type { AgentProject, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus
 import { registerCodeMapIpc, disposeCodeMaps } from './services/codeMapService'
 import { registerRetrievalIpc } from './services/retrievalService'
 import { registerMemoryStoreIpc } from './services/memoryStore'
+import { readGgufMeta } from './services/ggufReader'
+import { registerKnowledgeIpc } from './services/knowledgeService'
 
 let ptyModule: typeof ptyNs | null = null
 async function getPty(): Promise<typeof ptyNs> {
@@ -132,6 +134,15 @@ function isSafePath(base: string, target: string): boolean {
   const rTarget = resolve(target)
   return rTarget === rBase || rTarget.startsWith(rBase + sep)
 }
+// 模型工具类 handler 的模型路径校验：限制在模型目录 / 外部模型文件夹 / 图片模型文件夹内，且扩展名合法
+async function isAllowedModelPath(p: string): Promise<boolean> {
+  if (!p || typeof p !== 'string' || !existsSync(p)) return false
+  const ext = extname(p).toLowerCase()
+  if (!['.gguf', '.bin', '.ggml'].includes(ext)) return false
+  const s = await loadSettings()
+  const roots = [MODELS_DIR, ...s.externalModelFolders, ...s.imageModelFolders]
+  return roots.some(root => isSafePath(root, p))
+}
 // 下面的代码实现了一个简单的命令行参数验证机制，确保只有在 commands.json 中定义的参数才会被传递给后端执行的模型运行命令。这有助于防止恶意用户通过 IPC 传递危险的参数来执行未授权的操作。
 const schemaCache = new Map<string, { allowed: Set<string>; boolean: Set<string> }>()
 function loadSchemaArgs(backendPath: string): { allowed: Set<string>; boolean: Set<string> } {
@@ -213,8 +224,8 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
     return Promise.resolve()
   }
 }
-interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean;       notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean }
-const UI_KEYS = new Set(['splashEnabled', 'soundEnabled', 'notificationSound', 'chatSidebarCollapsed', 'agentToolCardsExpanded'])
+interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean;       notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string }
+const UI_KEYS = new Set(['splashEnabled', 'soundEnabled', 'notificationSound', 'chatSidebarCollapsed', 'agentToolCardsExpanded', 'ttsEngine', 'ttsModelPath', 'ttsVocoderPath'])
 let settingsCache: AppSettings | null = null
 async function loadSettings(): Promise<AppSettings> {
   if (settingsCache) return settingsCache
@@ -229,7 +240,10 @@ async function loadSettings(): Promise<AppSettings> {
       soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
       notificationSound: data.notificationSound !== undefined ? data.notificationSound : 'chime',
       chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? data.chatSidebarCollapsed : false,
-      agentToolCardsExpanded: data.agentToolCardsExpanded !== undefined ? data.agentToolCardsExpanded : true
+      agentToolCardsExpanded: data.agentToolCardsExpanded !== undefined ? data.agentToolCardsExpanded : true,
+      ttsEngine: typeof data.ttsEngine === 'string' ? data.ttsEngine : 'system',
+      ttsModelPath: typeof data.ttsModelPath === 'string' ? data.ttsModelPath : '',
+      ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : ''
     }
     return settingsCache
   } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
@@ -251,7 +265,10 @@ function loadSettingsSync(): AppSettings {
       soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
       notificationSound: data.notificationSound !== undefined ? data.notificationSound : 'chime',
       chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? data.chatSidebarCollapsed : false,
-      agentToolCardsExpanded: data.agentToolCardsExpanded !== undefined ? data.agentToolCardsExpanded : true
+      agentToolCardsExpanded: data.agentToolCardsExpanded !== undefined ? data.agentToolCardsExpanded : true,
+      ttsEngine: typeof data.ttsEngine === 'string' ? data.ttsEngine : 'system',
+      ttsModelPath: typeof data.ttsModelPath === 'string' ? data.ttsModelPath : '',
+      ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : ''
     }
     return settingsCache
   } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
@@ -1584,6 +1601,202 @@ export function registerIpcHandlers(): void {
     return { success: true }
   })
 
+  // ── 模型工具（GGUF 检查器 / Token 可视化 / 显存计算器）与本地 TTS ──
+  // 通用：校验后端目录内的二进制路径（沿用 run-benchmark 的 isSafePath 模式）
+  const resolveBackendExe = (backendPath: string, exe: string): { path?: string; error?: string } => {
+    const exePath = join(backendPath, exe)
+    if (!isSafePath(BACKEND_DIR, exePath)) return { error: '访问被拒绝' }
+    if (!existsSync(exePath)) return { error: `可执行文件未找到: ${exe}（当前后端版本可能未包含该工具）` }
+    return { path: exePath }
+  }
+  // 通用：spawn 二进制并收集全部输出（带超时杀进程），供 tokenize / fit-params 这类一次性工具调用
+  const runToolProcess = (exePath: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> => {
+    return new Promise((resolveRun) => {
+      let stdout = '', stderr = '', timedOut = false
+      const proc = spawn(exePath, args, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: true })
+      const timer = setTimeout(() => { timedOut = true; killProcessTreeAsync(proc) }, timeoutMs)
+      proc.stdout?.on('data', (d) => { stdout += d.toString() })
+      proc.stderr?.on('data', (d) => { if (stderr.length < 256 * 1024) stderr += d.toString() })
+      proc.on('error', (err) => { clearTimeout(timer); resolveRun({ code: null, stdout, stderr: stderr + String(err), timedOut }) })
+      proc.on('exit', (code) => { clearTimeout(timer); resolveRun({ code, stdout, stderr, timedOut }) })
+    })
+  }
+
+  ipcMain.handle('read-gguf-meta', async (_e, path: string) => {
+    try {
+      if (!(await isAllowedModelPath(path))) return { error: '访问被拒绝或文件不存在' }
+      return await readGgufMeta(path)
+    } catch (err) {
+      console.warn('[read-gguf-meta] failed:', path, err)
+      return { error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('tokenize-text', async (_e, opts: { port?: number; backendPath?: string; modelPath?: string; text: string }) => {
+    const text = typeof opts.text === 'string' ? opts.text : ''
+    if (!text) return { success: true, tokens: [] }
+    // 模式一：运行中的 llama-server，POST /tokenize（带 piece）
+    if (opts.port) {
+      if (text.length > 100000) return { success: false, error: '文本过长（上限 100000 字符）', tokens: [] }
+      try {
+        const result = await new Promise<{ tokens: unknown[] }>((resolveReq, rejectReq) => {
+          const body = JSON.stringify({ content: text, with_pieces: true })
+          const req = http.request({
+            hostname: '127.0.0.1', port: opts.port, path: '/tokenize', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            agent: httpAgent, timeout: 30000
+          }, (res) => {
+            let data = ''
+            res.on('data', (c) => { data += c })
+            res.on('end', () => {
+              try {
+                if (res.statusCode !== 200) return rejectReq(new Error(`HTTP ${res.statusCode}`))
+                resolveReq(JSON.parse(data))
+              } catch (e) { rejectReq(e) }
+            })
+          })
+          req.on('timeout', () => { req.destroy(new Error('请求超时')) })
+          req.on('error', rejectReq)
+          req.write(body); req.end()
+        })
+        const tokens = (Array.isArray(result.tokens) ? result.tokens : []).map((t) => {
+          if (typeof t === 'number') return { id: t, piece: '' }
+          const obj = t as { id?: number; piece?: unknown }
+          // piece 在非法 UTF-8 时会以字节数组形式返回
+          const piece = typeof obj.piece === 'string' ? obj.piece
+            : Array.isArray(obj.piece) ? Buffer.from(obj.piece as number[]).toString('utf-8') : ''
+          return { id: obj.id ?? 0, piece }
+        })
+        return { success: true, tokens }
+      } catch (err) {
+        return { success: false, error: `调用 /tokenize 失败: ${err instanceof Error ? err.message : String(err)}`, tokens: [] }
+      }
+    }
+    // 模式二：spawn llama-tokenize（仅加载词表）
+    if (!opts.backendPath || !opts.modelPath) return { success: false, error: '缺少后端或模型路径', tokens: [] }
+    if (text.length > 8000) return { success: false, error: '二进制模式文本上限 8000 字符，请改用运行中模型', tokens: [] }
+    if (!(await isAllowedModelPath(opts.modelPath))) return { success: false, error: '模型路径访问被拒绝', tokens: [] }
+    const exe = resolveBackendExe(opts.backendPath, 'llama-tokenize.exe')
+    if (!exe.path) return { success: false, error: exe.error, tokens: [] }
+    const run = await runToolProcess(exe.path, ['-m', opts.modelPath, '-p', text], 120000)
+    if (run.timedOut) return { success: false, error: '分词超时', tokens: [] }
+    if (run.code !== 0) return { success: false, error: `llama-tokenize 退出码 ${run.code}: ${run.stderr.slice(-500)}`, tokens: [] }
+    // 输出行格式：`123456 -> 'piece'`；piece 可能含换行，用前瞻下一条记录的惰性匹配跨行提取
+    const tokens: { id: number; piece: string }[] = []
+    const re = /^\s*(\d+) -> '([\s\S]*?)'\r?\n(?=\s*\d+ -> '|\s*$)/gm
+    let m: RegExpExecArray | null
+    while ((m = re.exec(run.stdout)) !== null) tokens.push({ id: parseInt(m[1], 10), piece: m[2] })
+    return { success: true, tokens }
+  })
+
+  ipcMain.handle('fit-params', async (_e, opts: { backendPath: string; modelPath: string; ctxSize?: number }) => {
+    if (!(await isAllowedModelPath(opts.modelPath))) return { success: false, error: '模型路径访问被拒绝' }
+    const exe = resolveBackendExe(opts.backendPath, 'llama-fit-params.exe')
+    if (!exe.path) return { success: false, error: exe.error }
+    const args = ['-m', opts.modelPath]
+    if (opts.ctxSize && opts.ctxSize > 0) args.push('-c', String(Math.floor(opts.ctxSize)))
+    const run = await runToolProcess(exe.path, args, 120000)
+    if (run.timedOut) return { success: false, error: '参数拟合超时' }
+    if (run.code !== 0) return { success: false, error: `llama-fit-params 退出码 ${run.code}: ${run.stderr.slice(-500)}`, log: run.stderr }
+    // stdout 末行即拟合参数（如 "-c 72448 -ngl -1"）
+    const lines = run.stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+    const fitted = [...lines].reverse().find(l => l.startsWith('-')) || ''
+    const ctxMatch = fitted.match(/(?:^|\s)-c\s+(\d+)/)
+    const nglMatch = fitted.match(/(?:^|\s)-ngl\s+(-?\d+)/)
+    // GPU 显存信息复用监控链路的 nvidia-smi 缓存（失败时为 null，前端隐藏 GPU 卡片）
+    await refreshGpuData()
+    const gpus = cachedGpuData && cachedGpuData.memoryTotal !== null
+      ? [{ name: cachedGpuData.name, totalMiB: cachedGpuData.memoryTotal, usedMiB: cachedGpuData.memoryUsed ?? 0 }]
+      : null
+    return {
+      success: true,
+      fittedArgs: fitted || undefined,
+      ctxSize: ctxMatch ? parseInt(ctxMatch[1], 10) : undefined,
+      gpuLayers: nglMatch ? parseInt(nglMatch[1], 10) : undefined,
+      log: run.stderr,
+      gpus
+    }
+  })
+
+  // 显存计算器：轻量返回 GPU 显存（复用 nvidia-smi 缓存；非 N 卡/无缓存时返回 null）
+  ipcMain.handle('get-gpu-vram', async (): Promise<{ name: string; totalMiB: number; usedMiB: number } | null> => {
+    await refreshGpuData()
+    if (!cachedGpuData || cachedGpuData.memoryTotal === null) return null
+    return { name: cachedGpuData.name, totalMiB: cachedGpuData.memoryTotal, usedMiB: cachedGpuData.memoryUsed ?? 0 }
+  })
+
+  // Chat 模板分析：模板文本写临时 jinja → llama-template-analysis.exe --template-file → 返回原始报告（解析在渲染层）
+  ipcMain.handle('analyze-template', async (_e, opts: { backendPath: string; template: string }) => {
+    const template = String(opts.template ?? '')
+    if (!template.trim()) return { success: false, error: '模板内容为空' }
+    if (template.length > 256 * 1024) return { success: false, error: '模板过大（上限 256KB）' }
+    const exe = resolveBackendExe(opts.backendPath, 'llama-template-analysis.exe')
+    if (!exe.path) return { success: false, error: exe.error }
+    const tplPath = join(tmpdir(), `llama-studio-tpl-${randomUUID()}.jinja`)
+    try {
+      writeFileSync(tplPath, template, 'utf-8')
+      const run = await runToolProcess(exe.path, ['--template-file', tplPath], 60000)
+      if (run.timedOut) return { success: false, error: '模板分析超时' }
+      // 注意：该工具把报告写到 stderr 且带 ANSI 颜色码（实测），合并两路输出并剥离后再判断
+      const report = (run.stdout + run.stderr).replace(/\u001b\[[0-9;]*m/g, '').trim()
+      if (run.code !== 0 && !report.includes('ANALYSIS COMPLETE')) {
+        return { success: false, error: `llama-template-analysis 退出码 ${run.code}: ${report.slice(-500)}` }
+      }
+      return { success: true, report }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    } finally {
+      try { unlinkSync(tplPath) } catch { /* ignore */ }
+    }
+  })
+
+  // ── 本地 TTS（llama-tts.exe 生成 wav，返回 base64 供渲染层播放）──
+  const runningTts = new Map<string, ChildProcess>()
+  ipcMain.handle('tts-generate', async (_e, opts: { id: string; backendPath: string; modelPath: string; vocoderPath: string; text: string }) => {
+    if (runningTts.has(opts.id)) return { success: false, error: '该朗读任务已在进行中' }
+    if (!(await isAllowedModelPath(opts.modelPath)) || !(await isAllowedModelPath(opts.vocoderPath))) {
+      return { success: false, error: 'TTS 模型路径访问被拒绝，请在设置中重新选择' }
+    }
+    const exe = resolveBackendExe(opts.backendPath, 'llama-tts.exe')
+    if (!exe.path) return { success: false, error: exe.error }
+    const text = String(opts.text ?? '').slice(0, 500)
+    if (!text.trim()) return { success: false, error: '朗读文本为空' }
+    const outPath = join(tmpdir(), `llama-studio-tts-${randomUUID()}.wav`)
+    const args = ['-m', opts.modelPath, '-mv', opts.vocoderPath, '-p', text, '-o', outPath]
+    try {
+      const result = await new Promise<{ code: number | null; stderr: string; timedOut: boolean }>((resolveRun) => {
+        let stderr = '', timedOut = false
+        const proc = spawn(exe.path!, args, { detached: false, stdio: 'pipe', cwd: dirname(exe.path!), windowsHide: true })
+        runningTts.set(opts.id, proc)
+        const timer = setTimeout(() => { timedOut = true; killProcessTreeAsync(proc) }, 180000)
+        proc.stderr?.on('data', (d) => { if (stderr.length < 128 * 1024) stderr += d.toString() })
+        proc.on('error', (err) => { clearTimeout(timer); runningTts.delete(opts.id); resolveRun({ code: null, stderr: stderr + String(err), timedOut }) })
+        proc.on('exit', (code) => { clearTimeout(timer); runningTts.delete(opts.id); resolveRun({ code, stderr, timedOut }) })
+      })
+      if (result.timedOut) return { success: false, error: '语音生成超时' }
+      if (result.code !== 0 || !existsSync(outPath)) {
+        return { success: false, error: result.code === null ? 'llama-tts 被中止' : `llama-tts 退出码 ${result.code}: ${result.stderr.slice(-500)}` }
+      }
+      const wav = await fsPromises.readFile(outPath)
+      // 防残缺产出：验证 RIFF/WAVE 头与最小长度，否则渲染层会拿到解码不了的音频
+      if (wav.length <= 44 || wav.toString('ascii', 0, 4) !== 'RIFF' || wav.toString('ascii', 8, 12) !== 'WAVE') {
+        return { success: false, error: `llama-tts 产出无效 wav（${wav.length} 字节）: ${result.stderr.slice(-300)}` }
+      }
+      return { success: true, wavBase64: wav.toString('base64') }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    } finally {
+      try { if (existsSync(outPath)) unlinkSync(outPath) } catch { /* ignore */ }
+    }
+  })
+  ipcMain.handle('tts-stop', async (_e, id: string) => {
+    const proc = runningTts.get(id)
+    if (!proc) return { success: false, error: '未在运行' }
+    runningTts.delete(id)
+    await killProcessTreeAsync(proc)
+    return { success: true }
+  })
+
   let cancelBackendDl: (() => void) | null = null
 
   ipcMain.handle('check-updates', async () => {
@@ -2175,7 +2388,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('get-ui-settings', async () => {
     const s = await loadSettings()
-    return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, notificationSound: s.notificationSound ?? 'chime', chatSidebarCollapsed: s.chatSidebarCollapsed ?? false, agentToolCardsExpanded: s.agentToolCardsExpanded ?? true }
+    return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, notificationSound: s.notificationSound ?? 'chime', chatSidebarCollapsed: s.chatSidebarCollapsed ?? false, agentToolCardsExpanded: s.agentToolCardsExpanded ?? true, ttsEngine: s.ttsEngine ?? 'system', ttsModelPath: s.ttsModelPath ?? '', ttsVocoderPath: s.ttsVocoderPath ?? '' }
   })
   ipcMain.handle('set-ui-setting', async (_e, key: string, value: boolean | string) => {
     const s = await loadSettings()
@@ -4337,6 +4550,8 @@ export function registerIpcHandlers(): void {
   registerRetrievalIpc()
   // 长期记忆存储（模块二 · 阶段 2.3）：分类条目沉淀 / 注入 / 矛盾仲裁
   registerMemoryStoreIpc(APP_ROOT)
+  // 本地知识库 RAG（knowledgeService）：knowledge-* 通道（BM25 检索 + 落盘）
+  registerKnowledgeIpc(APP_ROOT)
 
   // ── Agent Tracing 落盘 ──
   // 把每次工具执行的审计条目追加到 Agent session/traces/<sessionId>.jsonl，

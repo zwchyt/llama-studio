@@ -56,7 +56,7 @@ interface AppStore {
   commandsSchema: CommandsSchema | null
   releaseInfo: ReleaseInfo | null
   paths: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string; chatTemplates: string } | null
-  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'terminal' | 'ocr' | 'benchmark' | 'agent-code'
+  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'terminal' | 'ocr' | 'benchmark' | 'agent-code' | 'model-tools' | 'knowledge' | 'tts'
   showCreateModal: boolean
   editingTemplate: Template | null
   updateDismissed: boolean
@@ -166,6 +166,14 @@ interface AppStore {
     selectedModel: string
   } | null
   setBenchmarkResult: (r: AppStore['benchmarkResult']) => void
+  // ── 模型工具视图：外部跳转预选（模型列表「检查」按钮）──
+  modelToolsTarget: { tab: 'inspector' | 'tokenizer' | 'fit'; modelPath: string } | null
+  setModelToolsTarget: (t: AppStore['modelToolsTarget']) => void
+  // ── 本地 TTS 模型配置（供「语音合成」视图使用）──
+  ttsModelPath: string
+  setTtsModelPath: (v: string) => void
+  ttsVocoderPath: string
+  setTtsVocoderPath: (v: string) => void
   // ── Agent Code ──
   agentProjects: AgentProject[]
   setAgentProjects: (p: AgentProject[]) => void
@@ -362,6 +370,20 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   // ── 基准测试持久结果 ──
   benchmarkResult: null,
   setBenchmarkResult: (r) => set({ benchmarkResult: r }),
+  // ── 模型工具视图跳转预选 ──
+  modelToolsTarget: null,
+  setModelToolsTarget: (t) => set({ modelToolsTarget: t }),
+  // ── 本地 TTS 模型配置（供「语音合成」视图使用）──
+  ttsModelPath: '',
+  setTtsModelPath: (v) => {
+    set({ ttsModelPath: v })
+    window.api?.setUiSetting('ttsModelPath', v)
+  },
+  ttsVocoderPath: '',
+  setTtsVocoderPath: (v) => {
+    set({ ttsVocoderPath: v })
+    window.api?.setUiSetting('ttsVocoderPath', v)
+  },
   agentProjects: [],
   setAgentProjects: (p) => {
     set({ agentProjects: p })
@@ -430,6 +452,8 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
         try { localStorage.setItem('agentToolCardsExpanded', String(s.agentToolCardsExpanded)) } catch { /* ignore */ }
         set({ agentToolCardsExpanded: s.agentToolCardsExpanded })
       }
+      if (typeof s.ttsModelPath === 'string') set({ ttsModelPath: s.ttsModelPath })
+      if (typeof s.ttsVocoderPath === 'string') set({ ttsVocoderPath: s.ttsVocoderPath })
     } catch { /* ignore */ }
   },
   chatSidebarCurrentCollapsed: false,

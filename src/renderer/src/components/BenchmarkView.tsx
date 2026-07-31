@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import { Terminal, Gauge, Loader2, Cpu, Zap, HardDrive, BarChart3, Play, Square, ChevronDown } from 'lucide-react'
+import { Terminal, Gauge, Loader2, Cpu, Zap, HardDrive, BarChart3, Play, Square, ChevronDown, History, Trash2 } from 'lucide-react'
 import CustomSelect from './CustomSelect'
 import '../styles/benchmark.css'
 
@@ -61,6 +61,34 @@ function formatParams(n: number): string {
   return String(n)
 }
 
+// ── 历史结果：快速跑分的横向对比（localStorage 持久化，上限 20 条）──
+interface BenchHistoryEntry {
+  ts: number
+  model: string
+  quant: string
+  backend: string
+  ngl: number
+  threads: number
+  batch: number
+  ppTokS: number | null
+  tgTokS: number | null
+}
+
+const BENCH_HISTORY_KEY = 'llama-studio-bench-history'
+const BENCH_HISTORY_MAX = 20
+
+function loadBenchHistory(): BenchHistoryEntry[] {
+  try {
+    const raw = localStorage.getItem(BENCH_HISTORY_KEY)
+    const arr = raw ? JSON.parse(raw) : []
+    return Array.isArray(arr) ? arr : []
+  } catch { return [] }
+}
+
+function saveBenchHistory(list: BenchHistoryEntry[]): void {
+  try { localStorage.setItem(BENCH_HISTORY_KEY, JSON.stringify(list)) } catch { /* ignore */ }
+}
+
 function speedRating(tokPerS: number, nParams: number): { label: string; color: string; ratio: number } {
   const ratio = tokPerS / Math.max(nParams / 1_000_000_000, 0.1)
   if (ratio > 100) return { label: '极速', color: '#22c55e', ratio }
@@ -100,8 +128,10 @@ export default function BenchmarkView() {
   const [batchSize, setBatchSize] = useState(512)
   const [nTokens, setNTokens] = useState(128)
   const [nPrompt, setNPrompt] = useState(512)
+  const [ngl, setNgl] = useState(99)
   const [concurrent, setConcurrent] = useState(4)
   const [nRequests, setNRequests] = useState(50)
+  const [history, setHistory] = useState<BenchHistoryEntry[]>(() => loadBenchHistory())
   const [running, setRunning] = useState(false)
   const [showResults, setShowResults] = useState(false)
   const [configCollapsed, setConfigCollapsed] = useState(false)
@@ -151,6 +181,23 @@ export default function BenchmarkView() {
         const result = parseJsonOutput(fullLog)
         if (result) {
           setParsed(result)
+          // 追加历史记录（参数优先取实测结果里的真实值）
+          const entry: BenchHistoryEntry = {
+            ts: Date.now(),
+            model: result.modelInfo.name.split(/[\\/]/).pop() || result.modelInfo.name,
+            quant: result.modelInfo.type,
+            backend: selectedBackend,
+            ngl: result.prompt?.n_gpu_layers ?? result.generation?.n_gpu_layers ?? ngl,
+            threads: result.modelInfo.threads,
+            batch: result.prompt?.n_batch ?? result.generation?.n_batch ?? batchSize,
+            ppTokS: result.prompt ? result.prompt.avg_ts : null,
+            tgTokS: result.generation ? result.generation.avg_ts : null,
+          }
+          setHistory(prev => {
+            const next = [entry, ...prev].slice(0, BENCH_HISTORY_MAX)
+            saveBenchHistory(next)
+            return next
+          })
           setBenchmarkResult({
             mode: 'quick',
             parsed: { prompt: result.prompt as unknown as Record<string, unknown> | null, generation: result.generation as unknown as Record<string, unknown> | null, modelInfo: result.modelInfo as unknown as Record<string, unknown> },
@@ -201,9 +248,9 @@ export default function BenchmarkView() {
     setRunning(true); setShowResults(true); setLogs([]); setParsed(null); setSummary([]); setBenchmarkResult(null); setConfigCollapsed(true)
     const args: string[] = ['-m', selectedModel, '-o', 'json']
     if (mode === 'quick') {
-      args.push('-t', String(threads), '-b', String(batchSize), '-n', String(nTokens), '-p', String(nPrompt))
+      args.push('-t', String(threads), '-b', String(batchSize), '-n', String(nTokens), '-p', String(nPrompt), '-ngl', String(ngl))
     } else {
-      args.push('-c', String(concurrent), '-r', String(nRequests), '-n', String(nTokens), '-b', String(batchSize))
+      args.push('-c', String(concurrent), '-r', String(nRequests), '-n', String(nTokens), '-b', String(batchSize), '-ngl', String(ngl))
     }
     const res = await window.api.runBenchmark({ id, backendPath: activeBackend.path, exe: benchExe, args })
     if (!res.success) {
@@ -301,6 +348,10 @@ export default function BenchmarkView() {
                     <label>生成 Token</label>
                     <input type="number" value={nTokens} min={1} max={4096} onChange={e => setNTokens(parseInt(e.target.value) || 1)} disabled={running} />
                   </div>
+                  <div className="benchmark-param">
+                    <label>GPU 卸载层 (-ngl)</label>
+                    <input type="number" value={ngl} min={0} max={999} onChange={e => setNgl(parseInt(e.target.value) || 0)} disabled={running} />
+                  </div>
                 </>
               ) : (
                 <>
@@ -319,6 +370,10 @@ export default function BenchmarkView() {
                   <div className="benchmark-param">
                     <label>批次大小</label>
                     <input type="number" value={batchSize} min={1} max={4096} onChange={e => setBatchSize(parseInt(e.target.value) || 1)} disabled={running} />
+                  </div>
+                  <div className="benchmark-param">
+                    <label>GPU 卸载层 (-ngl)</label>
+                    <input type="number" value={ngl} min={0} max={999} onChange={e => setNgl(parseInt(e.target.value) || 0)} disabled={running} />
                   </div>
                 </>
               )}
@@ -459,6 +514,46 @@ export default function BenchmarkView() {
           <div className="benchmark-summary">
             <h3>压力测试摘要</h3>
             {summary.map((line, i) => <div key={i} className="benchmark-summary-line">{line}</div>)}
+          </div>
+        )}
+
+        {/* 历史结果横向对比（仅快速跑分；最佳 pp/tg 高亮）*/}
+        {history.length > 0 && (
+          <div className="benchmark-history">
+            <div className="benchmark-history-header">
+              <History size={14} />
+              <span>历史结果对比（{history.length}）</span>
+              <button
+                className="benchmark-history-clear"
+                onClick={() => { setHistory([]); saveBenchHistory([]) }}
+                disabled={running}
+              ><Trash2 size={13} /> 清空</button>
+            </div>
+            <div className="benchmark-history-table">
+              <div className="benchmark-history-row head">
+                <span>时间</span><span>模型</span><span>量化</span><span>ngl</span><span>线程/批次</span><span>提示词 tok/s</span><span>生成 tok/s</span><span></span>
+              </div>
+              {(() => {
+                const bestPp = Math.max(...history.map(h => h.ppTokS ?? 0))
+                const bestTg = Math.max(...history.map(h => h.tgTokS ?? 0))
+                return history.map(h => (
+                  <div key={h.ts} className="benchmark-history-row">
+                    <span>{new Date(h.ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                    <span title={`${h.model} · ${h.backend}`}>{h.model}</span>
+                    <span>{h.quant || '—'}</span>
+                    <span>{h.ngl}</span>
+                    <span>{h.threads} / {h.batch}</span>
+                    <span className={h.ppTokS !== null && h.ppTokS === bestPp && bestPp > 0 ? 'best' : ''}>{h.ppTokS !== null ? h.ppTokS.toFixed(1) : '—'}</span>
+                    <span className={h.tgTokS !== null && h.tgTokS === bestTg && bestTg > 0 ? 'best' : ''}>{h.tgTokS !== null ? h.tgTokS.toFixed(1) : '—'}</span>
+                    <button
+                      className="benchmark-history-del"
+                      title="删除该条"
+                      onClick={() => setHistory(prev => { const next = prev.filter(x => x.ts !== h.ts); saveBenchHistory(next); return next })}
+                    >✕</button>
+                  </div>
+                ))
+              })()}
+            </div>
           </div>
         )}
 

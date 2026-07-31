@@ -182,6 +182,14 @@ const fullApi = {
   memstoreContradict: (dir: string, probeText: string) => ipcRenderer.invoke('memstore-contradict', dir, probeText),
   memstoreList: (dir: string) => ipcRenderer.invoke('memstore-list', dir),
   memstoreArchive: (dir: string, id: string) => ipcRenderer.invoke('memstore-archive', dir, id),
+  // ── 本地知识库 RAG（knowledgeService）──
+  knowledgeList: () => ipcRenderer.invoke('knowledge-list'),
+  knowledgeCreate: (name: string) => ipcRenderer.invoke('knowledge-create', name),
+  knowledgeDelete: (id: string) => ipcRenderer.invoke('knowledge-delete', id),
+  knowledgeGet: (kbId: string) => ipcRenderer.invoke('knowledge-get', kbId),
+  knowledgeAddDoc: (kbId: string, doc: { name: string; text: string }) => ipcRenderer.invoke('knowledge-add-doc', kbId, doc),
+  knowledgeDeleteDoc: (kbId: string, docId: string) => ipcRenderer.invoke('knowledge-delete-doc', kbId, docId),
+  knowledgeQuery: (kbId: string, query: string, limit?: number) => ipcRenderer.invoke('knowledge-query', kbId, query, limit),
 
   // ── Agent Code 任务清单（Todo / Task）──
   agentTodoWrite: (sessionId: string, input: object) => ipcRenderer.invoke('agent-todo-write', sessionId, input),
@@ -242,6 +250,15 @@ const fullApi = {
     ipcRenderer.on('benchmark-error', (_e, data) => cb(data))
   },
   removeBenchmarkErrorListener: () => ipcRenderer.removeAllListeners('benchmark-error'),
+  // ── 模型工具（GGUF 检查器 / Token 可视化 / 显存计算器）──
+  readGgufMeta: (path: string) => ipcRenderer.invoke('read-gguf-meta', path),
+  tokenizeText: (opts: { port?: number; backendPath?: string; modelPath?: string; text: string }) => ipcRenderer.invoke('tokenize-text', opts),
+  fitParams: (opts: { backendPath: string; modelPath: string; ctxSize?: number }) => ipcRenderer.invoke('fit-params', opts),
+  getGpuVram: () => ipcRenderer.invoke('get-gpu-vram'),
+  analyzeTemplate: (opts: { backendPath: string; template: string }) => ipcRenderer.invoke('analyze-template', opts),
+  // ── 本地 TTS ──
+  ttsGenerate: (opts: { id: string; backendPath: string; modelPath: string; vocoderPath: string; text: string }) => ipcRenderer.invoke('tts-generate', opts),
+  ttsStop: (id: string) => ipcRenderer.invoke('tts-stop', id),
   // ── 窗口控制 ──
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
   windowMaximize: () => ipcRenderer.invoke('window-maximize'),

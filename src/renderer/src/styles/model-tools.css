@@ -1,0 +1,938 @@
+/* 模型工具视图（GGUF 检查器 / Token 可视化 / 显存计算器），类名前缀 mtools- */
+
+.mtools-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 12px 20px;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.mtools-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #7c7c87;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.mtools-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.mtools-tabs {
+  display: flex;
+  gap: 4px;
+  margin-left: 16px;
+}
+
+.mtools-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mtools-tab:hover {
+  color: var(--text-secondary);
+  background: var(--surface);
+}
+
+.mtools-tab.active {
+  color: #06b6d4;
+  background: #06b6d41c;
+  border-color: #06b6d440;
+}
+
+.mtools-tab-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+.mtools-form-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.mtools-form-row label {
+  min-width: 72px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.mtools-select-wrapper {
+  flex: 1;
+  min-width: 0;
+  max-width: 520px;
+  display: flex;
+}
+
+.mtools-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 4px;
+}
+
+.mtools-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  flex-shrink: 0;
+  box-shadow: var(--shadow-md);
+}
+
+.mtools-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.mtools-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px 0;
+}
+
+.mtools-error {
+  font-size: 12px;
+  color: var(--danger, #ef4444);
+  background: #ef44441a;
+  border: 1px solid #ef444440;
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  flex-shrink: 0;
+  word-break: break-all;
+}
+
+.mtools-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.mtools-spin {
+  animation: mtools-rotate 0.9s linear infinite;
+}
+
+@keyframes mtools-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── 基本信息网格 ── */
+.mtools-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.mtools-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+
+.mtools-info-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.mtools-info-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  word-break: break-all;
+}
+
+/* ── 量化类型分布 ── */
+.mtools-ttype-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mtools-ttype-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mtools-ttype-name {
+  min-width: 76px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  color: var(--text-secondary);
+}
+
+.mtools-ttype-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--bg);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.mtools-ttype-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #06b6d4, #3b82f6);
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.mtools-ttype-meta {
+  min-width: 130px;
+  text-align: right;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.mtools-vram-bar {
+  margin-top: 10px;
+  height: 8px;
+}
+
+/* ── 显存计算器：结论横幅 + 需求分解 ── */
+.mtools-vram-verdict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.mtools-vram-verdict.ok {
+  color: #10b981;
+  background: rgba(16, 185, 129, .10);
+  border-color: rgba(16, 185, 129, .35);
+}
+
+.mtools-vram-verdict.warn {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, .10);
+  border-color: rgba(245, 158, 11, .35);
+}
+
+.mtools-vram-verdict.bad {
+  color: #ef4444;
+  background: rgba(239, 68, 68, .10);
+  border-color: rgba(239, 68, 68, .35);
+}
+
+.mtools-vram-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mtools-vram-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 2px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  border-bottom: 1px dashed var(--border);
+}
+
+.mtools-vram-row:last-child {
+  border-bottom: none;
+}
+
+.mtools-vram-row span:last-child {
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  color: var(--text);
+}
+
+.mtools-vram-row.total {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.mtools-vram-row.total span:last-child {
+  color: #06b6d4;
+  font-size: 15px;
+}
+
+.mtools-kv-select {
+  min-width: 120px;
+}
+
+/* ── 折叠区（chat template / 日志）── */
+.mtools-collapse-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mtools-collapse-header .mtools-collapse-toggle {
+  flex: 1;
+  min-width: 0;
+}
+
+.mtools-collapse-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.mtools-collapse-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.mtools-chevron {
+  transition: transform 0.2s ease;
+}
+
+.mtools-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.mtools-template-pre {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  line-height: 1.5;
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.mtools-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 3px 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.mtools-collapse-header .mtools-copy-btn {
+  margin-left: 0;
+}
+
+/* ── KV 表 ── */
+.mtools-kv-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  color: var(--text-muted);
+}
+
+.mtools-kv-search input {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 11px;
+  color: var(--text-secondary);
+  width: 140px;
+}
+
+.mtools-kv-table {
+  display: flex;
+  flex-direction: column;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.mtools-kv-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) 90px minmax(0, 2fr);
+  gap: 10px;
+  padding: 5px 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  align-items: baseline;
+}
+
+.mtools-kv-row:last-child {
+  border-bottom: none;
+}
+
+.mtools-kv-key {
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  color: var(--text-secondary);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.mtools-kv-type {
+  color: #06b6d4;
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  font-size: 10px;
+}
+
+.mtools-kv-value {
+  color: var(--text-muted);
+  word-break: break-all;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.mtools-kv-empty {
+  padding: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── Token 可视化 ── */
+.mtools-mode-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.mtools-mode-tab {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mtools-mode-tab.active {
+  color: #06b6d4;
+  background: #06b6d41c;
+  border-color: #06b6d440;
+}
+
+.mtools-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 90px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-secondary);
+  outline: none;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+
+.mtools-textarea:focus {
+  border-color: var(--border-strong);
+  background: var(--surface);
+}
+
+.mtools-token-stats {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.mtools-stat {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.mtools-stat b {
+  color: var(--text-secondary);
+  font-family: var(--font-mono, 'SF Mono', monospace);
+}
+
+.mtools-token-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-content: flex-start;
+}
+
+.mtools-token-chip {
+  display: inline-block;
+  padding: 2px 5px;
+  font-size: 12px;
+  line-height: 1.4;
+  border: 1px solid;
+  border-radius: 4px;
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  white-space: pre-wrap;
+  word-break: break-all;
+  cursor: default;
+}
+
+/* ── 显存计算器 ── */
+.mtools-number-input {
+  width: 120px;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-secondary);
+  text-align: center;
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  outline: none;
+}
+
+.mtools-run-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 6px 16px;
+}
+
+.mtools-fit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.mtools-fit-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.mtools-fit-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.mtools-fit-value {
+  font-size: 17px;
+  font-weight: 700;
+  color: #06b6d4;
+  font-family: var(--font-mono, 'SF Mono', monospace);
+}
+
+.mtools-fit-args {
+  display: block;
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+/* ── 显存计算器：量化 what-if 对比表 ── */
+.mtools-quant-table {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mtools-quant-row {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1.3fr 1.2fr .9fr;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  color: var(--text-secondary);
+}
+
+.mtools-quant-row:nth-child(even) {
+  background: var(--bg);
+}
+
+.mtools-quant-row.head {
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: none;
+}
+
+.mtools-quant-row.current {
+  border: 1px solid rgba(6, 182, 212, .4);
+  background: rgba(6, 182, 212, .08);
+  color: var(--text);
+}
+
+.mtools-quant-row .fit-ok {
+  color: #10b981;
+  font-weight: 600;
+}
+
+.mtools-quant-row .fit-no {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+/* ── 量化 what-if：图表/表格切换按钮（卡片标题右侧）── */
+.mtools-quant-switch {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.mtools-quant-switch button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 8px;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+
+.mtools-quant-switch button:hover {
+  color: var(--text);
+}
+
+.mtools-quant-switch button.active {
+  background: rgba(6, 182, 212, .15);
+  color: #06b6d4;
+}
+
+/* ── 量化 what-if：堆叠条图表（权重/KV/预留 + 预算虚线）── */
+.mtools-quant-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.mtools-qbar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mtools-qbar-name {
+  flex: 0 0 84px;
+  font-size: 12px;
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.mtools-qbar-row.current .mtools-qbar-name {
+  color: #06b6d4;
+  font-weight: 700;
+}
+
+.mtools-qbar-track {
+  position: relative;
+  flex: 1;
+  display: flex;
+  height: 16px;
+  background: var(--bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.mtools-qbar-seg {
+  height: 100%;
+  transition: width .25s ease;
+}
+
+.mtools-qbar-seg.w {
+  background: #06b6d4;
+}
+
+.mtools-qbar-seg.kv {
+  background: #f59e0b;
+}
+
+.mtools-qbar-seg.ovh {
+  background: #6b7280;
+}
+
+.mtools-qbar-budget {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 0;
+  border-left: 2px dashed #ef4444;
+  opacity: .85;
+  pointer-events: none;
+}
+
+.mtools-qbar-total {
+  flex: 0 0 72px;
+  font-size: 12px;
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  text-align: right;
+}
+
+.mtools-qbar-total.fit-ok {
+  color: #10b981;
+}
+
+.mtools-qbar-total.fit-no {
+  color: #ef4444;
+}
+
+.mtools-qbar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 4px;
+  padding-left: 94px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.mtools-qbar-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.mtools-qbar-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.mtools-qbar-legend i.w {
+  background: #06b6d4;
+}
+
+.mtools-qbar-legend i.kv {
+  background: #f59e0b;
+}
+
+.mtools-qbar-legend i.ovh {
+  background: #6b7280;
+}
+
+.mtools-qbar-legend i.budget {
+  width: 0;
+  height: 12px;
+  border-radius: 0;
+  border-left: 2px dashed #ef4444;
+}
+
+/* ── 模型对比器：三列对比表（差异行高亮）── */
+.mtools-cmp-table {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mtools-cmp-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1.4fr 1.4fr;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+
+.mtools-cmp-row:nth-child(even) {
+  background: var(--bg);
+}
+
+.mtools-cmp-row.head {
+  font-weight: 700;
+  color: var(--text);
+  background: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.mtools-cmp-row.head span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mtools-cmp-row span:first-child {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.mtools-cmp-row span:not(:first-child) {
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  color: var(--text-secondary);
+}
+
+.mtools-cmp-row.diff span:not(:first-child) {
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+.mtools-cmp-row.diff {
+  border-left: 2px solid #f59e0b;
+}
+
+/* ── Chat 模板分析：能力徽章 + 差异段 ── */
+.mtools-tpl-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mtools-tpl-cap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--bg);
+}
+
+.mtools-tpl-cap.yes {
+  color: #10b981;
+  border-color: rgba(16, 185, 129, .4);
+  background: rgba(16, 185, 129, .08);
+}
+
+.mtools-tpl-cap.no {
+  opacity: .75;
+}
+
+.mtools-tpl-cap-x {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.mtools-tpl-diffs {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mtools-tpl-diff-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 5px;
+}
+
+.mtools-tpl-diff-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.mtools-tpl-diff-row .tag {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.mtools-tpl-diff-row .tag.left {
+  color: #10b981;
+  background: rgba(16, 185, 129, .12);
+}
+
+.mtools-tpl-diff-row .tag.right {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, .12);
+}
+
+.mtools-tpl-diff-row pre {
+  flex: 1;
+  margin: 0;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 160px;
+  overflow-y: auto;
+}

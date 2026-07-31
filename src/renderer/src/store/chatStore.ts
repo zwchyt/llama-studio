@@ -51,6 +51,7 @@ interface ChatStore {
   renameSession: (id: string, title: string) => void
   deleteSession: (id: string) => Promise<void>
   setSystemPrompt: (id: string, prompt: string) => void
+  setKnowledgeBase: (id: string, kbId: string | null) => void
   setParams: (id: string, params: Partial<ChatParams>) => void
   setSessionModel: (id: string, templateId: string, port: number) => void
 
@@ -165,6 +166,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === id ? { ...x, systemPrompt: prompt, updatedAt: new Date().toISOString() } : x
+      )
+    }))
+    get().persist(id)
+  },
+
+  setKnowledgeBase: (id, kbId) => {
+    set((s) => ({
+      sessions: s.sessions.map((x) =>
+        x.id === id ? { ...x, knowledgeBaseId: kbId || undefined, updatedAt: new Date().toISOString() } : x
       )
     }))
     get().persist(id)

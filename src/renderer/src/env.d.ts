@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, ChatStreamChunk, AgentProject, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, ChatStreamChunk, AgentProject, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeHit } from '../../shared/types'
 // 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
 interface ModelFileInfo {
   name: string
@@ -112,7 +112,7 @@ interface LlamaCppApi {
   setMetricsPolling: (enabled: boolean) => Promise<{ success: boolean }>
   getRunningProcesses: () => Promise<string[]>
   getModelLogs: (id: string) => Promise<{ stream: string; text: string }[]>
-  getUiSettings: () => Promise<{ splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean }>
+  getUiSettings: () => Promise<{ splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string }>
   setUiSetting: (key: string, value: boolean | string) => Promise<void>
   listGlobalAgents: () => Promise<{ name: string; pkg: string; cmd: string; installed: boolean; version: string | null; website?: string }[]>
   launchAgent: (cmd: string, cwd: string) => Promise<{ success: boolean; error?: string }>
@@ -158,6 +158,15 @@ interface LlamaCppApi {
   removeBenchmarkDoneListener: () => void
   onBenchmarkError: (cb: (data: { id: string; error: string }) => void) => void
   removeBenchmarkErrorListener: () => void
+  // ── 模型工具（GGUF 检查器 / Token 可视化 / 显存计算器）──
+  readGgufMeta: (path: string) => Promise<GgufMetadata | { error: string }>
+  tokenizeText: (opts: { port?: number; backendPath?: string; modelPath?: string; text: string }) => Promise<TokenizeResult>
+  fitParams: (opts: { backendPath: string; modelPath: string; ctxSize?: number }) => Promise<FitParamsResult>
+  getGpuVram: () => Promise<{ name: string; totalMiB: number; usedMiB: number } | null>
+  analyzeTemplate: (opts: { backendPath: string; template: string }) => Promise<{ success: boolean; error?: string; report?: string }>
+  // ── 本地 TTS ──
+  ttsGenerate: (opts: { id: string; backendPath: string; modelPath: string; vocoderPath: string; text: string }) => Promise<{ success: boolean; wavBase64?: string; error?: string }>
+  ttsStop: (id: string) => Promise<{ success: boolean; error?: string }>
   // ── Agent Code 文件树 ──
   buildFileTree: (dir: string, maxDepth?: number) => Promise<{ success: boolean; tree?: { name: string; path: string; isDir: boolean; children?: any[] }; error?: string }>
   expandFileTree: (dir: string, limit?: number) => Promise<{ success: boolean; children?: { name: string; path: string; isDir: boolean; size?: number }[]; truncated?: boolean; total?: number; error?: string }>
@@ -210,6 +219,14 @@ interface LlamaCppApi {
 		  memstoreContradict: (dir: string, probeText: string) => Promise<{ marked: number; archived: number }>
 		  memstoreList: (dir: string) => Promise<AgentMemoryEntry[]>
 		  memstoreArchive: (dir: string, id: string) => Promise<{ success: boolean }>
+		  // ── 本地知识库 RAG（knowledgeService）──
+		  knowledgeList: () => Promise<KnowledgeBaseMeta[]>
+		  knowledgeCreate: (name: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
+		  knowledgeDelete: (id: string) => Promise<{ success: boolean; error?: string }>
+		  knowledgeGet: (kbId: string) => Promise<{ id: string; name: string; createdAt: string; docs: KnowledgeDoc[] } | null>
+		  knowledgeAddDoc: (kbId: string, doc: { name: string; text: string }) => Promise<{ success: boolean; chunkCount?: number; meta?: KnowledgeBaseMeta; error?: string }>
+		  knowledgeDeleteDoc: (kbId: string, docId: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
+		  knowledgeQuery: (kbId: string, query: string, limit?: number) => Promise<{ hits: KnowledgeHit[]; lowConfidence: boolean }>
 		  // ── Agent Code 任务清单（Todo / Task）──
 		  agentTodoWrite: (sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }) => Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }>
 		  agentTaskGet: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; error?: string }>

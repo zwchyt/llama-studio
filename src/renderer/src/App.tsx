@@ -18,6 +18,9 @@ import BackendDownloadBanner from './components/BackendDownloadBanner'
 import ChatWindow from './components/ChatWindow'
 import LlamaChatView from './components/LlamaChatView'
 import TerminalView from './components/TerminalView'
+import ModelToolsView from './components/ModelToolsView'
+import KnowledgeView from './components/KnowledgeView'
+import TtsView from './components/TtsView'
 import OcrView from './components/OcrView'
 import BenchmarkView from './components/BenchmarkView'
 import AgentCodeView from './components/AgentCodeView'
@@ -473,6 +476,9 @@ function AppMain() {
       case 'llama': return <LlamaChatView />
       case 'ocr': return <OcrView />
       case 'benchmark': return <BenchmarkView />
+      case 'model-tools': return <ModelToolsView />
+      case 'knowledge': return <KnowledgeView />
+      case 'tts': return <TtsView />
       case 'agent-code': return null
       case 'terminal': return null
       default: return <CardsView />

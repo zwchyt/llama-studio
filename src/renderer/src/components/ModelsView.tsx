@@ -3,7 +3,7 @@ import { useStore, ModelFileInfo, ModelDownloadInfo } from '../store/useStore'
 
 import {
   HardDrive, Download, Trash, Pause, Play, X, Link, FolderOpen,
-  Pencil, Check, AlertCircle, Loader2, Search, Image as ImageIcon
+  Pencil, Check, AlertCircle, Loader2, Search, Image as ImageIcon, FileSearch
 } from 'lucide-react'
 import { formatBytes } from '../utils/format'
 import { formatDownloadStatus } from '../utils/downloadFormat'
@@ -174,6 +174,8 @@ function DownloadRow({ dl }: { dl: ModelDownloadInfo }) {
 }
 
 function ModelFileRow({ model, isImage, onDeleted }: { model: ModelFileInfo; isImage?: boolean; onDeleted: () => void }) {
+  const setView = useStore(s => s.setView)
+  const setModelToolsTarget = useStore(s => s.setModelToolsTarget)
   const [editing, setEditing] = useState(false)
   const [newName, setNewName] = useState(model.name.replace(/\.[^.]+$/, ''))
   useEffect(() => {
@@ -196,6 +198,11 @@ function ModelFileRow({ model, isImage, onDeleted }: { model: ModelFileInfo; isI
   function handleOpenFolder() {
     const idx = Math.max(model.path.lastIndexOf('/'), model.path.lastIndexOf('\\'))
     if (idx > 0) window.api.openFolder(model.path.substring(0, idx))
+  }
+  // 跳转到「模型工具 → GGUF 检查器」并预选当前模型
+  function handleInspect() {
+    setModelToolsTarget({ tab: 'inspector', modelPath: model.path })
+    setView('model-tools')
   }
   return (
     <div className="models-file-row">
@@ -220,6 +227,7 @@ function ModelFileRow({ model, isImage, onDeleted }: { model: ModelFileInfo; isI
         </div>
       </div>
       <div className="models-file-actions">
+        <button className="btn btn-ghost btn-icon" onClick={handleInspect} title="在模型工具中检查 GGUF 元数据"><FileSearch size={14} /></button>
         <button className="btn btn-ghost btn-icon" onClick={() => setEditing(true)}><Pencil size={14} /></button>
         <button className="btn btn-ghost btn-icon" onClick={handleOpenFolder}><FolderOpen size={14} /></button>
         <button className="btn btn-ghost btn-icon text-danger" onClick={handleDelete} disabled={model.external}><Trash size={14} /></button>

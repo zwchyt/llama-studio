@@ -1,0 +1,332 @@
+/* 知识库视图（BM25 RAG），类名前缀 kb- */
+
+.kb-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 12px 20px;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.kb-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #7c7c87;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.kb-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.kb-header-hint {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+.kb-body {
+  display: flex;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── 左栏：知识库列表 ── */
+.kb-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  overflow: hidden;
+}
+
+.kb-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.kb-create-row {
+  display: flex;
+  gap: 6px;
+}
+
+.kb-input {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-secondary);
+  outline: none;
+  font-family: inherit;
+}
+
+.kb-input:focus {
+  border-color: var(--accent, #0d9488);
+  background: var(--surface);
+}
+
+.kb-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kb-list-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.kb-list-item:hover {
+  background: var(--bg);
+}
+
+.kb-list-item.active {
+  background: #0d94881c;
+}
+
+.kb-list-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kb-list-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kb-list-item.active .kb-list-item-name {
+  color: #0d9488;
+}
+
+.kb-list-item-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.kb-list-item-del {
+  opacity: 0;
+  flex-shrink: 0;
+}
+
+.kb-list-item:hover .kb-list-item-del {
+  opacity: 1;
+}
+
+/* ── 右栏：文档管理 + 试搜索 ── */
+.kb-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.kb-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.kb-empty-sm {
+  padding: 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.kb-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 22px;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.kb-dropzone:hover,
+.kb-dropzone.dragover {
+  border-color: #0d9488;
+  color: #0d9488;
+  background: #0d94880d;
+}
+
+.kb-doc-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kb-doc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.kb-doc-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.kb-doc-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kb-doc-chunks {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  flex-shrink: 0;
+}
+
+/* ── 试搜索 ── */
+.kb-search {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 45%;
+}
+
+.kb-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+.kb-search-bar .kb-input {
+  border: none;
+  background: transparent;
+  padding: 4px 0;
+}
+
+.kb-search-bar .kb-input:focus {
+  background: transparent;
+}
+
+.kb-hits {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
+}
+
+.kb-lowconf {
+  font-size: 11px;
+  color: var(--warning, #f59e0b);
+  background: #f59e0b1a;
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+}
+
+.kb-hit {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+
+.kb-hit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.kb-hit-doc {
+  font-size: 10px;
+  font-weight: 600;
+  color: #0d9488;
+}
+
+.kb-hit-score {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, 'SF Mono', monospace);
+}
+
+.kb-hit-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.kb-spin {
+  animation: kb-rotate 0.9s linear infinite;
+}
+
+@keyframes kb-rotate {
+  to { transform: rotate(360deg); }
+}

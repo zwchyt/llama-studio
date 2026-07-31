@@ -692,6 +692,68 @@
   color: var(--text-muted);
 }
 
+/* 附加知识库弹窗（复用 .chat-tools-card 外壳）*/
+.chat-kb-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  padding: 4px 2px 2px;
+}
+
+.chat-kb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.chat-kb-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background .12s, border-color .12s;
+}
+
+.chat-kb-option:hover {
+  background: var(--surface-hover, rgba(127, 127, 127, .08));
+}
+
+.chat-kb-option.active {
+  border-color: #0d9488;
+  background: rgba(13, 148, 136, .10);
+}
+
+.chat-kb-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chat-kb-option-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-kb-option-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .chat-tools-switch {
   position: relative;
   display: inline-block;

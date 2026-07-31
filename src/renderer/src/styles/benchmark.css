@@ -623,3 +623,108 @@
   border-color: var(--border-strong);
   background: var(--surface);
 }
+
+/* ── 历史结果对比表 ── */
+.benchmark-history {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 10px);
+}
+
+.benchmark-history-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.benchmark-history-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color .12s, border-color .12s;
+}
+
+.benchmark-history-clear:hover:not(:disabled) {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, .4);
+}
+
+.benchmark-history-clear:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.benchmark-history-table {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.benchmark-history-row {
+  display: grid;
+  grid-template-columns: .9fr 2fr .9fr .5fr .8fr 1fr 1fr 28px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  color: var(--text-secondary);
+}
+
+.benchmark-history-row:nth-child(even) {
+  background: var(--bg);
+}
+
+.benchmark-history-row.head {
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: none;
+}
+
+.benchmark-history-row span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.benchmark-history-row .best {
+  color: #22c55e;
+  font-weight: 700;
+}
+
+.benchmark-history-del {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color .12s, background .12s;
+}
+
+.benchmark-history-del:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, .1);
+}

@@ -14,7 +14,7 @@ import {
   Plus, Send, Square, Trash2, Pencil, MessageSquare,
   ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain,
   Copy, Check, RotateCcw, ArrowDown, X, Eye, SlidersHorizontal, List, Play, Wrench,
-  Paperclip, FileText, GitBranch, Search, Download, Volume2, ImageDown, Star
+  Paperclip, FileText, GitBranch, Search, Download, Volume2, ImageDown, Star, BookOpen
 } from 'lucide-react'
 import { useChatStore, buildOpenAiMessages, DEFAULT_PARAMS } from '../store/chatStore'
 import { useStore } from '../store/useStore'
@@ -23,7 +23,7 @@ import { playNotificationSound } from '../utils/sound'
 import { useTts } from '../utils/useTts'
 import html2canvas from 'html2canvas'
 
-import type { ChatSession, ChatMessage, ChatParams, ToolCallInfo, Attachment } from '../../../shared/types'
+import type { ChatSession, ChatMessage, ChatParams, ToolCallInfo, Attachment, KnowledgeBaseMeta } from '../../../shared/types'
 import { getToolDefinitions, executeToolCall } from '../utils/tools'
 import type { ToolDefinition } from '../utils/tools'
 import { getDocument } from 'pdfjs-dist'
@@ -265,6 +265,80 @@ function ToolToggleCard({ config, onClose, onChange }: {
           {config.enabled
             ? `已启用 ${enabledCount} 个工具`
             : '工具调用已关闭'}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+// ── 附加知识库弹窗（仿 ToolToggleCard，绝对定位钉在会话框右上角）──────
+function KnowledgeAttachCard({ bases, selectedId, onClose, onSelect }: {
+  bases: KnowledgeBaseMeta[]
+  selectedId: string | null
+  onClose: () => void
+  onSelect: (kbId: string | null) => void
+}) {
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  // 点击外部关闭
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (cardRef.current && !cardRef.current.contains(e.target as Node)) {
+        onClose()
+      }
+    }
+    const timer = setTimeout(() => document.addEventListener('mousedown', handler), 0)
+    return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler) }
+  }, [onClose])
+
+  // ESC 关闭
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  const style: React.CSSProperties = {
+    position: 'absolute', top: 8, right: 8, zIndex: 1100,
+    maxHeight: 'calc(100% - 16px)', overflowY: 'auto',
+  }
+
+  return (
+    <div className="chat-tools-card" ref={cardRef} style={style}>
+      <div className="chat-tools-card-header">
+        <span className="chat-tools-card-title">附加知识库</span>
+      </div>
+
+      {bases.length === 0 ? (
+        <div className="chat-kb-empty">暂无知识库，请先前往「知识库」创建并添加文档。</div>
+      ) : (
+        <div className="chat-kb-list">
+          <button
+            className={`chat-kb-option ${!selectedId ? 'active' : ''}`}
+            onClick={() => { onSelect(null); onClose() }}
+          >
+            <span className="chat-kb-option-name">不使用</span>
+            {!selectedId && <Check size={14} />}
+          </button>
+          {bases.map((kb) => (
+            <button
+              key={kb.id}
+              className={`chat-kb-option ${selectedId === kb.id ? 'active' : ''}`}
+              onClick={() => { onSelect(kb.id); onClose() }}
+            >
+              <span className="chat-kb-option-body">
+                <span className="chat-kb-option-name">{kb.name}</span>
+                <span className="chat-kb-option-meta">{kb.docCount} 文档 · {kb.chunkCount} 块</span>
+              </span>
+              {selectedId === kb.id && <Check size={14} />}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="chat-tools-footer">
+        <span className="chat-tools-footer-text">
+          {selectedId ? '发送时将自动检索并注入相关资料' : '未附加知识库'}
         </span>
       </div>
     </div>
@@ -1610,6 +1684,15 @@ export default function ChatView() {
   const toolsBtnRef = useRef<HTMLButtonElement>(null)
   const toolConfig = useStore(s => s.toolConfig)
   const setToolConfig = useStore(s => s.setToolConfig)
+  // 知识库附加面板
+  const [showKb, setShowKb] = useState(false)
+  const kbBtnRef = useRef<HTMLButtonElement>(null)
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseMeta[]>([])
+  const setKnowledgeBase = useChatStore((s) => s.setKnowledgeBase)
+  // 面板打开时拉取最新知识库列表
+  useEffect(() => {
+    if (showKb) window.api.knowledgeList().then(setKnowledgeBases).catch(() => { })
+  }, [showKb])
   const { speakingId, speak, stop: stopTts } = useTts()
   // 图片点击放大
   const [previewImage, setPreviewImage] = useState<string | null>(null)
@@ -2635,6 +2718,30 @@ ${msgsHtml}
     updatedSession.messages = [...updatedSession.messages] // 已含刚追加的两条
     const messages = multimodalMessages || buildOpenAiMessages(updatedSession)
 
+    // ── 知识库 RAG：发送前检索并将相关段落注入 system 上下文（原 system 之后）──
+    // messages 与 multimodalMessages 引用同一数组，故两个分支均生效；命中为空/低置信则跳过。
+    if (session.knowledgeBaseId && content.trim()) {
+      try {
+        const { hits, lowConfidence } = await window.api.knowledgeQuery(session.knowledgeBaseId, content, 4)
+        if (hits.length > 0 && !lowConfidence) {
+          const parts: string[] = []
+          let acc = 0
+          for (let i = 0; i < hits.length; i++) {
+            const seg = hits[i].text.length > 600 ? hits[i].text.slice(0, 600) + '…' : hits[i].text
+            if (acc + seg.length > 2500) break
+            acc += seg.length
+            parts.push(`[${i + 1}] (${hits[i].docName}) ${seg}`)
+          }
+          if (parts.length > 0) {
+            const ctxMsg = { role: 'system', content: '以下是从知识库检索到的资料，回答时请优先参考；若资料不足以回答，可结合自身知识：\n\n' + parts.join('\n\n') }
+            const msgs = messages as Array<Record<string, unknown>>
+            const insertAt = msgs.length > 0 && msgs[0].role === 'system' ? 1 : 0
+            msgs.splice(insertAt, 0, ctxMsg)
+          }
+        }
+      } catch { /* 检索失败不阻断发送 */ }
+    }
+
     try {
       let res
       if (multimodalMessages) {
@@ -3156,6 +3263,14 @@ ${msgsHtml}
               <Wrench size={16} />
             </button>
             <button
+              ref={kbBtnRef}
+              className={`chat-settings-btn ${activeSession?.knowledgeBaseId ? 'preview-active' : ''}`}
+              onClick={() => setShowKb((v) => !v)}
+              title="附加知识库"
+            >
+              <BookOpen size={16} />
+            </button>
+            <button
               className="chat-settings-btn"
               onClick={handleExportPng}
             >
@@ -3200,6 +3315,14 @@ ${msgsHtml}
             config={toolConfig}
             onClose={() => setShowTools(false)}
             onChange={setToolConfig}
+          />
+        )}
+        {showKb && (
+          <KnowledgeAttachCard
+            bases={knowledgeBases}
+            selectedId={activeSession?.knowledgeBaseId || null}
+            onClose={() => setShowKb(false)}
+            onSelect={(kbId) => activeSession && setKnowledgeBase(activeSession.id, kbId)}
           />
         )}
         <div className="chat-main-col">

@@ -4,7 +4,7 @@ import { shallow } from 'zustand/shallow'
 import { safeCall } from '../utils/safeCall'
 import {
   LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Server, Bot,
-  MessageSquare, Terminal, Info, FileText, Gauge, Code, ChevronDown
+  MessageSquare, Terminal, Info, FileText, Gauge, Code, ChevronDown, Wrench, BookOpen, AudioLines
 } from 'lucide-react'
 import '../styles/topnav.css'
 
@@ -34,6 +34,9 @@ const NAV_GROUPS: NavDef[][] = [
     { key: 'benchmark', label: '性能测试', icon: <Gauge size={14} />, color: '#f59e0b' },
     { key: 'terminal', label: '终端', icon: <Terminal size={14} />, color: '#64748b' },
     { key: 'ocr', label: 'OCR', icon: <FileText size={14} />, color: '#a855f7', runningSource: 'models' },
+    { key: 'model-tools', label: '模型工具', icon: <Wrench size={14} />, color: '#06b6d4' },
+    { key: 'knowledge', label: '知识库', icon: <BookOpen size={14} />, color: '#0d9488' },
+    { key: 'tts', label: '语音合成', icon: <AudioLines size={14} />, color: '#f43f5e' },
   ],
   [
     { key: 'agent-code', label: 'Agent Code', icon: <Code size={14} />, color: '#10b981' },
