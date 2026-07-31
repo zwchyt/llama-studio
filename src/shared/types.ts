@@ -128,7 +128,8 @@ export interface Attachment {
   name: string       // 文件名（如 "pasted_text.txt"）
   type: 'image' | 'file'
   content?: string   // 文本内容（用于提示注入，图片时为 undefined）
-  dataUrl?: string   // 图片 base64（仅图片类型）
+  dataUrl?: string   // 图片缩略图 base64（仅图片类型，用于气泡展示）
+  fullDataUrl?: string // 图片原图 base64（仅图片类型，持久化后用于多轮重发/重新生成）
 }
 export interface ToolCallInfo {
   id: string

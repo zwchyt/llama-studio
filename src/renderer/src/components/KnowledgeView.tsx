@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { BookOpen, Plus, Trash2, FileText, Loader2, Search, Upload, X } from 'lucide-react'
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
+import { BookOpen, Plus, Trash2, FileText, Loader2, Search, Upload, X, AlertTriangle } from 'lucide-react'
 import { notify } from '../store/notificationStore'
 import { extractTextFromFile } from '../utils/extractText'
 import type { KnowledgeBaseMeta, KnowledgeDoc, KnowledgeHit } from '../../../shared/types'
@@ -14,6 +15,9 @@ export default function KnowledgeView() {
   const [ingesting, setIngesting] = useState(false)
   const [ingestMsg, setIngestMsg] = useState('')
   const [dragOver, setDragOver] = useState(false)
+  // 删除确认悬浮弹窗（锚定在删除按钮旁）
+  const [delPop, setDelPop] = useState<{ id: string; name: string; anchor: DOMRect } | null>(null)
+  const delPopRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // 试搜索
@@ -58,8 +62,39 @@ export default function KnowledgeView() {
     } else notify('创建失败：' + (res.error || '未知错误'), 'error')
   }
 
+  // Esc 关闭删除确认悬浮弹窗
+  useEffect(() => {
+    if (!delPop) return
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setDelPop(null)
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [delPop])
+
+  // 弹窗渲染后实测尺寸，精准锚在按钮旁：优先右侧垂直居中，空间不足翻到左侧
+  useLayoutEffect(() => {
+    const el = delPopRef.current
+    if (!delPop || !el) return
+    const { anchor } = delPop
+    const w = el.offsetWidth
+    const h = el.offsetHeight
+    let x = anchor.right + 8
+    if (x + w > window.innerWidth - 8) x = anchor.left - w - 8
+    x = Math.max(8, x)
+    let y = anchor.top + anchor.height / 2 - h / 2
+    y = Math.max(8, Math.min(y, window.innerHeight - h - 8))
+    el.style.left = `${x}px`
+    el.style.top = `${y}px`
+    el.style.visibility = 'visible'
+  }, [delPop])
+
+  function openDeletePop(e: React.MouseEvent, base: KnowledgeBaseMeta) {
+    const anchor = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setDelPop({ id: base.id, name: base.name, anchor })
+  }
+
   async function handleDeleteBase(id: string) {
-    if (!confirm('确定删除该知识库？其中所有文档与索引都会被移除，不可撤销。')) return
     const res = await window.api.knowledgeDelete(id)
     if (res.success) {
       const list = await refreshBases()
@@ -159,7 +194,7 @@ export default function KnowledgeView() {
                 </div>
                 <button
                   className="btn btn-ghost btn-icon text-danger kb-list-item-del"
-                  onClick={(e) => { e.stopPropagation(); handleDeleteBase(b.id) }}
+                  onClick={(e) => { e.stopPropagation(); openDeletePop(e, b) }}
                   title="删除知识库"
                 >
                   <Trash2 size={13} />
@@ -257,6 +292,28 @@ export default function KnowledgeView() {
           )}
         </div>
       </div>
+
+      {/* 删除确认悬浮弹窗：Portal 到 body，锚定在删除按钮旁 */}
+      {delPop && createPortal(
+        <>
+          <div className="kb-del-pop-backdrop" onClick={() => setDelPop(null)} />
+          <div ref={delPopRef} className="kb-del-pop" style={{ visibility: 'hidden' }}>
+            <div className="kb-del-pop-title">
+              <AlertTriangle size={13} />
+              <span>删除知识库</span>
+            </div>
+            <div className="kb-del-pop-msg">「{delPop.name}」的所有文档与索引都会被移除，不可撤销。</div>
+            <div className="kb-del-pop-actions">
+              <button className="btn btn-ghost btn-sm" onClick={() => setDelPop(null)}>取消</button>
+              <button
+                className="btn btn-danger btn-sm"
+                onClick={() => { handleDeleteBase(delPop.id); setDelPop(null) }}
+              >删除</button>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
     </div>
   )
 }

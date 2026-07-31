@@ -1274,6 +1274,49 @@ export function registerIpcHandlers(): void {
     return { success: true }
   })
   // ── 原生聊天会话 CRUD（与 templates 同模式） ──
+  // 聊天图片附件存储：原图独立落盘，会话 JSON 仅存引用（chatimg://<文件名>）。
+  // 若内嵌数 MB base64，流式期间每 3s 节流落盘的 JSON.stringify + 同步写盘会
+  // 阻塞主进程（SSE 转发也在主进程），导致 token 输出周期性卡顿。
+  const CHAT_IMAGES_DIR = join(CHATS_DIR, 'images')
+  const CHATIMG_PREFIX = 'chatimg://'
+  const IMG_MIME_EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/bmp': 'bmp', 'image/svg+xml': 'svg' }
+  const IMG_EXT_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml' }
+  function saveChatImageFromDataUrl(dataUrl: string): string | null {
+    if (!dataUrl.startsWith('data:')) return null
+    const comma = dataUrl.indexOf(',')
+    if (comma < 0) return null
+    const meta = dataUrl.slice(5, comma) // 如 image/png;base64
+    if (!meta.includes('base64')) return null
+    const mime = meta.split(';')[0] || 'image/png'
+    const buf = Buffer.from(dataUrl.slice(comma + 1), 'base64')
+    if (buf.length === 0) return null
+    // 内容哈希作文件名：同图自动去重，重复落盘直接跳过
+    const hash = createHash('sha1').update(buf).digest('hex')
+    const name = `${hash}.${IMG_MIME_EXT[mime] || 'bin'}`
+    if (!existsSync(CHAT_IMAGES_DIR)) mkdirSync(CHAT_IMAGES_DIR, { recursive: true })
+    const fp = join(CHAT_IMAGES_DIR, name)
+    if (!existsSync(fp)) writeFileSync(fp, buf)
+    return CHATIMG_PREFIX + name
+  }
+  ipcMain.handle('save-chat-image', (_e, dataUrl: string): { ok: boolean; ref?: string; error?: string } => {
+    try {
+      if (typeof dataUrl !== 'string' || dataUrl.length > 64 * 1024 * 1024) return { ok: false, error: '无效图片数据' }
+      const ref = saveChatImageFromDataUrl(dataUrl)
+      return ref ? { ok: true, ref } : { ok: false, error: '无效的 dataUrl' }
+    } catch (err) { return { ok: false, error: String(err) } }
+  })
+  ipcMain.handle('read-chat-image', async (_e, ref: string): Promise<string | null> => {
+    try {
+      if (typeof ref !== 'string' || !ref.startsWith(CHATIMG_PREFIX)) return null
+      const name = ref.slice(CHATIMG_PREFIX.length)
+      if (/[\\/]/.test(name) || name.includes('..')) return null
+      const fp = join(CHAT_IMAGES_DIR, name)
+      if (!isSafePath(CHAT_IMAGES_DIR, fp) || !existsSync(fp)) return null
+      const buf = await fsPromises.readFile(fp)
+      const mime = IMG_EXT_MIME[extname(name).slice(1).toLowerCase()] || 'application/octet-stream'
+      return `data:${mime};base64,${buf.toString('base64')}`
+    } catch { return null }
+  })
   ipcMain.handle('list-chat-sessions', async () => {
     if (!existsSync(CHATS_DIR)) return []
     const files = await fsPromises.readdir(CHATS_DIR)
@@ -1293,6 +1336,19 @@ export function registerIpcHandlers(): void {
       if (/[\\/]/.test(id) || id.includes('..')) return { success: false, error: '无效的会话 ID' }
       const fp = join(CHATS_DIR, `${id}.json`)
       if (!isSafePath(CHATS_DIR, fp)) return { success: false, error: '访问被拒绝' }
+      // 兼容旧数据：附件内嵌的原图（data:）转独立文件引用，保持会话 JSON 小体积
+      const msgs = session.messages
+      if (Array.isArray(msgs)) {
+        for (const m of msgs as Array<Record<string, unknown>>) {
+          const atts = m?.attachments
+          if (!Array.isArray(atts)) continue
+          for (const a of atts as Array<Record<string, unknown>>) {
+            if (a && a.type === 'image' && typeof a.fullDataUrl === 'string' && a.fullDataUrl.startsWith('data:')) {
+              try { const ref = saveChatImageFromDataUrl(a.fullDataUrl); if (ref) a.fullDataUrl = ref } catch { /* 转换失败保留内嵌 */ }
+            }
+          }
+        }
+      }
       writeFileSync(fp, JSON.stringify({ ...session, id }, null, 2))
       return { success: true, id }
     } catch (err) { return { success: false, error: String(err) } }
@@ -2456,6 +2512,18 @@ export function registerIpcHandlers(): void {
       req.on('error', (e) => resolve({ ok: false, error: e.message }))
       req.setTimeout(5000, () => { req.destroy(); resolve({ ok: false, error: 'timeout' }) })
     })
+  })
+
+	  // --- server-props (查询 llama-server /props：多模态能力检测) ---
+  ipcMain.handle('server-props', async (_e, port: number): Promise<{ ok: boolean; modalities?: { vision?: boolean; audio?: boolean }; error?: string }> => {
+    try {
+      const raw = await httpGetText(`http://127.0.0.1:${port}/props`)
+      const props = JSON.parse(raw)
+      const modalities = props && typeof props.modalities === 'object' ? props.modalities : undefined
+      return { ok: true, modalities }
+    } catch (e: any) {
+      return { ok: false, error: e?.message || '/props 请求失败' }
+    }
   })
 
 	  // --- chat-completion (非流式聊天代理：POST /v1/chat/completions，返回解析后的 JSON) ---

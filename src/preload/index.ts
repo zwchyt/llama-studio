@@ -120,6 +120,9 @@ const fullApi = {
   deleteChatSession: (id: string) => ipcRenderer.invoke('delete-chat-session', id),
   chatStream: (opts: { streamId: string; port: number; body: object }) => ipcRenderer.invoke('chat-completion-stream', opts),
   chatCompletion: (opts: { port: number; body: object }) => ipcRenderer.invoke('chat-completion', opts),
+    getServerProps: (port: number) => ipcRenderer.invoke('server-props', port),
+  saveChatImage: (dataUrl: string) => ipcRenderer.invoke('save-chat-image', dataUrl),
+  readChatImage: (ref: string) => ipcRenderer.invoke('read-chat-image', ref),
   abortChatStream: (streamId: string) => ipcRenderer.invoke('chat-stream-abort', streamId),
   onChatStreamChunk: (callback: (data: { streamId: string; delta?: string; done: boolean; error?: string; usage?: { promptTokens: number; completionTokens: number }; msFirstToken?: number; decodeTokS?: number; toolCalls?: Array<{ id: string; function: { name: string; arguments: string } }>; toolCallsProgress?: Array<{ name: string }>; finishReason?: string }) => void) => {
     ipcRenderer.removeAllListeners('chat-stream-chunk')

@@ -52,6 +52,10 @@ templates/*
 chats/*
 !chats/.gitkeep
 
+# 本地知识库数据（用户文档与索引，不入库；保留空文件夹）
+knowledge/*
+!knowledge/.gitkeep
+
 chat-templates/*
 !chat-templates/.gitkeep
 

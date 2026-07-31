@@ -14,7 +14,7 @@ import {
   Plus, Send, Square, Trash2, Pencil, MessageSquare,
   ChevronDown, Bot, PanelLeftClose, PanelLeftOpen, Brain,
   Copy, Check, RotateCcw, ArrowDown, X, Eye, SlidersHorizontal, List, Play, Wrench,
-  Paperclip, FileText, GitBranch, Search, Download, Volume2, ImageDown, Star, BookOpen
+  Paperclip, FileText, GitBranch, Search, Download, Volume2, ImageDown, Star, BookOpen, User
 } from 'lucide-react'
 import { useChatStore, buildOpenAiMessages, DEFAULT_PARAMS } from '../store/chatStore'
 import { useStore } from '../store/useStore'
@@ -131,14 +131,107 @@ function trackThinkTiming(streamId: string, buf: string): void {
 // （Write/Edit/Read/Bash 等）。白名单写死，确保无论全局注册了什么工具都不会泄露。
 const CHAT_ALLOWED_TOOLS = ['get_datetime', 'web_search', 'fetch_webpage']
 
-// 根据工具开关配置 + 原生聊天白名单过滤工具定义列表
-function getEnabledToolDefinitions(): ToolDefinition[] {
-  const all = getToolDefinitions()
+// 会话级知识库检索工具：仅在当前会话附加了知识库时暴露给模型，
+// 定义与执行都局限在 ChatView，不进入 tools.ts 全局注册表（避免波及 Agent Code）。
+const KNOWLEDGE_SEARCH_TOOL: ToolDefinition = {
+  type: 'function',
+  function: {
+    name: 'knowledge_search',
+    description: '在当前会话附加的本地知识库中检索相关资料（BM25 关键词检索）。当用户的问题可能涉及知识库文档内容时调用此工具。',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '检索关键词（用文档中可能出现的词语，而非完整问句）' }
+      },
+      required: ['query']
+    }
+  }
+}
+
+// 根据工具开关配置 + 原生聊天白名单过滤工具定义列表；
+// 知识库检索工具受双重条件约束：会话附加了知识库 + 工具面板中未关闭该开关
+function getEnabledToolDefinitions(kbAttached?: boolean): ToolDefinition[] {
   const cfg = useStore.getState().toolConfig
   if (!cfg.enabled) return []
-  return all.filter(
+  const out: ToolDefinition[] = getToolDefinitions().filter(
     d => CHAT_ALLOWED_TOOLS.includes(d.function.name) && cfg.tools[d.function.name] !== false
   )
+  if (kbAttached && cfg.tools['knowledge_search'] !== false) out.push(KNOWLEDGE_SEARCH_TOOL)
+  return out
+}
+
+// ── 多模态消息构建（图片附件 → OpenAI image_url contentParts）────
+// 原图以独立文件形式落盘，fullDataUrl 存 chatimg:// 引用（避免会话 JSON 内嵌大 base64
+// 导致流式期间节流落盘阻塞主进程、输出卡顿）；发送前需先 hydrateSessionImages 回读原图
+const chatImageCache = new Map<string, string>() // chatimg:// 引用 → 原图 dataUrl
+async function hydrateSessionImages(messages: ChatMessage[]): Promise<void> {
+  const refs = new Set<string>()
+  for (const m of messages) {
+    if (m.role !== 'user') continue
+    for (const a of m.attachments || []) {
+      if (a.type === 'image' && a.fullDataUrl?.startsWith('chatimg://') && !chatImageCache.has(a.fullDataUrl)) refs.add(a.fullDataUrl)
+    }
+  }
+  await Promise.all([...refs].map(async ref => {
+    try {
+      const dataUrl = await window.api.readChatImage(ref)
+      if (dataUrl) chatImageCache.set(ref, dataUrl)
+    } catch { /* 回读失败降级缩略图 */ }
+  }))
+}
+// 解析附件可发送的图片 URL：内嵌 data: 直接用；chatimg:// 查缓存；未命中降级缩略图
+function resolveImageUrl(a: Attachment): string | undefined {
+  const src = a.fullDataUrl
+  if (!src) return a.dataUrl
+  if (src.startsWith('data:')) return src
+  return chatImageCache.get(src) || a.dataUrl
+}
+
+// 用户消息含图片附件时返回 contentParts 数组，否则返回纯文本
+function buildMessageContent(m: ChatMessage): string | Array<Record<string, unknown>> {
+  if (m.role !== 'user' || !m.attachments) return m.content
+  const imgs = m.attachments.filter(a => a.type === 'image' && (a.fullDataUrl || a.dataUrl))
+  if (imgs.length === 0) return m.content
+  const parts: Array<Record<string, unknown>> = []
+  if (m.content) parts.push({ type: 'text', text: m.content })
+  for (const a of imgs) parts.push({ type: 'image_url', image_url: { url: resolveImageUrl(a) } })
+  return parts
+}
+
+// 会话历史中是否存在可重发的图片附件
+function sessionHasImages(messages: ChatMessage[]): boolean {
+  return messages.some(m => m.role === 'user' && (m.attachments || []).some(a => a.type === 'image' && (a.fullDataUrl || a.dataUrl)))
+}
+
+// 按会话构建多模态感知的消息数组（历史图片一并重发，修复多轮失忆）；
+// 无图片时输出与 buildOpenAiMessages 完全一致
+function buildMultimodalMessages(session: ChatSession): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = []
+  if (session.systemPrompt && session.systemPrompt.trim()) {
+    out.push({ role: 'system', content: session.systemPrompt.trim() })
+  }
+  for (const m of session.messages) {
+    if (m.role === 'system') continue
+    if (!m.content && !m.error && (!m.attachments || m.attachments.length === 0)) continue
+    out.push({ role: m.role, content: buildMessageContent(m) })
+  }
+  return out
+}
+
+// ── 视觉能力检测（llama-server /props 的 modalities.vision）────
+// 返回 true/false；旧版后端无 modalities 字段或请求失败时返回 null（无法判定，不阻断）；
+// 按端口缓存 15s，避免每次发送都请求 /props
+const visionCache = new Map<number, { ts: number; vision: boolean | null }>()
+async function checkVisionSupport(port: number): Promise<boolean | null> {
+  const c = visionCache.get(port)
+  if (c && Date.now() - c.ts < 15000) return c.vision
+  let vision: boolean | null = null
+  try {
+    const res = await window.api.getServerProps(port)
+    if (res.ok && res.modalities && typeof res.modalities.vision === 'boolean') vision = res.modalities.vision
+  } catch { /* 无法判定，不阻断 */ }
+  visionCache.set(port, { ts: Date.now(), vision })
+  return vision
 }
 
 // ── 工具调用展示块（与 ThinkBlock 同构，可折叠）────
@@ -187,8 +280,9 @@ const TOOL_LABELS: Record<string, string> = {
   get_datetime: '获取当前时间',
   web_search: '搜索网页',
   fetch_webpage: '抓取网页内容',
+  knowledge_search: '知识库检索',
 }
-const TOOL_ORDER = ['get_datetime', 'web_search', 'fetch_webpage']
+const TOOL_ORDER = ['get_datetime', 'web_search', 'fetch_webpage', 'knowledge_search']
 
 function ToolToggleCard({ config, onClose, onChange }: {
   config: { enabled: boolean; tools: Record<string, boolean> }
@@ -249,10 +343,13 @@ function ToolToggleCard({ config, onClose, onChange }: {
         <div className="chat-tools-divider" />
       )}
 
-      {/* 单个工具开关 */}
+      {/* 单个工具开关（知识库检索附加说明：需会话附加知识库后才对模型生效） */}
       {config.enabled && TOOL_ORDER.map(name => (
         <div key={name} className="chat-tools-item">
-          <span className="chat-tools-item-label">{TOOL_LABELS[name] || name}</span>
+          <span className="chat-tools-item-label">
+            {TOOL_LABELS[name] || name}
+            {name === 'knowledge_search' && <span className="chat-tools-item-hint">需附加知识库</span>}
+          </span>
           <label className="chat-tools-switch chat-tools-switch-sm">
             <input type="checkbox" checked={!!config.tools[name]} onChange={() => toggleTool(name)} />
             <span className="chat-tools-switch-slider" />
@@ -1117,7 +1214,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
         </div>
         {isUser && (
           <div className="chat-msg-avatar chat-msg-avatar-user">
-            <span style={{ fontSize: 12, fontWeight: 700 }}>我</span>
+            <User size={14} />
           </div>
         )}
       </div>
@@ -2165,7 +2262,8 @@ export default function ChatView() {
 
   // 全局监听流式 chunk
   useEffect(() => {
-    // 清除可能残留的流状态（ChatView unmount 时流未结束导致卡死）
+    // ChatView 已常驻挂载（App 中 display 切换），本 effect 仅在应用启动时执行一次；
+    // 这里清理的是上次异常退出可能残留的流状态，不会再误杀切回视图时正在进行的流。
     const initSt = useChatStore.getState()
     for (const sid of Object.keys(initSt.streamingMap)) {
       initSt.clearStreamForSession(sid)
@@ -2275,6 +2373,34 @@ export default function ChatView() {
           for (const tc of toolCalls) {
             let args: Record<string, unknown> = {}
             try { args = JSON.parse(tc.function.arguments || '{}') } catch { /* keep empty */ }
+            // 知识库检索：会话级工具，直接走 IPC 查当前会话附加的库（不经过全局 executeToolCall）
+            if (tc.function.name === 'knowledge_search') {
+              const kbId = useChatStore.getState().sessions.find(s => s.id === targetSession.id)?.knowledgeBaseId
+              let result: string
+              if (!kbId) {
+                result = JSON.stringify({ error: '当前会话未附加知识库' })
+              } else {
+                try {
+                  const q = String(args.query ?? '').trim()
+                  const { hits, lowConfidence } = await window.api.knowledgeQuery(kbId, q, 6)
+                  result = JSON.stringify({
+                    query: q,
+                    lowConfidence,
+                    hits: hits.map(h => ({
+                      doc: h.docName,
+                      chunk: h.ordinal + 1,
+                      score: h.score,
+                      text: h.text.length > 600 ? h.text.slice(0, 600) + '…' : h.text
+                    }))
+                  })
+                } catch (e: any) {
+                  result = JSON.stringify({ error: e?.message || '知识库检索失败' })
+                }
+              }
+              toolResults.push({ callId: tc.id, name: tc.function.name, result })
+              tc.result = result
+              continue
+            }
             // 执行端兜底：原生聊天只允许白名单内的 3 个工具，
             // 其余（如 Write/Edit/Bash）即使模型发起也不执行，直接拒绝，避免误改本地文件。
             if (!CHAT_ALLOWED_TOOLS.includes(tc.function.name)) {
@@ -2298,6 +2424,9 @@ export default function ChatView() {
 
           // 构建第二轮请求的消息数组（手动构建，避免 buildOpenAiMessages 重复包含工具调用消息）
           const followSession = useChatStore.getState().sessions.find(s => s.id === targetSession.id)!
+          // 历史含图且 server 支持视觉时，图片在工具回合也一并重发（与首轮一致）
+          const followIncludeImages = sessionHasImages(followSession.messages) && (await checkVisionSupport(followSession.port)) !== false
+          if (followIncludeImages) await hydrateSessionImages(followSession.messages)
           const followMessages: Array<Record<string, unknown>> = []
           if (followSession.systemPrompt?.trim()) {
             followMessages.push({ role: 'system', content: followSession.systemPrompt.trim() })
@@ -2317,7 +2446,7 @@ export default function ChatView() {
               })
             } else {
               if (!m.content && !m.error) continue
-              followMessages.push({ role: m.role, content: m.content })
+              followMessages.push({ role: m.role, content: followIncludeImages ? buildMessageContent(m) : m.content })
             }
           }
           // 追加每个工具的结果
@@ -2365,7 +2494,7 @@ export default function ChatView() {
               top_k: followSession.params.top_k,
               max_tokens: followSession.params.max_tokens || -1,
               repeat_penalty: followSession.params.repeat_penalty,
-              tools: getEnabledToolDefinitions(),
+              tools: getEnabledToolDefinitions(!!followSession.knowledgeBaseId),
               stream: true
             }
           }).catch((e: any) => {
@@ -2606,6 +2735,21 @@ ${msgsHtml}
       return
     }
 
+    // ── 视觉能力检测：要发图但 server 未启用多模态（--mmproj）时阻断，保留输入与附件 ──
+    const pendingHasImages = attachedFiles.some(f => f.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name))
+    const historyHasImages = sessionHasImages(session.messages)
+    let visionOk = true
+    if (pendingHasImages || historyHasImages) {
+      const vision = await checkVisionSupport(session.port)
+      if (vision === false) {
+        if (pendingHasImages) {
+          notify('当前模型未启用多模态（需配置 --mmproj），无法发送图片', 'error')
+          return
+        }
+        visionOk = false // 仅历史有图：降级为纯文本发送，不阻断
+      }
+    }
+
     setInput('')
     // 重置 textarea 高度
     if (inputRef.current) {
@@ -2623,7 +2767,6 @@ ${msgsHtml}
     setPdfPageNum(new Map())
 
     const attachments: Attachment[] = []
-    const fullSizeMap: string[] = []
 
     if (pendingFiles.length > 0) {
       const fileContents = await Promise.all(pendingFiles.map(f => readFileContent(f)))
@@ -2633,46 +2776,21 @@ ${msgsHtml}
         const fc = fileContents[i]
         const f = pendingFiles[i]
         if (fc.isImage && fc.dataUrl) {
-          fullSizeMap.push(fc.dataUrl)
+          // 原图落盘为独立文件，附件只存 chatimg:// 引用（会话 JSON 保持小体积，
+          // 避免流式期间节流落盘卡顿）；落盘失败时回退内嵌原图
           const thumb = await makeThumbnail(fc.dataUrl, 300)
-          attachments.push({ name: f.name, type: 'image', dataUrl: thumb })
+          let fullRef = fc.dataUrl
+          try {
+            const saved = await window.api.saveChatImage(fc.dataUrl)
+            if (saved.ok && saved.ref) { fullRef = saved.ref; chatImageCache.set(saved.ref, fc.dataUrl) }
+          } catch { /* 回退内嵌原图 */ }
+          attachments.push({ name: f.name, type: 'image', dataUrl: thumb, fullDataUrl: fullRef })
         } else {
           attachments.push({ name: f.name, type: 'file', content: fc.text })
         }
       }
 
-      if (hasImages) {
-        // 构建含图片的 contentParts
-        const contentParts: Array<Record<string, unknown>> = []
-        if (content) contentParts.push({ type: 'text', text: content })
-        let imgIdx = 0
-        for (const att of attachments) {
-          if (att.type === 'image') {
-            contentParts.push({ type: 'image_url', image_url: { url: fullSizeMap[imgIdx++] } })
-          } else if (att.content) {
-            finalContent += `\n\n=====\n${att.content}\n=====`
-          }
-        }
-
-        // 关键！先追加用户消息到 store，再构建 multimodalMessages（这样新消息才在 store 里）
-        appendUserMessage(session.id, content, attachments)
-        multimodalMessages = []
-        if (session.systemPrompt?.trim()) {
-          multimodalMessages.push({ role: 'system', content: session.systemPrompt.trim() })
-        }
-        const sessionMessages = useChatStore.getState().sessions.find(s => s.id === session.id)?.messages || []
-        for (const m of sessionMessages) {
-          if (m.role === 'system') continue
-          if (!m.content && !m.error && (!m.attachments || m.attachments.length === 0)) continue
-          multimodalMessages.push({ role: m.role, content: m.content })
-        }
-        for (let i = multimodalMessages.length - 1; i >= 0; i--) {
-          if (multimodalMessages[i].role === 'user') {
-            multimodalMessages[i] = { role: 'user', content: contentParts }
-            break
-          }
-        }
-      } else {
+      if (!hasImages) {
         // 纯文本附件
         for (const att of attachments) {
           if (att.content) {
@@ -2682,9 +2800,16 @@ ${msgsHtml}
       }
     }
 
-    // 没有多模态时，普通追加用户消息
-    if (!multimodalMessages) {
-      appendUserMessage(session.id, content, attachments)
+    // 追加用户消息（图片附件含原图 fullDataUrl，随会话持久化）
+    appendUserMessage(session.id, content, attachments)
+
+    // 本轮或历史含图片且 server 支持视觉 → 多模态通道（历史图片一并重发，修复多轮失忆）
+    if (visionOk && (attachments.some(a => a.type === 'image') || historyHasImages)) {
+      const cur = useChatStore.getState().sessions.find(s => s.id === session.id)
+      if (cur) {
+        await hydrateSessionImages(cur.messages) // 历史原图按需从磁盘回读
+        multimodalMessages = buildMultimodalMessages(cur)
+      }
     }
 
     // 追加空的 assistant 占位消息
@@ -2718,63 +2843,64 @@ ${msgsHtml}
     updatedSession.messages = [...updatedSession.messages] // 已含刚追加的两条
     const messages = multimodalMessages || buildOpenAiMessages(updatedSession)
 
-    // ── 知识库 RAG：发送前检索并将相关段落注入 system 上下文（原 system 之后）──
-    // messages 与 multimodalMessages 引用同一数组，故两个分支均生效；命中为空/低置信则跳过。
-    if (session.knowledgeBaseId && content.trim()) {
+    // ── 知识库 RAG：附加后始终注入库声明（让模型知道知识库存在、可主动检索），
+    // 高置信命中时额外附上自动检索到的段落；插在原 system 之后。
+    // messages 与 multimodalMessages 引用同一数组，故两个分支均生效。
+    if (session.knowledgeBaseId) {
       try {
-        const { hits, lowConfidence } = await window.api.knowledgeQuery(session.knowledgeBaseId, content, 4)
-        if (hits.length > 0 && !lowConfidence) {
-          const parts: string[] = []
-          let acc = 0
-          for (let i = 0; i < hits.length; i++) {
-            const seg = hits[i].text.length > 600 ? hits[i].text.slice(0, 600) + '…' : hits[i].text
-            if (acc + seg.length > 2500) break
-            acc += seg.length
-            parts.push(`[${i + 1}] (${hits[i].docName}) ${seg}`)
+        const kb = await window.api.knowledgeGet(session.knowledgeBaseId)
+        if (kb) {
+          const docNames = (kb.docs || []).slice(0, 10).map((d: { name: string }) => d.name).join('、')
+          // 仅当检索工具真正暴露给模型时才提示可调用，避免误导模型调用不存在的工具
+          const tcfg = useStore.getState().toolConfig
+          const kbToolExposed = tcfg.enabled && tcfg.tools['knowledge_search'] !== false
+          const lines: string[] = [
+            `当前会话已附加本地知识库「${kb.name}」，共 ${(kb.docs || []).length} 个文档${docNames ? `：${docNames}${(kb.docs || []).length > 10 ? ' 等' : ''}` : ''}。` +
+            (kbToolExposed
+              ? '若需查阅库内资料，请调用 knowledge_search 工具检索；回答涉及文档内容时优先以检索结果为准。'
+              : '回答涉及文档内容时，优先以随消息附上的检索资料为准。')
+          ]
+          // 高置信命中时同时附上自动检索段落（保留原静默注入能力）
+          if (content.trim()) {
+            const { hits, lowConfidence } = await window.api.knowledgeQuery(session.knowledgeBaseId, content, 4)
+            if (hits.length > 0 && !lowConfidence) {
+              const parts: string[] = []
+              let acc = 0
+              for (let i = 0; i < hits.length; i++) {
+                const seg = hits[i].text.length > 600 ? hits[i].text.slice(0, 600) + '…' : hits[i].text
+                if (acc + seg.length > 2500) break
+                acc += seg.length
+                parts.push(`[${i + 1}] (${hits[i].docName}) ${seg}`)
+              }
+              if (parts.length > 0) {
+                lines.push('以下是针对本次提问自动检索到的相关资料：\n\n' + parts.join('\n\n'))
+              }
+            }
           }
-          if (parts.length > 0) {
-            const ctxMsg = { role: 'system', content: '以下是从知识库检索到的资料，回答时请优先参考；若资料不足以回答，可结合自身知识：\n\n' + parts.join('\n\n') }
-            const msgs = messages as Array<Record<string, unknown>>
-            const insertAt = msgs.length > 0 && msgs[0].role === 'system' ? 1 : 0
-            msgs.splice(insertAt, 0, ctxMsg)
-          }
+          const ctxMsg = { role: 'system', content: lines.join('\n\n') }
+          const msgs = messages as Array<Record<string, unknown>>
+          const insertAt = msgs.length > 0 && msgs[0].role === 'system' ? 1 : 0
+          msgs.splice(insertAt, 0, ctxMsg)
         }
       } catch { /* 检索失败不阻断发送 */ }
     }
 
     try {
-      let res
-      if (multimodalMessages) {
-        // 多模态：走 /v1/chat/completions，去掉 tools（多模态 + tools 冲突）
-        res = await window.api.chatStream({
-          streamId,
-          port: session.port,
-          body: {
-            messages: multimodalMessages,
-            temperature: session.params.temperature,
-            top_p: session.params.top_p,
-            top_k: session.params.top_k,
-            max_tokens: session.params.max_tokens || -1,
-            repeat_penalty: session.params.repeat_penalty,
-            stream: true
-          }
-        })
-      } else {
-        res = await window.api.chatStream({
-          streamId,
-          port: session.port,
-          body: {
-            messages,
-            temperature: session.params.temperature,
-            top_p: session.params.top_p,
-            top_k: session.params.top_k,
-            max_tokens: session.params.max_tokens || -1,
-            repeat_penalty: session.params.repeat_penalty,
-            tools: getEnabledToolDefinitions(),
-            stream: true
-          }
-        })
-      }
+      // 多模态与纯文本统一走 /v1/chat/completions，tools 一并携带（多模态与工具共存）
+      const res = await window.api.chatStream({
+        streamId,
+        port: session.port,
+        body: {
+          messages,
+          temperature: session.params.temperature,
+          top_p: session.params.top_p,
+          top_k: session.params.top_k,
+          max_tokens: session.params.max_tokens || -1,
+          repeat_penalty: session.params.repeat_penalty,
+          tools: getEnabledToolDefinitions(!!session.knowledgeBaseId),
+          stream: true
+        }
+      })
       if (!res.success && res.error) {
         // 错误已在 chunk 回调里处理；这里兜底
         const st = useChatStore.getState()
@@ -2975,7 +3101,7 @@ ${msgsHtml}
   }
 
   // 编辑用户消息：将内容回填到输入框，截断该消息及之后的所有消息
-  const handleEditMessage = useCallback((msgId: string, content: string, attachments?: Attachment[]) => {
+  const handleEditMessage = useCallback(async (msgId: string, content: string, attachments?: Attachment[]) => {
     if (!activeSessionId) return
     setInput(content)
     // 恢复附件
@@ -2985,12 +3111,21 @@ ${msgsHtml}
       const urlMap = new Map<number, string>()
       let fileIdx = 0
       for (const att of attachments) {
-        if (att.type === 'image' && att.dataUrl) {
-          // 从 dataUrl 创建 File 用于显示在 chips 中
-          const blob = dataUrlToBlob(att.dataUrl)
+        if (att.type === 'image' && (att.fullDataUrl || att.dataUrl)) {
+          // 原图为 chatimg:// 引用时从磁盘回读；失败回退缩略图
+          let src = att.fullDataUrl || att.dataUrl!
+          if (src.startsWith('chatimg://')) {
+            let full = chatImageCache.get(src) ?? null
+            if (!full) {
+              try { full = await window.api.readChatImage(src) } catch { full = null }
+              if (full) chatImageCache.set(src, full)
+            }
+            src = full || att.dataUrl || ''
+          }
+          const blob = dataUrlToBlob(src)
           const f = new File([blob], att.name, { type: blob.type })
           files.push(f)
-          urlMap.set(fileIdx, att.dataUrl)
+          urlMap.set(fileIdx, src)
           fileIdx++
         } else {
           // 文本文件：创建一个虚拟 File，内容从 attachment 恢复
@@ -3070,7 +3205,10 @@ ${msgsHtml}
 
     const updatedSession = { ...useChatStore.getState().sessions.find((s) => s.id === activeSessionId)! }
     updatedSession.messages = [...updatedSession.messages]
-    const messages = buildOpenAiMessages(updatedSession)
+    // 历史含图且 server 支持视觉时携带图片重发（修复重新生成丢图）
+    const regenIncludeImages = sessionHasImages(updatedSession.messages) && (await checkVisionSupport(session.port)) !== false
+    if (regenIncludeImages) await hydrateSessionImages(updatedSession.messages)
+    const messages = regenIncludeImages ? buildMultimodalMessages(updatedSession) : buildOpenAiMessages(updatedSession)
 
     try {
       await window.api.chatStream({
@@ -3146,7 +3284,10 @@ ${msgsHtml}
 
     // 手动构建消息数组，添加继续生成指令
     const currentSession = useChatStore.getState().sessions.find((s) => s.id === activeSessionId)!
-    const messages: Array<{ role: string; content: string }> = []
+    // 历史含图且 server 支持视觉时携带图片重发（修复继续生成丢图）
+    const contIncludeImages = sessionHasImages(currentSession.messages) && (await checkVisionSupport(session.port)) !== false
+    if (contIncludeImages) await hydrateSessionImages(currentSession.messages)
+    const messages: Array<Record<string, unknown>> = []
     if (currentSession.systemPrompt?.trim()) {
       messages.push({ role: 'system', content: currentSession.systemPrompt.trim() })
     }
@@ -3164,7 +3305,7 @@ ${msgsHtml}
         if (content) lastAsstHadText = true
       } else {
         if (!content && !m.error) continue
-        messages.push({ role: m.role, content })
+        messages.push({ role: m.role, content: contIncludeImages ? buildMessageContent({ ...m, content }) : content })
       }
     }
     // 注入接续指令（用 user 角色，因为大多数模板要求 system 只能在开头）
@@ -3599,8 +3740,8 @@ ${msgsHtml}
                 rows={1}
               />
               {activeStreamId ? (
-                <button className="btn btn-danger chat-send-btn" onClick={handleStop}>
-                  <Square size={15} />
+                <button className="btn btn-danger chat-send-btn chat-stop-btn" onClick={handleStop} title="停止生成">
+                  <Square size={13} fill="currentColor" />
                 </button>
               ) : (
                 <button

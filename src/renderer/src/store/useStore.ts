@@ -350,7 +350,7 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   setActiveChat: (url, port) => set({ activeChatUrl: url, activeChatPort: port }),
   clearActiveChat: () => set({ activeChatUrl: null, activeChatPort: null }),
   // ── 工具调用开关 ──
-  toolConfig: { enabled: true, tools: { get_datetime: true, web_search: true, fetch_webpage: true } },
+  toolConfig: { enabled: true, tools: { get_datetime: true, web_search: true, fetch_webpage: true, knowledge_search: true } },
   setToolConfig: (config) => set({ toolConfig: config }),
   // ── 提示音 ──
   soundEnabled: true,

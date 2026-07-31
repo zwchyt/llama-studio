@@ -55,6 +55,23 @@ export default function TopNavBar() {
   )
   const [openMenu, setOpenMenu] = useState<null | 'backend' | 'folders'>(null)
   const rightRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // 窗口过窄导航项横向溢出时：鼠标滚轮在导航栏上滚动转为横向滚动
+  // （滚动条保持隐藏）；用原生监听器 passive:false 以允许 preventDefault
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth) return // 未溢出时不拦截
+      const delta = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX
+      if (!delta) return
+      e.preventDefault()
+      el.scrollLeft += delta
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
 
   // 点击下拉菜单外部时关闭
   useEffect(() => {
@@ -89,7 +106,7 @@ export default function TopNavBar() {
 
   return (
     <div className="topnav">
-      <div className="topnav-scroll">
+      <div className="topnav-scroll" ref={scrollRef}>
         {NAV_GROUPS.map((group, gi) => (
           <React.Fragment key={gi}>
             {gi > 0 && <span className="topnav-divider" />}

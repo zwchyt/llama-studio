@@ -125,6 +125,9 @@ interface LlamaCppApi {
   deleteChatSession: (id: string) => Promise<{ success: boolean }>
   chatStream: (opts: { streamId: string; port: number; body: object }) => Promise<{ success: boolean; error?: string }>
   chatCompletion: (opts: { port: number; body: object }) => Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }>
+  getServerProps: (port: number) => Promise<{ ok: boolean; modalities?: { vision?: boolean; audio?: boolean }; error?: string }>
+  saveChatImage: (dataUrl: string) => Promise<{ ok: boolean; ref?: string; error?: string }>
+  readChatImage: (ref: string) => Promise<string | null>
   abortChatStream: (streamId: string) => Promise<{ success: boolean }>
   onChatStreamChunk: (cb: (data: ChatStreamChunk) => void) => void
   removeChatStreamListener: () => void

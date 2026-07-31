@@ -330,3 +330,53 @@
 @keyframes kb-rotate {
   to { transform: rotate(360deg); }
 }
+
+/* ── 删除确认悬浮弹窗（锚定在删除按钮旁） ── */
+.kb-del-pop-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 998;
+  background: transparent;
+}
+
+.kb-del-pop {
+  position: fixed;
+  z-index: 999;
+  width: 232px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: kb-pop-in 0.14s ease;
+}
+
+@keyframes kb-pop-in {
+  from { opacity: 0; transform: translateX(-4px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+.kb-del-pop-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger, #ef4444);
+}
+
+.kb-del-pop-msg {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.kb-del-pop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}

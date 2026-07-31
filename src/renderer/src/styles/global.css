@@ -928,7 +928,14 @@ select {
 .update-banner .ub-progress-fill {
   height: 100%;
   border-radius: 3px;
-  background: var(--success);
+  /* 渐变锚定在整条轨道宽度（120px，与 .ub-progress 一致）上：
+     填充条推进时逐步揭开更深的颜色，下载越多前端越深，100% 时到达最深 */
+  background: linear-gradient(90deg,
+      color-mix(in srgb, var(--success) 55%, #fff) 0%,
+      var(--success) 55%,
+      color-mix(in srgb, var(--success) 72%, #000) 100%);
+  background-size: 120px 100%;
+  background-repeat: no-repeat;
   transition: width .3s;
 }
 
