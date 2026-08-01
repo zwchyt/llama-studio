@@ -14,7 +14,7 @@ import katex from 'katex'
 import katexCssInline from 'katex/dist/katex.min.css?inline'
 import katexJsInline from 'katex/dist/katex.min.js?raw'
 import '../styles/monitoring.css'
-import { Send, Square, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles, Cpu, Play, ChevronsDownUp, ChevronsUpDown, Quote, Eye, Globe, FileDiff, Database } from 'lucide-react'
+import { Send, Square, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles, Cpu, Play, ChevronsDownUp, ChevronsUpDown, Quote, Eye, Globe, FileDiff, Database, MessageSquarePlus } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import hljs from 'highlight.js/lib/common'
@@ -53,7 +53,9 @@ import { recordDebugTurn, getDebugTurns, subscribeDebug, clearDebug, type DebugT
 import { getTaskGetPrompt } from '../tools/TaskGetTool/prompt'
 import { getTaskListPrompt } from '../tools/TaskListTool/prompt'
 import AgentFileTree from './AgentFileTree'
-import AgentBrowser from './AgentBrowser'
+import AgentBrowser, { formatAnnotations, ANNOTATION_KIND_LABEL, type UiAnnotation } from './AgentBrowser'
+// HTML 预览 iframe 的 UI 注释工具脚本（同源注入，?raw 打包为字符串）
+import AGENT_ANNOTATE_SCRIPT from '../utils/agentAnnotateScript.js?raw'
 
 import AgentContextPanel from './AgentContextPanel'
 import CodeBlock from './CodeBlock'
@@ -913,6 +915,25 @@ function previewLineNoFromTarget(t: EventTarget | null): number | null {
   return m ? Number(m[1]) : null
 }
 
+/* ── 像素网格（chevron 波前，Drive 变体）──
+   思考状态的统一视觉：首 token 前的 ThinkingLoader 与思考块的
+   「思考中」头部共用，保证等待窗口到思考流式的视觉全程一致，
+   无切换突兀感。650ms 周期短于 720ms 扫过总长，两个波前在飞行。 */
+const LOADER_CHEVRON = Array.from({ length: 9 }, (_, i) => {
+  const r = Math.floor(i / 3), c = i % 3
+  return (c + Math.abs(r - 1)) * 90
+})
+
+const ThinkGrid = React.memo(function ThinkGrid() {
+  return (
+    <span aria-hidden className="agent-think-grid">
+      {LOADER_CHEVRON.map((d, i) => (
+        <span key={i} className="agent-think-cell" style={{ animationDelay: `${d}ms` }} />
+      ))}
+    </span>
+  )
+})
+
 const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, durationMs }: { value: string; closed: boolean; isStreaming?: boolean; durationMs?: number }) {
   const [expanded, setExpanded] = useState(isStreaming ?? false)
   const [visible, setVisible] = useState(isStreaming ?? false)
@@ -1027,7 +1048,9 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
       <button className="agent-think-toggle" onClick={handleToggle}>
         {thinking ? (
           <span className="agent-think-status">
-            <Brain size={13} className="agent-think-brain" /> 思考中
+            {/* 思考中：像素网格（与首 token 前 ThinkingLoader 同一视觉，全程一致）；
+                流式结束后的「思考过程/已中断」折叠态仍用大脑图标 */}
+            <ThinkGrid /> 思考中
             <span className="agent-think-dur">{fmtThinkDur(elapsedMs)}</span>
             <ChevronRight size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
           </span>
@@ -1276,6 +1299,33 @@ const StreamingBadge = React.memo(function StreamingBadge({ text, modelLabel }: 
   )
 })
 
+/* ─────────────────────────────────────────────────────────
+ * THINKING LOADER — 首 token 到达前（首次思考）在消息区展示
+ * 「模型思考中…」占位，带实时计时；与输入框上方常驻状态栏互补，
+ * 避免等待窗口在会话区留白。网格与思考块「思考中」头部共用
+ * ThinkGrid，视觉全程一致。reduced-motion 时网格冻结，计时仍走。
+ * ───────────────────────────────────────────────────────── */
+function useLoaderElapsed() {
+  const [ds, setDs] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setDs(d => d + 1), 100)
+    return () => clearInterval(t)
+  }, [])
+  const total = ds / 10
+  return total < 60 ? `${total.toFixed(1)}s` : `${Math.floor(total / 60)}m ${(total % 60).toFixed(1)}s`
+}
+
+const ThinkingLoader = React.memo(function ThinkingLoader() {
+  const elapsed = useLoaderElapsed()
+  return (
+    <div className="agent-think-loader">
+      <ThinkGrid />
+      <span className="agent-think-loader-label">模型思考中</span>
+      <span className="agent-think-loader-time">{elapsed}</span>
+    </div>
+  )
+})
+
 // ── 流式正文（非思考段）Markdown 节流渲染 ──
 // 模型主输出（正文）在流式期间每 ~30ms 落盘一次（STREAM_FLUSH_MS），若不优化，每次都触发 react-markdown
 // + remark-gfm/math + rehype-katex + rehype-raw + rehype-sanitize 对「完整且持续变长」的
@@ -1513,8 +1563,15 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
   return (
     <>
       <div className={`agent-tool-call tool-${tc.name.toLowerCase()}${failed ? ' failed' : ''}`}>
-        <div className="agent-tool-call-head" onClick={readNameOnly ? undefined : handleToggle} style={readNameOnly ? { cursor: 'default' } : undefined}>
-          <Icon size={13} />
+        <div className={`agent-tool-call-head${readNameOnly ? ' readonly' : ''}`} onClick={readNameOnly ? undefined : handleToggle} style={readNameOnly ? { cursor: 'default' } : undefined}>
+          {/* hover 换脸：主图标淡出、chevron 旋转淡入，提示行可点击展开（借 ToolChips 交互，布局不变）；
+              Read 完成态头部不可展开（readonly），保持纯图标 */}
+          {readNameOnly ? <Icon size={13} /> : (
+            <span className="agent-tool-call-icon">
+              <Icon size={13} className="agent-tool-call-icon-main" />
+              <ChevronRight size={12} className="agent-tool-call-icon-chev" />
+            </span>
+          )}
           <span className="agent-tool-call-name">{tc.name}</span>
           {/* Read 成功：文件名直接内联到头部（文件树同款图标 + 可点跳预览），不再另渲展开体，避免文件名重复显示 */}
           {headFilePath ? (
@@ -1586,9 +1643,12 @@ const ToolCallGroup = React.memo(function ToolCallGroup({ toolCalls, onPreviewFi
 
 // ── 消息底部「文件变更汇总」──
 // 一条助手消息内所有成功且未被撤销的 Write/Edit 按文件聚合增删行数，
-// 在消息底部统一展示：头部「N 个文件已变更 +X -Y」，每个文件一行
-// （文件树同款图标 + 文件名 + 该文件增删，点击跳「变更」面板定位到该文件的 diff；右上角「审查」按钮打开变更界面）。
-const FileChangeSummary = React.memo(function FileChangeSummary({ toolCalls, onOpenChange, onReview }: { toolCalls?: AgentMessage['toolCalls']; onOpenChange: (p: string) => void; onReview: () => void }) {
+// 在消息底部统一展示：头部「N 个文件已变更 +X -Y」，每文件一行
+// （文件树同款图标 + 文件名 + 该文件增删，点击跳「变更」面板定位到该文件的 diff）。
+// 默认折叠：折叠态头部右侧仅「撤销」（一键写回本次修改前的原文件内容）；
+// 展开后文件竖排列表，每行右侧「审查」该文件的改动。
+const FileChangeSummary = React.memo(function FileChangeSummary({ toolCalls, onOpenChange, canUndoAll, onUndoAll }: { toolCalls?: AgentMessage['toolCalls']; onOpenChange: (p: string) => void; canUndoAll?: boolean; onUndoAll?: () => void }) {
+  const [expanded, setExpanded] = useState(false)
   const files = useMemo(() => {
     if (!toolCalls?.length) return []
     // status：Write 仅能新建文件（已存在会被拒）→ A；只有 Edit → M；先 Write 后 Edit 仍算新增 A
@@ -1627,8 +1687,9 @@ const FileChangeSummary = React.memo(function FileChangeSummary({ toolCalls, onO
   const totalAdded = files.reduce((s, f) => s + f.added, 0)
   const totalRemoved = files.reduce((s, f) => s + f.removed, 0)
   return (
-    <div className="agent-file-changes">
-      <div className="agent-file-changes-head">
+    <div className={`agent-file-changes${expanded ? ' expanded' : ''}`}>
+      <div className="agent-file-changes-head" onClick={() => setExpanded(v => !v)} role="button" tabIndex={0} title={expanded ? '收起文件变更' : '展开文件变更'} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(v => !v) } }}>
+        <ChevronRight size={12} className={`agent-file-changes-chev${expanded ? ' open' : ''}`} />
         {/* 文件差异图标：与「变更」语义对应，强化卡片身份 */}
         <FileDiff size={13} className="agent-file-changes-head-icon" />
         <span>{files.length} 个文件已变更</span>
@@ -1636,31 +1697,43 @@ const FileChangeSummary = React.memo(function FileChangeSummary({ toolCalls, onO
           {totalAdded > 0 && <span className="diff-add">+{totalAdded}</span>}
           {totalRemoved > 0 && <span className="diff-del">-{totalRemoved}</span>}
         </span>
-        {/* 右上角审查入口：打开「变更」面板总览本轮改动 */}
-        <button className="agent-file-changes-review" onClick={onReview} title="在变更面板中审查本轮改动">
-          <GitBranch size={11} /> 审查
+        {/* 头部右侧「撤销」：折叠/展开态均可用，一键写回本次修改前的原文件内容（仅当前会话内存备份有效） */}
+        <button className="agent-file-changes-undo" title="撤销本次全部修改（仅当前会话内存备份有效）" disabled={!canUndoAll} onClick={e => { e.stopPropagation(); onUndoAll?.() }}>
+          <Undo2 size={11} /> 撤销
         </button>
       </div>
-      {files.map(f => {
-        // 文件名 + 淡化目录前缀（与 Git 变更面板同构），同名文件可区分归属
-        const norm = f.path.replace(/\\/g, '/')
-        const cut = norm.lastIndexOf('/')
-        const parent = cut > 0 ? norm.slice(0, cut) : ''
-        return (
-          <button className="agent-file-changes-row" key={f.path} title={f.path} onClick={() => onOpenChange(resolveWorkspacePath(f.path))}>
-            {(() => { const { Icon: FIcon, color } = fileMeta(dirName(f.path)); return <FIcon size={13} style={{ color }} /> })()}
-            <span className="agent-file-changes-name">{dirName(f.path)}</span>
-            {/* 增删行数与 A/M 徽标紧跟文件名，扫视时名称、数字、状态一眼对应 */}
-            <span className="agent-tool-diffstat">
-              {f.added > 0 && <span className="diff-add">+{f.added}</span>}
-              {f.removed > 0 && <span className="diff-del">-{f.removed}</span>}
-            </span>
-            {/* 状态徽标：复用 Git 变更面板同款配色（A 新增 / M 修改） */}
-            <span className={`agent-git-badge s-${f.status}`} title={f.status === 'A' ? '新增文件' : '修改文件'}>{f.status}</span>
-            {parent && <span className="agent-file-changes-dir">{parent}</span>}
-          </button>
-        )
-      })}
+      <div className="agent-file-changes-collapse">
+        <div className="agent-file-changes-clip">
+          <div className="agent-file-changes-body">
+            {files.map((f, i) => {
+              // 文件名 + 淡化目录前缀（与 Git 变更面板同构），同名文件可区分归属
+              const norm = f.path.replace(/\\/g, '/')
+              const cut = norm.lastIndexOf('/')
+              const parent = cut > 0 ? norm.slice(0, cut) : ''
+              return (
+                <div className="agent-file-changes-line" key={f.path}>
+                  <button className="agent-file-changes-row" title={f.path} style={{ animationDelay: `${Math.min(i, 8) * 70}ms` }} onClick={() => onOpenChange(resolveWorkspacePath(f.path))}>
+                    {(() => { const { Icon: FIcon, color } = fileMeta(dirName(f.path)); return <FIcon size={12} style={{ color }} /> })()}
+                    <span className="agent-file-changes-name">{dirName(f.path)}</span>
+                    {/* 增删行数与 A/M 徽标紧跟文件名，扫视时名称、数字、状态一眼对应 */}
+                    <span className="agent-tool-diffstat">
+                      {f.added > 0 && <span className="diff-add">+{f.added}</span>}
+                      {f.removed > 0 && <span className="diff-del">-{f.removed}</span>}
+                    </span>
+                    {/* 状态徽标：复用 Git 变更面板同款配色（A 新增 / M 修改） */}
+                    <span className={`agent-git-badge s-${f.status}`} title={f.status === 'A' ? '新增文件' : '修改文件'}>{f.status}</span>
+                    {parent && <span className="agent-file-changes-dir">{parent}</span>}
+                  </button>
+                  {/* 每行右侧「审查」：审查该文件的改动（跳变更面板定位该文件 diff） */}
+                  <button className="agent-file-changes-review" title="在变更面板中审查该文件的改动" onClick={() => onOpenChange(resolveWorkspacePath(f.path))}>
+                    <GitBranch size={11} /> 审查
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
     </div>
   )
 })
@@ -1755,6 +1828,10 @@ export default function AgentCodeView() {
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null)
   // HTML 预览模式：'preview' 渲染成网页（沙箱 iframe，允许脚本），'source' 按源码逐行显示。
   const [htmlViewMode, setHtmlViewMode] = useState<'preview' | 'source'>('preview')
+  // HTML 预览 iframe 的 UI 注释（复用 agentAnnotateScript，同源注入）：激活态 + 注释列表
+  const [htmlAnnotateActive, setHtmlAnnotateActive] = useState(false)
+  const [htmlAnnotations, setHtmlAnnotations] = useState<UiAnnotation[]>([])
+  const htmlPreviewRef = useRef<HTMLIFrameElement | null>(null)
   // 预览标签右键菜单：{x,y} 屏幕坐标 + 目标标签 path
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; path: string } | null>(null)
   const tabMenuRef = useRef<HTMLDivElement>(null)
@@ -1948,6 +2025,19 @@ export default function AgentCodeView() {
   const onDragMove = useCallback((e: PointerEvent) => {
     const d = draggingRef.current
     if (!d) return
+    // 兜底：松开左键（pointerup 丢失防护）→ 立即结束拖拽并解绑。
+    // 指针捕获缺失时（鼠标移入 iframe/预览区）pointerup 可能丢失，导致
+    // draggingRef 残留 → 之后每次鼠标移动都触发宽度更新（表现为松开后仍跟随 + 卡顿）。
+    if (!(e.buttons & 1)) {
+      draggingRef.current = null
+      setPreviewResizing(false)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+      window.removeEventListener('pointermove', onDragMove)
+      window.removeEventListener('pointerup', onDragEnd)
+      window.removeEventListener('pointercancel', onDragEnd)
+      return
+    }
     lastClientXRef.current = e.clientX
     const dx = e.clientX - d.startX
     const next = d.startPreviewW - dx
@@ -1970,12 +2060,16 @@ export default function AgentCodeView() {
     document.body.style.cursor = ''
     window.removeEventListener('pointermove', onDragMove)
     window.removeEventListener('pointerup', onDragEnd)
+    window.removeEventListener('pointercancel', onDragEnd)
   }, [onDragMove])
 
   const lastClientXRef = useRef(0)
   const startResize = (type: 'tree' | 'preview') => (e: React.PointerEvent) => {
     if (type === 'tree') return // 文件树宽度固定不动
     e.preventDefault()
+    // 指针捕获：后续 pointermove/pointerup 强制派发到本元素（即使鼠标移入
+    // iframe/预览区），杜绝 pointerup 丢失导致的拖拽状态残留
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch {}
     lastClientXRef.current = e.clientX
     draggingRef.current = { startX: e.clientX, startPreviewW: previewWidth }
     setPreviewResizing(true)
@@ -1983,6 +2077,7 @@ export default function AgentCodeView() {
     document.body.style.cursor = 'col-resize'
     window.addEventListener('pointermove', onDragMove)
     window.addEventListener('pointerup', onDragEnd)
+    window.addEventListener('pointercancel', onDragEnd)
   }
 
   // 会话侧边栏宽度：拖拽侧边栏右边框时调整
@@ -1999,6 +2094,16 @@ export default function AgentCodeView() {
   const onSidebarDragMove = useCallback((e: PointerEvent) => {
     const d = sidebarDragRef.current
     if (!d) return
+    // 兜底：松开左键立即结束（pointerup 丢失防护，与预览拖拽同款）
+    if (!(e.buttons & 1)) {
+      sidebarDragRef.current = null
+      setSidebarResizing(false)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+      window.removeEventListener('pointermove', onSidebarDragMove)
+      window.removeEventListener('pointerup', onSidebarDragEnd)
+      return
+    }
     lastClientXRef.current = e.clientX
     const dx = e.clientX - d.startX
     const next = d.startW + dx
@@ -2020,6 +2125,8 @@ export default function AgentCodeView() {
   }, [sidebarWidth, applySidebarWidth])
   const startSidebarResize = (e: React.PointerEvent) => {
     e.preventDefault()
+    // 指针捕获：保证 pointerup 送达（与预览拖拽同款，防状态残留）
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch {}
     lastClientXRef.current = e.clientX // 同步更新最后坐标，供 onSidebarDragEnd 使用（与预览拖拽共享 ref）
     sidebarDragRef.current = { startX: e.clientX, startW: sidebarWidth }
     setSidebarResizing(true)
@@ -2250,6 +2357,9 @@ export default function AgentCodeView() {
   const autoApproveBtnRef = useRef<HTMLButtonElement>(null)
   const allowBtnRef = useRef<HTMLButtonElement>(null)
   const backupsRef = useRef<Record<string, { path: string; content: string }>>({})
+  // 本轮是否已作废过旧备份：新一轮对话产生第一个修改备份时清空更早对话的备份，
+  // 撤销状态只停留在「当前正在执行的修改」上（旧消息的撤销按钮随之置灰）。
+  const backupResetRef = useRef(false)
   const regenRollbackRef = useRef<{ sid: string; messages: AgentMessage[] } | null>(null)
   const [promptModalOpen, setPromptModalOpen] = useState(false)
   const [promptDraft, setPromptDraft] = useState('')
@@ -3309,6 +3419,8 @@ export default function AgentCodeView() {
     setAgentSessionId(sid)
     // 清空上一轮 agent 会话的提问记录，避免跨会话残留
     askUserQuestionRegistry.reset()
+    // 每轮重置「备份已作废」标记：本轮首个修改备份写入时才会清空旧备份
+    backupResetRef.current = false
 
     // 局部工具状态更新（直接改写闭包内的 displayMsgs，并同步提交 React）
     const patchToolCall = (liveId: string, tcId: string, patch: Partial<NonNullable<AgentMessage['toolCalls']>[number]>) => {
@@ -3851,7 +3963,13 @@ export default function AgentCodeView() {
             // ── 写 / 改 / 删前备份原文件（支持一键撤销）──
             if (BACKUP_TOOLS.has(tc.function.name)) {
               const backup = await backupBeforeTool(parseToolArgs(tc.function.arguments))
-              if (backup) backupsRef.current[tc.id] = backup
+              if (backup) {
+                // 新一轮对话产生第一个修改备份时，作废更早对话的撤销备份：
+                // 上一轮未撤销的修改不再可撤销（旧消息撤销按钮随之置灰），
+                // 撤销只停留在当前正在执行的修改上；本轮后续备份正常累积。
+                if (!backupResetRef.current) { backupsRef.current = {}; backupResetRef.current = true }
+                backupsRef.current[tc.id] = backup
+              }
             }
             // ★ 设置工具状态为 executing → flushSync 同步提交 React 渲染
             commitToolCall(liveId, tc.id, { status: 'executing' })
@@ -4396,6 +4514,38 @@ export default function AgentCodeView() {
     notify('已恢复文件：' + dirName(b.path), 'success')
   }, [activeProjectId, activeSessionId, setProjects])
 
+  // 一键撤销本次全部修改：同一消息内所有仍在备份中的工具调用（Write/Edit 等）
+  // 逐一把原文件内容写回；成功后统一标记 restored 并弹一条汇总通知（避免逐条 toast）。
+  const handleUndoAll = useCallback(async (msgId: string, toolCalls: AgentMessage['toolCalls']) => {
+    const entries = (toolCalls || []).map(tc => ({ id: tc.id, b: backupsRef.current[tc.id] })).filter(e => e.b)
+    if (!entries.length) return
+    let ok = 0
+    const failed: string[] = []
+    const okIds = new Set<string>()
+    for (const { id, b } of entries) {
+      try {
+        const res = await window.api.writeFile(b.path, b.content)
+        if (!res.success) { failed.push(dirName(b.path)); continue }
+        delete backupsRef.current[id]
+        okIds.add(id)
+        ok++
+      } catch { failed.push(dirName(b.path)) }
+    }
+    setProjects(prev => prev.map(p => p.id === activeProjectId ? {
+      ...p,
+      sessions: p.sessions.map(s => s.id === activeSessionId ? {
+        ...s,
+        messages: s.messages.map(m => m.id === msgId ? {
+          ...m,
+          toolCalls: (m.toolCalls || []).map(t => okIds.has(t.id) ? { ...t, restored: true, backupPath: undefined } : t)
+        } : m)
+      } : s)
+    } : p))
+    if (ok && failed.length === 0) notify(`已撤销 ${ok} 个文件的修改`, 'success')
+    else if (ok) notify(`已撤销 ${ok} 个文件的修改，${failed.length} 个失败：${failed.join('、')}`, 'error')
+    else notify('撤销失败：' + failed.join('、'), 'error')
+  }, [activeProjectId, activeSessionId, setProjects])
+
   // 稳定的「可撤销判断 / 撤销回调」引用：直接内联箭头函数会导致每次父组件重渲染都生成
   // 新函数身份，击穿 ToolCallGroup / ToolCallCard 的 React.memo，使工具卡片在流式每帧
   // （~100ms）都重新挂载 → 展开状态下 ToolArgsView / ToolResultView 反复重算 → 工具栏卡顿跳动。
@@ -4438,6 +4588,75 @@ export default function AgentCodeView() {
     }
     handleSend(text)
   }, [loading, apiBaseUrl, runningCard, handleSend])
+
+  // UI 注释发送（浏览器注释面板）：模型已启动直接发送，否则填入输入框待手动发送
+  const sendAnnotationsToAgent = useCallback((text: string) => {
+    if (loading || !apiBaseUrl || !runningCard) {
+      setInput(text)
+      notify('模型未启动，UI 注释已填入输入框', 'info')
+      return
+    }
+    handleSend(text)
+    notify('UI 注释已发送给 Agent', 'success')
+  }, [loading, apiBaseUrl, runningCard, handleSend, notify])
+
+  // HTML 预览注释发送：发送后清空宿主面板 + 页面内角标（卡片消失，内容已在会话可复查）
+  const sendHtmlAnnotations = useCallback(() => {
+    if (!htmlAnnotations.length) return
+    sendAnnotationsToAgent(formatAnnotations(htmlAnnotations))
+    setHtmlAnnotations([])
+    const win = htmlPreviewRef.current?.contentWindow as (Window & { __agentAnnotate?: any }) | null
+    try { win?.__agentAnnotate?.clear() } catch {}
+  }, [htmlAnnotations, sendAnnotationsToAgent])
+
+  // ── HTML 预览 iframe 的 UI 注释（同源 iframe：直接读写 contentWindow）──
+  // iframe 每次 srcDoc 变化都会重载，onLoad 时重新注入脚本（脚本自带防重复保护）
+  // 性能排查开关：false 时 HTML 预览不注入注释脚本（整个注释功能关闭）。
+  // 用于对比「注释功能是否导致预览卡顿」——改完保存（dev 热更新）拖拽测试即可。
+  const HTML_ANNOTATE_ENABLED = true
+  const injectHtmlAnnotate = useCallback(() => {
+    if (!HTML_ANNOTATE_ENABLED) return
+    const win = htmlPreviewRef.current?.contentWindow as (Window & { __agentAnnotate?: any }) | null
+    if (!win) return
+    try { (win as any).eval(AGENT_ANNOTATE_SCRIPT) } catch {}
+  }, [])
+
+  const toggleHtmlAnnotate = useCallback(() => {
+    const win = htmlPreviewRef.current?.contentWindow as (Window & { __agentAnnotate?: any }) | null
+    try { win?.__agentAnnotate?.toggle() } catch {}
+  }, [])
+
+  const clearHtmlAnnotations = useCallback(() => {
+    setHtmlAnnotations([])
+    const win = htmlPreviewRef.current?.contentWindow as (Window & { __agentAnnotate?: any }) | null
+    try { win?.__agentAnnotate?.clear() } catch {}
+  }, [])
+
+  const removeHtmlAnnotation = useCallback((id: string) => {
+    setHtmlAnnotations(prev => prev.filter(a => a.id !== id))
+    const win = htmlPreviewRef.current?.contentWindow as (Window & { __agentAnnotate?: any }) | null
+    try { win?.__agentAnnotate?.removeById(id) } catch {}
+  }, [])
+
+  // HTML 预览 iframe 的注释状态：同源 iframe 用 postMessage 事件驱动推送
+  // （脚本 sync() 时发送），无需轮询——拖拽预览宽度时零跨进程开销。
+  // 内容比较后才 setState，避免无谓的整组件重渲染。
+  useEffect(() => {
+    if (!HTML_ANNOTATE_ENABLED || !isPreviewHtml || htmlViewMode !== 'preview') return
+    const onMsg = (e: MessageEvent) => {
+      if (!e.data || e.data.source !== 'agent-annotate') return
+      const snap = e.data.data
+      if (!snap) return
+      setHtmlAnnotateActive(prev => prev === !!snap.active ? prev : !!snap.active)
+      setHtmlAnnotations(prev => {
+        const next = snap.annotations || []
+        if (prev.length === next.length && prev.every((a, i) => a.id === next[i].id && a.note === next[i].note && a.kind === next[i].kind)) return prev
+        return next
+      })
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
+  }, [isPreviewHtml, htmlViewMode])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // IME 组合输入中（中文/日文输入法选词）不触发发送，避免误发消息
@@ -4728,6 +4947,9 @@ export default function AgentCodeView() {
               // 此时把思考链收尾（thinkDone）并展示“正在生成…”卡片，直到 done 后真正的工具卡片接管。
               const genActive = streamingHere && isLast && msg.role === 'assistant' && !!genToolCalls?.length
               const genThinkDone = genActive && !hasToolCalls
+              // 首 token 前（流式中、消息尚无任何产出：无正文/无思考/无工具）：在消息区显示
+              // 像素网格思考加载器，与输入框上方状态栏的「模型思考中…」互补，避免等待留白。
+              const pendingFirstToken = streamingMsg && !msg.content && !(msg.segments?.length) && !hasToolCalls && !genToolCalls?.length
               return (
                 <div key={msg.id} className={`chat-msg chat-msg-${msg.role}`}>
                   {msg.role !== 'user' && (
@@ -4787,7 +5009,7 @@ export default function AgentCodeView() {
                             {renderSegments(msg.segments, msg.id)}
                             {msg.stopped && stoppedBadge}
                             {/* 消息完成后：底部统一展示本轮修改过的文件汇总（按文件聚合增删行） */}
-                            {!streamingThis && <FileChangeSummary toolCalls={msg.toolCalls} onOpenChange={openGitDiffAt} onReview={openGitDiff} />}
+                            {!streamingThis && <FileChangeSummary toolCalls={msg.toolCalls} onOpenChange={openGitDiffAt} canUndoAll={!!(msg.toolCalls?.some(t => canUndoFor(t)))} onUndoAll={() => handleUndoAll(msg.id, msg.toolCalls)} />}
                             {/* 交错消息完成后展示操作按钮；重新生成常驻渲染，
                                 流式中置灰禁用（而非隐藏），避免操作栏宽度跳变 */}
                             {!streamingThis && (
@@ -4807,6 +5029,8 @@ export default function AgentCodeView() {
                             {streamingThis && (
                               <StreamingBadge text={msg.content || ''} modelLabel={modelLabel} />
                             )}
+                            {/* 首 token 前：像素网格思考加载器（首次思考占位），首 token 到达后自动卸载 */}
+                            {pendingFirstToken && <ThinkingLoader />}
                             {genActive ? (
                               // 生成期不在会话区显示工具状态（改由输入框上方常驻状态栏展示），仅收起思考链
                               (msg.content ? <StreamingContent content={msg.content} streaming={streamingMsg} thinkDone={genThinkDone} /> : null)
@@ -4814,7 +5038,7 @@ export default function AgentCodeView() {
                               // 首 token 前不再渲染「模型思考中…」占位：该窗口的状态已由输入框上方常驻状态栏统一展示
                               <StreamingContent content={msg.content} streaming={streamingMsg} />
                             )}
-                            {!streamingThis && hasToolCalls && <FileChangeSummary toolCalls={msg.toolCalls} onOpenChange={openGitDiffAt} onReview={openGitDiff} />}
+                            {!streamingThis && hasToolCalls && <FileChangeSummary toolCalls={msg.toolCalls} onOpenChange={openGitDiffAt} canUndoAll={!!(msg.toolCalls?.some(t => canUndoFor(t)))} onUndoAll={() => handleUndoAll(msg.id, msg.toolCalls)} />}
                             {!streamingThis && !hasToolCalls && (
                               <div className="chat-msg-actions">
                                 <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content || '')}><Copy size={13} /></button>
@@ -5218,7 +5442,7 @@ export default function AgentCodeView() {
             </div>
             <div className={`agent-code-resize-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startResize('preview')} />
             <div className={`agent-browser-wrap ${rightPanelMode === 'browser' ? '' : 'hidden'}`}>
-              <AgentBrowser visible={rightPanelMode === 'browser' && treeOpen} />
+              <AgentBrowser visible={rightPanelMode === 'browser' && treeOpen} onSendToAgent={sendAnnotationsToAgent} />
             </div>
             <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''} ${rightPanelMode === 'browser' ? 'hidden' : ''}`}>
               <div className="agent-code-preview">
@@ -5271,6 +5495,17 @@ export default function AgentCodeView() {
                         {htmlViewMode === 'preview' ? <Code2 size={12} /> : <Eye size={12} />}
                       </button>
                     )}
+                    {/* HTML 预览的 UI 注释：点击预览元素添加注释（发送给 Agent 自动定位修改） */}
+                    {isPreviewHtml && htmlViewMode === 'preview' && (
+                      <button
+                        className={`btn btn-xs ac-icon-btn agent-code-preview-annotate${htmlAnnotateActive ? ' active' : ''}`}
+                        onClick={toggleHtmlAnnotate}
+                        title="UI 注释模式：点击预览元素添加注释（发送给 Agent 自动定位修改）"
+                      >
+                        <MessageSquarePlus size={12} />
+                        {htmlAnnotations.length > 0 && <span className="agent-code-preview-annotate-count">{htmlAnnotations.length}</span>}
+                      </button>
+                    )}
                     <button className="btn btn-xs agent-code-preview-close ac-icon-btn" onClick={() => activeTab && closeTab(activeTab.path)} disabled={!activeTab}>
                       <X size={12} />
                     </button>
@@ -5303,15 +5538,47 @@ export default function AgentCodeView() {
                             : <div className="agent-code-preview-error">无法预览该图片</div>
                         )
                           : isPreviewHtml && htmlViewMode === 'preview' ? (
-                            <iframe
-                              className="agent-code-preview-html"
-                              title={activeTab.name}
-                              // 不设 sandbox：预览页常需 localStorage/字体等同源能力，
-                              // 而 allow-scripts+allow-same-origin 的沙箱可被逃逸（Chromium
-                              // 每次挂载都告警），安全上等价于无沙箱。预览内容为用户
-                              // 本地生成的文件，直接同源运行，避免假沙箱告警与功能破坏。
-                              srcDoc={buildHtmlSrcDoc(activeTab.content ?? '', activeTab.path)}
-                            />
+                            <>
+                              <iframe
+                                ref={htmlPreviewRef}
+                                className="agent-code-preview-html"
+                                title={activeTab.name}
+                                // 不设 sandbox：预览页常需 localStorage/字体等同源能力，
+                                // 而 allow-scripts+allow-same-origin 的沙箱可被逃逸（Chromium
+                                // 每次挂载都告警），安全上等价于无沙箱。预览内容为用户
+                                // 本地生成的文件，直接同源运行，避免假沙箱告警与功能破坏。
+                                srcDoc={buildHtmlSrcDoc(activeTab.content ?? '', activeTab.path)}
+                                onLoad={injectHtmlAnnotate}
+                              />
+                              {/* UI 注释面板（复用浏览器注释面板样式） */}
+                              {htmlAnnotations.length > 0 && (
+                                <div className="agent-browser-annotations">
+                                  <div className="agent-browser-annotations-head">
+                                    <span>UI 注释（{htmlAnnotations.length}）</span>
+                                    <button className="agent-browser-annotations-clear" onClick={clearHtmlAnnotations} title="清空全部注释"><Trash2 size={11} /> 清空</button>
+                                  </div>
+                                  <div className="agent-browser-annotations-list">
+                                    {htmlAnnotations.map(a => (
+                                      <div className="agent-browser-annotations-item" key={a.id}>
+                                        <div className="agent-browser-annotations-note">
+                                          <span className={`agent-ann-kind kind-${a.kind}`}>{ANNOTATION_KIND_LABEL[a.kind]}</span>{a.note}
+                                        </div>
+                                        {a.kind === 'area' && a.rect
+                                          ? <div className="agent-browser-annotations-sel" title={`${Math.round(a.rect.w)}×${Math.round(a.rect.h)} @ (${Math.round(a.rect.x)}, ${Math.round(a.rect.y)})`}>区域 {Math.round(a.rect.w)}×{Math.round(a.rect.h)} @ ({Math.round(a.rect.x)},{Math.round(a.rect.y)}) · 覆盖 {a.elements.length} 元素</div>
+                                          : a.kind === 'text'
+                                            ? <div className="agent-browser-annotations-sel" title={a.text}>"{a.text}"</div>
+                                            : <div className="agent-browser-annotations-sel" title={a.elements.map(e => e.selector).join('\n')}>{a.elements.length > 1 ? `多选 ${a.elements.length} 个元素` : (a.elements[0]?.selector || '')}</div>}
+                                        {a.component && <div className="agent-browser-annotations-comp" title={a.component}>{a.component}</div>}
+                                        <button className="agent-browser-annotations-del" onClick={() => removeHtmlAnnotation(a.id)} title="删除该注释"><X size={11} /></button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <button className="agent-browser-annotations-send" onClick={sendHtmlAnnotations}>
+                                    <Send size={12} /> 发送给 Agent
+                                  </button>
+                                </div>
+                              )}
+                            </>
                           )
                             : isPreviewMarkdown ? (
                               <div className="agent-code-preview-md chat-msg-markdown">

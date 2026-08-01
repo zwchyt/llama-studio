@@ -1291,8 +1291,82 @@
   background: color-mix(in srgb, var(--tool-accent, var(--accent)) 7%, transparent);
 }
 
+/* hover 换脸（借 ToolChips 交互）：图标位叠放主图标 + chevron，
+   hover 头部时主图标淡出、chevron 旋转淡入，提示行可展开；
+   readonly 头（Read 完成态）不触发，保持纯图标。 */
+.agent-tool-call-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.agent-tool-call-icon-main {
+  transition: opacity .15s;
+}
+
+.agent-tool-call-icon-chev {
+  position: absolute;
+  opacity: 0;
+  transform: rotate(-90deg);
+  transition: opacity .15s, transform .15s;
+}
+
+.agent-tool-call-head:not(.readonly):hover .agent-tool-call-icon-main {
+  opacity: 0;
+}
+
+.agent-tool-call-head:not(.readonly):hover .agent-tool-call-icon-chev {
+  opacity: 1;
+  transform: rotate(0deg);
+}
+
+/* 工具名固定宽：头部 flex 中不被压缩，压缩职责交给 path/preview 的 ellipsis */
 .agent-tool-call-name {
+  flex-shrink: 0;
   color: var(--tool-accent, var(--accent));
+}
+
+/* 入场动画（借 ToolChips fade-up/pop-in 节奏）：工具卡/思考块/文件汇总
+   挂载时淡入一次（流式内容更新是同一元素，不重放）；diff 胶囊级联 pop-in。 */
+.agent-tool-call,
+.agent-think {
+  animation: agentFadeUp 250ms cubic-bezier(.23, 1, .32, 1) both;
+}
+
+.agent-file-changes {
+  animation: agentFadeUp 300ms cubic-bezier(.23, 1, .32, 1) both;
+}
+
+.agent-file-changes-row {
+  animation: agentPopIn 250ms cubic-bezier(.23, 1, .32, 1) both;
+}
+
+@keyframes agentFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes agentPopIn {
+  from {
+    opacity: 0;
+    transform: scale(.94);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .agent-tool-call-desc {
@@ -1412,8 +1486,9 @@
 }
 
 /* ── 消息底部「文件变更汇总」──
-   头部「N 个文件已变更 +X -Y」+ 每文件一行（图标 + 文件名 + 淡化目录 + 增删 + A/M 徽标）；
-   圆角容器配合 overflow: hidden，行可点击跳「变更」面板定位 diff。 */
+   圆角边框容器（信息块有框更醒目）+ 头部「N 个文件已变更 +X -Y」+
+   展开后文件竖排列表（每行文件 + 行尾「审查」）；
+   头部默认折叠，右侧「撤销」一键写回本次修改前的原文件内容。 */
 .agent-file-changes {
   margin-top: 6px;
   /* 与会话区对齐：铺满消息列全宽（与思考链/输出正文同宽），不再限定固定上限 */
@@ -1440,6 +1515,25 @@
   color: var(--text-secondary);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+  /* 头部整体可点击切换展开/折叠 */
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition);
+}
+
+.agent-file-changes-head:hover {
+  background: color-mix(in srgb, var(--text-muted) 6%, var(--surface));
+}
+
+/* 展开/折叠指示箭头：open 时旋转 90°（与工具卡 chevron 同款动效） */
+.agent-file-changes-chev {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform .15s;
+}
+
+.agent-file-changes-chev.open {
+  transform: rotate(90deg);
 }
 
 .agent-file-changes-head .agent-tool-diffstat {
@@ -1452,39 +1546,107 @@
   color: var(--text-secondary);
 }
 
-/* 右上角「审查」按钮：幽灵态小按钮，悬停转强调色，跳转变更功能界面 */
-.agent-file-changes-review {
+/* 头部右侧「撤销」：去框文字按钮，危险色；hover 红底反馈；
+   无可用备份时置灰禁用（本次修改已全部撤销 / 已过新一轮对话后自动灰掉） */
+.agent-file-changes-undo {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--danger);
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
-  transition: color var(--transition), border-color var(--transition), background var(--transition);
+  transition: color var(--transition), background var(--transition);
+}
+
+.agent-file-changes-undo:hover:not(:disabled) {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.agent-file-changes-undo:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
+/* 「审查」按钮：去框文字按钮，每行文件右侧（竖排列表的行尾），
+   悬停转强调色，跳变更面板定位该文件 diff */
+.agent-file-changes-review {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--transition), background var(--transition);
 }
 
 .agent-file-changes-review:hover {
   color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-.agent-file-changes-row {
+/* 折叠动画（grid 0fr→1fr，免高度测量）：默认折叠，展开时胶囊列表与
+   审查按钮平滑展开；折叠态头部右侧仅「撤销」一个操作 */
+.agent-file-changes-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows .25s cubic-bezier(.23, 1, .32, 1), opacity .2s ease;
+}
+
+.agent-file-changes.expanded .agent-file-changes-collapse {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.agent-file-changes-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 文件列表区：竖排，每行一个文件（文件名 + 增删 + 徽标），行尾右侧「审查」；
+   左侧细竖线 + 缩进与工具卡展开体同构（视觉重量接近纯文字） */
+.agent-file-changes-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-left: 6px;
+  border-left: 2px solid var(--border-strong);
+  padding: 4px 10px 6px 12px;
+}
+
+/* 单行容器：文件行（可点跳 diff）+ 行尾审查按钮 */
+.agent-file-changes-line {
   display: flex;
   align-items: center;
-  gap: 7px;
-  width: 100%;
-  padding: 5px 10px;
+  gap: 4px;
+}
+
+.agent-file-changes-row {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  margin: 0 -6px;
   border: none;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.5;
   text-align: left;
   cursor: pointer;
@@ -1492,15 +1654,11 @@
 }
 
 .agent-file-changes-row:hover {
-  background: var(--surface-hover);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
 .agent-file-changes-row:hover .agent-file-changes-name {
   color: var(--accent);
-}
-
-.agent-file-changes-row+.agent-file-changes-row {
-  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
 }
 
 .agent-file-changes-row svg {
@@ -1517,16 +1675,16 @@
   transition: color var(--transition);
 }
 
-/* 目录前缀：淡化小字，居右收尾并优先被压缩省略（左侧信息区：名称+增删+徽标） */
+/* 目录前缀：淡化小字，居尾并优先被压缩省略（胶囊内左侧信息区：名称+增删+徽标） */
 .agent-file-changes-dir {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
+  max-width: 40%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 10.5px;
   color: var(--text-muted);
-  text-align: right;
 }
 
 /* 破坏性工具审批面板：居中浮在输入框上方，固定较窄宽度（不撑满输入框） */
@@ -2139,6 +2297,35 @@
   flex-direction: column;
   background: var(--surface);
   overflow: hidden;
+  /* UI 注释面板（.agent-browser-annotations）绝对定位基准 */
+  position: relative;
+}
+
+/* HTML 预览的 UI 注释按钮：激活态橙色（与浏览器注释按钮一致） + 计数徽标 */
+.agent-code-preview-annotate {
+  position: relative;
+}
+
+.agent-code-preview-annotate.active {
+  color: #f59e0b;
+  background: color-mix(in srgb, #f59e0b 12%, transparent);
+}
+
+.agent-code-preview-annotate-count {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: #f59e0b;
+  color: #1a1a1a;
+  font-size: 8.5px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
+  box-sizing: border-box;
 }
 
 .agent-code-preview-header {
@@ -3628,7 +3815,7 @@
    Agent 思考链样式（.agent-think*）——与原生聊天 .chat-think*（chat.css）完全解耦，
    独立命名、独立维护。改动本块只影响 Agent 工作台，不波及原生聊天；反之亦然。
    配色完全由主题变量驱动（中性灰 + --accent），思考中状态用本文件私有关键帧
-   agentThinkShimmer / agentThinkBrainPulse（不再使用 global.css 的紫色系关键帧）。
+   agentThinkShimmer / agentPixelOn（不再使用 global.css 的紫色系关键帧）。
    ============================================================ */
 
 /* 容器：思考链「去框平铺」——无边框/背景，折叠态只是一行状态文字，
@@ -3698,27 +3885,113 @@
   color: var(--text-muted);
 }
 
-/* 大脑图标：思考中做呼吸脉冲 */
+/* 大脑图标：仅用于「思考过程 / 思考已中断 / 历史摘要」等非流式折叠态
+   （思考中的呼吸脉冲已由像素网格 agentThinkGrid 取代） */
 .agent-think-brain {
   flex-shrink: 0;
 }
 
-.agent-think.thinking .agent-think-brain {
-  color: var(--text);
-  animation: agentThinkBrainPulse 1.6s ease-in-out infinite;
+/* ── 思考状态像素网格（.agent-think-grid / .agent-think-cell）──
+   首 token 前的 ThinkingLoader 与思考块「思考中」头部共用，
+   保证等待窗口到思考流式的视觉全程一致。chevron 波前（Drive 变体）：
+   650ms 周期短于 720ms 扫过总长，始终保持两个波前在飞行。 */
+.agent-think-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 4px);
+  gap: 1.5px;
+  flex: none;
 }
 
-@keyframes agentThinkBrainPulse {
+.agent-think-cell {
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  background: var(--text);
+  opacity: .12;
+  animation: agentPixelOn 650ms ease-in-out infinite;
+}
+
+@keyframes agentPixelOn {
 
   0%,
+  45%,
   100% {
-    opacity: .55;
-    transform: scale(.92);
+    opacity: .12;
   }
 
-  50% {
+  30% {
     opacity: 1;
-    transform: scale(1.08);
+  }
+}
+
+/* ── 首 token 前思考加载器（.agent-think-loader*）：流光标签 + 等宽计时 ── */
+.agent-think-loader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  padding: 2px 0;
+}
+
+@keyframes agentPixelOn {
+
+  0%,
+  45%,
+  100% {
+    opacity: .12;
+  }
+
+  30% {
+    opacity: 1;
+  }
+}
+
+.agent-think-loader-label {
+  font-size: 13px;
+  font-weight: 500;
+  background: linear-gradient(90deg, var(--text-muted) 35%, var(--text) 50%, var(--text-muted) 65%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: agentLoaderShimmer 1.4s linear infinite;
+}
+
+@keyframes agentLoaderShimmer {
+  from {
+    background-position: 200% 0;
+  }
+
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.agent-think-loader-time {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* reduced-motion：网格冻结为暗态（不播放动画），流光文字转静态弱化色，
+   工具卡/思考块/文件汇总的入场动画一并关闭，计时仍走 */
+@media (prefers-reduced-motion: reduce) {
+  .agent-think-cell {
+    animation: none;
+  }
+
+  .agent-think-loader-label {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: var(--text-secondary);
+  }
+
+  .agent-tool-call,
+  .agent-think,
+  .agent-file-changes,
+  .agent-file-changes-row {
+    animation: none;
   }
 }
 

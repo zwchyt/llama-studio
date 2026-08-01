@@ -156,3 +156,206 @@
 body[style*="col-resize"] .agent-browser-webview {
   pointer-events: none;
 }
+
+/* ── UI 注释（Agentation 式）── */
+
+/* 注释面板定位基准 */
+.agent-browser {
+  position: relative;
+}
+
+/* 工具栏注释按钮：激活态橙色描边 + 计数徽标 */
+.agent-browser-nav-btn--active {
+  color: #f59e0b;
+  background: color-mix(in srgb, #f59e0b 12%, transparent);
+}
+
+.agent-browser-nav-btn--active:hover:not(:disabled) {
+  color: #f59e0b;
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+}
+
+.agent-browser-annotate-count {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: #f59e0b;
+  color: #1a1a1a;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.agent-browser-nav-btn {
+  position: relative;
+}
+
+/* 注释面板：右下角浮动，列表 + 操作栏 */
+.agent-browser-annotations {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 50;
+  width: 280px;
+  max-height: 45%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .25);
+  overflow: hidden;
+}
+
+.agent-browser-annotations-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-browser-annotations-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color .15s, background .15s;
+}
+
+.agent-browser-annotations-clear:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.agent-browser-annotations-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.agent-browser-annotations-item {
+  position: relative;
+  padding: 5px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.agent-browser-annotations-item:last-child {
+  border-bottom: none;
+}
+
+.agent-browser-annotations-note {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.45;
+  word-break: break-word;
+  padding-right: 16px;
+}
+
+.agent-browser-annotations-sel {
+  margin-top: 2px;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  color: #f59e0b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-browser-annotations-comp {
+  margin-top: 1px;
+  font-size: 10px;
+  color: #93c5fd;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-browser-annotations-del {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color .15s, background .15s;
+}
+
+.agent-browser-annotations-del:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.agent-browser-annotations-send {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin: 6px 10px 10px;
+  padding: 6px 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+
+.agent-browser-annotations-send:hover:not(:disabled) {
+  opacity: .88;
+}
+
+.agent-browser-annotations-send:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+/* 注释类型标签：元素=橙、区域/多选/文本=绿（与页面内标记颜色一致） */
+.agent-ann-kind {
+  display: inline-block;
+  margin-right: 5px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.6;
+  vertical-align: 1px;
+}
+
+.agent-ann-kind.kind-element {
+  background: color-mix(in srgb, #f59e0b 16%, transparent);
+  color: #f59e0b;
+}
+
+.agent-ann-kind.kind-area,
+.agent-ann-kind.kind-multi,
+.agent-ann-kind.kind-text {
+  background: color-mix(in srgb, #22c55e 16%, transparent);
+  color: #22c55e;
+}

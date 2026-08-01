@@ -1,6 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { ArrowLeft, ArrowRight, RotateCcw, Globe, X, ExternalLink, ZoomIn, ZoomOut, Home } from 'lucide-react'
+import { ArrowLeft, ArrowRight, RotateCcw, Globe, X, ExternalLink, ZoomIn, ZoomOut, Home, MessageSquarePlus, Trash2, Send } from 'lucide-react'
 import '../styles/agent-browser.css'
+// 注释工具脚本（?raw 打包为字符串）：webview dom-ready 后 executeJavaScript 注入。
+// 不走 webview preload 属性——preload 仅接受 file: 协议，dev 模式（http 页面）无法加载。
+import AGENT_ANNOTATE_SCRIPT from '../utils/agentAnnotateScript.js?raw'
 
 // Electron webview 元素的最小类型接口（仅声明组件实际使用的 API）
 interface WebviewElement extends HTMLElement {
@@ -15,9 +18,66 @@ interface WebviewElement extends HTMLElement {
   getURL(): string
   focus(): void
   setAudioMuted(muted: boolean): void
+  executeJavaScript(code: string): Promise<any>
 }
 
-export default function AgentBrowser({ visible = true }: { visible?: boolean }) {
+// preload 上报的注释条目（与 agentAnnotateScript.js 的注释结构一致）
+export interface UiAnnotation {
+  id: string
+  kind: 'element' | 'area' | 'multi' | 'text'
+  elements: { selector: string; tag: string; name: string; summary: string }[]
+  rect?: { x: number; y: number; w: number; h: number }
+  text?: string
+  styles: Record<string, string>
+  component: string
+  note: string
+  url: string
+  ts: number
+}
+
+export const ANNOTATION_KIND_LABEL: Record<UiAnnotation['kind'], string> = {
+  element: '元素', area: '区域', multi: '多选', text: '文本',
+}
+
+// 注释 → 给 Agent 的结构化 Markdown（选择器/组件链/样式/反馈，仿 Agentation Schema）
+export function formatAnnotations(list: UiAnnotation[]): string {
+  const head = list[0]?.url || ''
+  const lines = [
+    '# 页面 UI 反馈注释',
+    `页面: ${head}`,
+    `数量: ${list.length} 条`,
+    '',
+    ...list.map((a, i) => {
+      const style = Object.entries(a.styles || {}).map(([k, v]) => `${k}: ${v}`).join('; ')
+      const l = [`## ${i + 1}. ${a.note}`]
+      if (a.kind === 'area' && a.rect) {
+        l.push('- 类型: 区域')
+        l.push(`- 区域: ${Math.round(a.rect.w)}×${Math.round(a.rect.h)} @ (${Math.round(a.rect.x)}, ${Math.round(a.rect.y)})（视口坐标）`)
+        if (a.elements.length) l.push(`- 覆盖元素: ${a.elements.map(e => '`' + e.selector + '`').join(' / ')}`)
+      } else if (a.kind === 'multi') {
+        l.push(`- 类型: 多选（${a.elements.length} 个元素）`)
+        a.elements.forEach(e => l.push(`- 选择器: \`${e.selector}\`（<${e.tag}${e.name ? ' ' + e.name : ''}>${e.summary ? ' "' + e.summary + '"' : ''}）`))
+        if (style) l.push(`- 计算样式: ${style}`)
+      } else if (a.kind === 'text') {
+        l.push('- 类型: 文本')
+        if (a.text) l.push(`- 引用文本: "${a.text}"`)
+        const e = a.elements[0]
+        if (e) l.push(`- 元素: \`${e.selector}\`（<${e.tag}>）`)
+      } else {
+        const e = a.elements[0] || {}
+        l.push(`- 选择器: \`${e.selector || ''}\``)
+        l.push(`- 元素: <${e.tag || ''}${e.name ? ' ' + e.name : ''}>`)
+        if (e.summary) l.push(`- 文本: "${e.summary}"`)
+        if (a.component) l.push(`- React 组件链: ${a.component}`)
+        if (style) l.push(`- 计算样式: ${style}`)
+      }
+      return l.filter(Boolean).join('\n')
+    }),
+  ]
+  return lines.join('\n')
+}
+
+export default function AgentBrowser({ visible = true, onSendToAgent }: { visible?: boolean; onSendToAgent?: (text: string) => void }) {
   const [initialUrl, setInitialUrl] = useState('')
   const [inputUrl, setInputUrl] = useState('')
   const [title, setTitle] = useState('')
@@ -28,10 +88,67 @@ export default function AgentBrowser({ visible = true }: { visible?: boolean }) 
   const [crashed, setCrashed] = useState(false)
   const [unresponsive, setUnresponsive] = useState(false)
   const [zoom, setZoom] = useState(1)
+  const [annotateActive, setAnnotateActive] = useState(false)
+  const [annotations, setAnnotations] = useState<UiAnnotation[]>([])
   const zoomRef = useRef(zoom)
   useEffect(() => { zoomRef.current = zoom }, [zoom])
   const webviewRef = useRef<WebviewElement | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // 注释模式开关：通知 webview 内的注释工具（preload 会回传状态）
+  const toggleAnnotate = useCallback(() => {
+    const wv = webviewRef.current
+    if (!wv) return
+    wv.executeJavaScript('window.__agentAnnotate && window.__agentAnnotate.toggle()').catch(() => {})
+  }, [])
+
+  // 清空全部注释
+  const clearAnnotations = useCallback(() => {
+    setAnnotations([])
+    webviewRef.current?.executeJavaScript('window.__agentAnnotate && window.__agentAnnotate.clear()').catch(() => {})
+  }, [])
+
+  // 删除单条注释
+  const removeAnnotation = useCallback((id: string) => {
+    setAnnotations(prev => prev.filter(a => a.id !== id))
+    webviewRef.current?.executeJavaScript(`window.__agentAnnotate && window.__agentAnnotate.removeById(${JSON.stringify(id)})`).catch(() => {})
+  }, [])
+
+  // 发送给 Agent：结构化 Markdown → 回调 AgentCodeView（模型未启动时填入输入框）
+  // 发送成功后清空注释：宿主面板卡片消失 + 页面内角标清除（内容已在会话消息中可复查）
+  const sendToAgent = useCallback(() => {
+    if (!annotations.length) return
+    onSendToAgent?.(formatAnnotations(annotations))
+    setAnnotations([])
+    webviewRef.current?.executeJavaScript('window.__agentAnnotate && window.__agentAnnotate.clear()').catch(() => {})
+  }, [annotations, onSendToAgent])
+
+  // 轮询取回注释工具状态（active + 注释列表）：注入脚本在页面上下文无法推送，
+  // 由宿主周期性 snapshot；浏览器面板不可见时暂停以省开销。
+  // snapshot 每次返回新数组引用，内容比较后才 setState，避免轮询触发整组件重渲染。
+  useEffect(() => {
+    if (!initialUrl || !visible) return
+    const wv = webviewRef.current
+    if (!wv) return
+    let stopped = false
+    const tick = async () => {
+      if (stopped) return
+      try {
+        const snap = await wv.executeJavaScript('window.__agentAnnotate && window.__agentAnnotate.snapshot()')
+        if (snap && !stopped) {
+          setAnnotateActive(prev => prev === !!snap.active ? prev : !!snap.active)
+          setAnnotations(prev => {
+            const next = snap.annotations || []
+            if (prev.length === next.length && prev.every((a, i) => a.id === next[i].id && a.note === next[i].note && a.kind === next[i].kind)) return prev
+            return next
+          })
+        }
+      } catch {}
+    }
+    const t = setInterval(tick, 800)
+    tick()
+    return () => { stopped = true; clearInterval(t) }
+  }, [initialUrl, visible])
 
   // webview dom-ready 后绑定事件
   useEffect(() => {
@@ -42,8 +159,10 @@ export default function AgentBrowser({ visible = true }: { visible?: boolean }) 
     const onDomReady = () => {
       // 设置缩放（从 ref 读取最新值，避免将 zoom 加入 effect 依赖导致所有监听重绑）
       try { wv.setZoomFactor(zoomRef.current) } catch {}
+      // 注入注释工具脚本（页面每次加载后重新注入；脚本自带防重复保护）
+      wv.executeJavaScript(AGENT_ANNOTATE_SCRIPT).catch(() => {})
     }
-    const onStartLoad = () => { setLoading(true); setError(null) }
+    const onStartLoad = () => { setLoading(true); setError(null); setAnnotateActive(false); setAnnotations([]) }
     const onStopLoad = () => {
       setLoading(false)
       try {
@@ -236,6 +355,10 @@ export default function AgentBrowser({ visible = true }: { visible?: boolean }) 
           />
           {loading && <span className="agent-browser-loading-dot" />}
         </div>
+        <button className={`agent-browser-nav-btn${annotateActive ? ' agent-browser-nav-btn--active' : ''}`} onClick={toggleAnnotate} title="UI 注释模式：点击页面元素添加注释（发送给 Agent 自动定位修改）">
+          <MessageSquarePlus size={14} />
+          {annotations.length > 0 && <span className="agent-browser-annotate-count">{annotations.length}</span>}
+        </button>
         <button className="agent-browser-nav-btn" onClick={() => handleZoom(-1)} title="缩小" disabled={zoom <= 0.5}>
           <ZoomOut size={13} />
         </button>
@@ -271,6 +394,34 @@ export default function AgentBrowser({ visible = true }: { visible?: boolean }) 
             /* @ts-ignore */
             allowpopups="true"
           />
+          {/* UI 注释面板：注释列表 + 发送给 Agent */}
+          {annotations.length > 0 && (
+            <div className="agent-browser-annotations">
+              <div className="agent-browser-annotations-head">
+                <span>UI 注释（{annotations.length}）</span>
+                <button className="agent-browser-annotations-clear" onClick={clearAnnotations} title="清空全部注释"><Trash2 size={11} /> 清空</button>
+              </div>
+              <div className="agent-browser-annotations-list">
+                {annotations.map(a => (
+                  <div className="agent-browser-annotations-item" key={a.id}>
+                    <div className="agent-browser-annotations-note">
+                      <span className={`agent-ann-kind kind-${a.kind}`}>{ANNOTATION_KIND_LABEL[a.kind]}</span>{a.note}
+                    </div>
+                    {a.kind === 'area' && a.rect
+                      ? <div className="agent-browser-annotations-sel" title={`${Math.round(a.rect.w)}×${Math.round(a.rect.h)} @ (${Math.round(a.rect.x)}, ${Math.round(a.rect.y)})`}>区域 {Math.round(a.rect.w)}×{Math.round(a.rect.h)} @ ({Math.round(a.rect.x)},{Math.round(a.rect.y)}) · 覆盖 {a.elements.length} 元素</div>
+                      : a.kind === 'text'
+                        ? <div className="agent-browser-annotations-sel" title={a.text}>"{a.text}"</div>
+                        : <div className="agent-browser-annotations-sel" title={a.elements.map(e => e.selector).join('\n')}>{a.elements.length > 1 ? `多选 ${a.elements.length} 个元素` : (a.elements[0]?.selector || '')}</div>}
+                    {a.component && <div className="agent-browser-annotations-comp" title={a.component}>{a.component}</div>}
+                    <button className="agent-browser-annotations-del" onClick={() => removeAnnotation(a.id)} title="删除该注释"><X size={11} /></button>
+                  </div>
+                ))}
+              </div>
+              <button className="agent-browser-annotations-send" onClick={sendToAgent} disabled={!onSendToAgent}>
+                <Send size={12} /> 发送给 Agent
+              </button>
+            </div>
+          )}
         </>
       ) : (
         <div className="agent-browser-empty">输入网址或搜索关键词后按 Enter</div>
