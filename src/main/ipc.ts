@@ -13,7 +13,7 @@ import http from 'http'
 import { app } from 'electron'
 import { randomUUID, createHash } from 'crypto'
 import type * as ptyNs from 'node-pty'
-import type { AgentProject, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus } from '../shared/types'
+import type { AgentProject, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus, EngineKind } from '../shared/types'
 import { registerCodeMapIpc, disposeCodeMaps } from './services/codeMapService'
 import { registerRetrievalIpc } from './services/retrievalService'
 import { registerMemoryStoreIpc } from './services/memoryStore'
@@ -35,6 +35,22 @@ function countExtractedFiles(dir: string): number {
     else count++
   }
   return count
+}
+
+// 若目录中只有一个子目录且没有其他条目（zip 内顶层目录包裹，如 TensorSharp 发布包），
+// 把该子目录的内容上移一层，保证可执行文件直接位于后端版本目录下
+function flattenSingleRoot(dir: string): void {
+  let entries: string[] = []
+  try { entries = readdirSync(dir) } catch { return }
+  if (entries.length !== 1) return
+  const only = join(dir, entries[0])
+  let isDir = false
+  try { isDir = statSync(only).isDirectory() } catch { return }
+  if (!isDir) return
+  for (const e of readdirSync(only)) {
+    try { renameSync(join(only, e), join(dir, e)) } catch { return }
+  }
+  try { rmdirSync(only) } catch { }
 }
 
 interface TerminalSession {
@@ -106,6 +122,15 @@ interface BackendSchema { categories?: BackendCategory[] }
 function isBackendSchema(v: unknown): v is BackendSchema {
   return typeof v === 'object' && v !== null && 'categories' in v
 }
+const LLAMA_CPP_EXE_NAMES = new Set(['llama-server', 'llama-server.exe', 'main', 'main.exe', 'server', 'server.exe', 'llama-cli', 'llama-cli.exe'])
+// 按可执行文件名推断后端引擎类型（TensorSharp.Server.exe → 'tensorsharp'，llama.cpp 系列 → 'llamacpp'）
+function detectEngineKind(exe: string | null): EngineKind {
+  if (!exe) return 'other'
+  const n = basename(exe).toLowerCase()
+  if (n.includes('tensorsharp')) return 'tensorsharp'
+  if (LLAMA_CPP_EXE_NAMES.has(n)) return 'llamacpp'
+  return 'other'
+}
 const APP_ROOT = app.isPackaged ? join(app.getPath('userData')) : join(process.cwd())
 const MODELS_DIR = join(APP_ROOT, 'models')
 const TEMPLATES_DIR = join(APP_ROOT, 'templates')
@@ -115,6 +140,18 @@ const CHAT_TEMPLATES_DIR = join(APP_ROOT, 'chat-templates')
 const SETTINGS_PATH = join(APP_ROOT, 'settings.json')
 for (const dir of [MODELS_DIR, TEMPLATES_DIR, BACKEND_DIR, CHATS_DIR, CHAT_TEMPLATES_DIR]) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+}
+// 参数集由用户在参数设置里手动切换（paramSet），不自动识别引擎：
+// 'tensorsharp' → commands-tensorsharp.json，'llamacpp' → commands.json
+function schemaResourcePaths(paramSet: EngineKind): string[] {
+  const name = paramSet === 'tensorsharp' ? 'commands-tensorsharp.json' : 'commands.json'
+  return [
+    join(APP_ROOT, 'resources', name),
+    ...(app.isPackaged ? [join(process.resourcesPath, 'resources', name)] : [])
+  ]
+}
+function normalizeParamSet(paramSet: unknown): EngineKind {
+  return paramSet === 'tensorsharp' ? 'tensorsharp' : 'llamacpp'
 }
 // 活跃的聊天流式请求，按 streamId 索引，支持中止
 const activeChatStreams = new Map<string, http.ClientRequest>()
@@ -128,6 +165,9 @@ const chatStreamToolCalls = new Map<string, Array<{ index: number; id: string; t
 // 的整份文件内容）会逐 token 到达，前端看不到任何工具信号 → 表现为“一直思考中”。
 // 记录已上报的工具名签名，仅当新工具名出现时才推一次 toolCallsProgress 事件（避免逐 token 洪水）。
 const chatStreamToolProgress = new Map<string, string>()
+// 各端口的托管模型名缓存（/v1/models 查询结果）：llama.cpp 忽略 model 字段，但 TensorSharp
+// 会严格校验 model 必须与 --model 托管的 GGUF 匹配；模型停止时由 stop-model 失效对应端口缓存。
+const hostedModelCache = new Map<number, { id: string; at: number }>()
 // isSafePath 函数用于防止路径遍历攻击（Path Traversal Attack），也称为目录遍历攻击。
 function isSafePath(base: string, target: string): boolean {
   const rBase = resolve(base)
@@ -145,7 +185,8 @@ async function isAllowedModelPath(p: string): Promise<boolean> {
 }
 // 下面的代码实现了一个简单的命令行参数验证机制，确保只有在 commands.json 中定义的参数才会被传递给后端执行的模型运行命令。这有助于防止恶意用户通过 IPC 传递危险的参数来执行未授权的操作。
 const schemaCache = new Map<string, { allowed: Set<string>; boolean: Set<string> }>()
-function loadSchemaArgs(backendPath: string): { allowed: Set<string>; boolean: Set<string> } {
+// 加载后端的参数白名单：先读后端目录内用户保存的专属参数文件，再回退到 resources/ 下对应参数集的文件
+function loadSchemaArgs(backendPath: string, paramSet: EngineKind = 'llamacpp'): { allowed: Set<string>; boolean: Set<string> } {
   const cached = schemaCache.get(backendPath)
   if (cached) return cached
   let schema: BackendSchema | null = null
@@ -155,14 +196,11 @@ function loadSchemaArgs(backendPath: string): { allowed: Set<string>; boolean: S
       return isBackendSchema(parsed) ? parsed : null
     } catch { return null }
   }
-  const commandsPath = join(backendPath, 'commands.json')
+  // 用户保存的自定义参数集按参数集分文件名（TensorSharp → commands-tensorsharp.json，其他 → commands.json）
+  const commandsPath = join(backendPath, paramSet === 'tensorsharp' ? 'commands-tensorsharp.json' : 'commands.json')
   if (existsSync(commandsPath)) schema = tryLoad(commandsPath)
   if (!schema) {
-    const defaultPaths = [
-      join(APP_ROOT, 'resources', 'commands.json'),
-      ...(app.isPackaged ? [join(process.resourcesPath, 'resources', 'commands.json')] : [])
-    ]
-    for (const p of defaultPaths) {
+    for (const p of schemaResourcePaths(paramSet)) {
       if (existsSync(p)) { schema = tryLoad(p); break }
     }
   }
@@ -273,7 +311,7 @@ function loadSettingsSync(): AppSettings {
     return settingsCache
   } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
 }
-interface RunningProcess { proc: ChildProcess; port: number }
+interface RunningProcess { proc: ChildProcess; port: number; kind: EngineKind }
 const runningProcesses = new Map<string, RunningProcess>()
 // 模型日志缓存：主进程留存每个模型的输出块，界面刷新后可拉回历史日志（每模型限量，防内存膨胀）
 const MODEL_LOG_BUFFER_MAX = 1000
@@ -790,6 +828,23 @@ function findNvidiaSmi(): string | null {
   nvidiaSmiPath = 'nvidia-smi'
   return 'nvidia-smi'
 }
+// NVIDIA GPU 探测缓存（会话内一次）：用于 TensorSharp 启动时自动选择 CUDA 后端
+let nvidiaGpuCache: boolean | null = null
+function hasNvidiaGpu(): boolean {
+  if (nvidiaGpuCache !== null) return nvidiaGpuCache
+  nvidiaGpuCache = false
+  try {
+    const smiPath = findNvidiaSmi()
+    if (!smiPath) return false
+    const isWin = process.platform === 'win32'
+    const out = execSync(
+      isWin ? `"${smiPath}" --query-gpu=name --format=csv,noheader` : `${smiPath} --query-gpu=name --format=csv,noheader`,
+      { timeout: 5000, encoding: 'utf-8' }
+    )
+    nvidiaGpuCache = String(out).trim().length > 0
+  } catch { /* nvidia-smi 不可用则视为无 NVIDIA GPU */ }
+  return nvidiaGpuCache
+}
 let modelsCache: { ts: number; result: ModelFileInfo[] } | null = null
 let modelsScanPromise: Promise<ModelFileInfo[]> | null = null
 const MODELS_CACHE_TTL = 30000
@@ -1157,19 +1212,21 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('list-backends', async () => {
     if (!existsSync(BACKEND_DIR)) return []
+    // 递归查找后端目录内的可执行文件（先按已知服务名精确匹配，再兜底取首个 .exe）
     const findExecutable = async (dir: string, depth = 0): Promise<string | null> => {
       if (depth > 10) return null
       try {
         const files = await fsPromises.readdir(dir, { withFileTypes: true })
         const names = process.platform === 'win32'
-          ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe']
-          : ['llama-server', 'main', 'server']
+          ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe']
+          : ['llama-server', 'main', 'server', 'TensorSharp.Server']
         for (const n of names) {
           const found = files.find(f => !f.isDirectory() && f.name.toLowerCase() === n)
           if (found) return found.name
         }
         if (process.platform === 'win32') {
-          const exeFiles = files.filter(f => !f.isDirectory() && f.name.toLowerCase().endsWith('.exe'))
+          // 兜底：取目录内首个 .exe；跳过 createdump.exe（.NET 崩溃转储工具，非服务程序）
+          const exeFiles = files.filter(f => !f.isDirectory() && f.name.toLowerCase().endsWith('.exe') && f.name.toLowerCase() !== 'createdump.exe')
           if (exeFiles.length > 0) return exeFiles[0].name
         }
         for (const f of files) {
@@ -1184,13 +1241,17 @@ export function registerIpcHandlers(): void {
     const entries = await fsPromises.readdir(BACKEND_DIR, { withFileTypes: true })
     const backends = await Promise.all(
       entries.filter(d => d.isDirectory()).map(async (d) => {
-        const commandsPath = join(BACKEND_DIR, d.name, 'commands.json')
         const basePath = join(BACKEND_DIR, d.name)
+        const exe = await findExecutable(basePath)
+        const kind = detectEngineKind(exe)
+        // 参数集不同，自定义参数文件名也不同：TensorSharp → commands-tensorsharp.json，其他 → commands.json
+        const commandsPath = join(BACKEND_DIR, d.name, kind === 'tensorsharp' ? 'commands-tensorsharp.json' : 'commands.json')
         return {
           name: d.name,
           path: basePath,
           hasCommands: existsSync(commandsPath),
-          exe: await findExecutable(basePath)
+          exe,
+          kind
         }
       })
     )
@@ -1218,29 +1279,32 @@ export function registerIpcHandlers(): void {
       return { success: false, error: String(err) }
     }
   })
-  ipcMain.handle('get-commands', async (_e, backendName: string) => {
-    const commandsPath = join(BACKEND_DIR, backendName, 'commands.json')
-    if (!isSafePath(BACKEND_DIR, commandsPath)) return null
+  ipcMain.handle('get-commands', async (_e, backendName: string, paramSet?: EngineKind) => {
+    const backendPath = join(BACKEND_DIR, backendName)
+    if (!isSafePath(BACKEND_DIR, backendPath)) return null
+    // 参数集由参数设置里的切换按钮决定，主进程不自动识别引擎
+    const ps = normalizeParamSet(paramSet)
+    const fileName = ps === 'tensorsharp' ? 'commands-tensorsharp.json' : 'commands.json'
+    const commandsPath = join(backendPath, fileName)
     try {
       if (existsSync(commandsPath)) return JSON.parse(await fsPromises.readFile(commandsPath, 'utf-8'))
     } catch { }
-    const defaultPaths = [
-      join(APP_ROOT, 'resources', 'commands.json'),
-      ...(app.isPackaged ? [join(process.resourcesPath, 'resources', 'commands.json')] : [])
-    ]
-    for (const defaultPath of defaultPaths) {
+    for (const defaultPath of schemaResourcePaths(ps)) {
       try {
         if (existsSync(defaultPath)) return JSON.parse(await fsPromises.readFile(defaultPath, 'utf-8'))
       } catch { }
     }
     return null
   })
-  ipcMain.handle('save-backend-commands', (_e, backendName: string, schema: unknown) => {
+  ipcMain.handle('save-backend-commands', async (_e, backendName: string, schema: unknown, paramSet?: EngineKind) => {
     try {
       const backendPath = join(BACKEND_DIR, backendName)
       if (!isSafePath(BACKEND_DIR, backendPath)) return { success: false, error: '访问被拒绝' }
       if (!existsSync(backendPath)) mkdirSync(backendPath, { recursive: true })
-      writeFileSync(join(backendPath, 'commands.json'), JSON.stringify(schema, null, 2))
+      // 保存到对应参数集的文件（TensorSharp → commands-tensorsharp.json，llama.cpp → commands.json）
+      const ps = normalizeParamSet(paramSet)
+      const fileName = ps === 'tensorsharp' ? 'commands-tensorsharp.json' : 'commands.json'
+      writeFileSync(join(backendPath, fileName), JSON.stringify(schema, null, 2))
       return { success: true }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -1382,14 +1446,23 @@ export function registerIpcHandlers(): void {
     return { name: basename(r.filePaths[0]), path: r.filePaths[0] }
   })
   ipcMain.handle('get-model-logs', (_e, id: string) => modelLogBuffers.get(String(id)) ?? [])
-  ipcMain.handle('run-model', (_e, opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number }) => {
+  ipcMain.handle('run-model', (_e, opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: EngineKind; kind?: EngineKind }) => {
     if (runningProcesses.has(opts.id)) return { success: false, error: '已在运行中' }
     const exePath = join(opts.backendPath, opts.exe)
     if (!isSafePath(BACKEND_DIR, exePath)) return { success: false, error: '访问被拒绝' }
     if (!existsSync(exePath)) return { success: false, error: `可执行文件未找到: ${exePath}` }
     try {
-      const { allowed, boolean } = loadSchemaArgs(opts.backendPath)
+      // 参数白名单按参数集加载（参数设置里的切换按钮决定，TensorSharp → commands-tensorsharp.json），
+      // 文件本身只含对应参数，无需再按引擎二次过滤
+      const paramSet = normalizeParamSet(opts.paramSet)
+      const { allowed, boolean } = loadSchemaArgs(opts.backendPath, paramSet)
       const safeArgs = validateArgs(opts.args, allowed, boolean)
+      // TensorSharp 引擎（按实际可执行文件判断，与参数集无关）官方默认后端为 ggml_cpu（不自动探测 GPU）；
+      // 本机存在 NVIDIA GPU 且用户未显式指定 --backend 时，自动注入 ggml_cuda
+      const kind = opts.kind ?? detectEngineKind(opts.exe)
+      if (kind === 'tensorsharp' && !safeArgs.includes('--backend') && hasNvidiaGpu()) {
+        safeArgs.push('--backend', 'ggml_cuda')
+      }
       const proc = spawn(exePath, safeArgs, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: false })
       modelLogBuffers.delete(opts.id) // 新一轮启动：丢弃上一轮的日志缓存
       let prefillResetTimer: ReturnType<typeof setTimeout> | null = null
@@ -1429,8 +1502,8 @@ export function registerIpcHandlers(): void {
               }
             }
           }
-          // 监听就绪：llama_server: listening on http://127.0.0.1:8080
-          const readyMatch = line.match(/listening on (https?:\/\/\S+)/i)
+          // 监听就绪：llama_server: listening on http://127.0.0.1:8080 / ASP.NET: Now listening on: http://127.0.0.1:5000
+          const readyMatch = line.match(/listening on:?\s+(https?:\/\/\S+)/i)
           if (readyMatch) {
             BrowserWindow.getAllWindows().forEach(win => {
               if (!win.isDestroyed()) win.webContents.send('model-ready', { id: opts.id, url: readyMatch[1] })
@@ -1448,8 +1521,8 @@ export function registerIpcHandlers(): void {
         for (const raw of text.trim().split('\n')) {
           const line = raw.trim()
           if (!line) continue
-          // 监听就绪：llama_server: listening on http://127.0.0.1:8080
-          const readyMatch = line.match(/listening on (https?:\/\/\S+)/i)
+          // 监听就绪：llama_server: listening on http://127.0.0.1:8080 / ASP.NET: Now listening on: http://127.0.0.1:5000
+          const readyMatch = line.match(/listening on:?\s+(https?:\/\/\S+)/i)
           if (readyMatch) {
             BrowserWindow.getAllWindows().forEach(win => {
               if (!win.isDestroyed()) win.webContents.send('model-ready', { id: opts.id, url: readyMatch[1] })
@@ -1477,7 +1550,7 @@ export function registerIpcHandlers(): void {
         if (runningProcesses.size === 0) stopMetricsInterval()
         if (!_e.sender.isDestroyed()) _e.sender.send('model-error', { id: opts.id, error: msg })
       })
-      runningProcesses.set(opts.id, { proc, port: opts.port })
+      runningProcesses.set(opts.id, { proc, port: opts.port, kind })
       if (metricsPollingEnabled) startMetricsInterval()
       // send initial pid metric immediately
       if (proc.pid !== undefined) {
@@ -1511,9 +1584,10 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  function openChatWindow(port: number) {
+  function openChatWindow(port: number, kind: EngineKind = 'llamacpp') {
     if (!Number.isInteger(port) || port < 1024 || port > 65535) return
-    const chatUrl = `http://127.0.0.1:${port}`
+    // TensorSharp 的网页聊天 UI 在 /html（根路径返回 JSON 状态），llama.cpp 在根路径
+    const chatUrl = kind === 'tensorsharp' ? `http://127.0.0.1:${port}/html` : `http://127.0.0.1:${port}`
     const candidates = [
       join(process.cwd(), 'assets', 'llama-studio-icon.png'),
       join(__dirname, '../../assets/llama-studio-icon.png'),
@@ -1546,8 +1620,8 @@ export function registerIpcHandlers(): void {
     }
   }
 
-  ipcMain.handle('open-chat-window', (_e, port: number) => {
-    openChatWindow(port)
+  ipcMain.handle('open-chat-window', (_e, port: number, kind?: EngineKind) => {
+    openChatWindow(port, kind)
   })
   const killByPortAsync = (port: number): Promise<boolean> => {
     if (process.platform !== 'win32') return Promise.resolve(false)
@@ -1592,7 +1666,7 @@ export function registerIpcHandlers(): void {
       runningProcesses.delete(id)
       if (runningProcesses.size === 0) stopMetricsInterval()
       const tasks: Promise<unknown>[] = [killProcessTreeAsync(entry.proc)]
-      if (entry.port) tasks.push(killByPortAsync(entry.port))
+      if (entry.port) { tasks.push(killByPortAsync(entry.port)); hostedModelCache.delete(entry.port) }
       await Promise.all(tasks)
       return { success: true }
     }
@@ -1608,6 +1682,7 @@ export function registerIpcHandlers(): void {
       }
     }
     const killed = port ? await killByPortAsync(port) : false
+    if (port) hostedModelCache.delete(port)
     return { success: killed || !port, error: killed || !port ? undefined : '未在运行' }
   })
   // ── 性能基准测试 ──
@@ -1894,7 +1969,8 @@ export function registerIpcHandlers(): void {
       return { tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at, isNewer, noPackage: platformAssets.length === 0, assets: platformAssets.map((a: any) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size })) }
     } catch (err) { return { error: String(err) } }
   })
-  ipcMain.handle('download-release', async (event, opts: { url: string; version: string; assetName: string }) => {
+  // 共享的后端发布包下载 + 解压实现（llama.cpp 与 TensorSharp 通用）
+  async function downloadBackendRelease(event: Electron.IpcMainInvokeEvent, opts: { url: string; version: string; assetName: string }): Promise<{ success: boolean; path?: string; error?: string }> {
     if (!opts.version || /[\\/:*?"<>|]/.test(opts.version) || opts.version.includes('..')) {
       return { success: false, error: '无效的版本' }
     }
@@ -1953,6 +2029,9 @@ export function registerIpcHandlers(): void {
       const extractedCount = countExtractedFiles(extractPath)
       console.log('[dl] 解压完成, 文件数:', extractedCount)
       if (extractedCount === 0) throw new Error('解压后内容为空')
+      // 部分发布包（如 TensorSharp）zip 内含同名顶层目录，解压后会多套一层；
+      // 若解压目录只有一个子目录且无其他内容，则把内容上移一层
+      flattenSingleRoot(extractPath)
       try { unlinkSync(archivePath) } catch (e) { console.error('清理临时文件失败', e) }
       clearTimeout(overallTimer)
       return { success: true, path: extractPath }
@@ -1976,13 +2055,56 @@ export function registerIpcHandlers(): void {
       else if (msg.includes('overall')) cnMsg = '下载整体超时'
       return { success: false, error: cnMsg }
     }
-  })
+  }
+  ipcMain.handle('download-release', (event, opts: { url: string; version: string; assetName: string }) => downloadBackendRelease(event, opts))
+  ipcMain.handle('download-tensorsharp-release', (event, opts: { url: string; version: string; assetName: string }) => downloadBackendRelease(event, opts))
   ipcMain.handle('cancel-backend-download', () => {
     if (cancelBackendDl) {
       cancelBackendDl()
       cancelBackendDl = null
     }
     return { success: true }
+  })
+
+  // ── TensorSharp 引擎更新通道（zhongkaifu/TensorSharp 发布页）──
+  ipcMain.handle('check-tensorsharp-update', async () => {
+    try {
+      const release = await fetchJson('https://api.github.com/repos/zhongkaifu/TensorSharp/releases/latest') as any
+      if (!release || !release.assets) return { error: 'GitHub 返回数据无效' }
+      const isWin = process.platform === 'win32'
+      const isMac = process.platform === 'darwin'
+      const arch = process.arch
+      const platformAssets = release.assets.filter((a: any) => {
+        const n = a.name.toLowerCase()
+        if (!n.includes('tensorsharp-server')) return false
+        if (isWin) return n.endsWith('.zip') && n.includes('win-x64') && !(arch === 'arm64' && n.includes('arm64'))
+        if (isMac) return n.endsWith('.tar.gz') && n.includes('osx') && !(arch === 'x64' && n.includes('arm64'))
+        return n.endsWith('.tar.gz') && n.includes('linux-x64') && !n.includes('arm64')
+      }).sort((a: any, b: any) => {
+        // Windows 下优先 CUDA 包（官方资产顺序中 cpu 排在 cuda 前，需手动置前）
+        if (!isWin) return 0
+        const ca = a.name.toLowerCase().includes('cuda') ? 0 : 1
+        const cb = b.name.toLowerCase().includes('cuda') ? 0 : 1
+        return ca - cb
+      })
+      const latestNum = parseInt(String(release.tag_name).replace(/^v/i, '').replace(/\./g, ''), 10)
+      let isNewer = true
+      if (existsSync(BACKEND_DIR)) {
+        for (const d of readdirSync(BACKEND_DIR, { withFileTypes: true }).filter(d => d.isDirectory())) {
+          // 已装目录形如 tensorsharp-server-3.1.2.0-win-x64-cuda
+          const m = d.name.match(/tensorsharp[-\s]*server[-\s]*([\d.]+)/i)
+          if (m) {
+            const installedNum = parseInt(m[1].replace(/\./g, ''), 10)
+            if (!isNaN(installedNum) && !isNaN(latestNum) && installedNum >= latestNum) { isNewer = false; break }
+          }
+        }
+      }
+      return {
+        tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at,
+        isNewer, noPackage: platformAssets.length === 0,
+        assets: platformAssets.map((a: any) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size }))
+      }
+    } catch (err) { return { error: String(err) } }
   })
 
   // ── 应用自身更新 ───────────────────────────────────────────
@@ -2336,10 +2458,14 @@ export function registerIpcHandlers(): void {
   }
 
   async function collectMetrics(id: string, port: number, pid?: number): Promise<Record<string, unknown>> {
-    const [rawSlots, rawMetrics] = await Promise.all([
-      httpGetText(`http://127.0.0.1:${port}/slots`).catch(() => ''),
-      httpGetText(`http://127.0.0.1:${port}/metrics`).catch(() => ''),
-    ])
+    // TensorSharp 没有 /slots 与 /metrics（llama.cpp 专属），只采集 GPU/CPU 数据
+    const kind = runningProcesses.get(id)?.kind
+    const [rawSlots, rawMetrics] = kind === 'tensorsharp'
+      ? ['', '']
+      : await Promise.all([
+        httpGetText(`http://127.0.0.1:${port}/slots`).catch(() => ''),
+        httpGetText(`http://127.0.0.1:${port}/metrics`).catch(() => ''),
+      ])
     const gpu = cachedGpuData
     const payload: Record<string, unknown> = { id, lastUpdated: Date.now() }
     const slots = rawSlots ? tryParseJson(rawSlots) : null
@@ -2526,11 +2652,53 @@ export function registerIpcHandlers(): void {
     }
   })
 
-	  // --- chat-completion (非流式聊天代理：POST /v1/chat/completions，返回解析后的 JSON) ---
-  ipcMain.handle('chat-completion', (_e, opts: { port: number; body: Record<string, unknown> }): Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }> => {
+	  // 按端口反查运行中模型的引擎类型（runModel 时登记），供聊天代理按引擎调整请求体
+  function engineKindByPort(port: number): EngineKind | null {
+    for (const entry of runningProcesses.values()) {
+      if (entry.port === port) return entry.kind ?? 'llamacpp'
+    }
+    return null
+  }
+
+  // ── 聊天代理 model 字段兜底 ──
+  // llama.cpp 忽略 model 名，但 TensorSharp 的 /v1/chat/completions 会严格校验 model 必须
+  // 与 --model 托管的 GGUF 匹配（否则返回 "model 'X' is not hosted by this server"）。
+  // 原生聊天不发送 model 字段、Agent 兜底可能发送占位符 '模型'，统一按端口查询
+  // /v1/models 的托管模型 id 自动填充；查询失败不阻断，保持原样转发。
+  async function resolveChatModel(port: number, model?: unknown): Promise<string | undefined> {
+    if (typeof model === 'string' && model.trim() && model.trim() !== '模型') return model
+    const cached = hostedModelCache.get(port)
+    if (cached && Date.now() - cached.at < 10 * 60 * 1000) return cached.id
+    try {
+      const raw = await httpGetText(`http://127.0.0.1:${port}/v1/models`)
+      const parsed = JSON.parse(raw) as { data?: Array<{ id?: unknown }>; id?: unknown }
+      const list = Array.isArray(parsed?.data) ? parsed.data : []
+      const id = list[0]?.id ?? parsed?.id
+      if (typeof id === 'string' && id.trim()) {
+        hostedModelCache.set(port, { id: id.trim(), at: Date.now() })
+        return id.trim()
+      }
+    } catch { /* 查询失败：保持原样转发 */ }
+    return undefined
+  }
+
+  // --- chat-completion (非流式聊天代理：POST /v1/chat/completions，返回解析后的 JSON) ---
+  ipcMain.handle('chat-completion', async (_e, opts: { port: number; body: Record<string, unknown> }): Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }> => {
+    const { port, body } = opts
+    const model = await resolveChatModel(port, body.model)
+    const finalBody = model ? { ...body, model } : body
+    // max_tokens 兜底：llama.cpp 用 -1 表示沿用服务端默认，TensorSharp 对负数/0 会抛
+    // ArgumentOutOfRangeException → HTTP 500（实测）。统一剔除非正数，让服务端默认值生效。
+    if (typeof finalBody.max_tokens !== 'number' || finalBody.max_tokens <= 0) {
+      delete finalBody.max_tokens
+    }
+    // 思考链兜底：TensorSharp 需显式 think:true 才返回 reasoning_content（llama.cpp 默认返回），
+    // 按端口反查引擎自动补上；调用方已显式指定时以调用方为准。
+    if (finalBody.think === undefined && engineKindByPort(port) === 'tensorsharp') {
+      finalBody.think = true
+    }
     return new Promise((resolve) => {
-      const { port, body } = opts
-      const bodyStr = JSON.stringify({ ...body, stream: false })
+      const bodyStr = JSON.stringify({ ...finalBody, stream: false })
       const req = http.request(`http://127.0.0.1:${port}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
@@ -2558,10 +2726,21 @@ export function registerIpcHandlers(): void {
   })
 
   // --- chat-completion-stream (流式聊天代理：POST /v1/chat/completions，SSE 转发) ---
-	  ipcMain.handle('chat-completion-stream', (e, opts: {
-	    streamId: string; port: number; body: Record<string, unknown>
-	  }): Promise<{ success: boolean; error?: string }> => {
-	    // 节流：累积多个 token 后再发送，减少 IPC 频率（约 20fps）
+  ipcMain.handle('chat-completion-stream', async (e, opts: {
+    streamId: string; port: number; body: Record<string, unknown>
+  }): Promise<{ success: boolean; error?: string }> => {
+    const { streamId, port, body } = opts
+    const model = await resolveChatModel(port, body.model)
+    const finalBody = model ? { ...body, model } : body
+    // max_tokens 兜底：同 chat-completion（TensorSharp 对负数/0 抛 ArgumentOutOfRangeException）
+    if (typeof finalBody.max_tokens !== 'number' || finalBody.max_tokens <= 0) {
+      delete finalBody.max_tokens
+    }
+    // 思考链兜底：同 chat-completion（TensorSharp 需 think:true 才返回 reasoning_content）
+    if (finalBody.think === undefined && engineKindByPort(port) === 'tensorsharp') {
+      finalBody.think = true
+    }
+    // 节流：累积多个 token 后再发送，减少 IPC 频率（约 20fps）
 	    const streamThrottleTimers = new Map<string, ReturnType<typeof setTimeout>>()
 	    const streamPendingDeltas = new Map<string, string>()
 	    const STREAM_THROTTLE_MS = 5
@@ -2588,9 +2767,8 @@ export function registerIpcHandlers(): void {
 	      flushStreamDelta(streamId)
 	    }
 	    return new Promise((resolve) => {
-      const { streamId, port, body } = opts
       // stream_options.include_usage 让 llama-server 在流结束前发送 usage 统计
-      const bodyStr = JSON.stringify({ ...body, stream: true, stream_options: { include_usage: true } })
+      const bodyStr = JSON.stringify({ ...finalBody, stream: true, stream_options: { include_usage: true } })
       const streamStartTime = Date.now()
       let firstTokenTime: number | null = null
       let lastUsage: { promptTokens: number; completionTokens: number } | null = null

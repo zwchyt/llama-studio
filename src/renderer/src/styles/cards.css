@@ -307,6 +307,14 @@
   flex-shrink: 0;
 }
 
+/* 引擎类型徽标（llama.cpp / TensorSharp） */
+.card-tag--engine {
+  flex-shrink: 0;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
 .card-tag {
   display: inline-flex;
   align-items: center;

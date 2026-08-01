@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { useSidebarStore } from '../store/sidebarStore'
 import { shallow } from 'zustand/shallow'
-import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown, AlertTriangle, Check, Type } from 'lucide-react'
+import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown, AlertTriangle, Check, Type, Cpu } from 'lucide-react'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { SOUND_OPTIONS, previewSound } from '../utils/sound'
+import type { ReleaseInfo } from '../../../shared/types'
 
 import CommandsEditor from './CommandsEditor'
 import FontSelector from './FontSelector'
@@ -50,6 +51,10 @@ export default function SettingsView() {
   const [extFolders, setExtFolders] = useState<string[]>([])
   const [imgFolders, setImgFolders] = useState<string[]>([])
   const [metricsPolling, setMetricsPolling] = useState(true)
+  // TensorSharp 引擎发布信息（独立于 llama.cpp 更新通道）
+  const [tsReleaseInfo, setTsReleaseInfo] = useState<ReleaseInfo | null>(null)
+  const [tsChecking, setTsChecking] = useState(false)
+  const [tsDownloading, setTsDownloading] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const deletePopoverRef = useRef<HTMLDivElement>(null)
   const deleteConfirmRef = useRef<HTMLButtonElement>(null)
@@ -135,7 +140,8 @@ export default function SettingsView() {
     const b = backends.find(x => x.name === name)
     if (!b) return
     setActiveBackend(b)
-    const cmds = await safeCall(() => window.api.getCommands(name), '切换后端失败')
+    // 切换后端时按其类型加载默认参数集
+    const cmds = await safeCall(() => window.api.getCommands(name, b.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp'), '切换后端失败')
     if (cmds) setCommandsSchema(cmds)
   }
 
@@ -182,6 +188,41 @@ export default function SettingsView() {
         setBackends(backendsData)
         if (backendsData.length > 0) setActiveBackend(backendsData[0])
       }
+    } else if (res && !res.success) {
+      notify(`下载失败：${res.error}`, 'error')
+    }
+  }
+
+  async function handleCheckTsUpdates() {
+    setTsChecking(true)
+    try {
+      const info = await window.api.checkTensorsharpUpdate()
+      setTsReleaseInfo(info)
+    } finally {
+      setTsChecking(false)
+    }
+  }
+
+  const handleTsDownload = async () => {
+    if (!tsReleaseInfo || !tsReleaseInfo.assets?.length) return
+    const asset = tsReleaseInfo.assets[0]
+    setTsDownloading(true)
+    const res = await safeCall(() => window.api.downloadTensorsharpRelease({
+      url: asset.downloadUrl,
+      // 版本目录名 = 资源名去掉扩展名（如 tensorsharp-server-3.1.2.0-win-x64-cuda）
+      version: asset.name.replace(/\.(zip|tar\.gz)$/, ''),
+      assetName: asset.name
+    }), '下载 TensorSharp 失败')
+    setTsDownloading(false)
+    if (res && res.success) {
+      notify('TensorSharp 安装完成', 'success')
+      const backendsData = await safeCall(() => window.api.listBackends(), '刷新后端列表失败')
+      if (backendsData) setBackends(backendsData)
+      // 安装后立即复查版本状态，让"已是最新"徽标及时生效
+      try {
+        const info = await window.api.checkTensorsharpUpdate()
+        setTsReleaseInfo(info)
+      } catch { /* 忽略复查失败 */ }
     } else if (res && !res.success) {
       notify(`下载失败：${res.error}`, 'error')
     }
@@ -471,6 +512,8 @@ export default function SettingsView() {
                   <div>
                     <div className="settings-row-label flex items-center gap-2">
                       {b.name}
+                      {b.kind === 'tensorsharp' && <span className="version-badge ts-badge">TensorSharp</span>}
+                      {b.kind === 'llamacpp' && <span className="version-badge">llama.cpp</span>}
                       {activeBackend?.name === b.name && <span className="version-badge active-version">当前使用</span>}
                       {!b.hasCommands && <span className="version-badge">回退架构</span>}
                     </div>
@@ -623,6 +666,57 @@ export default function SettingsView() {
           </button>
         </div>
         </div>
+
+      { }
+      <div className="settings-section">
+        <div className="settings-section-title"><Cpu /> TensorSharp 引擎</div>
+        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            TensorSharp.Server（OpenAI / Ollama 兼容推理服务器，支持多模态 / PDF / 视频）。与 llama.cpp 引擎并行安装、互不干扰；
+            监听地址固定为 <code>http://0.0.0.0:5000</code>（官方硬编码），请勿同时运行两张 TensorSharp 模型卡或占用 5000 端口的服务。
+          </p>
+          {tsChecking ? (
+            <div className="flex items-center gap-2 text-sm py-2" style={{ color: 'var(--text-muted)' }}>
+              <RefreshCw size={14} className="spin" /> 正在检查 GitHub 发布...
+            </div>
+          ) : tsReleaseInfo ? (
+            tsReleaseInfo.error ? (
+              <div className="text-danger text-sm py-2">错误：{tsReleaseInfo.error}</div>
+            ) : tsReleaseInfo.noPackage ? (
+              <div className="text-sm py-2" style={{ color: 'var(--text-muted)' }}>未检测到适用于当前平台的 TensorSharp 发布包。</div>
+            ) : (
+              <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12, padding: '6px 0' }}>
+                <div>
+                  <div className="settings-row-label">{tsReleaseInfo.name || tsReleaseInfo.tagName}</div>
+                  <div className="settings-row-sub">
+                    发布日期：{new Date(tsReleaseInfo.publishedAt).toLocaleDateString()}
+                    {tsReleaseInfo.isNewer === false && <span style={{ marginLeft: 8, color: 'var(--success)' }}>✓ 已安装最新版本</span>}
+                    {tsReleaseInfo.isNewer !== false && tsReleaseInfo.assets?.length > 0 && (
+                      <span style={{ marginLeft: 8 }}>
+                        {tsReleaseInfo.assets[0].name}（{Math.round(tsReleaseInfo.assets[0].size / 1024 / 1024)} MB）
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {tsReleaseInfo.isNewer !== false && tsReleaseInfo.assets?.length > 0 && (
+                  tsDownloading ? (
+                    <button className="btn btn-secondary btn-sm" disabled>
+                      <Loader2 size={14} className="spin" /> 下载中...
+                    </button>
+                  ) : (
+                    <button className="btn btn-primary btn-sm" onClick={handleTsDownload}>下载并安装</button>
+                  )
+                )}
+              </div>
+            )
+          ) : (
+            <div className="text-sm py-2" style={{ color: 'var(--text-muted)' }}>尚未检查。点击下方按钮查询 TensorSharp 最新发布。</div>
+          )}
+          <button className="btn btn-secondary w-full justify-center" onClick={handleCheckTsUpdates} disabled={tsChecking || tsDownloading}>
+            <RefreshCw size={14} className={tsChecking ? 'spin' : ''} /> {tsReleaseInfo ? '重新检查' : '检查 TensorSharp 发布'}
+          </button>
+        </div>
+      </div>
       </div>
     )
   }

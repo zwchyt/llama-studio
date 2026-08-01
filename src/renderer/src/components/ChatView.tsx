@@ -2334,11 +2334,22 @@ export default function ChatView() {
         const finalThinkDurations = thinkMeta ? thinkMeta.durations.slice() : undefined
         streamThinkMeta.delete(data.streamId)
         if (finalContent != null) {
+          // TensorSharp 的 think 模式会把最终答案也放进 reasoning_content（content 恒空），
+          // 整条消息只有 <think> 段。此时若无工具调用，把思考内容同时作为正式回答追加，
+          // 否则用户只能看到折叠的思考块而看不到答案（llama.cpp 下的同类模型同样受益）。
+          const hasToolCalls = Array.isArray(data.toolCalls) && data.toolCalls.length > 0
+          let finalMsgContent = finalContent
+          if (!hasToolCalls) {
+            const segs = parseThinkSegments(finalContent)
+            if (segs.some(s => s.type === 'think') && !segs.some(s => s.type === 'text')) {
+              finalMsgContent = finalContent + '\n\n' + segs.filter(s => s.type === 'think').map(s => s.value).join('\n\n')
+            }
+          }
           const s = useChatStore.getState()
           const sess = s.sessions.find(s => s.id === targetSession.id)
           if (sess) {
             const msgs = sess.messages.map(m => m.id === data.streamId
-              ? { ...m, content: finalContent, ...(finalThinkDurations && finalThinkDurations.length ? { thinkDurations: finalThinkDurations } : {}) }
+              ? { ...m, content: finalMsgContent, ...(finalThinkDurations && finalThinkDurations.length ? { thinkDurations: finalThinkDurations } : {}) }
               : m)
             s.replaceMessages(targetSession.id, msgs)
           }

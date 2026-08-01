@@ -3313,6 +3313,7 @@ export default function AgentCodeView() {
       setCondensing(true)
       const res = await window.api.chatCompletion({
         port, body: {
+          model: modelLabel,
           messages: [{ role: 'system', content: SUMMARY_PROMPT }, { role: 'user', content: userContent }],
           temperature: SUMMARY_TEMPERATURE, max_tokens: summaryMaxTok, stream: false,
         }
@@ -3720,7 +3721,7 @@ export default function AgentCodeView() {
           setStreaming(true)
           window.api.onChatStreamChunk(onChunk)
           const trimmed = trimApiMessages(apiMsgs, ctxBudget)
-          const requestBody = { messages: trimmed.messages, tools, tool_choice: toolChoice, stream: true, temperature: 0.3, max_tokens: AGENT_MAX_OUTPUT }
+          const requestBody = { model: modelLabel, messages: trimmed.messages, tools, tool_choice: toolChoice, stream: true, temperature: 0.3, max_tokens: AGENT_MAX_OUTPUT }
           // 调试面板：采集本轮请求体与规模
           turnMsgCount = trimmed.messages.length
           turnToolCount = Array.isArray(tools) ? tools.length : 0

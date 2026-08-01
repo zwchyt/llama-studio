@@ -192,13 +192,24 @@ export default function ModelCard({ card }: Props) {
       notify('未找到后端或无可执行文件。', 'error')
       return
     }
+    // 引擎类型归一化：'other' 视为 llama.cpp 行为
+    const kind: 'llamacpp' | 'tensorsharp' = targetBackend.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp'
+    // 参数集：模板里手动选择的优先，未选时按后端类型默认
+    const paramSet: 'llamacpp' | 'tensorsharp' = card.template.paramSet ?? kind
     const args: string[] = []
-    const tArgs = card.template.args
-    if (card.template.modelPath) args.push('-m', card.template.modelPath)
-    if (commandsSchema) {
-      for (const cat of commandsSchema.categories) {
+    const tArgs = card.template.args ?? {}
+    // 模型参数：llama.cpp 用 -m，TensorSharp 用 --model（--model 在两个 schema 中都会被跳过，
+    // 由这里显式追加）
+    if (card.template.modelPath) args.push(paramSet === 'tensorsharp' ? '--model' : '-m', card.template.modelPath)
+    // 参数白名单按卡片自身参数集获取（TensorSharp 与 llama.cpp 的 schema 不同），
+    // 不依赖全局 activeBackend 的 schema，否则另一引擎的参数会被静默丢弃
+    const cardSchema = (await window.api.getCommands(targetBackend.name, paramSet).catch(() => null)) ?? commandsSchema
+    if (cardSchema) {
+      for (const cat of cardSchema.categories) {
         for (const cmd of cat.commands) {
-          if (cmd.arg === '--port' || cmd.arg === '--model') continue
+          // --port / --model / --urls 由应用统一管理，不在高级参数里透传
+          if (cmd.arg === '--port' || cmd.arg === '--model' || cmd.arg === '--urls') continue
+          // 参数集按卡片自身后端加载（TensorSharp / llama.cpp 各自专属文件），无需再按引擎过滤
           const val = tArgs[cmd.arg]
           if (val !== undefined && val !== null && val !== '') {
             if (cmd.type === 'boolean') { if (val === true || val === 'true' || val === '1') args.push(cmd.arg) }
@@ -215,10 +226,22 @@ export default function ModelCard({ card }: Props) {
         else if (v !== false && v !== null && v !== '') args.push(k, String(v))
       }
     }
-    if (card.template.serverPort) {
+    // TensorSharp 监听地址官方硬编码为 http://0.0.0.0:5000（无端口参数，已实测 CLI/env 均无效），
+    // 启动前检查 5000 端口是否已被其他正在运行的卡片占用（TensorSharp 卡互斥 / llama.cpp 卡端口冲突）
+    const port = paramSet === 'tensorsharp' ? 5000 : (card.template.serverPort || 8080)
+    if (paramSet === 'tensorsharp') {
+      const conflict = useStore.getState().cards.find(c => {
+        if (c.template.id === card.template.id || c.status !== 'running') return false
+        const b = backends.find(x => x.name === c.template.backendVersion)
+        return c.template.paramSet === 'tensorsharp' || b?.kind === 'tensorsharp' || c.template.serverPort === 5000
+      })
+      if (conflict) {
+        notify(`TensorSharp 固定监听 5000 端口，与正在运行的「${conflict.template.name}」冲突`, 'error')
+        return
+      }
+    } else if (card.template.serverPort) {
       args.push('--port', String(card.template.serverPort))
     }
-    const port = card.template.serverPort || 8080
     const backendPath = targetBackend.path
     const exe = targetBackend.exe!
     const res = await safeCall(() => window.api.runModel({
@@ -227,14 +250,18 @@ export default function ModelCard({ card }: Props) {
       exe,
       args,
       openBrowser: false,
-      port
+      port,
+      paramSet,
+      kind
     }), '启动模型失败')
     if (res === null) { setCardStatus(card.template.id, 'error'); return }
     if (res.success) {
       clearModelLogs(card.template.id)
       setCardStatus(card.template.id, 'running', res.pid)
       if (launchMode === 'chat') {
-        useStore.getState().setActiveChat(`http://127.0.0.1:${port}`, port)
+        // TensorSharp 的网页聊天 UI 在 /html（根路径返回 JSON），llama.cpp 在根路径
+        const chatUrl = kind === 'tensorsharp' ? `http://127.0.0.1:${port}/html` : `http://127.0.0.1:${port}`
+        useStore.getState().setActiveChat(chatUrl, port)
         useStore.getState().setView('llama')
       }
     } else { notify(`运行失败：${res.error}`, 'error'); setCardStatus(card.template.id, 'error') }
@@ -264,6 +291,9 @@ export default function ModelCard({ card }: Props) {
       updateCard(card.template.id, { launchMode: mode })
     }
   }, [card.template.id, updateCard])
+  const cardBackend = backends.find(b => b.name === card.template.backendVersion)
+  const effectiveParamSet = card.template.paramSet ?? (cardBackend?.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp')
+  const engineLabel = effectiveParamSet === 'tensorsharp' ? 'TensorSharp' : effectiveParamSet === 'llamacpp' ? 'llama.cpp' : ''
   return (
     <div className={`model-card ${isRunning ? 'running' : ''}`}>
       <div className="card-header">
@@ -308,6 +338,11 @@ export default function ModelCard({ card }: Props) {
         </div>
       </div>
       <div className="card-meta">
+        {engineLabel && (
+          <span className="card-tag card-tag--engine">
+            <span className="card-tag-inner">{engineLabel}</span>
+          </span>
+        )}
         <span
           ref={modelTagRef}
           className={`card-tag card-tag--model${modelTagOverflow ? ' card-tag--slide' : ''}`}
@@ -361,7 +396,9 @@ export default function ModelCard({ card }: Props) {
             style={{ background: '#c1c1c1', color: '#1e0303' }}
             onClick={() => {
               const port = card.template.serverPort || 8080
-              useStore.getState().setActiveChat(`http://127.0.0.1:${port}`, port)
+              // TensorSharp 的网页聊天 UI 在 /html（根路径返回 JSON），llama.cpp 在根路径
+              const chatUrl = effectiveParamSet === 'tensorsharp' ? `http://127.0.0.1:${port}/html` : `http://127.0.0.1:${port}`
+              useStore.getState().setActiveChat(chatUrl, port)
               useStore.getState().setView('llama')
             }}
           >

@@ -263,7 +263,9 @@ function CategorySection({ cat, catIndex: _catIndex, onChange, onDelete }: Categ
   )
 }
 export default function CommandsEditor({ backendName }: { backendName: string }) {
-  const { setCommandsSchema } = useStore(s => ({ setCommandsSchema: s.setCommandsSchema }), shallow)
+  const { setCommandsSchema, backends } = useStore(s => ({ setCommandsSchema: s.setCommandsSchema, backends: s.backends }), shallow)
+  // 后端命令编辑器按该后端的类型决定读写哪个参数集文件（TensorSharp → commands-tensorsharp.json）
+  const paramSet: 'llamacpp' | 'tensorsharp' = backends.find(b => b.name === backendName)?.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp'
   const [schema, setSchema] = useState<CommandsSchema | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -273,7 +275,7 @@ export default function CommandsEditor({ backendName }: { backendName: string })
   const resetConfirmRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     setLoading(true)
-    window.api.getCommands(backendName).then(s => {
+    window.api.getCommands(backendName, paramSet).then(s => {
       setSchema(s ? JSON.parse(JSON.stringify(s)) : { version: '1.0', categories: [] })
       setLoading(false)
     }).catch((e) => {
@@ -281,7 +283,7 @@ export default function CommandsEditor({ backendName }: { backendName: string })
       notify('加载命令 schema 失败', 'error')
       setLoading(false)
     })
-  }, [backendName])
+  }, [backendName, paramSet])
   useEffect(() => {
     if (!showResetPopover) return
     function handlePointer(e: MouseEvent) {
@@ -304,11 +306,11 @@ export default function CommandsEditor({ backendName }: { backendName: string })
   async function handleSave() {
     if (!schema) return
     setSaving(true)
-    const res = await safeCall(() => window.api.saveBackendCommands(backendName, schema), '保存命令 schema 失败')
+    const res = await safeCall(() => window.api.saveBackendCommands(backendName, schema, paramSet), '保存命令 schema 失败')
     setSaving(false)
     if (res && res.success) {
       setSaved(true); setTimeout(() => setSaved(false), 2000)
-      const updated = await safeCall(() => window.api.getCommands(backendName), '刷新 schema 失败')
+      const updated = await safeCall(() => window.api.getCommands(backendName, paramSet), '刷新 schema 失败')
       if (updated) setCommandsSchema(updated)
     } else if (res && !res.success) { notify('保存失败：' + res.error, 'error') }
   }
@@ -318,7 +320,7 @@ export default function CommandsEditor({ backendName }: { backendName: string })
   async function confirmReset() {
     setShowResetPopover(false)
     setLoading(true)
-    const s = await safeCall(() => window.api.getCommands(backendName), '加载 schema 失败')
+    const s = await safeCall(() => window.api.getCommands(backendName, paramSet), '加载 schema 失败')
     setSchema(s ? JSON.parse(JSON.stringify(s)) : null)
     setLoading(false)
   }

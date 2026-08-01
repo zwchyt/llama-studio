@@ -1,0 +1,68 @@
+{
+  "version": "default",
+  "categories": [
+    {
+      "name": "模型加载",
+      "icon": "Box",
+      "commands": [
+        { "arg": "--model", "label": "Model Path", "description": "启动时托管的 GGUF 模型路径；推理必需。其他选项可启动无模型状态进程，但 /api/models/load 无法选择启动时未提供的 GGUF", "type": "string", "placeholder": "C:\\models\\gemma-4-E4B-it-Q8_0.gguf" },
+        { "arg": "--mmproj", "label": "Multimodal Projector", "description": "多模态投影仪 GGUF；裸文件名会在模型同目录解析；'none' 禁用。需 --model。默认无 — 需显式传入匹配的投影仪", "type": "string", "placeholder": "mmproj-gemma-4-E4B-it-Q8_0.gguf" }
+      ]
+    },
+    {
+      "name": "计算后端",
+      "icon": "Cpu",
+      "commands": [
+        { "arg": "--backend", "label": "Compute Backend", "description": "计算后端：cpu / cuda / mlx / ggml_cpu / ggml_metal / ggml_cuda / ggml_vulkan（不填自动选择：macOS 默认 ggml_metal，其他平台 ggml_cpu；BACKEND 环境变量可覆盖）", "type": "select", "options": ["cpu", "cuda", "mlx", "ggml_cpu", "ggml_metal", "ggml_cuda", "ggml_vulkan"], "default": "", "env": "BACKEND" },
+        { "arg": "--gpu-device", "label": "GPU Device Index", "description": "ggml_vulkan 后端的 Vulkan 设备索引（多 GPU 主机，如集成 Intel GPU 与独立 NVIDIA GPU 并存时选择）", "type": "number", "default": 0, "min": 0, "max": 64, "env": "TS_GGML_VULKAN_DEVICE" },
+        { "arg": "--list-gpus", "label": "List GPUs", "description": "列出 ggml-vulkan 可见的 Vulkan 设备（索引 + 适配器名）后退出", "type": "boolean", "default": false }
+      ]
+    },
+    {
+      "name": "采样参数",
+      "icon": "Sliders",
+      "commands": [
+        { "arg": "--max-tokens", "label": "Max Tokens", "description": "每个请求的最大生成 token 数", "type": "number", "default": 20000, "min": 1, "max": 1000000, "env": "MAX_TOKENS" },
+        { "arg": "--temperature", "label": "Temperature", "description": "采样温度（0 = 贪心）", "type": "number", "default": 0.8, "min": 0, "max": 2, "env": "TENSORSHARP_TEMPERATURE" },
+        { "arg": "--top-k", "label": "Top-K", "description": "Top-K 过滤（0 = 禁用）", "type": "number", "default": 40, "min": 0, "max": 1000, "env": "TENSORSHARP_TOP_K" },
+        { "arg": "--top-p", "label": "Top-P", "description": "核采样阈值（1.0 = 禁用）", "type": "number", "default": 0.9, "min": 0, "max": 1, "env": "TENSORSHARP_TOP_P" },
+        { "arg": "--min-p", "label": "Min-P", "description": "最小概率过滤（0 = 禁用）", "type": "number", "default": 0, "min": 0, "max": 1, "env": "TENSORSHARP_MIN_P" },
+        { "arg": "--repeat-penalty", "label": "Repeat Penalty", "description": "重复惩罚（1.0 = 无）", "type": "number", "default": 1.1, "min": 0, "max": 2, "env": "TENSORSHARP_REPEAT_PENALTY" },
+        { "arg": "--repeat-last-n", "label": "Repeat Last N", "description": "近期 token 惩罚窗口（0 = 禁用，-1 = 全部）", "type": "number", "default": 64, "min": -1, "max": 65536, "env": "TENSORSHARP_REPEAT_LAST_N" },
+        { "arg": "--presence-penalty", "label": "Presence Penalty", "description": "存在惩罚（0 = 禁用）", "type": "number", "default": 0, "min": 0, "max": 2, "env": "TENSORSHARP_PRESENCE_PENALTY" },
+        { "arg": "--frequency-penalty", "label": "Frequency Penalty", "description": "频率惩罚（0 = 禁用）", "type": "number", "default": 0, "min": 0, "max": 2, "env": "TENSORSHARP_FREQUENCY_PENALTY" },
+        { "arg": "--seed", "label": "Seed", "description": "随机种子（-1 = 非确定性）", "type": "number", "default": -1, "min": -1, "max": 2147483647, "env": "TENSORSHARP_SEED" },
+        { "arg": "--stop", "label": "Stop Sequence", "description": "停止序列；可重复指定多个（如 --stop \"</s>\"）", "type": "string", "placeholder": "</s>" }
+      ]
+    },
+    {
+      "name": "KV 缓存",
+      "icon": "Database",
+      "commands": [
+        { "arg": "--kv-cache-dtype", "label": "KV Cache Dtype", "description": "KV 缓存精度：f32 / f16 / q8_0 / q4_0。量化缓存以轻微数值漂移换内存（auto = 后端/模型自动选择）", "type": "select", "options": ["auto", "f32", "f16", "q8_0", "q4_0"], "default": "auto", "env": "KV_CACHE_DTYPE" },
+        { "arg": "--paged-kv", "label": "Paged KV Cache", "description": "启用跨会话分页 KV 缓存（请求间前缀复用）。默认关闭", "type": "boolean", "default": false },
+        { "arg": "--no-paged-kv", "label": "Disable Paged KV", "description": "禁用分页 KV 缓存", "type": "boolean", "default": false }
+      ]
+    },
+    {
+      "name": "调度",
+      "icon": "Zap",
+      "commands": [
+        { "arg": "--continuous-batching", "label": "Continuous Batching", "description": "跨并发请求的分页注意力连续批处理（别名 --paged-batching）。默认开启", "type": "boolean", "default": true },
+        { "arg": "--no-continuous-batching", "label": "Disable Continuous Batching", "description": "禁用连续批处理（别名 --no-paged-batching）", "type": "boolean", "default": false },
+        { "arg": "--prefill-chunk-size", "label": "Prefill Chunk Size", "description": "争用下的分块预填充粒度；小块让并行解码更频繁获得 GPU 时间", "type": "number", "default": 1024, "min": 16, "max": 65536 }
+      ]
+    },
+    {
+      "name": "MTP 推测解码",
+      "icon": "GitBranch",
+      "commands": [
+        { "arg": "--mtp-spec", "label": "MTP Speculative", "description": "启用 MTP/NextN 推测解码（模型需带草稿头）。默认关闭", "type": "boolean", "default": false },
+        { "arg": "--no-mtp-spec", "label": "Disable MTP", "description": "禁用 MTP 推测解码", "type": "boolean", "default": false },
+        { "arg": "--mtp-draft", "label": "MTP Draft Tokens", "description": "每步最大草稿 token 数", "type": "number", "default": 8, "min": 1, "max": 64 },
+        { "arg": "--mtp-pmin", "label": "MTP Min Draft Prob", "description": "最小草稿 token 概率（0, 1]；低于则停止起草", "type": "number", "default": 0.75, "min": 0, "max": 1 },
+        { "arg": "--mtp-draft-model", "label": "MTP Draft Model", "description": "独立草稿 GGUF（草稿头单独成文件的模型，如 Gemma 4 assistant；Qwen3.6 内嵌草稿头无需此参数）", "type": "string", "placeholder": "gemma-4-E4B-it-assistant.Q8_0.gguf" }
+      ]
+    }
+  ]
+}

@@ -42,8 +42,8 @@ interface LlamaCppApi {
   removeModelDownloadListener: () => void
   listBackends: () => Promise<BackendVersion[]>
   deleteBackend: (name: string) => Promise<{ success: boolean; error?: string }>
-  getCommands: (backendName: string) => Promise<CommandsSchema | null>
-  saveBackendCommands: (backendName: string, schema: object) => Promise<{ success: boolean; error?: string }>
+  getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp') => Promise<CommandsSchema | null>
+  saveBackendCommands: (backendName: string, schema: object, paramSet?: 'llamacpp' | 'tensorsharp') => Promise<{ success: boolean; error?: string }>
   listTemplates: () => Promise<Template[]>
   saveTemplate: (template: object) => Promise<{ success: boolean; id: string }>
   deleteTemplate: (id: string) => Promise<{ success: boolean }>
@@ -54,13 +54,16 @@ interface LlamaCppApi {
   selectDirectory: () => Promise<{ path: string | null }>
   selectFiles: () => Promise<{ paths: string[] }>
   listDrives: () => Promise<{ drives: string[] }>
-  runModel: (opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number }) => Promise<{ success: boolean; pid?: number; error?: string }>
+  runModel: (opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: 'llamacpp' | 'tensorsharp'; kind?: 'llamacpp' | 'tensorsharp' }) => Promise<{ success: boolean; pid?: number; error?: string }>
   stopModel: (id: string) => Promise<{ success: boolean; error?: string }>
   onModelError: (cb: (data: { id: string; error: string }) => void) => void
   removeModelErrorListener: () => void
   checkUpdates: () => Promise<ReleaseInfo>
   downloadRelease: (opts: { url: string; version: string; assetName: string }) => Promise<{ success: boolean; path?: string; error?: string }>
   cancelBackendDownload: () => Promise<{ success: boolean }>
+  // ── TensorSharp 引擎更新通道 ──
+  checkTensorsharpUpdate: () => Promise<ReleaseInfo>
+  downloadTensorsharpRelease: (opts: { url: string; version: string; assetName: string }) => Promise<{ success: boolean; path?: string; error?: string }>
   onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number }) => void) => void
   removeDownloadListener: () => void
   // ── 应用自身更新 ──

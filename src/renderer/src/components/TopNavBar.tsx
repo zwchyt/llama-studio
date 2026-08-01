@@ -88,7 +88,8 @@ export default function TopNavBar() {
     if (!b) return
     setActiveBackend(b)
     setOpenMenu(null)
-    const cmds = await safeCall(() => window.api.getCommands(name), '切换后端失败')
+    // 切换后端时按其类型加载默认参数集
+    const cmds = await safeCall(() => window.api.getCommands(name, b.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp'), '切换后端失败')
     if (cmds) setCommandsSchema(cmds)
   }, [backends, setActiveBackend, setCommandsSchema])
 

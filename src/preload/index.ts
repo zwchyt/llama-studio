@@ -20,8 +20,8 @@ const fullApi = {
   removeModelDownloadListener: () => ipcRenderer.removeAllListeners('model-download-progress'),
   listBackends: () => ipcRenderer.invoke('list-backends'),
   deleteBackend: (name: string) => ipcRenderer.invoke('delete-backend', name),
-  getCommands: (backendName: string) => ipcRenderer.invoke('get-commands', backendName),
-  saveBackendCommands: (backendName: string, schema: object) => ipcRenderer.invoke('save-backend-commands', backendName, schema),
+  getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp') => ipcRenderer.invoke('get-commands', backendName, paramSet),
+  saveBackendCommands: (backendName: string, schema: object, paramSet?: 'llamacpp' | 'tensorsharp') => ipcRenderer.invoke('save-backend-commands', backendName, schema, paramSet),
   listTemplates: () => ipcRenderer.invoke('list-templates'),
   saveTemplate: (template: object) => ipcRenderer.invoke('save-template', template),
   deleteTemplate: (id: string) => ipcRenderer.invoke('delete-template', id),
@@ -39,6 +39,9 @@ const fullApi = {
   checkUpdates: () => ipcRenderer.invoke('check-updates'),
   downloadRelease: (opts: object) => ipcRenderer.invoke('download-release', opts),
   cancelBackendDownload: () => ipcRenderer.invoke('cancel-backend-download'),
+  // ── TensorSharp 引擎更新通道 ──
+  checkTensorsharpUpdate: () => ipcRenderer.invoke('check-tensorsharp-update'),
+  downloadTensorsharpRelease: (opts: object) => ipcRenderer.invoke('download-tensorsharp-release', opts),
   onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number }) => void) => {
     ipcRenderer.removeAllListeners('download-progress')
     ipcRenderer.on('download-progress', (_event, data) => callback(data))

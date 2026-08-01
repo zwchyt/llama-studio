@@ -73,8 +73,8 @@ function parseCommand(cmd: string, shortFlagAliases: Record<string, string>): {
 }
 export default function CreateModal() {
   const editingTemplate = useStore(s => s.editingTemplate)
-  const { setShowCreateModal, backends, activeBackend, addCard, updateCard, models, commandsSchema } = useStore(
-    s => ({ setShowCreateModal: s.setShowCreateModal, backends: s.backends, activeBackend: s.activeBackend, addCard: s.addCard, updateCard: s.updateCard, models: s.models, commandsSchema: s.commandsSchema }),
+  const { setShowCreateModal, backends, activeBackend, setActiveBackend, addCard, updateCard, models, commandsSchema } = useStore(
+    s => ({ setShowCreateModal: s.setShowCreateModal, backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, addCard: s.addCard, updateCard: s.updateCard, models: s.models, commandsSchema: s.commandsSchema }),
     shallow
   )
   // Initialize form fields directly from editingTemplate — no useEffect needed.
@@ -87,9 +87,42 @@ export default function CreateModal() {
     : (activeBackend?.name ?? '')
   const [backendVersion, setBackendVersion] = useState(initialBackend)
   const [modelPath, setModelPath] = useState(editingTemplate?.modelPath ?? '')
-  const [serverPort, setServerPort] = useState(editingTemplate?.serverPort ?? 8080)
-  const [args, setArgs] = useState<TemplateArgs>(editingTemplate?.args ?? {})
+  // TensorSharp 固定监听 5000 端口（官方硬编码），端口字段仅作展示
+  const [serverPort, setServerPort] = useState(() => {
+    if (editingTemplate) {
+      const b = backends.find(x => x.name === editingTemplate.backendVersion)
+      return b?.kind === 'tensorsharp' ? 5000 : (editingTemplate.serverPort ?? 8080)
+    }
+    const b = backends.find(x => x.name === initialBackend)
+    return b?.kind === 'tensorsharp' ? 5000 : 8080
+  })
+  // 新建模板且后端为 TensorSharp 时，预填其默认采样参数（无 --ctx-size/--threads 等 llama.cpp 参数）
+  const [args, setArgs] = useState<TemplateArgs>(() => {
+    if (editingTemplate?.args) return editingTemplate.args
+    const b = backends.find(x => x.name === initialBackend)
+    if (b?.kind === 'tensorsharp') {
+      return { '--temperature': 0.7, '--repeat-penalty': 1.1, '--max-tokens': 20000 }
+    }
+    return {}
+  })
   const [launchMode, setLaunchMode] = useState<'chat' | 'api'>(editingTemplate?.launchMode ?? 'chat')
+  // 参数集：编辑模板时沿用已保存的，新建时按后端类型默认（可在高级参数里切换）
+  const [paramSet, setParamSet] = useState<'llamacpp' | 'tensorsharp'>(() => {
+    if (editingTemplate?.paramSet) return editingTemplate.paramSet
+    const b = backends.find(x => x.name === initialBackend)
+    return b?.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp'
+  })
+  // 参数集切换：同步更新显示 + 切换活跃后端 + 端口默认值 + 后端版本下拉框
+  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp') => {
+    if (next === paramSet) return
+    setParamSet(next)
+    const targetBackend = backends.find(b => b.kind === next)
+    if (targetBackend) {
+      setActiveBackend(targetBackend)
+      setBackendVersion(targetBackend.name)
+    }
+    setServerPort(next === 'tensorsharp' ? 5000 : 8080)
+  }
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [importCmd, setImportCmd] = useState('')
@@ -125,7 +158,8 @@ export default function CreateModal() {
       modelPath,
       serverPort,
       args,
-      launchMode
+      launchMode,
+      paramSet
     }
     setSubmitting(true)
     try {
@@ -230,10 +264,27 @@ export default function CreateModal() {
                 <CustomSelect
                   buttonClass="form-select-button"
                   value={backendVersion}
-                  onChange={setBackendVersion}
+                  onChange={(v) => {
+                    setBackendVersion(v)
+                    // 切换后端时参数集跟随后端类型（llama.cpp / TensorSharp 各自专属参数文件）
+                    const b = backends.find(x => x.name === v)
+                    if (b?.kind === 'tensorsharp') {
+                      setParamSet('tensorsharp')
+                      setServerPort(5000)
+                      if (Object.keys(args).length === 0) {
+                        setArgs({ '--temperature': 0.7, '--repeat-penalty': 1.1, '--max-tokens': 20000 })
+                      }
+                    } else {
+                      setParamSet('llamacpp')
+                      setServerPort(8080)
+                    }
+                  }}
                   options={[
                     { value: '', label: '默认（当前）' },
-                    ...backends.map(b => ({ value: b.name, label: b.name }))
+                    ...backends.map(b => ({
+                      value: b.name,
+                      label: b.kind === 'tensorsharp' ? `TensorSharp · ${b.name}` : b.name
+                    }))
                   ]}
                   aria-label="后端版本"
                 />
@@ -248,6 +299,7 @@ export default function CreateModal() {
                   min={1024}
                   max={65535}
                   aria-label="服务器端口"
+                  disabled={backends.find(b => b.name === backendVersion)?.kind === 'tensorsharp'}
                 />
               </div>
             </div>
@@ -311,8 +363,11 @@ export default function CreateModal() {
                   <CmdParamsEditor
                     args={args}
                     onChange={setArgs}
+                    backendName={backendVersion}
                     modelPathFallback={modelPath}
                     serverPortFallback={serverPort}
+                    paramSet={paramSet}
+                    onParamSetChange={handleParamSetChange}
                   />
                 </div>
               )}

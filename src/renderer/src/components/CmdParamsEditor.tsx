@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { ChevronDown, ChevronRight, Copy, Check, Search, Lock } from 'lucide-react'
-import type { CommandParam, TemplateArgs } from '../../../shared/types'
+import type { CommandParam, TemplateArgs, CommandsSchema } from '../../../shared/types'
 import { iconElements } from '../utils/iconMap'
 import CustomSelect from './CustomSelect'
 import ModelFileSelect from './ModelFileSelect'
@@ -10,14 +10,19 @@ import ModelFileSelect from './ModelFileSelect'
 const FEATURED_ARGS = ['--ctx-size', '--gpu-layers', '--threads', '--batch-size', '--flash-attn']
 interface Props {
   templateId?: string
+  /** 无 templateId 时（如新建模板弹窗）显式指定后端，用于预览命令与隐藏参数判断 */
+  backendName?: string
   args: TemplateArgs
   onChange?: (args: TemplateArgs) => void
   modelPathFallback?: string
   serverPortFallback?: number
   disabled?: boolean
+  /** 参数集选择（参数设置里切换）：'llamacpp' → commands.json，'tensorsharp' → commands-tensorsharp.json */
+  paramSet?: 'llamacpp' | 'tensorsharp'
+  onParamSetChange?: (s: 'llamacpp' | 'tensorsharp') => void
 }
-export default function CmdParamsEditor({ templateId, args, onChange, modelPathFallback, serverPortFallback, disabled: disabledProp }: Props) {
-  const { commandsSchema, updateCard, cards, imageModels, chatTemplates } = useStore(s => ({ commandsSchema: s.commandsSchema, updateCard: s.updateCard, cards: s.cards, imageModels: s.imageModels, chatTemplates: s.chatTemplates }), shallow)
+export default function CmdParamsEditor({ templateId, backendName, args, onChange, modelPathFallback, serverPortFallback, disabled: disabledProp, paramSet, onParamSetChange }: Props) {
+  const { commandsSchema, updateCard, cards, imageModels, chatTemplates, backends } = useStore(s => ({ commandsSchema: s.commandsSchema, updateCard: s.updateCard, cards: s.cards, imageModels: s.imageModels, chatTemplates: s.chatTemplates, backends: s.backends }), shallow)
   const setChatTemplates = useStore(s => s.setChatTemplates)
   const [searchQuery, setSearchQuery] = useState('')
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set())
@@ -25,26 +30,59 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
   const [copiedParam, setCopiedParam] = useState<string | null>(null)
   const initialSchemaRef = useRef(true)
 
+  const card = templateId ? cards.find(c => c.template.id === templateId) : null
+  const isRunning = card?.status === 'running'
+  const disabled = disabledProp || isRunning
+  // 预览跟随参数集选择（切换参数集时 exe 标志和参数形态同步切换）
+  const resolvedBackend = backends.find(b => b.name === (card?.template.backendVersion || backendName))
+  const effectiveParamSet: 'llamacpp' | 'tensorsharp' = paramSet ?? (resolvedBackend?.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp')
+  const isTensorSharp = effectiveParamSet === 'tensorsharp'
+  // 预览 exe 跟随参数集：参数集决定命令格式，与实际后端 exe 无关
+  const backendExe = isTensorSharp ? 'TensorSharp.Server' : 'llama-server'
+  const activeArgs = args
+  // 按参数集拉取专属 schema（llama.cpp → commands.json，TensorSharp → commands-tensorsharp.json）
+  const [localSchema, setLocalSchema] = useState<CommandsSchema | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    window.api.getCommands(backendName ?? '', effectiveParamSet).then((cmds) => {
+      if (!cancelled && cmds) setLocalSchema(cmds)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [backendName, effectiveParamSet])
+  const activeSchema = localSchema ?? commandsSchema
+  // 当前参数集允许的参数名集合（用于预览过滤：只显示属于当前参数集的参数）
+  const allowedArgs = useMemo(() => {
+    if (!activeSchema) return new Set<string>()
+    const s = new Set<string>()
+    for (const cat of activeSchema.categories) {
+      for (const cmd of cat.commands || []) {
+        if (cmd.arg) s.add(cmd.arg)
+        if (cmd.short) s.add(cmd.short)
+      }
+    }
+    return s
+  }, [activeSchema])
+  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp') => {
+    if (next === effectiveParamSet) return
+    onParamSetChange?.(next)
+  }
+
   useEffect(() => {
     window.api.listChatTemplates().then(setChatTemplates).catch(() => {})
   }, [])
 
   useEffect(() => {
-    if (commandsSchema) {
+    if (activeSchema) {
       if (initialSchemaRef.current) {
         initialSchemaRef.current = false
         const initialCollapsed = new Set<string>()
-        commandsSchema.categories.forEach(cat => {
+        activeSchema.categories.forEach(cat => {
           initialCollapsed.add(cat.name)
         })
         setCollapsedCategories(initialCollapsed)
       }
     }
-  }, [commandsSchema])
-
-  const card = templateId ? cards.find(c => c.template.id === templateId) : null
-  const isRunning = card?.status === 'running'
-  const disabled = disabledProp || isRunning
+  }, [activeSchema])
 
   interface PreviewParam {
     id: string
@@ -57,9 +95,14 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
     const items: PreviewParam[] = []
     const finalModelPath = card?.template.modelPath || modelPathFallback
     if (finalModelPath) {
-      items.push({ id: 'model', label: '-m', value: `"${finalModelPath}"`, fullText: `-m "${finalModelPath}"` })
+      const modelFlag = isTensorSharp ? '--model' : '-m'
+      items.push({ id: 'model', label: modelFlag, value: `"${finalModelPath}"`, fullText: `${modelFlag} "${finalModelPath}"` })
     }
-    Object.entries(args).forEach(([key, val]) => {
+    Object.entries(activeArgs).forEach(([key, val]) => {
+      // 只显示当前参数集允许的参数（避免另一引擎的参数残留在预览里）
+      if (!allowedArgs.has(key)) return
+      // --urls（TensorSharp 端口）由应用统一管理，避免与自动追加的端口参数重复
+      if (key === '--urls' && isTensorSharp) return
       if (val === true) {
         items.push({ id: key, label: key, fullText: key })
       } else if (val !== false && val !== null && val !== '') {
@@ -67,19 +110,20 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
       }
     })
     const finalPort = card?.template.serverPort || serverPortFallback
-    if (finalPort && args['--port'] === undefined) {
+    // TensorSharp 监听地址固定 http://0.0.0.0:5000，无端口参数，预览不显示端口项
+    if (finalPort && !isTensorSharp && activeArgs['--port'] === undefined) {
       items.push({ id: '--port', label: '--port', value: String(finalPort), fullText: `--port ${finalPort}` })
     }
     return items
-  }, [args, cards, templateId, modelPathFallback, serverPortFallback])
+  }, [activeArgs, cards, templateId, modelPathFallback, serverPortFallback, isTensorSharp, allowedArgs])
 
   const fullCommand = useMemo(() => {
-    let cmd = 'llama-server'
+    let cmd = backendExe
     cmdPreviewItems.forEach(item => {
       cmd += ` ${item.fullText}`
     })
     return cmd
-  }, [cmdPreviewItems])
+  }, [cmdPreviewItems, backendExe])
 
   const copyText = async (text: string): Promise<boolean> => {
     try {
@@ -114,10 +158,10 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
     }
   }
   const filteredCategories = useMemo(() => {
-    if (!commandsSchema) return []
+    if (!activeSchema) return []
     const q = searchQuery.toLowerCase()
     if (q) {
-      return commandsSchema.categories.map(cat => ({
+      return activeSchema.categories.map(cat => ({
         ...cat,
         commands: cat.commands.filter(cmd =>
           cmd.label.toLowerCase().includes(q) ||
@@ -127,9 +171,9 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
       })).filter(cat => cat.commands.length > 0)
     }
     let allCommands: CommandParam[] = []
-    commandsSchema.categories.forEach(cat => allCommands.push(...cat.commands))
+    activeSchema.categories.forEach(cat => allCommands.push(...cat.commands))
     const featuredCommands = allCommands.filter(c => FEATURED_ARGS.includes(c.arg))
-    const cats = commandsSchema.categories.map(cat => ({
+    const cats = activeSchema.categories.map(cat => ({
       ...cat,
       commands: cat.commands.filter(c => !FEATURED_ARGS.includes(c.arg))
     })).filter(cat => cat.commands.length > 0)
@@ -142,8 +186,8 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
       })
     }
     return cats
-  }, [commandsSchema, searchQuery])
-  if (!commandsSchema) {
+  }, [activeSchema, searchQuery])
+  if (!activeSchema) {
     return <div className="text-muted text-sm">No commands schema loaded. Ensure a backend is installed.</div>
   }
   const handleUpdate = (argName: string, value: any) => {
@@ -186,7 +230,9 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
     return collapsedCategories.has(catName)
   }
   const renderCommand = (cmd: CommandParam) => {
-    if (cmd.arg === '--model' || cmd.arg === '--port') return null
+    // --model 始终隐藏；端口参数按引擎类型隐藏（llama.cpp: --port，TensorSharp: --urls）
+    if (cmd.arg === '--model') return null
+    if (isTensorSharp ? cmd.arg === '--urls' : cmd.arg === '--port') return null
     const val = args[cmd.arg] ?? (cmd.type === 'boolean' ? false : '')
     const isActive = args[cmd.arg] !== undefined && args[cmd.arg] !== false && args[cmd.arg] !== ''
     return (
@@ -283,6 +329,27 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
           Parameters are locked while the model is running. Stop it first to make changes.
         </div>
       )}
+      <div className="param-set-row" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <span className="text-muted text-sm" style={{ flexShrink: 0 }}>参数集</span>
+        <div className="launch-mode-row" style={{ flex: 1 }}>
+          <button
+            type="button"
+            className={`launch-mode-btn ${effectiveParamSet === 'llamacpp' ? 'active' : ''}`}
+            onClick={() => handleParamSetChange('llamacpp')}
+            disabled={disabled}
+          >
+            llama.cpp
+          </button>
+          <button
+            type="button"
+            className={`launch-mode-btn ${effectiveParamSet === 'tensorsharp' ? 'active' : ''}`}
+            onClick={() => handleParamSetChange('tensorsharp')}
+            disabled={disabled}
+          >
+            TensorSharp
+          </button>
+        </div>
+      </div>
       <div className="params-search-box">
         <Search size={16} style={{ color: 'var(--text-muted)' }} />
         <input
@@ -337,7 +404,7 @@ export default function CmdParamsEditor({ templateId, args, onChange, modelPathF
             </button>
           </div>
           <div className="cmd-preview">
-            <span className="cmd-preview-base">llama-server</span>
+            <span className="cmd-preview-base">{backendExe}</span>
             {cmdPreviewItems.map((item) => (
               <span
                 key={item.id}

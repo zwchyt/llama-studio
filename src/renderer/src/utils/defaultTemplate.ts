@@ -1,4 +1,4 @@
-import type { Template } from '../../../shared/types'
+import type { EngineKind, Template } from '../../../shared/types'
 function cleanName(filename: string): string {
   return filename
     .replace(/\.gguf$/i, '')
@@ -99,28 +99,44 @@ export function buildDefaultTemplate(
   filename: string,
   modelPath: string,
   existingTemplates: Template[] = [],
-  backendName = ''
+  backendName = '',
+  kind: EngineKind = 'llamacpp'
 ): Template {
-  const settings = getRecommendedSettings(filename)
   const port = getNextPort(existingTemplates)
-  const args: Record<string, string | number | boolean | null> = {
-    '--ctx-size': settings.ctxSize,
-    '--threads': settings.threads,
-    '--n-gpu-layers': settings.gpuLayers,
-    '--batch-size': settings.batchSize,
-    '--temp': settings.temp,
-    '--repeat-penalty': settings.repeatPenalty
-  }
-  return {
+  const base = {
     id: crypto.randomUUID(),
     name: cleanName(filename) || filename,
-    description: settings.description,
     modelPath,
     serverPort: port,
     backendVersion: backendName,
-    args,
-    launchMode: 'chat',
+    launchMode: 'chat' as const,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
+  }
+  // TensorSharp 引擎：采样参数与 llama.cpp 预设不同（无 --ctx-size/--threads/--n-gpu-layers；
+  // --backend 留空让引擎自动选择，本机有 NVIDIA GPU 时运行时自动注入 ggml_cuda）
+  if (kind === 'tensorsharp') {
+    return {
+      ...base,
+      description: `${detectFamily(filename)} — TensorSharp 引擎，采样参数自动配置`,
+      args: {
+        '--temperature': 0.7,
+        '--repeat-penalty': 1.1,
+        '--max-tokens': 20000
+      }
+    }
+  }
+  const settings = getRecommendedSettings(filename)
+  return {
+    ...base,
+    description: settings.description,
+    args: {
+      '--ctx-size': settings.ctxSize,
+      '--threads': settings.threads,
+      '--n-gpu-layers': settings.gpuLayers,
+      '--batch-size': settings.batchSize,
+      '--temp': settings.temp,
+      '--repeat-penalty': settings.repeatPenalty
+    }
   }
 }

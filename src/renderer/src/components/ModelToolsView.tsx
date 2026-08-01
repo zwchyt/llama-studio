@@ -201,12 +201,14 @@ function InspectorTab({ modelPath, setModelPath }: { modelPath: string; setModel
 
 // ── Tab 2：Token 可视化器 ──────────────────────────────────
 function TokenizerTab({ modelPath, setModelPath }: { modelPath: string; setModelPath: (p: string) => void }) {
-  const { models, cards, activeBackend } = useStore(
-    s => ({ models: s.models, cards: s.cards, activeBackend: s.activeBackend }),
+  const { models, cards, activeBackend, backends } = useStore(
+    s => ({ models: s.models, cards: s.cards, activeBackend: s.activeBackend, backends: s.backends }),
     shallow
   )
   const runningCards = cards.filter(c => c.status === 'running' && c.template.serverPort)
-  const [mode, setMode] = useState<'server' | 'file'>(runningCards.length > 0 ? 'server' : 'file')
+  // /tokenize 是 llama.cpp 专属端点，TensorSharp 运行时不支持服务模式分词
+  const runningIsTensorSharp = runningCards.some(c => backends.find(b => b.name === c.template.backendVersion)?.kind === 'tensorsharp')
+  const [mode, setMode] = useState<'server' | 'file'>(runningCards.length > 0 && !runningIsTensorSharp ? 'server' : 'file')
   const [serverPort, setServerPort] = useState<string>(runningCards[0]?.template.serverPort ? String(runningCards[0].template.serverPort) : '')
   const [text, setText] = useState('')
   const [tokens, setTokens] = useState<{ id: number; piece: string }[]>([])
@@ -259,6 +261,9 @@ function TokenizerTab({ modelPath, setModelPath }: { modelPath: string; setModel
           </button>
           <button className={`mtools-mode-tab ${mode === 'file' ? 'active' : ''}`} onClick={() => setMode('file')}>选择 GGUF 文件</button>
         </div>
+        {runningIsTensorSharp && (
+          <span className="mtools-hint">TensorSharp 引擎不提供 /tokenize 端点，服务模式仅支持 llama.cpp 运行实例。</span>
+        )}
       </div>
 
       {mode === 'server' ? (

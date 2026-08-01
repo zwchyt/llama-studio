@@ -96,7 +96,7 @@ function AppMain() {
       .catch(() => {})
 
     // Stage 2: Default schema (activeBackend watcher at line 200 will re-fetch on backend change)
-    window.api.getCommands('').then((cmds) => {
+    window.api.getCommands('', 'llamacpp').then((cmds) => {
       if (cmds) setCommandsSchema(cmds)
     }).catch(() => {})
 
@@ -223,7 +223,8 @@ function AppMain() {
             data.filename,
             data.destPath,
             cards.map(c => c.template),
-            backend?.name || ''
+            backend?.name || '',
+            backend?.kind
           )
           const res = await window.api.saveTemplate(template)
           if (res.success) add({ ...template, id: res.id })
@@ -268,7 +269,8 @@ function AppMain() {
           data.filename,
           data.destPath,
           cards.map(c => c.template),
-          backend?.name || ''
+          backend?.name || '',
+          backend?.kind
         )
         const res = await window.api.saveTemplate(template)
         if (res.success) add({ ...template, id: res.id })
@@ -289,7 +291,8 @@ function AppMain() {
 
   useEffect(() => {
     if (!activeBackend) return
-    window.api.getCommands(activeBackend.name).then((cmds) => {
+    // 切换后端时按其后端类型加载默认参数集（模板级的 paramSet 在参数设置里另行控制）
+    window.api.getCommands(activeBackend.name, activeBackend.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp').then((cmds) => {
       if (cmds) setCommandsSchema(cmds)
     })
   }, [activeBackend, setCommandsSchema])

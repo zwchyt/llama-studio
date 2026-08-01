@@ -51,7 +51,8 @@ export default function Sidebar() {
     const b = backends.find((x) => x.name === name)
     if (!b) return
     setActiveBackend(b)
-    const cmds = await safeCall(() => window.api.getCommands(name), '切换后端失败')
+    // 切换后端时按其类型加载默认参数集
+    const cmds = await safeCall(() => window.api.getCommands(name, b.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp'), '切换后端失败')
     if (cmds) setCommandsSchema(cmds)
   }
   return (

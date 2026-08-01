@@ -60,6 +60,13 @@
   color: var(--accent-fg);
   border-color: var(--border-strong);
 }
+
+/* TensorSharp 引擎徽标 */
+.version-badge.ts-badge {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
 .ce-panel {
   border: 1.5px solid var(--border);
   border-radius: var(--radius-sm);

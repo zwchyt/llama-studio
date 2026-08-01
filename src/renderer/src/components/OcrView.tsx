@@ -7,6 +7,7 @@ import '../styles/ocr.css'
 
 export default function OcrView() {
   const cards = useStore(s => s.cards, shallow)
+  const backends = useStore(s => s.backends, shallow)
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
   const [fileName, setFileName] = useState('')
   const [ocrResult, setOcrResult] = useState('')
@@ -22,6 +23,10 @@ export default function OcrView() {
 
   const runningModel = cards.find(c => c.status === 'running')
   const port = runningModel?.template.serverPort
+  // OCR 走 llama.cpp 原生 /completion 多模态端点，TensorSharp 不提供 → 提示而非请求
+  const runningIsTensorSharp = runningModel
+    ? backends.find(b => b.name === runningModel.template.backendVersion)?.kind === 'tensorsharp'
+    : false
 
   useEffect(() => {
     window.api.onOcrChunk((data) => {
@@ -119,6 +124,11 @@ export default function OcrView() {
 
   async function handleOcr() {
     if (!imageDataUrl || !port) return
+    if (runningIsTensorSharp) {
+      setStatus('error')
+      setErrorMsg('OCR 需要 llama.cpp 引擎（/completion 端点）。TensorSharp 引擎不支持，请启动一张 llama.cpp 模型卡。')
+      return
+    }
     setOcrResult('')
     setStatus('processing')
     setErrorMsg('')
@@ -182,6 +192,13 @@ export default function OcrView() {
         <div className="ocr-notice">
           <AlertCircle size={16} />
           没有运行中的模型。请先在「我的模板」中启动一个支持多模态的模型。
+        </div>
+      )}
+
+      {port && runningIsTensorSharp && (
+        <div className="ocr-notice">
+          <AlertCircle size={16} />
+          当前运行的是 TensorSharp 引擎，OCR 功能仅支持 llama.cpp 引擎（/completion 端点）。
         </div>
       )}
 

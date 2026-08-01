@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { Search, Copy, Check, Lock } from 'lucide-react'
-import type { CommandParam, TemplateArgs } from '../../../shared/types'
+import type { CommandParam, Template, TemplateArgs, CommandsSchema } from '../../../shared/types'
 import { iconElements } from '../utils/iconMap'
 import CustomSelect from './CustomSelect'
 import ModelFileSelect from './ModelFileSelect'
@@ -17,7 +17,7 @@ interface Props {
 }
 
 export default function ParamsModal({ templateId, args, onClose, cardName }: Props) {
-  const { commandsSchema, cards, imageModels, chatTemplates, paramTooltipEnabled } = useStore(s => ({ commandsSchema: s.commandsSchema, cards: s.cards, imageModels: s.imageModels, chatTemplates: s.chatTemplates, paramTooltipEnabled: s.paramTooltipEnabled }), shallow)
+  const { commandsSchema, cards, imageModels, chatTemplates, paramTooltipEnabled, backends, setActiveBackend } = useStore(s => ({ commandsSchema: s.commandsSchema, cards: s.cards, imageModels: s.imageModels, chatTemplates: s.chatTemplates, paramTooltipEnabled: s.paramTooltipEnabled, backends: s.backends, setActiveBackend: s.setActiveBackend }), shallow)
   const updateCard = useStore(s => s.updateCard)
   const setChatTemplates = useStore(s => s.setChatTemplates)
   const [activeTab, setActiveTab] = useState('主要设置')
@@ -30,23 +30,78 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   const card = cards.find(c => c.template.id === templateId)
   const isRunning = card?.status === 'running'
   const disabled = isRunning
+  // 参数集：模板里手动选择的优先，未选时按后端类型默认；切换按钮在下方
+  const [paramSet, setParamSet] = useState<'llamacpp' | 'tensorsharp'>(() => {
+    const b = backends.find(x => x.name === card?.template.backendVersion)
+    return card?.template.paramSet ?? (b?.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp')
+  })
+  // 按卡片自身的参数集拉取 schema（不依赖全局 activeBackend 的 schema）
+  const [localSchema, setLocalSchema] = useState<CommandsSchema | null>(null)
+  // 预览跟随参数集选择（切换参数集时 exe 标志和参数形态同步切换）
+  const isTensorSharp = paramSet === 'tensorsharp'
+  // 预览 exe 跟随参数集：参数集决定命令格式，与实际后端 exe 无关
+  const backendExe = isTensorSharp ? 'TensorSharp.Server' : 'llama-server'
+  const activeArgs = args
 
   // debounce save: 合并高频写入，400ms 内只触发一次 IPC
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingArgsRef = useRef<TemplateArgs | null>(null)
+  const pendingSaveRef = useRef<Partial<Template> | null>(null)
 
   const flushSave = useCallback(() => {
-    if (pendingArgsRef.current === null) return
+    if (!pendingSaveRef.current) return
     const { cards } = useStore.getState()
     const card = cards.find(c => c.template.id === templateId)
     if (card) {
-      window.api.saveTemplate({ ...card.template, args: pendingArgsRef.current })
+      window.api.saveTemplate({ ...card.template, ...pendingSaveRef.current })
     }
-    pendingArgsRef.current = null
+    pendingSaveRef.current = null
   }, [templateId])
 
   // 组件卸载或关闭时确保落盘
   useEffect(() => () => { flushSave() }, [flushSave])
+
+  // 按卡片参数集拉取专属 schema；切换参数集时重新拉取
+  const backendName = card?.template.backendVersion ?? ''
+  useEffect(() => {
+    let cancelled = false
+    window.api.getCommands(backendName, paramSet).then((cmds) => {
+      if (!cancelled && cmds) setLocalSchema(cmds)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [backendName, paramSet])
+  const activeSchema = localSchema ?? commandsSchema
+  // 当前参数集允许的参数名集合（用于预览过滤：只显示属于当前参数集的参数）
+  const allowedArgs = useMemo(() => {
+    if (!activeSchema) return new Set<string>()
+    const s = new Set<string>()
+    for (const cat of activeSchema.categories) {
+      for (const cmd of cat.commands || []) {
+        if (cmd.arg) s.add(cmd.arg)
+        if (cmd.short) s.add(cmd.short)
+      }
+    }
+    return s
+  }, [activeSchema])
+
+  // 切换参数集：更新显示 + 切换活跃后端 + 切换后端版本 + 保存到模板
+  const handleParamSetChange = useCallback((next: 'llamacpp' | 'tensorsharp') => {
+    if (next === paramSet) return
+    setParamSet(next)
+    // 同步切换活跃后端到对应引擎 + 更新模板后端版本
+    const targetBackend = backends.find(b => b.kind === next)
+    const nextPort = next === 'tensorsharp' ? 5000 : 8080
+    if (targetBackend) {
+      setActiveBackend(targetBackend)
+      const { cards } = useStore.getState()
+      const card = cards.find(c => c.template.id === templateId)
+      if (card) {
+        updateCard(templateId, { paramSet: next, serverPort: nextPort, backendVersion: targetBackend.name })
+        pendingSaveRef.current = { paramSet: next, serverPort: nextPort, backendVersion: targetBackend.name }
+      }
+    }
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(flushSave, 400)
+  }, [paramSet, backends, setActiveBackend, templateId, updateCard, flushSave])
 
   useEffect(() => {
     window.api.listChatTemplates().then(setChatTemplates).catch(() => {})
@@ -79,6 +134,8 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   const handleUpdate = useCallback((argName: string, value: any) => {
     const { cards } = useStore.getState()
     const card = cards.find(c => c.template.id === templateId)
+    if (!card) return
+    // 写入模板 args（参数集已按引擎专属文件加载，这里只记录用户修改的值）
     const latestArgs = card?.template.args || {}
     const newArgs = { ...latestArgs }
     if (value === null || value === false || value === '') {
@@ -89,15 +146,15 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
     updateCard(templateId, { args: newArgs })
 
     // debounce 持久化
-    pendingArgsRef.current = newArgs
+    pendingSaveRef.current = { args: newArgs }
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(flushSave, 400)
   }, [templateId, updateCard, flushSave])
 
   const tabs = useMemo(() => {
-    if (!commandsSchema) return []
+    if (!activeSchema) return []
     const allCmds: CommandParam[] = []
-    commandsSchema.categories.forEach(cat => allCmds.push(...cat.commands))
+    activeSchema.categories.forEach(cat => allCmds.push(...cat.commands))
     const featured = allCmds
       .filter(c => FEATURED_ARGS.includes(c.arg))
       .sort((a, b) => FEATURED_ARGS.indexOf(a.arg) - FEATURED_ARGS.indexOf(b.arg))
@@ -105,23 +162,23 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
     if (featured.length > 0) {
       tabList.push({ name: '主要设置', icon: iconElements['Star'] ?? null, commands: featured })
     }
-    for (const cat of commandsSchema.categories) {
-      const filtered = cat.commands.filter(cmd => cmd.arg !== '--model' && cmd.arg !== '--port')
+    for (const cat of activeSchema.categories) {
+      const filtered = cat.commands.filter(cmd => cmd.arg !== '--model' && cmd.arg !== '--port' && cmd.arg !== '--urls')
       if (filtered.length > 0) {
         tabList.push({ name: cat.name, icon: iconElements[cat.icon] ?? null, commands: filtered })
       }
     }
     return tabList
-  }, [commandsSchema])
+  }, [activeSchema])
 
   const currentCommands = useMemo(() => {
-    if (!commandsSchema) return []
+    if (!activeSchema) return []
     if (searchQuery) {
       const q = searchQuery.toLowerCase()
       const results: CommandParam[] = []
-      for (const cat of commandsSchema.categories) {
+      for (const cat of activeSchema.categories) {
         for (const cmd of cat.commands) {
-          if (cmd.arg === '--model' || cmd.arg === '--port') continue
+          if (cmd.arg === '--model' || cmd.arg === '--port' || cmd.arg === '--urls') continue
           if (
             cmd.label.toLowerCase().includes(q) ||
             cmd.arg.toLowerCase().includes(q) ||
@@ -136,35 +193,39 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
     const activeTabData = tabs.find(t => t.name === activeTab)
     if (!activeTabData && tabs.length > 0) return tabs[0].commands
     return activeTabData?.commands ?? []
-  }, [commandsSchema, searchQuery, activeTab, tabs])
+  }, [activeSchema, searchQuery, activeTab, tabs])
 
   const cmdPreviewItems = useMemo(() => {
     const items: { id: string; label: string; value?: string; fullText: string }[] = []
     const finalModelPath = card?.template.modelPath
     if (finalModelPath) {
-      items.push({ id: 'model', label: '-m', value: `"${finalModelPath}"`, fullText: `-m "${finalModelPath}"` })
+      const modelFlag = isTensorSharp ? '--model' : '-m'
+      items.push({ id: 'model', label: modelFlag, value: `"${finalModelPath}"`, fullText: `${modelFlag} "${finalModelPath}"` })
     }
-    Object.entries(args).forEach(([key, val]) => {
+    Object.entries(activeArgs).forEach(([key, val]) => {
+      // 只显示当前参数集允许的参数（避免另一引擎的参数残留在预览里）
+      if (!allowedArgs.has(key)) return
       if (val === true) {
         items.push({ id: key, label: key, fullText: key })
       } else if (val !== false && val !== null && val !== '') {
         items.push({ id: key, label: key, value: String(val), fullText: `${key} ${val}` })
       }
     })
+    // TensorSharp 监听地址固定 http://0.0.0.0:5000，无端口参数，预览不显示端口项
     const finalPort = card?.template.serverPort
-    if (finalPort && args['--port'] === undefined) {
+    if (finalPort && !isTensorSharp && activeArgs['--port'] === undefined) {
       items.push({ id: '--port', label: '--port', value: String(finalPort), fullText: `--port ${finalPort}` })
     }
     return items
-  }, [args, card])
+  }, [activeArgs, card, isTensorSharp, allowedArgs])
 
   const fullCommand = useMemo(() => {
-    let cmd = 'llama-server'
+    let cmd = backendExe
     cmdPreviewItems.forEach(item => {
       cmd += ` ${item.fullText}`
     })
     return cmd
-  }, [cmdPreviewItems])
+  }, [cmdPreviewItems, backendExe])
 
   const handleCopyAll = async () => {
     await navigator.clipboard.writeText(fullCommand)
@@ -187,7 +248,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   }
 
   const renderCommand = (cmd: CommandParam) => {
-    const rawVal = args[cmd.arg]
+    const rawVal = activeArgs[cmd.arg]
     const isActive = rawVal !== undefined && rawVal !== false && rawVal !== ''
     const val = rawVal ?? (cmd.type === 'boolean' ? false : '')
     const displayVal: string | number = val === false || val === null || val === true ? '' : val
@@ -274,7 +335,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
     )
   }
 
-  if (!commandsSchema) {
+  if (!activeSchema) {
     return (
       <div
         className={`modal-overlay modal-overlay--plain${closing ? ' closing' : ''}`}
@@ -330,6 +391,28 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
             </div>
           )}
 
+          <div className="param-set-row" style={{ margin: '0 20px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span className="text-muted text-sm" style={{ flexShrink: 0 }}>参数集</span>
+            <div className="launch-mode-row" style={{ flex: 1 }}>
+              <button
+                type="button"
+                className={`launch-mode-btn ${paramSet === 'llamacpp' ? 'active' : ''}`}
+                onClick={() => handleParamSetChange('llamacpp')}
+                disabled={disabled}
+              >
+                llama.cpp
+              </button>
+              <button
+                type="button"
+                className={`launch-mode-btn ${paramSet === 'tensorsharp' ? 'active' : ''}`}
+                onClick={() => handleParamSetChange('tensorsharp')}
+                disabled={disabled}
+              >
+                TensorSharp
+              </button>
+            </div>
+          </div>
+
           <div className="params-search-box" style={{ margin: '0 20px 16px' }}>
             <Search size={16} style={{ color: 'var(--text-muted)' }} />
             <input
@@ -384,7 +467,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
             </div>
           </div>
           <div className="cmd-preview">
-            <span className="cmd-preview-base">llama-server</span>
+            <span className="cmd-preview-base">{backendExe}</span>
             {cmdPreviewItems.map((item) => (
               <span
                 key={item.id}
