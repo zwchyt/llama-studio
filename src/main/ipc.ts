@@ -9,6 +9,7 @@ import { join, extname, basename, dirname, resolve, sep, relative, isAbsolute } 
 import { spawn, execSync, ChildProcess } from 'child_process'
 import { tmpdir } from 'os'
 import iconv from 'iconv-lite'
+import extractZip from 'extract-zip'
 import http from 'http'
 import { app } from 'electron'
 import { randomUUID, createHash } from 'crypto'
@@ -51,6 +52,23 @@ function flattenSingleRoot(dir: string): void {
     try { renameSync(join(only, e), join(dir, e)) } catch { return }
   }
   try { rmdirSync(only) } catch { }
+}
+
+// 在目录树内（有限深度）查找任一目标文件名，用于校验解压出的后端主程序是否齐全
+function findAnyFile(dir: string, names: string[], maxDepth = 4): boolean {
+  const wanted = new Set(names.map(n => n.toLowerCase()))
+  const walk = (d: string, depth: number): boolean => {
+    if (depth > maxDepth) return false
+    let entries: string[] = []
+    try { entries = readdirSync(d) } catch { return false }
+    for (const e of entries) {
+      if (wanted.has(e.toLowerCase())) return true
+      const p = join(d, e)
+      try { if (statSync(p).isDirectory() && walk(p, depth + 1)) return true } catch { continue }
+    }
+    return false
+  }
+  return walk(dir, 0)
 }
 
 interface TerminalSession {
@@ -441,7 +459,7 @@ function startDownload(
   file.on('error', (err) => {
     if (!destroyed) { destroyed = true; req.abort(); onError(err) }
   })
-  const timeout = setTimeout(() => { if (!destroyed) { req.abort(); onError(new Error('连接超时')) } }, 30000)
+  const timeout = setTimeout(() => { if (!destroyed) { req.abort(); onError(new Error('连接超时')) } }, 120000)
   req.on('response', (res) => {
     clearTimeout(timeout)
     if (destroyed) { (res as any).destroy(); return }
@@ -519,8 +537,10 @@ function startParallelDownload(
   let receivedBytes = startByte
   let speedBytes = 0
   let lastSpeedCheck = Date.now()
+  // 进度上报节流：并行分片数据包里逐个上报太频繁，至少间隔 200ms 才同步一次回执
+  let lastReportAt = 0
 
-  const report = () => {
+  const report = (force = false) => {
     const now = Date.now()
     const elapsed = (now - lastSpeedCheck) / 1000
     let speed = 0
@@ -529,11 +549,19 @@ function startParallelDownload(
       speedBytes = 0
       lastSpeedCheck = now
     }
+    if (!force && now - lastReportAt < 200) return
+    lastReportAt = now
     onProgress(Math.min(receivedBytes, totalBytes || receivedBytes), totalBytes, speed)
   }
 
   const fallback = () => {
     if (destroyed || cancelled) return
+    // 服务器不支持 Range 时不续传：先清掉残缺文件再整包重下，
+    // 避免把完整内容追加到半截文件后面导致压缩包损坏
+    if (startByte > 0) {
+      try { fsPromises.truncate(destPath, 0) } catch {}
+      startByte = 0
+    }
     fallbackCancel = startDownload(url, destPath, startByte, onProgress, onDone, onError)
   }
 
@@ -541,7 +569,7 @@ function startParallelDownload(
     if (destroyed || cancelled) return
     const req = net.request({ url, headers: { 'User-Agent': USER_AGENT } })
     probeReq = req
-    const timeout = setTimeout(() => { if (!destroyed && !cancelled) { req.abort(); onError(new Error('探测连接超时')) } }, 30000)
+    const timeout = setTimeout(() => { if (!destroyed && !cancelled) { req.abort(); onError(new Error('探测连接超时')) } }, 120000)
     req.on('response', (res) => {
       clearTimeout(timeout)
       if (destroyed || cancelled) { (res as any).destroy(); return }
@@ -584,7 +612,8 @@ function startParallelDownload(
       const onChunkDone = () => {
         if (finished || destroyed || cancelled) return
         doneCount++
-        report()
+        // 最后一个分片完成时强制回执一次，保证终态进度一定到达界面
+        report(doneCount >= numChunks)
         if (doneCount >= numChunks) {
           finished = true
           if (totalBytes > 0 && receivedBytes !== totalBytes) {
@@ -599,6 +628,12 @@ function startParallelDownload(
         finished = true
         for (const c of activeCancel) { try { c() } catch {} }
         onError(err)
+      }
+      // 续传边界：临时文件已完整（上次下载完成但解压/替换中断），无需再合并分片，直接结束
+      if (effectiveStart >= total) {
+        receivedBytes = total
+        for (let i = 0; i < numChunks; i++) onChunkDone()
+        return
       }
       for (const range of ranges) {
         if (range.end < effectiveStart) { onChunkDone(); continue }
@@ -624,7 +659,7 @@ function startParallelDownload(
           }
           const req = net.request({ url, headers: { 'User-Agent': USER_AGENT, Range: `bytes=${rStart}-${rEnd}` } })
           reqRef = req
-          const timeout = setTimeout(() => { if (!destroyed && !cancelled && !cancelledOne) { req.abort(); fail(new Error('连接超时')) } }, 30000)
+          const timeout = setTimeout(() => { if (!destroyed && !cancelled && !cancelledOne) { req.abort(); fail(new Error('连接超时')) } }, 120000)
           req.on('response', (res) => {
             clearTimeout(timeout)
             if (destroyed || cancelled || cancelledOne) { (res as any).destroy(); return }
@@ -646,7 +681,7 @@ function startParallelDownload(
             let lastDataTime = Date.now()
             stall = setInterval(() => {
               if (destroyed || cancelled || cancelledOne) { if (stall) clearInterval(stall); return }
-              if (Date.now() - lastDataTime > 30000) {
+              if (Date.now() - lastDataTime > 120000) {
                 if (stall) clearInterval(stall)
                 try { ws.destroy() } catch {}
                 try { reqRef?.abort() } catch {}
@@ -659,6 +694,7 @@ function startParallelDownload(
               speedBytes += chunk.length
               receivedBytes += chunk.length
               chunkReceived += chunk.length
+              report()
               if (!ws.write(chunk)) { (res as any).pause(); paused = true }
             })
             res.on('end', () => {
@@ -1930,46 +1966,82 @@ export function registerIpcHandlers(): void {
 
   let cancelBackendDl: (() => void) | null = null
 
-  ipcMain.handle('check-updates', async () => {
-    try {
-      const release = await fetchJson('https://api.github.com/repos/ggml-org/llama.cpp/releases/latest') as any
-      if (!release || !release.assets) return { error: 'GitHub 返回数据无效' }
-      const isMac = process.platform === 'darwin'
-      const isLinux = process.platform === 'linux'
-      const arch = process.arch
-      const platformAssets = release.assets.filter((a: any) => {
-        const n = a.name.toLowerCase()
-        if (n.startsWith('cudart-')) return false
-        if (isMac) {
-          if (!n.endsWith('.tar.gz') || !n.includes('macos')) return false
-          if (arch === 'arm64' && !n.includes('arm64')) return false
-          if (arch === 'x64' && !n.includes('x64')) return false
-          return true
-        }
-        if (isLinux) {
-          if (!n.endsWith('.tar.gz') || !n.includes('ubuntu')) return false
-          if (arch === 'arm64' && !n.includes('arm64')) return false
+  // ── 共享的后端发布版本检查（llama.cpp 与 TensorSharp 通用，均直连 GitHub）──
+  // repo 形如「owner/name」，由渲染进程显式传入；缺省为 llama.cpp。
+  async function checkBackendRelease(repo: string) {
+    const release = await fetchJson(`https://api.github.com/repos/${repo}/releases/latest`) as any
+    if (!release || !release.assets) return { error: 'GitHub 返回数据无效' }
+    const isMac = process.platform === 'darwin'
+    const isLinux = process.platform === 'linux'
+    const arch = process.arch
+    const isTs = repo.toLowerCase().includes('tensorsharp')
+    const platformAssets = release.assets.filter((a: any) => {
+      const n = a.name.toLowerCase()
+      if (n.startsWith('cudart-')) return false
+      // TensorSharp 的发布页同时包含 cli 与 server 两种资产，本项目只使用推理服务器
+      if (isTs && !n.includes('tensorsharp-server')) return false
+      if (isMac) {
+        if (!n.endsWith('.tar.gz')) return false
+        // llama.cpp 资产名用 macos，TensorSharp 用 osx
+        if (isTs) {
+          if (!n.includes('osx')) return false
           if (arch === 'x64' && n.includes('arm64')) return false
           return true
         }
-        if (!n.endsWith('.zip')) return false
-        if (!(n.includes('win') || n.includes('windows'))) return false
-        if (arch === 'x64' && n.includes('arm64')) return false
-        if (arch === 'arm64' && n.includes('x64')) return false
+        if (!n.includes('macos')) return false
+        if (arch === 'arm64' && !n.includes('arm64')) return false
+        if (arch === 'x64' && !n.includes('x64')) return false
         return true
-      })
-      const latestNum = parseInt(release.tag_name.replace(/^b/, ''), 10)
-      let isNewer = true
-      if (existsSync(BACKEND_DIR)) {
-        for (const d of readdirSync(BACKEND_DIR, { withFileTypes: true }).filter(d => d.isDirectory())) {
+      }
+      if (isLinux) {
+        if (!n.endsWith('.tar.gz')) return false
+        // llama.cpp 资产名带发行版标识（ubuntu 等），Tensor 用 linux-x64
+        if (isTs) return n.includes('linux-x64') && !n.includes('arm64')
+        if (!n.includes('ubuntu')) return false
+        if (arch === 'arm64' && !n.includes('arm64')) return false
+        if (arch === 'x64' && n.includes('arm64')) return false
+        return true
+      }
+      if (!n.endsWith('.zip')) return false
+      if (!(n.includes('win') || n.includes('windows'))) return false
+      if (arch === 'x64' && n.includes('arm64')) return false
+      if (arch === 'arm64' && n.includes('x64')) return false
+      return true
+    })
+    // 版本号解析：TensorSharp 的 tag 形如 v3.1.2.0 → 3120；llama.cpp 形如 b4379 → 4379
+    const latestNum = isTs
+      ? parseInt(String(release.tag_name).replace(/^v/i, '').replace(/\./g, ''), 10)
+      : parseInt(String(release.tag_name).replace(/^b/, ''), 10)
+    let isNewer = true
+    if (existsSync(BACKEND_DIR)) {
+      for (const d of readdirSync(BACKEND_DIR, { withFileTypes: true }).filter(d => d.isDirectory())) {
+        if (isTs) {
+          // 已装目录形如 v3.1.2.0-tensorsharp-server-3.1.2.0-win-x64-cuda（兼容旧的 tensors-server-…）
+          const m = d.name.match(/tensorsharp[-\s]*server[-\s]*([\d.]+)/i)
+          if (m) {
+            const installed = parseInt(m[1].replace(/\./g, ''), 10)
+            if (!isNaN(installed) && !isNaN(latestNum) && installed >= latestNum) { isNewer = false; break }
+          }
+        } else {
           const m = d.name.match(/(\d{3,6})/); if (!m) continue
           if (parseInt(m[1], 10) >= latestNum || d.name.includes(release.tag_name)) { isNewer = false; break }
         }
       }
-      return { tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at, isNewer, noPackage: platformAssets.length === 0, assets: platformAssets.map((a: any) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size })) }
+    }
+    return {
+      tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at,
+      isNewer, noPackage: platformAssets.length === 0,
+      assets: platformAssets.map((a: any) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size }))
+    }
+  }
+  ipcMain.handle('check-updates', async (_event, repo?: string) => {
+    try {
+      const target = String(repo || 'ggml-org/llama.cpp').trim()
+      if (!/^[a-zA-Z0-9_.\-]+\/[a-zA-Z0-9_.\-]+$/.test(target)) return { error: '无效的仓库' }
+      return await checkBackendRelease(target)
     } catch (err) { return { error: String(err) } }
   })
-  // 共享的后端发布包下载 + 解压实现（llama.cpp 与 TensorSharp 通用）
+  // 共享的后端发布包下载 + 解压实现（llama.cpp 与 TensorSharp 通用，直连 GitHub）
   async function downloadBackendRelease(event: Electron.IpcMainInvokeEvent, opts: { url: string; version: string; assetName: string }): Promise<{ success: boolean; path?: string; error?: string }> {
     if (!opts.version || /[\\/:*?"<>|]/.test(opts.version) || opts.version.includes('..')) {
       return { success: false, error: '无效的版本' }
@@ -1980,67 +2052,88 @@ export function registerIpcHandlers(): void {
     const archivePath = join(app.getPath('temp'), opts.assetName)
     const extractPath = join(BACKEND_DIR, opts.version)
     if (!isSafePath(BACKEND_DIR, extractPath)) return { success: false, error: '访问被拒绝' }
+    // 解压先落到同卷的 staging 目录（避免跨盘 rename），全部校验通过后再原子替换正式版本目录；
+    // 失败时只清理 staging，绝不误删已安装好的后端
+    const stagingDir = join(dirname(BACKEND_DIR), `.staging-${opts.version}-${Date.now()}`)
     const isTarGz = opts.assetName.toLowerCase().endsWith('.tar.gz')
-    // 删除可能残留的损坏/不完整文件，确保本次为全新下载
-    if (existsSync(archivePath)) { try { unlinkSync(archivePath) } catch {} }
+    // 断点续传：保留已下完的临时文件，让 Range 分片从断点继续；损坏与否由下载步自身的校验兜底
     let startByte = 0
     try { const st = statSync(archivePath); if (st.size > 0) startByte = st.size } catch {}
     let dlReject: ((err: Error) => void) | null = null
-    const overallTimer = setTimeout(() => {
-      if (dlReject) dlReject(new Error('下载整体超时'))
-      if (cancelBackendDl) { cancelBackendDl(); cancelBackendDl = null }
-    }, 5 * 60 * 1000)
+    // 停滞看门狗：任何分片/顺序流一旦超过 2 分钟没有任何数据到达，则判定卡死并中止。
+    // 每个分片还有更严的 30s 停滞自检，这里只兜底顺序下载等个别无自检的路径。
+    let lastProgressAt = Date.now()
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastProgressAt > 120 * 1000) {
+        if (dlReject) dlReject(new Error('下载停滞'))
+        if (cancelBackendDl) { cancelBackendDl(); cancelBackendDl = null }
+      }
+    }, 30 * 1000)
+    // 供顶部进度横幅识别引擎与包名
+    const dlLabel = opts.assetName.toLowerCase().includes('tensorsharp') ? 'TensorSharp' : 'llama.cpp'
+    const progressPayload = (phase: string, received: number, total: number, percent: number) => ({ percent, phase, received, total, engine: dlLabel === 'TensorSharp' ? 'tensorsharp' : 'llamacpp', name: opts.assetName })
     try {
-      event.sender.send('download-progress', { percent: 0, phase: 'downloading', received: 0, total: 0 })
-      console.log('[dl] 开始下载:', opts.url)
+      event.sender.send('download-progress', progressPayload('downloading', 0, 0, 0))
+      console.log('[dl] 开始下载:', opts.url, startByte > 0 ? `(续传 ${startByte} 字节)` : '')
       await new Promise<void>((resolve, reject) => {
         dlReject = reject
         cancelBackendDl = startParallelDownload(opts.url, archivePath, startByte,
-          (r, t) => event.sender.send('download-progress', { percent: t > 0 ? Math.round(r / t * 100) : 0, phase: 'downloading', received: r, total: t }),
+          (r, t) => { lastProgressAt = Date.now(); event.sender.send('download-progress', progressPayload('downloading', r, t, t > 0 ? Math.round(r / t * 100) : 0)) },
           () => { console.log('[dl] 下载完成'); resolve() },
           (err) => { console.log('[dl] 下载失败:', err.message); reject(err) })
       })
       cancelBackendDl = null; dlReject = null
-      console.log('[dl] 开始解压:', archivePath, '->', extractPath)
-      event.sender.send('download-progress', { percent: 100, phase: 'extracting', received: 0, total: 0 })
-      if (!existsSync(extractPath)) mkdirSync(extractPath, { recursive: true })
+      clearInterval(watchdog)
+      console.log('[dl] 开始解压:', archivePath, '->', stagingDir)
+      event.sender.send('download-progress', progressPayload('extracting', 0, 0, 100))
       const archiveSize = statSync(archivePath).size
       if (archiveSize === 0) throw new Error('下载文件为空')
+      rmSync(stagingDir, { recursive: true, force: true })
+      mkdirSync(stagingDir, { recursive: true })
       if (isTarGz) {
         await new Promise<void>((resolve, reject) => {
-          const p = spawn('tar', ['-xzf', archivePath, '-C', extractPath], { stdio: 'pipe' })
-          const t = setTimeout(() => { p.kill(); reject(new Error('tar解压超时')) }, 120000)
+          const p = spawn('tar', ['-xzf', archivePath, '-C', stagingDir], { stdio: 'pipe' })
+          const t = setTimeout(() => { p.kill(); reject(new Error('tar解压超时')) }, 10 * 60 * 1000)
           p.on('error', (e) => { clearTimeout(t); reject(e) })
           p.on('exit', code => { clearTimeout(t); code === 0 ? resolve() : reject(new Error(`tar 退出码 ${code}`)) })
         })
       } else {
-        // Windows 用原生 PowerShell Expand-Archive，Linux/macOS 用 unzip
-        const [cmd, args] = process.platform === 'win32'
-          ? ['powershell', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${archivePath.replace(/'/g, "''")}' -DestinationPath '${extractPath.replace(/'/g, "''")}' -Force`]]
-          : ['unzip', ['-o', archivePath, '-d', extractPath]]
+        // ZIP 一律用 extract-zip（纯 JS / yauzl）解压：逐条目落地、破坏包立即抛错，
+        // 不依赖外部 PowerShell Expand-Archive / unzip（大包会静默截断、部分解压或超时）
+        let entryCount = 0
         await new Promise<void>((resolve, reject) => {
-          const p = spawn(cmd, args, { stdio: 'pipe' })
-          const t = setTimeout(() => { p.kill(); reject(new Error('解压超时')) }, 120000)
-          p.on('error', (e) => { clearTimeout(t); reject(e) })
-          p.on('exit', code => { clearTimeout(t); code === 0 ? resolve() : reject(new Error(`解压失败, exit code ${code}`)) })
+          const t = setTimeout(() => reject(new Error('解压超时')), 10 * 60 * 1000)
+          extractZip(archivePath, {
+            dir: stagingDir,
+            onEntry: () => { entryCount++ },
+          }).then(() => { clearTimeout(t); resolve() }).catch((e) => { clearTimeout(t); reject(e) })
         })
+        // 归档内没有任何条目视为无效包
+        if (entryCount === 0) throw new Error('解压后内容为空')
       }
       // 校验解压结果，避免“解压成功但内容为空”
-      const extractedCount = countExtractedFiles(extractPath)
+      const extractedCount = countExtractedFiles(stagingDir)
       console.log('[dl] 解压完成, 文件数:', extractedCount)
       if (extractedCount === 0) throw new Error('解压后内容为空')
       // 部分发布包（如 TensorSharp）zip 内含同名顶层目录，解压后会多套一层；
       // 若解压目录只有一个子目录且无其他内容，则把内容上移一层
-      flattenSingleRoot(extractPath)
+      flattenSingleRoot(stagingDir)
+      if (countExtractedFiles(stagingDir) === 0) throw new Error('解压后内容为空')
+      // 核心可执行文件必须存在（有限深度查找），防止“解压完成但没有主程序”
+      const exeNames = ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe', 'TensorSharp.Server']
+      if (!findAnyFile(stagingDir, exeNames)) throw new Error('解压后未找到核心可执行文件，安装包可能不完整')
+      // 校验全部通过后才替换正式版本目录（此前版本安装保持原样）
+      if (existsSync(extractPath)) rmSync(extractPath, { recursive: true, force: true })
+      renameSync(stagingDir, extractPath)
       try { unlinkSync(archivePath) } catch (e) { console.error('清理临时文件失败', e) }
-      clearTimeout(overallTimer)
       return { success: true, path: extractPath }
     } catch (err) {
       console.log('[dl] 失败:', err)
       cancelBackendDl = null; dlReject = null
-      clearTimeout(overallTimer)
-      if (existsSync(extractPath)) {
-        try { rmSync(extractPath, { recursive: true, force: true }) } catch {}
+      clearInterval(watchdog)
+      // 只清理 staging；正式版本目录（不论新旧）一律保留，失败不回滚也不误删
+      if (existsSync(stagingDir)) {
+        try { rmSync(stagingDir, { recursive: true, force: true }) } catch {}
       }
       const msg = String(err)
       let cnMsg = msg
@@ -2048,63 +2141,21 @@ export function registerIpcHandlers(): void {
       else if (msg.includes('ERR_CONNECTION_REFUSED')) cnMsg = '连接被拒绝'
       else if (msg.includes('ERR_INTERNET_DISCONNECTED')) cnMsg = '网络未连接'
       else if (msg.includes('ERR_NAME_NOT_RESOLVED')) cnMsg = 'DNS 解析失败，请检查网络'
-      else if (msg.includes('Download stalled')) cnMsg = '下载停滞，请检查网络'
+      else if (msg.includes('Download stalled') || msg.includes('下载停滞')) cnMsg = '下载停滞，请检查网络'
       else if (msg.includes('HTTP 4') || msg.includes('HTTP 5')) cnMsg = '服务器返回错误：' + (msg.match(/HTTP \d+/)?.[0] || '')
       else if (msg.includes('下载不完整') || msg.includes('分片下载不完整') || msg.includes('解压后内容为空') || msg.includes('下载文件为空')) cnMsg = '下载不完整，压缩包可能已损坏，请重试'
       else if (msg.includes('压缩包损坏') || msg.includes('tar') || msg.includes('unzip') || msg.includes('zip') || msg.includes('corrupt')) cnMsg = '解压失败，压缩包可能已损坏'
-      else if (msg.includes('overall')) cnMsg = '下载整体超时'
+      else if (msg.includes('EBUSY') || msg.includes('EPERM') || msg.includes('ECONNREFUSED')) cnMsg = '文件被占用，请先停止该后端再更新'
       return { success: false, error: cnMsg }
     }
   }
   ipcMain.handle('download-release', (event, opts: { url: string; version: string; assetName: string }) => downloadBackendRelease(event, opts))
-  ipcMain.handle('download-tensorsharp-release', (event, opts: { url: string; version: string; assetName: string }) => downloadBackendRelease(event, opts))
   ipcMain.handle('cancel-backend-download', () => {
     if (cancelBackendDl) {
       cancelBackendDl()
       cancelBackendDl = null
     }
     return { success: true }
-  })
-
-  // ── TensorSharp 引擎更新通道（zhongkaifu/TensorSharp 发布页）──
-  ipcMain.handle('check-tensorsharp-update', async () => {
-    try {
-      const release = await fetchJson('https://api.github.com/repos/zhongkaifu/TensorSharp/releases/latest') as any
-      if (!release || !release.assets) return { error: 'GitHub 返回数据无效' }
-      const isWin = process.platform === 'win32'
-      const isMac = process.platform === 'darwin'
-      const arch = process.arch
-      const platformAssets = release.assets.filter((a: any) => {
-        const n = a.name.toLowerCase()
-        if (!n.includes('tensorsharp-server')) return false
-        if (isWin) return n.endsWith('.zip') && n.includes('win-x64') && !(arch === 'arm64' && n.includes('arm64'))
-        if (isMac) return n.endsWith('.tar.gz') && n.includes('osx') && !(arch === 'x64' && n.includes('arm64'))
-        return n.endsWith('.tar.gz') && n.includes('linux-x64') && !n.includes('arm64')
-      }).sort((a: any, b: any) => {
-        // Windows 下优先 CUDA 包（官方资产顺序中 cpu 排在 cuda 前，需手动置前）
-        if (!isWin) return 0
-        const ca = a.name.toLowerCase().includes('cuda') ? 0 : 1
-        const cb = b.name.toLowerCase().includes('cuda') ? 0 : 1
-        return ca - cb
-      })
-      const latestNum = parseInt(String(release.tag_name).replace(/^v/i, '').replace(/\./g, ''), 10)
-      let isNewer = true
-      if (existsSync(BACKEND_DIR)) {
-        for (const d of readdirSync(BACKEND_DIR, { withFileTypes: true }).filter(d => d.isDirectory())) {
-          // 已装目录形如 tensorsharp-server-3.1.2.0-win-x64-cuda
-          const m = d.name.match(/tensorsharp[-\s]*server[-\s]*([\d.]+)/i)
-          if (m) {
-            const installedNum = parseInt(m[1].replace(/\./g, ''), 10)
-            if (!isNaN(installedNum) && !isNaN(latestNum) && installedNum >= latestNum) { isNewer = false; break }
-          }
-        }
-      }
-      return {
-        tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at,
-        isNewer, noPackage: platformAssets.length === 0,
-        assets: platformAssets.map((a: any) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size }))
-      }
-    } catch (err) { return { error: String(err) } }
   })
 
   // ── 应用自身更新 ───────────────────────────────────────────

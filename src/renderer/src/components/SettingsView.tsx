@@ -48,13 +48,27 @@ export default function SettingsView() {
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (tsAssetDropdownRef.current && !tsAssetDropdownRef.current.contains(e.target as Node)) {
+        setShowTsAssetDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
   const [extFolders, setExtFolders] = useState<string[]>([])
   const [imgFolders, setImgFolders] = useState<string[]>([])
   const [metricsPolling, setMetricsPolling] = useState(true)
-  // TensorSharp 引擎发布信息（独立于 llama.cpp 更新通道）
+  // TensorSharp 引擎发布信息（与 llama.cpp 共用同一条 check-updates / download-release 通道）
   const [tsReleaseInfo, setTsReleaseInfo] = useState<ReleaseInfo | null>(null)
   const [tsChecking, setTsChecking] = useState(false)
   const [tsDownloading, setTsDownloading] = useState(false)
+  const [tsSelectedAssetUrl, setTsSelectedAssetUrl] = useState('')
+  const [showTsAssetDropdown, setShowTsAssetDropdown] = useState(false)
+  const [tsDropdownUp, setTsDropdownUp] = useState(false)
+  const [tsHoveredAsset, setTsHoveredAsset] = useState('')
+  const tsAssetDropdownRef = useRef<HTMLDivElement>(null)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const deletePopoverRef = useRef<HTMLDivElement>(null)
   const deleteConfirmRef = useRef<HTMLButtonElement>(null)
@@ -93,6 +107,12 @@ export default function SettingsView() {
       setSelectedAssetUrl(releaseInfo.assets[0].downloadUrl)
     }
   }, [releaseInfo, selectedAssetUrl])
+
+  useEffect(() => {
+    if (tsReleaseInfo?.assets?.length && !tsSelectedAssetUrl) {
+      setTsSelectedAssetUrl(tsReleaseInfo.assets[0].downloadUrl)
+    }
+  }, [tsReleaseInfo, tsSelectedAssetUrl])
 
   useEffect(() => {
     window.api.listExternalModelFolders().then(setExtFolders).catch((e) => console.error('[listExternalModelFolders]', e))
@@ -164,7 +184,7 @@ export default function SettingsView() {
   async function handleCheckUpdates() {
     setCheckingUpdate(true)
     try {
-      const info = await window.api.checkUpdates()
+      const info = await window.api.checkUpdates('ggml-org/llama.cpp')
       setReleaseInfo(info)
     } finally {
       setCheckingUpdate(false)
@@ -177,6 +197,7 @@ export default function SettingsView() {
     setDownloading(true)
     const res = await safeCall(() => window.api.downloadRelease({
       url: asset.downloadUrl,
+      // 版本目录名 = tag + 资源名去掉扩展名（llama.cpp 与 TensorSharp 统一）
       version: `${releaseInfo.tagName}-${asset.name.replace(/\.(zip|tar\.gz)$/, '')}`,
       assetName: asset.name
     }), '下载后端失败')
@@ -193,10 +214,12 @@ export default function SettingsView() {
     }
   }
 
+  // TensorSharp 走与 llama.cpp 完全相同的检查/下载通道，仅仓库名不同
+  const TS_REPO = 'zhongkaifu/TensorSharp'
   async function handleCheckTsUpdates() {
     setTsChecking(true)
     try {
-      const info = await window.api.checkTensorsharpUpdate()
+      const info = await window.api.checkUpdates(TS_REPO)
       setTsReleaseInfo(info)
     } finally {
       setTsChecking(false)
@@ -205,22 +228,24 @@ export default function SettingsView() {
 
   const handleTsDownload = async () => {
     if (!tsReleaseInfo || !tsReleaseInfo.assets?.length) return
-    const asset = tsReleaseInfo.assets[0]
+    const asset = tsReleaseInfo.assets.find(a => a.downloadUrl === tsSelectedAssetUrl) || tsReleaseInfo.assets[0]
     setTsDownloading(true)
-    const res = await safeCall(() => window.api.downloadTensorsharpRelease({
+    setDownloadProgress(null)
+    const res = await safeCall(() => window.api.downloadRelease({
       url: asset.downloadUrl,
-      // 版本目录名 = 资源名去掉扩展名（如 tensorsharp-server-3.1.2.0-win-x64-cuda）
-      version: asset.name.replace(/\.(zip|tar\.gz)$/, ''),
+      // 版本目录名与 llama.cpp 一致：tag + 资源名去掉扩展名（如 v3.1.2.0-tensorsharp-server-…-win-x64-cuda）
+      version: `${tsReleaseInfo.tagName}-${asset.name.replace(/\.(zip|tar\.gz)$/, '')}`,
       assetName: asset.name
     }), '下载 TensorSharp 失败')
     setTsDownloading(false)
+    setDownloadProgress(null)
     if (res && res.success) {
       notify('TensorSharp 安装完成', 'success')
       const backendsData = await safeCall(() => window.api.listBackends(), '刷新后端列表失败')
       if (backendsData) setBackends(backendsData)
-      // 安装后立即复查版本状态，让"已是最新"徽标及时生效
+      // 安装后立即复查版本状态，让“已是最新”徽标及时生效
       try {
-        const info = await window.api.checkTensorsharpUpdate()
+        const info = await window.api.checkUpdates(TS_REPO)
         setTsReleaseInfo(info)
       } catch { /* 忽略复查失败 */ }
     } else if (res && !res.success) {
@@ -691,21 +716,68 @@ export default function SettingsView() {
                   <div className="settings-row-sub">
                     发布日期：{new Date(tsReleaseInfo.publishedAt).toLocaleDateString()}
                     {tsReleaseInfo.isNewer === false && <span style={{ marginLeft: 8, color: 'var(--success)' }}>✓ 已安装最新版本</span>}
-                    {tsReleaseInfo.isNewer !== false && tsReleaseInfo.assets?.length > 0 && (
-                      <span style={{ marginLeft: 8 }}>
-                        {tsReleaseInfo.assets[0].name}（{Math.round(tsReleaseInfo.assets[0].size / 1024 / 1024)} MB）
-                      </span>
-                    )}
                   </div>
                 </div>
                 {tsReleaseInfo.isNewer !== false && tsReleaseInfo.assets?.length > 0 && (
-                  tsDownloading ? (
-                    <button className="btn btn-secondary btn-sm" disabled>
-                      <Loader2 size={14} className="spin" /> 下载中...
-                    </button>
-                  ) : (
-                    <button className="btn btn-primary btn-sm" onClick={handleTsDownload}>下载并安装</button>
-                  )
+                  <div className="flex items-center gap-2 w-full">
+                    {/* 与 llama.cpp 区块一致的资产选择下拉（CPU / CUDA 等变体由用户自选） */}
+                    <div ref={tsAssetDropdownRef} style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+                      <button
+                        className="cmd-select"
+                        style={{ width: '100%', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                        onClick={() => {
+                          if (showTsAssetDropdown) { setShowTsAssetDropdown(false); return }
+                          if (tsAssetDropdownRef.current) {
+                            const rect = tsAssetDropdownRef.current.getBoundingClientRect()
+                            setTsDropdownUp(window.innerHeight - rect.bottom < 260)
+                          }
+                          setShowTsAssetDropdown(true)
+                        }}
+                        disabled={tsDownloading}
+                      >
+                        {tsReleaseInfo.assets.find(a => a.downloadUrl === tsSelectedAssetUrl)?.name || '选择版本'}
+                      </button>
+                      {showTsAssetDropdown && (
+                        <div style={{
+                          position: 'absolute' as const, left: 0, right: 0,
+                          background: 'var(--surface)', border: '1.5px solid var(--border)',
+                          borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-md)',
+                          maxHeight: 240, overflowY: 'auto' as const, zIndex: 300,
+                          ...(tsDropdownUp ? { bottom: 'calc(100% + 2px)' } : { top: 'calc(100% + 2px)' })
+                        }}>
+                          {tsReleaseInfo.assets.map(a => (
+                            <div
+                              key={a.downloadUrl}
+                              style={{
+                                padding: '6px 10px', fontSize: 12, cursor: 'pointer',
+                                background: a.downloadUrl === tsSelectedAssetUrl ? 'var(--bg)' : tsHoveredAsset === a.downloadUrl ? 'var(--surface-hover)' : 'transparent',
+                                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+                              }}
+                              onClick={() => { setTsSelectedAssetUrl(a.downloadUrl); setShowTsAssetDropdown(false) }}
+                              onMouseEnter={() => setTsHoveredAsset(a.downloadUrl)}
+                              onMouseLeave={() => setTsHoveredAsset('')}
+                            >
+                              {a.name} ({Math.round(a.size / 1024 / 1024)} MB)
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {tsDownloading ? (
+                      <button className="btn btn-secondary btn-sm" disabled>
+                        <Loader2 size={14} className="spin" /> 下载中...
+                      </button>
+                    ) : (
+                      <button className="btn btn-primary btn-sm" onClick={handleTsDownload}>下载并安装</button>
+                    )}
+                  </div>
+                )}
+                {tsDownloading && downloadProgress && (downloadProgress.phase === 'downloading' || downloadProgress.phase === 'extracting') && (
+                  <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                    {downloadProgress.phase === 'extracting'
+                      ? '正在解压...'
+                      : `下载中 ${downloadProgress.percent}%（${Math.round((downloadProgress.received || 0) / 1024 / 1024)} / ${Math.round((downloadProgress.total || 0) / 1024 / 1024)} MB）`}
+                  </div>
                 )}
               </div>
             )

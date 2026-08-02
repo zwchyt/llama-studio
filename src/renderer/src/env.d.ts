@@ -58,13 +58,10 @@ interface LlamaCppApi {
   stopModel: (id: string) => Promise<{ success: boolean; error?: string }>
   onModelError: (cb: (data: { id: string; error: string }) => void) => void
   removeModelErrorListener: () => void
-  checkUpdates: () => Promise<ReleaseInfo>
+  checkUpdates: (repo?: string) => Promise<ReleaseInfo>
   downloadRelease: (opts: { url: string; version: string; assetName: string }) => Promise<{ success: boolean; path?: string; error?: string }>
   cancelBackendDownload: () => Promise<{ success: boolean }>
-  // ── TensorSharp 引擎更新通道 ──
-  checkTensorsharpUpdate: () => Promise<ReleaseInfo>
-  downloadTensorsharpRelease: (opts: { url: string; version: string; assetName: string }) => Promise<{ success: boolean; path?: string; error?: string }>
-  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number }) => void) => void
+  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp'; name?: string }) => void) => void
   removeDownloadListener: () => void
   // ── 应用自身更新 ──
   checkAppUpdate: () => Promise<AppUpdateInfo>

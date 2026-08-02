@@ -36,13 +36,10 @@ const fullApi = {
     ipcRenderer.on('model-error', (_e, data) => cb(data))
   },
   removeModelErrorListener: () => ipcRenderer.removeAllListeners('model-error'),
-  checkUpdates: () => ipcRenderer.invoke('check-updates'),
+  checkUpdates: (repo?: string) => ipcRenderer.invoke('check-updates', repo),
   downloadRelease: (opts: object) => ipcRenderer.invoke('download-release', opts),
   cancelBackendDownload: () => ipcRenderer.invoke('cancel-backend-download'),
-  // ── TensorSharp 引擎更新通道 ──
-  checkTensorsharpUpdate: () => ipcRenderer.invoke('check-tensorsharp-update'),
-  downloadTensorsharpRelease: (opts: object) => ipcRenderer.invoke('download-tensorsharp-release', opts),
-  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number }) => void) => {
+  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp'; name?: string }) => void) => {
     ipcRenderer.removeAllListeners('download-progress')
     ipcRenderer.on('download-progress', (_event, data) => callback(data))
   },

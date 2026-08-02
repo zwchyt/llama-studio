@@ -46,6 +46,7 @@ export default function UpdateBanner({ hidden, switcher }: BannerSlotProps = {})
   if (!visible || !releaseInfo) return null
   const selectedAsset = releaseInfo.assets?.find(a => a.downloadUrl === selectedAssetUrl)
   const isBusy = downloading || !!downloadProgress
+  const busyEngine = downloadProgress?.engine === 'tensorsharp' ? 'TensorSharp' : 'llama.cpp'
   const handleSkipVersion = () => {
     skipVersion(SKIP_KEY, releaseInfo.tagName)
     closeWithAnim()
@@ -75,11 +76,11 @@ export default function UpdateBanner({ hidden, switcher }: BannerSlotProps = {})
     <div className={`update-banner${closing ? ' closing' : ''}`} style={hidden ? { display: 'none' } : undefined}>
       <span className="ub-badge">
         {isBusy ? <Loader2 size={11} className="spin" /> : <ArrowUpCircle size={11} />}
-        llama.cpp
+        {busyEngine}
       </span>
       {isBusy ? (
         <div className="ub-actions">
-          <span>正在下载 <strong>{selectedAsset?.name || releaseInfo.tagName}</strong></span>
+          <span>正在下载 <strong>{downloadProgress?.name || selectedAsset?.name || releaseInfo.tagName}</strong></span>
           <UbProgress percent={downloadProgress?.percent || 0} received={downloadProgress?.received} total={downloadProgress?.total} />
         </div>
       ) : (
