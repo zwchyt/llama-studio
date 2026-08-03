@@ -5,6 +5,7 @@ import { useChatStore } from '../store/chatStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
+import { ENGINE_LABELS, paramSetOf } from '../utils/engine'
 import { Play, Square, Settings, MoreVertical, Copy, Trash, Download, Globe, Server, Terminal, Check, MessageSquare } from 'lucide-react'
 import type { CardState } from '../../../shared/types'
 import ParamsModal from './ParamsModal'
@@ -193,9 +194,9 @@ export default function ModelCard({ card }: Props) {
       return
     }
     // 引擎类型归一化：'other' 视为 llama.cpp 行为
-    const kind: 'llamacpp' | 'tensorsharp' = targetBackend.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp'
+    const kind = paramSetOf(targetBackend.kind)
     // 参数集：模板里手动选择的优先，未选时按后端类型默认
-    const paramSet: 'llamacpp' | 'tensorsharp' = card.template.paramSet ?? kind
+    const paramSet = paramSetOf(card.template.paramSet ?? targetBackend.kind)
     const args: string[] = []
     const tArgs = card.template.args ?? {}
     // 模型参数：llama.cpp 用 -m，TensorSharp 用 --model（--model 在两个 schema 中都会被跳过，
@@ -292,8 +293,8 @@ export default function ModelCard({ card }: Props) {
     }
   }, [card.template.id, updateCard])
   const cardBackend = backends.find(b => b.name === card.template.backendVersion)
-  const effectiveParamSet = card.template.paramSet ?? (cardBackend?.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp')
-  const engineLabel = effectiveParamSet === 'tensorsharp' ? 'TensorSharp' : effectiveParamSet === 'llamacpp' ? 'llama.cpp' : ''
+  const effectiveParamSet = paramSetOf(card.template.paramSet ?? cardBackend?.kind)
+  const engineLabel = ENGINE_LABELS[effectiveParamSet] ?? ''
   return (
     <div className={`model-card ${isRunning ? 'running' : ''}`}>
       <div className="card-header">

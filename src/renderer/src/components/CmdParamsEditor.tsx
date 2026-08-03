@@ -4,6 +4,7 @@ import { shallow } from 'zustand/shallow'
 import { ChevronDown, ChevronRight, Copy, Check, Search, Lock } from 'lucide-react'
 import type { CommandParam, TemplateArgs, CommandsSchema } from '../../../shared/types'
 import { iconElements } from '../utils/iconMap'
+import { ENGINE_LABELS, paramSetOf, ALL_ENGINES } from '../utils/engine'
 import CustomSelect from './CustomSelect'
 import ModelFileSelect from './ModelFileSelect'
 
@@ -17,9 +18,9 @@ interface Props {
   modelPathFallback?: string
   serverPortFallback?: number
   disabled?: boolean
-  /** 参数集选择（参数设置里切换）：'llamacpp' → commands.json，'tensorsharp' → commands-tensorsharp.json */
-  paramSet?: 'llamacpp' | 'tensorsharp'
-  onParamSetChange?: (s: 'llamacpp' | 'tensorsharp') => void
+  /** 参数集选择（参数设置里切换）：'llamacpp' → commands.json，'tensorsharp' → commands-tensorsharp.json，llama.cpp 分支 → 各自专属文件 */
+  paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama'
+  onParamSetChange?: (s: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => void
 }
 export default function CmdParamsEditor({ templateId, backendName, args, onChange, modelPathFallback, serverPortFallback, disabled: disabledProp, paramSet, onParamSetChange }: Props) {
   const { commandsSchema, updateCard, cards, imageModels, chatTemplates, backends } = useStore(s => ({ commandsSchema: s.commandsSchema, updateCard: s.updateCard, cards: s.cards, imageModels: s.imageModels, chatTemplates: s.chatTemplates, backends: s.backends }), shallow)
@@ -35,7 +36,7 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
   const disabled = disabledProp || isRunning
   // 预览跟随参数集选择（切换参数集时 exe 标志和参数形态同步切换）
   const resolvedBackend = backends.find(b => b.name === (card?.template.backendVersion || backendName))
-  const effectiveParamSet: 'llamacpp' | 'tensorsharp' = paramSet ?? (resolvedBackend?.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp')
+  const effectiveParamSet = paramSet ?? paramSetOf(resolvedBackend?.kind)
   const isTensorSharp = effectiveParamSet === 'tensorsharp'
   // 预览 exe 跟随参数集：参数集决定命令格式，与实际后端 exe 无关
   const backendExe = isTensorSharp ? 'TensorSharp.Server' : 'llama-server'
@@ -62,7 +63,7 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
     }
     return s
   }, [activeSchema])
-  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp') => {
+  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => {
     if (next === effectiveParamSet) return
     onParamSetChange?.(next)
   }
@@ -332,22 +333,21 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
       <div className="param-set-row" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <span className="text-muted text-sm" style={{ flexShrink: 0 }}>参数集</span>
         <div className="launch-mode-row" style={{ flex: 1 }}>
-          <button
-            type="button"
-            className={`launch-mode-btn ${effectiveParamSet === 'llamacpp' ? 'active' : ''}`}
-            onClick={() => handleParamSetChange('llamacpp')}
-            disabled={disabled}
-          >
-            llama.cpp
-          </button>
-          <button
-            type="button"
-            className={`launch-mode-btn ${effectiveParamSet === 'tensorsharp' ? 'active' : ''}`}
-            onClick={() => handleParamSetChange('tensorsharp')}
-            disabled={disabled}
-          >
-            TensorSharp
-          </button>
+          {ALL_ENGINES.map(e => {
+            const installed = backends.some(b => b.kind === e)
+            return (
+              <button
+                key={e}
+                type="button"
+                className={`launch-mode-btn ${effectiveParamSet === e ? 'active' : ''}`}
+                onClick={() => handleParamSetChange(e)}
+                disabled={disabled || !installed}
+                title={installed ? undefined : `${ENGINE_LABELS[e]} 尚未安装，可在设置中下载`}
+              >
+                {ENGINE_LABELS[e]}
+              </button>
+            )
+          })}
         </div>
       </div>
       <div className="params-search-box">

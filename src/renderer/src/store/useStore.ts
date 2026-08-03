@@ -61,7 +61,7 @@ interface AppStore {
   editingTemplate: Template | null
   updateDismissed: boolean
   checkingUpdate: boolean
-  downloadProgress: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp'; name?: string } | null
+  downloadProgress: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama'; name?: string } | null
   // ── 应用自身更新 ──
   appReleaseInfo: AppUpdateInfo | null
   appUpdateDismissed: boolean

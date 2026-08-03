@@ -2,8 +2,8 @@ export interface ModelFile {
   name: string
   path: string
 }
-/** 后端引擎类型：llama.cpp 系列 / TensorSharp 系列 */
-export type EngineKind = 'llamacpp' | 'tensorsharp' | 'other'
+/** 后端引擎类型：llama.cpp 系列 / TensorSharp 系列 / llama.cpp 分支系列 */
+export type EngineKind = 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'other'
 export interface BackendVersion {
   name: string
   path: string
@@ -46,7 +46,7 @@ export interface Template {
   args: TemplateArgs
   launchMode?: 'chat' | 'api'
   /** 参数集选择（参数设置里手动切换）：'llamacpp' → commands.json，'tensorsharp' → commands-tensorsharp.json；缺省 = llama.cpp */
-  paramSet?: 'llamacpp' | 'tensorsharp'
+  paramSet?: EngineKind
   createdAt: string
   updatedAt: string
   _file?: string

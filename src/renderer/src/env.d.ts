@@ -42,8 +42,8 @@ interface LlamaCppApi {
   removeModelDownloadListener: () => void
   listBackends: () => Promise<BackendVersion[]>
   deleteBackend: (name: string) => Promise<{ success: boolean; error?: string }>
-  getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp') => Promise<CommandsSchema | null>
-  saveBackendCommands: (backendName: string, schema: object, paramSet?: 'llamacpp' | 'tensorsharp') => Promise<{ success: boolean; error?: string }>
+  getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => Promise<CommandsSchema | null>
+  saveBackendCommands: (backendName: string, schema: object, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => Promise<{ success: boolean; error?: string }>
   listTemplates: () => Promise<Template[]>
   saveTemplate: (template: object) => Promise<{ success: boolean; id: string }>
   deleteTemplate: (id: string) => Promise<{ success: boolean }>
@@ -54,14 +54,14 @@ interface LlamaCppApi {
   selectDirectory: () => Promise<{ path: string | null }>
   selectFiles: () => Promise<{ paths: string[] }>
   listDrives: () => Promise<{ drives: string[] }>
-  runModel: (opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: 'llamacpp' | 'tensorsharp'; kind?: 'llamacpp' | 'tensorsharp' }) => Promise<{ success: boolean; pid?: number; error?: string }>
+  runModel: (opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama'; kind?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' }) => Promise<{ success: boolean; pid?: number; error?: string }>
   stopModel: (id: string) => Promise<{ success: boolean; error?: string }>
   onModelError: (cb: (data: { id: string; error: string }) => void) => void
   removeModelErrorListener: () => void
   checkUpdates: (repo?: string) => Promise<ReleaseInfo>
-  downloadRelease: (opts: { url: string; version: string; assetName: string }) => Promise<{ success: boolean; path?: string; error?: string }>
+  downloadRelease: (opts: { url: string; version: string; assetName: string }) => Promise<{ success: boolean; path?: string; cancelled?: boolean; error?: string }>
   cancelBackendDownload: () => Promise<{ success: boolean }>
-  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp'; name?: string }) => void) => void
+  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama'; name?: string }) => void) => void
   removeDownloadListener: () => void
   // ── 应用自身更新 ──
   checkAppUpdate: () => Promise<AppUpdateInfo>

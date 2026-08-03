@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
+import { paramSetOf, ENGINE_LABELS } from '../utils/engine'
 import { FolderOpen, ChevronDown, Terminal, Globe, Server, Loader2 } from 'lucide-react'
 import CmdParamsEditor from './CmdParamsEditor'
 import CustomSelect from './CustomSelect'
@@ -107,13 +108,13 @@ export default function CreateModal() {
   })
   const [launchMode, setLaunchMode] = useState<'chat' | 'api'>(editingTemplate?.launchMode ?? 'chat')
   // 参数集：编辑模板时沿用已保存的，新建时按后端类型默认（可在高级参数里切换）
-  const [paramSet, setParamSet] = useState<'llamacpp' | 'tensorsharp'>(() => {
-    if (editingTemplate?.paramSet) return editingTemplate.paramSet
+  const [paramSet, setParamSet] = useState(() => {
+    if (editingTemplate?.paramSet) return paramSetOf(editingTemplate.paramSet)
     const b = backends.find(x => x.name === initialBackend)
-    return b?.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp'
+    return paramSetOf(b?.kind)
   })
   // 参数集切换：同步更新显示 + 切换活跃后端 + 端口默认值 + 后端版本下拉框
-  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp') => {
+  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => {
     if (next === paramSet) return
     setParamSet(next)
     const targetBackend = backends.find(b => b.kind === next)
@@ -179,6 +180,7 @@ export default function CreateModal() {
           serverPort,
           args,
           launchMode,
+          paramSet,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         }
@@ -258,38 +260,46 @@ export default function CreateModal() {
                 placeholder="此配置的简短描述..."
               />
             </div>
-            <div className="form-row">
-              <div className="form-group">
-                <label className="form-label">后端版本</label>
-                <CustomSelect
-                  buttonClass="form-select-button"
-                  value={backendVersion}
-                  onChange={(v) => {
-                    setBackendVersion(v)
-                    // 切换后端时参数集跟随后端类型（llama.cpp / TensorSharp 各自专属参数文件）
-                    const b = backends.find(x => x.name === v)
-                    if (b?.kind === 'tensorsharp') {
-                      setParamSet('tensorsharp')
-                      setServerPort(5000)
-                      if (Object.keys(args).length === 0) {
-                        setArgs({ '--temperature': 0.7, '--repeat-penalty': 1.1, '--max-tokens': 20000 })
-                      }
-                    } else {
-                      setParamSet('llamacpp')
-                      setServerPort(8080)
-                    }
-                  }}
-                  options={[
-                    { value: '', label: '默认（当前）' },
-                    ...backends.map(b => ({
-                      value: b.name,
-                      label: b.kind === 'tensorsharp' ? `TensorSharp · ${b.name}` : b.name
-                    }))
-                  ]}
-                  aria-label="后端版本"
-                />
+            <div className="form-group">
+              <label className="form-label">后端版本</label>
+              <CustomSelect
+                buttonClass="form-select-button"
+                value={backendVersion}
+                onChange={(v) => {
+                  setBackendVersion(v)
+                  // 切换后端时参数集跟随后端类型（llama.cpp / TensorSharp / llama.cpp 分支各自专属参数文件）
+                  const b = backends.find(x => x.name === v)
+                  const nextPs = paramSetOf(b?.kind)
+                  setParamSet(nextPs)
+                  setServerPort(nextPs === 'tensorsharp' ? 5000 : 8080)
+                  if (nextPs === 'tensorsharp' && Object.keys(args).length === 0) {
+                    setArgs({ '--temperature': 0.7, '--repeat-penalty': 1.1, '--max-tokens': 20000 })
+                  }
+                }}
+                options={[
+                  { value: '', label: '默认（当前）' },
+                  ...backends.map(b => ({
+                    value: b.name,
+                    // 带引擎前缀方便区分（目录名很长，如 tqp-v0.3.0-turboquant-plus-…）；下拉项已做省略号截断
+                    label: b.kind && b.kind !== 'other' ? `[${ENGINE_LABELS[b.kind] ?? b.kind}] ${b.name}` : b.name
+                  }))
+                ]}
+                aria-label="后端版本"
+              />
+            </div>
+            <div className="form-row" style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
+              <div className="form-group" style={{ flex: 1, minWidth: 0, marginBottom: 0 }}>
+                <label className="form-label">启动模式</label>
+                <div className="launch-mode-row">
+                  <button type="button" className={`launch-mode-btn ${launchMode === 'chat' ? 'active' : ''}`} onClick={() => setLaunchMode('chat')}>
+                    <Globe size={13} /> 聊天界面
+                  </button>
+                  <button type="button" className={`launch-mode-btn ${launchMode === 'api' ? 'active' : ''}`} onClick={() => setLaunchMode('api')}>
+                    <Server size={13} /> 仅 API
+                  </button>
+                </div>
               </div>
-              <div className="form-group">
+              <div className="form-group" style={{ width: 140, marginBottom: 0 }}>
                 <label className="form-label">服务器端口</label>
                 <input
                   type="number"
@@ -304,15 +314,6 @@ export default function CreateModal() {
               </div>
             </div>
             <div className="form-group">
-              <label className="form-label">启动模式</label>
-              <div className="launch-mode-row">
-                <button type="button" className={`launch-mode-btn ${launchMode === 'chat' ? 'active' : ''}`} onClick={() => setLaunchMode('chat')}>
-                  <Globe size={13} /> 聊天界面
-                </button>
-                <button type="button" className={`launch-mode-btn ${launchMode === 'api' ? 'active' : ''}`} onClick={() => setLaunchMode('api')}>
-                  <Server size={13} /> 仅 API
-                </button>
-              </div>
               <div className="form-hint">聊天界面会打开浏览器。仅 API 模式仅在端口提供服务，不打开网页界面。</div>
             </div>
             <div className="form-group mb-0">

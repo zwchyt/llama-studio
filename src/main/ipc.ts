@@ -10,6 +10,7 @@ import { spawn, execSync, ChildProcess } from 'child_process'
 import { tmpdir } from 'os'
 import iconv from 'iconv-lite'
 import extractZip from 'extract-zip'
+import yauzl from 'yauzl'
 import http from 'http'
 import { app } from 'electron'
 import { randomUUID, createHash } from 'crypto'
@@ -141,11 +142,16 @@ function isBackendSchema(v: unknown): v is BackendSchema {
   return typeof v === 'object' && v !== null && 'categories' in v
 }
 const LLAMA_CPP_EXE_NAMES = new Set(['llama-server', 'llama-server.exe', 'main', 'main.exe', 'server', 'server.exe', 'llama-cli', 'llama-cli.exe'])
-// 按可执行文件名推断后端引擎类型（TensorSharp.Server.exe → 'tensorsharp'，llama.cpp 系列 → 'llamacpp'）
-function detectEngineKind(exe: string | null): EngineKind {
-  if (!exe) return 'other'
-  const n = basename(exe).toLowerCase()
+// 按可执行文件名 + 后端目录名推断后端引擎类型：
+// TensorSharp.Server.exe → 'tensorsharp'；llama.cpp 分支（目录名含 turboquant / beellama）→ 对应分支；
+// llama.cpp 系列 → 'llamacpp'
+function detectEngineKind(exe: string | null, dirHint = ''): EngineKind {
+  const n = basename(exe ?? '').toLowerCase()
+  const dir = dirHint.toLowerCase()
   if (n.includes('tensorsharp')) return 'tensorsharp'
+  // llama.cpp 分支的后端目录名来自发布资产（如 turboquant-plus-tqp-v… / beellama-v0.4.2-…）
+  if (dir.includes('turboquant')) return 'turboquant'
+  if (dir.includes('beellama')) return 'beellama'
   if (LLAMA_CPP_EXE_NAMES.has(n)) return 'llamacpp'
   return 'other'
 }
@@ -160,16 +166,27 @@ for (const dir of [MODELS_DIR, TEMPLATES_DIR, BACKEND_DIR, CHATS_DIR, CHAT_TEMPL
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
 // 参数集由用户在参数设置里手动切换（paramSet），不自动识别引擎：
-// 'tensorsharp' → commands-tensorsharp.json，'llamacpp' → commands.json
+// 'tensorsharp' → commands-tensorsharp.json，'turboquant' → commands-turboquant.json，
+// 'beellama' → commands-beellama.json，其余 → commands.json
+function commandsFileName(paramSet: EngineKind): string {
+  switch (paramSet) {
+    case 'tensorsharp': return 'commands-tensorsharp.json'
+    case 'turboquant': return 'commands-turboquant.json'
+    case 'beellama': return 'commands-beellama.json'
+    default: return 'commands.json'
+  }
+}
 function schemaResourcePaths(paramSet: EngineKind): string[] {
-  const name = paramSet === 'tensorsharp' ? 'commands-tensorsharp.json' : 'commands.json'
+  const name = commandsFileName(paramSet)
   return [
     join(APP_ROOT, 'resources', name),
     ...(app.isPackaged ? [join(process.resourcesPath, 'resources', name)] : [])
   ]
 }
 function normalizeParamSet(paramSet: unknown): EngineKind {
-  return paramSet === 'tensorsharp' ? 'tensorsharp' : 'llamacpp'
+  return paramSet === 'tensorsharp' || paramSet === 'turboquant' || paramSet === 'beellama'
+    ? paramSet
+    : 'llamacpp'
 }
 // 活跃的聊天流式请求，按 streamId 索引，支持中止
 const activeChatStreams = new Map<string, http.ClientRequest>()
@@ -214,8 +231,8 @@ function loadSchemaArgs(backendPath: string, paramSet: EngineKind = 'llamacpp'):
       return isBackendSchema(parsed) ? parsed : null
     } catch { return null }
   }
-  // 用户保存的自定义参数集按参数集分文件名（TensorSharp → commands-tensorsharp.json，其他 → commands.json）
-  const commandsPath = join(backendPath, paramSet === 'tensorsharp' ? 'commands-tensorsharp.json' : 'commands.json')
+  // 用户保存的自定义参数集按参数集分文件名（TensorSharp → commands-tensorsharp.json，llama.cpp 分支 → 各自专属文件）
+  const commandsPath = join(backendPath, commandsFileName(paramSet))
   if (existsSync(commandsPath)) schema = tryLoad(commandsPath)
   if (!schema) {
     for (const p of schemaResourcePaths(paramSet)) {
@@ -577,6 +594,13 @@ function startParallelDownload(
       const total = parseInt(String(res.headers['content-length'] || '0'), 10)
       ;(res as any).destroy()
       if (!total || isNaN(total) || acceptRanges !== 'bytes' || total < MIN_CHUNK * 2) return fallback()
+      // 本地已存在“完整大小”的残留文件（上次下载失败未清理，内容可能损坏）：
+      // 续传分片只覆盖文件尾部，无法修复前部损坏，直接删除从头下载
+      if (startByte >= total) {
+        try { unlinkSync(destPath) } catch {}
+        console.log('[dl] 本地残留文件大小等于目标大小，视为损坏，删除后重新下载')
+        startByte = 0
+      }
       startChunks(total)
     })
     req.on('error', () => { clearTimeout(timeout); if (!destroyed && !cancelled) fallback() })
@@ -1279,9 +1303,11 @@ export function registerIpcHandlers(): void {
       entries.filter(d => d.isDirectory()).map(async (d) => {
         const basePath = join(BACKEND_DIR, d.name)
         const exe = await findExecutable(basePath)
-        const kind = detectEngineKind(exe)
-        // 参数集不同，自定义参数文件名也不同：TensorSharp → commands-tensorsharp.json，其他 → commands.json
-        const commandsPath = join(BACKEND_DIR, d.name, kind === 'tensorsharp' ? 'commands-tensorsharp.json' : 'commands.json')
+        // llama.cpp 分支（turboquant / beellama）与 llama.cpp 同名 exe，需结合目录名识别
+        const kind = detectEngineKind(exe, d.name)
+        // 参数集不同，自定义参数文件名也不同：TensorSharp → commands-tensorsharp.json，
+        // llama.cpp 分支 → 各自专属文件，其他 → commands.json
+        const commandsPath = join(BACKEND_DIR, d.name, commandsFileName(kind))
         return {
           name: d.name,
           path: basePath,
@@ -1320,7 +1346,7 @@ export function registerIpcHandlers(): void {
     if (!isSafePath(BACKEND_DIR, backendPath)) return null
     // 参数集由参数设置里的切换按钮决定，主进程不自动识别引擎
     const ps = normalizeParamSet(paramSet)
-    const fileName = ps === 'tensorsharp' ? 'commands-tensorsharp.json' : 'commands.json'
+    const fileName = commandsFileName(ps)
     const commandsPath = join(backendPath, fileName)
     try {
       if (existsSync(commandsPath)) return JSON.parse(await fsPromises.readFile(commandsPath, 'utf-8'))
@@ -1337,9 +1363,9 @@ export function registerIpcHandlers(): void {
       const backendPath = join(BACKEND_DIR, backendName)
       if (!isSafePath(BACKEND_DIR, backendPath)) return { success: false, error: '访问被拒绝' }
       if (!existsSync(backendPath)) mkdirSync(backendPath, { recursive: true })
-      // 保存到对应参数集的文件（TensorSharp → commands-tensorsharp.json，llama.cpp → commands.json）
+      // 保存到对应参数集的文件（TensorSharp → commands-tensorsharp.json，llama.cpp 分支 → 各自专属文件）
       const ps = normalizeParamSet(paramSet)
-      const fileName = ps === 'tensorsharp' ? 'commands-tensorsharp.json' : 'commands.json'
+      const fileName = commandsFileName(ps)
       writeFileSync(join(backendPath, fileName), JSON.stringify(schema, null, 2))
       return { success: true }
     } catch (err) {
@@ -1495,7 +1521,7 @@ export function registerIpcHandlers(): void {
       const safeArgs = validateArgs(opts.args, allowed, boolean)
       // TensorSharp 引擎（按实际可执行文件判断，与参数集无关）官方默认后端为 ggml_cpu（不自动探测 GPU）；
       // 本机存在 NVIDIA GPU 且用户未显式指定 --backend 时，自动注入 ggml_cuda
-      const kind = opts.kind ?? detectEngineKind(opts.exe)
+      const kind = opts.kind ?? detectEngineKind(opts.exe, opts.backendPath)
       if (kind === 'tensorsharp' && !safeArgs.includes('--backend') && hasNvidiaGpu()) {
         safeArgs.push('--backend', 'ggml_cuda')
       }
@@ -2042,7 +2068,7 @@ export function registerIpcHandlers(): void {
     } catch (err) { return { error: String(err) } }
   })
   // 共享的后端发布包下载 + 解压实现（llama.cpp 与 TensorSharp 通用，直连 GitHub）
-  async function downloadBackendRelease(event: Electron.IpcMainInvokeEvent, opts: { url: string; version: string; assetName: string }): Promise<{ success: boolean; path?: string; error?: string }> {
+  async function downloadBackendRelease(event: Electron.IpcMainInvokeEvent, opts: { url: string; version: string; assetName: string }): Promise<{ success: boolean; path?: string; cancelled?: boolean; error?: string }> {
     if (!opts.version || /[\\/:*?"<>|]/.test(opts.version) || opts.version.includes('..')) {
       return { success: false, error: '无效的版本' }
     }
@@ -2060,27 +2086,41 @@ export function registerIpcHandlers(): void {
     let startByte = 0
     try { const st = statSync(archivePath); if (st.size > 0) startByte = st.size } catch {}
     let dlReject: ((err: Error) => void) | null = null
+    // 用户取消标志 + 内部取消函数（看门狗停滞中止复用内部函数，避免误标为“用户取消”）
+    let dlCancelled = false
+    let cancelFn: (() => void) | null = null
     // 停滞看门狗：任何分片/顺序流一旦超过 2 分钟没有任何数据到达，则判定卡死并中止。
     // 每个分片还有更严的 30s 停滞自检，这里只兜底顺序下载等个别无自检的路径。
     let lastProgressAt = Date.now()
     const watchdog = setInterval(() => {
       if (Date.now() - lastProgressAt > 120 * 1000) {
         if (dlReject) dlReject(new Error('下载停滞'))
-        if (cancelBackendDl) { cancelBackendDl(); cancelBackendDl = null }
+        if (cancelFn) { cancelFn(); cancelFn = null }
       }
     }, 30 * 1000)
-    // 供顶部进度横幅识别引擎与包名
-    const dlLabel = opts.assetName.toLowerCase().includes('tensorsharp') ? 'TensorSharp' : 'llama.cpp'
-    const progressPayload = (phase: string, received: number, total: number, percent: number) => ({ percent, phase, received, total, engine: dlLabel === 'TensorSharp' ? 'tensorsharp' : 'llamacpp', name: opts.assetName })
+    // 供顶部进度横幅识别引擎与包名（按资产名推断：TensorSharp / TurboQuant / BeeLlama，其余视为 llama.cpp）
+    const assetLower = opts.assetName.toLowerCase()
+    const dlLabel = assetLower.includes('tensorsharp') ? 'TensorSharp'
+      : assetLower.includes('turboquant') ? 'TurboQuant'
+      : assetLower.includes('beellama') ? 'BeeLlama'
+      : 'llama.cpp'
+    const dlEngine = dlLabel === 'TensorSharp' ? 'tensorsharp' : dlLabel === 'TurboQuant' ? 'turboquant' : dlLabel === 'BeeLlama' ? 'beellama' : 'llamacpp'
+    const progressPayload = (phase: string, received: number, total: number, percent: number) => ({ percent, phase, received, total, engine: dlEngine, name: opts.assetName })
     try {
       event.sender.send('download-progress', progressPayload('downloading', 0, 0, 0))
       console.log('[dl] 开始下载:', opts.url, startByte > 0 ? `(续传 ${startByte} 字节)` : '')
+      // 用户取消标志：取消时让下载 Promise 立即 settle（否则会挂起到停滞看门狗超时）
       await new Promise<void>((resolve, reject) => {
         dlReject = reject
-        cancelBackendDl = startParallelDownload(opts.url, archivePath, startByte,
+        cancelFn = startParallelDownload(opts.url, archivePath, startByte,
           (r, t) => { lastProgressAt = Date.now(); event.sender.send('download-progress', progressPayload('downloading', r, t, t > 0 ? Math.round(r / t * 100) : 0)) },
           () => { console.log('[dl] 下载完成'); resolve() },
           (err) => { console.log('[dl] 下载失败:', err.message); reject(err) })
+        cancelBackendDl = () => {
+          dlCancelled = true
+          cancelFn?.()
+          reject(new Error('已取消'))
+        }
       })
       cancelBackendDl = null; dlReject = null
       clearInterval(watchdog)
@@ -2093,23 +2133,42 @@ export function registerIpcHandlers(): void {
       if (isTarGz) {
         await new Promise<void>((resolve, reject) => {
           const p = spawn('tar', ['-xzf', archivePath, '-C', stagingDir], { stdio: 'pipe' })
-          const t = setTimeout(() => { p.kill(); reject(new Error('tar解压超时')) }, 10 * 60 * 1000)
+          // 分支引擎包体可达数百 MB，解压较慢，超时放宽到 30 分钟
+          const t = setTimeout(() => { p.kill(); reject(new Error('tar解压超时')) }, 30 * 60 * 1000)
           p.on('error', (e) => { clearTimeout(t); reject(e) })
           p.on('exit', code => { clearTimeout(t); code === 0 ? resolve() : reject(new Error(`tar 退出码 ${code}`)) })
         })
       } else {
         // ZIP 一律用 extract-zip（纯 JS / yauzl）解压：逐条目落地、破坏包立即抛错，
         // 不依赖外部 PowerShell Expand-Archive / unzip（大包会静默截断、部分解压或超时）
-        let entryCount = 0
+      // 先读取中央目录统计总条目数（只读包尾目录，秒级），用于上报解压进度；
+      // 中央目录损坏（下载不完整）时提前失败并清理临时文件，避免把坏包留在 temp 里被续传复用
+      const totalEntries = await new Promise<number>((resolve, reject) => {
+        yauzl.open(archivePath, { lazyEntries: true }, (err, zip) => {
+          if (err) {
+            try { unlinkSync(archivePath) } catch {}
+            reject(new Error('下载不完整，压缩包损坏'))
+            return
+          }
+          const n = zip.entryCount
+          zip.close()
+          resolve(n)
+        })
+      })
+        if (totalEntries === 0) throw new Error('解压后内容为空')
+        let doneEntries = 0
         await new Promise<void>((resolve, reject) => {
-          const t = setTimeout(() => reject(new Error('解压超时')), 10 * 60 * 1000)
+          // 大包（数百 MB，如 TurboQuant / BeeLlama 分支）纯 JS 解压 + 杀毒软件实时扫描
+          // 每个 dll/exe 可能很慢，超时放宽到 30 分钟
+          const t = setTimeout(() => reject(new Error('解压超时')), 30 * 60 * 1000)
           extractZip(archivePath, {
             dir: stagingDir,
-            onEntry: () => { entryCount++ },
+            onEntry: () => {
+              doneEntries++
+              event.sender.send('download-progress', progressPayload('extracting', doneEntries, totalEntries, Math.round(doneEntries / totalEntries * 100)))
+            },
           }).then(() => { clearTimeout(t); resolve() }).catch((e) => { clearTimeout(t); reject(e) })
         })
-        // 归档内没有任何条目视为无效包
-        if (entryCount === 0) throw new Error('解压后内容为空')
       }
       // 校验解压结果，避免“解压成功但内容为空”
       const extractedCount = countExtractedFiles(stagingDir)
@@ -2131,10 +2190,13 @@ export function registerIpcHandlers(): void {
       console.log('[dl] 失败:', err)
       cancelBackendDl = null; dlReject = null
       clearInterval(watchdog)
-      // 只清理 staging；正式版本目录（不论新旧）一律保留，失败不回滚也不误删
+      // 清理 staging 与临时 zip；正式版本目录（不论新旧）一律保留，失败不回滚也不误删。
+      // 临时 zip 必须删除：否则残留的“完整大小但内容损坏”文件会被下次断点续传复用（续传只覆盖尾部），
+      // 导致解压持续失败（Z_DATA_ERROR: invalid block type）
       if (existsSync(stagingDir)) {
         try { rmSync(stagingDir, { recursive: true, force: true }) } catch {}
       }
+      try { unlinkSync(archivePath) } catch {}
       const msg = String(err)
       let cnMsg = msg
       if (msg.includes('ERR_CONNECTION_TIMED_OUT') || msg.includes('Connection timeout') || msg.includes('Probe connection timeout')) cnMsg = '连接超时，请检查网络或代理设置'
@@ -2142,11 +2204,16 @@ export function registerIpcHandlers(): void {
       else if (msg.includes('ERR_INTERNET_DISCONNECTED')) cnMsg = '网络未连接'
       else if (msg.includes('ERR_NAME_NOT_RESOLVED')) cnMsg = 'DNS 解析失败，请检查网络'
       else if (msg.includes('Download stalled') || msg.includes('下载停滞')) cnMsg = '下载停滞，请检查网络'
+      else if (msg.includes('已取消')) cnMsg = '已取消'
+      else if (msg.includes('解压超时') || msg.includes('tar解压超时')) cnMsg = '解压超时：包体较大或磁盘/杀毒软件扫描较慢。可重试；若反复超时，请将 backend 目录加入杀毒软件排除列表'
+      else if (msg.includes('ENOSPC')) cnMsg = '磁盘空间不足，请清理磁盘后重试'
+      else if (msg.includes('EACCES')) cnMsg = '文件写入被拒绝，可能被杀毒软件占用，请将 backend 目录加入排除列表后重试'
       else if (msg.includes('HTTP 4') || msg.includes('HTTP 5')) cnMsg = '服务器返回错误：' + (msg.match(/HTTP \d+/)?.[0] || '')
       else if (msg.includes('下载不完整') || msg.includes('分片下载不完整') || msg.includes('解压后内容为空') || msg.includes('下载文件为空')) cnMsg = '下载不完整，压缩包可能已损坏，请重试'
+      else if (msg.includes('Z_DATA_ERROR') || msg.includes('invalid block type') || msg.includes('incorrect header check')) cnMsg = '解压失败：压缩包内容损坏（通常为上次下载不完整），已清理临时文件，请重新下载'
       else if (msg.includes('压缩包损坏') || msg.includes('tar') || msg.includes('unzip') || msg.includes('zip') || msg.includes('corrupt')) cnMsg = '解压失败，压缩包可能已损坏'
       else if (msg.includes('EBUSY') || msg.includes('EPERM') || msg.includes('ECONNREFUSED')) cnMsg = '文件被占用，请先停止该后端再更新'
-      return { success: false, error: cnMsg }
+      return { success: false, cancelled: dlCancelled, error: cnMsg }
     }
   }
   ipcMain.handle('download-release', (event, opts: { url: string; version: string; assetName: string }) => downloadBackendRelease(event, opts))

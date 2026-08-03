@@ -730,6 +730,8 @@ select {
 
 .form-group {
   margin-bottom: 16px;
+  /* grid item 默认 min-width:auto 会被长内容（如长后端目录名）撑开列宽，允许收缩让省略号生效 */
+  min-width: 0;
 }
 
 .form-label {

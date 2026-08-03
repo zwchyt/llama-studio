@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
+import { ENGINE_LABELS } from '../utils/engine'
 import { X, Download, Loader2, ExternalLink, ChevronDown, ArrowUpCircle } from 'lucide-react'
 import { type BannerSlotProps, useBannerClose, isVersionSkipped, skipVersion, UbProgress } from './updateBannerShared'
 
@@ -46,7 +47,7 @@ export default function UpdateBanner({ hidden, switcher }: BannerSlotProps = {})
   if (!visible || !releaseInfo) return null
   const selectedAsset = releaseInfo.assets?.find(a => a.downloadUrl === selectedAssetUrl)
   const isBusy = downloading || !!downloadProgress
-  const busyEngine = downloadProgress?.engine === 'tensorsharp' ? 'TensorSharp' : 'llama.cpp'
+  const busyEngine = ENGINE_LABELS[downloadProgress?.engine ?? 'llamacpp'] ?? downloadProgress?.engine ?? 'llama.cpp'
   const handleSkipVersion = () => {
     skipVersion(SKIP_KEY, releaseInfo.tagName)
     closeWithAnim()

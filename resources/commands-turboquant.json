@@ -1,5 +1,5 @@
 {
-  "version": "default",
+  "version": "turboquant",
   "categories": [
     {
       "name": "模型加载",
@@ -9,7 +9,6 @@
         { "arg": "--model-url", "short": "-mu", "label": "Model URL", "description": "模型下载地址", "type": "string", "placeholder": "https://...", "env": "LLAMA_ARG_MODEL_URL" },
         { "arg": "--hf-repo", "short": "-hf", "label": "HuggingFace Repo", "description": "HuggingFace 模型仓库（用户名/模型名[:量化级别]）", "type": "string", "placeholder": "ggml-org/GLM-4.7-Flash-GGUF:Q4_K_M", "env": "LLAMA_ARG_HF_REPO" },
         { "arg": "--hf-file", "short": "-hff", "label": "HuggingFace File", "description": "HuggingFace 模型文件覆盖", "type": "string", "placeholder": "model.gguf", "env": "LLAMA_ARG_HF_FILE" },
-        { "arg": "--hf-token", "short": "-hft", "label": "HuggingFace Token", "description": "HuggingFace 访问令牌", "type": "string", "placeholder": "hf_...", "env": "HF_TOKEN" },
         { "arg": "--ctx-size", "short": "-c", "label": "Context Size", "description": "提示上下文大小（0 = 使用模型默认值）", "type": "number", "default": 0, "min": 0, "max": 131072, "env": "LLAMA_ARG_CTX_SIZE" },
         { "arg": "--n-predict", "short": "-n", "label": "Max Tokens to Predict", "description": "预测的最大令牌数（-1 = 无限）", "type": "number", "default": -1, "min": -1, "max": 65536, "env": "LLAMA_ARG_N_PREDICT" },
         { "arg": "--mmproj", "short": "-mm", "label": "Multimodal Projector", "description": "多模态投影仪文件路径", "type": "string", "placeholder": "/path/to/mmproj.gguf", "env": "LLAMA_ARG_MMPROJ" }
@@ -26,7 +25,7 @@
         { "arg": "--parallel", "short": "-np", "label": "Parallel Sequences", "description": "并行解码的序列数", "type": "number", "default": 1, "min": 1, "max": 64, "env": "LLAMA_ARG_N_PARALLEL" },
         { "arg": "--mlock", "label": "Memory Lock", "description": "强制系统将模型保留在 RAM 中（禁止交换到磁盘）", "type": "boolean", "default": false, "env": "LLAMA_ARG_MLOCK" },
         { "arg": "--no-mmap", "label": "No Memory Map", "description": "禁用内存映射（mmap 默认开启，加载更快；勾选后改为全量读入内存）", "type": "boolean", "default": false, "env": "LLAMA_ARG_NO_MMAP" },
-        { "arg": "--flash-attn", "short": "-fa", "label": "Flash Attention", "description": "Flash Attention 模式", "type": "select", "options": ["auto", "on", "off"], "default": "auto", "env": "LLAMA_ARG_FLASH_ATTN" },
+        { "arg": "--flash-attn", "short": "-fa", "label": "Flash Attention", "description": "Flash Attention 模式。TurboQuant 的 turbo2/3/4 缓存类型强制要求开启，请求时若被禁用会自动启用", "type": "select", "options": ["auto", "on", "off"], "default": "auto", "env": "LLAMA_ARG_FLASH_ATTN" },
         { "arg": "--cache-prompt", "label": "Prompt Cache", "description": "启用提示缓存，重复 prompt 时大幅加速", "type": "boolean", "default": true, "env": "LLAMA_ARG_CACHE_PROMPT" },
         { "arg": "--cache-ram", "label": "Cache RAM (MiB)", "description": "KV 缓存内存上限（-1 = 无限制，0 = 禁用）", "type": "number", "default": 8192, "min": -1, "max": 1048576, "env": "LLAMA_ARG_CACHE_RAM" },
         { "arg": "--direct-io", "label": "Direct I/O", "description": "绕过系统文件缓存直接读写磁盘", "type": "boolean", "default": false, "env": "LLAMA_ARG_DIO" }
@@ -44,11 +43,13 @@
       ]
     },
     {
-      "name": "KV缓存和权重",
+      "name": "TurboQuant KV 缓存",
       "icon": "Database",
       "commands": [
-        { "arg": "--cache-type-k", "short": "-ctk", "label": "KV Cache Type (K)", "description": "键（Keys）的 KV 缓存数据类型", "type": "select", "options": ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], "default": "f16", "env": "LLAMA_ARG_CACHE_TYPE_K" },
-        { "arg": "--cache-type-v", "short": "-ctv", "label": "KV Cache Type (V)", "description": "值（Values）的 KV 缓存数据类型", "type": "select", "options": ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], "default": "f16", "env": "LLAMA_ARG_CACHE_TYPE_V" },
+        { "arg": "--cache-type-k", "short": "-ctk", "label": "KV Cache Type (K)", "description": "键（Keys）的 KV 缓存数据类型。turbo2/3/4 为 TurboQuant 专属类型：Walsh-Hadamard 旋转（WHT）将缓存向量高斯化后压缩，相对 f16 分别压缩 6.4x / 4.9x / 3.8x，仅在运行时生效（不写入模型文件），且必须配合 Flash Attention（自动开启）。层自适应可用环境变量 TURBO_LAYER_ADAPTIVE（7 = Boundary V：首尾层 q8_0、中间层 turbo）", "type": "select", "options": ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1", "turbo2", "turbo3", "turbo4"], "default": "f16", "env": "LLAMA_ARG_CACHE_TYPE_K" },
+        { "arg": "--cache-type-v", "short": "-ctv", "label": "KV Cache Type (V)", "description": "值（Values）的 KV 缓存数据类型，取值同 K。K/V 可自由组合；量化 V 配未量化 K 是常见配置。大 GQA 模型可用环境变量 TURBO_AUTO_ASYMMETRIC（默认 1）自动选择非对称 K/V 类型，TURBO_SPARSE_V（默认 1）启用 Flash Attention 中的 Sparse-V 反量化跳过", "type": "select", "options": ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1", "turbo2", "turbo3", "turbo4"], "default": "f16", "env": "LLAMA_ARG_CACHE_TYPE_V" },
+        { "arg": "--cache-type-k-draft", "short": "-ctkd", "label": "Draft KV Cache Type (K)", "description": "草稿模型的键（Keys）KV 缓存数据类型", "type": "select", "options": ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], "default": "f16" },
+        { "arg": "--cache-type-v-draft", "short": "-ctvd", "label": "Draft KV Cache Type (V)", "description": "草稿模型的值（Values）KV 缓存数据类型", "type": "select", "options": ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], "default": "f16" },
         { "arg": "--repack", "label": "Weight Repacking", "description": "启用权重重新打包以提高性能", "type": "boolean", "default": true, "env": "LLAMA_ARG_REPACK" },
         { "arg": "--kv-unified", "short": "-kvu", "label": "Unified KV Buffer", "description": "使用统一 KV 缓冲跨所有序列（auto 时默认启用）", "type": "boolean", "default": true, "env": "LLAMA_ARG_KV_UNIFIED" }
       ]
@@ -64,7 +65,9 @@
         { "arg": "--seed", "short": "-s", "label": "Seed", "description": "随机数生成器种子（-1 = 随机）", "type": "number", "default": -1, "min": -1, "max": 2147483647 },
         { "arg": "--repeat-penalty", "label": "Repeat Penalty", "description": "重复惩罚（1.0 = 禁用）", "type": "number", "default": 1.0, "min": 0, "max": 2 },
         { "arg": "--presence-penalty", "label": "Presence Penalty", "description": "存在惩罚（0.0 = 禁用）", "type": "number", "default": 0.0, "min": 0, "max": 2 },
-        { "arg": "--frequency-penalty", "label": "Frequency Penalty", "description": "频率惩罚（0.0 = 禁用）", "type": "number", "default": 0.0, "min": 0, "max": 2 }
+        { "arg": "--frequency-penalty", "label": "Frequency Penalty", "description": "频率惩罚（0.0 = 禁用）", "type": "number", "default": 0.0, "min": 0, "max": 2 },
+        { "arg": "--adaptive-target", "label": "Adaptive-P Target", "description": "adaptive-p：选择接近该概率的令牌（0.0 = 禁用）", "type": "number", "default": 0.0, "min": 0, "max": 1, "env": "LLAMA_ARG_ADAPTIVE_TARGET" },
+        { "arg": "--adaptive-decay", "label": "Adaptive-P Decay", "description": "adaptive-p：目标随时间的衰减率，低值更保守", "type": "number", "default": 0.01, "min": 0, "max": 1, "env": "LLAMA_ARG_ADAPTIVE_DECAY" }
       ]
     },
     {
@@ -83,7 +86,6 @@
         { "arg": "--port", "label": "Server Port", "description": "服务器监听端口", "type": "number", "default": 8080, "min": 1024, "max": 65535, "env": "LLAMA_ARG_PORT" },
         { "arg": "--host", "label": "Server Host", "description": "绑定的主机地址", "type": "string", "default": "127.0.0.1", "placeholder": "127.0.0.1", "env": "LLAMA_ARG_HOST" },
         { "arg": "--chat-template", "label": "Chat Template", "description": "自定义 Jinja 聊天模板名称或路径", "type": "string", "placeholder": "llama3", "env": "LLAMA_ARG_CHAT_TEMPLATE" },
-        { "arg": "--chat-template-file", "label": "Chat Template File", "description": "自定义 Jinja 聊天模板文件路径", "type": "string", "placeholder": "/path/to/template.jinja", "env": "LLAMA_ARG_CHAT_TEMPLATE_FILE" },
         { "arg": "--jinja", "label": "Use Jinja Templating", "description": "启用 Jinja 模板引擎处理聊天", "type": "boolean", "default": true, "env": "LLAMA_ARG_JINJA" },
         { "arg": "--reasoning-format", "label": "Reasoning Format", "description": "模型推理输出格式", "type": "select", "options": ["auto", "none", "deepseek", "deepseek-legacy"], "default": "auto", "env": "LLAMA_ARG_THINK" },
         { "arg": "--reasoning", "short": "-rea", "label": "Reasoning Mode", "description": "在聊天中启用推理/思考模式", "type": "select", "options": ["auto", "on", "off"], "default": "auto", "env": "LLAMA_ARG_REASONING" },
@@ -100,8 +102,6 @@
         { "arg": "--log-colors", "label": "Log Colors", "description": "为日志输出着色", "type": "select", "options": ["auto", "on", "off"], "default": "auto", "env": "LLAMA_ARG_LOG_COLORS" },
         { "arg": "--verbose", "short": "-v", "label": "Verbose Mode", "description": "记录所有消息（用于调试）", "type": "boolean", "default": false },
         { "arg": "--log-verbosity", "short": "-lv", "label": "Verbosity Level", "description": "0=通用，1=错误，2=警告，3=信息，4=跟踪，5=调试", "type": "select", "options": ["0", "1", "2", "3", "4", "5"], "default": "3", "env": "LLAMA_ARG_LOG_VERBOSITY" },
-        { "arg": "--log-prefix", "label": "Log Prefix", "description": "在日志消息中启用前缀", "type": "boolean", "default": false, "env": "LLAMA_ARG_LOG_PREFIX" },
-        { "arg": "--log-timestamps", "label": "Log Timestamps", "description": "在日志消息中启用时间戳", "type": "boolean", "default": true, "env": "LLAMA_ARG_LOG_TIMESTAMPS" },
         { "arg": "--offline", "label": "Offline Mode", "description": "强制使用缓存，禁止网络访问", "type": "boolean", "default": false, "env": "LLAMA_ARG_OFFLINE" }
       ]
     },

@@ -2,14 +2,16 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { useSidebarStore } from '../store/sidebarStore'
 import { shallow } from 'zustand/shallow'
-import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown, AlertTriangle, Check, Type, Cpu } from 'lucide-react'
+import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown, AlertTriangle, Check, Type, Cpu, X } from 'lucide-react'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
+import { ENGINE_LABELS, paramSetOf } from '../utils/engine'
 import { SOUND_OPTIONS, previewSound } from '../utils/sound'
 import type { ReleaseInfo } from '../../../shared/types'
 
 import CommandsEditor from './CommandsEditor'
 import FontSelector from './FontSelector'
+import EngineDownloadSection from './EngineDownloadSection'
 import { CURSOR_SCHEMES, getCursorSchemeId, applyCursorScheme, CURSOR_STORAGE_KEY, schemeCursorValue, type CursorRole } from '../cursor-theme'
 import '../styles/settings.css'
 
@@ -161,7 +163,7 @@ export default function SettingsView() {
     if (!b) return
     setActiveBackend(b)
     // 切换后端时按其类型加载默认参数集
-    const cmds = await safeCall(() => window.api.getCommands(name, b.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp'), '切换后端失败')
+    const cmds = await safeCall(() => window.api.getCommands(name, paramSetOf(b.kind)), '切换后端失败')
     if (cmds) setCommandsSchema(cmds)
   }
 
@@ -193,6 +195,8 @@ export default function SettingsView() {
 
   const handleDownload = async () => {
     if (!releaseInfo || !releaseInfo.assets?.length) return
+    // 防止与其他引擎下载并发（主进程同一时刻只支持一个后端包下载）
+    if (downloadProgress) return
     const asset = releaseInfo.assets.find(a => a.downloadUrl === selectedAssetUrl) || releaseInfo.assets[0]
     setDownloading(true)
     const res = await safeCall(() => window.api.downloadRelease({
@@ -203,16 +207,16 @@ export default function SettingsView() {
     }), '下载后端失败')
     setDownloading(false)
     setDownloadProgress(null)
-    if (res && res.success) {
-      const backendsData = await safeCall(() => window.api.listBackends(), '刷新后端列表失败')
-      if (backendsData) {
-        setBackends(backendsData)
-        if (backendsData.length > 0) setActiveBackend(backendsData[0])
+      if (res && res.success) {
+        const backendsData = await safeCall(() => window.api.listBackends(), '刷新后端列表失败')
+        if (backendsData) {
+          setBackends(backendsData)
+          if (backendsData.length > 0) setActiveBackend(backendsData[0])
+        }
+      } else if (res && !res.success && !res.cancelled) {
+        notify(`下载失败：${res.error}`, 'error')
       }
-    } else if (res && !res.success) {
-      notify(`下载失败：${res.error}`, 'error')
     }
-  }
 
   // TensorSharp 走与 llama.cpp 完全相同的检查/下载通道，仅仓库名不同
   const TS_REPO = 'zhongkaifu/TensorSharp'
@@ -228,6 +232,8 @@ export default function SettingsView() {
 
   const handleTsDownload = async () => {
     if (!tsReleaseInfo || !tsReleaseInfo.assets?.length) return
+    // 防止与其他引擎下载并发（主进程同一时刻只支持一个后端包下载）
+    if (downloadProgress) return
     const asset = tsReleaseInfo.assets.find(a => a.downloadUrl === tsSelectedAssetUrl) || tsReleaseInfo.assets[0]
     setTsDownloading(true)
     setDownloadProgress(null)
@@ -248,7 +254,7 @@ export default function SettingsView() {
         const info = await window.api.checkUpdates(TS_REPO)
         setTsReleaseInfo(info)
       } catch { /* 忽略复查失败 */ }
-    } else if (res && !res.success) {
+    } else if (res && !res.success && !res.cancelled) {
       notify(`下载失败：${res.error}`, 'error')
     }
   }
@@ -537,8 +543,7 @@ export default function SettingsView() {
                   <div>
                     <div className="settings-row-label flex items-center gap-2">
                       {b.name}
-                      {b.kind === 'tensorsharp' && <span className="version-badge ts-badge">TensorSharp</span>}
-                      {b.kind === 'llamacpp' && <span className="version-badge">llama.cpp</span>}
+                      {b.kind && b.kind !== 'other' && <span className={`version-badge${b.kind === 'tensorsharp' ? ' ts-badge' : ''}`}>{ENGINE_LABELS[b.kind] ?? b.kind}</span>}
                       {activeBackend?.name === b.name && <span className="version-badge active-version">当前使用</span>}
                       {!b.hasCommands && <span className="version-badge">回退架构</span>}
                     </div>
@@ -671,13 +676,32 @@ export default function SettingsView() {
                       </div>
                     )}
                   </div>
-                  {downloading || downloadProgress ? (
+                  {downloading ? (
                     <button className="btn btn-secondary btn-sm" disabled>
                       <Loader2 size={14} className="spin" /> 下载中...
                     </button>
+                  ) : downloadProgress ? (
+                    <button className="btn btn-secondary btn-sm" disabled>其他引擎下载中</button>
                   ) : (
                     <button className="btn btn-primary btn-sm" onClick={handleDownload}>下载</button>
                   )}
+                </div>
+              )}
+              {downloading && downloadProgress && (downloadProgress.phase === 'downloading' || downloadProgress.phase === 'extracting') && (
+                <div className="flex items-center gap-2 w-full">
+                  <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                    {downloadProgress.phase === 'extracting'
+                      ? '正在解压...'
+                      : `下载中 ${downloadProgress.percent}%（${Math.round((downloadProgress.received || 0) / 1024 / 1024)} / ${Math.round((downloadProgress.total || 0) / 1024 / 1024)} MB）`}
+                  </div>
+                  <button
+                    className="btn btn-ghost btn-sm text-danger"
+                    style={{ marginLeft: 'auto' }}
+                    onClick={() => { window.api.cancelBackendDownload(); setDownloadProgress(null) }}
+                    title="取消下载"
+                  >
+                    <X size={13} /> 取消
+                  </button>
                 </div>
               )}
             </div>
@@ -733,7 +757,7 @@ export default function SettingsView() {
                           }
                           setShowTsAssetDropdown(true)
                         }}
-                        disabled={tsDownloading}
+                        disabled={tsDownloading || !!downloadProgress}
                       >
                         {tsReleaseInfo.assets.find(a => a.downloadUrl === tsSelectedAssetUrl)?.name || '选择版本'}
                       </button>
@@ -767,16 +791,28 @@ export default function SettingsView() {
                       <button className="btn btn-secondary btn-sm" disabled>
                         <Loader2 size={14} className="spin" /> 下载中...
                       </button>
+                    ) : downloadProgress ? (
+                      <button className="btn btn-secondary btn-sm" disabled>其他引擎下载中</button>
                     ) : (
                       <button className="btn btn-primary btn-sm" onClick={handleTsDownload}>下载并安装</button>
                     )}
                   </div>
                 )}
                 {tsDownloading && downloadProgress && (downloadProgress.phase === 'downloading' || downloadProgress.phase === 'extracting') && (
-                  <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                    {downloadProgress.phase === 'extracting'
-                      ? '正在解压...'
-                      : `下载中 ${downloadProgress.percent}%（${Math.round((downloadProgress.received || 0) / 1024 / 1024)} / ${Math.round((downloadProgress.total || 0) / 1024 / 1024)} MB）`}
+                  <div className="flex items-center gap-2 w-full">
+                    <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                      {downloadProgress.phase === 'extracting'
+                        ? `正在解压... ${downloadProgress.percent}%（${downloadProgress.received} / ${downloadProgress.total} 个文件）`
+                        : `下载中 ${downloadProgress.percent}%（${Math.round((downloadProgress.received || 0) / 1024 / 1024)} / ${Math.round((downloadProgress.total || 0) / 1024 / 1024)} MB）`}
+                    </div>
+                    <button
+                      className="btn btn-ghost btn-sm text-danger"
+                      style={{ marginLeft: 'auto' }}
+                      onClick={() => { window.api.cancelBackendDownload(); setDownloadProgress(null) }}
+                      title="取消下载"
+                    >
+                      <X size={13} /> 取消
+                    </button>
                   </div>
                 )}
               </div>
@@ -789,6 +825,32 @@ export default function SettingsView() {
           </button>
         </div>
       </div>
+
+      { }
+      <EngineDownloadSection
+        repo="TheTom/llama-cpp-turboquant"
+        engineLabel="TurboQuant"
+        description={
+          <>
+            llama.cpp 的 TurboQuant 分支：KV 缓存专用 turbo2 / turbo3 / turbo4 量化（Walsh-Hadamard 旋转，
+            相对 f16 压缩 6.4x / 4.9x / 3.8x，需配合 Flash Attention），以及 TQ3_1S / TQ4_1S 模型权重量化。
+            发布资产形如 <code>turboquant-plus-tqp-v0.3.0-windows-x64-cuda12.4.zip</code>，请按平台选择。
+          </>
+        }
+      />
+      <EngineDownloadSection
+        repo="Anbeeld/beellama.cpp"
+        engineLabel="BeeLlama"
+        description={
+          <>
+            llama.cpp 的 BeeLlama 分支：KVarN 方差归一化 KV 量化（kvarn2~kvarn8）、KV 缓存精度尾
+            （<code>--kv-tail-tokens</code>）、DFlash 自适应草稿深度与推理循环防护。发布资产形如
+            <code>beellama-v0.4.2-bin-win-cuda-13.1-x64.zip</code>，请按平台选择。
+            注意：bin 包不含 CUDA 运行时，若系统未安装对应版本的 CUDA，需额外下载同版本的
+            <code>beellama-v0.4.2-cudart-win-cuda-13.1-x64.zip</code> 并手动解压进后端目录。
+          </>
+        }
+      />
       </div>
     )
   }

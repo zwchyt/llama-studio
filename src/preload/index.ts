@@ -20,8 +20,8 @@ const fullApi = {
   removeModelDownloadListener: () => ipcRenderer.removeAllListeners('model-download-progress'),
   listBackends: () => ipcRenderer.invoke('list-backends'),
   deleteBackend: (name: string) => ipcRenderer.invoke('delete-backend', name),
-  getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp') => ipcRenderer.invoke('get-commands', backendName, paramSet),
-  saveBackendCommands: (backendName: string, schema: object, paramSet?: 'llamacpp' | 'tensorsharp') => ipcRenderer.invoke('save-backend-commands', backendName, schema, paramSet),
+  getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => ipcRenderer.invoke('get-commands', backendName, paramSet),
+  saveBackendCommands: (backendName: string, schema: object, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => ipcRenderer.invoke('save-backend-commands', backendName, schema, paramSet),
   listTemplates: () => ipcRenderer.invoke('list-templates'),
   saveTemplate: (template: object) => ipcRenderer.invoke('save-template', template),
   deleteTemplate: (id: string) => ipcRenderer.invoke('delete-template', id),
@@ -39,7 +39,7 @@ const fullApi = {
   checkUpdates: (repo?: string) => ipcRenderer.invoke('check-updates', repo),
   downloadRelease: (opts: object) => ipcRenderer.invoke('download-release', opts),
   cancelBackendDownload: () => ipcRenderer.invoke('cancel-backend-download'),
-  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp'; name?: string }) => void) => {
+  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama'; name?: string }) => void) => {
     ipcRenderer.removeAllListeners('download-progress')
     ipcRenderer.on('download-progress', (_event, data) => callback(data))
   },

@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore'
 import { useSidebarStore } from '../store/sidebarStore'
 import { shallow } from 'zustand/shallow'
 import { safeCall } from '../utils/safeCall'
+import { paramSetOf } from '../utils/engine'
 import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Server, Bot, MessageSquare, Terminal, Info, FileText, Gauge, Code, Wrench, BookOpen, AudioLines } from 'lucide-react'
 import '../styles/sidebar.css'
 
@@ -52,7 +53,7 @@ export default function Sidebar() {
     if (!b) return
     setActiveBackend(b)
     // 切换后端时按其类型加载默认参数集
-    const cmds = await safeCall(() => window.api.getCommands(name, b.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp'), '切换后端失败')
+    const cmds = await safeCall(() => window.api.getCommands(name, paramSetOf(b.kind)), '切换后端失败')
     if (cmds) setCommandsSchema(cmds)
   }
   return (

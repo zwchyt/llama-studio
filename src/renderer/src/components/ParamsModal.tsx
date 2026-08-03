@@ -4,6 +4,7 @@ import { shallow } from 'zustand/shallow'
 import { Search, Copy, Check, Lock } from 'lucide-react'
 import type { CommandParam, Template, TemplateArgs, CommandsSchema } from '../../../shared/types'
 import { iconElements } from '../utils/iconMap'
+import { ENGINE_LABELS, paramSetOf, ALL_ENGINES } from '../utils/engine'
 import CustomSelect from './CustomSelect'
 import ModelFileSelect from './ModelFileSelect'
 
@@ -31,9 +32,9 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   const isRunning = card?.status === 'running'
   const disabled = isRunning
   // 参数集：模板里手动选择的优先，未选时按后端类型默认；切换按钮在下方
-  const [paramSet, setParamSet] = useState<'llamacpp' | 'tensorsharp'>(() => {
+  const [paramSet, setParamSet] = useState(() => {
     const b = backends.find(x => x.name === card?.template.backendVersion)
-    return card?.template.paramSet ?? (b?.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp')
+    return paramSetOf(card?.template.paramSet ?? b?.kind)
   })
   // 按卡片自身的参数集拉取 schema（不依赖全局 activeBackend 的 schema）
   const [localSchema, setLocalSchema] = useState<CommandsSchema | null>(null)
@@ -83,21 +84,24 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
     return s
   }, [activeSchema])
 
-  // 切换参数集：更新显示 + 切换活跃后端 + 切换后端版本 + 保存到模板
-  const handleParamSetChange = useCallback((next: 'llamacpp' | 'tensorsharp') => {
+  // 切换参数集：更新显示 + 切换活跃后端 + 切换后端版本 + 保存到模板。
+  // 目标引擎后端未安装时也持久化参数集选择（否则关闭弹窗后切换丢失，与编辑模板界面不同步）
+  const handleParamSetChange = useCallback((next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => {
     if (next === paramSet) return
     setParamSet(next)
     // 同步切换活跃后端到对应引擎 + 更新模板后端版本
     const targetBackend = backends.find(b => b.kind === next)
     const nextPort = next === 'tensorsharp' ? 5000 : 8080
-    if (targetBackend) {
-      setActiveBackend(targetBackend)
-      const { cards } = useStore.getState()
-      const card = cards.find(c => c.template.id === templateId)
-      if (card) {
-        updateCard(templateId, { paramSet: next, serverPort: nextPort, backendVersion: targetBackend.name })
-        pendingSaveRef.current = { paramSet: next, serverPort: nextPort, backendVersion: targetBackend.name }
+    const { cards } = useStore.getState()
+    const card = cards.find(c => c.template.id === templateId)
+    if (card) {
+      const patch: Partial<Template> = { paramSet: next, serverPort: nextPort }
+      if (targetBackend) {
+        setActiveBackend(targetBackend)
+        patch.backendVersion = targetBackend.name
       }
+      updateCard(templateId, patch)
+      pendingSaveRef.current = patch
     }
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(flushSave, 400)
@@ -394,22 +398,21 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
           <div className="param-set-row" style={{ margin: '0 20px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
             <span className="text-muted text-sm" style={{ flexShrink: 0 }}>参数集</span>
             <div className="launch-mode-row" style={{ flex: 1 }}>
-              <button
-                type="button"
-                className={`launch-mode-btn ${paramSet === 'llamacpp' ? 'active' : ''}`}
-                onClick={() => handleParamSetChange('llamacpp')}
-                disabled={disabled}
-              >
-                llama.cpp
-              </button>
-              <button
-                type="button"
-                className={`launch-mode-btn ${paramSet === 'tensorsharp' ? 'active' : ''}`}
-                onClick={() => handleParamSetChange('tensorsharp')}
-                disabled={disabled}
-              >
-                TensorSharp
-              </button>
+              {ALL_ENGINES.map(e => {
+                const installed = backends.some(b => b.kind === e)
+                return (
+                  <button
+                    key={e}
+                    type="button"
+                    className={`launch-mode-btn ${paramSet === e ? 'active' : ''}`}
+                    onClick={() => handleParamSetChange(e)}
+                    disabled={disabled || !installed}
+                    title={installed ? undefined : `${ENGINE_LABELS[e]} 尚未安装，可在设置中下载`}
+                  >
+                    {ENGINE_LABELS[e]}
+                  </button>
+                )
+              })}
             </div>
           </div>
 

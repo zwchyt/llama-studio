@@ -15,6 +15,7 @@ import CreateModal from './components/CreateModal'
 import SplashScreen from './components/SplashScreen'
 import UpdateBannerGroup from './components/UpdateBannerGroup'
 import BackendDownloadBanner from './components/BackendDownloadBanner'
+import { paramSetOf } from './utils/engine'
 import ChatWindow from './components/ChatWindow'
 import LlamaChatView from './components/LlamaChatView'
 import TerminalView from './components/TerminalView'
@@ -292,7 +293,7 @@ function AppMain() {
   useEffect(() => {
     if (!activeBackend) return
     // 切换后端时按其后端类型加载默认参数集（模板级的 paramSet 在参数设置里另行控制）
-    window.api.getCommands(activeBackend.name, activeBackend.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp').then((cmds) => {
+    window.api.getCommands(activeBackend.name, paramSetOf(activeBackend.kind)).then((cmds) => {
       if (cmds) setCommandsSchema(cmds)
     })
   }, [activeBackend, setCommandsSchema])

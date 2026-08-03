@@ -6,6 +6,7 @@ import { safeCall } from '../utils/safeCall'
 import { Plus, Trash, ChevronDown, ChevronRight, Save, RotateCcw, Pencil, Check, X, Loader2, AlertTriangle } from 'lucide-react'
 import type { CommandsSchema, CommandCategory, CommandParam } from '../../../shared/types'
 import { iconComponents, ICON_NAMES } from '../utils/iconMap'
+import { paramSetOf } from '../utils/engine'
 
 const PARAM_TYPES = ['boolean', 'number', 'string', 'select', 'text']
 const emptyCmd = (): CommandParam => ({
@@ -264,8 +265,8 @@ function CategorySection({ cat, catIndex: _catIndex, onChange, onDelete }: Categ
 }
 export default function CommandsEditor({ backendName }: { backendName: string }) {
   const { setCommandsSchema, backends } = useStore(s => ({ setCommandsSchema: s.setCommandsSchema, backends: s.backends }), shallow)
-  // 后端命令编辑器按该后端的类型决定读写哪个参数集文件（TensorSharp → commands-tensorsharp.json）
-  const paramSet: 'llamacpp' | 'tensorsharp' = backends.find(b => b.name === backendName)?.kind === 'tensorsharp' ? 'tensorsharp' : 'llamacpp'
+  // 后端命令编辑器按该后端的类型决定读写哪个参数集文件（TensorSharp → commands-tensorsharp.json，llama.cpp 分支 → 各自专属文件）
+  const paramSet = paramSetOf(backends.find(b => b.name === backendName)?.kind)
   const [schema, setSchema] = useState<CommandsSchema | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)

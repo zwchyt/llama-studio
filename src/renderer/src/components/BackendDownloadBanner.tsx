@@ -4,9 +4,10 @@ import { shallow } from 'zustand/shallow'
 import { Loader2, X } from 'lucide-react'
 import { UbProgress } from './updateBannerShared'
 import { useBackendUpdateVisible } from './UpdateBanner'
+import { ENGINE_LABELS } from '../utils/engine'
 
 /**
- * 顶部后端下载进度条（llama.cpp 与 TensorSharp 通用）。
+ * 顶部后端下载进度条（llama.cpp / TensorSharp / TurboQuant / BeeLlama 通用）。
  * 只要存在后端包下载（download-progress 事件）即展示，与 llama.cpp 更新横幅是否
  * 正在展示解耦——update 横幅可见时由它接管同一份进度，避免两条重复。
  */
@@ -19,15 +20,15 @@ export default function BackendDownloadBanner() {
   if (!downloadProgress) return null
   // llama.cpp 更新横幅处于展示态时，由它负责下载进度显示，这里跳过避免重复
   if (backendBannerVisible) return null
-  const isTs = downloadProgress.engine === 'tensorsharp'
+  const engine = downloadProgress.engine ?? 'llamacpp'
   return (
     <div className="update-banner">
       <span className="ub-badge">
         <Loader2 size={11} className="spin" />
-        {isTs ? 'TensorSharp' : 'llama.cpp'}
+        {ENGINE_LABELS[engine] ?? engine}
       </span>
       <div className="ub-actions">
-        <span>{downloadProgress.phase === 'extracting' ? '解压后端中...' : '下载后端中...'}</span>
+        <span>{downloadProgress.phase === 'extracting' ? `解压后端中... ${downloadProgress.percent}%` : `下载后端中... ${downloadProgress.percent}%`}</span>
         <UbProgress percent={downloadProgress.percent || 0} received={downloadProgress.received} total={downloadProgress.total} />
       </div>
       <div className="ub-right">

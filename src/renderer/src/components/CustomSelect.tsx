@@ -81,7 +81,7 @@ export default function CustomSelect({
   const selectedLabel = options.find(o => o.value === strVal)?.label || strVal || placeholder
 
   return (
-    <div style={{ display: 'inline-block', ...style }} className={className}>
+    <div style={{ display: 'inline-block', maxWidth: '100%', ...style }} className={className}>
       <button
         ref={btnRef}
         className={`cmd-select${buttonClass ? ' ' + buttonClass : ''}`}
@@ -115,11 +115,12 @@ export default function CustomSelect({
               style={{
                 padding: '6px 10px', fontSize: 12, cursor: 'pointer',
                 background: opt.value === strVal ? 'var(--bg)' : hovered === opt.value ? 'var(--surface-hover)' : 'transparent',
-                whiteSpace: 'nowrap'
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%'
               }}
               onClick={() => { onChange(opt.value); close() }}
               onMouseEnter={() => setHovered(opt.value)}
               onMouseLeave={() => setHovered('')}
+              title={opt.label}
             >
               {opt.label}
             </div>
