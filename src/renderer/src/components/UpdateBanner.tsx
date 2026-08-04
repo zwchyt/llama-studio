@@ -4,7 +4,7 @@ import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { ENGINE_LABELS } from '../utils/engine'
-import { X, Download, Loader2, ExternalLink, ChevronDown, ArrowUpCircle } from 'lucide-react'
+import { X, Download, Loader2, ExternalLink, ChevronDown, ArrowUpCircle, Play, Pause } from 'lucide-react'
 import { type BannerSlotProps, useBannerClose, isVersionSkipped, skipVersion, UbProgress } from './updateBannerShared'
 
 const SKIP_KEY = 'llama_studio_skip_backend_version'
@@ -59,9 +59,11 @@ export default function UpdateBanner({ hidden, switcher }: BannerSlotProps = {})
     const res = await safeCall(() => window.api.downloadRelease({
       url: asset.downloadUrl,
       version: `${releaseInfo.tagName}-${asset.name.replace(/\.(zip|tar\.gz)$/, '')}`,
-      assetName: asset.name
+      assetName: asset.name,
+      digest: asset.digest
     }), '下载后端失败')
     setDownloading(false)
+    if (res && res.paused) return
     setDownloadProgress(null)
     if (res && res.success) {
       notify(`成功下载并解压 ${asset.name}`, 'success')
@@ -124,12 +126,33 @@ export default function UpdateBanner({ hidden, switcher }: BannerSlotProps = {})
       <div className="ub-right">
         {switcher}
         {isBusy ? (
-          <button
-            className="btn btn-ghost btn-xs"
-            onClick={() => { window.api.cancelBackendDownload(); setDownloading(false); setDownloadProgress(null) }}
-          >
-            取消
-          </button>
+          <>
+            {downloadProgress?.phase === 'paused' ? (
+              <button
+                className="btn btn-ghost btn-xs"
+                onClick={async () => {
+                  const res = await window.api.resumeBackendDownload().catch(() => null)
+                  if (res && !res.success) { setDownloading(false); setDownloadProgress(null); notify(`继续下载失败：${res.error}`, 'error') }
+                }}
+              >
+                <Play size={11} /> 继续
+              </button>
+            ) : downloadProgress?.phase === 'downloading' ? (
+              <button
+                className="btn btn-ghost btn-xs"
+                onClick={() => window.api.pauseBackendDownload()}
+                title="暂停下载（保留已下载部分）"
+              >
+                <Pause size={11} /> 暂停
+              </button>
+            ) : null}
+            <button
+              className="btn btn-ghost btn-xs"
+              onClick={() => { window.api.cancelBackendDownload(); setDownloading(false); setDownloadProgress(null) }}
+            >
+              取消
+            </button>
+          </>
         ) : (
           <>
             <button className="btn btn-ghost btn-xs" onClick={handleSkipVersion} title="不再提醒此版本，有新版本时仍会通知">

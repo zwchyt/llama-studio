@@ -57,7 +57,7 @@ export interface ReleaseInfo {
   url: string
   publishedAt: string
   isNewer?: boolean
-  assets: { name: string; downloadUrl: string; size: number }[]
+  assets: { name: string; downloadUrl: string; size: number; digest?: string }[]
   error?: string
   /** GitHub 未返回发布信息（可能官方暂未发布或接口返回为空） */
   noRelease?: boolean

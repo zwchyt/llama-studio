@@ -40,19 +40,24 @@ function countExtractedFiles(dir: string): number {
 }
 
 // 若目录中只有一个子目录且没有其他条目（zip 内顶层目录包裹，如 TensorSharp 发布包），
-// 把该子目录的内容上移一层，保证可执行文件直接位于后端版本目录下
+// 把该子目录的内容上移一层，保证可执行文件直接位于后端版本目录下。
+// 循环执行直到不再可拍平（处理多层包裹目录），单文件失败跳过继续，已拍平部分不受影响
 function flattenSingleRoot(dir: string): void {
-  let entries: string[] = []
-  try { entries = readdirSync(dir) } catch { return }
-  if (entries.length !== 1) return
-  const only = join(dir, entries[0])
-  let isDir = false
-  try { isDir = statSync(only).isDirectory() } catch { return }
-  if (!isDir) return
-  for (const e of readdirSync(only)) {
-    try { renameSync(join(only, e), join(dir, e)) } catch { return }
+  for (let guard = 0; guard < 16; guard++) {
+    let entries: string[] = []
+    try { entries = readdirSync(dir) } catch { return }
+    if (entries.length !== 1) return
+    const only = join(dir, entries[0])
+    let isDir = false
+    try { isDir = statSync(only).isDirectory() } catch { return }
+    if (!isDir) return
+    let movedAll = true
+    for (const e of readdirSync(only)) {
+      try { renameSync(join(only, e), join(dir, e)) } catch { movedAll = false }
+    }
+    try { rmdirSync(only) } catch {}
+    if (!movedAll) return
   }
-  try { rmdirSync(only) } catch { }
 }
 
 // 在目录树内（有限深度）查找任一目标文件名，用于校验解压出的后端主程序是否齐全
@@ -122,7 +127,7 @@ interface HfModelRaw {
   lastModified?: string
 }
 interface HfFileRaw { type: string; path: string; size?: number }
-type ModelFileInfo = { name: string; path: string; size: number; folder: string; external: boolean }
+type ModelFileInfo = { name: string; path: string; size: number; folder: string; external: boolean; tts?: boolean; ocr?: boolean }
 interface GpuInfo {
   name: string
   temperatureGpu: number | null
@@ -209,13 +214,13 @@ function isSafePath(base: string, target: string): boolean {
   const rTarget = resolve(target)
   return rTarget === rBase || rTarget.startsWith(rBase + sep)
 }
-// 模型工具类 handler 的模型路径校验：限制在模型目录 / 外部模型文件夹 / 图片模型文件夹内，且扩展名合法
+// 模型工具类 handler 的模型路径校验：限制在模型目录 / 文本模型文件夹 / 图片模型文件夹内，且扩展名合法
 async function isAllowedModelPath(p: string): Promise<boolean> {
   if (!p || typeof p !== 'string' || !existsSync(p)) return false
   const ext = extname(p).toLowerCase()
   if (!['.gguf', '.bin', '.ggml'].includes(ext)) return false
   const s = await loadSettings()
-  const roots = [MODELS_DIR, ...s.externalModelFolders, ...s.imageModelFolders]
+  const roots = [MODELS_DIR, ...s.externalModelFolders, ...s.imageModelFolders, ...s.ttsModelFolders, ...s.ocrModelFolders]
   return roots.some(root => isSafePath(root, p))
 }
 // 下面的代码实现了一个简单的命令行参数验证机制，确保只有在 commands.json 中定义的参数才会被传递给后端执行的模型运行命令。这有助于防止恶意用户通过 IPC 传递危险的参数来执行未授权的操作。
@@ -297,17 +302,19 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
     return Promise.resolve()
   }
 }
-interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean;       notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string }
+interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; ttsModelFolders: string[]; ocrModelFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean;       notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string }
 const UI_KEYS = new Set(['splashEnabled', 'soundEnabled', 'notificationSound', 'chatSidebarCollapsed', 'agentToolCardsExpanded', 'ttsEngine', 'ttsModelPath', 'ttsVocoderPath'])
 let settingsCache: AppSettings | null = null
 async function loadSettings(): Promise<AppSettings> {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
     const data = JSON.parse(await fsPromises.readFile(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
       imageModelFolders: Array.isArray(data.imageModelFolders) ? data.imageModelFolders : [],
+      ttsModelFolders: Array.isArray(data.ttsModelFolders) ? data.ttsModelFolders : [],
+      ocrModelFolders: Array.isArray(data.ocrModelFolders) ? data.ocrModelFolders : [],
       metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true,
       splashEnabled: data.splashEnabled !== undefined ? data.splashEnabled : true,
       soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
@@ -319,7 +326,7 @@ async function loadSettings(): Promise<AppSettings> {
       ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : ''
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
 }
 async function saveSettings(s: AppSettings): Promise<void> {
   await fsPromises.writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2))
@@ -328,11 +335,13 @@ async function saveSettings(s: AppSettings): Promise<void> {
 function loadSettingsSync(): AppSettings {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
     const data = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
       imageModelFolders: Array.isArray(data.imageModelFolders) ? data.imageModelFolders : [],
+      ttsModelFolders: Array.isArray(data.ttsModelFolders) ? data.ttsModelFolders : [],
+      ocrModelFolders: Array.isArray(data.ocrModelFolders) ? data.ocrModelFolders : [],
       metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true,
       splashEnabled: data.splashEnabled !== undefined ? data.splashEnabled : true,
       soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
@@ -344,7 +353,7 @@ function loadSettingsSync(): AppSettings {
       ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : ''
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
 }
 interface RunningProcess { proc: ChildProcess; port: number; kind: EngineKind }
 const runningProcesses = new Map<string, RunningProcess>()
@@ -414,7 +423,7 @@ function fetchJson(url: string): Promise<unknown> {
     req.end()
   })
 }
-interface GitHubAsset { name: string; browser_download_url: string; size: number }
+interface GitHubAsset { name: string; browser_download_url: string; size: number; digest?: string }
 interface GitHubRelease {
   tag_name: string
   name: string
@@ -452,6 +461,17 @@ function fetchJsonWithBody(
     req.end()
   })
 }
+// 计算文件 sha256（用于下载后与 GitHub 发布资产的官方 digest 比对）
+function sha256OfFile(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256')
+    const rs = createReadStream(filePath)
+    rs.on('data', (d) => hash.update(d))
+    rs.on('end', () => resolve(hash.digest('hex')))
+    rs.on('error', reject)
+  })
+}
+
 function startDownload(
   url: string,
   destPath: string,
@@ -536,14 +556,17 @@ function startParallelDownload(
   url: string,
   destPath: string,
   startByte: number,
-  onProgress: (received: number, total: number, speed: number) => void,
+  onProgress: (received: number, total: number, speed: number, chunks?: Array<'idle' | 'active' | 'done'>) => void,
   onDone: () => void,
-  onError: (err: Error) => void
+  onError: (err: Error) => void,
+  onStatus?: (note: string) => void
 ): () => void {
   const USER_AGENT = 'llama-studio/1.0'
-  const MIN_CHUNK = 1 * 1024 * 1024
-  const MAX_CHUNKS = 6
+  const MIN_CHUNK = 4 * 1024 * 1024
+  const MAX_CHUNKS = 12
   const CHUNK_RETRIES = 3
+  // 断点续传的完整性依据：服务器 ETag 变化说明远端文件已更新，残留分片不可续
+  const ETAG_FILE = destPath + '.etag'
   let destroyed = false
   let cancelled = false
   let activeCancel: Array<() => void> = []
@@ -554,25 +577,37 @@ function startParallelDownload(
   let receivedBytes = startByte
   let speedBytes = 0
   let lastSpeedCheck = Date.now()
+  // 最近一次 0.5s 采样窗口的平均速度；采样窗口之外上报沿用上次值，
+  // 避免 UI 在「有速度 / 0」之间闪烁跳动
+  let currentSpeed = 0
   // 进度上报节流：并行分片数据包里逐个上报太频繁，至少间隔 200ms 才同步一次回执
   let lastReportAt = 0
+  // 分片状态（供 UI 分片可视化）：与切片数组同序，'idle' 未领取 / 'active' 下载中 / 'done' 完成
+  let sliceStates: Array<'idle' | 'active' | 'done'> = []
+  // 续传时断点之前的完整前缀（格子数 = 已下载的整切片数），上报时拼在 sliceStates 前面，
+  // 让分片网格与进度百分比对齐（否则续传后网格会从全灰开始，与 40% 进度脱节）
+  let preDoneChunks: Array<'idle' | 'active' | 'done'> = []
+
+  const note = (msg: string) => { if (!destroyed && !cancelled) onStatus?.(msg) }
 
   const report = (force = false) => {
     const now = Date.now()
     const elapsed = (now - lastSpeedCheck) / 1000
-    let speed = 0
     if (elapsed >= 0.5) {
-      speed = speedBytes / elapsed
+      // 指数平滑，避免速度显示大幅抖动
+      const s = speedBytes / elapsed
+      currentSpeed = currentSpeed === 0 ? s : currentSpeed * 0.6 + s * 0.4
       speedBytes = 0
       lastSpeedCheck = now
     }
     if (!force && now - lastReportAt < 200) return
     lastReportAt = now
-    onProgress(Math.min(receivedBytes, totalBytes || receivedBytes), totalBytes, speed)
+    onProgress(Math.min(receivedBytes, totalBytes || receivedBytes), totalBytes, currentSpeed, preDoneChunks.concat(sliceStates))
   }
 
   const fallback = () => {
     if (destroyed || cancelled) return
+    note('服务器不支持多线程下载，已切换为单连接下载')
     // 服务器不支持 Range 时不续传：先清掉残缺文件再整包重下，
     // 避免把完整内容追加到半截文件后面导致压缩包损坏
     if (startByte > 0) {
@@ -582,7 +617,63 @@ function startParallelDownload(
     fallbackCancel = startDownload(url, destPath, startByte, onProgress, onDone, onError)
   }
 
-  const probe = (): void => {
+  const readEtag = (): string => {
+    try { return readFileSync(ETAG_FILE, 'utf8').trim() } catch { return '' }
+  }
+  const writeEtag = (etag: string) => {
+    try { if (etag) writeFileSync(ETAG_FILE, etag) } catch {}
+  }
+  const clearEtag = () => { try { unlinkSync(ETAG_FILE) } catch {} }
+
+  // 探测结果统一出口：etag 续传校验 → 能力判定 → 分片或回退
+  const handleProbeInfo = (acceptRanges: string, contentLength: string, etag: string) => {
+    if (destroyed || cancelled) return
+    const total = parseInt(contentLength || '0', 10)
+    if (startByte > 0) {
+      // 远端文件已更新（ETag 变了）：残留分片对不上新文件，续传只会拼出损坏包，删除重下
+      const oldEtag = readEtag()
+      if (oldEtag && etag && oldEtag !== etag) {
+        note('远端文件已更新，重新开始下载')
+        try { unlinkSync(destPath) } catch {}
+        clearEtag()
+        startByte = 0
+      }
+    } else {
+      // 全新下载：清除可能残留的陈旧 etag 旁路文件
+      clearEtag()
+    }
+    if (etag) writeEtag(etag)
+    if (!total || isNaN(total) || acceptRanges !== 'bytes' || total < MIN_CHUNK * 2) return fallback()
+    // startByte 是真实已下载字节数：达到 total 说明字节已全部收齐（分片按序领取写入、无空洞），
+    // 文件内容完整，交给 startChunks 的空切片分支直接完成，不再删档重下
+    startChunks(total)
+  }
+
+  // 探测优先用 HEAD（不拉取任何 body）；个别服务器不支持 HEAD 或 HEAD 无 content-length 时退回 GET 探测
+  const probeHead = (): void => {
+    if (destroyed || cancelled) return
+    const req = net.request({ method: 'HEAD', url, headers: { 'User-Agent': USER_AGENT } })
+    probeReq = req
+    const timeout = setTimeout(() => { if (!destroyed && !cancelled) { req.abort(); onError(new Error('探测连接超时')) } }, 120000)
+    req.on('response', (res) => {
+      clearTimeout(timeout)
+      if (destroyed || cancelled) { (res as any).destroy(); return }
+      const headers = res.headers
+      if (res.statusCode === 405 || res.statusCode === 501 || !headers['content-length']) {
+        ;(res as any).destroy()
+        probeGet()
+        return
+      }
+      if (res.statusCode !== 200) { (res as any).destroy(); return fallback() }
+      const etag = typeof headers.etag === 'string' ? headers.etag : ''
+      handleProbeInfo(String(headers['accept-ranges'] || '').toLowerCase(), String(headers['content-length'] || '0'), etag)
+      ;(res as any).destroy()
+    })
+    req.on('error', () => { clearTimeout(timeout); if (!destroyed && !cancelled) probeGet() })
+    req.end()
+  }
+
+  const probeGet = (): void => {
     if (destroyed || cancelled) return
     const req = net.request({ url, headers: { 'User-Agent': USER_AGENT } })
     probeReq = req
@@ -590,18 +681,9 @@ function startParallelDownload(
     req.on('response', (res) => {
       clearTimeout(timeout)
       if (destroyed || cancelled) { (res as any).destroy(); return }
-      const acceptRanges = String(res.headers['accept-ranges'] || '').toLowerCase()
-      const total = parseInt(String(res.headers['content-length'] || '0'), 10)
+      const etag = typeof res.headers.etag === 'string' ? res.headers.etag : ''
+      handleProbeInfo(String(res.headers['accept-ranges'] || '').toLowerCase(), String(res.headers['content-length'] || '0'), etag)
       ;(res as any).destroy()
-      if (!total || isNaN(total) || acceptRanges !== 'bytes' || total < MIN_CHUNK * 2) return fallback()
-      // 本地已存在“完整大小”的残留文件（上次下载失败未清理，内容可能损坏）：
-      // 续传分片只覆盖文件尾部，无法修复前部损坏，直接删除从头下载
-      if (startByte >= total) {
-        try { unlinkSync(destPath) } catch {}
-        console.log('[dl] 本地残留文件大小等于目标大小，视为损坏，删除后重新下载')
-        startByte = 0
-      }
-      startChunks(total)
     })
     req.on('error', () => { clearTimeout(timeout); if (!destroyed && !cancelled) fallback() })
     req.end()
@@ -609,21 +691,43 @@ function startParallelDownload(
 
   const startChunks = (total: number): void => {
     totalBytes = total
-    const numChunks = Math.min(MAX_CHUNKS, Math.max(2, Math.floor(total / (MIN_CHUNK * 2))))
-    const chunkSize = Math.ceil(total / numChunks)
-    const effectiveStart = Math.floor(startByte / chunkSize) * chunkSize
+    // 并发上限：不超过 12 路，同时不小于 2MB/片换算出的最少路数
+    const numWorkers = Math.min(MAX_CHUNKS, Math.max(2, Math.floor(total / (MIN_CHUNK * 2))))
+    // 统一切片粒度 = MIN_CHUNK：完成一片的 worker 立即领取下一片（分片池），
+    // 快连接不会在慢连接之后空等，尾部由空闲 worker 接管，总耗时接近带宽最优
+    const sliceSize = MIN_CHUNK
+    const effectiveStart = Math.min(Math.floor(startByte / sliceSize) * sliceSize, total)
     receivedBytes = effectiveStart
-    const ranges: Array<{ start: number; end: number }> = []
-    for (let i = 0; i < numChunks; i++) {
-      const s = i * chunkSize
-      const e = Math.min(total - 1, s + chunkSize - 1)
-      ranges.push({ start: s, end: e })
+    const slices: Array<{ start: number; end: number }> = []
+    for (let s = effectiveStart; s < total; s += sliceSize) {
+      slices.push({ start: s, end: Math.min(total - 1, s + sliceSize - 1) })
+    }
+    sliceStates = slices.map(() => 'idle' as const)
+    // 断点之前已完整下载的切片数：网格前缀显示为 done，与进度百分比对齐
+    preDoneChunks = Array(Math.floor(effectiveStart / sliceSize)).fill('done' as const)
+    // 磁盘空间预检：truncate 抛 ENOSPC 前先拦截，给出明确提示（statfs 不可用则跳过，由 ENOSPC 兜底）
+    const checkDisk = async (need: number): Promise<void> => {
+      if (need <= 0) return
+      try {
+        const fst = await (fsPromises as any).statfs(dirname(destPath))
+        if (fst && typeof fst.bavail !== 'undefined') {
+          const free = Number(fst.bavail) * Number(fst.bsize)
+          if (!isNaN(free) && free < need) throw new Error('磁盘空间不足（ENOSPC）')
+        }
+      } catch (e) {
+        if (String((e as Error)?.message).includes('磁盘空间不足')) throw e
+      }
     }
     const ensureSize = async () => {
       if (existsSync(destPath)) {
         const cur = (await fsPromises.stat(destPath)).size
-        if (cur < total) await fsPromises.truncate(destPath, total)
+        if (cur > total) await fsPromises.truncate(destPath, total)
+        else if (cur < total) {
+          await checkDisk(total - cur)
+          await fsPromises.truncate(destPath, total)
+        }
       } else {
+        await checkDisk(total)
         await fsPromises.writeFile(destPath, Buffer.alloc(0))
         await fsPromises.truncate(destPath, total)
       }
@@ -633,14 +737,15 @@ function startParallelDownload(
       report()
       let doneCount = 0
       let finished = false
-      const onChunkDone = () => {
+      let nextSlice = 0
+      const onSliceDone = () => {
         if (finished || destroyed || cancelled) return
         doneCount++
         // 最后一个分片完成时强制回执一次，保证终态进度一定到达界面
-        report(doneCount >= numChunks)
-        if (doneCount >= numChunks) {
+        report(doneCount >= slices.length)
+        if (doneCount >= slices.length) {
           finished = true
-          if (totalBytes > 0 && receivedBytes !== totalBytes) {
+          if (receivedBytes !== totalBytes) {
             onError(new Error(`下载不完整: 已接收 ${receivedBytes} / ${totalBytes} 字节`))
             return
           }
@@ -654,29 +759,37 @@ function startParallelDownload(
         onError(err)
       }
       // 续传边界：临时文件已完整（上次下载完成但解压/替换中断），无需再合并分片，直接结束
-      if (effectiveStart >= total) {
+      if (slices.length === 0) {
         receivedBytes = total
-        for (let i = 0; i < numChunks; i++) onChunkDone()
+        report(true)
+        onDone()
         return
       }
-      for (const range of ranges) {
-        if (range.end < effectiveStart) { onChunkDone(); continue }
-         const rStart = Math.max(range.start, effectiveStart)
-         const rEnd = range.end
-         const expectedBytes = rEnd - rStart + 1
-         let cancelledOne = false
-         activeCancel.push(() => { cancelledOne = true })
-         const fetchChunk = (retries: number) => {
-           if (destroyed || cancelled || cancelledOne) return
-           let reqRef: Electron.ClientRequest | null = null
-           let chunkReceived = 0
-           let stall: ReturnType<typeof setInterval> | null = null
+      const fetchSlice = (range: { start: number; end: number }, sliceIdx: number, onOk: () => void): void => {
+        const rStart = range.start
+        const rEnd = range.end
+        const expectedBytes = rEnd - rStart + 1
+        let cancelledOne = false
+        let retryTimer: ReturnType<typeof setTimeout> | null = null
+        let wsRef: ReturnType<typeof createWriteStream> | null = null
+        // 暂停/取消时立即关闭写入流句柄，避免文件被旧句柄持有影响后续续传写入与清理
+        activeCancel.push(() => {
+          cancelledOne = true
+          if (retryTimer) clearTimeout(retryTimer)
+          try { wsRef?.destroy() } catch {}
+        })
+        const attempt = (retries: number) => {
+          if (destroyed || cancelled || cancelledOne) return
+          let reqRef: Electron.ClientRequest | null = null
+          let chunkReceived = 0
+          let stall: ReturnType<typeof setInterval> | null = null
           const fail = (err: Error) => {
             if (destroyed || cancelled || cancelledOne || finished) return
             if (retries > 0) {
               receivedBytes -= chunkReceived
-              chunkReceived = 0
-              fetchChunk(retries - 1)
+              note('连接不稳定，正在重试分片')
+              // 随机退避 0.3~1.5s：多路同时失败时避免瞬时重连风暴
+              retryTimer = setTimeout(() => attempt(retries - 1), 300 + Math.random() * 1200)
               return
             }
             onChunkError(err)
@@ -700,6 +813,7 @@ function startParallelDownload(
             }
             if (res.statusCode !== 206) { onChunkError(new Error(`HTTP 错误 ${res.statusCode}`)); return }
             const ws = createWriteStream(destPath, { flags: 'r+', start: rStart })
+            wsRef = ws
             let paused = false
             ws.on('drain', () => { if (paused && !destroyed && !cancelled && !cancelledOne) { paused = false; (res as any).resume() } })
             let lastDataTime = Date.now()
@@ -730,7 +844,7 @@ function startParallelDownload(
                 fail(new Error('分片下载不完整'))
                 return
               }
-              ws.end(() => { if (!destroyed && !cancelled && !cancelledOne) onChunkDone() })
+              ws.end(() => { if (!destroyed && !cancelled && !cancelledOne) { sliceStates[sliceIdx] = 'done'; onOk() } })
             })
             res.on('error', (err) => { if (stall) clearInterval(stall); fail(err) })
             ws.on('error', (err) => { if (stall) clearInterval(stall); fail(err) })
@@ -738,12 +852,21 @@ function startParallelDownload(
           req.on('error', (err) => { clearTimeout(timeout); if (!destroyed && !cancelled && !cancelledOne) fail(err) })
           req.end()
         }
-        fetchChunk(CHUNK_RETRIES)
+        attempt(CHUNK_RETRIES)
       }
+      // worker 池：完成一片立即领取下一片，领不到即自然退出
+      const worker = () => {
+        if (destroyed || cancelled || finished) return
+        const idx = nextSlice++
+        if (idx >= slices.length) return
+        sliceStates[idx] = 'active'
+        fetchSlice(slices[idx], idx, () => { onSliceDone(); worker() })
+      }
+      for (let i = 0; i < numWorkers; i++) worker()
     }).catch((e) => { if (!destroyed && !cancelled) onError(e as Error) })
   }
 
-  probe()
+  probeHead()
   return () => {
     if (destroyed) return
     destroyed = true
@@ -756,6 +879,9 @@ function startParallelDownload(
 
 let metricsPollingEnabled = true
 let metricsInterval: ReturnType<typeof setInterval> | null = null
+// 最近一次成功估算的 TTFT（ms）：ttft 仅能在 prefill 进行中的瞬时计算，
+// 轮询间隔容易错过窗口，这里记住最后值供后续采集持续携带展示
+let lastTtft = new Map<string, number>()
 let cachedGpuData: GpuInfo | null = null
 let lastGpuFetch = 0
 let gpuLoggedFail = false
@@ -951,7 +1077,7 @@ export function registerIpcHandlers(): void {
       const results: ModelFileInfo[] = []
       const seen = new Set<string>()
       const visitedDirs = new Set<string>()
-      const scan = async (dir: string, external: boolean, depth = 0): Promise<void> => {
+      const scan = async (dir: string, external: boolean, tts = false, ocr = false, depth = 0): Promise<void> => {
         if (depth > 8 || results.length >= MAX_MODELS_FILES) return
         try {
           const realDir = await fsPromises.realpath(dir)
@@ -960,14 +1086,14 @@ export function registerIpcHandlers(): void {
           const files = await fsPromises.readdir(dir, { withFileTypes: true })
           for (const e of files) {
             if (results.length >= MAX_MODELS_FILES) return
-            if (e.isDirectory()) await scan(join(dir, e.name), external, depth + 1)
+            if (e.isDirectory()) await scan(join(dir, e.name), external, tts, ocr, depth + 1)
             else if (exts.includes(extname(e.name).toLowerCase()) && !e.name.endsWith('.tmp')) {
               const fp = join(dir, e.name)
               const key = resolve(fp)
               if (seen.has(key)) continue
               seen.add(key)
               const st = await fsPromises.stat(fp)
-              results.push({ name: e.name, path: fp, size: st.size, folder: basename(dir), external })
+              results.push({ name: e.name, path: fp, size: st.size, folder: basename(dir), external, tts: tts || undefined, ocr: ocr || undefined })
             }
           }
         } catch { }
@@ -977,6 +1103,14 @@ export function registerIpcHandlers(): void {
       for (const folder of settings.externalModelFolders) {
         if (results.length >= MAX_MODELS_FILES) break
         if (existsSync(folder)) await scan(folder, true)
+      }
+      for (const folder of settings.ttsModelFolders) {
+        if (results.length >= MAX_MODELS_FILES) break
+        if (existsSync(folder)) await scan(folder, true, true)
+      }
+      for (const folder of settings.ocrModelFolders) {
+        if (results.length >= MAX_MODELS_FILES) break
+        if (existsSync(folder)) await scan(folder, true, false, true)
       }
       modelsCache = { ts: Date.now(), result: results }
       return results
@@ -1076,6 +1210,50 @@ export function registerIpcHandlers(): void {
     invalidateImageModelsCache()
     return { success: true, folders: s.imageModelFolders }
   })
+  // ── 语音合成（TTS）模型文件夹 ──
+  // 与文字/图片模型文件夹同设计：目录不复制文件，TTS 模型（OuteTTS / WavTokenizer 的 GGUF）
+  // 归入通用模型列表，语音合成视图的模型下拉可直接选用
+  ipcMain.handle('list-tts-model-folders', async () => (await loadSettings()).ttsModelFolders)
+  ipcMain.handle('add-tts-model-folder', async () => {
+    const r = await dialog.showOpenDialog({ title: '添加语音合成模型文件夹', properties: ['openDirectory'] })
+    if (r.canceled || !r.filePaths.length) return { success: false }
+    const folder = r.filePaths[0]
+    const s = await loadSettings()
+    if (!s.ttsModelFolders.includes(folder)) {
+      s.ttsModelFolders.push(folder)
+      await saveSettings(s)
+      invalidateModelsCache()
+    }
+    return { success: true, folders: s.ttsModelFolders }
+  })
+  ipcMain.handle('remove-tts-model-folder', async (_e, folder: string) => {
+    const s = await loadSettings()
+    s.ttsModelFolders = s.ttsModelFolders.filter(f => f !== folder)
+    await saveSettings(s)
+    invalidateModelsCache()
+    return { success: true, folders: s.ttsModelFolders }
+  })
+  // ── OCR 模型文件夹 ──
+  ipcMain.handle('list-ocr-model-folders', async () => (await loadSettings()).ocrModelFolders)
+  ipcMain.handle('add-ocr-model-folder', async () => {
+    const r = await dialog.showOpenDialog({ title: '添加 OCR 模型文件夹', properties: ['openDirectory'] })
+    if (r.canceled || !r.filePaths.length) return { success: false }
+    const folder = r.filePaths[0]
+    const s = await loadSettings()
+    if (!s.ocrModelFolders.includes(folder)) {
+      s.ocrModelFolders.push(folder)
+      await saveSettings(s)
+      invalidateModelsCache()
+    }
+    return { success: true, folders: s.ocrModelFolders }
+  })
+  ipcMain.handle('remove-ocr-model-folder', async (_e, folder: string) => {
+    const s = await loadSettings()
+    s.ocrModelFolders = s.ocrModelFolders.filter(f => f !== folder)
+    await saveSettings(s)
+    invalidateModelsCache()
+    return { success: true, folders: s.ocrModelFolders }
+  })
   // ── 自定义聊天模板 (Jinja) ──
   ipcMain.handle('list-chat-templates', async () => {
     if (!existsSync(CHAT_TEMPLATES_DIR)) return []
@@ -1109,7 +1287,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('rename-model', (_e, oldPath: string, newName: string) => {
     try {
       const settings = loadSettingsSync()
-      const allDirs = [MODELS_DIR, ...settings.externalModelFolders, ...settings.imageModelFolders]
+      const allDirs = [MODELS_DIR, ...settings.externalModelFolders, ...settings.imageModelFolders, ...settings.ttsModelFolders, ...settings.ocrModelFolders]
       const resolvedTarget = resolve(oldPath)
       const matches = allDirs.map(d => ({ dir: d, resolvedDir: resolve(d), match: resolvedTarget.startsWith(resolve(d)) }))
       const isAllowed = matches.some(m => m.match)
@@ -1525,6 +1703,12 @@ export function registerIpcHandlers(): void {
       if (kind === 'tensorsharp' && !safeArgs.includes('--backend') && hasNvidiaGpu()) {
         safeArgs.push('--backend', 'ggml_cuda')
       }
+      // 模型监控面板的速度数据（decode tok/s、prefill tok/s 等）依赖 llama.cpp 的 /metrics 端点；
+      // 该端点需 --metrics 启动参数才启用。模板参数默认未开启，这里对 llama.cpp 系列引擎强制注入，
+      // 保证存量模板无需手动改动即可恢复监控数据（TensorSharp 无此参数，跳过）
+      if (kind !== 'tensorsharp' && !safeArgs.includes('--metrics')) {
+        safeArgs.push('--metrics')
+      }
       const proc = spawn(exePath, safeArgs, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: false })
       modelLogBuffers.delete(opts.id) // 新一轮启动：丢弃上一轮的日志缓存
       let prefillResetTimer: ReturnType<typeof setTimeout> | null = null
@@ -1545,6 +1729,18 @@ export function registerIpcHandlers(): void {
         for (const raw of lines) {
           const line = stripAnsi(raw.trim())
           if (!line) continue
+          // 从 llama-server 日志解析真实的 prompt eval time（即 TTFT，prefill 完成瞬间打印）
+          const ttftM = line.match(/prompt eval time\s*=\s*([\d.]+)\s*ms\s*\/\s*\d+\s*tokens/)
+          if (ttftM) {
+            const ttftMs = Math.round(parseFloat(ttftM[1]))
+            if (!isNaN(ttftMs) && ttftMs > 0) {
+              lastTtft.set(opts.id, ttftMs)
+              BrowserWindow.getAllWindows().forEach(win => {
+                if (!win.isDestroyed()) win.webContents.send('metrics-update', { id: opts.id, ttftMs, lastUpdated: Date.now() })
+              })
+              continue
+            }
+          }
           const m = line.match(/progress\s*=\s*([\d.]+)/)
           if (m) {
             const progress = parseFloat(m[1])
@@ -1726,6 +1922,7 @@ export function registerIpcHandlers(): void {
     const entry = runningProcesses.get(id)
     if (entry) {
       runningProcesses.delete(id)
+      lastTtft.delete(id)
       if (runningProcesses.size === 0) stopMetricsInterval()
       const tasks: Promise<unknown>[] = [killProcessTreeAsync(entry.proc)]
       if (entry.port) { tasks.push(killByPortAsync(entry.port)); hostedModelCache.delete(entry.port) }
@@ -1991,6 +2188,11 @@ export function registerIpcHandlers(): void {
   })
 
   let cancelBackendDl: (() => void) | null = null
+  let pauseBackendDl: (() => void) | null = null
+  // 最近一次后端包下载参数：暂停后供「继续」复用；成功/失败/取消后清空。
+  // startByte 记录暂停瞬间的真实已下载字节数（文件被预分配为完整大小，
+  // 续传必须用真实进度，不能按文件大小推断，否则会误判残留完整文件而删档重下）
+  let lastBackendDlOpts: { url: string; version: string; assetName: string; digest?: string; startByte?: number } | null = null
 
   // ── 共享的后端发布版本检查（llama.cpp 与 TensorSharp 通用，均直连 GitHub）──
   // repo 形如「owner/name」，由渲染进程显式传入；缺省为 llama.cpp。
@@ -2034,30 +2236,54 @@ export function registerIpcHandlers(): void {
       if (arch === 'arm64' && n.includes('x64')) return false
       return true
     })
-    // 版本号解析：TensorSharp 的 tag 形如 v3.1.2.0 → 3120；llama.cpp 形如 b4379 → 4379
-    const latestNum = isTs
-      ? parseInt(String(release.tag_name).replace(/^v/i, '').replace(/\./g, ''), 10)
-      : parseInt(String(release.tag_name).replace(/^b/, ''), 10)
+    // 版本号解析（版本目录名 = tagName + '-' + 资产名，版本号位于开头）：
+    // 点分版本：v3.1.2.0 → [3,1,2,0]、v0.4.2 → [0,4,2]、tqp-v0.3.0-… → [0,3,0]；
+    // 构建号：b4379 → [4379]、4379 → [4379]；解析失败返回 null。
+    // 注意必须锚定字符串开头，否则会误取资产名里的 cuda-13.1 等无关数字段
+    const parseVersion = (s: string): number[] | null => {
+      const dot = s.match(/^v?(\d+(?:\.\d+){1,4})/i)
+      if (dot) return dot[1].split('.').map(n => parseInt(n, 10))
+      const dotPrefixed = s.match(/^[a-z0-9]+[-_]v?(\d+(?:\.\d+){1,4})/i)
+      if (dotPrefixed) return dotPrefixed[1].split('.').map(n => parseInt(n, 10))
+      const build = s.match(/^[a-z]+[-_]b?(\d{3,6})/i) || s.match(/^b?(\d{3,6})/i)
+      if (build) return [parseInt(build[1], 10)]
+      return null
+    }
+    // 逐位比较版本数组（缺位补 0）：a < b → -1，a === b → 0，a > b → 1
+    const cmpVersion = (a: number[], b: number[]): number => {
+      const len = Math.max(a.length, b.length)
+      for (let i = 0; i < len; i++) {
+        const av = a[i] ?? 0, bv = b[i] ?? 0
+        if (av !== bv) return av < bv ? -1 : 1
+      }
+      return 0
+    }
+    // 引擎识别（与 detectEngineKind 同语义）：只与同引擎的已装目录比较，避免跨引擎版本串扰
+    const repoLower = repo.toLowerCase()
+    const repoKind = repoLower.includes('tensorsharp') ? 'tensorsharp'
+      : repoLower.includes('turboquant') ? 'turboquant'
+      : repoLower.includes('beellama') ? 'beellama'
+      : 'llamacpp'
+    const latestVer = parseVersion(String(release.tag_name))
     let isNewer = true
     if (existsSync(BACKEND_DIR)) {
       for (const d of readdirSync(BACKEND_DIR, { withFileTypes: true }).filter(d => d.isDirectory())) {
-        if (isTs) {
-          // 已装目录形如 v3.1.2.0-tensorsharp-server-3.1.2.0-win-x64-cuda（兼容旧的 tensors-server-…）
-          const m = d.name.match(/tensorsharp[-\s]*server[-\s]*([\d.]+)/i)
-          if (m) {
-            const installed = parseInt(m[1].replace(/\./g, ''), 10)
-            if (!isNaN(installed) && !isNaN(latestNum) && installed >= latestNum) { isNewer = false; break }
-          }
-        } else {
-          const m = d.name.match(/(\d{3,6})/); if (!m) continue
-          if (parseInt(m[1], 10) >= latestNum || d.name.includes(release.tag_name)) { isNewer = false; break }
-        }
+        const dn = d.name.toLowerCase()
+        const dirKind = dn.includes('tensorsharp') ? 'tensorsharp'
+          : dn.includes('turboquant') ? 'turboquant'
+          : dn.includes('beellama') ? 'beellama'
+          : 'llamacpp'
+        if (dirKind !== repoKind) continue
+        // 兜底：目录名包含完整 tagName（历史命名差异 / 无法解析版本号的旧目录）
+        if (d.name.includes(release.tag_name)) { isNewer = false; break }
+        const installed = parseVersion(d.name)
+        if (installed && latestVer && cmpVersion(installed, latestVer) >= 0) { isNewer = false; break }
       }
     }
     return {
       tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at,
       isNewer, noPackage: platformAssets.length === 0,
-      assets: platformAssets.map((a: any) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size }))
+      assets: platformAssets.map((a: any) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size, digest: String(a.digest || '').replace(/^sha256:/i, '') }))
     }
   }
   ipcMain.handle('check-updates', async (_event, repo?: string) => {
@@ -2068,13 +2294,14 @@ export function registerIpcHandlers(): void {
     } catch (err) { return { error: String(err) } }
   })
   // 共享的后端发布包下载 + 解压实现（llama.cpp 与 TensorSharp 通用，直连 GitHub）
-  async function downloadBackendRelease(event: Electron.IpcMainInvokeEvent, opts: { url: string; version: string; assetName: string }): Promise<{ success: boolean; path?: string; cancelled?: boolean; error?: string }> {
+  async function downloadBackendRelease(event: Electron.IpcMainInvokeEvent, opts: { url: string; version: string; assetName: string; digest?: string; startByte?: number }): Promise<{ success: boolean; path?: string; cancelled?: boolean; paused?: boolean; error?: string }> {
     if (!opts.version || /[\\/:*?"<>|]/.test(opts.version) || opts.version.includes('..')) {
       return { success: false, error: '无效的版本' }
     }
     if (!opts.assetName || opts.assetName.includes('..') || opts.assetName.includes('/') || opts.assetName.includes('\\')) {
       return { success: false, error: '无效的资源名称' }
     }
+    lastBackendDlOpts = { url: opts.url, version: opts.version, assetName: opts.assetName, digest: opts.digest }
     const archivePath = join(app.getPath('temp'), opts.assetName)
     const extractPath = join(BACKEND_DIR, opts.version)
     if (!isSafePath(BACKEND_DIR, extractPath)) return { success: false, error: '访问被拒绝' }
@@ -2082,12 +2309,19 @@ export function registerIpcHandlers(): void {
     // 失败时只清理 staging，绝不误删已安装好的后端
     const stagingDir = join(dirname(BACKEND_DIR), `.staging-${opts.version}-${Date.now()}`)
     const isTarGz = opts.assetName.toLowerCase().endsWith('.tar.gz')
-    // 断点续传：保留已下完的临时文件，让 Range 分片从断点继续；损坏与否由下载步自身的校验兜底
+    // 断点续传：保留已下完的临时文件，让 Range 分片从断点继续；损坏与否由下载步自身的校验兜底。
+    // 注意：文件被预分配为完整大小，不能按 statSync 大小推断进度；暂停续传优先使用暂停时记录的真实字节数
     let startByte = 0
-    try { const st = statSync(archivePath); if (st.size > 0) startByte = st.size } catch {}
+    if (opts.startByte && opts.startByte > 0) {
+      try { const st = statSync(archivePath); if (st.size > 0) startByte = Math.min(opts.startByte, st.size) } catch {}
+    } else {
+      try { const st = statSync(archivePath); if (st.size > 0) startByte = st.size } catch {}
+    }
     let dlReject: ((err: Error) => void) | null = null
     // 用户取消标志 + 内部取消函数（看门狗停滞中止复用内部函数，避免误标为“用户取消”）
     let dlCancelled = false
+    // 暂停标志：暂停中止请求但保留临时文件，供「继续」断点续传
+    let dlPaused = false
     let cancelFn: (() => void) | null = null
     // 停滞看门狗：任何分片/顺序流一旦超过 2 分钟没有任何数据到达，则判定卡死并中止。
     // 每个分片还有更严的 30s 停滞自检，这里只兜底顺序下载等个别无自检的路径。
@@ -2105,34 +2339,105 @@ export function registerIpcHandlers(): void {
       : assetLower.includes('beellama') ? 'BeeLlama'
       : 'llama.cpp'
     const dlEngine = dlLabel === 'TensorSharp' ? 'tensorsharp' : dlLabel === 'TurboQuant' ? 'turboquant' : dlLabel === 'BeeLlama' ? 'beellama' : 'llamacpp'
-    const progressPayload = (phase: string, received: number, total: number, percent: number) => ({ percent, phase, received, total, engine: dlEngine, name: opts.assetName })
+    const progressPayload = (phase: string, received: number, total: number, percent: number, speed?: number, note?: string, chunks?: Array<'idle' | 'active' | 'done'>) => ({ percent, phase, received, total, engine: dlEngine, name: opts.assetName, speed, note, chunks })
+    // 最近一次进度快照：onStatus（如回退提示）需要用它补全 payload
+    let lastR = 0, lastT = 0, lastSpeed = 0
+    let lastChunks: Array<'idle' | 'active' | 'done'> | undefined
+    const sendProgress = (phase: string, r: number, t: number, pct: number, noteText?: string, chunks?: Array<'idle' | 'active' | 'done'>) => {
+      lastR = r; lastT = t
+      if (chunks) lastChunks = chunks
+      event.sender.send('download-progress', progressPayload(phase, r, t, pct, lastSpeed, noteText, lastChunks))
+    }
     try {
-      event.sender.send('download-progress', progressPayload('downloading', 0, 0, 0))
+      sendProgress('downloading', 0, 0, 0)
       console.log('[dl] 开始下载:', opts.url, startByte > 0 ? `(续传 ${startByte} 字节)` : '')
       // 用户取消标志：取消时让下载 Promise 立即 settle（否则会挂起到停滞看门狗超时）
       await new Promise<void>((resolve, reject) => {
         dlReject = reject
         cancelFn = startParallelDownload(opts.url, archivePath, startByte,
-          (r, t) => { lastProgressAt = Date.now(); event.sender.send('download-progress', progressPayload('downloading', r, t, t > 0 ? Math.round(r / t * 100) : 0)) },
+          (r, t, speed, chunks) => { lastProgressAt = Date.now(); lastSpeed = speed ?? 0; sendProgress('downloading', r, t, t > 0 ? Math.round(r / t * 100) : 0, undefined, chunks) },
           () => { console.log('[dl] 下载完成'); resolve() },
-          (err) => { console.log('[dl] 下载失败:', err.message); reject(err) })
+          (err) => { console.log('[dl] 下载失败:', err.message); reject(err) },
+          (n) => { sendProgress('downloading', lastR, lastT, lastT > 0 ? Math.round(lastR / lastT * 100) : 0, n) })
         cancelBackendDl = () => {
           dlCancelled = true
           cancelFn?.()
           reject(new Error('已取消'))
         }
+        pauseBackendDl = () => {
+          dlPaused = true
+          cancelFn?.()
+          reject(new Error('已暂停'))
+        }
       })
-      cancelBackendDl = null; dlReject = null
+      cancelBackendDl = null; pauseBackendDl = null; dlReject = null
       clearInterval(watchdog)
+      // GitHub 发布资产携带 sha256 digest 时做下载后校验：解压前拦截损坏/被篡改的包
+      if (opts.digest) {
+        sendProgress('verifying', 0, 0, 100)
+        const want = opts.digest.toLowerCase()
+        const got = await sha256OfFile(archivePath)
+        console.log('[dl] sha256 校验:', got, '期望:', want, got === want ? '通过' : '不通过')
+        if (got !== want) {
+          try { unlinkSync(archivePath) } catch {}
+          try { unlinkSync(archivePath + '.etag') } catch {}
+          throw new Error('校验和失败：文件内容与官方发布不一致（sha256）')
+        }
+      }
+      // 校验通过/无 digest：清理 etag 旁路文件，避免残留陈旧 etag
+      try { unlinkSync(archivePath + '.etag') } catch {}
       console.log('[dl] 开始解压:', archivePath, '->', stagingDir)
       event.sender.send('download-progress', progressPayload('extracting', 0, 0, 100))
       const archiveSize = statSync(archivePath).size
       if (archiveSize === 0) throw new Error('下载文件为空')
+      // 清理历史崩溃残留的 staging 与旧版本备份目录（app 被杀 / 断电会遗留，大包可达数百 MB）
+      try {
+        const base = dirname(BACKEND_DIR)
+        for (const n of readdirSync(base)) {
+          if (n.startsWith('.staging-') || n.startsWith('.old-')) {
+            try { rmSync(join(base, n), { recursive: true, force: true }) } catch {}
+          }
+        }
+      } catch {}
       rmSync(stagingDir, { recursive: true, force: true })
       mkdirSync(stagingDir, { recursive: true })
       if (isTarGz) {
+        // tar 是顺序格式没有中央目录：先 -tzf 预读条目总数（只读头部，秒级~分钟级），
+        // 再 -xzf -v 按 stdout 文件名行计数上报进度，与 zip 路径一致；
+        // -t 失败说明包损坏，提前拦截并清理，避免把坏包留给续传复用
+        const totalTarEntries = await new Promise<number>((resolve, reject) => {
+          const p = spawn('tar', ['-tzf', archivePath], { stdio: ['ignore', 'pipe', 'ignore'] })
+          let count = 0
+          let buf = ''
+          p.stdout.on('data', (d: Buffer) => {
+            buf += d.toString()
+            const lines = buf.split('\n')
+            buf = lines.pop() ?? ''
+            count += lines.filter(l => l.trim().length > 0).length
+          })
+          const t = setTimeout(() => { p.kill(); reject(new Error('tar解压超时')) }, 5 * 60 * 1000)
+          p.on('error', (e) => { clearTimeout(t); reject(e) })
+          p.on('exit', code => {
+            clearTimeout(t)
+            if (code === 0) resolve(count)
+            else {
+              try { unlinkSync(archivePath) } catch {}
+              reject(new Error('下载不完整，压缩包损坏'))
+            }
+          })
+        })
+        if (totalTarEntries === 0) throw new Error('解压后内容为空')
+        let doneTarEntries = 0
         await new Promise<void>((resolve, reject) => {
-          const p = spawn('tar', ['-xzf', archivePath, '-C', stagingDir], { stdio: 'pipe' })
+          const p = spawn('tar', ['-xzf', archivePath, '-C', stagingDir, '-v'], { stdio: ['ignore', 'pipe', 'ignore'] })
+          let buf = ''
+          p.stdout.on('data', (d: Buffer) => {
+            buf += d.toString()
+            const lines = buf.split('\n')
+            buf = lines.pop() ?? ''
+            doneTarEntries += lines.filter(l => l.trim().length > 0).length
+            event.sender.send('download-progress', progressPayload('extracting', doneTarEntries, totalTarEntries, totalTarEntries > 0 ? Math.round(doneTarEntries / totalTarEntries * 100) : 100))
+          })
           // 分支引擎包体可达数百 MB，解压较慢，超时放宽到 30 分钟
           const t = setTimeout(() => { p.kill(); reject(new Error('tar解压超时')) }, 30 * 60 * 1000)
           p.on('error', (e) => { clearTimeout(t); reject(e) })
@@ -2181,15 +2486,47 @@ export function registerIpcHandlers(): void {
       // 核心可执行文件必须存在（有限深度查找），防止“解压完成但没有主程序”
       const exeNames = ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe', 'TensorSharp.Server']
       if (!findAnyFile(stagingDir, exeNames)) throw new Error('解压后未找到核心可执行文件，安装包可能不完整')
-      // 校验全部通过后才替换正式版本目录（此前版本安装保持原样）
-      if (existsSync(extractPath)) rmSync(extractPath, { recursive: true, force: true })
-      renameSync(stagingDir, extractPath)
+      // 校验全部通过后才替换正式版本目录（此前版本安装保持原样）。
+      // 原子替换：先把旧目录改名成 .old-* 备份（Windows rename 目标已存在会失败，不能直接覆盖），
+      // 再 rename staging 进来；新目录未就位前旧目录始终可回滚，绝不出现“版本目录消失”的中间态
+      let oldBackup: string | null = null
+      if (existsSync(extractPath)) {
+        oldBackup = join(dirname(BACKEND_DIR), `.old-${basename(extractPath)}`)
+        try { rmSync(oldBackup, { recursive: true, force: true }) } catch {}
+        try {
+          renameSync(extractPath, oldBackup)
+        } catch {
+          // 旧目录被占用（后端进程运行中 / 杀毒软件锁定），无法安全替换，报错并保留旧版本
+          throw new Error('旧版本目录被占用，无法替换（EBUSY）')
+        }
+      }
+      try {
+        renameSync(stagingDir, extractPath)
+      } catch (e) {
+        // 新目录改名失败：回滚旧目录，保证已安装版本不丢失
+        if (oldBackup) { try { renameSync(oldBackup, extractPath) } catch {} }
+        throw e
+      }
+      if (oldBackup) { try { rmSync(oldBackup, { recursive: true, force: true }) } catch {} }
       try { unlinkSync(archivePath) } catch (e) { console.error('清理临时文件失败', e) }
+      lastBackendDlOpts = null
+      // 全流程成功收尾事件：send 管道 FIFO 保证它排在所有进度事件之后，
+      // 渲染端收到 'done' 即清空横幅，避免 invoke 回执与进度事件跨管道乱序导致横幅卡在「解压中」
+      event.sender.send('download-progress', progressPayload('done', lastT, lastT, 100, lastSpeed, '安装完成'))
       return { success: true, path: extractPath }
     } catch (err) {
       console.log('[dl] 失败:', err)
-      cancelBackendDl = null; dlReject = null
+      cancelBackendDl = null; pauseBackendDl = null; dlReject = null
       clearInterval(watchdog)
+      // 暂停：中止请求但保留临时文件（断点续传依据），并通知渲染端进入暂停态。
+      // 记录真实已下载字节数（与文件实际落盘大小取较小值，避免超前后续拼接出空洞）
+      if (dlPaused) {
+        let savedStart = 0
+        try { savedStart = Math.min(lastR, statSync(archivePath).size) } catch {}
+        if (lastBackendDlOpts) lastBackendDlOpts.startByte = savedStart
+        event.sender.send('download-progress', progressPayload('paused', lastR, lastT, lastT > 0 ? Math.round(lastR / lastT * 100) : 0, lastSpeed, '已暂停，可随时继续'))
+        return { success: false, paused: true, cancelled: false, error: '已暂停' }
+      }
       // 清理 staging 与临时 zip；正式版本目录（不论新旧）一律保留，失败不回滚也不误删。
       // 临时 zip 必须删除：否则残留的“完整大小但内容损坏”文件会被下次断点续传复用（续传只覆盖尾部），
       // 导致解压持续失败（Z_DATA_ERROR: invalid block type）
@@ -2197,6 +2534,8 @@ export function registerIpcHandlers(): void {
         try { rmSync(stagingDir, { recursive: true, force: true }) } catch {}
       }
       try { unlinkSync(archivePath) } catch {}
+      try { unlinkSync(archivePath + '.etag') } catch {}
+      lastBackendDlOpts = null
       const msg = String(err)
       let cnMsg = msg
       if (msg.includes('ERR_CONNECTION_TIMED_OUT') || msg.includes('Connection timeout') || msg.includes('Probe connection timeout')) cnMsg = '连接超时，请检查网络或代理设置'
@@ -2210,19 +2549,42 @@ export function registerIpcHandlers(): void {
       else if (msg.includes('EACCES')) cnMsg = '文件写入被拒绝，可能被杀毒软件占用，请将 backend 目录加入排除列表后重试'
       else if (msg.includes('HTTP 4') || msg.includes('HTTP 5')) cnMsg = '服务器返回错误：' + (msg.match(/HTTP \d+/)?.[0] || '')
       else if (msg.includes('下载不完整') || msg.includes('分片下载不完整') || msg.includes('解压后内容为空') || msg.includes('下载文件为空')) cnMsg = '下载不完整，压缩包可能已损坏，请重试'
+      else if (msg.includes('校验和失败')) cnMsg = '文件校验失败：与官方 sha256 不一致，可能被代理篡改或下载损坏，已清理，请重试'
       else if (msg.includes('Z_DATA_ERROR') || msg.includes('invalid block type') || msg.includes('incorrect header check')) cnMsg = '解压失败：压缩包内容损坏（通常为上次下载不完整），已清理临时文件，请重新下载'
       else if (msg.includes('压缩包损坏') || msg.includes('tar') || msg.includes('unzip') || msg.includes('zip') || msg.includes('corrupt')) cnMsg = '解压失败，压缩包可能已损坏'
       else if (msg.includes('EBUSY') || msg.includes('EPERM') || msg.includes('ECONNREFUSED')) cnMsg = '文件被占用，请先停止该后端再更新'
       return { success: false, cancelled: dlCancelled, error: cnMsg }
     }
   }
-  ipcMain.handle('download-release', (event, opts: { url: string; version: string; assetName: string }) => downloadBackendRelease(event, opts))
+  ipcMain.handle('download-release', (event, opts: { url: string; version: string; assetName: string; digest?: string }) => downloadBackendRelease(event, opts))
+  // 取消：中止下载并删除临时文件（含暂停残留）
   ipcMain.handle('cancel-backend-download', () => {
     if (cancelBackendDl) {
       cancelBackendDl()
       cancelBackendDl = null
+    } else if (lastBackendDlOpts) {
+      // 暂停后无活动请求：清除暂停残留的临时文件（及 etag 旁路），防止被续传复用
+      const tmp = join(app.getPath('temp'), lastBackendDlOpts.assetName)
+      try { unlinkSync(tmp) } catch {}
+      try { unlinkSync(tmp + '.etag') } catch {}
+      lastBackendDlOpts = null
     }
     return { success: true }
+  })
+  // 暂停：中止请求但保留已下载部分，供「继续」断点续传
+  ipcMain.handle('pause-backend-download', () => {
+    if (pauseBackendDl) {
+      pauseBackendDl()
+      pauseBackendDl = null
+      return { success: true }
+    }
+    return { success: false, error: '没有正在进行的下载' }
+  })
+  // 继续：复用上次下载参数重新发起，主进程自动从临时文件断点续传
+  ipcMain.handle('resume-backend-download', (event) => {
+    if (!lastBackendDlOpts) return { success: false, error: '没有可恢复的下载' }
+    if (cancelBackendDl) return { success: false, error: '已有下载进行中' }
+    return downloadBackendRelease(event, lastBackendDlOpts)
   })
 
   // ── 应用自身更新 ───────────────────────────────────────────
@@ -2363,7 +2725,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('open-folder', async (_e, folderPath: string) => {
     const settings = await loadSettings()
-    const allowedBases = [MODELS_DIR, BACKEND_DIR, CHATS_DIR, CHAT_TEMPLATES_DIR, ...settings.externalModelFolders, ...settings.imageModelFolders]
+    const allowedBases = [MODELS_DIR, BACKEND_DIR, CHATS_DIR, CHAT_TEMPLATES_DIR, ...settings.externalModelFolders, ...settings.imageModelFolders, ...settings.ttsModelFolders, ...settings.ocrModelFolders]
     if (!allowedBases.some(base => isSafePath(base, folderPath))) return
     // 确保目录存在（例如 chats/images、chats/pdf_exports 是惰性创建的），
     // 否则 shell.openPath 在路径不存在时会静默失败、什么也不打开。
@@ -2522,7 +2884,8 @@ export function registerIpcHandlers(): void {
       const parts = trimmed.split(/\s+/)
       if (parts.length >= 2) {
         const val = parseFloat(parts[parts.length - 1])
-        if (!isNaN(val)) result[parts[0]] = val
+        // 指标名可能带 label（如 llamacpp:prompt_tokens_seconds{model="x"}），剥离后按裸名匹配
+        if (!isNaN(val)) result[parts[0].split('{')[0]] = val
       }
     }
     return result
@@ -2640,7 +3003,13 @@ export function registerIpcHandlers(): void {
     // Estimate TTFT from prompt token count and prefill speed
     if (typeof payload.nPromptTokens === 'number' && payload.nPromptTokens > 0 &&
       typeof payload.prefillTokS === 'number' && payload.prefillTokS > 0) {
-      payload.ttftMs = Math.round((payload.nPromptTokens / payload.prefillTokS) * 1000)
+      const ttftMs = Math.round((payload.nPromptTokens / payload.prefillTokS) * 1000)
+      payload.ttftMs = ttftMs
+      lastTtft.set(id, ttftMs)
+    } else {
+      // prefill 窗口极短（2s 轮询大概率错过），保持最后一次成功估算值持续展示
+      const prev = lastTtft.get(id)
+      if (prev !== undefined) payload.ttftMs = prev
     }
     if (pid !== undefined) {
       payload.cpuUsage = await getCpuUsage()

@@ -88,7 +88,7 @@
         { "arg": "--reasoning-format", "label": "Reasoning Format", "description": "模型推理输出格式", "type": "select", "options": ["auto", "none", "deepseek", "deepseek-legacy"], "default": "auto", "env": "LLAMA_ARG_THINK" },
         { "arg": "--reasoning", "short": "-rea", "label": "Reasoning Mode", "description": "在聊天中启用推理/思考模式", "type": "select", "options": ["auto", "on", "off"], "default": "auto", "env": "LLAMA_ARG_REASONING" },
         { "arg": "--reasoning-budget", "label": "Reasoning Budget (tokens)", "description": "思考的令牌预算（-1 = 无限制）", "type": "number", "default": -1, "min": -1, "max": 65536, "env": "LLAMA_ARG_THINK_BUDGET" },
-        { "arg": "--metrics", "label": "Metrics Endpoint", "description": "启用 Prometheus 格式的 /metrics 监控端点（提供 tokens/s 等实时数据）", "type": "boolean", "default": false, "env": "LLAMA_ARG_ENDPOINT_METRICS" }
+        { "arg": "--metrics", "label": "Metrics Endpoint", "description": "启用 Prometheus 格式的 /metrics 监控端点（提供 tokens/s 等实时数据）", "type": "boolean", "default": true, "env": "LLAMA_ARG_ENDPOINT_METRICS" }
       ]
     },
     {

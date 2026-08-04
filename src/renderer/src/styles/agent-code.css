@@ -2285,6 +2285,26 @@
   background: var(--surface);
 }
 
+.agent-code-tree.hidden {
+  display: none;
+}
+
+.agent-code-resize-handle.hidden {
+  display: none;
+}
+
+/* 浏览器 / 终端模式下文件树收起，右侧列占满可用宽度 */
+.agent-code-right-body.tree-collapsed .agent-browser-wrap {
+  flex: 1;
+  width: auto;
+  max-width: none;
+}
+
+.agent-code-right-body.tree-collapsed .agent-code-preview {
+  width: 100%;
+  max-width: none;
+}
+
 .agent-code-tree-header {
   display: none;
 }

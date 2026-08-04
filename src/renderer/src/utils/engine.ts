@@ -11,6 +11,14 @@ export const ENGINE_LABELS: Record<Exclude<EngineKind, 'other'>, string> = {
   beellama: 'BeeLlama'
 }
 
+/** 四个引擎的 GitHub 发布仓库（启动后自动检测新版本用，与设置页各下载区块一致） */
+export const ENGINE_REPOS: Record<Exclude<EngineKind, 'other'>, string> = {
+  llamacpp: 'ggml-org/llama.cpp',
+  tensorsharp: 'zhongkaifu/TensorSharp',
+  turboquant: 'TheTom/llama-cpp-turboquant',
+  beellama: 'Anbeeld/beellama.cpp'
+}
+
 /** 将后端类型归一化为可用的参数集名：'other'（无法识别的 exe）按 llama.cpp 行为处理 */
 export function paramSetOf(kind: EngineKind | undefined | null): Exclude<EngineKind, 'other'> {
   return kind === 'tensorsharp' || kind === 'turboquant' || kind === 'beellama' ? kind : 'llamacpp'

@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import { RefreshCw, Loader2, Cpu, X } from 'lucide-react'
+import { RefreshCw, Loader2, Cpu } from 'lucide-react'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
-import type { ReleaseInfo } from '../../../shared/types'
+import { ENGINE_REPOS } from '../utils/engine'
 
 interface Props {
   /** GitHub 仓库（owner/repo），与 llama.cpp / TensorSharp 共用同一条 check-updates / download-release 通道 */
@@ -22,11 +22,17 @@ interface Props {
  * 安装后按目录名（含 turboquant / beellama）自动识别引擎类型。
  */
 export default function EngineDownloadSection({ repo, engineLabel, description }: Props) {
-  const { setBackends, downloadProgress, setDownloadProgress } = useStore(
-    s => ({ setBackends: s.setBackends, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress }),
+  const { setBackends, downloadProgress, setDownloadProgress, engineReleases, setEngineRelease } = useStore(
+    s => ({ setBackends: s.setBackends, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, engineReleases: s.engineReleases, setEngineRelease: s.setEngineRelease }),
     shallow
   )
-  const [releaseInfo, setReleaseInfo] = useState<ReleaseInfo | null>(null)
+  // 发布信息由 store 的 engineReleases 提供（启动 10s 后自动检测写入），手动检查结果同样写回 store
+  const releaseInfo = engineReleases[repo] ?? null
+  // 下载状态由 store 的 downloadProgress 驱动（跨导航切换持久）：
+  // 本引擎是否正在下载（downloadProgress.engine 由主进程按资产名推断）
+  const dlActive = downloadProgress && (downloadProgress.phase === 'downloading' || downloadProgress.phase === 'extracting' || downloadProgress.phase === 'verifying' || downloadProgress.phase === 'paused') ? downloadProgress : null
+  const myEngine = (Object.entries(ENGINE_REPOS).find(([, r]) => r === repo)?.[0] ?? 'llamacpp') as 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama'
+  const thisBusy = !!dlActive && dlActive.engine === myEngine
   const [checking, setChecking] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [selectedAssetUrl, setSelectedAssetUrl] = useState('')
@@ -57,7 +63,7 @@ export default function EngineDownloadSection({ repo, engineLabel, description }
     setChecking(true)
     try {
       const info = await window.api.checkUpdates(repo)
-      setReleaseInfo(info)
+      setEngineRelease(repo, info)
     } finally {
       setChecking(false)
     }
@@ -74,9 +80,11 @@ export default function EngineDownloadSection({ repo, engineLabel, description }
       url: asset.downloadUrl,
       // 版本目录名与 llama.cpp / TensorSharp 统一：tag + 资源名去掉扩展名（如 tqp-v0.3.0-turboquant-plus-…-windows-x64-cuda12.4）
       version: `${releaseInfo.tagName}-${asset.name.replace(/\.(zip|tar\.gz)$/, '')}`,
-      assetName: asset.name
+      assetName: asset.name,
+      digest: asset.digest
     }), `下载 ${engineLabel} 失败`)
     setDownloading(false)
+    if (res && res.paused) return
     setDownloadProgress(null)
     if (res && res.success) {
       notify(`${engineLabel} 安装完成`, 'success')
@@ -85,7 +93,7 @@ export default function EngineDownloadSection({ repo, engineLabel, description }
       // 安装后立即复查版本状态，让“已是最新”徽标及时生效
       try {
         const info = await window.api.checkUpdates(repo)
-        setReleaseInfo(info)
+        setEngineRelease(repo, info)
       } catch { /* 忽略复查失败 */ }
     } else if (res && !res.success && !res.cancelled) {
       notify(`下载失败：${res.error}`, 'error')
@@ -161,32 +169,15 @@ export default function EngineDownloadSection({ repo, engineLabel, description }
                       </div>
                     )}
                   </div>
-                  {downloading ? (
+                  {downloading || thisBusy ? (
                     <button className="btn btn-secondary btn-sm" disabled>
                       <Loader2 size={14} className="spin" /> 下载中...
                     </button>
-                  ) : downloadProgress ? (
+                  ) : dlActive ? (
                     <button className="btn btn-secondary btn-sm" disabled>其他引擎下载中</button>
                   ) : (
                     <button className="btn btn-primary btn-sm" onClick={handleDownload}>下载并安装</button>
                   )}
-                </div>
-              )}
-              {downloading && downloadProgress && (downloadProgress.phase === 'downloading' || downloadProgress.phase === 'extracting') && (
-                <div className="flex items-center gap-2 w-full">
-                  <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                    {downloadProgress.phase === 'extracting'
-                      ? `正在解压... ${downloadProgress.percent}%（${downloadProgress.received} / ${downloadProgress.total} 个文件）`
-                      : `下载中 ${downloadProgress.percent}%（${Math.round((downloadProgress.received || 0) / 1024 / 1024)} / ${Math.round((downloadProgress.total || 0) / 1024 / 1024)} MB）`}
-                  </div>
-                  <button
-                    className="btn btn-ghost btn-sm text-danger"
-                    style={{ marginLeft: 'auto' }}
-                    onClick={() => { window.api.cancelBackendDownload(); setDownloadProgress(null) }}
-                    title="取消下载"
-                  >
-                    <X size={13} /> 取消
-                  </button>
                 </div>
               )}
             </div>

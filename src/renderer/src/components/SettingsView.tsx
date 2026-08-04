@@ -2,12 +2,11 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { useSidebarStore } from '../store/sidebarStore'
 import { shallow } from 'zustand/shallow'
-import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown, AlertTriangle, Check, Type, Cpu, X } from 'lucide-react'
+import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown, AlertTriangle, Check, Type, Cpu, ScanText } from 'lucide-react'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
-import { ENGINE_LABELS, paramSetOf } from '../utils/engine'
+import { ENGINE_LABELS, paramSetOf, ENGINE_REPOS } from '../utils/engine'
 import { SOUND_OPTIONS, previewSound } from '../utils/sound'
-import type { ReleaseInfo } from '../../../shared/types'
 
 import CommandsEditor from './CommandsEditor'
 import FontSelector from './FontSelector'
@@ -28,11 +27,16 @@ function getNotifPref(): 'banner' | 'manual' {
 export default function SettingsView() {
 	  const { backends, activeBackend, setActiveBackend, setCommandsSchema, setBackends,
 	    releaseInfo, checkingUpdate, downloadProgress, setDownloadProgress, setCheckingUpdate, setReleaseInfo,
+	    engineReleases, setEngineRelease,
     setModels, setImageModels, soundEnabled, setSoundEnabled, notificationSound, setNotificationSound, splashEnabled, setSplashEnabled, agentToolCardsExpanded, setAgentToolCardsExpanded, paramTooltipEnabled, setParamTooltipEnabled } = useStore(
-    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, setModels: s.setModels, setImageModels: s.setImageModels, soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, notificationSound: s.notificationSound, setNotificationSound: s.setNotificationSound, chatSidebarCollapsed: s.chatSidebarCollapsed, setChatSidebarCollapsed: s.setChatSidebarCollapsed, splashEnabled: s.splashEnabled, setSplashEnabled: s.setSplashEnabled, agentToolCardsExpanded: s.agentToolCardsExpanded, setAgentToolCardsExpanded: s.setAgentToolCardsExpanded, paramTooltipEnabled: s.paramTooltipEnabled, setParamTooltipEnabled: s.setParamTooltipEnabled }),
+    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, engineReleases: s.engineReleases, setEngineRelease: s.setEngineRelease, setModels: s.setModels, setImageModels: s.setImageModels, soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, notificationSound: s.notificationSound, setNotificationSound: s.setNotificationSound, chatSidebarCollapsed: s.chatSidebarCollapsed, setChatSidebarCollapsed: s.setChatSidebarCollapsed, splashEnabled: s.splashEnabled, setSplashEnabled: s.setSplashEnabled, agentToolCardsExpanded: s.agentToolCardsExpanded, setAgentToolCardsExpanded: s.setAgentToolCardsExpanded, paramTooltipEnabled: s.paramTooltipEnabled, setParamTooltipEnabled: s.setParamTooltipEnabled }),
     shallow
   )
   const { hoverExpandEnabled, setHoverExpandEnabled } = useSidebarStore()
+  // 下载状态由 store 的 downloadProgress 驱动（跨导航切换持久）：active 表示有下载进行中
+  const dlActive = downloadProgress && (downloadProgress.phase === 'downloading' || downloadProgress.phase === 'extracting' || downloadProgress.phase === 'verifying' || downloadProgress.phase === 'paused') ? downloadProgress : null
+  const llamaBusy = !!dlActive && dlActive.engine === 'llamacpp'
+  const tsBusy = !!dlActive && dlActive.engine === 'tensorsharp'
   const [downloading, setDownloading] = useState(false)
   const [selectedAssetUrl, setSelectedAssetUrl] = useState('')
   const [expandedEditor, setExpandedEditor] = useState<string | null>(null)
@@ -61,9 +65,13 @@ export default function SettingsView() {
   }, [])
   const [extFolders, setExtFolders] = useState<string[]>([])
   const [imgFolders, setImgFolders] = useState<string[]>([])
+  const [ttsFolders, setTtsFolders] = useState<string[]>([])
+  const [ocrFolders, setOcrFolders] = useState<string[]>([])
   const [metricsPolling, setMetricsPolling] = useState(true)
   // TensorSharp 引擎发布信息（与 llama.cpp 共用同一条 check-updates / download-release 通道）
-  const [tsReleaseInfo, setTsReleaseInfo] = useState<ReleaseInfo | null>(null)
+  // 由 store 的 engineReleases 提供（启动 10s 后自动检测写入），手动检查结果同样写回 store
+  const TS_REPO = ENGINE_REPOS.tensorsharp
+  const tsReleaseInfo = engineReleases[TS_REPO] ?? null
   const [tsChecking, setTsChecking] = useState(false)
   const [tsDownloading, setTsDownloading] = useState(false)
   const [tsSelectedAssetUrl, setTsSelectedAssetUrl] = useState('')
@@ -119,6 +127,8 @@ export default function SettingsView() {
   useEffect(() => {
     window.api.listExternalModelFolders().then(setExtFolders).catch((e) => console.error('[listExternalModelFolders]', e))
     window.api.listImageModelFolders().then(setImgFolders).catch((e) => console.error('[listImageModelFolders]', e))
+    window.api.listTtsModelFolders().then(setTtsFolders).catch((e) => console.error('[listTtsModelFolders]', e))
+    window.api.listOcrModelFolders().then(setOcrFolders).catch((e) => console.error('[listOcrModelFolders]', e))
     window.api.getMetricsPolling().then(setMetricsPolling).catch((e) => console.error('[getMetricsPolling]', e))
   }, [])
 
@@ -150,6 +160,28 @@ export default function SettingsView() {
     if (res && res.folders) {
       setImgFolders(res.folders)
       await refreshImageModels()
+    }
+  }
+  async function handleAddTtsFolder() {
+    const res = await safeCall(() => window.api.addTtsModelFolder(), '添加语音合成模型文件夹失败')
+    if (res && res.success && res.folders) { setTtsFolders(res.folders); await refreshModels() }
+  }
+  async function handleRemoveTtsFolder(folder: string) {
+    const res = await safeCall(() => window.api.removeTtsModelFolder(folder), '移除语音合成模型文件夹失败')
+    if (res && res.folders) {
+      setTtsFolders(res.folders)
+      await refreshModels()
+    }
+  }
+  async function handleAddOcrFolder() {
+    const res = await safeCall(() => window.api.addOcrModelFolder(), '添加 OCR 模型文件夹失败')
+    if (res && res.success && res.folders) { setOcrFolders(res.folders); await refreshModels() }
+  }
+  async function handleRemoveOcrFolder(folder: string) {
+    const res = await safeCall(() => window.api.removeOcrModelFolder(folder), '移除 OCR 模型文件夹失败')
+    if (res && res.folders) {
+      setOcrFolders(res.folders)
+      await refreshModels()
     }
   }
 
@@ -203,9 +235,11 @@ export default function SettingsView() {
       url: asset.downloadUrl,
       // 版本目录名 = tag + 资源名去掉扩展名（llama.cpp 与 TensorSharp 统一）
       version: `${releaseInfo.tagName}-${asset.name.replace(/\.(zip|tar\.gz)$/, '')}`,
-      assetName: asset.name
+      assetName: asset.name,
+      digest: asset.digest
     }), '下载后端失败')
     setDownloading(false)
+    if (res && res.paused) return
     setDownloadProgress(null)
       if (res && res.success) {
         const backendsData = await safeCall(() => window.api.listBackends(), '刷新后端列表失败')
@@ -218,13 +252,11 @@ export default function SettingsView() {
       }
     }
 
-  // TensorSharp 走与 llama.cpp 完全相同的检查/下载通道，仅仓库名不同
-  const TS_REPO = 'zhongkaifu/TensorSharp'
   async function handleCheckTsUpdates() {
     setTsChecking(true)
     try {
       const info = await window.api.checkUpdates(TS_REPO)
-      setTsReleaseInfo(info)
+      setEngineRelease(TS_REPO, info)
     } finally {
       setTsChecking(false)
     }
@@ -241,9 +273,11 @@ export default function SettingsView() {
       url: asset.downloadUrl,
       // 版本目录名与 llama.cpp 一致：tag + 资源名去掉扩展名（如 v3.1.2.0-tensorsharp-server-…-win-x64-cuda）
       version: `${tsReleaseInfo.tagName}-${asset.name.replace(/\.(zip|tar\.gz)$/, '')}`,
-      assetName: asset.name
+      assetName: asset.name,
+      digest: asset.digest
     }), '下载 TensorSharp 失败')
     setTsDownloading(false)
+    if (res && res.paused) return
     setDownloadProgress(null)
     if (res && res.success) {
       notify('TensorSharp 安装完成', 'success')
@@ -252,7 +286,7 @@ export default function SettingsView() {
       // 安装后立即复查版本状态，让“已是最新”徽标及时生效
       try {
         const info = await window.api.checkUpdates(TS_REPO)
-        setTsReleaseInfo(info)
+        setEngineRelease(TS_REPO, info)
       } catch { /* 忽略复查失败 */ }
     } else if (res && !res.success && !res.cancelled) {
       notify(`下载失败：${res.error}`, 'error')
@@ -476,7 +510,7 @@ export default function SettingsView() {
 
       { }
       <div className="settings-section">
-        <div className="settings-section-title"><Folder /> 外部模型文件夹</div>
+        <div className="settings-section-title"><Folder /> 文本模型文件夹</div>
         <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
             添加应用默认模型目录之外的文件夹。其中的文件（及子目录）将与已下载的模型一起显示在模型页面。文件保留在原位置——不会被复制。
@@ -530,6 +564,60 @@ export default function SettingsView() {
 
       { }
       <div className="settings-section">
+        <div className="settings-section-title"><Volume2 /> 语音合成模型文件夹</div>
+        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            添加存放语音合成模型（OuteTTS 与 WavTokenizer 声码器的 GGUF 文件）的文件夹。其中的模型将出现在语音合成视图的模型下拉中。文件保留在原位置——不会被复制。
+          </p>
+          {ttsFolders.length === 0 ? (
+            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未配置语音合成模型文件夹。</div>
+          ) : (
+            <div className="flex flex-col gap-2" style={{ width: '100%' }}>
+              {ttsFolders.map(f => (
+                <div key={f} className="settings-row" style={{ borderBottom: 'none', padding: '6px 0' }}>
+                  <div className="settings-row-sub mono" style={{ flex: 1, wordBreak: 'break-all' }}>{f}</div>
+                  <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleRemoveTtsFolder(f)}>
+                    <Trash size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <button className="btn btn-secondary btn-sm" onClick={handleAddTtsFolder}>
+            <FolderPlus size={13} /> 添加文件夹
+          </button>
+        </div>
+      </div>
+
+      { }
+      <div className="settings-section">
+        <div className="settings-section-title"><ScanText /> OCR 模型文件夹</div>
+        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            添加存放 OCR / 图片理解模型（如 llava、qwen2-vl 等多模态 GGUF）的文件夹。其中的模型将出现在模型页面，并可用于 OCR 文字识别与图片描述。文件保留在原位置——不会被复制。
+          </p>
+          {ocrFolders.length === 0 ? (
+            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未配置 OCR 模型文件夹。</div>
+          ) : (
+            <div className="flex flex-col gap-2" style={{ width: '100%' }}>
+              {ocrFolders.map(f => (
+                <div key={f} className="settings-row" style={{ borderBottom: 'none', padding: '6px 0' }}>
+                  <div className="settings-row-sub mono" style={{ flex: 1, wordBreak: 'break-all' }}>{f}</div>
+                  <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleRemoveOcrFolder(f)}>
+                    <Trash size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <button className="btn btn-secondary btn-sm" onClick={handleAddOcrFolder}>
+            <FolderPlus size={13} /> 添加文件夹
+          </button>
+        </div>
+      </div>
+
+      { }
+      <div className="settings-section">
         <div className="settings-section-title"><HardDrive /> 已安装的后端</div>
         {backends.length === 0 ? (
           <div className="text-center py-6 text-sm" style={{ color: 'var(--text-muted)' }}>
@@ -543,7 +631,7 @@ export default function SettingsView() {
                   <div>
                     <div className="settings-row-label flex items-center gap-2">
                       {b.name}
-                      {b.kind && b.kind !== 'other' && <span className={`version-badge${b.kind === 'tensorsharp' ? ' ts-badge' : ''}`}>{ENGINE_LABELS[b.kind] ?? b.kind}</span>}
+                      {b.kind && b.kind !== 'other' && <span className="version-badge">{ENGINE_LABELS[b.kind] ?? b.kind}</span>}
                       {activeBackend?.name === b.name && <span className="version-badge active-version">当前使用</span>}
                       {!b.hasCommands && <span className="version-badge">回退架构</span>}
                     </div>
@@ -676,32 +764,15 @@ export default function SettingsView() {
                       </div>
                     )}
                   </div>
-                  {downloading ? (
+                  {downloading || llamaBusy ? (
                     <button className="btn btn-secondary btn-sm" disabled>
                       <Loader2 size={14} className="spin" /> 下载中...
                     </button>
-                  ) : downloadProgress ? (
+                  ) : dlActive ? (
                     <button className="btn btn-secondary btn-sm" disabled>其他引擎下载中</button>
                   ) : (
                     <button className="btn btn-primary btn-sm" onClick={handleDownload}>下载</button>
                   )}
-                </div>
-              )}
-              {downloading && downloadProgress && (downloadProgress.phase === 'downloading' || downloadProgress.phase === 'extracting') && (
-                <div className="flex items-center gap-2 w-full">
-                  <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                    {downloadProgress.phase === 'extracting'
-                      ? '正在解压...'
-                      : `下载中 ${downloadProgress.percent}%（${Math.round((downloadProgress.received || 0) / 1024 / 1024)} / ${Math.round((downloadProgress.total || 0) / 1024 / 1024)} MB）`}
-                  </div>
-                  <button
-                    className="btn btn-ghost btn-sm text-danger"
-                    style={{ marginLeft: 'auto' }}
-                    onClick={() => { window.api.cancelBackendDownload(); setDownloadProgress(null) }}
-                    title="取消下载"
-                  >
-                    <X size={13} /> 取消
-                  </button>
                 </div>
               )}
             </div>
@@ -787,32 +858,15 @@ export default function SettingsView() {
                         </div>
                       )}
                     </div>
-                    {tsDownloading ? (
+                    {tsDownloading || tsBusy ? (
                       <button className="btn btn-secondary btn-sm" disabled>
                         <Loader2 size={14} className="spin" /> 下载中...
                       </button>
-                    ) : downloadProgress ? (
+                    ) : dlActive ? (
                       <button className="btn btn-secondary btn-sm" disabled>其他引擎下载中</button>
                     ) : (
                       <button className="btn btn-primary btn-sm" onClick={handleTsDownload}>下载并安装</button>
                     )}
-                  </div>
-                )}
-                {tsDownloading && downloadProgress && (downloadProgress.phase === 'downloading' || downloadProgress.phase === 'extracting') && (
-                  <div className="flex items-center gap-2 w-full">
-                    <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                      {downloadProgress.phase === 'extracting'
-                        ? `正在解压... ${downloadProgress.percent}%（${downloadProgress.received} / ${downloadProgress.total} 个文件）`
-                        : `下载中 ${downloadProgress.percent}%（${Math.round((downloadProgress.received || 0) / 1024 / 1024)} / ${Math.round((downloadProgress.total || 0) / 1024 / 1024)} MB）`}
-                    </div>
-                    <button
-                      className="btn btn-ghost btn-sm text-danger"
-                      style={{ marginLeft: 'auto' }}
-                      onClick={() => { window.api.cancelBackendDownload(); setDownloadProgress(null) }}
-                      title="取消下载"
-                    >
-                      <X size={13} /> 取消
-                    </button>
                   </div>
                 )}
               </div>

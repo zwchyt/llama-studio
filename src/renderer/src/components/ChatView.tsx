@@ -2896,6 +2896,22 @@ ${msgsHtml}
       } catch { /* 检索失败不阻断发送 */ }
     }
 
+    // ── 工具使用纪律 ──
+    // 小模型/工具倾向模型容易对普通问题随意触发工具调用。当工具暴露给模型时，
+    // 注入一条纪律提示词：默认直接回答，仅在确实缺少外部信息时才调用，且一次只调一个。
+    const exposedTools = getEnabledToolDefinitions(!!session.knowledgeBaseId)
+    if (exposedTools.length > 0) {
+      const msgs = messages as Array<Record<string, unknown>>
+      const insertAt = msgs.length > 0 && msgs[0].role === 'system' ? 1 : 0
+      msgs.splice(insertAt, 0, {
+        role: 'system',
+        content: '工具使用纪律：你能直接回答的问题请直接回答，不要调用任何工具。' +
+          '仅当回答确实缺少以下外部信息时才调用对应工具：当前时间/日期（get_datetime）、' +
+          '实时网络信息（web_search）、网页正文内容（fetch_webpage）。' +
+          '每次回答最多调用一个最必要的工具，工具返回结果后基于结果作答。'
+      })
+    }
+
     try {
       // 多模态与纯文本统一走 /v1/chat/completions，tools 一并携带（多模态与工具共存）
       const res = await window.api.chatStream({
@@ -2908,7 +2924,7 @@ ${msgsHtml}
           top_k: session.params.top_k,
           max_tokens: session.params.max_tokens || -1,
           repeat_penalty: session.params.repeat_penalty,
-          tools: getEnabledToolDefinitions(!!session.knowledgeBaseId),
+          tools: exposedTools,
           stream: true
         }
       })

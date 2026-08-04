@@ -47,3 +47,46 @@ export function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
+
+/** 分片可视化：一排小方块，idle 灰 / active 高亮 / done 绿 */
+export function ChunkGrid({ chunks, cell = 7, maxCells = 32 }: { chunks?: Array<'idle' | 'active' | 'done'>; cell?: number; maxCells?: number }) {
+  if (!chunks || chunks.length === 0) return null
+  // 大文件分片数可能上千（每片 4MB），单行直出会把横幅撑开。
+  // 超出上限时把相邻分片聚合成一格（取区间最差状态），总宽保持 ~maxCells 格。
+  const cells = chunks.length > maxCells ? downsampleChunks(chunks, maxCells) : chunks
+  const bg: Record<string, string> = { idle: 'var(--bg)', active: 'var(--accent)', done: 'var(--success)' }
+  return (
+    <span className="ub-chunks" style={{ display: 'inline-flex', gap: 2, alignItems: 'center', verticalAlign: 'middle' }}>
+      {cells.map((s, i) => (
+        <span
+          key={i}
+          title={`分片 ${i + 1}：${s === 'idle' ? '等待中' : s === 'active' ? '下载中' : '已完成'}`}
+          style={{
+            width: cell, height: 12, borderRadius: 2, display: 'inline-block',
+            background: bg[s] ?? 'var(--bg)',
+            opacity: s === 'idle' ? 0.35 : 1,
+            boxShadow: s === 'active' ? '0 0 5px var(--accent)' : 'none',
+            transition: 'background 0.2s, opacity 0.2s'
+          }}
+        />
+      ))}
+    </span>
+  )
+}
+
+function downsampleChunks(chunks: Array<'idle' | 'active' | 'done'>, n: number): Array<'idle' | 'active' | 'done'> {
+  const step = chunks.length / n
+  const out: Array<'idle' | 'active' | 'done'> = []
+  for (let i = 0; i < n; i++) {
+    const a = Math.floor(i * step)
+    const b = Math.max(a + 1, Math.floor((i + 1) * step))
+    let hasActive = false
+    let hasIdle = false
+    for (let j = a; j < b; j++) {
+      if (chunks[j] === 'active') hasActive = true
+      else if (chunks[j] === 'idle') hasIdle = true
+    }
+    out.push(hasActive ? 'active' : hasIdle ? 'idle' : 'done')
+  }
+  return out
+}

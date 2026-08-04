@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react'
 import { createTerminal, attach, fitTerminal, disposeTerminal, updateTerminalTheme, getTerminalFontSize, setTerminalFontSize, TERMINAL_FONT_SIZE_DEFAULT, detachTerminal, isTerminalReady, beginReplayGate, applyReplayAndFlush, endReplayGate } from '../utils/terminalRegistry'
-import { useTerminalStore } from '../store/terminalStore'
+import { useTerminalStore, type TerminalStoreHook } from '../store/terminalStore'
 import { Terminal, FolderOpen, Plus, Minus, RotateCcw } from 'lucide-react'
 import { safeCall } from '../utils/safeCall'
 import { matchTerminalAction, getTerminalKeybinds, subscribeTerminalStore } from '../utils/terminal-keybinds'
@@ -50,8 +50,8 @@ function AutoInput({
 }
 
 /** 统一标签栏：标签 + 目录输入 + 新建按钮 + 字号控制 */
-function TerminalTabBar(): React.JSX.Element {
-  const { sessions, activeId, setActive, close, open } = useTerminalStore()
+function TerminalTabBar({ store }: { store: TerminalStoreHook }): React.JSX.Element {
+  const { sessions, activeId, setActive, close, open } = store()
   const [cwd, setCwd] = useState(() => localStorage.getItem(CWD_KEY) || '')
   const [fontSize, setFontSize] = useState(getTerminalFontSize())
 
@@ -65,7 +65,7 @@ function TerminalTabBar(): React.JSX.Element {
 
   function handleNew(): void {
     try { localStorage.setItem(CWD_KEY, cwd) } catch { /* quota exceeded */ }
-    open(cwd || undefined)
+    open(cwd || undefined, { navigate: false })
   }
 
   function handleKeyDown(e: React.KeyboardEvent): void {
@@ -122,11 +122,11 @@ function TerminalTabBar(): React.JSX.Element {
   )
 }
 
-function TermScreen({ id, visible }: { id: string; visible: boolean }): React.JSX.Element {
+function TermScreen({ id, visible, store }: { id: string; visible: boolean; store: TerminalStoreHook }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
-  const session = useTerminalStore(s => s.sessions.find(ss => ss.id === id))
-  const setPtyReady = useTerminalStore(s => s.setPtyReady)
-  const setFallback = useTerminalStore(s => s.setFallback)
+  const session = store(s => s.sessions.find(ss => ss.id === id))
+  const setPtyReady = store(s => s.setPtyReady)
+  const setFallback = store(s => s.setFallback)
 
   useEffect(() => {
     const el = ref.current
@@ -340,8 +340,9 @@ function ansiToHtml(text: string): string {
 
 const MAX_MOUNTED_TERMINALS = 6
 
-export default function TerminalView(): React.JSX.Element {
-  const { sessions, activeId, open } = useTerminalStore()
+export default function TerminalView({ store }: { store?: TerminalStoreHook | null }): React.JSX.Element {
+  const activeStore = store ?? useTerminalStore
+  const { sessions, activeId, open } = activeStore()
   const active = sessions.find((s) => s.id === activeId)
 
   // MRU 顺序：仅保持最近 N 个 xterm 实例在 DOM 中，其余通过 detachTerminal 释放 xterm 内存
@@ -373,7 +374,7 @@ export default function TerminalView(): React.JSX.Element {
 
   return (
     <div className="terminal-view">
-      <TerminalTabBar />
+      <TerminalTabBar store={activeStore} />
       {sessions.length === 0 ? (
         <div className="terminal-empty">
           <Terminal size={48} strokeWidth={1.5} />
@@ -385,12 +386,12 @@ export default function TerminalView(): React.JSX.Element {
           {sessions.filter((s) => !s.exited && mountedKeys.includes(s.id)).map((s) => (
             s.fallback
               ? <FallbackTermScreen key={s.id} id={s.id} cwd={s.cwd} visible={s.id === activeId} />
-              : <TermScreen key={s.id} id={s.id} visible={s.id === activeId} />
+              : <TermScreen key={s.id} id={s.id} visible={s.id === activeId} store={activeStore} />
           ))}
           {active && active.exited && (
             <div className="terminal-exited-overlay">
               <p>终端已退出</p>
-              <button className="terminal-new-btn" onClick={() => open()}>
+              <button className="terminal-new-btn" onClick={() => open(undefined, { navigate: false })}>
                 新建终端
               </button>
             </div>

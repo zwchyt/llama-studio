@@ -107,6 +107,53 @@
   border-color: var(--danger);
 }
 
+.models-type-tabs {
+  display: flex;
+  gap: 0;
+  margin: 0 0 12px;
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  width: fit-content;
+  flex-wrap: wrap;
+}
+
+.models-type-tab {
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.models-type-tab:hover {
+  color: var(--text);
+}
+
+.models-type-tab.active {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.models-type-count {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
 .models-dl-status-text {
   font-size: 11px;
   margin-top: 2px;
@@ -201,12 +248,6 @@
   justify-content: center;
   flex-shrink: 0;
   color: var(--text-secondary);
-}
-
-.models-file-icon.image {
-  background: linear-gradient(135deg, var(--accent), #3a3a3a);
-  border-color: transparent;
-  color: var(--accent-fg);
 }
 
 .models-file-meta {

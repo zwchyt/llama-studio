@@ -15,7 +15,7 @@ import CreateModal from './components/CreateModal'
 import SplashScreen from './components/SplashScreen'
 import UpdateBannerGroup from './components/UpdateBannerGroup'
 import BackendDownloadBanner from './components/BackendDownloadBanner'
-import { paramSetOf } from './utils/engine'
+import { paramSetOf, ENGINE_REPOS } from './utils/engine'
 import ChatWindow from './components/ChatWindow'
 import LlamaChatView from './components/LlamaChatView'
 import TerminalView from './components/TerminalView'
@@ -154,6 +154,21 @@ function AppMain() {
     // Stage 3: Low priority — defer to next microtask so it overlaps with UI render
     queueMicrotask(() => { checkUpdates() })
     queueMicrotask(() => { checkAppUpdate() })
+    // 启动 10s 后自动检测四个引擎（llama.cpp / TensorSharp / TurboQuant / BeeLlama）
+    // 是否有新版本，结果写入 store 供设置页各下载区块直接展示（不再依赖手动点击检查）
+    const engineCheckTimer = window.setTimeout(() => {
+      Promise.allSettled(Object.values(ENGINE_REPOS).map(async (repo) => [repo, await window.api.checkUpdates(repo)] as const))
+        .then(results => {
+          for (const r of results) {
+            if (r.status === 'fulfilled' && r.value[1]) {
+              useStore.getState().setEngineRelease(r.value[0], r.value[1])
+              // llama.cpp 同步更新旧版 releaseInfo 入口，保持顶部更新横幅行为一致
+              if (r.value[0] === ENGINE_REPOS.llamacpp) useStore.getState().setReleaseInfo(r.value[1])
+            }
+          }
+        })
+        .catch(() => {})
+    }, 10_000)
     queueMicrotask(async () => {
       try {
         const agents = await window.api.listGlobalAgents() as AgentStatus[]
@@ -175,7 +190,10 @@ function AppMain() {
       }
       notify(`模型错误：${data.error}`, 'error')
     })
-    return () => window.api.removeModelErrorListener()
+    return () => {
+      window.clearTimeout(engineCheckTimer)
+      window.api.removeModelErrorListener()
+    }
   }, [])
 
   useEffect(() => {
@@ -304,7 +322,10 @@ function AppMain() {
 
   useEffect(() => {
     window.api.onDownloadProgress((data) => {
-      useStore.getState().setDownloadProgress(data)
+      // 主进程全流程成功后会推送 phase:'done' 收尾事件；该事件与 invoke 回执走
+      // 不同 IPC 管道、顺序不保证，必须在此兜底清空，否则最后一条 extracting
+      // 进度可能晚到并把横幅卡在「解压后端中...」
+      useStore.getState().setDownloadProgress(data.phase === 'done' ? null : data)
     })
     return () => window.api.removeDownloadListener()
   }, [])
@@ -542,20 +563,25 @@ function AppMain() {
           >
             <AgentCodeView />
           </div>
-          {/* 终端视图常驻挂载，仅按 view 切换显示/隐藏：切到其它侧边栏页再返回时，
-              各终端的滚动历史与活动 PTY 全部保留（对应 local-studio 的 PersistentTerminals）。 */}
-          <div
-            className="terminal-view-host"
-            style={{
-              display: view === 'terminal' ? 'flex' : 'none',
-              flex: 1,
-              minHeight: 0,
-              padding: 0,
-              overflow: 'hidden',
-            }}
-          >
-            <TerminalView />
-          </div>
+          {/* 终端视图：仅 view==='terminal' 时挂载（不常驻 display:none），
+              避免与 Agent Code 工作台内嵌终端同时渲染同一 session 的 xterm 实例（同一实例
+              只能 attach 到一个 DOM 容器，双挂载会把终端内容搬去隐藏容器导致黑屏）。
+              切换走时 xterm 实例销毁、PTY 由主进程保活，切回时 terminalCreate 复用并 replay 恢复历史。 */}
+          {view === 'terminal' && (
+            <div
+              className="terminal-view-host"
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                flex: 1,
+                minHeight: 0,
+                padding: 0,
+                overflow: 'hidden',
+              }}
+            >
+              <TerminalView />
+            </div>
+          )}
         </main>
         <div style={{ flex: view === 'llama' ? 1 : 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: view === 'llama' ? 'flex' : 'none', flex: 1, overflow: 'hidden', flexDirection: 'column', padding: 24 }}>

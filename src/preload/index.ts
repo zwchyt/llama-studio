@@ -39,7 +39,9 @@ const fullApi = {
   checkUpdates: (repo?: string) => ipcRenderer.invoke('check-updates', repo),
   downloadRelease: (opts: object) => ipcRenderer.invoke('download-release', opts),
   cancelBackendDownload: () => ipcRenderer.invoke('cancel-backend-download'),
-  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama'; name?: string }) => void) => {
+  pauseBackendDownload: () => ipcRenderer.invoke('pause-backend-download'),
+  resumeBackendDownload: () => ipcRenderer.invoke('resume-backend-download'),
+  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> }) => void) => {
     ipcRenderer.removeAllListeners('download-progress')
     ipcRenderer.on('download-progress', (_event, data) => callback(data))
   },
@@ -81,6 +83,13 @@ const fullApi = {
   listImageModelFolders: () => ipcRenderer.invoke('list-image-model-folders'),
   addImageModelFolder: () => ipcRenderer.invoke('add-image-model-folder'),
   removeImageModelFolder: (folder: string) => ipcRenderer.invoke('remove-image-model-folder', folder),
+  // ── 语音合成模型 ──
+  listTtsModelFolders: () => ipcRenderer.invoke('list-tts-model-folders'),
+  addTtsModelFolder: () => ipcRenderer.invoke('add-tts-model-folder'),
+  removeTtsModelFolder: (folder: string) => ipcRenderer.invoke('remove-tts-model-folder', folder),
+  listOcrModelFolders: () => ipcRenderer.invoke('list-ocr-model-folders'),
+  addOcrModelFolder: () => ipcRenderer.invoke('add-ocr-model-folder'),
+  removeOcrModelFolder: (folder: string) => ipcRenderer.invoke('remove-ocr-model-folder', folder),
   listChatTemplates: () => ipcRenderer.invoke('list-chat-templates'),
   listChatTemplatesRefresh: () => ipcRenderer.invoke('list-chat-templates'),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),

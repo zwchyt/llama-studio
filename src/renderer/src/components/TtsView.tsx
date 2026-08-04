@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { AudioLines, Play, Square, Loader2, Download, Volume2, TriangleAlert } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
@@ -27,6 +27,22 @@ export default function TtsView() {
   const ttsIdRef = useRef<string | null>(null)
 
   const ready = !!(ttsModelPath && ttsVocoderPath && activeBackend?.path)
+  // 配置了语音合成模型文件夹时，下拉只列出其中的模型（OuteTTS / WavTokenizer 专用目录）；
+  // 未配置时回退为全部模型，兼容把 TTS 模型放在 /models 或其他目录的用法
+  const ttsPool = useMemo(() => {
+    const tts = models.filter(m => m.tts)
+    return tts.length > 0 ? tts : models
+  }, [models])
+  // 两个下拉按模型名称分类（OuteTTS 模型 / WavTokenizer 声码器），避免同一模型在两个下拉中重复出现；
+  // 按名称过滤后为空时回退整个 TTS 池，保证任何命名都能选到
+  const outettsItems = useMemo(() => {
+    const matched = ttsPool.filter(m => /outetts/i.test(m.name))
+    return matched.length > 0 ? matched : ttsPool
+  }, [ttsPool])
+  const vocoderItems = useMemo(() => {
+    const matched = ttsPool.filter(m => /wavtokenizer/i.test(m.name))
+    return matched.length > 0 ? matched : ttsPool
+  }, [ttsPool])
   // llama-tts 文本预处理仅保留英文字母，含 CJK 必失败（实测验证），提前拦截
   const hasCjk = /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(text)
   const hasLetters = /[a-zA-Z]/.test(text)
@@ -123,7 +139,7 @@ export default function TtsView() {
                 value={ttsModelPath}
                 onChange={setTtsModelPath}
                 disabled={generating}
-                items={models}
+                items={outettsItems}
                 defaultLabel="选择 OuteTTS 模型（如 OuteTTS-0.2-500M）"
                 ariaLabel="OuteTTS 模型"
               />
@@ -134,7 +150,7 @@ export default function TtsView() {
                 value={ttsVocoderPath}
                 onChange={setTtsVocoderPath}
                 disabled={generating}
-                items={models}
+                items={vocoderItems}
                 defaultLabel="选择声码器（如 WavTokenizer-Large-75）"
                 ariaLabel="WavTokenizer 声码器"
               />

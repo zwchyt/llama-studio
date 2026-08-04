@@ -14,7 +14,7 @@ import katex from 'katex'
 import katexCssInline from 'katex/dist/katex.min.css?inline'
 import katexJsInline from 'katex/dist/katex.min.js?raw'
 import '../styles/monitoring.css'
-import { Send, Square, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles, Cpu, Play, ChevronsDownUp, ChevronsUpDown, Quote, Eye, Globe, FileDiff, Database, MessageSquarePlus } from 'lucide-react'
+import { Send, Square, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles, Cpu, Play, ChevronsDownUp, ChevronsUpDown, Quote, Eye, Globe, FileDiff, Database, MessageSquarePlus, Terminal } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import hljs from 'highlight.js/lib/common'
@@ -63,6 +63,8 @@ import AskUserQuestionInline from './AskUserQuestionInline'
 import AgentFilePicker from './AgentFilePicker'
 import AgentGitDiff, { type GitChangesData } from './AgentGitDiff'
 import AgentMessageSearch from './AgentMessageSearch'
+import TerminalView from './TerminalView'
+import { useAgentTerminalStore } from '../store/terminalStore'
 
 import type { AgentMessage, AgentSession, AgentProject, Attachment, TodoUpdate, AgentSegment, CardState, AgentMemoryEntry } from '../../../shared/types'
 import '../styles/agent-code.css'
@@ -330,6 +332,64 @@ function normalizeMathDelimiters(md: string): string {
     .replace(/\\\((.+?)\\\)/g, (_, tex) => `$${tex}$`)
   return out.replace(/\x00MATH(\d+)\x00/g, (_, i) => protected_[Number(i)]!)
 }
+
+// ── 顶栏指标隔离组件：自订阅 modelMetrics，避免主进程每 2s 广播指标时
+//    触发整个工作台全量重渲染（原实现直接在 AgentCodeView 订阅整棵 modelMetrics 树）──
+const AgentTopBarCtx = React.memo(function AgentTopBarCtx({
+  active,
+  onToggle,
+  btnRef,
+}: {
+  active: boolean
+  onToggle: () => void
+  btnRef: React.RefObject<HTMLButtonElement | null>
+}) {
+  const metrics = useStore(s => {
+    const rc = s.cards.find(c => c.status === 'running')
+    return rc ? s.modelMetrics[rc.template.id] : undefined
+  })
+  const ctxNCtx = metrics?.nCtx || 0
+  const ctxUsed = metrics?.nPromptTokens || 0
+  const ctxPct = ctxNCtx > 0 ? Math.min(100, (ctxUsed / ctxNCtx) * 100) : 0
+  const ctxWarning = ctxPct >= 80
+  const ctxNoModel = !metrics
+  return (
+    <button
+      ref={btnRef}
+      className={`agent-ctx-inline ${ctxWarning ? 'warn' : ''} ${active ? 'active' : ''}`}
+      onClick={onToggle}
+      title={ctxNoModel ? '模型未启动' : `上下文窗口 ${ctxPct.toFixed(0)}% · ${ctxUsed.toLocaleString()} / ${ctxNCtx.toLocaleString()} tokens${ctxWarning ? '（紧张）' : ''}\n点击${active ? '收起' : '展开'}详细面板`}
+    >
+      <span className="agent-ctx-inline-bar">
+        <span className="agent-ctx-inline-fill" style={{ width: `${ctxPct}%` }} />
+        <span className="agent-ctx-inline-mark" />
+      </span>
+      <span className="agent-ctx-inline-pct">{ctxNoModel ? '—' : `${ctxPct.toFixed(0)}%`}</span>
+      <span className="agent-ctx-inline-tokens">{ctxNoModel ? '未启动' : `${fmtCompactTok(ctxUsed)}/${fmtCompactTok(ctxNCtx)}`}</span>
+    </button>
+  )
+})
+
+const AgentPrefillBar = React.memo(function AgentPrefillBar() {
+  const prefillProgress = useStore(s => {
+    const rc = s.cards.find(c => c.status === 'running')
+    return rc ? (s.modelMetrics[rc.template.id]?.prefillProgress ?? null) : null
+  })
+  const prefillActive = prefillProgress !== null && prefillProgress < 1
+  const prefillDone = prefillProgress !== null && prefillProgress >= 1
+  if (!prefillActive) return null
+  return (
+    <div
+      className="metric-bar-wrap agent-prompt-build-bar"
+      title={prefillDone ? '提示词加载完成' : '正在加载提示词…'}
+    >
+      <div
+        className="metric-bar-fill"
+        style={{ width: `${Math.min(100, (prefillProgress ?? 0) * 100)}%`, background: '#7c3aed', opacity: 0.7 }}
+      />
+    </div>
+  )
+})
 
 const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { content: string }) {
   const normalized = useMemo(() => normalizeMathDelimiters(content), [content])
@@ -1780,19 +1840,10 @@ const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico
 
 export default function AgentCodeView() {
   const cards = useStore(s => s.cards)
+  const currentView = useStore(s => s.view)
   const runningCard = cards.find(c => c.status === 'running')
-  // 订阅模型运行指标，复用与「模型运行数据」面板完全相同的 prefill 进度数据源。
-  const modelMetrics = useStore(s => s.modelMetrics)
-  const prefillProgress = runningCard ? (modelMetrics[runningCard.template.id]?.prefillProgress ?? null) : null
-  const prefillActive = prefillProgress !== null && prefillProgress < 1
-  const prefillDone = prefillProgress !== null && prefillProgress >= 1
-  // ── 顶栏内联上下文指示器数据（常驻显示，免去反复点击「上下文」按钮）──
-  const ctxMetrics = runningCard ? modelMetrics[runningCard.template.id] : undefined
-  const ctxNCtx = ctxMetrics?.nCtx || 0
-  const ctxUsed = ctxMetrics?.nPromptTokens || 0
-  const ctxPct = ctxNCtx > 0 ? Math.min(100, (ctxUsed / ctxNCtx) * 100) : 0
-  const ctxWarning = ctxPct >= 80
-  const ctxNoModel = !runningCard
+  // 顶栏 prefill 进度与内联上下文指示器已抽为自订阅小组件（AgentPrefillBar / AgentTopBarCtx），
+  // 此处不再订阅 modelMetrics，避免主进程每 2s 广播指标时触发整个工作台全量重渲染。
   const apiBaseUrl = runningCard ? `http://127.0.0.1:${runningCard.template.serverPort}` : null
   const modelLabel = runningCard?.template.modelPath?.split(/[\\/]/).pop() || runningCard?.template.name || '模型'
   const storedProjects = useStore(s => s.agentProjects)
@@ -2222,8 +2273,8 @@ export default function AgentCodeView() {
   const attachBtnRef = useRef<HTMLButtonElement>(null)
   const [filePickerOpen, setFilePickerOpen] = useState(false)
   const [treeOpen, setTreeOpen] = useState(true)
-  // 右侧面板模式：files=文件树+预览 / browser=内嵌浏览器
-  const [rightPanelMode, setRightPanelMode] = useState<'files' | 'browser'>('files')
+  // 右侧面板模式：files=文件树+预览 / browser=内嵌浏览器 / terminal=内嵌终端
+  const [rightPanelMode, setRightPanelMode] = useState<'files' | 'browser' | 'terminal'>('files')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [contextModalOpen, setContextModalOpen] = useState(false)
   const [auditOpen, setAuditOpen] = useState(false)  // 操作审计面板开关
@@ -4767,38 +4818,23 @@ export default function AgentCodeView() {
           </button>
           <span className="agent-code-topbar-title">{activeSession?.title || '新会话'}</span>
         </div>
-        <div className="agent-code-topbar-toggle" onDoubleClick={toggleBothSidebars} onContextMenu={toggleBothSidebars}>
-          {/* 内联上下文指示器：常驻显示在顶栏中间（标题右侧、按钮左侧），
-              免去反复点击「上下文」按钮确认用量。点击可展开/收起完整面板。 */}
-          <button
-            ref={ctxInlineRef}
-            className={`agent-ctx-inline ${ctxWarning ? 'warn' : ''} ${contextModalOpen ? 'active' : ''}`}
-            onClick={() => setContextModalOpen(v => !v)}
-            title={ctxNoModel ? '模型未启动' : `上下文窗口 ${ctxPct.toFixed(0)}% · ${ctxUsed.toLocaleString()} / ${ctxNCtx.toLocaleString()} tokens${ctxWarning ? '（紧张）' : ''}\n点击${contextModalOpen ? '收起' : '展开'}详细面板`}
+          <div
+            className="agent-code-topbar-toggle"
+            onDoubleClick={toggleBothSidebars}
+            onContextMenu={toggleBothSidebars}
           >
-            <span className="agent-ctx-inline-bar">
-              <span className="agent-ctx-inline-fill" style={{ width: `${ctxPct}%` }} />
-              <span className="agent-ctx-inline-mark" />
-            </span>
-            <span className="agent-ctx-inline-pct">{ctxNoModel ? '—' : `${ctxPct.toFixed(0)}%`}</span>
-            <span className="agent-ctx-inline-tokens">{ctxNoModel ? '未启动' : `${fmtCompactTok(ctxUsed)}/${fmtCompactTok(ctxNCtx)}`}</span>
-          </button>
-        </div>
+            {/* 内联上下文指示器：常驻显示在顶栏中间（标题右侧、按钮左侧），
+               免去反复点击「上下文」按钮确认用量。点击可展开/收起完整面板。 */}
+            <AgentTopBarCtx
+              active={contextModalOpen}
+              onToggle={() => setContextModalOpen(v => !v)}
+              btnRef={ctxInlineRef}
+            />
+          </div>
         <div className="agent-code-topbar-right">
-          {/* Prefill 进度条：直接复用「模型运行数据」面板的同一数据源（modelMetrics[].prefillProgress），
-              作为顶部栏行内条目显示，样式照搬 metric-bar-wrap / metric-bar-fill。
-              仅在 prefill 进行中（pp < 1）显示，完成后自动消失。 */}
-          {prefillActive && (
-            <div
-              className="metric-bar-wrap agent-prompt-build-bar"
-              title={prefillDone ? '提示词加载完成' : '正在加载提示词…'}
-            >
-              <div
-                className="metric-bar-fill"
-                style={{ width: `${Math.min(100, (prefillProgress ?? 0) * 100)}%`, background: '#7c3aed', opacity: 0.7 }}
-              />
-            </div>
-          )}
+          {/* Prefill 进度条：复用「模型运行数据」面板的同一数据源（modelMetrics[].prefillProgress），
+              自订阅指标，仅在 prefill 进行中（pp < 1）显示，完成后自动消失。 */}
+          <AgentPrefillBar />
           <button
             ref={condenseBtnRef}
             className={`agent-code-topbar-btn ${condenseOpen ? 'active' : ''}`}
@@ -4812,6 +4848,7 @@ export default function AgentCodeView() {
           <button ref={memoryBtnRef} className={`agent-code-topbar-btn ${memoryOpen ? 'active' : ''}`} onClick={() => setMemoryOpen(v => !v)}><Database size={12} /> 记忆</button>
           <button className={`agent-code-topbar-btn ${activeTabPath === GIT_DIFF_TAB ? 'active' : ''}`} onClick={toggleGitDiff}><GitBranch size={12} /> 变更</button>
           <button className={`agent-code-topbar-btn ${rightPanelMode === 'browser' ? 'active' : ''}`} onClick={() => { setRightPanelMode(m => m === 'browser' ? 'files' : 'browser'); if (!treeOpen) setTreeOpen(true) }}><Globe size={12} /> 浏览器</button>
+          <button className={`agent-code-topbar-btn ${rightPanelMode === 'terminal' ? 'active' : ''}`} onClick={() => { setRightPanelMode(m => m === 'terminal' ? 'files' : 'terminal'); if (!treeOpen) setTreeOpen(true) }}><Terminal size={12} /> 终端</button>
           <button className="agent-code-topbar-btn" onClick={() => setToolCardsExpanded(!toolCardExpandedDefault)} title={toolCardExpandedDefault ? '折叠所有工具卡片' : '展开所有工具卡片'}>
             {toolCardExpandedDefault ? <ChevronsDownUp size={12} /> : <ChevronsUpDown size={12} />} 工具卡
           </button>
@@ -5437,15 +5474,24 @@ export default function AgentCodeView() {
         </div>
 
         <div className={`agent-code-right-collapser ${treeOpen ? '' : 'collapsed'}`}>
-          <div className="agent-code-right-body">
-            <div className="agent-code-tree">
+          <div className={`agent-code-right-body${rightPanelMode !== 'files' ? ' tree-collapsed' : ''}`}>
+            <div className={`agent-code-tree${rightPanelMode !== 'files' ? ' hidden' : ''}`}>
               <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={(name) => insertAtCursor(name)} onFilesChanged={onWorkspaceFilesChanged} />
             </div>
-            <div className={`agent-code-resize-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startResize('preview')} />
+            <div className={`agent-code-resize-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}${rightPanelMode !== 'files' ? ' hidden' : ''}`} onPointerDown={startResize('preview')} />
             <div className={`agent-browser-wrap ${rightPanelMode === 'browser' ? '' : 'hidden'}`}>
               <AgentBrowser visible={rightPanelMode === 'browser' && treeOpen} onSendToAgent={sendAnnotationsToAgent} />
             </div>
-            <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''} ${rightPanelMode === 'browser' ? 'hidden' : ''}`}>
+            {/* 内嵌终端：仅在 agent-code 视图激活时挂载（配合 App.tsx 的终端视图条件渲染，
+                保证同一 session 的 xterm 实例任意时刻只 attach 到一个 DOM 容器） */}
+            {rightPanelMode === 'terminal' && currentView === 'agent-code' && (
+              <div className="agent-browser-wrap">
+                <div className="agent-terminal">
+                  <TerminalView store={useAgentTerminalStore} />
+                </div>
+              </div>
+            )}
+            <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''} ${rightPanelMode === 'browser' || rightPanelMode === 'terminal' ? 'hidden' : ''}`}>
               <div className="agent-code-preview">
                 <div className="agent-code-preview-header">
                   <div className="agent-code-preview-tabs">

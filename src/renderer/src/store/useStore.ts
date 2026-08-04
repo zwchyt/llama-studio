@@ -12,7 +12,7 @@ interface CardState {
   ready?: boolean // 已监听到 llama_server 监听日志（服务就绪可对外提供服务）
 }
 export interface ModelFileInfo {
-  name: string; path: string; size: number; folder: string; external?: boolean
+  name: string; path: string; size: number; folder: string; external?: boolean; tts?: boolean; ocr?: boolean
 }
 export interface ModelDownloadInfo {
   id: string; url: string; filename: string; destPath: string
@@ -55,13 +55,15 @@ interface AppStore {
   activeBackend: BackendVersion | null
   commandsSchema: CommandsSchema | null
   releaseInfo: ReleaseInfo | null
+  /** 四引擎自动检测结果：repo → ReleaseInfo（启动 10s 后并行检测写入） */
+  engineReleases: Record<string, ReleaseInfo | null>
   paths: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string; chatTemplates: string } | null
   view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'terminal' | 'ocr' | 'benchmark' | 'agent-code' | 'model-tools' | 'knowledge' | 'tts'
   showCreateModal: boolean
   editingTemplate: Template | null
   updateDismissed: boolean
   checkingUpdate: boolean
-  downloadProgress: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama'; name?: string } | null
+  downloadProgress: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> } | null
   // ── 应用自身更新 ──
   appReleaseInfo: AppUpdateInfo | null
   appUpdateDismissed: boolean
@@ -90,6 +92,7 @@ interface AppStore {
   setChatTemplates: (m: ModelFileInfo[]) => void
   setCards: (c: CardState[]) => void
   setReleaseInfo: (r: ReleaseInfo | null) => void
+  setEngineRelease: (repo: string, info: ReleaseInfo | null) => void
   setPaths: (p: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string; chatTemplates: string }) => void
   setUpdateDismissed: (v: boolean) => void
   setCheckingUpdate: (v: boolean) => void
@@ -185,7 +188,7 @@ interface AppStore {
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
 export const useStore = createWithEqualityFn<AppStore>((set) => ({
   cards: [], backends: [], models: [], imageModels: [], chatTemplates: [], activeBackend: null,
-  commandsSchema: null, releaseInfo: null, paths: null,
+  commandsSchema: null, releaseInfo: null, engineReleases: {}, paths: null,
   view: 'cards', showCreateModal: false, editingTemplate: null,
   updateDismissed: false, checkingUpdate: false, downloadProgress: null,
   appReleaseInfo: null, appUpdateDismissed: false, appDownloadProgress: null, appCheckingUpdate: false,
@@ -215,6 +218,7 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   setChatTemplates: (m) => set({ chatTemplates: m }),
   setCards: (c) => set({ cards: c }),
   setReleaseInfo: (r) => set({ releaseInfo: r }),
+  setEngineRelease: (repo, info) => set(s => ({ engineReleases: { ...s.engineReleases, [repo]: info } })),
   setPaths: (p) => set({ paths: p }),
   setUpdateDismissed: (v) => set({ updateDismissed: v }),
   setCheckingUpdate: (v) => set({ checkingUpdate: v }),
@@ -350,7 +354,7 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   setActiveChat: (url, port) => set({ activeChatUrl: url, activeChatPort: port }),
   clearActiveChat: () => set({ activeChatUrl: null, activeChatPort: null }),
   // ── 工具调用开关 ──
-  toolConfig: { enabled: true, tools: { get_datetime: true, web_search: true, fetch_webpage: true, knowledge_search: true } },
+  toolConfig: { enabled: false, tools: { get_datetime: true, web_search: true, fetch_webpage: true, knowledge_search: true } },
   setToolConfig: (config) => set({ toolConfig: config }),
   // ── 提示音 ──
   soundEnabled: true,

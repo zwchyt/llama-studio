@@ -6,6 +6,8 @@ interface ModelFileInfo {
   size: number
   folder: string
   external?: boolean
+  tts?: boolean
+  ocr?: boolean
 }
 interface ModelDownloadInfo {
   id: string
@@ -59,9 +61,11 @@ interface LlamaCppApi {
   onModelError: (cb: (data: { id: string; error: string }) => void) => void
   removeModelErrorListener: () => void
   checkUpdates: (repo?: string) => Promise<ReleaseInfo>
-  downloadRelease: (opts: { url: string; version: string; assetName: string }) => Promise<{ success: boolean; path?: string; cancelled?: boolean; error?: string }>
+  downloadRelease: (opts: { url: string; version: string; assetName: string; digest?: string }) => Promise<{ success: boolean; path?: string; cancelled?: boolean; paused?: boolean; error?: string }>
   cancelBackendDownload: () => Promise<{ success: boolean }>
-  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama'; name?: string }) => void) => void
+  pauseBackendDownload: () => Promise<{ success: boolean; error?: string }>
+  resumeBackendDownload: () => Promise<{ success: boolean; path?: string; cancelled?: boolean; paused?: boolean; error?: string }>
+  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> }) => void) => void
   removeDownloadListener: () => void
   // ── 应用自身更新 ──
   checkAppUpdate: () => Promise<AppUpdateInfo>
@@ -95,6 +99,14 @@ interface LlamaCppApi {
   listImageModelFolders: () => Promise<string[]>
   addImageModelFolder: () => Promise<{ success: boolean; folders?: string[] }>
   removeImageModelFolder: (folder: string) => Promise<{ success: boolean; folders: string[] }>
+  // ── 语音合成模型 ──
+  listTtsModelFolders: () => Promise<string[]>
+  addTtsModelFolder: () => Promise<{ success: boolean; folders?: string[] }>
+  removeTtsModelFolder: (folder: string) => Promise<{ success: boolean; folders: string[] }>
+  // ── OCR 模型 ──
+  listOcrModelFolders: () => Promise<string[]>
+  addOcrModelFolder: () => Promise<{ success: boolean; folders?: string[] }>
+  removeOcrModelFolder: (folder: string) => Promise<{ success: boolean; folders: string[] }>
   listChatTemplates: () => Promise<ModelFileInfo[]>
   listChatTemplatesRefresh: () => Promise<ModelFileInfo[]>
   openExternal: (url: string) => Promise<void>
