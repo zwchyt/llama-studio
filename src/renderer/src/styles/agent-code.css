@@ -327,6 +327,51 @@
   box-shadow: 0 7px 0 var(--accent), 0 14px 0 var(--accent);
 }
 
+/* 浏览器 / 终端模式：右侧面板左边缘的可拖拽调宽手柄（聊天区 ↔ 右侧面板） */
+.agent-code-right-edge-handle {
+  width: 9px;
+  flex-shrink: 0;
+  align-self: stretch;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+  transition: background .2s;
+  position: relative;
+  z-index: var(--z-above);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-code-right-edge-handle::before {
+  content: '';
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  box-shadow: 0 7px 0 var(--text-muted), 0 14px 0 var(--text-muted);
+  opacity: 0.45;
+  transition: opacity .2s;
+}
+
+.agent-code-right-edge-handle:hover::before,
+.agent-code-right-edge-handle.agent-code-resize-handle--active::before {
+  opacity: 1;
+  background: var(--accent);
+  box-shadow: 0 7px 0 var(--accent), 0 14px 0 var(--accent);
+}
+
+.agent-code-right-edge-handle.hidden {
+  display: none;
+}
+
+/* 浏览器 / 终端模式下右侧面板整体宽度由 --agent-right-width 控制（文件树模式保持原布局） */
+.agent-code-right-collapser.panel-resizable {
+  width: var(--agent-right-width, 480px);
+  max-width: none;
+}
+
 .agent-code-chat {
   flex: 1;
   display: flex;

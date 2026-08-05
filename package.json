@@ -1,6 +1,6 @@
 {
   "name": "llama-studio",
-  "version": "1.0.149",
+  "version": "1.0.150",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",
   "main": "out/main/index.js",

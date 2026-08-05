@@ -58,20 +58,45 @@ export default function TopNavBar() {
   const rightRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // 窗口过窄导航项横向溢出时：鼠标滚轮在导航栏上滚动转为横向滚动
-  // （滚动条保持隐藏）；用原生监听器 passive:false 以允许 preventDefault
+  // 窗口过窄导航项横向溢出时：鼠标滚轮在导航栏上滚动转为平滑横向滚动。
+  // 用 rAF + 指数缓动把滚轮增量合成为目标位置做插值动画，避免逐帧硬跳的卡顿感；
+  // 原生监听器 passive:false 以允许 preventDefault
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
+    let target = 0
+    let raf = 0
+    let last = performance.now()
+    const step = (now: number) => {
+      const dt = Math.min(Math.max(now - last, 0) / 16.667, 3)
+      last = now
+      const max = Math.max(0, el.scrollWidth - el.clientWidth)
+      target = Math.min(Math.max(target, 0), max)
+      const diff = target - el.scrollLeft
+      if (Math.abs(diff) < 0.15) {
+        el.scrollLeft = target
+        raf = 0
+        return
+      }
+      el.scrollLeft += diff * Math.min(1, 0.22 * dt)
+      raf = requestAnimationFrame(step)
+    }
     const onWheel = (e: WheelEvent) => {
       if (el.scrollWidth <= el.clientWidth) return // 未溢出时不拦截
       const delta = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX
       if (!delta) return
       e.preventDefault()
-      el.scrollLeft += delta
+      target = Math.min(Math.max(target + delta, 0), Math.max(0, el.scrollWidth - el.clientWidth))
+      if (!raf) {
+        last = performance.now()
+        raf = requestAnimationFrame(step)
+      }
     }
     el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
+    return () => {
+      el.removeEventListener('wheel', onWheel)
+      if (raf) cancelAnimationFrame(raf)
+    }
   }, [])
 
   // 点击下拉菜单外部时关闭

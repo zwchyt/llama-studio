@@ -2187,6 +2187,70 @@ export default function AgentCodeView() {
     window.addEventListener('pointerup', onSidebarDragEnd)
   }
 
+  // 浏览器 / 终端模式：右侧面板宽度可拖拽调整（聊天区 ↔ 右侧面板，手柄在右侧面板左边缘）
+  const RIGHT_MIN = 260, RIGHT_MAX = 900
+  const [rightPanelWidth, setRightPanelWidth] = useState(() => {
+    try {
+      const v = Number(window.localStorage.getItem('agent-right-width') || '')
+      return v && Number.isFinite(v) ? Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, v)) : 480
+    } catch { return 480 }
+  })
+  const [rightResizing, setRightResizing] = useState(false)
+  const rightDragRef = useRef<{ startX: number; startW: number } | null>(null)
+  const rightRafRef = useRef<number | null>(null)
+  const applyRightWidth = useCallback((w: number) => {
+    const clamped = Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, w))
+    const root = document.querySelector('.agent-code-body') as HTMLElement | null
+    if (root) root.style.setProperty('--agent-right-width', `${clamped}px`)
+  }, [])
+  const onRightDragMove = useCallback((e: PointerEvent) => {
+    const d = rightDragRef.current
+    if (!d) return
+    // 兜底：松开左键立即结束（pointerup 丢失防护，与侧边栏拖拽同款）
+    if (!(e.buttons & 1)) {
+      rightDragRef.current = null
+      setRightResizing(false)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+      window.removeEventListener('pointermove', onRightDragMove)
+      window.removeEventListener('pointerup', onRightDragEnd)
+      return
+    }
+    lastClientXRef.current = e.clientX
+    const next = d.startW - (e.clientX - d.startX)
+    if (rightRafRef.current !== null) cancelAnimationFrame(rightRafRef.current)
+    rightRafRef.current = requestAnimationFrame(() => applyRightWidth(next))
+  }, [applyRightWidth])
+  const onRightDragEnd = useCallback(() => {
+    const d = rightDragRef.current
+    if (d) {
+      const w = Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, d.startW - (lastClientXRef.current - d.startX)))
+      setRightPanelWidth(w)
+      try { window.localStorage.setItem('agent-right-width', String(w)) } catch {}
+    }
+    rightDragRef.current = null
+    setRightResizing(false)
+    document.body.style.userSelect = ''
+    document.body.style.cursor = ''
+    window.removeEventListener('pointermove', onRightDragMove)
+    window.removeEventListener('pointerup', onRightDragEnd)
+  }, [onRightDragMove])
+  useEffect(() => {
+    applyRightWidth(rightPanelWidth)
+  }, [rightPanelWidth, applyRightWidth])
+  const startRightResize = (e: React.PointerEvent) => {
+    e.preventDefault()
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch {}
+    lastClientXRef.current = e.clientX
+    rightDragRef.current = { startX: e.clientX, startW: rightPanelWidth }
+    setRightResizing(true)
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+    window.addEventListener('pointermove', onRightDragMove)
+    window.addEventListener('pointerup', onRightDragEnd)
+    window.addEventListener('pointercancel', onRightDragEnd)
+  }
+
   // 拖拽监听器卸载安全网：若组件在拖拽过程中卸载，确保清理残留的 window 监听器和 body 样式。
   useEffect(() => {
     return () => {
@@ -2194,10 +2258,13 @@ export default function AgentCodeView() {
       window.removeEventListener('pointerup', onDragEnd)
       window.removeEventListener('pointermove', onSidebarDragMove)
       window.removeEventListener('pointerup', onSidebarDragEnd)
+      window.removeEventListener('pointermove', onRightDragMove)
+      window.removeEventListener('pointerup', onRightDragEnd)
+      window.removeEventListener('pointercancel', onRightDragEnd)
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
     }
-  }, [onDragMove, onDragEnd, onSidebarDragMove, onSidebarDragEnd])
+  }, [onDragMove, onDragEnd, onSidebarDragMove, onSidebarDragEnd, onRightDragMove, onRightDragEnd])
 
   // Persist to store on every change（跳过纯占位项目，防止干扰 seededRef 逻辑）
   useEffect(() => {
@@ -5473,7 +5540,11 @@ export default function AgentCodeView() {
           </div>
         </div>
 
-        <div className={`agent-code-right-collapser ${treeOpen ? '' : 'collapsed'}`}>
+        <div
+          className={`agent-code-right-edge-handle${rightResizing ? ' agent-code-resize-handle--active' : ''}${rightPanelMode === 'files' || !treeOpen ? ' hidden' : ''}`}
+          onPointerDown={startRightResize}
+        />
+        <div className={`agent-code-right-collapser ${rightPanelMode !== 'files' ? 'panel-resizable' : ''} ${treeOpen ? '' : 'collapsed'}`}>
           <div className={`agent-code-right-body${rightPanelMode !== 'files' ? ' tree-collapsed' : ''}`}>
             <div className={`agent-code-tree${rightPanelMode !== 'files' ? ' hidden' : ''}`}>
               <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={(name) => insertAtCursor(name)} onFilesChanged={onWorkspaceFilesChanged} />
