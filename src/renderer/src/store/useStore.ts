@@ -13,6 +13,8 @@ interface CardState {
 }
 export interface ModelFileInfo {
   name: string; path: string; size: number; folder: string; external?: boolean; tts?: boolean; ocr?: boolean
+  /** stable-diffusion.cpp 图像生成组件角色：model=扩散模型 / vae / llm=LLM 文本编码器 */
+  sdRole?: 'model' | 'vae' | 'llm'
 }
 export interface ModelDownloadInfo {
   id: string; url: string; filename: string; destPath: string
@@ -58,12 +60,12 @@ interface AppStore {
   /** 四引擎自动检测结果：repo → ReleaseInfo（启动 10s 后并行检测写入） */
   engineReleases: Record<string, ReleaseInfo | null>
   paths: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string; chatTemplates: string } | null
-  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'terminal' | 'ocr' | 'benchmark' | 'agent-code' | 'model-tools' | 'knowledge' | 'tts'
+  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'terminal' | 'ocr' | 'benchmark' | 'agent-code' | 'model-tools' | 'knowledge' | 'tts' | 'imagegen'
   showCreateModal: boolean
   editingTemplate: Template | null
   updateDismissed: boolean
   checkingUpdate: boolean
-  downloadProgress: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> } | null
+  downloadProgress: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama' | 'sdcpp'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> } | null
   // ── 应用自身更新 ──
   appReleaseInfo: AppUpdateInfo | null
   appUpdateDismissed: boolean

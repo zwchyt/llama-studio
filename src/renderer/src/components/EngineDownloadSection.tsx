@@ -31,7 +31,7 @@ export default function EngineDownloadSection({ repo, engineLabel, description }
   // 下载状态由 store 的 downloadProgress 驱动（跨导航切换持久）：
   // 本引擎是否正在下载（downloadProgress.engine 由主进程按资产名推断）
   const dlActive = downloadProgress && (downloadProgress.phase === 'downloading' || downloadProgress.phase === 'extracting' || downloadProgress.phase === 'verifying' || downloadProgress.phase === 'paused') ? downloadProgress : null
-  const myEngine = (Object.entries(ENGINE_REPOS).find(([, r]) => r === repo)?.[0] ?? 'llamacpp') as 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama'
+  const myEngine = (Object.entries(ENGINE_REPOS).find(([, r]) => r === repo)?.[0] ?? 'llamacpp') as 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp'
   const thisBusy = !!dlActive && dlActive.engine === myEngine
   const [checking, setChecking] = useState(false)
   const [downloading, setDownloading] = useState(false)

@@ -8,6 +8,8 @@ interface ModelFileInfo {
   external?: boolean
   tts?: boolean
   ocr?: boolean
+  /** stable-diffusion.cpp 图像生成组件角色：model=扩散模型 / vae / llm=LLM 文本编码器 */
+  sdRole?: 'model' | 'vae' | 'llm'
 }
 interface ModelDownloadInfo {
   id: string
@@ -44,8 +46,8 @@ interface LlamaCppApi {
   removeModelDownloadListener: () => void
   listBackends: () => Promise<BackendVersion[]>
   deleteBackend: (name: string) => Promise<{ success: boolean; error?: string }>
-  getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => Promise<CommandsSchema | null>
-  saveBackendCommands: (backendName: string, schema: object, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => Promise<{ success: boolean; error?: string }>
+  getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp') => Promise<CommandsSchema | null>
+  saveBackendCommands: (backendName: string, schema: object, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp') => Promise<{ success: boolean; error?: string }>
   listTemplates: () => Promise<Template[]>
   saveTemplate: (template: object) => Promise<{ success: boolean; id: string }>
   deleteTemplate: (id: string) => Promise<{ success: boolean }>
@@ -56,16 +58,19 @@ interface LlamaCppApi {
   selectDirectory: () => Promise<{ path: string | null }>
   selectFiles: () => Promise<{ paths: string[] }>
   listDrives: () => Promise<{ drives: string[] }>
-  runModel: (opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama'; kind?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' }) => Promise<{ success: boolean; pid?: number; error?: string }>
+  runModel: (opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp'; kind?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' }) => Promise<{ success: boolean; pid?: number; error?: string }>
   stopModel: (id: string) => Promise<{ success: boolean; error?: string }>
   onModelError: (cb: (data: { id: string; error: string }) => void) => void
   removeModelErrorListener: () => void
   checkUpdates: (repo?: string) => Promise<ReleaseInfo>
   downloadRelease: (opts: { url: string; version: string; assetName: string; digest?: string }) => Promise<{ success: boolean; path?: string; cancelled?: boolean; paused?: boolean; error?: string }>
+  installSdCudart: (opts: { url: string; assetName: string; backendName: string; digest?: string }) => Promise<{ success: boolean; installed?: string[]; error?: string }>
+  onSdCudartProgress: (cb: (data: { phase: string; percent: number; received?: number; total?: number; speed?: number }) => void) => void
+  removeSdCudartProgressListener: () => void
   cancelBackendDownload: () => Promise<{ success: boolean }>
   pauseBackendDownload: () => Promise<{ success: boolean; error?: string }>
   resumeBackendDownload: () => Promise<{ success: boolean; path?: string; cancelled?: boolean; paused?: boolean; error?: string }>
-  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> }) => void) => void
+  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama' | 'sdcpp'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> }) => void) => void
   removeDownloadListener: () => void
   // ── 应用自身更新 ──
   checkAppUpdate: () => Promise<AppUpdateInfo>
@@ -107,12 +112,17 @@ interface LlamaCppApi {
   listOcrModelFolders: () => Promise<string[]>
   addOcrModelFolder: () => Promise<{ success: boolean; folders?: string[] }>
   removeOcrModelFolder: (folder: string) => Promise<{ success: boolean; folders: string[] }>
+  // ── stable-diffusion.cpp 模型文件夹（扩散模型 / VAE / LLM 文本编码器）──
+  listSdModelFolders: () => Promise<{ model: string[]; vae: string[]; llm: string[] }>
+  addSdModelFolder: (kind: 'model' | 'vae' | 'llm') => Promise<{ success: boolean; folders?: string[] }>
+  removeSdModelFolder: (kind: 'model' | 'vae' | 'llm', folder: string) => Promise<{ success: boolean; folders?: string[] }>
   listChatTemplates: () => Promise<ModelFileInfo[]>
   listChatTemplatesRefresh: () => Promise<ModelFileInfo[]>
   openExternal: (url: string) => Promise<void>
   openChatWindow: (port: number) => Promise<void>
   waitForServer: (port: number) => Promise<boolean>
   fetchServerEndpoint: (port: number, endpoint: string) => Promise<{ ok: boolean; status?: number; text?: string; error?: string }>
+  sdapiRequest: (opts: { port: number; path: string; method?: 'GET' | 'POST'; body?: unknown }) => Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }>
   onModelLog: (cb: (data: { id: string; stream: string; text: string }) => void) => void
   removeModelLogListener: () => void
   onModelReady: (cb: (data: { id: string; url: string }) => void) => void

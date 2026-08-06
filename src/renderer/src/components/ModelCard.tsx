@@ -201,15 +201,19 @@ export default function ModelCard({ card }: Props) {
     const tArgs = card.template.args ?? {}
     // 模型参数：llama.cpp 用 -m，TensorSharp 用 --model（--model 在两个 schema 中都会被跳过，
     // 由这里显式追加）
-    if (card.template.modelPath) args.push(paramSet === 'tensorsharp' ? '--model' : '-m', card.template.modelPath)
+    // stable-diffusion.cpp 的扩散模型必须用 --diffusion-model 加载（Z-Image 等 GGUF
+    // tensor 名不带 model.diffusion_model. 前缀，用 -m 时 sd 识别不了架构）
+    if (card.template.modelPath) {
+      args.push(paramSet === 'tensorsharp' ? '--model' : paramSet === 'sdcpp' ? '--diffusion-model' : '-m', card.template.modelPath)
+    }
     // 参数白名单按卡片自身参数集获取（TensorSharp 与 llama.cpp 的 schema 不同），
     // 不依赖全局 activeBackend 的 schema，否则另一引擎的参数会被静默丢弃
     const cardSchema = (await window.api.getCommands(targetBackend.name, paramSet).catch(() => null)) ?? commandsSchema
     if (cardSchema) {
       for (const cat of cardSchema.categories) {
         for (const cmd of cat.commands) {
-          // --port / --model / --urls 由应用统一管理，不在高级参数里透传
-          if (cmd.arg === '--port' || cmd.arg === '--model' || cmd.arg === '--urls') continue
+          // --port / --listen-port / --model / --diffusion-model / --urls 由应用统一管理，不在高级参数里透传
+          if (cmd.arg === '--port' || cmd.arg === '--listen-port' || cmd.arg === '--model' || cmd.arg === '--diffusion-model' || cmd.arg === '--urls') continue
           // 参数集按卡片自身后端加载（TensorSharp / llama.cpp 各自专属文件），无需再按引擎过滤
           const val = tArgs[cmd.arg]
           if (val !== undefined && val !== null && val !== '') {
@@ -220,7 +224,7 @@ export default function ModelCard({ card }: Props) {
         }
       }
     } else {
-      const fallbackAllowed = new Set(['--host', '--no-webui', '--ctx-size', '-c', '--gpu-layers', '-ngl', '--threads', '-t', '--batch-size', '-b', '--flash-attn', '-fa', '--mlock', '--mmap', '--verbose'])
+      const fallbackAllowed = new Set(['--host', '--no-webui', '--ctx-size', '-c', '--gpu-layers', '-ngl', '--threads', '-t', '--batch-size', '-b', '--flash-attn', '-fa', '--mlock', '--mmap', '--verbose', '--listen-port', '--backend', '--steps', '--cfg-scale', '--diffusion-model'])
       for (const [k, v] of Object.entries(tArgs)) {
         if (!fallbackAllowed.has(k)) continue
         if (v === true) args.push(k)
@@ -241,7 +245,8 @@ export default function ModelCard({ card }: Props) {
         return
       }
     } else if (card.template.serverPort) {
-      args.push('--port', String(card.template.serverPort))
+      // stable-diffusion.cpp 的 sd-server 端口参数是 --listen-port（默认 1234），llama.cpp 系列是 --port
+      args.push(paramSet === 'sdcpp' ? '--listen-port' : '--port', String(card.template.serverPort))
     }
     const backendPath = targetBackend.path
     const exe = targetBackend.exe!
@@ -259,7 +264,7 @@ export default function ModelCard({ card }: Props) {
     if (res.success) {
       clearModelLogs(card.template.id)
       setCardStatus(card.template.id, 'running', res.pid)
-      if (launchMode === 'chat') {
+      if (launchMode === 'chat' && kind !== 'sdcpp') {
         // TensorSharp 的网页聊天 UI 在 /html（根路径返回 JSON），llama.cpp 在根路径
         const chatUrl = kind === 'tensorsharp' ? `http://127.0.0.1:${port}/html` : `http://127.0.0.1:${port}`
         useStore.getState().setActiveChat(chatUrl, port)

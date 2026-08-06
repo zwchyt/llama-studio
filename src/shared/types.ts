@@ -2,8 +2,8 @@ export interface ModelFile {
   name: string
   path: string
 }
-/** 后端引擎类型：llama.cpp 系列 / TensorSharp 系列 / llama.cpp 分支系列 */
-export type EngineKind = 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'other'
+/** 后端引擎类型：llama.cpp 系列 / TensorSharp 系列 / llama.cpp 分支系列 / stable-diffusion.cpp 图像引擎 */
+export type EngineKind = 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'other'
 export interface BackendVersion {
   name: string
   path: string
@@ -58,6 +58,8 @@ export interface ReleaseInfo {
   publishedAt: string
   isNewer?: boolean
   assets: { name: string; downloadUrl: string; size: number; digest?: string }[]
+  /** stable-diffusion.cpp 专用的 CUDA 运行时包（cudart/cublas），需额外下载合并进引擎目录（仅 Windows） */
+  cudartAsset?: { name: string; downloadUrl: string; size: number; digest?: string }
   error?: string
   /** GitHub 未返回发布信息（可能官方暂未发布或接口返回为空） */
   noRelease?: boolean

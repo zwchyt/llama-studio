@@ -3,6 +3,10 @@ function cleanName(filename: string): string {
   return filename
     .replace(/\.gguf$/i, '')
     .replace(/\.ggml$/i, '')
+    .replace(/\.safetensors$/i, '')
+    .replace(/\.ckpt$/i, '')
+    .replace(/\.pth$/i, '')
+    .replace(/\.pt$/i, '')
     .replace(/[_-]+/g, ' ')
     .replace(/\b(Q\d[_KMS]*|IQ\d[_KMS]*|F16|F32|BF16|GGUF|GGML)\b/gi, '') 
     .replace(/\s+/g, ' ')
@@ -123,6 +127,19 @@ export function buildDefaultTemplate(
         '--temperature': 0.7,
         '--repeat-penalty': 1.1,
         '--max-tokens': 20000
+      }
+    }
+  }
+  // stable-diffusion.cpp 引擎：sd-server 为图像推理服务（无聊天 UI），
+  // 预填常用生成默认值；端口参数由 sd-server 的 --listen-port 管理（默认 1234）
+  if (kind === 'sdcpp') {
+    return {
+      ...base,
+      launchMode: 'api' as const,
+      description: `stable-diffusion.cpp — 扩散模型，默认 ${20} 步 / CFG ${7}`,
+      args: {
+        '--steps': 20,
+        '--cfg-scale': 7
       }
     }
   }

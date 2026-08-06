@@ -500,6 +500,15 @@
   vertical-align: top;
 }
 
+/* stable-diffusion.cpp 的 --vae / --llm 模型下拉：宽度与普通参数控件(.cmd-input 110px)一致，
+   防止长文件名把参数行撑开或显得突兀（CustomSelect 外层是 inline-block，不约束宽度会随内容变宽） */
+.cmd-select-vae,
+.cmd-select-llm {
+  width: 110px;
+  max-width: 100%;
+  vertical-align: top;
+}
+
 .cmd-textarea {
   padding: 7px 9px;
   width: 100%;

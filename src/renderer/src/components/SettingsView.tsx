@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { useSidebarStore } from '../store/sidebarStore'
 import { shallow } from 'zustand/shallow'
-import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown, AlertTriangle, Check, Type, Cpu, ScanText } from 'lucide-react'
+import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, Bell, BellOff, FolderPlus, Folder, Activity, Volume2, ImageDown, AlertTriangle, Check, Type, Cpu, ScanText, Boxes } from 'lucide-react'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { ENGINE_LABELS, paramSetOf, ENGINE_REPOS } from '../utils/engine'
@@ -67,6 +67,11 @@ export default function SettingsView() {
   const [imgFolders, setImgFolders] = useState<string[]>([])
   const [ttsFolders, setTtsFolders] = useState<string[]>([])
   const [ocrFolders, setOcrFolders] = useState<string[]>([])
+  // stable-diffusion.cpp 图像生成的三类模型文件夹（扩散模型 / VAE / LLM 文本编码器）
+  const [sdFolders, setSdFolders] = useState<{ model: string[]; vae: string[]; llm: string[] }>({ model: [], vae: [], llm: [] })
+  // stable-diffusion.cpp CUDA 运行时下载状态（cudart 包独立通道）
+  const [sdCudartBusy, setSdCudartBusy] = useState(false)
+  const [sdCudartPercent, setSdCudartPercent] = useState(0)
   const [metricsPolling, setMetricsPolling] = useState(true)
   // TensorSharp 引擎发布信息（与 llama.cpp 共用同一条 check-updates / download-release 通道）
   // 由 store 的 engineReleases 提供（启动 10s 后自动检测写入），手动检查结果同样写回 store
@@ -129,6 +134,9 @@ export default function SettingsView() {
     window.api.listImageModelFolders().then(setImgFolders).catch((e) => console.error('[listImageModelFolders]', e))
     window.api.listTtsModelFolders().then(setTtsFolders).catch((e) => console.error('[listTtsModelFolders]', e))
     window.api.listOcrModelFolders().then(setOcrFolders).catch((e) => console.error('[listOcrModelFolders]', e))
+    window.api.listSdModelFolders().then(setSdFolders).catch((e) => console.error('[listSdModelFolders]', e))
+    window.api.onSdCudartProgress((d) => { setSdCudartPercent(d.percent ?? 0) })
+    return () => window.api.removeSdCudartProgressListener()
     window.api.getMetricsPolling().then(setMetricsPolling).catch((e) => console.error('[getMetricsPolling]', e))
   }, [])
 
@@ -182,6 +190,45 @@ export default function SettingsView() {
     if (res && res.folders) {
       setOcrFolders(res.folders)
       await refreshModels()
+    }
+  }
+
+  // ── stable-diffusion.cpp 模型文件夹（三合一）──
+  async function handleAddSdFolder(kind: 'model' | 'vae' | 'llm') {
+    const res = await safeCall(() => window.api.addSdModelFolder(kind), '添加文件夹失败')
+    if (res && res.success && res.folders) {
+      setSdFolders(prev => ({ ...prev, [kind]: res.folders as string[] }))
+      await refreshModels()
+    }
+  }
+  async function handleRemoveSdFolder(kind: 'model' | 'vae' | 'llm', folder: string) {
+    const res = await safeCall(() => window.api.removeSdModelFolder(kind, folder), '移除文件夹失败')
+    if (res && res.folders) {
+      setSdFolders(prev => ({ ...prev, [kind]: res.folders as string[] }))
+      await refreshModels()
+    }
+  }
+
+  // 下载 stable-diffusion.cpp 的 CUDA 运行时包并合并进已安装的 sd 引擎目录
+  async function handleInstallSdCudart() {
+    if (sdCudartBusy) return
+    const releaseInfo = engineReleases['leejet/stable-diffusion.cpp'] ?? null
+    const asset = releaseInfo?.cudartAsset
+    const sdBackend = backends.find(b => b.kind === 'sdcpp')
+    if (!asset || !sdBackend) return
+    setSdCudartBusy(true)
+    setSdCudartPercent(0)
+    const res = await safeCall(() => window.api.installSdCudart({
+      url: asset.downloadUrl,
+      assetName: asset.name,
+      backendName: sdBackend.name,
+      digest: asset.digest
+    }), '下载 CUDA 运行时失败')
+    setSdCudartBusy(false)
+    if (res && res.success) {
+      notify(`CUDA 运行时已安装（${(res.installed || []).length} 个 dll），重启模板后生效`, 'success')
+    } else if (res && !res.success) {
+      notify(`安装失败：${res.error}`, 'error')
     }
   }
 
@@ -618,6 +665,46 @@ export default function SettingsView() {
 
       { }
       <div className="settings-section">
+        <div className="settings-section-title"><Boxes /> stable-diffusion.cpp 模型文件夹</div>
+        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            图像生成需要三类组件（如 Z-Image = 扩散模型 + VAE + Qwen3-4B 文本编码器），
+            三类文件夹在此统一管理、一起添加。扫描结果会出现在模型页面，扩散模型可直接选为模板模型，
+            VAE 与 LLM 文本编码器会在模板高级参数的 <code>--vae</code> / <code>--llm</code> 下拉中列出。
+            文件保留在原位置——不会被复制。
+          </p>
+          {([
+            { kind: 'model' as const, label: '扩散模型（Diffusion Model）', hint: '如 z-image-turbo-Q4_K_M.gguf' },
+            { kind: 'vae' as const, label: 'VAE', hint: '如 ae.safetensors' },
+            { kind: 'llm' as const, label: 'LLM 文本编码器', hint: '如 Qwen3-4B-Instruct-2507-Q4_K_M.gguf' }
+          ]).map(({ kind, label, hint }) => (
+            <div key={kind} className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 8, width: '100%' }}>
+              <div className="settings-row-label" style={{ fontSize: 13 }}>{label}</div>
+              <div className="text-sm" style={{ color: 'var(--text-muted)', fontSize: 12 }}>{hint}</div>
+              {sdFolders[kind].length === 0 ? (
+                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未配置{label}文件夹。</div>
+              ) : (
+                <div className="flex flex-col gap-1" style={{ width: '100%' }}>
+                  {sdFolders[kind].map(f => (
+                    <div key={f} className="settings-row" style={{ borderBottom: 'none', padding: '4px 0' }}>
+                      <div className="settings-row-sub mono" style={{ flex: 1, wordBreak: 'break-all' }}>{f}</div>
+                      <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleRemoveSdFolder(kind, f)}>
+                        <Trash size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button className="btn btn-secondary btn-sm" onClick={() => handleAddSdFolder(kind)}>
+                <FolderPlus size={13} /> 添加文件夹
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      { }
+      <div className="settings-section">
         <div className="settings-section-title"><HardDrive /> 已安装的后端</div>
         {backends.length === 0 ? (
           <div className="text-center py-6 text-sm" style={{ color: 'var(--text-muted)' }}>
@@ -905,6 +992,51 @@ export default function SettingsView() {
           </>
         }
       />
+      <EngineDownloadSection
+        repo="leejet/stable-diffusion.cpp"
+        engineLabel="stable-diffusion.cpp"
+        description={
+          <>
+            扩散模型（SD / FLUX / Wan / Qwen-Image 等）的纯 C/C++ 推理引擎，与 llama.cpp 同源
+            （ggml）。自带 <code>sd-server</code> HTTP 服务，提供 <code>/sdapi/v1/txt2img</code>、
+            <code>/sdapi/v1/img2img</code> 等文生图/图生图接口。发布资产形如
+            <code>sd-master-xxx-bin-win-cpu-x64.zip</code>（另有 cuda12 / vulkan / rocm 版本，
+            请按平台与显卡选择；CUDA 版本建议同时安装对应 CUDA 运行时）。安装后即可在「我的模板」
+            中创建图像生成模板，并在「图像生成」视图中使用。
+          </>
+        }
+      />
+      <div className="settings-section">
+        <div className="settings-section-title"><Cpu /> stable-diffusion.cpp CUDA 运行时（可选）</div>
+        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            CUDA 版本的引擎包（<code>win-cuda12-x64</code>）本身<b>不含</b> CUDA 运行时（cudart / cublas）。
+            如果启动日志显示 <code>loaded CPU backend</code>、模型全在 RAM（VRAM 0.00MB），说明缺少运行时，
+            下载安装此包后重启模板即可启用 GPU。已手动安装过（引擎目录下有 <code>cudart64_12.dll</code>）可忽略。
+          </p>
+          {(() => {
+            const sdBackend = backends.find(b => b.kind === 'sdcpp')
+            const releaseInfo = engineReleases['leejet/stable-diffusion.cpp'] ?? null
+            const asset = releaseInfo?.cudartAsset
+            if (!sdBackend) return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>请先安装 stable-diffusion.cpp 引擎。</div>
+            if (!asset) return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未检测到 CUDA 运行时发布包（此包仅 Windows 提供）。</div>
+            return (
+              <div className="flex flex-col gap-2" style={{ width: '100%' }}>
+                <div className="text-sm">目标引擎：<code>{sdBackend.name}</code></div>
+                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>运行时包：{asset.name}（约 {(asset.size / 1024 / 1024).toFixed(0)}MB）</div>
+                {sdCudartBusy && (
+                  <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-muted)' }}>
+                    <Loader2 size={14} className="spin" /> 下载安装中... {sdCudartPercent}%
+                  </div>
+                )}
+                <button className="btn btn-secondary btn-sm" style={{ alignSelf: 'flex-start' }} onClick={handleInstallSdCudart} disabled={sdCudartBusy}>
+                  <Download size={13} /> {sdCudartBusy ? '下载中...' : '下载并安装 CUDA 运行时'}
+                </button>
+              </div>
+            )
+          })()}
+        </div>
+      </div>
       </div>
     )
   }

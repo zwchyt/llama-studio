@@ -9,6 +9,8 @@ import CustomSelect from './CustomSelect'
 import ModelFileSelect from './ModelFileSelect'
 
 const FEATURED_ARGS = ['--ctx-size', '--gpu-layers', '--threads', '--batch-size', '--flash-attn']
+// stable-diffusion.cpp 参数集的「主要设置」推荐参数（sd-server 无 ctx/gpu-layers 等 llama.cpp 参数）
+const FEATURED_ARGS_SDCPP = ['--steps', '--cfg-scale', '--width', '--height', '--seed', '--threads', '--vae', '--llm', '--diffusion-fa', '--offload-to-cpu']
 
 interface Props {
   templateId: string
@@ -18,7 +20,10 @@ interface Props {
 }
 
 export default function ParamsModal({ templateId, args, onClose, cardName }: Props) {
-  const { commandsSchema, cards, imageModels, chatTemplates, paramTooltipEnabled, backends, setActiveBackend } = useStore(s => ({ commandsSchema: s.commandsSchema, cards: s.cards, imageModels: s.imageModels, chatTemplates: s.chatTemplates, paramTooltipEnabled: s.paramTooltipEnabled, backends: s.backends, setActiveBackend: s.setActiveBackend }), shallow)
+  const { commandsSchema, cards, imageModels, chatTemplates, paramTooltipEnabled, backends, setActiveBackend, models } = useStore(s => ({ commandsSchema: s.commandsSchema, cards: s.cards, imageModels: s.imageModels, chatTemplates: s.chatTemplates, paramTooltipEnabled: s.paramTooltipEnabled, backends: s.backends, setActiveBackend: s.setActiveBackend, models: s.models }), shallow)
+  // stable-diffusion.cpp 图像生成组件下拉数据源（来自设置里的 sd 模型文件夹）
+  const sdVaeModels = models.filter(m => m.sdRole === 'vae')
+  const sdLlmModels = models.filter(m => m.sdRole === 'llm')
   const updateCard = useStore(s => s.updateCard)
   const setChatTemplates = useStore(s => s.setChatTemplates)
   const [activeTab, setActiveTab] = useState('主要设置')
@@ -40,8 +45,9 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   const [localSchema, setLocalSchema] = useState<CommandsSchema | null>(null)
   // 预览跟随参数集选择（切换参数集时 exe 标志和参数形态同步切换）
   const isTensorSharp = paramSet === 'tensorsharp'
+  const isSdcpp = paramSet === 'sdcpp'
   // 预览 exe 跟随参数集：参数集决定命令格式，与实际后端 exe 无关
-  const backendExe = isTensorSharp ? 'TensorSharp.Server' : 'llama-server'
+  const backendExe = isTensorSharp ? 'TensorSharp.Server' : isSdcpp ? 'sd-server' : 'llama-server'
   const activeArgs = args
 
   // debounce save: 合并高频写入，400ms 内只触发一次 IPC
@@ -86,12 +92,12 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
 
   // 切换参数集：更新显示 + 切换活跃后端 + 切换后端版本 + 保存到模板。
   // 目标引擎后端未安装时也持久化参数集选择（否则关闭弹窗后切换丢失，与编辑模板界面不同步）
-  const handleParamSetChange = useCallback((next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => {
+  const handleParamSetChange = useCallback((next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp') => {
     if (next === paramSet) return
     setParamSet(next)
     // 同步切换活跃后端到对应引擎 + 更新模板后端版本
     const targetBackend = backends.find(b => b.kind === next)
-    const nextPort = next === 'tensorsharp' ? 5000 : 8080
+    const nextPort = next === 'tensorsharp' ? 5000 : next === 'sdcpp' ? 1234 : 8080
     const { cards } = useStore.getState()
     const card = cards.find(c => c.template.id === templateId)
     if (card) {
@@ -159,21 +165,22 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
     if (!activeSchema) return []
     const allCmds: CommandParam[] = []
     activeSchema.categories.forEach(cat => allCmds.push(...cat.commands))
+    const featuredList = isSdcpp ? FEATURED_ARGS_SDCPP : FEATURED_ARGS
     const featured = allCmds
-      .filter(c => FEATURED_ARGS.includes(c.arg))
-      .sort((a, b) => FEATURED_ARGS.indexOf(a.arg) - FEATURED_ARGS.indexOf(b.arg))
+      .filter(c => featuredList.includes(c.arg))
+      .sort((a, b) => featuredList.indexOf(a.arg) - featuredList.indexOf(b.arg))
     const tabList: { name: string; icon: React.ReactNode; commands: CommandParam[] }[] = []
     if (featured.length > 0) {
       tabList.push({ name: '主要设置', icon: iconElements['Star'] ?? null, commands: featured })
     }
     for (const cat of activeSchema.categories) {
-      const filtered = cat.commands.filter(cmd => cmd.arg !== '--model' && cmd.arg !== '--port' && cmd.arg !== '--urls')
+      const filtered = cat.commands.filter(cmd => cmd.arg !== '--model' && cmd.arg !== '--diffusion-model' && cmd.arg !== '--port' && cmd.arg !== '--listen-port' && cmd.arg !== '--urls')
       if (filtered.length > 0) {
         tabList.push({ name: cat.name, icon: iconElements[cat.icon] ?? null, commands: filtered })
       }
     }
     return tabList
-  }, [activeSchema])
+  }, [activeSchema, isSdcpp])
 
   const currentCommands = useMemo(() => {
     if (!activeSchema) return []
@@ -182,7 +189,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
       const results: CommandParam[] = []
       for (const cat of activeSchema.categories) {
         for (const cmd of cat.commands) {
-          if (cmd.arg === '--model' || cmd.arg === '--port' || cmd.arg === '--urls') continue
+          if (cmd.arg === '--model' || cmd.arg === '--diffusion-model' || cmd.arg === '--port' || cmd.arg === '--urls') continue
           if (
             cmd.label.toLowerCase().includes(q) ||
             cmd.arg.toLowerCase().includes(q) ||
@@ -203,7 +210,8 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
     const items: { id: string; label: string; value?: string; fullText: string }[] = []
     const finalModelPath = card?.template.modelPath
     if (finalModelPath) {
-      const modelFlag = isTensorSharp ? '--model' : '-m'
+      // stable-diffusion.cpp 的扩散模型用 --diffusion-model（Z-Image 等 GGUF 必须，-m 识别不了）
+      const modelFlag = isTensorSharp ? '--model' : isSdcpp ? '--diffusion-model' : '-m'
       items.push({ id: 'model', label: modelFlag, value: `"${finalModelPath}"`, fullText: `${modelFlag} "${finalModelPath}"` })
     }
     Object.entries(activeArgs).forEach(([key, val]) => {
@@ -215,13 +223,15 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
         items.push({ id: key, label: key, value: String(val), fullText: `${key} ${val}` })
       }
     })
-    // TensorSharp 监听地址固定 http://0.0.0.0:5000，无端口参数，预览不显示端口项
+    // TensorSharp 监听地址固定 http://0.0.0.0:5000，无端口参数，预览不显示端口项；
+    // stable-diffusion.cpp 的 sd-server 端口参数是 --listen-port（默认 1234）
     const finalPort = card?.template.serverPort
     if (finalPort && !isTensorSharp && activeArgs['--port'] === undefined) {
-      items.push({ id: '--port', label: '--port', value: String(finalPort), fullText: `--port ${finalPort}` })
+      const portFlag = isSdcpp ? '--listen-port' : '--port'
+      items.push({ id: portFlag, label: portFlag, value: String(finalPort), fullText: `${portFlag} ${finalPort}` })
     }
     return items
-  }, [activeArgs, card, isTensorSharp, allowedArgs])
+  }, [activeArgs, card, isTensorSharp, isSdcpp, allowedArgs])
 
   const fullCommand = useMemo(() => {
     let cmd = backendExe
@@ -305,6 +315,28 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
               ariaLabel="--mmproj"
             />
           )}
+          {cmd.type === 'string' && cmd.arg === '--vae' && (
+            <ModelFileSelect
+              className="cmd-select-vae"
+              value={displayVal}
+              onChange={(v) => handleUpdate(cmd.arg, v)}
+              items={sdVaeModels}
+              defaultLabel="不指定"
+              disabled={disabled}
+              ariaLabel="--vae"
+            />
+          )}
+          {cmd.type === 'string' && cmd.arg === '--llm' && (
+            <ModelFileSelect
+              className="cmd-select-llm"
+              value={displayVal}
+              onChange={(v) => handleUpdate(cmd.arg, v)}
+              items={sdLlmModels}
+              defaultLabel="不指定"
+              disabled={disabled}
+              ariaLabel="--llm"
+            />
+          )}
           {cmd.type === 'string' && cmd.arg === '--chat-template-file' && (
             <ModelFileSelect
               className="cmd-select-chat-template"
@@ -316,7 +348,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
               ariaLabel="--chat-template-file"
             />
           )}
-          {cmd.type === 'string' && cmd.arg !== '--mmproj' && cmd.arg !== '--chat-template-file' && (
+          {cmd.type === 'string' && cmd.arg !== '--mmproj' && cmd.arg !== '--chat-template-file' && cmd.arg !== '--vae' && cmd.arg !== '--llm' && (
             <input type="text" className="cmd-input" value={displayVal} placeholder={cmd.placeholder || cmd.default?.toString()} onChange={(e) => handleUpdate(cmd.arg, e.target.value)} disabled={disabled} />
           )}
           {cmd.type === 'select' && (

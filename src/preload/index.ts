@@ -38,10 +38,16 @@ const fullApi = {
   removeModelErrorListener: () => ipcRenderer.removeAllListeners('model-error'),
   checkUpdates: (repo?: string) => ipcRenderer.invoke('check-updates', repo),
   downloadRelease: (opts: object) => ipcRenderer.invoke('download-release', opts),
+  installSdCudart: (opts: { url: string; assetName: string; backendName: string; digest?: string }) => ipcRenderer.invoke('install-sd-cudart', opts),
+  onSdCudartProgress: (cb: (data: { phase: string; percent: number; received?: number; total?: number; speed?: number }) => void) => {
+    ipcRenderer.removeAllListeners('sd-cudart-progress')
+    ipcRenderer.on('sd-cudart-progress', (_e, data) => cb(data))
+  },
+  removeSdCudartProgressListener: () => ipcRenderer.removeAllListeners('sd-cudart-progress'),
   cancelBackendDownload: () => ipcRenderer.invoke('cancel-backend-download'),
   pauseBackendDownload: () => ipcRenderer.invoke('pause-backend-download'),
   resumeBackendDownload: () => ipcRenderer.invoke('resume-backend-download'),
-  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> }) => void) => {
+  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama' | 'sdcpp'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> }) => void) => {
     ipcRenderer.removeAllListeners('download-progress')
     ipcRenderer.on('download-progress', (_event, data) => callback(data))
   },
@@ -90,6 +96,10 @@ const fullApi = {
   listOcrModelFolders: () => ipcRenderer.invoke('list-ocr-model-folders'),
   addOcrModelFolder: () => ipcRenderer.invoke('add-ocr-model-folder'),
   removeOcrModelFolder: (folder: string) => ipcRenderer.invoke('remove-ocr-model-folder', folder),
+  // ── stable-diffusion.cpp 模型文件夹（扩散模型 / VAE / LLM 文本编码器）──
+  listSdModelFolders: () => ipcRenderer.invoke('list-sd-model-folders'),
+  addSdModelFolder: (kind: 'model' | 'vae' | 'llm') => ipcRenderer.invoke('add-sd-model-folder', kind),
+  removeSdModelFolder: (kind: 'model' | 'vae' | 'llm', folder: string) => ipcRenderer.invoke('remove-sd-model-folder', kind, folder),
   listChatTemplates: () => ipcRenderer.invoke('list-chat-templates'),
   listChatTemplatesRefresh: () => ipcRenderer.invoke('list-chat-templates'),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
@@ -100,6 +110,7 @@ const fullApi = {
   openChatWindow: (port: number) => ipcRenderer.invoke('open-chat-window', port),
   waitForServer: (port: number) => ipcRenderer.invoke('wait-for-server', port),
   fetchServerEndpoint: (port: number, endpoint: string) => ipcRenderer.invoke('fetch-server-endpoint', port, endpoint),
+  sdapiRequest: (opts: { port: number; path: string; method?: 'GET' | 'POST'; body?: unknown }) => ipcRenderer.invoke('sdapi-request', opts),
   onModelLog: (cb: (data: { id: string; stream: string; text: string }) => void) => {
     ipcRenderer.removeAllListeners('model-log')
     ipcRenderer.on('model-log', (_e, data) => cb(data))

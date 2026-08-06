@@ -127,7 +127,7 @@ interface HfModelRaw {
   lastModified?: string
 }
 interface HfFileRaw { type: string; path: string; size?: number }
-type ModelFileInfo = { name: string; path: string; size: number; folder: string; external: boolean; tts?: boolean; ocr?: boolean }
+type ModelFileInfo = { name: string; path: string; size: number; folder: string; external: boolean; tts?: boolean; ocr?: boolean; sdRole?: 'model' | 'vae' | 'llm' }
 interface GpuInfo {
   name: string
   temperatureGpu: number | null
@@ -147,9 +147,11 @@ function isBackendSchema(v: unknown): v is BackendSchema {
   return typeof v === 'object' && v !== null && 'categories' in v
 }
 const LLAMA_CPP_EXE_NAMES = new Set(['llama-server', 'llama-server.exe', 'main', 'main.exe', 'server', 'server.exe', 'llama-cli', 'llama-cli.exe'])
+// stable-diffusion.cpp 的可执行文件（sd-server = HTTP 推理服务，sd-cli = 单次命令行生成）
+const SD_CPP_EXE_NAMES = new Set(['sd-server', 'sd-server.exe', 'sd-cli', 'sd-cli.exe', 'sd-convert', 'sd-convert.exe'])
 // 按可执行文件名 + 后端目录名推断后端引擎类型：
 // TensorSharp.Server.exe → 'tensorsharp'；llama.cpp 分支（目录名含 turboquant / beellama）→ 对应分支；
-// llama.cpp 系列 → 'llamacpp'
+// sd-server/sd-cli → 'sdcpp'；llama.cpp 系列 → 'llamacpp'
 function detectEngineKind(exe: string | null, dirHint = ''): EngineKind {
   const n = basename(exe ?? '').toLowerCase()
   const dir = dirHint.toLowerCase()
@@ -157,6 +159,7 @@ function detectEngineKind(exe: string | null, dirHint = ''): EngineKind {
   // llama.cpp 分支的后端目录名来自发布资产（如 turboquant-plus-tqp-v… / beellama-v0.4.2-…）
   if (dir.includes('turboquant')) return 'turboquant'
   if (dir.includes('beellama')) return 'beellama'
+  if (SD_CPP_EXE_NAMES.has(n) || n.startsWith('sd-')) return 'sdcpp'
   if (LLAMA_CPP_EXE_NAMES.has(n)) return 'llamacpp'
   return 'other'
 }
@@ -172,12 +175,13 @@ for (const dir of [MODELS_DIR, TEMPLATES_DIR, BACKEND_DIR, CHATS_DIR, CHAT_TEMPL
 }
 // 参数集由用户在参数设置里手动切换（paramSet），不自动识别引擎：
 // 'tensorsharp' → commands-tensorsharp.json，'turboquant' → commands-turboquant.json，
-// 'beellama' → commands-beellama.json，其余 → commands.json
+// 'beellama' → commands-beellama.json，'sdcpp' → commands-sdcpp.json，其余 → commands.json
 function commandsFileName(paramSet: EngineKind): string {
   switch (paramSet) {
     case 'tensorsharp': return 'commands-tensorsharp.json'
     case 'turboquant': return 'commands-turboquant.json'
     case 'beellama': return 'commands-beellama.json'
+    case 'sdcpp': return 'commands-sdcpp.json'
     default: return 'commands.json'
   }
 }
@@ -189,7 +193,7 @@ function schemaResourcePaths(paramSet: EngineKind): string[] {
   ]
 }
 function normalizeParamSet(paramSet: unknown): EngineKind {
-  return paramSet === 'tensorsharp' || paramSet === 'turboquant' || paramSet === 'beellama'
+  return paramSet === 'tensorsharp' || paramSet === 'turboquant' || paramSet === 'beellama' || paramSet === 'sdcpp'
     ? paramSet
     : 'llamacpp'
 }
@@ -218,9 +222,9 @@ function isSafePath(base: string, target: string): boolean {
 async function isAllowedModelPath(p: string): Promise<boolean> {
   if (!p || typeof p !== 'string' || !existsSync(p)) return false
   const ext = extname(p).toLowerCase()
-  if (!['.gguf', '.bin', '.ggml'].includes(ext)) return false
+  if (!['.gguf', '.bin', '.ggml', '.safetensors', '.ckpt', '.pth', '.pt'].includes(ext)) return false
   const s = await loadSettings()
-  const roots = [MODELS_DIR, ...s.externalModelFolders, ...s.imageModelFolders, ...s.ttsModelFolders, ...s.ocrModelFolders]
+  const roots = [MODELS_DIR, ...s.externalModelFolders, ...s.imageModelFolders, ...s.ttsModelFolders, ...s.ocrModelFolders, ...s.sdModelFolders, ...s.sdVaeFolders, ...s.sdLlmFolders]
   return roots.some(root => isSafePath(root, p))
 }
 // 下面的代码实现了一个简单的命令行参数验证机制，确保只有在 commands.json 中定义的参数才会被传递给后端执行的模型运行命令。这有助于防止恶意用户通过 IPC 传递危险的参数来执行未授权的操作。
@@ -302,19 +306,22 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
     return Promise.resolve()
   }
 }
-interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; ttsModelFolders: string[]; ocrModelFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean;       notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string }
+interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; ttsModelFolders: string[]; ocrModelFolders: string[]; sdModelFolders: string[]; sdVaeFolders: string[]; sdLlmFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean;       notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string }
 const UI_KEYS = new Set(['splashEnabled', 'soundEnabled', 'notificationSound', 'chatSidebarCollapsed', 'agentToolCardsExpanded', 'ttsEngine', 'ttsModelPath', 'ttsVocoderPath'])
 let settingsCache: AppSettings | null = null
 async function loadSettings(): Promise<AppSettings> {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
     const data = JSON.parse(await fsPromises.readFile(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
       imageModelFolders: Array.isArray(data.imageModelFolders) ? data.imageModelFolders : [],
       ttsModelFolders: Array.isArray(data.ttsModelFolders) ? data.ttsModelFolders : [],
       ocrModelFolders: Array.isArray(data.ocrModelFolders) ? data.ocrModelFolders : [],
+      sdModelFolders: Array.isArray(data.sdModelFolders) ? data.sdModelFolders : [],
+      sdVaeFolders: Array.isArray(data.sdVaeFolders) ? data.sdVaeFolders : [],
+      sdLlmFolders: Array.isArray(data.sdLlmFolders) ? data.sdLlmFolders : [],
       metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true,
       splashEnabled: data.splashEnabled !== undefined ? data.splashEnabled : true,
       soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
@@ -326,7 +333,7 @@ async function loadSettings(): Promise<AppSettings> {
       ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : ''
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
 }
 async function saveSettings(s: AppSettings): Promise<void> {
   await fsPromises.writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2))
@@ -335,13 +342,16 @@ async function saveSettings(s: AppSettings): Promise<void> {
 function loadSettingsSync(): AppSettings {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
     const data = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
       imageModelFolders: Array.isArray(data.imageModelFolders) ? data.imageModelFolders : [],
       ttsModelFolders: Array.isArray(data.ttsModelFolders) ? data.ttsModelFolders : [],
       ocrModelFolders: Array.isArray(data.ocrModelFolders) ? data.ocrModelFolders : [],
+      sdModelFolders: Array.isArray(data.sdModelFolders) ? data.sdModelFolders : [],
+      sdVaeFolders: Array.isArray(data.sdVaeFolders) ? data.sdVaeFolders : [],
+      sdLlmFolders: Array.isArray(data.sdLlmFolders) ? data.sdLlmFolders : [],
       metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true,
       splashEnabled: data.splashEnabled !== undefined ? data.splashEnabled : true,
       soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
@@ -353,7 +363,7 @@ function loadSettingsSync(): AppSettings {
       ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : ''
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
 }
 interface RunningProcess { proc: ChildProcess; port: number; kind: EngineKind }
 const runningProcesses = new Map<string, RunningProcess>()
@@ -1073,11 +1083,12 @@ export function registerIpcHandlers(): void {
     }
     if (modelsScanPromise) return modelsScanPromise
     modelsScanPromise = (async () => {
-      const exts = ['.gguf', '.bin', '.ggml']
+      // 含扩散模型权重（.safetensors/.ckpt/.pth/.pt）与 llama.cpp 模型（.gguf/.bin/.ggml）
+      const exts = ['.gguf', '.bin', '.ggml', '.safetensors', '.ckpt', '.pth', '.pt']
       const results: ModelFileInfo[] = []
       const seen = new Set<string>()
       const visitedDirs = new Set<string>()
-      const scan = async (dir: string, external: boolean, tts = false, ocr = false, depth = 0): Promise<void> => {
+      const scan = async (dir: string, external: boolean, tts = false, ocr = false, depth = 0, sdRole: 'model' | 'vae' | 'llm' | '' = ''): Promise<void> => {
         if (depth > 8 || results.length >= MAX_MODELS_FILES) return
         try {
           const realDir = await fsPromises.realpath(dir)
@@ -1086,14 +1097,14 @@ export function registerIpcHandlers(): void {
           const files = await fsPromises.readdir(dir, { withFileTypes: true })
           for (const e of files) {
             if (results.length >= MAX_MODELS_FILES) return
-            if (e.isDirectory()) await scan(join(dir, e.name), external, tts, ocr, depth + 1)
+            if (e.isDirectory()) await scan(join(dir, e.name), external, tts, ocr, depth + 1, sdRole)
             else if (exts.includes(extname(e.name).toLowerCase()) && !e.name.endsWith('.tmp')) {
               const fp = join(dir, e.name)
               const key = resolve(fp)
               if (seen.has(key)) continue
               seen.add(key)
               const st = await fsPromises.stat(fp)
-              results.push({ name: e.name, path: fp, size: st.size, folder: basename(dir), external, tts: tts || undefined, ocr: ocr || undefined })
+              results.push({ name: e.name, path: fp, size: st.size, folder: basename(dir), external, tts: tts || undefined, ocr: ocr || undefined, sdRole: sdRole || undefined })
             }
           }
         } catch { }
@@ -1111,6 +1122,20 @@ export function registerIpcHandlers(): void {
       for (const folder of settings.ocrModelFolders) {
         if (results.length >= MAX_MODELS_FILES) break
         if (existsSync(folder)) await scan(folder, true, false, true)
+      }
+      // stable-diffusion.cpp 图像生成的三类模型文件夹（扩散模型 / VAE / LLM 文本编码器）：
+      // 统一扫入模型列表并打上 sdRole 标记，供模板模型下拉与 --vae / --llm 参数选择
+      for (const folder of settings.sdModelFolders) {
+        if (results.length >= MAX_MODELS_FILES) break
+        if (existsSync(folder)) await scan(folder, true, false, false, 0, 'model')
+      }
+      for (const folder of settings.sdVaeFolders) {
+        if (results.length >= MAX_MODELS_FILES) break
+        if (existsSync(folder)) await scan(folder, true, false, false, 0, 'vae')
+      }
+      for (const folder of settings.sdLlmFolders) {
+        if (results.length >= MAX_MODELS_FILES) break
+        if (existsSync(folder)) await scan(folder, true, false, false, 0, 'llm')
       }
       modelsCache = { ts: Date.now(), result: results }
       return results
@@ -1253,6 +1278,39 @@ export function registerIpcHandlers(): void {
     await saveSettings(s)
     invalidateModelsCache()
     return { success: true, folders: s.ocrModelFolders }
+  })
+  // ── stable-diffusion.cpp 模型文件夹（图像生成三合一：扩散模型 / VAE / LLM 文本编码器）──
+  // 三种角色共用一套 handler，kind 决定读写 settings 里对应的数组
+  type SdFolderKind = 'model' | 'vae' | 'llm'
+  const sdFolderKey = (kind: SdFolderKind): 'sdModelFolders' | 'sdVaeFolders' | 'sdLlmFolders' =>
+    kind === 'model' ? 'sdModelFolders' : kind === 'vae' ? 'sdVaeFolders' : 'sdLlmFolders'
+  const SD_FOLDER_TITLES: Record<SdFolderKind, string> = { model: '扩散模型', vae: 'VAE', llm: 'LLM 文本编码器' }
+  ipcMain.handle('list-sd-model-folders', async (): Promise<{ model: string[]; vae: string[]; llm: string[] }> => {
+    const s = await loadSettings()
+    return { model: s.sdModelFolders, vae: s.sdVaeFolders, llm: s.sdLlmFolders }
+  })
+  ipcMain.handle('add-sd-model-folder', async (_e, kind: SdFolderKind) => {
+    if (kind !== 'model' && kind !== 'vae' && kind !== 'llm') return { success: false }
+    const r = await dialog.showOpenDialog({ title: `添加${SD_FOLDER_TITLES[kind]}文件夹`, properties: ['openDirectory'] })
+    if (r.canceled || !r.filePaths.length) return { success: false }
+    const folder = r.filePaths[0]
+    const s = await loadSettings()
+    const key = sdFolderKey(kind)
+    if (!s[key].includes(folder)) {
+      s[key].push(folder)
+      await saveSettings(s)
+      invalidateModelsCache()
+    }
+    return { success: true, folders: s[key] }
+  })
+  ipcMain.handle('remove-sd-model-folder', async (_e, kind: SdFolderKind, folder: string) => {
+    if (kind !== 'model' && kind !== 'vae' && kind !== 'llm') return { success: false }
+    const s = await loadSettings()
+    const key = sdFolderKey(kind)
+    s[key] = s[key].filter(f => f !== folder)
+    await saveSettings(s)
+    invalidateModelsCache()
+    return { success: true, folders: s[key] }
   })
   // ── 自定义聊天模板 (Jinja) ──
   ipcMain.handle('list-chat-templates', async () => {
@@ -1456,8 +1514,8 @@ export function registerIpcHandlers(): void {
       try {
         const files = await fsPromises.readdir(dir, { withFileTypes: true })
         const names = process.platform === 'win32'
-          ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe']
-          : ['llama-server', 'main', 'server', 'TensorSharp.Server']
+          ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe', 'sd-server.exe', 'sd-server']
+          : ['llama-server', 'main', 'server', 'TensorSharp.Server', 'sd-server']
         for (const n of names) {
           const found = files.find(f => !f.isDirectory() && f.name.toLowerCase() === n)
           if (found) return found.name
@@ -1705,8 +1763,8 @@ export function registerIpcHandlers(): void {
       }
       // 模型监控面板的速度数据（decode tok/s、prefill tok/s 等）依赖 llama.cpp 的 /metrics 端点；
       // 该端点需 --metrics 启动参数才启用。模板参数默认未开启，这里对 llama.cpp 系列引擎强制注入，
-      // 保证存量模板无需手动改动即可恢复监控数据（TensorSharp 无此参数，跳过）
-      if (kind !== 'tensorsharp' && !safeArgs.includes('--metrics')) {
+      // 保证存量模板无需手动改动即可恢复监控数据（TensorSharp / stable-diffusion.cpp 无此参数，跳过）
+      if (kind !== 'tensorsharp' && kind !== 'sdcpp' && !safeArgs.includes('--metrics')) {
         safeArgs.push('--metrics')
       }
       const proc = spawn(exePath, safeArgs, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: false })
@@ -2203,12 +2261,23 @@ export function registerIpcHandlers(): void {
     const isLinux = process.platform === 'linux'
     const arch = process.arch
     const isTs = repo.toLowerCase().includes('tensorsharp')
+    const isSdcpp = repo.toLowerCase().includes('stable-diffusion.cpp')
     const platformAssets = release.assets.filter((a: any) => {
       const n = a.name.toLowerCase()
       if (n.startsWith('cudart-')) return false
       // TensorSharp 的发布页同时包含 cli 与 server 两种资产，本项目只使用推理服务器
       if (isTs && !n.includes('tensorsharp-server')) return false
+      // stable-diffusion.cpp 的发布资产以 sd- 前缀命名（sd-<tag>-bin-win-… / -Darwin-… / -Linux-…）
+      if (isSdcpp && !n.startsWith('sd-')) return false
       if (isMac) {
+        // sd 的 macOS 资产是 zip（Darwin/macOS 命名），llama.cpp 系列是 tar.gz
+        if (isSdcpp) {
+          if (!n.endsWith('.zip')) return false
+          if (!n.includes('darwin')) return false
+          if (arch === 'x64' && n.includes('arm64')) return false
+          if (arch === 'arm64' && !n.includes('arm64')) return false
+          return true
+        }
         if (!n.endsWith('.tar.gz')) return false
         // llama.cpp 资产名用 macos，TensorSharp 用 osx
         if (isTs) {
@@ -2222,6 +2291,14 @@ export function registerIpcHandlers(): void {
         return true
       }
       if (isLinux) {
+        // sd 的 Linux 资产是 zip（Linux-Ubuntu-…-x86_64 命名），llama.cpp 系列是 tar.gz
+        if (isSdcpp) {
+          if (!n.endsWith('.zip')) return false
+          if (!n.includes('linux')) return false
+          if (arch === 'x64' && n.includes('arm64')) return false
+          if (arch === 'arm64' && !n.includes('arm64')) return false
+          return true
+        }
         if (!n.endsWith('.tar.gz')) return false
         // llama.cpp 资产名带发行版标识（ubuntu 等），Tensor 用 linux-x64
         if (isTs) return n.includes('linux-x64') && !n.includes('arm64')
@@ -2263,6 +2340,7 @@ export function registerIpcHandlers(): void {
     const repoKind = repoLower.includes('tensorsharp') ? 'tensorsharp'
       : repoLower.includes('turboquant') ? 'turboquant'
       : repoLower.includes('beellama') ? 'beellama'
+      : repoLower.includes('stable-diffusion.cpp') ? 'sdcpp'
       : 'llamacpp'
     const latestVer = parseVersion(String(release.tag_name))
     let isNewer = true
@@ -2272,6 +2350,8 @@ export function registerIpcHandlers(): void {
         const dirKind = dn.includes('tensorsharp') ? 'tensorsharp'
           : dn.includes('turboquant') ? 'turboquant'
           : dn.includes('beellama') ? 'beellama'
+          // sd 版本目录形如 master-813-bfbef5b-sd-master-bfbef5b-bin-win-cpu-x64
+          : dn.includes('sd-master') || dn.includes('stable-diffusion') ? 'sdcpp'
           : 'llamacpp'
         if (dirKind !== repoKind) continue
         // 兜底：目录名包含完整 tagName（历史命名差异 / 无法解析版本号的旧目录）
@@ -2280,9 +2360,17 @@ export function registerIpcHandlers(): void {
         if (installed && latestVer && cmpVersion(installed, latestVer) >= 0) { isNewer = false; break }
       }
     }
+    // stable-diffusion.cpp 的 CUDA 运行时包（cudart-sd-bin-win-cu12-x64.zip）：
+    // 主引擎包不含 CUDA 运行时，需单独下载合并进引擎目录（仅 Windows；macOS/Linux 包自带运行时）
+    const cudartAsset = isSdcpp && process.platform === 'win32'
+      ? (release.assets.find((a: any) => a.name.toLowerCase().startsWith('cudart-') && a.name.toLowerCase().endsWith('.zip')) ?? null)
+      : null
     return {
       tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at,
       isNewer, noPackage: platformAssets.length === 0,
+      cudartAsset: cudartAsset
+        ? { name: cudartAsset.name, downloadUrl: cudartAsset.browser_download_url, size: cudartAsset.size, digest: String(cudartAsset.digest || '').replace(/^sha256:/i, '') }
+        : undefined,
       assets: platformAssets.map((a: any) => ({ name: a.name, downloadUrl: a.browser_download_url, size: a.size, digest: String(a.digest || '').replace(/^sha256:/i, '') }))
     }
   }
@@ -2332,13 +2420,18 @@ export function registerIpcHandlers(): void {
         if (cancelFn) { cancelFn(); cancelFn = null }
       }
     }, 30 * 1000)
-    // 供顶部进度横幅识别引擎与包名（按资产名推断：TensorSharp / TurboQuant / BeeLlama，其余视为 llama.cpp）
+    // 供顶部进度横幅识别引擎与包名（按资产名推断：TensorSharp / TurboQuant / BeeLlama / stable-diffusion.cpp，其余视为 llama.cpp）
     const assetLower = opts.assetName.toLowerCase()
-    const dlLabel = assetLower.includes('tensorsharp') ? 'TensorSharp'
+    const dlLabel = assetLower.startsWith('sd-') || assetLower.includes('stable-diffusion') ? 'stable-diffusion.cpp'
+      : assetLower.includes('tensorsharp') ? 'TensorSharp'
       : assetLower.includes('turboquant') ? 'TurboQuant'
       : assetLower.includes('beellama') ? 'BeeLlama'
       : 'llama.cpp'
-    const dlEngine = dlLabel === 'TensorSharp' ? 'tensorsharp' : dlLabel === 'TurboQuant' ? 'turboquant' : dlLabel === 'BeeLlama' ? 'beellama' : 'llamacpp'
+    const dlEngine = dlLabel === 'stable-diffusion.cpp' ? 'sdcpp'
+      : dlLabel === 'TensorSharp' ? 'tensorsharp'
+      : dlLabel === 'TurboQuant' ? 'turboquant'
+      : dlLabel === 'BeeLlama' ? 'beellama'
+      : 'llamacpp'
     const progressPayload = (phase: string, received: number, total: number, percent: number, speed?: number, note?: string, chunks?: Array<'idle' | 'active' | 'done'>) => ({ percent, phase, received, total, engine: dlEngine, name: opts.assetName, speed, note, chunks })
     // 最近一次进度快照：onStatus（如回退提示）需要用它补全 payload
     let lastR = 0, lastT = 0, lastSpeed = 0
@@ -2557,6 +2650,83 @@ export function registerIpcHandlers(): void {
     }
   }
   ipcMain.handle('download-release', (event, opts: { url: string; version: string; assetName: string; digest?: string }) => downloadBackendRelease(event, opts))
+  // --- install-sd-cudart: 下载 stable-diffusion.cpp 的 CUDA 运行时包（cudart/cublas）并合并进已安装的引擎目录 ---
+  // 主引擎包（sd-master-*-bin-win-cuda12-x64.zip）不含 CUDA 运行时，需此包补充；
+  // 与主引擎不同，它不新建 backend 目录，而是把 dll 合并进已有 sd 后端目录
+  ipcMain.handle('install-sd-cudart', async (event, opts: { url: string; assetName: string; backendName: string; digest?: string }): Promise<{ success: boolean; installed?: string[]; error?: string }> => {
+    const targetDir = join(BACKEND_DIR, String(opts?.backendName || ''))
+    if (!opts?.url || !opts?.assetName || !isSafePath(BACKEND_DIR, targetDir) || !existsSync(targetDir) ||
+        !findAnyFile(targetDir, ['sd-server.exe', 'sd-server', 'sd-cli.exe', 'sd-cli'])) {
+      return { success: false, error: '目标后端目录不存在或不是 stable-diffusion.cpp 引擎' }
+    }
+    if (opts.assetName.includes('..') || opts.assetName.includes('/') || opts.assetName.includes('\\')) {
+      return { success: false, error: '无效的资源名称' }
+    }
+    const archivePath = join(app.getPath('temp'), opts.assetName)
+    const stagingDir = join(dirname(BACKEND_DIR), `.sd-cudart-staging-${Date.now()}`)
+    const sendP = (phase: string, r: number, t: number, pct: number, speed?: number) => {
+      event.sender.send('sd-cudart-progress', { phase, received: r, total: t, percent: pct, speed })
+    }
+    try {
+      sendP('downloading', 0, 0, 0)
+      await new Promise<void>((resolve, reject) => {
+        startParallelDownload(opts.url, archivePath, 0,
+          (r, t, speed) => sendP('downloading', r, t, t > 0 ? Math.round(r / t * 100) : 0, speed),
+          () => resolve(),
+          (err) => reject(err),
+          () => {})
+      })
+      if (opts.digest) {
+        sendP('verifying', 0, 0, 100)
+        const got = await sha256OfFile(archivePath)
+        if (got !== opts.digest.toLowerCase()) throw new Error('校验和失败：文件内容与官方发布不一致（sha256）')
+      }
+      const totalEntries = await new Promise<number>((resolve, reject) => {
+        yauzl.open(archivePath, { lazyEntries: true }, (err, zip) => {
+          if (err) { try { unlinkSync(archivePath) } catch {}; reject(new Error('下载不完整，压缩包损坏')); return }
+          const n = zip.entryCount
+          zip.close(); resolve(n)
+        })
+      })
+      if (totalEntries === 0) throw new Error('解压后内容为空')
+      rmSync(stagingDir, { recursive: true, force: true })
+      mkdirSync(stagingDir, { recursive: true })
+      let done = 0
+      await extractZip(archivePath, {
+        dir: stagingDir,
+        onEntry: () => { done++; sendP('extracting', done, totalEntries, Math.round(done / totalEntries * 100)) }
+      })
+      flattenSingleRoot(stagingDir)
+      // 收集包内全部 dll 并复制进引擎目录（cudart/cublas/cublasLt 等）
+      const dllFiles: string[] = []
+      const collect = (dir: string): void => {
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+          const p = join(dir, e.name)
+          if (e.isDirectory()) collect(p)
+          else if (e.name.toLowerCase().endsWith('.dll')) dllFiles.push(p)
+        }
+      }
+      collect(stagingDir)
+      if (dllFiles.length === 0) throw new Error('CUDA 运行时包中未找到 dll 文件')
+      const installed: string[] = []
+      for (const f of dllFiles) {
+        const dest = join(targetDir, basename(f))
+        await fsPromises.copyFile(f, dest)
+        installed.push(basename(f))
+      }
+      if (!['cudart64_12.dll', 'cublas64_12.dll', 'cublasLt64_12.dll'].some(n => existsSync(join(targetDir, n)))) {
+        throw new Error('CUDA 运行时安装不完整：缺少 cudart64_12.dll / cublas64_12.dll / cublasLt64_12.dll')
+      }
+      try { rmSync(stagingDir, { recursive: true, force: true }) } catch {}
+      try { unlinkSync(archivePath) } catch {}
+      sendP('done', 0, 0, 100)
+      return { success: true, installed }
+    } catch (err) {
+      try { rmSync(stagingDir, { recursive: true, force: true }) } catch {}
+      try { unlinkSync(archivePath) } catch {}
+      return { success: false, error: String(err instanceof Error ? err.message : err) }
+    }
+  })
   // 取消：中止下载并删除临时文件（含暂停残留）
   ipcMain.handle('cancel-backend-download', () => {
     if (cancelBackendDl) {
@@ -2725,7 +2895,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('open-folder', async (_e, folderPath: string) => {
     const settings = await loadSettings()
-    const allowedBases = [MODELS_DIR, BACKEND_DIR, CHATS_DIR, CHAT_TEMPLATES_DIR, ...settings.externalModelFolders, ...settings.imageModelFolders, ...settings.ttsModelFolders, ...settings.ocrModelFolders]
+    const allowedBases = [MODELS_DIR, BACKEND_DIR, CHATS_DIR, CHAT_TEMPLATES_DIR, ...settings.externalModelFolders, ...settings.imageModelFolders, ...settings.ttsModelFolders, ...settings.ocrModelFolders, ...settings.sdModelFolders, ...settings.sdVaeFolders, ...settings.sdLlmFolders]
     if (!allowedBases.some(base => isSafePath(base, folderPath))) return
     // 确保目录存在（例如 chats/images、chats/pdf_exports 是惰性创建的），
     // 否则 shell.openPath 在路径不存在时会静默失败、什么也不打开。
@@ -2759,8 +2929,8 @@ export function registerIpcHandlers(): void {
         const errMsg = typeof data === 'object' && data !== null && 'error' in data ? String((data as any).error) : 'API 返回异常'
         return { error: errMsg }
       }
-      const ggufFiles = data.filter((f: HfFileRaw) => f.type === 'file' && f.path.endsWith('.gguf'))
-      if (ggufFiles.length === 0) return { error: '该仓库中没有找到 .gguf 文件' }
+      const ggufFiles = data.filter((f: HfFileRaw) => f.type === 'file' && ['.gguf', '.safetensors', '.ckpt', '.pth', '.pt'].some(ext => f.path.toLowerCase().endsWith(ext)))
+      if (ggufFiles.length === 0) return { error: '该仓库中没有找到支持的模型文件（.gguf / .safetensors / .ckpt）' }
       return ggufFiles.map((f: HfFileRaw) => ({
         name: f.path,
         size: f.size || 0,
@@ -2825,8 +2995,20 @@ export function registerIpcHandlers(): void {
       exists = existsSync(filePath)
     } else {
       const s = await loadSettings()
-      const allowed = s.externalModelFolders.some(f => isSafePath(f, filePath))
-      if (!allowed) { checkFileCache.set(filePath, false); return false }
+      // 白名单包含全部可注册的模型文件夹（外部 / 图片 / TTS / OCR / sd 三件套），
+      // 否则通过设置添加的目录（如 stable-diffusion.cpp 模型文件夹）会被误判为文件缺失
+      const allowedRoots = [
+        ...s.externalModelFolders,
+        ...s.imageModelFolders,
+        ...s.ttsModelFolders,
+        ...s.ocrModelFolders,
+        ...s.sdModelFolders,
+        ...s.sdVaeFolders,
+        ...s.sdLlmFolders
+      ]
+      const allowed = allowedRoots.some(f => isSafePath(f, filePath))
+      // 不在白名单时返回 false 但不缓存，方便用户后续添加文件夹后立即生效
+      if (!allowed) return false
       exists = existsSync(filePath)
     }
     checkFileCache.set(filePath, exists)
@@ -3124,6 +3306,42 @@ export function registerIpcHandlers(): void {
       })
       req.on('error', (e) => resolve({ ok: false, error: e.message }))
       req.setTimeout(5000, () => { req.destroy(); resolve({ ok: false, error: 'timeout' }) })
+    })
+  })
+
+  // --- sdapi-request: 向运行中的 sd-server 发起 sdapi 请求（文生图/图生图/采样器列表等） ---
+  ipcMain.handle('sdapi-request', (_e, opts: { port: number; path: string; method?: 'GET' | 'POST'; body?: unknown }): Promise<{ ok: boolean; status?: number; data?: any; error?: string }> => {
+    return new Promise((resolve) => {
+      const p = String(opts?.path || '')
+      // 路径白名单：只放行 sd-server 的 /sdapi/ 端点，防止任意路径请求
+      if (!/^\/sdapi\/[a-zA-Z0-9_\-\/]*$/.test(p)) { resolve({ ok: false, error: '仅允许 /sdapi/ 端点' }); return }
+      const port = Number(opts?.port)
+      if (!Number.isInteger(port) || port < 1 || port > 65535) { resolve({ ok: false, error: '无效端口' }); return }
+      const method = opts?.method === 'POST' ? 'POST' : 'GET'
+      let bodyStr: string | null = null
+      if (method === 'POST') {
+        try { bodyStr = JSON.stringify(opts?.body ?? {}) } catch { resolve({ ok: false, error: '请求体序列化失败' }); return }
+      }
+      const req = http.request({
+        host: '127.0.0.1', port, path: p, method,
+        headers: bodyStr ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) } : {}
+      }, (res) => {
+        let buf = ''
+        res.on('data', (d: Buffer) => { buf += d.toString() })
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(buf)
+            resolve({ ok: (res.statusCode ?? 500) < 400, status: res.statusCode, data: parsed })
+          } catch {
+            resolve({ ok: (res.statusCode ?? 500) < 400, status: res.statusCode, error: buf.slice(0, 500) })
+          }
+        })
+      })
+      req.on('error', (e) => resolve({ ok: false, error: e.message }))
+      // 图像生成可能耗时较长（数十秒），超时放宽到 5 分钟
+      req.setTimeout(5 * 60 * 1000, () => { req.destroy(); resolve({ ok: false, error: '请求超时' }) })
+      if (bodyStr) req.write(bodyStr)
+      req.end()
     })
   })
 
@@ -3649,8 +3867,8 @@ export function registerIpcHandlers(): void {
       const data: any = await fetchJson(`https://modelscope.cn/api/v1/models/${safeRepoId}/repo/files?Revision=master&Root=`)
       const files = data?.Data?.Files
       if (!Array.isArray(files)) return { error: 'API 返回格式异常' }
-      const ggufFiles = files.filter((f: any) => f.Type === 'blob' && String(f.Name).endsWith('.gguf'))
-      if (ggufFiles.length === 0) return { error: '该仓库中没有找到 .gguf 文件' }
+      const ggufFiles = files.filter((f: any) => f.Type === 'blob' && ['.gguf', '.safetensors', '.ckpt', '.pth', '.pt'].some(ext => String(f.Name).toLowerCase().endsWith(ext)))
+      if (ggufFiles.length === 0) return { error: '该仓库中没有找到支持的模型文件（.gguf / .safetensors / .ckpt）' }
       return ggufFiles.map((f: any) => ({
         name: f.Name,
         size: f.Size || 0,

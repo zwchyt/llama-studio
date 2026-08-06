@@ -1,0 +1,68 @@
+{
+  "version": "sdcpp",
+  "categories": [
+    {
+      "name": "服务端",
+      "icon": "Server",
+      "commands": [
+        { "arg": "--listen-port", "label": "Listen Port", "description": "服务监听端口（默认 1234）", "type": "number", "default": 1234, "min": 1, "max": 65535 },
+        { "arg": "--listen-ip", "short": "-l", "label": "Listen IP", "description": "服务监听 IP（默认 127.0.0.1）", "type": "string", "default": "127.0.0.1" },
+        { "arg": "--verbose", "short": "-v", "label": "Verbose", "description": "打印额外信息", "type": "boolean", "default": false },
+        { "arg": "--color", "label": "Color Logs", "description": "按级别给日志标签上色", "type": "boolean", "default": false }
+      ]
+    },
+    {
+      "name": "模型加载",
+      "icon": "Box",
+      "commands": [
+        { "arg": "--model", "short": "-m", "label": "Model Path", "description": "扩散模型权重路径（.safetensors / .ckpt / .pt / .gguf）", "type": "string", "placeholder": "/path/to/model.safetensors" },
+        { "arg": "--vae", "label": "VAE Path", "description": "独立 VAE 权重路径（可选，默认随模型自动加载）", "type": "string", "placeholder": "/path/to/vae.safetensors" },
+        { "arg": "--taesd", "label": "TAESD Path", "description": "TAESD 快速解码器路径（低内存预览用）", "type": "string", "placeholder": "/path/to/taesd.gguf" },
+        { "arg": "--clip_l", "label": "CLIP-L Path", "description": "CLIP-L 文本编码器路径（分体模型时指定）", "type": "string", "placeholder": "/path/to/clip_l.safetensors" },
+        { "arg": "--clip_g", "label": "CLIP-G Path", "description": "CLIP-G 文本编码器路径（SDXL/Flux 分体模型时指定）", "type": "string", "placeholder": "/path/to/clip_g.safetensors" },
+        { "arg": "--t5xxl", "label": "T5-XXL Path", "description": "T5-XXL 文本编码器路径（SD3/Flux 分体模型时指定）", "type": "string", "placeholder": "/path/to/t5xxl.safetensors" },
+        { "arg": "--diffusion-model", "label": "Diffusion Model Path", "description": "扩散主干路径（分体模型时指定，如 Z-Image / Qwen-Image 的 GGUF）", "type": "string", "placeholder": "/path/to/diffusion_model.gguf" },
+        { "arg": "--llm", "label": "LLM Text Encoder Path", "description": "LLM 文本编码器路径（Z-Image / Qwen-Image 等用 Qwen3-4B 做文本编码，非 CLIP/T5）", "type": "string", "placeholder": "/path/to/Qwen3-4B-Instruct-2507-Q4_K_M.gguf" },
+        { "arg": "--control-net", "label": "ControlNet Path", "description": "ControlNet 权重路径", "type": "string", "placeholder": "/path/to/controlnet.safetensors" },
+        { "arg": "--ip-adapter", "label": "IP-Adapter Path", "description": "IP-Adapter 权重路径", "type": "string", "placeholder": "/path/to/ip_adapter.safetensors" },
+        { "arg": "--lora-model-dir", "label": "LoRA Model Dir", "description": "LoRA 模型目录（启动时自动扫描加载）", "type": "string", "placeholder": "./models" },
+        { "arg": "--embd-dir", "label": "Embedding Dir", "description": "Textual Inversion 嵌入目录", "type": "string", "placeholder": "./embeddings" }
+      ]
+    },
+    {
+      "name": "性能与后端",
+      "icon": "Cpu",
+      "commands": [
+        { "arg": "--threads", "short": "-t", "label": "Threads", "description": "推理线程数（-1 = 自动）", "type": "number", "default": -1, "min": -1, "max": 256 },
+        { "arg": "--backend", "label": "Backend", "description": "推理后端（CPU / CUDA / Vulkan / Metal / OpenCL / SYCL）", "type": "string", "placeholder": "CPU" },
+        { "arg": "--params-backend", "label": "Params Backend", "description": "权重参数存放后端（默认与 --backend 相同）", "type": "string", "placeholder": "CPU" },
+        { "arg": "--max-vram", "label": "Max VRAM (GiB)", "description": "显存预算（分段参数卸载，0=禁用，-1=自动）", "type": "number", "default": 0, "min": -1, "max": 256 },
+        { "arg": "--type", "label": "Weight Type", "description": "权重类型（f32 / f16 / q8_0 / q4_0 等，默认跟随模型文件）", "type": "string", "placeholder": "f16" },
+        { "arg": "--rng", "label": "RNG Type", "description": "随机数生成器（cuda / cpu / std，影响可复现性）", "type": "select", "options": ["cuda", "cpu", "std"], "default": "cuda" },
+        { "arg": "--fa", "label": "Flash Attention", "description": "启用 Flash Attention（降低显存占用）", "type": "boolean", "default": false },
+        { "arg": "--diffusion-fa", "label": "Diffusion Flash Attn", "description": "仅扩散主干启用 Flash Attention", "type": "boolean", "default": false },
+        { "arg": "--vae-tiling", "label": "VAE Tiling", "description": "VAE 分块处理（降低大图显存占用）", "type": "boolean", "default": false },
+        { "arg": "--temporal-tiling", "label": "Temporal Tiling", "description": "视频生成的时间维度分块", "type": "boolean", "default": false },
+        { "arg": "--mmap", "label": "Memory Map", "description": "使用内存映射加载权重", "type": "boolean", "default": false },
+        { "arg": "--offload-to-cpu", "label": "Offload to CPU", "description": "权重按需从 CPU 加载到 GPU（省显存）", "type": "boolean", "default": false }
+      ]
+    },
+    {
+      "name": "默认生成参数",
+      "icon": "Sliders",
+      "commands": [
+        { "arg": "--steps", "label": "Steps", "description": "默认采样步数（请求未指定时使用）", "type": "number", "default": 20, "min": 1, "max": 150 },
+        { "arg": "--cfg-scale", "label": "CFG Scale", "description": "默认提示词引导强度（请求未指定时使用）", "type": "number", "default": 7, "min": 1, "max": 30 },
+        { "arg": "--sampling-method", "label": "Sampling Method", "description": "默认采样器（Euler / Euler a / DPM++ 2M 等）", "type": "string", "placeholder": "euler" },
+        { "arg": "--scheduler", "label": "Scheduler", "description": "默认调度器（discrete / karras / exponential / ays 等）", "type": "string", "placeholder": "discrete" },
+        { "arg": "--width", "short": "-W", "label": "Width", "description": "默认生成宽度", "type": "number", "default": 512, "min": 64, "max": 2048 },
+        { "arg": "--height", "short": "-H", "label": "Height", "description": "默认生成高度", "type": "number", "default": 512, "min": 64, "max": 2048 },
+        { "arg": "--seed", "short": "-s", "label": "Seed", "description": "默认随机种子（-1 = 随机）", "type": "number", "default": -1, "min": -1 },
+        { "arg": "--batch-count", "short": "-b", "label": "Batch Count", "description": "默认一次生成的图像数量", "type": "number", "default": 1, "min": 1, "max": 16 },
+        { "arg": "--strength", "label": "Img2Img Strength", "description": "图生图默认重绘强度（0~1）", "type": "number", "default": 0.75, "min": 0, "max": 1 },
+        { "arg": "--negative-prompt", "short": "-n", "label": "Negative Prompt", "description": "默认负向提示词（请求未指定时使用）", "type": "string", "placeholder": "blurry, low quality" },
+        { "arg": "--clip-skip", "label": "Clip Skip", "description": "跳过末尾的 CLIP 层数", "type": "number", "default": -1, "min": -1, "max": 12 }
+      ]
+    }
+  ]
+}

@@ -4,7 +4,7 @@ import { useSidebarStore } from '../store/sidebarStore'
 import { shallow } from 'zustand/shallow'
 import { safeCall } from '../utils/safeCall'
 import { paramSetOf } from '../utils/engine'
-import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Server, Bot, MessageSquare, Terminal, Info, FileText, Gauge, Code, Wrench, BookOpen, AudioLines } from 'lucide-react'
+import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Server, Bot, MessageSquare, Terminal, Info, FileText, Gauge, Code, Wrench, BookOpen, AudioLines, Image } from 'lucide-react'
 import '../styles/sidebar.css'
 
 function BackendNavItem({ b, isActive, onSwitch }: { b: { name: string; path?: string }; isActive: boolean; onSwitch: () => void }) {
@@ -174,6 +174,16 @@ export default function Sidebar() {
           <AudioLines size={16} />
           <span>语音合成</span>
           {view === 'tts' && <span className="nav-active-dot" />}
+        </button>
+        <button
+          className={`nav-item ${view === 'imagegen' ? 'active' : ''}`}
+          onClick={() => setView('imagegen')}
+          style={hasRunningModels ? { color: 'var(--success)' } : {}}
+        >
+          <Image size={16} />
+          <span>图像生成</span>
+          {view === 'imagegen' && <span className="nav-active-dot" />}
+          {hasRunningModels && <span className="nav-dot" />}
         </button>
 
         {/* ── 工作台 ── */}

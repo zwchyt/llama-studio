@@ -5,7 +5,7 @@ import { safeCall } from '../utils/safeCall'
 import { paramSetOf } from '../utils/engine'
 import {
   LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Server, Bot,
-  MessageSquare, Terminal, Info, FileText, Gauge, Code, ChevronDown, Wrench, BookOpen, AudioLines
+  MessageSquare, Terminal, Info, FileText, Gauge, Code, ChevronDown, Wrench, BookOpen, AudioLines, Image
 } from 'lucide-react'
 import '../styles/topnav.css'
 
@@ -38,6 +38,7 @@ const NAV_GROUPS: NavDef[][] = [
     { key: 'model-tools', label: '模型工具', icon: <Wrench size={14} />, color: '#06b6d4' },
     { key: 'knowledge', label: '知识库', icon: <BookOpen size={14} />, color: '#0d9488' },
     { key: 'tts', label: '语音合成', icon: <AudioLines size={14} />, color: '#f43f5e' },
+    { key: 'imagegen', label: '图像生成', icon: <Image size={14} />, color: '#8b5cf6', runningSource: 'models' },
   ],
   [
     { key: 'agent-code', label: 'Agent Code', icon: <Code size={14} />, color: '#10b981' },

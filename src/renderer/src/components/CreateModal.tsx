@@ -7,7 +7,12 @@ import { paramSetOf, ENGINE_LABELS } from '../utils/engine'
 import { FolderOpen, ChevronDown, Terminal, Globe, Server, Loader2 } from 'lucide-react'
 import CmdParamsEditor from './CmdParamsEditor'
 import CustomSelect from './CustomSelect'
-import type { Template, TemplateArgs, CommandParam } from '../../../shared/types'
+import type { Template, TemplateArgs, CommandParam, EngineKind } from '../../../shared/types'
+
+/** 各引擎的默认端口：TensorSharp 固定 5000，sd-server 默认 1234，llama.cpp 系列 8080 */
+function defaultPortFor(kind: EngineKind | undefined | null): number {
+  return kind === 'tensorsharp' ? 5000 : kind === 'sdcpp' ? 1234 : 8080
+}
 
 const EXTRA_ALIASES: Record<string, string> = {
   '-sm': '--split-mode',
@@ -88,25 +93,33 @@ export default function CreateModal() {
     : (activeBackend?.name ?? '')
   const [backendVersion, setBackendVersion] = useState(initialBackend)
   const [modelPath, setModelPath] = useState(editingTemplate?.modelPath ?? '')
-  // TensorSharp 固定监听 5000 端口（官方硬编码），端口字段仅作展示
+  // TensorSharp 固定监听 5000 端口（官方硬编码），sd-server 默认 1234，端口字段仅作展示
   const [serverPort, setServerPort] = useState(() => {
     if (editingTemplate) {
       const b = backends.find(x => x.name === editingTemplate.backendVersion)
-      return b?.kind === 'tensorsharp' ? 5000 : (editingTemplate.serverPort ?? 8080)
+      return b?.kind === 'tensorsharp' ? 5000 : (editingTemplate.serverPort ?? defaultPortFor(b?.kind))
     }
     const b = backends.find(x => x.name === initialBackend)
-    return b?.kind === 'tensorsharp' ? 5000 : 8080
+    return defaultPortFor(b?.kind)
   })
-  // 新建模板且后端为 TensorSharp 时，预填其默认采样参数（无 --ctx-size/--threads 等 llama.cpp 参数）
+  // 新建模板且后端为 TensorSharp / stable-diffusion.cpp 时，预填各自默认采样参数
+  // （TensorSharp 无 --ctx-size/--threads 等 llama.cpp 参数；sd-server 预填生成默认值）
   const [args, setArgs] = useState<TemplateArgs>(() => {
     if (editingTemplate?.args) return editingTemplate.args
     const b = backends.find(x => x.name === initialBackend)
     if (b?.kind === 'tensorsharp') {
       return { '--temperature': 0.7, '--repeat-penalty': 1.1, '--max-tokens': 20000 }
     }
+    if (b?.kind === 'sdcpp') {
+      return { '--steps': 20, '--cfg-scale': 7 }
+    }
     return {}
   })
-  const [launchMode, setLaunchMode] = useState<'chat' | 'api'>(editingTemplate?.launchMode ?? 'chat')
+  // sd-server 无聊天 UI，新建 sdcpp 模板时默认 API 模式
+  const [launchMode, setLaunchMode] = useState<'chat' | 'api'>(editingTemplate?.launchMode ?? (() => {
+    const b = backends.find(x => x.name === initialBackend)
+    return b?.kind === 'sdcpp' ? 'api' : 'chat'
+  })())
   // 参数集：编辑模板时沿用已保存的，新建时按后端类型默认（可在高级参数里切换）
   const [paramSet, setParamSet] = useState(() => {
     if (editingTemplate?.paramSet) return paramSetOf(editingTemplate.paramSet)
@@ -114,7 +127,7 @@ export default function CreateModal() {
     return paramSetOf(b?.kind)
   })
   // 参数集切换：同步更新显示 + 切换活跃后端 + 端口默认值 + 后端版本下拉框
-  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => {
+  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp') => {
     if (next === paramSet) return
     setParamSet(next)
     const targetBackend = backends.find(b => b.kind === next)
@@ -122,7 +135,7 @@ export default function CreateModal() {
       setActiveBackend(targetBackend)
       setBackendVersion(targetBackend.name)
     }
-    setServerPort(next === 'tensorsharp' ? 5000 : 8080)
+    setServerPort(defaultPortFor(next === 'tensorsharp' || next === 'sdcpp' ? next : 'llamacpp'))
   }
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showImport, setShowImport] = useState(false)
@@ -271,9 +284,12 @@ export default function CreateModal() {
                   const b = backends.find(x => x.name === v)
                   const nextPs = paramSetOf(b?.kind)
                   setParamSet(nextPs)
-                  setServerPort(nextPs === 'tensorsharp' ? 5000 : 8080)
+                  setServerPort(defaultPortFor(nextPs === 'tensorsharp' || nextPs === 'sdcpp' ? nextPs : 'llamacpp'))
                   if (nextPs === 'tensorsharp' && Object.keys(args).length === 0) {
                     setArgs({ '--temperature': 0.7, '--repeat-penalty': 1.1, '--max-tokens': 20000 })
+                  }
+                  if (nextPs === 'sdcpp' && Object.keys(args).length === 0) {
+                    setArgs({ '--steps': 20, '--cfg-scale': 7 })
                   }
                 }}
                 options={[
@@ -327,7 +343,7 @@ export default function CreateModal() {
                     setModelPath(v)
                     if (v) {
                       const filename = v.split(/[/\\]/).pop() || ''
-                      const stripped = filename.replace(/\.(gguf|ggml|bin)$/i, '')
+                      const stripped = filename.replace(/\.(gguf|ggml|bin|safetensors|ckpt|pth|pt)$/i, '')
                       if (stripped) setName(stripped)
                     }
                   }}

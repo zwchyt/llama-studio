@@ -19,11 +19,14 @@ interface Props {
   serverPortFallback?: number
   disabled?: boolean
   /** 参数集选择（参数设置里切换）：'llamacpp' → commands.json，'tensorsharp' → commands-tensorsharp.json，llama.cpp 分支 → 各自专属文件 */
-  paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama'
-  onParamSetChange?: (s: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => void
+  paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp'
+  onParamSetChange?: (s: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp') => void
 }
 export default function CmdParamsEditor({ templateId, backendName, args, onChange, modelPathFallback, serverPortFallback, disabled: disabledProp, paramSet, onParamSetChange }: Props) {
-  const { commandsSchema, updateCard, cards, imageModels, chatTemplates, backends } = useStore(s => ({ commandsSchema: s.commandsSchema, updateCard: s.updateCard, cards: s.cards, imageModels: s.imageModels, chatTemplates: s.chatTemplates, backends: s.backends }), shallow)
+  const { commandsSchema, updateCard, cards, imageModels, chatTemplates, backends, models } = useStore(s => ({ commandsSchema: s.commandsSchema, updateCard: s.updateCard, cards: s.cards, imageModels: s.imageModels, chatTemplates: s.chatTemplates, backends: s.backends, models: s.models }), shallow)
+  // stable-diffusion.cpp 图像生成组件下拉数据源（来自设置里的 sd 模型文件夹）
+  const sdVaeModels = models.filter(m => m.sdRole === 'vae')
+  const sdLlmModels = models.filter(m => m.sdRole === 'llm')
   const setChatTemplates = useStore(s => s.setChatTemplates)
   const [searchQuery, setSearchQuery] = useState('')
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set())
@@ -38,8 +41,9 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
   const resolvedBackend = backends.find(b => b.name === (card?.template.backendVersion || backendName))
   const effectiveParamSet = paramSet ?? paramSetOf(resolvedBackend?.kind)
   const isTensorSharp = effectiveParamSet === 'tensorsharp'
+  const isSdcpp = effectiveParamSet === 'sdcpp'
   // 预览 exe 跟随参数集：参数集决定命令格式，与实际后端 exe 无关
-  const backendExe = isTensorSharp ? 'TensorSharp.Server' : 'llama-server'
+  const backendExe = isTensorSharp ? 'TensorSharp.Server' : isSdcpp ? 'sd-server' : 'llama-server'
   const activeArgs = args
   // 按参数集拉取专属 schema（llama.cpp → commands.json，TensorSharp → commands-tensorsharp.json）
   const [localSchema, setLocalSchema] = useState<CommandsSchema | null>(null)
@@ -63,7 +67,7 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
     }
     return s
   }, [activeSchema])
-  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => {
+  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp') => {
     if (next === effectiveParamSet) return
     onParamSetChange?.(next)
   }
@@ -96,7 +100,8 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
     const items: PreviewParam[] = []
     const finalModelPath = card?.template.modelPath || modelPathFallback
     if (finalModelPath) {
-      const modelFlag = isTensorSharp ? '--model' : '-m'
+      // stable-diffusion.cpp 的扩散模型用 --diffusion-model（Z-Image 等 GGUF 必须，-m 识别不了）
+      const modelFlag = isTensorSharp ? '--model' : isSdcpp ? '--diffusion-model' : '-m'
       items.push({ id: 'model', label: modelFlag, value: `"${finalModelPath}"`, fullText: `${modelFlag} "${finalModelPath}"` })
     }
     Object.entries(activeArgs).forEach(([key, val]) => {
@@ -111,12 +116,14 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
       }
     })
     const finalPort = card?.template.serverPort || serverPortFallback
-    // TensorSharp 监听地址固定 http://0.0.0.0:5000，无端口参数，预览不显示端口项
+    // TensorSharp 监听地址固定 http://0.0.0.0:5000，无端口参数，预览不显示端口项；
+    // stable-diffusion.cpp 的 sd-server 端口参数是 --listen-port（默认 1234）
     if (finalPort && !isTensorSharp && activeArgs['--port'] === undefined) {
-      items.push({ id: '--port', label: '--port', value: String(finalPort), fullText: `--port ${finalPort}` })
+      const portFlag = isSdcpp ? '--listen-port' : '--port'
+      items.push({ id: portFlag, label: portFlag, value: String(finalPort), fullText: `${portFlag} ${finalPort}` })
     }
     return items
-  }, [activeArgs, cards, templateId, modelPathFallback, serverPortFallback, isTensorSharp, allowedArgs])
+  }, [activeArgs, cards, templateId, modelPathFallback, serverPortFallback, isTensorSharp, isSdcpp, allowedArgs])
 
   const fullCommand = useMemo(() => {
     let cmd = backendExe
@@ -231,9 +238,10 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
     return collapsedCategories.has(catName)
   }
   const renderCommand = (cmd: CommandParam) => {
-    // --model 始终隐藏；端口参数按引擎类型隐藏（llama.cpp: --port，TensorSharp: --urls）
-    if (cmd.arg === '--model') return null
-    if (isTensorSharp ? cmd.arg === '--urls' : cmd.arg === '--port') return null
+    // --model / --diffusion-model 始终隐藏（由模板模型路径统一管理）；端口参数由应用统一管理，按引擎类型隐藏
+    // （llama.cpp: --port，TensorSharp: --urls，stable-diffusion.cpp: --listen-port）
+    if (cmd.arg === '--model' || cmd.arg === '--diffusion-model') return null
+    if (isTensorSharp ? cmd.arg === '--urls' : isSdcpp ? cmd.arg === '--listen-port' : cmd.arg === '--port') return null
     const val = args[cmd.arg] ?? (cmd.type === 'boolean' ? false : '')
     const isActive = args[cmd.arg] !== undefined && args[cmd.arg] !== false && args[cmd.arg] !== ''
     return (
@@ -283,6 +291,28 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
               ariaLabel="--mmproj"
             />
           )}
+          {cmd.type === 'string' && cmd.arg === '--vae' && (
+            <ModelFileSelect
+              className="cmd-select-vae"
+              value={val}
+              onChange={(v) => handleUpdate(cmd.arg, v)}
+              items={sdVaeModels}
+              defaultLabel="不指定"
+              disabled={disabled}
+              ariaLabel="--vae"
+            />
+          )}
+          {cmd.type === 'string' && cmd.arg === '--llm' && (
+            <ModelFileSelect
+              className="cmd-select-llm"
+              value={val}
+              onChange={(v) => handleUpdate(cmd.arg, v)}
+              items={sdLlmModels}
+              defaultLabel="不指定"
+              disabled={disabled}
+              ariaLabel="--llm"
+            />
+          )}
           {cmd.type === 'string' && cmd.arg === '--chat-template-file' && (
             <ModelFileSelect
               className="cmd-select-chat-template"
@@ -294,7 +324,7 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
               ariaLabel="--chat-template-file"
             />
           )}
-          {cmd.type === 'string' && cmd.arg !== '--mmproj' && cmd.arg !== '--chat-template-file' && (
+          {cmd.type === 'string' && cmd.arg !== '--mmproj' && cmd.arg !== '--chat-template-file' && cmd.arg !== '--vae' && cmd.arg !== '--llm' && (
             <input type="text" className="cmd-input" value={typeof val === 'boolean' ? '' : val} placeholder={cmd.placeholder || cmd.default?.toString()} onChange={(e) => handleUpdate(cmd.arg, e.target.value)} disabled={disabled} />
           )}
           {cmd.type === 'select' && (

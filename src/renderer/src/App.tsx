@@ -24,6 +24,7 @@ import KnowledgeView from './components/KnowledgeView'
 import TtsView from './components/TtsView'
 import OcrView from './components/OcrView'
 import BenchmarkView from './components/BenchmarkView'
+import ImageGenView from './components/ImageGenView'
 import AgentCodeView from './components/AgentCodeView'
 import TitleBar from './components/TitleBar'
 import TopNavBar from './components/TopNavBar'
@@ -504,6 +505,7 @@ function AppMain() {
       case 'model-tools': return <ModelToolsView />
       case 'knowledge': return <KnowledgeView />
       case 'tts': return <TtsView />
+      case 'imagegen': return <ImageGenView />
       case 'agent-code': return null
       case 'terminal': return null
       default: return <CardsView />
