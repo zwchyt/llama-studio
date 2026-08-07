@@ -5,6 +5,7 @@ import { Search, Copy, Check, Lock } from 'lucide-react'
 import type { CommandParam, Template, TemplateArgs, CommandsSchema } from '../../../shared/types'
 import { iconElements } from '../utils/iconMap'
 import { ENGINE_LABELS, paramSetOf, ALL_ENGINES } from '../utils/engine'
+import { switchParamSetArgs, syncArgsByParamSet } from '../utils/defaultTemplate'
 import CustomSelect from './CustomSelect'
 import ModelFileSelect from './ModelFileSelect'
 
@@ -101,7 +102,11 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
     const { cards } = useStore.getState()
     const card = cards.find(c => c.template.id === templateId)
     if (card) {
-      const patch: Partial<Template> = { paramSet: next, serverPort: nextPort }
+      // 切换引擎：先把当前引擎的自定义参数存入 argsByParamSet[当前引擎]，
+      // 再取出目标引擎已保存的参数（没有则用该引擎默认）。回切时可恢复各自自定义值。
+      const filename = ((card.template.modelPath ?? '').split(/[/\\]/).pop() || '')
+      const { args: nextArgs, argsByParamSet: nextByParamSet } = switchParamSetArgs(paramSet, card.template.args ?? {}, card.template.argsByParamSet, next, filename)
+      const patch: Partial<Template> = { paramSet: next, serverPort: nextPort, args: nextArgs, argsByParamSet: nextByParamSet }
       if (targetBackend) {
         setActiveBackend(targetBackend)
         patch.backendVersion = targetBackend.name
@@ -153,13 +158,15 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
     } else {
       newArgs[argName] = value
     }
-    updateCard(templateId, { args: newArgs })
+    // 同步到该引擎独立存储，来回切换引擎不丢自定义参数
+    const nextByParamSet = syncArgsByParamSet(paramSet, newArgs, card.template.argsByParamSet)
+    updateCard(templateId, { args: newArgs, argsByParamSet: nextByParamSet })
 
     // debounce 持久化
-    pendingSaveRef.current = { args: newArgs }
+    pendingSaveRef.current = { args: newArgs, argsByParamSet: nextByParamSet }
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(flushSave, 400)
-  }, [templateId, updateCard, flushSave])
+  }, [templateId, updateCard, flushSave, paramSet])
 
   const tabs = useMemo(() => {
     if (!activeSchema) return []

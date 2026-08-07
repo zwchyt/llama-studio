@@ -547,7 +547,6 @@ export default function BenchmarkView() {
                     <span className={h.tgTokS !== null && h.tgTokS === bestTg && bestTg > 0 ? 'best' : ''}>{h.tgTokS !== null ? h.tgTokS.toFixed(1) : '—'}</span>
                     <button
                       className="benchmark-history-del"
-                      title="删除该条"
                       onClick={() => setHistory(prev => { const next = prev.filter(x => x.ts !== h.ts); saveBenchHistory(next); return next })}
                     >✕</button>
                   </div>

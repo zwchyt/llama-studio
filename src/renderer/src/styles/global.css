@@ -757,10 +757,18 @@ select {
   transition: border-color var(--transition), box-shadow var(--transition);
 }
 
+.form-input:hover,
+.form-select:hover,
+.form-textarea:hover {
+  border-color: var(--border-strong);
+}
+
 .form-input:focus,
 .form-select:focus,
 .form-textarea:focus {
   border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--border-strong) 18%, transparent);
+  border-color: var(--accent);
 }
 
 .form-select {

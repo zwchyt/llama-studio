@@ -168,7 +168,7 @@ export default function HuggingFaceView() {
             <img src="./models-web-logo/ModelScope.png" alt="" style={{ width: 16, height: 16, flexShrink: 0, borderRadius: 2 }} /> 魔搭社区
           </button>
         </div>
-        <button className="btn btn-ghost" onClick={() => window.api[isHF ? 'hfOpenModelsDir' : 'msOpenModelsDir']()} title="打开模型文件夹">
+        <button className="btn btn-ghost" onClick={() => window.api[isHF ? 'hfOpenModelsDir' : 'msOpenModelsDir']()}>
           <FolderOpen size={15} /> 打开 /models
         </button>
       </div>
@@ -245,7 +245,7 @@ export default function HuggingFaceView() {
           {selectedModel && (
             <div className="hub-detail-panel">
               <div className="hub-detail-header">
-                <button className="btn btn-ghost btn-icon" onClick={() => setHubSelectedModelId(null)} title="返回">
+                <button className="btn btn-ghost btn-icon" onClick={() => setHubSelectedModelId(null)}>
                   <ChevronLeft size={16} />
                 </button>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -300,7 +300,6 @@ export default function HuggingFaceView() {
                             className="btn btn-ghost btn-icon"
                             style={{ marginLeft: 4 }}
                             onClick={() => safeCall(() => window.api.resumeModelDownload(file.name), '继续下载失败')}
-                            title="继续"
                           >
                             <Play size={12} />
                           </button>
@@ -309,7 +308,6 @@ export default function HuggingFaceView() {
                             className="btn btn-ghost btn-icon"
                             style={{ marginLeft: 4 }}
                             onClick={() => safeCall(() => window.api.pauseModelDownload(file.name), '暂停下载失败')}
-                            title="暂停"
                           >
                             <Pause size={12} />
                           </button>

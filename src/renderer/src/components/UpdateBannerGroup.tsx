@@ -22,7 +22,7 @@ export default function UpdateBannerGroup() {
 
   const toggle = () => setActive(a => (a === 'backend' ? 'app' : 'backend'))
   const switcher = both ? (
-    <span className="ub-switcher" title="切换更新通知">
+    <span className="ub-switcher">
       <button className="dismiss" onClick={toggle}><ChevronLeft size={13} /></button>
       <span className="ub-switch-count">{active === 'backend' ? 1 : 2}/2</span>
       <button className="dismiss" onClick={toggle}><ChevronRight size={13} /></button>

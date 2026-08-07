@@ -13,6 +13,8 @@ interface Props {
   engineLabel: string
   /** 区块描述文案 */
   description: React.ReactNode
+  /** 卡片内追加的附加区块（如可选 CUDA 运行时下载），渲染在引擎安装控件之后 */
+  extra?: React.ReactNode
 }
 
 /**
@@ -21,7 +23,7 @@ interface Props {
  * 行为与 TensorSharp 引擎区块一致；版本目录名 = tag + 资产名去掉扩展名，
  * 安装后按目录名（含 turboquant / beellama）自动识别引擎类型。
  */
-export default function EngineDownloadSection({ repo, engineLabel, description }: Props) {
+export default function EngineDownloadSection({ repo, engineLabel, description, extra }: Props) {
   const { setBackends, downloadProgress, setDownloadProgress, engineReleases, setEngineRelease } = useStore(
     s => ({ setBackends: s.setBackends, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, engineReleases: s.engineReleases, setEngineRelease: s.setEngineRelease }),
     shallow
@@ -189,6 +191,7 @@ export default function EngineDownloadSection({ repo, engineLabel, description }
           <RefreshCw size={14} className={checking ? 'spin' : ''} /> {releaseInfo ? '重新检查' : `检查 ${engineLabel} 发布`}
         </button>
       </div>
+      {extra}
     </div>
   )
 }

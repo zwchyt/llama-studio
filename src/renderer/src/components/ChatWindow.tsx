@@ -101,7 +101,7 @@ export default function ChatWindow({ url }: { url: string }) {
           )}
         </div>
       ) : (
-        <iframe key={reloadKey} src={url} style={{ flex: 1, border: 'none', width: '100%', background: '#fff' }} title="Llama 聊天" />
+        <iframe key={reloadKey} src={url} style={{ flex: 1, border: 'none', width: '100%', background: '#fff' }}/>
       )}
     </div>
   )

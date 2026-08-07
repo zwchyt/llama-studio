@@ -1621,18 +1621,56 @@ export function registerIpcHandlers(): void {
     )
     return results.filter(Boolean)
   })
+  // ── 模板文件以模型卡片名称为文件名（重名自动加序号；重命名时同步改文件名）──
+  // 模板内容里的 id 仍是唯一主键，文件名只用于直观展示/管理
+  function sanitizeTemplateFilename(name: string): string {
+    let s = String(name ?? '').trim().replace(/[\\/:*?"<>|\r\n\t]/g, ' ')
+    s = s.replace(/\s+/g, ' ').trim().replace(/[. ]+$/g, '')
+    return /^\.\.?$/.test(s) ? '' : s
+  }
+  // 找到 id 对应的模板文件（读 JSON 内容里的 id，文件名已不再等于 id）
+  function templateFileForId(id: string): string | null {
+    if (!existsSync(TEMPLATES_DIR)) return null
+    for (const f of readdirSync(TEMPLATES_DIR).filter(f => f.endsWith('.json'))) {
+      try {
+        const data = JSON.parse(readFileSync(join(TEMPLATES_DIR, f), 'utf-8'))
+        if (String(data.id) === String(id)) return f
+      } catch { /* skip unreadable */ }
+    }
+    return null
+  }
+  // 生成不与现有模板文件冲突的文件名：desired 被占用时追加 " (n)"
+  // existingFile 是同 id 当前文件名，需排除（否则未改名也会被当作占用）
+  function uniqueTemplateFilename(desired: string, existingFile: string | null): string {
+    const base = desired || randomUUID()
+    const taken = new Set(readdirSync(TEMPLATES_DIR).filter(f => f.endsWith('.json')))
+    if (existingFile) taken.delete(existingFile)
+    if (!taken.has(`${base}.json`)) return base
+    let i = 1
+    while (taken.has(`${base} (${i}).json`)) i++
+    return `${base} (${i})`
+  }
   ipcMain.handle('save-template', async (_e, template: Record<string, unknown>) => {
     try {
       const id = (template.id as string) || randomUUID()
-      if (/[\\/]/.test(id) || id.includes('..')) return { success: false, error: '无效的模板 ID' }
-      writeFileSync(join(TEMPLATES_DIR, `${id}.json`), JSON.stringify({ ...template, id }, null, 2))
-      return { success: true, id }
+      const content = { ...template, id }
+      const desired = sanitizeTemplateFilename(template.name as string) || id
+      const existingFile = templateFileForId(id)
+      const fileName = uniqueTemplateFilename(desired, existingFile)
+      // 若文件名随模型名变化，先删旧文件再写新文件（同一 id 的旧文件改名）
+      if (existingFile && existingFile !== `${fileName}.json`) {
+        try { unlinkSync(join(TEMPLATES_DIR, existingFile)) } catch { }
+      }
+      writeFileSync(join(TEMPLATES_DIR, `${fileName}.json`), JSON.stringify(content, null, 2))
+      return { success: true, id, _file: `${fileName}.json` }
     } catch (err) { return { success: false, error: String(err) } }
   })
   ipcMain.handle('delete-template', (_e, id: string) => {
-    const fp = join(TEMPLATES_DIR, `${id}.json`)
+    const fileName = templateFileForId(String(id))
+    if (!fileName) return { success: true }
+    const fp = join(TEMPLATES_DIR, fileName)
     if (!isSafePath(TEMPLATES_DIR, fp)) return { success: false, error: '访问被拒绝' }
-    try { if (existsSync(fp)) unlinkSync(fp) } catch { }
+    try { unlinkSync(fp) } catch { }
     return { success: true }
   })
   // ── 原生聊天会话 CRUD（与 templates 同模式） ──
@@ -1678,6 +1716,121 @@ export function registerIpcHandlers(): void {
       const mime = IMG_EXT_MIME[extname(name).slice(1).toLowerCase()] || 'application/octet-stream'
       return `data:${mime};base64,${buf.toString('base64')}`
     } catch { return null }
+  })
+  // ── 图像生成页：自动保存 + 历史持久化 ──
+  // 生成图以「带参数的描述性文件名」落到 CHAT_IMAGES_DIR；历史清单存 JSON（仅存文件名与元信息，
+  // 不内嵌 base64，避免文件巨大）。图片读取按需从磁盘回读成 dataUrl。
+  const SD_HISTORY_FILE = join(CHATS_DIR, 'imagegen-history.json')
+  // 标准 PNG 文本元数据：把生成参数/提示词写入 PNG 底层的 tEXt 块（看图工具可读，不影响文件名）
+  const SD_CRC_TABLE: number[] = (() => {
+    const t = new Array(256).fill(0)
+    for (let n = 0; n < 256; n++) {
+      let c = n
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+      t[n] = c >>> 0
+    }
+    return t
+  })()
+  function sdCrc32(buf: Buffer): number {
+    let c = 0xffffffff
+    for (let i = 0; i < buf.length; i++) c = SD_CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8)
+    return (c ^ 0xffffffff) >>> 0
+  }
+  function sdPngWithMeta(raw: Buffer, fields: Record<string, string>): Buffer {
+    const endMarker = Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44]) // 0长度 + "IEND"
+    const endIdx = raw.indexOf(endMarker)
+    if (endIdx < 0) return raw
+    const chunks: Buffer[] = []
+    for (const [key, val] of Object.entries(fields)) {
+      if (!val || !key) continue
+      const keyword = Buffer.from(key)
+      const text = Buffer.from(val)
+      if (keyword.length === 0 || keyword.length > 79 || keyword.length + 1 + text.length > 8192) continue
+      const data = Buffer.concat([keyword, Buffer.from([0]), text])
+      const type = Buffer.from('tEXt')
+      const len = Buffer.alloc(4)
+      len.writeUInt32BE(data.length)
+      const crcBuf = Buffer.alloc(4)
+      crcBuf.writeUInt32BE(sdCrc32(Buffer.concat([type, data])))
+      chunks.push(len, type, data, crcBuf)
+    }
+    if (chunks.length === 0) return raw
+    return Buffer.concat([raw.subarray(0, endIdx), ...chunks, raw.subarray(endIdx)])
+  }
+  ipcMain.handle('save-images', (_e, opts: { images: string[]; mode?: string; seed?: number; steps?: number; cfg?: number; width?: number; height?: number; prompt?: string; negativePrompt?: string; sampler?: string; scheduler?: string; model?: string }): Promise<{ ok: boolean; files?: string[]; error?: string }> => {
+    try {
+      if (!opts || !Array.isArray(opts.images) || opts.images.length === 0) return Promise.resolve({ ok: false, error: '无图片数据' })
+      if (!existsSync(CHAT_IMAGES_DIR)) mkdirSync(CHAT_IMAGES_DIR, { recursive: true })
+      const files = opts.images.map((dataUrl, i) => {
+        const comma = String(dataUrl || '').indexOf(',')
+        const b64 = comma >= 0 ? String(dataUrl).slice(comma + 1) : String(dataUrl)
+        const buf = Buffer.from(b64, 'base64')
+
+        // 写入 PNG 底层元数据（tEXt 块）：完整提示词、负向提示词、实际 seed 与生成参数
+        const meta: Record<string, string> = {
+          prompt: opts.prompt || '',
+          'negative_prompt': opts.negativePrompt || '',
+          'seed': opts.seed !== undefined ? String(opts.seed) : '',
+          'steps': opts.steps !== undefined ? String(opts.steps) : '',
+          'cfg_scale': opts.cfg !== undefined ? String(opts.cfg) : '',
+          'sampler_name': opts.sampler || '',
+          'scheduler': opts.scheduler || '',
+          'width': opts.width !== undefined ? String(opts.width) : '',
+          'height': opts.height !== undefined ? String(opts.height) : '',
+          'model': opts.model || ''
+        }
+        const png = sdPngWithMeta(buf, meta)
+        if (buf.length === 0) throw new Error('无效图片数据')
+        const parts = [
+          `sd`,
+          opts.mode === 'img2img' ? 'img2img' : 'txt2img'
+        ]
+        if (typeof opts.seed === 'number') parts.push(`s${opts.seed}`)
+        if (typeof opts.steps === 'number') parts.push(`steps${opts.steps}`)
+        if (typeof opts.cfg === 'number') parts.push(`cfg${opts.cfg}`)
+        if (typeof opts.width === 'number' && typeof opts.height === 'number') parts.push(`${opts.width}x${opts.height}`)
+        parts.push(`${Date.now()}_${i}`)
+        const name = `${parts.join('_')}.png`
+        const fp = join(CHAT_IMAGES_DIR, name)
+        if (!existsSync(fp)) writeFileSync(fp, png)
+        return name
+      })
+      return Promise.resolve({ ok: true, files })
+    } catch (err) { return Promise.resolve({ ok: false, error: String(err) }) }
+  })
+  ipcMain.handle('read-imagegen-image', async (_e, name: string): Promise<string | null> => {
+    try {
+      if (typeof name !== 'string' || !name) return null
+      if (/[\\/]/.test(name) || name.includes('..')) return null
+      const fp = join(CHAT_IMAGES_DIR, name)
+      if (!isSafePath(CHAT_IMAGES_DIR, fp) || !existsSync(fp)) return null
+      const buf = await fsPromises.readFile(fp)
+      return `data:image/png;base64,${buf.toString('base64')}`
+    } catch { return null }
+  })
+  ipcMain.handle('load-imagegen-history', (): unknown[] => {
+    try {
+      if (!existsSync(SD_HISTORY_FILE)) return []
+      const raw = JSON.parse(readFileSync(SD_HISTORY_FILE, 'utf-8'))
+      return Array.isArray(raw) ? raw : []
+    } catch { return [] }
+  })
+  ipcMain.handle('save-imagegen-history', (_e, items: unknown[]): boolean => {
+    try {
+      if (!existsSync(CHATS_DIR)) mkdirSync(CHATS_DIR, { recursive: true })
+      writeFileSync(SD_HISTORY_FILE, JSON.stringify(Array.isArray(items) ? items : [], null, 2), 'utf-8')
+      return true
+    } catch { return false }
+  })
+  ipcMain.handle('delete-imagegen-images', (_e, names: string[]): boolean => {
+    try {
+      for (const name of Array.isArray(names) ? names : []) {
+        if (typeof name !== 'string' || !name || /[\\/]/.test(name) || name.includes('..')) continue
+        const fp = join(CHAT_IMAGES_DIR, name.trim())
+        if (isSafePath(CHAT_IMAGES_DIR, fp) && existsSync(fp)) { try { unlinkSync(fp) } catch { /* ignore */ } }
+      }
+      return true
+    } catch { return false }
   })
   ipcMain.handle('list-chat-sessions', async () => {
     if (!existsSync(CHATS_DIR)) return []
@@ -1727,7 +1880,9 @@ export function registerIpcHandlers(): void {
       if (r.canceled || !r.filePaths.length) return null
       const data = JSON.parse(readFileSync(r.filePaths[0], 'utf-8'))
       const id = String(Date.now()); data.id = id
-      writeFileSync(join(TEMPLATES_DIR, `${id}.json`), JSON.stringify(data, null, 2))
+      const desired = sanitizeTemplateFilename(data.name as string) || id
+      const fileName = uniqueTemplateFilename(desired, null)
+      writeFileSync(join(TEMPLATES_DIR, `${fileName}.json`), JSON.stringify(data, null, 2))
       return data
     } catch { return null }
   })
@@ -2577,7 +2732,7 @@ export function registerIpcHandlers(): void {
       flattenSingleRoot(stagingDir)
       if (countExtractedFiles(stagingDir) === 0) throw new Error('解压后内容为空')
       // 核心可执行文件必须存在（有限深度查找），防止“解压完成但没有主程序”
-      const exeNames = ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe', 'TensorSharp.Server']
+      const exeNames = ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe', 'TensorSharp.Server', 'sd-server.exe', 'sd-server']
       if (!findAnyFile(stagingDir, exeNames)) throw new Error('解压后未找到核心可执行文件，安装包可能不完整')
       // 校验全部通过后才替换正式版本目录（此前版本安装保持原样）。
       // 原子替换：先把旧目录改名成 .old-* 备份（Windows rename 目标已存在会失败，不能直接覆盖），

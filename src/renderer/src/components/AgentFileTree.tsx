@@ -417,7 +417,7 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
             spellCheck={false}
           />
           {query && (
-            <button className="file-tree-search-clear" onClick={() => setQuery('')} title="清除"><X size={11} /></button>
+            <button className="file-tree-search-clear" onClick={() => setQuery('')}><X size={11} /></button>
           )}
         </div>
       )}

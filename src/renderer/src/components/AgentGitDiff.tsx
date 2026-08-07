@@ -351,7 +351,7 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
           </span>
         )}
         <span className="agent-git-spacer" />
-        <button className="agent-git-refresh" onClick={() => onRefresh()} title="刷新">
+        <button className="agent-git-refresh" onClick={() => onRefresh()}>
           <RefreshCw size={12} className={loading ? 'spin' : ''} />
         </button>
       </div>

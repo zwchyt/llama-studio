@@ -208,6 +208,22 @@ export default function Sidebar() {
           {view === 'agents' && <span className="nav-active-dot" />}
         </button>
         <button
+          className={`nav-item ${view === 'engines' ? 'active' : ''}`}
+          onClick={() => setView('engines')}
+        >
+          <HardDrive size={16} />
+          <span>后端与引擎</span>
+          {view === 'engines' && <span className="nav-active-dot" />}
+        </button>
+        <button
+          className={`nav-item ${view === 'folders' ? 'active' : ''}`}
+          onClick={() => setView('folders')}
+        >
+          <FolderOpen size={16} />
+          <span>模型文件夹</span>
+          {view === 'folders' && <span className="nav-active-dot" />}
+        </button>
+        <button
           className={`nav-item ${view === 'settings' ? 'active' : ''}`}
           onClick={() => setView('settings')}
         >
@@ -246,6 +262,7 @@ export default function Sidebar() {
         )}
         {paths && (
           <div className="sidebar-bottom-section" style={{ marginTop: 'auto', paddingTop: 12 }}>
+            <span className="nav-section-label">本地目录</span>
             <button className="nav-item" onClick={() => window.api.openFolder(paths.backend)}>
               <FolderOpen size={16} />
               <span>打开 /backend</span>

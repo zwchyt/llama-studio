@@ -57,7 +57,7 @@ export default function CodeBlock({ language, value, showLineNumbers }: CodeBloc
           <span className="chat-code-lang">{langLabel}</span>
           {showLineNumbers && <span className="chat-code-line-count">{lineCount} 行</span>}
         </div>
-        <button className="chat-code-copy" onClick={handleCopy} title="复制代码">
+        <button className="chat-code-copy" onClick={handleCopy}>
           {copied ? <Check size={12} /> : <Copy size={12} />}
           {copied ? '已复制' : '复制'}
         </button>

@@ -149,13 +149,13 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
       <div className="agent-file-picker-header">
         <div className="agent-file-picker-bread">
           {currentPath !== workspaceDir && currentPath !== DRIVES_VIEW && (
-            <button className="agent-file-picker-up" onClick={handleGoUp} title="上级目录">
+            <button className="agent-file-picker-up" onClick={handleGoUp}>
               <ChevronLeft size={13} />
             </button>
           )}
           {currentPath === DRIVES_VIEW ? (
             <>
-              <button className="agent-file-picker-crumb agent-file-picker-crumb-root" onClick={() => setCurrentPath(workspaceDir)} title="回到工作目录">
+              <button className="agent-file-picker-crumb agent-file-picker-crumb-root" onClick={() => setCurrentPath(workspaceDir)}>
                 <FolderOpen size={11} />
               </button>
               <span className="agent-file-picker-sep">/</span>
@@ -199,7 +199,7 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
         </div>
         <div className="agent-file-picker-search-area">
           {onBrowseSystem && (
-            <button className="agent-file-picker-search-btn" onClick={onBrowseSystem} title="浏览系统文件（任意磁盘）">
+            <button className="agent-file-picker-search-btn" onClick={onBrowseSystem}>
               <HardDrive size={13} />
             </button>
           )}
@@ -217,7 +217,7 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
               />
             </div>
           ) : (
-            <button className="agent-file-picker-search-btn" onClick={() => setSearchExpanded(true)} title="搜索文件">
+            <button className="agent-file-picker-search-btn" onClick={() => setSearchExpanded(true)}>
               <Search size={13} />
             </button>
           )}

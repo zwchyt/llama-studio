@@ -3434,7 +3434,6 @@ ${msgsHtml}
               ref={kbBtnRef}
               className={`chat-settings-btn ${activeSession?.knowledgeBaseId ? 'preview-active' : ''}`}
               onClick={() => setShowKb((v) => !v)}
-              title="附加知识库"
             >
               <BookOpen size={16} />
             </button>
@@ -3767,7 +3766,7 @@ ${msgsHtml}
                 rows={1}
               />
               {activeStreamId ? (
-                <button className="btn btn-danger chat-send-btn chat-stop-btn" onClick={handleStop} title="停止生成">
+                <button className="btn btn-danger chat-send-btn chat-stop-btn" onClick={handleStop}>
                   <Square size={13} fill="currentColor" />
                 </button>
               ) : (
@@ -3812,7 +3811,6 @@ ${msgsHtml}
                     <span
                       className="chat-file-tab-close"
                       role="button"
-                      title="关闭预览"
                       onClick={(e) => { e.stopPropagation(); removeAttachedFile(i) }}
                     >
                       <X size={11} />

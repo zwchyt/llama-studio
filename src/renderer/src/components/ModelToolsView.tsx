@@ -611,12 +611,10 @@ function FitTab({ modelPath, setModelPath }: { modelPath: string; setModelPath: 
                   <button
                     className={quantChart ? 'active' : ''}
                     onClick={() => setQuantChart(true)}
-                    title="图表视图"
                   ><BarChart3 size={13} /></button>
                   <button
                     className={!quantChart ? 'active' : ''}
                     onClick={() => setQuantChart(false)}
-                    title="表格视图"
                   ><Table2 size={13} /></button>
                 </div>
               </div>

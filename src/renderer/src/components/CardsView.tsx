@@ -52,7 +52,6 @@ export default function CardsView() {
                 <button
                   className="template-search-clear"
                   onClick={() => setTemplateSearch('')}
-                  title="清除"
                 >×</button>
               )}
             </div>

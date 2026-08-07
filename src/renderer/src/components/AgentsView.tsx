@@ -102,7 +102,6 @@ export default function AgentsView() {
         <button
           onClick={fetchAgents}
           disabled={agentsLoading}
-          title="刷新"
           style={{
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '6px 14px', fontSize: 13, fontWeight: 500,

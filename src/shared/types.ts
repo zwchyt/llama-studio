@@ -47,6 +47,8 @@ export interface Template {
   launchMode?: 'chat' | 'api'
   /** 参数集选择（参数设置里手动切换）：'llamacpp' → commands.json，'tensorsharp' → commands-tensorsharp.json；缺省 = llama.cpp */
   paramSet?: EngineKind
+  /** 各引擎/参数集独立保存的启动参数（切换引擎时保留各自的自定义值）；args 始终等于当前 paramSet 的那一套 */
+  argsByParamSet?: Partial<Record<Exclude<EngineKind, 'other'>, TemplateArgs>>
   createdAt: string
   updatedAt: string
   _file?: string

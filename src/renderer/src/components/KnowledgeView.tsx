@@ -161,7 +161,7 @@ export default function KnowledgeView() {
         <div className="kb-sidebar">
           <div className="kb-sidebar-head">
             <span>我的知识库</span>
-            <button className="btn btn-ghost btn-icon" onClick={() => setCreating(v => !v)} title="新建知识库">
+            <button className="btn btn-ghost btn-icon" onClick={() => setCreating(v => !v)}>
               <Plus size={15} />
             </button>
           </div>
@@ -195,7 +195,6 @@ export default function KnowledgeView() {
                 <button
                   className="btn btn-ghost btn-icon text-danger kb-list-item-del"
                   onClick={(e) => { e.stopPropagation(); openDeletePop(e, b) }}
-                  title="删除知识库"
                 >
                   <Trash2 size={13} />
                 </button>
@@ -245,7 +244,7 @@ export default function KnowledgeView() {
                     <FileText size={15} className="kb-doc-icon" />
                     <span className="kb-doc-name" title={d.name}>{d.name}</span>
                     <span className="kb-doc-chunks">{d.chunkCount} 块</span>
-                    <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleDeleteDoc(d.id)} title="移除文档">
+                    <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleDeleteDoc(d.id)}>
                       <X size={13} />
                     </button>
                   </div>

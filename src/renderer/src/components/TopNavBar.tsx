@@ -45,6 +45,8 @@ const NAV_GROUPS: NavDef[][] = [
   ],
   [
     { key: 'agents', label: 'AI Agent', icon: <Bot size={14} />, color: '#d946ef' },
+    { key: 'engines', label: '后端与引擎', icon: <HardDrive size={14} />, color: '#6b7280' },
+    { key: 'folders', label: '模型文件夹', icon: <FolderOpen size={14} />, color: '#6b7280' },
     { key: 'settings', label: '设置', icon: <Settings size={14} />, color: '#6b7280' },
     { key: 'about', label: '关于', icon: <Info size={14} />, color: '#6366f1' },
   ],
@@ -174,7 +176,6 @@ export default function TopNavBar() {
             <button
               className={`topnav-item topnav-dd ${openMenu === 'backend' ? 'open' : ''}`}
               onClick={() => setOpenMenu(openMenu === 'backend' ? null : 'backend')}
-              title="切换后端"
             >
               <span className="topnav-ico" style={{ background: '#3b82f61c', color: '#3b82f6' }}>
                 <HardDrive size={14} />
@@ -203,7 +204,6 @@ export default function TopNavBar() {
             <button
               className={`topnav-item topnav-dd ${openMenu === 'folders' ? 'open' : ''}`}
               onClick={() => setOpenMenu(openMenu === 'folders' ? null : 'folders')}
-              title="打开目录"
             >
               <span className="topnav-ico" style={{ background: '#f59e0b1c', color: '#f59e0b' }}>
                 <FolderOpen size={14} />

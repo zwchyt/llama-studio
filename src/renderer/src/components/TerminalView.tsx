@@ -107,14 +107,14 @@ function TerminalTabBar({ store }: { store: TerminalStoreHook }): React.JSX.Elem
           <Plus size={13} />
         </button>
         <span style={{ width: 1, height: 16, background: 'var(--border)', margin: '0 4px' }} />
-        <button className="terminal-tabbar-btn" onClick={() => { setTerminalFontSize(fontSize - 1); setFontSize(getTerminalFontSize()) }} title="缩小字号 (Ctrl+-)">
+        <button className="terminal-tabbar-btn" onClick={() => { setTerminalFontSize(fontSize - 1); setFontSize(getTerminalFontSize()) }}>
           <Minus size={13} />
         </button>
         <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 22, textAlign: 'center', userSelect: 'none' }}>{fontSize}</span>
-        <button className="terminal-tabbar-btn" onClick={() => { setTerminalFontSize(fontSize + 1); setFontSize(getTerminalFontSize()) }} title="放大字号 (Ctrl+=)">
+        <button className="terminal-tabbar-btn" onClick={() => { setTerminalFontSize(fontSize + 1); setFontSize(getTerminalFontSize()) }}>
           <Plus size={13} />
         </button>
-        <button className="terminal-tabbar-btn" onClick={() => { setTerminalFontSize(TERMINAL_FONT_SIZE_DEFAULT); setFontSize(getTerminalFontSize()) }} title="重置字号">
+        <button className="terminal-tabbar-btn" onClick={() => { setTerminalFontSize(TERMINAL_FONT_SIZE_DEFAULT); setFontSize(getTerminalFontSize()) }}>
           <RotateCcw size={12} />
         </button>
       </div>

@@ -238,7 +238,7 @@ export default function OcrView() {
               <div className="ocr-image-card-header">
                 <FileText size={14} />
                 <span className="ocr-image-name">{fileName}</span>
-                <button className="btn btn-ghost btn-icon" onClick={clearAll} title="清除">
+                <button className="btn btn-ghost btn-icon" onClick={clearAll}>
                   <X size={14} />
                 </button>
               </div>

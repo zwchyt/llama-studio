@@ -16,6 +16,8 @@ interface CustomSelectProps {
   className?: string
   style?: React.CSSProperties
   buttonClass?: string
+  panelClass?: string
+  itemClass?: string
 }
 
 export default function CustomSelect({
@@ -27,7 +29,9 @@ export default function CustomSelect({
   'aria-label': ariaLabel,
   className = '',
   style,
-  buttonClass = ''
+  buttonClass = '',
+  panelClass = '',
+  itemClass = ''
 }: CustomSelectProps) {
   const [open, setOpen] = useState(false)
   const [hovered, setHovered] = useState('')
@@ -99,6 +103,7 @@ export default function CustomSelect({
       {open && panelStyle && createPortal(
         <div
           ref={panelRef}
+          className={panelClass || undefined}
           style={{
             ...panelStyle,
             background: 'var(--surface)',
@@ -106,15 +111,18 @@ export default function CustomSelect({
             borderRadius: 'var(--radius-sm)',
             boxShadow: 'var(--shadow-md)',
             maxHeight: 240,
-            overflowY: 'auto'
+            overflowY: 'auto',
+            padding: 3
           }}
         >
           {options.map(opt => (
             <div
               key={opt.value}
+              className={`${itemClass || ''}${opt.value === strVal ? ' active' : ''}`.trim()}
               style={{
                 padding: '6px 10px', fontSize: 12, cursor: 'pointer',
-                background: opt.value === strVal ? 'var(--bg)' : hovered === opt.value ? 'var(--surface-hover)' : 'transparent',
+                background: opt.value === strVal ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : hovered === opt.value ? 'var(--surface-hover)' : 'transparent',
+                borderRadius: 4,
                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%'
               }}
               onClick={() => { onChange(opt.value); close() }}

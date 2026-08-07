@@ -4,6 +4,8 @@ import { notify } from './store/notificationStore'
 import Sidebar from './components/Sidebar'
 import CardsView from './components/CardsView'
 import SettingsView from './components/SettingsView'
+import EnginesView from './components/EnginesView'
+import ModelFoldersView from './components/ModelFoldersView'
 import HuggingFaceView from './components/HuggingFaceView'
 import ModelsView from './components/ModelsView'
 import ModelMonitoringView from './components/ModelMonitoringView'
@@ -493,6 +495,8 @@ function AppMain() {
     switch (view) {
       case 'hub': return <HuggingFaceView />
       case 'settings': return <SettingsView />
+      case 'engines': return <EnginesView />
+      case 'folders': return <ModelFoldersView />
       case 'models': return <ModelsView />
       case 'monitoring': return <ModelMonitoringView />
       case 'about': return <AboutView />

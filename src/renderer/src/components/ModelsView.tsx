@@ -3,7 +3,8 @@ import { useStore, ModelFileInfo, ModelDownloadInfo } from '../store/useStore'
 
 import {
   HardDrive, Download, Trash, Pause, Play, X, Link, FolderOpen,
-  Pencil, Check, AlertCircle, Loader2, Search, Image as ImageIcon, FileSearch, FileText, AudioLines, ScanText
+  Pencil, Check, AlertCircle, Loader2, Search, Image as ImageIcon, FileSearch, FileText, AudioLines, ScanText,
+  Palette as PaletteIcon
 } from 'lucide-react'
 import { formatBytes } from '../utils/format'
 import { formatDownloadStatus } from '../utils/downloadFormat'
@@ -156,13 +157,13 @@ function DownloadRow({ dl }: { dl: ModelDownloadInfo }) {
                 ? <Play size={13} />
                 : <Pause size={13} />}
             </button>
-            <button className="btn btn-ghost btn-icon text-danger" onClick={cancel} title="取消">
+            <button className="btn btn-ghost btn-icon text-danger" onClick={cancel}>
               <X size={13} />
             </button>
           </>
         )}
         {(isDone || isErr) && (
-          <button className="btn btn-ghost btn-icon" onClick={() => removeModelDownload(dl.id)} title="关闭">
+          <button className="btn btn-ghost btn-icon" onClick={() => removeModelDownload(dl.id)}>
             <X size={13} />
           </button>
         )}
@@ -173,7 +174,7 @@ function DownloadRow({ dl }: { dl: ModelDownloadInfo }) {
   )
 }
 
-function ModelFileRow({ model, isImage, isTts, isOcr, onDeleted }: { model: ModelFileInfo; isImage?: boolean; isTts?: boolean; isOcr?: boolean; onDeleted: () => void }) {
+function ModelFileRow({ model, isImage, isTts, isOcr, isSd, onDeleted }: { model: ModelFileInfo; isImage?: boolean; isTts?: boolean; isOcr?: boolean; isSd?: boolean; onDeleted: () => void }) {
   const setView = useStore(s => s.setView)
   const setModelToolsTarget = useStore(s => s.setModelToolsTarget)
   const [editing, setEditing] = useState(false)
@@ -207,7 +208,7 @@ function ModelFileRow({ model, isImage, isTts, isOcr, onDeleted }: { model: Mode
   return (
     <div className="models-file-row">
       <div className="models-file-icon">
-        {isImage ? <ImageIcon size={16} /> : isTts ? <AudioLines size={16} /> : isOcr ? <ScanText size={16} /> : <FileText size={16} />}
+        {isSd ? <PaletteIcon size={16} /> : isImage ? <ImageIcon size={16} /> : isTts ? <AudioLines size={16} /> : isOcr ? <ScanText size={16} /> : <FileText size={16} />}
       </div>
       <div className="models-file-meta">
         {editing ? (
@@ -224,9 +225,10 @@ function ModelFileRow({ model, isImage, isTts, isOcr, onDeleted }: { model: Mode
           {model.external && (
             <span className="models-folder-badge" title="来自外部路径添加的模型文件夹——删除操作不可用">外部</span>
           )}
-          {model.external && !isImage && !model.tts && !model.ocr && (
+          {model.external && !isImage && !isSd && !model.tts && !model.ocr && (
             <span className="models-folder-badge" style={{ background: 'var(--amber, #f59e0b)', color: '#fff' }} title="文字模型（大语言模型）">文本</span>
           )}
+          {isSd && <span className="models-folder-badge" style={{ background: 'var(--orange, #f97316)', color: '#fff' }} title={model.sdRole === 'vae' ? '生图模型（VAE 组件）' : model.sdRole === 'llm' ? '生图模型（LLM 文本编码器）' : 'stable-diffusion.cpp 生图模型（扩散模型）'}>生图</span>}
           {isTts && <span className="models-folder-badge" style={{ background: 'var(--violet, #a855f7)', color: '#fff' }} title="语音合成模型文件夹中的文件（OuteTTS / WavTokenizer）——删除操作不可用">语音合成</span>}
           {isOcr && <span className="models-folder-badge" style={{ background: 'var(--cyan, #06b6d4)', color: '#fff' }} title="OCR 模型文件夹中的文件（多模态 / 图片理解模型）——删除操作不可用">OCR</span>}
           {isImage && <span className="models-folder-badge" style={{ background: 'var(--green, #10b981)', color: '#fff' }} title="多模态投影仪文件（--mmproj）——删除操作不可用">图片</span>}
@@ -253,7 +255,7 @@ export default function ModelsView() {
   const [showUrlModal, setShowUrlModal] = useState(false)
   const [loading, setLoading] = useState(false)
   const [filter, setFilter] = useState('')
-  const [typeFilter, setTypeFilter] = useState<'all' | 'text' | 'image' | 'tts' | 'ocr'>('all')
+  const [typeFilter, setTypeFilter] = useState<'all' | 'text' | 'image' | 'tts' | 'ocr' | 'sd'>('all')
   const allModels = useMemo(() => {
     const seen = new Set(models.map(m => m.path))
     const unique = imageModels.filter(m => !seen.has(m.path))
@@ -261,18 +263,20 @@ export default function ModelsView() {
   }, [models, imageModels])
   const imagePathSet = useMemo(() => new Set(imageModels.map(m => m.path)), [imageModels])
   const typeCounts = useMemo(() => {
-    let text = 0, image = 0, tts = 0, ocr = 0
+    let text = 0, image = 0, tts = 0, ocr = 0, sd = 0
     for (const m of allModels) {
-      if (m.tts) tts++
+      if (m.sdRole) sd++
+      else if (m.tts) tts++
       else if (m.ocr) ocr++
       else if (imagePathSet.has(m.path)) image++
       else text++
     }
-    return { text, image, tts, ocr }
+    return { text, image, tts, ocr, sd }
   }, [allModels, imagePathSet])
   const filteredModels = useMemo(() => {
     let list = allModels
-    if (typeFilter === 'text') list = allModels.filter(m => !m.tts && !m.ocr && !imagePathSet.has(m.path))
+    if (typeFilter === 'sd') list = allModels.filter(m => m.sdRole)
+    else if (typeFilter === 'text') list = allModels.filter(m => !m.sdRole && !m.tts && !m.ocr && !imagePathSet.has(m.path))
     else if (typeFilter === 'image') list = allModels.filter(m => imagePathSet.has(m.path))
     else if (typeFilter === 'tts') list = allModels.filter(m => m.tts)
     else if (typeFilter === 'ocr') list = allModels.filter(m => m.ocr)
@@ -351,6 +355,7 @@ export default function ModelsView() {
           ['all', '全部', 0],
           ['text', '文本', typeCounts.text],
           ['image', '图片', typeCounts.image],
+          ['sd', '生图', typeCounts.sd],
           ['tts', '语音合成', typeCounts.tts],
           ['ocr', 'OCR', typeCounts.ocr],
         ] as const).map(([key, label, count]) => (
@@ -395,7 +400,7 @@ export default function ModelsView() {
           </div>
         )}
           {filteredModels.map(m => (
-            <ModelFileRow key={m.path} model={m} isImage={imageModels.some(im => im.path === m.path)} isTts={m.tts} isOcr={m.ocr} onDeleted={refresh} />
+            <ModelFileRow key={m.path} model={m} isImage={imageModels.some(im => im.path === m.path)} isSd={!!m.sdRole} isTts={m.tts} isOcr={m.ocr} onDeleted={refresh} />
           ))}
       </div>
       </div>

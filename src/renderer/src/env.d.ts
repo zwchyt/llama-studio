@@ -150,6 +150,11 @@ interface LlamaCppApi {
   getServerProps: (port: number) => Promise<{ ok: boolean; modalities?: { vision?: boolean; audio?: boolean }; error?: string }>
   saveChatImage: (dataUrl: string) => Promise<{ ok: boolean; ref?: string; error?: string }>
   readChatImage: (ref: string) => Promise<string | null>
+  saveImages: (opts: { images: string[]; mode?: string; seed?: number; steps?: number; cfg?: number; width?: number; height?: number; prompt?: string; negativePrompt?: string; sampler?: string; scheduler?: string; model?: string }) => Promise<{ ok: boolean; files?: string[]; error?: string }>
+  readImagegenImage: (name: string) => Promise<string | null>
+  loadImagegenHistory: () => Promise<unknown[]>
+  saveImagegenHistory: (items: unknown[]) => Promise<boolean>
+  deleteImagegenImages: (names: string[]) => Promise<boolean>
   abortChatStream: (streamId: string) => Promise<{ success: boolean }>
   onChatStreamChunk: (cb: (data: ChatStreamChunk) => void) => void
   removeChatStreamListener: () => void

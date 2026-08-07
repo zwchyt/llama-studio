@@ -141,7 +141,6 @@ export default function UpdateBanner({ hidden, switcher }: BannerSlotProps = {})
               <button
                 className="btn btn-ghost btn-xs"
                 onClick={() => window.api.pauseBackendDownload()}
-                title="暂停下载（保留已下载部分）"
               >
                 <Pause size={11} /> 暂停
               </button>
@@ -155,10 +154,10 @@ export default function UpdateBanner({ hidden, switcher }: BannerSlotProps = {})
           </>
         ) : (
           <>
-            <button className="btn btn-ghost btn-xs" onClick={handleSkipVersion} title="不再提醒此版本，有新版本时仍会通知">
+            <button className="btn btn-ghost btn-xs" onClick={handleSkipVersion}>
               跳过此版本
             </button>
-            <button className="dismiss" onClick={() => closeWithAnim()} title="关闭">
+            <button className="dismiss" onClick={() => closeWithAnim()}>
               <X size={14} />
             </button>
           </>

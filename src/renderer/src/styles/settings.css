@@ -72,6 +72,30 @@
   animation: fadeIn 150ms ease;
 }
 
+/* 已安装的后端列表行：窗口/导航栏缩放时允许换行与收缩，不被挤出卡片 */
+.settings-row.backend-row {
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+
+.settings-row.backend-row > div:first-child {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.settings-row.backend-row > div:first-child .settings-row-label,
+.settings-row.backend-row > div:first-child .settings-row-sub {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.settings-row.backend-row > div:last-child {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
 .cursor-theme-card {
   position: relative;
   display: flex;

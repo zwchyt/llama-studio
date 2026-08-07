@@ -1,4 +1,4 @@
-import type { EngineKind, Template } from '../../../shared/types'
+import type { EngineKind, Template, TemplateArgs } from '../../../shared/types'
 function cleanName(filename: string): string {
   return filename
     .replace(/\.gguf$/i, '')
@@ -93,6 +93,60 @@ function getRecommendedSettings(filename: string): RecommendedSettings {
     description: `${family}${sizeLabel} ${quantLabel} — ctx ${ctxSize.toLocaleString()}, ${threads} threads (auto-configured)`
   }
 }
+/**
+ * 按引擎/参数集返回该引擎的一套默认启动参数
+ * （切换引擎时替换模板 args，避免残留其他引擎的参数）
+ */
+export function defaultArgsForParamSet(paramSet: EngineKind, filename = ''): TemplateArgs {
+  switch (paramSet) {
+    case 'tensorsharp':
+      return { '--temperature': 0.7, '--repeat-penalty': 1.1, '--max-tokens': 20000 }
+    case 'sdcpp':
+      return { '--steps': 20, '--cfg-scale': 7 }
+    default:
+      const settings = getRecommendedSettings(filename)
+      return {
+        '--ctx-size': settings.ctxSize,
+        '--threads': settings.threads,
+        '--n-gpu-layers': settings.gpuLayers,
+        '--batch-size': settings.batchSize,
+        '--temp': settings.temp,
+        '--repeat-penalty': settings.repeatPenalty
+      }
+  }
+}
+
+type ParamSetKey = Exclude<EngineKind, 'other'>
+type ArgsByParamSet = Partial<Record<ParamSetKey, TemplateArgs>>
+
+/**
+ * 切换引擎时计算新的 args + argsByParamSet：
+ * 先把当前引擎的自定义 args 存入 argsByParamSet[当前引擎]，再取出目标引擎已保存的参数
+ * （没有则用该引擎默认值）。这样来回切换不会丢失各引擎各自调过的参数。
+ */
+export function switchParamSetArgs(
+  currentParamSet: ParamSetKey,
+  currentArgs: TemplateArgs,
+  argsByParamSet: ArgsByParamSet | undefined,
+  nextParamSet: ParamSetKey,
+  filename = ''
+): { args: TemplateArgs; argsByParamSet: ArgsByParamSet } {
+  const nextByParamSet: ArgsByParamSet = { ...(argsByParamSet ?? {}) }
+  nextByParamSet[currentParamSet] = { ...currentArgs }
+  const args = nextByParamSet[nextParamSet] ?? defaultArgsForParamSet(nextParamSet, filename)
+  return { args, argsByParamSet: nextByParamSet }
+}
+
+/**
+ * 把用户编辑后的当前引擎参数同步写入 argsByParamSet（保持 argsByParamSet[paramSet] === args）
+ */
+export function syncArgsByParamSet(
+  currentParamSet: ParamSetKey,
+  currentArgs: TemplateArgs,
+  argsByParamSet: ArgsByParamSet | undefined
+): ArgsByParamSet {
+  return { ...(argsByParamSet ?? {}), [currentParamSet]: { ...currentArgs } }
+}
 export function getNextPort(existingTemplates: Template[]): number {
   const usedPorts = new Set(existingTemplates.map(t => t.serverPort))
   let port = 8080
@@ -120,40 +174,39 @@ export function buildDefaultTemplate(
   // TensorSharp 引擎：采样参数与 llama.cpp 预设不同（无 --ctx-size/--threads/--n-gpu-layers；
   // --backend 留空让引擎自动选择，本机有 NVIDIA GPU 时运行时自动注入 ggml_cuda）
   if (kind === 'tensorsharp') {
+    const args = { '--temperature': 0.7, '--repeat-penalty': 1.1, '--max-tokens': 20000 }
     return {
       ...base,
       description: `${detectFamily(filename)} — TensorSharp 引擎，采样参数自动配置`,
-      args: {
-        '--temperature': 0.7,
-        '--repeat-penalty': 1.1,
-        '--max-tokens': 20000
-      }
+      args,
+      argsByParamSet: { tensorsharp: args }
     }
   }
   // stable-diffusion.cpp 引擎：sd-server 为图像推理服务（无聊天 UI），
   // 预填常用生成默认值；端口参数由 sd-server 的 --listen-port 管理（默认 1234）
   if (kind === 'sdcpp') {
+    const args = { '--steps': 20, '--cfg-scale': 7 }
     return {
       ...base,
       launchMode: 'api' as const,
       description: `stable-diffusion.cpp — 扩散模型，默认 ${20} 步 / CFG ${7}`,
-      args: {
-        '--steps': 20,
-        '--cfg-scale': 7
-      }
+      args,
+      argsByParamSet: { sdcpp: args }
     }
   }
   const settings = getRecommendedSettings(filename)
+  const args = {
+    '--ctx-size': settings.ctxSize,
+    '--threads': settings.threads,
+    '--n-gpu-layers': settings.gpuLayers,
+    '--batch-size': settings.batchSize,
+    '--temp': settings.temp,
+    '--repeat-penalty': settings.repeatPenalty
+  }
   return {
     ...base,
     description: settings.description,
-    args: {
-      '--ctx-size': settings.ctxSize,
-      '--threads': settings.threads,
-      '--n-gpu-layers': settings.gpuLayers,
-      '--batch-size': settings.batchSize,
-      '--temp': settings.temp,
-      '--repeat-penalty': settings.repeatPenalty
-    }
+    args,
+    argsByParamSet: { llamacpp: args }
   }
 }

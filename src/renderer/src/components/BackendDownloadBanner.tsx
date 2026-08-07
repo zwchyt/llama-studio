@@ -77,11 +77,11 @@ export default function BackendDownloadBanner() {
       )}
       <div className="ub-right">
         {paused ? (
-          <button className="btn btn-secondary btn-xs" onClick={handleResume} title="从断点继续下载">
+          <button className="btn btn-secondary btn-xs" onClick={handleResume}>
             <Play size={11} /> 继续
           </button>
         ) : p.phase === 'downloading' ? (
-          <button className="btn btn-secondary btn-xs" onClick={() => window.api.pauseBackendDownload()} title="暂停下载（保留已下载部分）">
+          <button className="btn btn-secondary btn-xs" onClick={() => window.api.pauseBackendDownload()}>
             <Pause size={11} /> 暂停
           </button>
         ) : null}

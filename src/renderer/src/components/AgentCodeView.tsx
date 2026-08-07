@@ -5174,10 +5174,10 @@ export default function AgentCodeView() {
               style={{ left: selectionPopover.x, top: selectionPopover.y }}
               onMouseDown={e => e.preventDefault()}
             >
-              <button className="agent-sel-btn" onClick={() => quoteSelection(selectionPopover.text)} title="引用到输入框">
+              <button className="agent-sel-btn" onClick={() => quoteSelection(selectionPopover.text)}>
                 <Quote size={13} /> 引用
               </button>
-              <button className="agent-sel-btn" onClick={() => copySelection(selectionPopover.text)} title="复制所选内容">
+              <button className="agent-sel-btn" onClick={() => copySelection(selectionPopover.text)}>
                 <Copy size={13} /> 复制
               </button>
             </div>
@@ -5248,7 +5248,7 @@ export default function AgentCodeView() {
             <div className="agent-task-card agent-card-audit">
               <div className="agent-task-card-header">
                 <span>操作审计日志</span>
-                <button className="agent-audit-clear" onClick={() => clearAudit()} title="清空记录"><Trash2 size={12} /> 清空</button>
+                <button className="agent-audit-clear" onClick={() => clearAudit()}><Trash2 size={12} /> 清空</button>
               </div>
               <div className="agent-task-card-body agent-card-audit-body">
                 <AuditPanel />
@@ -5260,7 +5260,7 @@ export default function AgentCodeView() {
             <div className="agent-task-card agent-card-debug">
               <div className="agent-task-card-header">
                 <span>调试（逐轮）· 跨会话·最新在前</span>
-                <button className="agent-audit-clear" onClick={() => clearDebug()} title="清空记录"><Trash2 size={12} /> 清空</button>
+                <button className="agent-audit-clear" onClick={() => clearDebug()}><Trash2 size={12} /> 清空</button>
               </div>
               <div className="agent-task-card-body agent-card-debug-body">
                 <DebugPanel />
@@ -5443,7 +5443,7 @@ export default function AgentCodeView() {
                   </div>
                 ))}
                 {attachedFiles.length > 1 && (
-                  <button className="chat-attach-clear-all" onClick={() => { setAttachedFiles([]); setFilePickerAttached([]) }} disabled={loading} title="清除全部附件">
+                  <button className="chat-attach-clear-all" onClick={() => { setAttachedFiles([]); setFilePickerAttached([]) }} disabled={loading}>
                     <X size={12} />全部清除
                   </button>
                 )}
@@ -5618,7 +5618,6 @@ export default function AgentCodeView() {
                       <button
                         className={`btn btn-xs ac-icon-btn agent-code-preview-annotate${htmlAnnotateActive ? ' active' : ''}`}
                         onClick={toggleHtmlAnnotate}
-                        title="UI 注释模式：点击预览元素添加注释（发送给 Agent 自动定位修改）"
                       >
                         <MessageSquarePlus size={12} />
                         {htmlAnnotations.length > 0 && <span className="agent-code-preview-annotate-count">{htmlAnnotations.length}</span>}
@@ -5673,7 +5672,7 @@ export default function AgentCodeView() {
                                 <div className="agent-browser-annotations">
                                   <div className="agent-browser-annotations-head">
                                     <span>UI 注释（{htmlAnnotations.length}）</span>
-                                    <button className="agent-browser-annotations-clear" onClick={clearHtmlAnnotations} title="清空全部注释"><Trash2 size={11} /> 清空</button>
+                                    <button className="agent-browser-annotations-clear" onClick={clearHtmlAnnotations}><Trash2 size={11} /> 清空</button>
                                   </div>
                                   <div className="agent-browser-annotations-list">
                                     {htmlAnnotations.map(a => (
@@ -5687,7 +5686,7 @@ export default function AgentCodeView() {
                                             ? <div className="agent-browser-annotations-sel" title={a.text}>"{a.text}"</div>
                                             : <div className="agent-browser-annotations-sel" title={a.elements.map(e => e.selector).join('\n')}>{a.elements.length > 1 ? `多选 ${a.elements.length} 个元素` : (a.elements[0]?.selector || '')}</div>}
                                         {a.component && <div className="agent-browser-annotations-comp" title={a.component}>{a.component}</div>}
-                                        <button className="agent-browser-annotations-del" onClick={() => removeHtmlAnnotation(a.id)} title="删除该注释"><X size={11} /></button>
+                                        <button className="agent-browser-annotations-del" onClick={() => removeHtmlAnnotation(a.id)}><X size={11} /></button>
                                       </div>
                                     ))}
                                   </div>

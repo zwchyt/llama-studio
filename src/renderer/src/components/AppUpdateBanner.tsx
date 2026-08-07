@@ -162,11 +162,11 @@ export default function AppUpdateBanner({ hidden, switcher }: BannerSlotProps = 
         ) : (
           <>
             {!isDownloaded && (
-              <button className="btn btn-ghost btn-xs" onClick={handleSkipVersion} title="不再提醒此版本，有新版本时仍会通知">
+              <button className="btn btn-ghost btn-xs" onClick={handleSkipVersion}>
                 跳过此版本
               </button>
             )}
-            <button className="dismiss" onClick={handleDismiss} title="关闭">
+            <button className="dismiss" onClick={handleDismiss}>
               <X size={14} />
             </button>
           </>

@@ -329,16 +329,16 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
   return (
     <div className="agent-browser">
       <div className="agent-browser-toolbar">
-        <button className="agent-browser-nav-btn" onClick={goBack} disabled={!canGoBack} title="后退">
+        <button className="agent-browser-nav-btn" onClick={goBack} disabled={!canGoBack}>
           <ArrowLeft size={14} />
         </button>
-        <button className="agent-browser-nav-btn" onClick={goForward} disabled={!canGoForward} title="前进">
+        <button className="agent-browser-nav-btn" onClick={goForward} disabled={!canGoForward}>
           <ArrowRight size={14} />
         </button>
-        <button className="agent-browser-nav-btn" onClick={loading ? stop : reload} title={loading ? '停止' : '刷新'}>
+        <button className="agent-browser-nav-btn" onClick={loading ? stop : reload} title={loading ? '' : ''}>
           {loading ? <X size={14} /> : <RotateCcw size={14} />}
         </button>
-        <button className="agent-browser-nav-btn" onClick={() => { try { webviewRef.current?.stop() } catch {} setInitialUrl(''); setInputUrl(''); setTitle(''); setError(null); setCanGoBack(false); setCanGoForward(false) }} title="重置">
+        <button className="agent-browser-nav-btn" onClick={() => { try { webviewRef.current?.stop() } catch {} setInitialUrl(''); setInputUrl(''); setTitle(''); setError(null); setCanGoBack(false); setCanGoForward(false) }}>
           <Home size={14} />
         </button>
         <div className="agent-browser-urlbar">
@@ -355,17 +355,17 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
           />
           {loading && <span className="agent-browser-loading-dot" />}
         </div>
-        <button className={`agent-browser-nav-btn${annotateActive ? ' agent-browser-nav-btn--active' : ''}`} onClick={toggleAnnotate} title="UI 注释模式：点击页面元素添加注释（发送给 Agent 自动定位修改）">
+        <button className={`agent-browser-nav-btn${annotateActive ? ' agent-browser-nav-btn--active' : ''}`} onClick={toggleAnnotate}>
           <MessageSquarePlus size={14} />
           {annotations.length > 0 && <span className="agent-browser-annotate-count">{annotations.length}</span>}
         </button>
-        <button className="agent-browser-nav-btn" onClick={() => handleZoom(-1)} title="缩小" disabled={zoom <= 0.5}>
+        <button className="agent-browser-nav-btn" onClick={() => handleZoom(-1)} disabled={zoom <= 0.5}>
           <ZoomOut size={13} />
         </button>
-        <button className="agent-browser-nav-btn" onClick={() => handleZoom(1)} title="放大" disabled={zoom >= 2}>
+        <button className="agent-browser-nav-btn" onClick={() => handleZoom(1)} disabled={zoom >= 2}>
           <ZoomIn size={13} />
         </button>
-        <button className="agent-browser-nav-btn" onClick={openExternal} title="在外部浏览器打开">
+        <button className="agent-browser-nav-btn" onClick={openExternal}>
           <ExternalLink size={13} />
         </button>
       </div>
@@ -376,7 +376,7 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
           {crashed && (
             <div className="agent-browser-error" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span>页面进程已崩溃</span>
-              <button className="agent-browser-nav-btn" onClick={handleRecover} title="重新加载" style={{ width: 'auto', padding: '2px 8px', fontSize: 11 }}>
+              <button className="agent-browser-nav-btn" onClick={handleRecover} style={{ width: 'auto', padding: '2px 8px', fontSize: 11 }}>
                 <RotateCcw size={11} /> 恢复
               </button>
             </div>
@@ -399,7 +399,7 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
             <div className="agent-browser-annotations">
               <div className="agent-browser-annotations-head">
                 <span>UI 注释（{annotations.length}）</span>
-                <button className="agent-browser-annotations-clear" onClick={clearAnnotations} title="清空全部注释"><Trash2 size={11} /> 清空</button>
+                <button className="agent-browser-annotations-clear" onClick={clearAnnotations} ><Trash2 size={11} /> 清空</button>
               </div>
               <div className="agent-browser-annotations-list">
                 {annotations.map(a => (
@@ -413,7 +413,7 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
                         ? <div className="agent-browser-annotations-sel" title={a.text}>"{a.text}"</div>
                         : <div className="agent-browser-annotations-sel" title={a.elements.map(e => e.selector).join('\n')}>{a.elements.length > 1 ? `多选 ${a.elements.length} 个元素` : (a.elements[0]?.selector || '')}</div>}
                     {a.component && <div className="agent-browser-annotations-comp" title={a.component}>{a.component}</div>}
-                    <button className="agent-browser-annotations-del" onClick={() => removeAnnotation(a.id)} title="删除该注释"><X size={11} /></button>
+                    <button className="agent-browser-annotations-del" onClick={() => removeAnnotation(a.id)} ><X size={11} /></button>
                   </div>
                 ))}
               </div>

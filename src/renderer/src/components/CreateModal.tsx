@@ -4,6 +4,7 @@ import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { paramSetOf, ENGINE_LABELS } from '../utils/engine'
+import { switchParamSetArgs, syncArgsByParamSet } from '../utils/defaultTemplate'
 import { FolderOpen, ChevronDown, Terminal, Globe, Server, Loader2 } from 'lucide-react'
 import CmdParamsEditor from './CmdParamsEditor'
 import CustomSelect from './CustomSelect'
@@ -102,10 +103,24 @@ export default function CreateModal() {
     const b = backends.find(x => x.name === initialBackend)
     return defaultPortFor(b?.kind)
   })
+  const [paramSet, setParamSet] = useState(() => {
+    if (editingTemplate?.paramSet) return paramSetOf(editingTemplate.paramSet)
+    const b = backends.find(x => x.name === initialBackend)
+    return paramSetOf(b?.kind)
+  })
+  // 各引擎独立保存的启动参数：切换引擎后回切时恢复该引擎自定义值，不丢参数
+  const [argsByParamSet, setArgsByParamSet] = useState<Partial<Record<'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp', TemplateArgs>>>(() => {
+    if (editingTemplate?.argsByParamSet && Object.keys(editingTemplate.argsByParamSet).length > 0) {
+      return editingTemplate.argsByParamSet
+    }
+    // 旧模板无 argsByParamSet：以当前 args 作为当前参数集的一份快照
+    return { [paramSet]: { ...(editingTemplate?.args ?? {}) } }
+  })
   // 新建模板且后端为 TensorSharp / stable-diffusion.cpp 时，预填各自默认采样参数
   // （TensorSharp 无 --ctx-size/--threads 等 llama.cpp 参数；sd-server 预填生成默认值）
   const [args, setArgs] = useState<TemplateArgs>(() => {
     if (editingTemplate?.args) return editingTemplate.args
+    if (argsByParamSet[paramSet] && Object.keys(argsByParamSet[paramSet]!).length > 0) return argsByParamSet[paramSet]!
     const b = backends.find(x => x.name === initialBackend)
     if (b?.kind === 'tensorsharp') {
       return { '--temperature': 0.7, '--repeat-penalty': 1.1, '--max-tokens': 20000 }
@@ -115,21 +130,24 @@ export default function CreateModal() {
     }
     return {}
   })
-  // sd-server 无聊天 UI，新建 sdcpp 模板时默认 API 模式
+  // 参数编辑统一入口：同步写入 args 与 argsByParamSet[当前引擎]
+  const handleArgsChange = (nextArgs: TemplateArgs) => {
+    setArgs(nextArgs)
+    setArgsByParamSet(prev => syncArgsByParamSet(paramSet, nextArgs, prev))
+  }
+// sd-server 无聊天 UI，新建 sdcpp 模板时默认 API 模式
   const [launchMode, setLaunchMode] = useState<'chat' | 'api'>(editingTemplate?.launchMode ?? (() => {
     const b = backends.find(x => x.name === initialBackend)
     return b?.kind === 'sdcpp' ? 'api' : 'chat'
   })())
-  // 参数集：编辑模板时沿用已保存的，新建时按后端类型默认（可在高级参数里切换）
-  const [paramSet, setParamSet] = useState(() => {
-    if (editingTemplate?.paramSet) return paramSetOf(editingTemplate.paramSet)
-    const b = backends.find(x => x.name === initialBackend)
-    return paramSetOf(b?.kind)
-  })
   // 参数集切换：同步更新显示 + 切换活跃后端 + 端口默认值 + 后端版本下拉框
   const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp') => {
     if (next === paramSet) return
+    const filename = (modelPath.split(/[/\\]/).pop() || '')
+    const { args: nextArgs, argsByParamSet: nextByParamSet } = switchParamSetArgs(paramSet, args, argsByParamSet, next, filename)
     setParamSet(next)
+    setArgs(nextArgs)
+    setArgsByParamSet(nextByParamSet)
     const targetBackend = backends.find(b => b.kind === next)
     if (targetBackend) {
       setActiveBackend(targetBackend)
@@ -157,7 +175,7 @@ export default function CreateModal() {
     if (parsed.modelPath?.trim()) setModelPath(parsed.modelPath.trim())
     const port = Math.min(65535, Math.max(1024, parsed.serverPort || 8080))
     setServerPort(port)
-    setArgs((prev) => ({ ...prev, ...parsed.args }))
+    handleArgsChange({ ...args, ...parsed.args })
     setShowImport(false)
     setImportCmd('')
   }
@@ -172,6 +190,7 @@ export default function CreateModal() {
       modelPath,
       serverPort,
       args,
+      argsByParamSet,
       launchMode,
       paramSet
     }
@@ -283,14 +302,12 @@ export default function CreateModal() {
                   // 切换后端时参数集跟随后端类型（llama.cpp / TensorSharp / llama.cpp 分支各自专属参数文件）
                   const b = backends.find(x => x.name === v)
                   const nextPs = paramSetOf(b?.kind)
+                  const fname = (modelPath.split(/[/\\]/).pop() || '')
+                  const { args: nextArgs, argsByParamSet: nextByParamSet } = switchParamSetArgs(paramSet, args, argsByParamSet, nextPs, fname)
                   setParamSet(nextPs)
+                  setArgs(nextArgs)
+                  setArgsByParamSet(nextByParamSet)
                   setServerPort(defaultPortFor(nextPs === 'tensorsharp' || nextPs === 'sdcpp' ? nextPs : 'llamacpp'))
-                  if (nextPs === 'tensorsharp' && Object.keys(args).length === 0) {
-                    setArgs({ '--temperature': 0.7, '--repeat-penalty': 1.1, '--max-tokens': 20000 })
-                  }
-                  if (nextPs === 'sdcpp' && Object.keys(args).length === 0) {
-                    setArgs({ '--steps': 20, '--cfg-scale': 7 })
-                  }
                 }}
                 options={[
                   { value: '', label: '默认（当前）' },
@@ -379,7 +396,7 @@ export default function CreateModal() {
                 <div className="collapsible-body">
                   <CmdParamsEditor
                     args={args}
-                    onChange={setArgs}
+                    onChange={handleArgsChange}
                     backendName={backendVersion}
                     modelPathFallback={modelPath}
                     serverPortFallback={serverPort}

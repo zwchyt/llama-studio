@@ -143,6 +143,11 @@ const fullApi = {
     getServerProps: (port: number) => ipcRenderer.invoke('server-props', port),
   saveChatImage: (dataUrl: string) => ipcRenderer.invoke('save-chat-image', dataUrl),
   readChatImage: (ref: string) => ipcRenderer.invoke('read-chat-image', ref),
+  saveImages: (opts: { images: string[]; mode?: string; seed?: number; steps?: number; cfg?: number; width?: number; height?: number; prompt?: string; negativePrompt?: string; sampler?: string; scheduler?: string; model?: string }) => ipcRenderer.invoke('save-images', opts),
+  readImagegenImage: (name: string) => ipcRenderer.invoke('read-imagegen-image', name),
+  loadImagegenHistory: () => ipcRenderer.invoke('load-imagegen-history'),
+  saveImagegenHistory: (items: unknown[]) => ipcRenderer.invoke('save-imagegen-history', items),
+  deleteImagegenImages: (names: string[]) => ipcRenderer.invoke('delete-imagegen-images', names),
   abortChatStream: (streamId: string) => ipcRenderer.invoke('chat-stream-abort', streamId),
   onChatStreamChunk: (callback: (data: { streamId: string; delta?: string; done: boolean; error?: string; usage?: { promptTokens: number; completionTokens: number }; msFirstToken?: number; decodeTokS?: number; toolCalls?: Array<{ id: string; function: { name: string; arguments: string } }>; toolCallsProgress?: Array<{ name: string }>; finishReason?: string }) => void) => {
     ipcRenderer.removeAllListeners('chat-stream-chunk')
