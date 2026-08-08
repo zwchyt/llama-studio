@@ -147,6 +147,8 @@ const fullApi = {
   readImagegenImage: (name: string) => ipcRenderer.invoke('read-imagegen-image', name),
   loadImagegenHistory: () => ipcRenderer.invoke('load-imagegen-history'),
   saveImagegenHistory: (items: unknown[]) => ipcRenderer.invoke('save-imagegen-history', items),
+  loadImagegenPresets: () => ipcRenderer.invoke('load-imagegen-presets'),
+  saveImagegenPresets: (data: { pos?: Array<{ id: string; tag: string; cn: string; group: string }>; neg?: Array<{ id: string; tag: string; cn: string; group: string }> }) => ipcRenderer.invoke('save-imagegen-presets', data),
   deleteImagegenImages: (names: string[]) => ipcRenderer.invoke('delete-imagegen-images', names),
   abortChatStream: (streamId: string) => ipcRenderer.invoke('chat-stream-abort', streamId),
   onChatStreamChunk: (callback: (data: { streamId: string; delta?: string; done: boolean; error?: string; usage?: { promptTokens: number; completionTokens: number }; msFirstToken?: number; decodeTokS?: number; toolCalls?: Array<{ id: string; function: { name: string; arguments: string } }>; toolCallsProgress?: Array<{ name: string }>; finishReason?: string }) => void) => {

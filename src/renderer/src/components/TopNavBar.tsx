@@ -19,12 +19,14 @@ interface NavDef {
   color: string
   /** 'models' = 有模型运行时点亮；'llama' = llama-server 连接时点亮 */
   runningSource?: 'models' | 'llama'
+  /** 常驻点亮：不随页面切换消失（启动/控制模型的总入口） */
+  persistent?: boolean
 }
 
 // 与旧侧边栏完全相同的入口集合，仅排布方式不同（横向分组），每项配一个专属色
 const NAV_GROUPS: NavDef[][] = [
   [
-    { key: 'cards', label: '我的模板', icon: <LayoutGrid size={14} />, color: '#8b5cf6', runningSource: 'models' },
+    { key: 'cards', label: '我的模板', icon: <LayoutGrid size={14} />, color: '#8b5cf6', runningSource: 'models', persistent: true },
     { key: 'models', label: '模型', icon: <HardDrive size={14} />, color: '#3b82f6' },
     { key: 'hub', label: '模型中心', icon: <Search size={14} />, color: '#0ea5e9' },
   ],
@@ -126,6 +128,9 @@ export default function TopNavBar() {
     (item.runningSource === 'models' && hasRunningModels) ||
     (item.runningSource === 'llama' && !!activeChatUrl)
 
+  // 常驻项只要运行就点亮；非常驻项仅在当前选中页点亮，避免多个导航同时变绿
+  const shouldHighlight = (item: NavDef) => isRunning(item) && (item.persistent || view === item.key)
+
   const folders: { label: string; path: string }[] = paths ? [
     { label: '/backend', path: paths.backend },
     { label: '/models', path: paths.models },
@@ -145,7 +150,7 @@ export default function TopNavBar() {
                 key={item.key}
                 className={`topnav-item ${view === item.key ? 'active' : ''}`}
                 onClick={() => setView(item.key)}
-                style={isRunning(item) && view !== item.key ? { color: 'var(--success)' } : {}}
+                style={shouldHighlight(item) ? { color: 'var(--success)' } : {}}
               >
                 <span
                   className="topnav-ico"
@@ -162,7 +167,7 @@ export default function TopNavBar() {
                     style={{ background: item.color, boxShadow: `0 0 0 3px ${item.color}38` }}
                   />
                 )}
-                {isRunning(item) && view !== item.key && <span className="topnav-run-dot" />}
+                {shouldHighlight(item) && <span className="topnav-run-dot" />}
               </button>
             ))}
           </React.Fragment>

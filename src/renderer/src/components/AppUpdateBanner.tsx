@@ -70,6 +70,9 @@ export default function AppUpdateBanner({ hidden, switcher }: BannerSlotProps = 
       })
       if (res.success && res.path) {
         setDownloadedPath(res.path)
+        // 终态不依赖 IPC 事件与 invoke 回执的到达顺序：直接置为已下载，
+        // 避免晚到的 phase:'downloading' 进度事件让横幅永远卡在 100% 转圈
+        setAppDownloadProgress({ percent: 100, phase: 'downloaded' })
         notify(`${appReleaseInfo.releaseName} 下载完成，点击「安装更新」以完成安装`, 'success')
       } else {
         notify(`下载失败：${res.error || '未知错误'}`, 'error')
@@ -78,7 +81,6 @@ export default function AppUpdateBanner({ hidden, switcher }: BannerSlotProps = 
       notify(`下载失败：${String(e)}`, 'error')
     } finally {
       setDownloading(false)
-      setAppDownloadProgress(null)
     }
   }
 
@@ -107,8 +109,8 @@ export default function AppUpdateBanner({ hidden, switcher }: BannerSlotProps = 
     closeWithAnim()
   }
 
-  const isDownloading = downloading || (appDownloadProgress?.phase === 'downloading')
-  const isDownloaded = appDownloadProgress?.phase === 'downloaded' || downloadedPath
+  const isDownloading = !downloadedPath && (downloading || (appDownloadProgress?.phase === 'downloading'))
+  const isDownloaded = !!downloadedPath || appDownloadProgress?.phase === 'downloaded'
   const progressPercent = appDownloadProgress?.percent ?? 0
 
   return (

@@ -228,11 +228,24 @@ async function isAllowedModelPath(p: string): Promise<boolean> {
   return roots.some(root => isSafePath(root, p))
 }
 // 下面的代码实现了一个简单的命令行参数验证机制，确保只有在 commands.json 中定义的参数才会被传递给后端执行的模型运行命令。这有助于防止恶意用户通过 IPC 传递危险的参数来执行未授权的操作。
-const schemaCache = new Map<string, { allowed: Set<string>; boolean: Set<string> }>()
+const schemaCache = new Map<string, { mtimeMs: number; allowed: Set<string>; boolean: Set<string> }>()
 // 加载后端的参数白名单：先读后端目录内用户保存的专属参数文件，再回退到 resources/ 下对应参数集的文件
 function loadSchemaArgs(backendPath: string, paramSet: EngineKind = 'llamacpp'): { allowed: Set<string>; boolean: Set<string> } {
   const cached = schemaCache.get(backendPath)
-  if (cached) return cached
+  // 资源白名单源文件的最终路径：用户自定义优先，否则用 resources/ 下的默认文件
+  const commandsPath = join(backendPath, commandsFileName(paramSet))
+  const schemaPath = existsSync(commandsPath)
+    ? commandsPath
+    : schemaResourcePaths(paramSet).find(p => existsSync(p))
+  if (cached) {
+    if (schemaPath) {
+      let mtimeMs = 0
+      try { mtimeMs = statSync(schemaPath).mtimeMs } catch { mtimeMs = 0 }
+      if (cached.mtimeMs === mtimeMs) return cached
+    } else if (cached.mtimeMs === -1) {
+      return cached
+    }
+  }
   let schema: BackendSchema | null = null
   const tryLoad = (p: string): BackendSchema | null => {
     try {
@@ -241,7 +254,6 @@ function loadSchemaArgs(backendPath: string, paramSet: EngineKind = 'llamacpp'):
     } catch { return null }
   }
   // 用户保存的自定义参数集按参数集分文件名（TensorSharp → commands-tensorsharp.json，llama.cpp 分支 → 各自专属文件）
-  const commandsPath = join(backendPath, commandsFileName(paramSet))
   if (existsSync(commandsPath)) schema = tryLoad(commandsPath)
   if (!schema) {
     for (const p of schemaResourcePaths(paramSet)) {
@@ -268,7 +280,12 @@ function loadSchemaArgs(backendPath: string, paramSet: EngineKind = 'llamacpp'):
       allowed.add(a)
     }
   }
-  const result = { allowed, boolean }
+  // 记录源文件的 mtime：文件更新后下次调用自动重新加载（否则新增参数会被旧白名单拦住）
+  let mtimeMs = -1
+  if (schemaPath) {
+    try { mtimeMs = statSync(schemaPath).mtimeMs } catch { mtimeMs = -1 }
+  }
+  const result = { mtimeMs, allowed, boolean }
   schemaCache.set(backendPath, result)
   return result
 }
@@ -1831,6 +1848,70 @@ export function registerIpcHandlers(): void {
       }
       return true
     } catch { return false }
+  })
+
+  // ── 提示词预设（resources/ 下的 JSON 文件，正向/反向各一份，用户可直接编辑）──
+  // 结构与 commands.json 一致：dev 指向项目 resources/ 目录，打包后回退到 process.resourcesPath
+  interface ImagePresetItem { id: string; tag: string; cn: string; group: string }
+  interface ImagePresetGroupJson { name?: unknown; presets?: unknown }
+  function imagePresetFileName(slot: 'pos' | 'neg'): string {
+    return slot === 'pos' ? 'imagegen-presets-pos.json' : 'imagegen-presets-neg.json'
+  }
+  function imagePresetResourcePaths(slot: 'pos' | 'neg'): string[] {
+    const name = imagePresetFileName(slot)
+    return [
+      join(APP_ROOT, 'resources', name),
+      ...(app.isPackaged ? [join(process.resourcesPath, 'resources', name)] : [])
+    ]
+  }
+  function readImagePresets(slot: 'pos' | 'neg'): ImagePresetItem[] {
+    for (const p of imagePresetResourcePaths(slot)) {
+      try {
+        if (!existsSync(p)) continue
+        const parsed: unknown = JSON.parse(readFileSync(p, 'utf-8'))
+        if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { groups?: unknown }).groups)) continue
+        const items: ImagePresetItem[] = []
+        ;(parsed as { groups: ImagePresetGroupJson[] }).groups.forEach((g, gi) => {
+          const group = typeof g?.name === 'string' && g.name ? g.name : '其他'
+          if (!Array.isArray(g?.presets)) return
+          g.presets.forEach((pr, pi) => {
+            const o = (pr && typeof pr === 'object' ? pr : {}) as Record<string, unknown>
+            items.push({
+              id: `preset-${gi}-${pi}`,
+              tag: String(o.tag ?? o.prompt ?? ''),
+              cn: String(o.cn ?? ''),
+              group
+            })
+          })
+        })
+        if (items.length > 0) return items
+      } catch { /* 继续尝试下一个候选路径 */ }
+    }
+    return []
+  }
+  function writeImagePresets(slot: 'pos' | 'neg', items: ImagePresetItem[]): boolean {
+    try {
+      const target = join(APP_ROOT, 'resources', imagePresetFileName(slot))
+      mkdirSync(join(APP_ROOT, 'resources'), { recursive: true })
+      const map: Record<string, { tag: string; cn: string }[]> = {}
+      items.forEach(it => {
+        const group = it.group && it.group.trim() ? it.group : '其他'
+        ;(map[group] ??= []).push({ tag: it.tag, cn: it.cn })
+      })
+      const groups = Object.keys(map).map(g => ({ name: g, presets: map[g] }))
+      writeFileSync(target, JSON.stringify({ groups }, null, 2), 'utf-8')
+      return true
+    } catch { return false }
+  }
+  ipcMain.handle('load-imagegen-presets', (): { pos: ImagePresetItem[]; neg: ImagePresetItem[] } => ({
+    pos: readImagePresets('pos'),
+    neg: readImagePresets('neg')
+  }))
+  ipcMain.handle('save-imagegen-presets', (_e, data: { pos?: ImagePresetItem[]; neg?: ImagePresetItem[] }): boolean => {
+    let ok = true
+    if (data?.pos) ok = writeImagePresets('pos', data.pos) && ok
+    if (data?.neg) ok = writeImagePresets('neg', data.neg) && ok
+    return ok
   })
   ipcMain.handle('list-chat-sessions', async () => {
     if (!existsSync(CHATS_DIR)) return []

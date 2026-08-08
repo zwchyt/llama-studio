@@ -97,32 +97,32 @@ export default function Sidebar() {
         <button
           className={`nav-item ${view === 'llama' ? 'active' : ''}`}
           onClick={() => setView('llama')}
-          style={activeChatUrl ? { color: 'var(--success)' } : {}}
+          style={view === 'llama' && activeChatUrl ? { color: 'var(--success)' } : {}}
         >
           <Server size={16} />
           <span>llama-server</span>
           {view === 'llama' && <span className="nav-active-dot" />}
-          {activeChatUrl && <span className="nav-dot" />}
+          {view === 'llama' && activeChatUrl && <span className="nav-dot" />}
         </button>
         <button
           className={`nav-item ${view === 'chat' ? 'active' : ''}`}
           onClick={() => setView('chat')}
-          style={hasRunningModels ? { color: 'var(--success)' } : {}}
+          style={view === 'chat' && hasRunningModels ? { color: 'var(--success)' } : {}}
         >
           <MessageSquare size={16} />
           <span>聊天</span>
           {view === 'chat' && <span className="nav-active-dot" />}
-          {hasRunningModels && <span className="nav-dot" />}
+          {view === 'chat' && hasRunningModels && <span className="nav-dot" />}
         </button>
         <button
           className={`nav-item ${view === 'monitoring' ? 'active' : ''}`}
           onClick={() => setView('monitoring')}
-          style={hasRunningModels ? { color: 'var(--success)' } : {}}
+          style={view === 'monitoring' && hasRunningModels ? { color: 'var(--success)' } : {}}
         >
           <Activity size={16} />
           <span>模型运行数据</span>
           {view === 'monitoring' && <span className="nav-active-dot" />}
-          {hasRunningModels && <span className="nav-dot" />}
+          {view === 'monitoring' && hasRunningModels && <span className="nav-dot" />}
         </button>
         <button
           className={`nav-item ${view === 'benchmark' ? 'active' : ''}`}
@@ -144,12 +144,12 @@ export default function Sidebar() {
         <button
           className={`nav-item ${view === 'ocr' ? 'active' : ''}`}
           onClick={() => setView('ocr')}
-          style={hasRunningModels ? { color: 'var(--success)' } : {}}
+          style={view === 'ocr' && hasRunningModels ? { color: 'var(--success)' } : {}}
         >
           <FileText size={16} />
           <span>OCR</span>
           {view === 'ocr' && <span className="nav-active-dot" />}
-          {hasRunningModels && <span className="nav-dot" />}
+          {view === 'ocr' && hasRunningModels && <span className="nav-dot" />}
         </button>
         <button
           className={`nav-item ${view === 'model-tools' ? 'active' : ''}`}
@@ -178,12 +178,12 @@ export default function Sidebar() {
         <button
           className={`nav-item ${view === 'imagegen' ? 'active' : ''}`}
           onClick={() => setView('imagegen')}
-          style={hasRunningModels ? { color: 'var(--success)' } : {}}
+          style={view === 'imagegen' && hasRunningModels ? { color: 'var(--success)' } : {}}
         >
           <Image size={16} />
           <span>图像生成</span>
           {view === 'imagegen' && <span className="nav-active-dot" />}
-          {hasRunningModels && <span className="nav-dot" />}
+          {view === 'imagegen' && hasRunningModels && <span className="nav-dot" />}
         </button>
 
         {/* ── 工作台 ── */}

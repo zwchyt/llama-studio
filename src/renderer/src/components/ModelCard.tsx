@@ -6,7 +6,7 @@ import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { ENGINE_LABELS, paramSetOf } from '../utils/engine'
-import { Play, Square, Settings, MoreVertical, Copy, Trash, Download, Globe, Server, Terminal, Check, MessageSquare } from 'lucide-react'
+import { Play, Square, Settings, MoreVertical, Copy, Trash, Download, Globe, Server, Terminal, Check, MessageSquare, Image } from 'lucide-react'
 import type { CardState } from '../../../shared/types'
 import ParamsModal from './ParamsModal'
 interface Props { card: CardState }
@@ -416,6 +416,10 @@ export default function ModelCard({ card }: Props) {
             className="btn card-run-btn"
             style={{ background: 'rgb(98 157 69)', color: 'rgb(37 8 8)' }}
             onClick={() => {
+              if (effectiveParamSet === 'sdcpp') {
+                useStore.getState().setView('imagegen')
+                return
+              }
               const id = card.template.id
               const port = card.template.serverPort || 8080
               const name = card.template.name
@@ -431,7 +435,8 @@ export default function ModelCard({ card }: Props) {
               useStore.getState().setView('chat')
             }}
           >
-            <MessageSquare size={14} /> <span className="btn-label">原生聊天</span>
+            {effectiveParamSet === 'sdcpp' ? <Image size={14} /> : <MessageSquare size={14} />}
+            <span className="btn-label">{effectiveParamSet === 'sdcpp' ? '图像生成' : '原生聊天'}</span>
           </button>
         )}
         {!isRunning && (

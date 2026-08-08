@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { Search, Copy, Check, Lock } from 'lucide-react'
@@ -10,8 +11,8 @@ import CustomSelect from './CustomSelect'
 import ModelFileSelect from './ModelFileSelect'
 
 const FEATURED_ARGS = ['--ctx-size', '--gpu-layers', '--threads', '--batch-size', '--flash-attn']
-// stable-diffusion.cpp 参数集的「主要设置」推荐参数（sd-server 无 ctx/gpu-layers 等 llama.cpp 参数）
-const FEATURED_ARGS_SDCPP = ['--steps', '--cfg-scale', '--width', '--height', '--seed', '--threads', '--vae', '--llm', '--diffusion-fa', '--offload-to-cpu']
+// stable-diffusion.cpp 参数集的「主要设置」推荐参数（仅保留核心生成参数，其余在各自分类中）
+const FEATURED_ARGS_SDCPP = ['--steps', '--cfg-scale', '--sampling-method', '--scheduler', '--width', '--height', '--seed', '--batch-count', '--negative-prompt', '--strength', '--hires']
 
 interface Props {
   templateId: string
@@ -436,7 +437,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
 
           <div className="param-set-row" style={{ margin: '0 20px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
             <span className="text-muted text-sm" style={{ flexShrink: 0 }}>参数集</span>
-            <div className="launch-mode-row" style={{ flex: 1 }}>
+            <div className="launch-mode-row" style={{ flex: 1, marginBottom: 0 }}>
               {ALL_ENGINES.map(e => {
                 const installed = backends.some(b => b.kind === e)
                 return (
@@ -525,7 +526,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
               </span>
             ))}
           </div>
-          {paramTooltipEnabled && hoveredParam && tooltipPos && (() => {
+          {paramTooltipEnabled && hoveredParam && tooltipPos && createPortal((() => {
             const desc = currentCommands.find(c => c.arg === hoveredParam)?.description
             return desc ? (
               <div
@@ -535,7 +536,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
                 {desc}
               </div>
             ) : null
-          })()}
+          })(), document.body)}
         </div>
       </div>
     </div>

@@ -1,5 +1,8 @@
 import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, ChatStreamChunk, AgentProject, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeHit } from '../../shared/types'
 // 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
+interface ImagePromptPresetPayload {
+  id: string; tag: string; cn: string; group: string
+}
 interface ModelFileInfo {
   name: string
   path: string
@@ -154,6 +157,8 @@ interface LlamaCppApi {
   readImagegenImage: (name: string) => Promise<string | null>
   loadImagegenHistory: () => Promise<unknown[]>
   saveImagegenHistory: (items: unknown[]) => Promise<boolean>
+  loadImagegenPresets: () => Promise<{ pos: ImagePromptPresetPayload[]; neg: ImagePromptPresetPayload[] }>
+  saveImagegenPresets: (data: { pos?: ImagePromptPresetPayload[]; neg?: ImagePromptPresetPayload[] }) => Promise<boolean>
   deleteImagegenImages: (names: string[]) => Promise<boolean>
   abortChatStream: (streamId: string) => Promise<{ success: boolean }>
   onChatStreamChunk: (cb: (data: ChatStreamChunk) => void) => void

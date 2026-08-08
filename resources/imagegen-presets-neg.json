@@ -1,0 +1,123 @@
+{
+  "groups": [
+    {
+      "name": "画面质量",
+      "presets": [
+        {
+          "tag": "lowres",
+          "cn": "低分辨率"
+        },
+        {
+          "tag": "worst quality",
+          "cn": "最差质量"
+        },
+        {
+          "tag": "low quality",
+          "cn": "低质量"
+        },
+        {
+          "tag": "blurry",
+          "cn": "模糊"
+        },
+        {
+          "tag": "jpeg artifacts",
+          "cn": "压缩伪影"
+        },
+        {
+          "tag": "oversharpened",
+          "cn": "过度锐化"
+        },
+        {
+          "tag": "grainy",
+          "cn": "颗粒感"
+        },
+        {
+          "tag": "pixelated",
+          "cn": "像素化"
+        }
+      ]
+    },
+    {
+      "name": "人物缺陷",
+      "presets": [
+        {
+          "tag": "bad anatomy",
+          "cn": "结构错乱"
+        },
+        {
+          "tag": "bad hands",
+          "cn": "坏手"
+        },
+        {
+          "tag": "missing fingers",
+          "cn": "缺手指"
+        },
+        {
+          "tag": "extra digits",
+          "cn": "多手指"
+        },
+        {
+          "tag": "extra limb",
+          "cn": "多余肢体"
+        },
+        {
+          "tag": "mutated hands",
+          "cn": "畸形手"
+        },
+        {
+          "tag": "deformed",
+          "cn": "变形"
+        },
+        {
+          "tag": "bad feet",
+          "cn": "坏脚"
+        },
+        {
+          "tag": "cross-eyed",
+          "cn": "斗鸡眼"
+        },
+        {
+          "tag": "bad face",
+          "cn": "脸崩"
+        }
+      ]
+    },
+    {
+      "name": "杂项干扰",
+      "presets": [
+        {
+          "tag": "watermark",
+          "cn": "水印"
+        },
+        {
+          "tag": "signature",
+          "cn": "签名"
+        },
+        {
+          "tag": "text",
+          "cn": "文字"
+        },
+        {
+          "tag": "username",
+          "cn": "用户名"
+        },
+        {
+          "tag": "logo",
+          "cn": "徽标"
+        },
+        {
+          "tag": "border",
+          "cn": "边框"
+        },
+        {
+          "tag": "framed",
+          "cn": "构图"
+        },
+        {
+          "tag": "cropped",
+          "cn": "裁切的"
+        }
+      ]
+    }
+  ]
+}

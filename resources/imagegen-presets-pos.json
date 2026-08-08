@@ -1,0 +1,607 @@
+{
+  "groups": [
+    {
+      "name": "常用",
+      "presets": [
+        {
+          "tag": "masterpiece",
+          "cn": "大师作品"
+        },
+        {
+          "tag": "best quality",
+          "cn": "最好画质"
+        },
+        {
+          "tag": "high quality",
+          "cn": "高画质"
+        },
+        {
+          "tag": "highres",
+          "cn": "高清"
+        },
+        {
+          "tag": "ultra detailed",
+          "cn": "超精细"
+        },
+        {
+          "tag": "8k",
+          "cn": "8K分辨率"
+        },
+        {
+          "tag": "official art",
+          "cn": "官方艺术"
+        },
+        {
+          "tag": "extremely detailed CG",
+          "cn": "极致细节CG"
+        }
+      ]
+    },
+    {
+      "name": "环境",
+      "presets": [
+        {
+          "tag": "day",
+          "cn": "白天"
+        },
+        {
+          "tag": "dusk",
+          "cn": "黄昏"
+        },
+        {
+          "tag": "night",
+          "cn": "夜晚"
+        },
+        {
+          "tag": "sun",
+          "cn": "太阳"
+        },
+        {
+          "tag": "sunset",
+          "cn": "落日"
+        },
+        {
+          "tag": "moon",
+          "cn": "月亮"
+        },
+        {
+          "tag": "full_moon",
+          "cn": "满月"
+        },
+        {
+          "tag": "stars",
+          "cn": "星星"
+        },
+        {
+          "tag": "cloudy",
+          "cn": "多云"
+        },
+        {
+          "tag": "rain",
+          "cn": "下雨"
+        },
+        {
+          "tag": "in the rain",
+          "cn": "雨中"
+        },
+        {
+          "tag": "snow",
+          "cn": "下雪"
+        },
+        {
+          "tag": "sunlight",
+          "cn": "阳光"
+        },
+        {
+          "tag": "summer",
+          "cn": "夏天"
+        },
+        {
+          "tag": "winter",
+          "cn": "冬天"
+        },
+        {
+          "tag": "sky",
+          "cn": "天空"
+        },
+        {
+          "tag": "sea",
+          "cn": "大海"
+        },
+        {
+          "tag": "mountain",
+          "cn": "山"
+        },
+        {
+          "tag": "on the beach",
+          "cn": "海滩上"
+        },
+        {
+          "tag": "cityscape",
+          "cn": "城市风景"
+        },
+        {
+          "tag": "landscape",
+          "cn": "风景"
+        },
+        {
+          "tag": "beautiful detailed sky",
+          "cn": "好天"
+        },
+        {
+          "tag": "flower field",
+          "cn": "花田"
+        },
+        {
+          "tag": "underwater",
+          "cn": "水下"
+        },
+        {
+          "tag": "forest",
+          "cn": "森林"
+        },
+        {
+          "tag": "stars cluster",
+          "cn": "星团"
+        },
+        {
+          "tag": "aurora",
+          "cn": "极光"
+        },
+        {
+          "tag": "fireworks",
+          "cn": "烟花"
+        }
+      ]
+    },
+    {
+      "name": "风格",
+      "presets": [
+        {
+          "tag": "artbook",
+          "cn": "原画"
+        },
+        {
+          "tag": "game_cg",
+          "cn": "游戏CG"
+        },
+        {
+          "tag": "comic",
+          "cn": "漫画"
+        },
+        {
+          "tag": "realistic",
+          "cn": "写实"
+        },
+        {
+          "tag": "photo",
+          "cn": "照片"
+        },
+        {
+          "tag": "anime",
+          "cn": "动漫"
+        },
+        {
+          "tag": "sketch",
+          "cn": "素描"
+        },
+        {
+          "tag": "pixel_art",
+          "cn": "点阵图"
+        },
+        {
+          "tag": "watercolor_(medium)",
+          "cn": "水彩"
+        },
+        {
+          "tag": "oil painting",
+          "cn": "油画"
+        },
+        {
+          "tag": "monochrome",
+          "cn": "单色"
+        },
+        {
+          "tag": "colorful",
+          "cn": "色彩斑斓"
+        },
+        {
+          "tag": "cyberpunk",
+          "cn": "赛博朋克"
+        },
+        {
+          "tag": "science_fiction",
+          "cn": "科技幻想"
+        },
+        {
+          "tag": "fantasy",
+          "cn": "奇幻"
+        }
+      ]
+    },
+    {
+      "name": "人物",
+      "presets": [
+        {
+          "tag": "girl",
+          "cn": "女孩"
+        },
+        {
+          "tag": "boy",
+          "cn": "男孩"
+        },
+        {
+          "tag": "woman",
+          "cn": "女人"
+        },
+        {
+          "tag": "man",
+          "cn": "男人"
+        },
+        {
+          "tag": "solo",
+          "cn": "单人"
+        },
+        {
+          "tag": "little girl",
+          "cn": "小女孩"
+        },
+        {
+          "tag": "kawaii",
+          "cn": "可爱"
+        },
+        {
+          "tag": "bishoujo",
+          "cn": "美少女"
+        },
+        {
+          "tag": "angel",
+          "cn": "天使"
+        },
+        {
+          "tag": "elf",
+          "cn": "精灵"
+        },
+        {
+          "tag": "idol",
+          "cn": "偶像"
+        },
+        {
+          "tag": "maid",
+          "cn": "女仆"
+        },
+        {
+          "tag": "witch",
+          "cn": "女巫"
+        },
+        {
+          "tag": "ninja",
+          "cn": "忍者"
+        },
+        {
+          "tag": "student",
+          "cn": "学生"
+        }
+      ]
+    },
+    {
+      "name": "服装",
+      "presets": [
+        {
+          "tag": "dress",
+          "cn": "连衣裙"
+        },
+        {
+          "tag": "bikini",
+          "cn": "比基尼"
+        },
+        {
+          "tag": "school uniform",
+          "cn": "校服"
+        },
+        {
+          "tag": "maid uniform",
+          "cn": "女仆装"
+        },
+        {
+          "tag": "kimono",
+          "cn": "和服"
+        },
+        {
+          "tag": "cheongsam",
+          "cn": "旗袍"
+        },
+        {
+          "tag": "military uniform",
+          "cn": "军装"
+        },
+        {
+          "tag": "suit",
+          "cn": "西装"
+        },
+        {
+          "tag": "casual",
+          "cn": "休闲"
+        },
+        {
+          "tag": "hat",
+          "cn": "帽子"
+        },
+        {
+          "tag": "hoodie",
+          "cn": "连帽衫"
+        },
+        {
+          "tag": "white dress",
+          "cn": "白裙"
+        }
+      ]
+    },
+    {
+      "name": "表情",
+      "presets": [
+        {
+          "tag": "smile",
+          "cn": "微笑"
+        },
+        {
+          "tag": "happy",
+          "cn": "开心"
+        },
+        {
+          "tag": "sad",
+          "cn": "悲伤"
+        },
+        {
+          "tag": "angry",
+          "cn": "生气"
+        },
+        {
+          "tag": "surprised",
+          "cn": "惊讶"
+        },
+        {
+          "tag": "blush",
+          "cn": "脸红"
+        },
+        {
+          "tag": "tears",
+          "cn": "眼泪"
+        },
+        {
+          "tag": "serious",
+          "cn": "严肃"
+        },
+        {
+          "tag": "calm",
+          "cn": "平静"
+        }
+      ]
+    },
+    {
+      "name": "头发",
+      "presets": [
+        {
+          "tag": "long hair",
+          "cn": "长发"
+        },
+        {
+          "tag": "short hair",
+          "cn": "短发"
+        },
+        {
+          "tag": "ponytail",
+          "cn": "马尾辫"
+        },
+        {
+          "tag": "twintails",
+          "cn": "双马尾"
+        },
+        {
+          "tag": "braid",
+          "cn": "辫子"
+        },
+        {
+          "tag": "blonde hair",
+          "cn": "金发"
+        },
+        {
+          "tag": "black hair",
+          "cn": "黑发"
+        },
+        {
+          "tag": "white hair",
+          "cn": "白发"
+        },
+        {
+          "tag": "brown hair",
+          "cn": "棕发"
+        },
+        {
+          "tag": "blue hair",
+          "cn": "蓝发"
+        },
+        {
+          "tag": "red hair",
+          "cn": "红发"
+        },
+        {
+          "tag": "tan hair",
+          "cn": "棕发"
+        }
+      ]
+    },
+    {
+      "name": "动作",
+      "presets": [
+        {
+          "tag": "sitting",
+          "cn": "坐着"
+        },
+        {
+          "tag": "standing",
+          "cn": "站着"
+        },
+        {
+          "tag": "lying",
+          "cn": "躺着"
+        },
+        {
+          "tag": "running",
+          "cn": "奔跑"
+        },
+        {
+          "tag": "jumping",
+          "cn": "跳跃"
+        },
+        {
+          "tag": "pointing",
+          "cn": "指向"
+        },
+        {
+          "tag": "waving",
+          "cn": "挥手"
+        },
+        {
+          "tag": "hands on hips",
+          "cn": "叉腰"
+        }
+      ]
+    },
+    {
+      "name": "眼睛",
+      "presets": [
+        {
+          "tag": "eye color",
+          "cn": "眼睛颜色"
+        },
+        {
+          "tag": "blue eyes",
+          "cn": "蓝眼睛"
+        },
+        {
+          "tag": "brown eyes",
+          "cn": "棕色眼睛"
+        },
+        {
+          "tag": "green eyes",
+          "cn": "绿眼睛"
+        },
+        {
+          "tag": "black eyes",
+          "cn": "黑眼睛"
+        },
+        {
+          "tag": "red eyes",
+          "cn": "红眼睛"
+        },
+        {
+          "tag": "purple eyes",
+          "cn": "紫眼睛"
+        },
+        {
+          "tag": "heterochromia",
+          "cn": "异色瞳"
+        },
+        {
+          "tag": "glowing eyes",
+          "cn": "发光眼"
+        },
+        {
+          "tag": "sparkling eyes",
+          "cn": "闪闪发光的眼睛"
+        },
+        {
+          "tag": "closed eyes",
+          "cn": "闭眼"
+        },
+        {
+          "tag": "wide eyes",
+          "cn": "睁大眼睛"
+        },
+        {
+          "tag": "half-closed eyes",
+          "cn": "半闭眼"
+        },
+        {
+          "tag": "anime eyes",
+          "cn": "动漫眼"
+        }
+      ]
+    },
+    {
+      "name": "身体",
+      "presets": [
+        {
+          "tag": "breasts",
+          "cn": "胸部"
+        },
+        {
+          "tag": "large breasts",
+          "cn": "胸部丰满"
+        },
+        {
+          "tag": "medium breasts",
+          "cn": "胸部适中"
+        },
+        {
+          "tag": "small breasts",
+          "cn": "胸部小巧"
+        },
+        {
+          "tag": "flat chest",
+          "cn": "平坦胸部"
+        },
+        {
+          "tag": "cleavage",
+          "cn": "沟"
+        },
+        {
+          "tag": "bare shoulders",
+          "cn": "露肩"
+        }
+      ]
+    },
+    {
+      "name": "动物",
+      "presets": [
+        {
+          "tag": "cat",
+          "cn": "猫"
+        },
+        {
+          "tag": "dog",
+          "cn": "狗"
+        },
+        {
+          "tag": "bird",
+          "cn": "鸟"
+        },
+        {
+          "tag": "rabbit",
+          "cn": "兔子"
+        },
+        {
+          "tag": "butterfly",
+          "cn": "蝴蝶"
+        },
+        {
+          "tag": "fox",
+          "cn": "狐狸"
+        },
+        {
+          "tag": "wolf",
+          "cn": "狼"
+        },
+        {
+          "tag": "dragon",
+          "cn": "龙"
+        },
+        {
+          "tag": "horse",
+          "cn": "马"
+        }
+      ]
+    }
+  ]
+}

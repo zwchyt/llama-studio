@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Image, Loader2, Save, FolderOpen, Upload, Square, Wand2, Trash2, ChevronDown, Play, AlertTriangle, X, Sparkles } from 'lucide-react'
+import { Image, Loader2, Save, FolderOpen, Upload, Square, Wand2, Trash2, ChevronDown, Play, X, Sparkles } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useImageStore, type ImageGenItem } from '../store/imageStore'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { paramSetOf } from '../utils/engine'
 import CustomSelect from './CustomSelect'
+import PromptPresetPicker from './PromptPresetPicker'
 import '../styles/imagegen.css'
 
 // ── 图像生成视图：调用运行中的 stable-diffusion.cpp sd-server ────
@@ -18,6 +19,11 @@ const toImageDataUrl = (b64: string): string =>
 
 // 单张上传上限（图生图 init image），超出直接拒绝，避免超大 base64 撑爆内存
 const MAX_INIT_IMAGE_MB = 25
+
+// 服务未启动时的兜底选项（与 stable-diffusion.cpp 的 --sampling-method / --scheduler 枚举一致），
+// 允许提前选择；服务就绪后会被 /sdapi 返回的真实列表覆盖
+const FALLBACK_SAMPLERS = ['euler', 'euler_a', 'heun', 'dpm2', 'dpm++2s_a', 'dpm++2m', 'dpm++2mv2', 'dpm++2m_sde', 'dpm++2m_sde_bt', 'ipndm', 'ipndm_v', 'lcm', 'ddim_trailing', 'tcd', 'res_multistep', 'res_2s', 'er_sde', 'euler_cfg_pp', 'euler_a_cfg_pp', 'lms']
+const FALLBACK_SCHEDULERS = ['discrete', 'karras', 'exponential', 'ays', 'gits', 'smoothstep', 'sgm_uniform', 'simple', 'kl_optimal', 'lcm', 'bong_tangent', 'ltx2', 'logit_normal', 'flux2', 'flux', 'beta']
 
 export default function ImageGenView() {
   const cards = useStore(s => s.cards)
@@ -36,6 +42,11 @@ export default function ImageGenView() {
   // 正在运行的 sd-server 卡片（ready 仅作展示，不参与筛选）
   const runningSdCards = useMemo(() => sdCards.filter(c => c.status === 'running'), [sdCards])
 
+  // 挂载时加载提示词预设（来自 resources/ 下的 JSON 文件）
+  useEffect(() => {
+    useImageStore.getState().initPromptPresets()
+  }, [])
+
   const [selectedId, setSelectedId] = useState('')
   // 列表变化时自动选中第一个运行中的卡片，否则选中第一个卡片
   useEffect(() => {
@@ -51,8 +62,8 @@ export default function ImageGenView() {
 
   // ── 参数表单 ──
   const [mode, setMode] = useState<'txt2img' | 'img2img'>('txt2img')
-  const [prompt, setPrompt] = useState('a lovely cat, masterpiece, best quality')
-  const [negativePrompt, setNegativePrompt] = useState('blurry, low quality, watermark')
+  const [prompt, setPrompt] = useState('')
+  const [negativePrompt, setNegativePrompt] = useState('')
   const [steps, setSteps] = useState(20)
   const [cfgScale, setCfgScale] = useState(7)
   const [width, setWidth] = useState(512)
@@ -164,10 +175,14 @@ export default function ImageGenView() {
     if (num(A['--width']) !== undefined) patchFromArgs.width = num(A['--width'])!
     if (num(A['--height']) !== undefined) patchFromArgs.height = num(A['--height'])!
     if (num(A['--seed']) !== undefined) patchFromArgs.seed = num(A['--seed'])!
-    if (num(A['--batch-size']) !== undefined) patchFromArgs.batch = num(A['--batch-size'])!
-    if (A['--sampler'] !== null && A['--sampler'] !== undefined && A['--sampler'] !== '') patchFromArgs.sampler = String(A['--sampler'])
+    if (num(A['--batch-count']) !== undefined) patchFromArgs.batch = num(A['--batch-count'])!
+    else if (num(A['--batch-size']) !== undefined) patchFromArgs.batch = num(A['--batch-size'])!
+    // sd-server 采样器参数名为 --sampling-method（兼容旧模板里的 --sampler）
+    if (A['--sampling-method'] !== null && A['--sampling-method'] !== undefined && A['--sampling-method'] !== '') patchFromArgs.sampler = String(A['--sampling-method'])
+    else if (A['--sampler'] !== null && A['--sampler'] !== undefined && A['--sampler'] !== '') patchFromArgs.sampler = String(A['--sampler'])
     if (A['--scheduler'] !== null && A['--scheduler'] !== undefined && A['--scheduler'] !== '') patchFromArgs.scheduler = String(A['--scheduler'])
-    if (num(A['--denoise-strength']) !== undefined) patchFromArgs.denoise = num(A['--denoise-strength'])!
+    if (num(A['--strength']) !== undefined) patchFromArgs.denoise = num(A['--strength'])!
+    else if (num(A['--denoise-strength']) !== undefined) patchFromArgs.denoise = num(A['--denoise-strength'])!
     apply(patchFromArgs)
 
     // 2) 服务就绪时：读取 sd-server 的有效配置并回填（这些仍是显式覆盖，故仅在未手动改过的字段上生效）
@@ -403,23 +418,8 @@ export default function ImageGenView() {
     )
   }
 
-  // 有模板但无一运行：参数面板照常展示，顶部显示醒目的启动提示
-  const noRunning = runningSdCards.length === 0
-
   return (
     <div className="imagegen">
-      {noRunning && (
-        <div className="imagegen-notice">
-          <AlertTriangle size={18} />
-          <div className="imagegen-notice-text">
-            <strong>当前没有正在运行的 stable-diffusion.cpp 服务</strong>
-            <span>你可以先在这里设置好生成参数；选择下方「服务」后点击「启动」再生成，或前往「我的模板」启动。</span>
-          </div>
-          <button className="btn btn-primary" onClick={() => setView('cards')}>
-            <Play size={14} /> 前往我的模板启动
-          </button>
-        </div>
-      )}
       <div className="imagegen-header">
         <div className="imagegen-header-left">
           <h2 className="imagegen-title">图像生成</h2>
@@ -460,7 +460,7 @@ export default function ImageGenView() {
           <div className="imagegen-reco-files">
             <code>z-image-turbo-Q4_K_M.gguf</code>
             <span>扩散主模型（Q4_K_M 量化）</span>
-            <code>z-image-turbo ae.safetensors</code>
+            <code>ae.safetensors</code>
             <span>VAE 解码器</span>
             <code>Qwen3-4B-Instruct-2507-UD-Q4_K_XL.gguf</code>
             <span>文本编码器</span>
@@ -468,6 +468,54 @@ export default function ImageGenView() {
           <p className="imagegen-reco-note">将以上权重放入对应的模型文件夹，并在「我的模板」中指定后即可使用。</p>
         </div>
       )}
+
+      {/* ── 提示词区：横跨整个界面宽度，正向 / 负向并排 ── */}
+      <div className="imagegen-prompts-full">
+        <h3 className="imagegen-section-title">提示词</h3>
+        <div className="imagegen-prompts-row">
+          <div className="imagegen-field">
+            <div className="imagegen-field-head">
+              <label className="form-label">正向提示词</label>
+              <div className="imagegen-field-tools">
+                {prompt && (
+                  <button type="button" className="imagegen-clear-btn" onClick={() => setPrompt('')} title="清空提示词">
+                    <X size={12} /> 清空
+                  </button>
+                )}
+                <PromptPresetPicker slot="pos" current={prompt} onApply={setPrompt} />
+              </div>
+            </div>
+            <textarea
+              className="form-textarea imagegen-prompt"
+              rows={4}
+              value={prompt}
+              onChange={e => setPrompt(e.target.value)}
+              placeholder="描述你想生成的画面..."
+            />
+          </div>
+          <div className="imagegen-field">
+            <div className="imagegen-field-head">
+              <label className="form-label">负向提示词</label>
+              <div className="imagegen-field-tools">
+                {negativePrompt && (
+                  <button type="button" className="imagegen-clear-btn" onClick={() => setNegativePrompt('')} title="清空提示词">
+                    <X size={12} /> 清空
+                  </button>
+                )}
+                <PromptPresetPicker slot="neg" current={negativePrompt} onApply={setNegativePrompt} />
+              </div>
+            </div>
+            <textarea
+              className="form-textarea imagegen-prompt"
+              rows={4}
+              value={negativePrompt}
+              onChange={e => setNegativePrompt(e.target.value)}
+              placeholder="blurry, low quality, watermark"
+            />
+          </div>
+        </div>
+      </div>
+
       <div className="imagegen-body">
         {/* ── 左侧：参数面板 ── */}
         <div className="imagegen-panel">
@@ -507,23 +555,6 @@ export default function ImageGenView() {
           )}
 
           <div className="imagegen-section">
-            <h3 className="imagegen-section-title">提示词</h3>
-            <div className="imagegen-field">
-              <textarea
-                className="form-textarea imagegen-prompt"
-                rows={4}
-                value={prompt}
-                onChange={e => setPrompt(e.target.value)}
-                placeholder="描述你想生成的画面..."
-              />
-            </div>
-            <div className="imagegen-field">
-              <label className="form-label">负向提示词</label>
-              <input className="form-input" value={negativePrompt} onChange={e => setNegativePrompt(e.target.value)} placeholder="blurry, low quality, watermark" />
-            </div>
-          </div>
-
-          <div className="imagegen-section">
             <h3 className="imagegen-section-title">生成参数</h3>
             <div className="imagegen-grid">
               <div className="imagegen-field">
@@ -559,7 +590,7 @@ export default function ImageGenView() {
                   itemClass="imagegen-dropdown-item"
                   value={samplerName}
                   onChange={setSamplerName}
-                  options={samplers.length === 0 ? [{ value: '', label: '默认' }] : samplers.map(s => ({ value: s, label: s }))}
+                  options={samplers.length === 0 ? [{ value: '', label: '默认' }, ...FALLBACK_SAMPLERS.map(s => ({ value: s, label: s }))] : samplers.map(s => ({ value: s, label: s }))}
                   placeholder="默认"
                 />
               </div>
@@ -572,7 +603,7 @@ export default function ImageGenView() {
                   itemClass="imagegen-dropdown-item"
                   value={scheduler}
                   onChange={setScheduler}
-                  options={schedulers.length === 0 ? [{ value: '', label: '默认' }] : schedulers.map(s => ({ value: s, label: s }))}
+                  options={schedulers.length === 0 ? [{ value: '', label: '默认' }, ...FALLBACK_SCHEDULERS.map(s => ({ value: s, label: s }))] : schedulers.map(s => ({ value: s, label: s }))}
                   placeholder="默认"
                 />
               </div>
