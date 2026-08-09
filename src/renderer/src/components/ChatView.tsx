@@ -1281,10 +1281,11 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRe
   }
 
   const filteredSessions = useMemo(() => {
-    let list = sessions
+    // 防御：跳过缺少有效 id 的脏数据，避免 key 警告与渲染崩溃
+    let list = sessions.filter(s => s && typeof s.id === 'string')
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
-      list = sessions.filter(s => {
+      list = list.filter(s => {
         if (s.title.toLowerCase().includes(q)) return true
         return s.messages.some(m => m.content && m.content.toLowerCase().includes(q))
       })

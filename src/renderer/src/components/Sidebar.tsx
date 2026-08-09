@@ -132,6 +132,16 @@ export default function Sidebar() {
           <span>性能测试</span>
           {view === 'benchmark' && <span className="nav-active-dot" />}
         </button>
+        <button
+          className={`nav-item ${view === 'token-stats' ? 'active' : ''}`}
+          onClick={() => setView('token-stats')}
+          style={view === 'token-stats' && hasRunningModels ? { color: 'var(--success)' } : {}}
+        >
+          <Gauge size={16} />
+          <span>Token 统计</span>
+          {view === 'token-stats' && <span className="nav-active-dot" />}
+          {view === 'token-stats' && hasRunningModels && <span className="nav-dot" />}
+        </button>
 
         <button
           className={`nav-item ${view === 'terminal' ? 'active' : ''}`}
@@ -193,7 +203,7 @@ export default function Sidebar() {
           onClick={() => setView('agent-code')}
         >
           <Code size={16} />
-          <span>Agent Code 工作台</span>
+          <span>Agent Code</span>
           {view === 'agent-code' && <span className="nav-active-dot" />}
         </button>
 

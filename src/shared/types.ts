@@ -183,6 +183,17 @@ export interface ChatSession {
   createdAt: string
   updatedAt: string
 }
+// 主进程 Token 记账簿条目（与聊天记录解耦，删除会话不影响）
+export interface TokenUsageEntry {
+  ts: number          // 请求结束时间戳
+  port: number        // llama-server 端口
+  templateId?: string // 发起请求的模板卡 id
+  modelPath?: string | null  // 当时该端口加载的模型文件路径
+  promptTokens: number       // 本次请求完整输入（含历史）
+  promptDelta?: number       // 新增输入：与同端口上一次请求相比的增长量
+  completionTokens: number
+}
+
 // 主进程流式代理推送到渲染层的 chunk
 export interface ChatStreamChunk {
   streamId: string

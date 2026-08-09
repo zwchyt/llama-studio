@@ -21,6 +21,7 @@ import { registerRetrievalIpc } from './services/retrievalService'
 import { registerMemoryStoreIpc } from './services/memoryStore'
 import { readGgufMeta } from './services/ggufReader'
 import { registerKnowledgeIpc } from './services/knowledgeService'
+import { initTokenLedger, appendTokenUsage, readTokenUsage, clearTokenUsage } from './tokenLedger'
 
 let ptyModule: typeof ptyNs | null = null
 async function getPty(): Promise<typeof ptyNs> {
@@ -173,6 +174,8 @@ const SETTINGS_PATH = join(APP_ROOT, 'settings.json')
 for (const dir of [MODELS_DIR, TEMPLATES_DIR, BACKEND_DIR, CHATS_DIR, CHAT_TEMPLATES_DIR]) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
+// Token 记账簿：独立于聊天记录，删除会话不影响累计
+initTokenLedger(CHATS_DIR)
 // 参数集由用户在参数设置里手动切换（paramSet），不自动识别引擎：
 // 'tensorsharp' → commands-tensorsharp.json，'turboquant' → commands-turboquant.json，
 // 'beellama' → commands-beellama.json，'sdcpp' → commands-sdcpp.json，其余 → commands.json
@@ -384,6 +387,20 @@ function loadSettingsSync(): AppSettings {
 }
 interface RunningProcess { proc: ChildProcess; port: number; kind: EngineKind }
 const runningProcesses = new Map<string, RunningProcess>()
+// 端口 → 当时加载的模型文件（Token 记账簿用：流结束时按 port 回查模型身份）
+const portModelInfos = new Map<number, { templateId: string; modelPath: string | null }>()
+// 从启动参数中提取模型文件参数（-m / --model / --model-path / --model-file 等均存在）
+function extractModelArg(args: string[]): string | null {
+  const keys = ['-m', '--model', '--model-path', '--model-file', '-mf']
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]
+    for (const k of keys) {
+      if (a === k) return args[i + 1] ?? null
+      if (a.startsWith(`${k}=`)) return a.slice(k.length + 1)
+    }
+  }
+  return null
+}
 // 模型日志缓存：主进程留存每个模型的输出块，界面刷新后可拉回历史日志（每模型限量，防内存膨胀）
 const MODEL_LOG_BUFFER_MAX = 1000
 const modelLogBuffers = new Map<string, { stream: string; text: string }[]>()
@@ -1075,6 +1092,7 @@ export function cleanupRunningProcesses(): void {
     killProcessTreeAsync(proc)
   }
   runningProcesses.clear()
+  portModelInfos.clear()
   // 清理所有进行中的聊天流式请求
   for (const [, req] of activeChatStreams) {
     try { req.destroy() } catch { /* ignore */ }
@@ -1920,7 +1938,10 @@ export function registerIpcHandlers(): void {
       files.filter(f => f.endsWith('.json')).map(async (f) => {
         try {
           const text = await fsPromises.readFile(join(CHATS_DIR, f), 'utf-8')
-          return JSON.parse(text)
+          const data = JSON.parse(text)
+          // 只返回真正的会话数据：排除 imagegen-history.json 等辅助 JSON（无 id/messages）
+          if (!data || typeof data.id !== 'string' || !Array.isArray(data.messages)) return null
+          return data
         } catch { return null }
       })
     )
@@ -1955,6 +1976,8 @@ export function registerIpcHandlers(): void {
     try { if (existsSync(fp)) unlinkSync(fp) } catch { }
     return { success: true }
   })
+  ipcMain.handle('list-token-usage', async () => readTokenUsage())
+  ipcMain.handle('clear-token-usage', () => { clearTokenUsage(); return { success: true } })
   ipcMain.handle('import-template', async () => {
     try {
       const r = await dialog.showOpenDialog({ title: 'Import Template', defaultPath: TEMPLATES_DIR, filters: [{ name: 'JSON Template', extensions: ['json'] }], properties: ['openFile'] })
@@ -2103,6 +2126,7 @@ export function registerIpcHandlers(): void {
         if (!_e.sender.isDestroyed()) _e.sender.send('model-error', { id: opts.id, error: msg })
       })
       runningProcesses.set(opts.id, { proc, port: opts.port, kind })
+      portModelInfos.set(opts.port, { templateId: opts.id, modelPath: extractModelArg(safeArgs) })
       if (metricsPollingEnabled) startMetricsInterval()
       // send initial pid metric immediately
       if (proc.pid !== undefined) {
@@ -2120,6 +2144,7 @@ export function registerIpcHandlers(): void {
           })
         }
         runningProcesses.delete(opts.id)
+        portModelInfos.delete(opts.port)
         if (runningProcesses.size === 0) stopMetricsInterval()
       })
       if (opts.openBrowser) {
@@ -2216,6 +2241,7 @@ export function registerIpcHandlers(): void {
     const entry = runningProcesses.get(id)
     if (entry) {
       runningProcesses.delete(id)
+      portModelInfos.delete(entry.port)
       lastTtft.delete(id)
       if (runningProcesses.size === 0) stopMetricsInterval()
       const tasks: Promise<unknown>[] = [killProcessTreeAsync(entry.proc)]
@@ -3877,6 +3903,18 @@ export function registerIpcHandlers(): void {
           const finalUsage = finalTokens != null
             ? { promptTokens: lastUsage?.promptTokens ?? 0, completionTokens: finalTokens }
             : undefined
+          // Token 记账：流结束即入账，独立于聊天记录持久化（删除会话不影响累计）
+          if (finalUsage) {
+            const m = portModelInfos.get(opts.port)
+            appendTokenUsage({
+              ts: Date.now(),
+              port: opts.port,
+              templateId: m?.templateId,
+              modelPath: m?.modelPath ?? null,
+              promptTokens: finalUsage.promptTokens,
+              completionTokens: finalUsage.completionTokens,
+            })
+          }
           e.sender.send('chat-stream-chunk', {
             streamId,
             done: true,

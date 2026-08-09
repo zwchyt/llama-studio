@@ -34,6 +34,7 @@ const NAV_GROUPS: NavDef[][] = [
     { key: 'llama', label: 'llama-server', icon: <Server size={14} />, color: '#14b8a6', runningSource: 'llama' },
     { key: 'chat', label: '聊天', icon: <MessageSquare size={14} />, color: '#ec4899', runningSource: 'models' },
     { key: 'monitoring', label: '运行数据', icon: <Activity size={14} />, color: '#ef4444', runningSource: 'models' },
+    { key: 'token-stats', label: 'Token 统计', icon: <Gauge size={14} />, color: '#f59e0b', runningSource: 'models' },
     { key: 'benchmark', label: '性能测试', icon: <Gauge size={14} />, color: '#f59e0b' },
     { key: 'terminal', label: '终端', icon: <Terminal size={14} />, color: '#64748b' },
     { key: 'ocr', label: 'OCR', icon: <FileText size={14} />, color: '#a855f7', runningSource: 'models' },

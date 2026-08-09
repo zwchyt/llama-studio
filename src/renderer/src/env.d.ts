@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, ChatStreamChunk, AgentProject, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeHit } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, TokenUsageEntry, ChatStreamChunk, AgentProject, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeHit } from '../../shared/types'
 // 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
 interface ImagePromptPresetPayload {
   id: string; tag: string; cn: string; group: string
@@ -148,6 +148,8 @@ interface LlamaCppApi {
   listChatSessions: () => Promise<ChatSession[]>
   saveChatSession: (session: object) => Promise<{ success: boolean; id?: string; error?: string }>
   deleteChatSession: (id: string) => Promise<{ success: boolean }>
+  listTokenUsage: () => Promise<TokenUsageEntry[]>
+  clearTokenUsage: () => Promise<{ success: boolean }>
   chatStream: (opts: { streamId: string; port: number; body: object }) => Promise<{ success: boolean; error?: string }>
   chatCompletion: (opts: { port: number; body: object }) => Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }>
   getServerProps: (port: number) => Promise<{ ok: boolean; modalities?: { vision?: boolean; audio?: boolean }; error?: string }>

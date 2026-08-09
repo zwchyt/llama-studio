@@ -28,6 +28,7 @@ import OcrView from './components/OcrView'
 import BenchmarkView from './components/BenchmarkView'
 import ImageGenView from './components/ImageGenView'
 import AgentCodeView from './components/AgentCodeView'
+import TokenStatsView from './components/TokenStatsView'
 import TitleBar from './components/TitleBar'
 import TopNavBar from './components/TopNavBar'
 import LayoutModeToggle from './components/LayoutModeToggle'
@@ -499,6 +500,7 @@ function AppMain() {
       case 'folders': return <ModelFoldersView />
       case 'models': return <ModelsView />
       case 'monitoring': return <ModelMonitoringView />
+      case 'token-stats': return <TokenStatsView />
       case 'about': return <AboutView />
       case 'agents': return <AgentsView />
       case 'chat': return null
