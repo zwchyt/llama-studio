@@ -330,23 +330,26 @@ function search(idx: WsIndex, query: string, limit: number): { hits: CodeSearchH
 // ── IPC 注册（由 ipc.ts 的 registerIpcHandlers 调用）──
 
 export function registerRetrievalIpc(): void {
-  ipcMain.handle('codesearch-query', async (_e, dir: string, query: string, limit?: number): Promise<CodeSearchResponse> => {
-    const empty = (status: CodeSearchResponse['status']): CodeSearchResponse =>
-      ({ status, results: [], lowConfidence: true, indexedChunks: 0 })
-    if (!dir || !query || typeof query !== 'string') return empty('no-map')
-    const files = getMapFiles(dir)
-    if (!files) {
-      // 地图 building 中或未触发：检索暂不可用，调用方降级到 Grep
-      return empty(getMapState(dir) === 'building' ? 'building' : 'no-map')
-    }
-    const idx = getOrCreateIndex(dir)
-    if (!idx.built) {
-      if (!idx.building) void buildIndex(idx, files) // 后台建索引，本次先返回 building
-      return { status: 'building', results: [], lowConfidence: true, indexedChunks: idx.chunks.size }
-    }
-    resyncIndex(idx, files) // 增量对账：只重分块哈希变更的文件
-    const cap = Math.max(1, Math.min(Math.floor(limit ?? RESULT_LIMIT_DEFAULT), RESULT_LIMIT_MAX))
-    const { hits, lowConfidence } = search(idx, String(query).slice(0, 2000), cap)
-    return { status: 'ready', results: hits, lowConfidence, indexedChunks: idx.chunks.size }
-  })
+  ipcMain.handle('codesearch-query', (_e, dir, query, limit) => handleCodeSearchQuery(dir, query, limit))
+}
+
+/** codesearch-query handler 的核心逻辑（提取供 pi bridge 直调） */
+export function handleCodeSearchQuery(dir: string, query: string, limit?: number): Promise<CodeSearchResponse> {
+  const empty = (status: CodeSearchResponse['status']): CodeSearchResponse =>
+    ({ status, results: [], lowConfidence: true, indexedChunks: 0 })
+  if (!dir || !query || typeof query !== 'string') return Promise.resolve(empty('no-map'))
+  const files = getMapFiles(dir)
+  if (!files) {
+    // 地图 building 中或未触发：检索暂不可用，调用方降级到 Grep
+    return Promise.resolve(empty(getMapState(dir) === 'building' ? 'building' : 'no-map'))
+  }
+  const idx = getOrCreateIndex(dir)
+  if (!idx.built) {
+    if (!idx.building) void buildIndex(idx, files) // 后台建索引，本次先返回 building
+    return Promise.resolve({ status: 'building', results: [], lowConfidence: true, indexedChunks: idx.chunks.size })
+  }
+  resyncIndex(idx, files) // 增量对账：只重分块哈希变更的文件
+  const cap = Math.max(1, Math.min(Math.floor(limit ?? RESULT_LIMIT_DEFAULT), RESULT_LIMIT_MAX))
+  const { hits, lowConfidence } = search(idx, String(query).slice(0, 2000), cap)
+  return Promise.resolve({ status: 'ready', results: hits, lowConfidence, indexedChunks: idx.chunks.size })
 }

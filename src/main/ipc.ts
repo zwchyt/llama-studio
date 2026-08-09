@@ -29,6 +29,103 @@ async function getPty(): Promise<typeof ptyNs> {
   return ptyModule
 }
 
+// ── 内部 handler 导出桥（供 pi-agent bridge 等 main 内部模块直调，
+//    避免重复实现路径解析/沙箱/后台任务等安全逻辑）──
+export interface IpcInternalHandlers {
+  handleReadFile: (
+    filePath: string,
+    opts?: { maxBytes?: number; offset?: number; limit?: number; raw?: boolean }
+  ) => Promise<{
+    success: boolean
+    content?: string
+    lines?: number
+    totalLines?: number
+    startLine?: number
+    truncated?: boolean
+    error?: string
+    errorType?: string
+    fileSize?: number
+    suggestedCommand?: string
+  }>
+  handleExecuteCommand: (opts: {
+    command: string
+    timeout?: number
+    isBackground?: boolean
+    maxOutputChars?: number
+    autoBackground?: boolean
+  }) => Promise<{
+    stdout: string
+    stderr: string
+    code: number
+    truncated?: boolean
+    totalBytes?: number
+    outputFile?: string
+    autoBackgrounded?: boolean
+    taskId?: string
+  }>
+  handleSetAgentWorkspace: (dir: string) => { success: boolean }
+  handleSetBashCwd: (dir: string) => { success: boolean }
+  /** 查询端口当前加载的模型信息（模板 id + 模型文件路径；Token 记账用） */
+  getPortModelInfo: (port: number) => { templateId: string; modelPath: string | null } | undefined
+  handleWriteFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>
+  handleEditFile: (
+    filePath: string,
+    oldString: string,
+    newString: string,
+    replaceAll?: boolean
+  ) => Promise<{ success: boolean; content?: string; error?: string }>
+  handleGlob: (opts: { pattern: string; path: string; limit?: number }) => Promise<{
+    success: boolean
+    filenames?: string[]
+    numFiles?: number
+    truncated?: boolean
+    timedOut?: boolean
+    error?: string
+  }>
+  handleListDir: (dirPath: string) => Promise<{
+    success: boolean
+    entries?: { name: string; isDir: boolean; fileCount: number; size?: number }[]
+    truncated?: boolean
+    total?: number
+    error?: string
+  }>
+  handleGrep: (opts: {
+    pattern: string
+    path: string
+    glob?: string
+    output_mode?: string
+    head_limit?: number
+    '-i'?: boolean
+    context?: number
+    '-n'?: boolean
+    type?: string
+    timeout_seconds?: number
+  }) => Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }>
+  handleDeletePath: (targetPath: string, recursive: boolean) => Promise<{ success: boolean; message?: string; error?: string }>
+  handleAgentTodoWrite: (sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }) => Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }>
+  handleAgentTaskGet: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
+  handleAgentTaskList: (sessionId: string) => Promise<{ success: boolean; tasks: AgentTask[] }>
+  handleGetBackgroundTask: (taskId: string) => Promise<{
+    success: boolean
+    stdout?: string
+    stderr?: string
+    code?: number | null
+    status?: string
+    truncated?: boolean
+    totalBytes?: number
+    error?: string
+  }>
+  handleListBackgroundTasks: () => Promise<Array<{
+    id: string
+    command: string
+    status: string
+    pid: number
+    startTime: number
+    autoBackgrounded: boolean
+  }>>
+}
+export const ipcInternal: Partial<IpcInternalHandlers> = {}
+
 function countExtractedFiles(dir: string): number {
   let count = 0
   const entries = readdirSync(dir, { withFileTypes: true })
@@ -4962,7 +5059,7 @@ export function registerIpcHandlers(): void {
     }).join('\n')
   }
 
-  ipcMain.handle('read-file', async (_e, filePath: string, opts?: { maxBytes?: number; offset?: number; limit?: number; raw?: boolean }): Promise<{
+  const handleReadFile = async (filePath: string, opts?: { maxBytes?: number; offset?: number; limit?: number; raw?: boolean }): Promise<{
     success: boolean
     content?: string
     lines?: number
@@ -5114,7 +5211,9 @@ export function registerIpcHandlers(): void {
     } catch (e) {
       return { success: false, error: `读取失败：${e instanceof Error ? e.message : String(e)}`, errorType: 'FileReadError' }
     }
-  })
+  }
+  ipcInternal.handleReadFile = handleReadFile
+  ipcMain.handle('read-file', (_e, filePath, opts) => handleReadFile(filePath, opts))
 
   // 读取文件并以 data URL（base64）形式返回，供渲染进程内联本地图片。
   // 预览面板里的 Markdown 可能引用相对路径图片（assets/xxx.png）；dev 模式下渲染进程
@@ -5137,7 +5236,7 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('write-file', async (_e, filePath: string, content: string): Promise<{ success: boolean; error?: string }> => {
+  const handleWriteFile = async (filePath: string, content: string): Promise<{ success: boolean; error?: string }> => {
     try {
       filePath = resolveAgentPath(filePath)
       // SECURITY: 拒绝 UNC 路径防 NTLM 凭据泄露
@@ -5161,9 +5260,11 @@ export function registerIpcHandlers(): void {
     } catch (e) {
       return { success: false, error: `写入失败：${e instanceof Error ? e.message : String(e)}` }
     }
-  })
+  }
+  ipcInternal.handleWriteFile = handleWriteFile
+  ipcMain.handle('write-file', (_e, filePath, content) => handleWriteFile(filePath, content))
 
-  ipcMain.handle('edit-file', async (_e, filePath: string, oldString: string, newString: string, replaceAll?: boolean): Promise<{ success: boolean; content?: string; error?: string }> => {
+  const handleEditFile = async (filePath: string, oldString: string, newString: string, replaceAll?: boolean): Promise<{ success: boolean; content?: string; error?: string }> => {
     try {
       filePath = resolveAgentPath(filePath)
       // SECURITY: 编辑目标必须落在工作区/应用范围内
@@ -5231,7 +5332,9 @@ export function registerIpcHandlers(): void {
     } catch (e) {
       return { success: false, error: `编辑失败：${e instanceof Error ? e.message : String(e)}` }
     }
-  })
+  }
+  ipcInternal.handleEditFile = handleEditFile
+  ipcMain.handle('edit-file', (_e, filePath, oldString, newString, replaceAll) => handleEditFile(filePath, oldString, newString, replaceAll))
 
   // ── Agent Code: glob / grep ──
   const GLOB_GREP_IGNORE_DIRS = new Set(['.git', 'node_modules'])
@@ -5347,7 +5450,7 @@ export function registerIpcHandlers(): void {
     }
   }
 
-  ipcMain.handle('glob', async (_e, opts: { pattern: string; path: string; limit?: number }): Promise<{ success: boolean; filenames?: string[]; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }> => {
+  const handleGlob = async (opts: { pattern: string; path: string; limit?: number }): Promise<{ success: boolean; filenames?: string[]; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }> => {
     try {
       if (!opts || !opts.path) return { success: false, error: '缺少搜索目录' }
       opts.path = resolveAgentPath(opts.path)
@@ -5411,9 +5514,11 @@ export function registerIpcHandlers(): void {
     } catch (e) {
       return { success: false, error: `搜索失败：${e instanceof Error ? e.message : String(e)}` }
     }
-  })
+  }
+  ipcInternal.handleGlob = handleGlob
+  ipcMain.handle('glob', (_e, opts) => handleGlob(opts))
 
-  ipcMain.handle('list-dir', async (_e, dirPath: string): Promise<{
+  const handleListDir = async (dirPath: string): Promise<{
     success: boolean
     entries?: { name: string; isDir: boolean; fileCount: number; size?: number }[]
     truncated?: boolean
@@ -5462,7 +5567,9 @@ export function registerIpcHandlers(): void {
     } catch (e) {
       return { success: false, error: `列出目录失败：${e instanceof Error ? e.message : String(e)}` }
     }
-  })
+  }
+  ipcInternal.handleListDir = handleListDir
+  ipcMain.handle('list-dir', (_e, dirPath) => handleListDir(dirPath))
 
   const DEFAULT_MAX_CHARS_PER_LINE = 1_000
   const TYPE_GLOB_MAP: Record<string, string> = {
@@ -5502,7 +5609,7 @@ export function registerIpcHandlers(): void {
     return line.slice(0, maxChars) + ` [... truncated ${line.length - maxChars} chars]`
   }
 
-  ipcMain.handle('grep', async (_e, opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean; type?: string; timeout_seconds?: number }): Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }> => {
+  const handleGrep = async (opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean; type?: string; timeout_seconds?: number }): Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }> => {
     // timeout_seconds 可调（借鉴 Reasonix grep 的 timeout_seconds，1-300s 封顶），
     // 0/省略回退默认 20s，避免大仓库搜索被固定超时截断、也防止模型设极大值挂起。
     const DEFAULT_GREP_TIMEOUT_MS = 20_000
@@ -5650,7 +5757,9 @@ export function registerIpcHandlers(): void {
     } catch (e) {
       return returnResult({ success: false, error: `搜索失败：${e instanceof Error ? e.message : String(e)}` })
     }
-  })
+  }
+  ipcInternal.handleGrep = handleGrep
+  ipcMain.handle('grep', (_e, opts) => handleGrep(opts))
 
   // ── 文件树浏览 ──
   ipcMain.handle('build-file-tree', async (_e, dir: string, maxDepth = 3): Promise<{ success: boolean; tree?: { name: string; path: string; isDir: boolean; children?: any[] }; error?: string }> => {
@@ -6023,7 +6132,7 @@ export function registerIpcHandlers(): void {
     }
   }
 
-  ipcMain.handle('agent-todo-write', async (_e, sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }): Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }> => {
+  const handleAgentTodoWrite = async (sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }): Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }> => {
     try {
       const updates = input?.todos ?? []
 
@@ -6072,34 +6181,48 @@ export function registerIpcHandlers(): void {
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
-  })
+  }
+  ipcInternal.handleAgentTodoWrite = handleAgentTodoWrite
+  ipcMain.handle('agent-todo-write', (_e, sessionId, input) => handleAgentTodoWrite(sessionId, input))
 
-  ipcMain.handle('agent-task-get', async (_e, sessionId: string, taskId: string): Promise<{ success: boolean; task?: AgentTask; error?: string }> => {
+  const handleAgentTaskGet = async (sessionId: string, taskId: string): Promise<{ success: boolean; task?: AgentTask; error?: string }> => {
     const task = loadAgentTasks(sessionId).find(t => t.id === String(taskId))
     return task ? { success: true, task } : { success: false, error: `Task ${taskId} not found` }
-  })
+  }
+  ipcInternal.handleAgentTaskGet = handleAgentTaskGet
+  ipcMain.handle('agent-task-get', (_e, sessionId, taskId) => handleAgentTaskGet(sessionId, taskId))
 
-  ipcMain.handle('agent-task-list', async (_e, sessionId: string): Promise<{ success: boolean; tasks: AgentTask[] }> => {
+  const handleAgentTaskList = async (sessionId: string): Promise<{ success: boolean; tasks: AgentTask[] }> => {
     return { success: true, tasks: loadAgentTasks(sessionId) }
-  })
+  }
+  ipcInternal.handleAgentTaskList = handleAgentTaskList
+  ipcMain.handle('agent-task-list', (_e, sessionId) => handleAgentTaskList(sessionId))
 
   // ── Agent Code Bash 执行 ────────────────────────────
   // 当前工作目录（由渲染进程在切换项目时通过 set-bash-cwd 同步过来）
   let bashCwd: string | null = null
-  ipcMain.handle('set-bash-cwd', async (_e, dir: string) => {
+  const handleSetBashCwd = (dir: string): { success: boolean } => {
     bashCwd = dir || null
     return { success: true }
-  })
+  }
+  ipcInternal.handleSetBashCwd = handleSetBashCwd
+  ipcMain.handle('set-bash-cwd', async (_e, dir: string) => handleSetBashCwd(dir))
+
+  // Token 记账用：查询端口当前加载的模型信息（模板 id + 模型文件路径）
+  ipcInternal.getPortModelInfo = (port: number) => portModelInfos.get(port)
+  ipcMain.handle('get-port-model-info', async (_e, port: number) => portModelInfos.get(port))
 
   // Agent Code 文件工具的“工作区根目录”。渲染进程在切换项目/目录时通过
   // set-agent-workspace 同步过来。模型若给出相对路径，统一在下面各 handler 中解析到
   // 工作区根目录，避免相对路径被错误地解析到应用进程的工作目录（process.cwd()），
   // 从而出现“在 test 同级目录新建目录而非在 test 内创建文件”这类错位。
   let agentWorkspaceRoot: string | null = null
-  ipcMain.handle('set-agent-workspace', async (_e, dir: string) => {
+  const handleSetAgentWorkspace = (dir: string): { success: boolean } => {
     agentWorkspaceRoot = dir || null
     return { success: true }
-  })
+  }
+  ipcInternal.handleSetAgentWorkspace = handleSetAgentWorkspace
+  ipcMain.handle('set-agent-workspace', (_e, dir) => handleSetAgentWorkspace(dir))
 
   // 将超长工具结果完整写入系统临时目录，返回绝对路径，供模型用 Read 查看完整内容。
   // 对应 grok-build 的「showing first/last，完整输出保存至文件」策略。
@@ -6266,7 +6389,7 @@ export function registerIpcHandlers(): void {
     return spawn('/bin/sh', ['-c', command], { cwd: bashCwd ?? undefined, detached: true, env: sanitizeCommandEnv() })
   }
 
-  ipcMain.handle('execute-command', async (_e, opts: {
+  const handleExecuteCommand = async (opts: {
     command: string
     timeout?: number
     isBackground?: boolean
@@ -6420,9 +6543,11 @@ export function registerIpcHandlers(): void {
         })
       })
     })
-  })
+  }
+  ipcInternal.handleExecuteCommand = handleExecuteCommand
+  ipcMain.handle('execute-command', (_e, opts) => handleExecuteCommand(opts))
 
-  ipcMain.handle('get-background-task', async (_e, taskId: string): Promise<{
+  const handleGetBackgroundTask = async (taskId: string): Promise<{
     success: boolean
     stdout?: string
     stderr?: string
@@ -6461,9 +6586,11 @@ export function registerIpcHandlers(): void {
       truncated: task.truncated,
       totalBytes: task.totalBytes
     }
-  })
+  }
+  ipcInternal.handleGetBackgroundTask = handleGetBackgroundTask
+  ipcMain.handle('get-background-task', (_e, taskId) => handleGetBackgroundTask(taskId))
 
-  ipcMain.handle('list-background-tasks', async (): Promise<Array<{
+  const handleListBackgroundTasks = async (): Promise<Array<{
     id: string
     command: string
     status: string
@@ -6479,7 +6606,9 @@ export function registerIpcHandlers(): void {
       startTime: t.startTime,
       autoBackgrounded: t.autoBackgrounded
     }))
-  })
+  }
+  ipcInternal.handleListBackgroundTasks = handleListBackgroundTasks
+  ipcMain.handle('list-background-tasks', () => handleListBackgroundTasks())
 
   ipcMain.handle('kill-background-task', async (_e, taskId: string): Promise<{ success: boolean; error?: string }> => {
     const task = backgroundTasks.get(taskId)
@@ -6508,7 +6637,7 @@ export function registerIpcHandlers(): void {
   function isAgentPathInScope(target: string): boolean {
     return DELETE_BASES().some(base => isSafePath(base, target))
   }
-  ipcMain.handle('delete-path', async (_e, targetPath: string, recursive: boolean): Promise<{ success: boolean; message?: string; error?: string }> => {
+  const handleDeletePath = async (targetPath: string, recursive: boolean): Promise<{ success: boolean; message?: string; error?: string }> => {
     try {
       const resolved = resolve(resolveAgentPath(targetPath))
       if (!isAgentPathInScope(resolved)) return { success: false, error: '访问被拒绝：路径不在安全范围内' }
@@ -6530,7 +6659,9 @@ export function registerIpcHandlers(): void {
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
-  })
+  }
+  ipcInternal.handleDeletePath = handleDeletePath
+  ipcMain.handle('delete-path', (_e, targetPath, recursive) => handleDeletePath(targetPath, recursive))
 
   // ── Agent Code：Git 变更（只读 diff 查看）────────────────
   // 在工作区跑 git，返回改动文件清单 + 相对 HEAD 的 unified diff（含未跟踪文件内容）。

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url'
 import { tmpdir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers, cleanupRunningProcesses } from './ipc'
+import { registerPiAgentIpc, disposePiAgentIpc } from './services/piAgentBridge/piAgentIpc'
 import { appendFileSync } from 'fs'
 import { existsSync } from 'fs'
 import { mkdirSync } from 'fs'
@@ -135,7 +136,8 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
   registerIpcHandlers()
-  createWindow()
+  const win = createWindow()
+  registerPiAgentIpc(win)
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -147,5 +149,6 @@ app.on('window-all-closed', () => {
 })
 app.on('will-quit', () => {
   cleanupRunningProcesses()
+  disposePiAgentIpc()
 })
 

@@ -1,6 +1,6 @@
 {
   "name": "llama-studio",
-  "version": "1.0.153",
+  "version": "1.0.154",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",
   "main": "out/main/index.js",
@@ -13,6 +13,9 @@
     "postinstall": "electron-rebuild -w node-pty || echo electron-rebuild 跳过（终端功能如需请在 Electron 下重建 node-pty：npx electron-rebuild -w node-pty）"
   },
   "dependencies": {
+    "@earendil-works/pi-agent-core": "^0.84.1",
+    "@earendil-works/pi-ai": "^0.84.1",
+    "@earendil-works/pi-coding-agent": "^0.84.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-web-links": "^0.12.0",

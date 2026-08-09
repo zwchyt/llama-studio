@@ -295,6 +295,29 @@ const fullApi = {
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
   windowMaximize: () => ipcRenderer.invoke('window-maximize'),
   windowClose: () => ipcRenderer.invoke('window-close'),
+  // ── pi-agent（pi SDK 驱动的 agent 会话）──
+  piAgent: {
+    create: (opts: object) => ipcRenderer.invoke('pi-agent-create', opts),
+    prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-prompt', sessionId, text, images),
+    abort: (sessionId: string) => ipcRenderer.invoke('pi-agent-abort', sessionId),
+    dispose: (sessionId: string) => ipcRenderer.invoke('pi-agent-dispose', sessionId),
+    list: () => ipcRenderer.invoke('pi-agent-list'),
+    onEvent: (cb: (sessionId: string, event: unknown) => void) => {
+      ipcRenderer.removeAllListeners('pi-agent-event')
+      ipcRenderer.on('pi-agent-event', (_e, sessionId, event) => cb(sessionId, event))
+    },
+    onAsk: (cb: (id: number, questions: Array<{ question: string; options?: string[]; allowFreeform?: boolean }>) => void) => {
+      ipcRenderer.removeAllListeners('pi-agent-ask')
+      ipcRenderer.on('pi-agent-ask', (_e, id, questions) => cb(id, questions))
+    },
+    askResolve: (id: number, result: string) => ipcRenderer.invoke('pi-agent-ask-resolve', id, result),
+    onApprove: (cb: (id: number, req: { toolName: string; args: Record<string, unknown> }) => void) => {
+      ipcRenderer.removeAllListeners('pi-agent-approve')
+      ipcRenderer.on('pi-agent-approve', (_e, id, req) => cb(id, req))
+    },
+    approveResolve: (id: number, approved: boolean) => ipcRenderer.invoke('pi-agent-approve-resolve', id, approved),
+    undo: (sessionId: string, toolCallId: string) => ipcRenderer.invoke('pi-agent-undo', sessionId, toolCallId)
+  },
 }
 
 const chatApi = {

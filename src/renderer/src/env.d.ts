@@ -272,6 +272,20 @@ interface LlamaCppApi {
 		  windowMinimize: () => Promise<void>
 		  windowMaximize: () => Promise<void>
 		  windowClose: () => Promise<void>
+		  // ── pi-agent（pi SDK 驱动的 agent 会话）──
+		  piAgent: {
+		    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
+		    prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
+		    abort: (sessionId: string) => Promise<{ success: boolean }>
+		    dispose: (sessionId: string) => Promise<{ success: boolean }>
+		    list: () => Promise<{ sessionIds: string[] }>
+		    onEvent: (cb: (sessionId: string, event: unknown) => void) => void
+		    onAsk: (cb: (id: number, questions: Array<{ question: string; options?: string[]; allowFreeform?: boolean }>) => void) => void
+		    askResolve: (id: number, result: string) => Promise<{ success: boolean }>
+		    onApprove: (cb: (id: number, req: { toolName: string; args: Record<string, unknown> }) => void) => void
+		    approveResolve: (id: number, approved: boolean) => Promise<{ success: boolean }>
+		    undo: (sessionId: string, toolCallId: string) => Promise<{ success: boolean; path?: string; error?: string }>
+		  }
 	}
 declare global {
   interface Window { api: LlamaCppApi }
