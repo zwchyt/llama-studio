@@ -62,14 +62,6 @@ export const WRITE_EDIT_TOOLS = new Set(
   Object.entries(TOOL_METAS).filter(([, m]) => m.kind === 'write' || m.kind === 'edit').map(([n]) => n)
 )
 
-// ── 渐进工具暴露（frequent / rare 分级）─────────────────────
-// 本地小模型上下文紧张：低频工具默认只注入「精简 schema」（一行摘要 + 参数名/类型，
-// 去掉冗长描述），需要完整参数说明时由模型调用 view_tool 展开。可显著降低 system
-// prompt 的 token 占用，减少弱模型的注意力干扰。
-export const AGENT_RARE_TOOLS = new Set<string>([
-  'Reflect', 'TaskGet', 'TaskList', 'GetBackgroundTaskOutput', 'ListBackgroundTasks',
-])
-
 interface ToolEntry {
   definition: ToolDefinition
   execute: (args: Record<string, unknown>) => Promise<string>
@@ -132,28 +124,6 @@ register(
     }
   },
   async (args) => window.api.fetchWebpage(String(args.url || ''))
-)
-
-// view_tool：渐进工具暴露的配套——返回某个工具的完整参数定义。
-// 当某个低频（rare）工具在提示词中仅显示精简摘要时，模型可先调用本工具获取完整 schema。
-register(
-  {
-    name: 'view_tool',
-    description: '查看某个精简（rare）工具的完整参数定义。若某工具仅显示一行摘要而你不确定其参数，请先调用本工具获取完整 schema，再正确调用该工具。',
-    parameters: {
-      type: 'object',
-      properties: {
-        name: { type: 'string', description: '要查看的工具名称（如 Reflect、TaskList）。' }
-      },
-      required: ['name']
-    }
-  },
-  async (args) => {
-    const name = String(args.name || '')
-    const entry = registry.find(e => e.definition.function.name === name)
-    if (!entry) return JSON.stringify({ error: `未找到工具：${name}` })
-    return JSON.stringify(entry.definition.function, null, 2)
-  }
 )
 
 // ── Agent Code 文件操作工具（从独立模块导入）──────────────
@@ -248,29 +218,9 @@ function isRetryableResult(result: string): boolean {
   return RETRYABLE_ERROR_RE.test(err)
 }
 
-/** 将一个工具定义压缩为「精简 schema」：仅保留一行摘要 + 参数名/类型，去掉冗长描述。 */
-function compactToolDefinition(def: ToolDefinition): ToolDefinition {
-  const fn = def.function
-  const desc = fn.description || ''
-  const firstSentence = desc.split(/(?<=[.。！!?？])\s/)[0] || desc
-  const shortDesc = (firstSentence.length > 120 ? firstSentence.slice(0, 120) : firstSentence)
-    + '（精简模式；调用前如不确定参数，请先用 view_tool 获取完整说明）'
-  const params = fn.parameters as { properties?: Record<string, { type?: string }>; required?: unknown } | undefined
-  const props: Record<string, { type?: string }> = {}
-  if (params?.properties) {
-    for (const [k, spec] of Object.entries(params.properties)) props[k] = { type: (spec as { type?: string })?.type }
-  }
-  const required = Array.isArray(params?.required) ? params!.required : []
-  return { type: 'function', function: { name: fn.name, description: shortDesc, parameters: { type: 'object', properties: props, required } } }
-}
-
-/** 获取所有已注册工具的定义列表（OpenAI 格式）。compactRare=true 时低频工具仅返回精简 schema。 */
-export function getToolDefinitions(opts?: { compactRare?: boolean }): ToolDefinition[] {
-  return registry.map(e =>
-    opts?.compactRare && AGENT_RARE_TOOLS.has(e.definition.function.name)
-      ? compactToolDefinition(e.definition)
-      : e.definition
-  )
+/** 获取所有已注册工具的定义列表（OpenAI 格式）。 */
+export function getToolDefinitions(): ToolDefinition[] {
+  return registry.map(e => e.definition)
 }
 
 // ── 工具参数 Schema 浅校验 + 自动修复 ──

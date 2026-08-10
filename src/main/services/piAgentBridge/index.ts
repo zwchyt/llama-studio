@@ -68,6 +68,15 @@ function getModelRuntime(agentDir: string): Promise<ModelRuntime> {
   return modelRuntimePromise
 }
 
+/**
+ * 预热 pi SDK 运行时：提前加载 pi 系 ESM 模块 + 创建 ModelRuntime，
+ * 把首次对话时的一次性初始化成本移出交互路径。全局缓存保证与
+ * createPiAgentBridge 共用同一实例；失败静默（后续正常路径会重新初始化）。
+ */
+export function warmupPiBridge(agentDir: string): Promise<void> {
+  return Promise.all([getPi(), getModelRuntime(agentDir)]).then(() => undefined)
+}
+
 export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promise<PiAgentBridge> {
   const { cwd, toolNames, customTools } = options
   const pi = await getPi()
@@ -131,8 +140,9 @@ export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promis
     // 每次重建会话注入完整历史），pi 的压缩只会多发一轮摘要请求且结果不落盘
     settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }),
     customTools,
-    tools: toolNames,
-    noTools: 'builtin'
+    // 工具白名单：只含 llama-studio 的自研工具名，pi 内置工具
+    // （小写 read/bash/edit/write/grep/find/ls）因此不会注册/激活。
+    tools: toolNames
   })
 
   options.onReady?.(session)

@@ -298,6 +298,7 @@ const fullApi = {
   // ── pi-agent（pi SDK 驱动的 agent 会话）──
   piAgent: {
     create: (opts: object) => ipcRenderer.invoke('pi-agent-create', opts),
+    warmup: () => ipcRenderer.invoke('pi-agent-warmup'),
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-prompt', sessionId, text, images),
     abort: (sessionId: string) => ipcRenderer.invoke('pi-agent-abort', sessionId),
     dispose: (sessionId: string) => ipcRenderer.invoke('pi-agent-dispose', sessionId),

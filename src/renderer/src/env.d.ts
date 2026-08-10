@@ -275,6 +275,7 @@ interface LlamaCppApi {
 		  // ── pi-agent（pi SDK 驱动的 agent 会话）──
 		  piAgent: {
 		    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
+		    warmup: () => Promise<{ success: boolean }>
 		    prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
 		    abort: (sessionId: string) => Promise<{ success: boolean }>
 		    dispose: (sessionId: string) => Promise<{ success: boolean }>

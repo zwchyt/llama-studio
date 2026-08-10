@@ -196,7 +196,7 @@ export function repairDanglingToolCalls(msgs: ApiMessage[]): ApiMessage[] {
         synthetic.push({
           role: 'tool',
           tool_call_id: tc.id,
-          content: JSON.stringify({ error: '该工具调用未产生结果（可能因达到熔断/轮次上限被提前中止）。请换用其他方案或向用户说明。' })
+          content: JSON.stringify({ error: '该工具调用未产生结果（可能因生成被中止）。请换用其他方案或向用户说明。' })
         })
       }
     }

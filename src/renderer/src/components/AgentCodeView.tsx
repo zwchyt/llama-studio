@@ -2525,6 +2525,12 @@ export default function AgentCodeView() {
     refreshTasks()
   }, [activeSessionId, refreshTasks])
 
+  // 进入 Agent Code 界面即预热 pi SDK 运行时（提前加载 pi 系 ESM 模块 + ModelRuntime，
+  // 首次对话免一次性初始化等待）。失败静默：正常创建路径会重新初始化。
+  useEffect(() => {
+    window.api?.piAgent?.warmup?.().catch(() => { })
+  }, [])
+
   const updateProject = useCallback((id: string, upd: Partial<AgentProject>) => {
     setProjects(prev => prev.map(p => p.id === id ? { ...p, ...upd } : p))
   }, [])
@@ -3167,6 +3173,10 @@ export default function AgentCodeView() {
         const memRoot = getWorkspaceRootForSession()
         if (memRoot) noteCondenseFacts(memRoot, sid, batch)
       }
+      // 压缩已写入会话记忆：使当前 pi session 失效并释放，下次 prompt 重建时按新摘要
+      // 注入，否则模型上下文仍持有全量历史，压缩只在 UI 生效。
+      piReadyRef.current = { sid: '', ready: false }
+      window.api?.piAgent?.dispose?.(`pi-${sid}`).catch(() => { })
       return newMemory
     } catch (e: any) {
       condenseErrorRef.current = e?.message || String(e)
@@ -3207,25 +3217,41 @@ export default function AgentCodeView() {
   }, [loading, condensing, runningCard, apiBaseUrl, activeSession, activeProjectId, activeSessionId, condenseSessionMemory])
 
 
-  // ── pi-agent 模式：pi SDK 驱动的单轮 agent 运行（替代自研 runAgentTurn 循环）──
+  // ── pi-agent 模式：pi SDK 驱动的单轮 agent 运行 ──
   // displayMsgs 的最后一条为最新 user 消息（由 prompt 发送）；此前消息作为历史注入 pi session。
   const runPiTurn = useCallback(async (
     pid: string,
     sid: string,
     displayMsgs: AgentMessage[],
-    opts: { port: number; text: string; workspaceDir: string; approveWriteEdit?: boolean }
+    opts: { port: number; text: string; workspaceDir: string; approveWriteEdit?: boolean; memory?: AgentSession['memory'] }
   ): Promise<{ errored: boolean; aborted: boolean }> => {
     const piSessionId = `pi-${sid}`
     // 首次进入该会话（或会话切换/重建）：创建 pi session 并注入历史
     if (piReadyRef.current.sid !== sid || !piReadyRef.current.ready) {
       // 新 pi 会话：清空上一会话的撤销备份引用
       backupsRef.current = {}
-      const history = displayMsgs.slice(0, -1).map(m => ({
-        role: m.role,
-        content: m.content,
-        toolCalls: m.toolCalls,
-        attachments: m.attachments,
-      }))
+      // 压缩记忆：被 coveredMsgIds 覆盖的最早连续前缀用摘要替代注入，使压缩真正
+      // 减小模型上下文（否则重建仍全量注入历史，压缩只改 UI 不生效）。
+      const prior = displayMsgs.slice(0, -1)
+      const coveredSet = new Set(opts.memory?.coveredMsgIds || [])
+      let coveredPrefix = 0
+      while (coveredPrefix < prior.length && coveredSet.has(prior[coveredPrefix]!.id)) coveredPrefix++
+      const history: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: AgentMessage['toolCalls']; attachments?: AgentMessage['attachments'] }> = []
+      if (coveredPrefix > 0) {
+        const summary = (opts.memory?.summary || '').trim()
+        const facts = (opts.memory?.facts || '').trim()
+        history.push({
+          role: 'user',
+          content: [
+            '以下是本会话早期对话的压缩摘要（替代已压缩的原文，作为对话背景，不是用户的新输入）：',
+            summary,
+            facts ? `\n结构化事实附录（逐字保留）：\n${facts}` : ''
+          ].filter(Boolean).join('\n')
+        })
+      }
+      for (const m of prior.slice(coveredPrefix)) {
+        history.push({ role: m.role, content: m.content, toolCalls: m.toolCalls, attachments: m.attachments })
+      }
       const res = await window.api.piAgent.create({
         sessionId: piSessionId,
         port: opts.port,
@@ -3258,8 +3284,8 @@ export default function AgentCodeView() {
         toolCalls.push({ id: tc.id, name: tc.name, args: tc.args, status: 'pending' })
         // 计划面板同步（与 legacy 一致）：TodoWrite 调用后更新右侧任务清单
         if (tc.name === 'TodoWrite') {
-          // 弹出右侧「待办」卡片（taskModalOpen 是卡片渲染条件；legacy 由
-          // runAgentTurn 流式解析打开，pi 模式需在此显式打开）
+          // 弹出右侧「待办」卡片（taskModalOpen 是卡片渲染条件；pi 模式在
+          // 此显式打开）
           setTaskModalOpen(true)
           setTaskPanelCollapsed(false)
           setTaskCardClosing(false)
@@ -3353,7 +3379,7 @@ export default function AgentCodeView() {
     }
   }, [updateSessionInProject])
 
-  // ── 区域：发送消息（构建附件、创建会话、调用 runAgentTurn） ──
+  // ── 区域：发送消息（构建附件、创建会话、调用 agent） ──
   const handleSend = useCallback(async (overrideText?: string, overrideAttachments?: Attachment[]) => {
     const attachmentsForSend: Attachment[] = overrideAttachments ?? attachedFiles.map(a => ({
       name: a.name,
@@ -3396,7 +3422,7 @@ export default function AgentCodeView() {
     }
     if (!text && !hasAttach) return
 
-    // 同步互斥门闩：从这里到 runAgentTurn 结束前，后到的 handleSend 一律走排队分支
+    // 同步互斥门闩：从这里到本轮 agent 结束前，后到的 handleSend 一律走排队分支
     sendingRef.current = true
     try {
       // 立即清空输入框并复位高度：消息已成功加入会话，避免输入框残留刚发出的内容
@@ -3445,17 +3471,34 @@ export default function AgentCodeView() {
         noteUserCorrection(activeProject.workspaceDir, sid, text)
       }
 
-      // ── pi SDK 驱动 agent 循环（自研 runAgentTurn 已移除）──
+      // ── pi SDK 驱动 agent 循环 ──
+      // 自动压缩：历史超过保留轮数时先压缩（condenseSessionMemory 内部按 token 水位
+      // 判断，未超预算直接跳过；压缩成功会使 pi session 失效并在下方重建），
+      // 避免长对话模型上下文无限增长。用返回值取最新 memory（压缩可能更新了
+      // coveredMsgIds/summary，而 activeSession 是旧闭包）。
+      let memoryForTurn = activeSession?.memory
+      if (activeSession && !condensing && runningCard) {
+        const coveredSet = new Set(activeSession.memory?.coveredMsgIds || [])
+        let coveredPrefix = 0
+        while (coveredPrefix < activeSession.messages.length && coveredSet.has(activeSession.messages[coveredPrefix]!.id)) coveredPrefix++
+        const turns = splitAgentTurns(activeSession.messages.slice(coveredPrefix))
+        if (turns.length > KEEP_RECENT_TURNS) {
+          const ctxN = useStore.getState().modelMetrics[runningCard.template.id]?.nCtx || 0
+          const ctxBudget = computeContextBudget(ctxN)
+          memoryForTurn = await condenseSessionMemory(activeProjectId, activeSessionId, activeSession.messages, activeSession.memory, ctxBudget, runningCard.template.serverPort, false)
+        }
+      }
       await runPiTurn(pid, sid, displayMsgs, {
         port: runningCard.template.serverPort,
         text,
         workspaceDir: activeProject.workspaceDir,
         approveWriteEdit: !!activeProject.approveWriteEdit,
+        memory: memoryForTurn,
       })
     } catch (e) {
-      // 准备阶段（系统提示词构建/历史压缩）异常：runAgentTurn 未启动，它的 finally
+      // 准备阶段（系统提示词构建/历史压缩）异常：本轮 agent 未启动，其收尾逻辑
       // 不会排空队列，这里兜底提示并重放排队消息，避免 sendingRef 窗口内
-      // 入队的消息永久滞留（runAgentTurn 已排空时队列为空，重放自然跳过）。
+      // 入队的消息永久滞留（队列为空时重放自然跳过）。
       notify(`发送失败：${e instanceof Error ? e.message : String(e)}`, 'error')
       const queue = pendingSendRef.current
       pendingSendRef.current = []
@@ -3481,7 +3524,7 @@ export default function AgentCodeView() {
     catch { notify('复制失败', 'error') }
   }, [])
 
-  // 重新生成 / 重发失败回滚：依据 runAgentTurn 返回结果，恢复原有消息
+  // 重新生成 / 重发失败回滚：依据 agent 返回结果，恢复原有消息
   const rollbackIfFailed = (r: { errored: boolean; aborted: boolean }) => {
     if (!r.errored || r.aborted) { regenRollbackRef.current = null; return }
     const rb = regenRollbackRef.current

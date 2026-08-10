@@ -3,6 +3,7 @@ import { ipcMain, app, type BrowserWindow } from 'electron'
 import { join } from 'path'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import { PiAgentManager, createIpcExecutors, type PiAgentSessionOptions } from './manager'
+import { warmupPiBridge } from './index'
 import type { MainToolExecutors, AskUserQuestionInput } from './tools/mainTools'
 
 let manager: PiAgentManager | null = null
@@ -69,6 +70,17 @@ export function registerPiAgentIpc(win: BrowserWindow): void {
       agentDir: opts.agentDir ?? join(app.getPath('userData'), 'pi-agent')
     }
     await getManager().createSession({ ...finalOpts, onEvent: push })
+    return { success: true }
+  })
+
+  // 预热 pi SDK 运行时（提前加载 ESM 模块 + ModelRuntime，首次对话免初始化等待）。
+  // 与 pi-agent-create 的默认 agentDir 保持一致；失败静默，不影响后续任何路径。
+  ipcMain.handle('pi-agent-warmup', async () => {
+    try {
+      await warmupPiBridge(join(app.getPath('userData'), 'pi-agent'))
+    } catch {
+      /* 预热失败静默：正常路径会重新初始化 */
+    }
     return { success: true }
   })
 
