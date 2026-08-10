@@ -1,4 +1,5 @@
 import { createWithEqualityFn } from 'zustand/traditional'
+import { createSdLogParser, SD_STAGE_TEXT, type SdGenSnapshot } from '../utils/sdLogParser'
 
 /** 图像生成结果单（供「历史 / 结果区」使用，只存轻量元信息 + dataUrl） */
 export interface ImageGenItem {
@@ -25,6 +26,13 @@ export interface ImageGenItem {
 export interface ImageLastGenInfo {
   seed?: number
   elapsedSec?: number
+}
+
+/** 某模板图像生成过程的日志解析进度(来自后端 stdout/stderr 进度条) */
+export interface SdGenProgressState extends SdGenSnapshot {
+  /** 中文阶段描述(如 加载模型中 / 扩散采样中) */
+  stageText: string
+  updatedAt: number
 }
 
 /** 用户自定义提示词预览（正向 / 负向各一份，localStorage 持久化） */
@@ -276,6 +284,8 @@ interface ImageUiState {
   elapsed: number
   progress: number | null
   progressPreview: string | null
+  /** 各模板图像生成的日志解析进度(key = 模板 id,由 ingestModelLog 写入) */
+  sdGenProgress: Record<string, SdGenProgressState>
   results: ImageGenItem[]
   /** 本次会话历史（含磁盘持久化回读） */
   history: ImageGenItem[]
@@ -291,6 +301,10 @@ interface ImageUiState {
   setProgressPreview: (s: string | null) => void
   setLastGen: (v: ImageLastGenInfo | null) => void
   setError: (s: string) => void
+  /** 喂入某模板后端的日志文本,解析图像生成阶段/进度(由 App 全局 model-log 事件调用) */
+  ingestModelLog: (id: string, text: string) => void
+  /** 开始新一轮生成前清空该模板的日志解析状态 */
+  resetSdGen: (id: string) => void
   /** 初始化/重新加载预设（从 JSON 文件），应至少调用一次 */
   initPromptPresets: () => Promise<void>
   /** 新增一个标签预设（写入 state 并持久化到 JSON 文件） */
@@ -310,6 +324,12 @@ interface ImageUiState {
 let elapsedTimer: ReturnType<typeof setInterval> | null = null
 let progressTimer: ReturnType<typeof setInterval> | null = null
 
+// 图像生成日志解析器按模板 id 常驻（由 App 全局 model-log 事件驱动，组件卸载后仍解析，
+// 保证进度在生成期间任何时刻都可用）。set 节流避免高刷进度条触发过多 React 渲染。
+const sdLogParsers = new Map<string, ReturnType<typeof createSdLogParser>>()
+let lastSdEmitAt = 0
+const SD_EMIT_THROTTLE_MS = 80
+
 function clearTimers() {
   if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null }
   if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
@@ -320,6 +340,7 @@ export const useImageStore = createWithEqualityFn<ImageUiState>((set) => ({
   elapsed: 0,
   progress: null,
   progressPreview: null,
+  sdGenProgress: {},
   results: [],
   history: [],
   lastGen: null,
@@ -334,6 +355,32 @@ export const useImageStore = createWithEqualityFn<ImageUiState>((set) => ({
   setProgressPreview: (s) => set({ progressPreview: s }),
   setLastGen: (v) => set({ lastGen: v }),
   setError: (s) => set({ error: s }),
+
+  ingestModelLog: (id, text) => {
+    let parser = sdLogParsers.get(id)
+    if (!parser) { parser = createSdLogParser(); sdLogParsers.set(id, parser) }
+    if (!parser.ingest(text)) return
+    const snap = parser.snapshot()
+    const now = Date.now()
+    if (now - lastSdEmitAt < SD_EMIT_THROTTLE_MS) return
+    lastSdEmitAt = now
+    set(s => ({
+      sdGenProgress: {
+        ...s.sdGenProgress,
+        [id]: { ...snap, stageText: SD_STAGE_TEXT[snap.stage], updatedAt: now }
+      }
+    }))
+  },
+
+  resetSdGen: (id) => {
+    sdLogParsers.get(id)?.reset()
+    set(s => {
+      if (!s.sdGenProgress[id]) return s
+      const next = { ...s.sdGenProgress }
+      delete next[id]
+      return { sdGenProgress: next }
+    })
+  },
 
   initPromptPresets: async () => {
     const loaded = await loadPresetsFromFile()

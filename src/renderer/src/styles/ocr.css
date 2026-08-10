@@ -328,6 +328,36 @@
   color: var(--text-muted);
 }
 
+/* 带位置的识别结果列表（文字 + 坐标） */
+.ocr-box-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ocr-box-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-bg);
+}
+
+.ocr-box-item-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.ocr-box-item-pos {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .ocr-error-inline {
   display: flex;
   align-items: center;

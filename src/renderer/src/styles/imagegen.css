@@ -840,6 +840,32 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 生成阶段徽章（来自日志解析：加载 / 编码 / 采样 / 解码 / 完成） */
+.imagegen-stage-badge {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 5px 10px;
+  border-radius: 999px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  white-space: nowrap;
+}
+.imagegen-stage-badge.stage-done {
+  color: var(--success, #16a34a);
+  background: color-mix(in srgb, var(--success, #16a34a) 12%, transparent);
+  border-color: color-mix(in srgb, var(--success, #16a34a) 32%, transparent);
+}
+
+/* 进度详情：迭代/步进计数（如 迭代 204/452 · 第 2 轮） */
+.imagegen-progress-detail {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* 中途预览 */
 .imagegen-loading-preview {
   width: 100%;
@@ -911,10 +937,18 @@
 }
 
 .imagegen-grid-results {
+  /* 滚动容器：占满剩余高度；内容超高时在自身内部滚动，不溢出遮挡历史，也不挤压窗口布局 */
   flex: 1;
   min-height: 0;
+  overflow-y: auto;
+}
+
+.imagegen-grid-inner {
+  /* 至少撑满滚动区高度，图片始终在结果区域内水平/垂直居中；超出时随外层滚动 */
+  min-height: 100%;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 320px));
+  /* auto-fit 折叠空轨道，列组宽度=实际内容宽度，justify-content:center 才能让单张图真正居中 */
+  grid-template-columns: repeat(auto-fit, minmax(230px, 320px));
   gap: 14px;
   justify-content: center;
   align-content: center;

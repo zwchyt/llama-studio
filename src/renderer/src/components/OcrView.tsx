@@ -3,7 +3,14 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { Upload, X, Copy, Check, Loader2, FileText, Trash2, AlertCircle, ImageIcon } from 'lucide-react'
 import { notify } from '../store/notificationStore'
+import { extractOcrBoxes, boxesToText, type OcrBox } from '../utils/ocrBoxes'
 import '../styles/ocr.css'
+
+// OCR 提示词：引导视觉模型输出「文字块 + 位置坐标」的结构化 JSON，
+// 前端解析后在结果区按位置展示（不在图片上叠加标注）。
+const OCR_BOX_PROMPT = `请识别这张图片中的所有文字，并按它们在图片中的实际位置输出。只输出一个严格 JSON 数组（不要输出任何其他文字、解释或代码块标记），数组每个元素代表一个文字块：
+[{"text": "该块的文字内容", "x1": 0-1000, "y1": 0-1000, "x2": 0-1000, "y2": 0-1000}]
+坐标规则：x1,y1 为文字块左上角，x2,y2 为右下角；使用整张图片的 0-1000 归一化坐标系（图片左上角为 0,0，右下角为 1000,1000）。如果图片中没有文字，输出 []。`
 
 export default function OcrView() {
   const cards = useStore(s => s.cards, shallow)
@@ -20,6 +27,10 @@ export default function OcrView() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const streamIdRef = useRef<string | null>(null)
   const resultRef = useRef<HTMLDivElement>(null)
+  // 累积完整识别文本（onOcrChunk 回调里 state 是旧值，解析需用 ref）
+  const ocrTextRef = useRef('')
+  // 解析出的文字块（带位置）；null = 模型输出不是结构化 JSON（回退显示原文）
+  const [ocrBoxes, setOcrBoxes] = useState<OcrBox[] | null>(null)
 
   const runningModel = cards.find(c => c.status === 'running')
   const port = runningModel?.template.serverPort
@@ -33,7 +44,8 @@ export default function OcrView() {
       // 仅处理当前活动流的事件：停止/切模式后旧流残留的 delta/done 会误改新一轮状态
       if (data.streamId !== streamIdRef.current) return
       if (data.delta) {
-        setOcrResult(prev => prev + data.delta)
+        ocrTextRef.current += data.delta
+        setOcrResult(ocrTextRef.current)
       }
       if (data.error) {
         setStatus('error')
@@ -41,6 +53,7 @@ export default function OcrView() {
         streamIdRef.current = null
       }
       if (data.done && !data.error) {
+        setOcrBoxes(extractOcrBoxes(ocrTextRef.current))
         setStatus('done')
         streamIdRef.current = null
       }
@@ -65,7 +78,9 @@ export default function OcrView() {
       return
     }
     setFileName(file.name)
+    ocrTextRef.current = ''
     setOcrResult('')
+    setOcrBoxes(null)
     setStatus('idle')
     setErrorMsg('')
     const reader = new FileReader()
@@ -94,7 +109,9 @@ export default function OcrView() {
   function clearAll() {
     setImageDataUrl(null)
     setFileName('')
+    ocrTextRef.current = ''
     setOcrResult('')
+    setOcrBoxes(null)
     setStatus('idle')
     setErrorMsg('')
     if (streamIdRef.current) {
@@ -116,7 +133,9 @@ export default function OcrView() {
         window.api.abortOcrStream(streamIdRef.current)
         streamIdRef.current = null
       }
+      ocrTextRef.current = ''
       setOcrResult('')
+      setOcrBoxes(null)
       setStatus('idle')
       setErrorMsg('')
     }
@@ -130,12 +149,14 @@ export default function OcrView() {
       return
     }
     setOcrResult('')
+    ocrTextRef.current = ''
+    setOcrBoxes(null)
     setStatus('processing')
     setErrorMsg('')
     const streamId = crypto.randomUUID()
     streamIdRef.current = streamId
     try {
-      const prompt = mode === 'ocr' ? '请识别这张图片中的文字' : (customPrompt || '详细描述这张图片的内容')
+      const prompt = mode === 'ocr' ? OCR_BOX_PROMPT : (customPrompt || '详细描述这张图片的内容')
       const res = await window.api.ocrStream({ streamId, port, image: imageDataUrl, prompt, templateArgs: runningModel?.template.args })
       if (!res.success) {
         setStatus('error')
@@ -156,12 +177,18 @@ export default function OcrView() {
     }
     // 已流出部分结果时置 done 保留展示（可复制）：置 idle 会让右侧面板
     // 退回占位图，「识别到需要的部分就停」拿不到已出的文字。
-    setStatus(ocrResult ? 'done' : 'idle')
+    if (ocrTextRef.current) {
+      setOcrBoxes(extractOcrBoxes(ocrTextRef.current))
+      setStatus('done')
+    } else {
+      setStatus('idle')
+    }
   }
 
   function handleCopy() {
     if (!ocrResult) return
-    navigator.clipboard.writeText(ocrResult)
+    const copyText = ocrBoxes && ocrBoxes.length > 0 ? boxesToText(ocrBoxes) : ocrResult
+    navigator.clipboard.writeText(copyText)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -301,10 +328,23 @@ export default function OcrView() {
                     {errorMsg}
                   </div>
                 )}
-                {status === 'processing' && !ocrResult && (
+                {status === 'processing' && !ocrTextRef.current && (
                   <span className="ocr-result-placeholder">等待识别结果...</span>
                 )}
-                {ocrResult && (
+                {status === 'processing' && ocrTextRef.current && (
+                  <span className="ocr-result-placeholder">正在识别文字及位置...</span>
+                )}
+                {status === 'done' && ocrBoxes && ocrBoxes.length > 0 && (
+                  <div className="ocr-box-list">
+                    {ocrBoxes.map((b, i) => (
+                      <div key={i} className="ocr-box-item">
+                        <span className="ocr-box-item-text">{b.text}</span>
+                        <span className="ocr-box-item-pos">位置 ({b.x1},{b.y1}) - ({b.x2},{b.y2})</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {ocrResult && !(ocrBoxes && ocrBoxes.length > 0) && (
                   <pre className="ocr-result-text">{ocrResult}</pre>
                 )}
               </div>

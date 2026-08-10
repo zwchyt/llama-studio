@@ -6,7 +6,7 @@ import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { ENGINE_LABELS, paramSetOf } from '../utils/engine'
-import { Play, Square, Settings, MoreVertical, Copy, Trash, Download, Globe, Server, Terminal, Check, MessageSquare, Image } from 'lucide-react'
+import { Play, Square, Settings, MoreVertical, Copy, Trash, Download, Globe, Server, Terminal, Check, MessageSquare, Image, Scan } from 'lucide-react'
 import type { CardState } from '../../../shared/types'
 import ParamsModal from './ParamsModal'
 interface Props { card: CardState }
@@ -300,6 +300,9 @@ export default function ModelCard({ card }: Props) {
   const cardBackend = backends.find(b => b.name === card.template.backendVersion)
   const effectiveParamSet = paramSetOf(card.template.paramSet ?? cardBackend?.kind)
   const engineLabel = ENGINE_LABELS[effectiveParamSet] ?? ''
+  // 专门的 OCR 模型：llama.cpp 引擎且模板名包含 "ocr"（如 Baidu-OCR）→ 卡片主按钮跳转 OCR 界面。
+  // 带 --mmproj 的通用视觉对话模型（如 Agents-A1-4B）不算 OCR 模型，保持「原生聊天」。
+  const isOcrModel = effectiveParamSet === 'llamacpp' && /ocr/i.test(card.template.name)
   return (
     <div className={`model-card ${isRunning ? 'running' : ''}`}>
       <div className="card-header">
@@ -420,6 +423,10 @@ export default function ModelCard({ card }: Props) {
                 useStore.getState().setView('imagegen')
                 return
               }
+              if (isOcrModel) {
+                useStore.getState().setView('ocr')
+                return
+              }
               const id = card.template.id
               const port = card.template.serverPort || 8080
               const name = card.template.name
@@ -435,8 +442,8 @@ export default function ModelCard({ card }: Props) {
               useStore.getState().setView('chat')
             }}
           >
-            {effectiveParamSet === 'sdcpp' ? <Image size={14} /> : <MessageSquare size={14} />}
-            <span className="btn-label">{effectiveParamSet === 'sdcpp' ? '图像生成' : '原生聊天'}</span>
+            {effectiveParamSet === 'sdcpp' ? <Image size={14} /> : isOcrModel ? <Scan size={14} /> : <MessageSquare size={14} />}
+            <span className="btn-label">{effectiveParamSet === 'sdcpp' ? '图像生成' : isOcrModel ? 'OCR 识别' : '原生聊天'}</span>
           </button>
         )}
         {!isRunning && (

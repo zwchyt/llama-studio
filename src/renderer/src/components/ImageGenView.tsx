@@ -88,6 +88,8 @@ export default function ImageGenView() {
   const elapsed = useImageStore(s => s.elapsed)
   const progress = useImageStore(s => s.progress)
   const progressPreview = useImageStore(s => s.progressPreview)
+  const sdGenProgress = useImageStore(s => s.sdGenProgress)
+  const resetSdGen = useImageStore(s => s.resetSdGen)
   const setResults = useImageStore(s => s.setResults)
   const history = useImageStore(s => s.history)
   const setHistory = useImageStore(s => s.setHistory)
@@ -292,6 +294,8 @@ export default function ImageGenView() {
     setImgError('')
     setResults([])
     startInProgress()
+    // 清空该模板上一轮的日志解析进度，重新开始收集
+    resetSdGen(selectedCard.template.id)
     // 尝试轮询 /progress（sd-server 不一定实现，失败则静默只保留计时）
     const progressTimer = setInterval(async () => {
       try {
@@ -398,6 +402,11 @@ export default function ImageGenView() {
   const openImagesDir = () => {
     if (paths?.chatImages) window.api.openFolder(paths.chatImages)
   }
+
+  // ── 生成进度展示：日志解析进度（sdGenProgress）优先，其次服务端 /progress 轮询 ──
+  const sdProg = selectedId ? sdGenProgress[selectedId] : undefined
+  const displayProgress = sdProg && sdProg.progress !== null ? sdProg.progress : progress
+  const displayDetail = sdProg?.detail || ''
 
   // ── 渲染 ──
   if (sdCards.length === 0) {
@@ -661,18 +670,26 @@ export default function ImageGenView() {
             <div className="imagegen-loading">
               <div className="imagegen-loading-box">
                 <div className="imagegen-loading-head">
-                  <Loader2 size={22} className="spin" />
-                  <span>正在生成中…</span>
+                  {sdProg && sdProg.stage !== 'idle' && (
+                    <span className={`imagegen-stage-badge stage-${sdProg.stage}`}>{sdProg.stageText}</span>
+                  )}
                   <span className="imagegen-elapsed">已用时 {elapsed}s</span>
                 </div>
 
-                {progress !== null && (
+                {displayProgress !== null && (
                   <div className="imagegen-progress">
                     <div className="imagegen-progress-bar">
-                      <div className="imagegen-progress-fill" style={{ width: `${Math.round(progress * 100)}%` }} />
+                      <div className="imagegen-progress-fill" style={{ width: `${Math.round(displayProgress * 100)}%` }} />
                     </div>
-                    <span className="imagegen-progress-text">{Math.round(progress * 100)}%</span>
+                    <span className="imagegen-progress-text">{Math.round(displayProgress * 100)}%</span>
                   </div>
+                )}
+
+                {displayDetail && (
+                  <p className="imagegen-progress-detail">
+                    {displayDetail}
+                    {sdProg && sdProg.round > 1 ? ` · 第 ${sdProg.round} 轮` : ''}
+                  </p>
                 )}
 
                 {progressPreview ? (
@@ -698,6 +715,7 @@ export default function ImageGenView() {
             </div>
           ) : results.length > 0 ? (
             <div className="imagegen-grid-results">
+              <div className="imagegen-grid-inner">
               {results.map(item => {
                 const m = item.meta
                 const chips = [
@@ -737,6 +755,7 @@ export default function ImageGenView() {
                   </div>
                 )
               })}
+              </div>
             </div>
           ) : (
             <div className="imagegen-placeholder">

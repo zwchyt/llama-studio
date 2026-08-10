@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo } from 'react'
 import { useStore, type AgentStatus } from './store/useStore'
+import { useImageStore } from './store/imageStore'
 import { notify } from './store/notificationStore'
 import Sidebar from './components/Sidebar'
 import CardsView from './components/CardsView'
@@ -337,6 +338,8 @@ function AppMain() {
   useEffect(() => {
     window.api.onModelLog((data) => {
       useStore.getState().appendModelLog(data.id, data.stream, data.text)
+      // 供图像生成界面可视化进度（解析加载/采样/解码阶段的日志进度条）
+      useImageStore.getState().ingestModelLog(data.id, data.text)
     })
     window.api.onModelReady((data) => {
       useStore.getState().setCardReady(data.id, true)
