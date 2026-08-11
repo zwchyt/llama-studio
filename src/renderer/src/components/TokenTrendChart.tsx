@@ -15,7 +15,7 @@ export interface TrendPoint {
 
 /** 每个模型固定的颜色（按出现顺序取色，超出循环） */
 const MODEL_COLORS = [
-  '#4f8cff', '#22c55e', '#f59e0b', '#e5484d', '#a855f7',
+  '#4f8cff', '#22c55e', '#f59e0b', '#e5484d', '#0ea5e9',
   '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#64748b',
 ]
 
@@ -101,8 +101,9 @@ export default function TokenTrendChart({ points, colorOf }: { points: TrendPoin
       if (!modelOrder.includes(p.modelKey)) modelOrder.push(p.modelKey)
     }
 
-    // 每行 = 一次请求；各模型值为「该次请求的消耗量」（参考图语义：无请求的时刻为 0，
-    // 曲线回落到底部是正常形态，配合平滑插值呈现波浪起伏）。
+    // 每行 = 一次请求；各模型值为「该次请求的消耗量」（无请求的时刻为 0，曲线回落
+    // 到底部是正常形态，配合平滑插值呈现波浪起伏）。保持 0 值连续：若用 null 断开，
+    // 请求稀疏的模型曲线会碎成多段，反而失去时间线的连续性。
     // x 轴改用等间距序号 i（而非真实时间戳）：同一时段请求密集时不会挤成一团，
     // 波浪均匀平滑；刻度再从序号映射回真实日期/时间标注。
     const rows = sorted.map((p, i) => {
@@ -158,7 +159,9 @@ export default function TokenTrendChart({ points, colorOf }: { points: TrendPoin
             }}
             tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
             tickLine={false}
-            axisLine={{ stroke: 'rgba(127,127,127,.25)' }}
+            // 底部贯穿时间线的 X 轴轴线：透明（用户确认——只改这条轴线的颜色，
+            // 不影响任何模型曲线的波浪/颜色）
+            axisLine={false}
           />
           <YAxis
             domain={[0, (dataMax: number) => Math.max(dataMax * 1.12, 100)]}
@@ -210,7 +213,10 @@ export default function TokenTrendChart({ points, colorOf }: { points: TrendPoin
               stroke={m.color}
               strokeWidth={2}
               fill={m.color}
-              fillOpacity={0.32}
+              // 填充透明度压低：多个模型的半透明填充都会在 0 基线处收口成一条贴底边，
+              // 叠加混合后形成一条贯穿底部的杂色带（如蓝+红混合成紫色），观感像一条
+              // 无意义的横线。0.08 下叠加带基本不可见，曲线仍清晰。
+              fillOpacity={0.08}
               activeDot={{ r: 4 }}
               clipPath="url(#ts-zero-clip)"
             />

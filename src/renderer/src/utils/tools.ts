@@ -96,37 +96,9 @@ register(
   }
 )
 
-register(
-  {
-    name: 'web_search',
-    description: 'Search the web. Returns a list of results with title, URL, and snippet.',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'The search query.' }
-      },
-      required: ['query']
-    }
-  },
-  async (args) => window.api.webSearch(String(args.query || ''))
-)
-
-register(
-  {
-    name: 'fetch_webpage',
-    description: 'Fetch and read the contents of a web page given its URL. Returns the page content as plain text.',
-    parameters: {
-      type: 'object',
-      properties: {
-        url: { type: 'string', description: 'The URL of the web page to fetch.' }
-      },
-      required: ['url']
-    }
-  },
-  async (args) => window.api.fetchWebpage(String(args.url || ''))
-)
-
-// ── Agent Code 文件操作工具（从独立模块导入）──────────────
+// ── Agent Code 文件/网络工具（从独立模块导入）─────────────
+import { definition as WebSearchDef, execute as WebSearchExec } from '../tools/WebSearchTool'
+import { definition as FetchWebpageDef, execute as FetchWebpageExec } from '../tools/FetchWebpageTool'
 import { definition as FileReadDef, execute as FileReadExec } from '../tools/FileReadTool'
 import { definition as FileWriteDef, execute as FileWriteExec } from '../tools/FileWriteTool'
 import { definition as FileEditDef, execute as FileEditExec } from '../tools/FileEditTool'
@@ -144,6 +116,8 @@ import { definition as ListBackgroundTasksDef, execute as ListBackgroundTasksExe
 import { definition as AskUserQuestionDef, execute as AskUserQuestionExec } from '../tools/AskUserQuestionTool'
 import { definition as ReflectDef, execute as ReflectExec } from '../tools/ReflectTool'
 import { definition as CodeSearchDef, execute as CodeSearchExec } from '../tools/CodeSearchTool'
+register(WebSearchDef, WebSearchExec)
+register(FetchWebpageDef, FetchWebpageExec)
 register(FileReadDef, FileReadExec)
 register(FileWriteDef, FileWriteExec)
 register(FileEditDef, FileEditExec)

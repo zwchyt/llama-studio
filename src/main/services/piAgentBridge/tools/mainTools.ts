@@ -88,6 +88,8 @@ export interface MainToolExecutors {
     lowConfidence: boolean
     indexedChunks: number
   }>
+  webSearch: (query: string) => Promise<string>
+  fetchWebpage: (url: string) => Promise<string>
   /** 询问用户（跨进程弹窗；由 IPC 层提供实现） */
   askUser(questions: AskUserQuestionInput[]): Promise<string>
   /** 破坏性操作审批（由 IPC 层提供实现；未提供则放行） */
@@ -238,6 +240,34 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
         time: now.toLocaleTimeString('zh-CN')
       })
     }
+  })
+
+  const webSearch: ToolDefinition = make({
+    name: 'web_search',
+    label: '网络搜索',
+    description: 'Search the web. Returns a list of results with title, URL, and snippet.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The search query.' }
+      },
+      required: ['query']
+    },
+    execute: async (args) => exec.webSearch(String(args.query ?? ''))
+  })
+
+  const fetchWebpage: ToolDefinition = make({
+    name: 'fetch_webpage',
+    label: '抓取网页',
+    description: 'Fetch and read the contents of a web page given its URL. Returns the page content as plain text.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'The URL of the web page to fetch.' }
+      },
+      required: ['url']
+    },
+    execute: async (args) => exec.fetchWebpage(String(args.url ?? ''))
   })
 
   const read: ToolDefinition = make({
@@ -895,5 +925,5 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     }
   })
 
-  return [getDatetime, read, bash, write, edit, glob, grep, listDir, deleteTool, todoWrite, taskGet, taskList, getBackgroundTaskOutput, listBackgroundTasks, askUserQuestion, reflect, codeSearch, analyzeDir]
+  return [getDatetime, webSearch, fetchWebpage, read, bash, write, edit, glob, grep, listDir, deleteTool, todoWrite, taskGet, taskList, getBackgroundTaskOutput, listBackgroundTasks, askUserQuestion, reflect, codeSearch, analyzeDir]
 }

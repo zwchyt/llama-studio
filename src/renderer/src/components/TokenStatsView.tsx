@@ -199,10 +199,15 @@ const trendPoints = useMemo<TrendPoint[]>(() =>
       .map(r => ({
         x: `${modelFileOf(r.modelPath) ?? r.templateName ?? '未知模型'} · ${fmtFullTime(r.ts)}`,
         ts: r.ts,
-        modelKey: r.modelPath || r.templateId || `port-${r.port}`,
+        // modelKey 与「按模型汇总」的 ensureModel 完全一致（modelPath || templateId || 'unknown'），
+        // 否则缺失模型信息的记录在图表里显示为 port-xxx、汇总里是 unknown，颜色对不上
+        modelKey: r.modelPath || r.templateId || 'unknown',
         modelName: modelFileOf(r.modelPath) ?? r.templateName ?? '未知模型',
         total: r.outTokens + r.inTokens
-      })),
+      }))
+      // 过滤零消耗请求：total=0 的记录画不出有效趋势，只会让该模型的曲线贴底拉成一条
+      // 水平直线（如界面里那条贯穿时间线的紫色线——它对应的是一个 0 token 的"幽灵"模型）
+      .filter(p => p.total > 0),
     [records]
   )
 

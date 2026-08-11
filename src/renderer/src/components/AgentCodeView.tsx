@@ -442,14 +442,6 @@ const TOOL_META: Record<string, { name: string; desc: string; icon: React.Compon
     Object.entries(TOOL_METAS).map(([name, m]) => [name, { name: m.label, desc: '', icon: m.icon }])
   )
 
-// 流式「生成参数中」文案（区别于「执行中」：此时工具尚未派发，模型正在逐 token 生成
-// tool_call 的 arguments，对 Write/Edit 而言就是在生成文件内容/修改内容）。
-function genToolVerb(name: string): string {
-  if (name === 'Write') return '正在生成写入内容…'
-  if (name === 'Edit') return '正在生成修改内容…'
-  return '正在生成调用参数…'
-}
-
 // 源码预览高亮：文件扩展名 → highlight.js 语言（仅补充 getLanguage 未涵盖的别名）。
 const PREVIEW_EXT_LANG: Record<string, string> = {
   htm: 'xml', vue: 'xml', svelte: 'xml',
@@ -667,8 +659,16 @@ function parseThinkSegments(content: string): ContentSegment[] {
   return segments
 }
 
+// ── segments 时间线（pi 模式）──
+// 时间线切分在 runPiTurn 内实时构建（appendTextDelta/buildSegs）：
+// 思考/正文增量按 <think> 边界切段、工具声明切段，事件到达顺序即真实时间线，
+// 流式与完成态都按「工具栏 → 思考链 → 工具栏 → 思考链 → … → 正文气泡」交错渲染。
+
 // 思考块渲染节流间隔（参考原生聊天 ChatView 的 THINK_THROTTLE_MS）
 const THINK_THROTTLE_MS = 120
+// 工具 executing 状态的最小展示时长：Write/Edit 等本地 IO 工具执行往往不足一帧，
+// 「写入中」徽标一闪而过肉眼不可见；结束时不足该时长会延迟置 done，保证状态可见。
+const MIN_EXEC_DISPLAY_MS = 400
 
 // 从事件目标解析源码预览行号（含行号槽）；不在预览行内返回 null
 function previewLineNoFromTarget(t: EventTarget | null): number | null {
@@ -1210,10 +1210,13 @@ const ToolResultView = React.memo(function ToolResultView({ result, truncated, t
 const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPreviewFile, canUndo, onUndo, defaultOpen }: { tc: NonNullable<AgentMessage['toolCalls']>[number]; index: number; total: number; onPreviewFile: (p: string) => void; canUndo?: boolean; onUndo?: () => void; defaultOpen?: boolean }) {
   const meta = TOOL_META[tc.name]
   const Icon = meta?.icon || Wrench
-  // 状态：await_approval(待人工确认) / done(已完成)；「待执行/执行中」由输入框上方
-  // 常驻状态栏展示，卡片在这两个阶段不渲染（见下方渲染门控），故无需对应分支。
+  // 状态：await_approval(待人工确认) / executing(执行中) / done(已完成)。
+  // 「待执行/参数生成中」阶段卡片不渲染（由输入框上方常驻状态栏展示，见下方渲染门控）；
+  // 执行中显示状态徽标（verb，如「写入中」），完成后显示结果卡片。
   const status = tc.status || (tc.result != null ? 'done' : 'pending')
   const awaiting = status === 'await_approval'
+  const executing = status === 'executing'
+  const pending = status === 'pending'
   const done = status === 'done'
   const failed = done && !!tc.failed
   const canRestore = done && canUndo && !tc.restored && BACKUP_TOOLS.has(tc.name)
@@ -1318,14 +1321,14 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
   const hideResult = readNameOnly || (done && !failed && WRITE_EDIT_TOOLS.has(tc.name))
 
   // ── 卡片渲染门控 ──
-  // 工具「待执行/执行中」状态已由输入框上方的常驻状态栏统一展示，会话区不再重复显示状态行；
-  // 会话区仅在工具「完成」（或待人工确认）后显示结果卡片。
-  const showCard = done || awaiting
+  // 工具声明（pending）即渲染卡片（与参考项目 Reasonix 的 ToolCard 一致：dispatch 即显示），
+  // 状态全程可见：待执行 → 写入中/修改中（verb）→ 完成，执行中的状态不会一闪而过。
+  const showCard = done || awaiting || executing || pending
   if (!showCard) return null
 
   return (
     <>
-      <div className={`agent-tool-call tool-${tc.name.toLowerCase()}${failed ? ' failed' : ''}`}>
+      <div className={`agent-tool-call tool-${tc.name.toLowerCase()}${failed ? ' failed' : ''}${executing ? ' executing' : ''}${pending ? ' pending' : ''}`}>
         <div className={`agent-tool-call-head${readNameOnly ? ' readonly' : ''}`} onClick={readNameOnly ? undefined : handleToggle} style={readNameOnly ? { cursor: 'default' } : undefined}>
           {/* hover 换脸：主图标淡出、chevron 旋转淡入，提示行可点击展开（借 ToolChips 交互，布局不变）；
               Read 完成态头部不可展开（readonly），保持纯图标 */}
@@ -1352,8 +1355,17 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
                 <span className="diff-del">-{editDiffStat.removed}</span>
               </span>
             )}
-            {awaiting ? (
+            {executing ? (
+              <span className="agent-tool-call-status run"><Loader2 size={12} className="spin" /> {TOOL_METAS[tc.name]?.verb || '执行中'}</span>
+            ) : awaiting ? (
               <span className="agent-tool-call-status confirm"><Clock size={12} /> 待确认</span>
+            ) : pending ? (
+              // 参数流式生成中（toolcall_start 后 args 为空）显示「参数生成中」；
+              // 参数完整待执行时显示「待执行」——卡片从参数生成起就可见（参考项目同款）
+              <span className="agent-tool-call-status pending">
+                {tc.args ? <Clock size={12} /> : <Loader2 size={12} className="spin" />}
+                {tc.args ? '待执行' : '参数生成中'}
+              </span>
             ) : failed ? (
               <span className="agent-tool-call-status err"><XCircle size={12} /> 失败</span>
             ) : (
@@ -1994,13 +2006,14 @@ export default function AgentCodeView() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [streaming, setStreaming] = useState(false)
-  // 流式期工具调用进度：done 之前模型正在逐 token 生成 tool_call 的 arguments（如 Write
-  // 的整份文件内容）时，主进程会推来已知的工具名。用于在生成期显示“正在生成…”卡片，
-  // 并让当前思考链及时收起“思考中”转圈（非 null 即表示本轮已进入工具生成阶段）。
-  const [genToolCalls] = useState<Array<{ name: string }> | null>(null)
-  // 流式期模型阶段：当前是否处于未闭合的 <think> 内（思考/推理）vs 输出正文。
-  // 供输入框上方常驻状态栏区分“思考中”与“生成中”两种图标/文案。
-  const [streamThinking] = useState(false)
+  // 流式期模型阶段（runPiTurn 实时维护）：think=思考中 / text=输出正文 / tools=工具调用执行中。
+  // 输入框上方常驻状态栏据此显示「思考中 / 输出中 / 工具调用中」图标与文案。
+  const [streamKind, setStreamKind] = useState<'think' | 'text' | 'tools' | 'idle'>('idle')
+  // 思考是否已结束（显式状态机，参考 Reasonix 的 reasoningComplete）：
+  // 思考增量 → false（思考中）；正文增量 / 思考闭合 / 工具声明 → true（思考结束）。
+  // 思考链转圈只看 streaming && !thinkDone，不依赖任何推断，工具执行期间必然收起。
+  const [thinkDone, setThinkDone] = useState(true)
+  const [curToolName, setCurToolName] = useState('')  // 当前正在调用/执行的工具名（状态栏 name 标签）
   const [condensing, setCondensing] = useState(false)  // 正在压缩历史（顶部轻量提示）
   const [condenseOpen, setCondenseOpen] = useState(false)  // 压缩历史弹层开关
   const [condenseMsg, setCondenseMsg] = useState('')       // 压缩历史弹层内的结果反馈
@@ -2297,8 +2310,7 @@ export default function AgentCodeView() {
   const activeSession = activeProject.sessions.find(s => s.id === activeSessionId) || activeProject.sessions[0] || null
   const toolCardExpandedDefault = useStore(s => s.agentToolCardsExpanded)
   const setToolCardsExpanded = useStore(s => s.setAgentToolCardsExpanded)
-  // 常驻状态栏数据源：全局 agentPhase（正在执行工具）+ 本地的 genToolCalls/streaming/loading 综合派生。
-  const agentPhase = useStore(s => s.agentPhase)
+  // 常驻状态栏数据源：本地 streamKind（思考/输出/工具阶段）+ streaming/loading 综合派生。
 
   // ── Git 变更（只读）：拉取工作区改动，供预览区的 Git 变更标签渲染 ──
   const refreshGitChanges = useCallback(async (silent = false) => {
@@ -3275,13 +3287,101 @@ export default function AgentCodeView() {
     }
     let streamedText = ''
     const toolCalls: NonNullable<AgentMessage['toolCalls']> = []
+    // ── 时间线切分（segments）：全程（含流式期间）按「事件到达顺序」构建，
+    // 思考/正文增量切分为 think/text 段、工具声明切分为 tools 段（只记 id，构建时从
+    // 最新 toolCalls 映射对象 —— 状态/结果更新能实时反映，避免缓存旧引用卡在 pending）。
+    // 事件顺序即真实时间线：思考 → 工具 → 思考 → 工具 → … → 正文，流式与完成态一致交错。
+    type LiveSeg = { kind: 'tools'; ids: string[] } | { kind: 'think' | 'text'; content: string }
+    const liveSegs: LiveSeg[] = []
+    // 工具执行开始时间戳（id → ms）：Write/Edit 等本地 IO 工具执行可能不足一帧（<16ms），
+    // executing 徽标一闪而过肉眼不可见；结束时若执行时长不足 MIN_EXEC_DISPLAY_MS，
+    // 延迟置 done，保证「写入中/编辑中」状态至少可见一瞬（最小展示时长）。
+    const execStartMs = new Map<string, number>()
+    let thinkOpen = false
+    let curToolIds: string[] | null = null
+    let textSinceLastTool = false
+    const buildSegs = (): NonNullable<AgentMessage['segments']> =>
+      liveSegs.map(s => s.kind === 'tools'
+        ? { kind: 'tools', toolCalls: s.ids
+            .map(id => toolCalls.find(t => t.id === id))
+            .filter((t): t is NonNullable<AgentMessage['toolCalls']>[number] => !!t) }
+        : { kind: s.kind, content: s.content })
+    // 把含 <think>/</think> 的文本增量按边界追加到 liveSegs（跨增量维护 think 开闭状态）
+    const appendTextDelta = (delta: string): void => {
+      const parts: Array<{ text: string; tag: 'open' | 'close' | null }> = []
+      const re = /<think>|<\/think>/g
+      let cursor = 0
+      let m: RegExpExecArray | null
+      re.lastIndex = 0
+      while ((m = re.exec(delta)) !== null) {
+        if (m.index > cursor) parts.push({ text: delta.slice(cursor, m.index), tag: null })
+        parts.push({ text: m[0], tag: m[0] === '<think>' ? 'open' : 'close' })
+        cursor = m.index + m[0].length
+      }
+      if (cursor < delta.length) parts.push({ text: delta.slice(cursor), tag: null })
+      for (const p of parts) {
+        if (p.tag === 'open') {
+          if (!thinkOpen) { liveSegs.push({ kind: 'think', content: '' }); thinkOpen = true }
+          // 思考开始：思考未结束
+          setThinkDone(false)
+        } else if (p.tag === 'close') {
+          thinkOpen = false
+          // 思考闭合：思考结束（后续若无新思考增量，思考块收起不转圈）
+          setThinkDone(true)
+        } else if (p.text) {
+          if (thinkOpen) {
+            const last = liveSegs[liveSegs.length - 1]
+            if (last && last.kind === 'think') last.content += p.text
+            else liveSegs.push({ kind: 'think', content: p.text })
+            // 思考增量：思考进行中
+            setThinkDone(false)
+          } else {
+            const last = liveSegs[liveSegs.length - 1]
+            if (last && last.kind === 'text') last.content += p.text
+            else liveSegs.push({ kind: 'text', content: p.text })
+            // 正文出现：思考已结束（Reasonix 同款语义：text 增量闭合推理）
+            setThinkDone(true)
+          }
+        }
+      }
+    }
     const client = new PiAgentClient({
       onTextDelta: (delta) => {
         streamedText += delta
-        commit({ content: streamedText })
+        textSinceLastTool = true
+        appendTextDelta(delta)
+        // 状态栏阶段：只有包含实际内容（非 <think> 标签/空段落占位）的增量才更新，
+        // 依据该增量是否进入未闭合 <think> 判断「思考中 / 输出中」
+        if (delta.replace(/<think>|<\/think>/g, '').trim()) {
+          setStreamKind(thinkOpen ? 'think' : 'text')
+        }
+        commit({ content: streamedText, segments: buildSegs() })
       },
       onToolCall: (tc) => {
-        toolCalls.push({ id: tc.id, name: tc.name, args: tc.args, status: 'pending' })
+        // 工具声明 = 进入「工具调用中」阶段（状态栏展示；消息区工具卡执行中另有 verb 徽标）
+        setStreamKind('tools')
+        setCurToolName(tc.name)
+        // 工具声明 = 思考已结束（Reasonix 同款：tool dispatch 结束模型推理阶段）
+        setThinkDone(true)
+        // 幂等合并：toolcall_start（参数流式开始）先创建卡（args 空 → 显示「参数生成中」），
+        // toolcall_end（参数完整）再更新 args；同一工具只保留一张卡、一个工具段。
+        let tIdx = toolCalls.findIndex(t => t.id === tc.id)
+        if (tIdx < 0) tIdx = toolCalls.findIndex(t => t.name === tc.name && !t.args && t.status === 'pending')
+        if (tIdx >= 0) {
+          // 参数更新（toolcall_end 携带完整 arguments；start 的空串不覆盖已有参数）
+          if (tc.args) toolCalls[tIdx] = { ...toolCalls[tIdx]!, args: tc.args }
+        } else {
+          toolCalls.push({ id: tc.id, name: tc.name, args: tc.args, status: 'pending' })
+        }
+        const lastTc = toolCalls[toolCalls.length - 1]!
+        // 相邻工具调用（之间无文本增量）并入同一工具批，保持「一批工具一张卡组」的展示粒度
+        if (curToolIds && !textSinceLastTool && !curToolIds.includes(lastTc.id)) {
+          curToolIds.push(lastTc.id)
+        } else if (!curToolIds?.includes(lastTc.id)) {
+          curToolIds = [lastTc.id]
+          liveSegs.push({ kind: 'tools', ids: curToolIds })
+        }
+        textSinceLastTool = false
         // 计划面板同步（与 legacy 一致）：TodoWrite 调用后更新右侧任务清单
         if (tc.name === 'TodoWrite') {
           // 弹出右侧「待办」卡片（taskModalOpen 是卡片渲染条件；pi 模式在
@@ -3316,23 +3416,35 @@ export default function AgentCodeView() {
             console.warn('[AgentCode] pi TodoWrite args parse failed:', e, tc.args.slice(0, 200))
           }
         }
-        commit({ toolCalls: [...toolCalls] })
+        commit({ toolCalls: [...toolCalls], segments: buildSegs() })
       },
-      onToolExecutionStart: (id) => {
-        const i = toolCalls.findIndex(t => t.id === id)
+      onToolExecutionStart: (id, name) => {
+        // 先按 id 精确匹配；对不上时按工具名兜底（找最近一个 pending 的同类工具），
+        // 保证 executing 状态一定落到卡片上（否则工具卡永远停在 pending 不渲染）
+        let i = toolCalls.findIndex(t => t.id === id)
+        if (i < 0 && name) i = toolCalls.findIndex(t => t.name === name && t.status === 'pending')
         if (i >= 0) {
           toolCalls[i] = { ...toolCalls[i]!, status: 'executing' }
-          commit({ toolCalls: [...toolCalls] })
+          execStartMs.set(id, Date.now())
+          commit({ toolCalls: [...toolCalls], segments: buildSegs() })
         }
       },
-      onToolExecutionEnd: (id, _n, resultText, isError, backupId) => {
+      onToolExecutionEnd: (id, name, resultText, isError, backupId) => {
         // pi 模式撤销：main 侧备份引用（标记 pi-undo:<id>，撤销走 pi-agent-undo IPC）
         if (backupId) backupsRef.current[id] = { path: `pi-undo:${backupId}`, content: '' }
-        const i = toolCalls.findIndex(t => t.id === id)
-        if (i >= 0) {
-          toolCalls[i] = { ...toolCalls[i]!, status: 'done', result: resultText, failed: isError }
-          commit({ toolCalls: [...toolCalls] })
+        // 最小展示时长：执行太快（本地 IO 不足一帧）时延迟置 done，让「写入中」徽标可见
+        const elapsed = execStartMs.has(id) ? Date.now() - execStartMs.get(id)! : Number.MAX_SAFE_INTEGER
+        const applyDone = (): void => {
+          // 与 start 同样的兜底：按工具名找正在执行的同类工具
+          let i = toolCalls.findIndex(t => t.id === id)
+          if (i < 0 && name) i = toolCalls.findIndex(t => t.name === name && t.status === 'executing')
+          if (i >= 0) {
+            toolCalls[i] = { ...toolCalls[i]!, status: 'done', result: resultText, failed: isError }
+            commit({ toolCalls: [...toolCalls], segments: buildSegs() })
+          }
         }
+        if (elapsed >= MIN_EXEC_DISPLAY_MS) applyDone()
+        else setTimeout(applyDone, MIN_EXEC_DISPLAY_MS - elapsed)
       },
       onEnd: () => { /* prompt 返回即结束，无需额外处理 */ }
     })
@@ -3355,7 +3467,15 @@ export default function AgentCodeView() {
             return { type: 'image' as const, data: base64, mimeType: mime }
           })
       await window.api.piAgent.prompt(piSessionId, opts.text, images && images.length > 0 ? images : undefined)
-      if (!streamedText && toolCalls.length === 0) commit({ content: '(模型未返回内容)' })
+      // 先结束流式态：让最终 commit 直接走「完成态交错」渲染分支（streamingMsg=false），
+      // 避免 StreamingContent 把思考/正文再重复渲染一遍（工具卡+思考重复显示的根源之一）。
+      setStreaming(false)
+      if (!streamedText && toolCalls.length === 0) {
+        commit({ content: '(模型未返回内容)' })
+      } else {
+        // 本轮结束：segments 已是实时时间线顺序（buildSegs），流式/完成态一致交错
+        commit({ content: streamedText, toolCalls: [...toolCalls], segments: buildSegs() })
+      }
       return { errored: false, aborted: abortRef.current.aborted }
     } catch (e: any) {
       commit({ content: `发送失败：${e?.message || String(e)}` })
@@ -3365,6 +3485,21 @@ export default function AgentCodeView() {
       piClientRef.current = null
       setLoading(false)
       setStreaming(false)
+      setStreamKind('idle')
+      setCurToolName('')
+      setThinkDone(true)
+      // 停止/失败兜底：未完成工具（待执行/执行中）标记为已完成（失败），
+      // 避免卡片永远停在「待执行/写入中」——参考项目同款：中止时工具卡收敛为终态
+      if (toolCalls.some(t => (t.status ?? 'pending') !== 'done')) {
+        for (const t of toolCalls) {
+          if ((t.status ?? 'pending') !== 'done') {
+            t.status = 'done'
+            t.failed = true
+            t.result = t.result ?? '(工具未完成：已停止生成)'
+          }
+        }
+        commit({ toolCalls: [...toolCalls], segments: buildSegs() })
+      }
       streamingSessionRef.current = null
       useStore.getState().setAgentPhase(null)
       const queue = pendingSendRef.current
@@ -3849,7 +3984,11 @@ export default function AgentCodeView() {
 
   // segments 交错渲染（工具组 / 思考链 / 正文气泡）：流式分支与完成分支共用同一实现。
   // 此前两处逐字复制，「流式态与完成态显示不一致」类 bug 多源于两份拷贝各改一处。
-  const renderSegments = (segments: NonNullable<AgentMessage['segments']>, msgId: string) =>
+  // streaming=true（流式进行中）：末段 think 保持「思考中」转圈展开实时显示，
+  // 已闭合的 think 段收起为「思考过程」折叠头；完成态全部折叠（可点击展开）。
+  // 转圈/展开门控 = streaming && 最后一个 think 段 && !thinkDone（显式思考状态机，
+  // 参考 Reasonix 的 reasoningComplete：思考增量置 false、正文/工具声明置 true）。
+  const renderSegments = (segments: NonNullable<AgentMessage['segments']>, msgId: string, streaming = false) =>
     segments.map((seg, si) =>
       seg.kind === 'tools' ? (
         <ToolCallGroup
@@ -3861,7 +4000,14 @@ export default function AgentCodeView() {
           onUndo={(tc) => onUndoTool(msgId, tc)}
         />
       ) : seg.kind === 'think' ? (
-        <ThinkBlock key={`seg-${si}`} value={seg.content} closed={true} isStreaming={false} durationMs={seg.durationMs} />
+        <ThinkBlock
+          key={`seg-${si}`}
+          value={seg.content}
+          // 工具声明/正文出现后 thinkDone=true：思考块必然收起，不会与工具卡并存转圈
+          closed={!streaming || si < segments.length - 1 || thinkDone}
+          isStreaming={streaming && si === segments.length - 1 && !thinkDone}
+          durationMs={seg.durationMs}
+        />
       ) : (
         <div key={`seg-${si}`} className="chat-msg-bubble chat-msg-markdown"><AgentMarkdown content={seg.content} /></div>
       )
@@ -4050,11 +4196,11 @@ export default function AgentCodeView() {
               const liveToolCalls = (msg.toolCalls || []).filter(t => !segmentedToolIds.has(t.id))
               // 流式生成阶段：本轮正在生成 tool_call 参数（仅对正在流式的末条助手消息生效）。
               // 此时把思考链收尾（thinkDone）并展示“正在生成…”卡片，直到 done 后真正的工具卡片接管。
-              const genActive = streamingHere && isLast && msg.role === 'assistant' && !!genToolCalls?.length
-              const genThinkDone = genActive && !hasToolCalls
+              const genActive = false
+              const genThinkDone = false
               // 首 token 前（流式中、消息尚无任何产出：无正文/无思考/无工具）：在消息区显示
               // 像素网格思考加载器，与输入框上方状态栏的「模型思考中…」互补，避免等待留白。
-              const pendingFirstToken = streamingMsg && !msg.content && !(msg.segments?.length) && !hasToolCalls && !genToolCalls?.length
+              const pendingFirstToken = streamingMsg && !msg.content && !(msg.segments?.length) && !hasToolCalls
               return (
                 <div key={msg.id} className={`chat-msg chat-msg-${msg.role}`}>
                   {msg.role !== 'user' && (
@@ -4090,16 +4236,25 @@ export default function AgentCodeView() {
                             的顺序排列。流式进行中一律走下面的实时 content 渲染（保证思考链/工具状态
                             实时显示，不延迟到工具批到达才出现）；旧消息（无 segments）也走传统布局。 */}
                         {streamingMsg && msg.segments && msg.segments.length > 0 ? (
-                          // 流式进行中：先渲染已 finalized 的 segments（按时间线交错，逐轮累积，
-                          // 不会把所有工具卡堆在顶部），再追加「当前轮实时尾部」（本轮尚未切分
-                          // 的工具卡 + 实时思考），避免完成后才从「全堆顶部」跳回交错布局。
+                          // 流式进行中：segments 已按事件时间线实时切分（思考/正文/工具交错），
+                          // 直接渲染交错布局，不再叠加 StreamingContent（避免正文重复显示）。
                           <>
-                            {renderSegments(msg.segments, msg.id)}
+                            {renderSegments(msg.segments, msg.id, true)}
                             {liveToolCalls.length > 0 && renderToolCalls(liveToolCalls, msg.id)}
                             {msg.stopped && stoppedBadge}
-                            {streamingThis && (
+                            {/* 模型名/token/tps 徽标仅在输出正文时显示（思考/工具阶段不显示，避免状态栏之外多余信息） */}
+                            {streamingThis && streamKind === 'text' && (
                               <StreamingBadge text={msg.content || ''} modelLabel={modelLabel} />
                             )}
+                          </>
+                        ) : streamingMsg ? (
+                          // 流式中但尚无 finalize 段（首 token 前 / 尚无任何产出）：实时 content 渲染兜底
+                          <>
+                            {msg.stopped && stoppedBadge}
+                            {streamingThis && streamKind === 'text' && (
+                              <StreamingBadge text={msg.content || ''} modelLabel={modelLabel} />
+                            )}
+                            {pendingFirstToken && <ThinkingLoader />}
                             {genActive ? (
                               // 生成期不在会话区显示工具状态（改由输入框上方常驻状态栏展示），仅收起思考链
                               (msg.content ? <StreamingContent content={msg.content} streaming={streamingMsg} thinkDone={genThinkDone} /> : null)
@@ -4131,7 +4286,7 @@ export default function AgentCodeView() {
                           <>
                             {hasToolCalls ? renderToolCalls(msg.toolCalls!, msg.id) : null}
                             {msg.stopped && stoppedBadge}
-                            {streamingThis && (
+                            {streamingThis && streamKind === 'text' && (
                               <StreamingBadge text={msg.content || ''} modelLabel={modelLabel} />
                             )}
                             {/* 首 token 前：像素网格思考加载器（首次思考占位），首 token 到达后自动卸载 */}
@@ -4474,20 +4629,21 @@ export default function AgentCodeView() {
                   let name = ''
                   let text = '就绪'
                   let orbState: OrbState = 'working'
-                  const SEARCH_TOOLS = new Set(['Read', 'Grep', 'Glob', 'ListDir', 'AnalyzeDir'])
                   if (approvalReq) {
                     kind = 'running'; name = approvalReq.name; text = '等待确认…'; orbState = 'listening'
-                  } else if (agentPhase?.kind === 'running_tools' && agentPhase.tools.length) {
-                    kind = 'running'
-                    name = agentPhase.tools[0]!.name
-                    text = agentPhase.tools.length > 1 ? `执行 ${agentPhase.tools.length} 个工具中` : agentPhase.tools[0]!.verb
-                    orbState = SEARCH_TOOLS.has(agentPhase.tools[0]!.name) ? 'searching' : 'working'
-                  } else if (genToolCalls?.length) {
-                    kind = 'running'; name = genToolCalls[0]!.name; text = genToolVerb(genToolCalls[0]!.name); orbState = 'shaping'
+                  } else if (streamKind === 'tools') {
+                    // 工具调用/执行阶段：状态栏显示「工具调用中」+ 当前工具名；
+                    // 消息区工具卡另有具体 verb 徽标（如 Write → 写入中）
+                    kind = 'running'; name = curToolName; text = '工具调用中'; orbState = 'working'
+                  } else if (streamKind === 'think' && !thinkDone) {
+                    // 思考闭合（thinkDone=true）后即使 streamKind 残留 'think' 也不再显示
+                    // 「思考中」转圈——模型已结束思考（在输出参数/正文/工具的路上）
+                    kind = 'running'; text = '思考中'; orbState = 'solving'
+                  } else if (streamKind === 'text') {
+                    kind = 'running'; text = '输出中'; orbState = 'composing'
                   } else if (streaming) {
-                    kind = 'running'
-                    if (streamThinking) { text = '模型思考中…'; orbState = 'solving' }
-                    else { text = '模型生成中…'; orbState = 'composing' }
+                    // 流式中但尚无实际内容（首 token 前）
+                    kind = 'running'; text = '准备中…'; orbState = 'working'
                   } else if (loading) {
                     kind = 'running'; text = '准备中…'; orbState = 'working'
                   }

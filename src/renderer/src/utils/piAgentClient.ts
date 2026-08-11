@@ -129,11 +129,22 @@ export class PiAgentClient {
             this.callbacks.onTextDelta(`\n<think>${msg.content}`)
           }
           this.closeThinking()
+        } else if (msg.type === 'toolcall_start') {
+          // 工具参数开始流式生成：立即发出工具卡信号（args 为空，卡片先显示「参数生成中」），
+          // 不等 toolcall_end（参数可能很长，如 Write 大文件内容，生成期间 UI 必须有反馈，
+          // 参考项目同款：partial dispatch 即显示「接收参数」卡）
+          const partial = msg.partial as { content?: Array<{ type?: string; id?: string; name?: string }> } | undefined
+          const block = partial?.content?.[(msg as { contentIndex?: number }).contentIndex ?? -1]
+          if (block?.name) {
+            this.callbacks.onToolCall({ id: block.id || '', name: block.name, args: '' })
+          }
         } else if (msg.type === 'toolcall_end') {
           const tc = msg.toolCall as { id?: string; name?: string; arguments?: unknown } | undefined
           if (tc?.name) {
             this.callbacks.onToolCall({
-              id: tc.id ?? `call-${Date.now()}`,
+              // 注意用 || 而非 ??：pi 解析时 id 可能为空串 ""，空串必须回退，
+              // 否则工具卡会以 "" 为 id，与 tool_execution_start 的真实 id 永远匹配不上
+              id: tc.id || `call-${Date.now()}`,
               name: tc.name,
               args: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments ?? {})
             })

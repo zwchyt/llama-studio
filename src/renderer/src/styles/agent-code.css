@@ -1375,6 +1375,33 @@
   color: var(--tool-accent, var(--accent));
 }
 
+/* 执行中：工具名 shimmer 流光扫过 + 头部高亮底色（参考 Reasonix 的 data-running 效果），
+   配合状态徽标「写入中/修改中」，执行中的视觉状态非常明显 */
+@keyframes agentToolShimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+.agent-tool-call.executing .agent-tool-call-name {
+  background: linear-gradient(105deg,
+    var(--tool-accent, var(--accent)) 0%,
+    var(--tool-accent, var(--accent)) 38%,
+    #fff 46%, #fff 54%,
+    var(--tool-accent, var(--accent)) 62%,
+    var(--tool-accent, var(--accent)) 100%);
+  background-size: 220% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: agentToolShimmer 1.8s linear infinite;
+}
+.agent-tool-call.executing .agent-tool-call-head {
+  background: color-mix(in srgb, var(--tool-accent, var(--accent)) 10%, transparent);
+}
+.agent-tool-call.pending .agent-tool-call-head {
+  background: color-mix(in srgb, var(--text-muted) 6%, transparent);
+}
+
 /* 入场动画（借 ToolChips fade-up/pop-in 节奏）：工具卡/思考块/文件汇总
    挂载时淡入一次（流式内容更新是同一元素，不重放）；diff 胶囊级联 pop-in。 */
 .agent-tool-call,
@@ -1497,6 +1524,14 @@
 
 .agent-tool-call-status.confirm {
   color: var(--warning);
+}
+
+.agent-tool-call-status.run {
+  color: var(--accent);
+}
+
+.agent-tool-call-status.pending {
+  color: var(--text-muted);
 }
 
 .agent-tool-undo {

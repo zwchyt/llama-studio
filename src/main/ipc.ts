@@ -123,6 +123,8 @@ export interface IpcInternalHandlers {
     startTime: number
     autoBackgrounded: boolean
   }>>
+  handleWebSearch: (query: string) => Promise<string>
+  handleFetchWebpage: (url: string) => Promise<string>
 }
 export const ipcInternal: Partial<IpcInternalHandlers> = {}
 
@@ -4000,17 +4002,38 @@ export function registerIpcHandlers(): void {
           const finalUsage = finalTokens != null
             ? { promptTokens: lastUsage?.promptTokens ?? 0, completionTokens: finalTokens }
             : undefined
-          // Token 记账：流结束即入账，独立于聊天记录持久化（删除会话不影响累计）
+          // Token 记账：流结束即入账，独立于聊天记录持久化（删除会话不影响累计）。
+          // 登记表缺失时（模型外部/手动启动、或应用重启后端口未重新登记）异步兜底：
+          // 从该端口 llama-server 的 /v1/models 读真实模型路径（data[0].id 即路径），
+          // 避免这类记录统计成「未知模型」；done 消息不等待兜底，记账完成后补写。
           if (finalUsage) {
             const m = portModelInfos.get(opts.port)
-            appendTokenUsage({
+            const base = {
               ts: Date.now(),
               port: opts.port,
               templateId: m?.templateId,
-              modelPath: m?.modelPath ?? null,
               promptTokens: finalUsage.promptTokens,
               completionTokens: finalUsage.completionTokens,
-            })
+            }
+            if (m?.modelPath) {
+              appendTokenUsage({ ...base, modelPath: m.modelPath })
+            } else {
+              fetch(`http://127.0.0.1:${opts.port}/v1/models`, { signal: AbortSignal.timeout(2000) })
+                .then(async (resp) => {
+                  let modelPath: string | null = null
+                  if (resp.ok) {
+                    const data = await resp.json() as { data?: Array<{ id?: string }> } | null
+                    const id = data?.data?.[0]?.id
+                    if (typeof id === 'string' && id.trim()) {
+                      modelPath = id.trim()
+                      // 成功后回填登记表，后续请求不再重复请求
+                      portModelInfos.set(opts.port, { templateId: m?.templateId ?? '', modelPath })
+                    }
+                  }
+                  appendTokenUsage({ ...base, modelPath })
+                })
+                .catch(() => appendTokenUsage({ ...base, modelPath: null }))
+            }
           }
           e.sender.send('chat-stream-chunk', {
             streamId,
@@ -4813,7 +4836,7 @@ export function registerIpcHandlers(): void {
   })
 
   // ── 网络搜索工具 ──────────────────────────────────────────
-  ipcMain.handle('web-search', async (_e, query: string): Promise<string> => {
+  const handleWebSearch = async (query: string): Promise<string> => {
     if (!query?.trim()) return JSON.stringify({ error: '搜索关键词不能为空' })
     try {
       const encoded = encodeURIComponent(query.trim())
@@ -4841,9 +4864,11 @@ export function registerIpcHandlers(): void {
     } catch (e: any) {
       return JSON.stringify({ error: `搜索失败: ${e?.message || e}` })
     }
-  })
+  }
+  ipcInternal.handleWebSearch = handleWebSearch
+  ipcMain.handle('web-search', async (_e, query: string) => handleWebSearch(query))
 
-  ipcMain.handle('fetch-webpage', async (_e, url: string): Promise<string> => {
+  const handleFetchWebpage = async (url: string): Promise<string> => {
     if (!url?.trim()) return JSON.stringify({ error: 'URL 不能为空' })
     try {
       validateUrl(url)
@@ -4858,7 +4883,9 @@ export function registerIpcHandlers(): void {
     } catch (e: any) {
       return JSON.stringify({ error: `获取页面失败: ${e?.message || e}` })
     }
-  })
+  }
+  ipcInternal.handleFetchWebpage = handleFetchWebpage
+  ipcMain.handle('fetch-webpage', async (_e, url: string) => handleFetchWebpage(url))
 
   ipcMain.handle('print-to-pdf', async (_e, html: string): Promise<string> => {
     // 内联 KaTeX CSS，避免 CDN 加载失败

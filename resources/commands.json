@@ -10,26 +10,57 @@
         { "arg": "--hf-repo", "short": "-hf", "label": "HuggingFace Repo", "description": "HuggingFace 模型仓库（用户名/模型名[:量化级别]）", "type": "string", "placeholder": "ggml-org/GLM-4.7-Flash-GGUF:Q4_K_M", "env": "LLAMA_ARG_HF_REPO" },
         { "arg": "--hf-file", "short": "-hff", "label": "HuggingFace File", "description": "HuggingFace 模型文件覆盖", "type": "string", "placeholder": "model.gguf", "env": "LLAMA_ARG_HF_FILE" },
         { "arg": "--hf-token", "short": "-hft", "label": "HuggingFace Token", "description": "HuggingFace 访问令牌", "type": "string", "placeholder": "hf_...", "env": "HF_TOKEN" },
-        { "arg": "--ctx-size", "short": "-c", "label": "Context Size", "description": "提示上下文大小（0 = 使用模型默认值）", "type": "number", "default": 0, "min": 0, "max": 131072, "env": "LLAMA_ARG_CTX_SIZE" },
-        { "arg": "--n-predict", "short": "-n", "label": "Max Tokens to Predict", "description": "预测的最大令牌数（-1 = 无限）", "type": "number", "default": -1, "min": -1, "max": 65536, "env": "LLAMA_ARG_N_PREDICT" },
         { "arg": "--mmproj", "short": "-mm", "label": "Multimodal Projector", "description": "多模态投影仪文件路径", "type": "string", "placeholder": "/path/to/mmproj.gguf", "env": "LLAMA_ARG_MMPROJ" }
       ]
     },
     {
-      "name": "性能优化",
+      "name": "生成与采样",
+      "icon": "Sliders",
+      "commands": [
+        { "arg": "--ctx-size", "short": "-c", "label": "Context Size", "description": "提示上下文大小（0 = 使用模型默认值）", "type": "number", "default": 0, "min": 0, "max": 131072, "env": "LLAMA_ARG_CTX_SIZE" },
+        { "arg": "--n-predict", "short": "-n", "label": "Max Tokens to Predict", "description": "预测的最大令牌数（-1 = 无限）", "type": "number", "default": -1, "min": -1, "max": 65536, "env": "LLAMA_ARG_N_PREDICT" },
+        { "arg": "--temperature", "label": "Temperature", "description": "采样温度（越高 = 越有创意）", "type": "number", "default": 0.8, "min": 0, "max": 2 },
+        { "arg": "--top-k", "label": "Top-K", "description": "Top-K 采样（0 = 禁用）", "type": "number", "default": 40, "min": 0, "max": 1000, "env": "LLAMA_ARG_TOP_K" },
+        { "arg": "--top-p", "label": "Top-P", "description": "Top-P 核心采样（1.0 = 禁用）", "type": "number", "default": 0.95, "min": 0, "max": 1 },
+        { "arg": "--min-p", "label": "Min-P", "description": "Min-P 采样（0.0 = 禁用）", "type": "number", "default": 0.05, "min": 0, "max": 1 },
+        { "arg": "--seed", "short": "-s", "label": "Seed", "description": "随机数生成器种子（-1 = 随机）", "type": "number", "default": -1, "min": -1, "max": 2147483647 },
+        { "arg": "--repeat-penalty", "label": "Repeat Penalty", "description": "重复惩罚（1.0 = 禁用）", "type": "number", "default": 1.0, "min": 0, "max": 2 },
+        { "arg": "--presence-penalty", "label": "Presence Penalty", "description": "存在惩罚（0.0 = 禁用）", "type": "number", "default": 0.0, "min": 0, "max": 2 },
+        { "arg": "--frequency-penalty", "label": "Frequency Penalty", "description": "频率惩罚（0.0 = 禁用）", "type": "number", "default": 0.0, "min": 0, "max": 2 },
+        { "arg": "--backend-sampling", "short": "-bs", "label": "Backend Sampling", "description": "启用后端采样（实验性）", "type": "boolean", "default": false, "env": "LLAMA_ARG_BACKEND_SAMPLING"},
+        { "arg": "--context-shift", "label": "Context Shift", "description": "无限文本生成时启用上下文移位", "type": "boolean", "default": false, "env": "LLAMA_ARG_CONTEXT_SHIFT" }
+      ]
+    },
+    {
+      "name": "线程与批处理",
       "icon": "Cpu",
       "commands": [
         { "arg": "--threads", "short": "-t", "label": "CPU Threads", "description": "生成的 CPU 线程数（-1 = 自动）", "type": "number", "default": -1, "min": -1, "max": 256, "env": "LLAMA_ARG_THREADS" },
         { "arg": "--threads-batch", "short": "-tb", "label": "Batch Threads", "description": "批处理/提示处理的线程数（默认与 --threads 相同）", "type": "number", "default": -1, "min": -1, "max": 256 },
         { "arg": "--batch-size", "short": "-b", "label": "Batch Size", "description": "逻辑最大批处理大小", "type": "number", "default": 2048, "min": 1, "max": 65536, "env": "LLAMA_ARG_BATCH" },
         { "arg": "--ubatch-size", "short": "-ub", "label": "Micro-Batch Size", "description": "物理最大批处理大小", "type": "number", "default": 512, "min": 1, "max": 65536, "env": "LLAMA_ARG_UBATCH" },
-        { "arg": "--parallel", "short": "-np", "label": "Parallel Sequences", "description": "并行解码的序列数", "type": "number", "default": 1, "min": 1, "max": 64, "env": "LLAMA_ARG_N_PARALLEL" },
+        { "arg": "--parallel", "short": "-np", "label": "Parallel Sequences", "description": "并行解码的序列数", "type": "number", "default": -1, "min": 1, "max": 64, "env": "LLAMA_ARG_N_PARALLEL" },
+        { "arg": "--flash-attn", "short": "-fa", "label": "Flash Attention", "description": "Flash Attention 模式", "type": "select", "options": ["auto", "on", "off"], "default": "auto", "env": "LLAMA_ARG_FLASH_ATTN" },
+        { "arg": "--cont-batching", "label": "Continuous Batching", "description": "启用连续批处理（动态批处理），默认启用", "type": "boolean", "default": true, "env": "LLAMA_ARG_CONT_BATCHING" },
+        { "arg": "--warmup", "label": "Warmup", "description": "执行空运行预热，默认启用", "type": "boolean", "default": true, "env": "LLAMA_ARG_WARMUP" }
+      ]
+    },
+    {
+      "name": "内存与缓存",
+      "icon": "Database",
+      "commands": [
         { "arg": "--mlock", "label": "Memory Lock", "description": "强制系统将模型保留在 RAM 中（禁止交换到磁盘）", "type": "boolean", "default": false, "env": "LLAMA_ARG_MLOCK" },
         { "arg": "--no-mmap", "label": "No Memory Map", "description": "禁用内存映射（mmap 默认开启，加载更快；勾选后改为全量读入内存）", "type": "boolean", "default": false, "env": "LLAMA_ARG_NO_MMAP" },
-        { "arg": "--flash-attn", "short": "-fa", "label": "Flash Attention", "description": "Flash Attention 模式", "type": "select", "options": ["auto", "on", "off"], "default": "auto", "env": "LLAMA_ARG_FLASH_ATTN" },
-        { "arg": "--cache-prompt", "label": "Prompt Cache", "description": "启用提示缓存，重复 prompt 时大幅加速", "type": "boolean", "default": true, "env": "LLAMA_ARG_CACHE_PROMPT" },
+        { "arg": "--direct-io", "label": "Direct I/O", "description": "绕过系统文件缓存直接读写磁盘", "type": "boolean", "default": false, "env": "LLAMA_ARG_DIO" },
+        { "arg": "--no-host", "label": "No Host Buffer", "description": "绕过宿主缓冲区，允许使用额外缓冲区以减少内存拷贝", "type": "boolean", "default": false, "env": "LLAMA_ARG_NO_HOST" },
         { "arg": "--cache-ram", "label": "Cache RAM (MiB)", "description": "KV 缓存内存上限（-1 = 无限制，0 = 禁用）", "type": "number", "default": 8192, "min": -1, "max": 1048576, "env": "LLAMA_ARG_CACHE_RAM" },
-        { "arg": "--direct-io", "label": "Direct I/O", "description": "绕过系统文件缓存直接读写磁盘", "type": "boolean", "default": false, "env": "LLAMA_ARG_DIO" }
+        { "arg": "--cache-prompt", "label": "Prompt Cache", "description": "启用提示缓存，重复 prompt 时大幅加速", "type": "boolean", "default": true, "env": "LLAMA_ARG_CACHE_PROMPT" },
+        { "arg": "--cache-type-k", "short": "-ctk", "label": "KV Cache Type (K)", "description": "键（Keys）的 KV 缓存数据类型", "type": "select", "options": ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], "default": "f16", "env": "LLAMA_ARG_CACHE_TYPE_K" },
+        { "arg": "--cache-type-v", "short": "-ctv", "label": "KV Cache Type (V)", "description": "值（Values）的 KV 缓存数据类型", "type": "select", "options": ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], "default": "f16", "env": "LLAMA_ARG_CACHE_TYPE_V" },
+        { "arg": "--kv-unified", "short": "-kvu", "label": "Unified KV Buffer", "description": "使用统一 KV 缓冲跨所有序列（auto 时默认启用）", "type": "boolean", "default": true, "env": "LLAMA_ARG_KV_UNIFIED" },
+        { "arg": "--kv-offload", "short": "-kvo", "label": "KV Cache Offload", "description": "启用 KV 缓存卸载到 GPU", "type": "boolean", "default": true, "env": "LLAMA_ARG_KV_OFFLOAD" },
+        { "arg": "--swa-full", "label": "SWA Full Cache", "description": "使用完整大小的滑动窗口注意力缓存，可能提升长上下文性能", "type": "boolean", "default": false, "env": "LLAMA_ARG_SWA_FULL" },
+        { "arg": "--repack", "label": "Weight Repacking", "description": "启用权重重新打包以提高性能", "type": "boolean", "default": true, "env": "LLAMA_ARG_REPACK" }
       ]
     },
     {
@@ -37,41 +68,42 @@
       "icon": "Zap",
       "commands": [
         { "arg": "--gpu-layers", "short": "-ngl", "label": "GPU Layers", "description": "存储在显存中的最大层数（'auto'、'all' 或数字）", "type": "string", "default": "auto", "placeholder": "auto", "env": "LLAMA_ARG_N_GPU_LAYERS" },
-        { "arg": "--kv-offload", "short": "-kvo", "label": "KV Cache Offload", "description": "启用 KV 缓存卸载到 GPU", "type": "boolean", "default": true, "env": "LLAMA_ARG_KV_OFFLOAD" },
         { "arg": "--fit", "short": "-fit", "label": "Auto Fit Memory", "description": "自动调整参数以适应设备内存", "type": "select", "options": ["on", "off"], "default": "on", "env": "LLAMA_ARG_FIT" },
+        { "arg": "--fit-target", "short": "-fitt", "label": "Fit Target Margin (MiB)", "description": "为每张设备保留的显存余量；默认 1024 MiB，可填单值或逗号分隔多 GPU 值", "type": "string", "default": "1024", "placeholder": "1024 或 1024,2048", "env": "LLAMA_ARG_FIT_TARGET" },
+        { "arg": "--fit-ctx", "short": "-fitc", "label": "Fit Minimum Context", "description": "自动显存适配时允许缩小到的最小上下文长度", "type": "number", "default": 4096, "min": 128, "max": 131072, "env": "LLAMA_ARG_FIT_CTX" },
         { "arg": "--cpu-moe", "short": "-cmoe", "label": "CPU MoE", "description": "将所有 MoE 权重保留在 CPU 中", "type": "boolean", "default": false, "env": "LLAMA_ARG_CPU_MOE" },
-        { "arg": "--n-cpu-moe", "label": "CPU MoE Layers", "description": "将前 N 层的 MoE 专家权重保留在 CPU 中（单个数字）", "type": "string", "placeholder": "6", "env": "LLAMA_ARG_N_CPU_MOE" }
+        { "arg": "--n-cpu-moe", "label": "CPU MoE Layers", "description": "将前 N 层的 MoE 专家权重保留在 CPU 中（单个数字）", "type": "string", "placeholder": "6", "env": "LLAMA_ARG_N_CPU_MOE" },
+        { "arg": "--op-offload", "label": "Operation Offload", "description": "将宿主张量操作卸载到设备", "type": "boolean", "default": true, "env": "LLAMA_ARG_OP_OFFLOAD" }
       ]
     },
+
     {
-      "name": "KV缓存和权重",
-      "icon": "Database",
+      "name": "CPU 调度",
+      "icon": "Gauge",
       "commands": [
-        { "arg": "--cache-type-k", "short": "-ctk", "label": "KV Cache Type (K)", "description": "键（Keys）的 KV 缓存数据类型", "type": "select", "options": ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], "default": "f16", "env": "LLAMA_ARG_CACHE_TYPE_K" },
-        { "arg": "--cache-type-v", "short": "-ctv", "label": "KV Cache Type (V)", "description": "值（Values）的 KV 缓存数据类型", "type": "select", "options": ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], "default": "f16", "env": "LLAMA_ARG_CACHE_TYPE_V" },
-        { "arg": "--repack", "label": "Weight Repacking", "description": "启用权重重新打包以提高性能", "type": "boolean", "default": true, "env": "LLAMA_ARG_REPACK" },
-        { "arg": "--kv-unified", "short": "-kvu", "label": "Unified KV Buffer", "description": "使用统一 KV 缓冲跨所有序列（auto 时默认启用）", "type": "boolean", "default": true, "env": "LLAMA_ARG_KV_UNIFIED" }
-      ]
-    },
+        { "arg": "--cpu-range", "short": "-Cr", "label": "CPU Core Range", "description": "限定生成线程使用的 CPU 核心范围，例如 0-7", "type": "string", "placeholder": "0-7", "env": "LLAMA_ARG_CPU_RANGE" },
+        { "arg": "--cpu-range-batch", "short": "-Crb", "label": "Batch CPU Core Range", "description": "限定 prompt/batch 处理线程使用的 CPU 核心范围", "type": "string", "placeholder": "0-15", "env": "LLAMA_ARG_CPU_RANGE_BATCH" },
+        { "arg": "--cpu-strict", "label": "Strict CPU Placement", "description": "严格绑定生成线程至指定 CPU 范围/掩码", "type": "boolean", "default": false, "env": "LLAMA_ARG_CPU_STRICT" },
+        { "arg": "--prio", "label": "Generation Priority", "description": "生成线程优先级：0 normal、1 medium、2 high、3 realtime", "type": "select", "options": ["0", "1", "2", "3"], "default": "0", "env": "LLAMA_ARG_PRIO" },
+        { "arg": "--poll", "label": "CPU Polling", "description": "工作等待轮询强度（0-100）；更低延迟但会提高空闲 CPU 占用", "type": "number", "default": 50, "min": 0, "max": 100, "env": "LLAMA_ARG_POLL" },
+        { "arg": "--numa", "label": "NUMA Mode", "description": "NUMA 系统优化：distribute（均衡分布）、isolate（本节点）、numactl（使用 numactl CPU 映射）", "type": "select", "options": ["", "distribute", "isolate", "numactl"], "default": "", "env": "LLAMA_ARG_NUMA" }
+     ]
+   },
+
     {
-      "name": "采样参数",
-      "icon": "Sliders",
+      "name": "推理模式",
+      "icon": "Settings",
       "commands": [
-        { "arg": "--temperature", "label": "Temperature", "description": "采样温度（越高 = 越有创意）", "type": "number", "default": 0.8, "min": 0, "max": 2, "env": "" },
-        { "arg": "--top-k", "label": "Top-K", "description": "Top-K 采样（0 = 禁用）", "type": "number", "default": 40, "min": 0, "max": 1000, "env": "LLAMA_ARG_TOP_K" },
-        { "arg": "--top-p", "label": "Top-P", "description": "Top-P 核心采样（1.0 = 禁用）", "type": "number", "default": 0.95, "min": 0, "max": 1 },
-        { "arg": "--min-p", "label": "Min-P", "description": "Min-P 采样（0.0 = 禁用）", "type": "number", "default": 0.05, "min": 0, "max": 1 },
-        { "arg": "--seed", "short": "-s", "label": "Seed", "description": "随机数生成器种子（-1 = 随机）", "type": "number", "default": -1, "min": -1, "max": 2147483647 },
-        { "arg": "--repeat-penalty", "label": "Repeat Penalty", "description": "重复惩罚（1.0 = 禁用）", "type": "number", "default": 1.0, "min": 0, "max": 2 },
-        { "arg": "--presence-penalty", "label": "Presence Penalty", "description": "存在惩罚（0.0 = 禁用）", "type": "number", "default": 0.0, "min": 0, "max": 2 },
-        { "arg": "--frequency-penalty", "label": "Frequency Penalty", "description": "频率惩罚（0.0 = 禁用）", "type": "number", "default": 0.0, "min": 0, "max": 2 }
+        { "arg": "--reasoning-format", "label": "Reasoning Format", "description": "模型推理输出格式", "type": "select", "options": ["auto", "none", "deepseek", "deepseek-legacy"], "default": "auto", "env": "LLAMA_ARG_THINK" },
+        { "arg": "--reasoning", "short": "-rea", "label": "Reasoning Mode", "description": "在聊天中启用推理/思考模式", "type": "select", "options": ["auto", "on", "off"], "default": "auto", "env": "LLAMA_ARG_REASONING" },
+        { "arg": "--reasoning-budget", "label": "Reasoning Budget (tokens)", "description": "思考的令牌预算（-1 = 无限制）", "type": "number", "default": -1, "min": -1, "max": 65536, "env": "LLAMA_ARG_THINK_BUDGET" }
       ]
     },
     {
       "name": "RoPE / YaRN",
       "icon": "Wind",
       "commands": [
-        { "arg": "--rope-scaling", "label": "RoPE Scaling", "description": "RoPE 频率缩放方法", "type": "select", "options": ["none", "linear", "yarn"], "default": "", "env": "LLAMA_ARG_ROPE_SCALING_TYPE" },
+        { "arg": "--rope-scaling", "label": "RoPE Scaling", "description": "RoPE 频率缩放方法", "type": "select", "options": ["none", "linear", "yarn"], "default": "none", "env": "LLAMA_ARG_ROPE_SCALING_TYPE" },
         { "arg": "--rope-scale", "label": "RoPE Scale", "description": "RoPE 上下文缩放因子", "type": "number", "default": 1.0, "min": 0.1, "max": 32, "env": "LLAMA_ARG_ROPE_SCALE" },
         { "arg": "--yarn-orig-ctx", "label": "YaRN Original Context", "description": "YaRN 原始上下文大小（0 = 模型默认值）", "type": "number", "default": 0, "min": 0, "max": 131072, "env": "LLAMA_ARG_YARN_ORIG_CTX" }
       ]
@@ -85,10 +117,8 @@
         { "arg": "--chat-template", "label": "Chat Template", "description": "自定义 Jinja 聊天模板名称或路径", "type": "string", "placeholder": "llama3", "env": "LLAMA_ARG_CHAT_TEMPLATE" },
         { "arg": "--chat-template-file", "label": "Chat Template File", "description": "自定义 Jinja 聊天模板文件路径", "type": "string", "placeholder": "/path/to/template.jinja", "env": "LLAMA_ARG_CHAT_TEMPLATE_FILE" },
         { "arg": "--jinja", "label": "Use Jinja Templating", "description": "启用 Jinja 模板引擎处理聊天", "type": "boolean", "default": true, "env": "LLAMA_ARG_JINJA" },
-        { "arg": "--reasoning-format", "label": "Reasoning Format", "description": "模型推理输出格式", "type": "select", "options": ["auto", "none", "deepseek", "deepseek-legacy"], "default": "auto", "env": "LLAMA_ARG_THINK" },
-        { "arg": "--reasoning", "short": "-rea", "label": "Reasoning Mode", "description": "在聊天中启用推理/思考模式", "type": "select", "options": ["auto", "on", "off"], "default": "auto", "env": "LLAMA_ARG_REASONING" },
-        { "arg": "--reasoning-budget", "label": "Reasoning Budget (tokens)", "description": "思考的令牌预算（-1 = 无限制）", "type": "number", "default": -1, "min": -1, "max": 65536, "env": "LLAMA_ARG_THINK_BUDGET" },
-        { "arg": "--metrics", "label": "Metrics Endpoint", "description": "启用 Prometheus 格式的 /metrics 监控端点（提供 tokens/s 等实时数据）", "type": "boolean", "default": true, "env": "LLAMA_ARG_ENDPOINT_METRICS" }
+        { "arg": "--metrics", "label": "Metrics Endpoint", "description": "启用 Prometheus 格式的 /metrics 监控端点（提供 tokens/s 等实时数据）", "type": "boolean", "default": true, "env": "LLAMA_ARG_ENDPOINT_METRICS" },
+        { "arg": "--tools", "label": "Tools", "description": "实验性:启用AI代理的内置工具", "type": "select", "options": ["all", "read_file", "file_glob_search", "grep_search", "exec_shell_command", "write_file", "edit_file", "get_datetime"], "default": "", "env": "LLAMA_ARG_TOOLS" }
       ]
     },
     {
@@ -116,7 +146,11 @@
         { "arg": "--spec-draft-n-min", "label": "Draft Min Tokens", "description": "推测解码的最小草稿令牌数", "type": "number", "default": 0, "min": 0, "max": 128, "env": "LLAMA_ARG_SPEC_DRAFT_N_MIN" },
         { "arg": "--spec-draft-p-min", "label": "Draft P-Min", "description": "推测解码的最小概率（贪心）", "type": "number", "default": 0.75, "min": 0, "max": 1, "env": "LLAMA_ARG_SPEC_DRAFT_P_MIN" },
         { "arg": "--spec-draft-p-split", "label": "Draft P-Split", "description": "推测解码的拆分概率", "type": "number", "default": 0.1, "min": 0, "max": 1, "env": "LLAMA_ARG_SPEC_DRAFT_P_SPLIT" },
-        { "arg": "--tools", "label": "Tools", "description": "实验性:启用AI代理的内置工具", "type": "select", "options": ["all", "read_file", "file_glob_search", "grep_search", "exec_shell_command", "write_file", "edit_file", "get_datetime"], "default": "", "env": "LLAMA_ARG_TOOLS" }
+        { "arg": "--spec-draft-type-k", "short": "-ctkd", "label": "Draft KV Cache Type (K)", "description": "草稿模型 K 缓存数据类型", "type": "select", "options": ["f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], "default": "f16", "env": "LLAMA_ARG_SPEC_DRAFT_CACHE_TYPE_K" },
+        { "arg": "--spec-draft-type-v", "short": "-ctvd", "label": "Draft KV Cache Type (V)", "description": "草稿模型 V 缓存数据类型", "type": "select", "options": ["f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"], "default": "f16", "env": "LLAMA_ARG_SPEC_DRAFT_CACHE_TYPE_V" },
+        { "arg": "--spec-draft-threads", "short": "-td", "label": "Draft CPU Threads", "description": "草稿模型生成线程数；默认继承主模型线程设置", "type": "number", "default": -1, "min": -1, "max": 256, "env": "LLAMA_ARG_SPEC_DRAFT_THREADS" },
+        { "arg": "--spec-ngram-simple-size-n", "label": "N-gram Lookup Size", "description": "ngram-simple 的查找 n-gram 长度", "type": "number", "default": 12, "min": 1, "max": 128, "env": "LLAMA_ARG_SPEC_NGRAM_SIMPLE_SIZE_N" },
+        { "arg": "--spec-ngram-simple-size-m", "label": "N-gram Draft Size", "description": "ngram-simple 的草稿 m-gram 长度", "type": "number", "default": 48, "min": 1, "max": 256, "env": "LLAMA_ARG_SPEC_NGRAM_SIMPLE_SIZE_M" }
       ]
     }
   ]

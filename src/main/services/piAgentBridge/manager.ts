@@ -59,7 +59,7 @@ export class PiAgentManager {
     toolNames: string[] = [
       'get_datetime', 'Read', 'Bash', 'Write', 'Edit', 'Glob', 'Grep', 'ListDir', 'Delete',
       'TodoWrite', 'TaskGet', 'TaskList', 'GetBackgroundTaskOutput', 'ListBackgroundTasks',
-      'AskUserQuestion', 'Reflect', 'CodeSearch', 'AnalyzeDir'
+      'AskUserQuestion', 'Reflect', 'CodeSearch', 'AnalyzeDir', 'web_search', 'fetch_webpage'
     ]
   ) {
     // 撤销备份由 manager 统一管理（注入 recordUndo/undo 到工具执行器）
@@ -321,6 +321,14 @@ export function createIpcExecutors(): MainToolExecutors {
       return ipcInternal.handleListBackgroundTasks!()
     },
     codesearchQuery: (dir, query, limit) => handleCodeSearchQuery(dir, query, limit),
+    webSearch: (query) => {
+      requireInternal('handleWebSearch')
+      return ipcInternal.handleWebSearch!(query)
+    },
+    fetchWebpage: (url) => {
+      requireInternal('handleFetchWebpage')
+      return ipcInternal.handleFetchWebpage!(url)
+    },
     // 默认实现：无窗口通道时由 piAgentIpc 覆写为跨进程弹窗
     askUser: async (questions) =>
       JSON.stringify({
