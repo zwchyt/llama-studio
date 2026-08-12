@@ -169,7 +169,6 @@ const fullApi = {
   readFileBase64: (filePath: string) => ipcRenderer.invoke('read-file-base64', filePath),
   getFilePath: (file: File) => webUtils.getPathForFile(file),
   writeFile: (filePath: string, content: string) => ipcRenderer.invoke('write-file', filePath, content),
-  editFile: (filePath: string, oldString: string, newString: string, replaceAll?: boolean) => ipcRenderer.invoke('edit-file', filePath, oldString, newString, replaceAll),
   glob: (opts: { pattern: string; path: string; limit?: number }) => ipcRenderer.invoke('glob', opts),
   grep: (opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean; type?: string }) => ipcRenderer.invoke('grep', opts),
   // ── Agent Code 工作台 文件树自动刷新（目录监听）──

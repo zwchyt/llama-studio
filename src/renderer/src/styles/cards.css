@@ -31,6 +31,41 @@
   margin: 0 auto;
 }
 
+/* 模板加载骨架占位：与真实卡片同网格布局，避免加载期闪空态 */
+.card-skeleton {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 120px;
+}
+.card-skeleton-icon,
+.card-skeleton-line {
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--border) 25%, var(--surface-hover, var(--border)) 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.2s ease-in-out infinite;
+}
+.card-skeleton-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+}
+.card-skeleton-line {
+  height: 14px;
+  width: 70%;
+}
+.card-skeleton-line.short {
+  width: 45%;
+}
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 .add-card {
   border: 2px dashed var(--border-strong);
   border-radius: var(--radius-lg);

@@ -39,10 +39,20 @@ function logClass(text: string): string {
 }
 // ── Agent Code 工作台：项目（含会话）落盘持久化（防抖，避免流式过程中频繁写盘）──
 let saveAgentProjectsTimer: ReturnType<typeof setTimeout> | null = null
+// 流式期间（agentPhase 非 null）不落盘：全量 JSON.stringify + IPC 克隆 + 主进程写所有
+// 会话文件，在长会话（消息累计大）下每次都会阻塞渲染线程数百毫秒——交互/生成时界面
+// 频繁「短暂冻结」的主因之一。先记 pending，等流式结束（setAgentPhase(null)）再补存一次。
+let pendingProjects: AgentProject[] | null = null
 function scheduleSaveAgentProjects(p: AgentProject[]): void {
   if (saveAgentProjectsTimer) clearTimeout(saveAgentProjectsTimer)
   // 空占位项目（无会话、无工作目录）不落盘，避免 IPC GC 误删磁盘已有会话文件
   if (p.length === 0 || p.every(proj => proj.sessions.length === 0 && !proj.workspaceDir)) return
+  if (useStore.getState().agentPhase != null) {
+    // 生成中：只记最新 pending，不写盘（等流式结束统一补存）
+    pendingProjects = p
+    return
+  }
+  pendingProjects = null
   saveAgentProjectsTimer = setTimeout(() => {
     window.api?.saveAgentProjects(p).catch(() => { })
   }, 800)
@@ -185,6 +195,9 @@ interface AppStore {
   // ── Agent Code 工具执行阶段（pi-web 风格状态机，驱动前端状态栏）──
   agentPhase: { kind: 'running_tools'; tools: { name: string; verb: string }[] } | { kind: 'waiting_model' } | null
   setAgentPhase: (phase: AppStore['agentPhase']) => void
+  /** 模板（模型卡片）列表是否已从主进程加载完成（未完成时 CardsView 显示加载占位，避免空态闪现） */
+  templatesReady: boolean
+  setTemplatesReady: (v: boolean) => void
 }
 // createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
@@ -195,6 +208,8 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   updateDismissed: false, checkingUpdate: false, downloadProgress: null,
   appReleaseInfo: null, appUpdateDismissed: false, appDownloadProgress: null, appCheckingUpdate: false,
   templateSearch: '', modelDownloads: {}, hfDownloads: [],
+  templatesReady: false,
+  setTemplatesReady: (v) => set({ templatesReady: v }),
   hubQuery: '', hubResults: [], hubSelectedModelId: null, hubSource: 'huggingface',
   modelLogs: {},
   modelMetrics: {},
@@ -396,7 +411,14 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
     scheduleSaveAgentProjects(p)
   },
   agentPhase: null,
-  setAgentPhase: (phase) => set({ agentPhase: phase }),
+  setAgentPhase: (phase) => {
+    const prev = useStore.getState().agentPhase
+    set({ agentPhase: phase })
+    // 流式结束（非 null → null）：补存流式中累积的 pending 变更（此时已非流式中，走正常防抖）
+    if (prev != null && phase == null && pendingProjects) {
+      scheduleSaveAgentProjects(pendingProjects)
+    }
+  },
   // ── 聊天界面 ──
   chatSidebarCollapsed: (() => {
     try { return localStorage.getItem('chatSidebarCollapsed') === 'true' } catch { return false }

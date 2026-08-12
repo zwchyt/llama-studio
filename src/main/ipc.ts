@@ -68,12 +68,6 @@ export interface IpcInternalHandlers {
   /** 查询端口当前加载的模型信息（模板 id + 模型文件路径；Token 记账用） */
   getPortModelInfo: (port: number) => { templateId: string; modelPath: string | null } | undefined
   handleWriteFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>
-  handleEditFile: (
-    filePath: string,
-    oldString: string,
-    newString: string,
-    replaceAll?: boolean
-  ) => Promise<{ success: boolean; content?: string; error?: string }>
   handleGlob: (opts: { pattern: string; path: string; limit?: number }) => Promise<{
     success: boolean
     filenames?: string[]
@@ -5020,33 +5014,8 @@ export function registerIpcHandlers(): void {
     }
   }
 
-  function findActualString(fileContent: string, oldString: string): string | null {
-    if (fileContent.includes(oldString)) return oldString
-    const curly = oldString.replace(/'/g, '\u2018').replace(/'/g, '\u2019').replace(/"/g, '\u201c').replace(/"/g, '\u201d')
-    if (fileContent.includes(curly)) return curly
-    const straight = curly.replace(/\u2018/g, "'").replace(/\u2019/g, "'").replace(/\u201c/g, '"').replace(/\u201d/g, '"')
-    if (straight !== curly && fileContent.includes(straight)) return straight
-    return null
-  }
-
-  // 友好的"未找到 old_string"提示（借鉴 Reasonix oldStringNotFoundError）：
-  // 给出与 old_string 首行最接近的文件行号与内容，并建议重新 Read 再编辑。
-  function buildEditNotFoundHint(fileContent: string, oldString: string, filePath: string): string {
-    const norm = oldString.replace(/\r\n/g, '\n')
-    const firstLine = norm.split('\n')[0] ?? ''
-    const lines = fileContent.split('\n')
-    if (firstLine.trim()) {
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i]!.includes(firstLine)) {
-          const snippet = lines[i]!.trim().slice(0, 200)
-          return `未在文件中找到要替换的字符串。最近匹配行 ${i + 1}: ${snippet}\n请重新 Read 文件获取最新内容后再编辑；若多处相似，请提供更多上下文以精确定位。\n路径: ${filePath}`
-        }
-      }
-    }
-    return `未在文件中找到要替换的字符串:\n${oldString}\n请重新 Read 文件获取最新内容后再编辑，并确保 old_string 与文件当前内容完全一致（含空白与行尾）。\n路径: ${filePath}`
-  }
-
-  // 跨批冲突检测：记录文件内容快照（hash+mtime+size），edit 前比对以发现上次读取后被其他轮次/外部改动。
+  // 文件内容快照（hash+mtime+size）：Read/Write 完整读取后记录，
+  // 作为后续一致性比对的基准（edit 链路已移除，记录逻辑保留供 Read/Write 使用）。
   interface FileSnapshot { mtimeMs: number; size: number; hash?: string }
   const fileSnapshots = new Map<string, FileSnapshot>()
   const SNAPSHOT_HASH_MAX = 5 * 1024 * 1024 // 仅对 <=5MB 文件算内容 hash，超出退回 mtime+size
@@ -5061,14 +5030,6 @@ export function registerIpcHandlers(): void {
     } catch { return null }
   }
   function recordFileSnapshot(fp: string): void { const s = computeFileSnapshot(fp); if (s) fileSnapshots.set(fp, s) }
-  // 有旧快照且当前与之不一致 → 冲突；无旧快照 → 不判冲突（不强制先 Read）
-  function detectFileConflict(fp: string): boolean {
-    const prev = fileSnapshots.get(fp); if (!prev) return false
-    const cur = computeFileSnapshot(fp); if (!cur) return false
-    if (cur.size !== prev.size) return true
-    if (prev.hash && cur.hash) return prev.hash !== cur.hash
-    return cur.mtimeMs > prev.mtimeMs // 大文件无 hash → 退回 mtime
-  }
 
   /** 用 ~4 chars/token 估算 token 数 */
   function estimateTokens(text: string): number {
@@ -5135,9 +5096,8 @@ export function registerIpcHandlers(): void {
         }
       }
 
-      // 仅「完整读取」（模型 Read 工具无 maxBytes）才更新内容快照作为编辑冲突基准；
-      // 带 maxBytes 的部分/预览读取（UI 预览、Edit 前撤销备份读）不刷新快照，
-      // 否则会覆盖模型 Read 时建立的基准，使 edit-file 的跨批冲突检测形同虚设。
+      // 仅「完整读取」（模型 Read 工具无 maxBytes）才更新内容快照作为一致性基准；
+      // 带 maxBytes 的部分/预览读取（UI 预览）不刷新快照，避免覆盖完整读取建立的基准。
       if (!(opts?.maxBytes && opts.maxBytes > 0)) recordFileSnapshot(filePath)
 
       // 预览场景（UI 文件浏览器）：仅读取前 maxBytes 字节
@@ -5290,78 +5250,6 @@ export function registerIpcHandlers(): void {
   }
   ipcInternal.handleWriteFile = handleWriteFile
   ipcMain.handle('write-file', (_e, filePath, content) => handleWriteFile(filePath, content))
-
-  const handleEditFile = async (filePath: string, oldString: string, newString: string, replaceAll?: boolean): Promise<{ success: boolean; content?: string; error?: string }> => {
-    try {
-      filePath = resolveAgentPath(filePath)
-      // SECURITY: 编辑目标必须落在工作区/应用范围内
-      if (!isAgentPathInScope(resolve(filePath))) return { success: false, error: '编辑被拒绝：目标路径不在工作区/应用范围内。' }
-      if (!existsSync(filePath)) return { success: false, error: '文件不存在' }
-
-      // 跨批冲突检测：文件在上次读取/写入后被其他轮次或外部改动（内容 hash 快照比对）
-      if (detectFileConflict(filePath)) {
-        return { success: false, error: '文件在你上次读取后已被修改（可能由其他工具轮次或外部改动），请重新 Read 获取最新内容与 hashline 后再编辑。' }
-      }
-
-      // 文件大小限制
-      const stat = statSync(filePath)
-      if (stat.size > MAX_FILE_SIZE) {
-        return { success: false, error: `文件过大（${(stat.size / 1024 / 1024).toFixed(1)} MiB），最大允许编辑 1 GiB` }
-      }
-
-      const { content: fileContent, encoding } = readFileContent(filePath)
-
-      // 行尾对齐（借鉴 Reasonix edit_file 的 matchLineEndings / CRLF 归一）：
-      // Windows 项目文件常为 CRLF，而模型给出的 old_string/new_string 多用 LF。
-      // 若文件行尾与给定串不一致，先把串对齐到文件行尾再匹配/替换，避免"找不到"误失败。
-      const fileHasCRLF = fileContent.includes('\r\n')
-      const alignLE = (s: string): string => {
-        if (s == null) return s
-        return fileHasCRLF ? s.replace(/\r\x0a/g, '\x0a').replace(/\x0a/g, '\r\x0a') : s.replace(/\r\x0a/g, '\x0a')
-      }
-      const oldNorm = alignLE(oldString ?? '')
-      const newNorm = alignLE(newString ?? '')
-
-      if (!oldString && fileContent.trim() !== '') {
-        return { success: false, error: '文件已存在且非空，无法创建' }
-      }
-
-      if (!oldString && !fileContent.trim()) {
-        // 空文件 + 空 oldString = 创建新内容
-        const updated = newNorm
-        await fsPromises.writeFile(filePath, updated, encoding as BufferEncoding)
-        recordFileSnapshot(filePath)
-        return { success: true, content: updated }
-      }
-
-      const actualOldString = findActualString(fileContent, oldNorm)
-      if (!actualOldString) {
-        // 友好错误提示（借鉴 Reasonix oldStringNotFoundError：给出最近匹配行 + 内容 + 重读建议）
-        const hint = buildEditNotFoundHint(fileContent, oldNorm, filePath)
-        return { success: false, error: hint }
-      }
-
-      // 多匹配检测
-      const matches = fileContent.split(actualOldString).length - 1
-      if (matches > 1 && !replaceAll) {
-        return { success: false, error: `找到 ${matches} 处匹配，请设置 replaceAll=true 或提供更多上下文精确定位` }
-      }
-
-      // 用函数形式替换：字符串形式的替换串中 $$/$&/$`/$' 会被 JS 解释为特殊模式，
-      // new_string 含这些序列（jQuery $(...)、shell $$、正则 $& 等）时会静默写入损坏的内容。
-      const updated = replaceAll
-        ? fileContent.replaceAll(actualOldString, () => newNorm)
-        : fileContent.replace(actualOldString, () => newNorm)
-
-      await fsPromises.writeFile(filePath, updated, encoding as BufferEncoding)
-      recordFileSnapshot(filePath)
-      return { success: true, content: updated }
-    } catch (e) {
-      return { success: false, error: `编辑失败：${e instanceof Error ? e.message : String(e)}` }
-    }
-  }
-  ipcInternal.handleEditFile = handleEditFile
-  ipcMain.handle('edit-file', (_e, filePath, oldString, newString, replaceAll) => handleEditFile(filePath, oldString, newString, replaceAll))
 
   // ── Agent Code: glob / grep ──
   const GLOB_GREP_IGNORE_DIRS = new Set(['.git', 'node_modules'])

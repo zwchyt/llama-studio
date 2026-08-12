@@ -3150,6 +3150,21 @@
   padding: 4px;
 }
 
+.agent-audit-more {
+  margin: 4px auto;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.agent-audit-more:hover {
+  color: var(--text-normal);
+  border-color: var(--border-strong);
+}
+
 .agent-audit-row {
   border: 1px solid var(--border);
   border-left: 3px solid var(--border-strong);

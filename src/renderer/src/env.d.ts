@@ -220,7 +220,6 @@ interface LlamaCppApi {
   readFileBase64: (filePath: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>
   getFilePath: (file: File) => string
   writeFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>
-  editFile: (filePath: string, oldString: string, newString: string, replaceAll?: boolean) => Promise<{ success: boolean; content?: string; error?: string }>
   glob: (opts: { pattern: string; path: string; limit?: number }) => Promise<{ success: boolean; filenames?: string[]; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }>
   grep: (opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean; type?: string; timeout_seconds?: number }) => Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }>
 	  // ── Agent Code 工作台项目持久化 ──

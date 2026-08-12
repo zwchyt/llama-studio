@@ -8,8 +8,8 @@ import { safeCall } from '../utils/safeCall'
 import type { Template } from '../../../shared/types'
 import '../styles/cards.css'
 export default function CardsView() {
-  const { cards, setShowCreateModal, addCard, templateSearch, setTemplateSearch } = useStore(
-    s => ({ cards: s.cards, setShowCreateModal: s.setShowCreateModal, addCard: s.addCard, templateSearch: s.templateSearch, setTemplateSearch: s.setTemplateSearch }),
+  const { cards, templatesReady, setShowCreateModal, addCard, templateSearch, setTemplateSearch } = useStore(
+    s => ({ cards: s.cards, templatesReady: s.templatesReady, setShowCreateModal: s.setShowCreateModal, addCard: s.addCard, templateSearch: s.templateSearch, setTemplateSearch: s.setTemplateSearch }),
     shallow
   )
   async function handleImport() {
@@ -66,7 +66,18 @@ export default function CardsView() {
           </button>
         </div>
       </div>
-      {cards.length === 0 ? (
+      {!templatesReady ? (
+        // 模板列表加载中：骨架占位（避免先闪"还没有模板"空态、卡片随后才蹦出的观感）
+        <div className="cards-grid cards-grid--loading">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div className="card card-skeleton" key={i}>
+              <div className="card-skeleton-icon" />
+              <div className="card-skeleton-line" />
+              <div className="card-skeleton-line short" />
+            </div>
+          ))}
+        </div>
+      ) : cards.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

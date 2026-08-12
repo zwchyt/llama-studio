@@ -20,6 +20,7 @@ import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import hljs from 'highlight.js/lib/common'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
+import { playNotificationSound } from '../utils/sound'
 import { TOOL_METAS, WRITE_EDIT_TOOLS, BACKUP_TOOLS } from '../utils/tools'
 import { fileMeta } from '../utils/fileIcon'
 import { agentConfig } from '../utils/agentConfig'
@@ -33,8 +34,8 @@ import { setWorkspaceRootForSession, getWorkspaceRootForSession } from '../tools
 import { setAgentSessionId } from '../tools/agentSession'
 import { getTrackedCwd } from '../tools/BashTool/BashTool'
 import { askUserQuestionRegistry } from '../utils/askUserQuestionRegistry'
-import { getAuditEntries, subscribeAudit, clearAudit, type AuditEntry } from '../utils/auditLog'
-import { getDebugTurns, subscribeDebug, clearDebug, type DebugTurn } from '../utils/debugLog'
+import { getAuditEntries, subscribeAudit, clearAudit, recordAudit, type AuditEntry } from '../utils/auditLog'
+import { getDebugTurns, subscribeDebug, clearDebug, recordDebugTurn, type DebugTurn, type DebugToolCall } from '../utils/debugLog'
 import AgentFileTree from './AgentFileTree'
 import AgentBrowser, { formatAnnotations, ANNOTATION_KIND_LABEL, type UiAnnotation } from './AgentBrowser'
 // HTML 预览 iframe 的 UI 注释工具脚本（同源注入，?raw 打包为字符串）
@@ -870,17 +871,23 @@ const HistorySummaryBubble = React.memo(function HistorySummaryBubble({ summary,
 })
 
 // ── 操作审计面板：订阅内存环形缓冲，展示本会话工具调用记录（最新在前）──
+// 默认只渲染最近 AUDIT_RENDER_LIMIT 条，避免 500 条记录（每条含 args/result 两个 pre）
+// 一次性渲染阻塞界面（打开面板时「短暂冻结」的候选来源）；超出后提供「显示全部」。
+const AUDIT_RENDER_LIMIT = 100
 const AuditPanel = React.memo(function AuditPanel() {
   const [entries, setEntries] = useState<AuditEntry[]>(() => getAuditEntries())
+  const [showAll, setShowAll] = useState(false)
   useEffect(() => {
     setEntries(getAuditEntries())
     return subscribeAudit(() => setEntries(getAuditEntries()))
   }, [])
   if (entries.length === 0) return <div className="agent-audit-empty">暂无工具调用记录。</div>
   const fmtTime = (t: number) => new Date(t).toLocaleTimeString('zh-CN', { hour12: false })
+  const shown = showAll ? entries : entries.slice(0, AUDIT_RENDER_LIMIT)
+  const hasMore = entries.length > AUDIT_RENDER_LIMIT && !showAll
   return (
     <div className="agent-audit-list">
-      {entries.map(e => (
+      {shown.map(e => (
         <div className={`agent-audit-row ${e.failed ? 'failed' : 'ok'}`} key={e.id}>
           <div className="agent-audit-line">
             <span className="agent-audit-tool">{e.tool}</span>
@@ -893,6 +900,11 @@ const AuditPanel = React.memo(function AuditPanel() {
           {e.result && <pre className="agent-audit-result">{e.result}</pre>}
         </div>
       ))}
+      {hasMore && (
+        <button className="agent-audit-more" onClick={() => setShowAll(true)}>
+          显示全部 {entries.length} 条记录
+        </button>
+      )}
     </div>
   )
 })
@@ -1153,9 +1165,27 @@ const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPreviewFil
             <LinedPre text={parsed!.content} maxHeight={360} />
           </div>
         )}
-        {name === 'Edit' && typeof parsed!.old_string === 'string' && typeof parsed!.new_string === 'string' && (
-          <ToolEditDiff oldText={parsed!.old_string} newText={parsed!.new_string} />
-        )}
+        {name === 'Edit' && (() => {
+          // 兼容两代参数：自研旧式 old_string/new_string，pi 原生 path + edits[]（一次多处）
+          if (typeof parsed!.old_string === 'string' && typeof parsed!.new_string === 'string') {
+            return <ToolEditDiff oldText={parsed!.old_string} newText={parsed!.new_string} />
+          }
+          const edits = Array.isArray(parsed!.edits) ? parsed!.edits : []
+          if (edits.length === 0) return null
+          return (
+            <div className="agent-tool-edits">
+              {edits.map((e, i) => {
+                if (!e || typeof e.oldText !== 'string' || typeof e.newText !== 'string') return null
+                return (
+                  <div className="agent-tool-edit" key={i}>
+                    <div className="agent-tool-content-head"><span>编辑 {i + 1}</span></div>
+                    <ToolEditDiff oldText={e.oldText} newText={e.newText} />
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })()}
         {/* Write/Edit 的文件名已内联到卡片头部（可点跳预览），展开体不再重复渲染文件名行 */}
       </div>
     )
@@ -1293,14 +1323,23 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
   const preview = getToolPreview(parsed)
   // 编辑工具的增删行数统计（显示在工具卡片上方，类似 git diff 的 +N -M）。
   // useMemo：内部跑 LCS diff，流式重渲染下不缓存会对大编辑反复重算。
+  // 兼容两代参数：自研旧式 old_string/new_string，pi 原生 path + edits[]（逐条累加）。
   const editDiffStat = useMemo(() => {
     if (tc.name !== 'Edit') return null
-    const o = parsed && typeof parsed.old_string === 'string' ? parsed.old_string : null
-    const n = parsed && typeof parsed.new_string === 'string' ? parsed.new_string : null
-    if (o == null || n == null) return null
-    const rows = computeSplitDiff(o, n)
-    const added = rows.filter(r => r.type === 'ins' || r.type === 'replace').length
-    const removed = rows.filter(r => r.type === 'del' || r.type === 'replace').length
+    let added = 0
+    let removed = 0
+    const acc = (o: string, n: string): void => {
+      const rows = computeSplitDiff(o, n)
+      added += rows.filter(r => r.type === 'ins' || r.type === 'replace').length
+      removed += rows.filter(r => r.type === 'del' || r.type === 'replace').length
+    }
+    if (parsed && typeof parsed.old_string === 'string' && typeof parsed.new_string === 'string') {
+      acc(parsed.old_string, parsed.new_string)
+    } else if (parsed && Array.isArray(parsed.edits)) {
+      for (const e of parsed.edits) {
+        if (e && typeof e.oldText === 'string' && typeof e.newText === 'string') acc(e.oldText, e.newText)
+      }
+    }
     if (added === 0 && removed === 0) return null
     return { added, removed }
   }, [tc.name, parsed])
@@ -1315,7 +1354,7 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
   const readNameOnly = done && !failed && !!readFilePath
   // Read/Write/Edit 统一：文件名内联到头部（文件树同款图标 + 可点跳预览），替代纯文字参数预览，
   // 展开体内不再重复渲染文件名行。
-  const headFilePath = readFilePath || (WRITE_EDIT_TOOLS.has(tc.name) && parsed && typeof parsed.file_path === 'string' ? parsed.file_path as string : '')
+  const headFilePath = readFilePath || (WRITE_EDIT_TOOLS.has(tc.name) && parsed && typeof (parsed.file_path ?? parsed.path) === 'string' ? (parsed.file_path ?? parsed.path) as string : '')
   // Write/Edit 成功结果只是一句确认文案，与头部绿勾「完成」重复，隐藏结果块；
   // 写入内容预览 / diff（来自参数）照常展示，失败时仍显示错误结果块。
   const hideResult = readNameOnly || (done && !failed && WRITE_EDIT_TOOLS.has(tc.name))
@@ -1434,14 +1473,24 @@ const FileChangeSummary = React.memo(function FileChangeSummary({ toolCalls, onO
       let parsed: Record<string, unknown> | null = null
       try { parsed = JSON.parse(tc.args || '{}') } catch { continue }
       if (!parsed || typeof parsed !== 'object') continue
-      const fp = typeof parsed.file_path === 'string' ? parsed.file_path : ''
+      const fp = typeof parsed.file_path === 'string' ? parsed.file_path : typeof parsed.path === 'string' ? parsed.path : ''
       if (!fp) continue
       let added = 0
       let removed = 0
-      if (tc.name === 'Edit' && typeof parsed.old_string === 'string' && typeof parsed.new_string === 'string') {
-        const rows = computeSplitDiff(parsed.old_string, parsed.new_string)
-        added = rows.filter(r => r.type === 'ins' || r.type === 'replace').length
-        removed = rows.filter(r => r.type === 'del' || r.type === 'replace').length
+      const acc = (o: string, n: string): void => {
+        const rows = computeSplitDiff(o, n)
+        added += rows.filter(r => r.type === 'ins' || r.type === 'replace').length
+        removed += rows.filter(r => r.type === 'del' || r.type === 'replace').length
+      }
+      if (tc.name === 'Edit') {
+        // 兼容两代参数：自研旧式 old_string/new_string，pi 原生 path + edits[]（逐条累加）
+        if (typeof parsed.old_string === 'string' && typeof parsed.new_string === 'string') {
+          acc(parsed.old_string, parsed.new_string)
+        } else if (Array.isArray(parsed.edits)) {
+          for (const e of parsed.edits) {
+            if (e && typeof e.oldText === 'string' && typeof e.newText === 'string') acc(e.oldText, e.newText)
+          }
+        }
       } else if (tc.name === 'Write' && typeof parsed.content === 'string') {
         // Write 无旧内容可比，按写入行数计为新增
         added = parsed.content.split('\n').length
@@ -3297,6 +3346,8 @@ export default function AgentCodeView() {
     // executing 徽标一闪而过肉眼不可见；结束时若执行时长不足 MIN_EXEC_DISPLAY_MS，
     // 延迟置 done，保证「写入中/编辑中」状态至少可见一瞬（最小展示时长）。
     const execStartMs = new Map<string, number>()
+    // 本轮（单次 prompt 运行）内的工具调用链（调试面板用；turn_end 时快照进 recordDebugTurn）
+    let turnToolTrace: DebugToolCall[] = []
     let thinkOpen = false
     let curToolIds: string[] | null = null
     let textSinceLastTool = false
@@ -3432,8 +3483,24 @@ export default function AgentCodeView() {
       onToolExecutionEnd: (id, name, resultText, isError, backupId) => {
         // pi 模式撤销：main 侧备份引用（标记 pi-undo:<id>，撤销走 pi-agent-undo IPC）
         if (backupId) backupsRef.current[id] = { path: `pi-undo:${backupId}`, content: '' }
-        // 最小展示时长：执行太快（本地 IO 不足一帧）时延迟置 done，让「写入中」徽标可见
         const elapsed = execStartMs.has(id) ? Date.now() - execStartMs.get(id)! : Number.MAX_SAFE_INTEGER
+        // 操作审计日志：记录每次已执行工具（pi 模式在 renderer 侧无从得知是否经过
+        // main 审批通道，approved 固定 false——审批弹窗的 id 与 toolCallId 无法关联）。
+        try {
+          const tc = toolCalls.find(t => t.id === id)
+          recordAudit({
+            sessionId: piSessionId,
+            tool: name,
+            args: tc?.args ?? '',
+            result: resultText,
+            durationMs: elapsed === Number.MAX_SAFE_INTEGER ? 0 : elapsed,
+            failed: isError,
+            approved: false,
+          })
+        } catch { /* 审计埋点不影响主流程 */ }
+        // 调试面板：本轮工具调用链（有序）
+        turnToolTrace.push({ name, durationMs: elapsed === Number.MAX_SAFE_INTEGER ? 0 : elapsed, failed: isError })
+        // 最小展示时长：执行太快（本地 IO 不足一帧）时延迟置 done，让「写入中」徽标可见
         const applyDone = (): void => {
           // 与 start 同样的兜底：按工具名找正在执行的同类工具
           let i = toolCalls.findIndex(t => t.id === id)
@@ -3445,6 +3512,27 @@ export default function AgentCodeView() {
         }
         if (elapsed >= MIN_EXEC_DISPLAY_MS) applyDone()
         else setTimeout(applyDone, MIN_EXEC_DISPLAY_MS - elapsed)
+      },
+      onTurnEnd: (info) => {
+        // 调试面板：按轮记录（pi 事件不携带 requestPayload/msgCount/toolCount/dropped/
+        // ttft/tps，这些字段留空；tokens 与耗时来自 turn_start/turn_end 事件）。
+        try {
+          recordDebugTurn({
+            sessionId: piSessionId,
+            turn: info.turnIndex,
+            requestPayload: '',
+            msgCount: 0,
+            toolCount: 0,
+            dropped: 0,
+            promptTokens: info.promptTokens,
+            completionTokens: info.completionTokens,
+            ttftMs: undefined,
+            tps: undefined,
+            durationMs: info.durationMs,
+            tools: turnToolTrace.slice(),
+          })
+        } catch { /* 调试埋点不影响主流程 */ }
+        turnToolTrace = []
       },
       onEnd: () => { /* prompt 返回即结束，无需额外处理 */ }
     })
@@ -3467,6 +3555,11 @@ export default function AgentCodeView() {
             return { type: 'image' as const, data: base64, mimeType: mime }
           })
       await window.api.piAgent.prompt(piSessionId, opts.text, images && images.length > 0 ? images : undefined)
+      // 对话完成提示音：与 ChatView 的完成提示一致（d610b1c 重构到 pi 桥时遗漏，
+      // 此处补回）。用户手动停止（aborted）或出错（走 catch）时不播放。
+      if (!abortRef.current.aborted && useStore.getState().soundEnabled) {
+        playNotificationSound(useStore.getState().notificationSound)
+      }
       // 先结束流式态：让最终 commit 直接走「完成态交错」渲染分支（streamingMsg=false），
       // 避免 StreamingContent 把思考/正文再重复渲染一遍（工具卡+思考重复显示的根源之一）。
       setStreaming(false)

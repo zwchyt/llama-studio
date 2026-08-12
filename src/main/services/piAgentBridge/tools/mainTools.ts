@@ -1,6 +1,7 @@
 // llama-studio 主要工具在 main 进程的实现（供 pi bridge 注册）。
 // 执行器通过依赖注入（MainToolExecutors），生产环境由 ipc.ts 提取的 handler 提供，
 // 测试环境可注入真实实现，与 ipc.ts 解耦。
+import { isAbsolute, resolve, sep } from 'node:path'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import { makePiTool, getTypebox, type PlainToolSpec } from './toolAdapter'
 
@@ -34,12 +35,6 @@ export interface MainToolExecutors {
     taskId?: string
   }>
   writeFile(filePath: string, content: string): Promise<{ success: boolean; error?: string }>
-  editFile(
-    filePath: string,
-    oldString: string,
-    newString: string,
-    replaceAll?: boolean
-  ): Promise<{ success: boolean; content?: string; error?: string }>
   glob(opts: { pattern: string; path: string; limit?: number }): Promise<{
     success: boolean
     filenames?: string[]
@@ -96,6 +91,8 @@ export interface MainToolExecutors {
   approve?: (toolName: string, args: Record<string, unknown>) => Promise<boolean>
   /** 记录撤销备份（content=null 表示原文件不存在，撤销时删除文件） */
   recordUndo: (toolCallId: string, filePath: string, content: string | null) => void
+  /** 移除撤销备份（工具执行失败时清掉孤儿条目；未提供则忽略） */
+  removeUndo?: (toolCallId: string) => void
   /** 撤销（写回备份内容或删除新建文件） */
   undo: (toolCallId: string) => Promise<{ success: boolean; path?: string; error?: string }>
 }
@@ -161,6 +158,96 @@ export function isDestructiveBashCommand(command: string): boolean {
   return false
 }
 
+// ── Windows cmd 环境 Unix 命令兼容层 ──
+// 模型习惯用 bash 语义（pwd/ls/cat/grep/cp/mv/rm...），而 Bash 工具在 Windows 用 cmd.exe 执行，
+// 直接执行会报「'pwd' 不是内部或外部命令」。把「整条命令就是已知 Unix 命令 + 参数」的
+// 简单形态翻译为 cmd 等价命令；含管道 / && / 换行的组合命令不翻译（保持原样，报错会
+// 引导模型改用 cmd 语法）。非 Windows 平台不翻译（本来就走 /bin/sh）。
+export function translateUnixToCmd(command: string): { translated: string; note: string } | null {
+  if (process.platform !== 'win32') return null
+  const t = command.trim()
+  if (!t) return null
+  // 组合命令（管道/条件/换行/重定向串联）不翻译
+  if (/[|&;\n]/.test(t)) return null
+  const m = /^([a-zA-Z][\w.-]*)(?:\s+(.*))?$/.exec(t)
+  if (!m) return null
+  const name = m[1]!.toLowerCase()
+  const rest = (m[2] ?? '').trim()
+  // 剥掉首个选项参数（ls -la / cp -r a b / grep -i ... / kill -9 pid），保留其余
+  const stripOpt = (s: string): string => s.replace(/^-\S+\s*/, '')
+  let translated: string | null = null
+  switch (name) {
+    case 'pwd': translated = 'cd'; break // cmd 的 cd 无参数输出当前目录
+    case 'ls': translated = 'dir'; break // cmd dir 自带详细信息；-l -a 等参数忽略
+    case 'cat': {
+      const a = stripOpt(rest)
+      if (!a) return null
+      translated = `type ${a}`
+      break
+    }
+    case 'cp': {
+      const rec = /^-r/.test(rest)
+      const a = stripOpt(rest)
+      if (!a) return null
+      translated = rec ? `xcopy ${a} /E /I /Y` : `copy /y ${a}`
+      break
+    }
+    case 'mv': {
+      const a = stripOpt(rest)
+      if (!a) return null
+      translated = `move /y ${a}`
+      break
+    }
+    case 'rm': {
+      const rec = /^-r/.test(rest)
+      const a = stripOpt(rest)
+      if (!a) return null
+      translated = rec ? `rmdir /s /q ${a}` : `del /q ${a}`
+      break
+    }
+    case 'mkdir': {
+      const a = rest.replace(/^-p\s*/, '')
+      if (!a) return null
+      translated = `mkdir ${a}`
+      break
+    }
+    case 'grep': {
+      const a = stripOpt(rest)
+      if (!a) return null
+      translated = `findstr /n ${a}`
+      break
+    }
+    case 'which': {
+      if (!rest) return null
+      translated = `where ${rest}`
+      break
+    }
+    case 'touch': {
+      const a = stripOpt(rest)
+      if (!a) return null
+      translated = `type nul > ${a}`
+      break
+    }
+    case 'ps': translated = 'tasklist'; break
+    case 'kill': {
+      const a = stripOpt(rest)
+      if (!a) return null
+      translated = `taskkill /F /PID ${a}`
+      break
+    }
+    case 'diff': {
+      const a = stripOpt(rest)
+      if (!a) return null
+      translated = `fc ${a}`
+      break
+    }
+    default:
+      return null
+  }
+  if (!translated) return null
+  return { translated, note: `（已将 Unix 命令 "${name}" 自动翻译为 Windows 等价命令执行）` }
+}
+
 /** 破坏性工具审批检查（与 renderer runAgentTurn 语义一致）；返回 true = 放行 */
 async function checkApproval(
   exec: MainToolExecutors,
@@ -195,6 +282,114 @@ async function recordBackup(exec: MainToolExecutors, toolCallId: string, filePat
   }
 }
 
+/** 编辑目标是否落在工作区范围内（Windows 大小写不敏感；与 ipc.ts isAgentPathInScope 的工作区基准一致） */
+function isPathInWorkspace(absPath: string, baseDir: string): boolean {
+  const base = resolve(baseDir).toLowerCase()
+  const target = resolve(absPath).toLowerCase()
+  return target === base || target.startsWith(base + sep.toLowerCase())
+}
+
+// ── pi 原生 Edit 工具（替换自研 edit；wrapper 补回沙箱/审批/撤销）──
+// pi 的 createEditToolDefinition 提供自研缺失的能力：edits[] 一次调用多处编辑、
+// 模糊匹配（NFKC/智能引号/Unicode 破折号/特殊空白归一）、BOM/行尾还原、unified patch
+// 输出（details.diff/patch/firstChangedLine）、同文件变更互斥队列。
+// 但默认直接操作本地 fs，绕过 llama-studio 的路径沙箱 / approveWriteEdit 审批 / 撤销备份，
+// 这里用 wrapper 补回。注意：跨批冲突检测（ipc.ts fileSnapshots hash 比对）pi 原生无此
+// 机制，替换后不再生效——换取 pi 更稳的匹配与多编辑能力，属预期取舍。
+async function createPiEditTool(exec: MainToolExecutors, ctx?: CreateMainToolsContext): Promise<ToolDefinition> {
+  // main 构建是 CJS，而 pi 系包为 ESM-only（exports 仅 import 条件），静态 import 会
+  // require 失败，必须动态 import（与 toolAdapter.ts 对 typebox 的处理一致）。
+  const { createEditToolDefinition } = await import('@earendil-works/pi-coding-agent')
+  const baseDir = ctx?.workspaceDir ?? '.'
+  const piEdit = createEditToolDefinition(baseDir)
+  const origPrepare = piEdit.prepareArguments
+  // 剥离 pi 的 TUI 渲染字段（renderCall/renderResult 面向 pi 终端 UI，llama-studio 用
+  // AgentCodeView 自绘，且其具体泛型参数与通用 ToolDefinition 不兼容）。
+  const { renderCall: _renderCall, renderResult: _renderResult, ...piCore } = piEdit
+  return {
+    ...piCore,
+    name: 'Edit', // 保持大写：toolNames 白名单 / TOOL_METAS 元数据 / AgentCodeView 判断均以此为键
+    label: '编辑文件',
+    // 兼容模型沿用自研参数（file_path + old_string/new_string + replace_all / hashline）：
+    // 先转成 pi 的 path + edits[] 格式，再走 pi 原生垫片（edits 字符串化、顶层 oldText/newText）。
+    prepareArguments: (args: unknown) => {
+      const a = (args ?? {}) as Record<string, unknown>
+      if (typeof a.file_path === 'string' && typeof a.path !== 'string') a.path = a.file_path
+      if (typeof a.old_string === 'string' && typeof a.new_string === 'string' && !Array.isArray(a.edits)) {
+        a.edits = [{ oldText: a.old_string, newText: a.new_string }]
+        delete a.old_string
+        delete a.new_string
+        // replace_all 无法直接映射（pi 要求 oldText 唯一、无"全部替换"），保留标记供
+        // execute 在文件存在多处匹配时给出明确提示，避免模型误以为已全部替换
+        if (a.replace_all === true) a.__replaceAll = true
+        delete a.replace_all
+        delete a.hashline
+      }
+      return origPrepare ? (origPrepare(a) as Record<string, unknown>) : a
+    },
+    execute: async (toolCallId, params, signal, onUpdate, pctx) => {
+      const input = (params ?? {}) as Record<string, unknown>
+      const rawPath = String(input.path ?? input.file_path ?? '')
+      // 1) 审批：approveWriteEdit 开启时要求人工确认
+      const approval = await checkApproval(exec, ctx, 'Edit', { path: rawPath })
+      if (!approval.ok) {
+        return { content: [{ type: 'text', text: JSON.stringify({ error: approval.reason }) }], details: {} }
+      }
+      // 2) 路径沙箱：解析到绝对路径并校验在工作区内（pi 原生不检查，防止越界写盘）
+      if (!rawPath) {
+        return { content: [{ type: 'text', text: '❌ 编辑失败：缺少路径参数 path' }], details: {} }
+      }
+      const abs = isAbsolute(rawPath) ? resolve(rawPath) : resolve(baseDir, rawPath)
+      if (!isPathInWorkspace(abs, baseDir)) {
+        return { content: [{ type: 'text', text: `❌ 编辑被拒绝：目标路径不在工作区/应用范围内：${rawPath}` }], details: {} }
+      }
+      // 2.5) replace_all 兼容提示：pi 原生要求每个 oldText 唯一，无法表达"全部替换"；
+      // 若原请求 replace_all=true 且文件中存在多处匹配，直接给出明确错误（而非让 pi 报
+      // 一句令人困惑的"必须唯一"，或让模型误以为替换已全部生效）
+      if (
+        input.__replaceAll === true &&
+        Array.isArray(input.edits) &&
+        input.edits.length === 1 &&
+        typeof (input.edits[0] as Record<string, unknown> | undefined)?.oldText === 'string'
+      ) {
+        const oldText = (input.edits[0] as Record<string, unknown>).oldText as string
+        const probe = await exec.readFile(abs, { raw: true }).catch(() => null)
+        if (probe?.success && typeof probe.content === 'string') {
+          const matches = probe.content.split(oldText).length - 1
+          if (matches > 1) {
+            return {
+              content: [{
+                type: 'text',
+                text: `❌ 编辑失败：old_string 在文件中有 ${matches} 处匹配。pi 原生 edit 要求 oldText 唯一（不再支持 replace_all 全部替换），请改用更精确的 old_string 分次编辑，或使用 Bash 工具批量替换。`
+              }],
+              details: {}
+            }
+          }
+        }
+      }
+      // 3) 撤销备份（recordUndo → UI 一键撤销；pi 无此能力）
+      await recordBackup(exec, toolCallId, abs)
+      // 4) 执行 pi 原生编辑（path 传绝对路径，绕过 pi 自身的 cwd 解析；去掉内部标记）
+      delete input.__replaceAll
+      try {
+        const res = await piCore.execute(
+          toolCallId,
+          { ...input, path: abs } as never,
+          signal,
+          onUpdate,
+          pctx
+        )
+        // 5) 追加 backupId 供 renderer 撤销（与自研 Write/Edit 的 details 契约一致）
+        return { ...res, details: { ...((res.details ?? {}) as unknown as Record<string, unknown>), backupId: toolCallId } }
+      } catch (err) {
+        // 执行失败：编辑未生效，清掉刚记录的撤销备份，避免撤销列表残留无效条目
+        exec.removeUndo?.(toolCallId)
+        throw err
+      }
+    }
+  }
+}
+
 export interface CreateMainToolsContext {
   /** llama-studio 会话 id（Todo/Task 工具定位任务清单用） */
   sessionId?: string
@@ -202,16 +397,6 @@ export interface CreateMainToolsContext {
   approveWriteEdit?: boolean
   /** 工作区目录（CodeSearch/AnalyzeDir 的相对路径基准） */
   workspaceDir?: string
-}
-
-// ── FNV-1a 行内容指纹（与 renderer FileReadTool 一致的 hashline 锚点）──
-export function lineHash(text: string): string {
-  let hash = 0x811c9dc5
-  for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i)
-    hash = Math.imul(hash, 0x01000193)
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 7)
 }
 
 function formatSize(bytes?: number): string {
@@ -274,7 +459,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     name: 'Read',
     label: '读取文件',
     description:
-      'Read file content with automatic encoding detection (UTF-8/UTF-16). Returns each line as "行号 哈希|内容" (Hashline format with content fingerprint for precise Edit targeting). Supports offset/limit. Token budget ~25000; larger content suggests using Grep. Prefer over Bash type/cat.',
+      'Read file content with automatic encoding detection (UTF-8/UTF-16). Returns each line prefixed with its line number; the line content after the number can be used directly as Edit edits[].oldText. Supports offset/limit. Token budget ~25000; larger content suggests using Grep. Prefer over Bash type/cat.',
     parameters: {
       type: 'object',
       properties: {
@@ -305,10 +490,11 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
       const allLines = (res.content ?? '').split('\n')
       const startLine = res.startLine ?? 1
       const totalLines = res.totalLines ?? allLines.length
-      const hashlineContent = allLines
-        .map((line, i) => `${startLine + i} ${lineHash(line)}|${line}`)
+      // 每行带行号前缀（行内容可直接用作 Edit 的 edits[].oldText）
+      const numberedContent = allLines
+        .map((line, i) => `${startLine + i} ${line}`)
         .join('\n')
-      return `File: ${file_path}\nLines: ${startLine}-${startLine + allLines.length - 1} of ${totalLines}\n\n${hashlineContent}`
+      return `File: ${file_path}\nLines: ${startLine}-${startLine + allLines.length - 1} of ${totalLines}\n\n${numberedContent}`
     }
   })
 
@@ -316,7 +502,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     name: 'Bash',
     label: '执行命令',
     description:
-      '在 Windows cmd.exe 执行 shell 命令，返回 stdout/stderr。支持前台/后台模式与输出截断。仅用于真正需要 shell 的场景（运行程序、脚本、构建等）。注意：不支持 Unix 命令（pwd/ls/cat/grep/cp/mv/rm 等），改用 dir/cd/copy/move/del/rmdir/where/set；列目录或探索项目结构请用 ListDir 工具，不要用 Bash；避免输出重定向（> >>）。',
+      '在 Windows cmd.exe 执行 shell 命令，返回 stdout/stderr。支持前台/后台模式与输出截断。常用的 Unix 命令（pwd/ls/cat/cp/mv/rm/mkdir/grep/which/touch/ps/kill/diff）会被自动翻译为 Windows 等价命令执行；其余不支持的 Unix 命令请改用 dir/cd/copy/move/del/rmdir/where/set；列目录或探索项目结构请用 ListDir 工具，不要用 Bash；避免输出重定向（> >>）。',
     parameters: {
       type: 'object',
       properties: {
@@ -355,8 +541,13 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
         max_output_chars?: unknown
         auto_background?: unknown
       }
+      const rawCommand = String(command ?? '')
+      // Unix 命令兼容层：Windows 下把模型常用的 Unix 单命令翻译为 cmd 等价命令
+      const cmdT = translateUnixToCmd(rawCommand)
+      const effectiveCommand = cmdT?.translated ?? rawCommand
+      const translatedNote = cmdT?.note ?? ''
       const res = await exec.executeCommand({
-        command: String(command ?? ''),
+        command: effectiveCommand,
         timeout: typeof timeout === 'number' ? Math.min(timeout, 300000) : 120000,
         isBackground: is_background === true,
         maxOutputChars: typeof max_output_chars === 'number' ? max_output_chars : undefined,
@@ -387,6 +578,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
       }
 
       let output = ''
+      if (translatedNote) output += translatedNote + '\n'
       if (description) output += `[${description}]\n`
       if (res.stdout) output += res.stdout
       if (res.stderr) {
@@ -436,7 +628,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
         if (existsNonEmpty) {
           return [
             '❌ 目标文件已存在，禁止用 Write 整体重写。',
-            '请改用 Edit 工具精准修改：先用 Read 获取最新 hashline 锚点，再用 Edit 只替换需要改动的片段。',
+            '请改用 Edit 工具精准修改：先用 Read 查看当前内容，再用 Edit 只替换需要改动的片段。',
             '（若确需整体替换此文件，请先用 Delete 删除再用 Write 新建；但通常应优先 Edit。）'
           ].join('\n')
         }
@@ -460,39 +652,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     }
   })
 
-  const edit: ToolDefinition = make({
-    name: 'Edit',
-    label: '编辑文件',
-    description:
-      'Edit a file by replacing text. Requires exact old_string match (quote-normalized). Use replace_all for bulk. Always Read the file first to get fresh hashline anchors, then use old_string matching the line content. Returns error if no match found. Path is resolved relative to the project directory.',
-    parameters: {
-      type: 'object',
-      properties: {
-        file_path: {
-          type: 'string',
-          description: 'Path to the file, relative to the project directory (e.g. "subdir/file.py") or absolute.'
-        },
-        old_string: { type: 'string', description: 'The exact content to replace (来自 Read 的 hashline 中 | 后面的部分，不含行号和哈希前缀)。' },
-        new_string: { type: 'string', description: 'The replacement string.' },
-        replace_all: { type: 'boolean', description: 'Replace all occurrences of old_string when true (default false).' },
-        hashline: { type: 'string', description: '可选的 hashline 锚点（如 "42 abc1234"），用于交叉验证 old_string 定位的行是否正确。' }
-      },
-      required: ['file_path', 'old_string', 'new_string']
-    },
-    execute: async (args, meta) => {
-      const approval = await checkApproval(exec, ctx, 'Edit', args as Record<string, unknown>)
-      if (!approval.ok) return JSON.stringify({ error: approval.reason })
-      const file_path = String(args.file_path ?? '')
-      const old_string = String(args.old_string ?? '')
-      const new_string = String(args.new_string ?? '')
-      const replace_all = args.replace_all === true
-      if (!old_string) return '❌ 编辑失败：缺少 old_string'
-      await recordBackup(exec, meta.toolCallId, file_path)
-      const res = await exec.editFile(file_path, old_string, new_string, replace_all)
-      if (!res.success) return `❌ 编辑失败：${res.error}`
-      return { text: `✅ 编辑成功。请用 Read 复核修改结果。`, details: { backupId: meta.toolCallId } }
-    }
-  })
+  const edit: ToolDefinition = await createPiEditTool(exec, ctx)
 
   const glob: ToolDefinition = make({
     name: 'Glob',

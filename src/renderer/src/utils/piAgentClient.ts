@@ -18,6 +18,8 @@ export interface PiAgentCallbacks {
   onToolExecutionStart: (id: string, name: string) => void
   /** 工具执行结束（result 为 pi 的工具结果，翻译成文本；backupId 供撤销按钮用） */
   onToolExecutionEnd: (id: string, name: string, resultText: string, isError: boolean, backupId?: string) => void
+  /** 一轮 LLM turn 结束（usage：input/output tokens；durationMs 从 turn_start 计时） */
+  onTurnEnd?: (info: { turnIndex: number; promptTokens: number; completionTokens: number; durationMs: number }) => void
   /** 一轮 agent 运行结束（agent_end / agent_settled） */
   onEnd: () => void
 }
@@ -66,6 +68,8 @@ export class PiAgentClient {
   private thinkingOpen = false
   private thinkTagPushed = false
   private deferredText: string[] = []
+  /** 当前 turn 的开始时间（turn_start 置位，turn_end 取差后清空） */
+  private turnStartAt: number | null = null
 
   /** 思考闭合：补闭合标签（若已推过开头）并输出缓冲的正文 */
   private closeThinking(): void {
@@ -165,6 +169,23 @@ export class PiAgentClient {
           ev.isError === true,
           typeof r?.details?.backupId === 'string' ? r.details.backupId : undefined
         )
+        return
+      }
+      case 'turn_start': {
+        this.turnStartAt = Date.now()
+        return
+      }
+      case 'turn_end': {
+        const msg = ev.message as { usage?: { input?: number; output?: number } } | undefined
+        const usage = msg?.usage
+        const started = this.turnStartAt
+        this.turnStartAt = null
+        this.callbacks.onTurnEnd?.({
+          turnIndex: Number(ev.turnIndex ?? 0),
+          promptTokens: typeof usage?.input === 'number' ? usage.input : 0,
+          completionTokens: typeof usage?.output === 'number' ? usage.output : 0,
+          durationMs: started ? Date.now() - started : 0,
+        })
         return
       }
       case 'agent_end':

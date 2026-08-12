@@ -75,7 +75,6 @@ function AppMain() {
   const setChatTemplates = useStore(s => s.setChatTemplates)
   const setActiveBackend = useStore(s => s.setActiveBackend)
   const setCommandsSchema = useStore(s => s.setCommandsSchema)
-  const setCards = useStore(s => s.setCards)
   const setPaths = useStore(s => s.setPaths)
   const setReleaseInfo = useStore(s => s.setReleaseInfo)
   const setCheckingUpdate = useStore(s => s.setCheckingUpdate)
@@ -117,18 +116,13 @@ function AppMain() {
       .then((m) => setChatTemplates(m))
       .catch((e) => console.error('[listChatTemplates]', e))
 
-    // Stage 1: First-paint critical — fetch 3 IPC calls in parallel
-    ;(async () => {
-      try {
-        const [paths, backendsData, templates] = await Promise.all([
-          window.api.getPaths(),
-          window.api.listBackends(),
-          window.api.listTemplates()
-        ])
-        setPaths(paths)
-        setBackends(backendsData)
-        if (backendsData.length > 0) setActiveBackend(backendsData[0])
-        setCards(
+    // Stage 1: First-paint critical — 模板（模型卡片）独立尽早加载：
+    // 不等待 listBackends（后端目录递归扫描可能较慢），进入界面后卡片尽快出现；
+    // 加载完成前 CardsView 显示骨架占位（templatesReady=false），不闪"还没有模板"空态。
+    window.api.listTemplates()
+      .then((templates) => {
+        const st = useStore.getState()
+        st.setCards(
           (templates as Template[]).map((t) => ({
             template: t,
             status: 'idle',
@@ -136,6 +130,22 @@ function AppMain() {
             monitorExpanded: true
           }))
         )
+        st.setTemplatesReady(true)
+      })
+      .catch((e) => {
+        console.error('[listTemplates]', e)
+        useStore.getState().setTemplatesReady(true) // 失败也结束加载态，避免一直占位
+      })
+
+    ;(async () => {
+      try {
+        const [paths, backendsData] = await Promise.all([
+          window.api.getPaths(),
+          window.api.listBackends()
+        ])
+        setPaths(paths)
+        setBackends(backendsData)
+        if (backendsData.length > 0) setActiveBackend(backendsData[0])
       } catch (e) {
         console.error('初始化错误:', e)
       } finally {

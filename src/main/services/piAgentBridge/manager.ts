@@ -68,6 +68,9 @@ export class PiAgentManager {
       recordUndo: (toolCallId, filePath, content) => {
         this.undoStore.set(toolCallId, { path: filePath, content })
       },
+      removeUndo: (toolCallId) => {
+        this.undoStore.delete(toolCallId)
+      },
       undo: async (toolCallId) => {
         const entry = this.undoStore.get(toolCallId)
         if (!entry) return { success: false, error: '备份不存在（可能已撤销或会话已重建）' }
@@ -280,10 +283,6 @@ export function createIpcExecutors(): MainToolExecutors {
       requireInternal('handleWriteFile')
       return ipcInternal.handleWriteFile!(filePath, content)
     },
-    editFile: (filePath, oldString, newString, replaceAll) => {
-      requireInternal('handleEditFile')
-      return ipcInternal.handleEditFile!(filePath, oldString, newString, replaceAll)
-    },
     glob: (opts) => {
       requireInternal('handleGlob')
       return ipcInternal.handleGlob!(opts)
@@ -337,6 +336,7 @@ export function createIpcExecutors(): MainToolExecutors {
       }),
     // recordUndo/undo 由 PiAgentManager 构造时包装覆盖（统一管理撤销备份）
     recordUndo: () => {},
+    removeUndo: () => {},
     undo: async () => ({ success: false, error: '撤销未启用' })
   }
 }

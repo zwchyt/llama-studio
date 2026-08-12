@@ -101,7 +101,6 @@ import { definition as WebSearchDef, execute as WebSearchExec } from '../tools/W
 import { definition as FetchWebpageDef, execute as FetchWebpageExec } from '../tools/FetchWebpageTool'
 import { definition as FileReadDef, execute as FileReadExec } from '../tools/FileReadTool'
 import { definition as FileWriteDef, execute as FileWriteExec } from '../tools/FileWriteTool'
-import { definition as FileEditDef, execute as FileEditExec } from '../tools/FileEditTool'
 import { definition as GlobDef, execute as GlobExec } from '../tools/GlobTool'
 import { definition as GrepDef, execute as GrepExec } from '../tools/GrepTool'
 import { definition as BashDef, execute as BashExec } from '../tools/BashTool'
@@ -120,7 +119,6 @@ register(WebSearchDef, WebSearchExec)
 register(FetchWebpageDef, FetchWebpageExec)
 register(FileReadDef, FileReadExec)
 register(FileWriteDef, FileWriteExec)
-register(FileEditDef, FileEditExec)
 register(GlobDef, GlobExec)
 register(GrepDef, GrepExec)
 register(BashDef, BashExec)
@@ -141,10 +139,10 @@ if (agentConfig.codeSearchEnabled) register(CodeSearchDef, CodeSearchExec)
 
 // 工具统一执行超时（毫秒）与适用白名单（仅本地 IO 类，详见 executeToolCall）。
 const TOOL_EXEC_TIMEOUT_MS = 30000
-const TIMEOUT_TOOLS = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep', 'ListDir', 'AnalyzeDir', 'Delete', 'CodeSearch'])
+const TIMEOUT_TOOLS = new Set(['Read', 'Write', 'Glob', 'Grep', 'ListDir', 'AnalyzeDir', 'Delete', 'CodeSearch'])
 // 有副作用的写入类工具：超时后底层操作可能仍在进行（Promise.race 只放弃等待、不中断 IPC），
 // 超时文案须明示「结果未知」并要求回读确认；且不参与自动重试（重试可能造成重复写入）。
-const MUTATING_TIMEOUT_TOOLS = new Set(['Write', 'Edit', 'Delete'])
+const MUTATING_TIMEOUT_TOOLS = new Set(['Write', 'Delete'])
 
 // 可自动重试的工具（只读本地 IO + 网络类）：仅对「瞬时性」错误重试一次，避免让模型为偶发抖动放弃。
 // 写入类（Write/Edit/Delete）不重试：第一次可能已部分生效，盲重试会双重写入或误报「未找到匹配」。
@@ -205,8 +203,6 @@ const ARG_ALIASES: Record<string, string[]> = {
   pattern: ['glob', 'regex', 'search'],
   command: ['cmd', 'bash', 'shell', 'script'],
   content: ['text', 'data', 'body', 'file_content'],
-  old_string: ['old', 'oldText', 'old_str', 'from'],
-  new_string: ['new', 'newText', 'new_str', 'replacement', 'to'],
 }
 // 模型偶尔把真实参数多包一层（如 {"arguments": {...}}）
 const WRAPPER_KEYS = new Set(['input', 'arguments', 'args', 'parameters', 'params', 'tool_input'])
