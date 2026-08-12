@@ -4108,6 +4108,22 @@
   .agent-file-changes-row {
     animation: none;
   }
+
+  .agent-ws-site,
+  .agent-ws-globe,
+  .agent-ws-shimmer {
+    animation: none;
+  }
+
+  .agent-task-card-item,
+  .agent-task-roll-inner,
+  .agent-task-todo-icon,
+  .agent-task-card-text,
+  .agent-task-card-text::before,
+  .agent-task-head-pie-fill {
+    animation: none;
+    transition: none;
+  }
 }
 
 /* 思考时长（弱化等宽数字；思考中随主色高亮） */
@@ -5197,6 +5213,7 @@
 }
 
 .agent-git-diff-body {
+  position: relative;
   border-top: 1px solid var(--border);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
   font-size: 12px;
@@ -5204,8 +5221,23 @@
   overflow-x: auto;
 }
 
+/* 行号列右侧全高分隔线（32px 旧行号 + 32px 新行号 = 64px 处），
+   对齐 FileDiff 设计的 gutter；z-index 保证位于着色行之上 */
+.agent-git-diff-body::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 68px;
+  width: 0.5px;
+  background: var(--border);
+  z-index: 1;
+}
+
 .agent-git-row {
-  display: flex;
+  position: relative;
+  display: grid;
+  grid-template-columns: 32px 32px 18px 1fr;
   white-space: pre;
   cursor: pointer;
   min-width: fit-content;
@@ -5223,6 +5255,25 @@
   background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent);
 }
 
+/* 左侧 accent 条：add 实心绿条，del 红色斜纹条（对齐 FileDiff 设计） */
+.agent-git-row.add::before,
+.agent-git-row.del::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+}
+
+.agent-git-row.add::before {
+  background: var(--success, #22c55e);
+}
+
+.agent-git-row.del::before {
+  background: repeating-linear-gradient(45deg, var(--danger, #ef4444) 0, var(--danger, #ef4444) 1.5px, transparent 1.5px, transparent 3px);
+}
+
 /* 行内单词级差异高亮：变更部分加深背景色 */
 .agent-git-row.add .agent-git-hl {
   background: color-mix(in srgb, var(--success, #22c55e) 28%, transparent);
@@ -5236,25 +5287,31 @@
 
 .agent-git-ln {
   flex-shrink: 0;
-  width: 38px;
-  padding: 0 6px;
+  width: 32px;
+  padding: 0 7px;
   text-align: right;
   color: var(--text-muted);
   opacity: .7;
   user-select: none;
 }
 
-.agent-git-ln+.agent-git-ln {
-  border-left: 1px solid var(--border);
+/* add 行新行号、del 行旧行号着色（对齐 FileDiff：行号与符号同色） */
+.agent-git-row.add .agent-git-ln+.agent-git-ln {
+  color: var(--success, #22c55e);
+  opacity: 1;
+}
+
+.agent-git-row.del .agent-git-ln:first-child {
+  color: var(--danger, #ef4444);
+  opacity: 1;
 }
 
 .agent-git-sign {
   flex-shrink: 0;
-  width: 16px;
+  width: 18px;
   text-align: center;
   color: var(--text-muted);
   user-select: none;
-  border-left: 1px solid var(--border);
 }
 
 .agent-git-row.add .agent-git-sign {
@@ -5994,4 +6051,316 @@
 .file-tree-ctx-item svg {
   color: var(--text-muted);
   flex-shrink: 0;
+}
+/* ── web_search 工具结果卡（WebSearchResults，对齐 WebSearch 演示设计）── */
+.agent-ws {
+  margin-top: 4px;
+}
+
+.agent-ws-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 2px 4px;
+  color: var(--text);
+}
+
+.agent-ws-globe {
+  animation: spin 1.4s linear infinite;
+  color: var(--accent);
+}
+
+.agent-ws-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.agent-ws-shimmer {
+  background: linear-gradient(105deg,
+    var(--text) 0%, var(--text) 38%,
+    #fff 46%, #fff 54%,
+    var(--text) 62%, var(--text) 100%);
+  background-size: 220% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: agentToolShimmer 1.8s linear infinite;
+}
+
+.agent-ws-quote {
+  color: var(--text-muted);
+}
+
+.agent-ws-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 2px 6px;
+}
+
+.agent-ws-skel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-ws-skel-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.agent-ws-skel-bar {
+  height: 9px;
+  flex: 1;
+  border-radius: 4px;
+  background: var(--border);
+  opacity: .7;
+}
+
+.agent-ws-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--danger, #e5484d);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger, #e5484d) 8%, transparent);
+}
+
+.agent-ws-list {
+  list-style: none;
+  margin: 0 0 0 5px;
+  padding: 0 0 2px 10px;
+  border-left: 2px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-ws-site {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 3px 0;
+}
+
+.agent-ws-bullet {
+  display: flex;
+  align-items: center;
+  margin-top: 1px;
+  color: var(--success, #2e9e5b);
+  flex-shrink: 0;
+}
+
+.agent-ws-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-ws-title {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 120ms;
+}
+
+.agent-ws-title:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.agent-ws-snippet {
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.agent-ws-url {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  opacity: .75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-ws-arrow {
+  color: var(--text-muted);
+  opacity: .6;
+  flex-shrink: 0;
+  margin-top: 3px;
+  transition: color 120ms, opacity 120ms;
+}
+
+.agent-ws-site:hover .agent-ws-arrow {
+  color: var(--accent);
+  opacity: 1;
+}
+
+/* ── 待办卡片视觉升级（对齐 TodoList 演示设计）── */
+/* 头部进度饼图：SVG 虚线外环 + 填充弧（stroke-dasharray 过渡） */
+.agent-task-card-head-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--text-muted);
+}
+
+.agent-task-head-pie {
+  display: block;
+}
+
+.agent-task-head-pie-ring {
+  stroke: var(--text-muted);
+}
+
+.agent-task-head-pie-fill {
+  stroke: var(--text);
+  transition: stroke-dasharray 400ms ease;
+}
+
+.agent-task-head-check {
+  width: 16px;
+  height: 16px;
+  color: var(--success, #22c55e);
+}
+
+/* 滚动数字计数 */
+.agent-task-roll-count {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.agent-task-roll-digit {
+  display: inline-block;
+  overflow: hidden;
+  height: 1em;
+  line-height: 1em;
+}
+
+.agent-task-roll-inner {
+  display: flex;
+  flex-direction: column;
+  transition: transform 350ms cubic-bezier(.4, 0, .2, 1);
+}
+
+.agent-task-roll-inner span {
+  height: 1em;
+  line-height: 1em;
+}
+
+.agent-task-roll-inner.on {
+  transform: translateY(-1em);
+}
+
+/* 任务项：级联入场 */
+.agent-task-card-item {
+  animation: agentTaskItemIn 360ms ease backwards;
+  animation-delay: calc(var(--i, 0) * 50ms);
+}
+
+@keyframes agentTaskItemIn {
+  from {
+    opacity: 0;
+    transform: translateY(-7px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 任务状态图标三态（同一槽位交叉淡变）：pending 虚线圆 / in_progress 箭头 / done 对勾 / cancelled 叉 */
+.agent-task-iconwrap {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin-top: 1px;
+}
+
+.agent-task-todo-icon {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 320ms ease;
+}
+
+.agent-task-todo-icon.on {
+  opacity: 1;
+}
+
+.agent-task-todo-icon.strong {
+  color: var(--text);
+}
+
+/* 进行中任务：文字流光（attr(data-label) 复制层 + 渐变 clip） */
+.agent-task-card-text {
+  position: relative;
+}
+
+.agent-task-card-text::before {
+  content: attr(data-label);
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, var(--text) 0%, var(--text) 30%,
+    color-mix(in srgb, var(--text) 45%, transparent) 45%,
+    color-mix(in srgb, var(--text) 45%, transparent) 55%,
+    var(--text) 70%, var(--text) 100%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  opacity: 0;
+  transition: opacity 360ms ease;
+  pointer-events: none;
+}
+
+.agent-task-card-item.active .agent-task-card-text {
+  color: transparent;
+}
+
+.agent-task-card-item.active .agent-task-card-text::before {
+  opacity: 1;
+  animation: agentTaskShine 2.2s cubic-bezier(.25, .1, .25, 1) infinite;
+}
+
+@keyframes agentTaskShine {
+  0%, 18% {
+    background-position: 100% 0;
+  }
+
+  82%, 100% {
+    background-position: 0% 0;
+  }
 }

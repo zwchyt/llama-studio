@@ -37,12 +37,12 @@ import { askUserQuestionRegistry } from '../utils/askUserQuestionRegistry'
 import { getAuditEntries, subscribeAudit, clearAudit, recordAudit, type AuditEntry } from '../utils/auditLog'
 import { getDebugTurns, subscribeDebug, clearDebug, recordDebugTurn, type DebugTurn, type DebugToolCall } from '../utils/debugLog'
 import AgentFileTree from './AgentFileTree'
-import AgentBrowser, { formatAnnotations, ANNOTATION_KIND_LABEL, type UiAnnotation } from './AgentBrowser'
-// HTML 预览 iframe 的 UI 注释工具脚本（同源注入，?raw 打包为字符串）
+import AgentBrowser, { formatAnnotations, ANNOTATION_KIND_LABEL, type UiAnnotation } from './AgentBrowser'// HTML 预览 iframe 的 UI 注释工具脚本（同源注入，?raw 打包为字符串）
 import AGENT_ANNOTATE_SCRIPT from '../utils/agentAnnotateScript.js?raw'
 
 import AgentContextPanel from './AgentContextPanel'
 import CodeBlock from './CodeBlock'
+import WebSearchResults from './WebSearchResults'
 import AskUserQuestionInline from './AskUserQuestionInline'
 import AgentFilePicker from './AgentFilePicker'
 import AgentGitDiff, { type GitChangesData } from './AgentGitDiff'
@@ -194,6 +194,90 @@ function LinedPre({ text, maxHeight }: { text: string; maxHeight?: number }) {
         </div>
       ))}
     </div>
+  )
+}
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║ 区域：待办卡片视觉组件（滚动数字 + 三态图标，对齐 TodoList 演示设计）        ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// 单个数字槽：字符变化时旧字符上滚、新字符滚入
+const RollDigit = React.memo(function RollDigit({ char }: { char: string }) {
+  const prev = useRef(char)
+  const [roll, setRoll] = useState<{ from: string; to: string } | null>(null)
+  const [up, setUp] = useState(false)
+  useEffect(() => {
+    if (char === prev.current) return
+    const from = prev.current
+    prev.current = char
+    setRoll({ from, to: char })
+    setUp(false)
+    const raf = requestAnimationFrame(() => requestAnimationFrame(() => setUp(true)))
+    const done = setTimeout(() => setRoll(null), 380)
+    return () => { cancelAnimationFrame(raf); clearTimeout(done) }
+  }, [char])
+  if (!roll) return <span className="agent-task-roll-digit">{char}</span>
+  return (
+    <span className="agent-task-roll-digit">
+      <span className={`agent-task-roll-inner${up ? ' on' : ''}`}>
+        <span>{roll.from}</span>
+        <span>{roll.to}</span>
+      </span>
+    </span>
+  )
+})
+
+// 任务计数（如 2/5），字符级滚动
+const TaskRollingCount = ({ value }: { value: string }) => (
+  <span className="agent-task-roll-count" aria-label={value}>
+    {value.split('').map((c, i) => <RollDigit key={i} char={c} />)}
+  </span>
+)
+
+// 任务状态图标三态（pending 虚线圆 / in_progress 箭头 / completed 对勾）+ cancelled 叉
+const taskIconCls = (base: string, on?: boolean) => base + (on ? ' on' : '')
+const TaskCheckIcon = ({ on }: { on?: boolean }) => (
+  <svg className={taskIconCls('agent-task-todo-icon', on)} viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+    <path d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+const TaskArrowIcon = ({ on }: { on?: boolean }) => (
+  <svg className={taskIconCls('agent-task-todo-icon strong', on)} viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+    <path d="m12.75 15 3-3m0 0-3-3m3 3h-7.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+const TaskDashedIcon = ({ on }: { on?: boolean }) => (
+  <svg className={taskIconCls('agent-task-todo-icon', on)} viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+    <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="1.8" strokeDasharray="1.8 3.6" strokeLinecap="round" />
+  </svg>
+)
+const TaskXIcon = ({ on }: { on?: boolean }) => (
+  <svg className={taskIconCls('agent-task-todo-icon', on)} viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+    <path d="M9 9l6 6m0-6-6 6M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+// 头部全完成实心对勾
+const TaskFilledCheckIcon = () => (
+  <svg className="agent-task-head-check" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+    <path fillRule="evenodd" clipRule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12Zm13.36-1.814a.75.75 0 1 0-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 0 0-1.06 1.06l2.25 2.25a.75.75 0 0 0 1.14-.094l3.75-5.25Z" fill="currentColor" />
+  </svg>
+)
+
+// 头部进度饼图：SVG 虚线外环 + 填充弧（stroke-dasharray 过渡，无 @property 依赖）
+const TaskPieIcon = ({ pct }: { pct: number }) => {
+  const R = 8.5
+  const circ = 2 * Math.PI * R
+  const filled = (circ * Math.max(0, Math.min(100, pct))) / 100
+  return (
+    <svg className="agent-task-head-pie" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true">
+      <circle className="agent-task-head-pie-ring" cx="10" cy="10" r={R} fill="none" strokeWidth="2" strokeDasharray="2 3.4" strokeLinecap="round" />
+      <circle
+        className="agent-task-head-pie-fill"
+        cx="10" cy="10" r={R} fill="none" strokeWidth="2" strokeLinecap="round"
+        strokeDasharray={`${filled} ${circ}`}
+        transform="rotate(-90 10 10)"
+      />
+    </svg>
   )
 }
 
@@ -1435,8 +1519,15 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
                   <pre className="agent-tool-bash-cmd">{bashCmd}</pre>
                 </div>
               )}
-              {tc.name !== 'Bash' && !readNameOnly && <ToolArgsView name={tc.name} args={tc.args} onPreviewFile={onPreviewFile} />}
-              {done && !hideResult && (
+              {tc.name !== 'Bash' && tc.name !== 'web_search' && !readNameOnly && <ToolArgsView name={tc.name} args={tc.args} onPreviewFile={onPreviewFile} />}
+              {tc.name === 'web_search' && !readNameOnly && (executing || done) && (
+                <WebSearchResults
+                  result={done ? tc.result ?? undefined : undefined}
+                  query={parsed && typeof parsed.query === 'string' ? parsed.query : undefined}
+                  loading={executing}
+                />
+              )}
+              {done && !hideResult && tc.name !== 'web_search' && (
                 <ToolResultView result={tc.result!} truncated={tc.truncated} total={tc.resultTotal} lined={tc.name === 'Read'} />
               )}
             </div>
@@ -2215,6 +2306,8 @@ export default function AgentCodeView() {
   const [taskCardClosing, setTaskCardClosing] = useState(false)
   // 当前 TodoWrite 计划项（每次新调用替换，不累加）
   const [currentPlanItems, setCurrentPlanItems] = useState<TodoUpdate[]>([])
+  // 待办卡片派生计数（头部饼图/滚动计数用）
+  const taskDoneCount = currentPlanItems.filter(i => i.status === 'completed').length
   // 计划总标题（plan 级别，区别于每条待办 content）：仅用于内联卡片展示，不持久化
   const [planTitle, setPlanTitle] = useState('')
 
@@ -4596,8 +4689,17 @@ export default function AgentCodeView() {
                 }}
               >
                 <div className="agent-task-card-head">
+                  <span className="agent-task-card-head-icon">
+                    {currentPlanItems.length > 0 && taskDoneCount === currentPlanItems.length ? (
+                      <TaskFilledCheckIcon />
+                    ) : currentPlanItems.length > 0 ? (
+                      <TaskPieIcon pct={Math.round((taskDoneCount / currentPlanItems.length) * 100)} />
+                    ) : (
+                      <TaskDashedIcon on />
+                    )}
+                  </span>
                   <span className="agent-task-card-title">待办</span>
-                  <span className="agent-task-card-count">{currentPlanItems.filter(i => i.status === 'completed').length}/{currentPlanItems.length}</span>
+                  <span className="agent-task-card-count"><TaskRollingCount value={`${taskDoneCount}/${currentPlanItems.length}`} /></span>
                   <div className="agent-task-card-head-actions">
                     <button className="agent-task-card-head-btn" onClick={() => {
                       setTaskPanelCollapsed(p => !p)
@@ -4626,12 +4728,9 @@ export default function AgentCodeView() {
                       currentPlanItems.map((item, i) => {
                         // 修复③：显式覆盖全部状态枚举，避免 cancelled 被 fallback 成「待完成」
                         const raw = item.status || 'pending'
-                        const statusLabel =
-                          raw === 'completed' ? '已完成'
-                            : raw === 'in_progress' ? '进行中'
-                              : raw === 'cancelled' ? '已取消'
-                                : '待完成'
                         const isDone = raw === 'completed'
+                        const isActive = raw === 'in_progress'
+                        const isCancelled = raw === 'cancelled'
                         // 仿 Reasonix：每条只显示一行。进行中且有备注(notes)时，备注作为 activeForm 显示；
                         // 否则显示 content。notes 不再作为独立第二行渲染。
                         const text = raw === 'in_progress' && item.notes
@@ -4639,10 +4738,19 @@ export default function AgentCodeView() {
                           : (item.content || item.description || '')
                         // 修复④：用稳定 id 作为 key（无 id 时回退下标），减少 merge 导致顺序变化时 DOM 复用错乱
                         return (
-                          <div key={item.id ?? i} className={`agent-task-card-item${isDone ? ' done' : ''}`}>
-                            <span className={`agent-task-card-status status-${raw}`}>{statusLabel}</span>
+                          <div
+                            key={item.id ?? i}
+                            className={`agent-task-card-item${isDone ? ' done' : ''}${isActive ? ' active' : ''}`}
+                            style={{ ['--i' as string]: i }}
+                          >
+                            <span className="agent-task-iconwrap">
+                              <TaskDashedIcon on={!isDone && !isActive && !isCancelled} />
+                              <TaskArrowIcon on={isActive} />
+                              <TaskCheckIcon on={isDone} />
+                              <TaskXIcon on={isCancelled} />
+                            </span>
                             <div className="agent-task-card-content">
-                              <div className="agent-task-card-text">{text}</div>
+                              <div className="agent-task-card-text" data-label={text}>{text}</div>
                             </div>
                           </div>
                         )
@@ -4721,13 +4829,21 @@ export default function AgentCodeView() {
                   let kind: 'running' | 'idle' = 'idle'
                   let name = ''
                   let text = '就绪'
-                  let orbState: OrbState = 'working'
+                  // thinking-orbs 0.3.1 新增 connecting/weaving/breathing 三个状态：
+                  // connecting=连接/准备中，weaving=写入/编辑（编织进项目），breathing=待机呼吸；
+                  // searching=搜索类工具（0.1.1 已有，此前未用）
+                  let orbState: OrbState = 'breathing'
                   if (approvalReq) {
                     kind = 'running'; name = approvalReq.name; text = '等待确认…'; orbState = 'listening'
                   } else if (streamKind === 'tools') {
                     // 工具调用/执行阶段：状态栏显示「工具调用中」+ 当前工具名；
-                    // 消息区工具卡另有具体 verb 徽标（如 Write → 写入中）
-                    kind = 'running'; name = curToolName; text = '工具调用中'; orbState = 'working'
+                    // 消息区工具卡另有具体 verb 徽标（如 Write → 写入中）。
+                    // orb 按工具类型细分：搜索类→searching，写入/编辑类→weaving，其余→working
+                    kind = 'running'; name = curToolName; text = '工具调用中'
+                    const toolKind = TOOL_METAS[curToolName]?.kind
+                    if (toolKind === 'search' || curToolName === 'web_search') orbState = 'searching'
+                    else if (toolKind === 'write' || toolKind === 'edit') orbState = 'weaving'
+                    else orbState = 'working'
                   } else if (streamKind === 'think' && !thinkDone) {
                     // 思考闭合（thinkDone=true）后即使 streamKind 残留 'think' 也不再显示
                     // 「思考中」转圈——模型已结束思考（在输出参数/正文/工具的路上）
@@ -4735,14 +4851,14 @@ export default function AgentCodeView() {
                   } else if (streamKind === 'text') {
                     kind = 'running'; text = '输出中'; orbState = 'composing'
                   } else if (streaming) {
-                    // 流式中但尚无实际内容（首 token 前）
-                    kind = 'running'; text = '准备中…'; orbState = 'working'
+                    // 流式中但尚无实际内容（首 token 前）：连接模型/建立会话
+                    kind = 'running'; text = '准备中…'; orbState = 'connecting'
                   } else if (loading) {
-                    kind = 'running'; text = '准备中…'; orbState = 'working'
+                    kind = 'running'; text = '准备中…'; orbState = 'connecting'
                   }
                   return (
                     <div className={`agent-status-bar agent-status-bar--${kind}`}>
-                      <ThinkingOrb state={orbState} size={20} theme="light" paused={kind === 'idle'} className="agent-status-orb" aria-label={text} />
+                      <ThinkingOrb state={orbState} size={20} theme="light" paused={false} className="agent-status-orb" aria-label={text} />
                       {kind === 'running' && name && <span className="agent-status-bar-name">{name}</span>}
                       {kind === 'running' && <span className="agent-status-bar-text">{text}</span>}
                     </div>
