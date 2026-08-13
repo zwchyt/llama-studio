@@ -111,6 +111,9 @@ interface LlamaCppApi {
   listTtsModelFolders: () => Promise<string[]>
   addTtsModelFolder: () => Promise<{ success: boolean; folders?: string[] }>
   removeTtsModelFolder: (folder: string) => Promise<{ success: boolean; folders: string[] }>
+  listAsrModelFolders: () => Promise<string[]>
+  addAsrModelFolder: () => Promise<{ success: boolean; folders?: string[] }>
+  removeAsrModelFolder: (folder: string) => Promise<{ success: boolean; folders: string[] }>
   // ── OCR 模型 ──
   listOcrModelFolders: () => Promise<string[]>
   addOcrModelFolder: () => Promise<{ success: boolean; folders?: string[] }>
@@ -137,7 +140,7 @@ interface LlamaCppApi {
   setMetricsPolling: (enabled: boolean) => Promise<{ success: boolean }>
   getRunningProcesses: () => Promise<string[]>
   getModelLogs: (id: string) => Promise<{ stream: string; text: string }[]>
-  getUiSettings: () => Promise<{ splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string }>
+  getUiSettings: () => Promise<{ splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; ttsMode?: 'qwen3' | 'outetts'; ttsLang?: string; ttsMmprojPath?: string; ttsSpeakerFile?: string; sttModelPath?: string; sttMmprojPath?: string; sttPrompt?: string; sttResult?: string }>
   setUiSetting: (key: string, value: boolean | string) => Promise<void>
   listGlobalAgents: () => Promise<{ name: string; pkg: string; cmd: string; installed: boolean; version: string | null; website?: string }[]>
   launchAgent: (cmd: string, cwd: string) => Promise<{ success: boolean; error?: string }>
@@ -202,8 +205,11 @@ interface LlamaCppApi {
   getGpuVram: () => Promise<{ name: string; totalMiB: number; usedMiB: number } | null>
   analyzeTemplate: (opts: { backendPath: string; template: string }) => Promise<{ success: boolean; error?: string; report?: string }>
   // ── 本地 TTS ──
-  ttsGenerate: (opts: { id: string; backendPath: string; modelPath: string; vocoderPath: string; text: string }) => Promise<{ success: boolean; wavBase64?: string; error?: string }>
+  ttsGenerate: (opts: { id: string; backendPath: string; modelPath: string; vocoderPath?: string; text: string; lang?: string; speakerFile?: string; mmprojPath?: string; qwen3?: boolean }) => Promise<{ success: boolean; wavBase64?: string; error?: string }>
   ttsStop: (id: string) => Promise<{ success: boolean; error?: string }>
+  // ── 本地语音转写（llama-mtmd-cli，无需 whisper.cpp）──
+  sttTranscribe: (opts: { id: string; backendPath: string; modelPath: string; mmprojPath: string; audioPath: string; prompt?: string }) => Promise<{ success: boolean; text?: string; error?: string }>
+  sttStop: (id: string) => Promise<{ success: boolean; error?: string }>
   // ── Agent Code 文件树 ──
   buildFileTree: (dir: string, maxDepth?: number) => Promise<{ success: boolean; tree?: { name: string; path: string; isDir: boolean; children?: any[] }; error?: string }>
   expandFileTree: (dir: string, limit?: number) => Promise<{ success: boolean; children?: { name: string; path: string; isDir: boolean; size?: number }[]; truncated?: boolean; total?: number; error?: string }>

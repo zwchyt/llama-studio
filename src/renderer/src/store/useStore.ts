@@ -12,7 +12,7 @@ interface CardState {
   ready?: boolean // 已监听到 llama_server 监听日志（服务就绪可对外提供服务）
 }
 export interface ModelFileInfo {
-  name: string; path: string; size: number; folder: string; external?: boolean; tts?: boolean; ocr?: boolean
+  name: string; path: string; size: number; folder: string; external?: boolean; tts?: boolean; ocr?: boolean; asr?: boolean
   /** stable-diffusion.cpp 图像生成组件角色：model=扩散模型 / vae / llm=LLM 文本编码器 */
   sdRole?: 'model' | 'vae' | 'llm'
 }
@@ -70,7 +70,7 @@ interface AppStore {
   /** 四引擎自动检测结果：repo → ReleaseInfo（启动 10s 后并行检测写入） */
   engineReleases: Record<string, ReleaseInfo | null>
   paths: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string; chatTemplates: string } | null
-  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'terminal' | 'ocr' | 'benchmark' | 'agent-code' | 'model-tools' | 'knowledge' | 'tts' | 'imagegen' | 'engines' | 'folders' | 'token-stats'
+  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'terminal' | 'ocr' | 'benchmark' | 'agent-code' | 'model-tools' | 'knowledge' | 'tts' | 'stt' | 'imagegen' | 'engines' | 'folders' | 'token-stats'
   showCreateModal: boolean
   editingTemplate: Template | null
   updateDismissed: boolean
@@ -189,6 +189,39 @@ interface AppStore {
   setTtsModelPath: (v: string) => void
   ttsVocoderPath: string
   setTtsVocoderPath: (v: string) => void
+  /** TTS 生成模式：qwen3 = 新版单模型（Qwen3-TTS），outetts = 经典双模型（OuteTTS + WavTokenizer） */
+  ttsMode: 'qwen3' | 'outetts'
+  setTtsMode: (v: AppStore['ttsMode']) => void
+  /** Qwen3-TTS 语言（zh/en/de/it/pt/es/ja/ko/fr/ru） */
+  ttsLang: string
+  setTtsLang: (v: string) => void
+  /** Qwen3-TTS 音频投影（mmproj GGUF，内含说话人编码器，必选） */
+  ttsMmprojPath: string
+  setTtsMmprojPath: (v: string) => void
+  /** Qwen3-TTS 参考音频（wav/mp3，用于克隆音色，可选） */
+  ttsSpeakerFile: string
+  setTtsSpeakerFile: (v: string) => void
+  /** 最近一次语音合成结果（data URL，切换界面后保留；体积大，仅内存不写磁盘） */
+  ttsWavDataUrl: string
+  setTtsWavDataUrl: (v: string) => void
+  /** 合成 wav 字节数（用于展示） */
+  ttsWavSize: number
+  setTtsWavSize: (v: number) => void
+  /** 合成耗时 ms（用于展示） */
+  ttsGenMs: number
+  setTtsGenMs: (v: number) => void
+  // ── 本地语音转写模型配置（供「语音转写」视图使用）──
+  sttModelPath: string
+  setSttModelPath: (v: string) => void
+  /** 语音转写音频投影（mmproj GGUF，音频编码器，必选） */
+  sttMmprojPath: string
+  setSttMmprojPath: (v: string) => void
+  /** 语音转写提示词（llama-mtmd-cli -p，默认英文转写指令，可自定义） */
+  sttPrompt: string
+  setSttPrompt: (v: string) => void
+  /** 最近一次语音转写结果（切换界面后保留，供复制/查看） */
+  sttResult: string
+  setSttResult: (v: string) => void
   // ── Agent Code ──
   agentProjects: AgentProject[]
   setAgentProjects: (p: AgentProject[]) => void
@@ -405,6 +438,53 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
     set({ ttsVocoderPath: v })
     window.api?.setUiSetting('ttsVocoderPath', v)
   },
+  ttsMode: 'qwen3',
+  setTtsMode: (v) => {
+    set({ ttsMode: v })
+    window.api?.setUiSetting('ttsMode', v)
+  },
+  ttsLang: 'zh',
+  setTtsLang: (v) => {
+    set({ ttsLang: v })
+    window.api?.setUiSetting('ttsLang', v)
+  },
+  ttsMmprojPath: '',
+  setTtsMmprojPath: (v) => {
+    set({ ttsMmprojPath: v })
+    window.api?.setUiSetting('ttsMmprojPath', v)
+  },
+  ttsSpeakerFile: '',
+  setTtsSpeakerFile: (v) => {
+    set({ ttsSpeakerFile: v })
+    window.api?.setUiSetting('ttsSpeakerFile', v)
+  },
+  ttsWavDataUrl: '',
+  setTtsWavDataUrl: (v) => set({ ttsWavDataUrl: v }),
+  ttsWavSize: 0,
+  setTtsWavSize: (v) => set({ ttsWavSize: v }),
+  ttsGenMs: 0,
+  setTtsGenMs: (v) => set({ ttsGenMs: v }),
+  // ── 本地语音转写模型配置（供「语音转写」视图使用）──
+  sttModelPath: '',
+  setSttModelPath: (v) => {
+    set({ sttModelPath: v })
+    window.api?.setUiSetting('sttModelPath', v)
+  },
+  sttMmprojPath: '',
+  setSttMmprojPath: (v) => {
+    set({ sttMmprojPath: v })
+    window.api?.setUiSetting('sttMmprojPath', v)
+  },
+  sttPrompt: 'Transcribe the following audio to text.',
+  setSttPrompt: (v) => {
+    set({ sttPrompt: v })
+    window.api?.setUiSetting('sttPrompt', v)
+  },
+  sttResult: '',
+  setSttResult: (v) => {
+    set({ sttResult: v })
+    window.api?.setUiSetting('sttResult', v)
+  },
   agentProjects: [],
   setAgentProjects: (p) => {
     set({ agentProjects: p })
@@ -482,6 +562,14 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
       }
       if (typeof s.ttsModelPath === 'string') set({ ttsModelPath: s.ttsModelPath })
       if (typeof s.ttsVocoderPath === 'string') set({ ttsVocoderPath: s.ttsVocoderPath })
+      if (s.ttsMode === 'qwen3' || s.ttsMode === 'outetts') set({ ttsMode: s.ttsMode })
+      if (typeof s.ttsLang === 'string') set({ ttsLang: s.ttsLang })
+      if (typeof s.ttsMmprojPath === 'string') set({ ttsMmprojPath: s.ttsMmprojPath })
+      if (typeof s.ttsSpeakerFile === 'string') set({ ttsSpeakerFile: s.ttsSpeakerFile })
+      if (typeof s.sttModelPath === 'string') set({ sttModelPath: s.sttModelPath })
+      if (typeof s.sttMmprojPath === 'string') set({ sttMmprojPath: s.sttMmprojPath })
+      if (typeof s.sttPrompt === 'string') set({ sttPrompt: s.sttPrompt })
+      if (typeof s.sttResult === 'string') set({ sttResult: s.sttResult })
     } catch { /* ignore */ }
   },
   chatSidebarCurrentCollapsed: false,

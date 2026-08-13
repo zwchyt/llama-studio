@@ -25,6 +25,7 @@ import TerminalView from './components/TerminalView'
 import ModelToolsView from './components/ModelToolsView'
 import KnowledgeView from './components/KnowledgeView'
 import TtsView from './components/TtsView'
+import SttView from './components/SttView'
 import OcrView from './components/OcrView'
 import BenchmarkView from './components/BenchmarkView'
 import ImageGenView from './components/ImageGenView'
@@ -524,6 +525,7 @@ function AppMain() {
       case 'model-tools': return <ModelToolsView />
       case 'knowledge': return <KnowledgeView />
       case 'tts': return <TtsView />
+      case 'stt': return <SttView />
       case 'imagegen': return <ImageGenView />
       case 'agent-code': return null
       case 'terminal': return null

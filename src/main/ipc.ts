@@ -186,7 +186,7 @@ interface HfModelRaw {
   lastModified?: string
 }
 interface HfFileRaw { type: string; path: string; size?: number }
-type ModelFileInfo = { name: string; path: string; size: number; folder: string; external: boolean; tts?: boolean; ocr?: boolean; sdRole?: 'model' | 'vae' | 'llm' }
+type ModelFileInfo = { name: string; path: string; size: number; folder: string; external: boolean; tts?: boolean; ocr?: boolean; asr?: boolean; sdRole?: 'model' | 'vae' | 'llm' }
 interface GpuInfo {
   name: string
   temperatureGpu: number | null
@@ -285,8 +285,14 @@ async function isAllowedModelPath(p: string): Promise<boolean> {
   const ext = extname(p).toLowerCase()
   if (!['.gguf', '.bin', '.ggml', '.safetensors', '.ckpt', '.pth', '.pt'].includes(ext)) return false
   const s = await loadSettings()
-  const roots = [MODELS_DIR, ...s.externalModelFolders, ...s.imageModelFolders, ...s.ttsModelFolders, ...s.ocrModelFolders, ...s.sdModelFolders, ...s.sdVaeFolders, ...s.sdLlmFolders]
+  const roots = [MODELS_DIR, ...s.externalModelFolders, ...s.imageModelFolders, ...s.ttsModelFolders, ...s.asrModelFolders, ...s.ocrModelFolders, ...s.sdModelFolders, ...s.sdVaeFolders, ...s.sdLlmFolders]
   return roots.some(root => isSafePath(root, p))
+}
+// 音频文件（参考音频 / 转写输入）由用户经系统文件对话框亲自选择，
+// 不限制目录，仅校验存在性与扩展名
+function isAllowedAudioPath(p: string): boolean {
+  if (!p || typeof p !== 'string' || !existsSync(p)) return false
+  return /\.(wav|mp3|flac|ogg|m4a)$/i.test(p)
 }
 // 下面的代码实现了一个简单的命令行参数验证机制，确保只有在 commands.json 中定义的参数才会被传递给后端执行的模型运行命令。这有助于防止恶意用户通过 IPC 传递危险的参数来执行未授权的操作。
 const schemaCache = new Map<string, { mtimeMs: number; allowed: Set<string>; boolean: Set<string> }>()
@@ -384,18 +390,19 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
     return Promise.resolve()
   }
 }
-interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; ttsModelFolders: string[]; ocrModelFolders: string[]; sdModelFolders: string[]; sdVaeFolders: string[]; sdLlmFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean;       notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string }
+interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; ttsModelFolders: string[]; asrModelFolders: string[]; ocrModelFolders: string[]; sdModelFolders: string[]; sdVaeFolders: string[]; sdLlmFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean;       notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string }
 const UI_KEYS = new Set(['splashEnabled', 'soundEnabled', 'notificationSound', 'chatSidebarCollapsed', 'agentToolCardsExpanded', 'ttsEngine', 'ttsModelPath', 'ttsVocoderPath'])
 let settingsCache: AppSettings | null = null
 async function loadSettings(): Promise<AppSettings> {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
     const data = JSON.parse(await fsPromises.readFile(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
       imageModelFolders: Array.isArray(data.imageModelFolders) ? data.imageModelFolders : [],
       ttsModelFolders: Array.isArray(data.ttsModelFolders) ? data.ttsModelFolders : [],
+      asrModelFolders: Array.isArray(data.asrModelFolders) ? data.asrModelFolders : [],
       ocrModelFolders: Array.isArray(data.ocrModelFolders) ? data.ocrModelFolders : [],
       sdModelFolders: Array.isArray(data.sdModelFolders) ? data.sdModelFolders : [],
       sdVaeFolders: Array.isArray(data.sdVaeFolders) ? data.sdVaeFolders : [],
@@ -411,7 +418,7 @@ async function loadSettings(): Promise<AppSettings> {
       ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : ''
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
 }
 async function saveSettings(s: AppSettings): Promise<void> {
   await fsPromises.writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2))
@@ -420,12 +427,13 @@ async function saveSettings(s: AppSettings): Promise<void> {
 function loadSettingsSync(): AppSettings {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
     const data = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
       imageModelFolders: Array.isArray(data.imageModelFolders) ? data.imageModelFolders : [],
       ttsModelFolders: Array.isArray(data.ttsModelFolders) ? data.ttsModelFolders : [],
+      asrModelFolders: Array.isArray(data.asrModelFolders) ? data.asrModelFolders : [],
       ocrModelFolders: Array.isArray(data.ocrModelFolders) ? data.ocrModelFolders : [],
       sdModelFolders: Array.isArray(data.sdModelFolders) ? data.sdModelFolders : [],
       sdVaeFolders: Array.isArray(data.sdVaeFolders) ? data.sdVaeFolders : [],
@@ -441,7 +449,7 @@ function loadSettingsSync(): AppSettings {
       ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : ''
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
 }
 interface RunningProcess { proc: ChildProcess; port: number; kind: EngineKind }
 const runningProcesses = new Map<string, RunningProcess>()
@@ -1176,7 +1184,7 @@ export function registerIpcHandlers(): void {
       const results: ModelFileInfo[] = []
       const seen = new Set<string>()
       const visitedDirs = new Set<string>()
-      const scan = async (dir: string, external: boolean, tts = false, ocr = false, depth = 0, sdRole: 'model' | 'vae' | 'llm' | '' = ''): Promise<void> => {
+      const scan = async (dir: string, external: boolean, tts = false, ocr = false, asr = false, depth = 0, sdRole: 'model' | 'vae' | 'llm' | '' = ''): Promise<void> => {
         if (depth > 8 || results.length >= MAX_MODELS_FILES) return
         try {
           const realDir = await fsPromises.realpath(dir)
@@ -1185,14 +1193,14 @@ export function registerIpcHandlers(): void {
           const files = await fsPromises.readdir(dir, { withFileTypes: true })
           for (const e of files) {
             if (results.length >= MAX_MODELS_FILES) return
-            if (e.isDirectory()) await scan(join(dir, e.name), external, tts, ocr, depth + 1, sdRole)
+            if (e.isDirectory()) await scan(join(dir, e.name), external, tts, ocr, asr, depth + 1, sdRole)
             else if (exts.includes(extname(e.name).toLowerCase()) && !e.name.endsWith('.tmp')) {
               const fp = join(dir, e.name)
               const key = resolve(fp)
               if (seen.has(key)) continue
               seen.add(key)
               const st = await fsPromises.stat(fp)
-              results.push({ name: e.name, path: fp, size: st.size, folder: basename(dir), external, tts: tts || undefined, ocr: ocr || undefined, sdRole: sdRole || undefined })
+              results.push({ name: e.name, path: fp, size: st.size, folder: basename(dir), external, tts: tts || undefined, ocr: ocr || undefined, asr: asr || undefined, sdRole: sdRole || undefined })
             }
           }
         } catch { }
@@ -1207,6 +1215,12 @@ export function registerIpcHandlers(): void {
         if (results.length >= MAX_MODELS_FILES) break
         if (existsSync(folder)) await scan(folder, true, true)
       }
+      // 语音转写（ASR）模型文件夹：与 TTS 文件夹同设计，模型（如 Qwen3-ASR / granite-speech 主模型）
+      // 打上 asr 标记，供语音转写视图的模型下拉选用
+      for (const folder of settings.asrModelFolders) {
+        if (results.length >= MAX_MODELS_FILES) break
+        if (existsSync(folder)) await scan(folder, true, false, false, true)
+      }
       for (const folder of settings.ocrModelFolders) {
         if (results.length >= MAX_MODELS_FILES) break
         if (existsSync(folder)) await scan(folder, true, false, true)
@@ -1215,15 +1229,15 @@ export function registerIpcHandlers(): void {
       // 统一扫入模型列表并打上 sdRole 标记，供模板模型下拉与 --vae / --llm 参数选择
       for (const folder of settings.sdModelFolders) {
         if (results.length >= MAX_MODELS_FILES) break
-        if (existsSync(folder)) await scan(folder, true, false, false, 0, 'model')
+        if (existsSync(folder)) await scan(folder, true, false, false, false, 0, 'model')
       }
       for (const folder of settings.sdVaeFolders) {
         if (results.length >= MAX_MODELS_FILES) break
-        if (existsSync(folder)) await scan(folder, true, false, false, 0, 'vae')
+        if (existsSync(folder)) await scan(folder, true, false, false, false, 0, 'vae')
       }
       for (const folder of settings.sdLlmFolders) {
         if (results.length >= MAX_MODELS_FILES) break
-        if (existsSync(folder)) await scan(folder, true, false, false, 0, 'llm')
+        if (existsSync(folder)) await scan(folder, true, false, false, false, 0, 'llm')
       }
       modelsCache = { ts: Date.now(), result: results }
       return results
@@ -1346,6 +1360,29 @@ export function registerIpcHandlers(): void {
     invalidateModelsCache()
     return { success: true, folders: s.ttsModelFolders }
   })
+  // ── 语音转写（ASR）模型文件夹 ──
+  // 与 TTS 模型文件夹同设计：ASR 模型（Qwen3-ASR / granite-speech 主模型 GGUF）归入通用模型列表，
+  // 语音转写视图的模型下拉直接选用
+  ipcMain.handle('list-asr-model-folders', async () => (await loadSettings()).asrModelFolders)
+  ipcMain.handle('add-asr-model-folder', async () => {
+    const r = await dialog.showOpenDialog({ title: '添加语音转写模型文件夹', properties: ['openDirectory'] })
+    if (r.canceled || !r.filePaths.length) return { success: false }
+    const folder = r.filePaths[0]
+    const s = await loadSettings()
+    if (!s.asrModelFolders.includes(folder)) {
+      s.asrModelFolders.push(folder)
+      await saveSettings(s)
+      invalidateModelsCache()
+    }
+    return { success: true, folders: s.asrModelFolders }
+  })
+  ipcMain.handle('remove-asr-model-folder', async (_e, folder: string) => {
+    const s = await loadSettings()
+    s.asrModelFolders = s.asrModelFolders.filter(f => f !== folder)
+    await saveSettings(s)
+    invalidateModelsCache()
+    return { success: true, folders: s.asrModelFolders }
+  })
   // ── OCR 模型文件夹 ──
   ipcMain.handle('list-ocr-model-folders', async () => (await loadSettings()).ocrModelFolders)
   ipcMain.handle('add-ocr-model-folder', async () => {
@@ -1433,7 +1470,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('rename-model', (_e, oldPath: string, newName: string) => {
     try {
       const settings = loadSettingsSync()
-      const allDirs = [MODELS_DIR, ...settings.externalModelFolders, ...settings.imageModelFolders, ...settings.ttsModelFolders, ...settings.ocrModelFolders]
+      const allDirs = [MODELS_DIR, ...settings.externalModelFolders, ...settings.imageModelFolders, ...settings.ttsModelFolders, ...settings.asrModelFolders, ...settings.ocrModelFolders]
       const resolvedTarget = resolve(oldPath)
       const matches = allDirs.map(d => ({ dir: d, resolvedDir: resolve(d), match: resolvedTarget.startsWith(resolve(d)) }))
       const isAllowed = matches.some(m => m.match)
@@ -2514,18 +2551,41 @@ export function registerIpcHandlers(): void {
   })
 
   // ── 本地 TTS（llama-tts.exe 生成 wav，返回 base64 供渲染层播放）──
+  // 两种模式：qwen3 = 新版单模型 TTS（Qwen3-TTS，--tts-lang/--tts-speaker-file/--output），
+  // outetts = 经典双模型（OuteTTS + WavTokenizer 声码器，-mv/-o）
   const runningTts = new Map<string, ChildProcess>()
-  ipcMain.handle('tts-generate', async (_e, opts: { id: string; backendPath: string; modelPath: string; vocoderPath: string; text: string }) => {
+  ipcMain.handle('tts-generate', async (_e, opts: { id: string; backendPath: string; modelPath: string; vocoderPath?: string; text: string; lang?: string; speakerFile?: string; mmprojPath?: string; qwen3?: boolean }) => {
     if (runningTts.has(opts.id)) return { success: false, error: '该朗读任务已在进行中' }
-    if (!(await isAllowedModelPath(opts.modelPath)) || !(await isAllowedModelPath(opts.vocoderPath))) {
+    if (!(await isAllowedModelPath(opts.modelPath))) {
       return { success: false, error: 'TTS 模型路径访问被拒绝，请在设置中重新选择' }
+    }
+    if (!opts.qwen3 && opts.vocoderPath && !(await isAllowedModelPath(opts.vocoderPath))) {
+      return { success: false, error: 'TTS 声码器路径访问被拒绝，请在设置中重新选择' }
+    }
+    if (opts.qwen3 && opts.mmprojPath && !(await isAllowedModelPath(opts.mmprojPath))) {
+      return { success: false, error: 'TTS 音频投影路径访问被拒绝，请重新选择' }
+    }
+    if (opts.qwen3 && opts.speakerFile && !(await isAllowedAudioPath(opts.speakerFile))) {
+      return { success: false, error: 'TTS 参考音频路径访问被拒绝，请重新选择' }
     }
     const exe = resolveBackendExe(opts.backendPath, 'llama-tts.exe')
     if (!exe.path) return { success: false, error: exe.error }
     const text = String(opts.text ?? '').slice(0, 500)
     if (!text.trim()) return { success: false, error: '朗读文本为空' }
     const outPath = join(tmpdir(), `llama-studio-tts-${randomUUID()}.wav`)
-    const args = ['-m', opts.modelPath, '-mv', opts.vocoderPath, '-p', text, '-o', outPath]
+    const args = ['-m', opts.modelPath, '-p', text]
+    if (opts.qwen3) {
+      // Qwen3-TTS 的说话人编码器打包在 mmproj GGUF 中，缺它新版 llama-tts 直接报
+      // "no mmproj provided, use --mmproj"
+      if (!opts.mmprojPath) return { success: false, error: '缺少 Qwen3-TTS 音频投影（mmproj）路径，请在模型配置中选择' }
+      args.push('--mmproj', opts.mmprojPath)
+      if (opts.lang) args.push('--tts-lang', opts.lang)
+      if (opts.speakerFile) args.push('--tts-speaker-file', opts.speakerFile)
+      args.push('--output', outPath)
+    } else {
+      if (!opts.vocoderPath) return { success: false, error: '缺少声码器模型路径' }
+      args.push('-mv', opts.vocoderPath, '-o', outPath)
+    }
     try {
       const result = await new Promise<{ code: number | null; stderr: string; timedOut: boolean }>((resolveRun) => {
         let stderr = '', timedOut = false
@@ -2538,7 +2598,13 @@ export function registerIpcHandlers(): void {
       })
       if (result.timedOut) return { success: false, error: '语音生成超时' }
       if (result.code !== 0 || !existsSync(outPath)) {
-        return { success: false, error: result.code === null ? 'llama-tts 被中止' : `llama-tts 退出码 ${result.code}: ${result.stderr.slice(-500)}` }
+        const tail = result.stderr.slice(-500)
+        // 新版 llama-tts（libmtmd 音频支持）才认识 --tts-lang/--tts-speaker-file；
+        // 旧版二进制对未知参数报 invalid argument，此时给出升级提示而非晦涩的退出码
+        const hint = opts.qwen3 && /invalid argument|unknown argument|unrecognized/i.test(tail)
+          ? '。当前 llama-tts 版本过旧不支持 Qwen3-TTS：请在「后端管理」下载新版本 llama.cpp（2025 年底之后、含多模态音频的构建）'
+          : ''
+        return { success: false, error: result.code === null ? 'llama-tts 被中止' : `llama-tts 退出码 ${result.code}: ${tail}${hint}` }
       }
       const wav = await fsPromises.readFile(outPath)
       // 防残缺产出：验证 RIFF/WAVE 头与最小长度，否则渲染层会拿到解码不了的音频
@@ -2556,6 +2622,67 @@ export function registerIpcHandlers(): void {
     const proc = runningTts.get(id)
     if (!proc) return { success: false, error: '未在运行' }
     runningTts.delete(id)
+    await killProcessTreeAsync(proc)
+    return { success: true }
+  })
+
+  // ── 本地语音转写（llama-mtmd-cli.exe，libmtmd 多模态 ASR，无需 whisper.cpp）──
+  // 用法：-m 主模型 --mmproj 音频投影 --audio 音频文件 -p 转写提示 --jinja --temp 0，
+  // 转写文本输出到 stdout。支持 granite-speech / LFM2.5-Audio / Qwen3-Omni 等 mtmd 音频模型
+  const runningStt = new Map<string, ChildProcess>()
+  ipcMain.handle('stt-transcribe', async (_e, opts: { id: string; backendPath: string; modelPath: string; mmprojPath: string; audioPath: string; prompt?: string }) => {
+    if (runningStt.has(opts.id)) return { success: false, error: '该转写任务已在进行中' }
+    if (!(await isAllowedModelPath(opts.modelPath))) {
+      return { success: false, error: '转写模型路径访问被拒绝，请在设置中重新选择' }
+    }
+    if (!(await isAllowedModelPath(opts.mmprojPath))) {
+      return { success: false, error: '音频投影（mmproj）路径访问被拒绝，请重新选择' }
+    }
+    if (!(await isAllowedAudioPath(opts.audioPath))) {
+      return { success: false, error: '音频文件路径访问被拒绝，请重新选择' }
+    }
+    const exe = resolveBackendExe(opts.backendPath, 'llama-mtmd-cli.exe')
+    if (!exe.path) return { success: false, error: exe.error }
+    const prompt = String(opts.prompt ?? '').trim().slice(0, 2000)
+    if (!prompt) return { success: false, error: '转写提示词为空' }
+    const args = ['-m', opts.modelPath, '--mmproj', opts.mmprojPath, '--audio', opts.audioPath, '-p', prompt, '--jinja', '--temp', '0']
+    try {
+      const result = await new Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }>((resolveRun) => {
+        let stdout = '', stderr = '', timedOut = false
+        const proc = spawn(exe.path!, args, { detached: false, stdio: 'pipe', cwd: dirname(exe.path!), windowsHide: true })
+        runningStt.set(opts.id, proc)
+        const timer = setTimeout(() => { timedOut = true; killProcessTreeAsync(proc) }, 300000)
+        proc.stdout?.on('data', (d) => { if (stdout.length < 256 * 1024) stdout += d.toString() })
+        proc.stderr?.on('data', (d) => { if (stderr.length < 256 * 1024) stderr += d.toString() })
+        proc.on('error', (err) => { clearTimeout(timer); runningStt.delete(opts.id); resolveRun({ code: null, stdout, stderr: stderr + String(err), timedOut }) })
+        proc.on('exit', (code) => { clearTimeout(timer); runningStt.delete(opts.id); resolveRun({ code, stdout, stderr, timedOut }) })
+      })
+      if (result.timedOut) return { success: false, error: '语音转写超时（5 分钟）' }
+      const tail = result.stderr.slice(-600)
+      if (result.code !== 0) {
+        // 旧版/无音频支持的二进制对 --mmproj/--audio 等参数报 invalid argument
+        const hint = /invalid argument|unknown argument|unrecognized|no such option/i.test(tail)
+          ? '。当前 llama.cpp 版本过旧或不含多模态音频支持：请在「后端管理」下载新版本 llama.cpp（2025 年底之后构建，需包含 llama-mtmd-cli.exe）'
+          : ''
+        return { success: false, error: result.code === null ? 'llama-mtmd-cli 被中止' : `llama-mtmd-cli 退出码 ${result.code}: ${tail}${hint}` }
+      }
+      // stdout 即转写文本；剥离 ANSI 色码与可能混入的日志行
+      const text = result.stdout
+        .replace(/\u001b\[[0-9;]*m/g, '')
+        .split(/\r?\n/)
+        .filter(l => !/^\s*(llama_|main:|ggml_|mtmd|srv |\[llama|loading|\.\.\.|gguf)/i.test(l.trim()))
+        .join('\n')
+        .trim()
+      if (!text) return { success: false, error: `转写无输出: ${tail.slice(-300)}` }
+      return { success: true, text }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle('stt-stop', async (_e, id: string) => {
+    const proc = runningStt.get(id)
+    if (!proc) return { success: false, error: '未在运行' }
+    runningStt.delete(id)
     await killProcessTreeAsync(proc)
     return { success: true }
   })
@@ -3226,7 +3353,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('open-folder', async (_e, folderPath: string) => {
     const settings = await loadSettings()
-    const allowedBases = [MODELS_DIR, BACKEND_DIR, CHATS_DIR, CHAT_TEMPLATES_DIR, ...settings.externalModelFolders, ...settings.imageModelFolders, ...settings.ttsModelFolders, ...settings.ocrModelFolders, ...settings.sdModelFolders, ...settings.sdVaeFolders, ...settings.sdLlmFolders]
+    const allowedBases = [MODELS_DIR, BACKEND_DIR, CHATS_DIR, CHAT_TEMPLATES_DIR, ...settings.externalModelFolders, ...settings.imageModelFolders, ...settings.ttsModelFolders, ...settings.asrModelFolders, ...settings.ocrModelFolders, ...settings.sdModelFolders, ...settings.sdVaeFolders, ...settings.sdLlmFolders]
     if (!allowedBases.some(base => isSafePath(base, folderPath))) return
     // 确保目录存在（例如 chats/images、chats/pdf_exports 是惰性创建的），
     // 否则 shell.openPath 在路径不存在时会静默失败、什么也不打开。
@@ -3332,6 +3459,7 @@ export function registerIpcHandlers(): void {
         ...s.externalModelFolders,
         ...s.imageModelFolders,
         ...s.ttsModelFolders,
+        ...s.asrModelFolders,
         ...s.ocrModelFolders,
         ...s.sdModelFolders,
         ...s.sdVaeFolders,

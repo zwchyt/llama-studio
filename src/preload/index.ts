@@ -93,6 +93,9 @@ const fullApi = {
   listTtsModelFolders: () => ipcRenderer.invoke('list-tts-model-folders'),
   addTtsModelFolder: () => ipcRenderer.invoke('add-tts-model-folder'),
   removeTtsModelFolder: (folder: string) => ipcRenderer.invoke('remove-tts-model-folder', folder),
+  listAsrModelFolders: () => ipcRenderer.invoke('list-asr-model-folders'),
+  addAsrModelFolder: () => ipcRenderer.invoke('add-asr-model-folder'),
+  removeAsrModelFolder: (folder: string) => ipcRenderer.invoke('remove-asr-model-folder', folder),
   listOcrModelFolders: () => ipcRenderer.invoke('list-ocr-model-folders'),
   addOcrModelFolder: () => ipcRenderer.invoke('add-ocr-model-folder'),
   removeOcrModelFolder: (folder: string) => ipcRenderer.invoke('remove-ocr-model-folder', folder),
@@ -282,8 +285,11 @@ const fullApi = {
   getGpuVram: () => ipcRenderer.invoke('get-gpu-vram'),
   analyzeTemplate: (opts: { backendPath: string; template: string }) => ipcRenderer.invoke('analyze-template', opts),
   // ── 本地 TTS ──
-  ttsGenerate: (opts: { id: string; backendPath: string; modelPath: string; vocoderPath: string; text: string }) => ipcRenderer.invoke('tts-generate', opts),
+  ttsGenerate: (opts: { id: string; backendPath: string; modelPath: string; vocoderPath?: string; text: string; lang?: string; speakerFile?: string; mmprojPath?: string; qwen3?: boolean }) => ipcRenderer.invoke('tts-generate', opts),
   ttsStop: (id: string) => ipcRenderer.invoke('tts-stop', id),
+  // ── 本地语音转写（llama-mtmd-cli，无需 whisper.cpp）──
+  sttTranscribe: (opts: { id: string; backendPath: string; modelPath: string; mmprojPath: string; audioPath: string; prompt?: string }) => ipcRenderer.invoke('stt-transcribe', opts),
+  sttStop: (id: string) => ipcRenderer.invoke('stt-stop', id),
   // ── 窗口控制 ──
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
   windowMaximize: () => ipcRenderer.invoke('window-maximize'),

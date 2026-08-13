@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useStore } from '../store/useStore'
-import { FolderPlus, Folder, ImageDown, Volume2, ScanText, Boxes, Trash } from 'lucide-react'
+import { FolderPlus, Folder, ImageDown, Volume2, Mic, ScanText, Boxes, Trash } from 'lucide-react'
 import { safeCall } from '../utils/safeCall'
 import '../styles/settings.css'
 
@@ -16,6 +16,7 @@ export default function ModelFoldersView() {
   const [extFolders, setExtFolders] = useState<string[]>([])
   const [imgFolders, setImgFolders] = useState<string[]>([])
   const [ttsFolders, setTtsFolders] = useState<string[]>([])
+  const [asrFolders, setAsrFolders] = useState<string[]>([])
   const [ocrFolders, setOcrFolders] = useState<string[]>([])
   const [sdFolders, setSdFolders] = useState<{ model: string[]; vae: string[]; llm: string[] }>({ model: [], vae: [], llm: [] })
 
@@ -23,6 +24,7 @@ export default function ModelFoldersView() {
     window.api.listExternalModelFolders().then(setExtFolders).catch((e) => console.error('[listExternalModelFolders]', e))
     window.api.listImageModelFolders().then(setImgFolders).catch((e) => console.error('[listImageModelFolders]', e))
     window.api.listTtsModelFolders().then(setTtsFolders).catch((e) => console.error('[listTtsModelFolders]', e))
+    window.api.listAsrModelFolders().then(setAsrFolders).catch((e) => console.error('[listAsrModelFolders]', e))
     window.api.listOcrModelFolders().then(setOcrFolders).catch((e) => console.error('[listOcrModelFolders]', e))
     window.api.listSdModelFolders().then(setSdFolders).catch((e) => console.error('[listSdModelFolders]', e))
   }, [])
@@ -68,6 +70,18 @@ export default function ModelFoldersView() {
     const res = await safeCall(() => window.api.removeTtsModelFolder(folder), '移除语音合成模型文件夹失败')
     if (res && res.folders) {
       setTtsFolders(res.folders)
+      await refreshModels()
+    }
+  }
+
+  async function handleAddAsrFolder() {
+    const res = await safeCall(() => window.api.addAsrModelFolder(), '添加语音转写模型文件夹失败')
+    if (res && res.success && res.folders) { setAsrFolders(res.folders); await refreshModels() }
+  }
+  async function handleRemoveAsrFolder(folder: string) {
+    const res = await safeCall(() => window.api.removeAsrModelFolder(folder), '移除语音转写模型文件夹失败')
+    if (res && res.folders) {
+      setAsrFolders(res.folders)
       await refreshModels()
     }
   }
@@ -164,7 +178,7 @@ export default function ModelFoldersView() {
         <div className="settings-section-title"><Volume2 /> 语音合成模型文件夹</div>
         <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-            添加存放语音合成模型（OuteTTS 与 WavTokenizer 声码器的 GGUF 文件）的文件夹。其中的模型将出现在语音合成视图的模型下拉中。文件保留在原位置——不会被复制。
+            添加存放语音合成模型（Qwen3-TTS、OuteTTS 与 WavTokenizer 声码器的 GGUF 文件）的文件夹。其中的模型将出现在语音合成视图的模型下拉中。文件保留在原位置——不会被复制。
           </p>
           {ttsFolders.length === 0 ? (
             <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未配置语音合成模型文件夹。</div>
@@ -181,6 +195,32 @@ export default function ModelFoldersView() {
             </div>
           )}
           <button className="btn btn-secondary btn-sm" onClick={handleAddTtsFolder}>
+            <FolderPlus size={13} /> 添加文件夹
+          </button>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title"><Mic /> 语音转写模型文件夹</div>
+        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            添加存放语音转写（ASR）模型主文件（如 Qwen3-ASR、granite-speech 的 GGUF，不含 mmproj）的文件夹。其中的模型将出现在语音转写视图的模型下拉中。mmproj 文件请放在「图片模型文件夹」。文件保留在原位置——不会被复制。
+          </p>
+          {asrFolders.length === 0 ? (
+            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未配置语音转写模型文件夹。</div>
+          ) : (
+            <div className="flex flex-col gap-2" style={{ width: '100%' }}>
+              {asrFolders.map(f => (
+                <div key={f} className="settings-row" style={{ borderBottom: 'none', padding: '6px 0' }}>
+                  <div className="settings-row-sub mono" style={{ flex: 1, wordBreak: 'break-all' }}>{f}</div>
+                  <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleRemoveAsrFolder(f)}>
+                    <Trash size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <button className="btn btn-secondary btn-sm" onClick={handleAddAsrFolder}>
             <FolderPlus size={13} /> 添加文件夹
           </button>
         </div>
