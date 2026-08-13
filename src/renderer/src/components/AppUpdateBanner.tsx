@@ -66,7 +66,8 @@ export default function AppUpdateBanner({ hidden, switcher }: BannerSlotProps = 
     try {
       const res = await window.api.downloadAppUpdate({
         url: appReleaseInfo.assetUrl,
-        assetName: appReleaseInfo.assetName
+        assetName: appReleaseInfo.assetName,
+        digest: appReleaseInfo.assetDigest || undefined
       })
       if (res.success && res.path) {
         setDownloadedPath(res.path)

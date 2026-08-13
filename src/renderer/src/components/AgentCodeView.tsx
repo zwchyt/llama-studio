@@ -14,7 +14,7 @@ import katex from 'katex'
 import katexCssInline from 'katex/dist/katex.min.css?inline'
 import katexJsInline from 'katex/dist/katex.min.js?raw'
 import '../styles/monitoring.css'
-import { Send, Square, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles, Cpu, Play, ChevronsDownUp, ChevronsUpDown, Quote, Eye, Globe, FileDiff, Database, MessageSquarePlus, Terminal } from 'lucide-react'
+import { Send, Square, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles, Play, ChevronsDownUp, ChevronsUpDown, Quote, Eye, Globe, FileDiff, Database, MessageSquarePlus, Terminal } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import hljs from 'highlight.js/lib/common'
@@ -32,7 +32,6 @@ import {
 import { noteUserCorrection, noteMilestone, noteCondenseFacts, noteSessionEnd } from '../utils/memoryWriter'
 import { setWorkspaceRootForSession, getWorkspaceRootForSession } from '../tools/workspaceRoot'
 import { setAgentSessionId } from '../tools/agentSession'
-import { getTrackedCwd } from '../tools/BashTool/BashTool'
 import { askUserQuestionRegistry } from '../utils/askUserQuestionRegistry'
 import { getAuditEntries, subscribeAudit, clearAudit, recordAudit, type AuditEntry } from '../utils/auditLog'
 import { getDebugTurns, subscribeDebug, clearDebug, recordDebugTurn, type DebugTurn, type DebugToolCall } from '../utils/debugLog'
@@ -2629,9 +2628,8 @@ export default function AgentCodeView() {
 
   useEffect(() => {
     setWorkspaceRootForSession(activeSessionId, activeProject.workspaceDir)
-    // bashCwd 按会话恢复：优先用该会话已追踪的 cd 目录（与模型对话历史中的认知一致），
-    // 无追踪时回退工作区根。若硬重置为根，切回已 cd 过的会话时两端会双向失步。
-    window.api?.setBashCwd(getTrackedCwd(activeSessionId) || activeProject.workspaceDir || '').catch(() => { })
+    // 工作区根同步给主进程（Read/Write 等文件工具的相对路径解析基准）。
+    // Bash 已改用 pi 原生实现、cwd 固定为创建时工作区根，无需再同步 bash cwd。
     window.api?.setAgentWorkspace(activeProject.workspaceDir || '').catch(() => { })
     // ── 认知地图：工作区就绪后后台构建（幂等；主进程内部有快照增量校验）──
     if (agentConfig.codeMapEnabled && activeProject.workspaceDir) {
@@ -2688,6 +2686,30 @@ export default function AgentCodeView() {
   const updateProject = useCallback((id: string, upd: Partial<AgentProject>) => {
     setProjects(prev => prev.map(p => p.id === id ? { ...p, ...upd } : p))
   }, [])
+
+  // 子会话收起/展开动画用的 wrap 元素（按项目 id 缓存；内容始终挂载，scrollHeight 随时可读）
+  const projectWrapRefs = useRef<Map<string, HTMLDivElement | null>>(new Map())
+  /** 按真实内容高度切换项目展开态：收起从 scrollHeight 收缩、展开过渡到 scrollHeight 后清 none。
+   * 解决固定 max-height:600px 时「内容瞬失 + 空白慢收」的卡顿感，且不再裁剪多会话目录。 */
+  const toggleProjectExpanded = useCallback((p: AgentProject) => {
+    const wrap = projectWrapRefs.current.get(p.id)
+    if (wrap) {
+      if (p.expanded) {
+        // 收起：先固定到当前真实高度并强制回流，再过渡到 0
+        wrap.style.maxHeight = `${wrap.scrollHeight}px`
+        void wrap.offsetHeight
+        wrap.style.maxHeight = '0px'
+      } else {
+        // 展开：从 0 过渡到真实高度，过渡结束后清 none（避免上限裁剪）
+        wrap.style.maxHeight = '0px'
+        void wrap.offsetHeight
+        wrap.style.maxHeight = `${wrap.scrollHeight}px`
+        const onEnd = () => { wrap.style.maxHeight = 'none'; wrap.removeEventListener('transitionend', onEnd) }
+        wrap.addEventListener('transitionend', onEnd, { once: true })
+      }
+    }
+    updateProject(p.id, { expanded: !p.expanded })
+  }, [updateProject])
 
   const updateSessionInProject = useCallback((projId: string, sessId: string, upd: Partial<AgentSession>) => {
     setProjects(prev => prev.map(p => p.id === projId ? ({ ...p, sessions: p.sessions.map(s => s.id === sessId ? ({ ...s, ...upd }) : s) }) : p))
@@ -4268,7 +4290,7 @@ export default function AgentCodeView() {
               {projects.map(p => (
                 <div key={p.id} className="agent-code-project-group">
                   <div className={`agent-code-project-item ${p.id === activeProjectId ? 'active' : ''}`} onClick={() => {
-                    updateProject(p.id, { expanded: !p.expanded })
+                    toggleProjectExpanded(p)
                     // 切到其他项目时必须同步会话指针：否则 activeSessionId 仍指向旧项目的会话，
                     // 界面靠 || sessions[0] 兜底显示正常，但 handleSend 用悬空 sid 写会话 = 消息静默丢失。
                     if (p.id !== activeProjectId) {
@@ -4302,7 +4324,7 @@ export default function AgentCodeView() {
                       <button className="agent-code-session-add" onClick={e => { e.stopPropagation(); addSessionToProject(p.id) }}><Plus size={11} /></button>
                     </span>
                   </div>
-                  <div className={`agent-code-child-wrap ${p.expanded ? 'open' : ''}`}>
+                  <div className={`agent-code-child-wrap ${p.expanded ? 'open' : ''}`} ref={el => { projectWrapRefs.current.set(p.id, el) }}>
                     <div className="agent-code-child-sessions">
                       {p.sessions.map(s => (
                         <div key={s.id} className={`agent-code-session-item ${s.id === activeSessionId && p.id === activeProjectId ? 'active' : ''}`} onClick={() => { setActiveProjectId(p.id); setActiveSessionId(s.id) }}>
@@ -4887,12 +4909,17 @@ export default function AgentCodeView() {
                 </div>
                 {/* ③ 底部按钮行：文件目录 + 模型列表（左）… 发送（右） */}
                 <div className="chat-input-tools">
+                  <button className="chat-upload-btn" onClick={() => fileInputRef.current?.click()} title="上传文件/图片"><Plus size={14} /></button>
                   <button ref={attachBtnRef} className={`chat-attach-btn${filePickerOpen ? ' active' : ''}`} onClick={toggleFilePicker} ><FolderOpen size={14} /></button>
                   <button
                     ref={modelBtnRef}
-                    className={`chat-model-btn${modelPickerOpen ? ' active' : ''}${runningCard ? ' running' : ''}${runningCard?.ready ? ' ready' : ''}`}
+                    className={`chat-model-dropdown${modelPickerOpen ? ' active' : ''}${runningCard ? ' running' : ''}${runningCard?.ready ? ' ready' : ''}`}
                     onClick={() => setModelPickerOpen(v => !v)}
-                  ><Cpu size={14} /></button>
+                    title={runningCard ? (runningCard.ready ? `运行中: ${modelLabel}` : `启动中: ${modelLabel}`) : '选择模型'}
+                  >
+                    <span className="chat-model-dropdown-name">{runningCard ? modelLabel : '选择模型'}</span>
+                    <ChevronDown size={12} className="chat-model-dropdown-caret" />
+                  </button>
                   {loading ? (
                     <button className="btn btn-primary chat-send-btn" onClick={handleStop} ><Square size={16} /></button>
                   ) : (

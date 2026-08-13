@@ -763,7 +763,6 @@
 
 .agent-code-project-group {
   padding: 4px 12px;
-  border-bottom: 1px solid var(--border);
 }
 
 .agent-code-project-item {
@@ -823,7 +822,10 @@
 }
 
 .agent-code-child-wrap.open {
-  max-height: 600px;
+  /* max-height 由 JS 按真实内容高度内联控制（收起从真实高度收缩，
+     避免固定 600px 上限导致「内容瞬失 + 空白慢收」的卡顿）；
+     none 仅作首次渲染/无 JS 时的兜底，同时避免上限裁剪多会话目录 */
+  max-height: none;
   opacity: 1;
 }
 
@@ -857,6 +859,9 @@
 .agent-code-child-wrap:not(.open) .agent-code-session-item {
   opacity: 0;
   transform: translateY(4px);
+  /* 收起时不做逐项 opacity/transform 过渡（N 项同时动画掉帧），
+     淡出统一由 wrap 的整体 opacity 过渡承载；展开态恢复逐项淡入 */
+  transition: none;
 }
 
 .agent-code-session-item::before {
@@ -1280,15 +1285,6 @@
 /* 查看工具：紫罗兰 */
 .agent-tool-call.tool-view_tool {
   --tool-accent: #9333ea;
-}
-
-/* 后台任务类统一蓝灰系：读输出浅、列任务深 */
-.agent-tool-call.tool-getbackgroundtaskoutput {
-  --tool-accent: #64748b;
-}
-
-.agent-tool-call.tool-listbackgroundtasks {
-  --tool-accent: #475569;
 }
 
 .agent-tool-call.tool-taskget {
@@ -4388,9 +4384,13 @@
   gap: 2px;
 }
 
-/* 发送按钮靠右：与目录/模型按钮同行，推到最右侧 */
-.agent-code-view .chat-input-tools .chat-send-btn.btn {
+/* 模型下拉 + 发送按钮靠右：自动留白放在下拉按钮上，把「模型名 + 发送」一起推到右侧 */
+.agent-code-view .chat-input-tools .chat-model-dropdown {
   margin-left: auto;
+}
+
+.agent-code-view .chat-input-tools .chat-send-btn.btn {
+  margin-left: 2px;
 }
 
 .agent-code-view .chat-input-field:hover:not(:focus-within) {
@@ -4621,7 +4621,8 @@
   cursor: not-allowed;
 }
 
-.agent-code-view .chat-input-row .chat-attach-btn {
+.agent-code-view .chat-input-row .chat-attach-btn,
+.agent-code-view .chat-input-row .chat-upload-btn {
   position: static;
   transform: none;
   z-index: var(--z-above);
@@ -4641,80 +4642,59 @@
 }
 
 .agent-code-view .chat-input-row .chat-attach-btn:hover:not(:disabled),
-.agent-code-view .chat-input-row .chat-attach-btn.active {
+.agent-code-view .chat-input-row .chat-attach-btn.active,
+.agent-code-view .chat-input-row .chat-upload-btn:hover:not(:disabled) {
   background: var(--bg);
   color: var(--text-secondary);
 }
 
-.agent-code-view .chat-input-row .chat-attach-btn:disabled {
+.agent-code-view .chat-input-row .chat-attach-btn:disabled,
+.agent-code-view .chat-input-row .chat-upload-btn:disabled {
   opacity: .4;
   cursor: not-allowed;
 }
 
-.agent-code-view .chat-input-row .chat-model-btn {
+/* ── 模型下拉触发器（发送按钮左侧）：显示当前模型名 + 箭头，点击展开模型列表 ── */
+.agent-code-view .chat-input-row .chat-model-dropdown {
   position: static;
-  transform: none;
+  z-index: var(--z-above);
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
+  gap: 4px;
+  height: 28px;
+  min-width: 0;
+  max-width: 220px;
+  padding: 0 8px 0 10px;
   border: none;
-  border-radius: 50%;
+  border-radius: 14px;
   background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background var(--transition), color var(--transition);
-  padding: 0;
-  z-index: var(--z-above);
-}
-
-.agent-code-view .chat-input-row .chat-model-btn:hover,
-.agent-code-view .chat-input-row .chat-model-btn.active {
-  background: var(--bg);
   color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 1;
+  transition: background var(--transition), color var(--transition);
 }
 
-.agent-code-view .chat-input-row .chat-model-btn.active {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--accent);
+.agent-code-view .chat-input-row .chat-model-dropdown:hover,
+.agent-code-view .chat-input-row .chat-model-dropdown.active {
+  background: var(--bg);
+  color: var(--text);
 }
 
-/* ── 模型运行状态（提升识别度：一眼看出「有模型正在运行」）── */
-/* 运行中：只把图标变绿，不加外层圆形底色 */
-.agent-code-view .chat-input-row .chat-model-btn.running {
-  color: var(--success);
+.agent-code-view .chat-input-row .chat-model-dropdown-name {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* 启动中（未就绪）：图标呼吸闪动（只变图标透明度，不加底色光晕） */
-.agent-code-view .chat-input-row .chat-model-btn.running:not(.ready) {
-  color: var(--success);
-  background: transparent;
-  animation: model-btn-icon-breathe 1.4s ease-in-out infinite;
+.agent-code-view .chat-input-row .chat-model-dropdown-caret {
+  flex-shrink: 0;
+  opacity: .6;
+  transition: transform .15s ease;
 }
 
-/* 就绪：图标保持绿色，不加底色圆圈 */
-.agent-code-view .chat-input-row .chat-model-btn.running.ready {
-  background: transparent;
-}
-
-/* 运行态与展开态同时存在时，绿色优先（运行是更重要的状态信号） */
-.agent-code-view .chat-input-row .chat-model-btn.running.active {
-  color: var(--success);
-  background: transparent;
-}
-
-@keyframes model-btn-icon-breathe {
-
-  0%,
-  100% {
-    opacity: .5;
-  }
-
-  50% {
-    opacity: 1;
-  }
+.agent-code-view .chat-input-row .chat-model-dropdown.active .chat-model-dropdown-caret {
+  transform: rotate(180deg);
 }
 
 .agent-code-view .chat-input-row .chat-input {
@@ -4732,10 +4712,10 @@
 
 .chat-model-picker {
   position: absolute;
-  left: 54px;
+  right: 55px;
   bottom: calc(100% + 8px);
   width: 300px;
-  max-width: calc(100% - 108px);
+  max-width: calc(100% - 24px);
   max-height: 320px;
   overflow-y: auto;
   padding: 4px;
@@ -6139,7 +6119,7 @@
   list-style: none;
   margin: 0 0 0 5px;
   padding: 0 0 2px 10px;
-  border-left: 2px solid var(--border);
+  border-left: 2px solid #d5d5d5;
   display: flex;
   flex-direction: column;
   gap: 8px;

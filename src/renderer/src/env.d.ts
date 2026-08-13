@@ -77,7 +77,7 @@ interface LlamaCppApi {
   removeDownloadListener: () => void
   // ── 应用自身更新 ──
   checkAppUpdate: () => Promise<AppUpdateInfo>
-  downloadAppUpdate: (opts: { url: string; assetName: string }) => Promise<{ success: boolean; path?: string; error?: string }>
+  downloadAppUpdate: (opts: { url: string; assetName: string; digest?: string }) => Promise<{ success: boolean; path?: string; error?: string }>
   cancelAppDownload: () => Promise<{ success: boolean }>
   installAppUpdate: (opts: { installerPath: string }) => Promise<{ success: boolean; error?: string }>
   onAppDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number }) => void) => void
@@ -227,13 +227,6 @@ interface LlamaCppApi {
 	  saveAgentProjects: (projects: AgentProject[]) => Promise<{ success: boolean; error?: string }>
 	  // ── Agent Tracing 落盘 ──
 	  agentTraceAppend: (sessionId: string, entry: object) => Promise<{ success: boolean; error?: string }>
-		  // ── Agent Code Bash 执行 ──
-		  executeCommand: (opts: { command: string; timeout?: number; isBackground?: boolean; maxOutputChars?: number; autoBackground?: boolean }) => Promise<{ stdout: string; stderr: string; code: number; truncated?: boolean; totalBytes?: number; outputFile?: string; autoBackgrounded?: boolean; taskId?: string }>
-		  writeTempFile: (content: string, ext?: string) => Promise<{ success: boolean; path?: string; error?: string }>
-		  setBashCwd: (dir: string) => Promise<{ success: boolean }>
-		  getBackgroundTask: (taskId: string) => Promise<{ success: boolean; stdout?: string; stderr?: string; code?: number | null; status?: string; truncated?: boolean; totalBytes?: number; error?: string }>
-		  listBackgroundTasks: () => Promise<Array<{ id: string; command: string; status: string; pid: number; startTime: number; autoBackgrounded: boolean }>>
-		  killBackgroundTask: (taskId: string) => Promise<{ success: boolean; error?: string }>
 		  // ── Agent Code 文件删除 ──
 		  deletePath: (targetPath: string, recursive: boolean) => Promise<{ success: boolean; message?: string; error?: string }>
 		  gitChanges: (dir: string) => Promise<{ isRepo: boolean; staged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>; unstaged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>; error?: string }>

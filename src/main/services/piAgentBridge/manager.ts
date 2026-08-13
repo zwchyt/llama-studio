@@ -58,7 +58,7 @@ export class PiAgentManager {
     executors: MainToolExecutors,
     toolNames: string[] = [
       'get_datetime', 'Read', 'Bash', 'Write', 'Edit', 'Glob', 'Grep', 'ListDir', 'Delete',
-      'TodoWrite', 'TaskGet', 'TaskList', 'GetBackgroundTaskOutput', 'ListBackgroundTasks',
+      'TodoWrite', 'TaskGet', 'TaskList',
       'AskUserQuestion', 'Reflect', 'CodeSearch', 'AnalyzeDir', 'web_search', 'fetch_webpage'
     ]
   ) {
@@ -159,10 +159,10 @@ export class PiAgentManager {
 
   async prompt(sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>): Promise<void> {
     const bridge = this.getBridge(sessionId)
-    // 同步工作区根 + bash cwd 到 ipc.ts（Read/Write/Bash 的相对路径解析依赖；会话切换每轮同步最稳）
+    // 同步工作区根到 ipc.ts（Read/Write 等文件工具的相对路径解析依赖；会话切换每轮同步最稳）。
+    // Bash 不再需要同步 cwd：pi 原生 bash 使用创建时固定的工作区根目录（cd 不跨命令持久）。
     const cwd = bridge.session.sessionManager.getCwd()
     ipcInternal.handleSetAgentWorkspace?.(cwd)
-    ipcInternal.handleSetBashCwd?.(cwd)
     await bridge.session.prompt(text, images && images.length > 0 ? { images } : undefined)
   }
 
@@ -275,10 +275,6 @@ export function createIpcExecutors(): MainToolExecutors {
       requireInternal('handleReadFile')
       return ipcInternal.handleReadFile!(filePath, opts)
     },
-    executeCommand: (opts) => {
-      requireInternal('handleExecuteCommand')
-      return ipcInternal.handleExecuteCommand!(opts)
-    },
     writeFile: (filePath, content) => {
       requireInternal('handleWriteFile')
       return ipcInternal.handleWriteFile!(filePath, content)
@@ -310,14 +306,6 @@ export function createIpcExecutors(): MainToolExecutors {
     taskList: (sessionId) => {
       requireInternal('handleAgentTaskList')
       return ipcInternal.handleAgentTaskList!(sessionId)
-    },
-    getBackgroundTask: (taskId) => {
-      requireInternal('handleGetBackgroundTask')
-      return ipcInternal.handleGetBackgroundTask!(taskId)
-    },
-    listBackgroundTasks: () => {
-      requireInternal('handleListBackgroundTasks')
-      return ipcInternal.handleListBackgroundTasks!()
     },
     codesearchQuery: (dir, query, limit) => handleCodeSearchQuery(dir, query, limit),
     webSearch: (query) => {

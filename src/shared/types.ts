@@ -82,6 +82,8 @@ export interface AppUpdateInfo {
   assetName: string
   assetUrl: string
   assetSize: number
+  /** GitHub 发布资产携带的 sha256（已去掉 sha256: 前缀）；为空时不强制校验 */
+  assetDigest: string
   error?: string
 }
 export interface IntervalSample {

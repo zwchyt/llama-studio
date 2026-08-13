@@ -47,24 +47,7 @@ export interface IpcInternalHandlers {
     fileSize?: number
     suggestedCommand?: string
   }>
-  handleExecuteCommand: (opts: {
-    command: string
-    timeout?: number
-    isBackground?: boolean
-    maxOutputChars?: number
-    autoBackground?: boolean
-  }) => Promise<{
-    stdout: string
-    stderr: string
-    code: number
-    truncated?: boolean
-    totalBytes?: number
-    outputFile?: string
-    autoBackgrounded?: boolean
-    taskId?: string
-  }>
   handleSetAgentWorkspace: (dir: string) => { success: boolean }
-  handleSetBashCwd: (dir: string) => { success: boolean }
   /** 查询端口当前加载的模型信息（模板 id + 模型文件路径；Token 记账用） */
   getPortModelInfo: (port: number) => { templateId: string; modelPath: string | null } | undefined
   handleWriteFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>
@@ -99,24 +82,6 @@ export interface IpcInternalHandlers {
   handleAgentTodoWrite: (sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }) => Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }>
   handleAgentTaskGet: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
   handleAgentTaskList: (sessionId: string) => Promise<{ success: boolean; tasks: AgentTask[] }>
-  handleGetBackgroundTask: (taskId: string) => Promise<{
-    success: boolean
-    stdout?: string
-    stderr?: string
-    code?: number | null
-    status?: string
-    truncated?: boolean
-    totalBytes?: number
-    error?: string
-  }>
-  handleListBackgroundTasks: () => Promise<Array<{
-    id: string
-    command: string
-    status: string
-    pid: number
-    startTime: number
-    autoBackgrounded: boolean
-  }>>
   handleWebSearch: (query: string) => Promise<string>
   handleFetchWebpage: (url: string) => Promise<string>
 }
@@ -1172,15 +1137,10 @@ let modelsCache: { ts: number; result: ModelFileInfo[] } | null = null
 let modelsScanPromise: Promise<ModelFileInfo[]> | null = null
 const MODELS_CACHE_TTL = 30000
 const MAX_MODELS_FILES = 5000
-// 退出清理钩子：registerIpcHandlers 内的后台任务表在此登记，
-// 供 cleanupRunningProcesses 在应用退出时终止残留子进程
-let killAllBackgroundTasks: (() => void) | null = null
 
 export function cleanupRunningProcesses(): void {
   if (metricsInterval) { clearInterval(metricsInterval); metricsInterval = null }
   disposeCodeMaps()
-  // 终止残留的后台任务子进程（dev server 等），避免退出后成为孤儿进程占用端口
-  if (killAllBackgroundTasks) { try { killAllBackgroundTasks() } catch { /* ignore */ } }
   for (const [, { proc }] of runningProcesses) {
     killProcessTreeAsync(proc)
   }
@@ -3161,13 +3121,14 @@ export function registerIpcHandlers(): void {
         assetName: asset?.name || '',
         assetUrl: asset?.browser_download_url || '',
         assetSize: asset?.size || 0,
+        assetDigest: String(asset?.digest || '').replace(/^sha256:/i, ''),
       }
     } catch {
       return { available: false, currentVersion: app.getVersion() }
     }
   })
 
-  ipcMain.handle('download-app-update', async (event, opts: { url: string; assetName: string }) => {
+  ipcMain.handle('download-app-update', async (event, opts: { url: string; assetName: string; digest?: string }) => {
     await loadSettings()
     const urlOk = opts.url.startsWith('https://github.com/') || opts.url.startsWith('https://objects.githubusercontent.com/')
     if (!urlOk) {
@@ -3178,8 +3139,9 @@ export function registerIpcHandlers(): void {
     }
 
     const archivePath = join(app.getPath('temp'), opts.assetName)
-    // 删除可能残留的损坏/不完整文件，确保本次为全新下载
-    if (existsSync(archivePath)) { try { unlinkSync(archivePath) } catch {} }
+    // 断点续传：保留上次残留文件，按已下载字节数续传（不再删档）。
+    // 完整性由 startParallelDownload 的 ETag 校验兜底：远端文件已更新（ETag 变化）
+    // 时它会自动删档重下；ETag 相同则用 Range 分片从断点继续，避免大包中断后重头下。
     let startByte = 0
     try { const st = statSync(archivePath); if (st.size > 0) startByte = st.size } catch {}
 
@@ -3205,6 +3167,20 @@ export function registerIpcHandlers(): void {
         )
       })
       cancelAppDl = null
+      // GitHub 发布资产携带 sha256 digest 时做下载后校验：安装前拦截损坏/被篡改的包。
+      // 不匹配时删除临时档（含 etag 旁路），下次点击从全新开始，避免坏包被续传复用。
+      if (opts.digest) {
+        const want = opts.digest.toLowerCase()
+        const got = await sha256OfFile(archivePath)
+        console.log('[app-dl] sha256 校验:', got, '期望:', want, got === want ? '通过' : '不通过')
+        if (got !== want) {
+          try { unlinkSync(archivePath) } catch {}
+          try { unlinkSync(archivePath + '.etag') } catch {}
+          return { success: false, error: '校验和失败：安装包内容与官方发布不一致（sha256）' }
+        }
+      }
+      // 校验通过/无 digest：清理 etag 旁路文件，避免残留陈旧 etag
+      try { unlinkSync(archivePath + '.etag') } catch {}
       return { success: true, path: archivePath }
     } catch (err) {
       cancelAppDl = null
@@ -6113,16 +6089,6 @@ export function registerIpcHandlers(): void {
   ipcInternal.handleAgentTaskList = handleAgentTaskList
   ipcMain.handle('agent-task-list', (_e, sessionId) => handleAgentTaskList(sessionId))
 
-  // ── Agent Code Bash 执行 ────────────────────────────
-  // 当前工作目录（由渲染进程在切换项目时通过 set-bash-cwd 同步过来）
-  let bashCwd: string | null = null
-  const handleSetBashCwd = (dir: string): { success: boolean } => {
-    bashCwd = dir || null
-    return { success: true }
-  }
-  ipcInternal.handleSetBashCwd = handleSetBashCwd
-  ipcMain.handle('set-bash-cwd', async (_e, dir: string) => handleSetBashCwd(dir))
-
   // Token 记账用：查询端口当前加载的模型信息（模板 id + 模型文件路径）
   ipcInternal.getPortModelInfo = (port: number) => portModelInfos.get(port)
   ipcMain.handle('get-port-model-info', async (_e, port: number) => portModelInfos.get(port))
@@ -6138,22 +6104,6 @@ export function registerIpcHandlers(): void {
   }
   ipcInternal.handleSetAgentWorkspace = handleSetAgentWorkspace
   ipcMain.handle('set-agent-workspace', (_e, dir) => handleSetAgentWorkspace(dir))
-
-  // 将超长工具结果完整写入系统临时目录，返回绝对路径，供模型用 Read 查看完整内容。
-  // 对应 grok-build 的「showing first/last，完整输出保存至文件」策略。
-  ipcMain.handle('write-temp-file', async (_e, content: string, ext = 'txt'): Promise<{ success: boolean; path?: string; error?: string }> => {
-    try {
-      const dir = join(tmpdir(), 'llama-studio-agent')
-      mkdirSync(dir, { recursive: true })
-      const safeExt = /^[a-z0-9]+$/i.test(ext) ? ext : 'txt'
-      const name = `tool-output-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`
-      const full = join(dir, name)
-      writeFileSync(full, String(content ?? ''), 'utf-8')
-      return { success: true, path: full }
-    } catch (e: any) {
-      return { success: false, error: e?.message || String(e) }
-    }
-  })
 
   // 清理模型给出的路径参数：去掉首尾空白、包裹的引号、以及（仅当被引号包裹时）
   // 字面的 \r\n\t 转义——避免误吞 Windows 路径里的反斜杠。
@@ -6193,66 +6143,10 @@ export function registerIpcHandlers(): void {
     return p
   }
 
-  // ── 后台任务管理器 ──────────────────────────────────
-  interface BackgroundTask {
-    id: string
-    command: string
-    pid: number
-    startTime: number
-    stdout: string
-    stderr: string
-    code: number | null
-    status: 'running' | 'completed' | 'killed' | 'timeout'
-    totalBytes: number
-    truncated: boolean
-    outputFile: string
-    isBackground: boolean
-    autoBackgrounded: boolean
-    // 运行期输出缓冲区引用：stdout/stderr 字段只在 close 时回填，而 dev server 等核心场景
-    // 永不退出 → 查询接口运行期永远拿到空输出。挂上缓冲区，查询时对 running 任务实时解码。
-    live?: {
-      outBufs: Buffer[]; outSize: { total: number; dropped?: boolean }
-      errBufs: Buffer[]; errSize: { total: number; dropped?: boolean }
-    }
-  }
-  const BASH_OUTPUT_DIR = join(tmpdir(), 'llama-studio-bash')
-  try { mkdirSync(BASH_OUTPUT_DIR, { recursive: true }) } catch { /* ok */ }
-  const backgroundTasks = new Map<string, BackgroundTask>()
-  let bgTaskCounter = 0
-  function registerBackgroundTask(command: string, pid: number, isBackground: boolean, autoBackgrounded: boolean): { taskId: string; task: BackgroundTask } {
-    const id = `bg-${++bgTaskCounter}`
-    const outputFile = join(BASH_OUTPUT_DIR, `${id}.log`)
-    const task: BackgroundTask = {
-      id, command, pid, startTime: Date.now(),
-      stdout: '', stderr: '', code: null,
-      status: 'running', totalBytes: 0, truncated: false,
-      outputFile, isBackground, autoBackgrounded
-    }
-    backgroundTasks.set(id, task)
-    return { taskId: id, task }
-  }
-
-  const DEFAULT_EXEC_TIMEOUT = 120_000
-  const DEFAULT_MAX_OUTPUT_CHARS = 100_000
-  // 输出缓冲上限：超过后丢弃最旧数据，防止长时间运行/输出巨大的进程把主进程内存撞爆
-  const MAX_BUFFERED_OUTPUT_BYTES = 8 * 1024 * 1024
-  function pushCapped(bufs: Buffer[], sizeRef: { total: number; dropped?: boolean }, d: Buffer): void {
-    bufs.push(d)
-    sizeRef.total += d.length
-    while (sizeRef.total > MAX_BUFFERED_OUTPUT_BYTES && bufs.length > 1) {
-      sizeRef.total -= bufs[0]!.length
-      bufs.shift()
-      sizeRef.dropped = true
-    }
-  }
-  // 解码时若发生过头部丢弃，在输出开头显式标注，避免模型/用户误信为完整输出
-  function decodeCapped(bufs: Buffer[], sizeRef: { total: number; dropped?: boolean }): string {
-    const text = decodeCommandOutput(Buffer.concat(bufs))
-    return sizeRef.dropped ? `[输出超出 8MB 缓冲上限，较早部分已丢弃，以下为尾部输出]\n${text}` : text
-  }
-
   // 敏感环境变量名过滤（借鉴 Reasonix 的 secrets.ProcessEnv）：执行命令前剔除凭证类
   // 环境变量，避免模型通过 echo $SECRET / %TOKEN% 读取并泄漏进上下文或日志。
+  // （Agent Bash 已改用 pi 原生实现，env 过滤在其 spawnHook 中执行；此处保留
+  // 供 runGit 等主进程内 shell 调用使用。）
   const SENSITIVE_ENV_PATTERN = /(^|[-_])(?:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL|\.ENV|ENV_?FILE)($|[-_])/i
   function sanitizeCommandEnv(): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = {}
@@ -6264,286 +6158,12 @@ export function registerIpcHandlers(): void {
     return env
   }
 
-  // 杀进程树（借鉴 Reasonix 的 reapShellProcess / KillTree）：前台命令超时或主动终止时，
-  // 仅 kill 主进程会遗留子进程（如 `npm run dev` 派生的 node）。按平台杀整棵树：
-  // Windows 用 taskkill /T /F；类 Unix 用 kill(-pid) 杀进程组（需 detached 使组可见）。
-  function killProcessTree(pid: number | undefined): void {
-    if (!pid) return
-    try {
-      if (process.platform === 'win32') {
-        spawn('taskkill', ['/T', '/F', '/PID', String(pid)], { windowsHide: true, stdio: 'ignore' })
-      } else {
-        process.kill(-pid, 'SIGKILL')
-      }
-    } catch { /* 进程可能已退出 */ }
-  }
-
-  // 应用退出时终止所有仍在运行的后台任务子进程（由 cleanupRunningProcesses 调用），
-  // 否则 dev server 等后台命令在 Windows 上不会随父进程退出，残留孤儿进程占用端口
-  killAllBackgroundTasks = () => {
-    for (const [, task] of backgroundTasks) {
-      if (task.status === 'running') killProcessTree(task.pid)
-    }
-  }
-
-  function spawnCommand(command: string) {
-    const isWin = process.platform === 'win32'
-    if (isWin) {
-      // 关键：用 shell:true 把整条命令作为「字符串」交给 cmd.exe，
-      // 而不是把 wrappedCommand 作为单个 argv 元素传给 spawn。
-      // 若用 spawn('cmd.exe', ['/c', wrappedCommand])，Node 在 Windows 下会对含空格/
-      // 特殊字符的 argv 元素整体加一层双引号，导致模型命令里自带的路径引号
-      // （如 dir "C:\工具集合\..."）被外层引号截断，cmd 解析出错：
-      // 「文件名、目录名或卷标语法不正确」。shell:true 下 Node 不再额外加引号，
-      // cmd 收到的是字面值，引号得以原样保留（与 PowerShell 中直接执行一致）。
-      const full = `@chcp 65001 >NUL && ${command}`
-      return spawn(full, [], { cwd: bashCwd ?? undefined, windowsHide: true, shell: true, env: sanitizeCommandEnv() })
-    }
-    // detached: true 使子进程进入独立进程组，超时/终止时可用 kill(-pid) 杀整组，
-    // 避免 `npm run dev` 类命令遗留孤儿进程（借鉴 Reasonix 的进程组回收）。
-    return spawn('/bin/sh', ['-c', command], { cwd: bashCwd ?? undefined, detached: true, env: sanitizeCommandEnv() })
-  }
-
-  const handleExecuteCommand = async (opts: {
-    command: string
-    timeout?: number
-    isBackground?: boolean
-    maxOutputChars?: number
-    autoBackground?: boolean
-  }): Promise<{
-    stdout: string
-    stderr: string
-    code: number
-    truncated?: boolean
-    totalBytes?: number
-    outputFile?: string
-    autoBackgrounded?: boolean
-    taskId?: string
-  }> => {
-    const timeout = opts.timeout ?? DEFAULT_EXEC_TIMEOUT
-    const maxOutputChars = opts.maxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS
-
-    // 显式后台执行
-    if (opts.isBackground) {
-      const child = spawnCommand(opts.command)
-      const { taskId, task } = registerBackgroundTask(opts.command, child.pid || 0, true, false)
-
-      const outBufs: Buffer[] = []
-      const errBufs: Buffer[] = []
-      const outSize = { total: 0 }
-      const errSize = { total: 0 }
-      task.live = { outBufs, outSize, errBufs, errSize }
-      child.stdout?.on('data', (d: Buffer) => { pushCapped(outBufs, outSize, d) })
-      child.stderr?.on('data', (d: Buffer) => { pushCapped(errBufs, errSize, d) })
-      child.on('close', (code) => {
-        task.live = undefined
-        const stdout = decodeCapped(outBufs, outSize)
-        const stderr = decodeCapped(errBufs, errSize)
-        task.stdout = stdout
-        task.stderr = stderr
-        task.code = code
-        task.status = 'completed'
-        task.totalBytes = stdout.length
-        if (stdout.length > maxOutputChars) {
-          task.truncated = true
-          task.stdout = stdout.slice(0, maxOutputChars) + `\n[... truncated: showing ${formatChars(maxOutputChars)} of ${formatChars(stdout.length)} chars]`
-        }
-        try { writeFileSync(task.outputFile, stdout, 'utf-8') } catch { /* ok */ }
-      })
-      child.on('error', () => { task.status = 'killed'; task.code = 1 })
-
-      return {
-        stdout: '',
-        stderr: '',
-        code: 0,
-        taskId,
-        autoBackgrounded: false
-      }
-    }
-
-    // 前台执行（带自动后台转后台功能）
-    return new Promise((resolve) => {
-      const child = spawnCommand(opts.command)
-      const outBufs: Buffer[] = []
-      const errBufs: Buffer[] = []
-      const outSize = { total: 0 }
-      const errSize = { total: 0 }
-      let timedOut = false
-      let resolved = false
-      // auto-background 转后台后的任务引用：close/error 时补写终态
-      let bgTask: BackgroundTask | null = null
-
-      const timeoutId = setTimeout(() => {
-        timedOut = true
-        if (opts.autoBackground) {
-          const { taskId, task } = registerBackgroundTask(opts.command, child.pid || 0, false, true)
-          const stdout = decodeCapped(outBufs, outSize)
-          const stderr = decodeCapped(errBufs, errSize)
-          task.stdout = stdout
-          task.stderr = stderr
-          task.status = 'running'
-          task.live = { outBufs, outSize, errBufs, errSize }
-          bgTask = task
-          resolved = true
-          const truncated = stdout.length > maxOutputChars
-          resolve({
-            stdout: `[Command moved to background (timed out after ${timeout}ms)]\n${truncated ? stdout.slice(0, maxOutputChars) : stdout}`,
-            stderr,
-            code: -1,
-            autoBackgrounded: true,
-            taskId,
-            truncated,
-            totalBytes: stdout.length
-          })
-        } else {
-          killProcessTree(child.pid)
-        }
-      }, timeout)
-
-      child.stdout?.on('data', (d: Buffer) => { pushCapped(outBufs, outSize, d) })
-      child.stderr?.on('data', (d: Buffer) => { pushCapped(errBufs, errSize, d) })
-      child.on('error', () => {
-        if (resolved) {
-          // 已转后台：进程异常时同步任务终态，避免状态永远停在 running
-          if (bgTask && bgTask.status === 'running') { bgTask.status = 'killed'; bgTask.code = 1 }
-          return
-        }
-        clearTimeout(timeoutId)
-        resolved = true
-        resolve({ stdout: '', stderr: 'command execution error', code: 1 })
-      })
-      child.on('close', (code) => {
-        if (resolved) {
-          // 已转后台（auto-background）：进程真正结束时补写任务终态并落盘输出，
-          // 否则任务状态永远停在超时瞬间的 running 快照（模型会反复轮询误判）。
-          // status 已被 kill-background-task 改成 killed 时不覆盖。
-          if (bgTask) bgTask.live = undefined
-          if (bgTask && bgTask.status === 'running') {
-            const stdout = decodeCapped(outBufs, outSize)
-            const stderr = decodeCapped(errBufs, errSize)
-            bgTask.stdout = stdout
-            bgTask.stderr = stderr
-            bgTask.code = code
-            bgTask.status = 'completed'
-            bgTask.totalBytes = stdout.length
-            if (stdout.length > maxOutputChars) {
-              bgTask.truncated = true
-              bgTask.stdout = stdout.slice(0, maxOutputChars) + `\n[... truncated: showing ${formatChars(maxOutputChars)} of ${formatChars(stdout.length)} chars]`
-            }
-            try { writeFileSync(bgTask.outputFile, stdout, 'utf-8') } catch { /* ok */ }
-          }
-          return
-        }
-        clearTimeout(timeoutId)
-        resolved = true
-        const stdout = decodeCapped(outBufs, outSize)
-        const stderr = decodeCapped(errBufs, errSize)
-        const totalBytes = stdout.length
-        let displayStdout = stdout
-        let truncated = false
-        let outputFile = ''
-        if (stdout.length > maxOutputChars) {
-          truncated = true
-          outputFile = join(BASH_OUTPUT_DIR, `fg-${Date.now()}.log`)
-          try { writeFileSync(outputFile, stdout, 'utf-8') } catch { /* ok */ }
-          displayStdout = stdout.slice(0, maxOutputChars) + `\n[... truncated: showing ${formatChars(maxOutputChars)} of ${formatChars(stdout.length)} chars - full output at: ${outputFile}]`
-        }
-        resolve({
-          stdout: displayStdout,
-          stderr,
-          code: timedOut ? 124 : (code ?? 1),
-          truncated,
-          totalBytes,
-          outputFile: outputFile || undefined
-        })
-      })
-    })
-  }
-  ipcInternal.handleExecuteCommand = handleExecuteCommand
-  ipcMain.handle('execute-command', (_e, opts) => handleExecuteCommand(opts))
-
-  const handleGetBackgroundTask = async (taskId: string): Promise<{
-    success: boolean
-    stdout?: string
-    stderr?: string
-    code?: number | null
-    status?: string
-    truncated?: boolean
-    totalBytes?: number
-    error?: string
-  }> => {
-    const task = backgroundTasks.get(taskId)
-    if (!task) return { success: false, error: `Task ${taskId} not found` }
-    // running 任务：从运行期缓冲区实时解码，让模型能看到 dev server 等不退出进程的当前输出；
-    // 超长时保留尾部（启动日志/报错通常在尾部）。
-    if (task.status === 'running' && task.live) {
-      const stdout = decodeCapped(task.live.outBufs, task.live.outSize)
-      const stderr = decodeCapped(task.live.errBufs, task.live.errSize)
-      const clip = (s: string) => s.length > DEFAULT_MAX_OUTPUT_CHARS
-        ? `[... 输出过长，仅显示尾部 ${formatChars(DEFAULT_MAX_OUTPUT_CHARS)}]\n` + s.slice(-DEFAULT_MAX_OUTPUT_CHARS)
-        : s
-      return {
-        success: true,
-        stdout: clip(stdout),
-        stderr: clip(stderr),
-        code: task.code,
-        status: task.status,
-        truncated: stdout.length > DEFAULT_MAX_OUTPUT_CHARS,
-        totalBytes: stdout.length
-      }
-    }
-    return {
-      success: true,
-      stdout: task.stdout,
-      stderr: task.stderr,
-      code: task.code,
-      status: task.status,
-      truncated: task.truncated,
-      totalBytes: task.totalBytes
-    }
-  }
-  ipcInternal.handleGetBackgroundTask = handleGetBackgroundTask
-  ipcMain.handle('get-background-task', (_e, taskId) => handleGetBackgroundTask(taskId))
-
-  const handleListBackgroundTasks = async (): Promise<Array<{
-    id: string
-    command: string
-    status: string
-    pid: number
-    startTime: number
-    autoBackgrounded: boolean
-  }>> => {
-    return [...backgroundTasks.values()].map(t => ({
-      id: t.id,
-      command: t.command,
-      status: t.status,
-      pid: t.pid,
-      startTime: t.startTime,
-      autoBackgrounded: t.autoBackgrounded
-    }))
-  }
-  ipcInternal.handleListBackgroundTasks = handleListBackgroundTasks
-  ipcMain.handle('list-background-tasks', () => handleListBackgroundTasks())
-
-  ipcMain.handle('kill-background-task', async (_e, taskId: string): Promise<{ success: boolean; error?: string }> => {
-    const task = backgroundTasks.get(taskId)
-    if (!task) return { success: false, error: `Task ${taskId} not found` }
-    if (task.status !== 'running') return { success: false, error: `Task ${taskId} is not running (${task.status})` }
-    try {
-      killProcessTree(task.pid)
-      task.status = 'killed'
-      return { success: true }
-    } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) }
-    }
-  })
-
   // ── Agent Code 文件删除（安全校验）────────────────────
   // 使用 isSafePath 确保删除操作不会越出项目目录（或 App 根目录）
   const DELETE_BASES = (): string[] => {
     const bases = [APP_ROOT]
-    // 注意：bashCwd 不在合法根之列——写/改/删边界永远锁死在工作区根，
-    // 不随 cd 移动（渲染层已拒绝越界 cd，此处双重保险）。
+    // 写/改/删边界永远锁死在工作区根（Bash 已改用 pi 原生实现、cwd 固定为工作区根，
+    // 不随 cd 移动；此处双重保险）。
     if (agentWorkspaceRoot) bases.push(agentWorkspaceRoot)
     return bases
   }
@@ -6736,12 +6356,6 @@ export function registerIpcHandlers(): void {
  * 优先按 UTF-8 解码（node/git/npm 等现代程序）；若含非法 UTF-8 序列（cmd 内部命令
  * 经管道输出 GBK/CP936），则回退用 GBK 解码，避免中文乱码。
  */
-function formatChars(n: number): string {
-  if (n < 1000) return `${n}`
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`
-  return `${(n / 1_000_000).toFixed(1)}M`
-}
-
 function decodeCommandOutput(buf: Buffer | string | undefined): string {
   if (typeof buf === 'string') return buf
   if (!buf || buf.length === 0) return ''

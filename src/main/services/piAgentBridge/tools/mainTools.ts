@@ -19,21 +19,6 @@ export interface MainToolExecutors {
     errorType?: string
     suggestedCommand?: string
   }>
-  executeCommand(opts: {
-    command: string
-    timeout?: number
-    isBackground?: boolean
-    maxOutputChars?: number
-    autoBackground?: boolean
-  }): Promise<{
-    stdout: string
-    stderr: string
-    code: number
-    truncated?: boolean
-    outputFile?: string
-    autoBackgrounded?: boolean
-    taskId?: string
-  }>
   writeFile(filePath: string, content: string): Promise<{ success: boolean; error?: string }>
   glob(opts: { pattern: string; path: string; limit?: number }): Promise<{
     success: boolean
@@ -66,17 +51,6 @@ export interface MainToolExecutors {
   todoWrite(sessionId: string, input: { merge: boolean; todos: TodoUpdateInput[] }): Promise<{ success: boolean; tasks?: AgentTaskLike[]; error?: string }>
   taskGet(sessionId: string, taskId: string): Promise<{ success: boolean; task?: AgentTaskLike; error?: string }>
   taskList(sessionId: string): Promise<{ success: boolean; tasks: AgentTaskLike[] }>
-  getBackgroundTask(taskId: string): Promise<{
-    success: boolean
-    stdout?: string
-    stderr?: string
-    code?: number | null
-    status?: string
-    truncated?: boolean
-    totalBytes?: number
-    error?: string
-  }>
-  listBackgroundTasks(): Promise<Array<{ id: string; command: string; status: string; pid: number; startTime: number; autoBackgrounded: boolean }>>
   codesearchQuery(dir: string, query: string, limit?: number): Promise<{
     status: string
     results: Array<{ relPath: string; startLine: number; endLine: number; symbol: string; kind: string; score: number; snippet: string }>
@@ -123,7 +97,7 @@ export interface AskUserQuestionInput {
   allowFreeform?: boolean
 }
 
-/** 与 renderer BashTool 一致的破坏性命令判定 */
+/** 破坏性 Bash 命令判定（Bash 工具执行前的人工审批依据） */
 const DESTRUCTIVE_PATTERNS: RegExp[] = [
   /\b(?:del|erase)\b/i,
   /\brm\b/i,
@@ -142,7 +116,12 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = [
   /\bicacls\b/i,
   /\bwmic\b/i,
   /\bmv\b/i,
-  /\bmove\b/i
+  /\bmove\b/i,
+  /\bremove-item\b/i,                                   // PowerShell 删除（模型常发 PS 命令）
+  /\brimraf\b/i,                                        // node 生态递归删除工具
+  /\bgit\s+reset\s+--hard\b/i,                          // 丢弃工作区改动（不可逆）
+  /\bgit\s+clean\b/i,                                   // 删除未跟踪文件（不可逆）
+  /\bgit\s+push\b/i,                                    // 推送远端（外发操作，一律人工确认）
 ]
 
 export function isDestructiveBashCommand(command: string): boolean {
@@ -156,96 +135,6 @@ export function isDestructiveBashCommand(command: string): boolean {
     if (re.test(stripped)) return true
   }
   return false
-}
-
-// ── Windows cmd 环境 Unix 命令兼容层 ──
-// 模型习惯用 bash 语义（pwd/ls/cat/grep/cp/mv/rm...），而 Bash 工具在 Windows 用 cmd.exe 执行，
-// 直接执行会报「'pwd' 不是内部或外部命令」。把「整条命令就是已知 Unix 命令 + 参数」的
-// 简单形态翻译为 cmd 等价命令；含管道 / && / 换行的组合命令不翻译（保持原样，报错会
-// 引导模型改用 cmd 语法）。非 Windows 平台不翻译（本来就走 /bin/sh）。
-export function translateUnixToCmd(command: string): { translated: string; note: string } | null {
-  if (process.platform !== 'win32') return null
-  const t = command.trim()
-  if (!t) return null
-  // 组合命令（管道/条件/换行/重定向串联）不翻译
-  if (/[|&;\n]/.test(t)) return null
-  const m = /^([a-zA-Z][\w.-]*)(?:\s+(.*))?$/.exec(t)
-  if (!m) return null
-  const name = m[1]!.toLowerCase()
-  const rest = (m[2] ?? '').trim()
-  // 剥掉首个选项参数（ls -la / cp -r a b / grep -i ... / kill -9 pid），保留其余
-  const stripOpt = (s: string): string => s.replace(/^-\S+\s*/, '')
-  let translated: string | null = null
-  switch (name) {
-    case 'pwd': translated = 'cd'; break // cmd 的 cd 无参数输出当前目录
-    case 'ls': translated = 'dir'; break // cmd dir 自带详细信息；-l -a 等参数忽略
-    case 'cat': {
-      const a = stripOpt(rest)
-      if (!a) return null
-      translated = `type ${a}`
-      break
-    }
-    case 'cp': {
-      const rec = /^-r/.test(rest)
-      const a = stripOpt(rest)
-      if (!a) return null
-      translated = rec ? `xcopy ${a} /E /I /Y` : `copy /y ${a}`
-      break
-    }
-    case 'mv': {
-      const a = stripOpt(rest)
-      if (!a) return null
-      translated = `move /y ${a}`
-      break
-    }
-    case 'rm': {
-      const rec = /^-r/.test(rest)
-      const a = stripOpt(rest)
-      if (!a) return null
-      translated = rec ? `rmdir /s /q ${a}` : `del /q ${a}`
-      break
-    }
-    case 'mkdir': {
-      const a = rest.replace(/^-p\s*/, '')
-      if (!a) return null
-      translated = `mkdir ${a}`
-      break
-    }
-    case 'grep': {
-      const a = stripOpt(rest)
-      if (!a) return null
-      translated = `findstr /n ${a}`
-      break
-    }
-    case 'which': {
-      if (!rest) return null
-      translated = `where ${rest}`
-      break
-    }
-    case 'touch': {
-      const a = stripOpt(rest)
-      if (!a) return null
-      translated = `type nul > ${a}`
-      break
-    }
-    case 'ps': translated = 'tasklist'; break
-    case 'kill': {
-      const a = stripOpt(rest)
-      if (!a) return null
-      translated = `taskkill /F /PID ${a}`
-      break
-    }
-    case 'diff': {
-      const a = stripOpt(rest)
-      if (!a) return null
-      translated = `fc ${a}`
-      break
-    }
-    default:
-      return null
-  }
-  if (!translated) return null
-  return { translated, note: `（已将 Unix 命令 "${name}" 自动翻译为 Windows 等价命令执行）` }
 }
 
 /** 破坏性工具审批检查（与 renderer runAgentTurn 语义一致）；返回 true = 放行 */
@@ -390,6 +279,85 @@ async function createPiEditTool(exec: MainToolExecutors, ctx?: CreateMainToolsCo
   }
 }
 
+// ── pi 原生 Bash 工具（替换自研 bash；wrapper 补回审批 + env 过滤）──
+// pi 的 createBashToolDefinition 在 Windows 上用 Git Bash 执行（自研版是 cmd.exe），
+// 带流式输出（onUpdate）、尾部截断 + 完整输出落盘（pi-bash 前缀临时文件）、超时杀进程树。
+// 但默认直接透传全部环境变量（含 SECRET/TOKEN 等敏感项）、无破坏性审批、工具名为小写
+// `bash` 且带 TUI 渲染字段——这里用 wrapper 补回 llama-studio 的契约：
+// 名字改回大写 Bash（toolNames 白名单 / TOOL_METAS / AgentCodeView 均以此键）、
+// 剥 renderCall/renderResult、spawnHook 剔除敏感 env、execute 前走破坏性命令审批。
+// cd 追踪 / 后台任务 / 自动转后台等自研能力不再保留（pi 原生无此机制，属预期取舍）。
+const SENSITIVE_ENV_PATTERN = /(^|[-_])(?:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL|\.ENV|ENV_?FILE)($|[-_])/i
+function filterSensitiveEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {}
+  for (const [k, v] of Object.entries(env)) {
+    if (v === undefined) continue
+    if (SENSITIVE_ENV_PATTERN.test(k)) continue // 剔除敏感变量
+    out[k] = v
+  }
+  return out
+}
+
+async function createPiBashTool(exec: MainToolExecutors, ctx?: CreateMainToolsContext): Promise<ToolDefinition> {
+  // main 构建是 CJS，而 pi 系包为 ESM-only（exports 仅 import 条件），静态 import 会
+  // require 失败，必须动态 import（与 toolAdapter.ts / createPiEditTool 的处理一致）。
+  const { createBashToolDefinition } = await import('@earendil-works/pi-coding-agent')
+  const baseDir = ctx?.workspaceDir ?? '.'
+  const piBash = createBashToolDefinition(baseDir, {
+    // llama-studio 不用 pi 的 PI_* 会话环境变量，不注入（避免污染模型可见的环境）
+    exposeSessionEnvironment: false,
+    // 剔除敏感环境变量（模型 echo $TOKEN 会泄密；与 ipc.ts sanitizeCommandEnv 语义一致）
+    spawnHook: ({ command, cwd, env }) => ({ command, cwd, env: filterSensitiveEnv(env) })
+  })
+  // 剥离 pi 的 TUI 渲染字段（renderCall/renderResult 面向 pi 终端 UI，llama-studio 用
+  // AgentCodeView 自绘，且其具体泛型参数与通用 ToolDefinition 不兼容）。
+  const { renderCall: _renderCall, renderResult: _renderResult, ...piCore } = piBash
+  return {
+    ...piCore,
+    name: 'Bash', // 保持大写：toolNames 白名单 / TOOL_METAS 元数据 / AgentCodeView 判断均以此为键
+    label: '执行命令',
+    // 兼容模型沿用自研参数（is_background/max_output_chars/auto_background/description）：
+    // pi 原生 schema 只有 command + timeout(秒)，多余参数会被 TypeBox 严格校验拒绝。
+    // 静默忽略旧参数；timeout 若按旧习惯传毫秒（>300）自动转秒，防 120000 被当成 33 小时。
+    prepareArguments: (args: unknown) => {
+      const a = (args ?? {}) as Record<string, unknown>
+      delete a.is_background
+      delete a.auto_background
+      delete a.max_output_chars
+      delete a.description
+      if (typeof a.timeout === 'number' && a.timeout > 300) a.timeout = Math.round(a.timeout / 1000)
+      return a
+    },
+    execute: async (toolCallId, params, signal, onUpdate, pctx) => {
+      const args = (params ?? {}) as Record<string, unknown>
+      // 1) 审批：破坏性命令（del/rm/rmdir/git push 等）要求人工确认
+      const approval = await checkApproval(exec, ctx, 'Bash', args)
+      if (!approval.ok) {
+        return { content: [{ type: 'text', text: JSON.stringify({ error: approval.reason }) }], details: {} }
+      }
+      // 2) 执行 pi 原生 bash（Git Bash；自带截断/落盘/超时/流式）。
+      // params 已过 prepareArguments（剥旧参数 + timeout 毫秒转秒），用 as never 绕过
+      // 泛型差异（与 createPiEditTool 的 `{ ...input, path: abs } as never` 同一模式）。
+      try {
+        return await piCore.execute(toolCallId, params as never, signal, onUpdate, pctx)
+      } catch (err) {
+        // 未装 Git Bash 时 pi 抛英文错误，转成可操作的中文提示
+        const msg = err instanceof Error ? err.message : String(err)
+        if (/No bash shell found/i.test(msg)) {
+          return {
+            content: [{
+              type: 'text',
+              text: '❌ 需要 Git Bash：Bash 工具基于 pi-agent 原生实现，在 Windows 上依赖 Git Bash 执行命令。请安装 Git for Windows（https://git-scm.com/download/win），或把 bash 加入 PATH（Cygwin/MSYS2/WSL 亦可）。'
+            }],
+            details: {}
+          }
+        }
+        throw err
+      }
+    }
+  }
+}
+
 export interface CreateMainToolsContext {
   /** llama-studio 会话 id（Todo/Task 工具定位任务清单用） */
   sessionId?: string
@@ -498,107 +466,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     }
   })
 
-  const bash: ToolDefinition = make({
-    name: 'Bash',
-    label: '执行命令',
-    description:
-      '在 Windows cmd.exe 执行 shell 命令，返回 stdout/stderr。支持前台/后台模式与输出截断。常用的 Unix 命令（pwd/ls/cat/cp/mv/rm/mkdir/grep/which/touch/ps/kill/diff）会被自动翻译为 Windows 等价命令执行；其余不支持的 Unix 命令请改用 dir/cd/copy/move/del/rmdir/where/set；列目录或探索项目结构请用 ListDir 工具，不要用 Bash；避免输出重定向（> >>）。',
-    parameters: {
-      type: 'object',
-      properties: {
-        command: {
-          type: 'string',
-          description: '要执行的 shell 命令（如 git log、node、python、npm run build）。列目录请用 ListDir 工具。'
-        },
-        description: {
-          type: 'string',
-          description: 'Clear, concise description of what this command does in active voice.'
-        },
-        timeout: {
-          type: 'number',
-          description: 'Optional timeout in milliseconds (max 300000). Default: 120000.'
-        },
-        is_background: {
-          type: 'boolean',
-          description: 'Run in background (long-running commands: dev servers, builds). Returns taskId immediately.'
-        },
-        max_output_chars: {
-          type: 'number',
-          description: 'Max output characters before truncation (default 100000).'
-        },
-        auto_background: { type: 'boolean', description: 'If command times out, move to background instead of killing.' }
-      },
-      required: ['command']
-    },
-    execute: async (args) => {
-      const approval = await checkApproval(exec, ctx, 'Bash', args as Record<string, unknown>)
-      if (!approval.ok) return JSON.stringify({ error: approval.reason })
-      const { command, description, timeout, is_background, max_output_chars, auto_background } = args as {
-        command?: unknown
-        description?: unknown
-        timeout?: unknown
-        is_background?: unknown
-        max_output_chars?: unknown
-        auto_background?: unknown
-      }
-      const rawCommand = String(command ?? '')
-      // Unix 命令兼容层：Windows 下把模型常用的 Unix 单命令翻译为 cmd 等价命令
-      const cmdT = translateUnixToCmd(rawCommand)
-      const effectiveCommand = cmdT?.translated ?? rawCommand
-      const translatedNote = cmdT?.note ?? ''
-      const res = await exec.executeCommand({
-        command: effectiveCommand,
-        timeout: typeof timeout === 'number' ? Math.min(timeout, 300000) : 120000,
-        isBackground: is_background === true,
-        maxOutputChars: typeof max_output_chars === 'number' ? max_output_chars : undefined,
-        autoBackground: auto_background === true
-      })
-
-      if (res.taskId && !res.autoBackgrounded) {
-        return [
-          `[${description ?? command}]`,
-          `Background task started: ${res.taskId}`,
-          'Command is running in the background.',
-          `Use GetBackgroundTaskOutput with task_id="${res.taskId}" to retrieve the output later.`,
-          'Use ListBackgroundTasks to see all running/completed tasks.'
-        ].join('\n')
-      }
-
-      if (res.autoBackgrounded && res.taskId) {
-        let output = `[${description ?? command}]`
-        output += `\n⏱ 命令执行超时（已自动转入后台运行）\n`
-        if (res.stdout) output += res.stdout
-        if (res.stderr) {
-          if (res.stdout) output += '\n'
-          output += `stderr:\n${res.stderr}`
-        }
-        output += `\n\nTask ID: ${res.taskId}（仍在后台运行）`
-        output += `\n可使用 GetBackgroundTaskOutput 获取完整输出。`
-        return output
-      }
-
-      let output = ''
-      if (translatedNote) output += translatedNote + '\n'
-      if (description) output += `[${description}]\n`
-      if (res.stdout) output += res.stdout
-      if (res.stderr) {
-        if (res.stdout) output += '\n'
-        output += `stderr:\n${res.stderr}`
-      }
-      if (res.code !== 0) {
-        if (res.code === 124 || res.code === -1) {
-          output += `\n\n⏱ 命令执行超时（${(typeof timeout === 'number' ? timeout : 120000) / 1000}s），已自动终止。如需更长等待可调大 timeout 参数。`
-        } else {
-          output += `\n\n❌ 命令失败，退出码: ${res.code}`
-        }
-        if (!output.trim()) output = `命令失败，退出码 ${res.code}（无输出）`
-      }
-      if (res.truncated && res.outputFile) {
-        output += `\n\n（输出过长已截断，完整输出已保存至：${res.outputFile}，可用 Read 工具查看全部内容）`
-      }
-      return output || '(no output)'
-    }
-  })
+  const bash: ToolDefinition = await createPiBashTool(exec, ctx)
 
   const write: ToolDefinition = make({
     name: 'Write',
@@ -915,44 +783,6 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     }
   })
 
-  const getBackgroundTaskOutput: ToolDefinition = make({
-    name: 'GetBackgroundTaskOutput',
-    label: '后台任务输出',
-    description: 'Get the current output of a background task by its task_id (returned when a command was started with is_background or auto-backgrounded after timeout). For running tasks returns the latest buffered output; for finished tasks returns the saved output. Also tells you the task status.',
-    parameters: {
-      type: 'object',
-      properties: { task_id: { type: 'string', description: 'The id of the background task.' } },
-      required: ['task_id']
-    },
-    execute: async (args) => {
-      const taskId = String(args.task_id ?? '')
-      if (!taskId) return '❌ 缺少 task_id'
-      const res = await exec.getBackgroundTask(taskId)
-      if (!res.success) return `❌ ${res.error}`
-      const out: string[] = [`后台任务 ${taskId} 状态: ${res.status ?? 'unknown'}`]
-      if (res.stdout) out.push(res.stdout)
-      if (res.stderr) out.push(`stderr:\n${res.stderr}`)
-      if (res.status === 'completed' && res.code === 0 && !res.stdout && !res.stderr) out.push('（已完成，无输出）')
-      return out.join('\n')
-    }
-  })
-
-  const listBackgroundTasks: ToolDefinition = make({
-    name: 'ListBackgroundTasks',
-    label: '后台任务列表',
-    description: 'List all background tasks (running and completed) with their ids, status and commands. Use GetBackgroundTaskOutput with a task_id to see output. Completed tasks are kept for a while.',
-    parameters: { type: 'object', properties: {} },
-    execute: async () => {
-      const tasks = await exec.listBackgroundTasks()
-      if (tasks.length === 0) return '当前没有后台任务。'
-      const lines = tasks.map((t) => {
-        const mark = t.status === 'running' ? '🔄' : t.status === 'completed' ? '✅' : t.status === 'killed' ? '⛔' : '❔'
-        return `- [${t.id}] ${mark} ${t.status} | ${t.command.slice(0, 80)}${t.autoBackgrounded ? ' (auto-backgrounded)' : ''}`
-      })
-      return `后台任务（${tasks.length} 个）：\n${lines.join('\n')}`
-    }
-  })
-
   const askUserQuestion: ToolDefinition = make({
     name: 'AskUserQuestion',
     label: '询问用户',
@@ -1085,5 +915,5 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     }
   })
 
-  return [getDatetime, webSearch, fetchWebpage, read, bash, write, edit, glob, grep, listDir, deleteTool, todoWrite, taskGet, taskList, getBackgroundTaskOutput, listBackgroundTasks, askUserQuestion, reflect, codeSearch, analyzeDir]
+  return [getDatetime, webSearch, fetchWebpage, read, bash, write, edit, glob, grep, listDir, deleteTool, todoWrite, taskGet, taskList, askUserQuestion, reflect, codeSearch, analyzeDir]
 }

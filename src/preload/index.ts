@@ -54,7 +54,7 @@ const fullApi = {
   removeDownloadListener: () => ipcRenderer.removeAllListeners('download-progress'),
   // ── 应用自身更新 ──
   checkAppUpdate: () => ipcRenderer.invoke('check-app-update'),
-  downloadAppUpdate: (opts: { url: string; assetName: string }) => ipcRenderer.invoke('download-app-update', opts),
+  downloadAppUpdate: (opts: { url: string; assetName: string; digest?: string }) => ipcRenderer.invoke('download-app-update', opts),
   cancelAppDownload: () => ipcRenderer.invoke('cancel-app-download'),
   installAppUpdate: (opts: { installerPath: string }) => ipcRenderer.invoke('install-app-update', opts),
   onAppDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number }) => void) => {
@@ -186,12 +186,6 @@ const fullApi = {
   saveAgentProjects: (projects: object) => ipcRenderer.invoke('save-agent-projects', projects),
   // ── Agent Tracing 落盘 ──
   agentTraceAppend: (sessionId: string, entry: object) => ipcRenderer.invoke('agent-trace-append', sessionId, entry),
-	  executeCommand: (opts: { command: string; timeout?: number; isBackground?: boolean; maxOutputChars?: number; autoBackground?: boolean }) => ipcRenderer.invoke('execute-command', opts),
-	  writeTempFile: (content: string, ext?: string) => ipcRenderer.invoke('write-temp-file', content, ext),
-	  setBashCwd: (dir: string) => ipcRenderer.invoke('set-bash-cwd', dir),
-	  getBackgroundTask: (taskId: string) => ipcRenderer.invoke('get-background-task', taskId),
-	  listBackgroundTasks: () => ipcRenderer.invoke('list-background-tasks'),
-	  killBackgroundTask: (taskId: string) => ipcRenderer.invoke('kill-background-task', taskId),
 	  deletePath: (targetPath: string, recursive: boolean) => ipcRenderer.invoke('delete-path', targetPath, recursive),
 	  gitChanges: (dir: string) => ipcRenderer.invoke('git-changes', dir),
 	  gitStageFile: (dir: string, path: string) => ipcRenderer.invoke('git-stage-file', dir, path),

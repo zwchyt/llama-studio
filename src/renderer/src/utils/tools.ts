@@ -1,6 +1,6 @@
 // ── 工具注册中心（类似 textgen 的 tool_use.py + 各 tools/*.py）────
 import type { ComponentType } from 'react'
-import { Eye, FilePlus2, Pencil, Search, FileSearch, TerminalSquare, Clock, HelpCircle, FileText, Trash2, List, ListChecks, TerminalSquare as BgTaskIcon, FolderOpen, Layers, Lightbulb, Sparkles } from 'lucide-react'
+import { Eye, FilePlus2, Pencil, Search, FileSearch, TerminalSquare, Clock, HelpCircle, FileText, Trash2, List, ListChecks, FolderOpen, Layers, Lightbulb, Sparkles } from 'lucide-react'
 import { agentConfig } from './agentConfig'
 
 export interface ToolDefinition {
@@ -47,8 +47,6 @@ export const TOOL_METAS: Record<string, ToolMeta> = {
   TodoWrite:       { kind: 'plan',   label: '计划任务', verb: '计划中', icon: ListChecks,      readOnly: false, needsApproval: false, canUndo: false },
   TaskGet:         { kind: 'task',   label: '查询任务', verb: '查询任务中', icon: List,        readOnly: true,  needsApproval: false, canUndo: false },
   TaskList:        { kind: 'task',   label: '列出任务', verb: '列出任务中', icon: ListChecks,   readOnly: true,  needsApproval: false, canUndo: false },
-  GetBackgroundTaskOutput: { kind: 'task', label: '读取后台输出', verb: '读取输出中', icon: BgTaskIcon, readOnly: true, needsApproval: false, canUndo: false },
-  ListBackgroundTasks:     { kind: 'task', label: '列出后台任务', verb: '列出任务中', icon: ListChecks, readOnly: true, needsApproval: false, canUndo: false },
 }
 
 // 派生集合（替代原先散落在 AgentCodeView 里的字符串 Set）
@@ -103,15 +101,12 @@ import { definition as FileReadDef, execute as FileReadExec } from '../tools/Fil
 import { definition as FileWriteDef, execute as FileWriteExec } from '../tools/FileWriteTool'
 import { definition as GlobDef, execute as GlobExec } from '../tools/GlobTool'
 import { definition as GrepDef, execute as GrepExec } from '../tools/GrepTool'
-import { definition as BashDef, execute as BashExec } from '../tools/BashTool'
 import { definition as ListDirDef, execute as ListDirExec } from '../tools/ListDirTool'
 import { definition as AnalyzeDirDef, execute as AnalyzeDirExec } from '../tools/AnalyzeDirTool'
 import { definition as FileDeleteDef, execute as FileDeleteExec } from '../tools/FileDeleteTool'
 import { definition as TodoWriteDef, execute as TodoWriteExec } from '../tools/TodoWriteTool'
 import { definition as TaskGetDef, execute as TaskGetExec } from '../tools/TaskGetTool'
 import { definition as TaskListDef, execute as TaskListExec } from '../tools/TaskListTool'
-import { definition as GetBackgroundTaskOutputDef, execute as GetBackgroundTaskOutputExec } from '../tools/GetBackgroundTaskOutputTool'
-import { definition as ListBackgroundTasksDef, execute as ListBackgroundTasksExec } from '../tools/ListBackgroundTasksTool'
 import { definition as AskUserQuestionDef, execute as AskUserQuestionExec } from '../tools/AskUserQuestionTool'
 import { definition as ReflectDef, execute as ReflectExec } from '../tools/ReflectTool'
 import { definition as CodeSearchDef, execute as CodeSearchExec } from '../tools/CodeSearchTool'
@@ -121,15 +116,12 @@ register(FileReadDef, FileReadExec)
 register(FileWriteDef, FileWriteExec)
 register(GlobDef, GlobExec)
 register(GrepDef, GrepExec)
-register(BashDef, BashExec)
 register(ListDirDef, ListDirExec)
 register(AnalyzeDirDef, AnalyzeDirExec)
 register(FileDeleteDef, FileDeleteExec)
 register(TodoWriteDef, TodoWriteExec)
 register(TaskGetDef, TaskGetExec)
 register(TaskListDef, TaskListExec)
-register(GetBackgroundTaskOutputDef, GetBackgroundTaskOutputExec)
-register(ListBackgroundTasksDef, ListBackgroundTasksExec)
 register(AskUserQuestionDef, AskUserQuestionExec)
 register(ReflectDef, ReflectExec)
 // CodeSearch（混合检索）：受开关门控——关闭时不注册，模型看不到该工具，行为与现状一致
@@ -159,13 +151,8 @@ export function isToolErrorResult(s: string): boolean {
   if (!s) return false
   const trimmed = s.trimStart()
   if (/^error:/i.test(trimmed)) return true
-  // 各工具的统一失败前缀（Edit/Write/Delete/Bash 异常等以表情标记开头）
+  // 各工具的统一失败前缀（Edit/Write/Delete 等以表情标记开头）
   if (/^(?:❌|💥|🔒|📁|⚠️)/.test(trimmed)) return true
-  // Bash：失败/超时标记附加在输出末尾（前面可能带 stdout/stderr），匹配 BashTool
-  // 生成的精确文案，避免误伤碰巧含相似词的普通输出。
-  if (/\n\n❌ 命令失败，退出码: -?\d+/.test(s)) return true
-  if (/^命令失败，退出码 /.test(trimmed)) return true
-  if (/^⏱ 命令执行超时/.test(trimmed) || /\n\n⏱ 命令执行超时（/.test(s)) return true
   try {
     const o = JSON.parse(s)
     return !!(o && typeof o === 'object' && 'error' in o)

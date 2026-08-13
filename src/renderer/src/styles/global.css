@@ -10,7 +10,9 @@
   --bg: #e5e5e5;
   --surface: #ececec;
   --surface-hover: #e8e8e8;
-  --border: #e8e8e8;
+  /* 浅色主题下边框必须比页面底色 --bg 深一档才有轮廓（曾为 #e8e8e8，比 #e5e5e5 更浅，
+     导致工具内容块等 1px 边框呈现"白色描边"）；#d8d8d8 与 --border-strong #d0d0d0 成梯度 */
+  --border: #d8d8d8;
   --border-strong: #d0d0d0;
   --text: #0a0a0a;
   --text-secondary: #6b6b6b;
