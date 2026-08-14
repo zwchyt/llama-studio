@@ -4170,6 +4170,30 @@
   min-width: 0;
 }
 
+/* 思考链面板内的链元素（思考续段 / 工具卡组）：与思考文本及彼此之间显式留距。
+   卡片自身保持「去框平铺」风格，左竖线缩进与思考体/工具展开体对齐。 */
+.agent-think-item {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 折叠/完成态头部「N 次工具调用」标识：提示思考块内收纳了可展开的工具内容 */
+.agent-think-tools-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  background: var(--surface-2, var(--bg));
+  border: 1px solid var(--border-strong);
+  white-space: nowrap;
+}
+
 /* 历史摘要气泡：沿用简单的 max-height 0↔none + 透明度切换（无流式、无逐帧动画需求） */
 .agent-think-summary-body {
   max-height: 0;

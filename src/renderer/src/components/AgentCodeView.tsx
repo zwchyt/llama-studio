@@ -781,7 +781,24 @@ const ThinkGrid = React.memo(function ThinkGrid() {
   )
 })
 
-const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, durationMs }: { value: string; closed: boolean; isStreaming?: boolean; durationMs?: number }) {
+// 思考链内的元素（按模型真实时间线排列）：思考续段文本 / 工具卡组。
+// 供 ThinkBlock 收纳展示——单条消息的思考链 = 一个 ThinkBlock，
+// 链内全部思考文本与全部工具卡按时间线交错合并，不再按「思考→工具」切分多个独立思考块。
+type ThinkChainItem =
+  | { kind: 'think'; content: string; durationMs?: number }
+  | { kind: 'tools'; toolCalls: NonNullable<AgentMessage['toolCalls']> }
+
+const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, durationMs, items, onPreviewFile, canUndoFor, onUndo, cardDefaultOpen }: {
+  value: string; closed: boolean; isStreaming?: boolean; durationMs?: number
+  // 收纳在本思考块展开体内的链内元素（首段思考 value 之后的交错序列：
+  // think 续段 = 后续思考文本；tools = 工具卡组）。无则思考块保持纯文本。
+  // 配套渲染回调与 ToolCallGroup 一致（文件预览跳转 / 撤销），由调用方透传。
+  items?: ThinkChainItem[]
+  onPreviewFile?: (p: string) => void
+  canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean
+  onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void
+  cardDefaultOpen?: boolean
+}) {
   const [expanded, setExpanded] = useState(isStreaming ?? false)
   const [visible, setVisible] = useState(isStreaming ?? false)
   const userToggledRef = useRef(false)
@@ -790,6 +807,12 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
   // 思考块永远转圈，直到下一轮才补上闭合标签。改为只看 isStreaming（= 真正流式且未闭合），
   // 流式一结束（进入工具执行阶段）思考块立即停止转圈。
   const thinking = isStreaming
+  // 思考链内全部工具卡（items 中 tools 组并集）：存在未完成者（待执行/执行中/待确认）
+  // 则思考链保持展开显示工具执行态（等待工具结果期间不收起），全部完成后恢复自动收起；
+  // 工具总数用于折叠头部「N 次工具调用」标识。
+  const chainToolCalls = (items ?? []).flatMap(it => (it.kind === 'tools' ? it.toolCalls : []))
+  const hasLiveTools = !!chainToolCalls.some(t => (t.status ?? 'pending') !== 'done')
+  const toolCount = chainToolCalls.length
   const bodyRef = useRef<HTMLDivElement>(null)
 
   // 「思考中」实时计时：thinking 为真时记录起始时间并每 100ms 刷新已用毫秒，
@@ -820,23 +843,25 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
 
   useEffect(() => {
     if (userToggledRef.current) return
-    if (thinking) {
+    // 思考流式中，或收纳的工具卡仍在执行：自动展开；全部完成且思考结束：自动收起
+    if (thinking || hasLiveTools) {
       setVisible(true)
       requestAnimationFrame(() => setExpanded(true))
       return
     }
     setExpanded(false)
     setVisible(false)
-  }, [thinking])
+  }, [thinking, hasLiveTools])
 
   // 当 closed 从外部变为 true（如 toolCalls 到达），立即收起思考块，
   // 不等待 thinking->false 的 useEffect（可能滞后一帧）。
+  // 但若收纳的工具卡仍待执行/执行中，保持展开显示执行态，不在此处收起。
   useEffect(() => {
-    if (closed && !thinking && !userToggledRef.current) {
+    if (closed && !thinking && !hasLiveTools && !userToggledRef.current) {
       setExpanded(false)
       setVisible(false)
     }
-  }, [closed, thinking])
+  }, [closed, thinking, hasLiveTools])
 
   const prevThinkingRef = useRef(thinking)
   useEffect(() => {
@@ -851,10 +876,11 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
   useEffect(() => { expandedRef.current = expanded }, [expanded])
 
   // 流式思考中（已展开）：内容持续增长，置 max-height:none 让其自适应，不做高度动画。
+  // 收纳工具卡执行中同理（卡片从挂载到结果渲染持续增长）。
   useEffect(() => {
     const el = bodyRef.current
-    if (thinking && visible && expanded && el) el.style.maxHeight = 'none'
-  }, [thinking, visible, expanded, renderValue])
+    if ((thinking || hasLiveTools) && visible && expanded && el) el.style.maxHeight = 'none'
+  }, [thinking, hasLiveTools, visible, expanded, renderValue])
 
   // 过渡结束：展开完成后置 none 以自适应后续高度；收起完成后保持挂载、停在 max-height:0。
   const onBodyTransitionEnd = (e: React.TransitionEvent<HTMLDivElement>) => {
@@ -904,12 +930,14 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
         ) : wasStopped ? (
           <span className="agent-think-status">
             <Brain size={13} className="agent-think-brain" /> 思考已中断
+            {toolCount > 0 && <span className="agent-think-tools-badge">{toolCount} 次工具调用</span>}
             <ChevronRight size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
           </span>
         ) : (
           <span className="agent-think-status">
             <Brain size={13} className="agent-think-brain" /> 思考过程
             {durationMs != null && <span className="agent-think-dur">思考了 {fmtThinkDur(durationMs)}</span>}
+            {toolCount > 0 && <span className="agent-think-tools-badge">{toolCount} 次工具调用</span>}
             <ChevronRight size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
           </span>
         )}
@@ -921,6 +949,23 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
 	              因此过渡期间 Markdown 不会被重解析，不会卡。 */}
           <div className="agent-think-body">
             {renderValue ? <AgentMarkdown content={renderValue} /> : '（空）'}
+            {/* 链内元素（思考续段 / 工具卡组）按模型时间线交错排列在思考文本下方，
+                随思考链展开/收起；调用窗口由调用方保证有 items 时必传渲染回调 */}
+            {items && items.length > 0 && items.map((it, idx) => (
+              <div key={idx} className="agent-think-item">
+                {it.kind === 'think'
+                  ? <AgentMarkdown content={it.content} />
+                  : (
+                    <ToolCallGroup
+                      toolCalls={it.toolCalls}
+                      cardDefaultOpen={cardDefaultOpen}
+                      onPreviewFile={onPreviewFile!}
+                      canUndoFor={canUndoFor}
+                      onUndo={onUndo}
+                    />
+                  )}
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -1218,18 +1263,62 @@ const StreamingMarkdown = React.memo(function StreamingMarkdown({ content, isStr
   )
 })
 
-const StreamingContent = React.memo(function StreamingContent({ content, streaming, thinkDone }: { content: string; streaming?: boolean; thinkDone?: boolean }) {
+// 旧消息（无 segments）的内容渲染：与 segments 消息相同的「一条消息一个思考过程」规则——
+// 整条消息的全部  thinking 段合并进同一个思考面板（链内按时间线交错思考文本/工具卡），
+// 正文段为全部独立气泡（不再打断/终结思考面板）；无时间线信息的 legacy 工具卡收进面板尾部，
+// 无思考段（纯工具）时工具卡独立显示。
+const StreamingContent = React.memo(function StreamingContent({ content, streaming, thinkDone, toolCalls, onPreviewFile, canUndoFor, onUndo, cardDefaultOpen }: {
+  content: string; streaming?: boolean; thinkDone?: boolean;
+  toolCalls?: NonNullable<AgentMessage['toolCalls']>;
+  onPreviewFile?: (p: string) => void;
+  canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean;
+  onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void;
+  cardDefaultOpen?: boolean
+}) {
   const segs = useMemo(() => parseThinkSegments(content || ''), [content])
+  const { chainItems, textValues, standaloneTools, lastClosed } = useMemo(() => {
+    const chainItems: ThinkChainItem[] = []
+    const textValues: string[] = []
+    let lastClosed = true
+    for (const seg of segs) {
+      if (seg.type === 'text') {
+        // 跳过空正文段：避免渲染出透明占位容器（padding + flex gap 造成的不可见空隙）
+        if ((seg.value || '').trim() === '') continue
+        textValues.push(seg.value)
+      }
+      else {
+        chainItems.push({ kind: 'think', content: seg.value })
+        lastClosed = seg.closed
+      }
+    }
+    let standaloneTools: NonNullable<AgentMessage['toolCalls']> | undefined
+    if (toolCalls?.length) {
+      if (chainItems.length > 0) chainItems.push({ kind: 'tools', toolCalls })
+      else standaloneTools = toolCalls
+    }
+    return { chainItems, textValues, standaloneTools, lastClosed }
+  }, [segs, toolCalls])
   return (
     <>
-      {segs.map((seg, j) =>
-        seg.type === 'think'
-          // thinkDone：本轮已进入工具生成阶段时，把当前思考段视为正常收尾（closed 且非流式），
+      {chainItems.length > 0 && chainItems[0]!.kind === 'think'
+        ? (
+          // thinkDone：本轮已进入工具生成阶段时，把思考面板视为正常收尾（closed 且非流式），
           // 呈现「思考过程」折叠态而非「思考中」转圈，也不会误判为「思考已中断」。
-          ? <ThinkBlock key={`t-${j}`} value={seg.value} closed={seg.closed || !!thinkDone} isStreaming={!!streaming && !seg.closed && !thinkDone} />
-          // 非流式（已完成）切换到 AgentMarkdown 完整栈：补齐 KaTeX 公式/raw HTML/sanitize，
-          // 否则无 segments 的消息完成后会永远停在轻量栈，公式不渲染。
-          : <div key={`m-${j}`} className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>{streaming ? <StreamingMarkdown content={seg.value} isStreaming={streaming} /> : <AgentMarkdown content={seg.value} />}</div>
+          <ThinkBlock key="legacy-chain" value={chainItems[0]!.content} closed={lastClosed || !!thinkDone} isStreaming={!!streaming && !lastClosed && !thinkDone} items={chainItems.slice(1)} onPreviewFile={onPreviewFile} canUndoFor={canUndoFor} onUndo={onUndo} cardDefaultOpen={cardDefaultOpen} />
+        )
+        : standaloneTools && (
+          <ToolCallGroup
+            toolCalls={standaloneTools}
+            cardDefaultOpen={cardDefaultOpen}
+            onPreviewFile={onPreviewFile!}
+            canUndoFor={canUndoFor}
+            onUndo={onUndo}
+          />
+        )}
+      {textValues.map((v, j) =>
+        // 非流式（已完成）切换到 AgentMarkdown 完整栈：补齐 KaTeX 公式/raw HTML/sanitize，
+        // 否则无 segments 的消息完成后会永远停在轻量栈，公式不渲染。
+        <div key={`m-${j}`} className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>{streaming ? <StreamingMarkdown content={v} isStreaming={streaming} /> : <AgentMarkdown content={v} />}</div>
       )}
     </>
   )
@@ -4180,46 +4269,69 @@ export default function AgentCodeView() {
     }
   }, [autoResize, detectAt, ensureWorkspaceFiles, filterAtFiles, activeProject.workspaceDir])
 
-  const renderToolCalls = (toolCalls: NonNullable<AgentMessage['toolCalls']>, msgId: string) => (
-    <ToolCallGroup
-      toolCalls={toolCalls}
-      cardDefaultOpen={toolCardExpandedDefault}
-      onPreviewFile={openPreview}
-      canUndoFor={canUndoFor}
-      onUndo={(tc) => onUndoTool(msgId, tc)}
-    />
-  )
-
-  // segments 交错渲染（工具组 / 思考链 / 正文气泡）：流式分支与完成分支共用同一实现。
+  // segments 渲染（思考链 / 工具卡 / 正文气泡）：流式分支与完成分支共用同一实现。
   // 此前两处逐字复制，「流式态与完成态显示不一致」类 bug 多源于两份拷贝各改一处。
-  // streaming=true（流式进行中）：末段 think 保持「思考中」转圈展开实时显示，
-  // 已闭合的 think 段收起为「思考过程」折叠头；完成态全部折叠（可点击展开）。
-  // 转圈/展开门控 = streaming && 最后一个 think 段 && !thinkDone（显式思考状态机，
-  // 参考 Reasonix 的 reasoningComplete：思考增量置 false、正文/工具声明置 true）。
-  const renderSegments = (segments: NonNullable<AgentMessage['segments']>, msgId: string, streaming = false) =>
-    segments.map((seg, si) =>
-      seg.kind === 'tools' ? (
+  // 单条消息的思考链合并规则（用户确认，对齐 Reasonix 过程折叠）：
+  //   - 一条消息 = 一个「思考过程」框：该消息的全部 think/tools 段按模型真实时间线
+  //     交错收进同一面板（思考文本 ↔ 工具卡），不因中途正文拆分出多个思考过程面板；
+  //   - text 段 = 独立正文气泡（全部正文段都独立，思考过程不再被正文打断终结）；
+  //   - 无思考文本的纯工具段（消息首段即工具）保持独立卡片显示（无思考链时工具卡照旧独立）。
+  // streaming=true（流式进行中）：思考框保持「思考中」转圈展开实时显示，
+  // 完成态自动收起为「思考过程」折叠头（可点击展开）。
+  // tailToolCalls：流式期间尚未切分进 segments 的实时工具（liveToolCalls），
+  // 并入思考框的工具尾部；无思考文本时独立展示。
+  const renderSegments = (segments: NonNullable<AgentMessage['segments']>, msgId: string, streaming = false, tailToolCalls?: NonNullable<AgentMessage['toolCalls']>) => {
+    const chainItems: ThinkChainItem[] = []
+    const textContents: string[] = []
+    for (const seg of segments) {
+      if (seg.kind === 'text') {
+        // 跳过空正文段：避免渲染出透明占位容器（padding + flex gap 造成的不可见空隙）
+        if (seg.content.trim() === '') continue
+        textContents.push(seg.content)
+      } else if (seg.kind === 'think') {
+        chainItems.push({ kind: 'think', content: seg.content, durationMs: seg.durationMs })
+      } else {
+        chainItems.push({ kind: 'tools', toolCalls: seg.toolCalls })
+      }
+    }
+    if (tailToolCalls && tailToolCalls.length > 0) chainItems.push({ kind: 'tools', toolCalls: tailToolCalls })
+    const out: React.ReactNode[] = []
+    if (chainItems.length > 0 && chainItems[0].kind === 'think') {
+      out.push(
+        <ThinkBlock
+          key="think-chain"
+          value={chainItems[0].content}
+          // 工具声明/正文出现后 thinkDone=true：思考框必然收起，不会与工具卡并存转圈
+          closed={!streaming || thinkDone}
+          isStreaming={streaming && !thinkDone}
+          durationMs={chainItems[0].durationMs}
+          items={chainItems.slice(1)}
+          onPreviewFile={openPreview}
+          canUndoFor={canUndoFor}
+          onUndo={(tc) => onUndoTool(msgId, tc)}
+          cardDefaultOpen={toolCardExpandedDefault}
+        />
+      )
+    } else if (chainItems.length > 0) {
+      // 无思考文本的纯工具：合并为一组独立卡片
+      out.push(
         <ToolCallGroup
-          key={`seg-${si}`}
-          toolCalls={seg.toolCalls}
+          key="tools-only"
+          toolCalls={chainItems.flatMap(it => (it.kind === 'tools' ? it.toolCalls : []))}
           cardDefaultOpen={toolCardExpandedDefault}
           onPreviewFile={openPreview}
           canUndoFor={canUndoFor}
           onUndo={(tc) => onUndoTool(msgId, tc)}
         />
-      ) : seg.kind === 'think' ? (
-        <ThinkBlock
-          key={`seg-${si}`}
-          value={seg.content}
-          // 工具声明/正文出现后 thinkDone=true：思考块必然收起，不会与工具卡并存转圈
-          closed={!streaming || si < segments.length - 1 || thinkDone}
-          isStreaming={streaming && si === segments.length - 1 && !thinkDone}
-          durationMs={seg.durationMs}
-        />
-      ) : (
-        <div key={`seg-${si}`} className="chat-msg-bubble chat-msg-markdown"><AgentMarkdown content={seg.content} /></div>
       )
-    )
+    }
+    for (let i = 0; i < textContents.length; i++) {
+      out.push(
+        <div key={`seg-text-${i}`} className="chat-msg-bubble chat-msg-markdown"><AgentMarkdown content={textContents[i]!} /></div>
+      )
+    }
+    return out
+  }
 
   // 「已停止生成」徽标（三个渲染分支共用）
   const stoppedBadge = (
@@ -4447,8 +4559,7 @@ export default function AgentCodeView() {
                           // 流式进行中：segments 已按事件时间线实时切分（思考/正文/工具交错），
                           // 直接渲染交错布局，不再叠加 StreamingContent（避免正文重复显示）。
                           <>
-                            {renderSegments(msg.segments, msg.id, true)}
-                            {liveToolCalls.length > 0 && renderToolCalls(liveToolCalls, msg.id)}
+                            {renderSegments(msg.segments, msg.id, true, liveToolCalls)}
                             {msg.stopped && stoppedBadge}
                             {/* 模型名/token/tps 徽标仅在输出正文时显示（思考/工具阶段不显示，避免状态栏之外多余信息） */}
                             {streamingThis && streamKind === 'text' && (
@@ -4468,7 +4579,7 @@ export default function AgentCodeView() {
                               (msg.content ? <StreamingContent content={msg.content} streaming={streamingMsg} thinkDone={genThinkDone} /> : null)
                             ) : (
                               // 首 token 前不再渲染「模型思考中…」占位：该窗口的状态已由输入框上方常驻状态栏统一展示
-                              <StreamingContent content={msg.content} streaming={streamingMsg} />
+                              <StreamingContent content={msg.content} streaming={streamingMsg} toolCalls={msg.toolCalls || undefined} onPreviewFile={openPreview} canUndoFor={canUndoFor} onUndo={(tc) => onUndoTool(msg.id, tc)} cardDefaultOpen={toolCardExpandedDefault} />
                             )}
                           </>
                         ) : !streamingMsg && msg.segments && msg.segments.length > 0 ? (
@@ -4490,9 +4601,8 @@ export default function AgentCodeView() {
                             )}
                           </>
                         ) : (
-                          // 旧消息（无 segments）或兜底：传统布局（工具卡在顶部）
+                          // 旧消息（无 segments）或兜底：传统布局（工具卡并入思考链尾部，由 StreamingContent 处理）
                           <>
-                            {hasToolCalls ? renderToolCalls(msg.toolCalls!, msg.id) : null}
                             {msg.stopped && stoppedBadge}
                             {streamingThis && streamKind === 'text' && (
                               <StreamingBadge text={msg.content || ''} modelLabel={modelLabel} />
@@ -4504,7 +4614,7 @@ export default function AgentCodeView() {
                               (msg.content ? <StreamingContent content={msg.content} streaming={streamingMsg} thinkDone={genThinkDone} /> : null)
                             ) : (
                               // 首 token 前不再渲染「模型思考中…」占位：该窗口的状态已由输入框上方常驻状态栏统一展示
-                              <StreamingContent content={msg.content} streaming={streamingMsg} />
+                              <StreamingContent content={msg.content} streaming={streamingMsg} toolCalls={msg.toolCalls || undefined} onPreviewFile={openPreview} canUndoFor={canUndoFor} onUndo={(tc) => onUndoTool(msg.id, tc)} cardDefaultOpen={toolCardExpandedDefault} />
                             )}
                             {!streamingThis && hasToolCalls && <FileChangeSummary toolCalls={msg.toolCalls} onOpenChange={openGitDiffAt} canUndoAll={!!(msg.toolCalls?.some(t => canUndoFor(t)))} onUndoAll={() => handleUndoAll(msg.id, msg.toolCalls)} />}
                             {!streamingThis && !hasToolCalls && (
@@ -4909,7 +5019,7 @@ export default function AgentCodeView() {
                 </div>
                 {/* ③ 底部按钮行：文件目录 + 模型列表（左）… 发送（右） */}
                 <div className="chat-input-tools">
-                  <button className="chat-upload-btn" onClick={() => fileInputRef.current?.click()} title="上传文件/图片"><Plus size={14} /></button>
+                  <button className="chat-upload-btn" onClick={() => fileInputRef.current?.click()}><Plus size={14} /></button>
                   <button ref={attachBtnRef} className={`chat-attach-btn${filePickerOpen ? ' active' : ''}`} onClick={toggleFilePicker} ><FolderOpen size={14} /></button>
                   <button
                     ref={modelBtnRef}
