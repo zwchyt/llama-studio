@@ -1,5 +1,5 @@
 import React from 'react'
-import { PanelLeft, LayoutPanelTop } from 'lucide-react'
+import { MenuIcon, LayoutGridIcon } from '@animateicons/react/lucide'
 import { useLayoutStore } from '../store/layoutStore'
 import '../styles/topnav.css'
 
@@ -20,7 +20,7 @@ export default function LayoutModeToggle() {
       title={isTopnav ? '切换为侧边栏布局' : '切换为顶部导航布局'}
       aria-label="切换界面布局"
     >
-      {isTopnav ? <PanelLeft size={15} /> : <LayoutPanelTop size={15} />}
+      {isTopnav ? <MenuIcon size={15} className="nav-animate-icon" /> : <LayoutGridIcon size={15} className="nav-animate-icon" />}
     </button>
   )
 }

@@ -1,5 +1,5 @@
 import React from 'react'
-import { Moon, Sun } from 'lucide-react'
+import { SunIcon, MoonIcon } from '@animateicons/react/lucide'
 import { useThemeStore } from '../store/themeStore'
 import '../styles/theme-dark.css'
 
@@ -26,7 +26,7 @@ export default function ThemeToggle() {
       title={isDark ? '切换为浅色主题' : '切换为黑暗主题'}
       aria-label="切换应用主题"
     >
-      {isDark ? <Sun size={15} /> : <Moon size={15} />}
+      {isDark ? <SunIcon size={15} className="nav-animate-icon" /> : <MoonIcon size={15} className="nav-animate-icon" />}
     </button>
   )
 }

@@ -27,7 +27,7 @@
   height: 32px;
 }
 
-.sidebar-wrapper.collapsed .nav-item> :not(svg:first-child) {
+.sidebar-wrapper.collapsed .nav-item>*:not(:first-child) {
   display: none;
 }
 
@@ -162,10 +162,22 @@
   color: var(--text);
 }
 
+.nav-item>*:first-child {
+  align-self: center;
+  flex-shrink: 0;
+  line-height: 0;
+  font-size: 0;
+}
+
 .nav-item svg {
-  width: 25px;
+  width: 16px;
   height: 16px;
   flex-shrink: 0;
+}
+
+/* 微调导航名称上下位置：改 translateY 的正负值即可，正数向下、负数向上 */
+.nav-item>span:not(.nav-dot):not(.nav-active-dot) {
+  transform: translateY(-1.5px);
 }
 
 .nav-dot {

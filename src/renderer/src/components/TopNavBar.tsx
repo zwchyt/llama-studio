@@ -4,9 +4,12 @@ import { shallow } from 'zustand/shallow'
 import { safeCall } from '../utils/safeCall'
 import { paramSetOf } from '../utils/engine'
 import {
-  LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Server, Bot,
-  MessageSquare, Terminal, Info, FileText, Gauge, Code, ChevronDown, Wrench, BookOpen, AudioLines, Image, Mic
-} from 'lucide-react'
+  LayoutDashboardIcon,
+  HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
+  MessageSquareIcon, TerminalIcon, InfoIcon, FileTextIcon, CodeIcon, ChevronDownIcon,
+  SettingsIcon, BookOpenIcon, AudioLinesIcon, ImageIcon, MicIcon,
+  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon
+} from '@animateicons/react/lucide'
 import '../styles/topnav.css'
 
 type ViewKey = ReturnType<typeof useStore.getState>['view']
@@ -26,33 +29,33 @@ interface NavDef {
 // 与旧侧边栏完全相同的入口集合，仅排布方式不同（横向分组），每项配一个专属色
 const NAV_GROUPS: NavDef[][] = [
   [
-    { key: 'cards', label: '我的模板', icon: <LayoutGrid size={14} />, color: '#8b5cf6', runningSource: 'models', persistent: true },
-    { key: 'models', label: '模型', icon: <HardDrive size={14} />, color: '#3b82f6' },
-    { key: 'hub', label: '模型中心', icon: <Search size={14} />, color: '#0ea5e9' },
+    { key: 'cards', label: '我的模板', icon: <LayoutDashboardIcon size={14} />, color: '#8b5cf6', runningSource: 'models', persistent: true },
+    { key: 'models', label: '模型', icon: <BoxesIcon size={14} />, color: '#3b82f6' },
+    { key: 'hub', label: '模型中心', icon: <SearchIcon size={14} />, color: '#0ea5e9' },
   ],
   [
-    { key: 'llama', label: 'llama-server', icon: <Server size={14} />, color: '#14b8a6', runningSource: 'llama' },
-    { key: 'chat', label: '聊天', icon: <MessageSquare size={14} />, color: '#ec4899', runningSource: 'models' },
-    { key: 'monitoring', label: '运行数据', icon: <Activity size={14} />, color: '#ef4444', runningSource: 'models' },
-    { key: 'token-stats', label: 'Token 统计', icon: <Gauge size={14} />, color: '#f59e0b', runningSource: 'models' },
-    { key: 'benchmark', label: '性能测试', icon: <Gauge size={14} />, color: '#f59e0b' },
-    { key: 'terminal', label: '终端', icon: <Terminal size={14} />, color: '#64748b' },
-    { key: 'ocr', label: 'OCR', icon: <FileText size={14} />, color: '#a855f7', runningSource: 'models' },
-    { key: 'model-tools', label: '模型工具', icon: <Wrench size={14} />, color: '#06b6d4' },
-    { key: 'knowledge', label: '知识库', icon: <BookOpen size={14} />, color: '#0d9488' },
-    { key: 'tts', label: '语音合成', icon: <AudioLines size={14} />, color: '#f43f5e' },
-    { key: 'stt', label: '语音转写', icon: <Mic size={14} />, color: '#f43f5e' },
-    { key: 'imagegen', label: '图像生成', icon: <Image size={14} />, color: '#8b5cf6', runningSource: 'models' },
+    { key: 'llama', label: 'llama-server', icon: <ServerIcon size={14} />, color: '#14b8a6', runningSource: 'llama' },
+    { key: 'chat', label: '聊天', icon: <MessageSquareIcon size={14} />, color: '#ec4899', runningSource: 'models' },
+    { key: 'monitoring', label: '运行数据', icon: <ActivityIcon size={14} />, color: '#ef4444', runningSource: 'models' },
+    { key: 'token-stats', label: 'Token 统计', icon: <TrendingUpIcon size={14} />, color: '#f59e0b', runningSource: 'models' },
+    { key: 'benchmark', label: '性能测试', icon: <ChartBarIcon size={14} />, color: '#f59e0b' },
+    { key: 'terminal', label: '终端', icon: <TerminalIcon size={14} />, color: '#64748b' },
+    { key: 'ocr', label: 'OCR', icon: <FileTextIcon size={14} />, color: '#a855f7', runningSource: 'models' },
+    { key: 'model-tools', label: '模型工具', icon: <SlidersHorizontalIcon size={14} />, color: '#06b6d4' },
+    { key: 'knowledge', label: '知识库', icon: <BookOpenIcon size={14} />, color: '#0d9488' },
+    { key: 'tts', label: '语音合成', icon: <AudioLinesIcon size={14} />, color: '#f43f5e' },
+    { key: 'stt', label: '语音转写', icon: <MicIcon size={14} />, color: '#f43f5e' },
+    { key: 'imagegen', label: '图像生成', icon: <ImageIcon size={14} />, color: '#8b5cf6', runningSource: 'models' },
   ],
   [
-    { key: 'agent-code', label: 'Agent Code', icon: <Code size={14} />, color: '#10b981' },
+    { key: 'agent-code', label: 'Agent Code', icon: <CodeIcon size={14} />, color: '#10b981' },
   ],
   [
-    { key: 'agents', label: 'AI Agent', icon: <Bot size={14} />, color: '#d946ef' },
-    { key: 'engines', label: '后端与引擎', icon: <HardDrive size={14} />, color: '#6b7280' },
-    { key: 'folders', label: '模型文件夹', icon: <FolderOpen size={14} />, color: '#6b7280' },
-    { key: 'settings', label: '设置', icon: <Settings size={14} />, color: '#6b7280' },
-    { key: 'about', label: '关于', icon: <Info size={14} />, color: '#6366f1' },
+    { key: 'agents', label: 'AI Agent', icon: <BrainIcon size={14} />, color: '#d946ef' },
+    { key: 'engines', label: '后端与引擎', icon: <CpuIcon size={14} />, color: '#6b7280' },
+    { key: 'folders', label: '模型文件夹', icon: <FolderOpenIcon size={14} />, color: '#6b7280' },
+    { key: 'settings', label: '设置', icon: <SettingsIcon size={14} />, color: '#6b7280' },
+    { key: 'about', label: '关于', icon: <InfoIcon size={14} />, color: '#6366f1' },
   ],
 ]
 
@@ -64,6 +67,15 @@ export default function TopNavBar() {
   const [openMenu, setOpenMenu] = useState<null | 'backend' | 'folders'>(null)
   const rightRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const iconRefs = useRef<Record<string, { startAnimation: () => void; stopAnimation: () => void }>>({})
+
+  const handleIconEnter = useCallback((key: string) => {
+    iconRefs.current[key]?.startAnimation()
+  }, [])
+
+  const handleIconLeave = useCallback((key: string) => {
+    iconRefs.current[key]?.stopAnimation()
+  }, [])
 
   // 窗口过窄导航项横向溢出时：鼠标滚轮在导航栏上滚动转为平滑横向滚动。
   // 用 rAF + 指数缓动把滚轮增量合成为目标位置做插值动画，避免逐帧硬跳的卡顿感；
@@ -147,31 +159,45 @@ export default function TopNavBar() {
         {NAV_GROUPS.map((group, gi) => (
           <React.Fragment key={gi}>
             {gi > 0 && <span className="topnav-divider" />}
-            {group.map((item) => (
-              <button
-                key={item.key}
-                className={`topnav-item ${view === item.key ? 'active' : ''}`}
-                onClick={() => setView(item.key)}
-                style={shouldHighlight(item) ? { color: 'var(--success)' } : {}}
-              >
-                <span
-                  className="topnav-ico"
-                  style={view === item.key
-                    ? { background: item.color, color: '#fff', boxShadow: `0 2px 8px ${item.color}55` }
-                    : { background: `${item.color}1c`, color: item.color }}
+            {group.map((item) => {
+              const iconElement = React.isValidElement(item.icon)
+                ? React.cloneElement(item.icon, {
+                    ref: (el: any) => { iconRefs.current[item.key] = el },
+                    className: `nav-animate-icon ${(item.icon.props as any)?.className || ''}`.trim()
+                  } as any)
+                : item.icon
+
+              return (
+                <button
+                  key={item.key}
+                  className={`topnav-item ${view === item.key ? 'active' : ''}`}
+                  onClick={() => setView(item.key)}
+                  style={shouldHighlight(item) ? { color: 'var(--success)' } : {}}
                 >
-                  {item.icon}
-                </span>
-                <span>{item.label}</span>
-                {view === item.key && (
                   <span
-                    className="topnav-active-dot"
-                    style={{ background: item.color, boxShadow: `0 0 0 3px ${item.color}38` }}
-                  />
-                )}
-                {shouldHighlight(item) && <span className="topnav-run-dot" />}
-              </button>
-            ))}
+                    className="topnav-ico"
+                    style={view === item.key
+                      ? { background: item.color, color: '#fff', boxShadow: `0 2px 8px ${item.color}55` }
+                      : { background: `${item.color}1c`, color: item.color }}
+                  >
+                    {iconElement}
+                  </span>
+                  <span
+                    onMouseEnter={() => handleIconEnter(item.key)}
+                    onMouseLeave={() => handleIconLeave(item.key)}
+                  >
+                    {item.label}
+                  </span>
+                  {view === item.key && (
+                    <span
+                      className="topnav-active-dot"
+                      style={{ background: item.color, boxShadow: `0 0 0 3px ${item.color}38` }}
+                    />
+                  )}
+                  {shouldHighlight(item) && <span className="topnav-run-dot" />}
+                </button>
+              )
+            })}
           </React.Fragment>
         ))}
       </div>
@@ -185,16 +211,22 @@ export default function TopNavBar() {
               onClick={() => setOpenMenu(openMenu === 'backend' ? null : 'backend')}
             >
               <span className="topnav-ico" style={{ background: '#3b82f61c', color: '#3b82f6' }}>
-                <HardDrive size={14} />
+                <HardDriveIcon size={14} ref={(el: any) => { if (el) iconRefs.current['backend'] = el }} className="nav-animate-icon" />
               </span>
-              <span className="topnav-backend-name">{activeBackend?.name || '后端'}</span>
-              <ChevronDown size={13} />
+              <span
+                className="topnav-backend-name"
+                onMouseEnter={() => handleIconEnter('backend')}
+                onMouseLeave={() => handleIconLeave('backend')}
+              >
+                {activeBackend?.name || '后端'}
+              </span>
+              <ChevronDownIcon size={13} />
             </button>
             {openMenu === 'backend' && (
               <div className="topnav-menu">
                 {backends.map((b) => (
                   <button key={b.name} className="topnav-menu-item" onClick={() => switchBackend(b.name)}>
-                    <HardDrive size={14} style={{ color: '#3b82f6' }} />
+                    <HardDriveIcon size={14} style={{ color: '#3b82f6' }} />
                     <span className="topnav-menu-item-label">{b.name}</span>
                     {activeBackend?.name === b.name && <span className="topnav-active-dot" />}
                   </button>
@@ -211,11 +243,13 @@ export default function TopNavBar() {
             <button
               className={`topnav-item topnav-dd ${openMenu === 'folders' ? 'open' : ''}`}
               onClick={() => setOpenMenu(openMenu === 'folders' ? null : 'folders')}
+              onMouseEnter={() => handleIconEnter('folders')}
+              onMouseLeave={() => handleIconLeave('folders')}
             >
               <span className="topnav-ico" style={{ background: '#f59e0b1c', color: '#f59e0b' }}>
-                <FolderOpen size={14} />
+                <FolderOpenIcon size={14} ref={(el: any) => { if (el) iconRefs.current['folders'] = el }} className="nav-animate-icon" />
               </span>
-              <ChevronDown size={13} />
+              <ChevronDownIcon size={13} />
             </button>
             {openMenu === 'folders' && (
               <div className="topnav-menu">
@@ -225,7 +259,7 @@ export default function TopNavBar() {
                     className="topnav-menu-item"
                     onClick={() => { window.api.openFolder(f.path); setOpenMenu(null) }}
                   >
-                    <FolderOpen size={14} style={{ color: '#f59e0b' }} />
+                    <FolderOpenIcon size={14} style={{ color: '#f59e0b' }} />
                     <span className="topnav-menu-item-label">打开 {f.label}</span>
                   </button>
                 ))}

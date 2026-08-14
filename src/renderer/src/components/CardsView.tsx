@@ -2,7 +2,7 @@ import React, { useMemo } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import ModelCard from './ModelCard'
-import { Plus, Upload, Search } from 'lucide-react'
+import { PlusIcon, UploadIcon, SearchIcon } from '@animateicons/react/lucide'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import type { Template } from '../../../shared/types'
@@ -40,7 +40,7 @@ export default function CardsView() {
         <div className="page-actions">
           {cards.length > 0 && (
             <div className="template-search-bar">
-              <Search size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+              <SearchIcon size={14} className="nav-animate-icon" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
               <input
                 type="text"
                 className="template-search-input"
@@ -57,11 +57,11 @@ export default function CardsView() {
             </div>
           )}
           <button className="btn header-input-btn" onClick={handleImport}>
-            <Upload size={15} />
+            <UploadIcon size={15} className="nav-animate-icon" />
             导入
           </button>
           <button className="btn header-input-btn" onClick={() => setShowCreateModal(true)}>
-            <Plus size={15} />
+            <PlusIcon size={15} className="nav-animate-icon" />
             新建模板
           </button>
         </div>
@@ -89,11 +89,11 @@ export default function CardsView() {
           <p>从本地 GGUF 创建，或从文件导入，即可一键配置并启动 llama.cpp 模型。</p>
           <div className="empty-state-actions">
             <button className="btn btn-primary" onClick={() => setShowCreateModal(true)}>
-              <Plus size={15} />
+              <PlusIcon size={15} className="nav-animate-icon" />
               新建模板
             </button>
             <button className="btn btn-secondary" onClick={handleImport}>
-              <Upload size={15} />
+              <UploadIcon size={15} className="nav-animate-icon" />
               导入
             </button>
           </div>
@@ -110,7 +110,7 @@ export default function CardsView() {
             <ModelCard key={card.template.id} card={card} />
           ))}
           <button className="add-card" onClick={() => setShowCreateModal(true)}>
-            <Plus size={28} />
+            <PlusIcon size={28} className="nav-animate-icon" />
             <span>添加模板</span>
           </button>
         </div>

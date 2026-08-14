@@ -1,21 +1,80 @@
-import React, { useCallback, useRef } from 'react'
+import React, { useCallback, useRef, forwardRef } from 'react'
 import { useStore } from '../store/useStore'
 import { useSidebarStore } from '../store/sidebarStore'
 import { shallow } from 'zustand/shallow'
 import { safeCall } from '../utils/safeCall'
 import { paramSetOf } from '../utils/engine'
-import { LayoutGrid, Settings, FolderOpen, HardDrive, Search, Activity, Server, Bot, MessageSquare, Terminal, Info, FileText, Gauge, Code, Wrench, BookOpen, AudioLines, Image, Mic } from 'lucide-react'
+import {
+  LayoutDashboardIcon,
+  HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
+  MessageSquareIcon, TerminalIcon, InfoIcon, FileTextIcon, CodeIcon,
+  SettingsIcon, BookOpenIcon, AudioLinesIcon, ImageIcon, MicIcon,
+  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon
+} from '@animateicons/react/lucide'
 import '../styles/sidebar.css'
 
+interface NavItemProps {
+  icon: React.ElementType
+  label: string
+  active?: boolean
+  onClick?: () => void
+  style?: React.CSSProperties
+  children?: React.ReactNode
+  className?: string
+}
+
+const NavItem = forwardRef<{ startAnimation: () => void; stopAnimation: () => void }, NavItemProps>(
+  ({ icon: Icon, label, active, onClick, style, children, className = '' }, ref) => {
+    const innerRef = useRef<{ startAnimation: () => void; stopAnimation: () => void } | null>(null)
+
+    React.useImperativeHandle(ref, () => ({
+      startAnimation: () => innerRef.current?.startAnimation(),
+      stopAnimation: () => innerRef.current?.stopAnimation(),
+    }))
+
+    const handleMouseEnter = useCallback(() => {
+      innerRef.current?.startAnimation()
+    }, [])
+
+    const handleMouseLeave = useCallback(() => {
+      innerRef.current?.stopAnimation()
+    }, [])
+
+    return (
+      <button
+        className={`nav-item ${active ? 'active' : ''} ${className}`}
+        onClick={onClick}
+        style={style}
+      >
+        <Icon ref={innerRef as any} size={16} className="nav-animate-icon" />
+        <span onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>{label}</span>
+        {children}
+      </button>
+    )
+  }
+)
+
+NavItem.displayName = 'NavItem'
+
 function BackendNavItem({ b, isActive, onSwitch }: { b: { name: string; path?: string }; isActive: boolean; onSwitch: () => void }) {
+  const iconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void } | null>(null)
+
+  const handleMouseEnter = useCallback(() => {
+    iconRef.current?.startAnimation()
+  }, [])
+
+  const handleMouseLeave = useCallback(() => {
+    iconRef.current?.stopAnimation()
+  }, [])
+
   return (
     <button
       className="nav-item"
       onClick={onSwitch}
     >
-      <HardDrive size={16} />
+      <HardDriveIcon ref={iconRef as any} size={16} className="nav-animate-icon" />
       <span className="sidebar-backend-name">
-        <span className="sidebar-backend-name-text">{b.name}</span>
+        <span className="sidebar-backend-name-text" onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>{b.name}</span>
         {isActive && <span className="nav-active-dot" />}
       </span>
     </button>
@@ -65,198 +124,198 @@ export default function Sidebar() {
       <nav className="sidebar">
         {/* ── 导航 ── */}
         <span className="nav-section-label">导航</span>
-        <button
-          className={`nav-item ${view === 'cards' ? 'active' : ''}`}
+        <NavItem
+          icon={LayoutDashboardIcon}
+          label="我的模板"
+          active={view === 'cards'}
           onClick={() => setView('cards')}
           style={hasRunningModels ? { color: 'var(--success)' } : {}}
         >
-          <LayoutGrid size={16} />
-          <span>我的模板</span>
           {view === 'cards' && <span className="nav-active-dot" />}
           {hasRunningModels && <span className="nav-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'models' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={BoxesIcon}
+          label="模型"
+          active={view === 'models'}
           onClick={() => setView('models')}
         >
-          <HardDrive size={16} />
-          <span>模型</span>
           {view === 'models' && <span className="nav-active-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'hub' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={SearchIcon}
+          label="模型中心"
+          active={view === 'hub'}
           onClick={() => setView('hub')}
         >
-          <Search size={16} />
-          <span>模型中心</span>
           {view === 'hub' && <span className="nav-active-dot" />}
-        </button>
+        </NavItem>
 
         {/* ── 服务 ── */}
         <span className="nav-section-label" style={{ marginTop: 12 }}>服务</span>
-        <button
-          className={`nav-item ${view === 'llama' ? 'active' : ''}`}
+        <NavItem
+          icon={ServerIcon}
+          label="llama-server"
+          active={view === 'llama'}
           onClick={() => setView('llama')}
           style={view === 'llama' && activeChatUrl ? { color: 'var(--success)' } : {}}
         >
-          <Server size={16} />
-          <span>llama-server</span>
           {view === 'llama' && <span className="nav-active-dot" />}
           {view === 'llama' && activeChatUrl && <span className="nav-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'chat' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={MessageSquareIcon}
+          label="聊天"
+          active={view === 'chat'}
           onClick={() => setView('chat')}
           style={view === 'chat' && hasRunningModels ? { color: 'var(--success)' } : {}}
         >
-          <MessageSquare size={16} />
-          <span>聊天</span>
           {view === 'chat' && <span className="nav-active-dot" />}
           {view === 'chat' && hasRunningModels && <span className="nav-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'monitoring' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={ActivityIcon}
+          label="模型运行数据"
+          active={view === 'monitoring'}
           onClick={() => setView('monitoring')}
           style={view === 'monitoring' && hasRunningModels ? { color: 'var(--success)' } : {}}
         >
-          <Activity size={16} />
-          <span>模型运行数据</span>
           {view === 'monitoring' && <span className="nav-active-dot" />}
           {view === 'monitoring' && hasRunningModels && <span className="nav-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'benchmark' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={ChartBarIcon}
+          label="性能测试"
+          active={view === 'benchmark'}
           onClick={() => setView('benchmark')}
         >
-          <Gauge size={16} />
-          <span>性能测试</span>
           {view === 'benchmark' && <span className="nav-active-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'token-stats' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={TrendingUpIcon}
+          label="Token 统计"
+          active={view === 'token-stats'}
           onClick={() => setView('token-stats')}
           style={view === 'token-stats' && hasRunningModels ? { color: 'var(--success)' } : {}}
         >
-          <Gauge size={16} />
-          <span>Token 统计</span>
           {view === 'token-stats' && <span className="nav-active-dot" />}
           {view === 'token-stats' && hasRunningModels && <span className="nav-dot" />}
-        </button>
+        </NavItem>
 
-        <button
-          className={`nav-item ${view === 'terminal' ? 'active' : ''}`}
+        <NavItem
+          icon={TerminalIcon}
+          label="终端"
+          active={view === 'terminal'}
           onClick={() => setView('terminal')}
         >
-          <Terminal size={16} />
-          <span>终端</span>
           {view === 'terminal' && <span className="nav-active-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'ocr' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={FileTextIcon}
+          label="OCR"
+          active={view === 'ocr'}
           onClick={() => setView('ocr')}
           style={view === 'ocr' && hasRunningModels ? { color: 'var(--success)' } : {}}
         >
-          <FileText size={16} />
-          <span>OCR</span>
           {view === 'ocr' && <span className="nav-active-dot" />}
           {view === 'ocr' && hasRunningModels && <span className="nav-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'model-tools' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={SlidersHorizontalIcon}
+          label="模型工具"
+          active={view === 'model-tools'}
           onClick={() => setView('model-tools')}
         >
-          <Wrench size={16} />
-          <span>模型工具</span>
           {view === 'model-tools' && <span className="nav-active-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'knowledge' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={BookOpenIcon}
+          label="知识库"
+          active={view === 'knowledge'}
           onClick={() => setView('knowledge')}
         >
-          <BookOpen size={16} />
-          <span>知识库</span>
           {view === 'knowledge' && <span className="nav-active-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'tts' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={AudioLinesIcon}
+          label="语音合成"
+          active={view === 'tts'}
           onClick={() => setView('tts')}
         >
-          <AudioLines size={16} />
-          <span>语音合成</span>
           {view === 'tts' && <span className="nav-active-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'stt' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={MicIcon}
+          label="语音转写"
+          active={view === 'stt'}
           onClick={() => setView('stt')}
         >
-          <Mic size={16} />
-          <span>语音转写</span>
           {view === 'stt' && <span className="nav-active-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'imagegen' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={ImageIcon}
+          label="图像生成"
+          active={view === 'imagegen'}
           onClick={() => setView('imagegen')}
           style={view === 'imagegen' && hasRunningModels ? { color: 'var(--success)' } : {}}
         >
-          <Image size={16} />
-          <span>图像生成</span>
           {view === 'imagegen' && <span className="nav-active-dot" />}
           {view === 'imagegen' && hasRunningModels && <span className="nav-dot" />}
-        </button>
+        </NavItem>
 
         {/* ── 工作台 ── */}
         <span className="nav-section-label" style={{ marginTop: 12 }}>工作台</span>
-        <button
-          className={`nav-item ${view === 'agent-code' ? 'active' : ''}`}
+        <NavItem
+          icon={CodeIcon}
+          label="Agent Code"
+          active={view === 'agent-code'}
           onClick={() => setView('agent-code')}
         >
-          <Code size={16} />
-          <span>Agent Code</span>
           {view === 'agent-code' && <span className="nav-active-dot" />}
-        </button>
+        </NavItem>
 
         {/* ── 系统 ── */}
         <span className="nav-section-label" style={{ marginTop: 12 }}>系统</span>
-        <button
-          className={`nav-item ${view === 'agents' ? 'active' : ''}`}
+        <NavItem
+          icon={BrainIcon}
+          label="AI Agent"
+          active={view === 'agents'}
           onClick={() => setView('agents')}
         >
-          <Bot size={16} />
-          <span>AI Agent</span>
           {view === 'agents' && <span className="nav-active-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'engines' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={CpuIcon}
+          label="后端与引擎"
+          active={view === 'engines'}
           onClick={() => setView('engines')}
         >
-          <HardDrive size={16} />
-          <span>后端与引擎</span>
           {view === 'engines' && <span className="nav-active-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'folders' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={FolderOpenIcon}
+          label="模型文件夹"
+          active={view === 'folders'}
           onClick={() => setView('folders')}
         >
-          <FolderOpen size={16} />
-          <span>模型文件夹</span>
           {view === 'folders' && <span className="nav-active-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'settings' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={SettingsIcon}
+          label="设置"
+          active={view === 'settings'}
           onClick={() => setView('settings')}
         >
-          <Settings size={16} />
-          <span>设置</span>
           {view === 'settings' && <span className="nav-active-dot" />}
-        </button>
-        <button
-          className={`nav-item ${view === 'about' ? 'active' : ''}`}
+        </NavItem>
+        <NavItem
+          icon={InfoIcon}
+          label="关于"
+          active={view === 'about'}
           onClick={() => setView('about')}
         >
-          <Info size={16} />
-          <span>关于</span>
           {view === 'about' && <span className="nav-active-dot" />}
-        </button>
+        </NavItem>
         {backends.length > 0 && (
           <>
             <span className="nav-section-label" style={{ marginTop: 12 }}>后端</span>
@@ -281,26 +340,31 @@ export default function Sidebar() {
         {paths && (
           <div className="sidebar-bottom-section" style={{ marginTop: 'auto', paddingTop: 12 }}>
             <span className="nav-section-label">本地目录</span>
-            <button className="nav-item" onClick={() => window.api.openFolder(paths.backend)}>
-              <FolderOpen size={16} />
-              <span>打开 /backend</span>
-            </button>
-            <button className="nav-item" onClick={() => window.api.openFolder(paths.models)}>
-              <FolderOpen size={16} />
-              <span>打开 /models</span>
-            </button>
-            <button className="nav-item" onClick={() => window.api.openFolder(paths.chatImages)}>
-              <FolderOpen size={16} />
-              <span>打开 /images</span>
-            </button>
-            <button className="nav-item" onClick={() => window.api.openFolder(paths.chatPdfExports)}>
-              <FolderOpen size={16} />
-              <span>打开 /pdf_exports</span>
-            </button>
-            <button className="nav-item" onClick={() => window.api.openFolder(paths.chatTemplates)}>
-              <FolderOpen size={16} />
-              <span>打开 /chat-templates</span>
-            </button>
+            <NavItem
+              icon={FolderOpenIcon}
+              label="打开 /backend"
+              onClick={() => window.api.openFolder(paths.backend)}
+            />
+            <NavItem
+              icon={FolderOpenIcon}
+              label="打开 /models"
+              onClick={() => window.api.openFolder(paths.models)}
+            />
+            <NavItem
+              icon={FolderOpenIcon}
+              label="打开 /images"
+              onClick={() => window.api.openFolder(paths.chatImages)}
+            />
+            <NavItem
+              icon={FolderOpenIcon}
+              label="打开 /pdf_exports"
+              onClick={() => window.api.openFolder(paths.chatPdfExports)}
+            />
+            <NavItem
+              icon={FolderOpenIcon}
+              label="打开 /chat-templates"
+              onClick={() => window.api.openFolder(paths.chatTemplates)}
+            />
           </div>
         )}
       </nav>

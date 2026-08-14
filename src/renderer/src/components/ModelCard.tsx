@@ -6,7 +6,7 @@ import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { ENGINE_LABELS, paramSetOf } from '../utils/engine'
-import { Play, Square, Settings, MoreVertical, Copy, Trash, Download, Globe, Server, Terminal, Check, MessageSquare, Image, Scan } from 'lucide-react'
+import { PlayIcon, CircleStopIcon, SettingsIcon, EllipsisVerticalIcon, CopyIcon, TrashIcon, DownloadIcon, GlobeIcon, ServerIcon, TerminalIcon, CheckIcon, MessageSquareIcon, ImageIcon, ScanIcon } from '@animateicons/react/lucide'
 import type { CardState } from '../../../shared/types'
 import ParamsModal from './ParamsModal'
 interface Props { card: CardState }
@@ -327,19 +327,19 @@ export default function ModelCard({ card }: Props) {
         </div>
         <div className="card-menu-btn" ref={menuRef} style={{ position: 'relative', zIndex: 10 }}>
           <button className="btn btn-ghost btn-icon" aria-label="更多操作" onClick={() => setShowMenu(p => !p)}>
-            <MoreVertical size={16} />
+            <EllipsisVerticalIcon size={16} className="nav-animate-icon" />
           </button>
           {showMenu && (
             <div className="dropdown-menu" style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 500 }}>
-              <button className="dropdown-item" onClick={handleEdit}><Settings size={14} /> 编辑模板</button>
-              <button className="dropdown-item" onClick={handleDuplicate}><Copy size={14} /> 复制</button>
-              <button className="dropdown-item" onClick={handleExport}><Download size={14} /> 导出</button>
+              <button className="dropdown-item" onClick={handleEdit}><SettingsIcon size={14} className="nav-animate-icon" /> 编辑模板</button>
+              <button className="dropdown-item" onClick={handleDuplicate}><CopyIcon size={14} className="nav-animate-icon" /> 复制</button>
+              <button className="dropdown-item" onClick={handleExport}><DownloadIcon size={14} className="nav-animate-icon" /> 导出</button>
               <div className="dropdown-divider" />
               <button
                 className={`dropdown-item danger ${confirmingDelete ? 'confirming' : ''}`}
                 onClick={handleDelete}
               >
-                <Trash size={14} />
+                <TrashIcon size={14} className="nav-animate-icon" />
                 {confirmingDelete ? '确认删除？' : '删除'}
               </button>
             </div>
@@ -372,14 +372,14 @@ export default function ModelCard({ card }: Props) {
           onClick={() => setLaunchMode('chat')}
           disabled={isRunning}
         >
-          <Globe size={12} /> 聊天界面
+          <GlobeIcon size={12} className="nav-animate-icon" /> 聊天界面
         </button>
         <button
           className={`launch-mode-btn ${launchMode === 'api' ? 'active' : ''}`}
           onClick={() => setLaunchMode('api')}
           disabled={isRunning}
         >
-          <Server size={12} /> 仅 API
+          <ServerIcon size={12} className="nav-animate-icon" /> 仅 API
         </button>
         {(isRunning || card.status === 'error') && logs && logs.length > 0 && (
           <button
@@ -387,7 +387,7 @@ export default function ModelCard({ card }: Props) {
             className={`launch-mode-btn logs-toggle-btn ${cardLogsExpanded ? 'active' : ''}`}
             onClick={toggleLogs}
           >
-            <Terminal size={12} /> 日志
+            <TerminalIcon size={12} className="nav-animate-icon" /> 日志
           </button>
         )}
       </div>
@@ -397,7 +397,7 @@ export default function ModelCard({ card }: Props) {
           onClick={handleRunToggle}
           disabled={!isRunning && !modelExists}
         >
-          {isRunning ? <><Square size={14} /> <span className="btn-label">停止</span></> : <><Play size={14} /> <span className="btn-label">启动</span></>}
+          {isRunning ? <><CircleStopIcon size={14} className="nav-animate-icon" /> <span className="btn-label">停止</span></> : <><PlayIcon size={14} className="nav-animate-icon" /> <span className="btn-label">启动</span></>}
         </button>
         {isRunning && (
           <button
@@ -405,13 +405,12 @@ export default function ModelCard({ card }: Props) {
             style={{ background: '#c1c1c1', color: '#1e0303' }}
             onClick={() => {
               const port = card.template.serverPort || 8080
-              // TensorSharp 的网页聊天 UI 在 /html（根路径返回 JSON），llama.cpp 在根路径
               const chatUrl = effectiveParamSet === 'tensorsharp' ? `http://127.0.0.1:${port}/html` : `http://127.0.0.1:${port}`
               useStore.getState().setActiveChat(chatUrl, port)
               useStore.getState().setView('llama')
             }}
           >
-            <Globe size={14} /> <span className="btn-label">打开聊天</span>
+            <GlobeIcon size={14} className="nav-animate-icon" /> <span className="btn-label">打开聊天</span>
           </button>
         )}
         {isRunning && (
@@ -431,7 +430,6 @@ export default function ModelCard({ card }: Props) {
               const port = card.template.serverPort || 8080
               const name = card.template.name
               const st = useChatStore.getState()
-              // 查找是否已有此模型的会话
               let session = st.sessions.find(s => s.templateId === id)
               if (!session) {
                 const newId = st.createSession(id, port, name)
@@ -442,7 +440,7 @@ export default function ModelCard({ card }: Props) {
               useStore.getState().setView('chat')
             }}
           >
-            {effectiveParamSet === 'sdcpp' ? <Image size={14} /> : isOcrModel ? <Scan size={14} /> : <MessageSquare size={14} />}
+            {effectiveParamSet === 'sdcpp' ? <ImageIcon size={14} className="nav-animate-icon" /> : isOcrModel ? <ScanIcon size={14} className="nav-animate-icon" /> : <MessageSquareIcon size={14} className="nav-animate-icon" />}
             <span className="btn-label">{effectiveParamSet === 'sdcpp' ? '图像生成' : isOcrModel ? 'OCR 识别' : '原生聊天'}</span>
           </button>
         )}
@@ -451,7 +449,7 @@ export default function ModelCard({ card }: Props) {
             className="card-expand-btn"
             onClick={() => setShowParamsModal(true)}
           >
-            <Settings size={16} />
+            <SettingsIcon size={16} className="nav-animate-icon" />
           </button>
         )}
       </div>
@@ -463,15 +461,15 @@ export default function ModelCard({ card }: Props) {
         >
           <div className="card-logs-header">
             <span className="card-logs-count">
-              <Terminal size={13} />
+              <TerminalIcon size={13} className="nav-animate-icon" />
               {logs?.length || 0} 行
             </span>
             <div className="card-logs-header-actions">
               <button className="card-logs-header-btn" onClick={handleCopyLogs}>
-                {logCopied ? <Check size={12} /> : <Copy size={12} />}
+                {logCopied ? <CheckIcon size={12} className="nav-animate-icon" /> : <CopyIcon size={12} className="nav-animate-icon" />}
               </button>
               <button className="card-logs-header-btn" onClick={handleClearLogs}>
-                <Trash size={12} />
+                <TrashIcon size={12} className="nav-animate-icon" />
               </button>
             </div>
           </div>

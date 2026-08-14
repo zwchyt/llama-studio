@@ -1,5 +1,6 @@
 import React from 'react'
-import { Minus, Square, X, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { Minus, Square, X } from 'lucide-react'
+import { StepBackIcon, StepForwardIcon } from '@animateicons/react/lucide'
 import { useSidebarStore } from '../store/sidebarStore'
 
 export default function TitleBar() {
@@ -9,7 +10,7 @@ export default function TitleBar() {
     <div className="titlebar">
       {/* 侧边栏折叠按钮 */}
       <button className="titlebar-btn titlebar-btn-sidebar" onClick={toggleCollapse} aria-label="切换侧边栏">
-        {collapsed && !hoverExpanded ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+        {collapsed && !hoverExpanded ? <StepForwardIcon size={17} className="nav-animate-icon" /> : <StepBackIcon size={17} className="nav-animate-icon" />}
       </button>
       {/* 可拖拽区域 */}
       <div className="titlebar-drag" />

@@ -58,3 +58,8 @@
   color: var(--text);
   background: var(--hover-bg, rgba(128, 128, 128, 0.15));
 }
+
+.nav-animate-icon {
+  line-height: 0;
+  font-size: 0;
+}

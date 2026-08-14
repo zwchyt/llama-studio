@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import { Search, Copy, Check, Lock } from 'lucide-react'
+import { LockIcon, SearchIcon, CopyIcon, CheckIcon } from '@animateicons/react/lucide'
 import type { CommandParam, Template, TemplateArgs, CommandsSchema } from '../../../shared/types'
 import { iconElements } from '../utils/iconMap'
 import { ENGINE_LABELS, paramSetOf, ALL_ENGINES } from '../utils/engine'
@@ -430,7 +430,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
         <div className="modal-body param-modal-body">
           {disabled && (
             <div className="param-locked-banner">
-              <Lock size={13} style={{ flexShrink: 0, opacity: 0.7 }} />
+              <LockIcon size={13} className="nav-animate-icon" style={{ flexShrink: 0, opacity: 0.7 }} />
               参数已锁定：模型正在运行，请先停止后再修改。
             </div>
           )}
@@ -457,7 +457,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
           </div>
 
           <div className="params-search-box" style={{ margin: '0 20px 16px' }}>
-            <Search size={16} style={{ color: 'var(--text-muted)' }} />
+            <SearchIcon size={16} className="nav-animate-icon" style={{ color: 'var(--text-muted)' }} />
             <input
               type="text"
               className="form-input"
@@ -500,11 +500,11 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
             <span>Preview</span>
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="cmd-copy-all-btn" onClick={handleCopyArgs}>
-                {copiedParam === '__args__' ? <Check size={12} /> : <Copy size={12} />}
+                {copiedParam === '__args__' ? <CheckIcon size={12} className="nav-animate-icon" /> : <CopyIcon size={12} className="nav-animate-icon" />}
                 {copiedParam === '__args__' ? '已复制' : '复制参数'}
               </button>
               <button className="cmd-copy-all-btn" onClick={handleCopyAll}>
-                {copiedParam === '__all__' ? <Check size={12} /> : <Copy size={12} />}
+                {copiedParam === '__all__' ? <CheckIcon size={12} className="nav-animate-icon" /> : <CopyIcon size={12} className="nav-animate-icon" />}
                 {copiedParam === '__all__' ? '已复制' : '复制全部'}
               </button>
             </div>
