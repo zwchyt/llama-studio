@@ -3,7 +3,7 @@ import { create } from 'zustand'
 // ── 应用字体系统：与主题系统同构——通过在根节点挂 data-font 属性切换字体预设，
 // 全部字体规则集中在 fonts.css，不修改任何旧样式文件。
 // 预设仅使用 Windows 自带/常见字体栈，无需下载字体文件，离线可用。
-export type FontThemeId = 'default' | 'system' | 'serif' | 'geek' | 'humanist'
+export type FontThemeId = 'default' | 'system' | 'serif' | 'geek' | 'humanist' | 'kaiti' | 'heiti' | 'fangsong' | 'youyuan' | 'lishu' | 'xingkai'
 
 export interface FontTheme {
   id: FontThemeId
@@ -21,6 +21,12 @@ export const FONT_THEMES: FontTheme[] = [
   { id: 'serif', label: '衬线阅读', desc: 'Georgia 衬线，适合长文阅读', previewStack: "Georgia, 'Times New Roman', 'Noto Serif SC', serif" },
   { id: 'geek', label: '极客等宽', desc: '全界面等宽字体，代码质感', previewStack: "'Cascadia Code', 'JetBrains Mono', Consolas, monospace" },
   { id: 'humanist', label: '人文简约', desc: 'Verdana 人文无衬线，字形开阔', previewStack: "Verdana, 'Segoe UI', Tahoma, sans-serif" },
+  { id: 'kaiti', label: '楷体书写', desc: '楷体书法感，手写自然', previewStack: "'楷体', KaiTi, STKaiti, serif" },
+  { id: 'heiti', label: '黑体现代', desc: '黑体笔画刚劲，现代醒目', previewStack: "'黑体', SimHei, 'Microsoft YaHei UI', sans-serif" },
+  { id: 'fangsong', label: '仿宋典雅', desc: '仿宋工整典雅，字体清秀', previewStack: "'仿宋', FangSong, STFangsong, serif" },
+  { id: 'youyuan', label: '幼圆圆润', desc: '幼圆笔画圆润，亲和可爱', previewStack: "'幼圆', YouYuan, 'Microsoft YaHei UI', sans-serif" },
+  { id: 'lishu', label: '隶书古典', desc: '隶书蚕头燕尾，古朴韵味', previewStack: "'隶书', LiSu, 'STLiti', serif" },
+  { id: 'xingkai', label: '行楷手写', desc: '华文行楷行云流水，手写美感', previewStack: "'华文行楷', STXingkai, '楷体', KaiTi, serif" },
 ]
 
 const STORAGE_KEY = 'llama_studio_font_theme'

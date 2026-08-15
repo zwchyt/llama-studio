@@ -9,8 +9,8 @@ import { ENGINE_LABELS, paramSetOf } from '../utils/engine'
 import { PlayIcon, CircleStopIcon, SettingsIcon, EllipsisVerticalIcon, CopyIcon, TrashIcon, DownloadIcon, GlobeIcon, ServerIcon, TerminalIcon, CheckIcon, MessageSquareIcon, ImageIcon, ScanIcon } from '@animateicons/react/lucide'
 import type { CardState } from '../../../shared/types'
 import ParamsModal from './ParamsModal'
-interface Props { card: CardState }
-export default function ModelCard({ card }: Props) {
+interface Props { card: CardState; style?: React.CSSProperties }
+export default function ModelCard({ card, style }: Props) {
   const { updateCard, setCardStatus, removeCard, backends, activeBackend, commandsSchema, setShowCreateModal, clearModelMetrics } = useStore(
     s => ({ updateCard: s.updateCard, setCardStatus: s.setCardStatus, removeCard: s.removeCard, backends: s.backends, activeBackend: s.activeBackend, commandsSchema: s.commandsSchema, setShowCreateModal: s.setShowCreateModal, clearModelMetrics: s.clearModelMetrics }),
     shallow
@@ -304,7 +304,7 @@ export default function ModelCard({ card }: Props) {
   // 带 --mmproj 的通用视觉对话模型（如 Agents-A1-4B）不算 OCR 模型，保持「原生聊天」。
   const isOcrModel = effectiveParamSet === 'llamacpp' && /ocr/i.test(card.template.name)
   return (
-    <div className={`model-card ${isRunning ? 'running' : ''}`}>
+    <div className={`model-card ${isRunning ? 'running' : ''}`} style={style}>
       <div className="card-header">
         <div
           className={`card-icon${isRunning ? ' running' : ''}`}

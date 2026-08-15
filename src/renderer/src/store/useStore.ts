@@ -61,6 +61,7 @@ function scheduleSaveAgentProjects(p: AgentProject[]): void {
 interface AppStore {
   cards: CardState[]
   backends: BackendVersion[]
+  backendsReady: boolean
   models: ModelFileInfo[]
   imageModels: ModelFileInfo[]
   chatTemplates: ModelFileInfo[]
@@ -99,6 +100,7 @@ interface AppStore {
   setActiveBackend: (b: BackendVersion) => void
   setCommandsSchema: (s: CommandsSchema) => void
   setBackends: (b: BackendVersion[]) => void
+  setBackendsReady: (v: boolean) => void
   setModels: (m: ModelFileInfo[]) => void
   setImageModels: (m: ModelFileInfo[]) => void
   setChatTemplates: (m: ModelFileInfo[]) => void
@@ -235,7 +237,7 @@ interface AppStore {
 // createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
 export const useStore = createWithEqualityFn<AppStore>((set) => ({
-  cards: [], backends: [], models: [], imageModels: [], chatTemplates: [], activeBackend: null,
+  cards: [], backends: [], backendsReady: false, models: [], imageModels: [], chatTemplates: [], activeBackend: null,
   commandsSchema: null, releaseInfo: null, engineReleases: {}, paths: null,
   view: 'cards', showCreateModal: false, editingTemplate: null,
   updateDismissed: false, checkingUpdate: false, downloadProgress: null,
@@ -263,6 +265,7 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   setActiveBackend: (b) => set({ activeBackend: b }),
   setCommandsSchema: (s) => set({ commandsSchema: s }),
   setBackends: (b) => set({ backends: b }),
+  setBackendsReady: (v) => set({ backendsReady: v }),
   setModels: (m) => set({ models: m }),
   setImageModels: (m) => set({ imageModels: m }),
   setChatTemplates: (m) => set({ chatTemplates: m }),

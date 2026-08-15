@@ -14,7 +14,15 @@ import katex from 'katex'
 import katexCssInline from 'katex/dist/katex.min.css?inline'
 import katexJsInline from 'katex/dist/katex.min.js?raw'
 import '../styles/monitoring.css'
-import { Send, Square, X, FileText, Bot, User, Folder, FolderOpen, Plus, Trash2, AlertCircle, Wrench, Loader2, ChevronRight, ChevronDown, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Pencil, Brain, TerminalSquare, Clock, CheckCircle2, XCircle, GitBranch, RotateCcw, SlidersHorizontal, Undo2, Copy, Check, Code2, Bug, Sparkles, Play, ChevronsDownUp, ChevronsUpDown, Quote, Eye, Globe, FileDiff, Database, MessageSquarePlus, Terminal } from 'lucide-react'
+import { Bot, AlertCircle, Wrench, TerminalSquare, CheckCircle2, XCircle, Undo2, Bug, Brain, FileDiff } from 'lucide-react'
+// 顶栏按钮动态图标（@animateicons 无 Panel*/Bug 对应项，用 Chevron 方向图标替代折叠语义）
+import {
+  BrainIcon, LoaderIcon, SlidersHorizontalIcon, ActivityIcon, BookOpenIcon,
+  GitBranchIcon, GlobeIcon, TerminalIcon, ChevronsUpIcon, ChevronsDownIcon, FolderOpenIcon,
+  ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon, FolderIcon, PlusIcon, TrashIcon, PencilIcon, Trash2Icon,
+  UserIcon, QuoteIcon, CircleStopIcon, PlayIcon, EyeIcon, ClockIcon, SparklesIcon, FileTextIcon,
+  RefreshCwIcon, SendIcon, XIcon, CopyIcon, CodeIcon, MessageSquarePlusIcon, CheckIcon
+} from '@animateicons/react/lucide'
 import { useStore } from '../store/useStore'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import hljs from 'highlight.js/lib/common'
@@ -788,8 +796,8 @@ type ThinkChainItem =
   | { kind: 'think'; content: string; durationMs?: number }
   | { kind: 'tools'; toolCalls: NonNullable<AgentMessage['toolCalls']> }
 
-const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, durationMs, items, onPreviewFile, canUndoFor, onUndo, cardDefaultOpen }: {
-  value: string; closed: boolean; isStreaming?: boolean; durationMs?: number
+const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, msgStreaming, bodyAppeared, durationMs, items, onPreviewFile, canUndoFor, onUndo, cardDefaultOpen }: {
+  value: string; closed: boolean; isStreaming?: boolean; msgStreaming?: boolean; bodyAppeared?: boolean; durationMs?: number
   // 收纳在本思考块展开体内的链内元素（首段思考 value 之后的交错序列：
   // think 续段 = 后续思考文本；tools = 工具卡组）。无则思考块保持纯文本。
   // 配套渲染回调与 ToolCallGroup 一致（文件预览跳转 / 撤销），由调用方透传。
@@ -813,19 +821,40 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
   const chainToolCalls = (items ?? []).flatMap(it => (it.kind === 'tools' ? it.toolCalls : []))
   const hasLiveTools = !!chainToolCalls.some(t => (t.status ?? 'pending') !== 'done')
   const toolCount = chainToolCalls.length
+  // 思考链累计思考时长 = 首段 durationMs + 链内各思考续段 durationMs 之和。
+  // 头部「思考了 X 秒」与「思考中 X 秒」都用它（+ 当前未定格段的实时 elapsed），
+  // 保证时间跨思考段/工具阶段连续增长、不回退：是整条思考链的思考总时间，而非首段时长。
+  const chainTotalMs = (durationMs ?? 0) + (items ?? []).reduce(
+    (acc, it) => acc + (it.kind === 'think' ? (it.durationMs ?? 0) : 0),
+    0
+  )
   const bodyRef = useRef<HTMLDivElement>(null)
 
-  // 「思考中」实时计时：thinking 为真时记录起始时间并每 100ms 刷新已用毫秒，
-  // 供头部显示「思考中 X 秒」并随时间跳动；结束后由 durationMs（持久化片段）接管定格。
+  // 「思考链总计时」：头部时间 = 已定格思考段累计 + 已固化工具阶段 + 当前阶段实时读秒。
+  // 阶段划分：think（真流式思考中）/ tools（链内工具执行中、消息仍流式）/ idle（链结束）。
+  // tools 阶段实时读秒，阶段结束时把耗时固化进 frozenToolsRef——时间跨思考段/工具执行
+  // 连续增长、不回退：工具调用期间头部时间继续走，不再停止。
   const [elapsedMs, setElapsedMs] = useState(0)
-  const thinkStartRef = useRef<number | null>(null)
+  const phaseStartRef = useRef<number | null>(null)
+  const frozenToolsRef = useRef(0)
+  const phase: 'think' | 'tools' | 'idle' = isStreaming ? 'think' : (msgStreaming && hasLiveTools) ? 'tools' : 'idle'
+  const phaseRef = useRef<'think' | 'tools' | 'idle'>('idle')
   useEffect(() => {
-    if (!thinking) { thinkStartRef.current = null; return }
-    if (thinkStartRef.current == null) thinkStartRef.current = Date.now()
-    setElapsedMs(Date.now() - thinkStartRef.current)
-    const timer = setInterval(() => setElapsedMs(Date.now() - (thinkStartRef.current ?? Date.now())), 100)
+    const prev = phaseRef.current
+    phaseRef.current = phase
+    // 退出 tools 阶段：固化该阶段已读秒时长（思考段累计在 chainTotalMs，工具段在此固化）
+    if (prev === 'tools' && phase !== 'tools' && phaseStartRef.current != null) {
+      frozenToolsRef.current += Date.now() - phaseStartRef.current
+    }
+    if (phase === 'idle') { phaseStartRef.current = null; setElapsedMs(0); return }
+    if (phase !== prev) { phaseStartRef.current = Date.now(); setElapsedMs(0) }
+    if (phaseStartRef.current == null) phaseStartRef.current = Date.now()
+    setElapsedMs(Date.now() - phaseStartRef.current)
+    const timer = setInterval(() => setElapsedMs(Date.now() - (phaseStartRef.current ?? Date.now())), 100)
     return () => clearInterval(timer)
-  }, [thinking])
+  }, [phase])
+  // 头部展示的总时长：idle 时定格（思考段累计 + 固化工具时长），think/tools 时实时跳动
+  const headMs = chainTotalMs + frozenToolsRef.current + (phase === 'idle' ? 0 : elapsedMs)
 
   // 流式期间对 Markdown 渲染做节流（参考原生聊天）：用 setInterval 固定间隔同步渲染内容，
   // 避免每个 token 都触发长文本 + KaTeX 重解析。注意必须用 setInterval 而非「重置型
@@ -915,30 +944,35 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
     }
   }
 
+  // 头部「思考中」状态判定：消息仍流式 且 正文尚未出现（正文 = 思考链终结信号）时，
+  // 无论当前在思考、工具执行还是段间间隙，统一保持「思考中」+ 时间跳动；
+  // 不再随 thinkDone（思考段闭合）细粒度切「思考过程」↔「思考中」，消除链内状态闪变。
+  const showThinking = !!msgStreaming && !bodyAppeared
   const wasStopped = !thinking && !closed
   return (
     <div className={`agent-think ${thinking ? 'thinking' : ''} ${expanded ? 'expanded' : ''} ${wasStopped ? 'stopped' : ''}`}>
       <button className="agent-think-toggle" onClick={handleToggle}>
-        {thinking ? (
+        {showThinking ? (
           <span className="agent-think-status">
             {/* 思考中：像素网格（与首 token 前 ThinkingLoader 同一视觉，全程一致）；
                 流式结束后的「思考过程/已中断」折叠态仍用大脑图标 */}
             <ThinkGrid /> 思考中
-            <span className="agent-think-dur">{fmtThinkDur(elapsedMs)}</span>
-            <ChevronRight size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
+            {/* 链总时长实时跳动（含固化工具时长）：思考链未结束前一直显示并持续增长 */}
+            <span className="agent-think-dur">{fmtThinkDur(headMs)}</span>
+            <ChevronRightIcon size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
           </span>
         ) : wasStopped ? (
           <span className="agent-think-status">
             <Brain size={13} className="agent-think-brain" /> 思考已中断
             {toolCount > 0 && <span className="agent-think-tools-badge">{toolCount} 次工具调用</span>}
-            <ChevronRight size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
+            <ChevronRightIcon size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
           </span>
         ) : (
           <span className="agent-think-status">
             <Brain size={13} className="agent-think-brain" /> 思考过程
-            {durationMs != null && <span className="agent-think-dur">思考了 {fmtThinkDur(durationMs)}</span>}
+            {headMs > 0 && <span className="agent-think-dur">思考了 {fmtThinkDur(headMs)}</span>}
             {toolCount > 0 && <span className="agent-think-tools-badge">{toolCount} 次工具调用</span>}
-            <ChevronRight size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
+            <ChevronRightIcon size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
           </span>
         )}
       </button>
@@ -948,13 +982,23 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
 	              流式期间父组件已不会再高频重渲染（store 节流 + 模块级 memo），
 	              因此过渡期间 Markdown 不会被重解析，不会卡。 */}
           <div className="agent-think-body">
+            {durationMs != null && (
+              <div className="agent-think-time">Thought: {formatDuration(durationMs)}</div>
+            )}
             {renderValue ? <AgentMarkdown content={renderValue} /> : '（空）'}
             {/* 链内元素（思考续段 / 工具卡组）按模型时间线交错排列在思考文本下方，
                 随思考链展开/收起；调用窗口由调用方保证有 items 时必传渲染回调 */}
             {items && items.length > 0 && items.map((it, idx) => (
               <div key={idx} className="agent-think-item">
                 {it.kind === 'think'
-                  ? <AgentMarkdown content={it.content} />
+                  ? (
+                    <>
+                      {it.durationMs != null && (
+                        <div className="agent-think-time">Thought: {formatDuration(it.durationMs)}</div>
+                      )}
+                      <AgentMarkdown content={it.content} />
+                    </>
+                  )
                   : (
                     <ToolCallGroup
                       toolCalls={it.toolCalls}
@@ -987,7 +1031,7 @@ const HistorySummaryBubble = React.memo(function HistorySummaryBubble({ summary,
     <div className={`agent-think agent-history-summary ${expanded ? 'expanded' : ''}`}>
       <button className="agent-think-toggle" onClick={handleToggle}>
         <span className="agent-think-status"><Brain size={12} /> 历史摘要（已压缩 {count} 条早期消息）</span>
-        <ChevronRight size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
+        <ChevronRightIcon size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
       </button>
       {visible && (
         <div className={`agent-think-body agent-think-summary-body ${expanded ? 'open' : ''}`}>
@@ -1078,7 +1122,7 @@ const MemoryPanel = React.memo(function MemoryPanel({ dir }: { dir: string }) {
             <span className="agent-mem-conf" title="置信度">{Math.round(e.confidence * 100)}%</span>
             {e.contradictions > 0 && <span className="agent-mem-contra" title="工具实测与该记忆矛盾的次数，累计 2 次自动归档">矛盾 ×{e.contradictions}</span>}
             <span className="agent-mem-time">{fmtDate(e.updatedAt)}</span>
-            <button className="agent-mem-archive" title="归档（不再注入提示词，保留存档）" onClick={() => archive(e.id)}><Trash2 size={11} /></button>
+            <button className="agent-mem-archive" title="归档（不再注入提示词，保留存档）" onClick={() => archive(e.id)}><Trash2Icon size={11} /></button>
           </div>
           <div className="agent-mem-content">{e.content}</div>
           {e.anchorPath && <div className="agent-mem-anchor" title={e.anchorSymbol ? `锚点符号：${e.anchorSymbol}` : undefined}>锚点：{e.anchorPath}</div>}
@@ -1087,7 +1131,7 @@ const MemoryPanel = React.memo(function MemoryPanel({ dir }: { dir: string }) {
       {archived.length > 0 && (
         <>
           <button className="agent-mem-archived-toggle" onClick={() => setShowArchived(v => !v)}>
-            <ChevronRight size={11} className={`agent-tool-chev ${showArchived ? 'open' : ''}`} /> 已归档 {archived.length} 条
+            <ChevronRightIcon size={11} className={`agent-tool-chev ${showArchived ? 'open' : ''}`} /> 已归档 {archived.length} 条
           </button>
           {showArchived && archived.map(e => (
             <div className="agent-mem-row archived" key={e.id}>
@@ -1130,7 +1174,7 @@ const DebugTurnRow = React.memo(function DebugTurnRow({ t }: { t: DebugTurn }) {
         </div>
       )}
       <button className="agent-debug-payload-toggle" onClick={() => setOpen(v => !v)}>
-        <ChevronRight size={11} className={`agent-tool-chev ${open ? 'open' : ''}`} /> {open ? '收起请求 payload' : '展开请求 payload'}
+        <ChevronRightIcon size={11} className={`agent-tool-chev ${open ? 'open' : ''}`} /> {open ? '收起请求 payload' : '展开请求 payload'}
       </button>
       {open && <pre className="agent-debug-payload">{t.requestPayload}</pre>}
     </div>
@@ -1397,7 +1441,7 @@ const ToolResultView = React.memo(function ToolResultView({ result, truncated, t
           结果{truncated ? `（已截断，共 ${total} 字符）` : `（共 ${lineCount} 行）`}
         </span>
         <button className="agent-tool-subtoggle" onClick={() => setExpanded(v => !v)}>
-          <ChevronRight size={11} className={`agent-tool-chev ${expanded ? 'open' : ''}`} />
+          <ChevronRightIcon size={11} className={`agent-tool-chev ${expanded ? 'open' : ''}`} />
           {expanded ? '收起' : (isLong ? `展开（显示前 12 / 共 ${lineCount} 行）` : (isMulti ? `展开（显示首行 / 共 ${lineCount} 行）` : '展开'))}
         </button>
       </div>
@@ -1539,6 +1583,10 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
 
   return (
     <>
+      {/* 每个工具卡的独立时间标签：基于该工具执行时长（elapsed），卡片上方醒目展示 */}
+      {done && tc.durationMs != null && (
+        <div className="agent-tool-time">Tool: {formatDuration(tc.durationMs)}</div>
+      )}
       <div className={`agent-tool-call tool-${tc.name.toLowerCase()}${failed ? ' failed' : ''}${executing ? ' executing' : ''}${pending ? ' pending' : ''}`}>
         <div className={`agent-tool-call-head${readNameOnly ? ' readonly' : ''}`} onClick={readNameOnly ? undefined : handleToggle} style={readNameOnly ? { cursor: 'default' } : undefined}>
           {/* hover 换脸：主图标淡出、chevron 旋转淡入，提示行可点击展开（借 ToolChips 交互，布局不变）；
@@ -1546,7 +1594,7 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
           {readNameOnly ? <Icon size={13} /> : (
             <span className="agent-tool-call-icon">
               <Icon size={13} className="agent-tool-call-icon-main" />
-              <ChevronRight size={12} className="agent-tool-call-icon-chev" />
+              <ChevronRightIcon size={12} className="agent-tool-call-icon-chev" />
             </span>
           )}
           <span className="agent-tool-call-name">{tc.name}</span>
@@ -1567,14 +1615,14 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
               </span>
             )}
             {executing ? (
-              <span className="agent-tool-call-status run"><Loader2 size={12} className="spin" /> {TOOL_METAS[tc.name]?.verb || '执行中'}</span>
+              <span className="agent-tool-call-status run"><LoaderIcon size={12} className="spin" /> {TOOL_METAS[tc.name]?.verb || '执行中'}</span>
             ) : awaiting ? (
-              <span className="agent-tool-call-status confirm"><Clock size={12} /> 待确认</span>
+              <span className="agent-tool-call-status confirm"><ClockIcon size={12} /> 待确认</span>
             ) : pending ? (
               // 参数流式生成中（toolcall_start 后 args 为空）显示「参数生成中」；
               // 参数完整待执行时显示「待执行」——卡片从参数生成起就可见（参考项目同款）
               <span className="agent-tool-call-status pending">
-                {tc.args ? <Clock size={12} /> : <Loader2 size={12} className="spin" />}
+                {tc.args ? <ClockIcon size={12} /> : <LoaderIcon size={12} className="spin" />}
                 {tc.args ? '待执行' : '参数生成中'}
               </span>
             ) : failed ? (
@@ -1582,20 +1630,15 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
             ) : (
               <span className="agent-tool-call-status ok"><CheckCircle2 size={12} /> 完成</span>
             )}
-            {done && tc.durationMs != null && (
-              <span className="agent-tool-call-dur">
-                <Clock size={10} /> {formatDuration(tc.durationMs)}
-              </span>
-            )}
             {canRestore && (
               <button className="agent-tool-undo" title="撤销仅本次运行内有效，重启应用后不可用" onClick={(e) => { e.stopPropagation(); onUndo?.() }}>
                 <Undo2 size={12} /> 恢复
               </button>
             )}
             {tc.restored && (
-              <span className="agent-tool-restored"><Check size={12} /> 已恢复</span>
+              <span className="agent-tool-restored"><CheckIcon size={12} /> 已恢复</span>
             )}
-            {!readNameOnly && <ChevronRight size={12} className={`agent-tool-chev ${expanded ? 'open' : ''}`} />}
+            {!readNameOnly && <ChevronRightIcon size={12} className={`agent-tool-chev ${expanded ? 'open' : ''}`} />}
           </span>
         </div>
         {visible && !readNameOnly && (
@@ -1692,7 +1735,7 @@ const FileChangeSummary = React.memo(function FileChangeSummary({ toolCalls, onO
   return (
     <div className={`agent-file-changes${expanded ? ' expanded' : ''}`}>
       <div className="agent-file-changes-head" onClick={() => setExpanded(v => !v)} role="button" tabIndex={0} title={expanded ? '收起文件变更' : '展开文件变更'} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(v => !v) } }}>
-        <ChevronRight size={12} className={`agent-file-changes-chev${expanded ? ' open' : ''}`} />
+        <ChevronRightIcon size={12} className={`agent-file-changes-chev${expanded ? ' open' : ''}`} />
         {/* 文件差异图标：与「变更」语义对应，强化卡片身份 */}
         <FileDiff size={13} className="agent-file-changes-head-icon" />
         <span>{files.length} 个文件已变更</span>
@@ -1729,7 +1772,7 @@ const FileChangeSummary = React.memo(function FileChangeSummary({ toolCalls, onO
                   </button>
                   {/* 每行右侧「审查」：审查该文件的改动（跳变更面板定位该文件 diff） */}
                   <button className="agent-file-changes-review" title="在变更面板中审查该文件的改动" onClick={() => onOpenChange(resolveWorkspacePath(f.path))}>
-                    <GitBranch size={11} /> 审查
+                    <GitBranchIcon size={11} /> 审查
                   </button>
                 </div>
               )
@@ -1780,6 +1823,41 @@ const CODE_EXT = new Set([
 ])
 const MD_EXT = new Set(['md', 'markdown', 'mdx', 'mkd', 'mdwn', 'mkdn', 'text', 'txt', 'rst', 'adoc', 'asciidoc', 'ronn'])
 const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico', 'avif'])
+
+interface AniIconHandle {
+  startAnimation: () => void
+  stopAnimation: () => void
+}
+
+/** 顶栏按钮（动态图标联动版）：鼠标落在按钮任意区域——图标/名称/留白——都通过 ref 触发图标动画；
+ *  animateicons 默认只在图标自身 hover 时动画，名称与留白区域 hover 无响应，此处统一提升到按钮级。 */
+function TopbarBtn({ icon: Icon, size = 12, btnRef, baseClass = 'agent-code-topbar-btn', className, active, onClick, title, children, iconClassName }: {
+  icon: React.ElementType
+  size?: number
+  btnRef?: React.Ref<HTMLButtonElement>
+  baseClass?: string
+  className?: string
+  active?: boolean
+  onClick?: () => void
+  title?: string
+  children?: React.ReactNode
+  iconClassName?: string
+}) {
+  const iconRef = useRef<AniIconHandle>(null)
+  return (
+    <button
+      ref={btnRef}
+      className={`${baseClass}${active ? ' active' : ''}${className ? ' ' + className : ''}`}
+      onClick={onClick}
+      title={title}
+      onMouseEnter={() => iconRef.current?.startAnimation()}
+      onMouseLeave={() => iconRef.current?.stopAnimation()}
+    >
+      <Icon ref={iconRef as never} size={size} className={iconClassName} />
+      {children}
+    </button>
+  )
+}
 
 export default function AgentCodeView() {
   const cards = useStore(s => s.cards)
@@ -2289,6 +2367,13 @@ export default function AgentCodeView() {
   const [treeOpen, setTreeOpen] = useState(true)
   // 右侧面板模式：files=文件树+预览 / browser=内嵌浏览器 / terminal=内嵌终端
   const [rightPanelMode, setRightPanelMode] = useState<'files' | 'browser' | 'terminal'>('files')
+  // 终端面板：首次真正切换到 terminal 模式后才挂载并常驻——挂载必然发生在可见容器内
+  // （xterm open 于 display:none 容器会拿到失真尺寸）；此后面板级切换只切 CSS hidden，
+  // 不卸载 xterm 实例，切回时不重建、不触发 replay 回放大段 backlog（避免界面卡顿）
+  const [terminalMounted, setTerminalMounted] = useState(false)
+  useEffect(() => {
+    if (rightPanelMode === 'terminal') setTerminalMounted(true)
+  }, [rightPanelMode])
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [contextModalOpen, setContextModalOpen] = useState(false)
   const [auditOpen, setAuditOpen] = useState(false)  // 操作审计面板开关
@@ -2768,8 +2853,14 @@ export default function AgentCodeView() {
 
   // 进入 Agent Code 界面即预热 pi SDK 运行时（提前加载 pi 系 ESM 模块 + ModelRuntime，
   // 首次对话免一次性初始化等待）。失败静默：正常创建路径会重新初始化。
+  // 注意：延迟 4s 执行——pi 包动态 import 的模块求值会同步阻塞 main 进程事件循环
+  // （实测约 1.1s），若在启动早期执行会挤占 listTemplates 等首界面 IPC，导致模型卡片
+  // 延迟显示。启动 4s 后首界面早已渲染完成，此时的阻塞用户无感知。
   useEffect(() => {
-    window.api?.piAgent?.warmup?.().catch(() => { })
+    const t = setTimeout(() => {
+      window.api?.piAgent?.warmup?.().catch(() => { })
+    }, 4000)
+    return () => clearTimeout(t)
   }, [])
 
   const updateProject = useCallback((id: string, upd: Partial<AgentProject>) => {
@@ -3544,8 +3635,15 @@ export default function AgentCodeView() {
     // 思考/正文增量切分为 think/text 段、工具声明切分为 tools 段（只记 id，构建时从
     // 最新 toolCalls 映射对象 —— 状态/结果更新能实时反映，避免缓存旧引用卡在 pending）。
     // 事件顺序即真实时间线：思考 → 工具 → 思考 → 工具 → … → 正文，流式与完成态一致交错。
-    type LiveSeg = { kind: 'tools'; ids: string[] } | { kind: 'think' | 'text'; content: string }
+    // 思考段计时：startMs = 标签开时刻；durationMs 在标签闭合/中断收尾时定格，
+    // 供链内每个思考段上方的独立时间标签展示（Thought: 515ms）。
+    type ThinkLiveSeg = { kind: 'think'; content: string; startMs?: number; durationMs?: number }
+    type LiveSeg = { kind: 'tools'; ids: string[] } | ThinkLiveSeg | { kind: 'text'; content: string }
     const liveSegs: LiveSeg[] = []
+    // 当前打开的思考段引用：用引用而非「最后一个段」定位——thinking_end 可能迟到于
+    // 工具声明（工具段已插入），close 时按引用定格，不受中间插入影响
+    // （此前按 last 定格：首段思考后紧跟工具时永远定不到格，首个思考过程无时间统计的根因）。
+    let curThinkSeg: ThinkLiveSeg | null = null
     // 工具执行开始时间戳（id → ms）：Write/Edit 等本地 IO 工具执行可能不足一帧（<16ms），
     // executing 徽标一闪而过肉眼不可见；结束时若执行时长不足 MIN_EXEC_DISPLAY_MS，
     // 延迟置 done，保证「写入中/编辑中」状态至少可见一瞬（最小展示时长）。
@@ -3560,7 +3658,9 @@ export default function AgentCodeView() {
         ? { kind: 'tools', toolCalls: s.ids
             .map(id => toolCalls.find(t => t.id === id))
             .filter((t): t is NonNullable<AgentMessage['toolCalls']>[number] => !!t) }
-        : { kind: s.kind, content: s.content })
+        : s.kind === 'think'
+          ? { kind: 'think', content: s.content, ...(s.durationMs != null ? { durationMs: s.durationMs } : {}) }
+          : { kind: 'text', content: s.content })
     // 把含 <think>/</think> 的文本增量按边界追加到 liveSegs（跨增量维护 think 开闭状态）
     const appendTextDelta = (delta: string): void => {
       const parts: Array<{ text: string; tag: 'open' | 'close' | null }> = []
@@ -3576,18 +3676,31 @@ export default function AgentCodeView() {
       if (cursor < delta.length) parts.push({ text: delta.slice(cursor), tag: null })
       for (const p of parts) {
         if (p.tag === 'open') {
-          if (!thinkOpen) { liveSegs.push({ kind: 'think', content: '' }); thinkOpen = true }
+          if (!thinkOpen) {
+            const seg: ThinkLiveSeg = { kind: 'think', content: '', startMs: Date.now() }
+            liveSegs.push(seg)
+            curThinkSeg = seg
+            thinkOpen = true
+          }
           // 思考开始：思考未结束
           setThinkDone(false)
         } else if (p.tag === 'close') {
           thinkOpen = false
+          // 思考闭合：定格该段的思考耗时（开→闭壁钟），供段上方时间标签展示
+          if (curThinkSeg && curThinkSeg.startMs != null && curThinkSeg.durationMs == null) {
+            curThinkSeg.durationMs = Date.now() - curThinkSeg.startMs
+          }
+          curThinkSeg = null
           // 思考闭合：思考结束（后续若无新思考增量，思考块收起不转圈）
           setThinkDone(true)
         } else if (p.text) {
           if (thinkOpen) {
-            const last = liveSegs[liveSegs.length - 1]
-            if (last && last.kind === 'think') last.content += p.text
-            else liveSegs.push({ kind: 'think', content: p.text })
+            if (curThinkSeg) curThinkSeg.content += p.text
+            else {
+              const seg: ThinkLiveSeg = { kind: 'think', content: p.text, startMs: Date.now() }
+              liveSegs.push(seg)
+              curThinkSeg = seg
+            }
             // 思考增量：思考进行中
             setThinkDone(false)
           } else {
@@ -3599,6 +3712,17 @@ export default function AgentCodeView() {
           }
         }
       }
+    }
+    // 中断/整轮收尾：遍历所有未闭合的思考段补上部分时长（用户停止、出错中断时定格到当前时刻），
+    // 使「思考已中断」的思考段也能显示截止到停止的耗时；幂等，已定格的不再覆盖。
+    const closeOpenThink = (): void => {
+      for (const s of liveSegs) {
+        if (s.kind === 'think' && s.startMs != null && s.durationMs == null) {
+          s.durationMs = Date.now() - s.startMs
+        }
+      }
+      curThinkSeg = null
+      thinkOpen = false
     }
     const client = new PiAgentClient({
       onTextDelta: (delta) => {
@@ -3618,6 +3742,9 @@ export default function AgentCodeView() {
         setCurToolName(tc.name)
         // 工具声明 = 思考已结束（Reasonix 同款：tool dispatch 结束模型推理阶段）
         setThinkDone(true)
+        // 工具声明 = 思考链阶段到此为止：立即定格未闭合的思考段（pi 的 thinking_end
+        // 可能迟到于工具声明；否则工具执行期间头部思考总时间因未定格而消失/回退）
+        closeOpenThink()
         // 幂等合并：toolcall_start（参数流式开始）先创建卡（args 空 → 显示「参数生成中」），
         // toolcall_end（参数完整）再更新 args；同一工具只保留一张卡、一个工具段。
         let tIdx = toolCalls.findIndex(t => t.id === tc.id)
@@ -3710,7 +3837,7 @@ export default function AgentCodeView() {
           let i = toolCalls.findIndex(t => t.id === id)
           if (i < 0 && name) i = toolCalls.findIndex(t => t.name === name && t.status === 'executing')
           if (i >= 0) {
-            toolCalls[i] = { ...toolCalls[i]!, status: 'done', result: resultText, failed: isError }
+            toolCalls[i] = { ...toolCalls[i]!, status: 'done', result: resultText, failed: isError, durationMs: elapsed === Number.MAX_SAFE_INTEGER ? 0 : elapsed }
             commit({ toolCalls: [...toolCalls], segments: buildSegs() })
           }
         }
@@ -3771,6 +3898,7 @@ export default function AgentCodeView() {
         commit({ content: '(模型未返回内容)' })
       } else {
         // 本轮结束：segments 已是实时时间线顺序（buildSegs），流式/完成态一致交错
+        closeOpenThink()
         commit({ content: streamedText, toolCalls: [...toolCalls], segments: buildSegs() })
       }
       return { errored: false, aborted: abortRef.current.aborted }
@@ -3785,9 +3913,10 @@ export default function AgentCodeView() {
       setStreamKind('idle')
       setCurToolName('')
       setThinkDone(true)
-      // 停止/失败兜底：未完成工具（待执行/执行中）标记为已完成（失败），
-      // 避免卡片永远停在「待执行/写入中」——参考项目同款：中止时工具卡收敛为终态
-      if (toolCalls.some(t => (t.status ?? 'pending') !== 'done')) {
+// 停止/失败兜底：未完成工具（待执行/执行中）标记为已完成（失败），
+        // 避免卡片永远停在「待执行/写入中」——参考项目同款：中止时工具卡收敛为终态
+        closeOpenThink()
+        if (toolCalls.some(t => (t.status ?? 'pending') !== 'done')) {
         for (const t of toolCalls) {
           if ((t.status ?? 'pending') !== 'done') {
             t.status = 'done'
@@ -4147,8 +4276,8 @@ export default function AgentCodeView() {
 
   // 欢迎页建议：模型已启动则直接发送，否则填入输入框待手动发送
   const AGENT_SUGGESTIONS: { text: string; icon: React.ReactNode }[] = [
-    { text: '讲讲这个代码库的架构', icon: <Code2 size={13} /> },
-    { text: '总结最近的 git 改动', icon: <GitBranch size={13} /> },
+    { text: '讲讲这个代码库的架构', icon: <CodeIcon size={13} /> },
+    { text: '总结最近的 git 改动', icon: <GitBranchIcon size={13} /> },
     { text: '智能体的运行主循环在哪，它做了什么？', icon: <Bot size={13} /> },
     { text: '找出并修复这个项目里的一个 bug', icon: <Bug size={13} /> },
   ]
@@ -4304,6 +4433,8 @@ export default function AgentCodeView() {
           // 工具声明/正文出现后 thinkDone=true：思考框必然收起，不会与工具卡并存转圈
           closed={!streaming || thinkDone}
           isStreaming={streaming && !thinkDone}
+          msgStreaming={streaming}
+          bodyAppeared={textContents.length > 0}
           durationMs={chainItems[0].durationMs}
           items={chainItems.slice(1)}
           onPreviewFile={openPreview}
@@ -4336,7 +4467,7 @@ export default function AgentCodeView() {
   // 「已停止生成」徽标（三个渲染分支共用）
   const stoppedBadge = (
     <div className="chat-msg-stopped-badge">
-      <Square size={10} />
+      <CircleStopIcon size={10} />
       <span>已停止生成</span>
     </div>
   )
@@ -4347,7 +4478,7 @@ export default function AgentCodeView() {
       <div className="agent-code-topbar">
         <div className="agent-code-topbar-left">
           <button className="chat-collapse-btn" onClick={() => setSidebarOpen(v => !v)} style={{ marginTop: 0, width: 28, height: 28 }}>
-            {sidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+            {sidebarOpen ? <ChevronLeftIcon size={14} /> : <ChevronRightIcon size={14} />}
           </button>
           <span className="agent-code-topbar-title">{activeSession?.title || '新会话'}</span>
         </div>
@@ -4368,25 +4499,27 @@ export default function AgentCodeView() {
           {/* Prefill 进度条：复用「模型运行数据」面板的同一数据源（modelMetrics[].prefillProgress），
               自订阅指标，仅在 prefill 进行中（pp < 1）显示，完成后自动消失。 */}
           <AgentPrefillBar />
-          <button
-            ref={condenseBtnRef}
-            className={`agent-code-topbar-btn ${condenseOpen ? 'active' : ''}`}
+          <TopbarBtn
+            btnRef={condenseBtnRef}
+            active={condenseOpen}
             onClick={() => setCondenseOpen(v => !v)}
-          >
-            {condensing ? <Loader2 size={12} className="spin" /> : <Brain size={12} />} 压缩历史
-          </button>
-          <button ref={promptBtnRef} className={`agent-code-topbar-btn ${promptModalOpen ? 'active' : ''}`} onClick={openPromptModal}><SlidersHorizontal size={12} /> 提示词</button>
-          <button ref={auditBtnRef} className={`agent-code-topbar-btn ${auditOpen ? 'active' : ''}`} onClick={() => setAuditOpen(v => !v)}><TerminalSquare size={12} /> 审计</button>
-          <button ref={debugBtnRef} className={`agent-code-topbar-btn ${debugOpen ? 'active' : ''}`} onClick={() => setDebugOpen(v => !v)}><Bug size={12} /> 调试</button>
-          <button ref={memoryBtnRef} className={`agent-code-topbar-btn ${memoryOpen ? 'active' : ''}`} onClick={() => setMemoryOpen(v => !v)}><Database size={12} /> 记忆</button>
-          <button className={`agent-code-topbar-btn ${activeTabPath === GIT_DIFF_TAB ? 'active' : ''}`} onClick={toggleGitDiff}><GitBranch size={12} /> 变更</button>
-          <button className={`agent-code-topbar-btn ${rightPanelMode === 'browser' ? 'active' : ''}`} onClick={() => { setRightPanelMode(m => m === 'browser' ? 'files' : 'browser'); if (!treeOpen) setTreeOpen(true) }}><Globe size={12} /> 浏览器</button>
-          <button className={`agent-code-topbar-btn ${rightPanelMode === 'terminal' ? 'active' : ''}`} onClick={() => { setRightPanelMode(m => m === 'terminal' ? 'files' : 'terminal'); if (!treeOpen) setTreeOpen(true) }}><Terminal size={12} /> 终端</button>
-          <button className="agent-code-topbar-btn" onClick={() => setToolCardsExpanded(!toolCardExpandedDefault)} title={toolCardExpandedDefault ? '折叠所有工具卡片' : '展开所有工具卡片'}>
-            {toolCardExpandedDefault ? <ChevronsDownUp size={12} /> : <ChevronsUpDown size={12} />} 工具卡
-          </button>
+            icon={condensing ? LoaderIcon : BrainIcon}
+            iconClassName={condensing ? 'spin' : undefined}
+          >压缩历史</TopbarBtn>
+          <TopbarBtn btnRef={promptBtnRef} active={promptModalOpen} onClick={openPromptModal} icon={SlidersHorizontalIcon}>提示词</TopbarBtn>
+          <TopbarBtn btnRef={auditBtnRef} active={auditOpen} onClick={() => setAuditOpen(v => !v)} icon={ActivityIcon}>审计</TopbarBtn>
+          <TopbarBtn btnRef={debugBtnRef} active={debugOpen} onClick={() => setDebugOpen(v => !v)} icon={Bug}>调试</TopbarBtn>
+          <TopbarBtn btnRef={memoryBtnRef} active={memoryOpen} onClick={() => setMemoryOpen(v => !v)} icon={BookOpenIcon}>记忆</TopbarBtn>
+          <TopbarBtn active={activeTabPath === GIT_DIFF_TAB} onClick={toggleGitDiff} icon={GitBranchIcon}>变更</TopbarBtn>
+          <TopbarBtn active={rightPanelMode === 'browser'} onClick={() => { setRightPanelMode(m => m === 'browser' ? 'files' : 'browser'); if (!treeOpen) setTreeOpen(true) }} icon={GlobeIcon}>浏览器</TopbarBtn>
+          <TopbarBtn active={rightPanelMode === 'terminal'} onClick={() => { setRightPanelMode(m => m === 'terminal' ? 'files' : 'terminal'); if (!treeOpen) setTreeOpen(true) }} icon={TerminalIcon}>终端</TopbarBtn>
+          <TopbarBtn
+            onClick={() => setToolCardsExpanded(!toolCardExpandedDefault)}
+            title={toolCardExpandedDefault ? '折叠所有工具卡片' : '展开所有工具卡片'}
+            icon={toolCardExpandedDefault ? ChevronsUpIcon : ChevronsDownIcon}
+          >工具卡</TopbarBtn>
           <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} style={{ marginTop: 0, width: 28, height: 28 }}>
-            {treeOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+            {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
           </button>
         </div>
       </div>
@@ -4394,9 +4527,7 @@ export default function AgentCodeView() {
       <div className={`agent-code-body ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
         <div className="agent-code-sidebar-collapser">
           <div className="agent-code-sidebar">
-            <button className="agent-code-session-new-btn" onClick={createProject}>
-              <FolderOpen size={14} /> 新建项目
-            </button>
+            <TopbarBtn baseClass="agent-code-session-new-btn" icon={FolderOpenIcon} size={14} onClick={createProject}>新建项目</TopbarBtn>
             <div className="agent-code-sidebar-header"><span>项目</span></div>
             <div className="agent-code-session-list">
               {projects.map(p => (
@@ -4422,18 +4553,18 @@ export default function AgentCodeView() {
                       />
                     ) : (
                       <>
-                        <Folder size={13} className="agent-code-project-icon" />
+                        <FolderIcon size={14} className="agent-code-project-icon" />
                         <span className="agent-code-session-title">{p.title}</span>
                       </>
                     )}
                     <span className="ac-icon-btn">
-                      <button className="agent-code-session-del" onClick={e => { e.stopPropagation(); changeProjectDir(p.id) }}><FolderOpen size={11} /></button>
+                      <button className="agent-code-session-del" onClick={e => { e.stopPropagation(); changeProjectDir(p.id) }}><FolderOpenIcon size={13} /></button>
                     </span>
                     <span className="ac-icon-btn">
-                      <button className="agent-code-session-del" onClick={e => { e.stopPropagation(); deleteProject(p.id) }}><Trash2 size={11} /></button>
+                      <button className="agent-code-session-del" onClick={e => { e.stopPropagation(); deleteProject(p.id) }}><TrashIcon size={13} /></button>
                     </span>
                     <span className="ac-icon-btn">
-                      <button className="agent-code-session-add" onClick={e => { e.stopPropagation(); addSessionToProject(p.id) }}><Plus size={11} /></button>
+                      <button className="agent-code-session-add" onClick={e => { e.stopPropagation(); addSessionToProject(p.id) }}><PlusIcon size={13} /></button>
                     </span>
                   </div>
                   <div className={`agent-code-child-wrap ${p.expanded ? 'open' : ''}`} ref={el => { projectWrapRefs.current.set(p.id, el) }}>
@@ -4454,8 +4585,8 @@ export default function AgentCodeView() {
                             <span className="agent-code-session-title">{s.title}</span>
                           )}
                           <span className="ac-icon-btn">
-                            <button className="agent-code-session-rename" onClick={e => { e.stopPropagation(); startSessRename(s.id, s.title) }}><Pencil size={10} /></button>
-                            <button className="agent-code-session-del" onClick={e => { e.stopPropagation(); deleteSession(p.id, s.id) }}><Trash2 size={10} /></button>
+                            <button className="agent-code-session-rename" onClick={e => { e.stopPropagation(); startSessRename(s.id, s.title) }}><PencilIcon size={12} /></button>
+                            <button className="agent-code-session-del" onClick={e => { e.stopPropagation(); deleteSession(p.id, s.id) }}><TrashIcon size={12} /></button>
                           </span>
                         </div>
                       ))}
@@ -4471,7 +4602,7 @@ export default function AgentCodeView() {
         <div className="agent-code-chat">
           <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll} onMouseUp={handleMessagesMouseUp}>
             {condensing && (
-              <div className="agent-condensing"><Loader2 size={13} className="spin" /> 正在压缩历史…</div>
+              <div className="agent-condensing"><LoaderIcon size={13} className="spin" /> 正在压缩历史…</div>
             )}
             {activeSession?.memory?.summary && (
               <HistorySummaryBubble summary={activeSession.memory.summary} count={activeSession.memory.coveredMsgIds.length} />
@@ -4479,7 +4610,7 @@ export default function AgentCodeView() {
             {!activeSession || activeSession.messages.length === 0 ? (
               <div className="agent-welcome">
                 <div className="agent-welcome-title">
-                  <Sparkles size={20} className="agent-welcome-icon" />
+                  <SparklesIcon size={20} className="agent-welcome-icon" />
                   一个LLM本地智能体
                 </div>
                 <div className="agent-welcome-desc">描述任务，或随便问点什么。</div>
@@ -4542,10 +4673,10 @@ export default function AgentCodeView() {
                         <>
                           <div className="chat-msg-bubble chat-msg-markdown"><AgentMarkdown content={msg.content} /></div>
                           <div className="chat-msg-actions">
-                            <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content)}><Copy size={13} /></button>
-                            <button className="chat-msg-action-btn" onClick={() => editAt(msg.id)} disabled={loading}><Pencil size={13} /></button>
-                            <button className="chat-msg-action-btn" onClick={() => resendAt(msg.id)} disabled={loading}><Send size={13} /></button>
-                            <button className="chat-msg-action-btn" onClick={() => branchAt(msg.id)} disabled={loading}><GitBranch size={13} /></button>
+                            <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content)}><CopyIcon size={13} /></button>
+                            <button className="chat-msg-action-btn" onClick={() => editAt(msg.id)} disabled={loading}><PencilIcon size={13} /></button>
+                            <button className="chat-msg-action-btn" onClick={() => resendAt(msg.id)} disabled={loading}><SendIcon size={13} /></button>
+                            <button className="chat-msg-action-btn" onClick={() => branchAt(msg.id)} disabled={loading}><GitBranchIcon size={13} /></button>
                           </div>
                         </>
                       ) : null
@@ -4593,9 +4724,9 @@ export default function AgentCodeView() {
                                 流式中置灰禁用（而非隐藏），避免操作栏宽度跳变 */}
                             {!streamingThis && (
                               <div className="chat-msg-actions">
-                                <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content || '')}><Copy size={13} /></button>
+                                <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content || '')}><CopyIcon size={13} /></button>
                                 {isLast && (
-                                  <button className="chat-msg-action-btn" onClick={() => regenerateAt(msg.id)} disabled={loading}><RotateCcw size={13} /></button>
+                                  <button className="chat-msg-action-btn" onClick={() => regenerateAt(msg.id)} disabled={loading}><RefreshCwIcon size={13} /></button>
                                 )}
                               </div>
                             )}
@@ -4619,9 +4750,9 @@ export default function AgentCodeView() {
                             {!streamingThis && hasToolCalls && <FileChangeSummary toolCalls={msg.toolCalls} onOpenChange={openGitDiffAt} canUndoAll={!!(msg.toolCalls?.some(t => canUndoFor(t)))} onUndoAll={() => handleUndoAll(msg.id, msg.toolCalls)} />}
                             {!streamingThis && !hasToolCalls && (
                               <div className="chat-msg-actions">
-                                <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content || '')}><Copy size={13} /></button>
+                                <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content || '')}><CopyIcon size={13} /></button>
                                 {isLast && (
-                                  <button className="chat-msg-action-btn" onClick={() => regenerateAt(msg.id)} disabled={loading}><RotateCcw size={13} /></button>
+                                  <button className="chat-msg-action-btn" onClick={() => regenerateAt(msg.id)} disabled={loading}><RefreshCwIcon size={13} /></button>
                                 )}
                               </div>
                             )}
@@ -4631,7 +4762,7 @@ export default function AgentCodeView() {
                     )}
                   </div>
                   {msg.role === 'user' && (
-                    <div className="chat-msg-avatar"><User size={14} /></div>
+                    <div className="chat-msg-avatar"><UserIcon size={14} /></div>
                   )}
                 </div>
               )
@@ -4648,10 +4779,10 @@ export default function AgentCodeView() {
               onMouseDown={e => e.preventDefault()}
             >
               <button className="agent-sel-btn" onClick={() => quoteSelection(selectionPopover.text)}>
-                <Quote size={13} /> 引用
+                <QuoteIcon size={13} /> 引用
               </button>
               <button className="agent-sel-btn" onClick={() => copySelection(selectionPopover.text)}>
-                <Copy size={13} /> 复制
+                <CopyIcon size={13} /> 复制
               </button>
             </div>
           )}
@@ -4694,7 +4825,7 @@ export default function AgentCodeView() {
                     onClick={handleManualCondense}
                     disabled={loading || condensing || !runningCard}
                   >
-                    {condensing ? <><Loader2 size={12} className="spin" /> 正在压缩…</> : '立即压缩历史'}
+                    {condensing ? <><LoaderIcon size={12} className="spin" /> 正在压缩…</> : '立即压缩历史'}
                   </button>
                   {activeSession?.memory?.summary && (
                     <button
@@ -4721,7 +4852,7 @@ export default function AgentCodeView() {
             <div className="agent-task-card agent-card-audit">
               <div className="agent-task-card-header">
                 <span>操作审计日志</span>
-                <button className="agent-audit-clear" onClick={() => clearAudit()}><Trash2 size={12} /> 清空</button>
+                <button className="agent-audit-clear" onClick={() => clearAudit()}><Trash2Icon size={12} /> 清空</button>
               </div>
               <div className="agent-task-card-body agent-card-audit-body">
                 <AuditPanel />
@@ -4733,7 +4864,7 @@ export default function AgentCodeView() {
             <div className="agent-task-card agent-card-debug">
               <div className="agent-task-card-header">
                 <span>调试（逐轮）· 跨会话·最新在前</span>
-                <button className="agent-audit-clear" onClick={() => clearDebug()}><Trash2 size={12} /> 清空</button>
+                <button className="agent-audit-clear" onClick={() => clearDebug()}><Trash2Icon size={12} /> 清空</button>
               </div>
               <div className="agent-task-card-body agent-card-debug-body">
                 <DebugPanel />
@@ -4781,7 +4912,7 @@ export default function AgentCodeView() {
               置于 .agent-code-chat（非滚动容器）内，用 --chat-input-h 变量精确浮在输入框上方。 */}
           {!atBottom && (
             <button className="agent-code-scroll-bottom-btn" onClick={() => scrollToBottom(true)} >
-              <ChevronDown size={18} />
+              <ChevronDownIcon size={18} />
             </button>
           )}
           <div className="chat-input-area" ref={chatInputAreaRef}>
@@ -4900,7 +5031,7 @@ export default function AgentCodeView() {
                 ) : (
                   atFiles.map(f => (
                     <button className="chat-at-item" key={f.path} onClick={() => onPickAtFile(f)} title={f.path}>
-                      <FileText size={13} />
+                      <FileTextIcon size={13} />
                       <span className="chat-at-name">{f.name}</span>
                       <span className="chat-at-rel">{f.relPath}</span>
                     </button>
@@ -4925,14 +5056,14 @@ export default function AgentCodeView() {
                   <div className="chat-attach-chip" key={att.id}>
                     {att.isImage && att.dataUrl
                       ? <img src={att.dataUrl} className="chat-attach-thumb" alt={att.name} />
-                      : <FileText size={14} className="chat-attach-fileicon" />}
+                      : <FileTextIcon size={14} className="chat-attach-fileicon" />}
                     <span className="chat-attach-name" title={att.name}>{att.name}</span>
-                    <button className="chat-attach-remove" onClick={() => removeAttachment(att.id)} disabled={loading}><X size={11} /></button>
+                    <button className="chat-attach-remove" onClick={() => removeAttachment(att.id)} disabled={loading}><XIcon size={11} /></button>
                   </div>
                 ))}
                 {attachedFiles.length > 1 && (
                   <button className="chat-attach-clear-all" onClick={() => { setAttachedFiles([]); setFilePickerAttached([]) }} disabled={loading}>
-                    <X size={12} />全部清除
+                    <XIcon size={12} />全部清除
                   </button>
                 )}
               </div>
@@ -4949,7 +5080,7 @@ export default function AgentCodeView() {
                     </div>
                   </div>
                   <button className="chat-model-item-action" onClick={e => { e.stopPropagation(); handleModelAction(card) }}>
-                    {card.status === 'running' ? <Square size={12} /> : <Play size={12} />}
+                    {card.status === 'running' ? <CircleStopIcon size={12} /> : <PlayIcon size={12} />}
                   </button>
                 </div>
               ))}
@@ -5001,17 +5132,17 @@ export default function AgentCodeView() {
                   <div className="chat-input-textwrap">
                     {refChips.map(chip => (
                       <div className="agent-ref-chip" key={chip.id}>
-                        <Quote size={12} className="agent-ref-chip-icon" />
+                        <QuoteIcon size={12} className="agent-ref-chip-icon" />
                         <span className="agent-ref-chip-label">引用</span>
-                        <button className="agent-ref-chip-remove" onClick={() => removeRefChip(chip.id)} disabled={loading}><X size={10} /></button>
+                        <button className="agent-ref-chip-remove" onClick={() => removeRefChip(chip.id)} disabled={loading}><XIcon size={10} /></button>
                         <span className="agent-ref-chip-tip">{chip.text}</span>
                       </div>
                     ))}
                     {codeSnippets.map(snip => (
                       <div className="code-snippet-chip" key={snip.id}>
-                        <Code2 size={12} className="code-snippet-chip-icon" />
+                        <CodeIcon size={12} className="code-snippet-chip-icon" />
                         <span className="code-snippet-file">{snip.fileName}:L{snip.startLine}-L{snip.endLine}</span>
-                        <button className="agent-ref-chip-remove" onClick={() => removeCodeSnippet(snip.id)} disabled={loading}><X size={10} /></button>
+                        <button className="agent-ref-chip-remove" onClick={() => removeCodeSnippet(snip.id)} disabled={loading}><XIcon size={10} /></button>
                       </div>
                     ))}
                     <textarea ref={textareaRef} className="chat-input" placeholder="" rows={1} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown} />
@@ -5019,8 +5150,8 @@ export default function AgentCodeView() {
                 </div>
                 {/* ③ 底部按钮行：文件目录 + 模型列表（左）… 发送（右） */}
                 <div className="chat-input-tools">
-                  <button className="chat-upload-btn" onClick={() => fileInputRef.current?.click()}><Plus size={14} /></button>
-                  <button ref={attachBtnRef} className={`chat-attach-btn${filePickerOpen ? ' active' : ''}`} onClick={toggleFilePicker} ><FolderOpen size={14} /></button>
+                  <button className="chat-upload-btn" onClick={() => fileInputRef.current?.click()}><PlusIcon size={14} /></button>
+                  <button ref={attachBtnRef} className={`chat-attach-btn${filePickerOpen ? ' active' : ''}`} onClick={toggleFilePicker} ><FolderOpenIcon size={14} /></button>
                   <button
                     ref={modelBtnRef}
                     className={`chat-model-dropdown${modelPickerOpen ? ' active' : ''}${runningCard ? ' running' : ''}${runningCard?.ready ? ' ready' : ''}`}
@@ -5028,12 +5159,12 @@ export default function AgentCodeView() {
                     title={runningCard ? (runningCard.ready ? `运行中: ${modelLabel}` : `启动中: ${modelLabel}`) : '选择模型'}
                   >
                     <span className="chat-model-dropdown-name">{runningCard ? modelLabel : '选择模型'}</span>
-                    <ChevronDown size={12} className="chat-model-dropdown-caret" />
+                    <ChevronDownIcon size={12} className="chat-model-dropdown-caret" />
                   </button>
                   {loading ? (
-                    <button className="btn btn-primary chat-send-btn" onClick={handleStop} ><Square size={16} /></button>
+                    <button className="btn btn-primary chat-send-btn" onClick={handleStop} ><CircleStopIcon size={16} /></button>
                   ) : (
-                    <button className="btn btn-primary chat-send-btn" onClick={() => handleSend()} disabled={(!input.trim() && attachedFiles.length === 0 && refChips.length === 0 && codeSnippets.length === 0) || !apiBaseUrl} ><Send size={16} /></button>
+                    <button className="btn btn-primary chat-send-btn" onClick={() => handleSend()} disabled={(!input.trim() && attachedFiles.length === 0 && refChips.length === 0 && codeSnippets.length === 0) || !apiBaseUrl} ><SendIcon size={16} /></button>
                   )}
                 </div>
               </div>
@@ -5055,10 +5186,11 @@ export default function AgentCodeView() {
             <div className={`agent-browser-wrap ${rightPanelMode === 'browser' ? '' : 'hidden'}`}>
               <AgentBrowser visible={rightPanelMode === 'browser' && treeOpen} onSendToAgent={sendAnnotationsToAgent} />
             </div>
-            {/* 内嵌终端：仅在 agent-code 视图激活时挂载（配合 App.tsx 的终端视图条件渲染，
-                保证同一 session 的 xterm 实例任意时刻只 attach 到一个 DOM 容器） */}
-            {rightPanelMode === 'terminal' && currentView === 'agent-code' && (
-              <div className="agent-browser-wrap">
+            {/* 内嵌终端：首次点开后常驻（含 App.tsx 终端视图条件渲染配合，
+                同一 session 的 xterm 实例任意时刻只 attach 到一个 DOM 容器）；
+                面板级 files/browser 切换仅 hidden 不卸载，xterm 不重建、不触发 replay 回放 */}
+            {terminalMounted && currentView === 'agent-code' && (
+              <div className={`agent-browser-wrap${rightPanelMode === 'terminal' ? '' : ' hidden'}`}>
                 <div className="agent-terminal">
                   <TerminalView store={useAgentTerminalStore} />
                 </div>
@@ -5100,7 +5232,7 @@ export default function AgentCodeView() {
                           className="agent-code-preview-tab-close"
                           onClick={(e) => { e.stopPropagation(); closeTab(t.path) }}
                         >
-                          <X size={10} />
+                          <XIcon size={10} />
                         </button>
                       </div>
                     ))}
@@ -5112,7 +5244,7 @@ export default function AgentCodeView() {
                         onClick={() => setHtmlViewMode(m => m === 'preview' ? 'source' : 'preview')}
                         title={htmlViewMode === 'preview' ? '查看源码' : '渲染预览'}
                       >
-                        {htmlViewMode === 'preview' ? <Code2 size={12} /> : <Eye size={12} />}
+                        {htmlViewMode === 'preview' ? <CodeIcon size={12} /> : <EyeIcon size={12} />}
                       </button>
                     )}
                     {/* HTML 预览的 UI 注释：点击预览元素添加注释（发送给 Agent 自动定位修改） */}
@@ -5121,12 +5253,12 @@ export default function AgentCodeView() {
                         className={`btn btn-xs ac-icon-btn agent-code-preview-annotate${htmlAnnotateActive ? ' active' : ''}`}
                         onClick={toggleHtmlAnnotate}
                       >
-                        <MessageSquarePlus size={12} />
+                        <MessageSquarePlusIcon size={12} />
                         {htmlAnnotations.length > 0 && <span className="agent-code-preview-annotate-count">{htmlAnnotations.length}</span>}
                       </button>
                     )}
                     <button className="btn btn-xs agent-code-preview-close ac-icon-btn" onClick={() => activeTab && closeTab(activeTab.path)} disabled={!activeTab}>
-                      <X size={12} />
+                      <XIcon size={12} />
                     </button>
                   </span>
                 </div>
@@ -5136,11 +5268,11 @@ export default function AgentCodeView() {
                   const y = Math.min(tabMenu.y, window.innerHeight - MENU_H - 8)
                   return (
                     <div ref={tabMenuRef} className="file-tree-ctx-menu" style={{ left: Math.max(8, x), top: Math.max(8, y) }} onContextMenu={(e) => e.preventDefault()}>
-                      <button className="file-tree-ctx-item" onClick={() => { closeTab(tabMenu.path); setTabMenu(null) }}><X size={13} /> 关闭</button>
-                      <button className="file-tree-ctx-item" onClick={() => { closeOtherTabs(tabMenu.path); setTabMenu(null) }}><X size={13} /> 关闭其他</button>
-                      <button className="file-tree-ctx-item" onClick={() => { closeAllTabs(); setTabMenu(null) }}><Trash2 size={13} /> 关闭全部</button>
+                      <button className="file-tree-ctx-item" onClick={() => { closeTab(tabMenu.path); setTabMenu(null) }}><XIcon size={13} /> 关闭</button>
+                      <button className="file-tree-ctx-item" onClick={() => { closeOtherTabs(tabMenu.path); setTabMenu(null) }}><XIcon size={13} /> 关闭其他</button>
+                      <button className="file-tree-ctx-item" onClick={() => { closeAllTabs(); setTabMenu(null) }}><Trash2Icon size={13} /> 关闭全部</button>
                       {tabMenu.path !== GIT_DIFF_TAB && (
-                        <button className="file-tree-ctx-item" onClick={() => { navigator.clipboard.writeText(tabMenu.path).catch(() => { }); setTabMenu(null) }}><Copy size={13} /> 复制路径</button>
+                        <button className="file-tree-ctx-item" onClick={() => { navigator.clipboard.writeText(tabMenu.path).catch(() => { }); setTabMenu(null) }}><CopyIcon size={13} /> 复制路径</button>
                       )}
                     </div>
                   )
@@ -5174,7 +5306,7 @@ export default function AgentCodeView() {
                                 <div className="agent-browser-annotations">
                                   <div className="agent-browser-annotations-head">
                                     <span>UI 注释（{htmlAnnotations.length}）</span>
-                                    <button className="agent-browser-annotations-clear" onClick={clearHtmlAnnotations}><Trash2 size={11} /> 清空</button>
+                                    <button className="agent-browser-annotations-clear" onClick={clearHtmlAnnotations}><Trash2Icon size={11} /> 清空</button>
                                   </div>
                                   <div className="agent-browser-annotations-list">
                                     {htmlAnnotations.map(a => (
@@ -5188,12 +5320,12 @@ export default function AgentCodeView() {
                                             ? <div className="agent-browser-annotations-sel" title={a.text}>"{a.text}"</div>
                                             : <div className="agent-browser-annotations-sel" title={a.elements.map(e => e.selector).join('\n')}>{a.elements.length > 1 ? `多选 ${a.elements.length} 个元素` : (a.elements[0]?.selector || '')}</div>}
                                         {a.component && <div className="agent-browser-annotations-comp" title={a.component}>{a.component}</div>}
-                                        <button className="agent-browser-annotations-del" onClick={() => removeHtmlAnnotation(a.id)}><X size={11} /></button>
+                                        <button className="agent-browser-annotations-del" onClick={() => removeHtmlAnnotation(a.id)}><XIcon size={11} /></button>
                                       </div>
                                     ))}
                                   </div>
                                   <button className="agent-browser-annotations-send" onClick={sendHtmlAnnotations}>
-                                    <Send size={12} /> 发送给 Agent
+                                    <SendIcon size={12} /> 发送给 Agent
                                   </button>
                                 </div>
                               )}
@@ -5219,7 +5351,7 @@ export default function AgentCodeView() {
                                     onMouseDown={e => e.preventDefault()}
                                   >
                                     <button className="agent-sel-btn" onClick={() => addCodeSnippet(previewSelPopover.startLine, previewSelPopover.endLine, previewSelPopover.text)}>
-                                      <Code2 size={13} /> 引用代码 L{previewSelPopover.startLine}-L{previewSelPopover.endLine}
+                                      <CodeIcon size={13} /> 引用代码 L{previewSelPopover.startLine}-L{previewSelPopover.endLine}
                                     </button>
                                   </div>
                                 )}

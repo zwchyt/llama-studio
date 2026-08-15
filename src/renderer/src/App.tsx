@@ -71,6 +71,7 @@ function AppMain() {
   const activeBackend = useStore(s => s.activeBackend)
   const activeChatUrl = useStore(s => s.activeChatUrl)
   const setBackends = useStore(s => s.setBackends)
+  const setBackendsReady = useStore(s => s.setBackendsReady)
   const setModels = useStore(s => s.setModels)
   const setImageModels = useStore(s => s.setImageModels)
   const setChatTemplates = useStore(s => s.setChatTemplates)
@@ -150,6 +151,7 @@ function AppMain() {
       } catch (e) {
         console.error('初始化错误:', e)
       } finally {
+        setBackendsReady(true)
         // 同步主进程中实际在运行的模型状态（刷新后恢复运行中标识）
         window.api.getRunningProcesses().then((runningIds: string[]) => {
           if (runningIds.length > 0) {

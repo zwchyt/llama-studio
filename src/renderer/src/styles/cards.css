@@ -31,39 +31,38 @@
   margin: 0 auto;
 }
 
-/* 模板加载骨架占位：与真实卡片同网格布局，避免加载期闪空态 */
-.card-skeleton {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+/* 模板加载完成：网格区整体淡入，卡片交错上浮渐入——避免卡片「突然蹦出」。
+   卡片 delay 由 CardsView 内联 animationDelay（index × 30ms，上限 450ms）控制 */
+.cards-grid.cards-grid--ready {
+  animation: cards-fade-in 0.3s ease-out;
+}
+.cards-grid.cards-grid--ready .model-card {
+  animation: card-reveal 0.32s ease-out both;
+}
+.cards-grid.cards-grid--ready .add-card {
+  animation: card-reveal 0.32s ease-out both;
+  animation-delay: 0.48s;
+}
+@keyframes cards-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes card-reveal {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cards-grid.cards-grid--ready,
+  .cards-grid.cards-grid--ready .model-card,
+  .cards-grid.cards-grid--ready .add-card {
+    animation: none;
+  }
+}
+
+/* 模板列表加载中：空网格容器占据基本版面高度（无骨架占位块，防闪烁；
+   加载完成后由 cards-grid--ready 的淡入 + 卡片交错浮现接管） */
+.cards-grid.cards-grid--loading {
   min-height: 120px;
-}
-.card-skeleton-icon,
-.card-skeleton-line {
-  border-radius: 6px;
-  background: linear-gradient(90deg, var(--border) 25%, var(--surface-hover, var(--border)) 50%, var(--border) 75%);
-  background-size: 200% 100%;
-  animation: skeleton-shimmer 1.2s ease-in-out infinite;
-}
-.card-skeleton-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-}
-.card-skeleton-line {
-  height: 14px;
-  width: 70%;
-}
-.card-skeleton-line.short {
-  width: 45%;
-}
-@keyframes skeleton-shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
 }
 
 .add-card {

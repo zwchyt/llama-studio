@@ -67,16 +67,9 @@ export default function CardsView() {
         </div>
       </div>
       {!templatesReady ? (
-        // 模板列表加载中：骨架占位（避免先闪"还没有模板"空态、卡片随后才蹦出的观感）
-        <div className="cards-grid cards-grid--loading">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div className="card card-skeleton" key={i}>
-              <div className="card-skeleton-icon" />
-              <div className="card-skeleton-line" />
-              <div className="card-skeleton-line short" />
-            </div>
-          ))}
-        </div>
+        // 模板列表加载中：空白网格容器（不渲染骨架占位，避免骨架块出现/消失的闪烁观感；
+        // 加载完成后由网格区淡入 + 卡片交错浮现接管）
+        <div className="cards-grid cards-grid--loading" />
       ) : cards.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">
@@ -105,9 +98,15 @@ export default function CardsView() {
           <button className="btn btn-ghost" onClick={() => setTemplateSearch('')}>清除搜索</button>
         </div>
       ) : (
-        <div className="cards-grid">
-          {filtered.map((card) => (
-            <ModelCard key={card.template.id} card={card} />
+        <div className="cards-grid cards-grid--ready">
+          {filtered.map((card, i) => (
+            // 交错渐入：每张卡片延迟 (index × 30ms) 依次浮现（上限 450ms），
+            // 配合网格区整体淡入，避免模板加载完成后卡片「突然蹦出」
+            <ModelCard
+              key={card.template.id}
+              card={card}
+              style={{ animationDelay: `${Math.min(i * 30, 450)}ms` }}
+            />
           ))}
           <button className="add-card" onClick={() => setShowCreateModal(true)}>
             <PlusIcon size={28} className="nav-animate-icon" />

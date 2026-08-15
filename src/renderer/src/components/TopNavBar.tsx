@@ -60,8 +60,8 @@ const NAV_GROUPS: NavDef[][] = [
 ]
 
 export default function TopNavBar() {
-  const { view, setView, backends, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, hasRunningModels } = useStore(
-    s => ({ view: s.view, setView: s.setView, backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
+  const { view, setView, backends, backendsReady, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, hasRunningModels } = useStore(
+    s => ({ view: s.view, setView: s.setView, backends: s.backends, backendsReady: s.backendsReady, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
     shallow
   )
   const [openMenu, setOpenMenu] = useState<null | 'backend' | 'folders'>(null)
@@ -235,7 +235,10 @@ export default function TopNavBar() {
             )}
           </div>
         )}
-        {backends.length === 0 && (
+        {backends.length === 0 && !backendsReady && (
+          <span className="topnav-no-backend">扫描后端中…</span>
+        )}
+        {backends.length === 0 && backendsReady && (
           <span className="topnav-no-backend">未找到后端，请在设置中下载</span>
         )}
         {paths && (

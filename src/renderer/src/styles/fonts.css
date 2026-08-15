@@ -30,6 +30,42 @@ html[data-font='humanist'] {
   --font-mono: 'Fira Code', Consolas, 'Courier New', monospace;
 }
 
+/* ── 楷体书写：书法感，手写自然 ── */
+html[data-font='kaiti'] {
+  --font: '楷体', KaiTi, STKaiti, 'Times New Roman', serif;
+  --font-mono: 'KaiTi', Consolas, 'Courier New', monospace;
+}
+
+/* ── 黑体现代：笔画刚劲，现代醒目 ── */
+html[data-font='heiti'] {
+  --font: '黑体', SimHei, 'Microsoft YaHei UI', 'Segoe UI', sans-serif;
+  --font-mono: Consolas, 'Microsoft YaHei UI', 'Courier New', monospace;
+}
+
+/* ── 仿宋典雅：工整清秀 ── */
+html[data-font='fangsong'] {
+  --font: '仿宋', FangSong, STFangsong, 'Times New Roman', serif;
+  --font-mono: Consolas, FangSong, 'Courier New', monospace;
+}
+
+/* ── 幼圆圆润：笔画圆润，亲和可爱 ── */
+html[data-font='youyuan'] {
+  --font: '幼圆', YouYuan, 'Microsoft YaHei UI', 'Segoe UI', sans-serif;
+  --font-mono: Consolas, 'YouYuan', 'Courier New', monospace;
+}
+
+/* ── 隶书古典：蚕头燕尾，古朴韵味 ── */
+html[data-font='lishu'] {
+  --font: '隶书', LiSu, STLiti, 'Times New Roman', serif;
+  --font-mono: Consolas, LiSu, 'Courier New', monospace;
+}
+
+/* ── 行楷手写：行云流水 ── */
+html[data-font='xingkai'] {
+  --font: '华文行楷', STXingkai, '楷体', KaiTi, 'Times New Roman', serif;
+  --font-mono: 'KaiTi', Consolas, 'Courier New', monospace;
+}
+
 /* ═══ 设置页字体选择器（FontSelector）卡片样式 ═══ */
 
 .font-selector {

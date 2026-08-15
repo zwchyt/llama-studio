@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef } from 'react'
+import { AlertCircle } from 'lucide-react'
 import {
-  ChevronRight, ChevronDown, ChevronsDownUp, ChevronsUpDown, Folder, FolderOpen, Loader2, AlertCircle, Copy, CornerDownLeft, Search, X
-} from 'lucide-react'
+  ChevronRightIcon, ChevronDownIcon, FolderIcon, FolderOpenIcon, LoaderIcon, CornerDownLeftIcon, CopyIcon, SearchIcon, XIcon, ChevronsUpIcon, ChevronsDownIcon
+} from '@animateicons/react/lucide'
 import { fileMeta } from '../utils/fileIcon'
 import { notify } from '../store/notificationStore'
 
@@ -47,6 +48,9 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
   const [imgTooltip, setImgTooltip] = useState<{ x: number; y: number; dataUrl: string } | null>(null)
   const imgHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const imgHoverPath = useRef<string | null>(null)
+  // 节点图标动画联动：鼠标落在节点行任意位置（名称/留白）都触发类型图标动画
+  const nodeIconRefs = useRef(new Map<string, { startAnimation: () => void; stopAnimation: () => void }>())
+  const resultIconRefs = useRef(new Map<string, { startAnimation: () => void; stopAnimation: () => void }>())
 
   const expandedRef = useRef(expanded)
   expandedRef.current = expanded
@@ -253,7 +257,10 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
       if (node.isDir) return
       setCtxMenu({ x: e.clientX, y: e.clientY, name: node.name, path: node.path })
     }
-    const onNodeMouseEnter = isImage ? (e: React.MouseEvent) => {
+    const onNodeMouseEnter = (e: React.MouseEvent) => {
+      // 节点行任意位置（名称/留白）hover → 触发类型图标动画；图片节点兼做悬停缩略图
+      nodeIconRefs.current.get(node.path)?.startAnimation()
+      if (!isImage) return
       const rect = e.currentTarget.getBoundingClientRect()
       imgHoverPath.current = node.path
       if (imgHoverTimer.current) clearTimeout(imgHoverTimer.current)
@@ -264,12 +271,14 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
           setImgTooltip({ x: rect.left + rect.width / 2, y: rect.top, dataUrl: r.dataUrl })
         }
       }, 350)
-    } : undefined
-    const onNodeMouseLeave = isImage ? () => {
+    }
+    const onNodeMouseLeave = () => {
+      nodeIconRefs.current.get(node.path)?.stopAnimation()
+      if (!isImage) return
       imgHoverPath.current = null
       if (imgHoverTimer.current) { clearTimeout(imgHoverTimer.current); imgHoverTimer.current = null }
       setImgTooltip(null)
-    } : undefined
+    }
     return (
       <div key={node.path}>
         <div
@@ -303,14 +312,17 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
         >
           <span className="file-tree-arrow">
             {node.isDir ? (
-              isLoading ? <Loader2 size={12} className="spin" /> : isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />
+              isLoading ? <LoaderIcon size={12} className="spin" /> : isExpanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />
             ) : (
               <span style={{ width: 12, display: 'inline-block' }} />
             )}
           </span>
           <span className="file-tree-icon">
-            {node.isDir ? (isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />)
-              : (() => { const { Icon, color } = fileMeta(node.name); return <Icon size={14} style={{ color }} /> })()}
+            {node.isDir
+              ? (isExpanded
+                  ? <FolderOpenIcon ref={el => { if (el) nodeIconRefs.current.set(node.path, el); else nodeIconRefs.current.delete(node.path) }} size={14} />
+                  : <FolderIcon ref={el => { if (el) nodeIconRefs.current.set(node.path, el); else nodeIconRefs.current.delete(node.path) }} size={14} />)
+              : (() => { const { Icon, color } = fileMeta(node.name); return <Icon ref={el => { if (el) nodeIconRefs.current.set(node.path, el); else nodeIconRefs.current.delete(node.path) }} size={14} style={{ color }} /> })()}
           </span>
           <span className="file-tree-name">{node.name}</span>
           {!node.isDir && node.size != null && <span className="file-tree-size">{formatFileSize(node.size)}</span>}
@@ -389,8 +401,8 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
     <div className="file-tree" ref={rootElRef}>
       <div className="file-tree-header">
         <span className="file-tree-title">
-          <FolderOpen size={14} />
-          文件浏览器
+          <FolderOpenIcon size={14} />
+          <span className="file-tree-title-text">文件浏览器</span>
         </span>
       </div>
       {/* 目录名称行：右侧双态按钮——有展开子目录时一键收起，全收起后可展开恢复 */}
@@ -402,13 +414,13 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
             title={hasExpandedSubdirs ? '收起所有展开的子目录' : '展开子目录（恢复上次层级）'}
             onClick={toggleAllDirs}
           >
-            {hasExpandedSubdirs ? <ChevronsDownUp size={12} /> : <ChevronsUpDown size={12} />}
+            {hasExpandedSubdirs ? <ChevronsUpIcon size={12} /> : <ChevronsDownIcon size={12} />}
           </button>
         )}
       </div>
       {workspaceDir && (
         <div className="file-tree-search">
-          <Search size={12} className="file-tree-search-icon" />
+          <SearchIcon size={12} className="file-tree-search-icon" />
           <input
             className="file-tree-search-input"
             value={query}
@@ -417,7 +429,7 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
             spellCheck={false}
           />
           {query && (
-            <button className="file-tree-search-clear" onClick={() => setQuery('')}><X size={11} /></button>
+            <button className="file-tree-search-clear" onClick={() => setQuery('')}><XIcon size={11} /></button>
           )}
         </div>
       )}
@@ -432,8 +444,11 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
           ) : (
             <div className="file-tree-nodes">
               {results.map(f => (
-                <div className="file-tree-result" key={f.path} title={f.relPath} onClick={() => onPreviewFile?.(f.path)}>
-                  {(() => { const { Icon, color } = fileMeta(f.name); return <Icon size={14} style={{ color }} /> })()}
+                <div className="file-tree-result" key={f.path} title={f.relPath}
+                  onMouseEnter={() => resultIconRefs.current.get(f.path)?.startAnimation()}
+                  onMouseLeave={() => resultIconRefs.current.get(f.path)?.stopAnimation()}
+                  onClick={() => onPreviewFile?.(f.path)}>
+                  {(() => { const { Icon, color } = fileMeta(f.name); return <Icon ref={el => { if (el) resultIconRefs.current.set(f.path, el); else resultIconRefs.current.delete(f.path) }} size={14} style={{ color }} /> })()}
                   <span className="file-tree-result-name">{f.name}</span>
                   <span className="file-tree-result-dir">{f.relPath.includes('/') ? f.relPath.slice(0, f.relPath.lastIndexOf('/')) : ''}</span>
                 </div>
@@ -462,14 +477,14 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
               className="file-tree-ctx-item"
               onClick={() => { onSendFileName?.(ctxMenu.name); setCtxMenu(null) }}
             >
-              <CornerDownLeft size={13} />
+              <CornerDownLeftIcon size={13} />
               发送到输入框
             </button>
             <button
               className="file-tree-ctx-item"
               onClick={() => { copyPath(ctxMenu.path); setCtxMenu(null) }}
             >
-              <Copy size={13} />
+              <CopyIcon size={13} />
               复制路径
             </button>
           </div>

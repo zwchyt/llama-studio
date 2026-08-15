@@ -570,6 +570,9 @@
 }
 
 .agent-code-topbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 3px 8px;
   font-size: 11px;
   border: 1px solid var(--border);
@@ -1990,21 +1993,16 @@
   user-select: none;
 }
 
-.agent-tool-call-dur {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  margin-left: 2px;
-  font-size: 10px;
-  font-weight: 400;
-  letter-spacing: 0.02em;
-  color: color-mix(in srgb, var(--text-muted) 78%, transparent);
-  opacity: 0.85;
+/* 工具卡独立时间标签：卡片上方，实色 #d97c00（橙）为最高层级 */
+.agent-tool-time {
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  font-family: var(--font-mono, monospace);
   font-variant-numeric: tabular-nums;
-}
-
-.agent-tool-call-dur svg {
-  opacity: 0.6;
+  color: #d97c00;
+  user-select: none;
 }
 
 .agent-tool-diffstat {
@@ -3963,7 +3961,7 @@
   gap: 5px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: #7780c1;
 }
 
 /* 思考中：文字用「流光扫过」效果——单色渐变在文字上循环滑动，
@@ -4127,7 +4125,7 @@
   margin-left: 2px;
   font-size: 11px;
   font-weight: 500;
-  color: var(--text-muted);
+  color: #598900;
   font-variant-numeric: tabular-nums;
 }
 
@@ -4170,6 +4168,18 @@
   min-width: 0;
 }
 
+/* 思考段独立时间标签：段上方，与工具卡时间标签同色 #d97c00（统一实色，不透明分层） */
+.agent-think-time {
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  color: #d97c00;
+  user-select: none;
+}
+
 /* 思考链面板内的链元素（思考续段 / 工具卡组）：与思考文本及彼此之间显式留距。
    卡片自身保持「去框平铺」风格，左竖线缩进与思考体/工具展开体对齐。 */
 .agent-think-item {
@@ -4188,7 +4198,7 @@
   font-size: 10px;
   font-weight: 500;
   line-height: 1.7;
-  color: var(--text-secondary);
+  color: #b98407;
   background: var(--surface-2, var(--bg));
   border: 1px solid var(--border-strong);
   white-space: nowrap;
@@ -5671,6 +5681,11 @@
   color: var(--text-secondary);
 }
 
+/* 标题文字垂直微调（只移文字、图标不动）：--file-tree-title-offset 正数下移、负数上移 */
+.file-tree-title-text {
+  transform: translateY(var(--file-tree-title-offset, -3px));
+}
+
 .file-tree-path {
   display: flex;
   align-items: center;
@@ -5874,6 +5889,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+  /* 名称垂直微调：--file-tree-name-offset 正数下移、负数上移（不影响布局）
+     在文件树容器上覆盖该变量即可微调与图标的对齐位置 */
+  transform: translateY(var(--file-tree-name-offset, -3px));
 }
 
 .file-tree-size {

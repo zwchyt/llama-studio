@@ -1,7 +1,8 @@
 import React, { useRef, useEffect, useState } from 'react'
 import { createTerminal, attach, fitTerminal, disposeTerminal, updateTerminalTheme, getTerminalFontSize, setTerminalFontSize, TERMINAL_FONT_SIZE_DEFAULT, detachTerminal, isTerminalReady, beginReplayGate, applyReplayAndFlush, endReplayGate } from '../utils/terminalRegistry'
 import { useTerminalStore, type TerminalStoreHook } from '../store/terminalStore'
-import { Terminal, FolderOpen, Plus, Minus, RotateCcw } from 'lucide-react'
+import { Terminal } from 'lucide-react'
+import { FolderOpenIcon, PlusIcon, MinusIcon, RefreshCwIcon } from '@animateicons/react/lucide'
 import { safeCall } from '../utils/safeCall'
 import { matchTerminalAction, getTerminalKeybinds, subscribeTerminalStore } from '../utils/terminal-keybinds'
 import '@xterm/xterm/css/xterm.css'
@@ -101,21 +102,21 @@ function TerminalTabBar({ store }: { store: TerminalStoreHook }): React.JSX.Elem
           onKeyDown={handleKeyDown}
         />
         <button className="terminal-tabbar-btn" onClick={handleBrowse}>
-          <FolderOpen size={13} />
+          <FolderOpenIcon size={13} />
         </button>
         <button className="terminal-tabbar-btn primary" onClick={handleNew}>
-          <Plus size={13} />
+          <PlusIcon size={13} />
         </button>
         <span style={{ width: 1, height: 16, background: 'var(--border)', margin: '0 4px' }} />
         <button className="terminal-tabbar-btn" onClick={() => { setTerminalFontSize(fontSize - 1); setFontSize(getTerminalFontSize()) }}>
-          <Minus size={13} />
+          <MinusIcon size={13} />
         </button>
         <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 22, textAlign: 'center', userSelect: 'none' }}>{fontSize}</span>
         <button className="terminal-tabbar-btn" onClick={() => { setTerminalFontSize(fontSize + 1); setFontSize(getTerminalFontSize()) }}>
-          <Plus size={13} />
+          <PlusIcon size={13} />
         </button>
         <button className="terminal-tabbar-btn" onClick={() => { setTerminalFontSize(TERMINAL_FONT_SIZE_DEFAULT); setFontSize(getTerminalFontSize()) }}>
-          <RotateCcw size={12} />
+          <RefreshCwIcon size={12} />
         </button>
       </div>
     </div>

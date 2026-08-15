@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, GitBranch, Minus, Plus, RefreshCw } from 'lucide-react'
+import { CheckIcon, ChevronRightIcon, ChevronsUpIcon, ChevronsDownIcon, CopyIcon, GitBranchIcon, MinusIcon, PlusIcon, RefreshCwIcon } from '@animateicons/react/lucide'
 import { fileMeta } from '../utils/fileIcon'
 
 // Git 变更（只读 diff 查看）：解析 `git diff HEAD` 的 unified 输出并按行渲染。
@@ -198,7 +198,7 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
   return (
     <div className={`agent-git-file s-${file.status}${flash ? ' focus-flash' : ''}`} ref={rootRef}>
       <div className="agent-git-file-head" onClick={() => setCollapsed(c => !c)}>
-        <ChevronRight size={12} className={`agent-git-chev ${collapsed ? '' : 'open'}`} />
+        <ChevronRightIcon size={12} className={`agent-git-chev ${collapsed ? '' : 'open'}`} />
         <button
           className="agent-git-file-path"
           title={file.path}
@@ -215,17 +215,17 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
         <span className={`agent-git-badge s-${file.status}`} title={STATUS_LABEL[file.status] || file.status}>{file.status}</span>
         {canCopy && (
           <button className="agent-git-copy" onClick={copyDiff}>
-            {copied ? <Check size={12} /> : <Copy size={12} />}
+            {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
           </button>
         )}
         {!file.staged && onStage && (
           <button className="agent-git-copy agent-git-stage-add" title="暂存此文件" onClick={(e) => { e.stopPropagation(); onStage(file.path) }}>
-            <Plus size={12} />
+            <PlusIcon size={12} />
           </button>
         )}
         {file.staged && onUnstage && (
           <button className="agent-git-copy agent-git-stage-remove" title="取消暂存" onClick={(e) => { e.stopPropagation(); onUnstage(file.path) }}>
-            <Minus size={12} />
+            <MinusIcon size={12} />
           </button>
         )}
       </div>
@@ -324,7 +324,7 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
     return (
       <div className="agent-git-section">
         <div className="agent-git-section-head" onClick={() => setSectionCollapsed(s => ({ ...s, [key]: !s[key] }))}>
-          <ChevronRight size={12} className={`agent-git-chev ${collapsed ? '' : 'open'}`} />
+<ChevronRightIcon size={12} className={`agent-git-chev ${collapsed ? '' : 'open'}`} />
           <span className="agent-git-section-title">{title}</span>
           <span className="agent-git-section-count">{list.length}</span>
         </div>
@@ -341,9 +341,9 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
           title={allExpanded ? '全部收起' : '全部展开'}
           disabled={!hasFiles}
         >
-          {allExpanded ? <ChevronsDownUp size={14} /> : <ChevronsUpDown size={14} />}
+          {allExpanded ? <ChevronsUpIcon size={14} /> : <ChevronsDownIcon size={14} />}
         </button>
-        <span className="agent-git-title"><GitBranch size={13} /> Git 变更</span>
+        <span className="agent-git-title"><GitBranchIcon size={13} /> Git 变更</span>
         {data?.isRepo && (
           <span className="agent-git-summary">
             {total} 个文件
@@ -352,7 +352,7 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
         )}
         <span className="agent-git-spacer" />
         <button className="agent-git-refresh" onClick={() => onRefresh()}>
-          <RefreshCw size={12} className={loading ? 'spin' : ''} />
+          <RefreshCwIcon size={12} className={loading ? 'spin' : ''} />
         </button>
       </div>
       <div className="agent-git-body">

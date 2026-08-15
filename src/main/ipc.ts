@@ -1631,8 +1631,14 @@ export function registerIpcHandlers(): void {
       percent: t.totalBytes > 0 ? Math.round((t.receivedBytes / t.totalBytes) * 100) : 0
     }))
   })
+  // 后端目录递归扫描结果缓存（TTL 5s）：扫描是启动时较重的 IO 工作（目录树深搜 exe），
+  // 缓存避免启动/频繁调用重复全扫——缓存命中即时返回，同时后台刷新保持新鲜。
+  let backendScanCache: { t: number; value: unknown } | null = null
+  const BACKEND_CACHE_TTL = 5000
   ipcMain.handle('list-backends', async () => {
-    if (!existsSync(BACKEND_DIR)) return []
+    if (backendScanCache && Date.now() - backendScanCache.t < BACKEND_CACHE_TTL) return backendScanCache.value
+    const scan = async () => {
+    if (!existsSync(BACKEND_DIR)) { backendScanCache = { t: Date.now(), value: [] }; return [] }
     // 递归查找后端目录内的可执行文件（先按已知服务名精确匹配，再兜底取首个 .exe）
     const findExecutable = async (dir: string, depth = 0): Promise<string | null> => {
       if (depth > 10) return null
@@ -1682,7 +1688,10 @@ export function registerIpcHandlers(): void {
       const n = (s: string) => parseInt((s.match(/(\d{3,6})/) || ['0', '0'])[1], 10)
       return n(b.name) - n(a.name)
     })
+    backendScanCache = { t: Date.now(), value: backends }
     return backends
+  }
+  return await scan()
   })
   ipcMain.handle('delete-backend', (_e, backendName: string) => {
     try {
@@ -5881,7 +5890,12 @@ export function registerIpcHandlers(): void {
         process.platform === 'win32' || process.platform === 'darwin' ? { recursive: true } : {},
         (_event, filename) => {
           const payload = { dir, filename: typeof filename === 'string' ? filename : '' }
-          BrowserWindow.getAllWindows().forEach(w => { if (!w.isDestroyed()) w.webContents.send('agent-file-changed', payload) })
+          // 窗口/渲染 frame 可能已销毁（窗口关闭、刷新中）：isDestroyed 检查外再 try/catch 兜底
+          // 检查与 send 之间的竞态（Render frame was disposed 报错源头）
+          BrowserWindow.getAllWindows().forEach(w => {
+            if (w.isDestroyed() || w.webContents.isDestroyed()) return
+            try { w.webContents.send('agent-file-changed', payload) } catch { /* frame 已销毁，忽略 */ }
+          })
         }
       )
       watcher.on('error', () => { /* 目录被删除等瞬时错误，忽略 */ })
