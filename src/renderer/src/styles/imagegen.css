@@ -62,6 +62,13 @@
   gap: 8px;
 }
 
+.imagegen-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .badge-ready {
   font-size: 12px;
   color: var(--success);
@@ -194,7 +201,7 @@
   flex-shrink: 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: 12px;
   background: var(--surface);
   padding: 0 0 12px;
   display: flex;
@@ -295,7 +302,7 @@
 .imagegen-prompts-full {
   padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: 12px;
   background: var(--surface);
 }
 
@@ -758,6 +765,10 @@
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 12px;
 }
 
 .imagegen-results-header {
@@ -769,32 +780,53 @@
 .imagegen-loading {
   flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-md);
-  min-height: 280px;
-  background: color-mix(in srgb, var(--surface) 50%, transparent);
-}
-
-.imagegen-loading-box {
-  width: 100%;
-  max-width: 560px;
-  display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  padding: 24px;
-  text-align: center;
+  min-height: 0;
+  max-height: 100%;
+  background: color-mix(in srgb, var(--surface) 50%, transparent);
+  overflow: hidden;
 }
 
 .imagegen-loading-head {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
+  padding: 12px 16px;
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
+  flex-shrink: 0;
+}
+
+.imagegen-loading-body {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.imagegen-loading-canvas {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+}
+
+.imagegen-ig-canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 16px;
+  background: #fafafa;
+  overflow: hidden;
 }
 
 .imagegen-loading-head .spin {
@@ -815,6 +847,8 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  margin: 0 auto;
+  padding: 0 20px;
 }
 
 .imagegen-progress-bar {
@@ -864,6 +898,7 @@
   font-size: 12px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
 /* 中途预览 */
@@ -915,6 +950,88 @@
   to { background-position: -200% 0; }
 }
 
+/* 生图时动画占位（参考 ImageGeneration 组件） */
+
+.imagegen-ig-canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 16px;
+  background: #fafafa;
+  overflow: hidden;
+}
+
+.imagegen-ig-dots {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, #a1a1a1 0.7px, transparent 1.3px);
+  background-size: 11px 11px;
+  background-repeat: space;
+  opacity: 0.22;
+}
+
+.imagegen-ig-glow {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, #0b0d12 1.1px, transparent 1.6px);
+  background-size: 11px 11px;
+  background-repeat: space;
+  -webkit-mask-image: radial-gradient(ellipse at center, #000 0%, transparent 60%), radial-gradient(ellipse at center, #000 0%, transparent 62%);
+  mask-image: radial-gradient(ellipse at center, #000 0%, transparent 60%), radial-gradient(ellipse at center, #000 0%, transparent 62%);
+  -webkit-mask-repeat: no-repeat, no-repeat;
+  mask-repeat: no-repeat, no-repeat;
+  -webkit-mask-size: 72% 62%, 52% 52%;
+  mask-size: 72% 62%, 52% 52%;
+  -webkit-mask-position: 16% 20%, 30% 32%;
+  mask-position: 16% 20%, 30% 32%;
+  animation: ig-morph 4.2s cubic-bezier(0.35, 1.55, 0.65, 1) infinite, ig-breathe 1.9s cubic-bezier(0.66, 0, 0.34, 1) infinite;
+}
+
+@keyframes ig-morph {
+  0% { -webkit-mask-size: 52% 46%, 40% 40%; mask-size: 52% 46%, 40% 40%; -webkit-mask-position: 16% 20%, 30% 32%; mask-position: 16% 20%, 30% 32%; }
+  25% { -webkit-mask-size: 46% 58%, 44% 38%; mask-size: 46% 58%, 44% 38%; -webkit-mask-position: 84% 16%, 66% 30%; mask-position: 84% 16%, 66% 30%; }
+  50% { -webkit-mask-size: 60% 44%, 38% 46%; mask-size: 60% 44%, 38% 46%; -webkit-mask-position: 82% 84%, 62% 68%; mask-position: 82% 84%, 62% 68%; }
+  75% { -webkit-mask-size: 48% 54%, 46% 40%; mask-size: 48% 54%, 46% 40%; -webkit-mask-position: 14% 82%, 34% 66%; mask-position: 14% 82%, 34% 66%; }
+  100% { -webkit-mask-size: 52% 46%, 40% 40%; mask-size: 52% 46%, 40% 40%; -webkit-mask-position: 16% 20%, 30% 32%; mask-position: 16% 20%, 30% 32%; }
+}
+
+@keyframes ig-breathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+.imagegen-ig-res {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #a1a1a1;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 2px 7px;
+  border-radius: 999px;
+  backdrop-filter: blur(4px);
+}
+
+.imagegen-ig-prompt {
+  color: #a1a1a1;
+  font-size: 13px;
+  text-align: center;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .imagegen-ig-glow { animation: none; opacity: 0.7; }
+}
+
+@media (prefers-color-scheme: dark) {
+  .imagegen-ig-canvas { background: #1f1f1f; }
+  .imagegen-ig-dots { background-image: radial-gradient(circle, #f5f5f5 0.7px, transparent 1.3px); }
+  .imagegen-ig-glow { background-image: radial-gradient(circle, #f5f5f5 1.1px, transparent 1.6px); }
+  .imagegen-ig-res { color: #a3a3a3; background: rgba(26, 26, 26, 0.72); }
+  .imagegen-ig-prompt { color: #a3a3a3; }
+}
+
 .imagegen-loading-note {
   font-size: 12px;
   line-height: 1.6;
@@ -944,20 +1061,18 @@
 }
 
 .imagegen-grid-inner {
-  /* 至少撑满滚动区高度，图片始终在结果区域内水平/垂直居中；超出时随外层滚动 */
   min-height: 100%;
   display: grid;
-  /* auto-fit 折叠空轨道，列组宽度=实际内容宽度，justify-content:center 才能让单张图真正居中 */
-  grid-template-columns: repeat(auto-fit, minmax(230px, 320px));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 14px;
   justify-content: center;
-  align-content: center;
-  align-items: center;
+  align-content: start;
+  align-items: start;
 }
 
 .imagegen-result-card {
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: 12px;
   overflow: hidden;
   background: var(--surface);
   display: flex;
@@ -973,7 +1088,6 @@
 
 .imagegen-result-img {
   width: 100%;
-  aspect-ratio: 1;
   background: var(--bg);
   display: flex;
   align-items: center;
@@ -983,7 +1097,7 @@
 
 .imagegen-result-img img {
   width: 100%;
-  height: 100%;
+  height: auto;
   object-fit: contain;
   cursor: zoom-in;
   transition: opacity var(--transition);

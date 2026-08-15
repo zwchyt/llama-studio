@@ -689,8 +689,8 @@ select {
 }
 
 .modal-wide {
-  width: 560px;
-  max-height: 90vh;
+  width: 680px;
+  max-height: 75vh;
 }
 
 .collapsible-section {
@@ -773,6 +773,10 @@ select {
   border-color: var(--accent);
 }
 
+.form-input-flat {
+  border: none;
+}
+
 .form-select {
   appearance: none;
   cursor: pointer;
@@ -809,6 +813,7 @@ select {
 }
 
 .form-textarea {
+  border: none;
   resize: vertical;
   min-height: 72px;
   font-size: 13px;

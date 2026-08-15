@@ -2,8 +2,9 @@ import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { ChevronDown, ChevronRight, Copy, Check, Search, Lock } from 'lucide-react'
+import { CpuIcon, ZapIcon, TimerIcon, SparklesIcon, ImageIcon } from '@animateicons/react/lucide'
 import type { CommandParam, TemplateArgs, CommandsSchema } from '../../../shared/types'
-import { iconElements } from '../utils/iconMap'
+import { iconComponents } from '../utils/iconMap'
 import { ENGINE_LABELS, paramSetOf, ALL_ENGINES } from '../utils/engine'
 import CustomSelect from './CustomSelect'
 import ModelFileSelect from './ModelFileSelect'
@@ -33,6 +34,15 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
   const [descTooltip, setDescTooltip] = useState<{ text: string; x: number; y: number } | null>(null)
   const [copiedParam, setCopiedParam] = useState<string | null>(null)
   const initialSchemaRef = useRef(true)
+  const catIconRefs = useRef<Record<string, { startAnimation: () => void; stopAnimation: () => void }>>({})
+  const engineIconRefs = useRef<Record<string, { startAnimation: () => void; stopAnimation: () => void }>>({})
+  const engineIconMap: Record<string, React.ElementType> = {
+    llamacpp: CpuIcon,
+    tensorsharp: ZapIcon,
+    turboquant: TimerIcon,
+    beellama: SparklesIcon,
+    sdcpp: ImageIcon
+  }
 
   const card = templateId ? cards.find(c => c.template.id === templateId) : null
   const isRunning = card?.status === 'running'
@@ -365,6 +375,7 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
         <div className="launch-mode-row" style={{ flex: 1 }}>
           {ALL_ENGINES.map(e => {
             const installed = backends.some(b => b.kind === e)
+            const EngineIcon = engineIconMap[e]
             return (
               <button
                 key={e}
@@ -373,7 +384,16 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
                 onClick={() => handleParamSetChange(e)}
                 disabled={disabled || !installed}
                 title={installed ? undefined : `${ENGINE_LABELS[e]} 尚未安装，可在设置中下载`}
+                onMouseEnter={() => engineIconRefs.current[e]?.startAnimation?.()}
+                onMouseLeave={() => engineIconRefs.current[e]?.stopAnimation?.()}
               >
+                {EngineIcon && React.createElement(EngineIcon, {
+                  ref: (el: any) => {
+                    if (el) engineIconRefs.current[e] = el
+                  },
+                  size: 12,
+                  className: 'nav-animate-icon'
+                })}
                 {ENGINE_LABELS[e]}
               </button>
             )
@@ -397,19 +417,29 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
           filteredCategories.map((cat) => {
             const isCollapsed = isCategoryCollapsed(cat.name)
             const isMainSettings = cat.name === '主要设置'
+            const CatIcon = iconComponents[cat.icon] ?? null
             return (
               <div key={cat.name} className="cmd-section">
                 <div
                   className={`cmd-section-header ${isMainSettings ? 'main-settings-header' : 'collapsible-section-header'}`}
                   style={isMainSettings ? { color: 'var(--text)' } : {}}
                   onClick={() => !isMainSettings && toggleCategory(cat.name)}
+                  onMouseEnter={() => catIconRefs.current[cat.name]?.startAnimation?.()}
+                  onMouseLeave={() => catIconRefs.current[cat.name]?.stopAnimation?.()}
                 >
                   {!isMainSettings && (
                     <span className="section-chevron">
                       {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
                     </span>
                   )}
-                  {iconElements[cat.icon]} {cat.name}
+                  {CatIcon && React.createElement(CatIcon, {
+                    ref: (el: any) => {
+                      if (el) catIconRefs.current[cat.name] = el
+                    },
+                    size: 14,
+                    className: 'nav-animate-icon'
+                  })}
+                  {cat.name}
                 </div>
                 <div className={`cmd-grid-wrapper ${isCollapsed ? 'cmd-grid-collapsed' : ''}`}>
                   <div className="cmd-grid">

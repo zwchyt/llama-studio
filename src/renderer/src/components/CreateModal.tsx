@@ -275,7 +275,7 @@ export default function CreateModal() {
               <label className="form-label">模板名称</label>
               <input
                 type="text"
-                className="form-input"
+                className="form-input form-input-flat"
                 value={name}
                 onChange={e => setName(e.target.value)}
                 placeholder="例如：Llama 3 8B 默认"
@@ -336,7 +336,7 @@ export default function CreateModal() {
                 <label className="form-label">服务器端口</label>
                 <input
                   type="number"
-                  className="form-input"
+                  className="form-input form-input-flat"
                   value={serverPort}
                   onChange={e => setServerPort(Number(e.target.value))}
                   min={1024}

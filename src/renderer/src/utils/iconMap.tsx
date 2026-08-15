@@ -1,22 +1,59 @@
 import React from 'react'
-import { Box, Cpu, Zap, Database, Sliders, Wind, Server, FileText, GitBranch, Star, Settings } from 'lucide-react'
+import {
+  BoxIcon,
+  CpuIcon,
+  ZapIcon,
+  SlidersHorizontalIcon,
+  WindIcon,
+  ServerIcon,
+  FileTextIcon,
+  GitBranchIcon,
+  StarIcon,
+  SettingsIcon,
+  MemoryStickIcon,
+  TimerIcon,
+  SparklesIcon,
+  ImageIcon,
+  ShieldCheckIcon,
+  ChartNetworkIcon
+} from '@animateicons/react/lucide'
 
 export const iconComponents: Record<string, React.ElementType> = {
-  Box, Cpu, Zap, Database, Sliders, Wind, Server, FileText, GitBranch, Star, Settings
+  Box: BoxIcon,
+  Cpu: CpuIcon,
+  Zap: ZapIcon,
+  Sliders: SlidersHorizontalIcon,
+  Wind: WindIcon,
+  Server: ServerIcon,
+  FileText: FileTextIcon,
+  GitBranch: GitBranchIcon,
+  Star: StarIcon,
+  Settings: SettingsIcon,
+  Database: MemoryStickIcon,
+  Gauge: TimerIcon,
+  Sparkles: SparklesIcon,
+  Image: ImageIcon,
+  Shield: ShieldCheckIcon,
+  Network: ChartNetworkIcon
 }
 
 export const iconElements: Record<string, React.ReactNode> = {
-  Box: <Box size={14} />,
-  Cpu: <Cpu size={14} />,
-  Zap: <Zap size={14} />,
-  Database: <Database size={14} />,
-  Sliders: <Sliders size={14} />,
-  Wind: <Wind size={14} />,
-  Server: <Server size={14} />,
-  FileText: <FileText size={14} />,
-  GitBranch: <GitBranch size={14} />,
-  Star: <Star size={14} />,
-  Settings: <Settings size={14} />
+  Box: <BoxIcon size={14} className="nav-animate-icon" />,
+  Cpu: <CpuIcon size={14} className="nav-animate-icon" />,
+  Zap: <ZapIcon size={14} className="nav-animate-icon" />,
+  Sliders: <SlidersHorizontalIcon size={14} className="nav-animate-icon" />,
+  Wind: <WindIcon size={14} className="nav-animate-icon" />,
+  Server: <ServerIcon size={14} className="nav-animate-icon" />,
+  FileText: <FileTextIcon size={14} className="nav-animate-icon" />,
+  GitBranch: <GitBranchIcon size={14} className="nav-animate-icon" />,
+  Star: <StarIcon size={14} className="nav-animate-icon" />,
+  Settings: <SettingsIcon size={14} className="nav-animate-icon" />,
+  Database: <MemoryStickIcon size={14} className="nav-animate-icon" />,
+  Gauge: <TimerIcon size={14} className="nav-animate-icon" />,
+  Sparkles: <SparklesIcon size={14} className="nav-animate-icon" />,
+  Image: <ImageIcon size={14} className="nav-animate-icon" />,
+  Shield: <ShieldCheckIcon size={14} className="nav-animate-icon" />,
+  Network: <ChartNetworkIcon size={14} className="nav-animate-icon" />
 }
 
 export const ICON_NAMES = Object.keys(iconComponents)

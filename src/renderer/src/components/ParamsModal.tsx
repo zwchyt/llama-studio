@@ -4,7 +4,7 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { LockIcon, SearchIcon, CopyIcon, CheckIcon } from '@animateicons/react/lucide'
 import type { CommandParam, Template, TemplateArgs, CommandsSchema } from '../../../shared/types'
-import { iconElements } from '../utils/iconMap'
+import { iconComponents } from '../utils/iconMap'
 import { ENGINE_LABELS, paramSetOf, ALL_ENGINES } from '../utils/engine'
 import { switchParamSetArgs, syncArgsByParamSet } from '../utils/defaultTemplate'
 import CustomSelect from './CustomSelect'
@@ -34,6 +34,9 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
   const [copiedParam, setCopiedParam] = useState<string | null>(null)
   const [closing, setClosing] = useState(false)
+  const copyArgsIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const copyAllIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const tabIconRefs = useRef<Record<string, { startAnimation: () => void; stopAnimation: () => void }>>({})
 
   const card = cards.find(c => c.template.id === templateId)
   const isRunning = card?.status === 'running'
@@ -177,14 +180,14 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
     const featured = allCmds
       .filter(c => featuredList.includes(c.arg))
       .sort((a, b) => featuredList.indexOf(a.arg) - featuredList.indexOf(b.arg))
-    const tabList: { name: string; icon: React.ReactNode; commands: CommandParam[] }[] = []
+    const tabList: { name: string; icon: React.ElementType | null; commands: CommandParam[] }[] = []
     if (featured.length > 0) {
-      tabList.push({ name: '主要设置', icon: iconElements['Star'] ?? null, commands: featured })
+      tabList.push({ name: '主要设置', icon: iconComponents['Star'] ?? null, commands: featured })
     }
     for (const cat of activeSchema.categories) {
       const filtered = cat.commands.filter(cmd => cmd.arg !== '--model' && cmd.arg !== '--diffusion-model' && cmd.arg !== '--port' && cmd.arg !== '--listen-port' && cmd.arg !== '--urls')
       if (filtered.length > 0) {
-        tabList.push({ name: cat.name, icon: iconElements[cat.icon] ?? null, commands: filtered })
+        tabList.push({ name: cat.name, icon: iconComponents[cat.icon] ?? null, commands: filtered })
       }
     }
     return tabList
@@ -469,15 +472,27 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
 
           {!searchQuery && tabs.length > 0 && (
             <div className="param-tabs">
-              {tabs.map(tab => (
-                <button
-                  key={tab.name}
-                  className={`param-tab ${activeTab === tab.name ? 'active' : ''}`}
-                  onClick={() => setActiveTab(tab.name)}
-                >
-                  {tab.icon} {tab.name}
-                </button>
-              ))}
+              {tabs.map(tab => {
+                const IconComp = tab.icon
+                return (
+                  <button
+                    key={tab.name}
+                    className={`param-tab ${activeTab === tab.name ? 'active' : ''}`}
+                    onClick={() => setActiveTab(tab.name)}
+                    onMouseEnter={() => tabIconRefs.current[tab.name]?.startAnimation?.()}
+                    onMouseLeave={() => tabIconRefs.current[tab.name]?.stopAnimation?.()}
+                  >
+                    {IconComp && React.createElement(IconComp, {
+                      ref: (el: any) => {
+                        if (el) tabIconRefs.current[tab.name] = el
+                      },
+                      size: 14,
+                      className: 'nav-animate-icon'
+                    })}
+                    {tab.name}
+                  </button>
+                )
+              })}
             </div>
           )}
 
@@ -499,12 +514,12 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
           <div className="params-preview-header">
             <span>Preview</span>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="cmd-copy-all-btn" onClick={handleCopyArgs}>
-                {copiedParam === '__args__' ? <CheckIcon size={12} className="nav-animate-icon" /> : <CopyIcon size={12} className="nav-animate-icon" />}
+              <button className="cmd-copy-all-btn" onClick={handleCopyArgs} onMouseEnter={() => copyArgsIconRef.current?.startAnimation()} onMouseLeave={() => copyArgsIconRef.current?.stopAnimation()}>
+                {copiedParam === '__args__' ? <CheckIcon size={12} className="nav-animate-icon" /> : <CopyIcon ref={copyArgsIconRef} size={12} className="nav-animate-icon" />}
                 {copiedParam === '__args__' ? '已复制' : '复制参数'}
               </button>
-              <button className="cmd-copy-all-btn" onClick={handleCopyAll}>
-                {copiedParam === '__all__' ? <CheckIcon size={12} className="nav-animate-icon" /> : <CopyIcon size={12} className="nav-animate-icon" />}
+              <button className="cmd-copy-all-btn" onClick={handleCopyAll} onMouseEnter={() => copyAllIconRef.current?.startAnimation()} onMouseLeave={() => copyAllIconRef.current?.stopAnimation()}>
+                {copiedParam === '__all__' ? <CheckIcon size={12} className="nav-animate-icon" /> : <CopyIcon ref={copyAllIconRef} size={12} className="nav-animate-icon" />}
                 {copiedParam === '__all__' ? '已复制' : '复制全部'}
               </button>
             </div>

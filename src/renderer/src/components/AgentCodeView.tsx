@@ -5071,7 +5071,6 @@ export default function AgentCodeView() {
             <div ref={modelPickerRef} className={`chat-model-picker${modelPickerOpen ? ' open' : ''}`}>
               {cards.map(card => (
                 <div key={card.template.id} className={`chat-model-item ${card.status}`} onClick={() => handleModelAction(card)}>
-                  <div className="chat-model-item-avatar">{card.template.name[0]?.toUpperCase() || '?'}</div>
                   <div className="chat-model-item-info">
                     <div className="chat-model-item-name">{card.template.name}</div>
                     <div className="chat-model-item-status">

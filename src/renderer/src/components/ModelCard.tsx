@@ -20,6 +20,18 @@ export default function ModelCard({ card, style }: Props) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const hideTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const chatIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const apiIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const logsIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const runIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const chatBtnIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const actionIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const expandIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const menuIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const editIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const copyIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const exportIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const deleteIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
   const isRunning = card.status === 'running'
   const launchMode = card.template.launchMode || 'chat'
   const logs = useStore(s => s.modelLogs[card.template.id])
@@ -326,20 +338,22 @@ export default function ModelCard({ card, style }: Props) {
           )}
         </div>
         <div className="card-menu-btn" ref={menuRef} style={{ position: 'relative', zIndex: 10 }}>
-          <button className="btn btn-ghost btn-icon" aria-label="更多操作" onClick={() => setShowMenu(p => !p)}>
-            <EllipsisVerticalIcon size={16} className="nav-animate-icon" />
+          <button className="btn btn-ghost btn-icon" aria-label="更多操作" onClick={() => setShowMenu(p => !p)} onMouseEnter={() => menuIconRef.current?.startAnimation()} onMouseLeave={() => menuIconRef.current?.stopAnimation()}>
+            <EllipsisVerticalIcon ref={menuIconRef} size={16} className="nav-animate-icon" />
           </button>
           {showMenu && (
             <div className="dropdown-menu" style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 500 }}>
-              <button className="dropdown-item" onClick={handleEdit}><SettingsIcon size={14} className="nav-animate-icon" /> 编辑模板</button>
-              <button className="dropdown-item" onClick={handleDuplicate}><CopyIcon size={14} className="nav-animate-icon" /> 复制</button>
-              <button className="dropdown-item" onClick={handleExport}><DownloadIcon size={14} className="nav-animate-icon" /> 导出</button>
+              <button className="dropdown-item" onClick={handleEdit} onMouseEnter={() => editIconRef.current?.startAnimation()} onMouseLeave={() => editIconRef.current?.stopAnimation()}><SettingsIcon ref={editIconRef} size={14} className="nav-animate-icon" /> 编辑模板</button>
+              <button className="dropdown-item" onClick={handleDuplicate} onMouseEnter={() => copyIconRef.current?.startAnimation()} onMouseLeave={() => copyIconRef.current?.stopAnimation()}><CopyIcon ref={copyIconRef} size={14} className="nav-animate-icon" /> 复制</button>
+              <button className="dropdown-item" onClick={handleExport} onMouseEnter={() => exportIconRef.current?.startAnimation()} onMouseLeave={() => exportIconRef.current?.stopAnimation()}><DownloadIcon ref={exportIconRef} size={14} className="nav-animate-icon" /> 导出</button>
               <div className="dropdown-divider" />
               <button
                 className={`dropdown-item danger ${confirmingDelete ? 'confirming' : ''}`}
                 onClick={handleDelete}
+                onMouseEnter={() => deleteIconRef.current?.startAnimation()}
+                onMouseLeave={() => deleteIconRef.current?.stopAnimation()}
               >
-                <TrashIcon size={14} className="nav-animate-icon" />
+                <TrashIcon ref={deleteIconRef} size={14} className="nav-animate-icon" />
                 {confirmingDelete ? '确认删除？' : '删除'}
               </button>
             </div>
@@ -371,23 +385,29 @@ export default function ModelCard({ card, style }: Props) {
           className={`launch-mode-btn ${launchMode === 'chat' ? 'active' : ''}`}
           onClick={() => setLaunchMode('chat')}
           disabled={isRunning}
+          onMouseEnter={() => chatIconRef.current?.startAnimation()}
+          onMouseLeave={() => chatIconRef.current?.stopAnimation()}
         >
-          <GlobeIcon size={12} className="nav-animate-icon" /> 聊天界面
+          <GlobeIcon ref={chatIconRef} size={12} className="nav-animate-icon" /> 聊天界面
         </button>
         <button
           className={`launch-mode-btn ${launchMode === 'api' ? 'active' : ''}`}
           onClick={() => setLaunchMode('api')}
           disabled={isRunning}
+          onMouseEnter={() => apiIconRef.current?.startAnimation()}
+          onMouseLeave={() => apiIconRef.current?.stopAnimation()}
         >
-          <ServerIcon size={12} className="nav-animate-icon" /> 仅 API
+          <ServerIcon ref={apiIconRef} size={12} className="nav-animate-icon" /> 仅 API
         </button>
         {(isRunning || card.status === 'error') && logs && logs.length > 0 && (
           <button
             ref={logsBtnRef}
             className={`launch-mode-btn logs-toggle-btn ${cardLogsExpanded ? 'active' : ''}`}
             onClick={toggleLogs}
+            onMouseEnter={() => logsIconRef.current?.startAnimation()}
+            onMouseLeave={() => logsIconRef.current?.stopAnimation()}
           >
-            <TerminalIcon size={12} className="nav-animate-icon" /> 日志
+            <TerminalIcon ref={logsIconRef} size={12} className="nav-animate-icon" /> 日志
           </button>
         )}
       </div>
@@ -396,8 +416,10 @@ export default function ModelCard({ card, style }: Props) {
           className={`btn card-run-btn ${isRunning ? 'btn-danger' : 'btn-primary'}`}
           onClick={handleRunToggle}
           disabled={!isRunning && !modelExists}
+          onMouseEnter={() => runIconRef.current?.startAnimation()}
+          onMouseLeave={() => runIconRef.current?.stopAnimation()}
         >
-          {isRunning ? <><CircleStopIcon size={14} className="nav-animate-icon" /> <span className="btn-label">停止</span></> : <><PlayIcon size={14} className="nav-animate-icon" /> <span className="btn-label">启动</span></>}
+          {isRunning ? <><CircleStopIcon ref={runIconRef} size={14} className="nav-animate-icon" /> <span className="btn-label">停止</span></> : <><PlayIcon ref={runIconRef} size={14} className="nav-animate-icon" /> <span className="btn-label">启动</span></>}
         </button>
         {isRunning && (
           <button
@@ -409,8 +431,10 @@ export default function ModelCard({ card, style }: Props) {
               useStore.getState().setActiveChat(chatUrl, port)
               useStore.getState().setView('llama')
             }}
+            onMouseEnter={() => chatBtnIconRef.current?.startAnimation()}
+            onMouseLeave={() => chatBtnIconRef.current?.stopAnimation()}
           >
-            <GlobeIcon size={14} className="nav-animate-icon" /> <span className="btn-label">打开聊天</span>
+            <GlobeIcon ref={chatBtnIconRef} size={14} className="nav-animate-icon" /> <span className="btn-label">打开聊天</span>
           </button>
         )}
         {isRunning && (
@@ -439,8 +463,10 @@ export default function ModelCard({ card, style }: Props) {
               }
               useStore.getState().setView('chat')
             }}
+            onMouseEnter={() => actionIconRef.current?.startAnimation()}
+            onMouseLeave={() => actionIconRef.current?.stopAnimation()}
           >
-            {effectiveParamSet === 'sdcpp' ? <ImageIcon size={14} className="nav-animate-icon" /> : isOcrModel ? <ScanIcon size={14} className="nav-animate-icon" /> : <MessageSquareIcon size={14} className="nav-animate-icon" />}
+            {effectiveParamSet === 'sdcpp' ? <ImageIcon ref={actionIconRef} size={14} className="nav-animate-icon" /> : isOcrModel ? <ScanIcon ref={actionIconRef} size={14} className="nav-animate-icon" /> : <MessageSquareIcon ref={actionIconRef} size={14} className="nav-animate-icon" />}
             <span className="btn-label">{effectiveParamSet === 'sdcpp' ? '图像生成' : isOcrModel ? 'OCR 识别' : '原生聊天'}</span>
           </button>
         )}
@@ -448,8 +474,10 @@ export default function ModelCard({ card, style }: Props) {
           <button
             className="card-expand-btn"
             onClick={() => setShowParamsModal(true)}
+            onMouseEnter={() => expandIconRef.current?.startAnimation()}
+            onMouseLeave={() => expandIconRef.current?.stopAnimation()}
           >
-            <SettingsIcon size={16} className="nav-animate-icon" />
+            <SettingsIcon ref={expandIconRef} size={16} className="nav-animate-icon" />
           </button>
         )}
       </div>
@@ -486,13 +514,14 @@ export default function ModelCard({ card, style }: Props) {
         </div>,
         document.body
       )}
-      {showParamsModal && (
+      {showParamsModal && createPortal(
         <ParamsModal
           templateId={card.template.id}
           args={card.template.args}
           onClose={() => setShowParamsModal(false)}
           cardName={card.template.name}
-        />
+        />,
+        document.body
       )}
     </div>
   )

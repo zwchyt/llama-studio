@@ -45,9 +45,11 @@ const NavItem = forwardRef<{ startAnimation: () => void; stopAnimation: () => vo
         className={`nav-item ${active ? 'active' : ''} ${className}`}
         onClick={onClick}
         style={style}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
       >
         <Icon ref={innerRef as any} size={16} className="nav-animate-icon" />
-        <span onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>{label}</span>
+        <span>{label}</span>
         {children}
       </button>
     )
@@ -71,10 +73,12 @@ function BackendNavItem({ b, isActive, onSwitch }: { b: { name: string; path?: s
     <button
       className="nav-item"
       onClick={onSwitch}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
       <HardDriveIcon ref={iconRef as any} size={16} className="nav-animate-icon" />
       <span className="sidebar-backend-name">
-        <span className="sidebar-backend-name-text" onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>{b.name}</span>
+        <span className="sidebar-backend-name-text">{b.name}</span>
         {isActive && <span className="nav-active-dot" />}
       </span>
     </button>

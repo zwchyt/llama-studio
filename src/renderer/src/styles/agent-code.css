@@ -90,7 +90,7 @@
   align-items: center;
   gap: 7px;
   padding: 4px 10px;
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 999px;
   background: var(--surface-2, var(--bg));
   color: var(--text-muted);
@@ -100,17 +100,21 @@
   white-space: nowrap;
   max-width: 100%;
   overflow: hidden;
-  transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
+  transition: background .2s ease, box-shadow .2s ease;
+  outline: none;
 }
 
 .agent-ctx-inline:hover {
-  border-color: var(--border-strong);
   background: var(--surface);
 }
 
 .agent-ctx-inline.active {
-  border-color: var(--accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.agent-ctx-inline:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .agent-ctx-inline-bar {
@@ -166,7 +170,6 @@
 }
 
 .agent-ctx-inline.warn {
-  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
   animation: agent-ctx-inline-pulse 2s ease-in-out infinite;
 }
 

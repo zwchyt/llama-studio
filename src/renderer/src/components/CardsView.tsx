@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import ModelCard from './ModelCard'
@@ -8,6 +8,10 @@ import { safeCall } from '../utils/safeCall'
 import type { Template } from '../../../shared/types'
 import '../styles/cards.css'
 export default function CardsView() {
+  const importIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const newTemplateIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const addCardIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
+  const searchIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
   const { cards, templatesReady, setShowCreateModal, addCard, templateSearch, setTemplateSearch } = useStore(
     s => ({ cards: s.cards, templatesReady: s.templatesReady, setShowCreateModal: s.setShowCreateModal, addCard: s.addCard, templateSearch: s.templateSearch, setTemplateSearch: s.setTemplateSearch }),
     shallow
@@ -39,8 +43,8 @@ export default function CardsView() {
         </div>
         <div className="page-actions">
           {cards.length > 0 && (
-            <div className="template-search-bar">
-              <SearchIcon size={14} className="nav-animate-icon" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+            <div className="template-search-bar" onMouseEnter={() => searchIconRef.current?.startAnimation()} onMouseLeave={() => searchIconRef.current?.stopAnimation()}>
+              <SearchIcon ref={searchIconRef} size={14} className="nav-animate-icon" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
               <input
                 type="text"
                 className="template-search-input"
@@ -56,12 +60,12 @@ export default function CardsView() {
               )}
             </div>
           )}
-          <button className="btn header-input-btn" onClick={handleImport}>
-            <UploadIcon size={15} className="nav-animate-icon" />
+          <button className="btn header-input-btn" onClick={handleImport} onMouseEnter={() => importIconRef.current?.startAnimation()} onMouseLeave={() => importIconRef.current?.stopAnimation()}>
+            <UploadIcon ref={importIconRef} size={15} className="nav-animate-icon" />
             导入
           </button>
-          <button className="btn header-input-btn" onClick={() => setShowCreateModal(true)}>
-            <PlusIcon size={15} className="nav-animate-icon" />
+          <button className="btn header-input-btn" onClick={() => setShowCreateModal(true)} onMouseEnter={() => newTemplateIconRef.current?.startAnimation()} onMouseLeave={() => newTemplateIconRef.current?.stopAnimation()}>
+            <PlusIcon ref={newTemplateIconRef} size={15} className="nav-animate-icon" />
             新建模板
           </button>
         </div>
@@ -108,8 +112,8 @@ export default function CardsView() {
               style={{ animationDelay: `${Math.min(i * 30, 450)}ms` }}
             />
           ))}
-          <button className="add-card" onClick={() => setShowCreateModal(true)}>
-            <PlusIcon size={28} className="nav-animate-icon" />
+          <button className="add-card" onClick={() => setShowCreateModal(true)} onMouseEnter={() => addCardIconRef.current?.startAnimation()} onMouseLeave={() => addCardIconRef.current?.stopAnimation()}>
+            <PlusIcon ref={addCardIconRef} size={28} className="nav-animate-icon" />
             <span>添加模板</span>
           </button>
         </div>

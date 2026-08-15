@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Image, Loader2, Save, FolderOpen, Upload, Square, Wand2, Trash2, ChevronDown, Play, X, Sparkles } from 'lucide-react'
+import { Image, Loader2, Save, FolderOpen, Upload, Wand2, Trash2, ChevronDown, Play, X, Sparkles } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useImageStore, type ImageGenItem } from '../store/imageStore'
 import { notify } from '../store/notificationStore'
@@ -433,7 +433,7 @@ export default function ImageGenView() {
         <div className="imagegen-header-left">
           <h2 className="imagegen-title">图像生成</h2>
           <button className={`btn btn-sm imagegen-reco-btn ${showReco ? 'active' : ''}`} onClick={() => setShowReco(v => !v)}>
-            <Sparkles size={14} /> 用户建议
+            <Sparkles size={14} /> 推荐模型
           </button>
         </div>
         <div className="imagegen-server-select">
@@ -457,6 +457,14 @@ export default function ImageGenView() {
         ) : selectedCard && selectedCard.status !== 'running' ? (
           <span className="badge-warn">○ 未运行</span>
         ) : null}
+        <div className="imagegen-header-actions">
+          <button className="btn btn-secondary btn-sm" onClick={() => setShowHistory(!showHistory)}>
+            <ChevronDown size={13} style={{ transform: showHistory ? 'rotate(180deg)' : 'none' }} /> 历史（{history.length}）
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={openImagesDir}>
+            <FolderOpen size={13} /> 打开图片目录
+          </button>
+        </div>
       </div>
 
       {showReco && (
@@ -464,7 +472,7 @@ export default function ImageGenView() {
           <div className="imagegen-reco-head">
             <Sparkles size={15} />
             <strong>推荐模型 · Z-Image-Turbo</strong>
-            <span className="imagegen-reco-tag">用户建议</span>
+            <span className="imagegen-reco-tag">建议</span>
           </div>
           <div className="imagegen-reco-files">
             <code>z-image-turbo-Q4_K_M.gguf</code>
@@ -649,14 +657,6 @@ export default function ImageGenView() {
         <div className="imagegen-results">
           <div className="imagegen-results-header">
             <span className="text-muted text-sm">生成结果</span>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-secondary btn-sm" onClick={() => setShowHistory(!showHistory)}>
-                <ChevronDown size={13} style={{ transform: showHistory ? 'rotate(180deg)' : 'none' }} /> 历史（{history.length}）
-              </button>
-              <button className="btn btn-secondary btn-sm" onClick={openImagesDir}>
-                <FolderOpen size={13} /> 打开图片目录
-              </button>
-            </div>
           </div>
 
           {lastGenInfo && !generating && (
@@ -668,49 +668,44 @@ export default function ImageGenView() {
 
           {generating ? (
             <div className="imagegen-loading">
-              <div className="imagegen-loading-box">
-                <div className="imagegen-loading-head">
-                  {sdProg && sdProg.stage !== 'idle' && (
-                    <span className={`imagegen-stage-badge stage-${sdProg.stage}`}>{sdProg.stageText}</span>
-                  )}
-                  <span className="imagegen-elapsed">已用时 {elapsed}s</span>
-                </div>
+              <div className="imagegen-loading-head">
+                {sdProg && sdProg.stage !== 'idle' && (
+                  <span className={`imagegen-stage-badge stage-${sdProg.stage}`}>{sdProg.stageText}</span>
+                )}
+                <span className="imagegen-elapsed">已用时 {elapsed}s</span>
+              </div>
 
-                {displayProgress !== null && (
-                  <div className="imagegen-progress">
-                    <div className="imagegen-progress-bar">
-                      <div className="imagegen-progress-fill" style={{ width: `${Math.round(displayProgress * 100)}%` }} />
-                    </div>
-                    <span className="imagegen-progress-text">{Math.round(displayProgress * 100)}%</span>
+              {displayProgress !== null && (
+                <div className="imagegen-progress">
+                  <div className="imagegen-progress-bar">
+                    <div className="imagegen-progress-fill" style={{ width: `${Math.round(displayProgress * 100)}%` }} />
                   </div>
-                )}
+                  <span className="imagegen-progress-text">{Math.round(displayProgress * 100)}%</span>
+                </div>
+              )}
 
-                {displayDetail && (
-                  <p className="imagegen-progress-detail">
-                    {displayDetail}
-                    {sdProg && sdProg.round > 1 ? ` · 第 ${sdProg.round} 轮` : ''}
-                  </p>
-                )}
+              {displayDetail && (
+                <p className="imagegen-progress-detail">
+                  {displayDetail}
+                  {sdProg && sdProg.round > 1 ? ` · 第 ${sdProg.round} 轮` : ''}
+                </p>
+              )}
 
+              <div className="imagegen-loading-body">
                 {progressPreview ? (
                   <div className="imagegen-loading-preview">
                     <img src={progressPreview} alt="中途预览" />
                     <span className="imagegen-loading-caption">采样进行中预览（图生图/部分模型支持）</span>
                   </div>
-) : (
-<div className="imagegen-skeleton-grid">
-  {Array.from({ length: Math.max(1, batchSize) }).map((_, i) => (
-    <div key={i} className="imagegen-skeleton" />
-  ))}
-</div>
-)}
-
-                <p className="imagegen-loading-note">
-                  扩散采样通常需要 10~60 秒；过程不可中途取消，如需中断可到「我的模板」停止该服务。
-                </p>
-                <button className="btn btn-secondary btn-sm" onClick={() => setView('cards')}>
-                  <Square size={13} /> 到「我的模板」停止服务
-                </button>
+                ) : (
+                  <div className="imagegen-loading-canvas">
+                    <div className="imagegen-ig-canvas" role="img" aria-label="Generating image">
+                      <span className="imagegen-ig-dots" aria-hidden />
+                      <span className="imagegen-ig-glow" aria-hidden />
+                      <span className="imagegen-ig-res">{width} × {height}</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ) : results.length > 0 ? (
