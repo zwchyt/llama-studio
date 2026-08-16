@@ -3685,8 +3685,24 @@ export function registerIpcHandlers(): void {
 
   function startMetricsInterval(): void {
     if (metricsInterval) return
+    // 2s 全量广播：GPU/CPU/缓存命中/预填进度等面板数据（collectMetrics 较重，
+    // 过短的周期会让数据流被单轮耗时阻塞）。
     metricsInterval = setInterval(() => broadcastMetrics(), 2000)
   }
+
+  // 主动查询一次模型最新 /slots 指标：agent 轮末以此快照 n_decoded 最终值，
+  // 与端点当前值精确一致（不依赖广播周期，广播间隔内 finalize 也能拿到最新值）。
+  ipcMain.handle('query-metrics-now', async (_e, id: string) => {
+    const entry = runningProcesses.get(id)
+    if (!entry || entry.proc.pid === undefined) return null
+    try {
+      const payload = await collectMetrics(id, entry.port, entry.proc.pid)
+      const v = payload.nDecoded
+      return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null
+    } catch {
+      return null
+    }
+  })
 
   function stopMetricsInterval(): void {
     if (metricsInterval) {

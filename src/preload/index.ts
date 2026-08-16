@@ -132,6 +132,9 @@ const fullApi = {
     ipcRenderer.on('metrics-update', (_event, data) => callback(data))
   },
   removeMetricsUpdateListener: () => ipcRenderer.removeAllListeners('metrics-update'),
+  // 主动查询模型最新 /slots 指标（返回 n_decoded 原值；无运行进程返回 null）：
+  // agent 输出结束时刻以此为准快照最终解码数，保证与端点当前值一致（不依赖广播周期）
+  queryMetricsNow: (id: string) => ipcRenderer.invoke('query-metrics-now', id),
   listGlobalAgents: () => ipcRenderer.invoke('list-global-agents'),
   launchAgent: (cmd: string, cwd: string) => ipcRenderer.invoke('launch-agent', { cmd, cwd }),
   installAgent: (pkg: string) => ipcRenderer.invoke('install-agent', { pkg }),

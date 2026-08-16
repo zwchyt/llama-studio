@@ -136,6 +136,7 @@ interface LlamaCppApi {
   getMetrics: () => Promise<{ metrics: Record<string, Partial<ModelMetrics>> }>
   onMetricsUpdate: (cb: (data: Partial<ModelMetrics> & { id: string }) => void) => void
   removeMetricsUpdateListener: () => void
+  queryMetricsNow: (id: string) => Promise<number | null>
   getMetricsPolling: () => Promise<boolean>
   setMetricsPolling: (enabled: boolean) => Promise<{ success: boolean }>
   getRunningProcesses: () => Promise<string[]>

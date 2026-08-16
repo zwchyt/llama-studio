@@ -7,9 +7,29 @@
   color: var(--text-muted);
 }
 
+/* 头部行内嵌形态：思考块头部是 flex 行（思考过程/思考已中断），
+   抵消独立行的 margin-bottom，徽标与时长/工具徽标同排紧凑排列 */
+.agent-think-status .agent-stream-meta {
+  margin-bottom: 0;
+}
+
+/* 思考中流光文字仅作用于头部文案本身（background-clip: text + fill 透明），
+   meta 徽标（模型名/token 计数）作为子元素会继承 -webkit-text-fill-color: transparent
+   导致数字/文字不可见——恢复为实色；tps 徽标底色上的白字一并还原 */
+.agent-think.thinking .agent-think-status .agent-stream-meta,
+.agent-think.thinking .agent-think-status .agent-stream-meta * {
+  -webkit-text-fill-color: var(--text-muted);
+  background: none;
+  background-clip: unset;
+}
+
+.agent-think.thinking .agent-think-status .agent-stream-tps {
+  -webkit-text-fill-color: #fff;
+}
+
 .agent-stream-model {
   font-size: 11px;
-  color: var(--text-muted);
+  color: #a7a54a;
   max-width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -21,7 +41,7 @@
   align-items: center;
   gap: 2px;
   font-size: 11px;
-  color: var(--text-muted);
+  color: #dd8340;
 }
 
 .agent-stream-tps {
@@ -4004,7 +4024,7 @@
 }
 
 /* ── 思考状态像素网格（.agent-think-grid / .agent-think-cell）──
-   首 token 前的 ThinkingLoader 与思考块「思考中」头部共用，
+   首 token 前（ThinkBlock pending 态）与思考块「思考中」头部共用，
    保证等待窗口到思考流式的视觉全程一致。chevron 波前（Drive 变体）：
    650ms 周期短于 720ms 扫过总长，始终保持两个波前在飞行。 */
 .agent-think-grid {
@@ -4211,12 +4231,16 @@
 .agent-think-tools-badge {
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
   padding: 1px 7px;
   border-radius: 999px;
   font-size: 10px;
   font-weight: 500;
   line-height: 1.7;
   color: #b98407;
+  /* 关键：思考态容器的 -webkit-text-fill-color: transparent（流光文字）会继承到徽标，
+     导致框内文字透明不可见（空框无文字）；这里显式压回实色。 */
+  -webkit-text-fill-color: #b98407;
   background: var(--surface-2, var(--bg));
   border: 1px solid var(--border-strong);
   white-space: nowrap;

@@ -778,7 +778,7 @@ function previewLineNoFromTarget(t: EventTarget | null): number | null {
 }
 
 /* ── 像素网格（chevron 波前，Drive 变体）──
-   思考状态的统一视觉：首 token 前的 ThinkingLoader 与思考块的
+   思考状态的统一视觉：首 token 前（ThinkBlock pending 态）与思考块的
    「思考中」头部共用，保证等待窗口到思考流式的视觉全程一致，
    无切换突兀感。650ms 周期短于 720ms 扫过总长，两个波前在飞行。 */
 const LOADER_CHEVRON = Array.from({ length: 9 }, (_, i) => {
@@ -801,7 +801,7 @@ const ThinkGrid = React.memo(function ThinkGrid() {
 // 链内全部思考文本与全部工具卡按时间线交错合并，不再按「思考→工具」切分多个独立思考块。
 type ThinkChainItem =
   | { kind: 'think'; content: string; durationMs?: number }
-  | { kind: 'tools'; toolCalls: NonNullable<AgentMessage['toolCalls']> }
+  | { kind: 'tools'; toolCalls: NonNullable<AgentMessage['toolCalls']>; durationMs?: number }
 
 // 思考链流式文本：逐行 span 渲染（稳定 key → React 只更新最后一行文本节点，
 // 浏览器 paint 区域收缩到最后一行）。与正文代码块同构——思考文本增长时整块
@@ -818,8 +818,17 @@ const StreamingThinkText = React.memo(function StreamingThinkText({ value }: { v
   )
 })
 
-const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, msgStreaming, bodyAppeared, durationMs, items, onPreviewFile, canUndoFor, onUndo, cardDefaultOpen }: {
+const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, msgStreaming, bodyAppeared, durationMs, items, onPreviewFile, canUndoFor, onUndo, cardDefaultOpen, pending, streamStartAt, meta }: {
   value: string; closed: boolean; isStreaming?: boolean; msgStreaming?: boolean; bodyAppeared?: boolean; durationMs?: number
+  // pending：首 token 前占位态（同一思考卡头部：「思考中」+ 流开始连续计时，不挂载内容），
+  // 首个思考段到达后由同组件原地接管——不再「ThinkingLoader → ThinkBlock」两元素切换，
+  // 消除视觉跳变与计时回退（loader 的 3.2s → 思考块重新从 0 数的现象）。
+  pending?: boolean
+  // streamStartAt：流开始时刻（ms）——实时头部时间据此连续计时（含 TTFT），不回退
+  streamStartAt?: number
+  // meta：模型名 + token 计数徽标（调用方按流式/完成态构造），常驻头部「思考过程/思考已中断」
+  // 两分支、完成后不消失——取代原「正文底部流式徽标、完成后消失」的展示位置。
+  meta?: React.ReactNode
   // 收纳在本思考块展开体内的链内元素（首段思考 value 之后的交错序列：
   // think 续段 = 后续思考文本；tools = 工具卡组）。无则思考块保持纯文本。
   // 配套渲染回调与 ToolCallGroup 一致（文件预览跳转 / 撤销），由调用方透传。
@@ -847,7 +856,7 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
   // 头部「思考了 X 秒」与「思考中 X 秒」都用它（+ 当前未定格段的实时 elapsed），
   // 保证时间跨思考段/工具阶段连续增长、不回退：是整条思考链的思考总时间，而非首段时长。
   const chainTotalMs = (durationMs ?? 0) + (items ?? []).reduce(
-    (acc, it) => acc + (it.kind === 'think' ? (it.durationMs ?? 0) : 0),
+    (acc, it) => acc + (it.kind === 'think' ? (it.durationMs ?? 0) : it.kind === 'tools' ? (it.durationMs ?? 0) : 0),
     0
   )
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -859,15 +868,22 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
   const [elapsedMs, setElapsedMs] = useState(0)
   const phaseStartRef = useRef<number | null>(null)
   const frozenToolsRef = useRef(0)
+  // pending 占位态以 isStreaming=true 挂载（同一「思考中」视觉），phase 自然归入 think，时钟照常走动
   const phase: 'think' | 'tools' | 'idle' = isStreaming ? 'think' : (msgStreaming && hasLiveTools) ? 'tools' : 'idle'
   const phaseRef = useRef<'think' | 'tools' | 'idle'>('idle')
   useEffect(() => {
     const prev = phaseRef.current
     phaseRef.current = phase
-    // 退出 tools 阶段：固化该阶段已读秒时长（思考段累计在 chainTotalMs，工具段在此固化）
-    if (prev === 'tools' && phase !== 'tools' && phaseStartRef.current != null) {
-      frozenToolsRef.current += Date.now() - phaseStartRef.current
-    }
+// 退出 tools 阶段：固化该阶段已读秒时长（思考段累计在 chainTotalMs，工具段在此固化）。
+  // 工具批全 done 时已把该批跨度定格进 seg.durationMs（chainTotalMs 已含），
+  // 这里只补未定格的剩余（多批工具时中间批已定格，差额 = 最后一批的实时跨度），避免双计。
+  if (prev === 'tools' && phase !== 'tools' && phaseStartRef.current != null) {
+    const stamped = (items ?? []).reduce(
+      (acc, it) => acc + (it.kind === 'tools' ? (it.durationMs ?? 0) : 0),
+      0
+    )
+    frozenToolsRef.current += Math.max(0, (Date.now() - phaseStartRef.current) - stamped)
+  }
     if (phase === 'idle') { phaseStartRef.current = null; setElapsedMs(0); return }
     if (phase !== prev) { phaseStartRef.current = Date.now(); setElapsedMs(0) }
     if (phaseStartRef.current == null) phaseStartRef.current = Date.now()
@@ -875,8 +891,14 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
     const timer = setInterval(() => setElapsedMs(Date.now() - (phaseStartRef.current ?? Date.now())), 100)
     return () => clearInterval(timer)
   }, [phase])
-  // 头部展示的总时长：idle 时定格（思考段累计 + 固化工具时长），think/tools 时实时跳动
-  const headMs = chainTotalMs + frozenToolsRef.current + (phase === 'idle' ? 0 : elapsedMs)
+  // 头部展示的总时长：idle 时定格（思考段累计 + 固化工具时长），think/tools 时实时跳动。
+  // 实时跳动优先用「流开始连续时钟」（streamStartAt，含 TTFT、跨 pending/思考/工具全程不回退），
+  // 无 streamStartAt（如旧消息回放）时回退到链累计 + 阶段实时读秒的旧逻辑。
+  const headMs = phase === 'idle'
+    ? chainTotalMs + frozenToolsRef.current
+    : streamStartAt != null
+      ? Date.now() - streamStartAt
+      : chainTotalMs + frozenToolsRef.current + elapsedMs
 
   // 流式期间对思考文本渲染做节流：用「rAF + 时间戳」帧对齐节流（见 useFrameThrottledValue），
   // 替代固定 setInterval——主线程忙时 rAF 自然降频不积压，空闲时按节流间隔上限更新；
@@ -888,6 +910,8 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
 
   useEffect(() => {
     if (userToggledRef.current) return
+    // pending 占位态：内容尚未到达，不挂载 body
+    if (pending) return
     // 思考流式中，或收纳的工具卡仍在执行：自动展开；全部完成且思考结束：自动收起
     if (thinking || hasLiveTools) {
       setVisible(true)
@@ -896,7 +920,7 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
     }
     setExpanded(false)
     setVisible(false)
-  }, [thinking, hasLiveTools])
+  }, [thinking, hasLiveTools, pending])
 
   // 当 closed 从外部变为 true（如 toolCalls 到达），立即收起思考块，
   // 不等待 thinking->false 的 useEffect（可能滞后一帧）。
@@ -970,17 +994,22 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
       <button className="agent-think-toggle" onClick={handleToggle}>
         {showThinking ? (
           <span className="agent-think-status">
-            {/* 思考中：像素网格（与首 token 前 ThinkingLoader 同一视觉，全程一致）；
-                流式结束后的「思考过程/已中断」折叠态仍用大脑图标 */}
+            {/* 思考中（含首 token 前 pending 占位）：像素网格 + 流光文案 + 连续计时，全程同一视觉 */}
             <ThinkGrid /> 思考中
-            {/* 链总时长实时跳动（含固化工具时长）：思考链未结束前一直显示并持续增长 */}
+            {/* 实时总时长（含固化工具时长）：思考链未结束前一直显示并持续增长，
+                pending → 思考同一连续时钟（streamStartAt），不回退 */}
             <span className="agent-think-dur">{fmtThinkDur(headMs)}</span>
+            {/* 工具执行中：头部同时显示工具总数徽标（与完成态一致） */}
+            {toolCount > 0 && <span className="agent-think-tools-badge">{toolCount} 次工具调用</span>}
+            {/* 模型名 + token 计数：思考链阶段也常驻（token 源 = 含思考标签的流文本，实时估算增长） */}
+            {meta}
             <ChevronRightIcon size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
           </span>
         ) : wasStopped ? (
           <span className="agent-think-status">
             <Brain size={13} className="agent-think-brain" /> 思考已中断
             {toolCount > 0 && <span className="agent-think-tools-badge">{toolCount} 次工具调用</span>}
+            {meta}
             <ChevronRightIcon size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
           </span>
         ) : (
@@ -988,6 +1017,7 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
             <Brain size={13} className="agent-think-brain" /> 思考过程
             {headMs > 0 && <span className="agent-think-dur">思考了 {fmtThinkDur(headMs)}</span>}
             {toolCount > 0 && <span className="agent-think-tools-badge">{toolCount} 次工具调用</span>}
+            {meta}
             <ChevronRightIcon size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
           </span>
         )}
@@ -1212,82 +1242,62 @@ const DebugPanel = React.memo(function DebugPanel() {
 })
 
 // ── 流式元信息徽标（参考 pi-web 的模型输出文字流式设计）──
-// 展示：模型名 + 预估 token 数 + 实时生成速度 t/s。
-// t/s 采用「滑动窗口」（最近 SPEED_WINDOW_MS 内的产出速率）而非全程累计均值，
-// 以反映「当前速度」；token 数用 CJK-aware 的 estimateTextTokens（而非粗糙的 4 字符/token），
-// 对中文/代码更接近真实。真实权威速度（服务端 decodeTokS）在流结束后记入「调试」面板。
-const SPEED_WINDOW_MS = 3000
-const StreamingBadge = React.memo(function StreamingBadge({ text, modelLabel }: { text: string; modelLabel?: string }) {
+// 展示：模型名 + 解码 token 数 + 实时生成速度 t/s。
+// 两者都用服务端真实数据（与「模型数据」监控面板的「生成进度」同源同义）：
+// token 数 = /slots 的 n_decoded 原值；t/s = n_decoded 差分 / 时间（2s 广播粒度）。
+// 不再做任何本地估算（estimateTextTokens 已从本组件移除）。
+const StreamingBadge = React.memo(function StreamingBadge({ modelLabel, live = true, persistedTps, onRate, decoded, templateId }: {
+  modelLabel?: string
+  live?: boolean
+  persistedTps?: number          // 完成态（刷新后）从消息还原持久化的最后速率
+  onRate?: (v: number | null) => void  // 采样值上报（供持久化进消息，刷新后还原 t/s）
+  decoded?: number               // 完成态：消息持久化的 n_decoded 原值（刷新后还原，不跟随当前变化）
+  templateId?: string            // 模型指标 key（modelMetrics[templateId].nDecoded）
+}) {
+  // 只订阅本组件：主进程每 2s 广播指标时仅徽标重渲染，不触发行/整页
+  const nDecoded = useStore(s => templateId ? s.modelMetrics[templateId]?.nDecoded : undefined)
+  // 官方瞬时速率：llamacpp:predicted_tokens_seconds（/metrics，llama.cpp 自身计时的真实 t/s，
+  // 非差分推算）；单值或历史数组（模型监控面板速度图同源）
+  const decodeTokS = useStore(s => templateId ? s.modelMetrics[templateId]?.decodeTokS : undefined)
   const [tps, setTps] = useState<number | null>(null)
-  const textRef = useRef(text)
-  textRef.current = text
-  // 滑动窗口采样：{ 时间戳, 当前累计 token }，以窗口两端的差分估算当前速率
-  const samplesRef = useRef<{ t: number; tok: number }[]>([])
-  useEffect(() => {
-    const id = setInterval(() => {
-      const tok = estimateTextTokens(textRef.current)
-      const now = Date.now()
-      if (tok <= 0) { samplesRef.current = []; setTps(null); return }
-      const s = samplesRef.current
-      s.push({ t: now, tok })
-      // 仅保留滑动窗口内的样本
-      const cutoff = now - SPEED_WINDOW_MS
-      samplesRef.current = s.filter(x => x.t >= cutoff)
-      const win = samplesRef.current
-      const first = win[0]!
-      const dt = (now - first.t) / 1000
-      const dTok = tok - first.tok
-      if (dt >= 0.5 && dTok > 0) setTps(dTok / dt)
-    }, 300)
-    return () => { clearInterval(id); samplesRef.current = []; setTps(null) }
-  }, [])
-  const est = estimateTextTokens(text)
+  // 上报回调走 ref：跨渲染稳定，避免父级箭头函数变化触发重复上报/重渲染循环
+  const onRateRef = useRef(onRate)
+  onRateRef.current = onRate
+  // 流式中官方速率到达即显示并上报（供轮末持久化「刷新后还原」）；
+  // 完成后保持最后一次采样值常驻，不跟随广播继续变化。
+  const rate = Array.isArray(decodeTokS) ? decodeTokS[decodeTokS.length - 1] : decodeTokS
+  const liveRate = live && rate != null && typeof rate === 'number' && rate > 0 ? rate : null
+  useEffect(() => { if (live) setTps(liveRate) }, [live, liveRate])
+  useEffect(() => { onRateRef.current?.(live ? liveRate : null) }, [live, liveRate])
+  // token 数：流式中实时 n_decoded 原值；完成态用消息持久化值（不跟随当前变化）
+  const shownTokens = live
+    ? (nDecoded != null && nDecoded > 0 ? nDecoded : 0)
+    : (decoded != null && decoded > 0 ? decoded : 0)
+  // 流式采样值优先；完成态（tps 无采样、已保留或刷新后清空）用持久化值兜底
+  const shownTps = tps ?? persistedTps ?? null
   // 速度分级配色：>=50 青、>=30 绿、>=15 黄、其余 红（与 pi-web 一致）
-  const bg = tps == null ? 'var(--text-muted)' : tps >= 50 ? '#53b3cb' : tps >= 30 ? '#9bc53d' : tps >= 15 ? '#f9c22e' : '#e01a4f'
+  const bg = shownTps == null ? 'var(--text-muted)' : shownTps >= 50 ? '#53b3cb' : shownTps >= 30 ? '#9bc53d' : shownTps >= 15 ? '#f9c22e' : '#e01a4f'
   return (
     <div className="agent-stream-meta">
       {modelLabel && <span className="agent-stream-model">{modelLabel}</span>}
-      {est > 0 && (
-        <span className="agent-stream-tokens" title="流式期间预估 token 数">
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
-          </svg>
-          {est}
-        </span>
-      )}
-      {tps != null && (
-        <span className="agent-stream-tps" style={{ background: bg }}>{tps.toFixed(1)} t/s</span>
+      <span className="agent-stream-tokens" title="已解码 token 数（服务端 /slots n_decoded）">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
+        </svg>
+        {shownTokens}
+      </span>
+      {shownTps != null && (
+        <span className="agent-stream-tps" style={{ background: bg }}>{shownTps.toFixed(1)} t/s</span>
       )}
     </div>
   )
 })
 
 /* ─────────────────────────────────────────────────────────
- * THINKING LOADER — 首 token 到达前（首次思考）在消息区展示
- * 「模型思考中…」占位，带实时计时；与输入框上方常驻状态栏互补，
- * 避免等待窗口在会话区留白。网格与思考块「思考中」头部共用
- * ThinkGrid，视觉全程一致。reduced-motion 时网格冻结，计时仍走。
+ * THINKING LOADER — 已并入 ThinkBlock 的 pending 态（首 token 前占位）：
+ * 同一思考卡头部 + 流开始连续计时 + 「模型思考中」，不再单独组件切换，
+ * 消除「ThinkingLoader → 思考块」两元素替换的视觉跳变与计时回退。
  * ───────────────────────────────────────────────────────── */
-function useLoaderElapsed() {
-  const [ds, setDs] = useState(0)
-  useEffect(() => {
-    const t = setInterval(() => setDs(d => d + 1), 100)
-    return () => clearInterval(t)
-  }, [])
-  const total = ds / 10
-  return total < 60 ? `${total.toFixed(1)}s` : `${Math.floor(total / 60)}m ${(total % 60).toFixed(1)}s`
-}
-
-const ThinkingLoader = React.memo(function ThinkingLoader() {
-  const elapsed = useLoaderElapsed()
-  return (
-    <div className="agent-think-loader">
-      <ThinkGrid />
-      <span className="agent-think-loader-label">模型思考中</span>
-      <span className="agent-think-loader-time">{elapsed}</span>
-    </div>
-  )
-})
 
 // ── 流式正文（非思考段）Markdown 节流渲染 ──
 // 模型主输出（正文）在流式期间每 ~30ms 落盘一次（STREAM_FLUSH_MS），若不优化，每次都触发 react-markdown
@@ -1971,6 +1981,8 @@ type RenderSegmentsOpts = {
   canUndoFor: AgentMsgRowActions['canUndoFor']
   onUndo: AgentMsgRowActions['onUndo']
   toolCardExpandedDefault: boolean
+  streamStartAt?: number  // 流开始时刻：思考块实时头部时间据此连续计时（含 TTFT）
+  meta?: React.ReactNode  // 模型名 + token 计数徽标：常驻思考块头部（流式中含 t/s，完成后保留）
 }
 // segments 渲染（思考链 / 工具卡 / 正文气泡）：流式分支与完成分支共用同一实现
 // （原为 AgentCodeView 内部闭包，抽到模块级供 AgentMessageRow 复用，避免两处拷贝漂移）。
@@ -1985,7 +1997,7 @@ function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']>, msgI
     } else if (seg.kind === 'think') {
       chainItems.push({ kind: 'think', content: seg.content, durationMs: seg.durationMs })
     } else {
-      chainItems.push({ kind: 'tools', toolCalls: seg.toolCalls })
+      chainItems.push({ kind: 'tools', toolCalls: seg.toolCalls, durationMs: seg.durationMs })
     }
   }
   if (tailToolCalls && tailToolCalls.length > 0) chainItems.push({ kind: 'tools', toolCalls: tailToolCalls })
@@ -2001,6 +2013,8 @@ function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']>, msgI
         msgStreaming={streaming}
         bodyAppeared={textContents.length > 0}
         durationMs={chainItems[0].durationMs}
+        streamStartAt={o.streamStartAt}
+        meta={o.meta}
         items={chainItems.slice(1)}
         onPreviewFile={o.onPreviewFile}
         canUndoFor={o.canUndoFor}
@@ -2041,93 +2055,91 @@ const stoppedBadge = (
   </div>
 )
 
-// 已完成助手消息行：含 segments 交错布局与旧消息传统布局两种完成态。
-// React.memo：msg 引用在流式 commit 间不变 → 已完成行跳过 reconcile，仅流式行更新，
-// 消除「整页 20 次/秒 × 15-40ms」渲染基线。
-const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loading, actionsRef, toolCardExpandedDefault }: {
+// 助手消息行：流式与完成的统一渲染者——streaming 期间订阅 liveAgentMsg 切片
+// （selector 按消息 id 短路：非本行 commit 返回 null，零重渲染，保持「仅流式行 ~50ms
+// 更新」的性能特性）；finalize 时 live 清空 → 回退到 msg 完成态渲染。流式/完成切换
+// 只变化 props、不卸载重挂，思考块/工具卡/正文容器 DOM 全程连续 → 消除完成瞬间的跳动。
+const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loading, actionsRef, toolCardExpandedDefault, streaming, modelLabel, thinkDone, streamStartAt, onRate, modelTemplateId }: {
   msg: AgentMessage
   isLast: boolean
   loading: boolean
   actionsRef: React.MutableRefObject<AgentMsgRowActions>
   toolCardExpandedDefault: boolean
+  streaming?: boolean
+  modelLabel?: string
+  thinkDone?: boolean
+  streamStartAt?: number  // 流开始时刻：pending 思考卡与思考块实时计时共用（连续不回退）
+  onRate?: (v: number | null) => void  // t/s 采样上报（parent 持久化进消息）
+  modelTemplateId?: string  // 模型指标 key（StreamingBadge 订阅 modelMetrics[templateId].nDecoded 取真实解码数）
 }) {
+  // 流式切片订阅：id 不匹配时返回 null（引用恒定 → 该行不随其它 commit 重渲染）。
+  // 流式行：live 每次 commit 是新对象 → 只这一行跟随更新。
+  const live = useStore(s => (s.liveAgentMsg && s.liveAgentMsg.id === msg.id) ? s.liveAgentMsg : null)
+  const isStreaming = !!streaming && !!live
+  const src = isStreaming ? live : msg
   const a = actionsRef.current
-  const hasToolCalls = !!(msg.toolCalls?.length)
-  const fileSummary = (
+  const hasToolCalls = !!(src.toolCalls?.length)
+  const fileSummary = !isStreaming && hasToolCalls ? (
     <FileChangeSummary toolCalls={msg.toolCalls} onOpenChange={a.openGitDiffAt} canUndoAll={!!(msg.toolCalls?.some(t => a.canUndoFor(t)))} onUndoAll={() => a.handleUndoAll(msg.id, msg.toolCalls)} />
-  )
-  const actions = (
+  ) : null
+  const actions = !isStreaming ? (
     <div className="chat-msg-actions">
       <button className="chat-msg-action-btn" onClick={() => a.copyMessage(msg.content || '')}><CopyIcon size={13} /></button>
       {isLast && (
         <button className="chat-msg-action-btn" onClick={() => a.regenerateAt(msg.id)} disabled={loading}><RefreshCwIcon size={13} /></button>
       )}
     </div>
-  )
-  if (msg.segments && msg.segments.length > 0) {
-    // 已完成：完整交错布局（思考链 → 工具卡 → … → 正文气泡）
-    return (
-      <>
-        {renderSegmentsFor(msg.segments, msg.id, false, undefined, { thinkDone: true, onPreviewFile: a.onPreviewFile, canUndoFor: a.canUndoFor, onUndo: a.onUndo, toolCardExpandedDefault })}
-        {msg.stopped && stoppedBadge}
-        {fileSummary}
-        {actions}
-      </>
-    )
-  }
-  // 旧消息（无 segments）或兜底：传统布局（工具卡并入思考链尾部，由 StreamingContent 处理）
-  return (
-    <>
-      {msg.stopped && stoppedBadge}
-      <StreamingContent content={msg.content} toolCalls={msg.toolCalls || undefined} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(msg.id, tc)} cardDefaultOpen={toolCardExpandedDefault} />
-      {hasToolCalls && fileSummary}
-      {!hasToolCalls && actions}
-    </>
-  )
-})
-
-// 流式中的末条助手消息：**唯一订阅 liveAgentMsg 切片的组件**——每个 text_delta commit
-// （~50ms）只重渲染它，整页其余部分不感知流式更新（projects 以 ~500ms 节流同步）。
-// 渲染两个流式分支：segments 已切分（思考/正文/工具交错）与未切分兜底（StreamingContent）。
-const AgentStreamingMessage = React.memo(function AgentStreamingMessage({ liveId, streamKind, modelLabel, thinkDone, actionsRef, toolCardExpandedDefault }: {
-  liveId: string
-  streamKind: 'think' | 'text' | 'tools' | 'idle'
-  modelLabel: string
-  thinkDone: boolean
-  actionsRef: React.MutableRefObject<AgentMsgRowActions>
-  toolCardExpandedDefault: boolean
-}) {
-  const live = useStore(s => s.liveAgentMsg)
-  if (!live || live.id !== liveId) return null
-  const hasToolCalls = !!(live.toolCalls?.length)
+  ) : null
   // 已切分进 segments 的工具调用 id：流式时把「当前轮尚未切分」的工具卡作为实时尾部追加，
   // 避免流式期所有工具卡堆在顶部、完成后才跳回交错。
-  const segmentedToolIds = new Set<string>()
-  if (live.segments) for (const seg of live.segments) if (seg.kind === 'tools') for (const t of seg.toolCalls) segmentedToolIds.add(t.id)
-  const liveToolCalls = (live.toolCalls || []).filter(t => !segmentedToolIds.has(t.id))
-  // 首 token 前（无正文/无思考/无工具）：像素网格思考加载器，避免等待留白
-  const pendingFirstToken = !live.content && !(live.segments?.length) && !hasToolCalls
-  const a = actionsRef.current
-  // 模型名/token/tps 徽标仅在输出正文且无工具时显示（思考/工具阶段不显示）
-  const badge = streamKind === 'text' && !hasToolCalls ? <StreamingBadge text={live.content || ''} modelLabel={modelLabel} /> : null
-  if (live.segments && live.segments.length > 0) {
-    // 流式进行中：segments 已按事件时间线实时切分，直接渲染交错布局，
-    // 不再叠加 StreamingContent（避免正文重复显示）。
+  const liveToolCalls = isStreaming ? (() => {
+    const segmentedToolIds = new Set<string>()
+    if (live.segments) for (const seg of live.segments) if (seg.kind === 'tools') for (const t of seg.toolCalls) segmentedToolIds.add(t.id)
+    return (live.toolCalls || []).filter(t => !segmentedToolIds.has(t.id))
+  })() : undefined
+  // 首 token 前（无正文/无思考/无工具）：pending 态思考卡（ThinkGrid + 思考中 + 连续计时），
+  // 首个思考段到达后由同一思考卡接管，避免等待窗口留白且全程无跳变
+  const pendingFirstToken = isStreaming && !src.content && !(src.segments?.length) && !hasToolCalls
+  // 模型名/token 计数徽标：常驻思考块头部（流式中含 t/s 速率采样，
+  // 完成后模型名/token 总数/t/s（持久化 lastTps 还原）保留不消失）
+  const label = src.modelLabel || modelLabel
+  const meta = label ? (
+    <StreamingBadge
+      modelLabel={label}
+      live={isStreaming}
+      persistedTps={isStreaming ? undefined : src.lastTps}
+      decoded={src.decodedTokens}
+      onRate={onRate}
+      templateId={modelTemplateId}
+    />
+  ) : null
+  if (src.segments && src.segments.length > 0) {
+    // segments 已切分：流式期实时交错布局（思考链 → 工具卡 → … → 正文气泡），
+    // 完成后同一结构静态渲染（ThinkBlock closed、正文切 AgentMarkdown 完整栈）。
     return (
       <>
-        {renderSegmentsFor(live.segments, live.id, true, liveToolCalls, { thinkDone, onPreviewFile: a.onPreviewFile, canUndoFor: a.canUndoFor, onUndo: a.onUndo, toolCardExpandedDefault })}
-        {live.stopped && stoppedBadge}
-        {badge}
+        {renderSegmentsFor(src.segments, msg.id, isStreaming, isStreaming ? liveToolCalls : undefined, {
+          thinkDone: isStreaming ? !!thinkDone : true,
+          onPreviewFile: a.onPreviewFile, canUndoFor: a.canUndoFor, onUndo: a.onUndo,
+          toolCardExpandedDefault,
+          streamStartAt: isStreaming ? streamStartAt : undefined,
+          meta
+        })}
+        {src.stopped && stoppedBadge}
+        {fileSummary}{actions}
       </>
     )
   }
-  // 流式中但尚无 finalize 段（首 token 前 / 尚无任何产出）：实时 content 渲染兜底
+  // 兜底：流式首 token 前（pending 思考卡 + 实时内容）或旧消息（无 segments，传统布局）
   return (
     <>
-      {live.stopped && stoppedBadge}
-      {badge}
-      {pendingFirstToken && <ThinkingLoader />}
-      <StreamingContent content={live.content} streaming toolCalls={live.toolCalls || undefined} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(live.id, tc)} cardDefaultOpen={toolCardExpandedDefault} />
+      {src.stopped && stoppedBadge}
+      {pendingFirstToken && (
+        <ThinkBlock pending value="" closed={false} isStreaming msgStreaming bodyAppeared={false} streamStartAt={streamStartAt} />
+      )}
+      <StreamingContent content={src.content} streaming={isStreaming} toolCalls={src.toolCalls || undefined} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(msg.id, tc)} cardDefaultOpen={toolCardExpandedDefault} />
+      {!isStreaming && hasToolCalls && fileSummary}
+      {!isStreaming && !hasToolCalls && actions}
     </>
   )
 })
@@ -2629,6 +2641,20 @@ export default function AgentCodeView() {
   const handleSendRef = useRef<(text?: string, attachments?: Attachment[]) => void>(() => { })
   const abortRef = useRef<{ aborted: boolean; resolve: (() => void) | null }>({ aborted: false, resolve: null })
   const currentStreamIdRef = useRef<string | null>(null)
+  // 流开始时刻（ms）：pending 思考卡与思考块实时头部时间共用此锚点连续计时（含 TTFT、不回退）
+  const streamStartAtRef = useRef<number | null>(null)
+  // 模型名在轮开始时固化：finalize 后 runningCard 可能已非 running，
+  // 顶层派生 modelLabel 会退化成「模型」，徽标显示仍保持该轮真实模型名。
+  const modelLabelRef = useRef('模型')
+  // 最终采样速率（t/s）：由 StreamingBadge 的 onRate 回调同步写入。
+  // 用 ref 而非 store：finalize 同步代码直接读 ref，无「异步 effect 未执行完」竞态
+  // （此前写 store liveAgentMsg 再读：finalize 可能抢先于 effect → lastTps 丢失 → 刷新后无 t/s）。
+  const lastRateRef = useRef<number | null>(null)
+  // t/s 采样上报：仅写入 lastRateRef，随 finalize 最终 commit 持久化进消息，
+  // 刷新后完成态徽标仍能还原最后速率
+  const handleStreamRate = useCallback((v: number | null) => {
+    if (v != null) lastRateRef.current = v
+  }, [])
   // ── pi-agent 模式状态：当前已创建 pi session 的 sid + 事件客户端 ──
   const piReadyRef = useRef<{ sid: string; ready: boolean }>({ sid: '', ready: false })
   const piClientRef = useRef<PiAgentClient | null>(null)
@@ -3018,7 +3044,11 @@ export default function AgentCodeView() {
     }
   }, [])
 
-  useEffect(() => {
+  // 贴底滚动必须在 paint 前执行（useLayoutEffect）：finalize 切换完成态行件的同一帧，
+  // DOM 布局已含新增的 actions/文件汇总（高度突变），若在 paint 后（useEffect）才滚动，
+  // 会先绘制一帧旧滚动位置 + 新布局（内容整体位移），再被拉回底部 → 视觉「跳一下」。
+  // 用 useLayoutEffect 在绘制前一次性到位，无中间帧。
+  useLayoutEffect(() => {
     if (atBottomRef.current) {
       scrollToBottom()
     }
@@ -3919,6 +3949,13 @@ export default function AgentCodeView() {
     }
     // 占位助手消息（pi 事件驱动其内容/工具卡片）
     const liveId = newMsgId()
+    // 流开始时刻：pending 思考卡/思考块实时计时锚点（连续、含 TTFT）
+    streamStartAtRef.current = Date.now()
+    // 固化本轮模型名（读 store 实时值，避免闭包过期）：思考块头部 meta 徽标常驻用
+    const rcNow = useStore.getState().cards.find(c => c.status === 'running')
+    modelLabelRef.current = rcNow
+      ? (rcNow.template.modelPath?.split(/[\\/]/).pop() || rcNow.template.name || '模型')
+      : modelLabelRef.current
     // 流式实时消息走独立 store 切片 liveAgentMsg：只重渲染流式消息组件（AgentStreamingMessage），
     // 整页（侧边栏/文件树/面板…）不再每个 commit 重渲染——实测整页 15-30ms × 20次/秒 是卡顿主因。
     // 整轮 msgs 以 ~500ms 节流同步进项目 store（历史/持久化），轮末 forceSync 一次性写全。
@@ -3926,6 +3963,19 @@ export default function AgentCodeView() {
     let msgs: AgentMessage[] = [...displayMsgs, liveMsg]
     useStore.getState().setLiveAgentMsg(liveMsg)
     updateSessionInProject(pid, sid, { messages: msgs })
+    // 服务端真实解码 token 数：直接取自 /slots 的 n_decoded（与「模型数据」监控面板的
+    // 「生成进度」同源同义——那里显示的就是 n_decoded 原值）。模型指标每 2s 广播进
+    // modelMetrics[template.id].nDecoded；流式中 StreamingBadge 直接订阅该值（实时），
+    // 此处仅在轮末 commit 时同步读取一次，把最终值持久化进消息（刷新后还原）。
+    const tidNow = rcNow?.template.id
+    const decodedNow = (): number | undefined => {
+      if (!tidNow) return undefined
+      const v = useStore.getState().modelMetrics[tidNow]?.nDecoded
+      return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined
+    }
+    // 轮末精确快照：输出结束时刻主动查询端点最新 /slots（与端点 n_decoded 当前值一致，
+    // 不依赖 500ms 广播周期）；查询失败或缺省时回退 store 里最近一次广播值
+    let finalDecoded: number | undefined
     const SYNC_PROJECTS_MS = 500
     let projectsSyncTimer: ReturnType<typeof setTimeout> | null = null
     let lastProjectsSyncAt = 0
@@ -3946,6 +3996,9 @@ export default function AgentCodeView() {
       liveMsg = { ...liveMsg, ...patch }
       useStore.getState().setLiveAgentMsg(liveMsg)
       if (forceSync) {
+        // 终态提交：清掉排队的文本提交（其闭包 liveMsg 无 modelLabel/lastTps 等终态字段，
+        // 延迟执行会覆盖 final commit 刚持久化的数据）
+        if (textCommitTimer) { clearTimeout(textCommitTimer); textCommitTimer = null }
         if (projectsSyncTimer) { clearTimeout(projectsSyncTimer); projectsSyncTimer = null }
         lastProjectsSyncAt = performance.now()
         updateSessionInProject(pid, sid, { messages: msgs })
@@ -3983,7 +4036,10 @@ export default function AgentCodeView() {
     // 思考段计时：startMs = 标签开时刻；durationMs 在标签闭合/中断收尾时定格，
     // 供链内每个思考段上方的独立时间标签展示（Thought: 515ms）。
     type ThinkLiveSeg = { kind: 'think'; content: string; startMs?: number; durationMs?: number }
-    type LiveSeg = { kind: 'tools'; ids: string[] } | ThinkLiveSeg | { kind: 'text'; content: string }
+    // tools 段带 startMs（本批首个工具声明时刻）与 durationMs（本批全部完成时定格）：
+    // 定格值随 segments 持久化，完成态静态渲染（无 frozenToolsRef 累积）也能还原工具时长，
+    // 避免「流式数字 → 完成数字」回退跳变。
+    type LiveSeg = { kind: 'tools'; ids: string[]; startMs: number; durationMs?: number } | ThinkLiveSeg | { kind: 'text'; content: string }
     const liveSegs: LiveSeg[] = []
     // 当前打开的思考段引用：用引用而非「最后一个段」定位——thinking_end 可能迟到于
     // 工具声明（工具段已插入），close 时按引用定格，不受中间插入影响
@@ -4002,7 +4058,8 @@ export default function AgentCodeView() {
       liveSegs.map(s => s.kind === 'tools'
         ? { kind: 'tools', toolCalls: s.ids
             .map(id => toolCalls.find(t => t.id === id))
-            .filter((t): t is NonNullable<AgentMessage['toolCalls']>[number] => !!t) }
+            .filter((t): t is NonNullable<AgentMessage['toolCalls']>[number] => !!t),
+            ...(s.durationMs != null ? { durationMs: s.durationMs } : {}) }
         : s.kind === 'think'
           ? { kind: 'think', content: s.content, ...(s.durationMs != null ? { durationMs: s.durationMs } : {}) }
           : { kind: 'text', content: s.content })
@@ -4109,7 +4166,7 @@ export default function AgentCodeView() {
           curToolIds.push(lastTc.id)
         } else if (!curToolIds?.includes(lastTc.id)) {
           curToolIds = [lastTc.id]
-          liveSegs.push({ kind: 'tools', ids: curToolIds })
+          liveSegs.push({ kind: 'tools', ids: curToolIds, startMs: Date.now() })
         }
         textSinceLastTool = false
         // 计划面板同步（与 legacy 一致）：TodoWrite 调用后更新右侧任务清单
@@ -4186,6 +4243,14 @@ export default function AgentCodeView() {
           if (i < 0 && name) i = toolCalls.findIndex(t => t.name === name && t.status === 'executing')
           if (i >= 0) {
             toolCalls[i] = { ...toolCalls[i]!, status: 'done', result: resultText, failed: isError, durationMs: elapsed === Number.MAX_SAFE_INTEGER ? 0 : elapsed }
+            // 本批全部完成：定格工具批段时长（声明时刻 → 本支完成时刻），随 segments 持久化，
+            // 完成态静态渲染（ThinkBlock 重挂载、frozenToolsRef 归零）时据此还原工具阶段耗时，
+            // 头部「思考了 X 秒」流式→完成不回退。
+            const tseg = liveSegs.find(s => s.kind === 'tools' && s.ids.includes(id))
+            if (tseg && tseg.kind === 'tools' && tseg.durationMs == null
+              && tseg.ids.every(tid => { const t = toolCalls.find(tc => tc.id === tid); return !!t && t.status === 'done' })) {
+              tseg.durationMs = Math.max(0, Date.now() - tseg.startMs)
+            }
             commit({ toolCalls: [...toolCalls], segments: buildSegs() })
           }
         }
@@ -4234,6 +4299,13 @@ export default function AgentCodeView() {
             return { type: 'image' as const, data: base64, mimeType: mime }
           })
       await window.api.piAgent.prompt(piSessionId, opts.text, images && images.length > 0 ? images : undefined)
+      // 输出已结束：此刻主动查询端点最新解码数（与 /slots 的 n_decoded 当前值精确一致）
+      if (tidNow) {
+        try {
+          const v = await window.api.queryMetricsNow(tidNow)
+          if (typeof v === 'number' && v > 0) finalDecoded = v
+        } catch { /* 查询失败回退广播值 */ }
+      }
       // 对话完成提示音：与 ChatView 的完成提示一致（d610b1c 重构到 pi 桥时遗漏，
       // 此处补回）。用户手动停止（aborted）或出错（走 catch）时不播放。
       if (!abortRef.current.aborted && useStore.getState().soundEnabled) {
@@ -4243,15 +4315,23 @@ export default function AgentCodeView() {
       // 避免 StreamingContent 把思考/正文再重复渲染一遍（工具卡+思考重复显示的根源之一）。
       setStreaming(false)
       if (!streamedText && toolCalls.length === 0) {
-        commit({ content: '(模型未返回内容)' }, true)
+        commit({ content: '(模型未返回内容)', modelLabel: modelLabelRef.current, decodedTokens: finalDecoded ?? decodedNow() }, true)
       } else {
         // 本轮结束：segments 已是实时时间线顺序（buildSegs），流式/完成态一致交错
         closeOpenThink()
-        commit({ content: streamedText, toolCalls: [...toolCalls], segments: buildSegs() }, true)
+        // modelLabel/lastTps/decodedTokens 随最终 commit 持久化：刷新后完成态徽标可还原模型名、最后速率与真实解码数
+        commit({
+          content: streamedText,
+          toolCalls: [...toolCalls],
+          segments: buildSegs(),
+          modelLabel: modelLabelRef.current,
+          lastTps: lastRateRef.current ?? undefined,
+          decodedTokens: finalDecoded ?? decodedNow()
+        }, true)
       }
       return { errored: false, aborted: abortRef.current.aborted }
     } catch (e: any) {
-      commit({ content: `发送失败：${e?.message || String(e)}` }, true)
+      commit({ content: `发送失败：${e?.message || String(e)}`, modelLabel: modelLabelRef.current, decodedTokens: finalDecoded ?? decodedNow() }, true)
       return { errored: true, aborted: false }
     } finally {
       client.detach()
@@ -4272,7 +4352,7 @@ export default function AgentCodeView() {
             t.result = t.result ?? '(工具未完成：已停止生成)'
           }
         }
-        commit({ toolCalls: [...toolCalls], segments: buildSegs() }, true)
+        commit({ toolCalls: [...toolCalls], segments: buildSegs(), modelLabel: modelLabelRef.current, lastTps: lastRateRef.current ?? undefined, decodedTokens: finalDecoded ?? decodedNow() }, true)
       }
       streamingSessionRef.current = null
       // 流式结束：清空实时切片（projects 已由上面的 forceSync 写入最终 msgs），
@@ -4960,22 +5040,30 @@ export default function AgentCodeView() {
                             的顺序排列。流式进行中一律走下面的实时 content 渲染（保证思考链/工具状态
                             实时显示，不延迟到工具批到达才出现）；旧消息（无 segments）也走传统布局。 */}
                         {streamingMsg ? (
-                          // 流式中的末条助手消息：独立组件 AgentStreamingMessage 订阅 liveAgentMsg
-                          // 切片——每个 ~50ms commit 只重渲染它（流式消息自身），整页其余部分不感知。
-                          // 内部按 segments 是否已切分渲染交错布局或 StreamingContent 兜底。
-                          <AgentStreamingMessage
-                            liveId={msg.id}
-                            streamKind={streamKind}
-                            modelLabel={modelLabel}
-                            thinkDone={thinkDone}
+                          // 流式中的末条助手消息：同一行组件 AgentMessageRow 渲染——
+                          // 组件内部按消息 id 订阅 liveAgentMsg 切片（~50ms commit 只重渲染该行）。
+                          // finalize 时仅变化 streaming prop（live 清空后回退 msg 完成态），
+                          // DOM 不卸载重挂 → 完成瞬间「思考过程/工具卡」零跳动。
+                          <AgentMessageRow
+                            msg={msg}
+                            isLast={isLast}
+                            loading={loading}
                             actionsRef={msgRowActionsRef}
                             toolCardExpandedDefault={toolCardExpandedDefault}
+                            streaming
+                            modelLabel={modelLabelRef.current}
+                            thinkDone={thinkDone}
+                            streamStartAt={streamStartAtRef.current ?? undefined}
+                            onRate={handleStreamRate}
+                            modelTemplateId={runningCard?.template.id}
                           />
                         ) : (
                           // 已完成消息：抽成 React.memo 行组件——msg 引用在流式 commit 间不变，
                           // 整行跳过 reconcile（只更新流式那条消息），消除整页渲染基线。
                           // 行内同时覆盖 segments 交错布局与传统布局两种完成态。
-                          <AgentMessageRow msg={msg} isLast={isLast} loading={loading} actionsRef={msgRowActionsRef} toolCardExpandedDefault={toolCardExpandedDefault} />
+                          // modelLabel 需与流式分支一致传入：思考块头部 meta（模型名+token）
+                          // 在完成后保留不消失（模型名/t/s 由消息持久化字段还原，刷新不丢）。
+                          <AgentMessageRow msg={msg} isLast={isLast} loading={loading} actionsRef={msgRowActionsRef} toolCardExpandedDefault={toolCardExpandedDefault} modelLabel={modelLabelRef.current} modelTemplateId={runningCard?.template.id} />
                         )}
                       </>
                     )}

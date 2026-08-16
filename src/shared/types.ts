@@ -240,6 +240,9 @@ export interface AgentMessage {
   // 用于「工具栏 → 思考链 → 工具栏 → 思考链 → …」的交错渲染。
   // 旧消息（无此字段）回退到「工具卡片在顶部 + 思考链在下方」的传统布局。
   segments?: AgentSegment[]
+  modelLabel?: string  // 生成该消息的模型名（流式开始固化；持久化供刷新后徽标还原）
+  lastTps?: number     // 流式结束瞬间的最后采样速率（t/s），持久化后完成态徽标常驻
+  decodedTokens?: number  // 服务端 /slots n_decoded 差值（真实解码 token 数；流式中定时同步、完成时持久化，无此字段/旧消息回退估算）
 }
 
 // 助手消息的有序片段：严格按模型产生的先后顺序记录，
@@ -247,7 +250,7 @@ export interface AgentMessage {
 export type AgentSegment =
   | { kind: 'think'; content: string; durationMs?: number }
   | { kind: 'text'; content: string }
-  | { kind: 'tools'; toolCalls: NonNullable<AgentMessage['toolCalls']> }
+  | { kind: 'tools'; toolCalls: NonNullable<AgentMessage['toolCalls']>; durationMs?: number }
 
 export interface AgentSession {
   id: string
