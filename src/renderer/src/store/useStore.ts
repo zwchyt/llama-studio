@@ -1,5 +1,5 @@
 import { createWithEqualityFn } from 'zustand/traditional'
-import type { AgentProject } from '../../../shared/types'
+import type { AgentMessage, AgentProject } from '../../../shared/types'
 import { shallow } from 'zustand/shallow'
 import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, AppUpdateInfo, RunningStatus, ModelMetrics, ModelDownloadPhase, HfDownloadPhase } from '../../../shared/types'
 interface CardState {
@@ -230,6 +230,12 @@ interface AppStore {
   // ── Agent Code 工具执行阶段（pi-web 风格状态机，驱动前端状态栏）──
   agentPhase: { kind: 'running_tools'; tools: { name: string; verb: string }[] } | { kind: 'waiting_model' } | null
   setAgentPhase: (phase: AppStore['agentPhase']) => void
+  // ── Agent Code 流式实时消息（独立切片）──
+  // 流式期间每个 text_delta（~26ms）都经 IPC 到达；若直接写 agentProjects，整页（侧边栏、
+  // 文件树、面板…）每次 commit 都重渲染（实测 15-30ms × 20次/秒 = 卡顿主因）。
+  // 实时内容只进这个切片：仅流式消息组件订阅它，整页以 ~500ms 节流同步 projects。
+  liveAgentMsg: AgentMessage | null
+  setLiveAgentMsg: (msg: AgentMessage | null) => void
   /** 模板（模型卡片）列表是否已从主进程加载完成（未完成时 CardsView 显示加载占位，避免空态闪现） */
   templatesReady: boolean
   setTemplatesReady: (v: boolean) => void
@@ -502,6 +508,8 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
       scheduleSaveAgentProjects(pendingProjects)
     }
   },
+  liveAgentMsg: null,
+  setLiveAgentMsg: (msg) => set({ liveAgentMsg: msg }),
   // ── 聊天界面 ──
   chatSidebarCollapsed: (() => {
     try { return localStorage.getItem('chatSidebarCollapsed') === 'true' } catch { return false }

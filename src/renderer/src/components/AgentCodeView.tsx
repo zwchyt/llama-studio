@@ -2,7 +2,6 @@
 // ║ 区域：导入声明                                                              ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
-import { flushSync } from 'react-dom'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -353,7 +352,7 @@ function remarkLinkifyUrls() {
   return (tree: any) => { visit(tree) }
 }
 
-function MarkdownCode({ className, children, node }: { className?: string; children?: React.ReactNode; node?: any }) {
+function MarkdownCode({ className, children, node, isStreaming }: { className?: string; children?: React.ReactNode; node?: any; isStreaming?: boolean }) {
   const nodeText: string | undefined = node?.children?.[0]?.value
   const nodeToText = (n: React.ReactNode): string => {
     if (n == null) return ''
@@ -366,12 +365,18 @@ function MarkdownCode({ className, children, node }: { className?: string; child
   const text = (typeof nodeText === 'string' ? nodeText : nodeToText(children)).replace(/\n$/, '')
   const match = /language-([^\s]+)/.exec(className || '')
   if (match) {
-    return <CodeBlock language={match[1]} value={text} />
+    return <CodeBlock language={match[1]} value={text} isStreaming={isStreaming} />
   }
   if (text.includes('\n')) {
-    return <CodeBlock language="" value={text} />
+    return <CodeBlock language="" value={text} isStreaming={isStreaming} />
   }
   return <code className="chat-code-in-line">{text}</code>
+}
+
+// 流式专用 code 渲染器：把 isStreaming=true 透传给 CodeBlock（逐行 span 渲染，
+// 只更新最后一行、跳过 hljs），消除代码输出时整块重绘的显示层卡顿。
+function MarkdownCodeStreaming(props: React.ComponentProps<typeof MarkdownCode>) {
+  return <MarkdownCode {...props} isStreaming />
 }
 
 const SANITIZE_SCHEMA = {
@@ -756,8 +761,10 @@ function parseThinkSegments(content: string): ContentSegment[] {
 // 思考/正文增量按 <think> 边界切段、工具声明切段，事件到达顺序即真实时间线，
 // 流式与完成态都按「工具栏 → 思考链 → 工具栏 → 思考链 → … → 正文气泡」交错渲染。
 
-// 思考块渲染节流间隔（参考原生聊天 ChatView 的 THINK_THROTTLE_MS）
-const THINK_THROTTLE_MS = 120
+// 思考块渲染节流间隔（与正文 STREAM_MD_THROTTLE_MS=40 同频）。
+// 此前 120ms（8fps）在思考吐字快时每 120ms 跳一大块文字（4-5 个 token），观感「一顿一顿」；
+// StreamingThinkText 逐行渲染后每次更新的重绘成本只有一行，40ms（25fps）完全撑得住。
+const THINK_THROTTLE_MS = 40
 // 工具 executing 状态的最小展示时长：Write/Edit 等本地 IO 工具执行往往不足一帧，
 // 「写入中」徽标一闪而过肉眼不可见；结束时不足该时长会延迟置 done，保证状态可见。
 const MIN_EXEC_DISPLAY_MS = 400
@@ -795,6 +802,21 @@ const ThinkGrid = React.memo(function ThinkGrid() {
 type ThinkChainItem =
   | { kind: 'think'; content: string; durationMs?: number }
   | { kind: 'tools'; toolCalls: NonNullable<AgentMessage['toolCalls']> }
+
+// 思考链流式文本：逐行 span 渲染（稳定 key → React 只更新最后一行文本节点，
+// 浏览器 paint 区域收缩到最后一行）。与正文代码块同构——思考文本增长时整块
+// markdown 重解析 + 整块重绘是思考链「一卡一卡」的显示层根源；流式期间用纯文本
+// 逐行展示（重绘成本 ≈ 一行），思考结束/收起后由 AgentMarkdown 接管完整排版。
+const StreamingThinkText = React.memo(function StreamingThinkText({ value }: { value: string }) {
+  const lines = useMemo(() => value.split('\n'), [value])
+  return (
+    <div className="agent-think-stream">
+      {lines.map((ln, i) => (
+        <span key={i} className="agent-think-stream-line">{ln || '\u00A0'}</span>
+      ))}
+    </div>
+  )
+})
 
 const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, msgStreaming, bodyAppeared, durationMs, items, onPreviewFile, canUndoFor, onUndo, cardDefaultOpen }: {
   value: string; closed: boolean; isStreaming?: boolean; msgStreaming?: boolean; bodyAppeared?: boolean; durationMs?: number
@@ -856,19 +878,13 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
   // 头部展示的总时长：idle 时定格（思考段累计 + 固化工具时长），think/tools 时实时跳动
   const headMs = chainTotalMs + frozenToolsRef.current + (phase === 'idle' ? 0 : elapsedMs)
 
-  // 流式期间对 Markdown 渲染做节流（参考原生聊天）：用 setInterval 固定间隔同步渲染内容，
-  // 避免每个 token 都触发长文本 + KaTeX 重解析。注意必须用 setInterval 而非「重置型
-  // setTimeout」——否则在持续流式（value 频繁变化）时定时器不断被重置，导致显示卡住不动。
-  const [renderValue, setRenderValue] = useState(value)
-  useEffect(() => {
-    if (!thinking) {
-      setRenderValue(value)
-      return
-    }
-    setRenderValue(value)
-    const timer = setInterval(() => setRenderValue(value), THINK_THROTTLE_MS)
-    return () => clearInterval(timer)
-  }, [value, thinking])
+  // 流式期间对思考文本渲染做节流：用「rAF + 时间戳」帧对齐节流（见 useFrameThrottledValue），
+  // 替代固定 setInterval——主线程忙时 rAF 自然降频不积压，空闲时按节流间隔上限更新；
+  // 不用「重置型 setTimeout」（持续流式时定时器不断被重置会导致显示卡住不动）。
+  // 常规长度与正文同频 40ms 平滑滚动；思考文本极长时自动降频（逐行 diff 上千行 span
+  // 的成本随文本线性增长，长思考宁可稍顿挫也不抢帧）。
+  const thinkThrottle = value.length > 20000 ? 90 : value.length > 8000 ? 60 : THINK_THROTTLE_MS
+  const renderValue = useFrameThrottledValue(value, thinking, thinkThrottle)
 
   useEffect(() => {
     if (userToggledRef.current) return
@@ -985,7 +1001,7 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
             {durationMs != null && (
               <div className="agent-think-time">Thought: {formatDuration(durationMs)}</div>
             )}
-            {renderValue ? <AgentMarkdown content={renderValue} /> : '（空）'}
+            {renderValue ? (thinking ? <StreamingThinkText value={renderValue} /> : <AgentMarkdown content={renderValue} />) : '（空）'}
             {/* 链内元素（思考续段 / 工具卡组）按模型时间线交错排列在思考文本下方，
                 随思考链展开/收起；调用窗口由调用方保证有 items 时必传渲染回调 */}
             {items && items.length > 0 && items.map((it, idx) => (
@@ -1285,22 +1301,99 @@ const ThinkingLoader = React.memo(function ThinkingLoader() {
 // 流式 Markdown 重解析节流间隔。流式期间已改用轻量插件栈，单帧解析成本很低，
 // 故可把间隔压到 60ms：既让文字显示跟手（~16 次/秒重解析），又避免逐 commit 重解析。
 // 注：落盘节流 STREAM_FLUSH_MS 取更小值（见流式循环），二者配合使画面接近模型真实吐字节奏。
-const STREAM_MD_THROTTLE_MS = 60
+const STREAM_MD_THROTTLE_MS = 40
+// ═══════════════════════════════════════════════════════════════════
+// 流式时序诊断（临时，排查「吐字卡顿」用；确认根因后整段删除）
+// 数据层：text_delta 每个 SSE chunk 推一次（pi-ai openai-completions.js），
+// 所以 arrival 间隔 ≈ 模型 token 节奏；commit 为 commitText 合并后的 store 更新节奏；
+// display 为 rAF 节流后的画面更新节奏（应 ≈ 节流间隔）；frames 记录掉帧（>16ms）。
+// 对比三者的 avg/p90：
+//   arrival p90 大 → 数据层分批（main/IPC 排队）；
+//   display p90 大且 commit 小、dropped-frames 多 → 渲染层重解析/重渲染占用主线程。
+const STREAM_DIAG = false
+const diagStats: Record<'arrivals' | 'commits' | 'displays' | 'frames', number[]> = { arrivals: [], commits: [], displays: [], frames: [] }
+const diagLast: Record<'arrival' | 'commit' | 'display', number> = { arrival: 0, commit: 0, display: 0 }
+// 渲染触发源追踪：记录每个嫌疑写入的最近时间戳，视图重渲染时打印离它最近的写入者，
+// 一次运行即可钉死「谁在 20次/秒 驱动整页重渲染」。
+const diagWrite: Record<'live' | 'skind' | 'tdone' | 'projects', number> = { live: 0, skind: 0, tdone: 0, projects: 0 }
+let diagTimer: ReturnType<typeof setInterval> | null = null
+function diagPush(kind: 'arrival' | 'commit' | 'display', now: number): void {
+  if (!STREAM_DIAG) return
+  const last = diagLast[kind]
+  if (last > 0) {
+    const gap = now - last
+    if (gap > 0 && gap < 8000) diagStats[kind === 'arrival' ? 'arrivals' : kind === 'commit' ? 'commits' : 'displays'].push(gap)
+  }
+  diagLast[kind] = now
+  if (!diagTimer) {
+    diagTimer = setInterval(() => {
+      const nonEmpty = diagStats.arrivals.length || diagStats.commits.length || diagStats.displays.length || diagStats.frames.length
+      if (!nonEmpty) return
+      const avg = (a: number[]) => (a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : 0)
+      const p90 = (a: number[]) => (a.length ? [...a].sort((x, y) => x - y)[Math.floor(a.length * 0.9)] ?? 0 : 0)
+      console.debug(`[stream-diag] arrival avg=${avg(diagStats.arrivals)} p90=${p90(diagStats.arrivals)} | commit avg=${avg(diagStats.commits)} p90=${p90(diagStats.commits)} | display avg=${avg(diagStats.displays)} p90=${p90(diagStats.displays)} | dropped-frames(${diagStats.frames.length}) p90=${p90(diagStats.frames)}`)
+      diagStats.arrivals = []; diagStats.commits = []; diagStats.displays = []; diagStats.frames = []
+    }, 4000)
+  }
+}
+// 帧对齐节流 hook：rAF + 时间戳，真正把「内容变化」与「显示更新」解耦。
+// 此前把 setDisplay 放在依赖 value 的 effect 里：内容一变就立即重渲染，rAF 循环形同虚设，
+// 每个 commit（~30ms）都全量重解析 markdown——节流从未生效。现在：
+//  - on=false：直通，内容变化立即透传；
+//  - on=true：内容变化只写 latestRef，由 rAF 循环按 throttleMs 上限统一取最新值更新。
+// 主线程忙时 rAF 自然降频（不积压任务），空闲时按 throttleMs 上限更新，吐字平滑。
+function useFrameThrottledValue(value: string, active: boolean | undefined, throttleMs: number): string {
+  const on = !!active
+  const latestRef = useRef(value)
+  latestRef.current = value
+  const [display, setDisplay] = useState(value)
+  // 非节流态：内容变化立即透传（依赖 value 保证最新）
+  useEffect(() => {
+    if (on) return
+    setDisplay(latestRef.current)
+  }, [value, on])
+  // 节流态：rAF 循环按 throttleMs 上限取最新内容更新（不依赖 value，循环不被重置）
+  useEffect(() => {
+    if (!on) return
+    let raf = 0
+    let last = performance.now()
+    let prevT = last
+    const tick = (t: number) => {
+      if (STREAM_DIAG && t - prevT > 16) diagStats.frames.push(t - prevT)
+      prevT = t
+      if (t - last >= throttleMs) {
+        last = t
+        setDisplay(latestRef.current)
+        diagPush('display', t)
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [on, throttleMs])
+  return display
+}
 // 流式专用轻量 Markdown：插件栈大幅精简（去掉 rehypeKatex / rehypeRaw / rehypeSanitize），
 // 仅保 gfm + 链接识别，单帧解析开销显著下降；完成时由 AgentMarkdown 完整栈接管。
 const StreamingMarkdown = React.memo(function StreamingMarkdown({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
-  const [display, setDisplay] = useState(content)
-  useEffect(() => {
-    if (!isStreaming) { setDisplay(content); return }
-    setDisplay(content)
-    const timer = setInterval(() => setDisplay(content), STREAM_MD_THROTTLE_MS)
-    return () => clearInterval(timer)
-  }, [content, isStreaming])
+  // 自适应节流：文本越长单帧重解析越贵（remark 对全文 O(n) 重解析），按长度分级降频，
+  // 保证「每秒解析成本」有界且节奏均匀；数据层 ~26ms/增量（≈38 tok/s），正文显示
+  // 用 40ms（25fps）步进跟上数据节奏，避免「字一顿一顿」；完成时由 AgentMarkdown 接管。
+  const interval = content.length > 8000 ? 100 : content.length > 2500 ? 70 : STREAM_MD_THROTTLE_MS
+  const display = useFrameThrottledValue(content, !!isStreaming, interval)
+  // 诊断：测量本子树每次 render 的耗时（解析+diff+commit），>8ms 打印
+  const diagT0 = useRef(0)
+  if (STREAM_DIAG) diagT0.current = performance.now()
+  useLayoutEffect(() => {
+    if (!STREAM_DIAG) return
+    const dt = performance.now() - diagT0.current
+    if (dt > 8) console.debug(`[stream-diag] md-render ${dt.toFixed(1)}ms len=${display.length}`)
+  })
   if (!display) return null
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkLinkifyUrls]}
-      components={{ code: MarkdownCode as any, pre: MarkdownPre as any, a: MarkdownLink as any }}
+      components={{ code: MarkdownCodeStreaming as any, pre: MarkdownPre as any, a: MarkdownLink as any }}
     >
       {display}
     </ReactMarkdown>
@@ -1850,8 +1943,8 @@ function TopbarBtn({ icon: Icon, size = 12, btnRef, baseClass = 'agent-code-topb
       className={`${baseClass}${active ? ' active' : ''}${className ? ' ' + className : ''}`}
       onClick={onClick}
       title={title}
-      onMouseEnter={() => iconRef.current?.startAnimation()}
-      onMouseLeave={() => iconRef.current?.stopAnimation()}
+      onMouseEnter={() => iconRef.current?.startAnimation?.()}
+      onMouseLeave={() => iconRef.current?.stopAnimation?.()}
     >
       <Icon ref={iconRef as never} size={size} className={iconClassName} />
       {children}
@@ -1859,10 +1952,207 @@ function TopbarBtn({ icon: Icon, size = 12, btnRef, baseClass = 'agent-code-topb
   )
 }
 
+// ── 已完成助手消息行组件（React.memo）──
+// 流式期间每次 commit（~50ms）整页都会重渲染；已完成消息的 msg 对象引用在 commit 之间
+// 保持不变（只有流式那条消息被替换），所以用 React.memo + 稳定 actionsRef 让已完成行
+// 完全跳过 reconcile——整页渲染成本从实测的 15-40ms 降到 ~2ms。
+type AgentMsgRowActions = {
+  onPreviewFile: (p: string) => void
+  canUndoFor: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean
+  onUndo: (msgId: string, tc: NonNullable<AgentMessage['toolCalls']>[number]) => void
+  openGitDiffAt: (p: string) => void
+  handleUndoAll: (msgId: string, toolCalls: AgentMessage['toolCalls']) => void
+  copyMessage: (content: string) => void | Promise<void>
+  regenerateAt: (msgId: string) => void | Promise<void>
+}
+type RenderSegmentsOpts = {
+  thinkDone: boolean
+  onPreviewFile: (p: string) => void
+  canUndoFor: AgentMsgRowActions['canUndoFor']
+  onUndo: AgentMsgRowActions['onUndo']
+  toolCardExpandedDefault: boolean
+}
+// segments 渲染（思考链 / 工具卡 / 正文气泡）：流式分支与完成分支共用同一实现
+// （原为 AgentCodeView 内部闭包，抽到模块级供 AgentMessageRow 复用，避免两处拷贝漂移）。
+function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']>, msgId: string, streaming: boolean, tailToolCalls: NonNullable<AgentMessage['toolCalls']> | undefined, o: RenderSegmentsOpts): React.ReactNode[] {
+  const chainItems: ThinkChainItem[] = []
+  const textContents: string[] = []
+  for (const seg of segments) {
+    if (seg.kind === 'text') {
+      // 跳过空正文段：避免渲染出透明占位容器（padding + flex gap 造成的不可见空隙）
+      if (seg.content.trim() === '') continue
+      textContents.push(seg.content)
+    } else if (seg.kind === 'think') {
+      chainItems.push({ kind: 'think', content: seg.content, durationMs: seg.durationMs })
+    } else {
+      chainItems.push({ kind: 'tools', toolCalls: seg.toolCalls })
+    }
+  }
+  if (tailToolCalls && tailToolCalls.length > 0) chainItems.push({ kind: 'tools', toolCalls: tailToolCalls })
+  const out: React.ReactNode[] = []
+  if (chainItems.length > 0 && chainItems[0].kind === 'think') {
+    out.push(
+      <ThinkBlock
+        key="think-chain"
+        value={chainItems[0].content}
+        // 工具声明/正文出现后 thinkDone=true：思考框必然收起，不会与工具卡并存转圈
+        closed={!streaming || o.thinkDone}
+        isStreaming={streaming && !o.thinkDone}
+        msgStreaming={streaming}
+        bodyAppeared={textContents.length > 0}
+        durationMs={chainItems[0].durationMs}
+        items={chainItems.slice(1)}
+        onPreviewFile={o.onPreviewFile}
+        canUndoFor={o.canUndoFor}
+        onUndo={(tc) => o.onUndo(msgId, tc)}
+        cardDefaultOpen={o.toolCardExpandedDefault}
+      />
+    )
+  } else if (chainItems.length > 0) {
+    // 无思考文本的纯工具：合并为一组独立卡片
+    out.push(
+      <ToolCallGroup
+        key="tools-only"
+        toolCalls={chainItems.flatMap(it => (it.kind === 'tools' ? it.toolCalls : []))}
+        cardDefaultOpen={o.toolCardExpandedDefault}
+        onPreviewFile={o.onPreviewFile}
+        canUndoFor={o.canUndoFor}
+        onUndo={(tc) => o.onUndo(msgId, tc)}
+      />
+    )
+  }
+  for (let i = 0; i < textContents.length; i++) {
+    out.push(
+      // 流式期间正文用 StreamingMarkdown（轻量插件栈 + 帧对齐节流），完成时切换
+      // AgentMarkdown 完整栈补齐公式/raw HTML；流式中加 --streaming 视觉指示。
+      <div key={`seg-text-${i}`} className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>
+        {streaming ? <StreamingMarkdown content={textContents[i]!} isStreaming /> : <AgentMarkdown content={textContents[i]!} />}
+      </div>
+    )
+  }
+  return out
+}
+
+// 「已停止生成」徽标（流式/完成分支共用）
+const stoppedBadge = (
+  <div className="chat-msg-stopped-badge">
+    <CircleStopIcon size={10} />
+    <span>已停止生成</span>
+  </div>
+)
+
+// 已完成助手消息行：含 segments 交错布局与旧消息传统布局两种完成态。
+// React.memo：msg 引用在流式 commit 间不变 → 已完成行跳过 reconcile，仅流式行更新，
+// 消除「整页 20 次/秒 × 15-40ms」渲染基线。
+const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loading, actionsRef, toolCardExpandedDefault }: {
+  msg: AgentMessage
+  isLast: boolean
+  loading: boolean
+  actionsRef: React.MutableRefObject<AgentMsgRowActions>
+  toolCardExpandedDefault: boolean
+}) {
+  const a = actionsRef.current
+  const hasToolCalls = !!(msg.toolCalls?.length)
+  const fileSummary = (
+    <FileChangeSummary toolCalls={msg.toolCalls} onOpenChange={a.openGitDiffAt} canUndoAll={!!(msg.toolCalls?.some(t => a.canUndoFor(t)))} onUndoAll={() => a.handleUndoAll(msg.id, msg.toolCalls)} />
+  )
+  const actions = (
+    <div className="chat-msg-actions">
+      <button className="chat-msg-action-btn" onClick={() => a.copyMessage(msg.content || '')}><CopyIcon size={13} /></button>
+      {isLast && (
+        <button className="chat-msg-action-btn" onClick={() => a.regenerateAt(msg.id)} disabled={loading}><RefreshCwIcon size={13} /></button>
+      )}
+    </div>
+  )
+  if (msg.segments && msg.segments.length > 0) {
+    // 已完成：完整交错布局（思考链 → 工具卡 → … → 正文气泡）
+    return (
+      <>
+        {renderSegmentsFor(msg.segments, msg.id, false, undefined, { thinkDone: true, onPreviewFile: a.onPreviewFile, canUndoFor: a.canUndoFor, onUndo: a.onUndo, toolCardExpandedDefault })}
+        {msg.stopped && stoppedBadge}
+        {fileSummary}
+        {actions}
+      </>
+    )
+  }
+  // 旧消息（无 segments）或兜底：传统布局（工具卡并入思考链尾部，由 StreamingContent 处理）
+  return (
+    <>
+      {msg.stopped && stoppedBadge}
+      <StreamingContent content={msg.content} toolCalls={msg.toolCalls || undefined} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(msg.id, tc)} cardDefaultOpen={toolCardExpandedDefault} />
+      {hasToolCalls && fileSummary}
+      {!hasToolCalls && actions}
+    </>
+  )
+})
+
+// 流式中的末条助手消息：**唯一订阅 liveAgentMsg 切片的组件**——每个 text_delta commit
+// （~50ms）只重渲染它，整页其余部分不感知流式更新（projects 以 ~500ms 节流同步）。
+// 渲染两个流式分支：segments 已切分（思考/正文/工具交错）与未切分兜底（StreamingContent）。
+const AgentStreamingMessage = React.memo(function AgentStreamingMessage({ liveId, streamKind, modelLabel, thinkDone, actionsRef, toolCardExpandedDefault }: {
+  liveId: string
+  streamKind: 'think' | 'text' | 'tools' | 'idle'
+  modelLabel: string
+  thinkDone: boolean
+  actionsRef: React.MutableRefObject<AgentMsgRowActions>
+  toolCardExpandedDefault: boolean
+}) {
+  const live = useStore(s => s.liveAgentMsg)
+  if (!live || live.id !== liveId) return null
+  const hasToolCalls = !!(live.toolCalls?.length)
+  // 已切分进 segments 的工具调用 id：流式时把「当前轮尚未切分」的工具卡作为实时尾部追加，
+  // 避免流式期所有工具卡堆在顶部、完成后才跳回交错。
+  const segmentedToolIds = new Set<string>()
+  if (live.segments) for (const seg of live.segments) if (seg.kind === 'tools') for (const t of seg.toolCalls) segmentedToolIds.add(t.id)
+  const liveToolCalls = (live.toolCalls || []).filter(t => !segmentedToolIds.has(t.id))
+  // 首 token 前（无正文/无思考/无工具）：像素网格思考加载器，避免等待留白
+  const pendingFirstToken = !live.content && !(live.segments?.length) && !hasToolCalls
+  const a = actionsRef.current
+  // 模型名/token/tps 徽标仅在输出正文且无工具时显示（思考/工具阶段不显示）
+  const badge = streamKind === 'text' && !hasToolCalls ? <StreamingBadge text={live.content || ''} modelLabel={modelLabel} /> : null
+  if (live.segments && live.segments.length > 0) {
+    // 流式进行中：segments 已按事件时间线实时切分，直接渲染交错布局，
+    // 不再叠加 StreamingContent（避免正文重复显示）。
+    return (
+      <>
+        {renderSegmentsFor(live.segments, live.id, true, liveToolCalls, { thinkDone, onPreviewFile: a.onPreviewFile, canUndoFor: a.canUndoFor, onUndo: a.onUndo, toolCardExpandedDefault })}
+        {live.stopped && stoppedBadge}
+        {badge}
+      </>
+    )
+  }
+  // 流式中但尚无 finalize 段（首 token 前 / 尚无任何产出）：实时 content 渲染兜底
+  return (
+    <>
+      {live.stopped && stoppedBadge}
+      {badge}
+      {pendingFirstToken && <ThinkingLoader />}
+      <StreamingContent content={live.content} streaming toolCalls={live.toolCalls || undefined} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(live.id, tc)} cardDefaultOpen={toolCardExpandedDefault} />
+    </>
+  )
+})
+
 export default function AgentCodeView() {
   const cards = useStore(s => s.cards)
   const currentView = useStore(s => s.view)
   const runningCard = cards.find(c => c.status === 'running')
+  // 诊断：整页渲染耗时探针（>15ms 打印；定位触发源：最近一次 diagWrite 写入者）
+  const diagViewT0 = useRef(0)
+  if (STREAM_DIAG) diagViewT0.current = performance.now()
+  useLayoutEffect(() => {
+    if (!STREAM_DIAG) return
+    const dt = performance.now() - diagViewT0.current
+    if (dt > 15) {
+      const now = performance.now()
+      let cause = 'other'
+      let best = 1e9
+      for (const k of Object.keys(diagWrite) as Array<keyof typeof diagWrite>) {
+        const d = now - diagWrite[k]
+        if (d < best) { best = d; cause = k }
+      }
+      console.debug(`[stream-diag] view-render ${dt.toFixed(1)}ms cause=${cause}(ago=${best.toFixed(0)}ms)`)
+    }
+  })
   // 顶栏 prefill 进度与内联上下文指示器已抽为自订阅小组件（AgentPrefillBar / AgentTopBarCtx），
   // 此处不再订阅 modelMetrics，避免主进程每 2s 广播指标时触发整个工作台全量重渲染。
   const apiBaseUrl = runningCard ? `http://127.0.0.1:${runningCard.template.serverPort}` : null
@@ -2744,7 +3034,12 @@ export default function AgentCodeView() {
     let raf = 0
     const pin = () => {
       const el = chatScrollRef.current
-      if (el && atBottomRef.current) el.scrollTop = el.scrollHeight
+      if (el && atBottomRef.current) {
+        const t0 = performance.now()
+        el.scrollTop = el.scrollHeight
+        const dt = performance.now() - t0
+        if (STREAM_DIAG && dt > 5) console.debug(`[stream-diag] pin ${dt.toFixed(1)}ms`)
+      }
       raf = requestAnimationFrame(pin)
     }
     raf = requestAnimationFrame(pin)
@@ -3624,10 +3919,60 @@ export default function AgentCodeView() {
     }
     // 占位助手消息（pi 事件驱动其内容/工具卡片）
     const liveId = newMsgId()
-    let msgs: AgentMessage[] = [...displayMsgs, { id: liveId, role: 'assistant', content: '' }]
-    const commit = (patch: Partial<AgentMessage>): void => {
+    // 流式实时消息走独立 store 切片 liveAgentMsg：只重渲染流式消息组件（AgentStreamingMessage），
+    // 整页（侧边栏/文件树/面板…）不再每个 commit 重渲染——实测整页 15-30ms × 20次/秒 是卡顿主因。
+    // 整轮 msgs 以 ~500ms 节流同步进项目 store（历史/持久化），轮末 forceSync 一次性写全。
+    let liveMsg: AgentMessage = { id: liveId, role: 'assistant', content: '' }
+    let msgs: AgentMessage[] = [...displayMsgs, liveMsg]
+    useStore.getState().setLiveAgentMsg(liveMsg)
+    updateSessionInProject(pid, sid, { messages: msgs })
+    const SYNC_PROJECTS_MS = 500
+    let projectsSyncTimer: ReturnType<typeof setTimeout> | null = null
+    let lastProjectsSyncAt = 0
+    const syncProjects = (): void => {
+      if (projectsSyncTimer) return
+      const apply = (): void => {
+        lastProjectsSyncAt = performance.now()
+        updateSessionInProject(pid, sid, { messages: msgs })
+        diagWrite.projects = performance.now()
+      }
+      const now = performance.now()
+      if (now - lastProjectsSyncAt >= SYNC_PROJECTS_MS) apply()
+      else projectsSyncTimer = setTimeout(() => { projectsSyncTimer = null; apply() }, SYNC_PROJECTS_MS - (now - lastProjectsSyncAt))
+    }
+    // forceSync=true：轮末/失败收尾——立即写 projects + 清掉排队同步，保证最终态入库。
+    const commit = (patch: Partial<AgentMessage>, forceSync = false): void => {
       msgs = msgs.map(m => m.id === liveId ? { ...m, ...patch } : m)
-      flushSync(() => updateSessionInProject(pid, sid, { messages: msgs }))
+      liveMsg = { ...liveMsg, ...patch }
+      useStore.getState().setLiveAgentMsg(liveMsg)
+      if (forceSync) {
+        if (projectsSyncTimer) { clearTimeout(projectsSyncTimer); projectsSyncTimer = null }
+        lastProjectsSyncAt = performance.now()
+        updateSessionInProject(pid, sid, { messages: msgs })
+      } else {
+        syncProjects()
+      }
+    }
+    // 流式正文 commit 节流：文本增量高频到达时合并为每 COMMIT_TEXT_MS 一次 live 切片更新
+    // （显示层另有 40ms 帧对齐节流，50ms 合并不会造成视觉滞后）；
+    // 工具/思考边界等低频事件仍走 commit 即时提交，保证工具卡状态不错过。
+    const COMMIT_TEXT_MS = 50
+    let textCommitTimer: ReturnType<typeof setTimeout> | null = null
+    let lastTextCommitAt = 0
+    const commitText = (patch: Partial<AgentMessage>): void => {
+      msgs = msgs.map(m => m.id === liveId ? { ...m, ...patch } : m)
+      liveMsg = { ...liveMsg, ...patch }
+      const apply = (): void => {
+        lastTextCommitAt = performance.now()
+        useStore.getState().setLiveAgentMsg(liveMsg)
+        diagWrite.live = performance.now()
+        syncProjects()
+        diagPush('commit', lastTextCommitAt)
+      }
+      if (textCommitTimer) return // 已有排队提交，最新 liveMsg 会随其 apply 一起带走
+      const now = performance.now()
+      if (now - lastTextCommitAt >= COMMIT_TEXT_MS) apply()
+      else textCommitTimer = setTimeout(() => { textCommitTimer = null; apply() }, COMMIT_TEXT_MS - (now - lastTextCommitAt))
     }
     let streamedText = ''
     const toolCalls: NonNullable<AgentMessage['toolCalls']> = []
@@ -3726,6 +4071,7 @@ export default function AgentCodeView() {
     }
     const client = new PiAgentClient({
       onTextDelta: (delta) => {
+        diagPush('arrival', performance.now())
         streamedText += delta
         textSinceLastTool = true
         appendTextDelta(delta)
@@ -3733,8 +4079,10 @@ export default function AgentCodeView() {
         // 依据该增量是否进入未闭合 <think> 判断「思考中 / 输出中」
         if (delta.replace(/<think>|<\/think>/g, '').trim()) {
           setStreamKind(thinkOpen ? 'think' : 'text')
+          diagWrite.skind = performance.now()
         }
-        commit({ content: streamedText, segments: buildSegs() })
+        diagWrite.tdone = performance.now()
+        commitText({ content: streamedText, segments: buildSegs() })
       },
       onToolCall: (tc) => {
         // 工具声明 = 进入「工具调用中」阶段（状态栏展示；消息区工具卡执行中另有 verb 徽标）
@@ -3895,15 +4243,15 @@ export default function AgentCodeView() {
       // 避免 StreamingContent 把思考/正文再重复渲染一遍（工具卡+思考重复显示的根源之一）。
       setStreaming(false)
       if (!streamedText && toolCalls.length === 0) {
-        commit({ content: '(模型未返回内容)' })
+        commit({ content: '(模型未返回内容)' }, true)
       } else {
         // 本轮结束：segments 已是实时时间线顺序（buildSegs），流式/完成态一致交错
         closeOpenThink()
-        commit({ content: streamedText, toolCalls: [...toolCalls], segments: buildSegs() })
+        commit({ content: streamedText, toolCalls: [...toolCalls], segments: buildSegs() }, true)
       }
       return { errored: false, aborted: abortRef.current.aborted }
     } catch (e: any) {
-      commit({ content: `发送失败：${e?.message || String(e)}` })
+      commit({ content: `发送失败：${e?.message || String(e)}` }, true)
       return { errored: true, aborted: false }
     } finally {
       client.detach()
@@ -3924,9 +4272,12 @@ export default function AgentCodeView() {
             t.result = t.result ?? '(工具未完成：已停止生成)'
           }
         }
-        commit({ toolCalls: [...toolCalls], segments: buildSegs() })
+        commit({ toolCalls: [...toolCalls], segments: buildSegs() }, true)
       }
       streamingSessionRef.current = null
+      // 流式结束：清空实时切片（projects 已由上面的 forceSync 写入最终 msgs），
+      // 消息列表从 store 渲染完成态行（AgentMessageRow）。
+      useStore.getState().setLiveAgentMsg(null)
       useStore.getState().setAgentPhase(null)
       const queue = pendingSendRef.current
       pendingSendRef.current = []
@@ -4398,79 +4749,18 @@ export default function AgentCodeView() {
     }
   }, [autoResize, detectAt, ensureWorkspaceFiles, filterAtFiles, activeProject.workspaceDir])
 
-  // segments 渲染（思考链 / 工具卡 / 正文气泡）：流式分支与完成分支共用同一实现。
-  // 此前两处逐字复制，「流式态与完成态显示不一致」类 bug 多源于两份拷贝各改一处。
-  // 单条消息的思考链合并规则（用户确认，对齐 Reasonix 过程折叠）：
-  //   - 一条消息 = 一个「思考过程」框：该消息的全部 think/tools 段按模型真实时间线
-  //     交错收进同一面板（思考文本 ↔ 工具卡），不因中途正文拆分出多个思考过程面板；
-  //   - text 段 = 独立正文气泡（全部正文段都独立，思考过程不再被正文打断终结）；
-  //   - 无思考文本的纯工具段（消息首段即工具）保持独立卡片显示（无思考链时工具卡照旧独立）。
-  // streaming=true（流式进行中）：思考框保持「思考中」转圈展开实时显示，
-  // 完成态自动收起为「思考过程」折叠头（可点击展开）。
-  // tailToolCalls：流式期间尚未切分进 segments 的实时工具（liveToolCalls），
-  // 并入思考框的工具尾部；无思考文本时独立展示。
-  const renderSegments = (segments: NonNullable<AgentMessage['segments']>, msgId: string, streaming = false, tailToolCalls?: NonNullable<AgentMessage['toolCalls']>) => {
-    const chainItems: ThinkChainItem[] = []
-    const textContents: string[] = []
-    for (const seg of segments) {
-      if (seg.kind === 'text') {
-        // 跳过空正文段：避免渲染出透明占位容器（padding + flex gap 造成的不可见空隙）
-        if (seg.content.trim() === '') continue
-        textContents.push(seg.content)
-      } else if (seg.kind === 'think') {
-        chainItems.push({ kind: 'think', content: seg.content, durationMs: seg.durationMs })
-      } else {
-        chainItems.push({ kind: 'tools', toolCalls: seg.toolCalls })
-      }
-    }
-    if (tailToolCalls && tailToolCalls.length > 0) chainItems.push({ kind: 'tools', toolCalls: tailToolCalls })
-    const out: React.ReactNode[] = []
-    if (chainItems.length > 0 && chainItems[0].kind === 'think') {
-      out.push(
-        <ThinkBlock
-          key="think-chain"
-          value={chainItems[0].content}
-          // 工具声明/正文出现后 thinkDone=true：思考框必然收起，不会与工具卡并存转圈
-          closed={!streaming || thinkDone}
-          isStreaming={streaming && !thinkDone}
-          msgStreaming={streaming}
-          bodyAppeared={textContents.length > 0}
-          durationMs={chainItems[0].durationMs}
-          items={chainItems.slice(1)}
-          onPreviewFile={openPreview}
-          canUndoFor={canUndoFor}
-          onUndo={(tc) => onUndoTool(msgId, tc)}
-          cardDefaultOpen={toolCardExpandedDefault}
-        />
-      )
-    } else if (chainItems.length > 0) {
-      // 无思考文本的纯工具：合并为一组独立卡片
-      out.push(
-        <ToolCallGroup
-          key="tools-only"
-          toolCalls={chainItems.flatMap(it => (it.kind === 'tools' ? it.toolCalls : []))}
-          cardDefaultOpen={toolCardExpandedDefault}
-          onPreviewFile={openPreview}
-          canUndoFor={canUndoFor}
-          onUndo={(tc) => onUndoTool(msgId, tc)}
-        />
-      )
-    }
-    for (let i = 0; i < textContents.length; i++) {
-      out.push(
-        <div key={`seg-text-${i}`} className="chat-msg-bubble chat-msg-markdown"><AgentMarkdown content={textContents[i]!} /></div>
-      )
-    }
-    return out
+  // 已完成消息行动作经「稳定 ref」传给 memo 行组件：ref 引用不变，useCallback 依赖
+  // 漂移不会击穿 AgentMessageRow 的 React.memo（流式期间已完成行整行跳过 reconcile）。
+  const msgRowActionsRef = useRef<AgentMsgRowActions>(null!)
+  msgRowActionsRef.current = {
+    onPreviewFile: openPreview,
+    canUndoFor,
+    onUndo: onUndoTool,
+    openGitDiffAt,
+    handleUndoAll,
+    copyMessage,
+    regenerateAt,
   }
-
-  // 「已停止生成」徽标（三个渲染分支共用）
-  const stoppedBadge = (
-    <div className="chat-msg-stopped-badge">
-      <CircleStopIcon size={10} />
-      <span>已停止生成</span>
-    </div>
-  )
 
   // ── 区域：JSX 渲染（顶栏、侧边栏、聊天区、预览区、弹层） ──
   return (
@@ -4632,26 +4922,9 @@ export default function AgentCodeView() {
               // 流式状态仅归属于发起它的会话：全局 streaming 标志不区分会话，
               // 切会话后若不校验归属，另一会话的末条助手消息会被误判为流式中。
               const streamingHere = streaming && streamingSessionRef.current === activeSession.id
-              // 核心修复：一旦消息已携带 toolCalls，说明模型已经完成思考并决定调用工具，
-              // 此时 ThinkBlock 绝不应再显示“思考中”转圈，无论 streaming 状态如何。
-              const hasToolCalls = !!(msg.toolCalls?.length)
-              const streamingThis = streamingHere && isLast && msg.role === 'assistant' && !hasToolCalls
-              // 流式消息（不限是否已产生工具批）：用于「流式期间实时渲染 content」与
-              // 「完成后切换为 segments 交错布局」的分流。流式时必须实时显示思考/工具状态，
-              // 否则思考链要等工具批到达才出现（延迟）；done 后才用 segments 交错。
+              // 流式消息（不限是否已产生工具批）：分派给独立组件 AgentStreamingMessage——
+              // 它订阅 liveAgentMsg 切片（实时内容不落 projects store，整页不随之重渲染）。
               const streamingMsg = streamingHere && isLast && msg.role === 'assistant'
-              // 已切分进 segments 的工具调用 id（用于流式时把「当前轮尚未切分」的工具卡
-              // 作为实时尾部追加，避免流式期所有工具卡堆在顶部、完成后才跳回交错）。
-              const segmentedToolIds = new Set<string>()
-              if (msg.segments) for (const seg of msg.segments) if (seg.kind === 'tools') for (const t of seg.toolCalls) segmentedToolIds.add(t.id)
-              const liveToolCalls = (msg.toolCalls || []).filter(t => !segmentedToolIds.has(t.id))
-              // 流式生成阶段：本轮正在生成 tool_call 参数（仅对正在流式的末条助手消息生效）。
-              // 此时把思考链收尾（thinkDone）并展示“正在生成…”卡片，直到 done 后真正的工具卡片接管。
-              const genActive = false
-              const genThinkDone = false
-              // 首 token 前（流式中、消息尚无任何产出：无正文/无思考/无工具）：在消息区显示
-              // 像素网格思考加载器，与输入框上方状态栏的「模型思考中…」互补，避免等待留白。
-              const pendingFirstToken = streamingMsg && !msg.content && !(msg.segments?.length) && !hasToolCalls
               return (
                 <div key={msg.id} className={`chat-msg chat-msg-${msg.role}`}>
                   {msg.role !== 'user' && (
@@ -4686,77 +4959,23 @@ export default function AgentCodeView() {
                             segments，则严格按 工具栏 → 思考链 → 工具栏 → 思考链 → … → 正文气泡
                             的顺序排列。流式进行中一律走下面的实时 content 渲染（保证思考链/工具状态
                             实时显示，不延迟到工具批到达才出现）；旧消息（无 segments）也走传统布局。 */}
-                        {streamingMsg && msg.segments && msg.segments.length > 0 ? (
-                          // 流式进行中：segments 已按事件时间线实时切分（思考/正文/工具交错），
-                          // 直接渲染交错布局，不再叠加 StreamingContent（避免正文重复显示）。
-                          <>
-                            {renderSegments(msg.segments, msg.id, true, liveToolCalls)}
-                            {msg.stopped && stoppedBadge}
-                            {/* 模型名/token/tps 徽标仅在输出正文时显示（思考/工具阶段不显示，避免状态栏之外多余信息） */}
-                            {streamingThis && streamKind === 'text' && (
-                              <StreamingBadge text={msg.content || ''} modelLabel={modelLabel} />
-                            )}
-                          </>
-                        ) : streamingMsg ? (
-                          // 流式中但尚无 finalize 段（首 token 前 / 尚无任何产出）：实时 content 渲染兜底
-                          <>
-                            {msg.stopped && stoppedBadge}
-                            {streamingThis && streamKind === 'text' && (
-                              <StreamingBadge text={msg.content || ''} modelLabel={modelLabel} />
-                            )}
-                            {pendingFirstToken && <ThinkingLoader />}
-                            {genActive ? (
-                              // 生成期不在会话区显示工具状态（改由输入框上方常驻状态栏展示），仅收起思考链
-                              (msg.content ? <StreamingContent content={msg.content} streaming={streamingMsg} thinkDone={genThinkDone} /> : null)
-                            ) : (
-                              // 首 token 前不再渲染「模型思考中…」占位：该窗口的状态已由输入框上方常驻状态栏统一展示
-                              <StreamingContent content={msg.content} streaming={streamingMsg} toolCalls={msg.toolCalls || undefined} onPreviewFile={openPreview} canUndoFor={canUndoFor} onUndo={(tc) => onUndoTool(msg.id, tc)} cardDefaultOpen={toolCardExpandedDefault} />
-                            )}
-                          </>
-                        ) : !streamingMsg && msg.segments && msg.segments.length > 0 ? (
-                          // 已完成：完整交错布局
-                          <>
-                            {renderSegments(msg.segments, msg.id)}
-                            {msg.stopped && stoppedBadge}
-                            {/* 消息完成后：底部统一展示本轮修改过的文件汇总（按文件聚合增删行） */}
-                            {!streamingThis && <FileChangeSummary toolCalls={msg.toolCalls} onOpenChange={openGitDiffAt} canUndoAll={!!(msg.toolCalls?.some(t => canUndoFor(t)))} onUndoAll={() => handleUndoAll(msg.id, msg.toolCalls)} />}
-                            {/* 交错消息完成后展示操作按钮；重新生成常驻渲染，
-                                流式中置灰禁用（而非隐藏），避免操作栏宽度跳变 */}
-                            {!streamingThis && (
-                              <div className="chat-msg-actions">
-                                <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content || '')}><CopyIcon size={13} /></button>
-                                {isLast && (
-                                  <button className="chat-msg-action-btn" onClick={() => regenerateAt(msg.id)} disabled={loading}><RefreshCwIcon size={13} /></button>
-                                )}
-                              </div>
-                            )}
-                          </>
+                        {streamingMsg ? (
+                          // 流式中的末条助手消息：独立组件 AgentStreamingMessage 订阅 liveAgentMsg
+                          // 切片——每个 ~50ms commit 只重渲染它（流式消息自身），整页其余部分不感知。
+                          // 内部按 segments 是否已切分渲染交错布局或 StreamingContent 兜底。
+                          <AgentStreamingMessage
+                            liveId={msg.id}
+                            streamKind={streamKind}
+                            modelLabel={modelLabel}
+                            thinkDone={thinkDone}
+                            actionsRef={msgRowActionsRef}
+                            toolCardExpandedDefault={toolCardExpandedDefault}
+                          />
                         ) : (
-                          // 旧消息（无 segments）或兜底：传统布局（工具卡并入思考链尾部，由 StreamingContent 处理）
-                          <>
-                            {msg.stopped && stoppedBadge}
-                            {streamingThis && streamKind === 'text' && (
-                              <StreamingBadge text={msg.content || ''} modelLabel={modelLabel} />
-                            )}
-                            {/* 首 token 前：像素网格思考加载器（首次思考占位），首 token 到达后自动卸载 */}
-                            {pendingFirstToken && <ThinkingLoader />}
-                            {genActive ? (
-                              // 生成期不在会话区显示工具状态（改由输入框上方常驻状态栏展示），仅收起思考链
-                              (msg.content ? <StreamingContent content={msg.content} streaming={streamingMsg} thinkDone={genThinkDone} /> : null)
-                            ) : (
-                              // 首 token 前不再渲染「模型思考中…」占位：该窗口的状态已由输入框上方常驻状态栏统一展示
-                              <StreamingContent content={msg.content} streaming={streamingMsg} toolCalls={msg.toolCalls || undefined} onPreviewFile={openPreview} canUndoFor={canUndoFor} onUndo={(tc) => onUndoTool(msg.id, tc)} cardDefaultOpen={toolCardExpandedDefault} />
-                            )}
-                            {!streamingThis && hasToolCalls && <FileChangeSummary toolCalls={msg.toolCalls} onOpenChange={openGitDiffAt} canUndoAll={!!(msg.toolCalls?.some(t => canUndoFor(t)))} onUndoAll={() => handleUndoAll(msg.id, msg.toolCalls)} />}
-                            {!streamingThis && !hasToolCalls && (
-                              <div className="chat-msg-actions">
-                                <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content || '')}><CopyIcon size={13} /></button>
-                                {isLast && (
-                                  <button className="chat-msg-action-btn" onClick={() => regenerateAt(msg.id)} disabled={loading}><RefreshCwIcon size={13} /></button>
-                                )}
-                              </div>
-                            )}
-                          </>
+                          // 已完成消息：抽成 React.memo 行组件——msg 引用在流式 commit 间不变，
+                          // 整行跳过 reconcile（只更新流式那条消息），消除整页渲染基线。
+                          // 行内同时覆盖 segments 交错布局与传统布局两种完成态。
+                          <AgentMessageRow msg={msg} isLast={isLast} loading={loading} actionsRef={msgRowActionsRef} toolCardExpandedDefault={toolCardExpandedDefault} />
                         )}
                       </>
                     )}
@@ -5179,7 +5398,7 @@ export default function AgentCodeView() {
         <div className={`agent-code-right-collapser ${rightPanelMode !== 'files' ? 'panel-resizable' : ''} ${treeOpen ? '' : 'collapsed'}`}>
           <div className={`agent-code-right-body${rightPanelMode !== 'files' ? ' tree-collapsed' : ''}`}>
             <div className={`agent-code-tree${rightPanelMode !== 'files' ? ' hidden' : ''}`}>
-              <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={(name) => insertAtCursor(name)} onFilesChanged={onWorkspaceFilesChanged} />
+              <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={insertAtCursor} onFilesChanged={onWorkspaceFilesChanged} />
             </div>
             <div className={`agent-code-resize-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}${rightPanelMode !== 'files' ? ' hidden' : ''}`} onPointerDown={startResize('preview')} />
             <div className={`agent-browser-wrap ${rightPanelMode === 'browser' ? '' : 'hidden'}`}>

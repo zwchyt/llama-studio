@@ -58,9 +58,30 @@ function getManager(): PiAgentManager {
 export function registerPiAgentIpc(win: BrowserWindow): void {
   currentWindow = win
   const push = (sessionId: string, event: AgentSessionEvent): void => {
-    if (currentWindow && !currentWindow.isDestroyed()) {
-      currentWindow.webContents.send('pi-agent-event', sessionId, event)
+    if (!currentWindow || currentWindow.isDestroyed()) return
+    // 流式事件瘦身：text_delta/thinking_delta 的 partial 携带「截至当前的完整消息内容」
+    // （随输出增长可达数十 KB），每次 webContents.send 都要结构化克隆 + GC，这是流式期间
+    // renderer 主线程周期性 200-300ms 卡顿（'message' handler violation）的根源；
+    // renderer 只消费 delta/contentIndex，partial 完全无用。
+    // 例外：toolcall_start 用 partial.content[i].name 显示「参数生成中」卡片——这里仅
+    // 保留各 content 块的 type/name/id（丢弃 text 全文），且保持数组索引不变。
+    let slim = event
+    if (event.type === 'message_update') {
+      const am = (event as { assistantMessageEvent?: { type?: string; partial?: { content?: Array<{ type?: string; name?: string; id?: string }> } } }).assistantMessageEvent
+      if (am && typeof am === 'object' && am.partial && typeof am.partial === 'object') {
+        const content = Array.isArray(am.partial.content) ? am.partial.content : []
+        slim = {
+          ...event,
+          assistantMessageEvent: {
+            ...am,
+            partial: am.type === 'toolcall_start'
+              ? { content: content.map(b => (b && b.type === 'toolCall' ? { type: b.type, name: b.name, id: b.id } : { type: b?.type ?? '' })) }
+              : undefined
+          }
+        } as unknown as AgentSessionEvent
+      }
     }
+    currentWindow.webContents.send('pi-agent-event', sessionId, slim)
   }
 
   ipcMain.handle('pi-agent-create', async (_e, opts: Omit<PiAgentSessionOptions, 'onEvent'>) => {

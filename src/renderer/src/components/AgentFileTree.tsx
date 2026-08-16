@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, memo } from 'react'
 import { AlertCircle } from 'lucide-react'
 import {
   ChevronRightIcon, ChevronDownIcon, FolderIcon, FolderOpenIcon, LoaderIcon, CornerDownLeftIcon, CopyIcon, SearchIcon, XIcon, ChevronsUpIcon, ChevronsDownIcon
@@ -34,7 +34,9 @@ function updateNodeInTree(root: FileNode, targetPath: string, updates: Partial<F
   return root
 }
 
-export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileName, onFilesChanged }: { workspaceDir: string; onPreviewFile?: (path: string) => void; onSendFileName?: (name: string) => void; onFilesChanged?: () => void }) {
+// memo：文件树是整页重渲染的最大单项成本（几百个节点的递归重建 ≈ 10-30ms/次）。
+// 流式期间整页可能频繁重渲染，包 memo 后只要 workspaceDir/回调引用不变就整树跳过。
+export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileName, onFilesChanged }: { workspaceDir: string; onPreviewFile?: (path: string) => void; onSendFileName?: (name: string) => void; onFilesChanged?: () => void }) {
   const [tree, setTree] = useState<FileNode | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [loadingSet, setLoadingSet] = useState<Set<string>>(new Set())
@@ -497,4 +499,4 @@ export default function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileN
       )}
     </div>
   )
-}
+})

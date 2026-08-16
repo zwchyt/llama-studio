@@ -4183,6 +4183,21 @@
   user-select: none;
 }
 
+/* 思考链流式文本：逐行 span（稳定 key → 只更新最后一行，paint 区域收缩到最后一行），
+   与正文代码块同构，消除思考链每 ~120ms 全量 markdown 重解析 + 整块重绘的卡顿。
+   字号/行高/颜色继承 .agent-think-body；思考结束后由 AgentMarkdown 接管完整排版。 */
+.agent-think-stream {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+
+.agent-think-stream-line {
+  display: block;
+  min-height: 1em;
+}
+
 /* 思考链面板内的链元素（思考续段 / 工具卡组）：与思考文本及彼此之间显式留距。
    卡片自身保持「去框平铺」风格，左竖线缩进与思考体/工具展开体对齐。 */
 .agent-think-item {
@@ -4375,6 +4390,15 @@
   font-family: inherit;
   font-size: inherit;
   margin: 0;
+}
+
+/* 流式代码：逐行 span（display:block 使行堆叠；pre 保留空白/换行结构）。
+   稳定 key 让 React 只更新最后一行文本节点 → paint 区域收缩到最后一行，
+   避免整块 <pre> 每帧重绘（代码输出「一卡一卡」的显示层根源）。
+   仅作用于 Agent Code 界面（本文件只被 AgentCodeView 引入）。 */
+.agent-code-view .chat-code-pre code.code-streaming > span {
+  display: block;
+  min-height: 1em;
 }
 
 .agent-code-view .chat-input-row {
