@@ -41,7 +41,11 @@ const PI_TOOL_GUIDANCE = [
   '- 需要规划或跟踪多步任务时，务必使用 TodoWrite 建立任务清单（merge:true 增量更新，保持任务 id 稳定）。',
   '- 用 TaskList 查看当前任务清单，用 TaskGet 查看单个任务详情。',
   '- 每完成一步，用 TodoWrite 把对应任务状态更新为 completed；遇到阻塞更新为 in_progress 并补充 notes。',
-  '- 不要用文本罗列代替任务清单——任务清单是跨轮次追踪进度的唯一来源。'
+  '- 不要用文本罗列代替任务清单——任务清单是跨轮次追踪进度的唯一来源。',
+  '## 大文件探索规范（重要）',
+  '- 定位代码禁止顺序通读大文件：先用 Grep（output_mode: content，结果带行号）按类名/函数名/关键字定位，再用 Read 以命中行为中心开窗（如 offset=行号-20、limit=50）。',
+  '- Read 未指定 limit 时默认只返回前 2000 行；结果被截断时遵循提示——继续读用 offset，定位换 Grep，不要一页页翻读。',
+  '- 不确定文件路径先用 Glob/ListDir 确认；查看内容一律用 Read/Grep，禁止 Bash 的 type/cat/findstr。'
 ]
 
 export class PiAgentManager {

@@ -833,7 +833,7 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
   // think 续段 = 后续思考文本；tools = 工具卡组）。无则思考块保持纯文本。
   // 配套渲染回调与 ToolCallGroup 一致（文件预览跳转 / 撤销），由调用方透传。
   items?: ThinkChainItem[]
-  onPreviewFile?: (p: string) => void
+  onPreviewFile?: (p: string, line?: number) => void
   canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean
   onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void
   cardDefaultOpen?: boolean
@@ -1417,7 +1417,7 @@ const StreamingMarkdown = React.memo(function StreamingMarkdown({ content, isStr
 const StreamingContent = React.memo(function StreamingContent({ content, streaming, thinkDone, toolCalls, onPreviewFile, canUndoFor, onUndo, cardDefaultOpen }: {
   content: string; streaming?: boolean; thinkDone?: boolean;
   toolCalls?: NonNullable<AgentMessage['toolCalls']>;
-  onPreviewFile?: (p: string) => void;
+  onPreviewFile?: (p: string, line?: number) => void;
   canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean;
   onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void;
   cardDefaultOpen?: boolean
@@ -1471,9 +1471,9 @@ const StreamingContent = React.memo(function StreamingContent({ content, streami
   )
 })
 
-const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPreviewFile }: { name: string; args: string; onPreviewFile: (p: string) => void }) {
+const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPreviewFile, headFilePath }: { name: string; args: string; onPreviewFile: (p: string, line?: number) => void; headFilePath?: string }) {
   const parsed = (() => { try { return JSON.parse(args) } catch { return null } })()
-  const filePath = parsed && typeof (parsed.file_path ?? parsed.path) === 'string' ? (parsed.file_path ?? parsed.path) as string : ''
+  const filePath = name === 'Read' ? '' : (headFilePath || (parsed && typeof (parsed.file_path ?? parsed.path) === 'string' ? (parsed.file_path ?? parsed.path) as string : ''))
   const isFileEdit = !!parsed && (name === 'Write' || name === 'Edit')
   if (isFileEdit) {
     return (
@@ -1517,7 +1517,7 @@ const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPreviewFil
       {filePath && (
         <div className="agent-tool-filebar">
           <button className="agent-tool-call-path" title={filePath} onClick={(e) => { e.stopPropagation(); onPreviewFile(resolveWorkspacePath(filePath)) }}>
-            {(() => { const { Icon: FIcon, color } = fileMeta(dirName(filePath)); return <FIcon size={12} style={{ color }} /> })()} {dirName(filePath)}
+            <span className="agent-tool-file-icon" style={{ color: fileMeta(dirName(filePath)).color }}>{(() => { const { Icon: FIcon } = fileMeta(dirName(filePath)); return <FIcon size={12} /> })()}</span>{filePath}
           </button>
         </div>
       )}
@@ -1556,7 +1556,7 @@ const ToolResultView = React.memo(function ToolResultView({ result, truncated, t
 // 流式生成阶段的工具状态（写入/修改/调用参数生成中）统一改由输入框上方的常驻状态栏展示，
 // 会话区不再内联渲染生成状态行；此处仅保留 genToolVerb 供状态栏取用。
 
-const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPreviewFile, canUndo, onUndo, defaultOpen }: { tc: NonNullable<AgentMessage['toolCalls']>[number]; index: number; total: number; onPreviewFile: (p: string) => void; canUndo?: boolean; onUndo?: () => void; defaultOpen?: boolean }) {
+const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPreviewFile, canUndo, onUndo, defaultOpen }: { tc: NonNullable<AgentMessage['toolCalls']>[number]; index: number; total: number; onPreviewFile: (p: string, line?: number) => void; canUndo?: boolean; onUndo?: () => void; defaultOpen?: boolean }) {
   const meta = TOOL_META[tc.name]
   const Icon = meta?.icon || Wrench
   // 状态：await_approval(待人工确认) / executing(执行中) / done(已完成)。
@@ -1667,16 +1667,25 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
     const c = parsed && typeof parsed.command === 'string' ? parsed.command : null
     return c && c.length > 400 ? c.slice(0, 400) + '\n…' : c
   })()
-  // Read 成功后展开体不再回显文件全文（内容用户可点文件名跳预览面板查看，避免会话区重复渲染大段代码），
-  // 只显示「图标 + 文件名」一行；失败时仍走原结果块展示错误信息。
-  const readFilePath = tc.name === 'Read' && parsed && typeof (parsed.file_path ?? parsed.path) === 'string' ? (parsed.file_path ?? parsed.path) as string : ''
-  const readNameOnly = done && !failed && !!readFilePath
-  // Read/Write/Edit 统一：文件名内联到头部（文件树同款图标 + 可点跳预览），替代纯文字参数预览，
-  // 展开体内不再重复渲染文件名行。
+  // Read/Write/Edit 统一：文件名内联到头部（文件树同款图标 + 可点跳预览），替代纯文字参数预览。
+  let readFilePath = tc.name === 'Read' && parsed && typeof (parsed.file_path ?? parsed.path) === 'string' ? (parsed.file_path ?? parsed.path) as string : ''
+  if (tc.name === 'Read' && typeof tc.result === 'string') {
+    const firstLine = tc.result.split('\n')[0] || ''
+    const m = /^File:\s*(.+)$/i.exec(firstLine)
+    if (m) readFilePath = m[1].trim()
+  }
   const headFilePath = readFilePath || (WRITE_EDIT_TOOLS.has(tc.name) && parsed && typeof (parsed.file_path ?? parsed.path) === 'string' ? (parsed.file_path ?? parsed.path) as string : '')
+  // Read 实际读取的行段（结果头 Lines: x-y 解析）：头部展示「文件名:x-y」、点击文件名跳转到起始行。
+  // 行段取自执行结果而非参数，是钳制后的真实范围；同一文件多次分片读取时借此区分各卡片。
+  const readRange = (() => {
+    if (tc.name !== 'Read' || !done || typeof tc.result !== 'string') return null
+    const m = tc.result.match(/^Lines: (\d+)-(\d+)/m)
+    return m ? { start: Number(m[1]), end: Number(m[2]) } : null
+  })()
   // Write/Edit 成功结果只是一句确认文案，与头部绿勾「完成」重复，隐藏结果块；
   // 写入内容预览 / diff（来自参数）照常展示，失败时仍显示错误结果块。
-  const hideResult = readNameOnly || (done && !failed && WRITE_EDIT_TOOLS.has(tc.name))
+  // Read 成功结果保留展示（ToolResultView 默认折叠为 12 行预览，可展开），供审计模型实际读到的内容。
+  const hideResult = done && !failed && WRITE_EDIT_TOOLS.has(tc.name)
 
   // ── 卡片渲染门控 ──
   // 工具声明（pending）即渲染卡片（与参考项目 Reasonix 的 ToolCard 一致：dispatch 即显示），
@@ -1691,20 +1700,17 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
         <div className="agent-tool-time">Tool: {formatDuration(tc.durationMs)}</div>
       )}
       <div className={`agent-tool-call tool-${tc.name.toLowerCase()}${failed ? ' failed' : ''}${executing ? ' executing' : ''}${pending ? ' pending' : ''}`}>
-        <div className={`agent-tool-call-head${readNameOnly ? ' readonly' : ''}`} onClick={readNameOnly ? undefined : handleToggle} style={readNameOnly ? { cursor: 'default' } : undefined}>
-          {/* hover 换脸：主图标淡出、chevron 旋转淡入，提示行可点击展开（借 ToolChips 交互，布局不变）；
-              Read 完成态头部不可展开（readonly），保持纯图标 */}
-          {readNameOnly ? <Icon size={13} /> : (
-            <span className="agent-tool-call-icon">
-              <Icon size={13} className="agent-tool-call-icon-main" />
-              <ChevronRightIcon size={12} className="agent-tool-call-icon-chev" />
-            </span>
-          )}
+        <div className="agent-tool-call-head" onClick={handleToggle}>
+          <span className="agent-tool-call-icon">
+            <Icon size={13} />
+          </span>
           <span className="agent-tool-call-name">{tc.name}</span>
-          {/* Read 成功：文件名直接内联到头部（文件树同款图标 + 可点跳预览），不再另渲展开体，避免文件名重复显示 */}
+          {/* Read/Write/Edit：文件名直接内联到头部（文件树同款图标 + 可点跳预览）。
+              Read 完成后附行段「文件名:x-y」，点击跳转到读取起始行——与模型实际读到的片段对上 */}
           {headFilePath ? (
-            <button className="agent-tool-call-path" title={headFilePath} onClick={(e) => { e.stopPropagation(); onPreviewFile(resolveWorkspacePath(headFilePath)) }}>
-              {(() => { const { Icon: FIcon, color } = fileMeta(dirName(headFilePath)); return <FIcon size={12} style={{ color }} /> })()} {dirName(headFilePath)}
+            <button className="agent-tool-call-path" title={headFilePath} onClick={(e) => { e.stopPropagation(); onPreviewFile(resolveWorkspacePath(headFilePath), readRange?.start) }}>
+              <span className="agent-tool-file-icon" style={{ color: fileMeta(dirName(headFilePath)).color }}>{(() => { const { Icon: FIcon } = fileMeta(dirName(headFilePath)); return <FIcon size={12} /> })()}</span>{headFilePath}
+              {readRange && <span className="agent-tool-call-linerange">:{readRange.start}-{readRange.end}</span>}
             </button>
           ) : (
             preview && <span className="agent-tool-call-preview">{preview}</span>
@@ -1741,10 +1747,10 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
             {tc.restored && (
               <span className="agent-tool-restored"><CheckIcon size={12} /> 已恢复</span>
             )}
-            {!readNameOnly && <ChevronRightIcon size={12} className={`agent-tool-chev ${expanded ? 'open' : ''}`} />}
+            <ChevronRightIcon size={12} className={`agent-tool-chev ${expanded ? 'open' : ''}`} />
           </span>
         </div>
-        {visible && !readNameOnly && (
+        {visible && (
           <div className="agent-tool-call-anim" ref={bodyRef} onTransitionEnd={onBodyTransitionEnd}>
             <div className="agent-tool-call-body">
               {tc.name === 'Bash' && bashCmd && (
@@ -1753,8 +1759,8 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
                   <pre className="agent-tool-bash-cmd">{bashCmd}</pre>
                 </div>
               )}
-              {tc.name !== 'Bash' && tc.name !== 'web_search' && !readNameOnly && <ToolArgsView name={tc.name} args={tc.args} onPreviewFile={onPreviewFile} />}
-              {tc.name === 'web_search' && !readNameOnly && (executing || done) && (
+              {tc.name !== 'Bash' && tc.name !== 'web_search' && <ToolArgsView name={tc.name} args={tc.args} onPreviewFile={onPreviewFile} headFilePath={headFilePath} />}
+              {tc.name === 'web_search' && (executing || done) && (
                 <WebSearchResults
                   result={done ? tc.result ?? undefined : undefined}
                   query={parsed && typeof parsed.query === 'string' ? parsed.query : undefined}
@@ -1772,7 +1778,7 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
   )
 })
 
-const ToolCallGroup = React.memo(function ToolCallGroup({ toolCalls, onPreviewFile, canUndoFor, onUndo, cardDefaultOpen }: { toolCalls: NonNullable<AgentMessage['toolCalls']>; onPreviewFile: (p: string) => void; canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean; onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void; cardDefaultOpen?: boolean }) {
+const ToolCallGroup = React.memo(function ToolCallGroup({ toolCalls, onPreviewFile, canUndoFor, onUndo, cardDefaultOpen }: { toolCalls: NonNullable<AgentMessage['toolCalls']>; onPreviewFile: (p: string, line?: number) => void; canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean; onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void; cardDefaultOpen?: boolean }) {
   return (
     <div className="agent-tool-list">
       {toolCalls.map((tc, i) => <ToolCallCard key={tc.id || i} tc={tc} index={i} total={toolCalls.length} onPreviewFile={onPreviewFile} canUndo={canUndoFor ? canUndoFor(tc) : false} onUndo={onUndo ? () => onUndo(tc) : undefined} defaultOpen={cardDefaultOpen} />)}
@@ -1967,7 +1973,7 @@ function TopbarBtn({ icon: Icon, size = 12, btnRef, baseClass = 'agent-code-topb
 // 保持不变（只有流式那条消息被替换），所以用 React.memo + 稳定 actionsRef 让已完成行
 // 完全跳过 reconcile——整页渲染成本从实测的 15-40ms 降到 ~2ms。
 type AgentMsgRowActions = {
-  onPreviewFile: (p: string) => void
+  onPreviewFile: (p: string, line?: number) => void
   canUndoFor: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean
   onUndo: (msgId: string, tc: NonNullable<AgentMessage['toolCalls']>[number]) => void
   openGitDiffAt: (p: string) => void
@@ -1977,7 +1983,7 @@ type AgentMsgRowActions = {
 }
 type RenderSegmentsOpts = {
   thinkDone: boolean
-  onPreviewFile: (p: string) => void
+  onPreviewFile: (p: string, line?: number) => void
   canUndoFor: AgentMsgRowActions['canUndoFor']
   onUndo: AgentMsgRowActions['onUndo']
   toolCardExpandedDefault: boolean
@@ -2630,6 +2636,15 @@ export default function AgentCodeView() {
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
+  const followingRef = useRef(true)
+  const FOLLOW_THRESHOLD = 80
+  const railIdRef = useRef(new WeakMap<HTMLElement, string>())
+  const railIdCounterRef = useRef(0)
+  const railTargetsRef = useRef(new Map<string, HTMLElement>())
+  const [railItems, setRailItems] = useState<{ id: string; label: string; description?: string; ariaLabel: string }[]>([])
+  const [activeRailId, setActiveRailId] = useState('')
+  const [railOverflowing, setRailOverflowing] = useState(false)
+  const railFrameRef = useRef<number | undefined>(undefined)
   const pendingSendRef = useRef<Array<{ text: string; attachments: Attachment[] }>>([])
   // 发送互斥门闩：handleSend 在真正把 loading 置真前还有一段异步准备（系统提示词/
   // 历史压缩），排队重放多条消息时第二条可能在该窗口绕过 loading 检查并发启
@@ -3001,10 +3016,10 @@ export default function AgentCodeView() {
     await openPreview(absPath)
   }, [openPreview])
 
-  // Git 变更面板的打开文件回调：用 useCallback 固定引用。
-  // 此前内联箭头每次渲染新建，击穿 AgentGitDiff 内部文件块的 memo，
+  // 打开文件的通用回调（可选跳转到指定行）：Git 变更面板与工具卡（Read 文件名跳读取起始行）共用。
+  // 用 useCallback 固定引用——此前内联箭头每次渲染新建，击穿 AgentGitDiff 内部文件块的 memo，
   // 导致点一次按钮就对全部 diff 行重跑高亮计算。
-  const openGitFile = useCallback((abs: string, line?: number) => {
+  const openFileAtLine = useCallback((abs: string, line?: number) => {
     if (line != null) void openPreviewAtLine(abs, line)
     else void openPreview(abs)
   }, [openPreviewAtLine, openPreview])
@@ -3028,11 +3043,12 @@ export default function AgentCodeView() {
   const onChatScroll = useCallback(() => {
     const el = chatScrollRef.current
     if (!el) return
-    // 滚动时选区外接矩形已偏移，直接收起选区操作条。
     setSelectionPopover(null)
-    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+    const bottom = distance <= FOLLOW_THRESHOLD
     atBottomRef.current = bottom
     setAtBottom(bottom)
+    followingRef.current = bottom
   }, [])
 
   const scrollToBottom = useCallback((smooth = false) => {
@@ -3041,6 +3057,7 @@ export default function AgentCodeView() {
       el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
       atBottomRef.current = true
       setAtBottom(true)
+      followingRef.current = true
     }
   }, [])
 
@@ -3049,10 +3066,10 @@ export default function AgentCodeView() {
   // 会先绘制一帧旧滚动位置 + 新布局（内容整体位移），再被拉回底部 → 视觉「跳一下」。
   // 用 useLayoutEffect 在绘制前一次性到位，无中间帧。
   useLayoutEffect(() => {
-    if (atBottomRef.current) {
+    if (followingRef.current) {
       scrollToBottom()
     }
-  }, [activeSession?.messages])
+  }, [activeSession?.messages, scrollToBottom])
 
   // 流式期间用 requestAnimationFrame 持续贴底，消除气泡底部“一卡一卡”。
   // 原因：正文通过节流的 display 状态“晚一次提交”才增高，而 messages 变更触发的
@@ -3064,7 +3081,7 @@ export default function AgentCodeView() {
     let raf = 0
     const pin = () => {
       const el = chatScrollRef.current
-      if (el && atBottomRef.current) {
+      if (el && followingRef.current) {
         const t0 = performance.now()
         el.scrollTop = el.scrollHeight
         const dt = performance.now() - t0
@@ -3075,6 +3092,194 @@ export default function AgentCodeView() {
     raf = requestAnimationFrame(pin)
     return () => cancelAnimationFrame(raf)
   }, [streaming])
+
+  const PREVIEW_TITLE_LENGTH = 56
+  const PREVIEW_DESCRIPTION_LENGTH = 88
+
+  function truncateMessageText(text: string, limit: number) {
+    if (text.length <= limit) return text
+    const excerpt = text.slice(0, limit)
+    const boundary = excerpt.lastIndexOf(' ')
+    return `${excerpt.slice(0, boundary > limit * 0.65 ? boundary : limit).trimEnd()}…`
+  }
+
+  function getMessagePreview(message: { role: string; content?: string }, messages: { role: string; content?: string }[], index: number) {
+    const rawText = (message.content ?? '').replace(/\s+/g, ' ').trim()
+    const text = message.role === 'assistant' ? stripThinkContent(rawText) : rawText
+    if (!text) {
+      return { label: message.role === 'user' ? 'User' : 'Assistant', description: undefined }
+    }
+
+    if (text.length <= PREVIEW_TITLE_LENGTH) {
+      const next = messages[index + 1]
+      const responseText = next?.role === 'assistant' ? stripThinkContent((next.content ?? '').replace(/\s+/g, ' ').trim()) : ''
+      return {
+        label: text,
+        description: responseText ? truncateMessageText(responseText, PREVIEW_DESCRIPTION_LENGTH) : undefined,
+      }
+    }
+
+    const titleExcerpt = text.slice(0, PREVIEW_TITLE_LENGTH)
+    const titleBoundary = titleExcerpt.lastIndexOf(' ')
+    const titleEnd = titleBoundary > PREVIEW_TITLE_LENGTH * 0.65 ? titleBoundary : PREVIEW_TITLE_LENGTH
+    const label = `${text.slice(0, titleEnd).trimEnd()}…`
+    const next = messages[index + 1]
+    const responseText = next?.role === 'assistant' ? stripThinkContent((next.content ?? '').replace(/\s+/g, ' ').trim()) : ''
+    const description = responseText
+      ? truncateMessageText(responseText, PREVIEW_DESCRIPTION_LENGTH)
+      : truncateMessageText(text.slice(titleEnd).trimStart(), PREVIEW_DESCRIPTION_LENGTH)
+    return { label, description }
+  }
+
+  function stripThinkContent(text: string): string {
+    return text
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      .replace(/<think[^>]*>[\s\S]*?<\/think>/gi, '')
+      .replace(/【\d+.*?】/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+}
+
+  const updateActiveRailItem = useCallback(() => {
+    const viewport = chatScrollRef.current
+    const targets = [...railTargetsRef.current.entries()]
+    if (!viewport || targets.length === 0) return
+
+    const viewportRect = viewport.getBoundingClientRect()
+    if (viewport.scrollTop <= FOLLOW_THRESHOLD) {
+      const firstId = targets[0]?.[0] ?? ''
+      setActiveRailId(current => current === firstId ? current : firstId)
+      return
+    }
+
+    const distanceFromEnd = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
+    if (distanceFromEnd <= FOLLOW_THRESHOLD) {
+      const lastId = targets.at(-1)?.[0] ?? ''
+      setActiveRailId(current => current === lastId ? current : lastId)
+      return
+    }
+
+    const viewportCenter = viewportRect.top + viewportRect.height / 2
+    let nearestId = targets[0]?.[0] ?? ''
+    let nearestDistance = Number.POSITIVE_INFINITY
+
+    for (const [id, element] of targets) {
+      const rect = element.getBoundingClientRect()
+      const messageCenter = rect.top + rect.height / 2
+      const distance = Math.abs(messageCenter - viewportCenter)
+      if (distance < nearestDistance) {
+        nearestDistance = distance
+        nearestId = id
+      }
+    }
+
+    setActiveRailId(current => current === nearestId ? current : nearestId)
+  }, [FOLLOW_THRESHOLD])
+
+  const syncRailItems = useCallback(() => {
+    const viewport = chatScrollRef.current
+    if (!viewport) return
+
+    const messages = activeSession?.messages ?? []
+    const messageNodes = Array.from(viewport.querySelectorAll<HTMLElement>('[data-slot="message"]'))
+    const nodeIndexMap = new Map<HTMLElement, number>()
+    messageNodes.forEach((node, index) => nodeIndexMap.set(node, index))
+
+    const targets = new Map<string, HTMLElement>()
+    const nextItems: { id: string; label: string; description?: string; ariaLabel: string }[] = []
+
+    for (const node of messageNodes) {
+      let id = railIdRef.current.get(node)
+      if (!id) {
+        railIdCounterRef.current += 1
+        id = `msg-rail-${railIdCounterRef.current}`
+        railIdRef.current.set(node, id)
+      }
+      targets.set(id, node)
+      const originalIndex = nodeIndexMap.get(node) ?? 0
+      const msg = messages[originalIndex]
+      const from = node.dataset.from ?? 'conversation'
+      const preview = msg ? getMessagePreview(msg, messages, originalIndex) : { label: from, description: undefined }
+      nextItems.push({
+        id,
+        label: preview.label,
+        description: preview.description,
+        ariaLabel: `Go to ${from} message`,
+      })
+    }
+
+    railTargetsRef.current = targets
+    setRailItems(nextItems)
+    setRailOverflowing(viewport.scrollHeight > viewport.clientHeight + 1 && nextItems.length > 1)
+  }, [activeSession?.messages])
+
+  const scheduleRailSync = useCallback(() => {
+    if (railFrameRef.current) cancelAnimationFrame(railFrameRef.current)
+    railFrameRef.current = requestAnimationFrame(() => {
+      syncRailItems()
+      updateActiveRailItem()
+    })
+  }, [syncRailItems, updateActiveRailItem])
+
+  const scrollToRailItem = useCallback((item: { id: string }) => {
+    const viewport = chatScrollRef.current
+    const target = railTargetsRef.current.get(item.id)
+    if (!viewport || !target) return
+
+    const lastId = railItems.at(-1)?.id
+    followingRef.current = false
+    const viewportRect = viewport.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    const top = viewport.scrollTop + targetRect.top - viewportRect.top - (viewport.clientHeight - targetRect.height) / 2
+    if (item.id === lastId) {
+      followingRef.current = true
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' })
+    } else {
+      viewport.scrollTo({ top, behavior: 'smooth' })
+    }
+    setActiveRailId(item.id)
+    scheduleRailSync()
+  }, [railItems, scheduleRailSync])
+
+  useEffect(() => {
+    const viewport = chatScrollRef.current
+    if (!viewport) return
+    let raf = 0
+    const onScroll = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        scheduleRailSync()
+        updateActiveRailItem()
+      })
+    }
+    viewport.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      viewport.removeEventListener('scroll', onScroll)
+      cancelAnimationFrame(raf)
+    }
+  }, [scheduleRailSync, updateActiveRailItem])
+
+  useEffect(() => {
+    const viewport = chatScrollRef.current
+    if (!viewport) return
+
+    scheduleRailSync()
+    const mutationObserver = typeof MutationObserver !== 'undefined' ? new MutationObserver(scheduleRailSync) : null
+    mutationObserver?.observe(viewport, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    })
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(scheduleRailSync) : null
+    resizeObserver?.observe(viewport)
+
+    return () => {
+      if (railFrameRef.current) cancelAnimationFrame(railFrameRef.current)
+      mutationObserver?.disconnect()
+      resizeObserver?.disconnect()
+    }
+  }, [scheduleRailSync])
 
   // 测量输入框区域高度，写入 CSS 变量，使浮动按钮精确浮在输入框上方
   useEffect(() => {
@@ -4833,7 +5038,7 @@ export default function AgentCodeView() {
   // 漂移不会击穿 AgentMessageRow 的 React.memo（流式期间已完成行整行跳过 reconcile）。
   const msgRowActionsRef = useRef<AgentMsgRowActions>(null!)
   msgRowActionsRef.current = {
-    onPreviewFile: openPreview,
+    onPreviewFile: openFileAtLine,
     canUndoFor,
     onUndo: onUndoTool,
     openGitDiffAt,
@@ -5006,7 +5211,7 @@ export default function AgentCodeView() {
               // 它订阅 liveAgentMsg 切片（实时内容不落 projects store，整页不随之重渲染）。
               const streamingMsg = streamingHere && isLast && msg.role === 'assistant'
               return (
-                <div key={msg.id} className={`chat-msg chat-msg-${msg.role}`}>
+                 <div key={msg.id} className={`chat-msg chat-msg-${msg.role}`} data-slot="message" data-from={msg.role}>
                   {msg.role !== 'user' && (
                     <div className="chat-msg-avatar"><Bot size={14} /></div>
                   )}
@@ -5075,6 +5280,31 @@ export default function AgentCodeView() {
               )
             })}
             <div ref={msgEndRef} />
+          </div>
+          <div className={`agent-chat-rail${railOverflowing && railItems.length > 1 ? ' agent-chat-rail--visible' : ''}`}>
+            {(() => {
+              const activeIndex = railItems.findIndex(it => it.id === activeRailId)
+              return railItems.map((item, index) => {
+                const distance = activeIndex >= 0 ? Math.abs(index - activeIndex) : 0
+                const delay = distance * 20
+                return (
+                  <button
+                    key={item.id}
+                    className={`agent-chat-rail-item${activeRailId === item.id ? ' agent-chat-rail-item--active' : ''}`}
+                    onClick={() => scrollToRailItem(item)}
+                    aria-label={item.ariaLabel}
+                    type="button"
+                    style={{ '--rail-wave-delay': `${delay}ms` } as React.CSSProperties}
+                  >
+                    <span className="agent-chat-rail-dot" />
+                    <span className="agent-chat-rail-preview">
+                      <span className="agent-chat-rail-preview-label">{item.label}</span>
+                      {item.description && <span className="agent-chat-rail-preview-desc">{item.description}</span>}
+                    </span>
+                  </button>
+                )
+              })
+            })()}
           </div>
           {/* 选中模型输出文字后的浮动操作条（引用 / 复制，均不默认选中）。
               onMouseDown 阻止默认行为，避免点击按钮时清除当前选区。 */}
@@ -5585,7 +5815,7 @@ export default function AgentCodeView() {
                 })()}
                 <div className="agent-code-preview-body">
                   {activeTabPath === GIT_DIFF_TAB ? (
-                    <AgentGitDiff data={gitChanges} loading={gitLoading} onRefresh={refreshGitChanges} onOpenFile={openGitFile} workspaceDir={activeProject.workspaceDir} focusPath={gitFocusPath} onFocusHandled={onGitFocusHandled} />
+                    <AgentGitDiff data={gitChanges} loading={gitLoading} onRefresh={refreshGitChanges} onOpenFile={openFileAtLine} workspaceDir={activeProject.workspaceDir} focusPath={gitFocusPath} onFocusHandled={onGitFocusHandled} />
                   ) : !activeTab ? null
                     : activeTab.loading ? <div className="file-tree-loading">读取中…</div>
                       : activeTab.error ? <div className="agent-code-preview-error">{activeTab.error}</div>

@@ -45,5 +45,14 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
   if (res.timedOut) {
     result += '\n(搜索超时，结果不完整。请缩小搜索范围或使用更具体的参数)'
   }
+  // Grep→Read 闭环：content 模式结果带行号命中时，尾部附上以首条命中为中心的 Read 开窗参数，
+  // 把「定位后开窗读取」从提示词规范变成可照抄的机械引导（与 pi 主进程版 Grep 一致）
+  if (output_mode === 'content') {
+    const m = result.match(/^(.+?):(\d+):/m)
+    if (m) {
+      const offset = Math.max(1, Number(m[2]) - 20)
+      result += `\n\n(查看命中行上下文用 Read 开窗读取：{ file_path: ${JSON.stringify(m[1])}, offset: ${offset}, limit: 50 }；不要为定位而通读整个文件)`
+    }
+  }
   return result
 }

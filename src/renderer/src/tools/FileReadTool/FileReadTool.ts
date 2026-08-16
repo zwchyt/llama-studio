@@ -11,7 +11,7 @@ export const definition: Omit<ToolDefinition['function'], 'type'> = {
     properties: {
       file_path: { type: 'string', description: 'Path to the file, relative to the project directory (e.g. "subdir/file.py") or absolute.' },
       offset: { type: 'number', description: 'Starting line number (1-indexed). Negative counts from end (e.g. -20 = last 20 lines). Default: 1.' },
-      limit: { type: 'number', description: 'Maximum number of lines to read. Default: all lines.' }
+      limit: { type: 'number', description: 'Maximum number of lines to read. Default: 2000.' }
     },
     required: ['file_path']
   }
@@ -79,13 +79,25 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
   const allLines = res.content!.split('\n')
   const startLine = res.startLine ?? 1
   const totalLines = res.totalLines ?? allLines.length
+  const endLine = startLine + allLines.length - 1
   // 对每一行：行号 + 内容指纹 + 原始内容
   const hashlineContent = allLines.map((line, i) => {
     const lineNum = startLine + i
     const hash = lineHash(line)
     return `${lineNum} ${hash}|${line}`
   }).join('\n')
-  const result = `File: ${file_path}\nLines: ${startLine}-${startLine + allLines.length - 1} of ${totalLines}\n\n${hashlineContent}`
+  // 未显式指定 limit 且文件还有剩余行：尾部附加显式截断提示（与 pi 主进程版 Read 一致），
+  // 引导模型继续读用 offset、定位用 Grep 开窗，避免一页页顺序通读大文件
+  const truncHint = limit === undefined && endLine < totalLines
+    ? `\n\n(已截断：第 ${startLine}-${endLine} 行 / 共 ${totalLines} 行。继续读用 offset=${endLine + 1}；定位目标代码更推荐 Grep（output_mode: content 带行号）后按行号以 offset/limit 开窗读取，避免逐页通读)`
+    : ''
+  const displayPath = (() => {
+    const root = getWorkspaceRootForSession()
+    if (!root) return file_path
+    if (/^[a-zA-Z]:[\\/]/.test(file_path) || file_path.startsWith('/') || file_path.startsWith('\\')) return file_path
+    return root.replace(/[\\/]+$/, '') + '/' + file_path.replace(/^[\\/]+/, '')
+  })()
+  const result = `File: ${displayPath}\nLines: ${startLine}-${endLine} of ${totalLines}\n\n${hashlineContent}${truncHint}`
   if (readCache.size >= READ_CACHE_MAX) readCache.clear()
   readCache.set(cacheKey, result)
   return result

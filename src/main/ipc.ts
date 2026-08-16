@@ -5058,6 +5058,9 @@ export function registerIpcHandlers(): void {
   const CHARS_PER_TOKEN = 4
   // 超过该大小的文件采用流式逐行读取（仅取所需行），避免整文件载入内存
   const STREAM_READ_THRESHOLD = 32 * 1024 * 1024 // 32 MiB
+  // 未指定 limit 时默认最多读取的行数（参考 grok-build 的「默认截断到 1000 行」），
+  // 避免大文件一次性全文读入占用大量上下文；超出 token 预算时仍会引导改用 Grep。
+  const DEFAULT_READ_LINES = 2000
   // 禁止读取的敏感/系统根目录（绝对路径，匹配前缀即拒绝）
   const FORBID_READ_ROOTS: string[] = [
     'C:\\Windows', 'C:\\Program Files', 'C:\\ProgramData',
@@ -5119,9 +5122,9 @@ export function registerIpcHandlers(): void {
     return new Promise<{ lines: string[]; totalLines: number }>((resolve, reject) => {
       rl.on('line', (line: string) => {
         lineNo++
-        if (lineNo < wantStart) return
-        if (lineNo > wantEnd) { rl.close(); return }
-        out.push(line)
+        // 只收集所需行，但不提前 close：继续读到末尾才能拿到真实总行数
+        // （提前 close 会把 totalLines 截到 wantEnd+1，头部 “of N” 与 offset 越界判断都会失真）
+        if (lineNo >= wantStart && lineNo <= wantEnd) out.push(line)
       })
       rl.on('close', () => resolve({ lines: out, totalLines: lineNo }))
       rl.on('error', (e: Error) => reject(e))
@@ -5234,6 +5237,8 @@ export function registerIpcHandlers(): void {
       const previewLarge = maxBytes > 0 && fileSize > maxBytes
       let content: string
       let totalLines = 0
+      // 流式路径标记：行范围已在 readFileLinesStream 内截取，下方不得再按 offset 二次切片
+      let streamed = false
       if (previewLarge) {
         const fh = await fsPromises.open(filePath, 'r')
         try {
@@ -5262,39 +5267,52 @@ export function registerIpcHandlers(): void {
         // 大文件（> 阈值）采用流式读取，仅取所需行，不整文件载入内存（借鉴 Reasonix 的流式 scan）
         if (fileSize > STREAM_READ_THRESHOLD) {
           const enc = (r.encoding === 'utf16le' ? 'utf16le' : 'utf8') as 'utf16le' | 'utf8'
-          const offsetForStream = opts?.offset ?? 1
-          const limitForStream = opts?.limit ?? 2000
-          const streamed = await readFileLinesStream(filePath, enc, offsetForStream, limitForStream)
-          content = streamed.lines.join('\n')
-          totalLines = streamed.totalLines
+          let offsetForStream = opts?.offset ?? 1
+          // 负 offset（从末尾数）需先知道总行数：先做一遍只计数、不收集的扫描
+          if (offsetForStream < 0) {
+            const counted = await readFileLinesStream(filePath, enc, 1, 0)
+            offsetForStream = Math.max(1, counted.totalLines + offsetForStream + 1)
+          }
+          const limitForStream = opts?.limit ?? DEFAULT_READ_LINES
+          const streamedRes = await readFileLinesStream(filePath, enc, offsetForStream, limitForStream)
+          content = streamedRes.lines.join('\n')
+          totalLines = streamedRes.totalLines
+          streamed = true
         } else {
           content = r.content
           totalLines = content.split('\n').length
         }
       }
 
-      const allLines = content.split('\n')
-
       // offset/limit 行级分片
       let offset = opts?.offset ?? 1
-      // 未指定 limit 时，默认最多读取 2000 行（参考 grok-build 的「默认截断到 1000 行」），
-      // 避免大文件一次性全文读入占用大量上下文；超出 token 预算时仍会引导改用 Grep。
-      const DEFAULT_READ_LINES = 2000
-      let limit = opts?.limit ?? DEFAULT_READ_LINES
+      const limit = opts?.limit ?? DEFAULT_READ_LINES
 
       if (offset < 0) {
         offset = Math.max(1, totalLines + offset + 1)
       }
-      offset = Math.max(1, Math.min(offset, totalLines))
-
-      let endLine: number
-      if (limit !== undefined && limit > 0) {
-        endLine = Math.min(offset + limit - 1, totalLines)
-      } else {
-        endLine = totalLines
+      // 起始行超出文件末尾：结构化报错。原先静默钳到末行只返回最后一行，
+      // 模型无从察觉行号已过期（文件被改短），只会拿到一行对不上的内容。
+      if (offset > totalLines) {
+        return {
+          success: false,
+          error: `起始行 ${offset} 超出文件总行数 ${totalLines}（文件可能已被修改、行号已过期），请从第 1 行重读或用 Grep 重新定位：${filePath}`,
+          errorType: 'OffsetBeyondEof',
+          fileSize,
+          totalLines
+        }
       }
+      offset = Math.max(1, offset)
 
-      const selectedLines = allLines.slice(offset - 1, endLine)
+      // 流式路径已按 offset/limit 取好行（content 即所选行）；非流式路径在此切片
+      let selectedLines: string[]
+      if (streamed) {
+        selectedLines = content.split('\n')
+      } else {
+        const allLines = content.split('\n')
+        const endLine = limit > 0 ? Math.min(offset + limit - 1, totalLines) : totalLines
+        selectedLines = allLines.slice(offset - 1, endLine)
+      }
       const slicedContent = selectedLines.join('\n')
 
       // Token 预算预估：超限则引导使用 Grep

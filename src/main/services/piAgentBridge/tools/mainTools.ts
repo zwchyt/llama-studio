@@ -1,6 +1,7 @@
 // llama-studio 主要工具在 main 进程的实现（供 pi bridge 注册）。
 // 执行器通过依赖注入（MainToolExecutors），生产环境由 ipc.ts 提取的 handler 提供，
 // 测试环境可注入真实实现，与 ipc.ts 解耦。
+import { statSync } from 'node:fs'
 import { isAbsolute, resolve, sep } from 'node:path'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import { makePiTool, getTypebox, type PlainToolSpec } from './toolAdapter'
@@ -367,6 +368,25 @@ export interface CreateMainToolsContext {
   workspaceDir?: string
 }
 
+// ── Read 短期缓存（对齐 renderer FileReadTool 的 readCache；pi 主进程版此前缺失）──
+// 模型探索时常对同一文件重复 Read（尤其上下文被裁剪后），按「路径|offset|limit」缓存
+// 格式化结果。与 renderer 版「写入后前缀失效」不同，这里改用 mtime+size 命中校验：
+// pi Bash / pi Edit 直接改盘不经本文件执行器，前缀失效覆盖不到，mtime 校验对全部修改路径成立。
+const readCache = new Map<string, { result: string; mtimeMs: number; size: number }>()
+const READ_CACHE_MAX = 200
+function readCacheKey(filePath: string, offset?: number, limit?: number): string {
+  return `${filePath.replace(/\\/g, '/').toLowerCase()}|${offset ?? ''}|${limit ?? ''}`
+}
+/** 缓存命中后校验文件未变（mtime+size）；stat 失败（被删除/路径重定向）视为失效 */
+function readCacheFresh(entry: { mtimeMs: number; size: number }, absPath: string): boolean {
+  try {
+    const st = statSync(absPath)
+    return st.mtimeMs === entry.mtimeMs && st.size === entry.size
+  } catch {
+    return false
+  }
+}
+
 function formatSize(bytes?: number): string {
   if (bytes == null) return ''
   if (bytes < 1024) return `${bytes} B`
@@ -439,7 +459,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
           type: 'number',
           description: 'Starting line number (1-indexed). Negative counts from end (e.g. -20 = last 20 lines). Default: 1.'
         },
-        limit: { type: 'number', description: 'Maximum number of lines to read. Default: all lines.' }
+        limit: { type: 'number', description: 'Maximum number of lines to read. Default: 2000.' }
       },
       required: ['file_path']
     },
@@ -447,6 +467,16 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
       const file_path = String(args.file_path ?? '')
       const offset = typeof args.offset === 'number' ? args.offset : undefined
       const limit = typeof args.limit === 'number' ? args.limit : undefined
+      // 缓存 key 用工作区根解析后的绝对路径归一（与 ipc resolveAgentPath 同基准），
+      // 相对/绝对、\ 与 /、大小写差异不会拆成多个 key
+      const baseDir = ctx?.workspaceDir ?? '.'
+      const absForCache = isAbsolute(file_path) ? file_path : resolve(baseDir, file_path)
+      const absForDisplay = isAbsolute(file_path) ? file_path : resolve(baseDir, file_path)
+      const key = readCacheKey(absForCache, offset, limit)
+      const hit = readCache.get(key)
+      if (hit && readCacheFresh(hit, absForCache)) {
+        return `${hit.result}\n\n(命中读取缓存，未重复读盘；该文件内容已在上方，请直接基于已有内容分析，不要再次读取同一文件)`
+      }
       const res = await exec.readFile(file_path, { offset, limit, raw: true })
       if (!res.success) {
         let msg = `Error: ${res.error}`
@@ -458,11 +488,23 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
       const allLines = (res.content ?? '').split('\n')
       const startLine = res.startLine ?? 1
       const totalLines = res.totalLines ?? allLines.length
+      const endLine = startLine + allLines.length - 1
       // 每行带行号前缀（行内容可直接用作 Edit 的 edits[].oldText）
       const numberedContent = allLines
         .map((line, i) => `${startLine + i} ${line}`)
         .join('\n')
-      return `File: ${file_path}\nLines: ${startLine}-${startLine + allLines.length - 1} of ${totalLines}\n\n${numberedContent}`
+      // 未显式指定 limit 且文件还有剩余行：尾部附加显式截断提示。头部 “of N” 是隐式信号，
+      // 模型（尤其弱模型）易忽略而退化成一页页顺序通读；显式给出下一步 offset 与 Grep 开窗建议。
+      const truncHint = limit === undefined && endLine < totalLines
+        ? `\n\n(已截断：第 ${startLine}-${endLine} 行 / 共 ${totalLines} 行。继续读用 offset=${endLine + 1}；定位目标代码更推荐 Grep（output_mode: content 带行号）后按行号以 offset/limit 开窗读取，避免逐页通读)`
+        : ''
+      const result = `File: ${absForDisplay}\nLines: ${startLine}-${endLine} of ${totalLines}\n\n${numberedContent}${truncHint}`
+      if (readCache.size >= READ_CACHE_MAX) readCache.clear()
+      try {
+        const st = statSync(absForCache)
+        readCache.set(key, { result, mtimeMs: st.mtimeMs, size: st.size })
+      } catch { /* 路径被重定向到工作区根等场景 stat 不到原路径，放弃缓存（每次都会新鲜读取） */ }
+      return result
     }
   })
 
@@ -581,7 +623,17 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
       if (typeof args.timeout_seconds === 'number') opts.timeout_seconds = args.timeout_seconds
       const res = await exec.grep(opts)
       if (!res.success) return `Error: ${res.error}`
-      return res.content ?? `(${res.numFiles ?? 0} files matched)`
+      let out = res.content ?? `(${res.numFiles ?? 0} files matched)`
+      // Grep→Read 闭环：content 模式结果带行号命中时，尾部附上以首条命中为中心的 Read 开窗参数，
+      // 把「定位后开窗读取」从提示词规范变成可照抄的机械引导（与 renderer GrepTool 一致）
+      if (opts.output_mode === 'content') {
+        const m = out.match(/^(.+?):(\d+):/m)
+        if (m) {
+          const offset = Math.max(1, Number(m[2]) - 20)
+          out += `\n\n(查看命中行上下文用 Read 开窗读取：{ file_path: ${JSON.stringify(m[1])}, offset: ${offset}, limit: 50 }；不要为定位而通读整个文件)`
+        }
+      }
+      return out
     }
   })
 

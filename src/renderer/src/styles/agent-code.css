@@ -1250,6 +1250,13 @@
 .agent-tool-call {
   background: transparent;
   border: none;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  transition: background var(--transition);
+}
+
+.agent-tool-call:hover {
+  background: color-mix(in srgb, var(--tool-accent, var(--accent)) 4%, transparent);
 }
 
 .agent-tool-call.tool-read {
@@ -1358,37 +1365,15 @@
   background: color-mix(in srgb, var(--tool-accent, var(--accent)) 7%, transparent);
 }
 
-/* hover 换脸（借 ToolChips 交互）：图标位叠放主图标 + chevron，
-   hover 头部时主图标淡出、chevron 旋转淡入，提示行可展开；
-   readonly 头（Read 完成态）不触发，保持纯图标。 */
+/* hover 时头部图标位保持原工具图标，不再替换为 chevron */
 .agent-tool-call-icon {
-  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: none;
   width: 14px;
   height: 14px;
-}
-
-.agent-tool-call-icon-main {
-  transition: opacity .15s;
-}
-
-.agent-tool-call-icon-chev {
-  position: absolute;
-  opacity: 0;
-  transform: rotate(-90deg);
-  transition: opacity .15s, transform .15s;
-}
-
-.agent-tool-call-head:not(.readonly):hover .agent-tool-call-icon-main {
-  opacity: 0;
-}
-
-.agent-tool-call-head:not(.readonly):hover .agent-tool-call-icon-chev {
-  opacity: 1;
-  transform: rotate(0deg);
+  transform: translateY(var(--agent-tool-icon-y, 0));
 }
 
 /* 工具名固定宽：头部 flex 中不被压缩，压缩职责交给 path/preview 的 ellipsis */
@@ -1503,7 +1488,7 @@
   gap: 3px;
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 42%;
+  max-width: 60%;
   border: none;
   background: transparent;
   color: var(--tool-accent, var(--accent));
@@ -1514,10 +1499,29 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transform: translateY(var(--agent-tool-path-y, -0.5px));
 }
 
 .agent-tool-call-path:hover {
   text-decoration: underline;
+}
+
+.agent-tool-file-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  transform: translateY(var(--agent-tool-file-icon-y, 2px));
+}
+
+.agent-tool-call-path:hover {
+  text-decoration: underline;
+}
+
+/* Read 卡头部文件名后的行段后缀（文件名:起-止）：弱化显示，与文件名区分 */
+.agent-tool-call-linerange {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 }
 
 .agent-tool-call-meta {
@@ -1534,6 +1538,10 @@
   gap: 4px;
   font-size: 11px;
   font-weight: 500;
+  border-radius: 999px;
+  padding: 1px 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
 }
 
 .agent-tool-call-status.ok {
@@ -1561,13 +1569,13 @@
   align-items: center;
   gap: 4px;
   margin-left: 4px;
-  padding: 2px 8px;
+  padding: 1px 8px;
   font-size: 11px;
   font-weight: 500;
   border: 1px solid var(--warning);
   color: var(--warning);
   background: transparent;
-  border-radius: 6px;
+  border-radius: 999px;
   cursor: pointer;
   transition: all var(--transition);
 }
@@ -1582,9 +1590,13 @@
   align-items: center;
   gap: 4px;
   margin-left: 4px;
+  padding: 1px 6px;
   font-size: 11px;
   font-weight: 500;
   color: var(--success);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success) 25%, transparent);
 }
 
 /* ── 消息底部「文件变更汇总」──
@@ -3758,12 +3770,10 @@
 .agent-code-view .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 0;
+  padding: 16px 24px 16px 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  /* 启用滚动锚定：当用户向上翻阅历史、上方消息（流式/工具结果）高度变化时，
-     浏览器自动保持当前阅读位置，避免视图跳动到顶部。 */
   overflow-anchor: auto;
 }
 
@@ -3773,6 +3783,115 @@
    基础间隙从 16px 缩小到 8px（约一个复制按钮高度的紧凑贴合），让消息底与卡片上边框更贴近。 */
 .agent-code-view .chat-messages {
   padding-bottom: calc(1px + var(--task-card-h, 0px));
+}
+
+/* ── Message Rail Navigation ── */
+/* rail 定位在 .agent-code-chat（= viewport 容器）的右边缘，不随消息滚动 */
+.agent-code-chat {
+  position: relative;
+}
+
+.agent-chat-rail {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  right: 4px;
+  width: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 5;
+}
+
+.agent-chat-rail--visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.agent-chat-rail-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 8px 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+  flex: none;
+}
+
+.agent-chat-rail-item::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+}
+
+.agent-chat-rail-dot {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--text-tertiary, #9ca3af);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) var(--rail-wave-delay, 0ms), background 0.2s ease var(--rail-wave-delay, 0ms);
+}
+
+.agent-chat-rail-item:hover .agent-chat-rail-dot,
+.agent-chat-rail-item--active .agent-chat-rail-dot {
+  background: var(--accent);
+  transform: scale(1.8) translateX(-3px) translateY(-1px);
+}
+
+/* 预览卡片从 rail 左侧水平展开 */
+.agent-chat-rail-preview {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.15));
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.agent-chat-rail-item:hover .agent-chat-rail-preview {
+  opacity: 1;
+}
+
+.agent-chat-rail-preview-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.3;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-chat-rail-preview-desc {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-secondary, #9ca3af);
+  line-height: 1.3;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .agent-code-view .chat-messages .chat-msg {
@@ -5685,10 +5804,11 @@
 
 .agent-tool-chev {
   transition: transform .15s;
+  transform: translateY(var(--agent-tool-chev-y, 0));
 }
 
 .agent-tool-chev.open {
-  transform: rotate(90deg);
+  transform: rotate(90deg) translateY(var(--agent-tool-chev-y, 0));
 }
 
 
