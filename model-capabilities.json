@@ -1,0 +1,32 @@
+{
+  "f3f0bb80-4f07-4406-be4a-9fdee399b015": {
+    "vision": true,
+    "tools": false,
+    "thinking": false
+  },
+  "02f22ae3-7f45-46b0-b4c1-178334822892": {
+    "vision": true,
+    "tools": false,
+    "thinking": false
+  },
+  "3646f943-68bb-40cf-8422-90e3a0d96dfc": {
+    "vision": false,
+    "tools": true,
+    "thinking": false
+  },
+  "ed5dda8c-a4df-40d3-8ae4-a6cf9db7b98c": {
+    "vision": true,
+    "tools": true,
+    "thinking": true
+  },
+  "1d8b72a6-c174-45e2-991e-3b87902a7849": {
+    "vision": true,
+    "tools": true,
+    "thinking": true
+  },
+  "90bd7f72-aa22-4871-b6dc-7a76d2ede7bb": {
+    "vision": true,
+    "tools": true,
+    "thinking": true
+  }
+}

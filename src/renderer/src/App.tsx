@@ -102,6 +102,12 @@ function AppMain() {
       .then((projects) => { if (Array.isArray(projects)) useStore.getState().setAgentProjects(projects) })
       .catch(() => {})
 
+    // 模型自定义 Logo（logos/logos.json 映射 + 图片缓存）：全局加载一次，两处界面共用
+    useStore.getState().loadModelLogos().catch(() => {})
+
+    // 模型能力检测缓存（model-capabilities.json）：启动即载入，避免打开下拉时重读 GGUF
+    useStore.getState().loadModelCapabilities().catch(() => {})
+
     // Stage 2: Default schema (activeBackend watcher at line 200 will re-fetch on backend change)
     window.api.getCommands('', 'llamacpp').then((cmds) => {
       if (cmds) setCommandsSchema(cmds)

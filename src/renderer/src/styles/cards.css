@@ -236,6 +236,12 @@
   flex-shrink: 0;
   font-size: 16px;
   font-weight: 700;
+  cursor: pointer;
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+
+.card-icon:hover {
+  border-color: var(--text-muted);
 }
 
 .card-icon-letter {
@@ -243,6 +249,15 @@
   font-weight: 700;
   line-height: 1;
   user-select: none;
+}
+
+/* 自定义模型 Logo：替换字母头像（与 Agent Code 模型下拉共用同一份 logos/ 资源） */
+.card-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
 }
 
 .card-icon.running {
@@ -591,4 +606,43 @@
 
 .expanded-inner {
   padding: 16px 18px 20px;
+}
+
+/* 卡片图标上的模型 Logo 更换/移除菜单（与 Agent Code 模型下拉共用同一套类名/样式） */
+.chat-model-logo-menu {
+  position: fixed;
+  z-index: calc(var(--z-toast) + 1);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--text-muted) 15%, transparent);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px color-mix(in srgb, #000 25%, transparent);
+}
+
+.chat-model-logo-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .12s ease;
+}
+
+.chat-model-logo-menu-item:hover {
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+}
+
+.chat-model-logo-menu-item.danger {
+  color: var(--danger, #ef4444);
+}
+
+.chat-model-logo-menu-item.danger:hover {
+  background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent);
 }

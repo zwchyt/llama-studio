@@ -6,7 +6,7 @@ import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { ENGINE_LABELS, paramSetOf } from '../utils/engine'
-import { PlayIcon, CircleStopIcon, SettingsIcon, EllipsisVerticalIcon, CopyIcon, TrashIcon, DownloadIcon, GlobeIcon, ServerIcon, TerminalIcon, CheckIcon, MessageSquareIcon, ImageIcon, ScanIcon } from '@animateicons/react/lucide'
+import { PlayIcon, CircleStopIcon, SettingsIcon, EllipsisVerticalIcon, CopyIcon, TrashIcon, DownloadIcon, GlobeIcon, ServerIcon, TerminalIcon, CheckIcon, MessageSquareIcon, ImageIcon, ScanIcon, RefreshCwIcon } from '@animateicons/react/lucide'
 import type { CardState } from '../../../shared/types'
 import ParamsModal from './ParamsModal'
 interface Props { card: CardState; style?: React.CSSProperties }
@@ -34,6 +34,9 @@ export default function ModelCard({ card, style }: Props) {
   const deleteIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
   const isRunning = card.status === 'running'
   const launchMode = card.template.launchMode || 'chat'
+  // 模型自定义 Logo（全局 store 共享，与 Agent Code 模型下拉同一份数据；有 Logo 时替换字母头像）
+  const logos = useStore(s => s.modelLogos)
+  const setModelLogoEntry = useStore(s => s.setModelLogoEntry)
   const logs = useStore(s => s.modelLogs[card.template.id])
   const clearModelLogs = useStore(s => s.clearModelLogs)
   const [cardLogsExpanded, setCardLogsExpanded] = useState(false)
@@ -315,14 +318,55 @@ export default function ModelCard({ card, style }: Props) {
   // 专门的 OCR 模型：llama.cpp 引擎且模板名包含 "ocr"（如 Baidu-OCR）→ 卡片主按钮跳转 OCR 界面。
   // 带 --mmproj 的通用视觉对话模型（如 Agents-A1-4B）不算 OCR 模型，保持「原生聊天」。
   const isOcrModel = effectiveParamSet === 'llamacpp' && /ocr/i.test(card.template.name)
+  // 已有 Logo 时点击弹出的菜单（更换/移除）：固定定位坐标来自点击处
+  const [logoMenu, setLogoMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const logoMenuRef = useRef<HTMLDivElement>(null)
+  // 无 Logo → 直接选图；有 Logo → 弹出更换/移除菜单
+  const toggleLogoMenu = useCallback((e: React.MouseEvent) => {
+    if (!logos[card.template.id]) { void pickModelLogo(); return }
+    if (logoMenu?.id === card.template.id) { setLogoMenu(null); return }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setLogoMenu({ id: card.template.id, x: rect.right, y: rect.bottom })
+  }, [logos, logoMenu])
+  // 选图：主进程弹选择框、复制进 logos/ 并更新映射 → 立即刷新图片
+  const pickModelLogo = useCallback(async () => {
+    const res = await window.api.setModelLogo(card.template.id)
+    if (!res.success) {
+      if (res.error !== '已取消') notify(`设置 Logo 失败：${res.error}`, 'error')
+      return
+    }
+    const img = await window.api.getModelLogoImage(res.fileName!)
+    setModelLogoEntry(card.template.id, img.success && img.dataUrl ? img.dataUrl : null)
+    setLogoMenu(null)
+  }, [card.template.id, setModelLogoEntry])
+  // 移除：删文件 + 清映射记录 + 还原字母头像
+  const removeCardLogo = useCallback(async () => {
+    const res = await window.api.removeModelLogo(card.template.id)
+    if (!res.success) { notify(`移除 Logo 失败：${res.error}`, 'error'); return }
+    setModelLogoEntry(card.template.id, null)
+    setLogoMenu(null)
+  }, [card.template.id, setModelLogoEntry])
+  // Logo 菜单外部点击收起
+  useEffect(() => {
+    if (!logoMenu) return
+    const handler = (e: MouseEvent) => {
+      if (logoMenuRef.current && !logoMenuRef.current.contains(e.target as Node)) setLogoMenu(null)
+    }
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [logoMenu])
   return (
     <div className={`model-card ${isRunning ? 'running' : ''}`} style={style}>
       <div className="card-header">
         <div
           className={`card-icon${isRunning ? ' running' : ''}`}
-          style={{ background: avatar.bg, color: avatar.fg }}
+          style={logos[card.template.id] ? undefined : { background: avatar.bg, color: avatar.fg }}
+          title={logos[card.template.id] ? '模型 Logo（点击更换/移除）' : '设置模型 Logo'}
+          onClick={e => { e.stopPropagation(); toggleLogoMenu(e) }}
         >
-          <span className="card-icon-letter">{avatar.letter}</span>
+          {logos[card.template.id]
+            ? <img src={logos[card.template.id]!} alt={card.template.name} className="card-icon-img" />
+            : <span className="card-icon-letter">{avatar.letter}</span>}
           {isRunning && <span className="card-icon-spin" />}
         </div>
         <div className="card-info">
@@ -521,6 +565,13 @@ export default function ModelCard({ card, style }: Props) {
           onClose={() => setShowParamsModal(false)}
           cardName={card.template.name}
         />,
+        document.body
+      )}
+      {logoMenu && logoMenu.id === card.template.id && createPortal(
+        <div ref={logoMenuRef} className="chat-model-logo-menu" style={{ left: logoMenu.x, top: logoMenu.y }} onClick={e => e.stopPropagation()}>
+          <div className="chat-model-logo-menu-item" onClick={() => void pickModelLogo()}><RefreshCwIcon size={12} />更换图片</div>
+          <div className="chat-model-logo-menu-item danger" onClick={() => void removeCardLogo()}><TrashIcon size={12} />移除 Logo</div>
+        </div>,
         document.body
       )}
     </div>

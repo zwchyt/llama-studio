@@ -62,6 +62,10 @@ chat-templates/*
 # Agent instructions (not part of source code)
 AGENTS.md
 
+# 用户运行时添加的模型 Logo（不入库；保留空文件夹）
+src/renderer/public/logos/*
+!src/renderer/public/logos/.gitkeep
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

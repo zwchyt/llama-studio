@@ -91,6 +91,16 @@ interface AppStore {
   hubSource: 'huggingface' | 'modelscope'
   modelLogs: Record<string, { stream: string; text: string; className: string }[]>
   modelMetrics: Record<string, ModelMetrics>
+  // 模型自定义 Logo（key = template.id；data URL 或 null=无/读取失败）：
+  // 「我的模板」卡片与 Agent Code 模型列表共用同一份，设置/移除后立即同步
+  modelLogos: Record<string, string | null>
+  loadModelLogos: () => Promise<void>
+  setModelLogoEntry: (id: string, url: string | null) => void
+  // 模型能力检测缓存（key = template.id；null=本次读取失败/非 GGUF）：持久化于
+  // model-capabilities.json，启动时全量载入，避免每次打开项目重读 GGUF 元数据
+  modelCapabilities: Record<string, import('../utils/modelCapabilities').ModelCapabilities | null>
+  loadModelCapabilities: () => Promise<void>
+  setModelCapabilitiesEntry: (id: string, caps: import('../utils/modelCapabilities').ModelCapabilities | null) => void
   appendModelLog: (id: string, stream: string, text: string) => void
   clearModelLogs: (id: string) => void
   updateModelMetric: (id: string, partial: Partial<ModelMetrics>) => void
@@ -242,7 +252,7 @@ interface AppStore {
 }
 // createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
-export const useStore = createWithEqualityFn<AppStore>((set) => ({
+export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
   cards: [], backends: [], backendsReady: false, models: [], imageModels: [], chatTemplates: [], activeBackend: null,
   commandsSchema: null, releaseInfo: null, engineReleases: {}, paths: null,
   view: 'cards', showCreateModal: false, editingTemplate: null,
@@ -254,6 +264,39 @@ export const useStore = createWithEqualityFn<AppStore>((set) => ({
   hubQuery: '', hubResults: [], hubSelectedModelId: null, hubSource: 'huggingface',
   modelLogs: {},
   modelMetrics: {},
+  modelLogos: {},
+  modelCapabilities: {},
+  // 幂等加载：只补读缺失项的能力检测结果（含持久化文件里没有的），已缓存不重复
+  loadModelCapabilities: async () => {
+    const map = await window.api.getModelCapabilities()
+    const cached = get().modelCapabilities
+    const missing = Object.keys(map).filter(id => !(id in cached))
+    if (missing.length === 0) return
+    set((st) => {
+      const next = { ...st.modelCapabilities }
+      for (const id of missing) next[id] = map[id]
+      return { modelCapabilities: next }
+    })
+  },
+  setModelCapabilitiesEntry: (id, caps) => set((st) => ({ modelCapabilities: { ...st.modelCapabilities, [id]: caps } })),
+  // 幂等加载：按 logos/logos.json 映射只补读缺失项的图片，已缓存（含 null）不重复读盘
+  loadModelLogos: async () => {
+    const map = await window.api.getModelLogos()
+    const cached = get().modelLogos
+    const missing = Object.keys(map).filter(id => map[id] && !(id in cached))
+    if (missing.length === 0) return
+    const pending: Record<string, string | null> = {}
+    await Promise.allSettled(missing.map(async (id) => {
+      try {
+        const res = await window.api.getModelLogoImage(map[id]!)
+        pending[id] = res.success && res.dataUrl ? res.dataUrl : null
+      } catch {
+        pending[id] = null
+      }
+    }))
+    set((st) => ({ modelLogos: { ...st.modelLogos, ...pending } }))
+  },
+  setModelLogoEntry: (id, url) => set((st) => ({ modelLogos: { ...st.modelLogos, [id]: url } })),
   activeChatUrl: null,
   activeChatPort: null,
   agentStatuses: [],

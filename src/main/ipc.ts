@@ -5370,6 +5370,109 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  // ── 模型自定义 Logo（Agent Code 模型列表）────────────────────────
+  // 图片与记录均为运行时用户数据：目录定点在 renderer/public/logos
+  // （dev 即项目内该路径，可被渲染进程直接引用），图片本身不进打包产物
+  // （electron-builder files 排除 out/renderer/logos），记录存 logos/logos.json
+  // （{模板id: 文件名}），与模型来源解耦，不依赖 templates/ 下模板文件。
+  const LOGOS_DIR = join(APP_ROOT, 'src/renderer/public', 'logos')
+  const LOGOS_MAP_FILE = join(LOGOS_DIR, 'logos.json')
+  // 模型能力检测结果持久化（{模板id: {thinking,tools,vision}}），避免每次打开项目重读 GGUF
+  const MODEL_CAPS_FILE = join(APP_ROOT, 'model-capabilities.json')
+  function readModelCaps(): Record<string, { thinking: boolean; tools: boolean; vision: boolean }> {
+    try {
+      if (!existsSync(MODEL_CAPS_FILE)) return {}
+      const data = JSON.parse(readFileSync(MODEL_CAPS_FILE, 'utf-8'))
+      return typeof data === 'object' && data && !Array.isArray(data) ? data : {}
+    } catch { return {} }
+  }
+  function writeModelCaps(map: Record<string, { thinking: boolean; tools: boolean; vision: boolean }>): void {
+    writeFileSync(MODEL_CAPS_FILE, JSON.stringify(map, null, 2))
+  }
+  const LOGO_EXT_RE = /^\.(png|jpe?g|svg|webp)$/i
+  // 模板 id 转 logo 文件名主干（去非法字符，保持唯一且可回映射）
+  function sanitizeLogoFileBase(id: string): string {
+    return String(id ?? '').trim().replace(/[\\/:*?"<>|\r\n\t]+/g, '_').replace(/\s+/g, '_') || 'model'
+  }
+  function readLogosMap(): Record<string, string> {
+    try {
+      if (!existsSync(LOGOS_MAP_FILE)) return {}
+      const data = JSON.parse(readFileSync(LOGOS_MAP_FILE, 'utf-8'))
+      return typeof data === 'object' && data && !Array.isArray(data) ? data : {}
+    } catch { return {} }
+  }
+  function writeLogosMap(map: Record<string, string>): void {
+    mkdirSync(LOGOS_DIR, { recursive: true })
+    writeFileSync(LOGOS_MAP_FILE, JSON.stringify(map, null, 2))
+  }
+  // 弹文件选择框 → 复制进 logos/ → 更新映射 → 返回文件名
+  ipcMain.handle('set-model-logo', async (_e, templateId: string): Promise<{ success: boolean; fileName?: string; error?: string }> => {
+    try {
+      // 确保目录存在后直接打开 logos 目录，方便用户挑选/管理已有图片
+      mkdirSync(LOGOS_DIR, { recursive: true })
+      const r = await dialog.showOpenDialog({
+        title: '选择模型 Logo 图片',
+        defaultPath: LOGOS_DIR,
+        filters: [{ name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'svg', 'webp'] }],
+        properties: ['openFile']
+      })
+      if (r.canceled || r.filePaths.length === 0) return { success: false, error: '已取消' }
+      const src = r.filePaths[0]!
+      const ext = extname(src).toLowerCase()
+      if (!LOGO_EXT_RE.test(ext)) return { success: false, error: '仅支持 png/jpg/svg/webp 图片' }
+      // 选中的就是 logos/ 目录内已有图片 → 直接复用原文件（不复制，避免目录里出现重复图片）
+      const inLogosDir = resolve(dirname(src)) === resolve(LOGOS_DIR)
+      const fileName = inLogosDir ? basename(src) : `${sanitizeLogoFileBase(String(templateId))}${ext}`
+      const map = readLogosMap()
+      // 换格式替换时清掉旧格式文件
+      const oldName = map[String(templateId)]
+      if (oldName && oldName !== fileName) {
+        const old = join(LOGOS_DIR, basename(oldName))
+        if (isSafePath(LOGOS_DIR, old)) { try { unlinkSync(old) } catch { } }
+      }
+      if (!inLogosDir) writeFileSync(join(LOGOS_DIR, fileName), readFileSync(src))
+      map[String(templateId)] = fileName
+      writeLogosMap(map)
+      return { success: true, fileName }
+    } catch (err) { return { success: false, error: err instanceof Error ? err.message : String(err) } }
+  })
+  // 全量 Logo 映射（渲染端打开列表时拉取，按模板 id 匹配）
+  ipcMain.handle('get-model-logos', (): Record<string, string> => readLogosMap())
+  // 按文件名读 logos/ 下图片为 data URL（渲染端展示用）
+  ipcMain.handle('get-model-logo-image', (_e, fileName: string): Promise<{ success: boolean; dataUrl?: string; error?: string }> => {
+    try {
+      const fp = join(LOGOS_DIR, basename(String(fileName ?? '')))
+      if (!isSafePath(LOGOS_DIR, fp) || !existsSync(fp)) return Promise.resolve({ success: false, error: 'Logo 不存在' })
+      const ext = /\.([a-z0-9]+)$/i.exec(fp)
+      const mime = ext ? (MIME_BY_EXT[ext[1]!.toLowerCase()] ?? 'application/octet-stream') : 'application/octet-stream'
+      return Promise.resolve({ success: true, dataUrl: `data:${mime};base64,${readFileSync(fp).toString('base64')}` })
+    } catch (err) { return Promise.resolve({ success: false, error: err instanceof Error ? err.message : String(err) }) }
+  })
+  // 删除 logo 文件并从映射移除
+  ipcMain.handle('remove-model-logo', (_e, templateId: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const map = readLogosMap()
+      const oldName = map[String(templateId)]
+      if (oldName) {
+        const p = join(LOGOS_DIR, basename(oldName))
+        if (isSafePath(LOGOS_DIR, p)) { try { unlinkSync(p) } catch { } }
+      }
+      delete map[String(templateId)]
+      writeLogosMap(map)
+      return Promise.resolve({ success: true })
+    } catch (err) { return Promise.resolve({ success: false, error: err instanceof Error ? err.message : String(err) }) }
+  })
+  // 全量能力检测缓存（渲染端启动/打开列表时拉取）
+  ipcMain.handle('get-model-capabilities', (): Record<string, { thinking: boolean; tools: boolean; vision: boolean }> => readModelCaps())
+  // 单条写入能力检测缓存（检测成功后合并落盘）
+  ipcMain.handle('save-model-capabilities', (_e, templateId: string, caps: { thinking: boolean; tools: boolean; vision: boolean }): void => {
+    try {
+      const map = readModelCaps()
+      map[String(templateId)] = caps
+      writeModelCaps(map)
+    } catch { /* 缓存失败不影响主流程 */ }
+  })
+
   const handleWriteFile = async (filePath: string, content: string): Promise<{ success: boolean; error?: string }> => {
     try {
       filePath = resolveAgentPath(filePath)

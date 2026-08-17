@@ -4950,6 +4950,75 @@
   border-radius: 8px;
   cursor: pointer;
   transition: background .12s ease;
+  flex-wrap: nowrap;
+}
+
+/* 模型自定义 Logo：无图时灰底占位图标，有图时整体显示所选图片
+   （图片为运行时用户数据，存 APP_ROOT/logos/，由用户点击添加，不参与打包） */
+.chat-model-logo {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+
+.chat-model-logo:hover {
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  color: var(--text);
+}
+
+.chat-model-logo-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+/* 已有 Logo 时的更换/移除菜单（fixed 定位，跟随点击处，不受 picker 滚动裁切） */
+.chat-model-logo-menu {
+  position: fixed;
+  z-index: calc(var(--z-toast) + 1);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--text-muted) 15%, transparent);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px color-mix(in srgb, #000 25%, transparent);
+}
+
+.chat-model-logo-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .12s ease;
+}
+
+.chat-model-logo-menu-item:hover {
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+}
+
+.chat-model-logo-menu-item.danger {
+  color: var(--danger, #ef4444);
+}
+
+.chat-model-logo-menu-item.danger:hover {
+  background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent);
 }
 
 .chat-model-item:hover {
@@ -4990,17 +5059,72 @@
 }
 
 .chat-model-item-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex: 1;
   min-width: 0;
 }
 
 .chat-model-item-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
   font-size: 12px;
   font-weight: 600;
   color: #878787;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+/* 模型能力徽标（思考 / 工具调用 / 看图）：跟随模型名一行，未读取到时整组不渲染 */
+.chat-model-caps {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+}
+
+.chat-model-cap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  transition: background .12s ease, color .12s ease;
+}
+
+.chat-model-cap:hover {
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+  color: var(--text);
+}
+
+.chat-model-item.running .chat-model-cap.cap-thinking {
+  color: #a78bfa;
+}
+
+.chat-model-item.running .chat-model-cap.cap-tools {
+  color: #60a5fa;
+}
+
+.chat-model-item.running .chat-model-cap.cap-vision {
+  color: #34d399;
+}
+
+.chat-model-item.running .chat-model-cap.cap-thinking:hover {
+  background: color-mix(in srgb, #a78bfa 15%, transparent);
+}
+
+.chat-model-item.running .chat-model-cap.cap-tools:hover {
+  background: color-mix(in srgb, #60a5fa 15%, transparent);
+}
+
+.chat-model-item.running .chat-model-cap.cap-vision:hover {
+  background: color-mix(in srgb, #34d399 15%, transparent);
 }
 
 .chat-model-item.running .chat-model-item-name {
@@ -5009,61 +5133,6 @@
 
 .chat-model-item.error .chat-model-item-name {
   color: var(--danger, #ef4444);
-}
-
-.chat-model-item-status {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  color: var(--text-muted);
-  margin-top: 1px;
-}
-
-.chat-model-item.running .chat-model-item-status {
-  color: var(--success, #22c55e);
-}
-
-.chat-model-item.error .chat-model-item-status {
-  color: var(--danger, #ef4444);
-}
-
-.chat-model-item-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.chat-model-item-dot.ready {
-  background: var(--success, #22c55e);
-  box-shadow: 0 0 4px var(--success, #22c55e);
-}
-
-.chat-model-item-dot.running {
-  background: #60a5fa;
-  animation: chat-model-dot-pulse 1s ease-in-out infinite;
-}
-
-.chat-model-item-dot.idle {
-  background: var(--text-muted);
-  opacity: .4;
-}
-
-.chat-model-item-dot.error {
-  background: var(--danger, #ef4444);
-}
-
-@keyframes chat-model-dot-pulse {
-
-  0%,
-  100% {
-    opacity: .5;
-  }
-
-  50% {
-    opacity: 1;
-  }
 }
 
 .chat-model-item-action {
@@ -5078,6 +5147,7 @@
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
+  margin-left: auto;
   transition: background .12s ease, color .12s ease;
 }
 

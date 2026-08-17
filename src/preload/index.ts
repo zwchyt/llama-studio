@@ -283,6 +283,13 @@ const fullApi = {
   removeBenchmarkErrorListener: () => ipcRenderer.removeAllListeners('benchmark-error'),
   // ── 模型工具（GGUF 检查器 / Token 可视化 / 显存计算器）──
   readGgufMeta: (path: string) => ipcRenderer.invoke('read-gguf-meta', path),
+  // ── 模型自定义 Logo（Agent Code 模型列表；图片存 logos/ 目录）──
+  setModelLogo: (templateId: string) => ipcRenderer.invoke('set-model-logo', templateId),
+  getModelLogos: () => ipcRenderer.invoke('get-model-logos'),
+  getModelLogoImage: (fileName: string) => ipcRenderer.invoke('get-model-logo-image', fileName),
+  removeModelLogo: (templateId: string) => ipcRenderer.invoke('remove-model-logo', templateId),
+  getModelCapabilities: () => ipcRenderer.invoke('get-model-capabilities'),
+  saveModelCapabilities: (templateId: string, caps: { thinking: boolean; tools: boolean; vision: boolean }) => ipcRenderer.invoke('save-model-capabilities', templateId, caps),
   tokenizeText: (opts: { port?: number; backendPath?: string; modelPath?: string; text: string }) => ipcRenderer.invoke('tokenize-text', opts),
   fitParams: (opts: { backendPath: string; modelPath: string; ctxSize?: number }) => ipcRenderer.invoke('fit-params', opts),
   getGpuVram: () => ipcRenderer.invoke('get-gpu-vram'),

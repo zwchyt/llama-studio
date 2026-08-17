@@ -191,6 +191,18 @@ export function previewSound(soundId: string): void {
   playSoundById(soundId)
 }
 
+/**
+ * 在用户手势中预热 AudioContext（发送/试听等按钮点击时调用）：
+ * Chromium 自动播放策略禁止在无手势的异步回调里创建/恢复 AudioContext，
+ * 而完成提示音发生在 await 之后，必须先在手势内激活，否则永不发声
+ */
+export function warmUpAudio(): void {
+  try {
+    const ctx = getCtx()
+    if (ctx.state === 'suspended') void ctx.resume().catch(() => {})
+  } catch { /* 音频不可用时忽略 */ }
+}
+
 function playSoundById(soundId: string): void {
   switch (soundId) {
     case 'pop':

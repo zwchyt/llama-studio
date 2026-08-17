@@ -19,7 +19,7 @@ import {
 import { useChatStore, buildOpenAiMessages, DEFAULT_PARAMS } from '../store/chatStore'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
-import { playNotificationSound } from '../utils/sound'
+import { playNotificationSound, warmUpAudio } from '../utils/sound'
 import { useTts } from '../utils/useTts'
 import html2canvas from 'html2canvas'
 
@@ -2719,6 +2719,8 @@ ${msgsHtml}
 
   // 发送消息（发起流）
   const handleSend = useCallback(async () => {
+    // 用户手势内预热音频：否则完成提示音（await 后播放）会被自动播放策略静默拦截
+    warmUpAudio()
     const session = useChatStore.getState().sessions.find((s) => s.id === activeSessionId)
     if (!session) return
     // 引用追问：优先使用 ref 传递的文本绕过闭包过期问题

@@ -13,7 +13,7 @@ import katex from 'katex'
 import katexCssInline from 'katex/dist/katex.min.css?inline'
 import katexJsInline from 'katex/dist/katex.min.js?raw'
 import '../styles/monitoring.css'
-import { Bot, AlertCircle, Wrench, TerminalSquare, CheckCircle2, XCircle, Undo2, Bug, Brain, FileDiff } from 'lucide-react'
+import { Bot, AlertCircle, Wrench, TerminalSquare, CheckCircle2, XCircle, Undo2, Bug, Brain, FileDiff, Eye, Image as ImageIcon } from 'lucide-react'
 // 顶栏按钮动态图标（@animateicons 无 Panel*/Bug 对应项，用 Chevron 方向图标替代折叠语义）
 import {
   BrainIcon, LoaderIcon, SlidersHorizontalIcon, ActivityIcon, BookOpenIcon,
@@ -27,9 +27,11 @@ import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import hljs from 'highlight.js/lib/common'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
-import { playNotificationSound } from '../utils/sound'
+import { playNotificationSound, warmUpAudio } from '../utils/sound'
 import { TOOL_METAS, WRITE_EDIT_TOOLS, BACKUP_TOOLS } from '../utils/tools'
 import { fileMeta } from '../utils/fileIcon'
+import { detectModelCapabilities } from '../utils/modelCapabilities'
+import { paramSetOf } from '../utils/engine'
 import { agentConfig } from '../utils/agentConfig'
 import { PiAgentClient } from '../utils/piAgentClient'
 import {
@@ -2152,8 +2154,16 @@ const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loadi
 
 export default function AgentCodeView() {
   const cards = useStore(s => s.cards)
+  const backends = useStore(s => s.backends)
   const currentView = useStore(s => s.view)
   const runningCard = cards.find(c => c.status === 'running')
+  // 模型下拉只列可对话/代理的模型：排除生图模型（stable-diffusion.cpp 引擎）与 OCR 模型；
+  // 已运行中的除外（保留停止入口）
+  const isExcludedModel = (card: CardState): boolean => {
+    const kind = paramSetOf(card.template.paramSet ?? backends.find(b => b.name === card.template.backendVersion)?.kind)
+    return kind === 'sdcpp' || /ocr/i.test(card.template.name)
+  }
+  const agentCards = cards.filter(c => !isExcludedModel(c) || c.status === 'running')
   // 诊断：整页渲染耗时探针（>15ms 打印；定位触发源：最近一次 diagWrite 写入者）
   const diagViewT0 = useRef(0)
   if (STREAM_DIAG) diagViewT0.current = performance.now()
@@ -2692,6 +2702,95 @@ export default function AgentCodeView() {
   const [filePickerAttached, setFilePickerAttached] = useState<Array<{ id: string; path: string; name: string; isDir: boolean }>>([])
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const modelPickerRef = useRef<HTMLDivElement>(null)
+  // 各模型的能力徽标（key = template.id；null = 读取失败/非 GGUF，不显示图标）：
+  // 全局 store 共享 + model-capabilities.json 持久化，检测结果不重复读盘
+  const modelCaps = useStore(s => s.modelCapabilities)
+  const loadModelCapabilities = useStore(s => s.loadModelCapabilities)
+  // 下拉面板宽度：按列表中最长模型名 + 行内元素估算，保证名称完整显示不省略
+  // （不依赖打开状态：收起时宽度保持同一值，避免关闭动画期间重排抖动）
+  const modelPickerWidth = useMemo(() => {
+    if (agentCards.length === 0) return 300
+    const ctx = document.createElement('canvas').getContext('2d')
+    if (!ctx) return 300
+    ctx.font = '600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    // 行内固定余量：logo 26 + 间距 8×3 + 按钮 28 + 面板/条目内边距 24
+    let maxW = 0
+    for (const card of agentCards) {
+      const caps = modelCaps[card.template.id]
+      const capsCount = caps ? Number(!!caps.thinking) + Number(!!caps.tools) + Number(!!caps.vision) : 0
+      const capsW = capsCount > 0 ? capsCount * 20 + 4 : 0
+      maxW = Math.max(maxW, ctx.measureText(card.template.name).width + 26 + 8 * 3 + 28 + 24 + 24 + capsW)
+    }
+    return Math.min(Math.max(maxW, 300), 560)
+  }, [agentCards, modelCaps])
+  // 各模型的自定义 Logo（key = template.id；data URL 或 null=无）：全局 store 共享，
+  // 与「我的模板」卡片同一份数据，任一处设置/移除后两处立即同步
+  const modelLogos = useStore(s => s.modelLogos)
+  const setModelLogoEntry = useStore(s => s.setModelLogoEntry)
+  const loadModelLogos = useStore(s => s.loadModelLogos)
+  // 打开下拉时兜底补读（App 启动已全局加载；此处幂等，只读缺失项）
+  useEffect(() => {
+    if (modelPickerOpen) void loadModelLogos().catch(() => {})
+  }, [modelPickerOpen, loadModelLogos])
+  // 已有 Logo 时点击弹出的菜单（更换/移除）：固定定位坐标来自点击处
+  const [logoMenu, setLogoMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const logoMenuRef = useRef<HTMLDivElement>(null)
+
+  // 无 Logo → 直接选图；有 Logo → 弹出更换/移除菜单（菜单 fixed 定位，避开 picker 滚动裁切）
+  const toggleLogoMenu = useCallback((e: React.MouseEvent, card: CardState) => {
+    if (!modelLogos[card.template.id]) { void pickModelLogo(card); return }
+    if (logoMenu?.id === card.template.id) { setLogoMenu(null); return }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setLogoMenu({ id: card.template.id, x: rect.right, y: rect.bottom })
+  }, [modelLogos, logoMenu])
+  // 选图：主进程弹选择框、复制进 logos/ 并更新映射 → 立即刷新图片
+  const pickModelLogo = useCallback(async (card: CardState) => {
+    const res = await window.api.setModelLogo(card.template.id)
+    if (!res.success) {
+      if (res.error !== '已取消') notify(`设置 Logo 失败：${res.error}`, 'error')
+      return
+    }
+    const img = await window.api.getModelLogoImage(res.fileName!)
+    setModelLogoEntry(card.template.id, img.success && img.dataUrl ? img.dataUrl : null)
+    setLogoMenu(null)
+  }, [])
+  // 移除：删文件 + 清映射记录 + 还原占位图标
+  const removeModelLogo = useCallback(async (card: CardState) => {
+    const res = await window.api.removeModelLogo(card.template.id)
+    if (!res.success) { notify(`移除 Logo 失败：${res.error}`, 'error'); return }
+    setModelLogoEntry(card.template.id, null)
+    setLogoMenu(null)
+  }, [])
+  // Logo 菜单外部点击收起
+  useEffect(() => {
+    if (!logoMenu) return
+    function onDown(e: MouseEvent) {
+      if (logoMenuRef.current?.contains(e.target as Node)) return
+      setLogoMenu(null)
+    }
+    document.addEventListener('pointerdown', onDown)
+    return () => document.removeEventListener('pointerdown', onDown)
+  }, [logoMenu])
+
+  // 打开下拉时对未缓存的模型读取 GGUF 元数据并判定能力（只读头部，毫秒级）；
+  // 检测成功即持久化到 model-capabilities.json，下次启动直接载入不再读盘
+  useEffect(() => {
+    if (!modelPickerOpen) return
+    void loadModelCapabilities().catch(() => {})
+    const store = useStore.getState()
+    const missing = store.cards.filter(c => !(c.template.id in modelCaps) && !!c.template.modelPath)
+    if (missing.length === 0) return
+    ;(async () => {
+      await Promise.allSettled(missing.map(async (card) => {
+        const res = await window.api.readGgufMeta(card.template.modelPath!)
+        if ('error' in res || !card.template.modelPath) return
+        const caps = detectModelCapabilities({ architecture: res.architecture, chatTemplate: res.chatTemplate, kv: res.kv })
+        useStore.getState().setModelCapabilitiesEntry(card.template.id, caps)
+        void window.api.saveModelCapabilities(card.template.id, caps).catch(() => {})
+      }))
+    })()
+    // modelCaps 不参与依赖：缓存命中判断用引用快照，避免打开一次列表触发两轮读取
+  }, [modelPickerOpen])
   const modelBtnRef = useRef<HTMLButtonElement>(null)
   const attachBtnRef = useRef<HTMLButtonElement>(null)
   const [filePickerOpen, setFilePickerOpen] = useState(false)
@@ -4578,6 +4677,8 @@ export default function AgentCodeView() {
 
   // ── 区域：发送消息（构建附件、创建会话、调用 agent） ──
   const handleSend = useCallback(async (overrideText?: string, overrideAttachments?: Attachment[]) => {
+    // 用户手势内预热音频：否则完成提示音（await 后播放）会被自动播放策略静默拦截
+    warmUpAudio()
     const attachmentsForSend: Attachment[] = overrideAttachments ?? attachedFiles.map(a => ({
       name: a.name,
       type: a.isImage ? 'image' : 'file',
@@ -5605,22 +5706,45 @@ export default function AgentCodeView() {
                 )}
               </div>
             )}
-            <div ref={modelPickerRef} className={`chat-model-picker${modelPickerOpen ? ' open' : ''}`}>
-              {cards.map(card => (
+            <div ref={modelPickerRef} className={`chat-model-picker${modelPickerOpen ? ' open' : ''}`} style={{ width: modelPickerWidth }}>
+              {agentCards.map(card => (
                 <div key={card.template.id} className={`chat-model-item ${card.status}`} onClick={() => handleModelAction(card)}>
+                  <div className="chat-model-logo" onClick={e => { e.stopPropagation(); toggleLogoMenu(e, card) }}>
+                    {modelLogos[card.template.id]
+                      ? <img src={modelLogos[card.template.id]!} alt={card.template.name} className="chat-model-logo-img" />
+                      : <ImageIcon size={12} />}
+                  </div>
                   <div className="chat-model-item-info">
                     <div className="chat-model-item-name">{card.template.name}</div>
-                    <div className="chat-model-item-status">
-                      <span className={`chat-model-item-dot ${card.status === 'running' && card.ready ? 'ready' : card.status === 'running' ? 'running' : card.status === 'error' ? 'error' : 'idle'}`} />
-                      {card.ready ? '就绪' : card.status === 'running' ? '启动中' : card.status === 'error' ? '错误' : '未启动'}
-                    </div>
+                    {modelCaps[card.template.id] && (
+                      <span className="chat-model-caps">
+                        {modelCaps[card.template.id]?.thinking && <span className="chat-model-cap cap-thinking"><Brain size={13} /></span>}
+                        {modelCaps[card.template.id]?.tools && <span className="chat-model-cap cap-tools"><Wrench size={13} /></span>}
+                        {modelCaps[card.template.id]?.vision && <span className="chat-model-cap cap-vision"><Eye size={13} /></span>}
+                      </span>
+                    )}
+                    <button className="chat-model-item-action" onClick={e => { e.stopPropagation(); handleModelAction(card) }}>
+                      {card.status === 'running' ? <CircleStopIcon size={12} /> : <PlayIcon size={12} />}
+                    </button>
                   </div>
-                  <button className="chat-model-item-action" onClick={e => { e.stopPropagation(); handleModelAction(card) }}>
-                    {card.status === 'running' ? <CircleStopIcon size={12} /> : <PlayIcon size={12} />}
-                  </button>
-                </div>
+</div>
               ))}
             </div>
+            {logoMenu && (() => {
+              const menuCard = cards.find(c => c.template.id === logoMenu.id)
+              if (!menuCard) return null
+              return (
+                <div
+                  ref={logoMenuRef}
+                  className="chat-model-logo-menu"
+                  style={{ left: logoMenu.x, top: logoMenu.y }}
+                  onClick={e => e.stopPropagation()}
+                >
+                  <div className="chat-model-logo-menu-item" onClick={() => void pickModelLogo(menuCard)}><RefreshCwIcon size={12} />更换图片</div>
+                  <div className="chat-model-logo-menu-item danger" onClick={() => void removeModelLogo(menuCard)}><TrashIcon size={12} />移除 Logo</div>
+                </div>
+              )
+            })()}
             <div className="chat-input-row">
               <div className="chat-input-field" onDragOver={handleInputDragOver} onDrop={handleInputDrop}>
                 {/* ① 状态栏：并入输入框顶部，无框无底；默认只显示 orb 图标，模型运行时才显示文字 */}
@@ -5692,7 +5816,6 @@ export default function AgentCodeView() {
                     ref={modelBtnRef}
                     className={`chat-model-dropdown${modelPickerOpen ? ' active' : ''}${runningCard ? ' running' : ''}${runningCard?.ready ? ' ready' : ''}`}
                     onClick={() => setModelPickerOpen(v => !v)}
-                    title={runningCard ? (runningCard.ready ? `运行中: ${modelLabel}` : `启动中: ${modelLabel}`) : '选择模型'}
                   >
                     <span className="chat-model-dropdown-name">{runningCard ? modelLabel : '选择模型'}</span>
                     <ChevronDownIcon size={12} className="chat-model-dropdown-caret" />

@@ -201,6 +201,13 @@ interface LlamaCppApi {
   removeBenchmarkErrorListener: () => void
   // ── 模型工具（GGUF 检查器 / Token 可视化 / 显存计算器）──
   readGgufMeta: (path: string) => Promise<GgufMetadata | { error: string }>
+  // ── 模型自定义 Logo（Agent Code 模型列表；图片存 logos/ 目录，记录存 logos.json）──
+  setModelLogo: (templateId: string) => Promise<{ success: boolean; fileName?: string; error?: string }>
+  getModelLogos: () => Promise<Record<string, string>>
+  getModelLogoImage: (fileName: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>
+  removeModelLogo: (templateId: string) => Promise<{ success: boolean; error?: string }>
+  getModelCapabilities: () => Promise<Record<string, { thinking: boolean; tools: boolean; vision: boolean }>>
+  saveModelCapabilities: (templateId: string, caps: { thinking: boolean; tools: boolean; vision: boolean }) => Promise<void>
   tokenizeText: (opts: { port?: number; backendPath?: string; modelPath?: string; text: string }) => Promise<TokenizeResult>
   fitParams: (opts: { backendPath: string; modelPath: string; ctxSize?: number }) => Promise<FitParamsResult>
   getGpuVram: () => Promise<{ name: string; totalMiB: number; usedMiB: number } | null>
