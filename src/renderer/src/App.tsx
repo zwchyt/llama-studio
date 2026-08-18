@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo } from 'react'
 import { useStore, type AgentStatus } from './store/useStore'
 import { useImageStore } from './store/imageStore'
-import { notify } from './store/notificationStore'
 import Sidebar from './components/Sidebar'
 import CardsView from './components/CardsView'
 import SettingsView from './components/SettingsView'
@@ -31,6 +30,8 @@ import BenchmarkView from './components/BenchmarkView'
 import ImageGenView from './components/ImageGenView'
 import AgentCodeView from './components/AgentCodeView'
 import TokenStatsView from './components/TokenStatsView'
+import JsonUiView from './components/JsonUiView'
+import ModelDiagnosisPanel from './components/ModelDiagnosisPanel'
 import TitleBar from './components/TitleBar'
 import TopNavBar from './components/TopNavBar'
 import LayoutModeToggle from './components/LayoutModeToggle'
@@ -192,7 +193,7 @@ function AppMain() {
           }
         })
         .catch(() => {})
-    }, 10_000)
+    }, 30_000)
     queueMicrotask(async () => {
       try {
         const agents = await window.api.listGlobalAgents() as AgentStatus[]
@@ -212,11 +213,17 @@ function AppMain() {
       if (card && card.template.serverPort === s.activeChatPort) {
         s.clearActiveChat()
       }
-      notify(`模型错误：${data.error}`, 'error')
+      // 错误详情展示由 model-diagnosis 诊断卡片接管（含原因与修复建议），
+      // model-error 通道仅保留状态副作用（卡片置 error），不再弹出红色 toast。
+    })
+
+    window.api.onModelDiagnosis((d) => {
+      useStore.getState().setModelDiagnosis(d.id, d)
     })
     return () => {
       window.clearTimeout(engineCheckTimer)
       window.api.removeModelErrorListener()
+      window.api.removeModelDiagnosisListener()
     }
   }, [])
 
@@ -535,6 +542,7 @@ function AppMain() {
       case 'tts': return <TtsView />
       case 'stt': return <SttView />
       case 'imagegen': return <ImageGenView />
+      case 'jsonui': return <JsonUiView />
       case 'agent-code': return null
       case 'terminal': return null
       default: return <CardsView />
@@ -549,6 +557,7 @@ function AppMain() {
       <ThemeToggle />
       <UpdateBannerGroup />
       <BackendDownloadBanner />
+      <ModelDiagnosisPanel />
       {layoutMode === 'topnav' && <TopNavBar />}
       <div className="main-layout">
         {layoutMode === 'sidebar' && <Sidebar />}

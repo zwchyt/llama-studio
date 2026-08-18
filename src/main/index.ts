@@ -11,6 +11,21 @@ import { mkdirSync } from 'fs'
 
 process.noDeprecation = true
 
+// ── 崩溃/异常探针：全部落盘 userData/debug.log，dev 模式下主进程弹框前留下栈证据 ──
+function crashLog(msg: string): void {
+  try { appendFileSync(join(app.getPath('userData'), 'debug.log'), `[${new Date().toISOString()}] ${msg}\n`) } catch { /* ignore */ }
+}
+app.on('render-process-gone', (_e, webContents, details) => {
+  crashLog(`[render-process-gone] reason=${details.reason} exitCode=${details.exitCode} url=${webContents.getURL()} crashed=${details.reason !== 'clean-exit'}`)
+  console.error('[render-process-gone]', details)
+})
+process.on('uncaughtException', (err) => {
+  crashLog('[main uncaughtException] ' + (err?.stack ?? String(err)))
+})
+process.on('unhandledRejection', (reason) => {
+  crashLog('[main unhandledRejection] ' + (reason instanceof Error ? reason.stack ?? reason.message : String(reason)))
+})
+
 try { mkdirSync(join(tmpdir(), 'llama-studio-cache'), { recursive: true }) } catch {}
 app.commandLine.appendSwitch('--disk-cache-dir', join(tmpdir(), 'llama-studio-cache'))
 app.commandLine.appendSwitch('--disable-gpu-cache')

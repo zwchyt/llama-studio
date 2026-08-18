@@ -65,6 +65,8 @@ interface LlamaCppApi {
   stopModel: (id: string) => Promise<{ success: boolean; error?: string }>
   onModelError: (cb: (data: { id: string; error: string }) => void) => void
   removeModelErrorListener: () => void
+  onModelDiagnosis: (cb: (data: { id: string; code: number | null; severity: 'info' | 'warning' | 'critical'; title: string; cause: string; recommendations: string[]; evidence: string; logExcerpt?: { lines: string[]; start: number; errorLine: number } }) => void) => void
+  removeModelDiagnosisListener: () => void
   checkUpdates: (repo?: string) => Promise<ReleaseInfo>
   downloadRelease: (opts: { url: string; version: string; assetName: string; digest?: string }) => Promise<{ success: boolean; path?: string; cancelled?: boolean; paused?: boolean; error?: string }>
   installSdCudart: (opts: { url: string; assetName: string; backendName: string; digest?: string }) => Promise<{ success: boolean; installed?: string[]; error?: string }>
@@ -156,6 +158,8 @@ interface LlamaCppApi {
   clearTokenUsage: () => Promise<{ success: boolean }>
   chatStream: (opts: { streamId: string; port: number; body: object }) => Promise<{ success: boolean; error?: string }>
   chatCompletion: (opts: { port: number; body: object }) => Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }>
+  chatStreamJsonUI: (opts: { streamId: string; port: number; body: object }) => Promise<{ success: boolean; error?: string }>
+  onJsonUIStreamChunk: (cb: (data: { streamId: string; delta?: string; done: boolean; error?: string }) => void) => () => void
   getServerProps: (port: number) => Promise<{ ok: boolean; modalities?: { vision?: boolean; audio?: boolean }; error?: string }>
   saveChatImage: (dataUrl: string) => Promise<{ ok: boolean; ref?: string; error?: string }>
   readChatImage: (ref: string) => Promise<string | null>

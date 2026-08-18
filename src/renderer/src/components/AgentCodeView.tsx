@@ -20,11 +20,10 @@ import {
   GitBranchIcon, GlobeIcon, TerminalIcon, ChevronsUpIcon, ChevronsDownIcon, FolderOpenIcon,
   ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon, FolderIcon, PlusIcon, TrashIcon, PencilIcon, Trash2Icon,
   UserIcon, QuoteIcon, CircleStopIcon, PlayIcon, EyeIcon, ClockIcon, SparklesIcon, FileTextIcon,
-  RefreshCwIcon, SendIcon, XIcon, CopyIcon, CodeIcon, MessageSquarePlusIcon, CheckIcon
+  RefreshCwIcon, SendIcon, XIcon, CopyIcon, CodeIcon, MessageSquarePlusIcon, CheckIcon, SaveIcon
 } from '@animateicons/react/lucide'
 import { useStore } from '../store/useStore'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
-import hljs from 'highlight.js/lib/common'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { playNotificationSound, warmUpAudio } from '../utils/sound'
@@ -57,8 +56,18 @@ import AgentGitDiff, { type GitChangesData } from './AgentGitDiff'
 import AgentMessageSearch from './AgentMessageSearch'
 import TerminalView from './TerminalView'
 import { useAgentTerminalStore } from '../store/terminalStore'
+import { Suspense, lazy } from 'react'
+import { extToMonacoLang } from './MonacoEditor'
+
+const MonacoEditor = lazy(() => import('./MonacoEditor'))
 
 import type { AgentMessage, AgentSession, AgentProject, Attachment, TodoUpdate, CardState, AgentMemoryEntry } from '../../../shared/types'
+import { JSONUIProvider, Renderer } from '@json-render/react'
+import type { Spec } from '@json-render/core'
+import { registry } from '../jsonui/registry'
+import { makeDefaultHandlers } from '../jsonui/defaultHandlers'
+import MetricsBridge from '../jsonui/MetricsBridge'
+import { tryExtractSpec } from '../jsonui/specGen'
 import '../styles/agent-code.css'
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -540,64 +549,6 @@ const TOOL_META: Record<string, { name: string; desc: string; icon: React.Compon
   Object.fromEntries(
     Object.entries(TOOL_METAS).map(([name, m]) => [name, { name: m.label, desc: '', icon: m.icon }])
   )
-
-// 源码预览高亮：文件扩展名 → highlight.js 语言（仅补充 getLanguage 未涵盖的别名）。
-const PREVIEW_EXT_LANG: Record<string, string> = {
-  htm: 'xml', vue: 'xml', svelte: 'xml',
-  yml: 'yaml', env: 'ini', conf: 'ini', cfg: 'ini',
-  cmd: 'dos', bat: 'dos', mjs: 'javascript', cjs: 'javascript',
-}
-
-function escapeHtmlText(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-// 将 highlight.js 输出的整块 HTML 按换行拆分成多行，跨行的 <span> 逐行闭合再重开，
-// 既保留多行注释/字符串的正确高亮，又能与行号/行高亮（跳转）逐行对齐。
-function splitHighlightedLines(html: string): string[] {
-  const lines: string[] = []
-  const openStack: string[] = []
-  let cur = ''
-  let i = 0
-  while (i < html.length) {
-    const ch = html[i]!
-    if (ch === '<') {
-      const end = html.indexOf('>', i)
-      if (end === -1) { cur += html.slice(i); break }
-      const tag = html.slice(i, end + 1)
-      if (/^<span/i.test(tag)) { openStack.push(tag); cur += tag }
-      else if (/^<\/span/i.test(tag)) { openStack.pop(); cur += tag }
-      else { cur += tag }
-      i = end + 1
-    } else if (ch === '\n') {
-      for (let k = openStack.length - 1; k >= 0; k--) cur += '</span>'
-      lines.push(cur)
-      cur = ''
-      for (const t of openStack) cur += t
-      i++
-    } else {
-      cur += ch
-      i++
-    }
-  }
-  lines.push(cur)
-  return lines
-}
-
-// 把整个文件高亮一次（按扩展名定语言，未知则自动探测），返回逐行 HTML。
-function highlightPreviewLines(content: string, path: string): string[] {
-  if (!content) return ['']
-  const ext = (/\.([a-z0-9]+)$/i.exec(path || '')?.[1] || '').toLowerCase()
-  const lang = hljs.getLanguage(ext) ? ext : (PREVIEW_EXT_LANG[ext] || '')
-  let html: string
-  try {
-    if (lang) html = hljs.highlight(content, { language: lang, ignoreIllegals: true }).value
-    else html = hljs.highlightAuto(content).value
-  } catch {
-    html = escapeHtmlText(content)
-  }
-  return splitHighlightedLines(html)
-}
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║ 区域：工具结果截断与格式化（字符上限、截断策略、耗时格式）                    ║
@@ -2067,6 +2018,31 @@ const stoppedBadge = (
 // （selector 按消息 id 短路：非本行 commit 返回 null，零重渲染，保持「仅流式行 ~50ms
 // 更新」的性能特性）；finalize 时 live 清空 → 回退到 msg 完成态渲染。流式/完成切换
 // 只变化 props、不卸载重挂，思考块/工具卡/正文容器 DOM 全程连续 → 消除完成瞬间的跳动。
+const agentUiDefaultHandlers = makeDefaultHandlers()
+
+const AgentUiBlock = React.memo(function AgentUiBlock({ msg, modelTemplateId }: { msg: AgentMessage; modelTemplateId?: string }) {
+  const spec = useMemo(() => {
+    if (msg.uiSpecRaw) {
+      try { return JSON.parse(msg.uiSpecRaw) as Spec } catch { return null }
+    }
+    if (!msg.uiSpecChecked && msg.content) {
+      const raw = tryExtractSpec(msg.content)
+      if (!raw) return null
+      try { return JSON.parse(raw) as Spec } catch { return null }
+    }
+    return null
+  }, [msg.uiSpecRaw, msg.uiSpecChecked, msg.content])
+  if (!spec) return null
+  return (
+    <div className="agent-msg-ui">
+      <JSONUIProvider registry={registry} initialState={{}} handlers={agentUiDefaultHandlers}>
+        {modelTemplateId ? <MetricsBridge modelId={modelTemplateId} /> : null}
+        <Renderer spec={spec} registry={registry} />
+      </JSONUIProvider>
+    </div>
+  )
+})
+
 const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loading, actionsRef, toolCardExpandedDefault, streaming, modelLabel, thinkDone, streamStartAt, onRate, modelTemplateId }: {
   msg: AgentMessage
   isLast: boolean
@@ -2134,7 +2110,9 @@ const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loadi
           meta
         })}
         {src.stopped && stoppedBadge}
-        {fileSummary}{actions}
+        {fileSummary}
+        {!isStreaming && <AgentUiBlock msg={msg} modelTemplateId={modelTemplateId} />}
+        {actions}
       </>
     )
   }
@@ -2146,6 +2124,7 @@ const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loadi
         <ThinkBlock pending value="" closed={false} isStreaming msgStreaming bodyAppeared={false} streamStartAt={streamStartAt} />
       )}
       <StreamingContent content={src.content} streaming={isStreaming} toolCalls={src.toolCalls || undefined} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(msg.id, tc)} cardDefaultOpen={toolCardExpandedDefault} />
+      {!isStreaming && <AgentUiBlock msg={msg} modelTemplateId={modelTemplateId} />}
       {!isStreaming && hasToolCalls && fileSummary}
       {!isStreaming && !hasToolCalls && actions}
     </>
@@ -2231,9 +2210,29 @@ export default function AgentCodeView() {
   // 点击 diff 行 → 打开源文件并跳到对应行：记录待跳转目标（内容渲染完成后由 effect 滚动+高亮）。
   const previewJumpRef = useRef<{ path: string; line: number } | null>(null)
   const [previewHighlightLine, setPreviewHighlightLine] = useState<number | null>(null)
+  // monaco 源码预览编辑模式：previewEditing 控制只读/可编辑；previewDraft 为编辑中草稿
+  const [previewEditing, setPreviewEditing] = useState(false)
+  const [previewDraft, setPreviewDraft] = useState<string | null>(null)
+  // 切 tab / 关闭 tab 时退出编辑态
+  useEffect(() => { setPreviewEditing(false); setPreviewDraft(null) }, [activeTabPath])
   const openTabsRef = useRef<PreviewTab[]>([])
   useEffect(() => { openTabsRef.current = openTabs }, [openTabs])
   const activeTab = openTabs.find(t => t.path === activeTabPath) || null
+  // 保存源码预览：写回文件并同步 openTabs 内容，退出编辑态
+  const savePreviewFile = useCallback(async (content: string) => {
+    const tab = openTabsRef.current.find(t => t.path === activeTabPath) || null
+    if (!tab || tab.path.startsWith('pi-undo:')) { notify('当前标签不支持保存', 'error'); return }
+    try {
+      const res = await window.api.writeFile(tab.path, content)
+      if (!res.success) { notify('保存失败：' + (res.error || '未知错误'), 'error'); return }
+      setOpenTabs(prev => prev.map(t => t.path === tab.path ? { ...t, content } : t))
+      setPreviewDraft(null)
+      setPreviewEditing(false)
+      notify(`已保存 ${tab.name}`, 'success')
+    } catch (e: any) {
+      notify('保存失败：' + (e?.message || '未知错误'), 'error')
+    }
+  }, [activeTabPath, setOpenTabs])
   const isPreviewMarkdown = useMemo(() => {
     const p = activeTabPath || ''
     const extMatch = /\.([a-z0-9]+)$/i.exec(p)
@@ -2256,12 +2255,7 @@ export default function AgentCodeView() {
   }, [activeTabPath])
 
   // 源码预览逐行高亮 HTML（整文高亮一次后拆行，随内容/路径变化重算）。
-  const previewCodeLines = useMemo(
-    () => highlightPreviewLines(activeTab?.content ?? '', activeTabPath || ''),
-    [activeTab?.content, activeTabPath]
-  )
-
-  // 供 HTML 预览 iframe 注入的 KaTeX CSS：把字体 url() 改写为基于应用自身源的
+  // 源码预览行高亮由 MonacoEditor 的 deltaDecorations 完成（highlightLine prop）  // 供 HTML 预览 iframe 注入的 KaTeX CSS：把字体 url() 改写为基于应用自身源的
   // 绝对 URL（iframe 与应用同源，直接加载无 CORS 问题）。若原样内联，
   // 字体根路径（开发期如 /@fs/…）会被 iframe 内的 file:// base 解析成
   // 不存在的本地路径，触发 Not allowed to load local resource。
@@ -2878,8 +2872,12 @@ export default function AgentCodeView() {
       clearModelLogs(card.template.id)
       useStore.getState().setCardStatus(card.template.id, 'running', res.pid)
     } else {
-      notify(`运行失败：${res.error}`, 'error')
       useStore.getState().setCardStatus(card.template.id, 'error')
+      setTimeout(() => {
+        if (!useStore.getState().modelDiagnostics[card.template.id]) {
+          notify(`运行失败：${res.error}`, 'error')
+        }
+      }, 400)
     }
   }, [])
 
@@ -4624,13 +4622,16 @@ export default function AgentCodeView() {
         // 本轮结束：segments 已是实时时间线顺序（buildSegs），流式/完成态一致交错
         closeOpenThink()
         // modelLabel/lastTps/decodedTokens 随最终 commit 持久化：刷新后完成态徽标可还原模型名、最后速率与真实解码数
+        // uiSpecRaw：正文中提取 json-render Spec（校验通过才写），消息行下方渲染动态 UI 卡片
         commit({
           content: streamedText,
           toolCalls: [...toolCalls],
           segments: buildSegs(),
           modelLabel: modelLabelRef.current,
           lastTps: lastRateRef.current ?? undefined,
-          decodedTokens: finalDecoded ?? decodedNow()
+          decodedTokens: finalDecoded ?? decodedNow(),
+          uiSpecRaw: streamedText ? (tryExtractSpec(streamedText) ?? undefined) : undefined,
+          uiSpecChecked: true
         }, true)
       }
       return { errored: false, aborted: abortRef.current.aborted }
@@ -5916,6 +5917,23 @@ export default function AgentCodeView() {
                         {htmlAnnotations.length > 0 && <span className="agent-code-preview-annotate-count">{htmlAnnotations.length}</span>}
                       </button>
                     )}
+                    {/* 源码预览编辑：进入/退出编辑态；保存写回文件 */}
+                    {!isPreviewHtml && !isPreviewMarkdown && activeTab && activeTabPath !== GIT_DIFF_TAB && (
+                      previewEditing ? (
+                        <>
+                          <button className="btn btn-xs ac-icon-btn agent-code-preview-save" onClick={() => { if (previewDraft !== null) savePreviewFile(previewDraft) }} disabled={previewDraft === null || previewDraft === activeTab.content}>
+                            <SaveIcon size={12} /> 保存
+                          </button>
+                          <button className="btn btn-xs ac-icon-btn" onClick={() => { setPreviewDraft(null); setPreviewEditing(false) }}>
+                            <XIcon size={12} /> 取消
+                          </button>
+                        </>
+                      ) : (
+                        <button className="btn btn-xs ac-icon-btn" onClick={() => setPreviewEditing(true)} title="编辑此文件">
+                          <PencilIcon size={12} />
+                        </button>
+                      )
+                    )}
                     <button className="btn btn-xs agent-code-preview-close ac-icon-btn" onClick={() => activeTab && closeTab(activeTab.path)} disabled={!activeTab}>
                       <XIcon size={12} />
                     </button>
@@ -5994,26 +6012,19 @@ export default function AgentCodeView() {
                               <div className="agent-code-preview-md chat-msg-markdown">
                                 <AgentMarkdown content={activeTab.content ?? ''} />
                               </div>
-                            ) : (
-                              <div className="agent-code-preview-code hljs" onMouseDown={handlePreviewMouseDown} onMouseUp={handlePreviewMouseUp}>
-                                {previewCodeLines.map((lineHtml, i) => (
-                                  <div className={`agent-code-preview-line${previewHighlightLine === i + 1 ? ' highlight' : ''}${previewSelPopover && i + 1 >= previewSelPopover.startLine && i + 1 <= previewSelPopover.endLine ? ' sel-range' : ''}`} id={`agent-preview-line-${i + 1}`} key={i}>
-                                    <span className="agent-code-preview-ln">{i + 1}</span>
-                                    <span className="agent-code-preview-lc" dangerouslySetInnerHTML={{ __html: lineHtml || ' ' }} />
-                                  </div>
-                                ))}
-                                {previewSelPopover && (
-                                  <div
-                                    ref={previewSelRef}
-                                    className="agent-sel-popover agent-sel-popover--preview"
-                                    style={{ left: previewSelPopover.x, top: previewSelPopover.y }}
-                                    onMouseDown={e => e.preventDefault()}
-                                  >
-                                    <button className="agent-sel-btn" onClick={() => addCodeSnippet(previewSelPopover.startLine, previewSelPopover.endLine, previewSelPopover.text)}>
-                                      <CodeIcon size={13} /> 引用代码 L{previewSelPopover.startLine}-L{previewSelPopover.endLine}
-                                    </button>
-                                  </div>
-                                )}
+                            )                             : (
+                              <div className="agent-code-preview-editor" onMouseDown={previewEditing ? undefined : handlePreviewMouseDown} onMouseUp={previewEditing ? undefined : handlePreviewMouseUp}>
+                                <Suspense fallback={<div className="file-tree-loading">加载编辑器…</div>}>
+                                  <MonacoEditor
+                                    value={previewEditing && previewDraft !== null ? previewDraft : activeTab?.content ?? ''}
+                                    language={extToMonacoLang(activeTabPath || '')}
+                                    readOnly={!previewEditing}
+                                    highlightLine={previewEditing ? null : previewHighlightLine}
+                                    onChange={v => { if (previewEditing) setPreviewDraft(v) }}
+                                    onSave={v => savePreviewFile(v)}
+                                    onSelectionAction={previewEditing ? undefined : (text, startLine, endLine) => addCodeSnippet(startLine, endLine, text)}
+                                  />
+                                </Suspense>
                               </div>
                             )}
                 </div>

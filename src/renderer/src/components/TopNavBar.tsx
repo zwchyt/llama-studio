@@ -8,7 +8,7 @@ import {
   HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
   MessageSquareIcon, TerminalIcon, InfoIcon, FileTextIcon, CodeIcon, ChevronDownIcon,
   SettingsIcon, BookOpenIcon, AudioLinesIcon, ImageIcon, MicIcon,
-  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon
+  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon, SparklesIcon
 } from '@animateicons/react/lucide'
 import '../styles/topnav.css'
 
@@ -28,6 +28,7 @@ const NAV_GROUPS: NavDef[][] = [
     { key: 'cards', label: '我的模板', icon: LayoutDashboardIcon, color: '#8b5cf6', runningSource: 'models', persistent: true },
     { key: 'models', label: '模型', icon: BoxesIcon, color: '#3b82f6' },
     { key: 'hub', label: '模型中心', icon: SearchIcon, color: '#0ea5e9' },
+    { key: 'jsonui', label: 'AI 面板', icon: SparklesIcon, color: '#a855f7' },
   ],
   [
     { key: 'llama', label: 'llama-server', icon: ServerIcon, color: '#14b8a6', runningSource: 'llama' },

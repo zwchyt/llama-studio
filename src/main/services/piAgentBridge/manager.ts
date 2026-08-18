@@ -48,6 +48,31 @@ const PI_TOOL_GUIDANCE = [
   '- 不确定文件路径先用 Glob/ListDir 确认；查看内容一律用 Read/Grep，禁止 Bash 的 type/cat/findstr。'
 ]
 
+const PI_UI_SPEC_GUIDANCE = [
+  '## 动态 UI 卡片（json-render Spec，重要）',
+  '- 应用内置 json-render 渲染器。当用户要求生成「卡片/状态面板/诊断/指标/进度/参数对比」等结构化 UI（例如：生成一张 GPU 利用率卡片）时，不要输出 HTML，而是输出一个 ```json 代码块，内容为 json-render Spec，应用会把该代码块渲染成动态卡片。',
+  '- Spec 格式：{"root":"根元素id","elements":{"元素id":{"type":"组件类型","props":{...},"children":[]}},"state":{}}',
+  '- 组件类型（type 只能取以下之一）与关键 props：',
+  '  - MessageCard: variant(info|warning|critical), title, message',
+  '  - ErrorDiagnosisCard: severity, title, cause, recommendations[]',
+  '  - InferenceMetrics: status, promptTokensPerSec, generationTokensPerSec, ctxTokens, ctxLimit, kvCacheMb, gpuMemMb',
+  '  - GpuUsagePanel: engine, utilization, memoryUsedMb, memoryTotalMb, temperature',
+  '  - ModelRuntimeStatus: modelName, engine, status, port, uptimeSec, contextLength',
+  '  - TaskTimeline: title, steps[{title,status,detail}]',
+  '  - AgentStepCard: title, status, description, durationMs',
+  '  - ConfigurationDiff: title, changes[{key,from,to}]',
+  '  - ConfirmDangerousAction: title, message, dangerLevel, confirmLabel',
+  '  - DownloadProgressCard: fileName, progress, speedMbPerSec, sizeMb, status',
+  '  - LogExcerpt: title, level, start, lines[], errorLine',
+  '- 实时指标字段写成 {"$state":"/metrics/字段"}，由应用实时填充（GPU 利用率/显存/温度/上下文/速率等）。可用路径：/metrics/gpuUtilization, /metrics/vramUsedMb, /metrics/vramTotalMb, /metrics/gpuTemperature, /metrics/cpuUsage, /metrics/decodeTokS, /metrics/reqPerSec, /metrics/ttftMs, /metrics/prefillTokS, /metrics/nCtx, /metrics/nDecoded, /metrics/nPromptTokens, /metrics/isProcessing',
+  '- 示例（用户要 GPU 利用率卡片时）：',
+  '```json',
+  '{"root":"gpu","elements":{"gpu":{"type":"GpuUsagePanel","props":{"engine":"本地模型","utilization":{"$state":"/metrics/gpuUtilization"},"memoryUsedMb":{"$state":"/metrics/vramUsedMb"},"memoryTotalMb":{"$state":"/metrics/vramTotalMb"},"temperature":{"$state":"/metrics/gpuTemperature"}},"children":[]}},"state":{}}',
+  '```',
+  '- 输出 json 代码块时前后尽量不写无关文字；确需解释时保持简短。',
+  '- 仅在用户明确要卡片/状态类 UI 时输出 Spec；普通问答正常回复即可。'
+]
+
 export class PiAgentManager {
   private readonly bridges = new Map<string, PiAgentBridge>()
   private readonly executors: MainToolExecutors
@@ -118,7 +143,7 @@ export class PiAgentManager {
       getContextWindow: () => opts.contextWindow ?? 128000,
       cwd: opts.cwd,
       agentDir: opts.agentDir,
-      appendSystemPrompt: PI_TOOL_GUIDANCE,
+      appendSystemPrompt: [...PI_TOOL_GUIDANCE, ...PI_UI_SPEC_GUIDANCE],
       toolNames: this.toolNames,
       customTools: [...mainTools, ...(opts.customTools ?? [])]
     })

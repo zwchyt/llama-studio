@@ -22,6 +22,7 @@ import { registerMemoryStoreIpc } from './services/memoryStore'
 import { readGgufMeta } from './services/ggufReader'
 import { registerKnowledgeIpc } from './services/knowledgeService'
 import { initTokenLedger, appendTokenUsage, readTokenUsage, clearTokenUsage } from './tokenLedger'
+import { diagnoseModelFailure } from './diagnose'
 
 let ptyModule: typeof ptyNs | null = null
 async function getPty(): Promise<typeof ptyNs> {
@@ -1631,39 +1632,67 @@ export function registerIpcHandlers(): void {
       percent: t.totalBytes > 0 ? Math.round((t.receivedBytes / t.totalBytes) * 100) : 0
     }))
   })
-  // 后端目录递归扫描结果缓存（TTL 5s）：扫描是启动时较重的 IO 工作（目录树深搜 exe），
-  // 缓存避免启动/频繁调用重复全扫——缓存命中即时返回，同时后台刷新保持新鲜。
+  // 后端目录递归扫描结果缓存：内存缓存命中即时返回；启动首次调用命中磁盘缓存也即时返回，
+  // 后台异步全量刷新保持新鲜。磁盘缓存 24h 有效期、后端下载/删除时失效——避免每次重启对
+  // backend 目录（数百 exe/dll）全量重扫：首次 stat 会触发 Windows Defender 实时扫描，
+  // 串行扫描时启动可拖慢 5-15s。
   let backendScanCache: { t: number; value: unknown } | null = null
-  const BACKEND_CACHE_TTL = 5000
-  ipcMain.handle('list-backends', async () => {
-    if (backendScanCache && Date.now() - backendScanCache.t < BACKEND_CACHE_TTL) return backendScanCache.value
-    const scan = async () => {
-    if (!existsSync(BACKEND_DIR)) { backendScanCache = { t: Date.now(), value: [] }; return [] }
+  const BACKEND_CACHE_MS = 24 * 60 * 60 * 1000
+  const BACKEND_CACHE_FILE = join(app.getPath('userData'), 'backend-scan-cache.json')
+  function invalidateBackendCache(): void {
+    backendScanCache = null
+    try { unlinkSync(BACKEND_CACHE_FILE) } catch { /* ignore */ }
+  }
+  function loadBackendCacheDisk(): { t: number; value: unknown } | null {
+    try {
+      const parsed = JSON.parse(readFileSync(BACKEND_CACHE_FILE, 'utf-8')) as { t: number; value: unknown }
+      if (parsed && typeof parsed.t === 'number' && Array.isArray(parsed.value)) return parsed
+    } catch { /* 缺失/损坏视为无缓存 */ }
+    return null
+  }
+  function saveBackendCacheDisk(c: { t: number; value: unknown }): void {
+    try { writeFileSync(BACKEND_CACHE_FILE, JSON.stringify(c), 'utf-8') } catch { /* ignore */ }
+  }
+  async function scanBackendsAndCache(): Promise<unknown> {
+    if (!existsSync(BACKEND_DIR)) {
+      backendScanCache = { t: Date.now(), value: [] }
+      saveBackendCacheDisk(backendScanCache)
+      return []
+    }
     // 递归查找后端目录内的可执行文件（先按已知服务名精确匹配，再兜底取首个 .exe）
     const findExecutable = async (dir: string, depth = 0): Promise<string | null> => {
       if (depth > 10) return null
-      try {
-        const files = await fsPromises.readdir(dir, { withFileTypes: true })
-        const names = process.platform === 'win32'
-          ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe', 'sd-server.exe', 'sd-server']
-          : ['llama-server', 'main', 'server', 'TensorSharp.Server', 'sd-server']
-        for (const n of names) {
-          const found = files.find(f => !f.isDirectory() && f.name.toLowerCase() === n)
-          if (found) return found.name
+      type Entry = { name: string; isDirectory(): boolean }
+      let files: Entry[] = []
+      try { files = (await fsPromises.readdir(dir, { withFileTypes: true })) as unknown as Entry[] } catch { return null }
+      const names = process.platform === 'win32'
+        ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe', 'sd-server.exe', 'sd-server']
+        : ['llama-server', 'main', 'server', 'TensorSharp.Server', 'sd-server']
+      for (const n of names) {
+        const found = files.find(f => !f.isDirectory() && f.name.toLowerCase() === n)
+        if (found) return found.name
+      }
+      if (process.platform === 'win32') {
+        // 兜底：取目录内首个 .exe；跳过 createdump.exe（.NET 崩溃转储工具，非服务程序）
+        const exeFiles = files.filter(f => !f.isDirectory() && f.name.toLowerCase().endsWith('.exe') && f.name.toLowerCase() !== 'createdump.exe')
+        if (exeFiles.length > 0) return exeFiles[0].name
+      }
+      // 子目录并发搜索（限流 8）：树大时串行递归会放大 Defender 首访延迟；结果按下标保序，
+      // 与串行版"取首个命中"行为一致
+      const subdirs = files.filter(f => f.isDirectory())
+      if (subdirs.length === 0) return null
+      const results: (string | null)[] = new Array(subdirs.length)
+      let next = 0
+      const workers = Array.from({ length: Math.min(8, subdirs.length) }, async () => {
+        for (;;) {
+          const idx = next++
+          if (idx >= subdirs.length) return
+          const sub = await findExecutable(join(dir, subdirs[idx].name), depth + 1)
+          if (sub) results[idx] = join(subdirs[idx].name, sub)
         }
-        if (process.platform === 'win32') {
-          // 兜底：取目录内首个 .exe；跳过 createdump.exe（.NET 崩溃转储工具，非服务程序）
-          const exeFiles = files.filter(f => !f.isDirectory() && f.name.toLowerCase().endsWith('.exe') && f.name.toLowerCase() !== 'createdump.exe')
-          if (exeFiles.length > 0) return exeFiles[0].name
-        }
-        for (const f of files) {
-          if (f.isDirectory()) {
-            const sub = await findExecutable(join(dir, f.name), depth + 1)
-            if (sub) return join(f.name, sub)
-          }
-        }
-      } catch { }
-      return null
+      })
+      await Promise.all(workers)
+      return results.find(r => r) ?? null
     }
     const entries = await fsPromises.readdir(BACKEND_DIR, { withFileTypes: true })
     const backends = await Promise.all(
@@ -1689,9 +1718,21 @@ export function registerIpcHandlers(): void {
       return n(b.name) - n(a.name)
     })
     backendScanCache = { t: Date.now(), value: backends }
+    saveBackendCacheDisk(backendScanCache)
     return backends
   }
-  return await scan()
+  ipcMain.handle('list-backends', async () => {
+    if (backendScanCache && Date.now() - backendScanCache.t < BACKEND_CACHE_MS) return backendScanCache.value
+    // 启动首次调用：磁盘缓存命中则立即返回，后台异步全扫刷新（不阻塞本次响应）
+    if (!backendScanCache) {
+      const disk = loadBackendCacheDisk()
+      if (disk && Date.now() - disk.t < BACKEND_CACHE_MS) {
+        backendScanCache = disk
+        void scanBackendsAndCache()
+        return backendScanCache.value
+      }
+    }
+    return await scanBackendsAndCache()
   })
   ipcMain.handle('delete-backend', (_e, backendName: string) => {
     try {
@@ -1706,6 +1747,7 @@ export function registerIpcHandlers(): void {
         rmdirSync(dir)
       }
       rm(backendPath)
+      invalidateBackendCache()
       return { success: true }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -2103,10 +2145,20 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('get-model-logs', (_e, id: string) => modelLogBuffers.get(String(id)) ?? [])
   ipcMain.handle('run-model', (_e, opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: EngineKind; kind?: EngineKind }) => {
+    let stderrBuf = ''
+    const broadcastDiagnosis = (msg: string) => {
+      const diag = diagnoseModelFailure(null, `${stderrBuf}\n${msg}`, '', opts.id)
+      BrowserWindow.getAllWindows().forEach(win => {
+        if (!win.isDestroyed()) win.webContents.send('model-diagnosis', diag)
+      })
+    }
     if (runningProcesses.has(opts.id)) return { success: false, error: '已在运行中' }
     const exePath = join(opts.backendPath, opts.exe)
     if (!isSafePath(BACKEND_DIR, exePath)) return { success: false, error: '访问被拒绝' }
-    if (!existsSync(exePath)) return { success: false, error: `可执行文件未找到: ${exePath}` }
+    if (!existsSync(exePath)) {
+      broadcastDiagnosis(`可执行文件未找到: ${exePath}`)
+      return { success: false, error: `可执行文件未找到: ${exePath}` }
+    }
     try {
       // 参数白名单按参数集加载（参数设置里的切换按钮决定，TensorSharp → commands-tensorsharp.json），
       // 文件本身只含对应参数，无需再按引擎二次过滤
@@ -2128,7 +2180,6 @@ export function registerIpcHandlers(): void {
       const proc = spawn(exePath, safeArgs, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: false })
       modelLogBuffers.delete(opts.id) // 新一轮启动：丢弃上一轮的日志缓存
       let prefillResetTimer: ReturnType<typeof setTimeout> | null = null
-      let stderrBuf = ''
       const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
       proc.stderr?.on('data', (d) => {
         const text = d.toString()
@@ -2137,10 +2188,11 @@ export function registerIpcHandlers(): void {
         BrowserWindow.getAllWindows().forEach(win => {
           if (!win.isDestroyed()) win.webContents.send('model-log', { id: opts.id, stream: 'stderr', text })
         })
-        // Buffer stderr and process complete lines to handle chunked data
+        // 累积全部 stderr（上限 256KB），崩溃诊断需要完整日志做切片摘录；
+        // 完整行解析在下方 lines 循环中完成，这里无需保留"未处理行"
         stderrBuf += text
+        if (stderrBuf.length > 256 * 1024) stderrBuf = stderrBuf.slice(-256 * 1024)
         const lines = stderrBuf.split('\n')
-        stderrBuf = lines.pop() || '' // keep incomplete last line in buffer
         // Parse prefill progress: "progress = 0.57, t = 3.02 s / 2035.72 tokens per second"
         for (const raw of lines) {
           const line = stripAnsi(raw.trim())
@@ -2223,6 +2275,10 @@ export function registerIpcHandlers(): void {
         runningProcesses.delete(opts.id)
         if (runningProcesses.size === 0) stopMetricsInterval()
         if (!_e.sender.isDestroyed()) _e.sender.send('model-error', { id: opts.id, error: msg })
+        const diag = diagnoseModelFailure(null, `${stderrBuf}\n${msg}`, '', opts.id)
+        BrowserWindow.getAllWindows().forEach(win => {
+          if (!win.isDestroyed()) win.webContents.send('model-diagnosis', diag)
+        })
       })
       runningProcesses.set(opts.id, { proc, port: opts.port, kind })
       portModelInfos.set(opts.port, { templateId: opts.id, modelPath: extractModelArg(safeArgs) })
@@ -2241,6 +2297,10 @@ export function registerIpcHandlers(): void {
           BrowserWindow.getAllWindows().forEach(win => {
             if (!win.isDestroyed()) win.webContents.send('model-error', { id: opts.id, error: msg })
           })
+          const diag = diagnoseModelFailure(code, stderrBuf, '', opts.id)
+          BrowserWindow.getAllWindows().forEach(win => {
+            if (!win.isDestroyed()) win.webContents.send('model-diagnosis', diag)
+          })
         }
         runningProcesses.delete(opts.id)
         portModelInfos.delete(opts.port)
@@ -2254,9 +2314,13 @@ export function registerIpcHandlers(): void {
       return { success: true, pid: proc.pid }
     } catch (err: unknown) {
       if (hasErrnoCode(err) && err.code === 'UNKNOWN' && opts.backendPath.toLowerCase().includes('arm64') && process.arch !== 'arm64') {
-        return { success: false, error: '架构不匹配：你正在 x64 系统上运行 ARM64 版本的后端。请在设置中删除此后端并下载 x64 版本。' }
+        const msg = '架构不匹配：你正在 x64 系统上运行 ARM64 版本的后端。请在设置中删除此后端并下载 x64 版本。'
+        broadcastDiagnosis(msg)
+        return { success: false, error: msg }
       }
-      return { success: false, error: String(err) }
+      const msg = String(err)
+      broadcastDiagnosis(msg)
+      return { success: false, error: msg }
     }
   })
 
@@ -3057,6 +3121,7 @@ export function registerIpcHandlers(): void {
       // 全流程成功收尾事件：send 管道 FIFO 保证它排在所有进度事件之后，
       // 渲染端收到 'done' 即清空横幅，避免 invoke 回执与进度事件跨管道乱序导致横幅卡在「解压中」
       event.sender.send('download-progress', progressPayload('done', lastT, lastT, 100, lastSpeed, '安装完成'))
+      invalidateBackendCache()
       return { success: true, path: extractPath }
     } catch (err) {
       console.log('[dl] 失败:', err)
@@ -3916,9 +3981,9 @@ export function registerIpcHandlers(): void {
 
   // --- chat-completion-stream (流式聊天代理：POST /v1/chat/completions，SSE 转发) ---
   ipcMain.handle('chat-completion-stream', async (e, opts: {
-    streamId: string; port: number; body: Record<string, unknown>
+    streamId: string; port: number; body: Record<string, unknown>; channel?: string
   }): Promise<{ success: boolean; error?: string }> => {
-    const { streamId, port, body } = opts
+    const { streamId, port, body, channel = 'chat-stream-chunk' } = opts
     const model = await resolveChatModel(port, body.model)
     const finalBody = model ? { ...body, model } : body
     // max_tokens 兜底：同 chat-completion（TensorSharp 对负数/0 抛 ArgumentOutOfRangeException）
@@ -3937,7 +4002,7 @@ export function registerIpcHandlers(): void {
 	      const delta = streamPendingDeltas.get(streamId)
 	      if (delta) {
 	        streamPendingDeltas.delete(streamId)
-	        e.sender.send('chat-stream-chunk', { streamId, delta, done: false })
+	        e.sender.send(channel, { streamId, delta, done: false })
 	      }
 	    }
 	    function queueStreamDelta(streamId: string, delta: string): void {
@@ -3977,7 +4042,7 @@ export function registerIpcHandlers(): void {
           chatStreamToolCalls.delete(streamId)
           chatStreamToolProgress.delete(streamId)
           flushStreamNow(streamId)
-          e.sender.send('chat-stream-chunk', { streamId, done: true, error: '流式响应空闲超时（服务可能已停止输出）' })
+          e.sender.send(channel, { streamId, done: true, error: '流式响应空闲超时（服务可能已停止输出）' })
           abortedChatStreams.delete(streamId)
           activeChatStreams.delete(streamId)
           resolve({ success: false, error: 'idle timeout' })
@@ -3997,7 +4062,7 @@ export function registerIpcHandlers(): void {
 	          res.on('end', () => {
 	            activeChatStreams.delete(streamId)
 	            flushStreamNow(streamId)
-	            e.sender.send('chat-stream-chunk', { streamId, done: true, error: `HTTP 错误 ${res.statusCode}: ${errBody.slice(0, 500)}` })
+	            e.sender.send(channel, { streamId, done: true, error: `HTTP 错误 ${res.statusCode}: ${errBody.slice(0, 500)}` })
 	            resolve({ success: false, error: `HTTP 错误 ${res.statusCode}` })
 	          })
 	          return
@@ -4079,7 +4144,7 @@ export function registerIpcHandlers(): void {
                 const names = acc.map(a => a.function.name).filter(Boolean).join('|')
                 if (names && names !== chatStreamToolProgress.get(streamId)) {
                   chatStreamToolProgress.set(streamId, names)
-                  e.sender.send('chat-stream-chunk', {
+                  e.sender.send(channel, {
                     streamId, done: false,
                     toolCallsProgress: acc.filter(a => a.function.name).map(a => ({ name: a.function.name })),
                   })
@@ -4158,7 +4223,7 @@ export function registerIpcHandlers(): void {
                 .catch(() => appendTokenUsage({ ...base, modelPath: null }))
             }
           }
-          e.sender.send('chat-stream-chunk', {
+          e.sender.send(channel, {
             streamId,
             done: true,
             usage: finalUsage,
@@ -4174,7 +4239,7 @@ export function registerIpcHandlers(): void {
           // 不携带 done，因此不会触发前端二次 finalize / 二次工具执行。
           if (endMetricsPromise) {
             endMetricsPromise
-              .then(m => { e.sender.send('chat-stream-chunk', { streamId, metrics: m }) })
+              .then(m => { e.sender.send(channel, { streamId, metrics: m }) })
               .catch(() => {})
           }
         })
@@ -4187,7 +4252,7 @@ export function registerIpcHandlers(): void {
 	        // 主动中止的流不发 error 事件，避免前端误显示
 	        if (!abortedChatStreams.has(streamId)) {
 	          flushStreamNow(streamId)
-	          e.sender.send('chat-stream-chunk', { streamId, done: true, error: err.message })
+	          e.sender.send(channel, { streamId, done: true, error: err.message })
 	        }
 	        abortedChatStreams.delete(streamId)
 	        activeChatStreams.delete(streamId)
@@ -4201,7 +4266,7 @@ export function registerIpcHandlers(): void {
 	        chatStreamToolCalls.delete(streamId)
 	        chatStreamToolProgress.delete(streamId)
 	        flushStreamNow(streamId)
-	        e.sender.send('chat-stream-chunk', { streamId, done: true, error: '超时' })
+	        e.sender.send(channel, { streamId, done: true, error: '超时' })
         activeChatStreams.delete(streamId)
         resolve({ success: false, error: '超时' })
       })

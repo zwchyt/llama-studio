@@ -2028,6 +2028,22 @@
   user-select: none;
 }
 
+/* 消息内 json-render 动态 UI 卡片区：正文之下、操作按钮之上 */
+.agent-msg-ui {
+  margin-top: 10px;
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+}
+
+.agent-msg-ui .jui-view {
+  max-width: none;
+  padding: 0;
+}
+
+.agent-msg-ui .jui-card {
+  box-shadow: none;
+}
+
 /* 工具卡独立时间标签：卡片上方，实色 #d97c00（橙）为最高层级 */
 .agent-tool-time {
   margin-bottom: 4px;
@@ -2569,6 +2585,28 @@
   overflow-x: hidden;
   background: var(--bg);
 }
+
+/* monaco 编辑器容器：铺满预览区（body 自身滚动，monaco 内部滚动） */
+.agent-code-preview-editor {
+  width: 100%;
+  height: 100%;
+  min-height: 300px;
+  background: var(--bg);
+  transition: background-color 0.45s ease;
+}
+.agent-code-preview-monaco { height: 100%; }
+/* monaco 自身背景透明：容器 var(--bg) + 渐变过渡负责背景（主题水波切换时随界面缓慢过渡） */
+.agent-code-preview-monaco .monaco-editor,
+.agent-code-preview-monaco .monaco-editor-background,
+.agent-code-preview-monaco .monaco-editor .margin,
+.agent-code-preview-monaco .monaco-editor .minimap,
+.agent-code-preview-monaco .monaco-editor .scroll-decoration {
+  background: transparent !important;
+}
+
+/* 只读模式跳转行高亮（monaco decoration） */
+.monaco-hl-line { background: rgba(59, 130, 246, 0.18) !important; }
+.monaco-hl-line-edit { background: rgba(16, 185, 129, 0.16) !important; }
 
 .agent-code-preview-image {
   display: flex;
@@ -5838,6 +5876,19 @@
 
 .agent-code-scroll-bottom-btn:active {
   transform: translateX(-50%) translateY(0);
+}
+
+/* 预览工具栏按钮：透明背景跟随主题（裸 .btn 无背景定义，暗色下会透出 UA 默认浅色） */
+.agent-code-preview-actions .ac-icon-btn {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: transparent;
+}
+
+.agent-code-preview-actions .ac-icon-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: transparent;
 }
 
 .ac-icon-btn {

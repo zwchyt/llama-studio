@@ -1,0 +1,476 @@
+.jui-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow);
+}
+
+.jui-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.jui-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 8px;
+  letter-spacing: .4px;
+}
+
+.jui-badge-running { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+.jui-badge-success { background: color-mix(in srgb, var(--success) 18%, transparent); color: var(--success); }
+.jui-badge-failed { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+.jui-badge-loading { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
+.jui-badge-stopped { background: color-mix(in srgb, var(--text-muted) 18%, transparent); color: var(--text-muted); }
+.jui-badge-pending { background: color-mix(in srgb, var(--text-muted) 18%, transparent); color: var(--text-muted); }
+.jui-badge-downloading { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.jui-badge-paused { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
+.jui-badge-verifying { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
+.jui-badge-done { background: color-mix(in srgb, var(--success) 18%, transparent); color: var(--success); }
+
+.jui-metric-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.jui-metric-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.jui-metric-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.jui-grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.jui-metrics-footer {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.jui-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.jui-label { color: var(--text-secondary); }
+.jui-value { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.jui-diagnosis { border-left-width: 4px; }
+.jui-diagnosis-cause { font-size: 12px; color: var(--text); margin-bottom: 8px; }
+
+.jui-rec {
+  margin: 0 0 10px 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.jui-rec li { margin-bottom: 3px; }
+
+.jui-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.jui-btn {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.jui-btn:hover { filter: brightness(1.15); }
+
+.jui-btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-strong);
+}
+
+.jui-btn-danger { color: #fff; border: none; }
+
+.jui-log { font-family: var(--mono-font, Consolas, monospace); }
+.jui-log-warn { border-left-color: var(--warning); }
+.jui-log-error { border-left-color: var(--danger); }
+
+.jui-log-body {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--code-bg, #26292f);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.jui-log-line { display: flex; gap: 8px; white-space: pre-wrap; word-break: break-all; }
+.jui-log-line-no {
+  flex: none;
+  min-width: 34px;
+  text-align: right;
+  color: var(--text-muted);
+  user-select: none;
+}
+.jui-log-line-error { background: rgba(239, 68, 68, 0.12); outline: 1px solid rgba(239, 68, 68, 0.35); }
+.jui-log-info { border-left-color: var(--success); }
+
+.jui-step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.jui-step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.jui-step-title { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; }
+.jui-step-desc { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+.jui-step-dur { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
+
+.jui-timeline { display: flex; flex-direction: column; gap: 0; }
+
+.jui-timeline-item {
+  display: flex;
+  gap: 10px;
+  position: relative;
+  padding-bottom: 14px;
+}
+
+.jui-timeline-item:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 10px;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+
+.jui-timeline-marker {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 4px;
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.jui-timeline-title { font-size: 12px; font-weight: 600; color: var(--text); }
+.jui-timeline-detail { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+
+.jui-confirm { border-left-width: 4px; }
+.jui-confirm-msg { font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; }
+
+.jui-progress {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 8px 0 6px;
+}
+
+.jui-progress-fill {
+  height: 100%;
+  background: var(--success);
+  border-radius: 3px;
+  transition: width .3s;
+}
+
+.jui-dl-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.jui-diff {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.jui-diff th {
+  text-align: left;
+  color: var(--text-muted);
+  font-weight: 600;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.jui-diff td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.jui-diff-key { color: var(--text); font-family: var(--mono-font, Consolas, monospace); }
+.jui-diff-from { color: var(--danger); text-decoration: line-through; }
+.jui-diff-to { color: var(--success); }
+
+.jui-view {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  max-width: 1080px;
+}
+
+.jui-view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.jui-view-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.jui-view-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.jui-view-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.jui-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.jui-inline-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.jui-inline-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.jui-diagnosis-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(440px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.jui-diagnosis-item {
+  pointer-events: auto;
+}
+
+.jui-diagnosis-item .jui-card {
+  margin-bottom: 0;
+  background: color-mix(in srgb, var(--surface) 96%, var(--bg));
+  box-shadow: var(--shadow-lg);
+  max-height: 320px;
+  overflow: auto;
+}
+
+.jui-gen {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.jui-gen-input {
+  width: 100%;
+  resize: vertical;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.jui-gen-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.jui-gen-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.jui-gen-model {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.jui-gen-model:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.jui-gen-error {
+  font-size: 12px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: 6px;
+  padding: 6px 10px;
+  word-break: break-word;
+}
+
+.jui-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 16px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.jui-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.jui-empty-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: 420px;
+}
+
+.jui-main {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.jui-stage {
+  flex: 1;
+  min-width: 0;
+}
+
+.jui-json-panel {
+  width: 400px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 120px);
+}
+
+.jui-json-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.jui-json-panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.jui-json-copy {
+  padding: 2px 10px;
+  font-size: 11px;
+}
+
+.jui-json-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.jui-json-code {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  font-family: var(--mono-font, Consolas, monospace);
+  color: var(--text);
+  white-space: pre;
+  word-break: break-all;
+}
+
+.jui-json-empty {
+  padding: 32px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.jui-json-stream {
+  color: var(--accent);
+  animation: jui-blink .8s step-end infinite;
+}
+
+@keyframes jui-blink {
+  50% { opacity: .45; }
+}

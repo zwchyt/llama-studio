@@ -19,6 +19,7 @@ function applyThemeInstant(t: AppTheme): void {
   requestAnimationFrame(() => {
     requestAnimationFrame(() => el.classList.remove('theme-switching'))
   })
+
 }
 
 export interface ThemeOrigin { x: number; y: number }
@@ -38,7 +39,10 @@ function applyThemeRadial(t: AppTheme, origin?: ThemeOrigin): void {
   const el = document.documentElement
   // 揭示动画期间禁用各元素自身过渡，避免与扩散动画叠加打架
   el.classList.add('theme-switching')
-  const done = (): void => { el.classList.remove('theme-switching') }
+  const done = (): void => {
+    el.classList.remove('theme-switching')
+  
+  }
   const transition = doc.startViewTransition(() => { applyTheme(t) })
   transition.ready
     .then(() => {

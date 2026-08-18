@@ -71,7 +71,7 @@ interface AppStore {
   /** 四引擎自动检测结果：repo → ReleaseInfo（启动 10s 后并行检测写入） */
   engineReleases: Record<string, ReleaseInfo | null>
   paths: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string; chatTemplates: string } | null
-  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'terminal' | 'ocr' | 'benchmark' | 'agent-code' | 'model-tools' | 'knowledge' | 'tts' | 'stt' | 'imagegen' | 'engines' | 'folders' | 'token-stats'
+  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'terminal' | 'ocr' | 'benchmark' | 'agent-code' | 'model-tools' | 'knowledge' | 'tts' | 'stt' | 'imagegen' | 'engines' | 'folders' | 'token-stats' | 'jsonui'
   showCreateModal: boolean
   editingTemplate: Template | null
   updateDismissed: boolean
@@ -90,6 +90,9 @@ interface AppStore {
   hubSelectedModelId: string | null
   hubSource: 'huggingface' | 'modelscope'
   modelLogs: Record<string, { stream: string; text: string; className: string }[]>
+  modelDiagnostics: Record<string, { code: number | null; severity: 'info' | 'warning' | 'critical'; title: string; cause: string; recommendations: string[]; evidence: string; logExcerpt?: { lines: string[]; start: number; errorLine: number } }>
+  setModelDiagnosis: (id: string, d: { code: number | null; severity: 'info' | 'warning' | 'critical'; title: string; cause: string; recommendations: string[]; evidence: string; logExcerpt?: { lines: string[]; start: number; errorLine: number } }) => void
+  dismissModelDiagnosis: (id: string) => void
   modelMetrics: Record<string, ModelMetrics>
   // 模型自定义 Logo（key = template.id；data URL 或 null=无/读取失败）：
   // 「我的模板」卡片与 Agent Code 模型列表共用同一份，设置/移除后立即同步
@@ -263,6 +266,7 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
   setTemplatesReady: (v) => set({ templatesReady: v }),
   hubQuery: '', hubResults: [], hubSelectedModelId: null, hubSource: 'huggingface',
   modelLogs: {},
+  modelDiagnostics: {},
   modelMetrics: {},
   modelLogos: {},
   modelCapabilities: {},
@@ -369,6 +373,14 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
     const next = { ...s.modelLogs }
     delete next[id]
     return { modelLogs: next }
+  }),
+  setModelDiagnosis: (id, d) => set((s) => ({
+    modelDiagnostics: { ...s.modelDiagnostics, [id]: d },
+  })),
+  dismissModelDiagnosis: (id) => set((s) => {
+    const next = { ...s.modelDiagnostics }
+    delete next[id]
+    return { modelDiagnostics: next }
   }),
   updateModelMetric: (id, partial) => set((s) => {
     const existing = s.modelMetrics[id]

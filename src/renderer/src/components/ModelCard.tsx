@@ -285,7 +285,16 @@ export default function ModelCard({ card, style }: Props) {
         useStore.getState().setActiveChat(chatUrl, port)
         useStore.getState().setView('llama')
       }
-    } else { notify(`运行失败：${res.error}`, 'error'); setCardStatus(card.template.id, 'error') }
+    } else {
+      setCardStatus(card.template.id, 'error')
+      // 同步失败同样会收到 model-diagnosis 广播（主进程 run-model catch 分支），
+      // 延迟检查：诊断卡片存在则不再弹红色 toast，避免重复提示。
+      setTimeout(() => {
+        if (!useStore.getState().modelDiagnostics[card.template.id]) {
+          notify(`运行失败：${res.error}`, 'error')
+        }
+      }, 400)
+    }
   }
   const handleDelete = useCallback(() => {
     if (isRunning) { notify('请先停止模型再删除。', 'error'); return }

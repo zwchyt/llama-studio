@@ -36,6 +36,11 @@ const fullApi = {
     ipcRenderer.on('model-error', (_e, data) => cb(data))
   },
   removeModelErrorListener: () => ipcRenderer.removeAllListeners('model-error'),
+  onModelDiagnosis: (cb: (data: { id: string; code: number | null; severity: string; title: string; cause: string; recommendations: string[]; evidence: string; logExcerpt?: { lines: string[]; start: number; errorLine: number } }) => void) => {
+    ipcRenderer.removeAllListeners('model-diagnosis')
+    ipcRenderer.on('model-diagnosis', (_e, data) => cb(data))
+  },
+  removeModelDiagnosisListener: () => ipcRenderer.removeAllListeners('model-diagnosis'),
   checkUpdates: (repo?: string) => ipcRenderer.invoke('check-updates', repo),
   downloadRelease: (opts: object) => ipcRenderer.invoke('download-release', opts),
   installSdCudart: (opts: { url: string; assetName: string; backendName: string; digest?: string }) => ipcRenderer.invoke('install-sd-cudart', opts),
@@ -148,7 +153,15 @@ const fullApi = {
   clearTokenUsage: () => ipcRenderer.invoke('clear-token-usage'),
   chatStream: (opts: { streamId: string; port: number; body: object }) => ipcRenderer.invoke('chat-completion-stream', opts),
   chatCompletion: (opts: { port: number; body: object }) => ipcRenderer.invoke('chat-completion', opts),
-    getServerProps: (port: number) => ipcRenderer.invoke('server-props', port),
+  getServerProps: (port: number) => ipcRenderer.invoke('server-props', port),
+  // ── json-render 动态 UI（AI 面板）：独立通道流式生成，不与聊天流冲突 ──
+  chatStreamJsonUI: (opts: { streamId: string; port: number; body: object }) =>
+    ipcRenderer.invoke('chat-completion-stream', { ...opts, channel: 'chat-stream-jsonui-chunk' }),
+  onJsonUIStreamChunk: (callback: (data: { streamId: string; delta?: string; done: boolean; error?: string }) => void) => {
+    const listener = (_event: unknown, data: { streamId: string; delta?: string; done: boolean; error?: string }) => callback(data)
+    ipcRenderer.on('chat-stream-jsonui-chunk', listener)
+    return () => ipcRenderer.removeListener('chat-stream-jsonui-chunk', listener)
+  },
   saveChatImage: (dataUrl: string) => ipcRenderer.invoke('save-chat-image', dataUrl),
   readChatImage: (ref: string) => ipcRenderer.invoke('read-chat-image', ref),
   saveImages: (opts: { images: string[]; mode?: string; seed?: number; steps?: number; cfg?: number; width?: number; height?: number; prompt?: string; negativePrompt?: string; sampler?: string; scheduler?: string; model?: string }) => ipcRenderer.invoke('save-images', opts),
