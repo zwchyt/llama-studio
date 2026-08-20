@@ -4,57 +4,88 @@
 
 <p align="center">
   <img src="https://img.shields.io/github/v/release/zwchyt/llama-studio?style=flat-square&color=black&label=version" alt="Latest Version" />
-  <img src="https://img.shields.io/badge/Electron-191970?style=flat-square&logo=Electron&logoColor=white" alt="Electron" />
-  <img src="https://img.shields.io/badge/React-20232A?style=flat-square&logo=react&logoColor=61DAFB" alt="React" />
-  <img src="https://img.shields.io/badge/TypeScript-007ACC?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/Vite-B73BFE?style=flat-square&logo=vite&logoColor=FFD62E" alt="Vite" />
+  <img src="https://img.shields.io/badge/Electron-43-191970?style=flat-square&logo=electron&logoColor=white" alt="Electron" />
+  <img src="https://img.shields.io/badge/Bun-1.4.0-000000?style=flat-square&logo=bun&logoColor=white" alt="Bun" />
+  <img src="https://img.shields.io/badge/React-19-20232A?style=flat-square&logo=react&logoColor=61DAFB" alt="React" />
+  <img src="https://img.shields.io/badge/TypeScript-5-007ACC?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Vite-5-B73BFE?style=flat-square&logo=vite&logoColor=FFD62E" alt="Vite" />
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License" />
+  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square" alt="Platform" />
 </p>
 
 <p align="center">
   <b>llama-studio</b> — 基于 <a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a> 的本地大模型桌面工作站。
-  <br/>
-  搜索下载模型、模板化多实例运行、内置聊天客户端与 Agent 编码工作台，全程本地完成。
+  <br />
+  搜索下载模型、模板化多实例运行、内置聊天客户端与 Agent 编码工作台，<b>全程本地完成</b>。
 </p>
+
+---
+
+## 📑 目录
+
+- [✨ 核心功能](#核心功能)
+- [🛠️ 技术栈](#技术栈)
+- [🚀 快速开始](#快速开始)
+- [📖 使用指南](#使用指南)
+- [⚙️ 配置说明](#配置说明)
+- [🔒 隐私声明](#隐私声明)
+- [📄 许可证](#许可证)
 
 ---
 
 ## ✨ 核心功能
 
-### 🔍 集成模型 Hub
-直接在应用中搜索 Hugging Face 和 modelscope。浏览仓库、查看文件详情、一键下载 GGUF 模型——无需打开浏览器。
+> 一套**完全本地运行**的大模型工作台，覆盖从模型获取到智能体自动化的完整链路。
 
-### ⬇️ 智能下载管理器
-支持暂停、恢复、取消大模型下载。根据量化等级自动生成执行模板和推荐参数。
+| 分类 | 主要界面 |
+| --- | --- |
+| 🔍 模型与下载 | 模型中心 · 模型 · 我的模板 · 模型文件夹 |
+| 💬 对话与服务 | 聊天 · llama-server · AI 面板 · 知识库 · OCR · 语音合成 · 语音转写 · 图像生成 · 音频工作室 |
+| 🧰 分析与工具 | 模型工具 · 模型运行数据 · 性能测试 · Token 统计 · 终端 |
+| 🤖 智能体 | Agent Code 工作台 · AI Agent |
+| ⚙️ 系统与后端 | 后端与引擎 · 设置 · 关于 |
 
-### 📋 模板化执行
-将模型配置保存为可复用的模板。在多端口上同时运行多个模型。支持 **Chat UI** 和 **API Only** 两种启动模式。
+### 🔍 模型与下载
+- **模型中心**：在应用内搜索 Hugging Face / ModelScope，浏览仓库与文件、一键下载 GGUF 模型，无需打开浏览器。
+- **模型**：本地模型库管理，查看已下载 GGUF 文件信息，通过 URL 直接下载或分析 HuggingFace 仓库并管理文件。
+- **我的模板**：将模型配置保存为可复用模板，多端口同时运行多个模型，支持 **Chat UI** 与 **API Only** 两种启动模式。
+- **模型文件夹**：统一管理文本 / 图片 / 语音 / OCR / stable-diffusion.cpp 五类模型文件夹，可增删外部目录。
 
-### 💬 内置聊天客户端
-无需浏览器，直接与本地模型对话：思考链展示与折叠、LaTeX 公式渲染、代码块实时预览、图片/PDF/Word 附件解析、消息导航面板、token 速率统计、会话管理与导出。
+### 💬 对话与服务
+- **聊天**：内置聊天客户端——思考链展示与折叠、LaTeX 公式渲染、代码块实时预览、图片/PDF/Word 附件解析、消息导航、token 速率统计、会话管理与导出。
+- **llama-server**：内嵌运行中的 llama.cpp server Web UI，可复制服务地址、在外部浏览器打开、一键停止服务。
+- **AI 面板**：JSON 驱动的动态 UI 面板（基于 @json-render），用自然语言 + 模型生成 UI 规范并渲染交互界面。
+- **知识库**：本地知识库（RAG），上传/拖入文档向量化入库，供对话时检索增强。
+- **OCR**：利用 llama.cpp 从图片中提取文字，全程本地处理。
+- **语音合成**：本地 TTS（Qwen3-TTS / OuteTTS），文本离线生成 wav，支持多语言与参考音频克隆音色，可试听/下载。
+- **语音转写**：本地 ASR（llama-mtmd），选择音频文件离线转写为文本，兼容 granite-speech / Qwen3-Omni 等。
+- **图像生成**：文生图 / 图生图，调用运行中的 stable-diffusion.cpp（sd-server）兼容接口，支持采样器、提示词预设与历史记录。
+- **音频工作室**：内嵌运行中的 audio.cpp 服务 Web UI，进行音乐 / 音频生成，可刷新、外部打开、停止服务。
 
-### 🧑‍💻 Agent Code 工作台
-由本地模型驱动的编码代理：选定工作区后，模型可通过 20+ 内置工具（读写/编辑文件、代码搜索、目录分析、后台任务等）自主完成任务。配套工作区文件树、Git 变更 diff 审查、消息内文件变更汇总、内置浏览器、提示词配置、工具调用审计与调试面板。
+### 🧰 分析与工具
+- **模型工具**：GGUF 分析工具集——元数据检查、tokenizer 可视化、显存与上下文层数估算、模型对比、聊天模板调试。
+- **模型运行数据**：运行中模型的 CPU、内存等资源占用实时监控。
+- **性能测试**：内置 llama-bench 基准测试视图，一键跑分对比模型吞吐。
+- **Token 统计**：基于本地使用记录的 Token 用量统计（按模型、按活动时间分布），纯本地、不联网。
+- **终端**：集成式多标签终端（xterm.js + node-pty），可指定工作目录、调整字号、多会话并行。
 
-### 📊 基准测试与资源监控
-内置 llama-bench 基准测试视图，一键跑分对比模型吞吐；运行中模型的 CPU、内存等资源占用实时监控。
+### 🤖 智能体
+- **Agent Code 工作台**：本地模型驱动的编码代理，通过 20+ 内置工具（读写/编辑文件、代码搜索、目录分析、后台任务等）自主完成任务；配套文件树、Git diff 审查、变更汇总、内置浏览器、提示词配置、工具调用审计与调试面板。
+- **AI Agent**：侧边栏管理与启动基于 npm 的 AI 代理脚本（安装状态检测、版本更新），扩展自动化工作流。
 
-### 🔄 版本与后端管理
-维护和切换多个 llama.cpp 二进制版本。自动检查新版本，在设置面板中一键下载更新。
-
-### 🖼️ OCR 文字识别
-内置 OCR 视图，利用 llama.cpp 从图片中提取文字，全程本地处理。
-
-### 🤖 Agent 脚本管理
-在侧边栏中管理和启动基于 npm 的 AI 代理脚本（安装状态检测、版本更新），扩展自动化工作流。
+### ⚙️ 系统与后端
+- **后端与引擎**：维护与切换多个 llama.cpp 二进制版本，自动检查新版本并在设置中一键下载更新。
+- **设置**：全局偏好配置（主题、后端路径、下载目录等）。
+- **关于**：版本与许可证信息。
 
 ---
 
 ## 🛠️ 技术栈
 
 | 层级 | 技术 |
-|-------|-----------|
+| --- | --- |
 | 桌面框架 | [Electron](https://www.electronjs.org/) 43 |
+| 包管理器 | [Bun](https://bun.sh/) 1.4 |
 | UI 框架 | [React](https://react.dev/) 19 |
 | 语言 | [TypeScript](https://www.typescriptlang.org/) 5 |
 | 构建工具 | [Vite](https://vitejs.dev/) 5 + [electron-vite](https://electron-vite.org/) |
@@ -72,9 +103,11 @@
 
 ### 环境要求
 
-- **Node.js** ≥ 18
-- **npm**
+- **Bun** ≥ 1.4（依赖安装与脚本运行，推荐）
+- **Node.js** ≥ 18（构建及部分原生工具需要）
 - **Git**
+
+> 本项目使用 **Bun** 管理依赖，锁文件为 `bun.lock`。若改用 npm 需注意 lockfile 差异。
 
 ### 安装与运行
 
@@ -84,31 +117,30 @@ git clone https://github.com/zwchyt/llama-studio.git
 cd llama-studio
 
 # 安装依赖
-npm install
+bun install
 
 # 启动开发模式
-npm run dev
+bun run dev
 ```
 
-### 打包构建
+### 打包发布
 
 ```bash
-npm run build
+bun run package
 ```
 
-编译后的安装包位于 `dist/` 目录。
+使用 electron-builder 构建安装包，产物位于 `dist/` 目录。
 
-> **注意**：如果嵌入式终端遇到问题，请为 Electron 重建 `node-pty`：
-> ```bash
-> npx electron-rebuild -w node-pty
-> ```
+> **注**：`bun run build` 仅执行过滤构建脚本，不会产出安装包。
+>
+> **Electron 二进制**：Bun 默认屏蔽 `postinstall` 脚本，可能跳过 Electron 二进制下载，启动时报 `Electron uninstall`。若出现，执行 `node node_modules/electron/install.js` 提取二进制，或运行 `bun pm trust` 允许安装脚本。
 
 ---
 
 ## 📖 使用指南
 
 ### 1. 浏览与下载模型
-- 打开 **模型 Hub** 标签页，搜索 Hugging Face 上的 GGUF 模型。
+- 打开 **模型中心** 标签页，搜索 Hugging Face 上的 GGUF 模型。
 - 点击模型查看详情，选择量化版本，一键下载。
 
 ### 2. 创建执行模板
@@ -117,7 +149,7 @@ npm run build
 - 选择 **Chat UI**（交互对话）或 **API Only**（服务端）启动模式。
 
 ### 3. 运行模型
-- 在模板上点击 **运行**，后端会在终端视图中自动启动。
+- 在模板上点击 **运行**，后端会在 **终端** 视图中自动启动。
 - Chat UI 模式可直接对话；API Only 模式使用提供的端点地址。
 
 ### 4. 内置聊天对话
@@ -126,19 +158,19 @@ npm run build
 
 ### 5. 使用 Agent Code 工作台
 - 进入 **Agent Code** 视图，选择项目工作区目录并连接运行中的模型。
-- 在会话中下达任务，模型会调用工具读写文件完成编码；通过顶栏的 **变更** 审查 Git diff，**审计**/**调试** 面板追踪工具调用。
+- 在会话中下达任务，模型会调用工具读写文件完成编码；通过顶栏的 **变更** 审查 Git diff，**审计** / **调试** 面板追踪工具调用。
 
 ### 6. 基准测试与监控
-- 在 **基准测试** 视图选择模型一键跑分；在 **监控** 视图查看运行中模型的资源占用。
+- 在 **性能测试** 视图选择模型一键跑分；在 **模型运行数据** 视图查看运行中模型的资源占用。
 
 ### 7. 管理后端
-- 进入 **设置** → **后端**，切换或更新 llama.cpp 版本。
+- 进入 **设置** → **后端与引擎**，切换或更新 llama.cpp 版本。
 
-### 8. 使用 Agent 脚本
-- 从侧边栏打开 **Agents** 面板，管理基于 npm 的代理脚本。
+### 8. 使用 AI Agent 脚本
+- 从侧边栏打开 **AI Agent** 面板，管理基于 npm 的代理脚本。
 
 ### 9. OCR 与文档处理
-- 在 OCR 视图中上传图片，利用正在运行的模型提取文字。
+- 在 **OCR** 视图中上传图片，利用正在运行的模型提取文字。
 
 ---
 
@@ -178,7 +210,7 @@ npm run build
 
 ## 🔒 隐私声明
 
-本应用 **完全本地运行**。不收集、不存储、不传输任何遥测或个人数据。模型下载依赖第三方服务（Hugging Face和ModelScope），后端二进制文件遵循各自的许可协议。
+本应用 **完全本地运行**。不收集、不存储、不传输任何遥测或个人数据。模型下载依赖第三方服务（Hugging Face 和 ModelScope），后端二进制文件遵循各自的许可协议。
 
 ---
 
@@ -191,4 +223,3 @@ npm run build
 <div align="center">
   <sub>为本地 AI 社区而建 ❤️</sub>
 </div>
-
