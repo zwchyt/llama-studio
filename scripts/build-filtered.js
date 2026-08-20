@@ -1,8 +1,11 @@
 const { spawn } = require('child_process')
 const { resolve } = require('path')
+const { existsSync } = require('fs')
 
 const cwd = resolve(__dirname, '..')
-const p = spawn(resolve(cwd, 'node_modules/.bin/electron-vite') + '.cmd build', [], {
+const base = resolve(cwd, 'node_modules/.bin/electron-vite')
+const ext = ['.cmd', '.exe', ''].find((e) => existsSync(base + e)) || ''
+const p = spawn(base + ext + ' build', [], {
   cwd,
   shell: true,
   windowsHide: true,
