@@ -1,0 +1,31 @@
+{
+  "version": "audiocpp",
+  "categories": [
+    {
+      "name": "服务端",
+      "icon": "Server",
+      "commands": [
+        { "arg": "--ui", "label": "WebUI", "description": "以内置 WebUI 模式启动（必须开启，否则要求 --config 才能启动）；页内提供模型安装/加载/生成等全部功能", "type": "boolean", "default": true },
+        { "arg": "--ui-management", "label": "UI 模型管理", "description": "允许 WebUI 内模型 load/unload 与临时上传", "type": "boolean", "default": true },
+        { "arg": "--port", "short": "-p", "label": "Port", "description": "服务监听端口（默认 8080；本项目模板默认 8088）", "type": "number", "default": 8088, "min": 1, "max": 65535 },
+        { "arg": "--host", "short": "-H", "label": "Host", "description": "服务监听地址（默认 127.0.0.1）", "type": "string", "default": "127.0.0.1" },
+        { "arg": "--backend", "label": "Backend", "description": "推理后端：cuda / hip / rocm / vulkan / metal / cpu（默认 cuda；CUDA 缺 runtime DLL 时换 cpu）", "type": "select", "options": ["cuda", "hip", "rocm", "vulkan", "metal", "cpu"], "default": "cuda" },
+        { "arg": "--device", "short": "-d", "label": "Device ID", "description": "GPU 设备 ID（多卡时指定）", "type": "number", "default": 0, "min": 0 },
+        { "arg": "--threads", "short": "-t", "label": "Threads", "description": "推理线程数（默认 4）", "type": "number", "default": 4, "min": 1, "max": 256 },
+        { "arg": "--busy-timeout-ms", "label": "Busy Timeout (ms)", "description": "空闲超时卸载模型（默认 300000）", "type": "number", "default": 300000, "min": 0 },
+        { "arg": "--log", "label": "Log", "description": "启用服务日志输出", "type": "boolean", "default": false },
+        { "arg": "--log-file", "label": "Log File", "description": "日志输出到文件", "type": "string", "placeholder": "server.log" },
+        { "arg": "--cors-origins", "label": "CORS Origins", "description": "允许的跨域来源（逗号分隔）", "type": "string", "placeholder": "http://localhost:5173" }
+      ]
+    },
+    {
+      "name": "模型与资源",
+      "icon": "Box",
+      "commands": [
+        { "arg": "--config", "label": "Config File", "description": "服务配置文件（server.json；与 --ui 互斥，二选一）", "type": "string", "placeholder": "server.json" },
+        { "arg": "--model-spec-override", "label": "Model Spec Override", "description": "覆盖模型规格定义（JSON 文件或目录，默认用内置 model_specs）", "type": "string", "placeholder": "model_specs" },
+        { "arg": "--voice-dir", "label": "Voice Dir", "description": "音色/声音克隆参考文件目录", "type": "string", "placeholder": "./voices" }
+      ]
+    }
+  ]
+}

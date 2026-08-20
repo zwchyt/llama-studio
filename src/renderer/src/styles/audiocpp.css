@@ -1,0 +1,112 @@
+/* ── audio.cpp 音频工作室（内嵌官方 WebUI）── */
+.audiocpp {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100%;
+}
+
+.audiocpp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 4px 2px;
+}
+
+.audiocpp-header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.audiocpp-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.audiocpp-subtitle {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.audiocpp-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.audiocpp-server-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.audiocpp-server-select {
+  max-width: 260px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #444);
+  background: var(--bg-secondary, transparent);
+  color: var(--text, inherit);
+  font-size: 13px;
+}
+
+/* 内嵌 WebUI 占满剩余空间（自适应头高度） */
+.audiocpp-frame-wrap {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border, #444);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #111;
+}
+
+.audiocpp-frame {
+  display: block;
+  width: 100%;
+  height: calc(100vh - 150px);
+  min-height: 480px;
+  border: 0;
+  background: #fff;
+}
+
+.audiocpp-empty {
+  flex: 1;
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--border, #444);
+  border-radius: 10px;
+  padding: 32px;
+}
+
+.audiocpp-empty-icon {
+  opacity: 0.6;
+}
+
+.audiocpp-empty-warn {
+  opacity: 0.7;
+  color: var(--warning, #f59e0b);
+}
+
+.audiocpp-empty h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text);
+}
+
+.audiocpp-empty p {
+  max-width: 420px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}

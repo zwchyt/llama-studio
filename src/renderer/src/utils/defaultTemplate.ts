@@ -103,6 +103,10 @@ export function defaultArgsForParamSet(paramSet: EngineKind, filename = ''): Tem
       return { '--temperature': 0.7, '--repeat-penalty': 1.1, '--max-tokens': 20000 }
     case 'sdcpp':
       return { '--steps': 20, '--cfg-scale': 7 }
+case 'audiocpp':
+      // audiocpp_server 为音频推理服务（自带 WebUI，模型安装/加载/生成均在页内完成，
+      // 无聊天 UI），必须 --ui 启动；端口参数由 --port 管理（模板默认 8088）
+      return { '--ui': true, '--ui-management': true, '--backend': 'cuda', '--threads': 4 }
     default:
       const settings = getRecommendedSettings(filename)
       return {
@@ -192,6 +196,18 @@ export function buildDefaultTemplate(
       description: `stable-diffusion.cpp — 扩散模型，默认 ${20} 步 / CFG ${7}`,
       args,
       argsByParamSet: { sdcpp: args }
+    }
+  }
+  // audio.cpp 引擎：audiocpp_server 为音频推理服务（自带 WebUI，模型安装/加载/生成均在页内完成，
+  // 无聊天 UI），必须 --ui 启动；端口参数由 --port 管理（模板默认 8088）
+  if (kind === 'audiocpp') {
+    const args = { '--ui': true, '--ui-management': true, '--backend': 'cuda', '--threads': 4 }
+    return {
+      ...base,
+      launchMode: 'api' as const,
+      description: `audio.cpp — 音频推理服务（TTS / ASR / 音乐 / 声音克隆），默认 CUDA 后端`,
+      args,
+      argsByParamSet: { audiocpp: args }
     }
   }
   const settings = getRecommendedSettings(filename)

@@ -6,7 +6,7 @@ import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { ENGINE_LABELS, paramSetOf } from '../utils/engine'
-import { PlayIcon, CircleStopIcon, SettingsIcon, EllipsisVerticalIcon, CopyIcon, TrashIcon, DownloadIcon, GlobeIcon, ServerIcon, TerminalIcon, CheckIcon, MessageSquareIcon, ImageIcon, ScanIcon, RefreshCwIcon } from '@animateicons/react/lucide'
+import { PlayIcon, CircleStopIcon, SettingsIcon, EllipsisVerticalIcon, CopyIcon, TrashIcon, DownloadIcon, GlobeIcon, ServerIcon, TerminalIcon, CheckIcon, MessageSquareIcon, ImageIcon, ScanIcon, RefreshCwIcon, AudioLines } from '@animateicons/react/lucide'
 import type { CardState } from '../../../shared/types'
 import ParamsModal from './ParamsModal'
 interface Props { card: CardState; style?: React.CSSProperties }
@@ -218,7 +218,8 @@ export default function ModelCard({ card, style }: Props) {
     // 由这里显式追加）
     // stable-diffusion.cpp 的扩散模型必须用 --diffusion-model 加载（Z-Image 等 GGUF
     // tensor 名不带 model.diffusion_model. 前缀，用 -m 时 sd 识别不了架构）
-    if (card.template.modelPath) {
+    // audio.cpp 的模型由服务端自带 WebUI 管理（安装/加载/卸载），启动时无需指定本地模型路径
+    if (card.template.modelPath && paramSet !== 'audiocpp') {
       args.push(paramSet === 'tensorsharp' ? '--model' : paramSet === 'sdcpp' ? '--diffusion-model' : '-m', card.template.modelPath)
     }
     // 参数白名单按卡片自身参数集获取（TensorSharp 与 llama.cpp 的 schema 不同），
@@ -481,13 +482,18 @@ export default function ModelCard({ card, style }: Props) {
             onClick={() => {
               const port = card.template.serverPort || 8080
               const chatUrl = effectiveParamSet === 'tensorsharp' ? `http://127.0.0.1:${port}/html` : `http://127.0.0.1:${port}`
+              if (effectiveParamSet === 'audiocpp') {
+                useStore.getState().setActiveChat(chatUrl, port)
+                useStore.getState().setView('audiocpp')
+                return
+              }
               useStore.getState().setActiveChat(chatUrl, port)
               useStore.getState().setView('llama')
             }}
             onMouseEnter={() => chatBtnIconRef.current?.startAnimation()}
             onMouseLeave={() => chatBtnIconRef.current?.stopAnimation()}
           >
-            <GlobeIcon ref={chatBtnIconRef} size={14} className="nav-animate-icon" /> <span className="btn-label">打开聊天</span>
+            <GlobeIcon ref={chatBtnIconRef} size={14} className="nav-animate-icon" /> <span className="btn-label">{effectiveParamSet === 'audiocpp' ? '打开音频界面' : '打开聊天'}</span>
           </button>
         )}
         {isRunning && (
@@ -495,6 +501,10 @@ export default function ModelCard({ card, style }: Props) {
             className="btn card-run-btn"
             style={{ background: 'rgb(98 157 69)', color: 'rgb(37 8 8)' }}
             onClick={() => {
+              if (effectiveParamSet === 'audiocpp') {
+                useStore.getState().setView('audiocpp')
+                return
+              }
               if (effectiveParamSet === 'sdcpp') {
                 useStore.getState().setView('imagegen')
                 return
@@ -519,8 +529,8 @@ export default function ModelCard({ card, style }: Props) {
             onMouseEnter={() => actionIconRef.current?.startAnimation()}
             onMouseLeave={() => actionIconRef.current?.stopAnimation()}
           >
-            {effectiveParamSet === 'sdcpp' ? <ImageIcon ref={actionIconRef} size={14} className="nav-animate-icon" /> : isOcrModel ? <ScanIcon ref={actionIconRef} size={14} className="nav-animate-icon" /> : <MessageSquareIcon ref={actionIconRef} size={14} className="nav-animate-icon" />}
-            <span className="btn-label">{effectiveParamSet === 'sdcpp' ? '图像生成' : isOcrModel ? 'OCR 识别' : '原生聊天'}</span>
+            {effectiveParamSet === 'audiocpp' ? <AudioLines ref={actionIconRef} size={14} className="nav-animate-icon" /> : effectiveParamSet === 'sdcpp' ? <ImageIcon ref={actionIconRef} size={14} className="nav-animate-icon" /> : isOcrModel ? <ScanIcon ref={actionIconRef} size={14} className="nav-animate-icon" /> : <MessageSquareIcon ref={actionIconRef} size={14} className="nav-animate-icon" />}
+            <span className="btn-label">{effectiveParamSet === 'audiocpp' ? '音频工作台' : effectiveParamSet === 'sdcpp' ? '图像生成' : isOcrModel ? 'OCR 识别' : '原生聊天'}</span>
           </button>
         )}
         {!isRunning && (

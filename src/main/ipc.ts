@@ -209,9 +209,11 @@ function isBackendSchema(v: unknown): v is BackendSchema {
 const LLAMA_CPP_EXE_NAMES = new Set(['llama-server', 'llama-server.exe', 'main', 'main.exe', 'server', 'server.exe', 'llama-cli', 'llama-cli.exe'])
 // stable-diffusion.cpp 的可执行文件（sd-server = HTTP 推理服务，sd-cli = 单次命令行生成）
 const SD_CPP_EXE_NAMES = new Set(['sd-server', 'sd-server.exe', 'sd-cli', 'sd-cli.exe', 'sd-convert', 'sd-convert.exe'])
+// audio.cpp 的可执行文件（audiocpp_server = HTTP 服务（自带 WebUI），audiocpp_cli = 命令行推理）
+const AUDIO_CPP_EXE_NAMES = new Set(['audiocpp_server', 'audiocpp_server.exe', 'audiocpp_cli', 'audiocpp_cli.exe'])
 // 按可执行文件名 + 后端目录名推断后端引擎类型：
 // TensorSharp.Server.exe → 'tensorsharp'；llama.cpp 分支（目录名含 turboquant / beellama）→ 对应分支；
-// sd-server/sd-cli → 'sdcpp'；llama.cpp 系列 → 'llamacpp'
+// sd-server/sd-cli → 'sdcpp'；audiocpp_server/cli 或目录名含 audiocpp → 'audiocpp'；llama.cpp 系列 → 'llamacpp'
 function detectEngineKind(exe: string | null, dirHint = ''): EngineKind {
   const n = basename(exe ?? '').toLowerCase()
   const dir = dirHint.toLowerCase()
@@ -220,6 +222,7 @@ function detectEngineKind(exe: string | null, dirHint = ''): EngineKind {
   if (dir.includes('turboquant')) return 'turboquant'
   if (dir.includes('beellama')) return 'beellama'
   if (SD_CPP_EXE_NAMES.has(n) || n.startsWith('sd-')) return 'sdcpp'
+  if (AUDIO_CPP_EXE_NAMES.has(n) || n.includes('audiocpp')) return 'audiocpp'
   if (LLAMA_CPP_EXE_NAMES.has(n)) return 'llamacpp'
   return 'other'
 }
@@ -244,6 +247,7 @@ function commandsFileName(paramSet: EngineKind): string {
     case 'turboquant': return 'commands-turboquant.json'
     case 'beellama': return 'commands-beellama.json'
     case 'sdcpp': return 'commands-sdcpp.json'
+    case 'audiocpp': return 'commands-audiocpp.json'
     default: return 'commands.json'
   }
 }
@@ -255,7 +259,7 @@ function schemaResourcePaths(paramSet: EngineKind): string[] {
   ]
 }
 function normalizeParamSet(paramSet: unknown): EngineKind {
-  return paramSet === 'tensorsharp' || paramSet === 'turboquant' || paramSet === 'beellama' || paramSet === 'sdcpp'
+  return paramSet === 'tensorsharp' || paramSet === 'turboquant' || paramSet === 'beellama' || paramSet === 'sdcpp' || paramSet === 'audiocpp'
     ? paramSet
     : 'llamacpp'
 }
@@ -1666,8 +1670,8 @@ export function registerIpcHandlers(): void {
       let files: Entry[] = []
       try { files = (await fsPromises.readdir(dir, { withFileTypes: true })) as unknown as Entry[] } catch { return null }
       const names = process.platform === 'win32'
-        ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe', 'sd-server.exe', 'sd-server']
-        : ['llama-server', 'main', 'server', 'TensorSharp.Server', 'sd-server']
+        ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe', 'sd-server.exe', 'sd-server', 'audiocpp_server.exe', 'audiocpp_server', 'audiocpp_cli.exe', 'audiocpp_cli']
+        : ['llama-server', 'main', 'server', 'TensorSharp.Server', 'sd-server', 'audiocpp_server', 'audiocpp_cli']
       for (const n of names) {
         const found = files.find(f => !f.isDirectory() && f.name.toLowerCase() === n)
         if (found) return found.name
@@ -2173,8 +2177,8 @@ export function registerIpcHandlers(): void {
       }
       // 模型监控面板的速度数据（decode tok/s、prefill tok/s 等）依赖 llama.cpp 的 /metrics 端点；
       // 该端点需 --metrics 启动参数才启用。模板参数默认未开启，这里对 llama.cpp 系列引擎强制注入，
-      // 保证存量模板无需手动改动即可恢复监控数据（TensorSharp / stable-diffusion.cpp 无此参数，跳过）
-      if (kind !== 'tensorsharp' && kind !== 'sdcpp' && !safeArgs.includes('--metrics')) {
+      // 保证存量模板无需手动改动即可恢复监控数据（TensorSharp / stable-diffusion.cpp / audio.cpp 无此参数，跳过）
+      if (kind !== 'tensorsharp' && kind !== 'sdcpp' && kind !== 'audiocpp' && !safeArgs.includes('--metrics')) {
         safeArgs.push('--metrics')
       }
       const proc = spawn(exePath, safeArgs, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: false })
@@ -2777,18 +2781,20 @@ export function registerIpcHandlers(): void {
     const arch = process.arch
     const isTs = repo.toLowerCase().includes('tensorsharp')
     const isSdcpp = repo.toLowerCase().includes('stable-diffusion.cpp')
+    const isAudioCpp = repo.toLowerCase().includes('audio.cpp')
     const platformAssets = release.assets.filter((a: any) => {
       const n = a.name.toLowerCase()
-      if (n.startsWith('cudart-')) return false
+      if (n.startsWith('cudart-') || n.includes('cuda-runtime')) return false
       // TensorSharp 的发布页同时包含 cli 与 server 两种资产，本项目只使用推理服务器
       if (isTs && !n.includes('tensorsharp-server')) return false
       // stable-diffusion.cpp 的发布资产以 sd- 前缀命名（sd-<tag>-bin-win-… / -Darwin-… / -Linux-…）
       if (isSdcpp && !n.startsWith('sd-')) return false
       if (isMac) {
-        // sd 的 macOS 资产是 zip（Darwin/macOS 命名），llama.cpp 系列是 tar.gz
-        if (isSdcpp) {
+        // sd 的 macOS 资产是 zip（Darwin/macOS 命名），audio.cpp 的 macOS 资产同为 zip，llama.cpp 系列是 tar.gz
+        if (isSdcpp || isAudioCpp) {
           if (!n.endsWith('.zip')) return false
-          if (!n.includes('darwin')) return false
+          if (!n.includes('darwin') && !n.includes('macos')) return false
+          if (!n.includes('audiocpp') && isAudioCpp) return false
           if (arch === 'x64' && n.includes('arm64')) return false
           if (arch === 'arm64' && !n.includes('arm64')) return false
           return true
@@ -2806,8 +2812,8 @@ export function registerIpcHandlers(): void {
         return true
       }
       if (isLinux) {
-        // sd 的 Linux 资产是 zip（Linux-Ubuntu-…-x86_64 命名），llama.cpp 系列是 tar.gz
-        if (isSdcpp) {
+        // sd 的 Linux 资产是 zip（Linux-Ubuntu-…-x86_64 命名），audio.cpp 同，llama.cpp 系列是 tar.gz
+        if (isSdcpp || isAudioCpp) {
           if (!n.endsWith('.zip')) return false
           if (!n.includes('linux')) return false
           if (arch === 'x64' && n.includes('arm64')) return false
@@ -2856,6 +2862,7 @@ export function registerIpcHandlers(): void {
       : repoLower.includes('turboquant') ? 'turboquant'
       : repoLower.includes('beellama') ? 'beellama'
       : repoLower.includes('stable-diffusion.cpp') ? 'sdcpp'
+      : repoLower.includes('audio.cpp') ? 'audiocpp'
       : 'llamacpp'
     const latestVer = parseVersion(String(release.tag_name))
     let isNewer = true
@@ -2867,6 +2874,8 @@ export function registerIpcHandlers(): void {
           : dn.includes('beellama') ? 'beellama'
           // sd 版本目录形如 master-813-bfbef5b-sd-master-bfbef5b-bin-win-cpu-x64
           : dn.includes('sd-master') || dn.includes('stable-diffusion') ? 'sdcpp'
+          // audio.cpp 版本目录形如 audiocpp-windows-cuda-portable-<hash>
+          : dn.includes('audiocpp') ? 'audiocpp'
           : 'llamacpp'
         if (dirKind !== repoKind) continue
         // 兜底：目录名包含完整 tagName（历史命名差异 / 无法解析版本号的旧目录）
@@ -2875,10 +2884,14 @@ export function registerIpcHandlers(): void {
         if (installed && latestVer && cmpVersion(installed, latestVer) >= 0) { isNewer = false; break }
       }
     }
-    // stable-diffusion.cpp 的 CUDA 运行时包（cudart-sd-bin-win-cu12-x64.zip）：
-    // 主引擎包不含 CUDA 运行时，需单独下载合并进引擎目录（仅 Windows；macOS/Linux 包自带运行时）
-    const cudartAsset = isSdcpp && process.platform === 'win32'
-      ? (release.assets.find((a: any) => a.name.toLowerCase().startsWith('cudart-') && a.name.toLowerCase().endsWith('.zip')) ?? null)
+    // stable-diffusion.cpp 的 CUDA 运行时包（cudart-sd-bin-win-cu12-x64.zip）与
+    // audio.cpp 的 CUDA 运行时包（audiocpp-windows-cuda-runtime-*.zip）：
+    // 主引擎包不含 CUDA 运行时 DLL，需单独下载合并进引擎目录（仅 Windows；macOS/Linux 包自带运行时）
+    const cudartAsset = (isSdcpp || isAudioCpp) && process.platform === 'win32'
+      ? (release.assets.find((a: any) => {
+          const an = a.name.toLowerCase()
+          return (an.startsWith('cudart-') || an.includes('cuda-runtime')) && an.endsWith('.zip')
+        }) ?? null)
       : null
     return {
       tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at,
@@ -2935,17 +2948,19 @@ export function registerIpcHandlers(): void {
         if (cancelFn) { cancelFn(); cancelFn = null }
       }
     }, 30 * 1000)
-    // 供顶部进度横幅识别引擎与包名（按资产名推断：TensorSharp / TurboQuant / BeeLlama / stable-diffusion.cpp，其余视为 llama.cpp）
+    // 供顶部进度横幅识别引擎与包名（按资产名推断：TensorSharp / TurboQuant / BeeLlama / stable-diffusion.cpp / audio.cpp，其余视为 llama.cpp）
     const assetLower = opts.assetName.toLowerCase()
     const dlLabel = assetLower.startsWith('sd-') || assetLower.includes('stable-diffusion') ? 'stable-diffusion.cpp'
       : assetLower.includes('tensorsharp') ? 'TensorSharp'
       : assetLower.includes('turboquant') ? 'TurboQuant'
       : assetLower.includes('beellama') ? 'BeeLlama'
+      : assetLower.includes('audiocpp') || assetLower.includes('audio.cpp') ? 'audio.cpp'
       : 'llama.cpp'
     const dlEngine = dlLabel === 'stable-diffusion.cpp' ? 'sdcpp'
       : dlLabel === 'TensorSharp' ? 'tensorsharp'
       : dlLabel === 'TurboQuant' ? 'turboquant'
       : dlLabel === 'BeeLlama' ? 'beellama'
+      : dlLabel === 'audio.cpp' ? 'audiocpp'
       : 'llamacpp'
     const progressPayload = (phase: string, received: number, total: number, percent: number, speed?: number, note?: string, chunks?: Array<'idle' | 'active' | 'done'>) => ({ percent, phase, received, total, engine: dlEngine, name: opts.assetName, speed, note, chunks })
     // 最近一次进度快照：onStatus（如回退提示）需要用它补全 payload

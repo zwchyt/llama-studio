@@ -68,6 +68,9 @@ export class PiAgentClient {
   private thinkingOpen = false
   private thinkTagPushed = false
   private deferredText: string[] = []
+  /** 本轮是否出现过思考（thinking_start 置位）：一旦进入过思考，后续正文增量一律暂存，
+   *  等思考闭合后统一输出，避免正文碎片穿插/堆叠在思考链下方。 */
+  private everThinking = false
   /** 当前 turn 的开始时间（turn_start 置位，turn_end 取差后清空） */
   private turnStartAt: number | null = null
 
@@ -106,13 +109,21 @@ export class PiAgentClient {
         const msg = ev.assistantMessageEvent as RawPiEvent | undefined
         if (!msg) return
         if (msg.type === 'text_delta' && typeof msg.delta === 'string') {
-          // 正文出现 = 该轮思考已结束：立即闭合思考段（补 </think>），正文实时输出，
-          // 不必等 thinking_end（pi 的顺序是 text_delta 先于 thinking_end）。
-          // 空串 text_delta（pi 的段落占位）不闭合思考，避免"思考到一半被截断"。
-          if (this.thinkingOpen && msg.delta.trim().length > 0) this.closeThinking()
-          this.callbacks.onTextDelta(msg.delta)
+          // 正文统一输出：只要本轮已进入过思考（everThinking），正文增量一律暂存到
+          // deferredText，等思考闭合（thinking_end / turn_end / agent_end 兜底）后
+          // 一次性输出为一条完整正文，避免正文碎片穿插/堆叠在思考链下方。
+          // 思考链（thinking_delta）不受影响，仍实时包裹在 <think> 中显示。
+          if (this.thinkingOpen || this.everThinking) {
+            this.deferredText.push(msg.delta)
+          } else {
+            // 思考尚未开始时的正文（极罕见）：正常实时输出
+            this.callbacks.onTextDelta(msg.delta)
+          }
         } else if (msg.type === 'thinking_start') {
+          // 若上一轮思考期间已缓冲正文，先闭合思考并输出该正文，避免被重置丢失
+          if (this.deferredText.length > 0) this.closeThinking()
           this.thinkingOpen = true
+          this.everThinking = true
           this.thinkTagPushed = false
           this.deferredText = []
         } else if (msg.type === 'thinking_delta' && typeof msg.delta === 'string') {
@@ -180,6 +191,8 @@ export class PiAgentClient {
         const usage = msg?.usage
         const started = this.turnStartAt
         this.turnStartAt = null
+        // 一轮结束：把本轮已缓冲的正文一次性输出（与 thinking_end 同语义，保证不跨轮滞留）
+        this.closeThinking()
         this.callbacks.onTurnEnd?.({
           turnIndex: Number(ev.turnIndex ?? 0),
           promptTokens: typeof usage?.input === 'number' ? usage.input : 0,
@@ -190,8 +203,8 @@ export class PiAgentClient {
       }
       case 'agent_end':
       case 'agent_settled': {
-        // 兜底：整轮结束仍未收到 thinking_end 时强制闭合（防止正文被吞）
-        if (this.thinkingOpen) this.closeThinking()
+        // 兜底：整轮结束强制闭合思考并输出缓冲正文（无论 thinking_end 是否到达）
+        this.closeThinking()
         this.callbacks.onEnd()
         return
       }

@@ -20,8 +20,8 @@ interface Props {
   serverPortFallback?: number
   disabled?: boolean
   /** 参数集选择（参数设置里切换）：'llamacpp' → commands.json，'tensorsharp' → commands-tensorsharp.json，llama.cpp 分支 → 各自专属文件 */
-  paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp'
-  onParamSetChange?: (s: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp') => void
+  paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp'
+  onParamSetChange?: (s: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp') => void
 }
 export default function CmdParamsEditor({ templateId, backendName, args, onChange, modelPathFallback, serverPortFallback, disabled: disabledProp, paramSet, onParamSetChange }: Props) {
   const { commandsSchema, updateCard, cards, imageModels, chatTemplates, backends, models } = useStore(s => ({ commandsSchema: s.commandsSchema, updateCard: s.updateCard, cards: s.cards, imageModels: s.imageModels, chatTemplates: s.chatTemplates, backends: s.backends, models: s.models }), shallow)
@@ -77,7 +77,7 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
     }
     return s
   }, [activeSchema])
-  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp') => {
+  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp') => {
     if (next === effectiveParamSet) return
     onParamSetChange?.(next)
   }

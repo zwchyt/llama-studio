@@ -33,7 +33,7 @@ const NAV_GROUPS: NavDef[][] = [
   [
     { key: 'llama', label: 'llama-server', icon: ServerIcon, color: '#14b8a6', runningSource: 'llama' },
     { key: 'chat', label: '聊天', icon: MessageSquareIcon, color: '#ec4899', runningSource: 'models' },
-    { key: 'monitoring', label: '运行数据', icon: ActivityIcon, color: '#ef4444', runningSource: 'models' },
+    { key: 'monitoring', label: '模型运行数据', icon: ActivityIcon, color: '#ef4444', runningSource: 'models' },
     { key: 'token-stats', label: 'Token 统计', icon: TrendingUpIcon, color: '#f59e0b', runningSource: 'models' },
     { key: 'benchmark', label: '性能测试', icon: ChartBarIcon, color: '#f59e0b' },
     { key: 'terminal', label: '终端', icon: TerminalIcon, color: '#64748b' },
@@ -43,6 +43,7 @@ const NAV_GROUPS: NavDef[][] = [
     { key: 'tts', label: '语音合成', icon: AudioLinesIcon, color: '#f43f5e' },
     { key: 'stt', label: '语音转写', icon: MicIcon, color: '#f43f5e' },
     { key: 'imagegen', label: '图像生成', icon: ImageIcon, color: '#8b5cf6', runningSource: 'models' },
+    { key: 'audiocpp', label: '音频工作室', icon: AudioLinesIcon, color: '#0ea5e9' },
   ],
   [
     { key: 'agent-code', label: 'Agent Code', icon: CodeIcon, color: '#10b981' },

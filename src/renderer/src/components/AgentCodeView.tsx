@@ -2140,7 +2140,7 @@ export default function AgentCodeView() {
   // 已运行中的除外（保留停止入口）
   const isExcludedModel = (card: CardState): boolean => {
     const kind = paramSetOf(card.template.paramSet ?? backends.find(b => b.name === card.template.backendVersion)?.kind)
-    return kind === 'sdcpp' || /ocr/i.test(card.template.name)
+    return kind === 'sdcpp' || kind === 'audiocpp' || /ocr/i.test(card.template.name)
   }
   const agentCards = cards.filter(c => !isExcludedModel(c) || c.status === 'running')
   // 诊断：整页渲染耗时探针（>15ms 打印；定位触发源：最近一次 diagWrite 写入者）

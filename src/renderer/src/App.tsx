@@ -31,6 +31,7 @@ import ImageGenView from './components/ImageGenView'
 import AgentCodeView from './components/AgentCodeView'
 import TokenStatsView from './components/TokenStatsView'
 import JsonUiView from './components/JsonUiView'
+import AudioCppView from './components/AudioCppView'
 import ModelDiagnosisPanel from './components/ModelDiagnosisPanel'
 import TitleBar from './components/TitleBar'
 import TopNavBar from './components/TopNavBar'
@@ -542,6 +543,7 @@ function AppMain() {
       case 'tts': return <TtsView />
       case 'stt': return <SttView />
       case 'imagegen': return <ImageGenView />
+      case 'audiocpp': return <AudioCppView />
       case 'jsonui': return <JsonUiView />
       case 'agent-code': return null
       case 'terminal': return null

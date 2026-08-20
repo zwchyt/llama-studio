@@ -274,6 +274,14 @@ export default function Sidebar() {
           {view === 'imagegen' && <span className="nav-active-dot" />}
           {view === 'imagegen' && hasRunningModels && <span className="nav-dot" />}
         </NavItem>
+        <NavItem
+          icon={AudioLinesIcon}
+          label="音频工作室"
+          active={view === 'audiocpp'}
+          onClick={() => setView('audiocpp')}
+        >
+          {view === 'audiocpp' && <span className="nav-active-dot" />}
+        </NavItem>
 
         {/* ── 工作台 ── */}
         <span className="nav-section-label" style={{ marginTop: 12 }}>工作台</span>

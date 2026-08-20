@@ -10,9 +10,9 @@ import CmdParamsEditor from './CmdParamsEditor'
 import CustomSelect from './CustomSelect'
 import type { Template, TemplateArgs, CommandParam, EngineKind } from '../../../shared/types'
 
-/** 各引擎的默认端口：TensorSharp 固定 5000，sd-server 默认 1234，llama.cpp 系列 8080 */
+/** 各引擎的默认端口：TensorSharp 固定 5000，sd-server 默认 1234，audiocpp 默认 8088，llama.cpp 系列 8080 */
 function defaultPortFor(kind: EngineKind | undefined | null): number {
-  return kind === 'tensorsharp' ? 5000 : kind === 'sdcpp' ? 1234 : 8080
+  return kind === 'tensorsharp' ? 5000 : kind === 'sdcpp' ? 1234 : kind === 'audiocpp' ? 8088 : 8080
 }
 
 const EXTRA_ALIASES: Record<string, string> = {
@@ -109,7 +109,7 @@ export default function CreateModal() {
     return paramSetOf(b?.kind)
   })
   // 各引擎独立保存的启动参数：切换引擎后回切时恢复该引擎自定义值，不丢参数
-  const [argsByParamSet, setArgsByParamSet] = useState<Partial<Record<'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp', TemplateArgs>>>(() => {
+  const [argsByParamSet, setArgsByParamSet] = useState<Partial<Record<'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp', TemplateArgs>>>(() => {
     if (editingTemplate?.argsByParamSet && Object.keys(editingTemplate.argsByParamSet).length > 0) {
       return editingTemplate.argsByParamSet
     }
@@ -141,7 +141,7 @@ export default function CreateModal() {
     return b?.kind === 'sdcpp' ? 'api' : 'chat'
   })())
   // 参数集切换：同步更新显示 + 切换活跃后端 + 端口默认值 + 后端版本下拉框
-  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp') => {
+  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp') => {
     if (next === paramSet) return
     const filename = (modelPath.split(/[/\\]/).pop() || '')
     const { args: nextArgs, argsByParamSet: nextByParamSet } = switchParamSetArgs(paramSet, args, argsByParamSet, next, filename)
@@ -153,7 +153,7 @@ export default function CreateModal() {
       setActiveBackend(targetBackend)
       setBackendVersion(targetBackend.name)
     }
-    setServerPort(defaultPortFor(next === 'tensorsharp' || next === 'sdcpp' ? next : 'llamacpp'))
+    setServerPort(defaultPortFor(next === 'tensorsharp' || next === 'sdcpp' || next === 'audiocpp' ? next : 'llamacpp'))
   }
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showImport, setShowImport] = useState(false)
@@ -307,7 +307,7 @@ export default function CreateModal() {
                   setParamSet(nextPs)
                   setArgs(nextArgs)
                   setArgsByParamSet(nextByParamSet)
-                  setServerPort(defaultPortFor(nextPs === 'tensorsharp' || nextPs === 'sdcpp' ? nextPs : 'llamacpp'))
+                  setServerPort(defaultPortFor(nextPs === 'tensorsharp' || nextPs === 'sdcpp' || nextPs === 'audiocpp' ? nextPs : 'llamacpp'))
                 }}
                 options={[
                   { value: '', label: '默认（当前）' },

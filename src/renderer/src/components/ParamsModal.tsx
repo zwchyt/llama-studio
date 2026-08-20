@@ -97,12 +97,12 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
 
   // 切换参数集：更新显示 + 切换活跃后端 + 切换后端版本 + 保存到模板。
   // 目标引擎后端未安装时也持久化参数集选择（否则关闭弹窗后切换丢失，与编辑模板界面不同步）
-  const handleParamSetChange = useCallback((next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp') => {
+  const handleParamSetChange = useCallback((next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp') => {
     if (next === paramSet) return
     setParamSet(next)
     // 同步切换活跃后端到对应引擎 + 更新模板后端版本
     const targetBackend = backends.find(b => b.kind === next)
-    const nextPort = next === 'tensorsharp' ? 5000 : next === 'sdcpp' ? 1234 : 8080
+    const nextPort = next === 'tensorsharp' ? 5000 : next === 'sdcpp' ? 1234 : next === 'audiocpp' ? 8088 : 8080
     const { cards } = useStore.getState()
     const card = cards.find(c => c.template.id === templateId)
     if (card) {
