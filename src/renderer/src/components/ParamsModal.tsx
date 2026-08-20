@@ -51,8 +51,12 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   // 预览跟随参数集选择（切换参数集时 exe 标志和参数形态同步切换）
   const isTensorSharp = paramSet === 'tensorsharp'
   const isSdcpp = paramSet === 'sdcpp'
+  const isAudiocpp = paramSet === 'audiocpp'
+  // “主要设置”tab 只对 llama.cpp 系引擎与 stable-diffusion.cpp 摘取常用核心参数；
+  // 其他引擎（TensorSharp / audio.cpp）直接按各自分类展示，避免出现只有零星参数的“主要设置”
+  const isLlamaFamily = paramSet === 'llamacpp' || paramSet === 'turboquant' || paramSet === 'beellama'
   // 预览 exe 跟随参数集：参数集决定命令格式，与实际后端 exe 无关
-  const backendExe = isTensorSharp ? 'TensorSharp.Server' : isSdcpp ? 'sd-server' : 'llama-server'
+  const backendExe = isTensorSharp ? 'TensorSharp.Server' : isSdcpp ? 'sd-server' : isAudiocpp ? 'audiocpp_server.exe' : 'llama-server'
   const activeArgs = args
 
   // debounce save: 合并高频写入，400ms 内只触发一次 IPC
@@ -176,7 +180,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
     if (!activeSchema) return []
     const allCmds: CommandParam[] = []
     activeSchema.categories.forEach(cat => allCmds.push(...cat.commands))
-    const featuredList = isSdcpp ? FEATURED_ARGS_SDCPP : FEATURED_ARGS
+    const featuredList = isSdcpp ? FEATURED_ARGS_SDCPP : (isLlamaFamily ? FEATURED_ARGS : [])
     const featured = allCmds
       .filter(c => featuredList.includes(c.arg))
       .sort((a, b) => featuredList.indexOf(a.arg) - featuredList.indexOf(b.arg))
@@ -191,7 +195,14 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
       }
     }
     return tabList
-  }, [activeSchema, isSdcpp])
+  }, [activeSchema, isSdcpp, isLlamaFamily])
+
+  // 无“主要设置”tab（如 audio.cpp / TensorSharp）时，默认选中第一个分类
+  useEffect(() => {
+    if (tabs.length > 0 && !tabs.some(t => t.name === activeTab)) {
+      setActiveTab(tabs[0].name)
+    }
+  }, [tabs, activeTab])
 
   const currentCommands = useMemo(() => {
     if (!activeSchema) return []

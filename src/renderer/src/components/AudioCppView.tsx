@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect, useCallback } from 'react'
 import { useStore } from '../store/useStore'
 import { paramSetOf } from '../utils/engine'
 import { safeCall } from '../utils/safeCall'
+import CustomSelect from './CustomSelect'
 import { AudioLines, ExternalLink, RotateCw, Power, CircleStop, LayoutGrid, TriangleAlert } from 'lucide-react'
 import '../styles/audiocpp.css'
 
@@ -20,11 +21,11 @@ export default function AudioCppView() {
   const runningAudioCards = useMemo(() => audioCards.filter(c => c.status === 'running'), [audioCards])
 
   const [selectedId, setSelectedId] = useState('')
-  // 列表变化时自动选中第一个运行中的卡片，否则选中第一个卡片
+  // 列表变化时自动选中第一个运行中的卡片；没有正在运行的卡片则保持空（显示占位，不默认选中某个未启动的服务）
   useEffect(() => {
     if (audioCards.length === 0) { setSelectedId(''); return }
     if (!audioCards.some(c => c.template.id === selectedId)) {
-      setSelectedId((runningAudioCards[0] ?? audioCards[0]).template.id)
+      setSelectedId(runningAudioCards[0]?.template.id ?? '')
     }
   }, [audioCards, runningAudioCards, selectedId])
 
@@ -78,13 +79,18 @@ export default function AudioCppView() {
         </div>
         <div className="audiocpp-header-right">
           <label className="audiocpp-server-label">audio.cpp 服务</label>
-          <select className="audiocpp-server-select" value={selectedId} onChange={e => setSelectedId(e.target.value)}>
-            {audioCards.map(c => (
-              <option key={c.template.id} value={c.template.id}>
-                {c.template.name}（:{c.template.serverPort || 8088}{c.status === 'running' ? ' · 运行中' : ' · 未运行'}）
-              </option>
-            ))}
-          </select>
+          <CustomSelect
+            className="audiocpp-server-select-wrap"
+            buttonClass="audiocpp-server-select"
+            value={selectedId}
+            onChange={setSelectedId}
+            placeholder="没有运行中的服务"
+            aria-label="audio.cpp 服务"
+            options={runningAudioCards.map(c => ({
+              value: c.template.id,
+              label: `${c.template.name}（:${c.template.serverPort || 8088} · 运行中）`
+            }))}
+          />
           <span className={`status-dot ${isRunning ? 'ready' : 'idle'}`} />
           <button className={`btn btn-sm ${isRunning ? '' : 'btn-primary'}`} onClick={() => isRunning ? handleStop(selectedCard!.template.id) : setView('cards')} disabled={stopping}>
             {stopping ? <CircleStop size={13} /> : isRunning ? <Power size={13} /> : <Power size={13} />}
@@ -113,7 +119,7 @@ export default function AudioCppView() {
         <div className="audiocpp-empty">
           <TriangleAlert size={36} className="audiocpp-empty-warn" />
           <h3>服务未运行</h3>
-          <p>「{selectedCard?.template.name ?? '该实例'}」尚未启动。先启动 audio.cpp 服务，即可在下方使用完整的音频工作台（模型加载、TTS、语音转写、音乐生成等）。</p>
+          <p>当前没有正在运行的 audio.cpp 服务。在「我的模板」中启动一个 audio.cpp 模板，即可在下方使用完整的音频工作台（模型加载、TTS、语音转写、音乐生成等）。</p>
           <button className="btn btn-primary" onClick={() => setView('cards')}>前往「我的模板」启动</button>
         </div>
       )}

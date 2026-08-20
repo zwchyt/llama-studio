@@ -515,6 +515,9 @@
   max-width: calc(100vw - 16px);
   margin: 0;
   box-shadow: var(--shadow-lg);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 
 .card-logs-header {

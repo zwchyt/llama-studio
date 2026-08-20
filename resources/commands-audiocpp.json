@@ -6,6 +6,7 @@
       "icon": "Server",
       "commands": [
         { "arg": "--ui", "label": "WebUI", "description": "以内置 WebUI 模式启动（必须开启，否则要求 --config 才能启动）；页内提供模型安装/加载/生成等全部功能", "type": "boolean", "default": true },
+        { "arg": "--no-ui", "label": "No WebUI", "description": "禁用内置 WebUI（与 --ui 互斥）", "type": "boolean", "default": false },
         { "arg": "--ui-management", "label": "UI 模型管理", "description": "允许 WebUI 内模型 load/unload 与临时上传", "type": "boolean", "default": true },
         { "arg": "--port", "short": "-p", "label": "Port", "description": "服务监听端口（默认 8080；本项目模板默认 8088）", "type": "number", "default": 8088, "min": 1, "max": 65535 },
         { "arg": "--host", "short": "-H", "label": "Host", "description": "服务监听地址（默认 127.0.0.1）", "type": "string", "default": "127.0.0.1" },

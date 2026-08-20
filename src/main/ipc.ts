@@ -1636,10 +1636,9 @@ export function registerIpcHandlers(): void {
       percent: t.totalBytes > 0 ? Math.round((t.receivedBytes / t.totalBytes) * 100) : 0
     }))
   })
-  // 后端目录递归扫描结果缓存：内存缓存命中即时返回；启动首次调用命中磁盘缓存也即时返回，
-  // 后台异步全量刷新保持新鲜。磁盘缓存 24h 有效期、后端下载/删除时失效——避免每次重启对
-  // backend 目录（数百 exe/dll）全量重扫：首次 stat 会触发 Windows Defender 实时扫描，
-  // 串行扫描时启动可拖慢 5-15s。
+  // 后端目录递归扫描结果缓存：内存缓存命中即时返回；启动首次调用命中磁盘缓存也即时返回。
+  // 磁盘缓存 24h 有效期、后端下载/删除时失效——避免每次重启对 backend 目录（数百 exe/dll）全量重扫：
+  // 首次 stat 会触发 Windows Defender 实时扫描，串行扫描时启动可拖慢 5-15s。缓存命中直接返回，不做后台重扫。
   let backendScanCache: { t: number; value: unknown } | null = null
   const BACKEND_CACHE_MS = 24 * 60 * 60 * 1000
   const BACKEND_CACHE_FILE = join(app.getPath('userData'), 'backend-scan-cache.json')
@@ -1727,12 +1726,12 @@ export function registerIpcHandlers(): void {
   }
   ipcMain.handle('list-backends', async () => {
     if (backendScanCache && Date.now() - backendScanCache.t < BACKEND_CACHE_MS) return backendScanCache.value
-    // 启动首次调用：磁盘缓存命中则立即返回，后台异步全扫刷新（不阻塞本次响应）
+    // 启动首次调用：磁盘缓存命中则直接返回（后端下载/删除时会失效缓存，见 invalidateBackendCache），
+    // 不再后台全量重扫，避免每次启动触发 Windows Defender 首访扫描拖慢冷读
     if (!backendScanCache) {
       const disk = loadBackendCacheDisk()
       if (disk && Date.now() - disk.t < BACKEND_CACHE_MS) {
         backendScanCache = disk
-        void scanBackendsAndCache()
         return backendScanCache.value
       }
     }

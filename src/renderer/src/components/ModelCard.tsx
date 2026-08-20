@@ -61,7 +61,6 @@ export default function ModelCard({ card, style }: Props) {
   const userScrolledRef = useRef(false)
   const logsBtnRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
-  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null)
   useEffect(() => {
     if (cardLogsExpanded && logsBodyRef.current && !userScrolledRef.current) {
       logsBodyRef.current.scrollTop = logsBodyRef.current.scrollHeight
@@ -103,33 +102,8 @@ export default function ModelCard({ card, style }: Props) {
   function handleClearLogs() {
     clearModelLogs(card.template.id)
   }
-  const POPOVER_W = 380
-  const POPOVER_H = 460
-  // 按日志按钮的当前位置计算弹窗坐标（优先贴在按钮下方，放不下则翻到上方，并限制在视口内）
-  const computePopoverPos = useCallback(() => {
-    const el = logsBtnRef.current
-    if (!el) return null
-    const r = el.getBoundingClientRect()
-    let left = r.left
-    if (left + POPOVER_W > window.innerWidth - 8) left = window.innerWidth - 8 - POPOVER_W
-    if (left < 8) left = 8
-    let top = r.bottom + 6
-    if (top + POPOVER_H > window.innerHeight - 8) {
-      top = r.top - 6 - POPOVER_H
-      if (top < 8) top = 8
-    }
-    return { top, left }
-  }, [])
   function toggleLogs() {
-    if (cardLogsExpanded) {
-      setCardLogsExpanded(false)
-      setPopoverPos(null)
-      return
-    }
-    const pos = computePopoverPos()
-    if (!pos) return
-    setPopoverPos(pos)
-    setCardLogsExpanded(true)
+    setCardLogsExpanded(!cardLogsExpanded)
   }
   useEffect(() => {
     if (!cardLogsExpanded) return
@@ -138,39 +112,17 @@ export default function ModelCard({ card, style }: Props) {
       if (popoverRef.current && popoverRef.current.contains(t)) return
       if (logsBtnRef.current && logsBtnRef.current.contains(t)) return
       setCardLogsExpanded(false)
-      setPopoverPos(null)
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') { setCardLogsExpanded(false); setPopoverPos(null) }
+      if (e.key === 'Escape') setCardLogsExpanded(false)
     }
-    // 弹窗持续锚定在日志按钮旁：每帧重算位置，滚动/缩放/侧边栏收展等任何布局变化都跟随，
-    // 仅当按钮完全滚出视口时才收起；位置无变化时不触发重渲染
-    let rafId = 0
-    const track = () => {
-      const el = logsBtnRef.current
-      if (el) {
-        const r = el.getBoundingClientRect()
-        if (r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth) {
-          setCardLogsExpanded(false)
-          setPopoverPos(null)
-          return
-        }
-        const pos = computePopoverPos()
-        if (pos) {
-          setPopoverPos(prev => (prev && prev.top === pos.top && prev.left === pos.left) ? prev : pos)
-        }
-      }
-      rafId = requestAnimationFrame(track)
-    }
-    rafId = requestAnimationFrame(track)
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
     return () => {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
-      cancelAnimationFrame(rafId)
     }
-  }, [cardLogsExpanded, computePopoverPos])
+  }, [cardLogsExpanded])
   const [modelExists, setModelExists] = useState(true)
   useEffect(() => {
     if (!card.template.modelPath) { setModelExists(true); return }
@@ -426,7 +378,7 @@ export default function ModelCard({ card, style }: Props) {
         >
           <span className="card-tag-inner">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /></svg>
-            {!modelExists ? <span style={{ color: 'var(--danger)' }}>文件缺失</span> : (card.template.modelPath?.split(/[/\\]/).pop() || '无模型')}
+            {effectiveParamSet === 'audiocpp' ? '模型由 WebUI 管理' : (!modelExists ? <span style={{ color: 'var(--danger)' }}>文件缺失</span> : (card.template.modelPath?.split(/[/\\]/).pop() || '无模型'))}
           </span>
         </span>
         <span className="card-tag card-tag--status">
@@ -469,7 +421,7 @@ export default function ModelCard({ card, style }: Props) {
         <button
           className={`btn card-run-btn ${isRunning ? 'btn-danger' : 'btn-primary'}`}
           onClick={handleRunToggle}
-          disabled={!isRunning && !modelExists}
+          disabled={!isRunning && effectiveParamSet !== 'audiocpp' && !modelExists}
           onMouseEnter={() => runIconRef.current?.startAnimation()}
           onMouseLeave={() => runIconRef.current?.stopAnimation()}
         >
@@ -493,7 +445,7 @@ export default function ModelCard({ card, style }: Props) {
             onMouseEnter={() => chatBtnIconRef.current?.startAnimation()}
             onMouseLeave={() => chatBtnIconRef.current?.stopAnimation()}
           >
-            <GlobeIcon ref={chatBtnIconRef} size={14} className="nav-animate-icon" /> <span className="btn-label">{effectiveParamSet === 'audiocpp' ? '打开音频界面' : '打开聊天'}</span>
+            <GlobeIcon ref={chatBtnIconRef} size={14} className="nav-animate-icon" /> <span className="btn-label">{effectiveParamSet === 'audiocpp' ? '打开音频' : '打开聊天'}</span>
           </button>
         )}
         {isRunning && (
@@ -544,12 +496,8 @@ export default function ModelCard({ card, style }: Props) {
           </button>
         )}
       </div>
-      {(isRunning || card.status === 'error') && logs && logs.length > 0 && cardLogsExpanded && popoverPos && createPortal(
-        <div
-          ref={popoverRef}
-          className="card-logs-section logs-popover open"
-          style={{ top: popoverPos.top, left: popoverPos.left }}
-        >
+      {(isRunning || card.status === 'error') && logs && logs.length > 0 && cardLogsExpanded && createPortal(
+        <div ref={popoverRef} className="card-logs-section logs-popover open">
           <div className="card-logs-header">
             <span className="card-logs-count">
               <TerminalIcon size={13} className="nav-animate-icon" />

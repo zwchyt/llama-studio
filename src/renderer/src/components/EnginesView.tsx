@@ -562,6 +562,18 @@ export default function EnginesView() {
           </div>
         }
       />
+      <EngineDownloadSection
+        repo="0xShug0/audio.cpp"
+        engineLabel="audio.cpp"
+        description={
+          <>
+            audio.cpp：TTS / ASR / 音乐生成 / 声音克隆推理引擎，内置 WebUI（模型安装 / 加载 / 生成均在页内完成），
+            安装后可在「音频工作室」中使用。发布资产形如 <code>audiocpp-windows-cuda-portable-&lt;hash&gt;.zip</code>，
+            请按平台选择。注意：Windows 主包不含 CUDA 运行时，若系统未安装对应版本的 CUDA，
+            需额外下载同版本的 <code>audiocpp-windows-cuda-runtime-*.zip</code> 并手动解压进后端目录。
+          </>
+        }
+      />
     </div>
   )
 }

@@ -52,8 +52,12 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
   const effectiveParamSet = paramSet ?? paramSetOf(resolvedBackend?.kind)
   const isTensorSharp = effectiveParamSet === 'tensorsharp'
   const isSdcpp = effectiveParamSet === 'sdcpp'
+  const isAudiocpp = effectiveParamSet === 'audiocpp'
+  // “主要设置”摘取与默认折叠只对 llama.cpp 系引擎生效（llama.cpp / TurboQuant / BeeLlama 共用核心参数）；
+  // 其他引擎（TensorSharp / sd.cpp / audio.cpp）参数体系不同，直接按各自分类全量展示，避免主要设置只剩零星参数
+  const isLlamaFamily = effectiveParamSet === 'llamacpp' || effectiveParamSet === 'turboquant' || effectiveParamSet === 'beellama'
   // 预览 exe 跟随参数集：参数集决定命令格式，与实际后端 exe 无关
-  const backendExe = isTensorSharp ? 'TensorSharp.Server' : isSdcpp ? 'sd-server' : 'llama-server'
+  const backendExe = isTensorSharp ? 'TensorSharp.Server' : isSdcpp ? 'sd-server' : isAudiocpp ? 'audiocpp_server.exe' : 'llama-server'
   const activeArgs = args
   // 按参数集拉取专属 schema（llama.cpp → commands.json，TensorSharp → commands-tensorsharp.json）
   const [localSchema, setLocalSchema] = useState<CommandsSchema | null>(null)
@@ -91,13 +95,16 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
       if (initialSchemaRef.current) {
         initialSchemaRef.current = false
         const initialCollapsed = new Set<string>()
-        activeSchema.categories.forEach(cat => {
-          initialCollapsed.add(cat.name)
-        })
+        // 非 llama.cpp 系引擎参数少且无“主要设置”摘取，默认全部展开直接可见
+        if (isLlamaFamily) {
+          activeSchema.categories.forEach(cat => {
+            initialCollapsed.add(cat.name)
+          })
+        }
         setCollapsedCategories(initialCollapsed)
       }
     }
-  }, [activeSchema])
+  }, [activeSchema, isLlamaFamily])
 
   interface PreviewParam {
     id: string
@@ -190,10 +197,11 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
     }
     let allCommands: CommandParam[] = []
     activeSchema.categories.forEach(cat => allCommands.push(...cat.commands))
-    const featuredCommands = allCommands.filter(c => FEATURED_ARGS.includes(c.arg))
+    // “主要设置”（常用核心参数）只对 llama.cpp 系引擎摘取；其他引擎直接展示各自分类的全部参数
+    const featuredCommands = isLlamaFamily ? allCommands.filter(c => FEATURED_ARGS.includes(c.arg)) : []
     const cats = activeSchema.categories.map(cat => ({
       ...cat,
-      commands: cat.commands.filter(c => !FEATURED_ARGS.includes(c.arg))
+      commands: cat.commands.filter(c => !isLlamaFamily || !FEATURED_ARGS.includes(c.arg))
     })).filter(cat => cat.commands.length > 0)
     if (featuredCommands.length > 0) {
       featuredCommands.sort((a, b) => FEATURED_ARGS.indexOf(a.arg) - FEATURED_ARGS.indexOf(b.arg))
@@ -204,7 +212,7 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
       })
     }
     return cats
-  }, [activeSchema, searchQuery])
+  }, [activeSchema, searchQuery, isLlamaFamily])
   if (!activeSchema) {
     return <div className="text-muted text-sm">No commands schema loaded. Ensure a backend is installed.</div>
   }
