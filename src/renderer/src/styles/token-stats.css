@@ -1,503 +1,844 @@
-/* ═══════════════════════════════════════════════════════════════════════
-   Token 使用记录页（token-stats）
-   记账式界面：KPI 汇总 + 按模型汇总条 + 会话使用明细表
-   ═══════════════════════════════════════════════════════════════════════ */
+/* ── Token 使用统计（移植自 local-studio 的 Usage 页） ────────────────
+   表格语言：无边框表格立在页面底色上，行与行用空隙分隔，数字右对齐等宽。
+   统计条概括正下方的表格。柱状图刻意是 div（见 TokenUsageBars 注释）。
+   全部走 CSS 变量主题，暗色自动生效。 */
 
 .token-stats {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  height: 100%;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 24px;
-  color: var(--text);
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 2px 0 24px;
 }
 
-/* ── 头部 ── */
-.ts-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
+/* ── 页头 ── */
+.ts-header .page-subtitle {
+  max-width: 640px;
 }
 
-.ts-title {
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-
-.ts-sub {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  max-width: 720px;
-  line-height: 1.6;
-}
-
-.ts-header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.ts-header-chip {
+.ts-refresh {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  background: var(--surface);
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-/* ── KPI 卡 ── */
-.ts-kpis {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 12px;
-}
-
-.ts-kpi {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-}
-
-.ts-kpi-ico {
-  display: flex;
-  align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  color: var(--accent);
-  flex-shrink: 0;
-}
-
-.ts-kpi-value {
-  font-size: 19px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.2;
-}
-
-.ts-kpi-label {
-  font-size: 11.5px;
-  color: var(--text-secondary);
-  margin-top: 2px;
-}
-
-/* ── 区块标题 ── */
-.ts-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-/* 趋势图卡片与「按模型汇总」之间的间距单独收紧（基础 gap 18px → 约 8px） */
-.ts-section-chart {
-  margin-bottom: -10px;
-}
-
-.ts-section-title {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 13.5px;
-  font-weight: 600;
-}
-
-.ts-section-title svg {
-  color: var(--text-secondary);
-}
-
-/* ── 按模型汇总 ── */
-.ts-model-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.ts-model-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  width: 32px;
+  height: 32px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
-  font-size: 12.5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color var(--transition), color var(--transition), transform var(--transition);
 }
 
-.ts-model-ico {
+.ts-refresh:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.ts-refresh:active {
+  transform: scale(.96);
+}
+
+.ts-spin {
+  animation: ts-spin 0.8s linear infinite;
+}
+
+@keyframes ts-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── 页签栏 ── */
+.ts-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+
+.ts-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color var(--transition), border-color var(--transition);
+}
+
+.ts-tab:hover {
+  color: var(--text);
+}
+
+.ts-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* ── 页签面板头 + 上下文条 ── */
+.ts-tab-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -.2px;
+}
+
+.ts-tab-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  margin-bottom: 14px;
+  max-width: 680px;
+}
+
+.ts-scope {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  padding: 8px 12px;
+  margin-bottom: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.ts-scope-scale {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.ts-scope-detail {
+  color: var(--text-secondary);
+}
+
+/* ── 加载/错误/空态 ── */
+.ts-loading {
+  padding: 40px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.ts-error {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  color: var(--accent);
-  flex-shrink: 0;
+  gap: 12px;
+  padding: 24px 16px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  font-size: 13px;
+  color: var(--text);
 }
 
-.ts-model-name {
-  flex: 1;
+.ts-retry {
+  padding: 5px 12px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.ts-retry:hover {
+  border-color: var(--border-strong);
+}
+
+.ts-tab-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ── 统计条 ── */
+.ts-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.ts-stat {
+  padding: 12px 14px;
   min-width: 0;
-  font-weight: 600;
+}
+
+/* 除了第一个单元外都加左分隔线（auto-fit 断行时自然落在下一行开头） */
+.ts-stat:not(:first-child) {
+  border-left: 1px solid var(--border);
+}
+
+.ts-stat-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.ts-stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.3px;
   white-space: nowrap;
 }
 
-.ts-model-stat {
-  flex-shrink: 0;
-  color: var(--text-secondary);
+.ts-stat-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.ts-model-total {
-  flex-shrink: 0;
-  min-width: 70px;
-  text-align: right;
+.ts-tone-ok {
+  color: var(--success);
+}
+
+.ts-tone-warn {
+  color: var(--warning);
+}
+
+.ts-tone-err {
+  color: var(--danger);
+}
+
+/* ── 表格语言 ── */
+.ts-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.ts-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-head {
+  text-align: left;
+  font-size: 11px;
   font-weight: 600;
+  color: var(--text-secondary);
+  padding: 10px 14px;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+
+.ts-head.ts-num {
+  text-align: right;
+}
+
+.ts-head-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.ts-head-btn:hover {
   color: var(--text);
 }
 
-.ts-model-total-label {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--text-secondary);
-  margin-right: 6px;
+.ts-head-btn.active {
+  color: var(--text);
 }
 
-/* 累计总量数字：次要层级，与「当前消耗」并排对照 */
-.ts-model-total-cum {
-  color: var(--text-secondary);
-  font-weight: 500;
+.ts-sort-arrow {
+  display: inline-block;
+  width: 1ch;
+  text-align: center;
+  font-size: 10px;
+  flex-shrink: 0;
 }
 
-.ts-model-bar {
-  flex: 1;
-  min-width: 60px;
-  max-width: 160px;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--border-strong);
-  overflow: hidden;
-}
-
-.ts-model-bar-fill {
-  height: 100%;
-  border-radius: 999px;
-  background: var(--accent);
-  transition: width .5s ease-out;
-}
-
-/* ── 会话明细列表 ── */
-.ts-sessions {
-  display: flex;
-  flex-direction: column;
+.ts-head-span {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
 }
 
-.ts-session {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  overflow: hidden;
+/* 组头：贯穿整行的分区小字 */
+.ts-group-cell {
+  padding: 0;
 }
 
-.ts-session-row {
+.ts-group {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  width: 100%;
-  padding: 11px 14px;
-  border: none;
-  background: transparent;
+  padding: 9px 14px 5px;
+}
+
+.ts-group-left {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ts-group-label {
+  font-size: 11px;
+  font-weight: 700;
   color: var(--text);
-  font-size: 13px;
-  cursor: pointer;
-  text-align: left;
+  white-space: nowrap;
+}
+
+.ts-group-blurb {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ts-group-right {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 行 */
+.ts-row {
   transition: background var(--transition);
 }
 
-.ts-session-row:hover {
+.ts-row:hover {
   background: var(--surface-hover);
 }
 
-.ts-session-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  flex-shrink: 0;
+.ts-row.clickable {
+  cursor: pointer;
 }
 
-.ts-session-name {
-  flex: 1;
-  min-width: 0;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.ts-row.clickable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ts-row.dimmed {
+  opacity: .45;
+}
+
+.ts-cell {
+  padding: 8px 14px;
+  font-size: 12.5px;
+  vertical-align: middle;
+  border: none;
+}
+
+.ts-cell-lead {
+  padding-left: 14px;
+  padding-right: 10px;
+}
+
+.ts-cell-num {
+  text-align: right;
   white-space: nowrap;
 }
 
-.ts-session-model {
-  flex-shrink: 0;
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.ts-session-stat {
-  flex-shrink: 0;
-  font-size: 11.5px;
-  color: var(--text-muted);
-}
-
-.ts-session-tokens {
-  flex-shrink: 0;
-  font-family: var(--font-mono, ui-monospace, 'Cascadia Code', Consolas, monospace);
-  font-size: 12px;
-  color: var(--text-secondary);
+.ts-cell-num-value {
   font-variant-numeric: tabular-nums;
-}
-
-.ts-session-time {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.ts-session-detail {
-  border-top: 1px solid var(--border);
-  padding: 10px 14px;
-  background: color-mix(in srgb, var(--surface) 55%, transparent);
-}
-
-.ts-msg-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 18px;
-  font-size: 12px;
   color: var(--text-secondary);
 }
 
-.ts-msg-meta b {
-  margin-left: 4px;
+.ts-cell-num-strong {
+  font-weight: 600;
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
 
-/* ── 空态 ── */
-.ts-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 64px 24px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface);
-  text-align: center;
-}
-
-.ts-empty-ico {
+.ts-cell-sub {
+  font-size: 10.5px;
   color: var(--text-muted);
-  opacity: .6;
+  margin-top: 1px;
+  white-space: nowrap;
 }
 
-.ts-empty-title {
-  font-size: 15px;
-  font-weight: 600;
+.ts-cell-end {
+  text-align: right;
 }
 
-.ts-empty-sub {
-  max-width: 460px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-}
-
-/* ── 趋势折线图 ── */
-.ts-chart {
+/* BarCell：垫在数字下面的比例条 */
+.ts-bar-track {
   width: 100%;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  padding: 12px 14px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* 点击图表时 svg/容器获得焦点会显示默认的黄色 outline 框，去掉它 */
-.ts-chart:focus,
-.ts-chart :focus {
-  outline: none;
-}
-
-.ts-chart-body {
-  width: 100%;
-  height: 280px;
-  min-width: 0;
-  /* 裁剪掉自然样条在 0 线以下/图表范围外的过冲部分，避免曲线“下滑到下面” */
+  max-width: 7rem;
+  height: 3px;
+  margin-left: auto;
+  margin-top: 4px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
   overflow: hidden;
 }
 
-.ts-chart-body .recharts-responsive-container {
-  width: 100% !important;
+.ts-bar-fill {
+  height: 100%;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--accent) 48%, transparent);
 }
 
-.ts-tooltip {
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  padding: 8px 12px;
-  min-width: 160px;
-}
-
-.ts-tooltip-time {
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 600;
-  margin-bottom: 6px;
-}
-
-.ts-tooltip-row {
+/* 模型列 */
+.ts-model-id {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
-  font-size: 12px;
-  color: var(--text-primary);
-  margin-top: 4px;
+  min-width: 0;
 }
 
-.ts-tooltip-dot {
+.ts-model-dot {
+  flex-shrink: 0;
+  align-self: center;
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  flex: none;
 }
 
-.ts-tooltip-name {
-  flex: 1;
-  min-width: 0;
+.ts-model-name {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 300px;
+}
+
+.ts-model-sub {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 日期列 */
+.ts-day-label {
+  color: var(--text);
   white-space: nowrap;
 }
 
-.ts-tooltip-val {
+/* 通知（空态） */
+.ts-notice {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 28px 20px;
+  text-align: left;
+}
+
+.ts-notice-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.ts-notice-body {
+  font-size: 13px;
   color: var(--text-secondary);
-  white-space: nowrap;
+  margin: 0;
+  max-width: 560px;
+  line-height: 1.5;
 }
 
-.ts-chart-legend {
+/* ── 区块（活动页的「一天中的时段」「过去一年」） ── */
+.ts-section-head {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.ts-legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.ts-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+
+.ts-section-note {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.ts-section-desc {
   font-size: 12px;
   color: var(--text-secondary);
+  margin: 4px 0 10px;
 }
 
-.ts-legend-swatch {
-  width: 14px;
-  height: 4px;
-  border-radius: 2px;
-  display: inline-block;
-}
-
-.ts-chart-svg {
-  width: 100%;
-  height: auto;
-  display: block;
-}
-
-.ts-chart-grid {
-  stroke: var(--border);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-
-.ts-chart-axis {
-  fill: var(--text-muted);
-  font-size: 10.5px;
-  font-family: var(--font-mono, ui-monospace, 'Cascadia Code', Consolas, monospace);
-}
-
-.ts-chart-line {
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  transition: opacity var(--transition);
-}
-
-.ts-chart-line:hover {
-  opacity: .8;
-}
-
-.ts-chart-dot {
-  fill: var(--background, var(--surface));
-  stroke: var(--accent);
-  stroke-width: 1.5;
-  cursor: help;
-}
-
-.ts-chart-empty {
-  padding: 40px 16px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-sm);
+/* ── 柱状图（一天中的时段 / 抽屉趋势） ── */
+.ts-bars {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   background: var(--surface);
-  text-align: center;
-  font-size: 12.5px;
-  color: var(--text-secondary);
+  padding: 14px 14px 8px;
 }
 
-/* ── 底部合计 ── */
-.ts-footer {
+.ts-bars-axis {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.ts-bar-slot {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+
+.ts-bar {
+  width: 100%;
+  border-radius: 2px 2px 0 0;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  transition: background var(--transition), transform var(--transition);
+  transform-origin: bottom;
+}
+
+.ts-bar-slot:hover .ts-bar {
+  background: color-mix(in srgb, var(--accent) 75%, transparent);
+  transform: scaleY(1.03);
+}
+
+.ts-bar.zero {
+  background: color-mix(in srgb, var(--text-muted) 22%, transparent);
+}
+
+.ts-bar-labels {
+  display: flex;
+  gap: 2px;
+  margin-top: 6px;
+}
+
+.ts-bar-label {
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── 热力图（过去一年） ── */
+.ts-hm-scroll {
+  overflow-x: auto;
+}
+
+.ts-hm {
+  min-width: 47rem;
+  padding: 12px;
+}
+
+.ts-hm-months {
+  display: flex;
+  gap: 3px;
+  margin-bottom: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.ts-hm-month {
+  flex: 1 1 0;
+  text-align: left;
+}
+
+.ts-hm-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, 1fr);
+  gap: 3px;
+}
+
+.ts-hm-cell {
+  width: 11px;
+  height: 11px;
+  border: none;
+  border-radius: 2px;
+  padding: 0;
+  cursor: pointer;
+  transition: transform var(--transition);
+}
+
+.ts-hm-pad {
+  width: 11px;
+  height: 11px;
+}
+
+.ts-hm-future {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-muted) 6%, transparent);
+}
+
+.ts-hm-cell:hover,
+.ts-hm-cell:focus-visible {
+  transform: scale(1.18);
+  outline: 1px solid var(--text);
+  outline-offset: 1px;
+}
+
+.ts-hm-selected {
+  outline: 1.5px solid var(--text);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.ts-chip-btn {
+  margin-left: auto;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+  white-space: nowrap;
+}
+
+.ts-chip-btn:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: var(--border-strong);
+}
+
+.ts-hm-l0 {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.ts-hm-l1 {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.ts-hm-l2 {
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+
+.ts-hm-l3 {
+  background: color-mix(in srgb, var(--accent) 62%, transparent);
+}
+
+.ts-hm-l4 {
+  background: color-mix(in srgb, var(--accent) 90%, transparent);
+}
+
+.ts-hm-legend {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin-top: 8px;
   flex-wrap: wrap;
-  padding: 10px 14px;
-  border-top: 1px solid var(--border-strong);
-  font-family: var(--font-mono, ui-monospace, 'Cascadia Code', Consolas, monospace);
-  font-size: 12px;
+}
+
+.ts-hm-active {
+  font-size: 11px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
-.ts-footer-item {
-  display: inline-flex;
+.ts-hm-scale {
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
 }
 
-.ts-mono {
-  font-family: var(--font-mono, ui-monospace, 'Cascadia Code', Consolas, monospace);
+.ts-hm-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+/* ── 模型抽屉 ── */
+.ts-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  background: rgba(0, 0, 0, .28);
+  display: flex;
+  justify-content: flex-end;
+  animation: ts-fade-in .15s ease-out;
+}
+
+.ts-drawer {
+  width: 400px;
+  max-width: 92vw;
+  height: 100%;
+  background: var(--surface);
+  border-left: 1px solid var(--border-strong);
+  z-index: var(--z-modal);
+  display: flex;
+  flex-direction: column;
+  box-shadow: -12px 0 32px rgba(0, 0, 0, .12);
+  animation: ts-drawer-in .2s ease-out;
+  overflow: hidden;
+}
+
+@keyframes ts-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes ts-drawer-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.ts-drawer-head {
+  flex-shrink: 0;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ts-drawer-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ts-drawer-dot {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.ts-drawer-titles {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ts-drawer-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ts-drawer-status {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-drawer-close {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+
+.ts-drawer-close:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.ts-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 16px 24px;
+}
+
+.ts-drawer-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 0 0 2px;
+  word-break: break-all;
+}
+
+.ts-drawer-path-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0;
+  word-break: break-all;
+}
+
+.ts-facts {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.ts-fact {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--bg);
+}
+
+.ts-fact-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 3px;
+}
+
+.ts-fact-value {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-drawer-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  margin: 0 0 3px;
+}
+
+.ts-drawer-section-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0 0 10px;
+}
+
+.ts-drawer-bars .ts-bars {
+  padding: 10px 10px 6px;
+}
+
+.ts-drawer-bar-range {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 6px;
   font-variant-numeric: tabular-nums;
 }
