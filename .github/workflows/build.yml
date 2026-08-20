@@ -108,17 +108,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: '22'
-          cache: 'npm'
+          bun-version: latest
 
-      - run: npm install
-
-      # npm cache clean（GitHub AI 建议的 Windows 文件锁规避；注意：会清掉
-      # setup-node 恢复的 npm 缓存，使依赖每次全量重新下载——无害但略拖慢构建）
-      - name: Clean npm cache
-        run: npm cache clean --force
+      - run: bun install
 
       # electron-builder 打包 Windows 时需要下载 winCodeSign 等二进制
       # （github.com/electron-userland/electron-builder-binaries），CI 网络抖动会
@@ -130,14 +125,14 @@ jobs:
           key: electron-builder-cache-${{ runner.os }}
 
       - name: Build Electron
-        run: npm run build
+        run: bun run build
 
       - name: Package with electron-builder
         shell: bash
         run: |
           set -e
           for i in 1 2 3; do
-            if npm run package; then
+            if bun run package; then
               exit 0
             fi
             echo "package attempt $i failed (network), retrying in 10s..."
