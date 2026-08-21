@@ -28,13 +28,14 @@ interface ModelDownloadInfo {
 }
 interface HfModelResult {
   id: string; author: string; name: string
-  downloads: number; likes: number; tags: string[]; lastModified: string
+  downloads: number; likes: number; tags: string[]; lastModified: string; avatar?: string
 }
 interface HfFileResult { name: string; size: number; downloadUrl: string }
 interface MsModelResult {
   id: string; author: string; name: string
-  downloads: number; likes: number; tags: string[]; lastModified: string
+  downloads: number; likes: number; tags: string[]; lastModified: string; avatar?: string
 }
+interface HfSearchResult { items: HfModelResult[]; hasMore: boolean }
 interface LlamaCppApi {
   listModels: () => Promise<ModelFileInfo[]>
   listModelsRefresh: () => Promise<ModelFileInfo[]>
@@ -44,6 +45,7 @@ interface LlamaCppApi {
   pauseModelDownload: (id: string) => Promise<{ success: boolean; error?: string }>
   resumeModelDownload: (id: string) => Promise<{ success: boolean; error?: string }>
   cancelModelDownload: (id: string) => Promise<{ success: boolean; error?: string }>
+  retryModelDownload: (id: string) => Promise<{ success: boolean; error?: string }>
   listModelDownloads: () => Promise<ModelDownloadInfo[]>
   onModelDownloadProgress: (cb: (data: ModelDownloadInfo) => void) => void
   removeModelDownloadListener: () => void
@@ -84,12 +86,16 @@ interface LlamaCppApi {
   installAppUpdate: (opts: { installerPath: string }) => Promise<{ success: boolean; error?: string }>
   onAppDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number }) => void) => void
   removeAppDownloadListener: () => void
-  hfSearch: (query: string) => Promise<HfModelResult[] | { error: string }>
+  hfSearch: (query: string, opts?: { sort?: string; library?: string; limit?: number; offset?: number }) => Promise<HfSearchResult | { error: string }>
   hfGetFiles: (repoId: string) => Promise<HfFileResult[] | { error: string }>
+  hfModelInfo: (repoId: string) => Promise<{ description: string; readme: string; isHtml: boolean }>
   hfDownloadModel: (opts: { repoId: string; filename: string; downloadUrl: string }) => Promise<{ success: boolean; error?: string }>
   hfOpenModelsDir: () => Promise<void>
-  msSearch: (query: string) => Promise<MsModelResult[] | { error: string }>
+  msSearch: (query: string, opts?: { sort?: string; library?: string; limit?: number; page?: number }) => Promise<HfSearchResult | { error: string }>
   msGetFiles: (repoId: string) => Promise<HfFileResult[] | { error: string }>
+  msModelInfo: (repoId: string) => Promise<{ description: string; readme: string; isHtml: boolean }>
+  msModelAvatar: (repoId: string) => Promise<string | null>
+  hfModelAvatar: (author: string) => Promise<string | null>
   msDownloadModel: (opts: { repoId: string; filename: string; downloadUrl: string }) => Promise<{ success: boolean; error?: string }>
   msOpenModelsDir: () => Promise<void>
   onHfDownloadProgress: (callback: (data: {

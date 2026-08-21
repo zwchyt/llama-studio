@@ -84,7 +84,7 @@ interface AppStore {
   appCheckingUpdate: boolean
   templateSearch: string
   modelDownloads: Record<string, ModelDownloadInfo>
-  hfDownloads: { repoId: string; filename: string; percent: number; phase: HfDownloadPhase; speed?: number }[]
+  hfDownloads: { repoId: string; filename: string; percent: number; phase: HfDownloadPhase; speed?: number; receivedBytes?: number; totalBytes?: number }[]
   hubQuery: string
   hubResults: import('../../../shared/types').HubResultItem[]
   hubSelectedModelId: string | null
@@ -131,7 +131,7 @@ interface AppStore {
   setTemplateSearch: (q: string) => void
   upsertModelDownload: (d: ModelDownloadInfo) => void
   removeModelDownload: (id: string) => void
-  setHfDownload: (d: { repoId: string; filename: string; percent: number; phase: HfDownloadPhase; speed?: number }) => void
+  setHfDownload: (d: { repoId: string; filename: string; percent: number; phase: HfDownloadPhase; speed?: number; receivedBytes?: number; totalBytes?: number }) => void
   removeHfDownload: (filename: string) => void
   setHubQuery: (q: string) => void
   setHubResults: (r: import('../../../shared/types').HubResultItem[]) => void

@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { ChevronDown, ChevronRight, Copy, Check, Search, Lock } from 'lucide-react'
-import { CpuIcon, ZapIcon, TimerIcon, SparklesIcon, ImageIcon } from '@animateicons/react/lucide'
+import { CpuIcon, ZapIcon, TimerIcon, SparklesIcon, ImageIcon, AudioLinesIcon } from '@animateicons/react/lucide'
 import type { CommandParam, TemplateArgs, CommandsSchema } from '../../../shared/types'
 import { iconComponents } from '../utils/iconMap'
 import { ENGINE_LABELS, paramSetOf, ALL_ENGINES } from '../utils/engine'
@@ -41,7 +41,8 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
     tensorsharp: ZapIcon,
     turboquant: TimerIcon,
     beellama: SparklesIcon,
-    sdcpp: ImageIcon
+    sdcpp: ImageIcon,
+    audiocpp: AudioLinesIcon
   }
 
   const card = templateId ? cards.find(c => c.template.id === templateId) : null

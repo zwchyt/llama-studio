@@ -290,7 +290,9 @@ function AppMain() {
             filename: data.filename,
             percent: data.percent,
             phase: data.phase,
-            speed: data.speed
+            speed: data.speed,
+            receivedBytes: data.receivedBytes,
+            totalBytes: data.totalBytes
           })
         }
       } catch (e) {

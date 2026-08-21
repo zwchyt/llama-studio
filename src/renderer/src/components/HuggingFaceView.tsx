@@ -1,14 +1,19 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import {
   Search, Download, Heart, ChevronDown, ChevronLeft,
-  FolderOpen, CheckCircle, Loader2, X, AlertCircle, Box, Pause, Play
+  FolderOpen, CheckCircle, Loader2, X, AlertCircle, Pause, Play, RotateCcw
 } from 'lucide-react'
-import { formatBytes } from '../utils/format'
-import { formatDownloadStatus, formatDownloadStripText } from '../utils/downloadFormat'
+import { formatBytes, formatSpeed } from '../utils/format'
+import { formatDownloadStatus, formatDownloadStripText, formatEta } from '../utils/downloadFormat'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
+import ModelLogo from './ModelLogo'
 import '../styles/hub.css'
 interface HfModel {
   id: string
@@ -18,6 +23,7 @@ interface HfModel {
   likes: number
   tags: string[]
   lastModified: string
+  avatar?: string
 }
 interface HfFile {
   name: string
@@ -29,6 +35,74 @@ function formatNumber(n: number): string {
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
   return String(n)
 }
+function formatDate(iso: string): string {
+  if (!iso) return '未知'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return '未知'
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+const readmeSanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [
+    ...(defaultSchema.tagNames || []),
+    'div', 'span', 'section', 'figure', 'figcaption', 'picture', 'source',
+    'svg', 'path', 'details', 'summary', 'img', 'a',
+  ],
+  attributes: {
+    ...defaultSchema.attributes,
+    img: [...(defaultSchema.attributes?.img || []), 'src', 'alt', 'title', 'width', 'height', 'loading'],
+    a: [...(defaultSchema.attributes?.a || []), 'href', 'target', 'rel'],
+  },
+  clobberPrefix: 'user-content-',
+}
+
+function resolveImgSrc(src: string | undefined, base: string): string {
+  if (!src) return ''
+  if (/^https?:\/\//i.test(src) || src.startsWith('data:') || src.startsWith('#')) return src
+  const clean = src.replace(/^[./]+/, '')
+  return base.replace(/\/+$/, '') + '/' + clean
+}
+
+const ReadmeMarkdown = React.memo(function ReadmeMarkdown({
+  content,
+  id,
+  isHF,
+}: {
+  content: string
+  id: string
+  isHF: boolean
+}) {
+  const base = isHF
+    ? `https://huggingface.co/${id}/resolve/main/`
+    : `https://modelscope.cn/models/${id}/resolve/master/`
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeRaw, [rehypeSanitize, readmeSanitizeSchema]]}
+      components={{
+        img: ({ node, src, alt, ...rest }) => (
+          <img src={resolveImgSrc(src as string, base)} alt={(alt as string) || ''} loading="lazy" {...rest} />
+        ),
+        a: ({ node, href, children, ...rest }) => {
+          const handleClick = (e: React.MouseEvent) => {
+            if (href && /^https?:\/\//i.test(href)) {
+              e.preventDefault()
+              window.api.openExternal(href)
+            }
+          }
+          return (
+            <a href={href} target="_blank" rel="noopener noreferrer" onClick={handleClick} {...rest}>
+              {children}
+            </a>
+          )
+        },
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  )
+})
+
 function quantLabel(filename: string): { label: string; color: string } {
   const upper = filename.toUpperCase()
   if (upper.includes('Q2')) return { label: 'Q2', color: '#ef4444' }
@@ -43,6 +117,8 @@ function quantLabel(filename: string): { label: string; color: string } {
   return { label: 'GGUF', color: '#6b7280' }
 }
 const popularQueries = ['llama', 'mistral', 'phi', 'qwen', 'gemma', 'deepseek', 'falcon']
+
+const PAGE_SIZE = 20
 
 export default function HuggingFaceView() {
   const {
@@ -62,28 +138,71 @@ export default function HuggingFaceView() {
   const [error, setError] = useState('')
   const [files, setFiles] = useState<HfFile[]>([])
   const [filesLoading, setFilesLoading] = useState(false)
+  const [modelInfo, setModelInfo] = useState<{ description: string; loading: boolean }>({ description: '', loading: false })
+  const [modelReadme, setModelReadme] = useState<{ content: string; isHtml: boolean; loading: boolean }>({ content: '', isHtml: false, loading: false })
 
   const [inputValue, setInputValue] = useState(hubQuery)
+  const [page, setPage] = useState(1)
+  const [hasMore, setHasMore] = useState(false)
+  const resultsRef = useRef<HfModel[]>([])
+  const searchSeq = useRef(0)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const doSearch = useCallback(async (q: string) => {
+  const runSearch = useCallback(async (
+    q: string,
+    { append = false }: { append?: boolean } = {}
+  ) => {
     if (!q.trim()) return
-    setHubQuery(q)
-    setLoading(true)
-    setError('')
-    setHubResults([])
-    setHubSelectedModelId(null)
+    const mySeq = ++searchSeq.current
+    const nextPage = append ? page + 1 : 1
+    if (!append) {
+      setHubQuery(q)
+      setLoading(true)
+      setError('')
+      setHubResults([])
+      setHubSelectedModelId(null)
+      resultsRef.current = []
+    } else {
+      setLoading(true)
+    }
+    const apiOpts = isHF
+      ? { library: 'gguf', limit: PAGE_SIZE, offset: (nextPage - 1) * PAGE_SIZE }
+      : { library: 'gguf', limit: PAGE_SIZE, page: nextPage }
     try {
       const res = isHF
-        ? await window.api.hfSearch(q.trim())
-        : await window.api.msSearch(q.trim())
-      if ('error' in res) throw new Error(res.error)
-      setHubResults(res)
+        ? await window.api.hfSearch(q.trim(), apiOpts)
+        : await window.api.msSearch(q.trim(), apiOpts)
+      if (mySeq !== searchSeq.current) return
+      if ('error' in res) throw new Error((res as { error: string }).error)
+      const arr = res.items as HfModel[]
+      const merged = append ? [...resultsRef.current, ...arr] : arr
+      resultsRef.current = merged
+      setHubResults(merged)
+      setPage(nextPage)
+      setHasMore(res.hasMore)
     } catch (e: any) {
+      if (mySeq !== searchSeq.current) return
       setError(e.message || '搜索失败')
+      if (!append) setHubResults([])
     } finally {
-      setLoading(false)
+      if (mySeq === searchSeq.current) setLoading(false)
     }
-  }, [setHubQuery, setHubResults, setHubSelectedModelId, setLoading, setError, isHF])
+  }, [setHubQuery, setHubResults, setHubSelectedModelId, setLoading, setError, isHF, page])
+
+  const runImmediate = (q: string) => {
+    if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null }
+    runSearch(q)
+  }
+  const doSearch = (q: string) => runImmediate(q)
+  const scheduleSearch = (v: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    if (!v.trim()) return
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null
+      runSearch(v.trim())
+    }, 350)
+  }
+  const loadMore = () => { if (hubQuery.trim() && !loading) runSearch(hubQuery, { append: true }) }
 
   async function fetchFiles(model: HfModel) {
     setFiles([])
@@ -104,6 +223,18 @@ export default function HuggingFaceView() {
   async function handleSelectModel(model: HfModel) {
     setHubSelectedModelId(model.id)
     fetchFiles(model)
+    setModelInfo({ description: '', loading: true })
+    setModelReadme({ content: '', isHtml: false, loading: true })
+    try {
+      const info = isHF
+        ? await window.api.hfModelInfo(model.id)
+        : await window.api.msModelInfo(model.id)
+      setModelInfo({ description: info.description || '', loading: false })
+      setModelReadme({ content: info.readme || '', isHtml: !!info.isHtml, loading: false })
+    } catch {
+      setModelInfo({ description: '', loading: false })
+      setModelReadme({ content: '', isHtml: false, loading: false })
+    }
   }
 
   async function handleDownload(file: HfFile) {
@@ -123,6 +254,10 @@ export default function HuggingFaceView() {
       removeHfDownload(file.name)
       notify(`下载失败：${res.error}`, 'error')
     }
+  }
+
+  async function handleRetryDownload(filename: string) {
+    await safeCall(() => window.api.retryModelDownload(filename), '重试下载失败')
   }
 
   const isDownloading = useCallback((filename: string) => hfDownloads.some(d => d.filename === filename), [hfDownloads])
@@ -179,15 +314,15 @@ export default function HuggingFaceView() {
           type="text"
           placeholder={`在 ${sourceLabel} 上搜索 GGUF 模型...`}
           value={inputValue}
-          onChange={e => setInputValue(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && doSearch(inputValue)}
+          onChange={e => { const v = e.target.value; setInputValue(v); scheduleSearch(v) }}
+          onKeyDown={e => { if (e.key === 'Enter') runImmediate(inputValue) }}
         />
         {inputValue && (
           <button className="hub-search-clear" onClick={() => { setInputValue(''); setHubQuery(''); setHubResults([]); setHubSelectedModelId(null) }} aria-label="清除搜索">
             <X size={14} />
           </button>
         )}
-        <button className="btn btn-primary" onClick={() => doSearch(inputValue)} disabled={loading || !inputValue.trim()}>
+        <button className="btn btn-primary" onClick={() => runImmediate(inputValue)} disabled={loading || !inputValue.trim()}>
           {loading ? <Loader2 size={14} className="spin" /> : <Search size={14} />}
           搜索
         </button>
@@ -228,7 +363,7 @@ export default function HuggingFaceView() {
                 onClick={() => handleSelectModel(model)}
               >
                 <div className="hub-card-icon">
-                  <Box size={18} />
+                  <ModelLogo author={model.author} avatarUrl={isHF ? undefined : (model.avatar || undefined)} size={36} fetchAvatar={() => isHF ? window.api.hfModelAvatar(model.author) : window.api.msModelAvatar(model.id)} />
                 </div>
                 <div className="hub-card-body">
                   <div className="hub-card-name" title={model.name}>{model.name}</div>
@@ -243,11 +378,15 @@ export default function HuggingFaceView() {
             ))}
           </div>
           {selectedModel && (
+            <>
             <div className="hub-detail-panel">
               <div className="hub-detail-header">
                 <button className="btn btn-ghost btn-icon" onClick={() => setHubSelectedModelId(null)}>
                   <ChevronLeft size={16} />
                 </button>
+                <div className="hub-card-icon" style={{ width: 36, height: 36 }}>
+                  <ModelLogo author={selectedModel.author} avatarUrl={isHF ? undefined : (selectedModel.avatar || undefined)} size={36} fetchAvatar={() => isHF ? window.api.hfModelAvatar(selectedModel.author) : window.api.msModelAvatar(selectedModel.id)} />
+                </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="hub-detail-name" title={selectedModel.name}>{selectedModel.name}</div>
                   <div className="hub-detail-author">{selectedModel.author}</div>
@@ -263,6 +402,42 @@ export default function HuggingFaceView() {
               <div className="hub-detail-stats">
                 <span><Download size={12} /> {formatNumber(selectedModel.downloads)} 次下载</span>
                 <span><Heart size={12} /> {formatNumber(selectedModel.likes)} 次点赞</span>
+              </div>
+              <div className="hub-detail-meta">
+                <span>更新于 {formatDate(selectedModel.lastModified)}</span>
+              </div>
+              {!modelReadme.loading && selectedModel.tags && selectedModel.tags.length > 0 && (
+                <div className="hub-detail-tags">
+                  {selectedModel.tags.slice(0, 16).map(t => (
+                    <span key={t} className="hub-detail-tag">{t}</span>
+                  ))}
+                </div>
+              )}
+              {!filesLoading && files.length > 0 && (
+                <>
+                  <div className="hub-detail-section-label">量化精度</div>
+                  <div className="hub-detail-quants">
+                    {Array.from(new Set(files.map(f => quantLabel(f.name).label)))
+                      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+                      .map(q => {
+                        const sample = files.find(f => quantLabel(f.name).label === q)!
+                        const { color } = quantLabel(sample.name)
+                        return (
+                          <span key={q} className="hub-quant-badge" style={{ background: color + '22', color }}>{q}</span>
+                        )
+                      })}
+                  </div>
+                </>
+              )}
+              <div className="hub-detail-section-label">仓库信息</div>
+              <div className="hub-detail-repo">
+                <div><span className="hub-detail-repo-k">作者</span><span className="hub-detail-repo-v">{selectedModel.author}</span></div>
+                <div><span className="hub-detail-repo-k">更新于</span><span className="hub-detail-repo-v">{formatDate(selectedModel.lastModified)}</span></div>
+                <div><span className="hub-detail-repo-k">来源</span>
+                  <a className="hub-detail-repo-link" href="#" onClick={(e) => { e.preventDefault(); window.api.openExternal(isHF ? `https://huggingface.co/${selectedModel.id}` : `https://modelscope.cn/models/${selectedModel.id}`) }}>
+                    {isHF ? 'HuggingFace' : 'ModelScope'}
+                  </a>
+                </div>
               </div>
               <div className="hub-detail-section-label">GGUF 文件</div>
               {filesLoading && (
@@ -330,24 +505,67 @@ export default function HuggingFaceView() {
                 )
               })}
             </div>
-          )}
+            <div className="hub-readme-panel">
+              <div className="hub-detail-section-label">模型卡</div>
+              {modelReadme.loading ? (
+                <div className="hub-detail-desc-skeleton" />
+              ) : modelReadme.content ? (
+                <div className="hub-detail-readme">
+                  <ReadmeMarkdown content={modelReadme.content} id={selectedModel.id} isHF={isHF} />
+                </div>
+              ) : (
+                <div className="hub-detail-desc">{modelInfo.description || '暂无介绍'}</div>
+              )}
+            </div>
+          </>)}
+        </div>
+      )}
+      {hasMore && !loading && (
+        <div className="hub-load-more-wrap">
+          <button className="btn btn-ghost hub-load-more" onClick={loadMore}>加载更多</button>
         </div>
       )}
       {hfDownloads.filter(d => d.phase !== 'done').length > 0 && (
         <div className="hub-downloads-strip">
           {hfDownloads.filter(d => d.phase !== 'done').map(dl => {
             const isPaused = dl.phase === 'paused'
+            const isError = dl.phase === 'error'
             const statusText = formatDownloadStripText({ phase: dl.phase, percent: dl.percent, speed: dl.speed })
+            const remaining = (dl.totalBytes || 0) - (dl.receivedBytes || 0)
+            const etaText = dl.speed && dl.speed > 0 && remaining > 0 ? formatEta(remaining / dl.speed) : ''
             return (
-              <div key={dl.filename} className="hub-dl-strip-item">
-                {isPaused
-                  ? <Pause size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                  : <Loader2 size={12} className="spin" style={{ flexShrink: 0 }} />}
-                <span className="hub-dl-strip-name">{dl.filename}</span>
-                <div className="hub-dl-strip-bar">
-                  <div className="hub-dl-strip-fill" style={{ width: `${dl.percent}%`, opacity: isPaused ? 0.45 : 1, transition: 'width 0.3s ease' }} />
+              <div key={dl.filename} className={`hub-dl-strip-item ${isError ? 'is-error' : ''}`}>
+                <div className="hub-dl-strip-row">
+                  {isError
+                    ? <AlertCircle size={12} className="hub-dl-strip-icon" />
+                    : isPaused
+                      ? <Pause size={12} className="hub-dl-strip-icon" />
+                      : <Loader2 size={12} className="hub-dl-strip-icon spin" />}
+                  <span className="hub-dl-strip-name" title={dl.filename}>{dl.filename}</span>
+                  <div className="hub-dl-strip-bar">
+                    <div className="hub-dl-strip-fill" style={{ width: `${dl.percent}%`, opacity: (isPaused || isError) ? 0.45 : 1, transition: 'width 0.3s ease' }} />
+                  </div>
+                  <span className="hub-dl-strip-pct">{statusText}</span>
                 </div>
-                <span className="hub-dl-strip-pct">{statusText}</span>
+                <div className="hub-dl-strip-meta">
+                  {dl.phase === 'downloading' && (
+                    <>
+                      <span>{formatBytes(dl.receivedBytes || 0)} / {formatBytes(dl.totalBytes || 0)}</span>
+                      {dl.speed ? <span>{formatSpeed(dl.speed)}</span> : null}
+                      {etaText ? <span>剩余 {etaText}</span> : null}
+                    </>
+                  )}
+                  {isPaused && (
+                    <button className="hub-dl-strip-btn" onClick={() => safeCall(() => window.api.resumeModelDownload(dl.filename), '继续下载失败')}>
+                      <Play size={11} /> 继续
+                    </button>
+                  )}
+                  {isError && (
+                    <button className="hub-dl-strip-btn" onClick={() => handleRetryDownload(dl.filename)}>
+                      <RotateCcw size={11} /> 重试
+                    </button>
+                  )}
+                </div>
               </div>
             )
           })}

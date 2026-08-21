@@ -528,8 +528,10 @@
 
 .launch-mode-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 6px;
+  min-width: 0;
 }
 
 .launch-mode-btn {

@@ -64,3 +64,19 @@ export function formatDownloadStripText(dl: DownloadStatusInput): string {
       return `${dl.percent}%`
   }
 }
+
+/**
+ * 把剩余秒数格式化为中文时长（如「1分20秒」「2时5分」）。
+ * 非法/无限值返回空串（调用方据此决定是否展示）。
+ */
+export function formatEta(seconds?: number): string {
+  if (seconds == null || !isFinite(seconds) || seconds < 0) return ''
+  const s = Math.round(seconds)
+  if (s < 60) return `${s}秒`
+  const m = Math.floor(s / 60)
+  const rs = s % 60
+  if (m < 60) return rs ? `${m}分${rs}秒` : `${m}分`
+  const h = Math.floor(m / 60)
+  const rm = m % 60
+  return rm ? `${h}时${rm}分` : `${h}时`
+}

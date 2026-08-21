@@ -1,4 +1,5 @@
 import { ipcMain, dialog, shell, BrowserWindow, net } from 'electron'
+import https from 'https'
 import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
   unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, watch, promises as fsPromises,
@@ -1629,6 +1630,46 @@ export function registerIpcHandlers(): void {
     downloadTasks.delete(id)
     return { success: true }
   })
+  ipcMain.handle('retry-model-download', (_e, id: string) => {
+    const task = downloadTasks.get(id)
+    if (!task) return { success: false, error: '未找到下载任务' }
+    if (task.phase !== 'error' && task.phase !== 'cancelled') return { success: false, error: '当前状态无需重试' }
+    // 清理上次残留的临时/目标文件，从头重新开始
+    try { unlinkSync(task.destPath + '.tmp') } catch { }
+    try { unlinkSync(task.destPath) } catch { }
+    task.receivedBytes = 0
+    task.totalBytes = 0
+    task.phase = 'downloading'
+    const tmpPath = task.destPath + '.tmp'
+    const broadcast = (t: DownloadTask, force = false) => {
+      if (!force && !canBroadcast(t.id)) return
+      const payload = {
+        id: t.id, filename: t.filename, phase: t.phase, speed: t.speed,
+        percent: t.totalBytes > 0 ? Math.round((t.receivedBytes / t.totalBytes) * 100) : 0,
+        receivedBytes: t.receivedBytes, totalBytes: t.totalBytes, destPath: t.destPath,
+        repoId: t.repoId
+      }
+      BrowserWindow.getAllWindows().forEach(win => {
+        if (!win.isDestroyed()) {
+          win.webContents.send('model-download-progress', payload)
+          if (t.repoId) win.webContents.send('hf-download-progress', payload)
+        }
+      })
+    }
+    task.cancelFn = startDownload(
+      task.url, tmpPath, 0,
+      (r, t, speed) => { task.receivedBytes = r; task.totalBytes = t; task.speed = speed; broadcast(task) },
+      () => {
+        try { renameSync(tmpPath, task.destPath) } catch { }
+        task.phase = 'done'; task.speed = 0; broadcast(task, true)
+        invalidateModelsCache()
+        setTimeout(() => { downloadTasks.delete(id); broadcastTimes.delete(id); lastSent.delete(id) }, 5000)
+      },
+      (err) => { task.phase = 'error'; task.speed = 0; broadcast(task, true); console.error('重试下载错误:', err) }
+    )
+    broadcast(task, true)
+    return { success: true }
+  })
   ipcMain.handle('list-model-downloads', () => {
     return Array.from(downloadTasks.values()).map(t => ({
       id: t.id, url: t.url, filename: t.filename, destPath: t.destPath,
@@ -3106,7 +3147,7 @@ export function registerIpcHandlers(): void {
       flattenSingleRoot(stagingDir)
       if (countExtractedFiles(stagingDir) === 0) throw new Error('解压后内容为空')
       // 核心可执行文件必须存在（有限深度查找），防止“解压完成但没有主程序”
-      const exeNames = ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe', 'TensorSharp.Server', 'sd-server.exe', 'sd-server']
+      const exeNames = ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe', 'TensorSharp.Server', 'sd-server.exe', 'sd-server', 'audiocpp_server.exe', 'audiocpp_server', 'audiocpp_cli.exe', 'audiocpp_cli']
       if (!findAnyFile(stagingDir, exeNames)) throw new Error('解压后未找到核心可执行文件，安装包可能不完整')
       // 校验全部通过后才替换正式版本目录（此前版本安装保持原样）。
       // 原子替换：先把旧目录改名成 .old-* 备份（Windows rename 目标已存在会失败，不能直接覆盖），
@@ -3459,11 +3500,19 @@ export function registerIpcHandlers(): void {
       }
     } catch { }
   })
-  ipcMain.handle('hf-search', async (_e, query: string) => {
+  ipcMain.handle('hf-search', async (_e, query: string, opts: any = {}) => {
     try {
-      const data = await fetchJson(`https://huggingface.co/api/models?search=${encodeURIComponent(query)}&filter=gguf&limit=24&sort=downloads&direction=-1`)
+      const library = opts.library || 'gguf'
+      const filter = library === 'all' ? '' : `&filter=${encodeURIComponent(library)}`
+      const sortMap: Record<string, string> = { downloads: 'downloads', likes: 'likes', newest: 'lastModified', trending: 'trendingScore' }
+      const sort = sortMap[opts.sort] || 'downloads'
+      const limit = Math.min(opts.limit || 20, 100)
+      const offset = opts.offset || 0
+      const url = `https://huggingface.co/api/models?search=${encodeURIComponent(query)}${filter}&limit=${limit}&offset=${offset}&sort=${sort}&direction=-1`
+      const data = await fetchJson(url)
       if (!Array.isArray(data)) return { error: 'API 返回格式异常' }
-      return data.map((m: HfModelRaw) => ({ id: m.id, author: m.author || m.id.split('/')[0] || '', name: m.id.split('/').pop() || m.id, downloads: m.downloads || 0, likes: m.likes || 0, tags: m.tags || [], lastModified: m.lastModified || '' }))
+      const items = data.map((m: HfModelRaw) => ({ id: m.id, author: m.author || m.id.split('/')[0] || '', name: m.id.split('/').pop() || m.id, downloads: m.downloads || 0, likes: m.likes || 0, tags: m.tags || [], lastModified: m.lastModified || '', avatar: `https://huggingface.co/${encodeURIComponent(m.author || m.id.split('/')[0] || '')}/avatar` }))
+      return { items, hasMore: data.length === limit }
     } catch (err) { return { error: String(err) } }
   })
   ipcMain.handle('hf-get-files', async (_e, repoId: string) => {
@@ -3475,14 +3524,22 @@ export function registerIpcHandlers(): void {
         const errMsg = typeof data === 'object' && data !== null && 'error' in data ? String((data as any).error) : 'API 返回异常'
         return { error: errMsg }
       }
-      const ggufFiles = data.filter((f: HfFileRaw) => f.type === 'file' && ['.gguf', '.safetensors', '.ckpt', '.pth', '.pt'].some(ext => f.path.toLowerCase().endsWith(ext)))
-      if (ggufFiles.length === 0) return { error: '该仓库中没有找到支持的模型文件（.gguf / .safetensors / .ckpt）' }
+      const ggufFiles = data.filter((f: HfFileRaw) => f.type === 'file' && f.path.toLowerCase().endsWith('.gguf'))
+      if (ggufFiles.length === 0) return { error: '该仓库中没有找到 GGUF 模型文件（.gguf）' }
       return ggufFiles.map((f: HfFileRaw) => ({
         name: f.path,
         size: f.size || 0,
         downloadUrl: `https://huggingface.co/${safeRepoId}/resolve/main/${f.path.split('/').map(s => encodeURIComponent(s)).join('/')}`
       }))
     } catch (err) { return { error: String(err) } }
+  })
+  ipcMain.handle('hf-model-info', async (_e, repoId: string) => {
+    try {
+      const safeRepoId = repoId.split('/').map(s => encodeURIComponent(s)).join('/')
+      const readme = await fetchText(`https://huggingface.co/${safeRepoId}/raw/main/README.md`)
+      const capped = readme.length > 200000 ? readme.slice(0, 200000) + '\n\n…(已截断)' : readme
+      return { description: firstReadmeParagraph(readme), readme: capped, isHtml: false }
+    } catch (err) { return { description: '', readme: '', isHtml: false } }
   })
   ipcMain.handle('hf-download-model', (_event, opts: { repoId: string; filename: string; downloadUrl: string }) => {
     const id = opts.filename
@@ -4424,15 +4481,41 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('hf-open-models-dir', () => shell.openPath(MODELS_DIR))
   // ── ModelScope ──
-  ipcMain.handle('ms-search', async (_e, query: string) => {
+  // 拉取模型详情取作者/组织头像（Organization.Avatar 优先，缺省回退顶层 Avatar）；
+  // 单条加超时，避免某个请求拖垮整个搜索；失败返回 null（前端回退首字母）
+  const msAvatarCache = new Map<string, { value: string | null; ts: number }>()
+  async function msModelAvatar(repoId: string): Promise<string | null> {
+    const timeout = new Promise<null>(resolve => setTimeout(() => resolve(null), 3000))
+    const key = String(repoId).toLowerCase()
+    const cached = msAvatarCache.get(key)
+    if (cached && Date.now() - cached.ts < AVATAR_TTL) return cached.value
+    const fetch = (async () => {
+      try {
+        const safe = repoId.split('/').map(s => encodeURIComponent(s)).join('/')
+        const data: any = await fetchJson(`https://modelscope.cn/api/v1/models/${safe}`)
+        const d = data?.Data
+        if (!d) return null
+        return (d.Organization && d.Organization.Avatar) || d.Avatar || null
+      } catch { return null }
+    })()
+    const result = await Promise.race([fetch, timeout])
+    msAvatarCache.set(key, { value: result, ts: Date.now() })
+    return result
+  }
+  ipcMain.handle('ms-search', async (_e, query: string, opts: any = {}) => {
     try {
+      const library = opts.library || 'gguf'
       // MS 搜索需要用 Name 参数（Query 参数无效），附加 GGUF 关键词精确定位
       const searchName = query.trim() ? query + ' GGUF' : 'GGUF'
+      const sortMap: Record<string, string> = { downloads: 'DownloadCount', likes: 'StarCount', newest: 'LastUpdatedTime', trending: 'DownloadCount' }
+      const sortBy = sortMap[opts.sort] || 'DownloadCount'
+      const pageSize = Math.min(opts.limit || 20, 100)
+      const pageNumber = opts.page || 1
       const data: any = await fetchJsonWithBody('https://modelscope.cn/api/v1/dolphin/models', {
         Name: searchName,
-        PageSize: 50,
-        PageNumber: 1,
-        Sort: { SortBy: 'DownloadCount', Descending: true }
+        PageSize: pageSize,
+        PageNumber: pageNumber,
+        Sort: { SortBy: sortBy, Descending: true }
       })
       const raw = data?.Data?.Model?.Models
       if (!Array.isArray(raw)) return { error: 'API 返回格式异常' }
@@ -4442,35 +4525,144 @@ export function registerIpcHandlers(): void {
         return Array.isArray(libs) ? libs : []
       }
       // 只保留 GGUF 模型
-      const ggufModels = raw.filter((m: any) =>
-        parseLibs(m.Libraries).some((l: string) => l.toLowerCase() === 'gguf')
-      )
-      if (ggufModels.length === 0) return { error: '未找到 GGUF 模型，请尝试其他关键词' }
-      return ggufModels.map((m: any) => ({
+      const libFilter = library === 'all' ? null : library
+      const ggufModels = libFilter
+        ? raw.filter((m: any) => parseLibs(m.Libraries).some((l: string) => l.toLowerCase() === libFilter))
+        : raw
+      if (ggufModels.length === 0) return { error: libFilter ? `未找到 ${libFilter.toUpperCase()} 模型，请尝试其他关键词` : '未找到模型，请尝试其他关键词' }
+      // 头像不在搜索阶段拉取（避免阻塞搜索返回），改为前端卡片挂载后懒加载
+      const results = ggufModels.map((m: any) => ({
         id: String(m.Path) + '/' + String(m.Name),
         author: String(m.CreatedBy || m.Path || ''),
         name: String(m.Name),
         downloads: m.Downloads || 0,
         likes: m.Stars || 0,
         tags: typeof m.Tags === 'string' ? (() => { try { return JSON.parse(m.Tags) } catch { return [] } })() : (Array.isArray(m.Tags) ? m.Tags : []),
-        lastModified: m.LastUpdatedTime ? new Date(m.LastUpdatedTime * 1000).toISOString() : ''
+        lastModified: m.LastUpdatedTime ? new Date(m.LastUpdatedTime * 1000).toISOString() : '',
+        avatar: ''
       }))
+      return { items: results, hasMore: raw.length === pageSize }
     } catch (err) { return { error: String(err) } }
   })
+  // 前端卡片懒加载模型头像（非阻塞，失败返回 null 由前端回退首字母）
+  ipcMain.handle('ms-model-avatar', (_e, repoId: string) => msModelAvatar(repoId))
+  // 把图片二进制拉取为 data: URL（渲染端用 data: 直接渲染，绕开 CDN/CORS/重定向问题）。
+  // 使用 Node https（rejectUnauthorized:false 仅作用于头像拉取，绕开本环境对 HF 头像 CDN 的 TLS 证书不被信任问题）。
+  function fetchImageDataUrl(url: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+      const tryOnce = (u: string, depth: number): void => {
+        if (depth > 5) return resolve(null)
+        let req: any
+        try {
+          req = https.get(u, {
+            headers: { 'User-Agent': UA, Accept: 'image/avif,image/webp,image/png,image/*,*/*' },
+            rejectUnauthorized: false,
+            timeout: 8000
+          }, (res: any) => {
+            const ct: string = (res.headers && (res.headers['content-type'] as string)) || ''
+            const code = res.statusCode || 0
+            if ([301, 302, 303, 307, 308].includes(code) && res.headers.location) {
+              res.resume()
+              return tryOnce(new URL(res.headers.location, u).toString(), depth + 1)
+            }
+            if (code !== 200) { res.resume(); return resolve(null) }
+            const chunks: Buffer[] = []
+            res.on('data', (c: Buffer) => chunks.push(Buffer.from(c)))
+            res.on('end', () => {
+              const buf = Buffer.concat(chunks)
+              if (buf.length === 0) return resolve(null)
+              const mime = ct.startsWith('image/') ? ct : 'image/png'
+              resolve(`data:${mime};base64,${buf.toString('base64')}`)
+            })
+          })
+        } catch { return resolve(null) }
+        req.on('error', () => resolve(null))
+        req.on('timeout', () => { try { req.destroy() } catch {} resolve(null) })
+      }
+      tryOnce(url, 0)
+    })
+  }
+  // 作者头像缓存：成功与失败（含 404）都缓存一段时间，避免重复打 HF API 触发限流。
+  const avatarCache = new Map<string, { value: string | null; ts: number }>()
+  const AVATAR_TTL = 10 * 60 * 1000
+  // 服务端代理拉取 HuggingFace 作者头像。
+  // 正确路径是 /api/users/{author}/overview（注意带 /overview，否则 404），
+  // 其返回的 avatarUrl 形如 https://huggingface.co/avatars/{hash}.svg（主域，与搜索同源可达），
+  // 而不是 cdn-avatars.huggingface.co（本环境主进程访问该 CDN 被连接关闭）。
+  async function hfModelAvatar(author: string): Promise<string | null> {
+    const timeout = new Promise<null>(resolve => setTimeout(() => resolve(null), 8000))
+    const go = (async () => {
+      if (!author) return null
+      const key = String(author).toLowerCase()
+      const cached = avatarCache.get(key)
+      if (cached && Date.now() - cached.ts < AVATAR_TTL) return cached.value
+      let result: string | null = null
+      const norm = (v: any): string | null => {
+        if (typeof v !== 'string' || !v) return null
+        if (v.startsWith('http')) return v
+        if (v.startsWith('/')) return `https://huggingface.co${v}`
+        return `https://huggingface.co/${v}`
+      }
+      // 1) 用户/组织 overview API 取真实 avatarUrl（主域 /avatars/*.svg，可达）
+      for (const ep of [
+        `https://huggingface.co/api/users/${encodeURIComponent(author)}/overview`,
+        `https://huggingface.co/api/orgs/${encodeURIComponent(author)}/overview`
+      ]) {
+        try {
+          const d: any = await fetchJson(ep)
+          const av = norm(d?.avatarUrl || d?.avatar || d?.picture)
+          if (av && !av.includes('cdn-avatars')) {
+            const dataUrl = await fetchImageDataUrl(av)
+            if (dataUrl) { result = dataUrl; break }
+          }
+        } catch { /* 继续 */ }
+      }
+      // 2) 兜底：/avatar 直接拿图片字节（会 302 到 cdn-avatars，本环境多半失败但无害）
+      if (!result) result = await fetchImageDataUrl(`https://huggingface.co/${encodeURIComponent(author)}/avatar`)
+      avatarCache.set(key, { value: result, ts: Date.now() })
+      return result
+    })()
+    return Promise.race([go, timeout])
+  }
+  ipcMain.handle('hf-model-avatar', (_e, author: string) => hfModelAvatar(author))
   ipcMain.handle('ms-get-files', async (_e, repoId: string) => {
     try {
       const safeRepoId = repoId.split('/').map(s => encodeURIComponent(s)).join('/')
       const data: any = await fetchJson(`https://modelscope.cn/api/v1/models/${safeRepoId}/repo/files?Revision=master&Root=`)
       const files = data?.Data?.Files
       if (!Array.isArray(files)) return { error: 'API 返回格式异常' }
-      const ggufFiles = files.filter((f: any) => f.Type === 'blob' && ['.gguf', '.safetensors', '.ckpt', '.pth', '.pt'].some(ext => String(f.Name).toLowerCase().endsWith(ext)))
-      if (ggufFiles.length === 0) return { error: '该仓库中没有找到支持的模型文件（.gguf / .safetensors / .ckpt）' }
+      const ggufFiles = files.filter((f: any) => f.Type === 'blob' && String(f.Name).toLowerCase().endsWith('.gguf'))
+      if (ggufFiles.length === 0) return { error: '该仓库中没有找到 GGUF 模型文件（.gguf）' }
       return ggufFiles.map((f: any) => ({
         name: f.Name,
         size: f.Size || 0,
         downloadUrl: `https://modelscope.cn/models/${safeRepoId}/resolve/master/${String(f.Name).split('/').map(s => encodeURIComponent(s)).join('/')}`
       }))
     } catch (err) { return { error: String(err) } }
+  })
+  ipcMain.handle('ms-model-info', async (_e, repoId: string) => {
+    try {
+      const safe = repoId.split('/').map(s => encodeURIComponent(s)).join('/')
+      const data: any = await fetchJson(`https://modelscope.cn/api/v1/models/${safe}`)
+      const d = data?.Data
+      if (!d) return { description: '', readme: '', isHtml: true }
+      // 优先用 Introduction（HTML），为空则回退拉 README.md 原始 markdown
+      const intro = d.Introduction || d.Readme || d.ReadMe || ''
+      if (intro && intro.trim()) {
+        const capped = intro.length > 200000 ? intro.slice(0, 200000) : intro
+        return { description: firstReadmeParagraph(intro), readme: capped, isHtml: true }
+      }
+      // 回退：ModelScope README 原始内容（markdown），与下载 resolve 同域可达
+      try {
+        const readme = await fetchText(`https://modelscope.cn/models/${safe}/resolve/master/README.md`)
+        if (readme && readme.trim()) {
+          const rCapped = readme.length > 200000 ? readme.slice(0, 200000) + '\n\n…(已截断)' : readme
+          return { description: firstReadmeParagraph(readme), readme: rCapped, isHtml: false }
+        }
+      } catch { /* README 也拿不到，返回空 */ }
+      return { description: '', readme: '', isHtml: false }
+    } catch (err) { return { description: '', readme: '', isHtml: true } }
   })
   // ms-download-model 复用 hf-download-model 的下载基础设施，仅下载URL不同
   ipcMain.handle('ms-download-model', (_event, opts: { repoId: string; filename: string; downloadUrl: string }) => {
@@ -6757,6 +6949,39 @@ function stripHtml(html: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, ' ')
+}
+
+// 从模型 README(markdown) 中抽取首段描述，用于详情面板简介展示
+function firstReadmeParagraph(md: string): string {
+  if (!md) return ''
+  let text = md
+  // 去掉 YAML frontmatter
+  if (text.startsWith('---')) {
+    const end = text.indexOf('\n---', 3)
+    if (end !== -1) text = text.slice(end + 4)
+  }
+  const specialRe = /^(#{1,6}\s|!\[|<!--|<\!--|<\/?[a-zA-Z]|[\|>]|```)/
+  const paraLines: string[] = []
+  let started = false
+  for (const ln of text.split('\n')) {
+    const line = ln.trim()
+    if (!line) { if (started) break; continue }
+    if (specialRe.test(line)) { if (started) break; continue }
+    const clean = line
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/`([^`]*)`/g, '$1')
+      .replace(/[*_~]/g, '')
+      .replace(/<[^>]+>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!clean) { if (started) break; continue }
+    started = true
+    paraLines.push(clean)
+  }
+  let result = paraLines.join(' ')
+  if (result.length > 280) result = result.slice(0, 280) + '…'
+  return result
 }
 
 function validateUrl(url: string): void {

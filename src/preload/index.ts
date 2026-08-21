@@ -12,6 +12,7 @@ const fullApi = {
   pauseModelDownload: (id: string) => ipcRenderer.invoke('pause-model-download', id),
   resumeModelDownload: (id: string) => ipcRenderer.invoke('resume-model-download', id),
   cancelModelDownload: (id: string) => ipcRenderer.invoke('cancel-model-download', id),
+  retryModelDownload: (id: string) => ipcRenderer.invoke('retry-model-download', id),
   listModelDownloads: () => ipcRenderer.invoke('list-model-downloads'),
   onModelDownloadProgress: (cb: (data: object) => void) => {
     ipcRenderer.removeAllListeners('model-download-progress')
@@ -67,12 +68,16 @@ const fullApi = {
     ipcRenderer.on('app-download-progress', (_event, data) => callback(data))
   },
   removeAppDownloadListener: () => ipcRenderer.removeAllListeners('app-download-progress'),
-  hfSearch: (query: string) => ipcRenderer.invoke('hf-search', query),
+  hfSearch: (query: string, opts?: { sort?: string; library?: string; limit?: number; offset?: number }) => ipcRenderer.invoke('hf-search', query, opts),
   hfGetFiles: (repoId: string) => ipcRenderer.invoke('hf-get-files', repoId),
+  hfModelInfo: (repoId: string) => ipcRenderer.invoke('hf-model-info', repoId),
   hfDownloadModel: (opts: object) => ipcRenderer.invoke('hf-download-model', opts),
   hfOpenModelsDir: () => ipcRenderer.invoke('hf-open-models-dir'),
-  msSearch: (query: string) => ipcRenderer.invoke('ms-search', query),
+  msSearch: (query: string, opts?: { sort?: string; library?: string; limit?: number; page?: number }) => ipcRenderer.invoke('ms-search', query, opts),
   msGetFiles: (repoId: string) => ipcRenderer.invoke('ms-get-files', repoId),
+  msModelInfo: (repoId: string) => ipcRenderer.invoke('ms-model-info', repoId),
+  msModelAvatar: (repoId: string) => ipcRenderer.invoke('ms-model-avatar', repoId),
+  hfModelAvatar: (author: string) => ipcRenderer.invoke('hf-model-avatar', author),
   msDownloadModel: (opts: object) => ipcRenderer.invoke('ms-download-model', opts),
   msOpenModelsDir: () => ipcRenderer.invoke('ms-open-models-dir'),
   onHfDownloadProgress: (callback: (data: { percent: number; phase: string; filename: string; destPath: string }) => void) => {
