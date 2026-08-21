@@ -1690,7 +1690,16 @@ export function registerIpcHandlers(): void {
   function loadBackendCacheDisk(): { t: number; value: unknown } | null {
     try {
       const parsed = JSON.parse(readFileSync(BACKEND_CACHE_FILE, 'utf-8')) as { t: number; value: unknown }
-      if (parsed && typeof parsed.t === 'number' && Array.isArray(parsed.value)) return parsed
+      if (parsed && typeof parsed.t === 'number' && Array.isArray(parsed.value)) {
+        // 缓存条目存的是绝对路径：项目目录迁移后（如 C 盘桌面 → E 盘）这些路径全部失效，
+        // 若继续信任会导致 run-model 的 isSafePath 检查误报「访问被拒绝」。
+        // 因此校验所有条目仍位于当前 BACKEND_DIR 内，否则丢弃缓存触发重扫
+        const allInScope = parsed.value.every((b) => {
+          const p = (b as { path?: unknown })?.path
+          return typeof p === 'string' && isSafePath(BACKEND_DIR, p)
+        })
+        if (allInScope) return parsed
+      }
     } catch { /* 缺失/损坏视为无缓存 */ }
     return null
   }

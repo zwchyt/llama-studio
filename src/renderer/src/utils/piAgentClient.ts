@@ -62,26 +62,20 @@ export class PiAgentClient {
    * 若把正文直接拼在思考增量后面，正文会被拼进 <think> 里被 parseThinkSegments 吞掉。
    * 策略：
    *  - thinking_delta 实时直推（思考链流式显示，不等 thinking_end）
-   *  - thinking 未闭合期间到达的正文（text_delta）进 deferredText 缓冲，
-   *    等思考闭合（thinking_end / 整轮兜底）后再按序输出 → 正文不会被吞
+   *  - 正文（text_delta）不做任何缓存，一律立即直推、流式显示；
+   *    若到达时思考仍开启，先补 </think> 收尾，正文落到思考链之后，
+   *    避免被拼进 <think> 吞掉（若后续再有思考增量会重新开 <think>）。
    */
   private thinkingOpen = false
   private thinkTagPushed = false
-  private deferredText: string[] = []
-  /** 本轮是否出现过思考（thinking_start 置位）：一旦进入过思考，后续正文增量一律暂存，
-   *  等思考闭合后统一输出，避免正文碎片穿插/堆叠在思考链下方。 */
-  private everThinking = false
   /** 当前 turn 的开始时间（turn_start 置位，turn_end 取差后清空） */
   private turnStartAt: number | null = null
 
-  /** 思考闭合：补闭合标签（若已推过开头）并输出缓冲的正文 */
+  /** 思考闭合：补闭合标签（若已推过开头），结束思考通道；不缓冲任何正文 */
   private closeThinking(): void {
     if (this.thinkTagPushed) this.callbacks.onTextDelta('</think>')
     this.thinkTagPushed = false
     this.thinkingOpen = false
-    const deferred = this.deferredText
-    this.deferredText = []
-    for (const d of deferred) this.callbacks.onTextDelta(d)
   }
 
   private readonly handler = (_sid: string, event: unknown): void => {
@@ -109,23 +103,16 @@ export class PiAgentClient {
         const msg = ev.assistantMessageEvent as RawPiEvent | undefined
         if (!msg) return
         if (msg.type === 'text_delta' && typeof msg.delta === 'string') {
-          // 正文统一输出：只要本轮已进入过思考（everThinking），正文增量一律暂存到
-          // deferredText，等思考闭合（thinking_end / turn_end / agent_end 兜底）后
-          // 一次性输出为一条完整正文，避免正文碎片穿插/堆叠在思考链下方。
-          // 思考链（thinking_delta）不受影响，仍实时包裹在 <think> 中显示。
-          if (this.thinkingOpen || this.everThinking) {
-            this.deferredText.push(msg.delta)
-          } else {
-            // 思考尚未开始时的正文（极罕见）：正常实时输出
-            this.callbacks.onTextDelta(msg.delta)
-          }
+          // 正文不做任何缓存：无论思考是否开启都立即直推、流式显示。
+          // 若思考仍开启，先补 </think> 把思考链收尾，正文随之落到思考链之后，
+          // 避免被拼进 <think> 吞掉；后续若还有思考增量会按 reopen 逻辑重新开 <think>。
+          if (this.thinkingOpen) this.closeThinking()
+          this.callbacks.onTextDelta(msg.delta)
         } else if (msg.type === 'thinking_start') {
-          // 若上一轮思考期间已缓冲正文，先闭合思考并输出该正文，避免被重置丢失
-          if (this.deferredText.length > 0) this.closeThinking()
+          // 若上一段思考未正常闭合，先补闭合标签平衡，再开启新思考段
+          if (this.thinkingOpen) this.closeThinking()
           this.thinkingOpen = true
-          this.everThinking = true
           this.thinkTagPushed = false
-          this.deferredText = []
         } else if (msg.type === 'thinking_delta' && typeof msg.delta === 'string') {
           // 思考增量实时直推：首个增量先开 <think> 标签（避免空思考产生空标签）。
           // 若思考段已被正文闭合（thinkingOpen=false）而思考仍在继续（模型思考

@@ -712,7 +712,8 @@ function parseThinkSegments(content: string): ContentSegment[] {
 // ── segments 时间线（pi 模式）──
 // 时间线切分在 runPiTurn 内实时构建（appendTextDelta/buildSegs）：
 // 思考/正文增量按 <think> 边界切段、工具声明切段，事件到达顺序即真实时间线，
-// 流式与完成态都按「工具栏 → 思考链 → 工具栏 → 思考链 → … → 正文气泡」交错渲染。
+// 流式与完成态都按「思考链 → 工具卡 → 正文气泡 → 思考链 → …」严格时间线交错渲染
+// （含中途正文原位插回，见 renderSegmentsFor 的方案 A 时间线平铺）。
 
 // 思考块渲染节流间隔（与正文 STREAM_MD_THROTTLE_MS=40 同频）。
 // 此前 120ms（8fps）在思考吐字快时每 120ms 跳一大块文字（4-5 个 token），观感「一顿一顿」；
@@ -1363,9 +1364,10 @@ const StreamingMarkdown = React.memo(function StreamingMarkdown({ content, isStr
   )
 })
 
-// 旧消息（无 segments）的内容渲染：与 segments 消息相同的「一条消息一个思考过程」规则——
-// 整条消息的全部  thinking 段合并进同一个思考面板（链内按时间线交错思考文本/工具卡），
-// 正文段为全部独立气泡（不再打断/终结思考面板）；无时间线信息的 legacy 工具卡收进面板尾部，
+// 旧消息（无 segments）的内容渲染：与 segments 消息相同的方案 A 时间线平铺——
+// 按 <think> 边界切出的片段按原序构建节点序列：连续思考段归入同一个思考链单元
+// （ThinkBlock，链内交错收纳），中途正文段作为独立气泡在真实位置插回（不再全部沉底）；
+// 无时间线信息的 legacy 工具卡沿用旧规则收纳进最后一个思考单元尾部，
 // 无思考段（纯工具）时工具卡独立显示。
 const StreamingContent = React.memo(function StreamingContent({ content, streaming, thinkDone, toolCalls, onPreviewFile, canUndoFor, onUndo, cardDefaultOpen }: {
   content: string; streaming?: boolean; thinkDone?: boolean;
@@ -1375,51 +1377,97 @@ const StreamingContent = React.memo(function StreamingContent({ content, streami
   onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void;
   cardDefaultOpen?: boolean
 }) {
-  const segs = useMemo(() => parseThinkSegments(content || ''), [content])
-  const { chainItems, textValues, standaloneTools, lastClosed } = useMemo(() => {
-    const chainItems: ThinkChainItem[] = []
-    const textValues: string[] = []
+  const { nodes, lastClosed } = useMemo(() => {
+    type LegacyThinkUnit = { value: string; items: ThinkChainItem[] }
+    type LegacyNode =
+      | { t: 'think'; unit: LegacyThinkUnit }
+      | { t: 'tools'; toolCalls: NonNullable<AgentMessage['toolCalls']> }
+      | { t: 'text'; content: string }
+    const nodes: LegacyNode[] = []
+    let curUnit: LegacyThinkUnit | null = null
+    // 最后一个思考单元引用：不因中途正文清空——legacy 工具卡无时间线信息，
+    // 始终收纳进最后一个思考单元尾部（与旧行为一致）
+    let lastUnit: LegacyThinkUnit | null = null
     let lastClosed = true
-    for (const seg of segs) {
-      if (seg.type === 'text') {
+    for (const seg of parseThinkSegments(content || '')) {
+      if (seg.type === 'think') {
+        if (curUnit) {
+          curUnit.items.push({ kind: 'think', content: seg.value })
+        } else {
+          curUnit = { value: seg.value, items: [] }
+          lastUnit = curUnit
+          nodes.push({ t: 'think', unit: curUnit })
+        }
+        lastClosed = seg.closed
+      } else {
         // 跳过空正文段：避免渲染出透明占位容器（padding + flex gap 造成的不可见空隙）
         if ((seg.value || '').trim() === '') continue
-        textValues.push(seg.value)
-      }
-      else {
-        chainItems.push({ kind: 'think', content: seg.value })
-        lastClosed = seg.closed
+        // 正文终结当前思考链单元：后续思考段开启新单元（时间线原位插回的关键）
+        curUnit = null
+        nodes.push({ t: 'text', content: seg.value })
       }
     }
-    let standaloneTools: NonNullable<AgentMessage['toolCalls']> | undefined
     if (toolCalls?.length) {
-      if (chainItems.length > 0) chainItems.push({ kind: 'tools', toolCalls })
-      else standaloneTools = toolCalls
+      if (lastUnit) lastUnit.items.push({ kind: 'tools', toolCalls })
+      else nodes.push({ t: 'tools', toolCalls })
     }
-    return { chainItems, textValues, standaloneTools, lastClosed }
-  }, [segs, toolCalls])
+    return { nodes, lastClosed }
+  }, [content, toolCalls])
+
+  // 仅最后一个思考链单元可能仍生长；其余强制完成态
+  let lastThinkIdx = -1
+  for (let i = 0; i < nodes.length; i++) if (nodes[i]!.t === 'think') lastThinkIdx = i
+  let thinkOrdinal = 0
+  let toolsOrdinal = 0
   return (
     <>
-      {chainItems.length > 0 && chainItems[0]!.kind === 'think'
-        ? (
-          // thinkDone：本轮已进入工具生成阶段时，把思考面板视为正常收尾（closed 且非流式），
-          // 呈现「思考过程」折叠态而非「思考中」转圈，也不会误判为「思考已中断」。
-          <ThinkBlock key="legacy-chain" value={chainItems[0]!.content} closed={lastClosed || !!thinkDone} isStreaming={!!streaming && !lastClosed && !thinkDone} items={chainItems.slice(1)} onPreviewFile={onPreviewFile} canUndoFor={canUndoFor} onUndo={onUndo} cardDefaultOpen={cardDefaultOpen} />
-        )
-        : standaloneTools && (
-          <ToolCallGroup
-            toolCalls={standaloneTools}
-            cardDefaultOpen={cardDefaultOpen}
-            onPreviewFile={onPreviewFile!}
-            canUndoFor={canUndoFor}
-            onUndo={onUndo}
-          />
-        )}
-      {textValues.map((v, j) =>
-        // 非流式（已完成）切换到 AgentMarkdown 完整栈：补齐 KaTeX 公式/raw HTML/sanitize，
+      {nodes.map((n, i) => {
+        if (n.t === 'think') {
+          // 非末单元 closed 恒真，不随全局 thinkDone 抖动重开——消除中途正文导致的
+          // 整面板折叠/展开闪变。thinkDone：本轮已进入工具/正文阶段时，把末单元视为
+          // 正常收尾（「思考过程」折叠态而非「思考中」转圈，也不误判「思考已中断」）。
+          const isLast = i === lastThinkIdx
+          const hasTextAfter = nodes.some((m, j) => j > i && m.t === 'text')
+          const ordinal = thinkOrdinal++
+          return (
+            <ThinkBlock
+              key={`legacy-think-${ordinal}`}
+              value={n.unit.value}
+              items={n.unit.items}
+              closed={!isLast || lastClosed || !!thinkDone}
+              isStreaming={!!streaming && isLast && !lastClosed && !thinkDone}
+              msgStreaming={!!streaming && isLast}
+              bodyAppeared={hasTextAfter}
+              onPreviewFile={onPreviewFile}
+              canUndoFor={canUndoFor}
+              onUndo={onUndo}
+              cardDefaultOpen={cardDefaultOpen}
+            />
+          )
+        }
+        if (n.t === 'tools') {
+          const ordinal = toolsOrdinal++
+          return (
+            <ToolCallGroup
+              key={`legacy-tools-${ordinal}`}
+              toolCalls={n.toolCalls}
+              cardDefaultOpen={cardDefaultOpen}
+              onPreviewFile={onPreviewFile!}
+              canUndoFor={canUndoFor}
+              onUndo={onUndo}
+            />
+          )
+        }
+        // 正文气泡：仅整条消息最后一个节点且仍在流式时用轻量流式栈；更早的正文段
+        // 已是完成片段，直接走 AgentMarkdown 完整栈补齐 KaTeX 公式/raw HTML/sanitize，
         // 否则无 segments 的消息完成后会永远停在轻量栈，公式不渲染。
-        <div key={`m-${j}`} className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>{streaming ? <StreamingMarkdown content={v} isStreaming={streaming} /> : <AgentMarkdown content={v} />}</div>
-      )}
+        const isFinalNode = i === nodes.length - 1
+        return (
+          <div key={`legacy-text-${i}`} className={`chat-msg-bubble chat-msg-markdown${streaming && isFinalNode ? ' chat-msg-bubble--streaming' : ''}`}>
+            {streaming && isFinalNode ? <StreamingMarkdown content={n.content} isStreaming={streaming} /> : <AgentMarkdown content={n.content} />}
+          </div>
+        )
+      })}
     </>
   )
 })
@@ -1945,63 +1993,102 @@ type RenderSegmentsOpts = {
 }
 // segments 渲染（思考链 / 工具卡 / 正文气泡）：流式分支与完成分支共用同一实现
 // （原为 AgentCodeView 内部闭包，抽到模块级供 AgentMessageRow 复用，避免两处拷贝漂移）。
+//
+// 方案 A（时间线平铺）：按 segments 原序构建节点序列——连续的 think/tools 归入同一个
+// 「思考链单元」（一个 ThinkBlock，链内交错收纳），text 段作为独立正文气泡在真实时间线
+// 位置原位插回，不再全部沉底。一条消息可产生多个思考链单元：
+//   [ThinkBlock1] [正文A] [ThinkBlock2] [正文B] …
+// 仅最后一个单元可能仍在生长（closed/isStreaming 沿用原全局公式），更早的单元一律按
+// 完成态渲染（折叠头部「思考过程」）——消除中途正文到达时整面板「收起→重开」的闪变。
+// 附带修复：旧实现 chainItems[0] 非 think 时（先工具后思考）会静默丢弃后续思考文本，
+// 平铺后任意顺序的段都按位渲染，不再丢内容。
 function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']>, msgId: string, streaming: boolean, tailToolCalls: NonNullable<AgentMessage['toolCalls']> | undefined, o: RenderSegmentsOpts): React.ReactNode[] {
-  const chainItems: ThinkChainItem[] = []
-  const textContents: string[] = []
+  type ThinkUnit = { value: string; durationMs?: number; items: ThinkChainItem[] }
+  type Node =
+    | { t: 'think'; unit: ThinkUnit }
+    | { t: 'text'; content: string }
+  const nodes: Node[] = []
+  let curUnit: ThinkUnit | null = null
+  // 最近一个思考链单元引用：工具卡始终收进思考链（用户要求——工具调用执行只发生在思考链内，
+  // 正文只输出纯文字、不承载工具卡）。curUnit 关闭后工具仍可挂到最近单元，不漂成独立卡片。
+  let lastUnit: ThinkUnit | null = null
+  const addTools = (toolCalls: NonNullable<AgentMessage['toolCalls']>, durationMs?: number): void => {
+    if (!toolCalls.length) return
+    // 优先当前打开的单元；否则最近一个思考单元；整条尚无思考单元则新建一个承载
+    // （保证「工具只在思考链中执行/展示」，正文部分永远不含工具卡）。
+    const target = curUnit ?? lastUnit ?? (() => {
+      const u: ThinkUnit = { value: '', items: [] }
+      lastUnit = u
+      nodes.push({ t: 'think', unit: u })
+      return u
+    })()
+    target.items.push({ kind: 'tools', toolCalls, ...(durationMs != null ? { durationMs } : {}) })
+  }
   for (const seg of segments) {
-    if (seg.kind === 'text') {
+    if (seg.kind === 'think') {
+      if (curUnit) {
+        curUnit.items.push({ kind: 'think', content: seg.content, ...(seg.durationMs != null ? { durationMs: seg.durationMs } : {}) })
+      } else {
+        const unit: ThinkUnit = { value: seg.content, items: [], ...(seg.durationMs != null ? { durationMs: seg.durationMs } : {}) }
+        curUnit = unit
+        lastUnit = unit
+        nodes.push({ t: 'think', unit })
+      }
+    } else if (seg.kind === 'tools') {
+      addTools(seg.toolCalls, seg.durationMs)
+    } else {
       // 跳过空正文段：避免渲染出透明占位容器（padding + flex gap 造成的不可见空隙）
       if (seg.content.trim() === '') continue
-      textContents.push(seg.content)
-    } else if (seg.kind === 'think') {
-      chainItems.push({ kind: 'think', content: seg.content, durationMs: seg.durationMs })
-    } else {
-      chainItems.push({ kind: 'tools', toolCalls: seg.toolCalls, durationMs: seg.durationMs })
+      // 正文终结当前思考链单元：后续段落开启新节点（时间线原位插回的关键）。
+      // 正文本身不承载工具，工具卡一律通过 addTools 收进思考链单元。
+      curUnit = null
+      nodes.push({ t: 'text', content: seg.content })
     }
   }
-  if (tailToolCalls && tailToolCalls.length > 0) chainItems.push({ kind: 'tools', toolCalls: tailToolCalls })
+  // 流式尾部实时工具卡（尚未切分进 segments）：同样收进思考链单元，不独立成卡
+  if (tailToolCalls && tailToolCalls.length > 0) addTools(tailToolCalls)
+
+  // 最后一个思考链单元才可能仍生长；其余强制完成态
+  let lastThinkIdx = -1
+  for (let i = 0; i < nodes.length; i++) if (nodes[i]!.t === 'think') lastThinkIdx = i
+  let thinkOrdinal = 0
   const out: React.ReactNode[] = []
-  if (chainItems.length > 0 && chainItems[0].kind === 'think') {
-    out.push(
-      <ThinkBlock
-        key="think-chain"
-        value={chainItems[0].content}
-        // 工具声明/正文出现后 thinkDone=true：思考框必然收起，不会与工具卡并存转圈
-        closed={!streaming || o.thinkDone}
-        isStreaming={streaming && !o.thinkDone}
-        msgStreaming={streaming}
-        bodyAppeared={textContents.length > 0}
-        durationMs={chainItems[0].durationMs}
-        streamStartAt={o.streamStartAt}
-        meta={o.meta}
-        items={chainItems.slice(1)}
-        onPreviewFile={o.onPreviewFile}
-        canUndoFor={o.canUndoFor}
-        onUndo={(tc) => o.onUndo(msgId, tc)}
-        cardDefaultOpen={o.toolCardExpandedDefault}
-      />
-    )
-  } else if (chainItems.length > 0) {
-    // 无思考文本的纯工具：合并为一组独立卡片
-    out.push(
-      <ToolCallGroup
-        key="tools-only"
-        toolCalls={chainItems.flatMap(it => (it.kind === 'tools' ? it.toolCalls : []))}
-        cardDefaultOpen={o.toolCardExpandedDefault}
-        onPreviewFile={o.onPreviewFile}
-        canUndoFor={o.canUndoFor}
-        onUndo={(tc) => o.onUndo(msgId, tc)}
-      />
-    )
-  }
-  for (let i = 0; i < textContents.length; i++) {
-    out.push(
-      // 流式期间正文用 StreamingMarkdown（轻量插件栈 + 帧对齐节流），完成时切换
-      // AgentMarkdown 完整栈补齐公式/raw HTML；流式中加 --streaming 视觉指示。
-      <div key={`seg-text-${i}`} className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>
-        {streaming ? <StreamingMarkdown content={textContents[i]!} isStreaming /> : <AgentMarkdown content={textContents[i]!} />}
-      </div>
-    )
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i]!
+    if (n.t === 'think') {
+      const isLast = i === lastThinkIdx
+      const hasTextAfter = nodes.some((m, j) => j > i && m.t === 'text')
+      const ordinal = thinkOrdinal++
+      out.push(
+        <ThinkBlock
+          key={`think-${ordinal}`}
+          value={n.unit.value}
+          durationMs={n.unit.durationMs}
+          // 工具声明/正文出现后 thinkDone=true：末单元思考框必然收起，不会与工具卡并存转圈；
+          // 非末单元 closed 恒真，不随全局 thinkDone 抖动重开。
+          closed={!streaming || !isLast || o.thinkDone}
+          isStreaming={streaming && isLast && !o.thinkDone}
+          msgStreaming={streaming && isLast}
+          bodyAppeared={hasTextAfter}
+          streamStartAt={isLast ? o.streamStartAt : undefined}
+          meta={isLast ? o.meta : undefined}
+          items={n.unit.items}
+          onPreviewFile={o.onPreviewFile}
+          canUndoFor={o.canUndoFor}
+          onUndo={(tc) => o.onUndo(msgId, tc)}
+          cardDefaultOpen={o.toolCardExpandedDefault}
+        />
+      )
+    } else {
+      // 正文气泡：仅当它是整条消息最后一个节点且仍在流式时用轻量流式栈，
+      // 更早的正文段已是完成片段，直接走 AgentMarkdown 完整栈（KaTeX/raw HTML 补齐）。
+      const isFinalNode = i === nodes.length - 1
+      out.push(
+        <div key={`seg-text-${i}`} className={`chat-msg-bubble chat-msg-markdown${streaming && isFinalNode ? ' chat-msg-bubble--streaming' : ''}`}>
+          {streaming && isFinalNode ? <StreamingMarkdown content={n.content} isStreaming /> : <AgentMarkdown content={n.content} />}
+        </div>
+      )
+    }
   }
   return out
 }
@@ -2098,8 +2185,8 @@ const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loadi
     />
   ) : null
   if (src.segments && src.segments.length > 0) {
-    // segments 已切分：流式期实时交错布局（思考链 → 工具卡 → … → 正文气泡），
-    // 完成后同一结构静态渲染（ThinkBlock closed、正文切 AgentMarkdown 完整栈）。
+    // segments 已切分：流式期实时时间线布局（思考链 → 工具卡 → 正文气泡 → 思考链 → …，
+    // 中途正文原位插回），完成后同一结构静态渲染（ThinkBlock closed、正文切 AgentMarkdown 完整栈）。
     return (
       <>
         {renderSegmentsFor(src.segments, msg.id, isStreaming, isStreaming ? liveToolCalls : undefined, {
@@ -5343,9 +5430,10 @@ export default function AgentCodeView() {
                     ) : (
                       <>
                         {/* 交错渲染：消息 finalized 后（非流式），若已按流式时间线切分为
-                            segments，则严格按 工具栏 → 思考链 → 工具栏 → 思考链 → … → 正文气泡
-                            的顺序排列。流式进行中一律走下面的实时 content 渲染（保证思考链/工具状态
-                            实时显示，不延迟到工具批到达才出现）；旧消息（无 segments）也走传统布局。 */}
+                            segments，则严格按 思考链 → 工具卡 → 正文气泡 → 思考链 → … 的真实
+                            时间线顺序排列（方案 A 时间线平铺，中途正文原位插回）。流式进行中一律
+                            走下面的实时 content 渲染（保证思考链/工具状态实时显示，不延迟到工具批
+                            到达才出现）；旧消息（无 segments）也走传统布局。 */}
                         {streamingMsg ? (
                           // 流式中的末条助手消息：同一行组件 AgentMessageRow 渲染——
                           // 组件内部按消息 id 订阅 liveAgentMsg 切片（~50ms commit 只重渲染该行）。
