@@ -1,6 +1,6 @@
 // ── 工具注册中心（类似 textgen 的 tool_use.py + 各 tools/*.py）────
 import type { ComponentType } from 'react'
-import { Eye, FilePlus2, Pencil, Search, FileSearch, TerminalSquare, Clock, HelpCircle, FileText, Trash2, List, ListChecks, FolderOpen, Layers, Lightbulb, Sparkles } from 'lucide-react'
+import { Eye, FilePlus2, Pencil, Search, FileSearch, TerminalSquare, Clock, HelpCircle, FileText, Trash2, List, ListChecks, FolderOpen, Layers, Lightbulb, Sparkles, Zap } from 'lucide-react'
 import { agentConfig } from './agentConfig'
 
 export interface ToolDefinition {
@@ -33,6 +33,7 @@ export const TOOL_METAS: Record<string, ToolMeta> = {
   Edit:            { kind: 'edit',   label: '编辑文件', verb: '编辑中', icon: Pencil,          readOnly: false, needsApproval: false, canUndo: true },
   Glob:            { kind: 'search', label: '查找文件', verb: '查找中', icon: Search,          readOnly: true,  needsApproval: false, canUndo: false },
   Grep:            { kind: 'search', label: '搜索内容', verb: '搜索中', icon: FileSearch,      readOnly: true,  needsApproval: false, canUndo: false },
+  Ripgrep:         { kind: 'search', label: '极速搜索', verb: '极速搜索中', icon: Zap,          readOnly: true,  needsApproval: false, canUndo: false },
   CodeSearch:      { kind: 'search', label: '智能检索', verb: '检索中', icon: Sparkles,        readOnly: true,  needsApproval: false, canUndo: false },
   ListDir:         { kind: 'list',   label: '列出目录', verb: '列目录中', icon: FolderOpen,    readOnly: true,  needsApproval: false, canUndo: false },
   AnalyzeDir:      { kind: 'list',   label: '分析目录', verb: '分析中', icon: Layers,          readOnly: true,  needsApproval: false, canUndo: false },

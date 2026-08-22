@@ -47,6 +47,18 @@ export interface MainToolExecutors {
     type?: string
     timeout_seconds?: number
   }): Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; error?: string }>
+  ripgrep(opts: {
+    pattern: string
+    path: string
+    glob?: string
+    output_mode?: string
+    head_limit?: number
+    '-i'?: boolean
+    context?: number
+    '-n'?: boolean
+    type?: string
+    timeout_seconds?: number
+  }): Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; error?: string }>
   deletePath(path: string, recursive: boolean): Promise<{ success: boolean; message?: string; error?: string }>
   // ── 会话/任务类（sessionId 由 createMainTools 的 ctx 注入）──
   todoWrite(sessionId: string, input: { merge: boolean; todos: TodoUpdateInput[] }): Promise<{ success: boolean; tasks?: AgentTaskLike[]; error?: string }>
@@ -313,6 +325,17 @@ async function createPiBashTool(exec: MainToolExecutors, ctx?: CreateMainToolsCo
   // 剥离 pi 的 TUI 渲染字段（renderCall/renderResult 面向 pi 终端 UI，llama-studio 用
   // AgentCodeView 自绘，且其具体泛型参数与通用 ToolDefinition 不兼容）。
   const { renderCall: _renderCall, renderResult: _renderResult, ...piCore } = piBash
+  // 防卡死：pi 原生 bash 无默认超时（模型不传 timeout 就无限等待长驻/交互式命令）。
+  // 这里强制默认 120s；下载/安装依赖等合法长任务由模型显式传更大的 timeout 覆盖。
+  const BASH_DEFAULT_TIMEOUT_SECONDS = 120
+  const bashParams = piCore.parameters as {
+    properties?: Record<string, { description?: string }>
+  }
+  if (bashParams.properties?.timeout) {
+    bashParams.properties.timeout.description =
+      `总时长上限（秒）。不传时默认 ${BASH_DEFAULT_TIMEOUT_SECONDS} 秒，超时会终止进程树并返回已产生的输出。` +
+      '下载、安装依赖、构建等可能超过两分钟的任务必须显式传更大的值（如 npm install 用 600）。'
+  }
   return {
     ...piCore,
     name: 'Bash', // 保持大写：toolNames 白名单 / TOOL_METAS 元数据 / AgentCodeView 判断均以此为键
@@ -336,7 +359,11 @@ async function createPiBashTool(exec: MainToolExecutors, ctx?: CreateMainToolsCo
       if (!approval.ok) {
         return { content: [{ type: 'text', text: JSON.stringify({ error: approval.reason }) }], details: {} }
       }
-      // 2) 执行 pi 原生 bash（Git Bash；自带截断/落盘/超时/流式）。
+      // 2) 防卡死兜底：模型未传 timeout 时补默认 120s（pi 原生不传就无限等待）。
+      if (typeof args.timeout !== 'number' || !(args.timeout > 0)) {
+        ;(params as Record<string, unknown>).timeout = BASH_DEFAULT_TIMEOUT_SECONDS
+      }
+      // 3) 执行 pi 原生 bash（Git Bash；自带截断/落盘/超时/流式）。
       // params 已过 prepareArguments（剥旧参数 + timeout 毫秒转秒），用 as never 绕过
       // 泛型差异（与 createPiEditTool 的 `{ ...input, path: abs } as never` 同一模式）。
       try {
@@ -352,6 +379,19 @@ async function createPiBashTool(exec: MainToolExecutors, ctx?: CreateMainToolsCo
             }],
             details: {}
           }
+        }
+        // 超时错误改写：pi 抛 "…output…\n\nCommand timed out after N seconds"。
+        // 原文没有行动指引，模型容易反复原样重试；改成带纠错路径的中文提示
+        // （保留已产生的输出在前半段，模型能看到中断时的进度）。
+        const timeoutMatch = /Command timed out after (\d+) seconds/.exec(msg)
+        if (timeoutMatch) {
+          const partial = msg.slice(0, timeoutMatch.index).trim()
+          const secs = timeoutMatch[1]
+          return Promise.reject(new Error(
+            `${partial ? `${partial}\n\n` : ''}⏱ 命令超过 ${secs} 秒被终止（防卡死保护）。` +
+            '若这是下载/安装依赖/构建等长耗时任务，请重试同一命令并在参数中传更大的 timeout（秒，如 600）；' +
+            '若是长驻进程（服务器/watch 模式），不要用本工具阻塞执行——改为写入脚本文件并告知用户手动运行。'
+          ))
         }
         throw err
       }
@@ -626,6 +666,57 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
       let out = res.content ?? `(${res.numFiles ?? 0} files matched)`
       // Grep→Read 闭环：content 模式结果带行号命中时，尾部附上以首条命中为中心的 Read 开窗参数，
       // 把「定位后开窗读取」从提示词规范变成可照抄的机械引导（与 renderer GrepTool 一致）
+      if (opts.output_mode === 'content') {
+        const m = out.match(/^(.+?):(\d+):/m)
+        if (m) {
+          const offset = Math.max(1, Number(m[2]) - 20)
+          out += `\n\n(查看命中行上下文用 Read 开窗读取：{ file_path: ${JSON.stringify(m[1])}, offset: ${offset}, limit: 50 }；不要为定位而通读整个文件)`
+        }
+      }
+      return out
+    }
+  })
+
+  // Ripgrep：与 Grep 并存的极速搜索引擎工具（捆绑 @vscode/ripgrep 二进制，无需用户安装）。
+  // 参数面与 Grep 完全对齐（模型零学习成本），引擎层优势：多线程、自动尊重 .gitignore、
+  // 编码自动检测。description 引导分工：大仓库/首次全局搜索优先 Ripgrep。
+  const ripgrep: ToolDefinition = make({
+    name: 'Ripgrep',
+    label: '极速搜索',
+    description:
+      'Fast content search powered by the bundled ripgrep engine. Multithreaded, automatically respects .gitignore, auto-detects file encodings (UTF-8/GBK/Latin1). Same parameters and output modes as Grep. PREFER THIS over Grep for large repos or first-pass global searches; Grep stays fine for small scoped lookups.',
+    parameters: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'Regular expression to search for in file contents.' },
+        path: { type: 'string', description: 'File or directory to search in. Omit to use the project directory.' },
+        glob: { type: 'string', description: 'Glob filter for files (e.g. "*.ts", "*.{ts,tsx}").' },
+        type: { type: 'string', description: 'File type shortcut — sets glob automatically. Common types: py, js, ts, rs, rust, go, java, c, cpp, md, json, yaml, sh, html, css, sql.' },
+        output_mode: { type: 'string', enum: ['content', 'files_with_matches', 'count'], description: 'Output mode. Defaults to "files_with_matches".' },
+        head_limit: { type: 'number', description: 'Max lines/entries to return (default 250, 0 = unlimited).' },
+        '-i': { type: 'boolean', description: 'Case insensitive search.' },
+        context: { type: 'number', description: 'Lines of context before/after each match (content mode).' },
+        '-n': { type: 'boolean', description: 'Show line numbers in content mode (default true).' },
+        timeout_seconds: { type: 'number', description: 'Abort and return partial matches after this many seconds (default 20, max 300).' }
+      },
+      required: ['pattern']
+    },
+    execute: async (args) => {
+      const pattern = String(args.pattern ?? '')
+      const path = String(args.path ?? '.')
+      const opts: Parameters<MainToolExecutors['ripgrep']>[0] = { pattern, path }
+      if (typeof args.glob === 'string') opts.glob = args.glob
+      if (typeof args.type === 'string') opts.type = args.type
+      if (typeof args.output_mode === 'string') opts.output_mode = args.output_mode
+      if (typeof args.head_limit === 'number') opts.head_limit = args.head_limit
+      if (args['-i'] === true) opts['-i'] = true
+      if (typeof args.context === 'number') opts.context = args.context
+      if (args['-n'] === true) opts['-n'] = true
+      if (typeof args.timeout_seconds === 'number') opts.timeout_seconds = args.timeout_seconds
+      const res = await exec.ripgrep(opts)
+      if (!res.success) return `Error: ${res.error}`
+      let out = res.content ?? `(${res.numFiles ?? 0} files matched)`
+      // 与 Grep 同款 Grep→Read 开窗引导：content 模式首条命中即给出 Read 参数
       if (opts.output_mode === 'content') {
         const m = out.match(/^(.+?):(\d+):/m)
         if (m) {
@@ -967,5 +1058,5 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     }
   })
 
-  return [getDatetime, webSearch, fetchWebpage, read, bash, write, edit, glob, grep, listDir, deleteTool, todoWrite, taskGet, taskList, askUserQuestion, reflect, codeSearch, analyzeDir]
+  return [getDatetime, webSearch, fetchWebpage, read, bash, write, edit, glob, grep, ripgrep, listDir, deleteTool, todoWrite, taskGet, taskList, askUserQuestion, reflect, codeSearch, analyzeDir]
 }

@@ -50,6 +50,7 @@ interface LlamaCppApi {
   onModelDownloadProgress: (cb: (data: ModelDownloadInfo) => void) => void
   removeModelDownloadListener: () => void
   listBackends: () => Promise<BackendVersion[]>
+  onBackendsUpdated: (cb: (backends: BackendVersion[]) => void) => void
   deleteBackend: (name: string) => Promise<{ success: boolean; error?: string }>
   getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp') => Promise<CommandsSchema | null>
   saveBackendCommands: (backendName: string, schema: object, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp') => Promise<{ success: boolean; error?: string }>
@@ -164,8 +165,6 @@ interface LlamaCppApi {
   clearTokenUsage: () => Promise<{ success: boolean }>
   chatStream: (opts: { streamId: string; port: number; body: object }) => Promise<{ success: boolean; error?: string }>
   chatCompletion: (opts: { port: number; body: object }) => Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }>
-  chatStreamJsonUI: (opts: { streamId: string; port: number; body: object }) => Promise<{ success: boolean; error?: string }>
-  onJsonUIStreamChunk: (cb: (data: { streamId: string; delta?: string; done: boolean; error?: string }) => void) => () => void
   getServerProps: (port: number) => Promise<{ ok: boolean; modalities?: { vision?: boolean; audio?: boolean }; error?: string }>
   saveChatImage: (dataUrl: string) => Promise<{ ok: boolean; ref?: string; error?: string }>
   readChatImage: (ref: string) => Promise<string | null>
@@ -299,10 +298,14 @@ interface LlamaCppApi {
 		    onEvent: (cb: (sessionId: string, event: unknown) => void) => void
 		    onAsk: (cb: (id: number, questions: Array<{ question: string; options?: string[]; allowFreeform?: boolean }>) => void) => void
 		    askResolve: (id: number, result: string) => Promise<{ success: boolean }>
-		    onApprove: (cb: (id: number, req: { toolName: string; args: Record<string, unknown> }) => void) => void
-		    approveResolve: (id: number, approved: boolean) => Promise<{ success: boolean }>
-		    undo: (sessionId: string, toolCallId: string) => Promise<{ success: boolean; path?: string; error?: string }>
-		  }
+	    onApprove: (cb: (id: number, req: { toolName: string; args: Record<string, unknown> }) => void) => void
+	    approveResolve: (id: number, approved: boolean) => Promise<{ success: boolean }>
+	    undo: (sessionId: string, toolCallId: string) => Promise<{ success: boolean; path?: string; error?: string }>
+	    // ── 轨迹台账（事件流落盘的查询侧；read 支持 fromSeq 增量）──
+	    trajectoryList: () => Promise<Array<{ sessionId: string; bytes: number; mtimeMs: number }>>
+	    trajectoryRead: (sessionId: string, fromSeq: number) => Promise<{ entries: Array<{ seq: number; ts: number; type: string; src: 'flow' | 'assistant' | 'tool' | 'user' | 'system'; payload: unknown }>; nextSeq: number }>
+	    trajectoryClear: (sessionId: string) => Promise<{ success: boolean; error?: string }>
+	  }
 	}
 declare global {
   interface Window { api: LlamaCppApi }

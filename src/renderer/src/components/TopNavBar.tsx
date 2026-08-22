@@ -8,7 +8,7 @@ import {
   HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
   MessageSquareIcon, TerminalIcon, InfoIcon, FileTextIcon, CodeIcon, ChevronDownIcon,
   SettingsIcon, BookOpenIcon, AudioLinesIcon, ImageIcon, MicIcon,
-  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon, SparklesIcon
+  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon
 } from '@animateicons/react/lucide'
 import '../styles/topnav.css'
 
@@ -28,7 +28,6 @@ const NAV_GROUPS: NavDef[][] = [
     { key: 'cards', label: '我的模板', icon: LayoutDashboardIcon, color: '#8b5cf6', runningSource: 'models', persistent: true },
     { key: 'models', label: '模型', icon: BoxesIcon, color: '#3b82f6' },
     { key: 'hub', label: '模型中心', icon: SearchIcon, color: '#0ea5e9' },
-    { key: 'jsonui', label: 'AI 面板', icon: SparklesIcon, color: '#a855f7' },
   ],
   [
     { key: 'llama', label: 'llama-server', icon: ServerIcon, color: '#14b8a6', runningSource: 'llama' },
@@ -75,44 +74,95 @@ export default function TopNavBar() {
     iconRefs.current[key]?.stopAnimation()
   }, [])
 
-  // 窗口过窄导航项横向溢出时：鼠标滚轮在导航栏上滚动转为平滑横向滚动。
-  // 用 rAF + 指数缓动把滚轮增量合成为目标位置做插值动画，避免逐帧硬跳的卡顿感；
-  // 原生监听器 passive:false 以允许 preventDefault
+  // 窗口过窄导航项横向溢出时：鼠标滚轮在导航栏上滚动转为带惯性的横向滚动。
+  // 滚轮输入期间目标位置即时缓动跟手；输入停止 ~90ms 后切入惯性滑行——
+  // 以最近滚动的速度继续前进并逐帧指数衰减（0.95/帧），像手机惯性滚动一样
+  // 自然减速停下，而不是一停手就瞬间定住。
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
     let target = 0
     let raf = 0
     let last = performance.now()
+    let smoothDt = 1 // 帧间隔 EMA 平滑：抑制 vsync 波动向步进长度的传导（顿挫感来源之一）
+    let mode: 'idle' | 'ease' | 'glide' = 'idle'
+    let vx = 0 // 惯性初速（px/帧，scrollLeft 正方向）
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
+    // 滚动上限缓存：动画循环里绝不读 scrollWidth/clientWidth——「写 scrollLeft →
+    // 读布局」的每帧交替会强制同步回流（layout thrashing），主界面 DOM 重时
+    // reflow 耗时波动直接表现为滚动步进忽快忽慢的颤动。改由 ResizeObserver 更新。
+    let maxScroll = Math.max(0, el.scrollWidth - el.clientWidth)
+    const ro = new ResizeObserver(() => {
+      maxScroll = Math.max(0, el.scrollWidth - el.clientWidth)
+    })
+    ro.observe(el)
+
     const step = (now: number) => {
-      const dt = Math.min(Math.max(now - last, 0) / 16.667, 3)
+      const rawDt = Math.min(Math.max(now - last, 0) / 16.667, 3)
       last = now
-      const max = Math.max(0, el.scrollWidth - el.clientWidth)
-      target = Math.min(Math.max(target, 0), max)
+      smoothDt += (rawDt - smoothDt) * 0.25
+      target = Math.min(Math.max(target, 0), maxScroll)
+      if (mode === 'glide') {
+        vx *= Math.pow(0.95, smoothDt) // 阻尼：每帧衰减 ~5%
+        target += vx * smoothDt
+        // 退出阈值故意设高（0.8px/帧）：0.95 指数衰减的长尾会让最后几百毫秒
+        // 陷入低于 1px/帧的蠕动，经 scrollLeft 整数化走出 1,1,0,1,0 的不均匀
+        // 序列——视觉上正是"阻尼消失后还在咔咔往前蹭"。提前交棒给 ease，
+        // 几何衰减几帧内利落归零，没有蠕动尾巴。
+        if (target <= 0 || target >= maxScroll || Math.abs(vx) < 0.8) {
+          target = Math.min(Math.max(target, 0), maxScroll)
+          mode = 'ease' // 速度耗尽/触边 → 回缓动精确收敛
+          vx = 0
+        }
+      }
       const diff = target - el.scrollLeft
-      if (Math.abs(diff) < 0.15) {
+      // 阈值取 0.75（<1px）：尾段增量小于 1px 时会被 scrollLeft 整数化走出
+      // 1,1,0,1,0 的取整颗粒。注意吸附必须用 target 原值而非 Math.round——
+      // round 会把位置往回拉最多半像素，视觉上正是滑行收尾时文字"颤一下"。
+      if (mode === 'ease' && Math.abs(diff) < 0.75) {
         el.scrollLeft = target
+        mode = 'idle'
         raf = 0
         return
       }
-      el.scrollLeft += diff * Math.min(1, 0.22 * dt)
+      el.scrollLeft += diff * Math.min(1, 0.22 * smoothDt)
       raf = requestAnimationFrame(step)
     }
-    const onWheel = (e: WheelEvent) => {
-      if (el.scrollWidth <= el.clientWidth) return // 未溢出时不拦截
-      const delta = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX
-      if (!delta) return
-      e.preventDefault()
-      target = Math.min(Math.max(target + delta, 0), Math.max(0, el.scrollWidth - el.clientWidth))
+    const ensureLoop = () => {
       if (!raf) {
         last = performance.now()
         raf = requestAnimationFrame(step)
       }
     }
+    const onWheel = (e: WheelEvent) => {
+      if (maxScroll <= 0) return // 未溢出时不拦截
+      let delta = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX
+      if (!delta) return
+      if (Math.abs(delta) < 2) return // 过滤滚轮编码器噪声微事件，避免唤醒动画造成末端颤动
+      // 行模式的设备（部分鼠标驱动）delta 单位是"行"，换算成像素量级
+      if (e.deltaMode === 1) delta *= 16
+      e.preventDefault()
+      // 持续滚动中不断顺延"输入结束"判定，并把本次增量并入惯性速度（指数平滑）
+      if (idleTimer) clearTimeout(idleTimer)
+      vx = 0.6 * (delta * 0.14) + 0.4 * vx
+      target = Math.min(Math.max(target + delta, 0), maxScroll)
+      mode = 'ease'
+      ensureLoop()
+      idleTimer = setTimeout(() => {
+        // 进入阈值 0.9 与 step 里的 glide 退出阈值 0.8 配套：更低的残余速度
+        // （轻拨）不值得惯性滑行，直接缓动收尾即可
+        if (Math.abs(vx) > 0.9) {
+          mode = 'glide' // 停手：带着残余速度进入惯性滑行
+          ensureLoop()
+        }
+      }, 90)
+    }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => {
       el.removeEventListener('wheel', onWheel)
+      ro.disconnect()
       if (raf) cancelAnimationFrame(raf)
+      if (idleTimer) clearTimeout(idleTimer)
     }
   }, [])
 

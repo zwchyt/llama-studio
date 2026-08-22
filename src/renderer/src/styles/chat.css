@@ -3308,6 +3308,37 @@
   opacity: 0;
 }
 
+/* 思考块 pending 占位（首 token 未到 / 模型加载上下文中）：三点跳动 + 等待文案 */
+.chat-think-waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.chat-think-waiting i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.3;
+  animation: chat-think-wait-dot 1.2s ease-in-out infinite;
+}
+.chat-think-waiting i:nth-child(2) { animation-delay: 0.15s; }
+.chat-think-waiting i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes chat-think-wait-dot {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+
+/* 思考异常留空的弱化占位 */
+.chat-think-empty {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-secondary);
+  opacity: 0.7;
+}
+
 .chat-think-body.open {
   padding: 4px 0 6px 12px;
   overflow-y: auto;

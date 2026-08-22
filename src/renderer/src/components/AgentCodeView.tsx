@@ -20,7 +20,8 @@ import {
   GitBranchIcon, GlobeIcon, TerminalIcon, ChevronsUpIcon, ChevronsDownIcon, FolderOpenIcon,
   ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon, FolderIcon, PlusIcon, TrashIcon, PencilIcon, Trash2Icon,
   UserIcon, QuoteIcon, CircleStopIcon, PlayIcon, EyeIcon, ClockIcon, SparklesIcon, FileTextIcon,
-  RefreshCwIcon, SendIcon, XIcon, CopyIcon, CodeIcon, MessageSquarePlusIcon, CheckIcon, SaveIcon
+  RefreshCwIcon, SendIcon, XIcon, CopyIcon, CodeIcon, MessageSquarePlusIcon, CheckIcon, SaveIcon,
+  RouteIcon
 } from '@animateicons/react/lucide'
 import { useStore } from '../store/useStore'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
@@ -44,6 +45,7 @@ import { askUserQuestionRegistry } from '../utils/askUserQuestionRegistry'
 import { getAuditEntries, subscribeAudit, clearAudit, recordAudit, type AuditEntry } from '../utils/auditLog'
 import { getDebugTurns, subscribeDebug, clearDebug, recordDebugTurn, type DebugTurn, type DebugToolCall } from '../utils/debugLog'
 import AgentFileTree from './AgentFileTree'
+import { AgentTrajectoryPanel } from './AgentTrajectoryPanel'
 import AgentBrowser, { formatAnnotations, ANNOTATION_KIND_LABEL, type UiAnnotation } from './AgentBrowser'// HTML 预览 iframe 的 UI 注释工具脚本（同源注入，?raw 打包为字符串）
 import AGENT_ANNOTATE_SCRIPT from '../utils/agentAnnotateScript.js?raw'
 
@@ -985,7 +987,14 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
             {durationMs != null && (
               <div className="agent-think-time">Thought: {formatDuration(durationMs)}</div>
             )}
-            {renderValue ? (thinking ? <StreamingThinkText value={renderValue} /> : <AgentMarkdown content={renderValue} />) : '（空）'}
+            {renderValue ? (
+              thinking ? <StreamingThinkText value={renderValue} /> : <AgentMarkdown content={renderValue} />
+            ) : thinking ? (
+              // pending 阶段（首 token 未到 / 模型加载上下文中）：动态等待提示，替代生硬的「（空）」
+              <span className="agent-think-waiting"><i /><i /><i />正在加载上下文…</span>
+            ) : (
+              <span className="agent-think-empty">（暂无内容）</span>
+            )}
             {/* 链内元素（思考续段 / 工具卡组）按模型时间线交错排列在思考文本下方，
                 随思考链展开/收起；调用窗口由调用方保证有 items 时必传渲染回调 */}
             {items && items.length > 0 && items.map((it, idx) => (
@@ -1035,7 +1044,7 @@ const HistorySummaryBubble = React.memo(function HistorySummaryBubble({ summary,
       </button>
       {visible && (
         <div className={`agent-think-body agent-think-summary-body ${expanded ? 'open' : ''}`}>
-          {summary ? <AgentMarkdown content={summary} /> : '（空）'}
+          {summary ? <AgentMarkdown content={summary} /> : <span className="agent-think-empty">（暂无摘要内容）</span>}
         </div>
       )}
     </div>
@@ -2770,6 +2779,7 @@ export default function AgentCodeView() {
   const ctxInlineRef = useRef<HTMLButtonElement>(null)
   const condenseBtnRef = useRef<HTMLButtonElement>(null)
   const auditBtnRef = useRef<HTMLButtonElement>(null)
+  const trajBtnRef = useRef<HTMLButtonElement>(null)
   const debugBtnRef = useRef<HTMLButtonElement>(null)
   const promptBtnRef = useRef<HTMLButtonElement>(null)
   const memoryBtnRef = useRef<HTMLButtonElement>(null)
@@ -2888,6 +2898,7 @@ export default function AgentCodeView() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [contextModalOpen, setContextModalOpen] = useState(false)
   const [auditOpen, setAuditOpen] = useState(false)  // 操作审计面板开关
+  const [trajOpen, setTrajOpen] = useState(false)  // 轨迹台账面板开关
   const [debugOpen, setDebugOpen] = useState(false)  // 调试面板开关
   const [memoryOpen, setMemoryOpen] = useState(false)  // 长期记忆面板开关
   const treeOpenRef = useRef(treeOpen)
@@ -2984,6 +2995,7 @@ export default function AgentCodeView() {
   usePopoverDismiss(contextModalOpen, setContextModalOpen, ctxInlineRef, '.agent-card-ctx')
   usePopoverDismiss(condenseOpen, setCondenseOpen, condenseBtnRef, '.agent-card-condense')
   usePopoverDismiss(auditOpen, setAuditOpen, auditBtnRef, '.agent-card-audit')
+  usePopoverDismiss(trajOpen, setTrajOpen, trajBtnRef, '.agent-card-traj')
   usePopoverDismiss(debugOpen, setDebugOpen, debugBtnRef, '.agent-card-debug')
   usePopoverDismiss(memoryOpen, setMemoryOpen, memoryBtnRef, '.agent-card-memstore')
 
@@ -3567,14 +3579,22 @@ export default function AgentCodeView() {
 
   // 进入 Agent Code 界面即预热 pi SDK 运行时（提前加载 pi 系 ESM 模块 + ModelRuntime，
   // 首次对话免一次性初始化等待）。失败静默：正常创建路径会重新初始化。
-  // 注意：延迟 4s 执行——pi 包动态 import 的模块求值会同步阻塞 main 进程事件循环
-  // （实测约 1.1s），若在启动早期执行会挤占 listTemplates 等首界面 IPC，导致模型卡片
-  // 延迟显示。启动 4s 后首界面早已渲染完成，此时的阻塞用户无感知。
+  // 注意：pi 包动态 import 的模块求值会同步阻塞 main 进程事件循环（实测约 1.1s，冷机更久），
+  // 必须与启动拥堵窗口错峰：等浏览器空闲（requestIdleCallback）且至少 15s 后才执行——
+  // 启动初期主进程正忙于首屏 IPC / Defender 磁盘扫描，此时插入同步阻塞会造成整窗"未响应"。
   useEffect(() => {
-    const t = setTimeout(() => {
+    const warm = (): void => {
       window.api?.piAgent?.warmup?.().catch(() => { })
-    }, 4000)
-    return () => clearTimeout(t)
+    }
+    let idleId: number | undefined
+    const t = setTimeout(() => {
+      if (typeof requestIdleCallback === 'function') idleId = requestIdleCallback(warm, { timeout: 20000 })
+      else warm()
+    }, 15000)
+    return () => {
+      clearTimeout(t)
+      if (idleId !== undefined) cancelIdleCallback(idleId)
+    }
   }, [])
 
   const updateProject = useCallback((id: string, upd: Partial<AgentProject>) => {
@@ -4170,7 +4190,10 @@ export default function AgentCodeView() {
     memory: AgentSession['memory'], budget: number, port: number, force = false
   ): Promise<AgentSession['memory']> => {
     try {
-      if (!force && abortRef.current.aborted) return memory
+      // 注：此处不做 abortRef.aborted 短路——该标志在用户点「停止」后残留 true，
+      // 直到下轮 runPiTurn 才复位，而自动压缩恰恰发生在 runPiTurn 之前；
+      // 若在此检查，「停止后继续对话」的场景会永远跳过压缩。
+      // 并发安全已由调用方保证：handleSend 持 sendingRef+!condensing 互斥，手动入口检查 loading||condensing。
       const apiMsgs = buildApiMessagesFull(messages, memory)
       const total = apiMsgs.reduce((s, m) => s + estimateApiMsgTokens(m), 0)
       if (!force && total <= budget * CONDENSE_TRIGGER_RATIO) return memory
@@ -5272,6 +5295,7 @@ export default function AgentCodeView() {
           >压缩历史</TopbarBtn>
           <TopbarBtn btnRef={promptBtnRef} active={promptModalOpen} onClick={openPromptModal} icon={SlidersHorizontalIcon}>提示词</TopbarBtn>
           <TopbarBtn btnRef={auditBtnRef} active={auditOpen} onClick={() => setAuditOpen(v => !v)} icon={ActivityIcon}>审计</TopbarBtn>
+          <TopbarBtn btnRef={trajBtnRef} active={trajOpen} onClick={() => setTrajOpen(v => !v)} icon={RouteIcon}>轨迹</TopbarBtn>
           <TopbarBtn btnRef={debugBtnRef} active={debugOpen} onClick={() => setDebugOpen(v => !v)} icon={Bug}>调试</TopbarBtn>
           <TopbarBtn btnRef={memoryBtnRef} active={memoryOpen} onClick={() => setMemoryOpen(v => !v)} icon={BookOpenIcon}>记忆</TopbarBtn>
           <TopbarBtn active={activeTabPath === GIT_DIFF_TAB} onClick={toggleGitDiff} icon={GitBranchIcon}>变更</TopbarBtn>
@@ -5583,6 +5607,17 @@ export default function AgentCodeView() {
               </div>
               <div className="agent-task-card-body agent-card-audit-body">
                 <AuditPanel />
+              </div>
+            </div>
+          )}
+          {/* 轨迹台账卡片（浮动在聊天区右上角）：pi 会话事件流落盘的只读视图 */}
+          {trajOpen && (
+            <div className="agent-task-card agent-card-traj">
+              <div className="agent-task-card-header">
+                <span>轨迹台账 · {activeSessionId ? `pi-${activeSessionId}` : '无会话'}</span>
+              </div>
+              <div className="agent-task-card-body agent-card-traj-body">
+                <AgentTrajectoryPanel piSessionId={activeSessionId ? `pi-${activeSessionId}` : null} />
               </div>
             </div>
           )}

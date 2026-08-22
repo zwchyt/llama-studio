@@ -30,7 +30,7 @@ import BenchmarkView from './components/BenchmarkView'
 import ImageGenView from './components/ImageGenView'
 import AgentCodeView from './components/AgentCodeView'
 import TokenStatsView from './components/TokenStatsView'
-import JsonUiView from './components/JsonUiView'
+
 import AudioCppView from './components/AudioCppView'
 import ModelDiagnosisPanel from './components/ModelDiagnosisPanel'
 import TitleBar from './components/TitleBar'
@@ -220,6 +220,16 @@ function AppMain() {
 
     window.api.onModelDiagnosis((d) => {
       useStore.getState().setModelDiagnosis(d.id, d)
+    })
+
+    // 后端目录后台重扫完成且内容有变化时，主进程广播最新列表（list-backends 现在永远
+    // 用缓存即时应答，重扫在后台静默进行）——此处无缝热替换；当前选中后端仍存在则保留
+    window.api.onBackendsUpdated((list) => {
+      setBackends(list)
+      const cur = useStore.getState().activeBackend
+      if ((!cur || !list.some(b => b.name === cur.name)) && list[0]) {
+        setActiveBackend(list[0])
+      }
     })
     return () => {
       window.clearTimeout(engineCheckTimer)
@@ -546,7 +556,6 @@ function AppMain() {
       case 'stt': return <SttView />
       case 'imagegen': return <ImageGenView />
       case 'audiocpp': return <AudioCppView />
-      case 'jsonui': return <JsonUiView />
       case 'agent-code': return null
       case 'terminal': return null
       default: return <CardsView />

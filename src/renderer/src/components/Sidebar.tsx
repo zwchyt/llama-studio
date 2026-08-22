@@ -9,7 +9,7 @@ import {
   HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
   MessageSquareIcon, TerminalIcon, InfoIcon, FileTextIcon, CodeIcon,
   SettingsIcon, BookOpenIcon, AudioLinesIcon, ImageIcon, MicIcon,
-  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon, SparklesIcon
+  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon
 } from '@animateicons/react/lucide'
 import '../styles/sidebar.css'
 
@@ -153,14 +153,6 @@ export default function Sidebar() {
           onClick={() => setView('hub')}
         >
           {view === 'hub' && <span className="nav-active-dot" />}
-        </NavItem>
-        <NavItem
-          icon={SparklesIcon}
-          label="AI 面板"
-          active={view === 'jsonui'}
-          onClick={() => setView('jsonui')}
-        >
-          {view === 'jsonui' && <span className="nav-active-dot" />}
         </NavItem>
 
         {/* ── 服务 ── */}

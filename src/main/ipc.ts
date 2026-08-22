@@ -10,6 +10,7 @@ import { join, extname, basename, dirname, resolve, sep, relative, isAbsolute } 
 import { spawn, execSync, ChildProcess } from 'child_process'
 import { tmpdir } from 'os'
 import iconv from 'iconv-lite'
+import { rgPath } from '@vscode/ripgrep'
 import extractZip from 'extract-zip'
 import yauzl from 'yauzl'
 import http from 'http'
@@ -69,6 +70,18 @@ export interface IpcInternalHandlers {
     error?: string
   }>
   handleGrep: (opts: {
+    pattern: string
+    path: string
+    glob?: string
+    output_mode?: string
+    head_limit?: number
+    '-i'?: boolean
+    context?: number
+    '-n'?: boolean
+    type?: string
+    timeout_seconds?: number
+  }) => Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }>
+  handleRipgrep: (opts: {
     pattern: string
     path: string
     glob?: string
@@ -546,6 +559,33 @@ interface GitHubRelease {
   html_url: string
   published_at: string
   assets: GitHubAsset[]
+}
+
+// ── GitHub API 缓存（防速率限制：未认证 IP 级仅 60 次/小时）──
+// releases/latest 类查询结果变化极慢（发版频率天级），30 分钟 TTL 足够新鲜；
+// 限额耗尽（HTTP 403）或网络失败时回退旧缓存（stale-on-error），界面照常可用；
+// 同 URL 并发去重：应用更新 + 后端版本 + Agents 版本同时触发时只发一次真实请求。
+const GH_CACHE_TTL_MS = 30 * 60 * 1000
+const ghCache = new Map<string, { data: unknown; ts: number }>()
+const ghInflight = new Map<string, Promise<unknown>>()
+function fetchGithubJsonCached(url: string): Promise<unknown> {
+  const hit = ghCache.get(url)
+  if (hit && Date.now() - hit.ts < GH_CACHE_TTL_MS) return Promise.resolve(hit.data)
+  const inflight = ghInflight.get(url)
+  if (inflight) return inflight
+  const p = fetchJson(url)
+    .then((data) => {
+      ghCache.set(url, { data, ts: Date.now() })
+      ghInflight.delete(url)
+      return data
+    })
+    .catch((err) => {
+      ghInflight.delete(url)
+      if (hit) return hit.data
+      throw err
+    })
+  ghInflight.set(url, p)
+  return p
 }
 /** 带 JSON body 的 HTTP POST/PUT 请求（用于 ModelScope 等 API） */
 function fetchJsonWithBody(
@@ -1677,15 +1717,36 @@ export function registerIpcHandlers(): void {
       percent: t.totalBytes > 0 ? Math.round((t.receivedBytes / t.totalBytes) * 100) : 0
     }))
   })
-  // 后端目录递归扫描结果缓存：内存缓存命中即时返回；启动首次调用命中磁盘缓存也即时返回。
-  // 磁盘缓存 24h 有效期、后端下载/删除时失效——避免每次重启对 backend 目录（数百 exe/dll）全量重扫：
-  // 首次 stat 会触发 Windows Defender 实时扫描，串行扫描时启动可拖慢 5-15s。缓存命中直接返回，不做后台重扫。
+  // 后端目录递归扫描结果缓存：内存缓存命中即时返回；磁盘缓存（任意年龄）也即时返回。
+  // 避免每次重启对 backend 目录（数百 exe/dll）全量重扫：首次 stat 会触发 Windows
+  // Defender 实时扫描，串行扫描时启动可拖慢 5-15s。
+  // 关键策略：过期缓存绝不让启动 IPC 同步等待重扫——立即返回旧数据 + 后台静默重扫，
+  // 完成后有变化才广播 'backends-updated' 让 renderer 刷新（无变化仅续期缓存时间戳）。
+  // 只有首次启动且从无缓存时才同步扫描（此时无旧数据可给）。
   let backendScanCache: { t: number; value: unknown } | null = null
   const BACKEND_CACHE_MS = 24 * 60 * 60 * 1000
   const BACKEND_CACHE_FILE = join(app.getPath('userData'), 'backend-scan-cache.json')
+  let backendRescanInflight: Promise<unknown> | null = null
   function invalidateBackendCache(): void {
     backendScanCache = null
     try { unlinkSync(BACKEND_CACHE_FILE) } catch { /* ignore */ }
+  }
+  /** 后台静默重扫（单飞）：完成后与旧数据对比，有变化才写盘并广播各窗口 */
+  function scheduleBackendRescan(): void {
+    if (backendRescanInflight) return
+    backendRescanInflight = (async () => {
+      try {
+        const prev = JSON.stringify(backendScanCache?.value ?? null)
+        const fresh = await scanBackendsAndCache()
+        if (JSON.stringify(fresh) !== prev) {
+          for (const w of BrowserWindow.getAllWindows()) {
+            if (!w.isDestroyed()) w.webContents.send('backends-updated', fresh)
+          }
+        }
+      } catch { /* 静默：下次触发再试 */ } finally {
+        backendRescanInflight = null
+      }
+    })()
   }
   function loadBackendCacheDisk(): { t: number; value: unknown } | null {
     try {
@@ -1775,16 +1836,19 @@ export function registerIpcHandlers(): void {
     return backends
   }
   ipcMain.handle('list-backends', async () => {
-    if (backendScanCache && Date.now() - backendScanCache.t < BACKEND_CACHE_MS) return backendScanCache.value
-    // 启动首次调用：磁盘缓存命中则直接返回（后端下载/删除时会失效缓存，见 invalidateBackendCache），
-    // 不再后台全量重扫，避免每次启动触发 Windows Defender 首访扫描拖慢冷读
-    if (!backendScanCache) {
-      const disk = loadBackendCacheDisk()
-      if (disk && Date.now() - disk.t < BACKEND_CACHE_MS) {
-        backendScanCache = disk
-        return backendScanCache.value
-      }
+    const now = Date.now()
+    if (backendScanCache && now - backendScanCache.t < BACKEND_CACHE_MS) return backendScanCache.value
+    // 有任何可用缓存（内存已过期 / 磁盘任意年龄）：立即返回旧数据，绝不阻塞启动；
+    // 同时后台静默重扫保持数据新鲜（见 scheduleBackendRescan）
+    const staleMem = backendScanCache
+    const disk = staleMem ? null : loadBackendCacheDisk()
+    const usable = staleMem ?? disk
+    if (usable) {
+      if (!staleMem && disk) backendScanCache = disk
+      scheduleBackendRescan()
+      return usable.value
     }
+    // 首次启动且无任何缓存：只能同步扫描（renderer 本就把它放在首屏关键路径之外）
     return await scanBackendsAndCache()
   })
   ipcMain.handle('delete-backend', (_e, backendName: string) => {
@@ -2823,7 +2887,7 @@ export function registerIpcHandlers(): void {
   // ── 共享的后端发布版本检查（llama.cpp 与 TensorSharp 通用，均直连 GitHub）──
   // repo 形如「owner/name」，由渲染进程显式传入；缺省为 llama.cpp。
   async function checkBackendRelease(repo: string) {
-    const release = await fetchJson(`https://api.github.com/repos/${repo}/releases/latest`) as any
+    const release = await fetchGithubJsonCached(`https://api.github.com/repos/${repo}/releases/latest`) as any
     if (!release || !release.assets) return { error: 'GitHub 返回数据无效' }
     const isMac = process.platform === 'darwin'
     const isLinux = process.platform === 'linux'
@@ -3346,7 +3410,7 @@ export function registerIpcHandlers(): void {
     try {
       const currentVersion = app.getVersion() || '0.0.0'
 
-      const release = await fetchJson(`https://api.github.com/repos/${APP_GITHUB_OWNER}/${APP_GITHUB_REPO}/releases/latest`) as GitHubRelease
+      const release = await fetchGithubJsonCached(`https://api.github.com/repos/${APP_GITHUB_OWNER}/${APP_GITHUB_REPO}/releases/latest`) as GitHubRelease
       if (!release || !release.tag_name) {
         return { available: false, currentVersion }
       }
@@ -4964,7 +5028,7 @@ export function registerIpcHandlers(): void {
       const repo = GITHUB_LATEST[agent.pkg]
       if (!repo) continue
       try {
-        const data = await fetchJson(`https://api.github.com/repos/${repo}/releases/latest`) as { tag_name?: string }
+        const data = await fetchGithubJsonCached(`https://api.github.com/repos/${repo}/releases/latest`) as { tag_name?: string }
         const tag = data?.tag_name
         if (tag) {
           const m = tag.match(/(\d+\.\d+\.\d+)/)
@@ -6205,6 +6269,127 @@ export function registerIpcHandlers(): void {
   }
   ipcInternal.handleGrep = handleGrep
   ipcMain.handle('grep', (_e, opts) => handleGrep(opts))
+
+  // ── Ripgrep 工具执行端：spawn 捆绑的 rg 引擎（@vscode/ripgrep），与 handleGrep（纯 JS 逐文件遍历）并存 ──
+  // rg 引擎优势：多线程并行、自动尊重 .gitignore、编码自动检测（UTF-8/GBK/Latin1…），
+  // 大仓库全局搜索显著快于 JS 遍历。安全设施与 handleGrep 对齐：resolveAgentPath 路径校验、
+  // SENSITIVE_FILES 名单 --glob 排除（rg 会把文件内容带进上下文，密钥类必须剔除）、
+  // 超时 kill 取部分结果、head_limit 截断、行内 1000 字符截断。
+  function resolveRgPath(): string {
+    if (!app.isPackaged) return rgPath
+    // 打包后二进制由 electron-builder extraResources 拷至 <resources>/bin/
+    const p = join(process.resourcesPath, 'bin', process.platform === 'win32' ? 'rg.exe' : 'rg')
+    if (existsSync(p)) return p
+    return 'rg' // 最后兜底 PATH
+  }
+  const handleRipgrep = async (opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean; type?: string; timeout_seconds?: number }): Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }> => {
+    try {
+      if (!opts || !opts.pattern) return { success: false, error: '缺少搜索模式' }
+      if (!opts.path) return { success: false, error: '缺少搜索目录' }
+      const searchPath = resolveAgentPath(opts.path)
+      if (searchPath.startsWith('\\\\') || searchPath.startsWith('//')) return { success: false, error: '不支持 UNC 路径' }
+      if (!existsSync(searchPath)) return { success: false, error: '目录不存在' }
+      const mode = (opts.output_mode || 'files_with_matches') as 'content' | 'files_with_matches' | 'count'
+      if (!['content', 'files_with_matches', 'count'].includes(mode)) return { success: false, error: `无效 output_mode：${mode}` }
+      // 正则预校验：让模型尽早收到可读的「无效正则」错误，而不是 rg 的英文 stderr
+      try { new RegExp(opts.pattern, opts['-i'] ? 'i' : '') } catch (e) { return { success: false, error: `无效正则：${e instanceof Error ? e.message : String(e)}` } }
+      const headLimit = opts.head_limit === undefined ? 250 : opts.head_limit
+      const maxItems = headLimit === 0 ? Infinity : headLimit
+      const reqSec = typeof opts.timeout_seconds === 'number' && opts.timeout_seconds > 0 ? opts.timeout_seconds : 0
+      const timeoutMs = reqSec > 0 ? Math.min(Math.max(reqSec * 1000, 1000), 300_000) : 20_000
+
+      const args: string[] = ['--color', 'never', '--no-heading', '--with-filename', '--no-messages']
+      for (const p of SENSITIVE_FILES) args.push('--glob', `!${p}`)
+      if (opts['-i']) args.push('--ignore-case')
+      let globPattern = opts.glob
+      if (!globPattern && opts.type && TYPE_GLOB_MAP[opts.type]) globPattern = TYPE_GLOB_MAP[opts.type]
+      if (globPattern) args.push('--glob', globPattern)
+      if (mode === 'count') args.push('--count-matches')
+      else if (mode === 'content') {
+        if (opts['-n'] !== false) args.push('--line-number')
+        const ctx = opts.context ?? 0
+        if (ctx > 0) args.push('-C', String(ctx))
+      } else args.push('--files-with-matches')
+      args.push('--', opts.pattern, searchPath)
+
+      return await new Promise((resolvePromise) => {
+        const child = spawn(resolveRgPath(), args, { windowsHide: true })
+        const lines: string[] = []
+        let buf = ''
+        let truncated = false
+        let timedOut = false
+        let stopped = false
+        const stop = (): void => {
+          if (stopped) return
+          stopped = true
+          try { child.kill() } catch { /* ignore */ }
+        }
+        const timer = setTimeout(() => { timedOut = true; stop() }, timeoutMs)
+        child.stdout.setEncoding('utf-8')
+        child.stdout.on('data', (chunk: string) => {
+          buf += chunk
+          for (;;) {
+            const nl = buf.indexOf('\n')
+            if (nl < 0) break
+            const raw = buf.slice(0, nl)
+            buf = buf.slice(nl + 1)
+            if (raw.length === 0) continue
+            if (lines.length >= maxItems) { truncated = true; stop(); break }
+            lines.push(raw.length > DEFAULT_MAX_CHARS_PER_LINE ? trimLine(raw, DEFAULT_MAX_CHARS_PER_LINE) : raw)
+          }
+          if (stopped) { try { child.stdout.destroy() } catch { /* ignore */ } }
+        })
+        let stderrTail = ''
+        child.stderr.setEncoding('utf-8')
+        child.stderr.on('data', (d: string) => { stderrTail = (stderrTail + d).slice(-500) })
+        const finish = (): void => {
+          clearTimeout(timer)
+          if (lines.length >= maxItems) truncated = true
+          const items = headLimit === 0 ? lines : lines.slice(0, maxItems)
+          let content: string
+          let numFiles = items.length
+          if (items.length === 0) {
+            content = mode === 'content' ? 'No matches found.' : 'No files found.'
+            if (timedOut) content = '搜索超时，返回部分结果。请缩小搜索范围或使用更具体的参数。'
+          } else if (mode === 'files_with_matches') {
+            content = `Found ${items.length} file(s):\n${items.join('\n')}`
+          } else if (mode === 'count') {
+            let total = 0
+            for (const l of items) { const i = l.lastIndexOf(':'); const n = parseInt(l.slice(i + 1), 10); if (Number.isFinite(n)) total += n }
+            content = `Found ${total} matches across ${items.length} file(s):\n${items.join('\n')}`
+          } else {
+            // content 行格式 path:line:text；懒惰匹配停在首个「:行号:」，Windows 盘符冒号安全
+            const filesSet = new Set<string>()
+            for (const l of items) {
+              const m = l.match(/^(.+?):\d+:/)
+              if (m) filesSet.add(m[1])
+            }
+            numFiles = filesSet.size
+            content = items.join('\n')
+          }
+          if (truncated) content += '\n(结果已截断)'
+          if (timedOut) content += '\n(搜索超时，返回部分结果)'
+          resolvePromise({ success: true, content, numFiles, truncated: truncated || undefined, timedOut: timedOut || undefined })
+        }
+        child.on('error', (e) => {
+          clearTimeout(timer)
+          resolvePromise({ success: false, error: `无法启动 ripgrep：${e.message}` })
+        })
+        child.on('close', (code) => {
+          // code 0=有匹配 1=无匹配 ≥2=出错；超时/截断主动 kill 的非零码不算错误
+          if (!timedOut && !truncated && code !== null && code >= 2 && lines.length === 0) {
+            clearTimeout(timer)
+            resolvePromise({ success: false, error: `ripgrep 退出码 ${code}${stderrTail.trim() ? `：${stderrTail.trim()}` : ''}` })
+            return
+          }
+          finish()
+        })
+      })
+    } catch (e) {
+      return { success: false, error: `搜索失败：${e instanceof Error ? e.message : String(e)}` }
+    }
+  }
+  ipcInternal.handleRipgrep = handleRipgrep
 
   // ── 文件树浏览 ──
   ipcMain.handle('build-file-tree', async (_e, dir: string, maxDepth = 3): Promise<{ success: boolean; tree?: { name: string; path: string; isDir: boolean; children?: any[] }; error?: string }> => {

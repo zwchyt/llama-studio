@@ -18,7 +18,8 @@
   box-shadow: var(--shadow);
 }
 
-/* 左侧导航项区域：窗口过窄时可横向滚动，不换行 */
+/* 左侧导航项区域：窗口过窄时可横向滚动，不换行。
+   will-change: scroll-position 提示浏览器把横向滚动走合成器通道，减少主线程重绘抖动 */
 .topnav-scroll {
   flex: 1;
   min-width: 0;
@@ -28,6 +29,7 @@
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+  will-change: scroll-position;
 }
 
 .topnav-scroll::-webkit-scrollbar {

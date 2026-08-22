@@ -6,6 +6,7 @@ import type { Message } from '@earendil-works/pi-ai'
 import { createPiAgentBridge, type PiAgentBridge } from './index'
 import { createMainTools, type MainToolExecutors } from './tools/mainTools'
 import { appendTokenUsage, type TokenUsageEntry } from '../../tokenLedger'
+import { appendSessionEvent, writeTrajectoryHeader, appendLlmRequest, summarizeLlmRequest, appendUserEntry, appendLlmSystemMessages } from './trajectory'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 
 /** llama-studio 会话历史消息（pi 模式注入用，与 shared/types 的 AgentMessage 结构对应） */
@@ -43,9 +44,18 @@ const PI_TOOL_GUIDANCE = [
   '- 每完成一步，用 TodoWrite 把对应任务状态更新为 completed；遇到阻塞更新为 in_progress 并补充 notes。',
   '- 不要用文本罗列代替任务清单——任务清单是跨轮次追踪进度的唯一来源。',
   '## 大文件探索规范（重要）',
-  '- 定位代码禁止顺序通读大文件：先用 Grep（output_mode: content，结果带行号）按类名/函数名/关键字定位，再用 Read 以命中行为中心开窗（如 offset=行号-20、limit=50）。',
-  '- Read 未指定 limit 时默认只返回前 2000 行；结果被截断时遵循提示——继续读用 offset，定位换 Grep，不要一页页翻读。',
-  '- 不确定文件路径先用 Glob/ListDir 确认；查看内容一律用 Read/Grep，禁止 Bash 的 type/cat/findstr。'
+  '- 定位代码禁止顺序通读大文件：先用 Ripgrep（output_mode: content，结果带行号）按类名/函数名/关键字定位，再用 Read 以命中行为中心开窗（如 offset=行号-20、limit=50）。',
+  '- Read 未指定 limit 时默认只返回前 2000 行；结果被截断时遵循提示——继续读用 offset，定位换 Ripgrep，不要一页页翻读。',
+  '- 不确定文件路径先用 Glob/ListDir 确认；查看内容一律用 Read/Ripgrep/Grep，禁止 Bash 的 type/cat/findstr。',
+  '## 搜索工具使用规范（重要）',
+  '- 内容搜索工具：Ripgrep（捆绑的 ripgrep 引擎，多线程、自动尊重 .gitignore、自动识别 UTF-8/GBK 编码，大仓库显著更快）与 Grep（JS 实现）。默认优先 Ripgrep；仅当 Ripgrep 明确报错时才回退 Grep。',
+  '- 分工：全项目/大目录首次搜索 → Ripgrep + 默认 files_with_matches 模式先定位文件，再决定 Read 开窗还是 content 模式看上下文；单文件/小目录精确查找 → 两工具皆可，参数完全一致。',
+  '- 避免重复搜索：不要对同一目标先后调用两个搜索工具交叉验证；无结果时先放宽 pattern（去锚点/改模糊匹配）或去掉 glob/type 过滤重试，而不是直接换工具。',
+  '- 控制输出体量：head_limit 保持默认 250，不要传 0（无限）；content 模式配合 context 参数取最小够用的上下文行数。',
+  '## Bash 执行规范（重要）',
+  '- Bash 默认 120 秒超时，超时会终止进程并返回已产生的输出；下载、安装依赖、构建等长耗时任务必须在参数里显式传更大的 timeout（如 npm install / git clone 用 600）。',
+  '- 禁止用 Bash 直接执行长驻进程（dev server、watch 模式、交互式程序）——会阻塞到超时且得不到服务。如需启动服务供后续验证，写入启动脚本并告知用户手动运行，或用后台方式启动后立即退出命令本身。',
+  '- 收到超时提示时：长任务→加大 timeout 重试；卡死的交互式程序→换非交互参数（如 --yes/-y/CI=true）重试。'
 ]
 
 const PI_UI_SPEC_GUIDANCE = [
@@ -86,7 +96,7 @@ export class PiAgentManager {
   constructor(
     executors: MainToolExecutors,
     toolNames: string[] = [
-      'get_datetime', 'Read', 'Bash', 'Write', 'Edit', 'Glob', 'Grep', 'ListDir', 'Delete',
+      'get_datetime', 'Read', 'Bash', 'Write', 'Edit', 'Glob', 'Grep', 'Ripgrep', 'ListDir', 'Delete',
       'TodoWrite', 'TaskGet', 'TaskList',
       'AskUserQuestion', 'Reflect', 'CodeSearch', 'AnalyzeDir', 'web_search', 'fetch_webpage'
     ]
@@ -152,6 +162,8 @@ export class PiAgentManager {
       bridge.session.agent.state.messages = convertHistory(opts.history)
     }
     bridge.session.subscribe((event) => {
+      // 轨迹台账：全量事件流落盘（旁路观测，失败静默，不影响主流程）
+      appendSessionEvent(opts.sessionId, event)
       // Token 记账：pi 每轮 LLM 响应结束（turn_end 携带 message.usage）时入账。
       // pi 模式不经过 chat-completion-stream（原入账点在 ipc.ts 聊天流 handler），
       // 必须在此补记，否则导航栏 Token 统计永远只有旧模型（legacy/ChatView）的记录。
@@ -160,7 +172,34 @@ export class PiAgentManager {
       }
       opts.onEvent(opts.sessionId, event)
     })
+    // 轨迹台账（阶段 2）：LLM 请求快照 —— 包装而非覆盖 Agent.onPayload，
+    // 保留 pi 内部可能已注册的钩子；每次发往模型的完整请求体被瘦身后落盘。
+    const prevOnPayload = bridge.session.agent.onPayload
+    bridge.session.agent.onPayload = (payload, model) => {
+      try {
+        if (payload && typeof payload === 'object') {
+          appendLlmRequest(opts.sessionId, summarizeLlmRequest(payload))
+          // 台账补记「系统信息」：pi 不为 system/developer 消息发事件，从首次请求体
+          // 提取落盘（内部防重，每会话仅一次），否则轨迹里看不到系统提示词来源。
+          appendLlmSystemMessages(opts.sessionId, (payload as { messages?: unknown }).messages)
+        }
+      } catch {
+        /* 快照失败静默：旁路观测不影响请求 */
+      }
+      return prevOnPayload?.(payload, model)
+    }
     this.bridges.set(opts.sessionId, bridge)
+    // 会话创建头信息（轨迹台账元数据：复现问题时的环境上下文）
+    writeTrajectoryHeader(opts.sessionId, {
+      cwd: opts.cwd,
+      port: opts.port,
+      contextWindow: opts.contextWindow ?? 128000,
+      // 记录模型实际可见的全部工具名：pi 内置白名单 + 自研 customTools（诊断「模型
+      // 为什么不用某工具」时的第一手证据）
+      tools: [...this.toolNames, ...mainTools.map(t => t.name)],
+      systemPromptChars: [...PI_TOOL_GUIDANCE, ...PI_UI_SPEC_GUIDANCE].join('\n\n').length,
+      historyCount: opts.history?.length ?? 0
+    })
   }
 
   /** pi 请求结束入账：usage（pi 格式 input/output）→ tokenLedger（llama-studio 记账簿） */
@@ -192,6 +231,9 @@ export class PiAgentManager {
     // Bash 不再需要同步 cwd：pi 原生 bash 使用创建时固定的工作区根目录（cd 不跨命令持久）。
     const cwd = bridge.session.sessionManager.getCwd()
     ipcInternal.handleSetAgentWorkspace?.(cwd)
+    // 台账补记「用户输入」：pi 不为 user 消息发事件，在入账前主动记录
+    //（否则轨迹面板只有模型/工具/LLM 行，看不到用户问了什么）。
+    appendUserEntry(sessionId, text, images?.length)
     await bridge.session.prompt(text, images && images.length > 0 ? { images } : undefined)
   }
 
@@ -319,6 +361,10 @@ export function createIpcExecutors(): MainToolExecutors {
     grep: (opts) => {
       requireInternal('handleGrep')
       return ipcInternal.handleGrep!(opts)
+    },
+    ripgrep: (opts) => {
+      requireInternal('handleRipgrep')
+      return ipcInternal.handleRipgrep!(opts)
     },
     deletePath: (path, recursive) => {
       requireInternal('handleDeletePath')

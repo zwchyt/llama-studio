@@ -772,7 +772,12 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
             ) : (
               <FinalMarkdown content={displayValue} />
             )
-          ) : '（空）'}
+          ) : thinking ? (
+            // pending 阶段（首 token 未到 / 模型加载上下文中）：动态等待提示，替代生硬的「（空）」
+            <span className="chat-think-waiting"><i /><i /><i />正在加载上下文…</span>
+          ) : (
+            <span className="chat-think-empty">（暂无内容）</span>
+          )}
         </div>
       )}
     </div>

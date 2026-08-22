@@ -4,8 +4,7 @@
    全部走 CSS 变量主题，暗色自动生效。 */
 
 .token-stats {
-  max-width: 1160px;
-  margin: 0 auto;
+  /* 与其他导航视图一致：铺满 .view-transition 卡片面板，不再居中限宽 */
   padding: 2px 0 24px;
 }
 

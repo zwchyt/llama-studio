@@ -4,6 +4,7 @@ import { join } from 'path'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import { PiAgentManager, createIpcExecutors, type PiAgentSessionOptions } from './manager'
 import { warmupPiBridge } from './index'
+import { setTrajectoryRoot, listTrajectories, readTrajectory, clearTrajectory } from './trajectory'
 import type { MainToolExecutors, AskUserQuestionInput } from './tools/mainTools'
 
 let manager: PiAgentManager | null = null
@@ -57,6 +58,8 @@ function getManager(): PiAgentManager {
 /** 注册 pi-agent IPC 通道。win 用于把会话事件/询问/审批推给 renderer。 */
 export function registerPiAgentIpc(win: BrowserWindow): void {
   currentWindow = win
+  // 轨迹台账根目录（与 Agent session/traces 同根：打包后 userData，开发时 cwd）
+  setTrajectoryRoot(join(app.isPackaged ? app.getPath('userData') : process.cwd(), 'Agent session'))
   const push = (sessionId: string, event: AgentSessionEvent): void => {
     if (!currentWindow || currentWindow.isDestroyed()) return
     // 流式事件瘦身：text_delta/thinking_delta 的 partial 携带「截至当前的完整消息内容」
@@ -126,6 +129,11 @@ export function registerPiAgentIpc(win: BrowserWindow): void {
   })
 
   ipcMain.handle('pi-agent-list', () => ({ sessionIds: getManager().sessionIds }))
+
+  // ── 轨迹台账查询（阶段 1：完整事件流落盘的读取侧）──
+  ipcMain.handle('pi-agent-trajectory-list', () => listTrajectories())
+  ipcMain.handle('pi-agent-trajectory-read', (_e, sessionId: string, fromSeq: number) => readTrajectory(sessionId, Number(fromSeq) || 0))
+  ipcMain.handle('pi-agent-trajectory-clear', (_e, sessionId: string) => clearTrajectory(sessionId))
 
   // ── 询问/审批回传（renderer 弹窗后调用）──
   ipcMain.handle('pi-agent-ask-resolve', (_e, id: number, result: string) => {

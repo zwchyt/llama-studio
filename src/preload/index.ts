@@ -20,6 +20,10 @@ const fullApi = {
   },
   removeModelDownloadListener: () => ipcRenderer.removeAllListeners('model-download-progress'),
   listBackends: () => ipcRenderer.invoke('list-backends'),
+  onBackendsUpdated: (cb: (backends: unknown) => void) => {
+    ipcRenderer.removeAllListeners('backends-updated')
+    ipcRenderer.on('backends-updated', (_e, data) => cb(data))
+  },
   deleteBackend: (name: string) => ipcRenderer.invoke('delete-backend', name),
   getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => ipcRenderer.invoke('get-commands', backendName, paramSet),
   saveBackendCommands: (backendName: string, schema: object, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => ipcRenderer.invoke('save-backend-commands', backendName, schema, paramSet),
@@ -159,14 +163,6 @@ const fullApi = {
   chatStream: (opts: { streamId: string; port: number; body: object }) => ipcRenderer.invoke('chat-completion-stream', opts),
   chatCompletion: (opts: { port: number; body: object }) => ipcRenderer.invoke('chat-completion', opts),
   getServerProps: (port: number) => ipcRenderer.invoke('server-props', port),
-  // ── json-render 动态 UI（AI 面板）：独立通道流式生成，不与聊天流冲突 ──
-  chatStreamJsonUI: (opts: { streamId: string; port: number; body: object }) =>
-    ipcRenderer.invoke('chat-completion-stream', { ...opts, channel: 'chat-stream-jsonui-chunk' }),
-  onJsonUIStreamChunk: (callback: (data: { streamId: string; delta?: string; done: boolean; error?: string }) => void) => {
-    const listener = (_event: unknown, data: { streamId: string; delta?: string; done: boolean; error?: string }) => callback(data)
-    ipcRenderer.on('chat-stream-jsonui-chunk', listener)
-    return () => ipcRenderer.removeListener('chat-stream-jsonui-chunk', listener)
-  },
   saveChatImage: (dataUrl: string) => ipcRenderer.invoke('save-chat-image', dataUrl),
   readChatImage: (ref: string) => ipcRenderer.invoke('read-chat-image', ref),
   saveImages: (opts: { images: string[]; mode?: string; seed?: number; steps?: number; cfg?: number; width?: number; height?: number; prompt?: string; negativePrompt?: string; sampler?: string; scheduler?: string; model?: string }) => ipcRenderer.invoke('save-images', opts),
@@ -344,7 +340,11 @@ const fullApi = {
       ipcRenderer.on('pi-agent-approve', (_e, id, req) => cb(id, req))
     },
     approveResolve: (id: number, approved: boolean) => ipcRenderer.invoke('pi-agent-approve-resolve', id, approved),
-    undo: (sessionId: string, toolCallId: string) => ipcRenderer.invoke('pi-agent-undo', sessionId, toolCallId)
+    undo: (sessionId: string, toolCallId: string) => ipcRenderer.invoke('pi-agent-undo', sessionId, toolCallId),
+    // ── 轨迹台账（事件流落盘的查询侧；read 支持 fromSeq 增量）──
+    trajectoryList: () => ipcRenderer.invoke('pi-agent-trajectory-list') as Promise<{ sessionId: string; bytes: number; mtimeMs: number }[]>,
+    trajectoryRead: (sessionId: string, fromSeq: number) => ipcRenderer.invoke('pi-agent-trajectory-read', sessionId, fromSeq),
+    trajectoryClear: (sessionId: string) => ipcRenderer.invoke('pi-agent-trajectory-clear', sessionId)
   },
 }
 
