@@ -1,6 +1,6 @@
 {
   "name": "llama-studio",
-  "version": "1.0.182",
+  "version": "1.0.183",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",
   "main": "out/main/index.js",
@@ -15,6 +15,9 @@
   "trustedDependencies": [
     "electron"
   ],
+  "overrides": {
+    "canvas": "file:./scripts/canvas-stub"
+  },
   "dependencies": {
     "@animateicons/react": "^0.4.3",
     "@earendil-works/pi-agent-core": "^0.84.1",
