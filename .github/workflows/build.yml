@@ -114,10 +114,7 @@ jobs:
           bun-version: latest
 
       - run: bun install
-
-      # electron-builder 打包 Windows 时需要下载 winCodeSign 等二进制
-      # （github.com/electron-userland/electron-builder-binaries），CI 网络抖动会
-      # 导致 got 下载中断（socket hang up）。缓存该目录避免重复下载。
+      
       - name: Cache electron-builder binaries
         uses: actions/cache@v4
         with:
@@ -126,6 +123,9 @@ jobs:
 
       - name: Build Electron
         run: bun run build
+
+      - name: Rebuild native modules for Electron
+        run: bun x electron-rebuild -w node-pty -f
 
       - name: Package with electron-builder
         shell: bash

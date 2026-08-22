@@ -9,6 +9,7 @@ files:
   # 用户运行时添加的模型 Logo 不进打包产物（dev 目录 src/renderer/public/logos）
   - '!out/renderer/logos/**'
 nodeGypRebuild: false
+npmRebuild: false
 extraResources:
   - from: resources
     to: resources
