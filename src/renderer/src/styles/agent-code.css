@@ -5410,7 +5410,8 @@
 }
 
 .agent-code-view .chat-input-row .chat-attach-btn,
-.agent-code-view .chat-input-row .chat-upload-btn {
+.agent-code-view .chat-input-row .chat-upload-btn,
+.agent-code-view .chat-input-row .chat-mic-btn {
   position: static;
   transform: none;
   z-index: var(--z-above);
@@ -5431,15 +5432,35 @@
 
 .agent-code-view .chat-input-row .chat-attach-btn:hover:not(:disabled),
 .agent-code-view .chat-input-row .chat-attach-btn.active,
-.agent-code-view .chat-input-row .chat-upload-btn:hover:not(:disabled) {
+.agent-code-view .chat-input-row .chat-upload-btn:hover:not(:disabled),
+.agent-code-view .chat-input-row .chat-mic-btn:hover:not(:disabled) {
   background: var(--bg);
   color: var(--text-secondary);
 }
 
 .agent-code-view .chat-input-row .chat-attach-btn:disabled,
-.agent-code-view .chat-input-row .chat-upload-btn:disabled {
+.agent-code-view .chat-input-row .chat-upload-btn:disabled,
+.agent-code-view .chat-input-row .chat-mic-btn:disabled {
   opacity: .4;
   cursor: not-allowed;
+}
+
+/* 麦克风按钮录音中：红色 + 脉冲，明确提示正在听写 */
+.agent-code-view .chat-input-row .chat-mic-btn.listening {
+  color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent);
+  animation: agent-mic-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes agent-mic-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.12);
+  }
 }
 
 /* ── 模型下拉触发器（发送按钮左侧）：显示当前模型名 + 箭头，点击展开模型列表 ── */
@@ -5453,19 +5474,30 @@
   min-width: 0;
   max-width: 220px;
   padding: 0 8px 0 10px;
+  /* 非运行态完全无边框（border:none），杜绝任何边框环；启动模型后才出现主题色圆角边框 */
+  appearance: none;
+  -webkit-appearance: none;
   border: none;
   border-radius: 14px;
-  background: transparent;
+  background: var(--surface);
   color: var(--text-secondary);
   cursor: pointer;
   flex-shrink: 1;
-  transition: background var(--transition), color var(--transition);
+  transition: background var(--transition), color var(--transition), box-shadow var(--transition);
 }
 
 .agent-code-view .chat-input-row .chat-model-dropdown:hover,
 .agent-code-view .chat-input-row .chat-model-dropdown.active {
   background: var(--bg);
   color: var(--text);
+}
+
+/* 启动模型后：只保留单层圆角边框，突出当前已选模型。
+   用界面真正的边框色变量 var(--border-strong)——随主题自适应
+   （浅色 #d0d0d0 浅灰 / 深色 #4b505b），与输入区外框同源、风格一致，
+   不发黑、不刺眼、不出现主题里没有的蓝色。 */
+.agent-code-view .chat-input-row .chat-model-dropdown.running {
+  border: 1.5px solid var(--border-strong);
 }
 
 .agent-code-view .chat-input-row .chat-model-dropdown-name {

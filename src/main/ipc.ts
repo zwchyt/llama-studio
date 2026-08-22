@@ -2856,12 +2856,16 @@ export function registerIpcHandlers(): void {
           : ''
         return { success: false, error: result.code === null ? 'llama-mtmd-cli 被中止' : `llama-mtmd-cli 退出码 ${result.code}: ${tail}${hint}` }
       }
-      // stdout 即转写文本；剥离 ANSI 色码与可能混入的日志行
+      // stdout 即转写文本；剥离 ANSI 色码、<asr_text> 标签、"language xxx" 标记与前导逗号
       const text = result.stdout
         .replace(/\u001b\[[0-9;]*m/g, '')
+        .replace(/<\/?asr_text>/gi, '')
         .split(/\r?\n/)
         .filter(l => !/^\s*(llama_|main:|ggml_|mtmd|srv |\[llama|loading|\.\.\.|gguf)/i.test(l.trim()))
+        .filter(l => !/^language\s+\w+$/i.test(l.trim()))
         .join('\n')
+        .replace(/\blanguage\s+[a-z]+\b\s*/gi, '')
+        .replace(/^\s*,+\s*/, '')
         .trim()
       if (!text) return { success: false, error: `转写无输出: ${tail.slice(-300)}` }
       return { success: true, text }
@@ -5844,6 +5848,17 @@ export function registerIpcHandlers(): void {
   }
   ipcInternal.handleWriteFile = handleWriteFile
   ipcMain.handle('write-file', (_e, filePath, content) => handleWriteFile(filePath, content))
+
+  // ── 麦克风录音：将 base64 编码的 WAV 写入系统临时目录，返回路径供本地 STT 使用 ──
+  ipcMain.handle('write-temp-file', async (_e, fileName: string, base64: string) => {
+    try {
+      const fp = join(tmpdir(), fileName)
+      await fsPromises.writeFile(fp, Buffer.from(base64, 'base64'))
+      return { success: true, path: fp }
+    } catch (e) {
+      return { success: false, error: `写入临时文件失败：${e instanceof Error ? e.message : String(e)}` }
+    }
+  })
 
   // ── Agent Code: glob / grep ──
   const GLOB_GREP_IGNORE_DIRS = new Set(['.git', 'node_modules'])

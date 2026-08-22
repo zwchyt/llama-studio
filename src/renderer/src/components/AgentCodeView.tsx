@@ -19,7 +19,7 @@ import {
   BrainIcon, LoaderIcon, SlidersHorizontalIcon, ActivityIcon, BookOpenIcon,
   GitBranchIcon, GlobeIcon, TerminalIcon, ChevronsUpIcon, ChevronsDownIcon, FolderOpenIcon,
   ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon, FolderIcon, PlusIcon, TrashIcon, PencilIcon, Trash2Icon,
-  UserIcon, QuoteIcon, CircleStopIcon, PlayIcon, EyeIcon, ClockIcon, SparklesIcon, FileTextIcon,
+  UserIcon, QuoteIcon, MicIcon, CircleStopIcon, PlayIcon, EyeIcon, ClockIcon, SparklesIcon, FileTextIcon,
   RefreshCwIcon, SendIcon, XIcon, CopyIcon, CodeIcon, MessageSquarePlusIcon, CheckIcon, SaveIcon,
   RouteIcon
 } from '@animateicons/react/lucide'
@@ -1978,6 +1978,73 @@ function TopbarBtn({ icon: Icon, size = 12, btnRef, baseClass = 'agent-code-topb
   )
 }
 
+/** 输入框按钮（动态图标联动版）：整按钮 hover 即触发 @animateicons 动画，与顶栏 TopbarBtn 同款。 */
+const AniIconButton = React.forwardRef<HTMLButtonElement, {
+  icon: React.ElementType
+  size?: number
+  onClick?: () => void
+  onMouseDown?: (e: React.MouseEvent) => void
+  className?: string
+  title?: string
+  disabled?: boolean
+  children?: React.ReactNode
+}>(function AniIconButton({ icon: Icon, size = 14, onClick, onMouseDown, className, title, disabled, children }, ref) {
+  const iconRef = useRef<AniIconHandle>(null)
+  return (
+    <button
+      ref={ref}
+      className={className}
+      onClick={onClick}
+      onMouseDown={onMouseDown}
+      title={title}
+      disabled={disabled}
+      onMouseEnter={() => iconRef.current?.startAnimation?.()}
+      onMouseLeave={() => iconRef.current?.stopAnimation?.()}
+    >
+      <Icon ref={iconRef as never} size={size} />
+      {children}
+    </button>
+  )
+})
+
+/** 将浏览器可解码的音频（如 webm/opus）转成 16-bit PCM WAV 的 base64，供本地 STT 模型识别。 */
+async function encodeWavBase64(inputBuf: ArrayBuffer): Promise<string> {
+  const AC: any = window.AudioContext || (window as any).webkitAudioContext
+  const ac = new AC()
+  const audioBuf = await ac.decodeAudioData(inputBuf)
+  const numCh = audioBuf.numberOfChannels
+  const sampleRate = audioBuf.sampleRate
+  const len = audioBuf.length
+  const bytesPerSample = 2
+  const blockAlign = numCh * bytesPerSample
+  const dataSize = len * blockAlign
+  const buffer = new ArrayBuffer(44 + dataSize)
+  const view = new DataView(buffer)
+  const writeStr = (off: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)) }
+  writeStr(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); writeStr(8, 'WAVE')
+  writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true)
+  view.setUint16(22, numCh, true); view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * blockAlign, true); view.setUint16(32, blockAlign, true)
+  view.setUint16(34, 16, true); writeStr(36, 'data'); view.setUint32(40, dataSize, true)
+  const channels: Float32Array[] = []
+  for (let c = 0; c < numCh; c++) channels.push(audioBuf.getChannelData(c))
+  let off = 44
+  for (let i = 0; i < len; i++) {
+    for (let c = 0; c < numCh; c++) {
+      const s = Math.max(-1, Math.min(1, channels[c][i]))
+      view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true)
+      off += 2
+    }
+  }
+  const bytes = new Uint8Array(buffer)
+  let bin = ''
+  const CH = 0x8000
+  for (let i = 0; i < bytes.length; i += CH) {
+    bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CH)))
+  }
+  return btoa(bin)
+}
+
 // ── 已完成助手消息行组件（React.memo）──
 // 流式期间每次 commit（~50ms）整页都会重渲染；已完成消息的 msg 对象引用在 commit 之间
 // 保持不变（只有流式那条消息被替换），所以用 React.memo + 稳定 actionsRef 让已完成行
@@ -2733,6 +2800,115 @@ export default function AgentCodeView() {
   const [condenseMsg, setCondenseMsg] = useState('')       // 压缩历史弹层内的结果反馈
   const condenseErrorRef = useRef('')                      // 最近一次压缩失败的具体原因
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // ── 麦克风语音输入（项目本地 STT 模型：采集麦克风 → wav → 临时文件 → sttTranscribe）──
+  const mediaRecorderRef = useRef<any>(null)
+  const micChunksRef = useRef<any[]>([])
+  const micStreamRef = useRef<MediaStream | null>(null)
+  const micBaseTextRef = useRef('') // 点录音前输入框已有的文字（实时回填时作为前缀保留）
+  const micBusyRef = useRef(false) // 实时片段识别是否进行中（防止定时器重叠）
+  const micTimerRef = useRef<number | null>(null)
+  const [listening, setListening] = useState(false) // 录音中
+  const [micTranscribing, setMicTranscribing] = useState(false) // 最终识别中
+
+  const stopMic = (): void => {
+    try { mediaRecorderRef.current?.stop() } catch { /* noop */ }
+    micStreamRef.current?.getTracks().forEach(t => t.stop())
+    micStreamRef.current = null
+  }
+
+  const startMic = useCallback(async () => {
+    const st = useStore.getState()
+    const backendPath = st.activeBackend?.path || ''
+    // 仅使用手动配置的 STT 模型与音频 mmproj（不再自动从磁盘模型里挑选）
+    const asrModel = st.sttModelPath || ''
+    const mmproj = st.sttMmprojPath || ''
+    if (!asrModel || !mmproj || !backendPath) {
+      notify('语音识别缺少配置：需要 ASR 模型 + 音频 mmproj + 已选择的 llama.cpp 后端（在「后端管理」选中一个版本）', 'error')
+      return
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      notify('当前环境无法访问麦克风（navigator.mediaDevices 不可用，可能需 Electron 允许媒体权限）', 'error')
+      return
+    }
+    // 配置就绪，先给可见反馈（按钮变红脉冲），再申请麦克风
+    setListening(true)
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch (e) {
+      setListening(false)
+      notify('无法访问麦克风（请检查系统 / Electron 麦克风权限）：' + String(e), 'error')
+      return
+    }
+    micBaseTextRef.current = input
+    micStreamRef.current = stream
+    const mr = new MediaRecorder(stream)
+    micChunksRef.current = []
+    mr.ondataavailable = (e: any) => { if (e.data && e.data.size) micChunksRef.current.push(e.data) }
+    // 实时回填：录音期间周期性把已录音频送本地 STT，识别结果写回输入框（边说边显示）
+    const liveTranscribe = async () => {
+      if (micBusyRef.current || micChunksRef.current.length === 0) return
+      micBusyRef.current = true
+      try {
+        const blob = new Blob(micChunksRef.current, { type: mr.mimeType || 'audio/webm' })
+        const wavB64 = await encodeWavBase64(await blob.arrayBuffer())
+        const saved = await window.api.writeTempFile(`llama-studio-mic-${crypto.randomUUID()}.wav`, wavB64)
+        if (saved.success && saved.path) {
+          const res = await window.api.sttTranscribe({
+            id: crypto.randomUUID(), backendPath, modelPath: asrModel, mmprojPath: mmproj,
+            audioPath: saved.path, prompt: st.sttPrompt?.trim() || 'Transcribe the following audio to text.'
+          })
+          if (res.success && res.text) {
+            const base = micBaseTextRef.current
+            const txt = base ? (/\s$/.test(base) ? base + res.text : base + ' ' + res.text) : res.text
+            setInput(txt)
+          }
+        }
+      } catch { /* 忽略实时片段的瞬时错误 */ } finally {
+        micBusyRef.current = false
+      }
+    }
+    mr.onstop = async () => {
+      micStreamRef.current?.getTracks().forEach(t => t.stop())
+      micStreamRef.current = null
+      if (micTimerRef.current) { clearInterval(micTimerRef.current); micTimerRef.current = null }
+      try {
+        const blob = new Blob(micChunksRef.current, { type: mr.mimeType || 'audio/webm' })
+        const wavB64 = await encodeWavBase64(await blob.arrayBuffer())
+        const saved = await window.api.writeTempFile(`llama-studio-mic-${crypto.randomUUID()}.wav`, wavB64)
+        if (!saved.success || !saved.path) { notify('写入临时音频失败：' + (saved.error || ''), 'error'); return }
+        setMicTranscribing(true)
+        const res = await window.api.sttTranscribe({
+          id: crypto.randomUUID(), backendPath, modelPath: asrModel, mmprojPath: mmproj,
+          audioPath: saved.path, prompt: st.sttPrompt?.trim() || 'Transcribe the following audio to text.'
+        })
+        if (res.success && res.text) {
+          const base = micBaseTextRef.current
+          const txt = base ? (/\s$/.test(base) ? base + res.text : base + ' ' + res.text) : res.text
+          setInput(txt)
+          notify('语音识别完成', 'success')
+        } else {
+          notify('语音识别失败：' + (res.error || '未知错误'), 'error')
+        }
+      } catch (e) {
+        notify('语音处理出错：' + String(e), 'error')
+      } finally {
+        setMicTranscribing(false)
+        setListening(false)
+      }
+    }
+    mediaRecorderRef.current = mr
+    mr.start()
+    micTimerRef.current = window.setInterval(liveTranscribe, 2000)
+    // 尽早触发第一次实时识别（录音刚开始就开跑，不等满一个间隔）
+    window.setTimeout(liveTranscribe, 1200)
+  }, [])
+  const toggleListen = useCallback(() => {
+    if (micTranscribing) return
+    if (listening) stopMic()
+    else startMic()
+  }, [listening, micTranscribing, startMic, stopMic])
+  useEffect(() => () => { try { mediaRecorderRef.current?.stop() } catch { /* noop */ } if (micTimerRef.current) clearInterval(micTimerRef.current) }, [])
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
@@ -5934,20 +6110,20 @@ export default function AgentCodeView() {
                 </div>
                 {/* ③ 底部按钮行：文件目录 + 模型列表（左）… 发送（右） */}
                 <div className="chat-input-tools">
-                  <button className="chat-upload-btn" onClick={() => fileInputRef.current?.click()}><PlusIcon size={14} /></button>
-                  <button ref={attachBtnRef} className={`chat-attach-btn${filePickerOpen ? ' active' : ''}`} onClick={toggleFilePicker} ><FolderOpenIcon size={14} /></button>
+                  <AniIconButton className="chat-upload-btn" icon={PlusIcon} size={14} onClick={() => fileInputRef.current?.click()} title="添加附件" />
+                  <AniIconButton ref={attachBtnRef} className={`chat-attach-btn${filePickerOpen ? ' active' : ''}`} icon={FolderOpenIcon} size={14} onClick={toggleFilePicker} title="选择文件" />
+                  <AniIconButton className={`chat-mic-btn${listening || micTranscribing ? ' listening' : ''}`} icon={MicIcon} size={14} onClick={toggleListen} disabled={micTranscribing} title={micTranscribing ? '识别中…' : listening ? '停止录音' : '语音输入'} />
                   <button
                     ref={modelBtnRef}
                     className={`chat-model-dropdown${modelPickerOpen ? ' active' : ''}${runningCard ? ' running' : ''}${runningCard?.ready ? ' ready' : ''}`}
                     onClick={() => setModelPickerOpen(v => !v)}
                   >
                     <span className="chat-model-dropdown-name">{runningCard ? modelLabel : '选择模型'}</span>
-                    <ChevronDownIcon size={12} className="chat-model-dropdown-caret" />
                   </button>
                   {loading ? (
-                    <button className="btn btn-primary chat-send-btn" onClick={handleStop} ><CircleStopIcon size={16} /></button>
+                    <AniIconButton className="btn btn-primary chat-send-btn" icon={CircleStopIcon} size={16} onClick={handleStop} title="停止" />
                   ) : (
-                    <button className="btn btn-primary chat-send-btn" onClick={() => handleSend()} disabled={(!input.trim() && attachedFiles.length === 0 && refChips.length === 0 && codeSnippets.length === 0) || !apiBaseUrl} ><SendIcon size={16} /></button>
+                    <AniIconButton className="btn btn-primary chat-send-btn" icon={SendIcon} size={16} onClick={() => handleSend()} disabled={(!input.trim() && attachedFiles.length === 0 && refChips.length === 0 && codeSnippets.length === 0) || !apiBaseUrl} title="发送" />
                   )}
                 </div>
               </div>
