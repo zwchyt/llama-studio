@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import { Wrench, FileSearch, Hash, MemoryStick, Loader2, Copy, Check, ChevronDown, Search, Cpu, Layers, TriangleAlert, Table2, BarChart3, GitCompare, FileCode2, Play } from 'lucide-react'
+import { Wrench, FileSearch, Hash, MemoryStick, Loader2, Copy, Check, ChevronDown, Search, Cpu, TriangleAlert, GitCompare, FileCode2, Play } from 'lucide-react'
 import CustomSelect from './CustomSelect'
-import type { GgufMetadata } from '../../../shared/types'
-import { estimateVram, maxGpuLayers, maxContext, cpuSideBytes, canEstimate, toGB, GIB, KV_TYPE_BYTES, KV_TYPE_LABELS, QUANT_BPW, weightBytesFromBpw, type KvType } from '../utils/vramEstimate'
+import type { GgufMetadata, FitParamsResult } from '../../../shared/types'
+
+// KV 缓存精度选项（透传给 llama-fit-params 的 -ctk/-ctv；f16 为工具默认）
+type KvType = 'f16' | 'q8_0' | 'q4_0'
+const KV_TYPE_LABELS: Record<KvType, string> = { f16: 'F16（默认）', q8_0: 'Q8_0', q4_0: 'Q4_0' }
 import '../styles/model-tools.css'
 
 type ToolTab = 'inspector' | 'tokenizer' | 'fit' | 'compare' | 'template'
@@ -344,111 +347,56 @@ function TokenizerTab({ modelPath, setModelPath }: { modelPath: string; setModel
   )
 }
 
-// ── Tab 3：显存装载计算器 ──────────────────────────────────
-// 上下文长度输入上限（1M token，防止误输天文数字导致估算数值失真）
+// ── Tab 3：显存装载计算器（直接调用后端 llama-fit-params.exe 实测拟合）──
+// 不做任何本地估算：由工具真实加载模型、探测显卡显存并按预算余量拟合出 -c/-ngl。
+// 上下文长度输入上限（1M token，防误输天文数字）
 const CTX_MAX = 1048576
 
 function FitTab({ modelPath, setModelPath }: { modelPath: string; setModelPath: (p: string) => void }) {
-  const models = useStore(s => s.models)
-  const [meta, setMeta] = useState<GgufMetadata | null>(null)
-  const [metaError, setMetaError] = useState('')
-  const [loadingMeta, setLoadingMeta] = useState(false)
-  const [ctxSize, setCtxSize] = useState(4096)
-  const [kvType, setKvType] = useState<KvType>('f16')
-  const [vramGb, setVramGb] = useState(8)
-  // 数字输入框显示值与生效值分离：输入过程允许清空/半成品（否则受控输入
-  // 每敲一键就被钳位回写，无法从头输入新数字），失焦时才钳位并回写显示。
+  const { models, activeBackend } = useStore(
+    s => ({ models: s.models, activeBackend: s.activeBackend }),
+    shallow
+  )
+  const { meta, error: metaError, loading: loadingMeta } = useGgufMeta(modelPath)
+  // 上下文输入框显示值与生效值分离（失焦才钳位）；空/0 = 不传 -c，由工具自动拟合最大上下文
   const [ctxText, setCtxText] = useState('4096')
-  const [vramText, setVramText] = useState('8')
-  const [gpu, setGpu] = useState<{ name: string; totalMiB: number; usedMiB: number } | null>(null)
-  // 量化 what-if 卡片：图表（堆叠条+预算线）/ 表格 两种展示，单选切换
-  const [quantChart, setQuantChart] = useState(true)
+  const [kvType, setKvType] = useState<KvType>('f16')
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState('')
+  const [result, setResult] = useState<FitParamsResult | null>(null)
+  const [showLog, setShowLog] = useState(false)
+  const reqSeq = useRef(0)
 
-  const selectedModel = models.find(m => m.path === modelPath)
+  const ctxSize = useMemo(() => {
+    const n = parseInt(ctxText, 10)
+    return Number.isFinite(n) && n > 0 ? Math.min(n, CTX_MAX) : 0
+  }, [ctxText])
 
-  // 挂载时探测显卡显存，自动填充预算（检测不到则保留默认值供手动填写）
-  useEffect(() => {
-    window.api.getGpuVram().then(g => {
-      setGpu(g)
-      if (g && g.totalMiB > 0) {
-        const v = Math.round((g.totalMiB / 1024) * 10) / 10
-        setVramGb(v); setVramText(String(v))
-      }
-    }).catch(() => { })
-  }, [])
+  const backendReady = !!activeBackend?.path
 
-  // 选择模型后本地读取 GGUF 头部（不加载权重）
-  useEffect(() => {
-    if (!modelPath) { setMeta(null); setMetaError(''); return }
-    let alive = true
-    setLoadingMeta(true); setMetaError(''); setMeta(null)
-    window.api.readGgufMeta(modelPath).then(res => {
-      if (!alive) return
-      if ('error' in res) { setMetaError(res.error); setMeta(null) }
-      else {
-        setMeta(res)
-        if (res.contextLength) {
-          const c = Math.min(res.contextLength, 4096)
-          setCtxSize(c); setCtxText(String(c))
-        }
-      }
-    }).catch(e => { if (alive) setMetaError(String(e)) })
-      .finally(() => { if (alive) setLoadingMeta(false) })
-    return () => { alive = false }
-  }, [modelPath])
+  const doFit = useCallback(async () => {
+    if (!modelPath || !backendReady) return
+    const seq = ++reqSeq.current
+    setRunning(true); setError(''); setResult(null)
+    const res = await window.api.fitParams({
+      backendPath: activeBackend!.path, modelPath,
+      ctxSize: ctxSize > 0 ? ctxSize : undefined,
+      kvType,
+    }).catch(err => ({ success: false, error: String(err), log: '' }) as FitParamsResult)
+    if (seq !== reqSeq.current) return
+    setRunning(false)
+    if (!res.success) { setError(res.error || '拟合失败'); setResult(null) }
+    else setResult(res)
+  }, [modelPath, backendReady, activeBackend, ctxSize, kvType])
 
-  const fileSize = selectedModel?.size ?? meta?.fileSize ?? 0
-  const ready = !!meta && canEstimate({
-    fileSizeBytes: fileSize, nLayer: meta.blockCount, nEmbd: meta.embeddingLength, nHead: meta.headCount
-  })
-
-  // 所有估算均为本地纯函数，随上下文/KV精度/显存预算实时重算
-  const calc = useMemo(() => {
-    if (!meta || !ready) return null
-    const nLayer = meta.blockCount as number
-    const base = {
-      fileSizeBytes: fileSize,
-      nLayer,
-      nEmbd: meta.embeddingLength as number,
-      nHead: meta.headCount as number,
-      nHeadKv: meta.headCountKv ?? (meta.headCount as number),
-      ctxSize,
-      kvBytesPerElem: KV_TYPE_BYTES[kvType],
-    }
-    const budgetBytes = vramGb * GIB
-    const full = estimateVram({ ...base, nGpuLayers: -1 })
-    const rec = maxGpuLayers(base, budgetBytes)
-    const fitsFull = full.totalGpuBytes <= budgetBytes
-    const pct = budgetBytes > 0 ? (full.totalGpuBytes / budgetBytes) * 100 : 0
-    const nglArg = fitsFull ? 99 : rec
-    const kvFlag = kvType !== 'f16' ? ` --cache-type-k ${kvType} --cache-type-v ${kvType}` : ''
-    const args = `-ngl ${nglArg} -c ${ctxSize}${kvFlag}`
-    // 反解：全量卸载时该预算能开的最大上下文（受训练上限钳位）
-    const { ctxSize: _c, ...noCtx } = base
-    const maxCtxRaw = maxContext({ ...noCtx, nGpuLayers: -1 }, budgetBytes)
-    const maxCtxFull = meta.contextLength ? Math.min(maxCtxRaw, meta.contextLength) : maxCtxRaw
-    // 部分卸载：按建议 ngl 估算 GPU/CPU 两侧占用与速度影响
-    const recEst = !fitsFull && rec > 0 ? estimateVram({ ...base, nGpuLayers: rec }) : null
-    const cpuBytes = recEst ? cpuSideBytes(recEst) : 0
-    const cpuFrac = recEst ? (nLayer - rec) / nLayer : 0
-    // 量化 what-if：按参数量×bpw 估算各量化的权重体积与全量需求/最大上下文
-    const paramCount = meta.paramCount || 0
-    const quantRows = paramCount > 0 ? QUANT_BPW.map(q => {
-      const wBytes = weightBytesFromBpw(paramCount, q.bpw)
-      const qBase = { ...base, fileSizeBytes: wBytes }
-      const qFull = estimateVram({ ...qBase, nGpuLayers: -1 })
-      const { ctxSize: _qc, ...qNoCtx } = qBase
-      const qMaxRaw = maxContext({ ...qNoCtx, nGpuLayers: -1 }, budgetBytes)
-      const qMaxCtx = meta.contextLength ? Math.min(qMaxRaw, meta.contextLength) : qMaxRaw
-      return { name: q.name, wBytes, totalBytes: qFull.totalGpuBytes, kvBytes: qFull.kvGpuBytes, ovhBytes: qFull.overheadBytes, fits: qFull.totalGpuBytes <= budgetBytes, maxCtx: qMaxCtx }
-    }) : []
-    // 图表横轴标尺：取“最大需求”与“预算”中的大者再留 5% 余量，保证预算线始终可见
-    const quantScale = quantRows.length > 0 ? Math.max(budgetBytes, ...quantRows.map(q => q.totalBytes)) * 1.05 : 0
-    return { base, budgetBytes, full, rec, nLayer, fitsFull, pct, args, maxCtxFull, recEst, cpuBytes, cpuFrac, quantRows, quantScale }
-  }, [meta, ready, fileSize, ctxSize, kvType, vramGb])
-
-  const headDim = meta && meta.headCount ? Math.round((meta.embeddingLength as number) / meta.headCount) : 0
-  const freeGb = gpu ? ((gpu.totalMiB - gpu.usedMiB) / 1024).toFixed(1) : null
+  const nLayerTotal = meta?.blockCount ?? null
+  // -ot 张量卸载规则（MoE 模型显存不足时工具会输出专家张量驻留内存的正则列表）
+  const otRules = result?.fittedArgs?.match(/-ot\s+"([^"]*)"/)?.[1]?.split(',').filter(Boolean) ?? null
+  // 结论分级：-ngl=-1 全量载入；>0 部分卸载；=0 放不下；未输出 -ngl 视为中性
+  const verdict = !result ? null
+    : result.gpuLayers === -1 ? 'ok'
+      : (result.gpuLayers ?? 0) > 0 ? 'warn'
+        : result.gpuLayers === 0 ? 'bad' : 'info'
 
   return (
     <div className="mtools-tab-body">
@@ -459,58 +407,34 @@ function FitTab({ modelPath, setModelPath }: { modelPath: string; setModelPath: 
           value={modelPath}
           onChange={setModelPath}
           options={[
-            { value: '', label: '选择要估算的 GGUF 模型' },
+            { value: '', label: '选择要计算的 GGUF 模型' },
             ...models.map(m => ({ value: m.path, label: `${m.name} (${m.folder})` })),
           ]}
           aria-label="模型文件"
         />
       </div>
 
-      <div className="mtools-form-row">
-        <label>可用显存</label>
-        <input
-          className="mtools-number-input"
-          type="number"
-          min={0}
-          step={0.1}
-          value={vramText}
-          onChange={e => {
-            setVramText(e.target.value)
-            const n = parseFloat(e.target.value)
-            if (Number.isFinite(n) && n >= 0) setVramGb(n)
-          }}
-          onBlur={() => {
-            const n = parseFloat(vramText)
-            const v = Number.isFinite(n) && n >= 0 ? Math.round(n * 10) / 10 : vramGb
-            setVramGb(v); setVramText(String(v))
-          }}
-        />
-        <span className="mtools-hint">GB（可手动修改）</span>
-        <span className="mtools-hint">
-          {gpu ? `已检测 ${gpu.name}：总 ${(gpu.totalMiB / 1024).toFixed(1)}GB，空闲 ${freeGb}GB` : '未检测到 NVIDIA 显卡，请手动填写'}
-        </span>
-      </div>
+      {!backendReady && (
+        <div className="mtools-error">未检测到可用后端，请先在「后端」页选择/下载后端版本（需包含 llama-fit-params.exe）。</div>
+      )}
 
       <div className="mtools-form-row">
         <label>上下文长度</label>
         <input
           className="mtools-number-input"
           type="number"
-          min={256}
+          min={0}
           step={256}
+          placeholder="自动拟合"
           value={ctxText}
-          onChange={e => {
-            setCtxText(e.target.value)
-            const n = parseInt(e.target.value, 10)
-            if (Number.isFinite(n) && n >= 256) setCtxSize(Math.min(n, CTX_MAX))
-          }}
+          onChange={e => setCtxText(e.target.value)}
           onBlur={() => {
             const n = parseInt(ctxText, 10)
-            const c = Number.isFinite(n) ? Math.min(Math.max(n, 256), CTX_MAX) : ctxSize
-            setCtxSize(c); setCtxText(String(c))
+            const c = Number.isFinite(n) && n > 0 ? Math.min(n, CTX_MAX) : 0
+            setCtxText(c > 0 ? String(c) : '')
           }}
         />
-        <span className="mtools-hint">token{meta?.contextLength ? `（训练上限 ${meta.contextLength.toLocaleString()}）` : ''}</span>
+        <span className="mtools-hint">token；清空或 0 = 按实际显存自动拟合最大上下文{meta?.contextLength ? `（训练上限 ${meta.contextLength.toLocaleString()}）` : ''}</span>
         <label style={{ marginLeft: 'auto' }}>KV 精度</label>
         <CustomSelect
           className="mtools-kv-select"
@@ -521,172 +445,73 @@ function FitTab({ modelPath, setModelPath }: { modelPath: string; setModelPath: 
         />
       </div>
 
+      <div className="mtools-form-row">
+        <span className="mtools-hint">工具会真实加载模型并按当前显卡实测拟合，给出可直接使用的启动参数</span>
+        <button className="btn btn-primary" style={{ marginLeft: 'auto' }} onClick={doFit} disabled={!modelPath || !backendReady || running}>
+          {running ? <Loader2 size={14} className="mtools-spin" /> : <Play size={14} />}
+          {running ? '拟合中…' : '计算'}
+        </button>
+      </div>
+
       {loadingMeta && <div className="mtools-loading"><Loader2 size={16} className="mtools-spin" /> 读取模型元数据中…</div>}
       {metaError && <div className="mtools-error">{metaError}</div>}
-      {meta && !ready && !loadingMeta && (
-        <div className="mtools-error">该模型缺少层数/头数等元数据，无法估算显存。</div>
-      )}
+      {error && <div className="mtools-error">{error}</div>}
 
-      {calc && (
+      {result && (
         <div className="mtools-scroll">
-          {/* 结论横幅 */}
-          <div className={`mtools-vram-verdict ${calc.fitsFull ? 'ok' : calc.rec > 0 ? 'warn' : 'bad'}`}>
-            {calc.fitsFull ? <Check size={16} /> : <TriangleAlert size={16} />}
-            <span>
-              {calc.fitsFull
-                ? '✓ 可全量载入 GPU（-ngl 全部）'
-                : calc.rec > 0
-                  ? `显存不足以全量载入，建议卸载 ${calc.rec} / ${calc.nLayer} 层`
-                  : '显存放不下该配置，建议纯 CPU 或减小上下文 / 换更小量化'}
-            </span>
-          </div>
-
-          {/* 显存需求分解（全量卸载）*/}
-          <div className="mtools-card">
-            <div className="mtools-card-title">
-              <MemoryStick size={14} /><span>全量载入显存需求</span>
-              <CopyButton text={calc.args} label="复制参数" />
-            </div>
-            <div className="mtools-vram-breakdown">
-              <div className="mtools-vram-row"><span>模型权重</span><span>{toGB(calc.full.weightsGpuBytes)} GB</span></div>
-              <div className="mtools-vram-row"><span>KV 缓存 @ {ctxSize.toLocaleString()} · {KV_TYPE_LABELS[kvType]}</span><span>{toGB(calc.full.kvGpuBytes)} GB</span></div>
-              <div className="mtools-vram-row"><span>预留（计算缓冲等，估算）</span><span>{toGB(calc.full.overheadBytes)} GB</span></div>
-              <div className="mtools-vram-row total"><span>合计需求</span><span>{toGB(calc.full.totalGpuBytes)} GB</span></div>
-              <div className="mtools-vram-row"><span>你的显存预算</span><span>{vramGb.toFixed(1)} GB</span></div>
-            </div>
-            <div className="mtools-ttype-bar mtools-vram-bar">
-              <div
-                className="mtools-ttype-fill"
-                style={{ width: `${Math.min(calc.pct, 100)}%`, background: calc.fitsFull ? undefined : (calc.rec > 0 ? '#f59e0b' : '#ef4444') }}
-              />
-            </div>
-            <div className="mtools-hint">占预算 {calc.pct.toFixed(0)}%（全量卸载）</div>
-            <code className="mtools-fit-args">{calc.args}</code>
-          </div>
-
-          {/* 反解：该预算全量载入时的最大上下文 */}
-          <div className="mtools-card">
-            <div className="mtools-card-title"><Search size={14} /><span>最大上下文（全量载入）</span></div>
-            {calc.maxCtxFull > 0 ? (
-              <>
-                <div className="mtools-vram-breakdown">
-                  <div className="mtools-vram-row total"><span>{vramGb.toFixed(1)} GB 预算 · {KV_TYPE_LABELS[kvType]} 下最大可开</span><span>≈ {calc.maxCtxFull.toLocaleString()} token</span></div>
-                </div>
-                <div className="mtools-hint">
-                  {meta?.contextLength && calc.maxCtxFull >= meta.contextLength
-                    ? '已达训练上限，显存不是瓶颈。'
-                    : '此为权重全部进 GPU 后剩余显存能容纳的 KV 上限；降低 KV 精度可进一步提升。'}
-                </div>
-              </>
-            ) : (
-              <div className="mtools-hint">该预算连模型权重都放不下，不存在全量载入的可行上下文。</div>
-            )}
-          </div>
-
-          {/* 部分卸载：CPU 内存占用 + 速度预期 */}
-          {calc.recEst && (
-            <div className="mtools-card">
-              <div className="mtools-card-title"><Cpu size={14} /><span>部分卸载（-ngl {calc.rec}）的代价</span></div>
-              <div className="mtools-vram-breakdown">
-                <div className="mtools-vram-row"><span>GPU 侧占用</span><span>{toGB(calc.recEst.totalGpuBytes)} GB</span></div>
-                <div className="mtools-vram-row"><span>CPU 内存侧（{calc.nLayer - calc.rec} 层权重 + KV）</span><span>{toGB(calc.cpuBytes)} GB</span></div>
-              </div>
-              <div className="mtools-hint">
-                {calc.cpuFrac > 0.5
-                  ? `⚠️ ${Math.round(calc.cpuFrac * 100)}% 的层在 CPU 上，生成速度将接近纯 CPU 推理，建议换更小量化或减小上下文。`
-                  : calc.cpuFrac > 0.2
-                    ? `${Math.round(calc.cpuFrac * 100)}% 的层在 CPU 上，生成速度会明显下降（通常只剩全 GPU 的几分之一）。`
-                    : `仅 ${Math.round(calc.cpuFrac * 100)}% 的层在 CPU 上，速度损失较小。`}
-                另需确保系统内存富余≥ {toGB(calc.cpuBytes)} GB。
-              </div>
+          {/* 结论横幅（按工具返回的 -ngl 分级）*/}
+          {verdict && (
+            <div className={`mtools-vram-verdict ${verdict}`}>
+              {verdict === 'ok' ? <Check size={16} /> : verdict === 'info' ? <MemoryStick size={16} /> : <TriangleAlert size={16} />}
+              <span>
+                {verdict === 'ok'
+                  ? '可全量载入 GPU'
+                  : verdict === 'warn'
+                    ? otRules
+                      ? `显存不足以全量载入：已生成 -ot 规则将 ${otRules.length} 组专家张量留在内存，其余上 GPU`
+                      : `显存不足以全量载入，工具建议卸载 ${result.gpuLayers}${nLayerTotal ? ` / ${nLayerTotal}` : ''} 层`
+                    : verdict === 'bad'
+                      ? '当前配置无法放入 GPU 显存，建议减小上下文 / 换更小量化或纯 CPU 运行'
+                      : '工具未输出 -ngl 调整建议（当前默认配置应可直接运行）'}
+              </span>
             </div>
           )}
 
-          {/* 量化 what-if 对比：不用下载文件即可比较该模型各量化的可行性；图表/表格单选切换 */}
-          {calc.quantRows.length > 0 && (
+          {/* 拟合参数卡 */}
+          {result.fittedArgs && (
             <div className="mtools-card">
               <div className="mtools-card-title">
-                <Layers size={14} /><span>换个量化会怎样？（按参数量估算）</span>
-                <div className="mtools-quant-switch">
-                  <button
-                    className={quantChart ? 'active' : ''}
-                    onClick={() => setQuantChart(true)}
-                  ><BarChart3 size={13} /></button>
-                  <button
-                    className={!quantChart ? 'active' : ''}
-                    onClick={() => setQuantChart(false)}
-                  ><Table2 size={13} /></button>
-                </div>
+                <MemoryStick size={14} /><span>llama-fit-params 拟合参数</span>
+                <CopyButton text={result.fittedArgs} label="复制参数" />
               </div>
-              {quantChart ? (
-                <div className="mtools-quant-chart">
-                  {calc.quantRows.map(q => {
-                    const isCur = meta?.fileTypeName?.toUpperCase().startsWith(q.name)
-                    return (
-                      <div key={q.name} className={`mtools-qbar-row ${isCur ? 'current' : ''}`}>
-                        <span className="mtools-qbar-name">{q.name}{isCur ? ' ★' : ''}</span>
-                        <div className="mtools-qbar-track">
-                          <div className="mtools-qbar-seg w" style={{ width: `${(q.wBytes / calc.quantScale) * 100}%` }} />
-                          <div className="mtools-qbar-seg kv" style={{ width: `${(q.kvBytes / calc.quantScale) * 100}%` }} />
-                          <div className="mtools-qbar-seg ovh" style={{ width: `${(q.ovhBytes / calc.quantScale) * 100}%` }} />
-                          <div className="mtools-qbar-budget" style={{ left: `${(calc.budgetBytes / calc.quantScale) * 100}%` }} />
-                        </div>
-                        <span className={`mtools-qbar-total ${q.fits ? 'fit-ok' : 'fit-no'}`}>{toGB(q.totalBytes)} GB</span>
-                      </div>
-                    )
-                  })}
-                  <div className="mtools-qbar-legend">
-                    <span><i className="w" />权重</span>
-                    <span><i className="kv" />KV 缓存 @{ctxSize.toLocaleString()}</span>
-                    <span><i className="ovh" />预留</span>
-                    <span><i className="budget" />预算 {vramGb.toFixed(1)} GB</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="mtools-quant-table">
-                  <div className="mtools-quant-row head">
-                    <span>量化</span><span>权重体积</span><span>全量需求 @{ctxSize.toLocaleString()}</span><span>最大上下文</span><span></span>
-                  </div>
-                  {calc.quantRows.map(q => (
-                    <div key={q.name} className={`mtools-quant-row ${meta?.fileTypeName?.toUpperCase().startsWith(q.name) ? 'current' : ''}`}>
-                      <span>{q.name}{meta?.fileTypeName?.toUpperCase().startsWith(q.name) ? '（当前）' : ''}</span>
-                      <span>{toGB(q.wBytes)} GB</span>
-                      <span>{toGB(q.totalBytes)} GB</span>
-                      <span>{q.maxCtx > 0 ? `≈ ${q.maxCtx.toLocaleString()}` : '—'}</span>
-                      <span className={q.fits ? 'fit-ok' : 'fit-no'}>{q.fits ? '✓ 装得下' : '✕ 装不下'}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="mtools-hint">体积按 bpw 经验值估算，与实际文件存在小幅误差；{quantChart ? '条超过虚线即装不下，★ 为当前量化。' : '“最大上下文”为全量载入下的反解值。'}</div>
-            </div>
-          )}
-
-          {/* 模型参数 */}
-          <div className="mtools-card">
-            <div className="mtools-card-title"><Layers size={14} /><span>模型参数</span></div>
-            <div className="mtools-fit-grid">
-              <div className="mtools-fit-item"><span className="mtools-fit-label">文件大小</span><span className="mtools-fit-value">{formatBytes(fileSize)}</span></div>
-              <div className="mtools-fit-item"><span className="mtools-fit-label">层数</span><span className="mtools-fit-value">{calc.nLayer}</span></div>
-              <div className="mtools-fit-item"><span className="mtools-fit-label">注意力头 / KV 头</span><span className="mtools-fit-value">{meta!.headCount} / {meta!.headCountKv ?? meta!.headCount}</span></div>
-              <div className="mtools-fit-item"><span className="mtools-fit-label">头维 / 隐藏维</span><span className="mtools-fit-value">{headDim} / {meta!.embeddingLength}</span></div>
-              {meta!.fileTypeName && <div className="mtools-fit-item"><span className="mtools-fit-label">量化</span><span className="mtools-fit-value">{meta!.fileTypeName}</span></div>}
-              <div className="mtools-fit-item"><span className="mtools-fit-label">每 token KV</span><span className="mtools-fit-value">{(calc.full.perTokenKvBytes / 1024).toFixed(1)} KB</span></div>
-            </div>
-          </div>
-
-          {/* GPU 实时状态（仅 NVIDIA，仅供参考）*/}
-          {gpu && (
-            <div className="mtools-card">
-              <div className="mtools-card-title"><Cpu size={14} /><span>{gpu.name}（实时）</span></div>
+              <code className="mtools-fit-args">{result.fittedArgs}</code>
               <div className="mtools-fit-grid">
-                <div className="mtools-fit-item"><span className="mtools-fit-label">总显存</span><span className="mtools-fit-value">{(gpu.totalMiB / 1024).toFixed(1)} GB</span></div>
-                <div className="mtools-fit-item"><span className="mtools-fit-label">已用</span><span className="mtools-fit-value">{(gpu.usedMiB / 1024).toFixed(1)} GB</span></div>
-                <div className="mtools-fit-item"><span className="mtools-fit-label">空闲</span><span className="mtools-fit-value">{freeGb} GB</span></div>
+                {result.ctxSize !== undefined && (
+                  <div className="mtools-fit-item"><span className="mtools-fit-label">拟合上下文（-c）</span><span className="mtools-fit-value">{result.ctxSize > 0 ? result.ctxSize.toLocaleString() : '模型默认'}</span></div>
+                )}
+                {result.gpuLayers !== undefined && (
+                  <div className="mtools-fit-item"><span className="mtools-fit-label">GPU 卸载层数（-ngl）</span><span className="mtools-fit-value">{result.gpuLayers === -1 ? `全部层${nLayerTotal ? `（${nLayerTotal}）` : ''}` : `${result.gpuLayers}${nLayerTotal ? ` / ${nLayerTotal}` : ''}`}</span></div>
+                )}
+                {otRules && (
+                  <div className="mtools-fit-item"><span className="mtools-fit-label">内存驻留张量组（-ot）</span><span className="mtools-fit-value" title={otRules.join('\n')}>{otRules.length}</span></div>
+                )}
               </div>
-              <div className="mtools-hint">实时值为系统全局占用（含其他程序），非本模型预估。</div>
             </div>
           )}
+          {!result.fittedArgs && (
+            <div className="mtools-hint">工具未返回拟合参数：可能当前配置无需调整即可运行。</div>
+          )}
+
+          {/* 完整日志折叠 */}
+          {result.log && (
+            <div className="mtools-collapse-header">
+              <button className="mtools-collapse-toggle" onClick={() => setShowLog(o => !o)} aria-expanded={showLog}>
+                <ChevronDown size={14} className={`mtools-chevron ${showLog ? '' : 'collapsed'}`} />
+                完整日志
+              </button>
+            </div>
+          )}
+          {showLog && result.log && <pre className="mtools-fit-args mtools-fit-log">{result.log}</pre>}
         </div>
       )}
     </div>

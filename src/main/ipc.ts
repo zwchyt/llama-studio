@@ -2701,32 +2701,30 @@ export function registerIpcHandlers(): void {
     return { success: true, tokens }
   })
 
-  ipcMain.handle('fit-params', async (_e, opts: { backendPath: string; modelPath: string; ctxSize?: number }) => {
+  ipcMain.handle('fit-params', async (_e, opts: { backendPath: string; modelPath: string; ctxSize?: number; kvType?: string }) => {
     if (!(await isAllowedModelPath(opts.modelPath))) return { success: false, error: '模型路径访问被拒绝' }
     const exe = resolveBackendExe(opts.backendPath, 'llama-fit-params.exe')
     if (!exe.path) return { success: false, error: exe.error }
     const args = ['-m', opts.modelPath]
+    // -c 省略（或 0）时交给工具按实际显存自动拟合最大上下文
     if (opts.ctxSize && opts.ctxSize > 0) args.push('-c', String(Math.floor(opts.ctxSize)))
+    // KV 精度：f16 为默认不传，其余透传 -ctk/-ctv
+    const kv = typeof opts.kvType === 'string' ? opts.kvType : 'f16'
+    if (kv !== 'f16') args.push('-ctk', kv, '-ctv', kv)
     const run = await runToolProcess(exe.path, args, 120000)
     if (run.timedOut) return { success: false, error: '参数拟合超时' }
     if (run.code !== 0) return { success: false, error: `llama-fit-params 退出码 ${run.code}: ${run.stderr.slice(-500)}`, log: run.stderr }
-    // stdout 末行即拟合参数（如 "-c 72448 -ngl -1"）
     const lines = run.stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+    // stdout 末行即拟合参数（如 "-c 72448 -ngl -1"，MoE 模型可能附带 -ot 张量卸载规则）
     const fitted = [...lines].reverse().find(l => l.startsWith('-')) || ''
     const ctxMatch = fitted.match(/(?:^|\s)-c\s+(\d+)/)
     const nglMatch = fitted.match(/(?:^|\s)-ngl\s+(-?\d+)/)
-    // GPU 显存信息复用监控链路的 nvidia-smi 缓存（失败时为 null，前端隐藏 GPU 卡片）
-    await refreshGpuData()
-    const gpus = cachedGpuData && cachedGpuData.memoryTotal !== null
-      ? [{ name: cachedGpuData.name, totalMiB: cachedGpuData.memoryTotal, usedMiB: cachedGpuData.memoryUsed ?? 0 }]
-      : null
     return {
       success: true,
       fittedArgs: fitted || undefined,
       ctxSize: ctxMatch ? parseInt(ctxMatch[1], 10) : undefined,
       gpuLayers: nglMatch ? parseInt(nglMatch[1], 10) : undefined,
-      log: run.stderr,
-      gpus
+      log: run.stderr
     }
   })
 

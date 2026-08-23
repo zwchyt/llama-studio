@@ -595,6 +595,17 @@
   word-break: break-all;
 }
 
+/* 参数卡内：参数行与其下 -c/-ngl 网格之间补齐间距 */
+.mtools-card .mtools-fit-args {
+  margin-bottom: 10px;
+}
+
+.mtools-fit-log {
+  white-space: pre-wrap;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
 /* ── 显存计算器：量化 what-if 对比表 ── */
 .mtools-quant-table {
   display: flex;

@@ -218,7 +218,7 @@ interface LlamaCppApi {
   getModelCapabilities: () => Promise<Record<string, { thinking: boolean; tools: boolean; vision: boolean }>>
   saveModelCapabilities: (templateId: string, caps: { thinking: boolean; tools: boolean; vision: boolean }) => Promise<void>
   tokenizeText: (opts: { port?: number; backendPath?: string; modelPath?: string; text: string }) => Promise<TokenizeResult>
-  fitParams: (opts: { backendPath: string; modelPath: string; ctxSize?: number }) => Promise<FitParamsResult>
+  fitParams: (opts: { backendPath: string; modelPath: string; ctxSize?: number; kvType?: string }) => Promise<FitParamsResult>
   getGpuVram: () => Promise<{ name: string; totalMiB: number; usedMiB: number } | null>
   analyzeTemplate: (opts: { backendPath: string; template: string }) => Promise<{ success: boolean; error?: string; report?: string }>
   // ── 本地 TTS ──

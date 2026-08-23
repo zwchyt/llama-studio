@@ -495,7 +495,6 @@ export interface FitParamsResult {
   ctxSize?: number          // 从 fittedArgs 解析的 -c
   gpuLayers?: number        // 从 fittedArgs 解析的 -ngl
   log?: string              // 完整 stderr 日志
-  gpus?: { name: string; totalMiB: number; usedMiB: number }[] | null
 }
 
 // ── 本地知识库 RAG（knowledgeService，BM25 关键词检索）──

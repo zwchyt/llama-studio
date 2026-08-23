@@ -311,7 +311,7 @@ const fullApi = {
   getModelCapabilities: () => ipcRenderer.invoke('get-model-capabilities'),
   saveModelCapabilities: (templateId: string, caps: { thinking: boolean; tools: boolean; vision: boolean }) => ipcRenderer.invoke('save-model-capabilities', templateId, caps),
   tokenizeText: (opts: { port?: number; backendPath?: string; modelPath?: string; text: string }) => ipcRenderer.invoke('tokenize-text', opts),
-  fitParams: (opts: { backendPath: string; modelPath: string; ctxSize?: number }) => ipcRenderer.invoke('fit-params', opts),
+  fitParams: (opts: { backendPath: string; modelPath: string; ctxSize?: number; kvType?: string }) => ipcRenderer.invoke('fit-params', opts),
   getGpuVram: () => ipcRenderer.invoke('get-gpu-vram'),
   analyzeTemplate: (opts: { backendPath: string; template: string }) => ipcRenderer.invoke('analyze-template', opts),
   // ── 本地 TTS ──
