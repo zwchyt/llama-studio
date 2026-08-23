@@ -184,7 +184,7 @@ interface AppStore {
   setChatSidebarCurrentCollapsed: (v: boolean) => void
   // ── 基准测试持久结果 ──
   benchmarkResult: {
-    mode: 'quick' | 'stress'
+    mode: 'quick' | 'stress' | 'ppl'
     parsed: {
       prompt: Record<string, unknown> | null
       generation: Record<string, unknown> | null
@@ -194,6 +194,7 @@ interface AppStore {
     showResults: boolean
     selectedBackend: string
     selectedModel: string
+    ppl?: { value: number; err: number | null; chunks: number[] } | null
   } | null
   setBenchmarkResult: (r: AppStore['benchmarkResult']) => void
   // ── 模型工具视图：外部跳转预选（模型列表「检查」按钮）──
@@ -485,9 +486,20 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
     try { localStorage.setItem('notificationSound', v) } catch { /* ignore */ }
     window.api?.setUiSetting('notificationSound', v)
   },
-  // ── 基准测试持久结果 ──
-  benchmarkResult: null,
-  setBenchmarkResult: (r) => set({ benchmarkResult: r }),
+  // ── 基准测试持久结果（localStorage 持久化，刷新/重启后恢复最近一次结果卡片）──
+  benchmarkResult: (() => {
+    try {
+      const raw = localStorage.getItem('llama-studio-last-bench-result')
+      return raw ? (JSON.parse(raw) as AppStore['benchmarkResult']) : null
+    } catch { return null }
+  })(),
+  setBenchmarkResult: (r) => {
+    set({ benchmarkResult: r })
+    try {
+      if (r) localStorage.setItem('llama-studio-last-bench-result', JSON.stringify(r))
+      else localStorage.removeItem('llama-studio-last-bench-result')
+    } catch { /* ignore */ }
+  },
   // ── 模型工具视图跳转预选 ──
   modelToolsTarget: null,
   setModelToolsTarget: (t) => set({ modelToolsTarget: t }),

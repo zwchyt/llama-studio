@@ -66,6 +66,8 @@ export interface PlainToolSpec {
   description: string
   /** OpenAI 格式 JSON Schema 参数定义 */
   parameters: Record<string, unknown>
+  /** 激活该工具时附加到系统提示词的使用规范（pi promptGuidelines 通道） */
+  promptGuidelines?: string[]
   /** 返回文本；或 {text, details} 以便携带附加信息（如撤销备份 id） */
   execute: (args: Record<string, unknown>, meta: { toolCallId: string }) => Promise<string | { text: string; details?: Record<string, unknown> }>
 }
@@ -79,6 +81,7 @@ export function makePiTool(
     name: spec.name,
     label: spec.label ?? spec.name,
     description: spec.description,
+    ...(spec.promptGuidelines?.length ? { promptGuidelines: spec.promptGuidelines } : {}),
     parameters: jsonSchemaToTypeBox(spec.parameters, Type),
     execute: async (toolCallId, params, _signal, _onUpdate) => {
       const res = await spec.execute(params as Record<string, unknown>, { toolCallId })

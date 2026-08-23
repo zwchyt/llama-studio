@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, TokenUsageEntry, ChatStreamChunk, AgentProject, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeHit } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, TokenUsageEntry, ChatStreamChunk, AgentProject, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit } from '../../shared/types'
 // 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
 interface ImagePromptPresetPayload {
   id: string; tag: string; cn: string; group: string
@@ -277,9 +277,14 @@ interface LlamaCppApi {
 		  knowledgeCreate: (name: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
 		  knowledgeDelete: (id: string) => Promise<{ success: boolean; error?: string }>
 		  knowledgeGet: (kbId: string) => Promise<{ id: string; name: string; createdAt: string; docs: KnowledgeDoc[] } | null>
-		  knowledgeAddDoc: (kbId: string, doc: { name: string; text: string }) => Promise<{ success: boolean; chunkCount?: number; meta?: KnowledgeBaseMeta; error?: string }>
+		knowledgeAddDoc: (kbId: string, doc: { name: string; text: string; chunking?: { mode?: 'auto' | 'heading' | 'delim' | 'single' | 'manual' | 'code'; size?: number; delimiter?: string; ranges?: number[][]; lang?: string } }) => Promise<{ success: boolean; chunkCount?: number; meta?: KnowledgeBaseMeta; error?: string }>
 		  knowledgeDeleteDoc: (kbId: string, docId: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
 		  knowledgeQuery: (kbId: string, query: string, limit?: number) => Promise<{ hits: KnowledgeHit[]; lowConfidence: boolean }>
+		  knowledgeDocContent: (kbId: string, docId: string) => Promise<{ success: boolean; error?: string } & Partial<KnowledgeDocContent>>
+		  knowledgeExport: (kbId: string) => Promise<{ success: boolean; name?: string; json?: string; error?: string }>
+		  knowledgeImport: (json: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
+		  knowledgeRename: (kbId: string, name: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
+		  knowledgeRenameDoc: (kbId: string, docId: string, name: string) => Promise<{ success: boolean; error?: string }>
 		  // ── Agent Code 任务清单（Todo / Task）──
 		  agentTodoWrite: (sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }) => Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }>
 		  agentTaskGet: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
@@ -290,7 +295,7 @@ interface LlamaCppApi {
 		  windowClose: () => Promise<void>
 		  // ── pi-agent（pi SDK 驱动的 agent 会话）──
 		  piAgent: {
-		    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
+		    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
 		    warmup: () => Promise<{ success: boolean }>
 		    prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
 		    abort: (sessionId: string) => Promise<{ success: boolean }>

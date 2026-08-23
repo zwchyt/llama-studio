@@ -13,7 +13,7 @@ import katex from 'katex'
 import katexCssInline from 'katex/dist/katex.min.css?inline'
 import katexJsInline from 'katex/dist/katex.min.js?raw'
 import '../styles/monitoring.css'
-import { Bot, AlertCircle, Wrench, TerminalSquare, CheckCircle2, XCircle, Undo2, Bug, Brain, FileDiff, Eye, Image as ImageIcon } from 'lucide-react'
+import { Bot, AlertCircle, Wrench, TerminalSquare, CheckCircle2, XCircle, Undo2, Bug, Brain, FileDiff, Eye, Image as ImageIcon, Database, Copy, Check } from 'lucide-react'
 // 顶栏按钮动态图标（@animateicons 无 Panel*/Bug 对应项，用 Chevron 方向图标替代折叠语义）
 import {
   BrainIcon, LoaderIcon, SlidersHorizontalIcon, ActivityIcon, BookOpenIcon,
@@ -63,7 +63,7 @@ import { extToMonacoLang } from './MonacoEditor'
 
 const MonacoEditor = lazy(() => import('./MonacoEditor'))
 
-import type { AgentMessage, AgentSession, AgentProject, Attachment, TodoUpdate, CardState, AgentMemoryEntry } from '../../../shared/types'
+import type { AgentMessage, AgentSession, AgentProject, Attachment, TodoUpdate, CardState, AgentMemoryEntry, KnowledgeBaseMeta } from '../../../shared/types'
 import { JSONUIProvider, Renderer } from '@json-render/react'
 import type { Spec } from '@json-render/core'
 import { registry } from '../jsonui/registry'
@@ -1921,8 +1921,10 @@ function usePopoverDismiss(
       if (e.type === 'keydown' && (e as KeyboardEvent).key === 'Escape') { setOpen(false); return }
       const target = e.target as Node
       if (btnRef.current?.contains(target)) return
-      const pop = document.querySelector(popSelector)
-      if (pop?.contains(target)) return
+      // 注意：逗号选择器必须用 querySelectorAll 逐一检查——querySelector 只返回文档序第一个匹配，
+      // portal 到 body 的浮层面板排在卡片之后会被漏判，导致点选项被当成「点击外部」而误关弹层
+      const pops = document.querySelectorAll(popSelector)
+      for (const pop of pops) { if (pop.contains(target)) return }
       setOpen(false)
     }
     document.addEventListener('pointerdown', close)
@@ -2958,6 +2960,7 @@ export default function AgentCodeView() {
   const trajBtnRef = useRef<HTMLButtonElement>(null)
   const debugBtnRef = useRef<HTMLButtonElement>(null)
   const promptBtnRef = useRef<HTMLButtonElement>(null)
+  const kbBtnRef = useRef<HTMLButtonElement>(null)
   const memoryBtnRef = useRef<HTMLButtonElement>(null)
   const [attachedFiles, setAttachedFiles] = useState<Array<{ id: string; name: string; isImage: boolean; dataUrl?: string; content?: string }>>([])
   // 「引用」引用块：以胶囊（图标 + 缩写）形式内嵌在输入框内，
@@ -3219,8 +3222,12 @@ export default function AgentCodeView() {
   const [promptDraft, setPromptDraft] = useState('')
   const [approveWriteEditDraft, setApproveWriteEditDraft] = useState(false)
   const [memoryDraft, setMemoryDraft] = useState('')  // 提示词卡片内的项目记忆草稿
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseMeta[]>([])
+  const [kbModalOpen, setKbModalOpen] = useState(false)
+  const [kbCopiedId, setKbCopiedId] = useState<string | null>(null)
 
   usePopoverDismiss(promptModalOpen, setPromptModalOpen, promptBtnRef, '.agent-card-prompt')
+  usePopoverDismiss(kbModalOpen, setKbModalOpen, kbBtnRef, '.agent-card-kb, .agent-card-kb-panel')
 
   // 用户消息内联编辑中的消息 id（null = 无）
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null)
@@ -4492,7 +4499,7 @@ export default function AgentCodeView() {
     pid: string,
     sid: string,
     displayMsgs: AgentMessage[],
-    opts: { port: number; text: string; workspaceDir: string; approveWriteEdit?: boolean; memory?: AgentSession['memory'] }
+    opts: { port: number; text: string; workspaceDir: string; approveWriteEdit?: boolean; knowledgeBaseId?: string; memory?: AgentSession['memory'] }
   ): Promise<{ errored: boolean; aborted: boolean }> => {
     const piSessionId = `pi-${sid}`
     // 首次进入该会话（或会话切换/重建）：创建 pi session 并注入历史
@@ -4526,6 +4533,7 @@ export default function AgentCodeView() {
         port: opts.port,
         cwd: opts.workspaceDir || '.',
         approveWriteEdit: opts.approveWriteEdit === true,
+        knowledgeBaseId: opts.knowledgeBaseId || undefined,
         contextWindow: (() => {
           const rc = useStore.getState().cards.find(c => c.status === 'running')
           return rc ? useStore.getState().modelMetrics[rc.template.id]?.nCtx || undefined : undefined
@@ -5078,6 +5086,7 @@ export default function AgentCodeView() {
         text,
         workspaceDir: activeProject.workspaceDir,
         approveWriteEdit: !!activeProject.approveWriteEdit,
+        knowledgeBaseId: activeProject.knowledgeBaseId,
         memory: memoryForTurn,
       })
     } catch (e) {
@@ -5138,6 +5147,7 @@ export default function AgentCodeView() {
       text: lastUser?.content ?? '',
       workspaceDir: activeProject.workspaceDir,
       approveWriteEdit: !!activeProject.approveWriteEdit,
+      knowledgeBaseId: activeProject.knowledgeBaseId,
     })
     rollbackIfFailed(r)
   }, [loading, runningCard, activeSession, activeProject, activeProjectId, activeSessionId, updateSessionInProject, runPiTurn])
@@ -5158,6 +5168,7 @@ export default function AgentCodeView() {
       text: msgs[idx]!.content,
       workspaceDir: activeProject.workspaceDir,
       approveWriteEdit: !!activeProject.approveWriteEdit,
+      knowledgeBaseId: activeProject.knowledgeBaseId,
     })
     rollbackIfFailed(r)
   }, [loading, runningCard, activeSession, activeProject, activeProjectId, activeSessionId, updateSessionInProject, runPiTurn])
@@ -5285,6 +5296,7 @@ export default function AgentCodeView() {
       setPromptDraft(activeProject.systemPrompt ?? '')
       setApproveWriteEditDraft(!!activeProject.approveWriteEdit)
       setMemoryDraft(activeProject.memory?.notes ?? '')
+      window.api.knowledgeList().then(setKnowledgeBases).catch(() => { })
     }
   }, [activeProject, promptModalOpen])
 
@@ -5297,6 +5309,15 @@ export default function AgentCodeView() {
     setPromptModalOpen(false)
     notify('已保存系统提示词', 'success')
   }, [activeProjectId, promptDraft, approveWriteEditDraft, memoryDraft, updateProject])
+
+  // 知识库弹层（独立按钮；只读展示本机全部知识库——工具常驻，模型按名称自行检索任意库）
+  const openKbModal = useCallback(() => {
+    const next = !kbModalOpen
+    setKbModalOpen(next)
+    if (next) {
+      window.api.knowledgeList().then(setKnowledgeBases).catch(() => { })
+    }
+  }, [kbModalOpen])
 
   // 欢迎页建议：模型已启动则直接发送，否则填入输入框待手动发送
   const AGENT_SUGGESTIONS: { text: string; icon: React.ReactNode }[] = [
@@ -5470,6 +5491,7 @@ export default function AgentCodeView() {
             iconClassName={condensing ? 'spin' : undefined}
           >压缩历史</TopbarBtn>
           <TopbarBtn btnRef={promptBtnRef} active={promptModalOpen} onClick={openPromptModal} icon={SlidersHorizontalIcon}>提示词</TopbarBtn>
+          <TopbarBtn btnRef={kbBtnRef} active={kbModalOpen} onClick={openKbModal} icon={Database} title="知识库列表（智能体可检索全部库）">知识库</TopbarBtn>
           <TopbarBtn btnRef={auditBtnRef} active={auditOpen} onClick={() => setAuditOpen(v => !v)} icon={ActivityIcon}>审计</TopbarBtn>
           <TopbarBtn btnRef={trajBtnRef} active={trajOpen} onClick={() => setTrajOpen(v => !v)} icon={RouteIcon}>轨迹</TopbarBtn>
           <TopbarBtn btnRef={debugBtnRef} active={debugOpen} onClick={() => setDebugOpen(v => !v)} icon={Bug}>调试</TopbarBtn>
@@ -5841,6 +5863,40 @@ export default function AgentCodeView() {
                 <button className="agent-prompt-btn agent-prompt-btn-ghost" onClick={() => { setPromptDraft(''); setApproveWriteEditDraft(false) }}>重置默认</button>
                 <button className="agent-prompt-btn agent-prompt-btn-ghost" onClick={() => setPromptModalOpen(false)}>取消</button>
                 <button className="agent-prompt-btn agent-prompt-btn-primary" onClick={saveSystemPrompt}>保存</button>
+              </div>
+            </div>
+          )}
+          {/* 知识库卡片（独立按钮；只读展示全部知识库，无绑定/选择操作） */}
+          {kbModalOpen && (
+            <div className="agent-task-card agent-card-prompt agent-card-kb">
+              <div className="agent-task-card-header">
+                <span>知识库 · {knowledgeBases.length} 个</span>
+              </div>
+              <div className="agent-task-card-body agent-card-prompt-body">
+                <p className="agent-prompt-hint">智能体自带 knowledge_search / knowledge_read 两阶段检索工具，可访问下列所有知识库；模型会按库名指定检索目标，无需在此选择。</p>
+                {knowledgeBases.length === 0 ? (
+                  <p className="agent-prompt-hint">尚未创建知识库——可在左侧「知识库」页面新建并导入文档。</p>
+                ) : (
+                  <ul className="agent-kb-list">
+                    {knowledgeBases.map(kb => (
+                      <li key={kb.id} className="agent-kb-item" title={kb.name}>
+                        <Database size={13} />
+                        <span className="agent-kb-item-name">{kb.name}</span>
+                        <span className="agent-kb-item-count">{kb.docCount} 文档</span>
+                        <button
+                          className="agent-kb-copy"
+                          title="复制库名"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            navigator.clipboard.writeText(kb.name)
+                            setKbCopiedId(kb.id)
+                            window.setTimeout(() => setKbCopiedId(null), 1200)
+                          }}
+                        >{kbCopiedId === kb.id ? <Check size={12} /> : <Copy size={12} />}</button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </div>
           )}

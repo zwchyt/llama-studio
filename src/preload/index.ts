@@ -233,9 +233,14 @@ const fullApi = {
   knowledgeCreate: (name: string) => ipcRenderer.invoke('knowledge-create', name),
   knowledgeDelete: (id: string) => ipcRenderer.invoke('knowledge-delete', id),
   knowledgeGet: (kbId: string) => ipcRenderer.invoke('knowledge-get', kbId),
-  knowledgeAddDoc: (kbId: string, doc: { name: string; text: string }) => ipcRenderer.invoke('knowledge-add-doc', kbId, doc),
+  knowledgeAddDoc: (kbId: string, doc: { name: string; text: string; chunking?: { mode?: 'auto' | 'heading' | 'delim' | 'single' | 'manual' | 'code'; size?: number; delimiter?: string; ranges?: number[][]; lang?: string } }) => ipcRenderer.invoke('knowledge-add-doc', kbId, doc),
   knowledgeDeleteDoc: (kbId: string, docId: string) => ipcRenderer.invoke('knowledge-delete-doc', kbId, docId),
   knowledgeQuery: (kbId: string, query: string, limit?: number) => ipcRenderer.invoke('knowledge-query', kbId, query, limit),
+  knowledgeDocContent: (kbId: string, docId: string) => ipcRenderer.invoke('knowledge-doc-content', kbId, docId),
+  knowledgeExport: (kbId: string) => ipcRenderer.invoke('knowledge-export', kbId),
+  knowledgeImport: (json: string) => ipcRenderer.invoke('knowledge-import', json),
+  knowledgeRename: (kbId: string, name: string) => ipcRenderer.invoke('knowledge-rename', kbId, name),
+  knowledgeRenameDoc: (kbId: string, docId: string, name: string) => ipcRenderer.invoke('knowledge-rename-doc', kbId, docId, name),
 
   // ── Agent Code 任务清单（Todo / Task）──
   agentTodoWrite: (sessionId: string, input: object) => ipcRenderer.invoke('agent-todo-write', sessionId, input),

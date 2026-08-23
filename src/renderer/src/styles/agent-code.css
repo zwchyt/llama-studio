@@ -1345,6 +1345,15 @@
   --tool-accent: #65a30d;
 }
 
+/* 知识库两阶段：检索=琥珀 / 读取=深青 */
+.agent-tool-call.tool-knowledge_search {
+  --tool-accent: #aa6f54;
+}
+
+.agent-tool-call.tool-knowledge_read {
+  --tool-accent: #155e75;
+}
+
 /* 失败态整行转红：覆盖工具色变量，头部文字/图标/路径按钮随之变红，扫视时可直接定位出错步骤 */
 .agent-tool-call.failed {
   --tool-accent: var(--danger);
@@ -2788,6 +2797,24 @@
 .agent-prompt-btn:disabled {
   opacity: .5;
   cursor: not-allowed;
+}
+
+/* 知识库绑定下拉（提示词卡片） */
+.agent-prompt-select {
+  width: 100%;
+  padding: 7px 9px;
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+  transition: border-color .15s ease;
+}
+
+.agent-prompt-select:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .agent-prompt-checkbox {
@@ -7256,3 +7283,65 @@
     background-position: 0% 0;
   }
 }
+
+/* ── 知识库只读列表（顶栏按钮弹层）── */
+.agent-kb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.agent-kb-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  font-size: 12px;
+}
+
+.agent-kb-item svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.agent-kb-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.agent-kb-item-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.agent-kb-copy {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color var(--transition, .15s), background var(--transition, .15s);
+}
+
+.agent-kb-copy:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+

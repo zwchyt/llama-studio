@@ -5,6 +5,8 @@ import { statSync } from 'node:fs'
 import { isAbsolute, resolve, sep } from 'node:path'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import { makePiTool, getTypebox, type PlainToolSpec } from './toolAdapter'
+import { createKnowledgeSearchSpec, formatKnowledgeCatalog } from '../../../../renderer/src/tools/KnowledgeSearchTool'
+import { createKnowledgeReadSpec, parseChunkRefs, formatKnowledgeChunks } from '../../../../renderer/src/tools/KnowledgeReadTool'
 
 export interface MainToolExecutors {
   readFile(
@@ -72,6 +74,16 @@ export interface MainToolExecutors {
   }>
   webSearch: (query: string) => Promise<string>
   fetchWebpage: (url: string) => Promise<string>
+  /** 知识库 BM25 检索（knowledgeService 内部函数直调） */
+  knowledgeQuery(kbId: string, query: string, limit?: number): Promise<{
+    hits: Array<{ docName: string; ordinal: number; text: string; title?: string; score: number }>
+    lowConfidence: boolean
+  }>
+  /** 知识库按引用读取选中块正文（两阶段检索第二段） */
+  knowledgeRead(kbId: string, refs: { docName?: string; ordinal?: number }[]): Promise<{
+    hits: Array<{ docName: string; ordinal: number; title: string; text: string }>
+    error?: string
+  }>
   /** 询问用户（跨进程弹窗；由 IPC 层提供实现） */
   askUser(questions: AskUserQuestionInput[]): Promise<string>
   /** 破坏性操作审批（由 IPC 层提供实现；未提供则放行） */
@@ -406,6 +418,10 @@ export interface CreateMainToolsContext {
   approveWriteEdit?: boolean
   /** 工作区目录（CodeSearch/AnalyzeDir 的相对路径基准） */
   workspaceDir?: string
+  /** 项目绑定的知识库 id（提供时注册 knowledge_search 工具） */
+  knowledgeBaseId?: string
+  /** 本机全部知识库清单：注入工具参数 kb 的 enum（模型从真实列表选择，非提示词） */
+  knowledgeBases?: { id: string; name: string }[]
 }
 
 // ── Read 短期缓存（对齐 renderer FileReadTool 的 readCache；pi 主进程版此前缺失）──
@@ -482,6 +498,65 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     },
     execute: async (args) => exec.fetchWebpage(String(args.url ?? ''))
   })
+
+  // 知识库两阶段检索：绑定了库、或本机存在任何知识库时注册。
+  // 定义/提示词/输出格式全部来自渲染层标准工具模块 src/renderer/src/tools/KnowledgeSearchTool 与 KnowledgeReadTool
+  //（纯数据文件双侧可导入；执行走本进程 executors，因为 pi 的 ToolDefinition.execute 无法跨 IPC）。
+  // 第一段 knowledge_search 只返回「标题目录」（每条几十字，极省 token）；模型按标题挑中后，
+  // 用第二段 knowledge_read 精确读取选中块的正文，避免把无关整块灌进上下文。
+  // 库列表以代码级 enum 注入工具参数 kb（模型从真实库名中选择，而非提示词描述）。
+  const kbLibs = ctx?.knowledgeBases ?? []
+  const kbNames = kbLibs.map(l => l.name)
+  const resolveKb = (want: unknown): { id?: string; error?: string } => {
+    const name = typeof want === 'string' ? want.trim() : ''
+    if (name) {
+      const hit = kbLibs.find(l => l.name === name || l.id === name)
+      return hit ? { id: hit.id } : { error: `未找到知识库「${name}」。可用的知识库：${kbNames.join('、') || '（无）'}` }
+    }
+    if (ctx?.knowledgeBaseId) return { id: ctx.knowledgeBaseId }
+    if (kbLibs.length === 1) return { id: kbLibs[0].id }
+    if (kbLibs.length > 1) return { error: `本机有多个知识库，请在 kb 参数中指定其一：${kbNames.join('、')}` }
+    return { error: '本机尚未创建任何知识库。' }
+  }
+  let knowledgeSearch: ToolDefinition | null = null
+  let knowledgeRead: ToolDefinition | null = null
+  if (ctx?.knowledgeBaseId || kbLibs.length > 0) {
+    const searchSpec = createKnowledgeSearchSpec(kbNames)
+    knowledgeSearch = make({
+      ...searchSpec,
+      execute: async (args) => {
+        const t = resolveKb(args.kb)
+        if (!t.id) return t.error ?? '知识库不可用'
+        const r = await exec.knowledgeQuery(t.id, String(args.query ?? ''), typeof args.limit === 'number' ? args.limit : undefined)
+        // 断层自动附正文：第一名逐字包含完整查询短语、且分数 ≥ 第二名 2 倍（或仅一条命中）时，
+        // 直接附带该块正文——省掉一轮 knowledge_read；分数咬得紧（多答案）时仍只回目录由模型挑。
+        let auto = ''
+        const hs = r.hits ?? []
+        if (hs.length > 0) {
+          const normQ = String(args.query ?? '').toLowerCase().replace(/\s+/g, ' ').trim()
+          const top = hs[0]
+          const dominant = normQ.length >= 4
+            && top.text.toLowerCase().replace(/\s+/g, ' ').includes(normQ)
+            && (hs.length === 1 || top.score >= (hs[1]?.score ?? 0) * 2)
+          if (dominant) {
+            auto = `\n\n【已自动附带最相关块正文：相关度断层悬殊，无需再调用 knowledge_read】\n【${top.title ?? '（无标题）'}】(${top.docName} · 第${top.ordinal + 1}块 · 相关度 ${top.score})\n${top.text}`
+          }
+        }
+        return formatKnowledgeCatalog(r) + auto
+      }
+    })
+    knowledgeRead = make({
+      ...createKnowledgeReadSpec(kbNames),
+      execute: async (args) => {
+        const t = resolveKb(args.kb)
+        if (!t.id) return t.error ?? '知识库不可用'
+        const refs = parseChunkRefs(args.refs)
+        if (refs.length === 0) return '未指定有效的块引用（需要 docName + ordinal）。'
+        const r = await exec.knowledgeRead(t.id, refs)
+        return formatKnowledgeChunks(r)
+      }
+    })
+  }
 
   const read: ToolDefinition = make({
     name: 'Read',
@@ -1058,5 +1133,5 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     }
   })
 
-  return [getDatetime, webSearch, fetchWebpage, read, bash, write, edit, glob, grep, ripgrep, listDir, deleteTool, todoWrite, taskGet, taskList, askUserQuestion, reflect, codeSearch, analyzeDir]
+  return [getDatetime, webSearch, fetchWebpage, ...(knowledgeSearch && knowledgeRead ? [knowledgeSearch, knowledgeRead] : []), read, bash, write, edit, glob, grep, ripgrep, listDir, deleteTool, todoWrite, taskGet, taskList, askUserQuestion, reflect, codeSearch, analyzeDir]
 }

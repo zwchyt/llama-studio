@@ -1,6 +1,6 @@
 // ── 工具注册中心（类似 textgen 的 tool_use.py + 各 tools/*.py）────
 import type { ComponentType } from 'react'
-import { Eye, FilePlus2, Pencil, Search, FileSearch, TerminalSquare, Clock, HelpCircle, FileText, Trash2, List, ListChecks, FolderOpen, Layers, Lightbulb, Sparkles, Zap } from 'lucide-react'
+import { Eye, FilePlus2, Pencil, Search, FileSearch, TerminalSquare, Clock, HelpCircle, FileText, Trash2, List, ListChecks, FolderOpen, Layers, Lightbulb, Sparkles, Zap, BookOpen } from 'lucide-react'
 import { agentConfig } from './agentConfig'
 
 export interface ToolDefinition {
@@ -41,6 +41,8 @@ export const TOOL_METAS: Record<string, ToolMeta> = {
   Delete:          { kind: 'delete', label: '删除文件', verb: '删除中', icon: Trash2,          readOnly: false, needsApproval: true,  canUndo: true },
   get_datetime:    { kind: 'other',  label: '获取时间', verb: '获取时间中', icon: Clock,        readOnly: true,  needsApproval: false, canUndo: false },
   web_search:      { kind: 'other',  label: '网络搜索', verb: '搜索中', icon: Search,          readOnly: true,  needsApproval: false, canUndo: false },
+  knowledge_search: { kind: 'search', label: '知识库检索', verb: '检索知识库中', icon: BookOpen,   readOnly: true,  needsApproval: false, canUndo: false },
+  knowledge_read:  { kind: 'read',   label: '知识库读取块', verb: '读取知识块中', icon: BookOpen,     readOnly: true,  needsApproval: false, canUndo: false },
   fetch_webpage:   { kind: 'other',  label: '抓取网页', verb: '抓取中', icon: FileText,        readOnly: true,  needsApproval: false, canUndo: false },
   AskUserQuestion: { kind: 'ask',    label: '提问用户', verb: '提问中', icon: HelpCircle,      readOnly: true,  needsApproval: false, canUndo: false },
   Reflect:         { kind: 'other',  label: '自我反思', verb: '反思中', icon: Lightbulb,       readOnly: true,  needsApproval: false, canUndo: false },

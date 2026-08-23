@@ -33,6 +33,8 @@ export interface PiAgentSessionOptions {
   agentDir?: string
   /** 已有会话历史（首次创建时注入 pi session，避免历史丢失） */
   history?: PiHistoryMessage[]
+  /** 项目绑定的知识库 id（提供时注册 knowledge_search 工具） */
+  knowledgeBaseId?: string
   /** 会话事件回调（由 IPC 层转推 renderer） */
   onEvent: (sessionId: string, event: AgentSessionEvent) => void
 }
@@ -98,7 +100,10 @@ export class PiAgentManager {
     toolNames: string[] = [
       'get_datetime', 'Read', 'Bash', 'Write', 'Edit', 'Glob', 'Grep', 'Ripgrep', 'ListDir', 'Delete',
       'TodoWrite', 'TaskGet', 'TaskList',
-      'AskUserQuestion', 'Reflect', 'CodeSearch', 'AnalyzeDir', 'web_search', 'fetch_webpage'
+      'AskUserQuestion', 'Reflect', 'CodeSearch', 'AnalyzeDir', 'web_search', 'fetch_webpage',
+      // 知识库两工具：pi 的 tools 参数是「激活名单」——customTools 只进定义池，
+      // 名字不在名单里的自定义工具不会出现在发给模型的请求里（实测 llm_request 验证）
+      'knowledge_search', 'knowledge_read'
     ]
   ) {
     // 撤销备份由 manager 统一管理（注入 recordUndo/undo 到工具执行器）
@@ -146,7 +151,9 @@ export class PiAgentManager {
     const mainTools = await createMainTools(this.executors, {
       sessionId: opts.sessionId.replace(/^pi-/, ''),
       approveWriteEdit: opts.approveWriteEdit,
-      workspaceDir: opts.cwd
+      workspaceDir: opts.cwd,
+      knowledgeBaseId: opts.knowledgeBaseId,
+      knowledgeBases: listKnowledgeBases()
     })
     const bridge = await createPiAgentBridge({
       getPort: () => opts.port,
@@ -336,6 +343,7 @@ function safeParseArgs(raw: string): Record<string, unknown> {
 // ── 生产执行器：ipc.ts 提取的 handler 直调（registerIpcHandlers 后可用）──
 import { ipcInternal } from '../../ipc'
 import { handleCodeSearchQuery } from '../retrievalService'
+import { queryKnowledgeBase, readKnowledgeChunks, listKnowledgeBases } from '../knowledgeService'
 
 export function createIpcExecutors(): MainToolExecutors {
   const requireInternal = (name: keyof typeof ipcInternal): void => {
@@ -391,6 +399,8 @@ export function createIpcExecutors(): MainToolExecutors {
       requireInternal('handleFetchWebpage')
       return ipcInternal.handleFetchWebpage!(url)
     },
+    knowledgeQuery: async (kbId, query, limit) => queryKnowledgeBase(kbId, query, limit),
+    knowledgeRead: async (kbId, refs) => readKnowledgeChunks(kbId, refs),
     // 默认实现：无窗口通道时由 piAgentIpc 覆写为跨进程弹窗
     askUser: async (questions) =>
       JSON.stringify({

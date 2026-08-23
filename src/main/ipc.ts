@@ -3,7 +3,7 @@ import https from 'https'
 import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
   unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, watch, promises as fsPromises,
-  createReadStream
+  createReadStream, copyFileSync
 } from 'fs'
 import * as readline from 'readline'
 import { join, extname, basename, dirname, resolve, sep, relative, isAbsolute } from 'path'
@@ -2547,13 +2547,33 @@ export function registerIpcHandlers(): void {
   // ── 性能基准测试 ──
   interface RunningBenchmark { proc: ChildProcess }
   const runningBenchmarks = new Map<string, RunningBenchmark>()
+  // 困惑度语料的临时副本（Windows 构建的 llama-perplexity 无法 fopen 非 ASCII 路径，见实测）
+  const stagedCorpusFiles = new Map<string, string>()
   ipcMain.handle('run-benchmark', (_e, opts: { id: string; backendPath: string; exe: string; args: string[] }) => {
     if (runningBenchmarks.has(opts.id)) return { success: false, error: '已在运行中' }
     const exePath = join(opts.backendPath, opts.exe)
     if (!isSafePath(BACKEND_DIR, exePath)) return { success: false, error: '访问被拒绝' }
     if (!existsSync(exePath)) return { success: false, error: `可执行文件未找到: ${exePath}` }
+    let spawnArgs = opts.args
+    if (opts.exe === 'llama-perplexity.exe') {
+      const fi = opts.args.indexOf('-f')
+      const corpusPath = fi >= 0 ? opts.args[fi + 1] : undefined
+      if (corpusPath && /[^\x00-\x7F]/.test(corpusPath) && existsSync(corpusPath)) {
+        try {
+          const staged = join(tmpdir(), `llama-studio-corpus-${randomUUID()}.txt`)
+          copyFileSync(corpusPath, staged)
+          spawnArgs = [...opts.args]
+          spawnArgs[fi + 1] = staged
+          stagedCorpusFiles.set(opts.id, staged)
+        } catch { /* 复制失败时按原路径运行，让工具自行报错 */ }
+      }
+    }
+    const cleanupStagedCorpus = () => {
+      const staged = stagedCorpusFiles.get(opts.id)
+      if (staged) { try { unlinkSync(staged) } catch { /* ignore */ } stagedCorpusFiles.delete(opts.id) }
+    }
     try {
-      const proc = spawn(exePath, opts.args, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: false })
+      const proc = spawn(exePath, spawnArgs, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: false })
       proc.stdout?.on('data', (d) => {
         const text = d.toString()
         BrowserWindow.getAllWindows().forEach(win => { if (!win.isDestroyed()) win.webContents.send('benchmark-log', { id: opts.id, stream: 'stdout', text }) })
@@ -2564,10 +2584,12 @@ export function registerIpcHandlers(): void {
       })
       proc.on('error', (err) => {
         runningBenchmarks.delete(opts.id)
+        cleanupStagedCorpus()
         BrowserWindow.getAllWindows().forEach(win => { if (!win.isDestroyed()) win.webContents.send('benchmark-error', { id: opts.id, error: String(err) }) })
       })
       proc.on('exit', (code) => {
         runningBenchmarks.delete(opts.id)
+        cleanupStagedCorpus()
         BrowserWindow.getAllWindows().forEach(win => { if (!win.isDestroyed()) win.webContents.send('benchmark-done', { id: opts.id, code }) })
       })
       runningBenchmarks.set(opts.id, { proc })
@@ -6574,6 +6596,9 @@ export function registerIpcHandlers(): void {
     workspaceDir: string
     createdAt: number
     messages: AgentMessage[]
+    // 项目级设置随每个会话文件冗余存储（项目本身无独立文件，重启后靠这里还原）
+    knowledgeBaseId?: string
+    systemPrompt?: string
   }
 
   function ensureAgentProjectsDir(): void {
@@ -6648,6 +6673,9 @@ export function registerIpcHandlers(): void {
         title: first.projectTitle || projectId,
         workspaceDir: first.workspaceDir || '',
         expanded: true,
+        // 项目级设置：取该组会话文件里最近一次写入的值（save 侧每个文件都冗余了同一份）
+        knowledgeBaseId: [...sessList].reverse().find(s => typeof s.knowledgeBaseId === 'string')?.knowledgeBaseId,
+        systemPrompt: [...sessList].reverse().find(s => typeof s.systemPrompt === 'string')?.systemPrompt,
         sessions: sessList.map(s => ({ id: s.id, title: s.title, messages: s.messages })),
       })
       orderInfo.push({ id: projectId, minCreated: Math.min(...sessList.map(s => s.createdAt)) })
@@ -6696,6 +6724,8 @@ export function registerIpcHandlers(): void {
             workspaceDir: p.workspaceDir,
             createdAt,
             messages: s.messages || [],
+            knowledgeBaseId: p.knowledgeBaseId,
+            systemPrompt: p.systemPrompt,
           }
           await fsPromises.writeFile(existingPath, JSON.stringify(file, null, 2))
         }

@@ -280,6 +280,7 @@ export interface AgentProject {
   sessions: AgentSession[]
   systemPrompt?: string      // 自定义系统提示词（按项目）；为空则用默认工具指引
   approveWriteEdit?: boolean  // 是否对 Write / Edit 也要求人工确认（Delete / Bash 始终要求）
+  knowledgeBaseId?: string   // 项目绑定的知识库（Agent 获得 knowledge_search 工具检索库内文档）
   // 跨会话项目记忆：用户沉淀的关键结论/约定，发送时注入系统提示，对该项目所有会话生效。
   memory?: {
     notes: string      // 跨会话项目记忆（用户可编辑的关键结论/约定）
@@ -513,6 +514,19 @@ export interface KnowledgeDoc {
   id: string
   name: string
   chunkCount: number
+  /** 清洗后原文字符数（旧文档导入时可能缺失） */
+  chars?: number
+  /** 该文档导入时使用的分块方式中文标签（自动分段/标题分块/分隔符/单块/手动划块；旧文档缺失） */
+  chunkMode?: string
+}
+
+/** knowledge-doc-content 返回：按块序拼接还原的全文 + 分块结构 */
+export interface KnowledgeDocContent {
+  name: string
+  text: string
+  chunkCount: number
+  chars: number
+  chunks: { ordinal: number; text: string }[]
 }
 
 /** knowledge-query 命中的文档段落 */
@@ -520,5 +534,7 @@ export interface KnowledgeHit {
   docName: string
   ordinal: number      // 该段在文档内的块序号
   text: string
+  /** 块小标题（入库时从块首提取；旧数据读取时惰性生成） */
+  title?: string
   score: number
 }
