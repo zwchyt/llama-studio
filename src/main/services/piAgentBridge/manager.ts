@@ -8,6 +8,7 @@ import { createMainTools, type MainToolExecutors } from './tools/mainTools'
 import { appendTokenUsage, type TokenUsageEntry } from '../../tokenLedger'
 import { appendSessionEvent, writeTrajectoryHeader, appendLlmRequest, summarizeLlmRequest, appendUserEntry, appendLlmSystemMessages } from './trajectory'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
+import type { ThinkingLevel } from '../../../shared/types'
 
 /** llama-studio 会话历史消息（pi 模式注入用，与 shared/types 的 AgentMessage 结构对应） */
 export interface PiHistoryMessage {
@@ -247,6 +248,12 @@ export class PiAgentManager {
   async abort(sessionId: string): Promise<void> {
     const bridge = this.getBridge(sessionId)
     await bridge.session.abort()
+  }
+
+  /** 动态设置会话级思考程度（发送前调用；会按当前模型能力自动 clamp）。 */
+  setThinkingLevel(sessionId: string, level: ThinkingLevel): void {
+    const bridge = this.getBridge(sessionId)
+    bridge.session.setThinkingLevel(level)
   }
 
   disposeSession(sessionId: string): void {

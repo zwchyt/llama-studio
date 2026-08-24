@@ -6,6 +6,7 @@ import { PiAgentManager, createIpcExecutors, type PiAgentSessionOptions } from '
 import { warmupPiBridge } from './index'
 import { setTrajectoryRoot, listTrajectories, readTrajectory, clearTrajectory } from './trajectory'
 import type { MainToolExecutors, AskUserQuestionInput } from './tools/mainTools'
+import type { ThinkingLevel } from '../../../shared/types'
 
 let manager: PiAgentManager | null = null
 let currentWindow: BrowserWindow | null = null
@@ -120,6 +121,12 @@ export function registerPiAgentIpc(win: BrowserWindow): void {
 
   ipcMain.handle('pi-agent-dispose', async (_e, sessionId: string) => {
     getManager().disposeSession(sessionId)
+    return { success: true }
+  })
+
+  // 动态设置会话级思考程度（发送前由 renderer 调用；setThinkingLevel 按模型能力自动 clamp）
+  ipcMain.handle('pi-agent-set-thinking-level', (_e, sessionId: string, level: ThinkingLevel) => {
+    getManager().setThinkingLevel(sessionId, level)
     return { success: true }
   })
 

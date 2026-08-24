@@ -517,6 +517,28 @@ function canBroadcast(id: string): boolean {
   if (now - last >= BROADCAST_THROTTLE_MS) { broadcastTimes.set(id, now); return true }
   return false
 }
+// 启动时从 .env 载入 GITHUB_TOKEN，避免 dev 环境未注入环境变量时 GitHub API 走 60/hr 匿名限额。
+// 优先用已存在的 process.env.GITHUB_TOKEN；否则按 项目根/.env、userData/.env 顺序读取。
+function loadGitHubTokenFromEnvFile(): void {
+  if (process.env.GITHUB_TOKEN) return
+  let fsMod: typeof import('fs') | undefined
+  let pathMod: typeof import('path') | undefined
+  try { fsMod = require('fs'); pathMod = require('path') } catch { return }
+  if (!fsMod || !pathMod) return
+  const candidates: string[] = [pathMod.resolve(process.cwd(), '.env')]
+  try { const { app } = require('electron'); candidates.push(pathMod.join(app.getPath('userData'), '.env')) } catch { /* app 不可用 */ }
+  for (const cand of candidates) {
+    try {
+      const txt = fsMod.readFileSync(cand, 'utf8')
+      for (const line of txt.split('\n')) {
+        const m = line.match(/^\s*GITHUB_TOKEN\s*=\s*(.+?)\s*$/)
+        if (m) { process.env.GITHUB_TOKEN = m[1].replace(/^["']|["']$/g, ''); return }
+      }
+    } catch { /* 文件不存在，跳过 */ }
+  }
+}
+loadGitHubTokenFromEnvFile()
+
 function fetchJson(url: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const headers: Record<string, string> = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36', Accept: 'application/json' }
@@ -2298,9 +2320,33 @@ export function registerIpcHandlers(): void {
       modelLogBuffers.delete(opts.id) // 新一轮启动：丢弃上一轮的日志缓存
       let prefillResetTimer: ReturnType<typeof setTimeout> | null = null
       const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+
+      // llama-server 终端日志美化：仅作用于 console 输出，绝不改动原始 text / IPC / 解析逻辑
+      const LS_TTY = !!process.stdout.isTTY
+      const lsC = (code: number, s: string) => `\x1b[${code}m${s}\x1b[0m`
+      const LS_PREFIX = lsC(36, lsC(1, '[llama-server]'))
+      const lsLine = (line: string): string => {
+        const m = line.match(/^(\d+\.\d+\.\d+\.\d+)\s+([IWE])\s+(\S+)\s+([\s\S]*)$/)
+        if (!m) return lsC(90, line)
+        const [, ts, lvl, comp, msg] = m
+        const lvlC = lvl === 'E' ? 31 : lvl === 'W' ? 33 : 90
+        const compC = comp === 'srv' ? 35 : comp === 'slot' ? 34 : 90
+        let body = msg
+          // 仅以下字段的数值高亮
+          .replace(/(prompt eval time|eval time|total time)\s*=\s*([\s\S]*)$/g,
+            (_f, label, rest) => `${label} = ${rest.replace(/[\d.]+/g, (n) => lsC(32, n))}`)
+          .replace(/(graphs reused|n_tokens|truncated|is_child|f_sim_best|f_keep)\s*=\s*([\d.]+)/g,
+            (_f, label, num) => `${label} = ${lsC(32, num)}`)
+          .replace(/>\s*([\d.]+)\s*thold/g, (_f, num) => `> ${lsC(32, num)} thold`)
+          .replace(/(security risk|failed|error|NOTICE)/gi, (f) => lsC(31, f))
+          .replace(/(listening on|model loaded|ready)/gi, (f) => lsC(32, f))
+        return `${lsC(90, ts)} ${lsC(lvlC, lvl)} ${lsC(compC, comp)} ${body}`
+      }
+      const styleLlamaLog = (text: string): string =>
+        LS_TTY ? text.split('\n').map(lsLine).join('\n') : text
       proc.stderr?.on('data', (d) => {
         const text = d.toString()
-        console.error('[llama-server]', text)
+        console.error(`${LS_PREFIX} ${styleLlamaLog(text)}`)
         pushModelLog(opts.id, 'stderr', text)
         BrowserWindow.getAllWindows().forEach(win => {
           if (!win.isDestroyed()) win.webContents.send('model-log', { id: opts.id, stream: 'stderr', text })
@@ -2356,7 +2402,7 @@ export function registerIpcHandlers(): void {
       })
       proc.stdout?.on('data', (d) => {
         const text = d.toString()
-        console.log('[llama-server]', text)
+        console.log(`${LS_PREFIX} ${styleLlamaLog(text)}`)
         pushModelLog(opts.id, 'stdout', text)
         BrowserWindow.getAllWindows().forEach(win => {
           if (!win.isDestroyed()) win.webContents.send('model-log', { id: opts.id, stream: 'stdout', text })
@@ -3855,19 +3901,36 @@ export function registerIpcHandlers(): void {
     }
     if (rawMetrics) {
       const prom = parsePrometheusMetrics(rawMetrics)
-      if (prom['llamacpp:predicted_tokens_seconds'] !== undefined) payload.decodeTokS = prom['llamacpp:predicted_tokens_seconds']
-      if (prom['llamacpp:prompt_tokens_seconds'] !== undefined) payload.prefillTokS = prom['llamacpp:prompt_tokens_seconds']
-      if (prom['llamacpp:n_decode_total'] !== undefined) {
+      // 适配本地构建(b10545)实际指标名：带 _total 后缀、词序为 tokens_predicted_*
+      // 旧名 llamacpp:predicted_tokens_seconds / llamacpp:prompt_tokens_seconds / llamacpp:n_decode_total 已不存在
+      const predSec = prom['llamacpp:tokens_predicted_seconds_total'] ?? prom['llamacpp:predicted_tokens_seconds']
+      const predTok = prom['llamacpp:tokens_predicted_total']
+      if (predSec !== undefined && predTok !== undefined && predSec > 0) {
+        payload.decodeTokS = predTok / predSec
+      } else if (prom['llamacpp:predicted_tokens_seconds'] !== undefined) {
+        // 旧构建：该指标本身即速率
+        payload.decodeTokS = prom['llamacpp:predicted_tokens_seconds']
+      }
+      const promptSec = prom['llamacpp:prompt_seconds_total'] ?? prom['llamacpp:prompt_tokens_seconds']
+      const promptTok = prom['llamacpp:prompt_tokens_total']
+      if (promptSec !== undefined && promptTok !== undefined && promptSec > 0) {
+        payload.prefillTokS = promptTok / promptSec
+      } else if (prom['llamacpp:prompt_tokens_seconds'] !== undefined) {
+        payload.prefillTokS = prom['llamacpp:prompt_tokens_seconds']
+      }
+      // 请求吞吐(requests/s)：本地构建无 n_decode_total 等价指标；decode 速度已由 decodeTokS 覆盖
+      const nDecode = prom['llamacpp:n_decode_total']
+      if (nDecode !== undefined) {
         const prev = lastDecodeCount.get(id)
         const now = Date.now()
         if (prev && prev.count >= 0) {
           const dt = (now - prev.time) / 1000
           if (dt > 0) {
-            const delta = prom['llamacpp:n_decode_total'] - prev.count
+            const delta = nDecode - prev.count
             if (delta > 0) payload.reqPerSec = delta / dt
           }
         }
-        lastDecodeCount.set(id, { count: prom['llamacpp:n_decode_total'], time: now })
+        lastDecodeCount.set(id, { count: nDecode, time: now })
       }
       // 不覆盖 nPromptTokensCache：slots API 的 n_prompt_tokens_cache 是真正的缓存命中数
       // kv_cache_tokens 是全局 KV cache 占用量，语义不同，仅用于推算 nCtx

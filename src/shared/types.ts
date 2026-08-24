@@ -531,9 +531,14 @@ export interface KnowledgeDocContent {
 /** knowledge-query 命中的文档段落 */
 export interface KnowledgeHit {
   docName: string
-  ordinal: number      // 该段在文档内的块序号
+  ordinal: number      // 知识库中该块的块号
   text: string
-  /** 块小标题（入库时从块首提取；旧数据读取时惰性生成） */
+  /** 最小匹配（BM25 时从块内容取；向量检索时由相似度取得），用于排序展示 */
   title?: string
   score: number
 }
+
+/** Pi SDK 会话级「思考程度」（与 @earendil-works/pi-agent-core 的 ThinkingLevel 完全一致）。
+ * 在主进程 setThinkingLevel 时按模型能力自动 clamp，UI 直接展示全部档位即可。 */
+export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export const THINKING_LEVELS: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']

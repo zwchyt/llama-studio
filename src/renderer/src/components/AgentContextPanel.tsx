@@ -32,6 +32,10 @@ export default function AgentContextPanel({ templateId, startedAt, requests, cum
     return () => clearInterval(t)
   }, [startedAt])
 
+  // 上下文占用数据来自模型服务端 metrics（self-dev 真相源），而非 Pi：Pi 仅作运行时，
+  // 其自动压缩已禁用（index.ts compaction.enabled=false），真实上下文由自研 memory/summary
+  // 注入历史决定。因此这里读 modelMetrics.nPromptTokens 即为当前真实 KV 占用，不应改成读 Pi
+  // 的 turn_end.usage（那只是单轮 token，非会话级上下文）。
   const nCtx = metrics?.nCtx || 0
   const used = metrics?.nPromptTokens || 0
   const cache = metrics?.nPromptTokensCache || 0

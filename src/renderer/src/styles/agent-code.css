@@ -5199,9 +5199,139 @@
   gap: 2px;
 }
 
-/* 模型下拉 + 发送按钮靠右：自动留白放在下拉按钮上，把「模型名 + 发送」一起推到右侧 */
+/* 模型下拉与思考程度控件视觉对齐：透明底 + 细边框，hover 用 --bg 提亮，靠右由 margin-left:auto 驱动 */
 .agent-code-view .chat-input-tools .chat-model-dropdown {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.agent-code-view .chat-input-tools .chat-model-dropdown:hover:not(:disabled),
+.agent-code-view .chat-input-tools .chat-model-dropdown.active {
+  background: var(--bg);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+/* 思考程度选择器：与文件/语音按钮同款小尺寸，自绘下拉（展开列表随主题变量切换） */
+.agent-code-view .chat-input-tools .chat-think-level {
+  position: relative;
+  max-width: 96px;
+}
+
+.agent-code-view .chat-input-tools .chat-think-level-trigger {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 28px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.agent-code-view .chat-input-tools .chat-think-level-trigger:hover:not(:disabled) {
+  background: var(--bg);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.agent-code-view .chat-input-tools .chat-think-level-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.agent-code-view .chat-input-tools .chat-think-level-label {
+  text-transform: lowercase;
+  letter-spacing: 0.2px;
+}
+
+@keyframes think-menu-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes think-item-in {
+  from { opacity: 0; transform: translateX(-8px); filter: blur(2px); }
+  to   { opacity: 1; transform: translateX(0); filter: blur(0); }
+}
+
+@keyframes think-grad {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+.agent-code-view .chat-input-tools .chat-think-level-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 92px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  transform-origin: bottom left;
+  animation: think-menu-in 0.16s ease-out;
+}
+
+.agent-code-view .chat-input-tools .chat-think-level-item {
+  padding: 5px 8px;
+  font-size: 11px;
+  border-radius: 5px;
+  cursor: pointer;
+  text-transform: lowercase;
+  background-image: linear-gradient(100deg, var(--text-secondary), var(--accent), var(--text-secondary));
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: think-item-in 0.22s ease-out both, think-grad 3s linear infinite;
+}
+
+.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(1) { animation-delay: 0.02s, 0s; }
+.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(2) { animation-delay: 0.05s, 0s; }
+.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(3) { animation-delay: 0.08s, 0s; }
+.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(4) { animation-delay: 0.11s, 0s; }
+.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(5) { animation-delay: 0.14s, 0s; }
+.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(6) { animation-delay: 0.17s, 0s; }
+.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(7) { animation-delay: 0.20s, 0s; }
+
+.agent-code-view .chat-input-tools .chat-think-level-item:hover:not(.active) {
+  background-image: none;
+  -webkit-text-fill-color: var(--text);
+  color: var(--text);
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+  background: var(--surface-hover);
+}
+
+.agent-code-view .chat-input-tools .chat-think-level-item.active {
+  background-image: none;
+  -webkit-text-fill-color: var(--accent-fg);
+  color: var(--accent-fg);
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+  background: var(--accent);
 }
 
 .agent-code-view .chat-input-tools .chat-send-btn.btn {
@@ -5500,22 +5630,23 @@
   height: 28px;
   min-width: 0;
   max-width: 220px;
-  padding: 0 8px 0 10px;
-  /* 非运行态完全无边框（border:none），杜绝任何边框环；启动模型后才出现主题色圆角边框 */
+  padding: 0 8px;
   appearance: none;
   -webkit-appearance: none;
-  border: none;
-  border-radius: 14px;
-  background: var(--surface);
+  /* 与思考程度控件同款：透明底 + 细边框，hover 用 --bg 提亮 */
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   flex-shrink: 1;
-  transition: background var(--transition), color var(--transition), box-shadow var(--transition);
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
 }
 
 .agent-code-view .chat-input-row .chat-model-dropdown:hover,
 .agent-code-view .chat-input-row .chat-model-dropdown.active {
   background: var(--bg);
+  border-color: var(--border-strong);
   color: var(--text);
 }
 

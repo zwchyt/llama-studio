@@ -1,90 +1,120 @@
 // pi-agent 事件客户端（renderer）：订阅 main 推送的 pi-agent-event，
-// 翻译成 UI 可消费的回调（流式文本 / 工具卡片 / 完成信号）。
-// 与 AgentCodeView 解耦：本模块只做「pi 事件 → 语义回调」翻译。
+// 经 piAgentAdapter 翻译成结构化 WorkspaceEvent，再派发到 UI 可消费的回调
+// （流式文本 / 工具卡片 / 完成信号）。与 AgentCodeView 解耦：本模块只做「pi 事件 → 语义回调」。
+
+import { PiEventAdapter, extractPiResultText } from '../agent/piAgentAdapter'
+import type { WorkspaceEvent, WorkspaceEventSink } from '../agent/workspaceEvents'
+
+export { extractPiResultText }
+export type { WorkspaceEvent, WorkspaceEventSink }
 
 export interface PiToolCallUI {
   id: string
   name: string
-  /** 参数 JSON 字符串（toolcall_end 时完整给出） */
+  /** 参数 JSON 字符串（toolcall_end 时完整给出；toolcall_start 时为空） */
   args: string
 }
 
 export interface PiAgentCallbacks {
-  /** 模型生成的文本增量（含 <think> 原始标记，由渲染层解析） */
+  /** 模型生成的文本增量（纯正文，不含 <think> 标签——思考由独立回调下发） */
   onTextDelta: (delta: string) => void
+  /** 模型开始推理（thinking_start）；openThinking 由首个 thinking_delta 触发以对齐原行为 */
+  onThinkingStart?: () => void
+  /** 模型推理链增量（思考内容，单独通道，不混入正文） */
+  onThinkingDelta?: (delta: string) => void
+  /** 模型推理链结束 */
+  onThinkingEnd?: () => void
   /** 模型完成一次工具调用声明（参数已完整） */
   onToolCall: (tc: PiToolCallUI) => void
   /** 工具开始执行 */
   onToolExecutionStart: (id: string, name: string) => void
-  /** 工具执行结束（result 为 pi 的工具结果，翻译成文本；backupId 供撤销按钮用） */
+  /** 工具执行结束（resultText 为 pi 的工具结果，翻译成文本；backupId 供撤销按钮用） */
   onToolExecutionEnd: (id: string, name: string, resultText: string, isError: boolean, backupId?: string) => void
   /** 一轮 LLM turn 结束（usage：input/output tokens；durationMs 从 turn_start 计时） */
   onTurnEnd?: (info: { turnIndex: number; promptTokens: number; completionTokens: number; durationMs: number }) => void
   /** 一轮 agent 运行结束（agent_end / agent_settled） */
-  onEnd: () => void
+  onEnd?: () => void
 }
 
-/** 把 pi 工具结果对象翻译成展示文本 */
-export function extractPiResultText(result: unknown): string {
-  if (result == null) return '(无输出)'
-  if (typeof result === 'string') return result
-  if (Array.isArray(result)) return result.map(extractPiResultText).join('\n')
-  if (typeof result === 'object') {
-    const r = result as Record<string, unknown>
-    // AgentToolResult: { content: [{type:'text',text}], details }
-    if (Array.isArray(r.content)) {
-      const parts: string[] = []
-      for (const c of r.content as Array<Record<string, unknown>>) {
-        if (c.type === 'text' && typeof c.text === 'string') parts.push(c.text)
+/**
+ * 把 WorkspaceEvent 映射回 PiAgentCallbacks（回调式兼容层）。
+ * turn_start/turn_end 的 durationMs 在此维护 turnStartAt 计算后下发。
+ */
+class ClientSink implements WorkspaceEventSink {
+  constructor(
+    private readonly cb: PiAgentCallbacks,
+    private readonly getTurnStartAt: () => number | null,
+    private readonly setTurnStartAt: (v: number | null) => void
+  ) {}
+
+  emit(e: WorkspaceEvent): void {
+    switch (e.type) {
+      case 'text_delta':
+        this.cb.onTextDelta(e.delta)
+        return
+      case 'thinking_start':
+        this.cb.onThinkingStart?.()
+        return
+      case 'thinking_delta':
+        this.cb.onThinkingDelta?.(e.delta)
+        return
+      case 'thinking_end':
+        this.cb.onThinkingEnd?.()
+        return
+      case 'tool_call_start':
+        // 与旧实现一致：toolcall_start 即发出空参工具卡（显示「参数生成中」）
+        this.cb.onToolCall({ id: e.id, name: e.name, args: '' })
+        return
+      case 'tool_call_end':
+        this.cb.onToolCall({ id: e.id, name: e.name, args: e.args })
+        return
+      case 'tool_exec_start':
+        this.cb.onToolExecutionStart(e.id, e.name)
+        return
+      case 'tool_exec_end':
+        this.cb.onToolExecutionEnd(e.id, e.name, e.resultText, e.isError, e.backupId)
+        return
+      case 'turn_start':
+        this.setTurnStartAt(Date.now())
+        return
+      case 'turn_end': {
+        const started = this.getTurnStartAt()
+        this.setTurnStartAt(null)
+        this.cb.onTurnEnd?.({
+          turnIndex: e.turnIndex,
+          promptTokens: e.promptTokens,
+          completionTokens: e.completionTokens,
+          durationMs: started ? Date.now() - started : 0
+        })
+        return
       }
-      if (parts.length > 0) return parts.join('\n')
-    }
-    if (typeof r.text === 'string') return r.text
-    try {
-      return JSON.stringify(r, null, 2)
-    } catch {
-      return String(result)
+      case 'run_end':
+        this.cb.onEnd?.()
+        return
+      case 'error':
+        return
     }
   }
-  return String(result)
-}
-
-interface RawPiEvent {
-  type: string
-  [k: string]: unknown
 }
 
 export class PiAgentClient {
-  private readonly callbacks: PiAgentCallbacks
   private sessionId: string | null = null
-  /**
-   * 推理通道处理。pi 的事件顺序可能是 text_delta（正文）先于 thinking_end 到达，
-   * 若把正文直接拼在思考增量后面，正文会被拼进 <think> 里被 parseThinkSegments 吞掉。
-   * 策略：
-   *  - thinking_delta 实时直推（思考链流式显示，不等 thinking_end）
-   *  - 正文（text_delta）不做任何缓存，一律立即直推、流式显示；
-   *    若到达时思考仍开启，先补 </think> 收尾，正文落到思考链之后，
-   *    避免被拼进 <think> 吞掉（若后续再有思考增量会重新开 <think>）。
-   */
-  private thinkingOpen = false
-  private thinkTagPushed = false
   /** 当前 turn 的开始时间（turn_start 置位，turn_end 取差后清空） */
   private turnStartAt: number | null = null
-
-  /** 思考闭合：补闭合标签（若已推过开头），结束思考通道；不缓冲任何正文 */
-  private closeThinking(): void {
-    if (this.thinkTagPushed) this.callbacks.onTextDelta('</think>')
-    this.thinkTagPushed = false
-    this.thinkingOpen = false
-  }
+  private readonly sink: WorkspaceEventSink
+  private readonly adapter = new PiEventAdapter()
 
   private readonly handler = (_sid: string, event: unknown): void => {
     if (this.sessionId === null || _sid !== this.sessionId) return
-    this.translate(event as RawPiEvent)
+    this.adapter.adapt(event, this.sink)
   }
 
   constructor(callbacks: PiAgentCallbacks) {
-    this.callbacks = callbacks
+    this.sink = new ClientSink(
+      callbacks,
+      () => this.turnStartAt,
+      (v) => { this.turnStartAt = v }
+    )
   }
 
   /** 订阅事件流（仅处理指定 sessionId 的事件） */
@@ -95,108 +125,5 @@ export class PiAgentClient {
 
   detach(): void {
     this.sessionId = null
-  }
-
-  private translate(ev: RawPiEvent): void {
-    switch (ev.type) {
-      case 'message_update': {
-        const msg = ev.assistantMessageEvent as RawPiEvent | undefined
-        if (!msg) return
-        if (msg.type === 'text_delta' && typeof msg.delta === 'string') {
-          // 正文不做任何缓存：无论思考是否开启都立即直推、流式显示。
-          // 若思考仍开启，先补 </think> 把思考链收尾，正文随之落到思考链之后，
-          // 避免被拼进 <think> 吞掉；后续若还有思考增量会按 reopen 逻辑重新开 <think>。
-          if (this.thinkingOpen) this.closeThinking()
-          this.callbacks.onTextDelta(msg.delta)
-        } else if (msg.type === 'thinking_start') {
-          // 若上一段思考未正常闭合，先补闭合标签平衡，再开启新思考段
-          if (this.thinkingOpen) this.closeThinking()
-          this.thinkingOpen = true
-          this.thinkTagPushed = false
-        } else if (msg.type === 'thinking_delta' && typeof msg.delta === 'string') {
-          // 思考增量实时直推：首个增量先开 <think> 标签（避免空思考产生空标签）。
-          // 若思考段已被正文闭合（thinkingOpen=false）而思考仍在继续（模型思考
-          // 中途输出过正文片段），重新打开思考段——思考内容不混入正文、不错乱。
-          if (!this.thinkTagPushed) {
-            this.thinkTagPushed = true
-            this.thinkingOpen = true
-            this.callbacks.onTextDelta('\n<think>')
-          }
-          this.callbacks.onTextDelta(msg.delta)
-        } else if (msg.type === 'thinking_end') {
-          // 部分实现只在 end 携带完整内容（无 delta 流）：若思考段仍开启则补发完整思考文本；
-          // 已被正文闭合（thinkingOpen=false）时忽略，避免在正文之后插入思考造成错序
-          if (this.thinkingOpen && !this.thinkTagPushed && typeof msg.content === 'string' && msg.content) {
-            this.thinkTagPushed = true
-            this.callbacks.onTextDelta(`\n<think>${msg.content}`)
-          }
-          this.closeThinking()
-        } else if (msg.type === 'toolcall_start') {
-          // 工具参数开始流式生成：立即发出工具卡信号（args 为空，卡片先显示「参数生成中」），
-          // 不等 toolcall_end（参数可能很长，如 Write 大文件内容，生成期间 UI 必须有反馈，
-          // 参考项目同款：partial dispatch 即显示「接收参数」卡）
-          const partial = msg.partial as { content?: Array<{ type?: string; id?: string; name?: string }> } | undefined
-          const block = partial?.content?.[(msg as { contentIndex?: number }).contentIndex ?? -1]
-          if (block?.name) {
-            this.callbacks.onToolCall({ id: block.id || '', name: block.name, args: '' })
-          }
-        } else if (msg.type === 'toolcall_end') {
-          const tc = msg.toolCall as { id?: string; name?: string; arguments?: unknown } | undefined
-          if (tc?.name) {
-            this.callbacks.onToolCall({
-              // 注意用 || 而非 ??：pi 解析时 id 可能为空串 ""，空串必须回退，
-              // 否则工具卡会以 "" 为 id，与 tool_execution_start 的真实 id 永远匹配不上
-              id: tc.id || `call-${Date.now()}`,
-              name: tc.name,
-              args: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments ?? {})
-            })
-          }
-        }
-        return
-      }
-      case 'tool_execution_start': {
-        this.callbacks.onToolExecutionStart(String(ev.toolCallId ?? ''), String(ev.toolName ?? ''))
-        return
-      }
-      case 'tool_execution_end': {
-        const r = ev.result as { details?: { backupId?: string } } | undefined
-        this.callbacks.onToolExecutionEnd(
-          String(ev.toolCallId ?? ''),
-          String(ev.toolName ?? ''),
-          extractPiResultText(ev.result),
-          ev.isError === true,
-          typeof r?.details?.backupId === 'string' ? r.details.backupId : undefined
-        )
-        return
-      }
-      case 'turn_start': {
-        this.turnStartAt = Date.now()
-        return
-      }
-      case 'turn_end': {
-        const msg = ev.message as { usage?: { input?: number; output?: number } } | undefined
-        const usage = msg?.usage
-        const started = this.turnStartAt
-        this.turnStartAt = null
-        // 一轮结束：把本轮已缓冲的正文一次性输出（与 thinking_end 同语义，保证不跨轮滞留）
-        this.closeThinking()
-        this.callbacks.onTurnEnd?.({
-          turnIndex: Number(ev.turnIndex ?? 0),
-          promptTokens: typeof usage?.input === 'number' ? usage.input : 0,
-          completionTokens: typeof usage?.output === 'number' ? usage.output : 0,
-          durationMs: started ? Date.now() - started : 0,
-        })
-        return
-      }
-      case 'agent_end':
-      case 'agent_settled': {
-        // 兜底：整轮结束强制闭合思考并输出缓冲正文（无论 thinking_end 是否到达）
-        this.closeThinking()
-        this.callbacks.onEnd()
-        return
-      }
-      default:
-        return
-    }
   }
 }

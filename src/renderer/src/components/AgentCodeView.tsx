@@ -63,7 +63,8 @@ import { extToMonacoLang } from './MonacoEditor'
 
 const MonacoEditor = lazy(() => import('./MonacoEditor'))
 
-import type { AgentMessage, AgentSession, AgentProject, Attachment, TodoUpdate, CardState, AgentMemoryEntry, KnowledgeBaseMeta } from '../../../shared/types'
+import type { AgentMessage, AgentSession, AgentProject, Attachment, TodoUpdate, CardState, AgentMemoryEntry, KnowledgeBaseMeta, ThinkingLevel } from '../../../shared/types'
+import { THINKING_LEVELS } from '../../../shared/types'
 import { JSONUIProvider, Renderer } from '@json-render/react'
 import type { Spec } from '@json-render/core'
 import { registry } from '../jsonui/registry'
@@ -2796,6 +2797,22 @@ export default function AgentCodeView() {
   // 思考增量 → false（思考中）；正文增量 / 思考闭合 / 工具声明 → true（思考结束）。
   // 思考链转圈只看 streaming && !thinkDone，不依赖任何推断，工具执行期间必然收起。
   const [thinkDone, setThinkDone] = useState(true)
+  // 思考程度（发送给 Pi 会话前动态设置），默认 medium；ref 供 runPiTurn 闭包读最新值而不必进 deps。
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>('medium')
+  const thinkingLevelRef = useRef<ThinkingLevel>(thinkingLevel)
+  thinkingLevelRef.current = thinkingLevel
+  // 思考程度自绘下拉（替代原生 <select>，使展开列表也可用项目暗色主题）
+  const [thinkLevelOpen, setThinkLevelOpen] = useState(false)
+  const thinkLevelMenuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!thinkLevelOpen) return
+    function onDown(e: MouseEvent) {
+      if (thinkLevelMenuRef.current?.contains(e.target as Node)) return
+      setThinkLevelOpen(false)
+    }
+    document.addEventListener('pointerdown', onDown)
+    return () => document.removeEventListener('pointerdown', onDown)
+  }, [thinkLevelOpen])
   const [curToolName, setCurToolName] = useState('')  // 当前正在调用/执行的工具名（状态栏 name 标签）
   const [condensing, setCondensing] = useState(false)  // 正在压缩历史（顶部轻量提示）
   const [condenseOpen, setCondenseOpen] = useState(false)  // 压缩历史弹层开关
@@ -4543,6 +4560,8 @@ export default function AgentCodeView() {
       if (!res?.success) throw new Error('pi-agent 会话创建失败')
       piReadyRef.current = { sid, ready: true }
     }
+    // 应用当前选择的思考程度（同步方法，按模型能力自动 clamp；不支持思考的模型无效但非致命）
+    try { await window.api.piAgent.setThinkingLevel(piSessionId, thinkingLevelRef.current) } catch { /* 模型不支持思考时 SDK 自行 clamp，忽略异常 */ }
     // 占位助手消息（pi 事件驱动其内容/工具卡片）
     const liveId = newMsgId()
     // 流开始时刻：pending 思考卡/思考块实时计时锚点（连续、含 TTFT）
@@ -4659,82 +4678,95 @@ export default function AgentCodeView() {
         : s.kind === 'think'
           ? { kind: 'think', content: s.content, ...(s.durationMs != null ? { durationMs: s.durationMs } : {}) }
           : { kind: 'text', content: s.content })
-    // 把含 <think>/</think> 的文本增量按边界追加到 liveSegs（跨增量维护 think 开闭状态）
+    // 结构化事件驱动（经 piAgentAdapter 已把 <think> 标签从传输层剥离）：
+    // thinking_* 直接操作 think 段，text_delta 为纯文本增量；思考段仍按原语义在
+    // content/streamedText 里重构成成对 <think>...</think>（兼容 parseThinkSegments）。
+    const openThinking = (): void => {
+      if (thinkOpen) return
+      const seg: ThinkLiveSeg = { kind: 'think', content: '', startMs: Date.now() }
+      liveSegs.push(seg)
+      curThinkSeg = seg
+      thinkOpen = true
+      streamedText += '\n<think>'
+      setThinkDone(false)
+    }
+    const appendThinkingDelta = (delta: string): void => {
+      if (!thinkOpen) openThinking()
+      if (curThinkSeg) curThinkSeg.content += delta
+      else {
+        const seg: ThinkLiveSeg = { kind: 'think', content: delta, startMs: Date.now() }
+        liveSegs.push(seg)
+        curThinkSeg = seg
+      }
+      streamedText += delta
+      setThinkDone(false)
+      textSinceLastTool = true
+    }
+    const closeThinking = (): void => {
+      if (!thinkOpen) return
+      // 思考闭合：定格该段的思考耗时（开→闭壁钟），供段上方时间标签展示
+      if (curThinkSeg && curThinkSeg.startMs != null && curThinkSeg.durationMs == null) {
+        curThinkSeg.durationMs = Date.now() - curThinkSeg.startMs
+      }
+      thinkOpen = false
+      curThinkSeg = null
+      streamedText += '</think>'
+      // 思考闭合：思考结束（后续若无新思考增量，思考块收起不转圈）
+      setThinkDone(true)
+    }
+    // 纯文本增量：不解析 <think> 标签；若思考仍开启先闭合思考段，文本落到思考链之后
     const appendTextDelta = (delta: string): void => {
-      const parts: Array<{ text: string; tag: 'open' | 'close' | null }> = []
-      const re = /<think>|<\/think>/g
-      let cursor = 0
-      let m: RegExpExecArray | null
-      re.lastIndex = 0
-      while ((m = re.exec(delta)) !== null) {
-        if (m.index > cursor) parts.push({ text: delta.slice(cursor, m.index), tag: null })
-        parts.push({ text: m[0], tag: m[0] === '<think>' ? 'open' : 'close' })
-        cursor = m.index + m[0].length
-      }
-      if (cursor < delta.length) parts.push({ text: delta.slice(cursor), tag: null })
-      for (const p of parts) {
-        if (p.tag === 'open') {
-          if (!thinkOpen) {
-            const seg: ThinkLiveSeg = { kind: 'think', content: '', startMs: Date.now() }
-            liveSegs.push(seg)
-            curThinkSeg = seg
-            thinkOpen = true
-          }
-          // 思考开始：思考未结束
-          setThinkDone(false)
-        } else if (p.tag === 'close') {
-          thinkOpen = false
-          // 思考闭合：定格该段的思考耗时（开→闭壁钟），供段上方时间标签展示
-          if (curThinkSeg && curThinkSeg.startMs != null && curThinkSeg.durationMs == null) {
-            curThinkSeg.durationMs = Date.now() - curThinkSeg.startMs
-          }
-          curThinkSeg = null
-          // 思考闭合：思考结束（后续若无新思考增量，思考块收起不转圈）
-          setThinkDone(true)
-        } else if (p.text) {
-          if (thinkOpen) {
-            if (curThinkSeg) curThinkSeg.content += p.text
-            else {
-              const seg: ThinkLiveSeg = { kind: 'think', content: p.text, startMs: Date.now() }
-              liveSegs.push(seg)
-              curThinkSeg = seg
-            }
-            // 思考增量：思考进行中
-            setThinkDone(false)
-          } else {
-            const last = liveSegs[liveSegs.length - 1]
-            if (last && last.kind === 'text') last.content += p.text
-            else liveSegs.push({ kind: 'text', content: p.text })
-            // 正文出现：思考已结束（Reasonix 同款语义：text 增量闭合推理）
-            setThinkDone(true)
-          }
-        }
-      }
+      if (thinkOpen) closeThinking()
+      const last = liveSegs[liveSegs.length - 1]
+      if (last && last.kind === 'text') last.content += delta
+      else liveSegs.push({ kind: 'text', content: delta })
+      streamedText += delta
+      // 正文出现：思考已结束（Reasonix 同款语义：text 增量闭合推理）
+      setThinkDone(true)
+      textSinceLastTool = true
     }
     // 中断/整轮收尾：遍历所有未闭合的思考段补上部分时长（用户停止、出错中断时定格到当前时刻），
-    // 使「思考已中断」的思考段也能显示截止到停止的耗时；幂等，已定格的不再覆盖。
+    // 并闭合当前思考段（补 </think>，保证 streamedText 成对标签）；幂等，已定格的不再覆盖。
     const closeOpenThink = (): void => {
       for (const s of liveSegs) {
         if (s.kind === 'think' && s.startMs != null && s.durationMs == null) {
           s.durationMs = Date.now() - s.startMs
         }
       }
-      curThinkSeg = null
-      thinkOpen = false
+      closeThinking()
     }
     const client = new PiAgentClient({
       onTextDelta: (delta) => {
         diagPush('arrival', performance.now())
-        streamedText += delta
-        textSinceLastTool = true
         appendTextDelta(delta)
-        // 状态栏阶段：只有包含实际内容（非 <think> 标签/空段落占位）的增量才更新，
-        // 依据该增量是否进入未闭合 <think> 判断「思考中 / 输出中」
-        if (delta.replace(/<think>|<\/think>/g, '').trim()) {
-          setStreamKind(thinkOpen ? 'think' : 'text')
+        // 状态栏阶段：只有含实际内容的增量才更新（纯文本即「输出中」）
+        if (delta.trim()) {
+          setStreamKind('text')
           diagWrite.skind = performance.now()
         }
         diagWrite.tdone = performance.now()
+        commitText({ content: streamedText, segments: buildSegs() })
+      },
+      onThinkingStart: () => {
+        diagPush('arrival', performance.now())
+        // openThinking 延迟到首个 thinking_delta（保持与原「首增量才推 <think>」行为一致），
+        // 此处仅切状态栏阶段 + 标记思考未结束
+        setStreamKind('think')
+        setThinkDone(false)
+      },
+      onThinkingDelta: (delta) => {
+        diagPush('arrival', performance.now())
+        appendThinkingDelta(delta)
+        if (delta.trim()) {
+          setStreamKind('think')
+          diagWrite.skind = performance.now()
+        }
+        diagWrite.tdone = performance.now()
+        commitText({ content: streamedText, segments: buildSegs() })
+      },
+      onThinkingEnd: () => {
+        diagPush('arrival', performance.now())
+        closeThinking()
         commitText({ content: streamedText, segments: buildSegs() })
       },
       onToolCall: (tc) => {
@@ -4813,8 +4845,13 @@ export default function AgentCodeView() {
         }
       },
       onToolExecutionEnd: (id, name, resultText, isError, backupId) => {
-        // pi 模式撤销：main 侧备份引用（标记 pi-undo:<id>，撤销走 pi-agent-undo IPC）
-        if (backupId) backupsRef.current[id] = { path: `pi-undo:${backupId}`, content: '' }
+        // pi 模式撤销契约（R2）：撤销按钮是否可用完全由 backupId 是否存在决定。
+        // main 仅在写操作成功并真实记录备份后才回传 backupId；只读工具、执行失败、
+        // 或备份记录失败时 backupId 为 undefined → 不写入备份引用 → canUndoFor 返回 false
+        // → 工具卡不显示撤销按钮，避免「无备份可写回」的空撤销。
+        if (backupId) {
+          backupsRef.current[id] = { path: `pi-undo:${backupId}`, content: '' }
+        }
         const elapsed = execStartMs.has(id) ? Date.now() - execStartMs.get(id)! : Number.MAX_SAFE_INTEGER
         // 操作审计日志：记录每次已执行工具（pi 模式在 renderer 侧无从得知是否经过
         // main 审批通道，approved 固定 false——审批弹窗的 id 与 toolCallId 无法关联）。
@@ -6176,6 +6213,40 @@ export default function AgentCodeView() {
                   >
                     <span className="chat-model-dropdown-name">{runningCard ? modelLabel : '选择模型'}</span>
                   </button>
+                  <div
+                    ref={thinkLevelMenuRef}
+                    className={`chat-think-level${thinkLevelOpen ? ' open' : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className="chat-think-level-trigger"
+                      title="思考程度（发送前选择，按模型能力自动调整）"
+                      disabled={loading}
+                      onClick={() => setThinkLevelOpen(v => !v)}
+                    >
+                      <span className="chat-think-level-label">{thinkingLevel}</span>
+                    </button>
+                    {thinkLevelOpen && (
+                      <ul className="chat-think-level-menu">
+                        {THINKING_LEVELS.map(l => (
+                          <li
+                            key={l}
+                            className={`chat-think-level-item${l === thinkingLevel ? ' active' : ''}`}
+                            onClick={() => {
+                              setThinkingLevel(l)
+                              setThinkLevelOpen(false)
+                              const cur = piReadyRef.current
+                              if (cur.ready && cur.sid) {
+                                window.api.piAgent.setThinkingLevel(`pi-${cur.sid}`, l).catch(() => { /* 非致命 */ })
+                              }
+                            }}
+                          >
+                            {l}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                   {loading ? (
                     <AniIconButton className="btn btn-primary chat-send-btn" icon={CircleStopIcon} size={16} onClick={handleStop} title="停止" />
                   ) : (

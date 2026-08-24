@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, TokenUsageEntry, ChatStreamChunk, AgentProject, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, TokenUsageEntry, ChatStreamChunk, AgentProject, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit, ThinkingLevel } from '../../shared/types'
 // 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
 interface ImagePromptPresetPayload {
   id: string; tag: string; cn: string; group: string
@@ -307,6 +307,7 @@ interface LlamaCppApi {
 	    onApprove: (cb: (id: number, req: { toolName: string; args: Record<string, unknown> }) => void) => void
 	    approveResolve: (id: number, approved: boolean) => Promise<{ success: boolean }>
 	    undo: (sessionId: string, toolCallId: string) => Promise<{ success: boolean; path?: string; error?: string }>
+    setThinkingLevel: (sessionId: string, level: ThinkingLevel) => Promise<{ success: boolean }>
 	    // ── 轨迹台账（事件流落盘的查询侧；read 支持 fromSeq 增量）──
 	    trajectoryList: () => Promise<Array<{ sessionId: string; bytes: number; mtimeMs: number }>>
 	    trajectoryRead: (sessionId: string, fromSeq: number) => Promise<{ entries: Array<{ seq: number; ts: number; type: string; src: 'flow' | 'assistant' | 'tool' | 'user' | 'system'; payload: unknown }>; nextSeq: number }>

@@ -5,8 +5,13 @@ import { statSync } from 'node:fs'
 import { isAbsolute, resolve, sep } from 'node:path'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import { makePiTool, getTypebox, type PlainToolSpec } from './toolAdapter'
-import { createKnowledgeSearchSpec, formatKnowledgeCatalog } from '../../../../renderer/src/tools/KnowledgeSearchTool'
-import { createKnowledgeReadSpec, parseChunkRefs, formatKnowledgeChunks } from '../../../../renderer/src/tools/KnowledgeReadTool'
+import {
+  createKnowledgeSearchSpec,
+  formatKnowledgeCatalog,
+  createKnowledgeReadSpec,
+  parseChunkRefs,
+  formatKnowledgeChunks,
+} from '../../../../shared/tools/knowledgeSpecs'
 
 export interface MainToolExecutors {
   readFile(
@@ -293,7 +298,9 @@ async function createPiEditTool(exec: MainToolExecutors, ctx?: CreateMainToolsCo
           onUpdate,
           pctx
         )
-        // 5) 追加 backupId 供 renderer 撤销（与自研 Write/Edit 的 details 契约一致）
+        // 5) 追加 backupId 供 renderer 撤销（与自研 Write/Edit 的 details 契约一致）。
+        // 这是撤销契约的「真相源」：backupId 仅在本分支（写操作成功、备份已记录）回传；
+        // 失败/只读路径不回传 → renderer 端不显示撤销按钮（R2，杜绝空撤销）。
         return { ...res, details: { ...((res.details ?? {}) as unknown as Record<string, unknown>), backupId: toolCallId } }
       } catch (err) {
         // 执行失败：编辑未生效，清掉刚记录的撤销备份，避免撤销列表残留无效条目
@@ -500,8 +507,8 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
   })
 
   // 知识库两阶段检索：绑定了库、或本机存在任何知识库时注册。
-  // 定义/提示词/输出格式全部来自渲染层标准工具模块 src/renderer/src/tools/KnowledgeSearchTool 与 KnowledgeReadTool
-  //（纯数据文件双侧可导入；执行走本进程 executors，因为 pi 的 ToolDefinition.execute 无法跨 IPC）。
+  // 定义/提示词/输出格式全部来自 src/shared/tools/knowledgeSpecs（纯数据文件，main 与 renderer 双侧共享，
+  // 消除 main → renderer 跨构建图 import；执行走本进程 executors，因为 pi 的 ToolDefinition.execute 无法跨 IPC）。
   // 第一段 knowledge_search 只返回「标题目录」（每条几十字，极省 token）；模型按标题挑中后，
   // 用第二段 knowledge_read 精确读取选中块的正文，避免把无关整块灌进上下文。
   // 库列表以代码级 enum 注入工具参数 kb（模型从真实库名中选择，而非提示词描述）。

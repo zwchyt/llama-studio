@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import type { ThinkingLevel } from '../shared/types'
 
 const fullApi = {
   printToPDF: (html: string) => ipcRenderer.invoke('print-to-pdf', html),
@@ -331,6 +332,7 @@ const fullApi = {
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-prompt', sessionId, text, images),
     abort: (sessionId: string) => ipcRenderer.invoke('pi-agent-abort', sessionId),
     dispose: (sessionId: string) => ipcRenderer.invoke('pi-agent-dispose', sessionId),
+    setThinkingLevel: (sessionId: string, level: ThinkingLevel) => ipcRenderer.invoke('pi-agent-set-thinking-level', sessionId, level),
     list: () => ipcRenderer.invoke('pi-agent-list'),
     onEvent: (cb: (sessionId: string, event: unknown) => void) => {
       ipcRenderer.removeAllListeners('pi-agent-event')

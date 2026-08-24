@@ -1,14 +1,14 @@
 {
   "name": "llama-studio",
-  "version": "1.0.186",
+  "version": "1.0.187",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",
   "main": "out/main/index.js",
   "homepage": "./",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "electron-vite dev --logLevel silent",
     "build": "node scripts/build-filtered.js",
-    "preview": "electron-vite preview",
+    "preview": "electron-vite preview --logLevel silent",
     "package": "electron-vite build && electron-builder --publish never",
     "postinstall": "electron-rebuild -w node-pty"
   },
