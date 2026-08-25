@@ -37,12 +37,68 @@ function logClass(text: string): string {
   if (/\bwarn(ing)?\b/i.test(text)) return 'log-warn'
   return 'log-stdout'
 }
+
+// 日志写入批处理：模型高频吐日志时，把同一渲染帧内的多次 append 合并为一次 set，
+// 避免每次 chunk 都触发 5000 元素数组拷贝 + 整树重渲染（曾导致主线程周期性阻塞 ~750ms）。
+// 仅缓冲、延迟落盘；落盘后行为与原先一致（保留 MAX_LOG_LINES 上限截取）。
+const logWriteBuf = new Map<string, { stream: string; text: string }[]>()
+let logFlushHandle: ReturnType<typeof setTimeout> | null = null
+function flushModelLogs(): void {
+  logFlushHandle = null
+  if (logWriteBuf.size === 0) return
+  const batch = logWriteBuf
+  logWriteBuf.clear()
+  useStore.setState((s) => {
+    const nextLogs = { ...s.modelLogs }
+    batch.forEach((entries, id) => {
+      const existing = nextLogs[id] || []
+      const newEntries = entries.map(e => ({ stream: e.stream, text: e.text, className: logClass(e.text) }))
+      const merged = existing.concat(newEntries)
+      nextLogs[id] = merged.length > MAX_LOG_LINES ? merged.slice(-MAX_LOG_LINES) : merged
+    })
+    return { modelLogs: nextLogs }
+  })
+}
+function scheduleLogFlush(): void {
+  if (logFlushHandle !== null) return
+  const run = () => flushModelLogs()
+  if (typeof requestAnimationFrame === 'function') {
+    // 优先按帧合并；标签页隐藏时 rAF 不触发，用 setTimeout 兜底保证日志落盘
+    requestAnimationFrame(() => { if (logFlushHandle !== null) { logFlushHandle = null; flushModelLogs() } })
+    logFlushHandle = setTimeout(() => { if (logFlushHandle !== null) { logFlushHandle = null; flushModelLogs() } }, 1000)
+  } else {
+    logFlushHandle = setTimeout(run, 0)
+  }
+}
 // ── Agent Code 工作台：项目（含会话）落盘持久化（防抖，避免流式过程中频繁写盘）──
 let saveAgentProjectsTimer: ReturnType<typeof setTimeout> | null = null
-// 流式期间（agentPhase 非 null）不落盘：全量 JSON.stringify + IPC 克隆 + 主进程写所有
-// 会话文件，在长会话（消息累计大）下每次都会阻塞渲染线程数百毫秒——交互/生成时界面
-// 频繁「短暂冻结」的主因之一。先记 pending，等流式结束（setAgentPhase(null)）再补存一次。
+// 流式期间（agentPhase 非 null）不落盘：先记 pending，等流式结束（setAgentPhase(null)）再补存一次。
 let pendingProjects: AgentProject[] | null = null
+// 增量落盘：记录上次实际落盘的项目快照，仅在项目真正变更时才把该项目纳入待写集合，
+// 避免每次都把全部会话历史（可能数十 MB）在渲染线程做结构化克隆 + IPC 序列化而卡死界面
+// （原全量落盘是「短暂冻结」主因之一）。首次落盘仍是全量，之后只写变更项目。
+let lastSavedProjects: AgentProject[] | null = null
+const dirtyProjectIds = new Set<string>()
+function projectChanged(prev: AgentProject | undefined, cur: AgentProject): boolean {
+  if (!prev) return true
+  if (prev.title !== cur.title || prev.systemPrompt !== cur.systemPrompt ||
+      prev.knowledgeBaseId !== cur.knowledgeBaseId || prev.workspaceDir !== cur.workspaceDir) return true
+  if (prev.sessions.length !== cur.sessions.length) return true
+  const prevSess = new Map(prev.sessions.map(s => [s.id, s]))
+  for (const s of cur.sessions) {
+    const ps = prevSess.get(s.id)
+    if (!ps || ps.messages.length !== s.messages.length || ps.title !== s.title) return true
+  }
+  return false
+}
+function markDirty(projects: AgentProject[]): void {
+  if (!lastSavedProjects) { for (const p of projects) dirtyProjectIds.add(p.id); return }
+  const prevMap = new Map(lastSavedProjects.map(p => [p.id, p]))
+  const curIds = new Set(projects.map(p => p.id))
+  for (const p of projects) if (projectChanged(prevMap.get(p.id), p)) dirtyProjectIds.add(p.id)
+  // 整个项目被删除也要在其范围内 GC 残留会话文件
+  for (const p of lastSavedProjects) if (!curIds.has(p.id)) dirtyProjectIds.add(p.id)
+}
 function scheduleSaveAgentProjects(p: AgentProject[]): void {
   if (saveAgentProjectsTimer) clearTimeout(saveAgentProjectsTimer)
   // 空占位项目（无会话、无工作目录）不落盘，避免 IPC GC 误删磁盘已有会话文件
@@ -53,8 +109,13 @@ function scheduleSaveAgentProjects(p: AgentProject[]): void {
     return
   }
   pendingProjects = null
+  markDirty(p)
   saveAgentProjectsTimer = setTimeout(() => {
-    window.api?.saveAgentProjects(p).catch(() => { })
+    const toSave = dirtyProjectIds.size ? p.filter(proj => dirtyProjectIds.has(proj.id)) : p
+    const gcScope = [...dirtyProjectIds]
+    dirtyProjectIds.clear()
+    lastSavedProjects = p
+    window.api?.saveAgentProjects(toSave, gcScope.length ? { gcScope } : undefined).catch(() => { })
   }, 800)
 }
 
@@ -253,6 +314,10 @@ interface AppStore {
   /** 模板（模型卡片）列表是否已从主进程加载完成（未完成时 CardsView 显示加载占位，避免空态闪现） */
   templatesReady: boolean
   setTemplatesReady: (v: boolean) => void
+  // ── 自定义 /命令（Slash Commands）──
+  // 仅存用户自定义命令；内建命令在 slashCommands.ts 中硬编码。持久化于 settings.json（经 setUiSetting）。
+  slashCommands: import('../../../shared/types').SlashCommand[]
+  setSlashCommands: (cmds: import('../../../shared/types').SlashCommand[]) => void
 }
 // createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
@@ -359,22 +424,20 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
   setHubResults: (r) => set({ hubResults: r }),
   setHubSelectedModelId: (id) => set({ hubSelectedModelId: id }),
   setHubSource: (s) => set({ hubSource: s }),
-  appendModelLog: (id, stream, text) => set((s) => {
-    const existing = s.modelLogs[id] || []
-    const lines = text.split('\n')
-    const newEntries = lines
-      .filter(line => line.length > 0 || lines.length === 1)
-      .map(line => ({ stream, text: line, className: logClass(line) }))
-    if (existing.length + newEntries.length <= MAX_LOG_LINES) {
-      return { modelLogs: { ...s.modelLogs, [id]: [...existing, ...newEntries] } }
-    }
-    return { modelLogs: { ...s.modelLogs, [id]: [...existing, ...newEntries].slice(-MAX_LOG_LINES) } }
-  }),
-  clearModelLogs: (id) => set((s) => {
-    const next = { ...s.modelLogs }
-    delete next[id]
-    return { modelLogs: next }
-  }),
+  appendModelLog: (id, stream, text) => {
+    const arr = logWriteBuf.get(id)
+    if (arr) arr.push({ stream, text })
+    else logWriteBuf.set(id, [{ stream, text }])
+    scheduleLogFlush()
+  },
+  clearModelLogs: (id) => {
+    logWriteBuf.delete(id)
+    set((s) => {
+      const next = { ...s.modelLogs }
+      delete next[id]
+      return { modelLogs: next }
+    })
+  },
   setModelDiagnosis: (id, d) => set((s) => ({
     modelDiagnostics: { ...s.modelDiagnostics, [id]: d },
   })),
@@ -577,6 +640,14 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
   },
   liveAgentMsg: null,
   setLiveAgentMsg: (msg) => set({ liveAgentMsg: msg }),
+  // ── 自定义 /命令：从 settings.json 读取（initUiSettings 注入），默认空（仅内建命令）──
+  slashCommands: [],
+  setSlashCommands: (cmds) => {
+    set({ slashCommands: cmds })
+    try {
+      window.api?.setUiSetting('slashCommands', JSON.stringify(cmds))
+    } catch { /* ignore */ }
+  },
   // ── 聊天界面 ──
   chatSidebarCollapsed: (() => {
     try { return localStorage.getItem('chatSidebarCollapsed') === 'true' } catch { return false }
@@ -648,6 +719,12 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
       if (typeof s.sttMmprojPath === 'string') set({ sttMmprojPath: s.sttMmprojPath })
       if (typeof s.sttPrompt === 'string') set({ sttPrompt: s.sttPrompt })
       if (typeof s.sttResult === 'string') set({ sttResult: s.sttResult })
+      if (s.slashCommands !== undefined) {
+        try {
+          const parsed = typeof s.slashCommands === 'string' ? JSON.parse(s.slashCommands) : s.slashCommands
+          if (Array.isArray(parsed)) set({ slashCommands: parsed })
+        } catch { /* ignore */ }
+      }
     } catch { /* ignore */ }
   },
   chatSidebarCurrentCollapsed: false,

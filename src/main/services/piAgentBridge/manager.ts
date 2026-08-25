@@ -245,6 +245,26 @@ export class PiAgentManager {
     await bridge.session.prompt(text, images && images.length > 0 ? { images } : undefined)
   }
 
+  /** 流式中途插话：当前 assistant turn 结束后、下一 LLM 调用前注入。 */
+  async steer(sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>): Promise<void> {
+    const bridge = this.getBridge(sessionId)
+    appendUserEntry(sessionId, text, images?.length)
+    await bridge.session.steer(text, images && images.length > 0 ? images : undefined)
+  }
+
+  /** 追加：仅当 agent 本应停止（idle）时再运行。 */
+  async followUp(sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>): Promise<void> {
+    const bridge = this.getBridge(sessionId)
+    appendUserEntry(sessionId, text, images?.length)
+    await bridge.session.followUp(text, images && images.length > 0 ? images : undefined)
+  }
+
+  /** 清空 steer/followUp 队列（停止时调用，避免 abort 后自动续跑）。 */
+  async clearQueue(sessionId: string): Promise<void> {
+    const bridge = this.getBridge(sessionId)
+    await bridge.session.clearQueue()
+  }
+
   async abort(sessionId: string): Promise<void> {
     const bridge = this.getBridge(sessionId)
     await bridge.session.abort()

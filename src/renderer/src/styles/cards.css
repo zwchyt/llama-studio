@@ -585,6 +585,9 @@
 .log-entry {
   white-space: pre-wrap;
   word-break: break-all;
+  /* 视口外的日志行跳过渲染，进一步降低长日志列表的重绘成本 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 18px;
 }
 
 .log-stdout {

@@ -17,7 +17,7 @@ import { Bot, AlertCircle, Wrench, TerminalSquare, CheckCircle2, XCircle, Undo2,
 // 顶栏按钮动态图标（@animateicons 无 Panel*/Bug 对应项，用 Chevron 方向图标替代折叠语义）
 import {
   BrainIcon, LoaderIcon, SlidersHorizontalIcon, ActivityIcon, BookOpenIcon,
-  GitBranchIcon, GlobeIcon, TerminalIcon, ChevronsUpIcon, ChevronsDownIcon, FolderOpenIcon,
+  GitBranchIcon, GlobeIcon, TerminalIcon, ChevronsUpIcon, ChevronsDownIcon, FolderOpenIcon, DownloadIcon, UploadIcon,
   ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon, FolderIcon, PlusIcon, TrashIcon, PencilIcon, Trash2Icon,
   UserIcon, QuoteIcon, MicIcon, CircleStopIcon, PlayIcon, EyeIcon, ClockIcon, SparklesIcon, FileTextIcon,
   RefreshCwIcon, SendIcon, XIcon, CopyIcon, CodeIcon, MessageSquarePlusIcon, CheckIcon, SaveIcon,
@@ -25,6 +25,7 @@ import {
 } from '@animateicons/react/lucide'
 import { useStore } from '../store/useStore'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
+import { parseSlashCommand, findCommand, expandCommandTemplate, filterCommands, mergeCommands } from '../agent/slashCommands'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { playNotificationSound, warmUpAudio } from '../utils/sound'
@@ -2228,8 +2229,11 @@ const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loadi
   const isStreaming = !!streaming && !!live
   const src = isStreaming ? live : msg
   const a = actionsRef.current
-  const hasToolCalls = !!(src.toolCalls?.length)
-  const fileSummary = !isStreaming && hasToolCalls ? (
+  const toolCalls = src.toolCalls ?? []
+  const hasToolCalls = toolCalls.length > 0
+  const allToolsDone = toolCalls.every(t => t.status === 'done')
+  const showFileSummary = !isStreaming && hasToolCalls && allToolsDone
+  const fileSummary = showFileSummary ? (
     <FileChangeSummary toolCalls={msg.toolCalls} onOpenChange={a.openGitDiffAt} canUndoAll={!!(msg.toolCalls?.some(t => a.canUndoFor(t)))} onUndoAll={() => a.handleUndoAll(msg.id, msg.toolCalls)} />
   ) : null
   const actions = !isStreaming ? (
@@ -2789,6 +2793,7 @@ export default function AgentCodeView() {
   const [activeSessionId, setActiveSessionId] = useState(projects[0]!.sessions[0]?.id || '')
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [queueInfo, setQueueInfo] = useState<{ followUp: string[] }>({ followUp: [] })
   const [streaming, setStreaming] = useState(false)
   // 流式期模型阶段（runPiTurn 实时维护）：think=思考中 / text=输出正文 / tools=工具调用执行中。
   // 输入框上方常驻状态栏据此显示「思考中 / 输出中 / 工具调用中」图标与文案。
@@ -2968,6 +2973,14 @@ export default function AgentCodeView() {
   // ── pi-agent 模式状态：当前已创建 pi session 的 sid + 事件客户端 ──
   const piReadyRef = useRef<{ sid: string; ready: boolean }>({ sid: '', ready: false })
   const piClientRef = useRef<PiAgentClient | null>(null)
+  // 队列/历史同步：followUp/steer 用户消息不在发送时写入聊天，而是在 SDK 真正执行该条
+  // （queue_update 出队）时由 appendQueuedUserMsg 补写，避免多个追加问题提前堆在对话里。
+  const prevQueueRef = useRef<{ followUp: string[] }>({ followUp: [] })
+  const appendLiveUserMsgRef = useRef<(m: AgentMessage) => void>(() => {})
+  // 前端 followUp 队列：追加的问题不再交给 SDK 自动续跑（单轮 runPiTurn 会吞掉回复），
+  // 而是前端排队，当前轮 runPiTurn 结束后自动发起独立新轮（产生独立 user + assistant）。
+  const followUpQueueRef = useRef<{ text: string; attachments: Attachment[] }[]>([])
+  const runPiTurnRef = useRef<((pid: string, sid: string, displayMsgs: AgentMessage[], opts: { port: number; text: string; workspaceDir: string; approveWriteEdit?: boolean; knowledgeBaseId?: string; memory?: AgentSession['memory'] }) => Promise<{ errored: boolean; aborted: boolean }>) | null>(null)
   const inputHistoryRef = useRef<string[]>([])
   const historyIdxRef = useRef<number>(-1)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -3103,12 +3116,6 @@ export default function AgentCodeView() {
     setSidebarOpen(openTabs.length === 0)
   }, [openTabs.length])
 
-  const toggleBothSidebars = useCallback((e: React.MouseEvent) => {
-    if (e.type === 'contextmenu') e.preventDefault()
-    setSidebarOpen(v => !v)
-    setTreeOpen(v => !v)
-  }, [])
-
   const handleModelAction = useCallback(async (card: CardState) => {
     if (card.status === 'running') {
       const { setCardStatus, clearModelMetrics, activeChatPort, clearActiveChat } = useStore.getState()
@@ -3232,6 +3239,8 @@ export default function AgentCodeView() {
   const autoApproveBtnRef = useRef<HTMLButtonElement>(null)
   const allowBtnRef = useRef<HTMLButtonElement>(null)
   const backupsRef = useRef<Record<string, { path: string; content: string }>>({})
+  // handleUndo 在 runSlashAction 之后定义，用 ref 转发避免声明顺序/闭包报错
+  const handleUndoRef = useRef<((msgId: string, tcId: string) => Promise<void>) | null>(null)
   // 本轮是否已作废过旧备份：新一轮对话产生第一个修改备份时清空更早对话的备份，
   // 撤销状态只停留在「当前正在执行的修改」上（旧消息的撤销按钮随之置灰）。
   const regenRollbackRef = useRef<{ sid: string; messages: AgentMessage[] } | null>(null)
@@ -3352,6 +3361,8 @@ export default function AgentCodeView() {
   const activeSession = activeProject.sessions.find(s => s.id === activeSessionId) || activeProject.sessions[0] || null
   const toolCardExpandedDefault = useStore(s => s.agentToolCardsExpanded)
   const setToolCardsExpanded = useStore(s => s.setAgentToolCardsExpanded)
+  // 自定义 /命令：仅用户自定义部分（内建命令在 slashCommands.ts 中硬编码）
+  const slashCommands = useStore(s => s.slashCommands)
   // 常驻状态栏数据源：本地 streamKind（思考/输出/工具阶段）+ streaming/loading 综合派生。
 
   // ── Git 变更（只读）：拉取工作区改动，供预览区的 Git 变更标签渲染 ──
@@ -3829,6 +3840,32 @@ export default function AgentCodeView() {
     setProjects(prev => prev.map(p => p.id === projId ? ({ ...p, sessions: p.sessions.map(s => s.id === sessId ? ({ ...s, ...upd }) : s) }) : p))
   }, [])
 
+  // 队列出队检测：返回 prev 中存在、next 中不存在的项（多重集语义，正确处理重复文本）
+  function queueRemoved(prev: string[], next: string[]): string[] {
+    const removed: string[] = []
+    const nextCount = new Map<string, number>()
+    for (const x of next) nextCount.set(x, (nextCount.get(x) ?? 0) + 1)
+    for (const x of prev) {
+      const c = nextCount.get(x) ?? 0
+      if (c > 0) nextCount.set(x, c - 1)
+      else removed.push(x)
+    }
+    return removed
+  }
+
+  // 队列真正执行（出队）时，把该条用户消息补写进历史真相源 + 本轮 live msgs，
+  // 使其此刻出现在对话里（而非提前堆入）；live msgs 同步避免轮末 commit 覆盖丢失。
+  const appendQueuedUserMsg = useCallback((text: string) => {
+    const pid = activeProjectId
+    const sid = activeSessionId
+    if (!pid || !sid) return
+    const userMsg: AgentMessage = { id: newMsgId(), role: 'user', content: text }
+    const sess = activeSession
+    const base = sess && sess.id === sid ? sess.messages : []
+    updateSessionInProject(pid, sid, { messages: [...base, userMsg] })
+    appendLiveUserMsgRef.current(userMsg)
+  }, [updateSessionInProject, activeSession, activeSessionId, activeProjectId])
+
   const createProject = useCallback(async () => {
     const res = await safeCall<{ path: string | null }>(() => window.api.selectDirectory(), '选择目录')
     if (!res?.path) return
@@ -3852,6 +3889,32 @@ export default function AgentCodeView() {
       setActiveSessionId(fallback.sessions[0]?.id ?? '')
     }
   }, [projects, activeProjectId])
+
+  const exportSession = useCallback(async (sessId: string) => {
+    try {
+      const res = await window.api.exportAgentSession(sessId)
+      if (res.canceled) return
+      if (!res.success) { notify('导出失败：' + (res.error || '未知错误'), 'error'); return }
+      notify('会话已导出', 'success')
+    } catch (e) {
+      notify('导出失败：' + (e instanceof Error ? e.message : String(e)), 'error')
+    }
+  }, [])
+
+  const importSessionToProject = useCallback(async (projId: string) => {
+    try {
+      const res = await window.api.importAgentSession(projId)
+      if (res.canceled) return
+      if (!res.success || !res.session) { notify('导入失败：' + (res.error || '未知错误'), 'error'); return }
+      const sess = res.session
+      setProjects(prev => prev.map(p => p.id === projId ? { ...p, sessions: [...p.sessions, sess] } : p))
+      setActiveProjectId(projId)
+      setActiveSessionId(sess.id)
+      notify('会话已导入', 'success')
+    } catch (e) {
+      notify('导入失败：' + (e instanceof Error ? e.message : String(e)), 'error')
+    }
+  }, [setProjects, setActiveProjectId, setActiveSessionId])
 
   const addSessionToProject = useCallback((projId: string) => {
     const sess: AgentSession = { id: uniqueId('sess'), title: '新会话', messages: [] }
@@ -4153,6 +4216,60 @@ export default function AgentCodeView() {
     setAtQuery(null)
   }, [activeProject.workspaceDir])
 
+  // ── /命令 自动补全浮层 ──
+  const [slashQuery, setSlashQuery] = useState<string | null>(null) // 非空=浮层激活，存 / 后的查询串
+  const [slashList, setSlashList] = useState<import('../../../shared/types').SlashCommand[]>([])
+  const [slashIdx, setSlashIdx] = useState(0)
+  const slashAnchorRef = useRef<number | null>(null) // / 在 input 中的起始索引
+  const slashPopRef = useRef<HTMLDivElement>(null)
+
+  // 根据光标位置检测是否处于「/命令触发」状态：/ 前为空白或行首，/ 后无空格
+  const detectSlash = useCallback((value: string, caret: number) => {
+    const before = value.slice(0, caret)
+    const m = /(^|\s)\/([a-zA-Z0-9_\-]*)$/.exec(before)
+    if (m) {
+      const slashStart = caret - (m[2]!.length + 1)
+      slashAnchorRef.current = slashStart
+      const q = m[2]!
+      setSlashQuery(q)
+      setSlashList(filterCommands(q, slashCommands))
+      setSlashIdx(0)
+      return true
+    }
+    slashAnchorRef.current = null
+    setSlashQuery(null)
+    return false
+  }, [slashCommands])
+
+  // 选中命令：把 /查询串 替换为 "/name "（留出参数位置），不发送
+  const onPickSlash = useCallback((cmd: import('../../../shared/types').SlashCommand) => {
+    const anchor = slashAnchorRef.current
+    const el = textareaRef.current
+    const caret = el?.selectionStart ?? input.length
+    if (anchor == null) { setInput(`/${cmd.name} `); setSlashQuery(null); return }
+    const next = input.slice(0, anchor) + `/${cmd.name} ` + input.slice(caret)
+    setInput(next)
+    setSlashQuery(null)
+    requestAnimationFrame(() => {
+      el?.focus()
+      const pos = anchor + cmd.name.length + 2
+      el?.setSelectionRange(pos, pos)
+      autoResize()
+    })
+  }, [input, autoResize])
+
+  // 浮层外部点击关闭
+  useEffect(() => {
+    if (slashQuery === null) return
+    const close = (e: MouseEvent) => {
+      if (slashPopRef.current?.contains(e.target as Node)) return
+      setSlashQuery(null)
+    }
+    document.addEventListener('pointerdown', close, true)
+    return () => document.removeEventListener('pointerdown', close, true)
+  }, [slashQuery])
+
+
   // ── 附件 / 图片 ──
   async function readAttachmentFile(file: File): Promise<{ isImage: boolean; dataUrl?: string; text: string }> {
     const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name)
@@ -4292,7 +4409,14 @@ export default function AgentCodeView() {
     if (approvalResolveRef.current) approvalResolveRef.current(false)
     // pi 引擎：中止 pi session
     if (piReadyRef.current.ready) {
-      window.api.piAgent.abort(`pi-${piReadyRef.current.sid}`).catch(() => {})
+      const sid = `pi-${piReadyRef.current.sid}`
+      window.api.piAgent.abort(sid).catch(() => {})
+      // 清空 steer/followUp 队列，避免 abort 后队列自动续跑；
+      // 重置 prevQueue 使随后 SDK 的 queue_update（移除条目）不被误判为「已执行」而补写历史
+      window.api.piAgent.clearQueue(sid).catch(() => {})
+      followUpQueueRef.current = []
+      prevQueueRef.current = { followUp: [] }
+      setQueueInfo({ followUp: [] })
     }
     const resolve = abortRef.current.resolve
     if (resolve) { resolve(); abortRef.current.resolve = null }
@@ -4509,6 +4633,238 @@ export default function AgentCodeView() {
     }
   }, [loading, condensing, runningCard, apiBaseUrl, activeSession, activeProjectId, activeSessionId, condenseSessionMemory])
 
+  // ── 动作型 /命令 分发（renderer 侧直接处理，不发给模型）──
+  // 每个命令产出一个文本结果（写入对话）或直接执行 UI 动作（如 clear/compact）。
+  const runSlashAction = useCallback(async (name: string, args: string): Promise<void> => {
+    const st = useStore.getState()
+    const pid = activeProjectId
+    const metrics = runningCard ? st.modelMetrics[runningCard.template.id] : undefined
+    // 确保存在会话（无则就地创建），并返回当前消息基数
+    const ensureSession = (): { sid: string; base: AgentMessage[] } => {
+      let sid = activeSessionId
+      let base = activeSession ? activeSession.messages : []
+      if (!activeSession) {
+        sid = uniqueId('sess')
+        const fresh: AgentSession = { id: sid, title: `/${name}`, messages: [] }
+        setProjects(prev => prev.map(p => p.id === pid ? { ...p, sessions: [...p.sessions, fresh] } : p))
+        setActiveSessionId(sid)
+        base = []
+      }
+      return { sid, base }
+    }
+    // 把命令与结果作为 user/assistant 两条消息写入会话
+    const appendResult = (text: string): void => {
+      const { sid, base } = ensureSession()
+      const userMsg: AgentMessage = { id: newMsgId(), role: 'user', content: args ? `/${name} ${args}` : `/${name}` }
+      const aMsg: AgentMessage = { id: newMsgId(), role: 'assistant', content: text }
+      updateSessionInProject(pid, sid, { messages: [...base, userMsg, aMsg] })
+    }
+    switch (name) {
+      case 'help': {
+        const all = mergeCommands(slashCommands)
+        const lines = all.map(c => `- \`/${c.name}\` — ${c.description}`)
+        appendResult(`# 可用命令\n\n${lines.join('\n')}\n\n（在输入框输入 \`/\` 可唤起自动补全）`)
+        return
+      }
+      case 'status': {
+        const model = runningCard ? modelLabel : '（模型未启动）'
+        const msgs = activeSession?.messages ?? []
+        const parts = [
+          '**会话状态**',
+          `- 模型：${model}`,
+          `- 消息数：${msgs.length}`,
+          `- 工作区：${activeProject.workspaceDir || '—'}`,
+        ]
+        if (metrics) {
+          parts.push(`- Prompt Token：${metrics.nPromptTokens}`)
+          parts.push(`- 已解码 Token：${metrics.nDecoded}`)
+        }
+        appendResult(parts.join('\n'))
+        return
+      }
+      case 'context': {
+        const m = metrics
+        if (!m || !m.nCtx) { appendResult('当前模型未运行或无法读取上下文窗口信息。'); return }
+        const used = (m.nPromptTokensProcessed || m.nPromptTokens) + (m.nDecoded || 0)
+        const pct = m.nCtx ? Math.round((used / m.nCtx) * 100) : 0
+        appendResult([
+          '**上下文窗口**',
+          `- 上下文大小：${m.nCtx} token`,
+          `- 当前占用：约 ${used} token（${pct}%）`,
+          `- Prompt：${m.nPromptTokens} / 已处理 ${m.nPromptTokensProcessed} / 缓存 ${m.nPromptTokensCache}`,
+          `- 已解码：${m.nDecoded}`,
+        ].join('\n'))
+        return
+      }
+      case 'clear': {
+        const { sid } = ensureSession()
+        updateSessionInProject(pid, sid, { messages: [] })
+        notify('已清空当前会话', 'success')
+        return
+      }
+      case 'model': {
+        const cur = runningCard ? modelLabel : '（未启动）'
+        const running = cards.filter(c => c.status === 'running')
+        const others = running.filter(c => c !== runningCard).map(c => `- ${c.template.name}（端口 ${c.template.serverPort}）`)
+        appendResult([
+          '**当前模型**',
+          `- ${cur}`,
+          ...(others.length ? ['', '**其他运行中模型**', ...others] : []),
+          '',
+          '切换模型请在「模型卡片」页启动目标模型，或在顶部模型下拉中选择。',
+        ].join('\n'))
+        return
+      }
+      case 'thinking': {
+        const arg = args.trim().toLowerCase()
+        const valid: ThinkingLevel[] = ['low', 'medium', 'high']
+        if (arg && valid.includes(arg as ThinkingLevel)) {
+          setThinkingLevel(arg as ThinkingLevel)
+          if (runningCard) window.api.piAgent.setThinkingLevel(`pi-${activeSessionId}`, arg as ThinkingLevel).catch(() => { })
+          appendResult(`思考程度已设置为 **${arg}**。`)
+          return
+        }
+        appendResult(`当前思考程度：**${thinkingLevel}**\n可选值：low / medium / high（用法：\`/thinking high\`）`)
+        return
+      }
+      case 'tasks': {
+        if (!currentPlanItems.length) { appendResult('当前没有待办事项。'); return }
+        const done = currentPlanItems.filter(i => i.status === 'completed').length
+        const lines = currentPlanItems.map(t => `- [${t.status ?? 'pending'}] ${t.content ?? t.id ?? ''}`)
+        appendResult(`**待办清单（${done}/${currentPlanItems.length}）**\n\n${lines.join('\n')}`)
+        return
+      }
+      case 'stats': {
+        const m = metrics
+        if (!m) { appendResult('当前没有可统计的运行指标（模型未启动）。'); return }
+        const decode = m.decodeTokS.length ? m.decodeTokS[m.decodeTokS.length - 1] : 0
+        const req = m.reqPerSec.length ? m.reqPerSec[m.reqPerSec.length - 1] : 0
+        appendResult([
+          '**运行统计**',
+          `- Prompt Token：${m.nPromptTokens}`,
+          `- 已解码 Token：${m.nDecoded}`,
+          `- 缓存 Prompt Token：${m.nPromptTokensCache}`,
+          `- 首字延迟(TTFT)：${m.ttftMs ?? '—'} ms`,
+          `- Prefill：${m.prefillTokS ?? '—'} tok/s`,
+          `- 解码：${decode} tok/s`,
+          `- 请求速率：${req} req/s`,
+          `- 上下文：${m.nCtx}`,
+        ].join('\n'))
+        return
+      }
+      case 'compact': {
+        await handleManualCondense()
+        appendResult('已触发历史压缩，结果见顶部压缩提示。')
+        return
+      }
+      case 'files': {
+        const dir = activeProject.workspaceDir
+        if (!dir) { appendResult('未设置工作区目录，无法列出文件。'); return }
+        try {
+          const res = await window.api.expandFileTree(dir, 60)
+          if (!res.success || !res.children) { appendResult(`列出文件失败：${res.error || '未知错误'}`); return }
+          const items = res.children.slice().sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name))
+          const lines = items.slice(0, 40).map(c => `${c.isDir ? '📁' : '📄'} ${c.name}`)
+          const more = items.length > 40 ? `\n…等共 ${res.total ?? items.length} 项` : ''
+          appendResult(`**工作区文件** \`${dir}\`\n\n${lines.join('\n')}${more}`)
+        } catch (e: any) {
+          appendResult(`列出文件失败：${e?.message || e}`)
+        }
+        return
+      }
+      case 'git': {
+        const dir = activeProject.workspaceDir
+        if (!dir) { appendResult('未设置工作区目录，无法查看 Git 变更。'); return }
+        try {
+          const data = await window.api.gitChanges(dir)
+          if (!data.isRepo) { appendResult(`\`${dir}\` 不是 Git 仓库。`); return }
+          if (data.error) { appendResult(`读取 Git 变更失败：${data.error}`); return }
+          const fmt = (arr: { path: string; status: string }[]) => arr.map(f => `- ${f.status} ${f.path}`).join('\n')
+          const staged = data.staged.length ? `**已暂存（${data.staged.length}）**\n${fmt(data.staged)}` : ''
+          const unstaged = data.unstaged.length ? `**未暂存（${data.unstaged.length}）**\n${fmt(data.unstaged)}` : ''
+          appendResult([
+            `**Git 变更** \`${dir}\``,
+            `共 ${data.staged.length + data.unstaged.length} 个文件变更`,
+            '', staged, unstaged,
+            data.staged.length + data.unstaged.length === 0 ? '工作区干净，无改动。' : '',
+          ].filter(Boolean).join('\n'))
+        } catch (e: any) {
+          appendResult(`读取 Git 变更失败：${e?.message || e}`)
+        }
+        return
+      }
+      case 'audit': {
+        const entries = getAuditEntries().slice(-12).reverse()
+        if (!entries.length) { appendResult('暂无操作审计记录。'); return }
+        const lines = entries.map(e => `- [${e.failed ? '失败' : '成功'}] \`${e.tool}\` ${e.durationMs}ms · ${new Date(e.timestamp).toLocaleTimeString('zh-CN')}`)
+        appendResult(`**操作审计（最近 ${entries.length} 条）**\n\n${lines.join('\n')}`)
+        return
+      }
+      case 'debug': {
+        const turns = getDebugTurns().slice(-12).reverse()
+        if (!turns.length) { appendResult('暂无调试记录（发起一次对话后出现）。'); return }
+        const lines = turns.map(t => `- 轮次 ${t.turn}：${t.tools.length} 次工具调用，${t.durationMs}ms`)
+        appendResult(`**调试信息（最近 ${turns.length} 轮）**\n\n${lines.join('\n')}`)
+        return
+      }
+      case 'memory': {
+        const dir = activeProject.workspaceDir
+        if (!dir) { appendResult('未设置工作区目录，无法读取长期记忆。'); return }
+        try {
+          const list = await window.api.memstoreList(dir)
+          const active = list.filter(e => !e.archived)
+          if (!active.length) { appendResult('暂无长期记忆条目。'); return }
+          const lines = active.slice(0, 15).map(e => `- [${e.category}] ${e.content}`)
+          appendResult(`**长期记忆（${active.length} 条活跃）**\n\n${lines.join('\n')}`)
+        } catch (e: any) {
+          appendResult(`读取长期记忆失败：${e?.message || e}`)
+        }
+        return
+      }
+      case 'kb': {
+        try {
+          const list = await window.api.knowledgeList()
+          if (!list.length) { appendResult('当前没有已加载的知识库。'); return }
+          const lines = list.map(k => `- ${k.name}${k.id === activeProject.knowledgeBaseId ? '（当前绑定）' : ''}`)
+          appendResult(`**知识库（${list.length} 个）**\n\n${lines.join('\n')}`)
+        } catch (e: any) {
+          appendResult(`读取知识库失败：${e?.message || e}`)
+        }
+        return
+      }
+      case 'branch': {
+        if (!activeSession) { appendResult('当前没有可分支的会话。'); return }
+        const branchMsgs = activeSession.messages.map(m => ({ ...m }))
+        const branchSess: AgentSession = { id: uniqueId('sess'), title: activeSession.title + ' (分支)', messages: branchMsgs }
+        setProjects(prev => prev.map(p => p.id === activeProjectId ? { ...p, sessions: [...p.sessions, branchSess] } : p))
+        setActiveSessionId(branchSess.id)
+        notify('已创建分支对话', 'success')
+        appendResult(`已创建当前会话的分支：**${branchSess.title}**。`)
+        return
+      }
+      case 'export': {
+        await exportSession(activeSessionId)
+        appendResult('已触发会话导出（结果见系统通知）。')
+        return
+      }
+      case 'undo': {
+        if (!activeSession) { appendResult('当前没有会话，无法撤销。'); return }
+        let last: { msgId: string; tcId: string; path: string } | null = null
+        for (const m of activeSession.messages) {
+          for (const tc of m.toolCalls || []) {
+            const b = backupsRef.current[tc.id]
+            if (b) last = { msgId: m.id, tcId: tc.id, path: b.path }
+          }
+        }
+        if (!last) { appendResult('没有可撤销的文件修改。'); return }
+        if (handleUndoRef.current) await handleUndoRef.current(last.msgId, last.tcId)
+        appendResult(`已撤销最近一次文件修改：${last.path.startsWith('pi-undo:') ? '(Pi 备份)' : last.path}`)
+        return
+      }
+      default:
+        return
+    }
+  }, [activeProjectId, activeSessionId, activeSession, activeProject, runningCard, cards, modelLabel, slashCommands, thinkingLevel, currentPlanItems, updateSessionInProject, setProjects, setActiveSessionId, setThinkingLevel, handleManualCondense, exportSession, notify])
 
   // ── pi-agent 模式：pi SDK 驱动的单轮 agent 运行 ──
   // displayMsgs 的最后一条为最新 user 消息（由 prompt 发送）；此前消息作为历史注入 pi session。
@@ -4576,6 +4932,8 @@ export default function AgentCodeView() {
     // 整轮 msgs 以 ~500ms 节流同步进项目 store（历史/持久化），轮末 forceSync 一次性写全。
     let liveMsg: AgentMessage = { id: liveId, role: 'assistant', content: '' }
     let msgs: AgentMessage[] = [...displayMsgs, liveMsg]
+    // 供队列出队时把用户消息补写进本轮 live msgs（与 store 同步，避免轮末 commit 覆盖丢失）
+    appendLiveUserMsgRef.current = (m: AgentMessage) => { msgs.push(m) }
     useStore.getState().setLiveAgentMsg(liveMsg)
     updateSessionInProject(pid, sid, { messages: msgs })
     // 服务端真实解码 token 数：直接取自 /slots 的 n_decoded（与「模型数据」监控面板的
@@ -4911,7 +5269,14 @@ export default function AgentCodeView() {
         } catch { /* 调试埋点不影响主流程 */ }
         turnToolTrace = []
       },
-      onEnd: () => { /* prompt 返回即结束，无需额外处理 */ }
+      onEnd: () => { /* prompt 返回即结束，无需额外处理 */ },
+      onQueueUpdate: (_s, f) => {
+        // 出队（被执行）的条目 = prev 有而当前无的 → 此刻补写进历史，让其出现在对话里
+        const removedFollow = queueRemoved(prevQueueRef.current.followUp, f)
+        prevQueueRef.current = { followUp: f }
+        setQueueInfo({ followUp: f })
+        for (const t of removedFollow) appendQueuedUserMsg(t)
+      },
     })
     piClientRef.current = client
     client.attach(piSessionId)
@@ -5004,8 +5369,19 @@ export default function AgentCodeView() {
           }
         }
       }
+      // 前端 followUp 队列：当前轮结束后自动发起独立新轮，产生独立 user + assistant 回复
+      const nextFU = followUpQueueRef.current.shift()
+      if (nextFU && !abortRef.current.aborted) {
+        const fuUserMsg: AgentMessage = { id: newMsgId(), role: 'user', content: nextFU.text, attachments: nextFU.attachments.length ? nextFU.attachments : undefined }
+        const fuMsgs = [...msgs, fuUserMsg]
+        updateSessionInProject(pid, sid, { messages: fuMsgs })
+        setQueueInfo(prev => ({ ...prev, followUp: prev.followUp.slice(1) }))
+        const fuOpts = { port: opts.port, text: nextFU.text, workspaceDir: opts.workspaceDir, approveWriteEdit: opts.approveWriteEdit, knowledgeBaseId: opts.knowledgeBaseId, memory: opts.memory }
+        setTimeout(() => { const rt = runPiTurnRef.current; if (rt) rt(pid, sid, fuMsgs, fuOpts) }, 0)
+      }
     }
   }, [updateSessionInProject])
+  runPiTurnRef.current = runPiTurn
 
   // ── 区域：发送消息（构建附件、创建会话、调用 agent） ──
   const handleSend = useCallback(async (overrideText?: string, overrideAttachments?: Attachment[]) => {
@@ -5035,14 +5411,36 @@ export default function AgentCodeView() {
     }
     const text = outgoing.trim()
     const hasAttach = attachmentsForSend.length > 0
+    // ── /命令 展开：/name args → 提示词模板（参数替换为 $ARGUMENTS）──
+    // 在模型未启动的提前返回之前展开：保留展开后的文本在输入框，待启动后可手动发送。
+    let resolvedText = text
+    const parsedCmd = parseSlashCommand(text)
+    if (parsedCmd) {
+      const cmd = findCommand(parsedCmd.name, slashCommands)
+      if (!cmd) {
+        notify(`未知命令 /${parsedCmd.name}（输入 / 查看可用命令）`, 'error')
+        if (text) { setInput(text); setRefChips([]); setCodeSnippets([]) }
+        return
+      }
+      // 动作型命令：renderer 侧直接处理（状态查询 / UI 动作），不发给模型
+      if (cmd.kind === 'action') {
+        setInput('')
+        if (textareaRef.current) textareaRef.current.style.height = 'auto'
+        setAttachedFiles([])
+        setRefChips([])
+        setCodeSnippets([])
+        await runSlashAction(cmd.name, parsedCmd.args)
+        return
+      }
+      resolvedText = expandCommandTemplate(cmd.template, parsedCmd.args)
+    }
     if (!apiBaseUrl || !runningCard) {
       // 模型未启动：把建议文本保留在输入框，待启动后手动发送（胶囊已合入文本，清空避免重复）
-      if (text) { setInput(text); setRefChips([]); setCodeSnippets([]) }
+      if (resolvedText) { setInput(resolvedText); setRefChips([]); setCodeSnippets([]) }
       return
     }
-    if (loading || sendingRef.current) {
-      // 生成 / 工具执行 / 发送准备期间：把当前输入加入队列，待本轮结束后按序自动发送。
-      // sendingRef 封死「loading 置真前的异步准备窗口」，防止排队重放时并发双流。
+    if (sendingRef.current && !loading) {
+      // 异步准备窗口（loading 已置真前）：沿用原排队兜底，避免并发双流
       pendingSendRef.current.push({ text: outgoing, attachments: attachmentsForSend })
       setInput('')
       if (textareaRef.current) textareaRef.current.style.height = 'auto'
@@ -5050,7 +5448,26 @@ export default function AgentCodeView() {
       if (overrideText === undefined) { setRefChips([]); setCodeSnippets([]) }
       return
     }
-    if (!text && !hasAttach) return
+    if (loading) {
+      // 空插话：仅复位输入，不向 SDK 发空消息
+      if (!resolvedText && attachmentsForSend.length === 0) {
+        setInput('')
+        if (textareaRef.current) textareaRef.current.style.height = 'auto'
+        setAttachedFiles([])
+        if (overrideText === undefined) { setRefChips([]); setCodeSnippets([]) }
+        return
+      }
+      setInput('')
+      if (textareaRef.current) textareaRef.current.style.height = 'auto'
+      setAttachedFiles([])
+      if (overrideText === undefined) { setRefChips([]); setCodeSnippets([]) }
+      // 运行中：追加（followUp）走前端队列，当前轮 runPiTurn 结束后自动发起独立新轮，
+      // 让模型真正作答（SDK 自动续跑会被单轮 runPiTurn 架构吞掉回复）。
+      followUpQueueRef.current.push({ text: resolvedText, attachments: attachmentsForSend })
+      setQueueInfo(prev => ({ ...prev, followUp: [...prev.followUp, resolvedText] }))
+      return
+    }
+    if (!resolvedText && !hasAttach) return
 
     // 同步互斥门闩：从这里到本轮 agent 结束前，后到的 handleSend 一律走排队分支
     sendingRef.current = true
@@ -5067,7 +5484,7 @@ export default function AgentCodeView() {
         sid = uniqueId('sess')
         const freshSess: AgentSession = {
           id: sid,
-          title: text.slice(0, 40),
+          title: resolvedText.slice(0, 40),
           messages: []
         }
         setProjects(prev => prev.map(p => p.id === pid ? { ...p, sessions: [...p.sessions, freshSess] } : p))
@@ -5076,9 +5493,9 @@ export default function AgentCodeView() {
       }
 
       // 记录历史输入（仅文本），供 ↑ / ↓ 回溯
-      if (text) {
+      if (resolvedText) {
         const hist = inputHistoryRef.current
-        if (hist[hist.length - 1] !== text) hist.push(text)
+        if (hist[hist.length - 1] !== resolvedText) hist.push(resolvedText)
         historyIdxRef.current = -1
       }
 
@@ -5086,19 +5503,19 @@ export default function AgentCodeView() {
       const attachments = attachmentsForSend
       if (overrideText === undefined) { setAttachedFiles([]); setRefChips([]); setCodeSnippets([]) }
 
-      const userMsg: AgentMessage = { id: newMsgId(), role: 'user', content: text, attachments: attachments.length ? attachments : undefined }
+      const userMsg: AgentMessage = { id: newMsgId(), role: 'user', content: resolvedText, attachments: attachments.length ? attachments : undefined }
       // 仅在该会话尚无任何用户消息时，用首条消息自动生成标题（后续不再覆盖，保留手动重命名）
       const shouldAutoTitle = !baseMessages.some(m => m.role === 'user')
       let displayMsgs: AgentMessage[] = [...baseMessages, userMsg]
       updateSessionInProject(pid, sid, {
         messages: displayMsgs,
-        ...(shouldAutoTitle ? { title: (text || '附件对话').slice(0, 40) } : {})
+        ...(shouldAutoTitle ? { title: (resolvedText || '附件对话').slice(0, 40) } : {})
       })
 
       // ── 即时沉淀（阶段 2.3）：启发式识别用户纠正 / 约束语气，原话逐字写入长期记忆
       // （仅当会话已有助手回复时才可能是「纠正」，首条消息不触发）──
-      if (agentConfig.longTermMemoryEnabled && text && activeProject.workspaceDir && baseMessages.some(m => m.role === 'assistant')) {
-        noteUserCorrection(activeProject.workspaceDir, sid, text)
+      if (agentConfig.longTermMemoryEnabled && resolvedText && activeProject.workspaceDir && baseMessages.some(m => m.role === 'assistant')) {
+        noteUserCorrection(activeProject.workspaceDir, sid, resolvedText)
       }
 
       // ── pi SDK 驱动 agent 循环 ──
@@ -5120,7 +5537,7 @@ export default function AgentCodeView() {
       }
       await runPiTurn(pid, sid, displayMsgs, {
         port: runningCard.template.serverPort,
-        text,
+        text: resolvedText,
         workspaceDir: activeProject.workspaceDir,
         approveWriteEdit: !!activeProject.approveWriteEdit,
         knowledgeBaseId: activeProject.knowledgeBaseId,
@@ -5285,6 +5702,8 @@ export default function AgentCodeView() {
     markRestored()
     notify('已恢复文件：' + dirName(b.path), 'success')
   }, [activeProjectId, activeSessionId, setProjects])
+  // 转发给 runSlashAction 使用（其定义早于 handleUndo）
+  handleUndoRef.current = handleUndo
 
   // 一键撤销本次全部修改：同一消息内所有仍在备份中的工具调用（Write/Edit 等）
   // 逐一把原文件内容写回；成功后统一标记 restored 并弹一条汇总通知（避免逐条 toast）。
@@ -5454,6 +5873,32 @@ export default function AgentCodeView() {
         return
       }
     }
+    // /命令 补全浮层激活时，方向键/回车/Tab/Esc 优先用于选择，绝不发送、不翻历史
+    if (slashQuery !== null) {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setSlashQuery(null)
+        return
+      }
+      if (slashList.length > 0) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault()
+          setSlashIdx(i => (i + 1) % slashList.length)
+          return
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault()
+          setSlashIdx(i => (i - 1 + slashList.length) % slashList.length)
+          return
+        } else if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault()
+          onPickSlash(slashList[slashIdx]!)
+          return
+        }
+      }
+      // 其他按键（字母/空格等）允许正常输入；但浮层激活期间不触发发送/翻历史
+      // （回车已被上方拦截或在不匹配时落空，避免把半个 /命令 发给模型）
+      if (e.key === 'Enter' && !e.shiftKey) return
+    }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
     else if (e.key === 'ArrowUp' && !input) { e.preventDefault(); recallHistory(-1) }
     else if (e.key === 'ArrowDown' && !input) { e.preventDefault(); recallHistory(1) }
@@ -5470,6 +5915,10 @@ export default function AgentCodeView() {
     setInput(value)
     autoResize()
     const dir = activeProject.workspaceDir
+    if (detectSlash(value, caret)) {
+      // /命令 补全优先；此时不触发 @ 文件补全
+      return
+    }
     if (!dir) { setAtQuery(null); return }
     if (detectAt(value, caret)) {
       // 先确保文件列表已加载（按工作区缓存），再过滤
@@ -5478,7 +5927,7 @@ export default function AgentCodeView() {
         if (atAnchorRef.current != null) filterAtFiles(atQueryRef.current ?? '')
       })
     }
-  }, [autoResize, detectAt, ensureWorkspaceFiles, filterAtFiles, activeProject.workspaceDir])
+  }, [autoResize, detectAt, detectSlash, ensureWorkspaceFiles, filterAtFiles, activeProject.workspaceDir])
 
   // 已完成消息行动作经「稳定 ref」传给 memo 行组件：ref 引用不变，useCallback 依赖
   // 漂移不会击穿 AgentMessageRow 的 React.memo（流式期间已完成行整行跳过 reconcile）。
@@ -5503,22 +5952,13 @@ export default function AgentCodeView() {
           </button>
           <span className="agent-code-topbar-title">{activeSession?.title || '新会话'}</span>
         </div>
-          <div
-            className="agent-code-topbar-toggle"
-            onDoubleClick={toggleBothSidebars}
-            onContextMenu={toggleBothSidebars}
-          >
-            {/* 内联上下文指示器：常驻显示在顶栏中间（标题右侧、按钮左侧），
-               免去反复点击「上下文」按钮确认用量。点击可展开/收起完整面板。 */}
-            <AgentTopBarCtx
-              active={contextModalOpen}
-              onToggle={() => setContextModalOpen(v => !v)}
-              btnRef={ctxInlineRef}
-            />
-          </div>
+
+
+
         <div className="agent-code-topbar-right">
           {/* Prefill 进度条：复用「模型运行数据」面板的同一数据源（modelMetrics[].prefillProgress），
               自订阅指标，仅在 prefill 进行中（pp < 1）显示，完成后自动消失。 */}
+          <div className="agent-code-topbar-right-scroll">
           <AgentPrefillBar />
           <TopbarBtn
             btnRef={condenseBtnRef}
@@ -5541,6 +5981,7 @@ export default function AgentCodeView() {
             title={toolCardExpandedDefault ? '折叠所有工具卡片' : '展开所有工具卡片'}
             icon={toolCardExpandedDefault ? ChevronsUpIcon : ChevronsDownIcon}
           >工具卡</TopbarBtn>
+          </div>
           <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} style={{ marginTop: 0, width: 28, height: 28 }}>
             {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
           </button>
@@ -5589,6 +6030,9 @@ export default function AgentCodeView() {
                     <span className="ac-icon-btn">
                       <button className="agent-code-session-add" onClick={e => { e.stopPropagation(); addSessionToProject(p.id) }}><PlusIcon size={13} /></button>
                     </span>
+                    <span className="ac-icon-btn">
+                      <button className="agent-code-session-add" onClick={e => { e.stopPropagation(); importSessionToProject(p.id) }} title="导入会话"><UploadIcon size={13} /></button>
+                    </span>
                   </div>
                   <div className={`agent-code-child-wrap ${p.expanded ? 'open' : ''}`} ref={el => { projectWrapRefs.current.set(p.id, el) }}>
                     <div className="agent-code-child-sessions">
@@ -5608,6 +6052,7 @@ export default function AgentCodeView() {
                             <span className="agent-code-session-title">{s.title}</span>
                           )}
                           <span className="ac-icon-btn">
+                            <button className="agent-code-session-export" onClick={e => { e.stopPropagation(); exportSession(s.id) }}><DownloadIcon size={12} /></button>
                             <button className="agent-code-session-rename" onClick={e => { e.stopPropagation(); startSessRename(s.id, s.title) }}><PencilIcon size={12} /></button>
                             <button className="agent-code-session-del" onClick={e => { e.stopPropagation(); deleteSession(p.id, s.id) }}><TrashIcon size={12} /></button>
                           </span>
@@ -5717,7 +6162,7 @@ export default function AgentCodeView() {
                           // 行内同时覆盖 segments 交错布局与传统布局两种完成态。
                           // modelLabel 需与流式分支一致传入：思考块头部 meta（模型名+token）
                           // 在完成后保留不消失（模型名/t/s 由消息持久化字段还原，刷新不丢）。
-                          <AgentMessageRow msg={msg} isLast={isLast} loading={loading} actionsRef={msgRowActionsRef} toolCardExpandedDefault={toolCardExpandedDefault} modelLabel={modelLabelRef.current} modelTemplateId={runningCard?.template.id} />
+                          <AgentMessageRow msg={msg} isLast={isLast} loading={loading} actionsRef={msgRowActionsRef} toolCardExpandedDefault={toolCardExpandedDefault} streaming={streaming} modelLabel={modelLabelRef.current} modelTemplateId={runningCard?.template.id} />
                         )}
                       </>
                     )}
@@ -6070,6 +6515,28 @@ export default function AgentCodeView() {
                 )}
               </div>
             )}
+            {slashQuery !== null && (
+              <div className="chat-slash-pop" ref={slashPopRef}>
+                {slashList.length === 0 ? (
+                  <div className="chat-at-empty">无匹配命令</div>
+                ) : (
+                   slashList.map((c, i) => (
+                     <button
+                       className={`chat-slash-item${i === slashIdx ? ' active' : ''}`}
+                       key={c.name}
+                       ref={i === slashIdx ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
+                       onMouseEnter={() => setSlashIdx(i)}
+                       onClick={() => onPickSlash(c)}
+                       title={c.template}
+                     >
+                      <span className="chat-slash-name">/{c.name}</span>
+                      <span className="chat-slash-desc">{c.description}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+
             {filePickerOpen && activeProject.workspaceDir && (
               <AgentFilePicker
                 workspaceDir={activeProject.workspaceDir}
@@ -6200,12 +6667,53 @@ export default function AgentCodeView() {
                     ))}
                     <textarea ref={textareaRef} className="chat-input" placeholder="" rows={1} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown} />
                   </div>
+                  {loading && runningCard && (() => {
+                    const hasInput = input.trim() !== '' || attachedFiles.length > 0 || refChips.length > 0 || codeSnippets.length > 0
+                    const queueHas = queueInfo.followUp.length > 0
+                    if (!hasInput && !queueHas) return null
+                    return (
+                      <div className="chat-queue-actions">
+                        {hasInput && (
+                          <button
+                            type="button"
+                            className="chat-queue-act chat-queue-act-followup"
+                            onClick={() => handleSend(undefined, undefined)}
+                          >追加下一条</button>
+                        )}
+                        {queueHas && (() => {
+                          const _last = queueInfo.followUp[queueInfo.followUp.length - 1] ?? ''
+                          const _prev = _last.length > 14 ? _last.slice(0, 14) + '…' : _last
+                          const _tip = [
+                            `追加（${queueInfo.followUp.length}）：`,
+                            ...queueInfo.followUp.map(t => '  • ' + t),
+                          ].join('\n')
+                          return (
+                            <button
+                              type="button"
+                              className="chat-queue-indicator"
+                              onClick={() => { window.api.piAgent.clearQueue(`pi-${activeSessionId}`); followUpQueueRef.current = []; prevQueueRef.current = { followUp: [] }; setQueueInfo({ followUp: [] }) }}
+                              title={_tip}
+                            >
+                              <span className="chat-queue-count">追加 {queueInfo.followUp.length}</span>
+                              {_last && <span className="chat-queue-preview">：{_prev}</span>}
+                              <XIcon size={11} />
+                            </button>
+                          )
+                        })()}
+                      </div>
+                    )
+                  })()}
                 </div>
                 {/* ③ 底部按钮行：文件目录 + 模型列表（左）… 发送（右） */}
-                <div className="chat-input-tools">
+                  <div className="chat-input-tools">
                   <AniIconButton className="chat-upload-btn" icon={PlusIcon} size={14} onClick={() => fileInputRef.current?.click()} title="添加附件" />
                   <AniIconButton ref={attachBtnRef} className={`chat-attach-btn${filePickerOpen ? ' active' : ''}`} icon={FolderOpenIcon} size={14} onClick={toggleFilePicker} title="选择文件" />
                   <AniIconButton className={`chat-mic-btn${listening || micTranscribing ? ' listening' : ''}`} icon={MicIcon} size={14} onClick={toggleListen} disabled={micTranscribing} title={micTranscribing ? '识别中…' : listening ? '停止录音' : '语音输入'} />
+                  <AgentTopBarCtx
+                    active={contextModalOpen}
+                    onToggle={() => setContextModalOpen(v => !v)}
+                    btnRef={ctxInlineRef}
+                  />
                   <button
                     ref={modelBtnRef}
                     className={`chat-model-dropdown${modelPickerOpen ? ' active' : ''}${runningCard ? ' running' : ''}${runningCard?.ready ? ' ready' : ''}`}
@@ -6244,11 +6752,11 @@ export default function AgentCodeView() {
                             {l}
                           </li>
                         ))}
-                      </ul>
-                    )}
-                  </div>
-                  {loading ? (
-                    <AniIconButton className="btn btn-primary chat-send-btn" icon={CircleStopIcon} size={16} onClick={handleStop} title="停止" />
+                       </ul>
+                     )}
+                   </div>
+                    {loading ? (
+                    <AniIconButton className="btn btn-ghost chat-stop-btn" icon={CircleStopIcon} size={16} onClick={handleStop} title="停止" />
                   ) : (
                     <AniIconButton className="btn btn-primary chat-send-btn" icon={SendIcon} size={16} onClick={() => handleSend()} disabled={(!input.trim() && attachedFiles.length === 0 && refChips.length === 0 && codeSnippets.length === 0) || !apiBaseUrl} title="发送" />
                   )}

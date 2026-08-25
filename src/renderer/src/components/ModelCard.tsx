@@ -45,6 +45,9 @@ export default function ModelCard({ card, style }: Props) {
   const nameRef = useRef<HTMLHeadingElement>(null)
   const [nameOverflow, setNameOverflow] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
+  // 日志弹层只渲染末尾 N 行（其余已截留在 store 的 MAX_LOG_LINES 缓冲里），
+  // 避免一次性渲染数千个 <div> 导致主线程长阻塞（见冻结探测器 ~750ms 卡顿）。
+  const RENDER_LOG_TAIL = 500
   const modelTagRef = useRef<HTMLSpanElement>(null)
   const [modelTagOverflow, setModelTagOverflow] = useState(false)
   const avatar = useMemo(() => {
@@ -514,11 +517,14 @@ export default function ModelCard({ card, style }: Props) {
           </div>
           <div className="card-logs-body" ref={logsBodyRef}>
             <div className="card-logs-scroll">
-              {logs?.map((entry, i) => (
-                <div key={i} className={`log-entry ${entry.className}`}>
-                  {entry.text}
-                </div>
-              ))}
+              {logs && (() => {
+                const start = Math.max(0, logs.length - RENDER_LOG_TAIL)
+                return logs.slice(start).map((entry, i) => (
+                  <div key={start + i} className={`log-entry ${entry.className}`}>
+                    {entry.text}
+                  </div>
+                ))
+              })()}
               <div ref={logsEndRef} />
             </div>
           </div>

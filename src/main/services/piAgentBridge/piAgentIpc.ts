@@ -114,6 +114,21 @@ export function registerPiAgentIpc(win: BrowserWindow): void {
     return { success: true }
   })
 
+  ipcMain.handle('pi-agent-steer', async (_e, sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => {
+    await getManager().steer(sessionId, text, images)
+    return { success: true }
+  })
+
+  ipcMain.handle('pi-agent-follow-up', async (_e, sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => {
+    await getManager().followUp(sessionId, text, images)
+    return { success: true }
+  })
+
+  ipcMain.handle('pi-agent-clear-queue', async (_e, sessionId: string) => {
+    await getManager().clearQueue(sessionId)
+    return { success: true }
+  })
+
   ipcMain.handle('pi-agent-abort', async (_e, sessionId: string) => {
     await getManager().abort(sessionId)
     return { success: true }

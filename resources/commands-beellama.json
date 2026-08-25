@@ -85,6 +85,7 @@
       "commands": [
         { "arg": "--port", "label": "Server Port", "description": "服务器监听端口", "type": "number", "default": 8080, "min": 1024, "max": 65535, "env": "LLAMA_ARG_PORT" },
         { "arg": "--host", "label": "Server Host", "description": "绑定的主机地址", "type": "string", "default": "127.0.0.1", "placeholder": "127.0.0.1", "env": "LLAMA_ARG_HOST" },
+        { "arg": "--api-key", "short": "-key", "label": "API Key", "description": "设置服务器 API 密钥：消除「CORS 允许所有来源且未设 key」的安全风险；客户端调用需携带该 key。建议填入随机串", "type": "string", "placeholder": "随机串，例如 a1b2c3d4e5f6...", "env": "LLAMA_API_KEY" },
         { "arg": "--chat-template", "label": "Chat Template", "description": "自定义 Jinja 聊天模板名称或路径", "type": "string", "placeholder": "llama3", "env": "LLAMA_ARG_CHAT_TEMPLATE" },
         { "arg": "--jinja", "label": "Use Jinja Templating", "description": "启用 Jinja 模板引擎处理聊天", "type": "boolean", "default": true, "env": "LLAMA_ARG_JINJA" },
         { "arg": "--reasoning-format", "label": "Reasoning Format", "description": "模型推理输出格式", "type": "select", "options": ["auto", "none", "deepseek", "deepseek-legacy"], "default": "auto", "env": "LLAMA_ARG_THINK" },

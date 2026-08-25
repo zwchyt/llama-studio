@@ -17,7 +17,7 @@ import http from 'http'
 import { app } from 'electron'
 import { randomUUID, createHash } from 'crypto'
 import type * as ptyNs from 'node-pty'
-import type { AgentProject, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus, EngineKind } from '../shared/types'
+import type { AgentProject, AgentSession, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus, EngineKind } from '../shared/types'
 import { registerCodeMapIpc, disposeCodeMaps } from './services/codeMapService'
 import { registerRetrievalIpc } from './services/retrievalService'
 import { registerMemoryStoreIpc } from './services/memoryStore'
@@ -409,8 +409,8 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
     return Promise.resolve()
   }
 }
-interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; ttsModelFolders: string[]; asrModelFolders: string[]; ocrModelFolders: string[]; sdModelFolders: string[]; sdVaeFolders: string[]; sdLlmFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean;       notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string }
-const UI_KEYS = new Set(['splashEnabled', 'soundEnabled', 'notificationSound', 'chatSidebarCollapsed', 'agentToolCardsExpanded', 'ttsEngine', 'ttsModelPath', 'ttsVocoderPath'])
+interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; ttsModelFolders: string[]; asrModelFolders: string[]; ocrModelFolders: string[]; sdModelFolders: string[]; sdVaeFolders: string[]; sdLlmFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean;       notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; slashCommands?: unknown }
+const UI_KEYS = new Set(['splashEnabled', 'soundEnabled', 'notificationSound', 'chatSidebarCollapsed', 'agentToolCardsExpanded', 'ttsEngine', 'ttsModelPath', 'ttsVocoderPath', 'slashCommands'])
 let settingsCache: AppSettings | null = null
 async function loadSettings(): Promise<AppSettings> {
   if (settingsCache) return settingsCache
@@ -2337,6 +2337,9 @@ export function registerIpcHandlers(): void {
             (_f, label, rest) => `${label} = ${rest.replace(/[\d.]+/g, (n) => lsC(32, n))}`)
           .replace(/(graphs reused|n_tokens|truncated|is_child|f_sim_best|f_keep)\s*=\s*([\d.]+)/g,
             (_f, label, num) => `${label} = ${lsC(32, num)}`)
+          // 生成吞吐速率 tg / tg_3s（单位 t/s）数值标红，醒目提示性能数据
+          .replace(/(tg_3s|tg)\s*=\s*([\d.]+)/g,
+            (_f, label, num) => `${label} = ${lsC(31, num)}`)
           .replace(/>\s*([\d.]+)\s*thold/g, (_f, num) => `> ${lsC(32, num)} thold`)
           .replace(/(security risk|failed|error|NOTICE)/gi, (f) => lsC(31, f))
           .replace(/(listening on|model loaded|ready)/gi, (f) => lsC(32, f))
@@ -4019,7 +4022,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('get-ui-settings', async () => {
     const s = await loadSettings()
-    return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, notificationSound: s.notificationSound ?? 'chime', chatSidebarCollapsed: s.chatSidebarCollapsed ?? false, agentToolCardsExpanded: s.agentToolCardsExpanded ?? true, ttsEngine: s.ttsEngine ?? 'system', ttsModelPath: s.ttsModelPath ?? '', ttsVocoderPath: s.ttsVocoderPath ?? '' }
+    return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, notificationSound: s.notificationSound ?? 'chime', chatSidebarCollapsed: s.chatSidebarCollapsed ?? false, agentToolCardsExpanded: s.agentToolCardsExpanded ?? true, ttsEngine: s.ttsEngine ?? 'system', ttsModelPath: s.ttsModelPath ?? '', ttsVocoderPath: s.ttsVocoderPath ?? '', slashCommands: s.slashCommands ?? [] }
   })
   ipcMain.handle('set-ui-setting', async (_e, key: string, value: boolean | string) => {
     const s = await loadSettings()
@@ -6757,7 +6760,7 @@ export function registerIpcHandlers(): void {
       return []
     }
   })
-  ipcMain.handle('save-agent-projects', async (_e, projects: AgentProject[]): Promise<{ success: boolean; error?: string }> => {
+  ipcMain.handle('save-agent-projects', async (_e, projects: AgentProject[], opts?: { gcScope?: string[] }): Promise<{ success: boolean; error?: string }> => {
     try {
       ensureAgentProjectsDir()
       // 没有任何含会话的项目 → 跳过落盘和 GC，防止误删磁盘数据
@@ -6792,6 +6795,8 @@ export function registerIpcHandlers(): void {
         }
       }
       // GC：删除已被删除会话残留的孤立文件（排除遗留单文件，含 .tasks.json）
+      // 增量落盘时只在该项目范围内 GC（gcScope），避免误删其他项目的会话文件
+      const gcScope = opts?.gcScope
       let allFiles: string[] = []
       try { allFiles = readdirSync(AGENT_PROJECTS_DIR) } catch { allFiles = [] }
       for (const f of allFiles) {
@@ -6799,10 +6804,84 @@ export function registerIpcHandlers(): void {
         if (f === 'agent-projects.json') continue
         const sessionId = f.endsWith('.tasks.json') ? f.slice(0, -11) : f.slice(0, -5)
         if (!liveIds.has(sessionId)) {
+          if (gcScope && gcScope.length) {
+            try {
+              const ex = JSON.parse(readFileSync(join(AGENT_PROJECTS_DIR, f), 'utf-8'))
+              if (!gcScope.includes(ex.projectId)) continue
+            } catch { continue }
+          }
           try { unlinkSync(join(AGENT_PROJECTS_DIR, f)) } catch { /* ignore */ }
         }
       }
       return { success: true }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  // ── Agent 会话导入 / 导出（.jsonl：首行为会话元数据，其后每行一条消息）──
+  ipcMain.handle('export-agent-session', async (_e, { sessionId }: { sessionId: string }): Promise<{ success: boolean; canceled?: boolean; error?: string }> => {
+    try {
+      ensureAgentProjectsDir()
+      const src = join(AGENT_PROJECTS_DIR, `${sessionId}.json`)
+      if (!existsSync(src)) return { success: false, error: '会话文件不存在' }
+      const data = JSON.parse(readFileSync(src, 'utf-8'))
+      const r = await dialog.showSaveDialog({
+        title: '导出会话',
+        defaultPath: `${data.title || sessionId}.jsonl`,
+        filters: [{ name: '会话 JSONL', extensions: ['jsonl'] }],
+      })
+      if (r.canceled || !r.filePath) return { success: true, canceled: true }
+      const meta = {
+        __type: 'agent-session',
+        title: data.title,
+        projectId: data.projectId,
+        projectTitle: data.projectTitle,
+        workspaceDir: data.workspaceDir,
+        systemPrompt: data.systemPrompt,
+        knowledgeBaseId: data.knowledgeBaseId,
+        memory: data.memory,
+        exportedAt: Date.now(),
+      }
+      const lines = [JSON.stringify(meta), ...(data.messages || []).map((m: unknown) => JSON.stringify(m))]
+      writeFileSync(r.filePath, lines.join('\n'), 'utf-8')
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('import-agent-session', async (_e, { projectId }: { projectId: string }): Promise<{ success: boolean; canceled?: boolean; sessionId?: string; session?: AgentSession; error?: string }> => {
+    try {
+      const r = await dialog.showOpenDialog({
+        title: '导入会话',
+        filters: [{ name: '会话 JSONL', extensions: ['jsonl'] }],
+        properties: ['openFile'],
+      })
+      if (r.canceled || !r.filePaths[0]) return { success: true, canceled: true }
+      const text = readFileSync(r.filePaths[0], 'utf-8')
+      const lines = text.split('\n').map((l) => l.trim()).filter(Boolean)
+      if (lines.length === 0) return { success: false, error: '文件为空' }
+      const meta = JSON.parse(lines[0])
+      if (meta?.__type !== 'agent-session') return { success: false, error: '不是有效的会话 JSONL 文件' }
+      const messages = lines.slice(1).map((l) => JSON.parse(l))
+      const newId = randomUUID()
+      ensureAgentProjectsDir()
+      const file = {
+        id: newId,
+        title: meta.title || '导入的会话',
+        projectId,
+        projectTitle: '',
+        workspaceDir: meta.workspaceDir || '',
+        createdAt: Date.now(),
+        messages,
+        knowledgeBaseId: meta.knowledgeBaseId,
+        systemPrompt: meta.systemPrompt,
+        memory: meta.memory,
+      }
+      writeFileSync(join(AGENT_PROJECTS_DIR, `${newId}.json`), JSON.stringify(file, null, 2), 'utf-8')
+      const session: AgentSession = { id: newId, title: file.title, messages: file.messages || [], memory: file.memory }
+      return { success: true, sessionId: newId, session }
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) }
     }

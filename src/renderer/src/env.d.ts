@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, TokenUsageEntry, ChatStreamChunk, AgentProject, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit, ThinkingLevel } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, TokenUsageEntry, ChatStreamChunk, AgentProject, AgentSession, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit, ThinkingLevel } from '../../shared/types'
 // 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
 interface ImagePromptPresetPayload {
   id: string; tag: string; cn: string; group: string
@@ -150,7 +150,7 @@ interface LlamaCppApi {
   setMetricsPolling: (enabled: boolean) => Promise<{ success: boolean }>
   getRunningProcesses: () => Promise<string[]>
   getModelLogs: (id: string) => Promise<{ stream: string; text: string }[]>
-  getUiSettings: () => Promise<{ splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; ttsMode?: 'qwen3' | 'outetts'; ttsLang?: string; ttsMmprojPath?: string; ttsSpeakerFile?: string; sttModelPath?: string; sttMmprojPath?: string; sttPrompt?: string; sttResult?: string }>
+  getUiSettings: () => Promise<{ splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; ttsMode?: 'qwen3' | 'outetts'; ttsLang?: string; ttsMmprojPath?: string; ttsSpeakerFile?: string; sttModelPath?: string; sttMmprojPath?: string; sttPrompt?: string; sttResult?: string; slashCommands?: unknown }>
   setUiSetting: (key: string, value: boolean | string) => Promise<void>
   listGlobalAgents: () => Promise<{ name: string; pkg: string; cmd: string; installed: boolean; version: string | null; website?: string }[]>
   launchAgent: (cmd: string, cwd: string) => Promise<{ success: boolean; error?: string }>
@@ -246,9 +246,11 @@ interface LlamaCppApi {
   writeTempFile: (fileName: string, base64: string) => Promise<{ success: boolean; path?: string; error?: string }>
   glob: (opts: { pattern: string; path: string; limit?: number }) => Promise<{ success: boolean; filenames?: string[]; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }>
   grep: (opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean; type?: string; timeout_seconds?: number }) => Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }>
-	  // ── Agent Code 工作台项目持久化 ──
-	  loadAgentProjects: () => Promise<AgentProject[]>
-	  saveAgentProjects: (projects: AgentProject[]) => Promise<{ success: boolean; error?: string }>
+  // ── Agent Code 工作台项目持久化 ──
+  loadAgentProjects: () => Promise<AgentProject[]>
+  saveAgentProjects: (projects: AgentProject[], opts?: { gcScope?: string[] }) => Promise<{ success: boolean; error?: string }>
+  exportAgentSession: (sessionId: string) => Promise<{ success: boolean; canceled?: boolean; error?: string }>
+  importAgentSession: (projectId: string) => Promise<{ success: boolean; canceled?: boolean; sessionId?: string; session?: AgentSession; error?: string }>
 	  // ── Agent Tracing 落盘 ──
 	  agentTraceAppend: (sessionId: string, entry: object) => Promise<{ success: boolean; error?: string }>
 		  // ── Agent Code 文件删除 ──
@@ -298,6 +300,9 @@ interface LlamaCppApi {
 		    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
 		    warmup: () => Promise<{ success: boolean }>
 		    prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
+		    steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
+		    followUp: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
+		    clearQueue: (sessionId: string) => Promise<{ success: boolean }>
 		    abort: (sessionId: string) => Promise<{ success: boolean }>
 		    dispose: (sessionId: string) => Promise<{ success: boolean }>
 		    list: () => Promise<{ sessionIds: string[] }>

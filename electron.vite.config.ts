@@ -30,6 +30,15 @@ function gradStr(text: string, c1: [number, number, number], c2: [number, number
 const gradBar = (len: number, c1: [number, number, number], c2: [number, number, number]) =>
   gradStr('─'.repeat(len), c1, c2)
 
+// 列宽对齐工具：按「可见宽度」(剥离 ANSI 转义) 进行补齐，确保表头与数据行严格对齐
+function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*m/g, '')
+}
+function padv(s: string, n: number): string {
+  const v = stripAnsi(s).length
+  return s + ' '.repeat(Math.max(0, n - v))
+}
+
 // ─────────────────────────────────────────────────────────────
 // 启动标题栏 + 列头（进程启动时打印一次）
 // ─────────────────────────────────────────────────────────────
@@ -81,18 +90,33 @@ function printBanner() {
     reset: '\x1b[0m'        // 重置
   }
   
-  console.log(
-    '\n' +
-    '┌' + rule + '┐\n' +
-    '│' + gradStr(inner, [205, 225, 255], [185, 145, 255]) + '│\n' +
-    '└' + rule + '┘\n' +
-    '\n' +
-    `  ${colors.process}process${colors.reset}    ` +
-    `${colors.status}status${colors.reset}      ` +
-    `${colors.output}output${colors.reset}              ` +
-    `${colors.time}time${colors.reset}\n` +
-    '  ────────   ──────────   ────────────────   ──────────\n'
-  )
+  // 列宽（表头与数据行共用，保证上下对齐）
+  const PROC_W = 8
+  const STATUS_W = 13
+  const OUTPUT_W = 12
+  const SEP = '  '
+
+  const head =
+    SEP +
+    padv(`${colors.process}process${colors.reset}`, PROC_W) +
+    SEP +
+    padv(`${colors.status}status${colors.reset}`, STATUS_W) +
+    SEP +
+    padv(`${colors.output}output${colors.reset}`, OUTPUT_W) +
+    SEP +
+    `${colors.time}time${colors.reset}`
+
+  const dash =
+    SEP +
+    '─'.repeat(PROC_W) +
+    SEP +
+    '─'.repeat(STATUS_W) +
+    SEP +
+    '─'.repeat(OUTPUT_W) +
+    SEP +
+    '─'.repeat(4)
+
+  console.log('\n' + '┌' + rule + '┐\n' + '│' + gradStr(inner, [205, 225, 255], [185, 145, 255]) + '│\n' + '└' + rule + '┘\n' + '\n' + head + '\n' + dash + '\n')
   startSpinner()
 }
 
@@ -114,7 +138,7 @@ function makeCustomLogger(): Logger {
       // renderer dev server 就绪 → 停 spinner 并打印面板行
       if (/dev server running for the electron renderer/i.test(s)) {
         stopSpinner()
-        console.log('  renderer  ' + green('✓ dev server ready') + ' (hot reload on)')
+        console.log('  ' + padv('renderer', 8) + '  ' + green('✓ dev server ready') + ' (hot reload on)')
         return
       }
 
@@ -141,7 +165,19 @@ function makeBuildPanel(proc: 'main' | 'preload') {
         /* 产物尚未落盘时忽略 */
       }
       const ms = `${Date.now() - start}ms`
-      const row = `  ${proc.padEnd(8)}  ${green('✓ done')}      ${size.padStart(10)}   ${ms}`
+      const SEP = '  '
+      const PROC_W = 8
+      const STATUS_W = 13
+      const OUTPUT_W = 12
+      const row =
+        SEP +
+        padv(proc, PROC_W) +
+        SEP +
+        padv(green('✓ done'), STATUS_W) +
+        SEP +
+        padv(size, OUTPUT_W) +
+        SEP +
+        ms
       if (proc === 'main') {
         printRow(row, true, 'building preload…')
       } else {

@@ -34,6 +34,8 @@ export interface PiAgentCallbacks {
   onTurnEnd?: (info: { turnIndex: number; promptTokens: number; completionTokens: number; durationMs: number }) => void
   /** 一轮 agent 运行结束（agent_end / agent_settled） */
   onEnd?: () => void
+  /** 队列变化（steer/followUp）：可用于在 UI 显示待执行指令计数 */
+  onQueueUpdate?: (steering: string[], followUp: string[]) => void
 }
 
 /**
@@ -103,13 +105,20 @@ export class PiAgentClient {
   private turnStartAt: number | null = null
   private readonly sink: WorkspaceEventSink
   private readonly adapter = new PiEventAdapter()
+  private readonly callbacks: PiAgentCallbacks
 
   private readonly handler = (_sid: string, event: unknown): void => {
     if (this.sessionId === null || _sid !== this.sessionId) return
+    const anyEvent = event as { type?: string; steering?: string[]; followUp?: string[] }
+    if (anyEvent?.type === 'queue_update') {
+      this.callbacks.onQueueUpdate?.(anyEvent.steering ?? [], anyEvent.followUp ?? [])
+      return
+    }
     this.adapter.adapt(event, this.sink)
   }
 
   constructor(callbacks: PiAgentCallbacks) {
+    this.callbacks = callbacks
     this.sink = new ClientSink(
       callbacks,
       () => this.turnStartAt,

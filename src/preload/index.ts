@@ -205,7 +205,9 @@ const fullApi = {
   },
   // ── Agent Code 工作台 项目持久化 ──
   loadAgentProjects: () => ipcRenderer.invoke('load-agent-projects'),
-  saveAgentProjects: (projects: object) => ipcRenderer.invoke('save-agent-projects', projects),
+  saveAgentProjects: (projects: object, opts?: { gcScope?: string[] }) => ipcRenderer.invoke('save-agent-projects', projects, opts),
+  exportAgentSession: (sessionId: string) => ipcRenderer.invoke('export-agent-session', { sessionId }),
+  importAgentSession: (projectId: string) => ipcRenderer.invoke('import-agent-session', { projectId }),
   // ── Agent Tracing 落盘 ──
   agentTraceAppend: (sessionId: string, entry: object) => ipcRenderer.invoke('agent-trace-append', sessionId, entry),
 	  deletePath: (targetPath: string, recursive: boolean) => ipcRenderer.invoke('delete-path', targetPath, recursive),
@@ -330,6 +332,9 @@ const fullApi = {
     create: (opts: object) => ipcRenderer.invoke('pi-agent-create', opts),
     warmup: () => ipcRenderer.invoke('pi-agent-warmup'),
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-prompt', sessionId, text, images),
+    steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-steer', sessionId, text, images),
+    followUp: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-follow-up', sessionId, text, images),
+    clearQueue: (sessionId: string) => ipcRenderer.invoke('pi-agent-clear-queue', sessionId),
     abort: (sessionId: string) => ipcRenderer.invoke('pi-agent-abort', sessionId),
     dispose: (sessionId: string) => ipcRenderer.invoke('pi-agent-dispose', sessionId),
     setThinkingLevel: (sessionId: string, level: ThinkingLevel) => ipcRenderer.invoke('pi-agent-set-thinking-level', sessionId, level),

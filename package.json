@@ -1,6 +1,6 @@
 {
   "name": "llama-studio",
-  "version": "1.0.187",
+  "version": "1.0.188",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",
   "main": "out/main/index.js",
@@ -20,9 +20,9 @@
   },
   "dependencies": {
     "@animateicons/react": "^0.4.3",
-    "@earendil-works/pi-agent-core": "^0.84.1",
-    "@earendil-works/pi-ai": "^0.84.1",
-    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@earendil-works/pi-agent-core": "^0.84.3",
+    "@earendil-works/pi-ai": "^0.84.3",
+    "@earendil-works/pi-coding-agent": "^0.84.3",
     "@json-render/core": "^0.20.0",
     "@json-render/react": "^0.20.0",
     "@vscode/ripgrep": "^1.18.0",

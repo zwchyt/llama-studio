@@ -542,3 +542,23 @@ export interface KnowledgeHit {
  * 在主进程 setThinkingLevel 时按模型能力自动 clamp，UI 直接展示全部档位即可。 */
 export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 export const THINKING_LEVELS: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+
+// ── 自定义 /命令（Slash Commands / Prompt Templates）──
+// 用户输入以 `/name args` 开头时，会被展开为 template 中的提示词再发送给 Agent。
+// template 支持占位符 $ARGUMENTS（替换为命令后的全部参数）；缺省时参数直接追加到模板末尾。
+export interface SlashCommand {
+  /** 命令名（不含前导 /），如 "commit" */
+  name: string
+  /** 自动补全与说明中展示的简介 */
+  description: string
+  /**
+   * 命令种类：
+   * - 'prompt'（默认）：把模板展开为提示词后发给模型（用户自定义命令均为此类）；
+   * - 'action'：renderer 侧直接处理的 UI 动作/状态查询，不发给模型。
+   */
+  kind?: 'prompt' | 'action'
+  /** 展开后的提示词模板（prompt 类使用）；可含 $ARGUMENTS 占位符。action 类留空。 */
+  template: string
+  /** 内建命令不可被删除/重命名（action 类内建只读，prompt 类内建可被同名自定义覆盖显示） */
+  builtin?: boolean
+}
