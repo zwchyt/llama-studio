@@ -223,6 +223,11 @@ interface AppStore {
   // ── 工具调用开关 ──
   toolConfig: { enabled: boolean; tools: Record<string, boolean> }
   setToolConfig: (config: { enabled: boolean; tools: Record<string, boolean> }) => void
+  // ── 网络搜索引擎（Agent Code）──
+  searchEnabled: boolean
+  setSearchEnabled: (v: boolean) => void
+  searchProvider: 'ddg' | 'bing'
+  setSearchProvider: (v: 'ddg' | 'bing') => void
   // ── 提示音 ──
   soundEnabled: boolean
   setSoundEnabled: (v: boolean) => void
@@ -534,6 +539,11 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
   // ── 工具调用开关 ──
   toolConfig: { enabled: false, tools: { get_datetime: true, web_search: true, fetch_webpage: true, knowledge_search: true } },
   setToolConfig: (config) => set({ toolConfig: config }),
+  // ── 网络搜索引擎（Agent Code）──
+  searchEnabled: (() => { try { return localStorage.getItem('searchEnabled') !== 'false' } catch { return true } })(),
+  setSearchEnabled: (v) => { set({ searchEnabled: v }); try { localStorage.setItem('searchEnabled', String(v)); window.api?.setUiSetting('searchEnabled', v) } catch { /* ignore */ } },
+  searchProvider: (() => { try { return (localStorage.getItem('searchProvider') as 'ddg' | 'bing') || 'bing' } catch { return 'bing' } })(),
+  setSearchProvider: (v) => { set({ searchProvider: v }); try { localStorage.setItem('searchProvider', v); window.api?.setUiSetting('searchProvider', v) } catch { /* ignore */ } },
   // ── 提示音 ──
   soundEnabled: true,
   setSoundEnabled: (v: boolean) => {

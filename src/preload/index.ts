@@ -251,6 +251,7 @@ const fullApi = {
   agentTaskList: (sessionId: string) => ipcRenderer.invoke('agent-task-list', sessionId),
   // ── 工具调用（网络搜索）──
   webSearch: (query: string) => ipcRenderer.invoke('web-search', query),
+  webSearchBing: (query: string) => ipcRenderer.invoke('web-search-bing', query),
   fetchWebpage: (url: string) => ipcRenderer.invoke('fetch-webpage', url),
 
   // ── 终端控制台 ──

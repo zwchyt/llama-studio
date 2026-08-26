@@ -13,7 +13,7 @@ import katex from 'katex'
 import katexCssInline from 'katex/dist/katex.min.css?inline'
 import katexJsInline from 'katex/dist/katex.min.js?raw'
 import '../styles/monitoring.css'
-import { Bot, AlertCircle, Wrench, TerminalSquare, CheckCircle2, XCircle, Undo2, Bug, Brain, FileDiff, Eye, Image as ImageIcon, Database, Copy, Check } from 'lucide-react'
+import { Bot, AlertCircle, Wrench, TerminalSquare, CheckCircle2, XCircle, Undo2, Bug, Brain, FileDiff, Eye, Image as ImageIcon, Database, Copy, Check, Search, SearchX, Globe } from 'lucide-react'
 // 顶栏按钮动态图标（@animateicons 无 Panel*/Bug 对应项，用 Chevron 方向图标替代折叠语义）
 import {
   BrainIcon, LoaderIcon, SlidersHorizontalIcon, ActivityIcon, BookOpenIcon,
@@ -453,14 +453,15 @@ const AgentTopBarCtx = React.memo(function AgentTopBarCtx({
       ref={btnRef}
       className={`agent-ctx-inline ${ctxWarning ? 'warn' : ''} ${active ? 'active' : ''}`}
       onClick={onToggle}
-      title={ctxNoModel ? '模型未启动' : `上下文窗口 ${ctxPct.toFixed(0)}% · ${ctxUsed.toLocaleString()} / ${ctxNCtx.toLocaleString()} tokens${ctxWarning ? '（紧张）' : ''}\n点击${active ? '收起' : '展开'}详细面板`}
     >
       <span className="agent-ctx-inline-bar">
         <span className="agent-ctx-inline-fill" style={{ width: `${ctxPct}%` }} />
         <span className="agent-ctx-inline-mark" />
       </span>
       <span className="agent-ctx-inline-pct">{ctxNoModel ? '—' : `${ctxPct.toFixed(0)}%`}</span>
-      <span className="agent-ctx-inline-tokens">{ctxNoModel ? '未启动' : `${fmtCompactTok(ctxUsed)}/${fmtCompactTok(ctxNCtx)}`}</span>
+      {!ctxNoModel && (
+        <span className="agent-ctx-inline-tokens">{`${fmtCompactTok(ctxUsed)}/${fmtCompactTok(ctxNCtx)}`}</span>
+      )}
     </button>
   )
 })
@@ -1771,15 +1772,15 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
                   <pre className="agent-tool-bash-cmd">{bashCmd}</pre>
                 </div>
               )}
-              {tc.name !== 'Bash' && tc.name !== 'web_search' && <ToolArgsView name={tc.name} args={tc.args} onPreviewFile={onPreviewFile} headFilePath={headFilePath} />}
-              {tc.name === 'web_search' && (executing || done) && (
+              {tc.name !== 'Bash' && tc.name !== 'web_search' && tc.name !== 'web_search_bing' && <ToolArgsView name={tc.name} args={tc.args} onPreviewFile={onPreviewFile} headFilePath={headFilePath} />}
+              {(tc.name === 'web_search' || tc.name === 'web_search_bing') && (executing || done) && (
                 <WebSearchResults
                   result={done ? tc.result ?? undefined : undefined}
                   query={parsed && typeof parsed.query === 'string' ? parsed.query : undefined}
                   loading={executing}
                 />
               )}
-              {done && !hideResult && tc.name !== 'web_search' && (
+              {done && !hideResult && tc.name !== 'web_search' && tc.name !== 'web_search_bing' && (
                 <ToolResultView result={tc.result!} truncated={tc.truncated} total={tc.resultTotal} lined={tc.name === 'Read'} />
               )}
             </div>
@@ -2971,7 +2972,7 @@ export default function AgentCodeView() {
     if (v != null) lastRateRef.current = v
   }, [])
   // ── pi-agent 模式状态：当前已创建 pi session 的 sid + 事件客户端 ──
-  const piReadyRef = useRef<{ sid: string; ready: boolean }>({ sid: '', ready: false })
+  const piReadyRef = useRef<{ sid: string | null; ready: boolean }>({ sid: null, ready: false })
   const piClientRef = useRef<PiAgentClient | null>(null)
   // 队列/历史同步：followUp/steer 用户消息不在发送时写入聊天，而是在 SDK 真正执行该条
   // （queue_update 出队）时由 appendQueuedUserMsg 补写，避免多个追加问题提前堆在对话里。
@@ -3002,6 +3003,31 @@ export default function AgentCodeView() {
   const [filePickerAttached, setFilePickerAttached] = useState<Array<{ id: string; path: string; name: string; isDir: boolean }>>([])
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const modelPickerRef = useRef<HTMLDivElement>(null)
+  const searchEnabled = useStore(s => s.searchEnabled)
+  const searchProvider = useStore(s => s.searchProvider)
+  const [searchMenuOpen, setSearchMenuOpen] = useState(false)
+  const searchMenuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!searchMenuOpen) return
+    const onDocClick = (e: MouseEvent) => {
+      if (searchMenuRef.current && !searchMenuRef.current.contains(e.target as Node)) setSearchMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [searchMenuOpen])
+  const applySearchChange = (enabled: boolean, provider: 'ddg' | 'bing') => {
+    setSearchMenuOpen(false)
+    const st = useStore.getState()
+    if (enabled === st.searchEnabled && provider === st.searchProvider) return
+    st.setSearchEnabled(enabled)
+    st.setSearchProvider(provider)
+    const cur = piReadyRef.current
+    const sid = cur.sid
+    if (cur.ready && sid && !loading) {
+      window.api.piAgent.dispose(`pi-${sid}`).catch(() => {})
+      piReadyRef.current = { sid: null, ready: false }
+    }
+  }
   // 各模型的能力徽标（key = template.id；null = 读取失败/非 GGUF，不显示图标）：
   // 全局 store 共享 + model-capabilities.json 持久化，检测结果不重复读盘
   const modelCaps = useStore(s => s.modelCapabilities)
@@ -4907,6 +4933,8 @@ export default function AgentCodeView() {
         cwd: opts.workspaceDir || '.',
         approveWriteEdit: opts.approveWriteEdit === true,
         knowledgeBaseId: opts.knowledgeBaseId || undefined,
+        searchEnabled: useStore.getState().searchEnabled,
+        searchProvider: useStore.getState().searchProvider,
         contextWindow: (() => {
           const rc = useStore.getState().cards.find(c => c.status === 'running')
           return rc ? useStore.getState().modelMetrics[rc.template.id]?.nCtx || undefined : undefined
@@ -6229,6 +6257,8 @@ export default function AgentCodeView() {
                   startedAt={runningCard?.startedAt}
                   requests={reqCount}
                   cumTokens={cumTokens}
+                  session={activeSession}
+                  project={activeProject}
                 />
               </div>
             </div>
@@ -6624,7 +6654,7 @@ export default function AgentCodeView() {
                     // orb 按工具类型细分：搜索类→searching，写入/编辑类→weaving，其余→working
                     kind = 'running'; name = curToolName; text = '工具调用中'
                     const toolKind = TOOL_METAS[curToolName]?.kind
-                    if (toolKind === 'search' || curToolName === 'web_search') orbState = 'searching'
+                    if (toolKind === 'search' || curToolName === 'web_search' || curToolName === 'web_search_bing') orbState = 'searching'
                     else if (toolKind === 'write' || toolKind === 'edit') orbState = 'weaving'
                     else orbState = 'working'
                   } else if (streamKind === 'think' && !thinkDone) {
@@ -6728,7 +6758,6 @@ export default function AgentCodeView() {
                     <button
                       type="button"
                       className="chat-think-level-trigger"
-                      title="思考程度（发送前选择，按模型能力自动调整）"
                       disabled={loading}
                       onClick={() => setThinkLevelOpen(v => !v)}
                     >
@@ -6753,8 +6782,44 @@ export default function AgentCodeView() {
                           </li>
                         ))}
                        </ul>
-                     )}
-                   </div>
+                      )}
+                    </div>
+                    <div
+                      ref={searchMenuRef}
+                      className={`chat-search-switch${searchMenuOpen ? ' open' : ''}`}
+                    >
+                      <button
+                        type="button"
+                        className="chat-search-trigger"
+                        disabled={loading}
+                        onClick={() => setSearchMenuOpen(v => !v)}
+                      >
+                        {!searchEnabled ? (
+                          <SearchX size={14} />
+                        ) : searchProvider === 'bing' ? (
+                          <Globe size={14} />
+                        ) : (
+                          <Search size={14} />
+                        )}
+                        <span className="chat-search-label">{!searchEnabled ? '搜索关' : searchProvider === 'bing' ? '必应' : 'DDG'}</span>
+                      </button>
+                      {searchMenuOpen && (
+                        <ul className="chat-search-menu">
+                          <li
+                            className={`chat-search-item${!searchEnabled ? ' active' : ''}`}
+                            onClick={() => applySearchChange(false, searchProvider)}
+                          ><SearchX size={12} />关闭网络搜索</li>
+                          <li
+                            className={`chat-search-item${searchEnabled && searchProvider === 'bing' ? ' active' : ''}`}
+                            onClick={() => applySearchChange(true, 'bing')}
+                          ><Globe size={12} />必应 Bing（国内）</li>
+                          <li
+                            className={`chat-search-item${searchEnabled && searchProvider === 'ddg' ? ' active' : ''}`}
+                            onClick={() => applySearchChange(true, 'ddg')}
+                          ><Search size={12} />DuckDuckGo</li>
+                        </ul>
+                      )}
+                    </div>
                     {loading ? (
                     <AniIconButton className="btn btn-ghost chat-stop-btn" icon={CircleStopIcon} size={16} onClick={handleStop} title="停止" />
                   ) : (

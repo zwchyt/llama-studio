@@ -78,6 +78,7 @@ export interface MainToolExecutors {
     indexedChunks: number
   }>
   webSearch: (query: string) => Promise<string>
+  webSearchBing: (query: string) => Promise<string>
   fetchWebpage: (url: string) => Promise<string>
   /** 知识库 BM25 检索（knowledgeService 内部函数直调） */
   knowledgeQuery(kbId: string, query: string, limit?: number): Promise<{
@@ -490,6 +491,20 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
       required: ['query']
     },
     execute: async (args) => exec.webSearch(String(args.query ?? ''))
+  })
+
+  const webSearchBing: ToolDefinition = make({
+    name: 'web_search_bing',
+    label: '必应搜索',
+    description: 'Search the web via Bing (cn.bing.com). Returns a list of results with title, URL, and snippet. Use this for Chinese/domestic web content and when DuckDuckGo is unreachable.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The search query.' }
+      },
+      required: ['query']
+    },
+    execute: async (args) => exec.webSearchBing(String(args.query ?? ''))
   })
 
   const fetchWebpage: ToolDefinition = make({
@@ -1140,5 +1155,5 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     }
   })
 
-  return [getDatetime, webSearch, fetchWebpage, ...(knowledgeSearch && knowledgeRead ? [knowledgeSearch, knowledgeRead] : []), read, bash, write, edit, glob, grep, ripgrep, listDir, deleteTool, todoWrite, taskGet, taskList, askUserQuestion, reflect, codeSearch, analyzeDir]
+  return [getDatetime, webSearch, webSearchBing, fetchWebpage, ...(knowledgeSearch && knowledgeRead ? [knowledgeSearch, knowledgeRead] : []), read, bash, write, edit, glob, grep, ripgrep, listDir, deleteTool, todoWrite, taskGet, taskList, askUserQuestion, reflect, codeSearch, analyzeDir]
 }

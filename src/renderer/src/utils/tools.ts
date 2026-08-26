@@ -41,6 +41,7 @@ export const TOOL_METAS: Record<string, ToolMeta> = {
   Delete:          { kind: 'delete', label: '删除文件', verb: '删除中', icon: Trash2,          readOnly: false, needsApproval: true,  canUndo: true },
   get_datetime:    { kind: 'other',  label: '获取时间', verb: '获取时间中', icon: Clock,        readOnly: true,  needsApproval: false, canUndo: false },
   web_search:      { kind: 'other',  label: '网络搜索', verb: '搜索中', icon: Search,          readOnly: true,  needsApproval: false, canUndo: false },
+  web_search_bing: { kind: 'other',  label: '必应搜索', verb: '搜索中', icon: Search,          readOnly: true,  needsApproval: false, canUndo: false },
   knowledge_search: { kind: 'search', label: '知识库检索', verb: '检索知识库中', icon: BookOpen,   readOnly: true,  needsApproval: false, canUndo: false },
   knowledge_read:  { kind: 'read',   label: '知识库读取块', verb: '读取知识块中', icon: BookOpen,     readOnly: true,  needsApproval: false, canUndo: false },
   fetch_webpage:   { kind: 'other',  label: '抓取网页', verb: '抓取中', icon: FileText,        readOnly: true,  needsApproval: false, canUndo: false },
@@ -99,6 +100,7 @@ register(
 
 // ── Agent Code 文件/网络工具（从独立模块导入）─────────────
 import { definition as WebSearchDef, execute as WebSearchExec } from '../tools/WebSearchTool'
+import { definition as BingSearchDef, execute as BingSearchExec } from '../tools/BingSearchTool'
 import { definition as FetchWebpageDef, execute as FetchWebpageExec } from '../tools/FetchWebpageTool'
 import { definition as FileReadDef, execute as FileReadExec } from '../tools/FileReadTool'
 import { definition as FileWriteDef, execute as FileWriteExec } from '../tools/FileWriteTool'
@@ -114,6 +116,7 @@ import { definition as AskUserQuestionDef, execute as AskUserQuestionExec } from
 import { definition as ReflectDef, execute as ReflectExec } from '../tools/ReflectTool'
 import { definition as CodeSearchDef, execute as CodeSearchExec } from '../tools/CodeSearchTool'
 register(WebSearchDef, WebSearchExec)
+register(BingSearchDef, BingSearchExec)
 register(FetchWebpageDef, FetchWebpageExec)
 register(FileReadDef, FileReadExec)
 register(FileWriteDef, FileWriteExec)

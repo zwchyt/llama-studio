@@ -260,6 +260,7 @@ export default function ModelCard({ card, style }: Props) {
     }
     safeCall(() => window.api.deleteTemplate(card.template.id), '删除模板失败').then((ok) => {
       if (ok === null) return
+      useStore.getState().setModelCapabilitiesEntry(card.template.id, null)
       removeCard(card.template.id)
     })
   }, [isRunning, confirmingDelete, card.template.id, removeCard])

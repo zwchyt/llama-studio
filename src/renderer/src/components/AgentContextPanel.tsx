@@ -1,12 +1,16 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { Gauge, Clock, Activity, Hash } from 'lucide-react'
+import type { AgentProject, AgentSession } from '../../../shared/types'
+import { estimateContextMeasured } from '../utils/contextBreakdown'
 
 interface AgentContextPanelProps {
   templateId: string | null   // 正在运行的模型模板 id（用于查 metrics）；未启动为 null
   startedAt?: number         // 模型启动时间，用于运行时间统计
   requests: number           // 本会话累计请求数
   cumTokens: number          // 本会话累计 tokens（prompt + completion）
+  session?: AgentSession     // 当前会话（用于估算上下文构成）
+  project?: AgentProject      // 当前项目（系统提示 / 知识库来源）
 }
 
 // 运行时间格式化为 HH:MM:SS
@@ -20,7 +24,7 @@ function fmtDuration(ms: number): string {
 
 const COMPRESS_THRESHOLD = 0.8   // 设计稿中的「压缩阈值」参考线（本地 LLM 仅作警告，不改变行为）
 
-export default function AgentContextPanel({ templateId, startedAt, requests, cumTokens }: AgentContextPanelProps) {
+export default function AgentContextPanel({ templateId, startedAt, requests, cumTokens, session, project }: AgentContextPanelProps) {
   const metrics = useStore(s => (templateId ? s.modelMetrics[templateId] : undefined))
   // 仅用 setter 每秒触发一次重渲染以刷新运行时间；tick 值本身不参与渲染，故跳过声明
   const [, setTick] = useState(0)
@@ -45,6 +49,23 @@ export default function AgentContextPanel({ templateId, startedAt, requests, cum
   const toCompress = Math.max(0, Math.floor(nCtx * COMPRESS_THRESHOLD) - used)
   const uptime = startedAt ? fmtDuration(Date.now() - startedAt) : '—'
   const noModel = !templateId
+
+  // 上下文构成：本地估算分项，再用差额对齐到真实总量（见 util 注释）
+  const measured = estimateContextMeasured(session, project)
+  const displayTotal = used > 0 ? used : measured.total
+  const otherTok = used > 0 ? Math.max(0, used - measured.total) : 0
+  const categories = useMemo<Array<{ key: string; label: string; tokens: number; color: string }>>(
+    () => [
+      ...measured.categories,
+      { key: 'other', label: '其他（内置指引/知识库/开销）', tokens: otherTok, color: '#6b7280' },
+    ],
+    [measured, otherTok],
+  )
+  const catPct = (tokens: number) => (displayTotal > 0 ? (tokens / displayTotal) * 100 : 0)
+  const toolEntries = useMemo(
+    () => Object.entries(measured.toolByName).sort((a, b) => b[1] - a[1]).slice(0, 6),
+    [measured],
+  )
 
   return (
     <div className="agent-ctx-panel">
@@ -75,6 +96,44 @@ export default function AgentContextPanel({ templateId, startedAt, requests, cum
               : `距压缩 ${toCompress.toLocaleString()}`}
         </span>
       </div>
+
+      <div className="agent-ctx-divider">上下文构成（估算）</div>
+
+      {displayTotal > 0 ? (
+        <div className="agent-ctx-compose">
+          <div className="agent-ctx-stack">
+            {categories.map(c => (
+              <span
+                key={c.key}
+                className="agent-ctx-seg"
+                style={{ width: `${catPct(c.tokens)}%`, background: c.color }}
+                title={`${c.label}：${c.tokens.toLocaleString()} token（${catPct(c.tokens).toFixed(0)}%）`}
+              />
+            ))}
+          </div>
+          <div className="agent-ctx-legend">
+            {categories.map(c => (
+              <div key={c.key} className="agent-ctx-leg-item">
+                <span className="agent-ctx-leg-dot" style={{ background: c.color }} />
+                <span className="agent-ctx-leg-label">{c.label}</span>
+                <span className="agent-ctx-leg-val">{c.tokens.toLocaleString()} · {catPct(c.tokens).toFixed(0)}%</span>
+              </div>
+            ))}
+          </div>
+          {toolEntries.length > 0 && (
+            <div className="agent-ctx-tools">
+              {toolEntries.map(([name, tok]) => (
+                <div key={name} className="agent-ctx-tool-item">
+                  <span className="agent-ctx-tool-name">{name}</span>
+                  <span className="agent-ctx-tool-val">{tok.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="agent-ctx-compose-empty">暂无会话内容</div>
+      )}
 
       <div className="agent-ctx-divider">会话指标</div>
 

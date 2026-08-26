@@ -98,6 +98,7 @@ export interface IpcInternalHandlers {
   handleAgentTaskGet: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
   handleAgentTaskList: (sessionId: string) => Promise<{ success: boolean; tasks: AgentTask[] }>
   handleWebSearch: (query: string) => Promise<string>
+  handleWebSearchBing: (query: string) => Promise<string>
   handleFetchWebpage: (url: string) => Promise<string>
 }
 export const ipcInternal: Partial<IpcInternalHandlers> = {}
@@ -1981,11 +1982,27 @@ export function registerIpcHandlers(): void {
     } catch (err) { return { success: false, error: String(err) } }
   })
   ipcMain.handle('delete-template', (_e, id: string) => {
-    const fileName = templateFileForId(String(id))
-    if (!fileName) return { success: true }
-    const fp = join(TEMPLATES_DIR, fileName)
-    if (!isSafePath(TEMPLATES_DIR, fp)) return { success: false, error: '访问被拒绝' }
-    try { unlinkSync(fp) } catch { }
+    const sid = String(id)
+    const fileName = templateFileForId(sid)
+    if (fileName) {
+      const fp = join(TEMPLATES_DIR, fileName)
+      if (!isSafePath(TEMPLATES_DIR, fp)) return { success: false, error: '访问被拒绝' }
+      try { unlinkSync(fp) } catch { }
+    }
+    try {
+      // 同步清理能力检测缓存，避免删除模型卡片后 model-capabilities.json 残留无效条目
+      const caps = readModelCaps()
+      if (caps[sid]) { delete caps[sid]; writeModelCaps(caps) }
+      // 同步清理模型 Logo（映射 + 图片文件），避免孤儿资源
+      const lmap = readLogosMap()
+      const oldName = lmap[sid]
+      if (oldName) {
+        const p = join(LOGOS_DIR, basename(String(oldName)))
+        if (isSafePath(LOGOS_DIR, p)) { try { unlinkSync(p) } catch { } }
+        delete lmap[sid]
+        writeLogosMap(lmap)
+      }
+    } catch { /* 缓存/资源清理失败不影响模板删除主流程 */ }
     return { success: true }
   })
   // ── 原生聊天会话 CRUD（与 templates 同模式） ──
@@ -5425,6 +5442,36 @@ export function registerIpcHandlers(): void {
   ipcInternal.handleWebSearch = handleWebSearch
   ipcMain.handle('web-search', async (_e, query: string) => handleWebSearch(query))
 
+  // ── 必应（国内版）网络搜索工具 ──────────────────────────────
+  const handleWebSearchBing = async (query: string): Promise<string> => {
+    if (!query?.trim()) return JSON.stringify({ error: '搜索关键词不能为空' })
+    try {
+      const encoded = encodeURIComponent(query.trim())
+      const url = `https://cn.bing.com/search?q=${encoded}`
+      const html = await fetchText(url, 15_000)
+      const results: Array<{ title: string; url: string; snippet: string }> = []
+      const blockRe = /<li class="b_algo"[^>]*>([\s\S]*?)<\/li>/gi
+      let bm: RegExpExecArray | null
+      while ((bm = blockRe.exec(html)) !== null && results.length < 5) {
+        const block = bm[1]
+        const linkM = /<h2[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>\s*<\/h2>/i.exec(block)
+        if (!linkM) continue
+        const rawUrl = linkM[1]
+        if (!/^https?:\/\//i.test(rawUrl)) continue
+        const title = stripHtml(linkM[2]).trim()
+        if (!title) continue
+        const snipM = /<p[^>]*>([\s\S]*?)<\/p>/i.exec(block)
+        const snippet = snipM ? stripHtml(snipM[1]).trim() : ''
+        results.push({ title, url: rawUrl, snippet })
+      }
+      return JSON.stringify(results)
+    } catch (e: any) {
+      return JSON.stringify({ error: `必应搜索失败: ${e?.message || e}` })
+    }
+  }
+  ipcInternal.handleWebSearchBing = handleWebSearchBing
+  ipcMain.handle('web-search-bing', async (_e, query: string) => handleWebSearchBing(query))
+
   const handleFetchWebpage = async (url: string): Promise<string> => {
     if (!url?.trim()) return JSON.stringify({ error: 'URL 不能为空' })
     try {
@@ -7328,6 +7375,12 @@ function stripHtml(html: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, ' ')
+    .replace(/&#x([0-9a-fA-F]+);/g, (_m, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_m, d) => String.fromCharCode(parseInt(d, 10)))
+    .replace(/&ensp;|&emsp;|&thinsp;/g, ' ')
+    .replace(/&hellip;/g, '…')
+    .replace(/&mdash;/g, '—')
+    .replace(/&ndash;/g, '–')
 }
 
 // 从模型 README(markdown) 中抽取首段描述，用于详情面板简介展示

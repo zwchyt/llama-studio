@@ -82,6 +82,11 @@ Thumbs.db
 # Runtime config (user-specific local paths)
 settings.json
 
+# 模型能力检测缓存 / 用户 Logo 映射（每台机器运行时生成，不入库）
+/model-capabilities.json
+/logos.json
+/logos/
+
 # Agent Code 工作台会话记录（用户数据，不入库；保留空文件夹，仅忽略日志文件）
 Agent session/*
 !Agent session/.gitkeep

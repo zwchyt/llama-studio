@@ -180,6 +180,7 @@ interface LlamaCppApi {
   removeChatStreamListener: () => void
   // ── 工具调用（网络搜索）──
   webSearch: (query: string) => Promise<string>
+  webSearchBing: (query: string) => Promise<string>
   fetchWebpage: (url: string) => Promise<string>
   // ── 终端控制台 ──
   terminalCreate: (opts: { id?: string; cwd?: string; cols?: number; rows?: number; ownerKey?: string }) => Promise<{ success: boolean; id?: string; shell?: string; error?: string; replay?: string; reused?: boolean }>
@@ -297,7 +298,7 @@ interface LlamaCppApi {
 		  windowClose: () => Promise<void>
 		  // ── pi-agent（pi SDK 驱动的 agent 会话）──
 		  piAgent: {
-		    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
+		    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
 		    warmup: () => Promise<{ success: boolean }>
 		    prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
 		    steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>

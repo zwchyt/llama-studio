@@ -571,6 +571,97 @@
   margin-top: 1px;
 }
 
+.agent-ctx-compose {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-ctx-stack {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface-hover);
+}
+
+.agent-ctx-seg {
+  height: 100%;
+  min-width: 0;
+  transition: width .3s ease;
+}
+
+.agent-ctx-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agent-ctx-leg-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.agent-ctx-leg-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.agent-ctx-leg-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-ctx-leg-val {
+  flex: none;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-ctx-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 14px;
+  border-left: 2px solid var(--border);
+  margin-left: 3px;
+}
+
+.agent-ctx-tool-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.agent-ctx-tool-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-ctx-tool-val {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-ctx-compose-empty {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .agent-ctx-metrics {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -615,9 +706,11 @@
 .agent-code-topbar-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   padding: 3px 8px;
   font-size: 11px;
+  line-height: 1;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg);
@@ -625,6 +718,12 @@
   cursor: pointer;
   transition: all .15s ease;
   white-space: nowrap;
+}
+
+.agent-code-topbar-btn > svg,
+.agent-code-topbar-btn > span {
+  display: block;
+  flex: none;
 }
 
 .agent-code-topbar-btn:hover {
@@ -818,12 +917,23 @@
   padding: 8px;
   font-size: 13px;
   font-weight: 600;
+  line-height: 1;
   color: var(--text);
   cursor: pointer;
   transition: background .15s ease, color .15s ease;
   user-select: none;
   border-radius: var(--radius-sm);
   position: relative;
+}
+
+.agent-code-project-item > svg {
+  display: block;
+  flex: none;
+}
+
+.agent-code-project-item > .agent-code-session-title {
+  display: block;
+  min-width: 0;
 }
 
 .agent-code-project-icon {
@@ -1392,6 +1502,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  line-height: 1;
   /* 横向 padding + 负 margin 抵消：hover 底色不贴字，文字左缘仍与展开体对齐 */
   padding: 3px 6px;
   margin: 0 -6px;
@@ -1417,6 +1528,12 @@
   width: 14px;
   height: 14px;
   transform: translateY(var(--agent-tool-icon-y, 0));
+}
+
+/* 头部内所有 lucide 图标统一为 block + 不拉伸，消除 inline 基线间隙导致的「图标偏上」 */
+.agent-tool-call-head svg {
+  display: block;
+  flex: none;
 }
 
 /* 工具名固定宽：头部 flex 中不被压缩，压缩职责交给 path/preview 的 ellipsis */
@@ -5644,6 +5761,92 @@
   -webkit-background-clip: border-box;
   background-clip: border-box;
   background: var(--accent);
+}
+
+/* 网络搜索引擎开关：与思考程度选择器同款小尺寸，自绘互斥下拉 */
+.agent-code-view .chat-input-tools .chat-search-switch {
+  position: relative;
+  max-width: 110px;
+}
+
+.agent-code-view .chat-input-tools .chat-search-trigger {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  line-height: 1;
+  height: 28px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.agent-code-view .chat-input-tools .chat-search-trigger svg {
+  display: block;
+  flex: none;
+}
+
+.agent-code-view .chat-input-tools .chat-search-trigger:hover:not(:disabled) {
+  background: var(--bg);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.agent-code-view .chat-input-tools .chat-search-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.agent-code-view .chat-input-tools .chat-search-label {
+  letter-spacing: 0.2px;
+}
+
+.agent-code-view .chat-input-tools .chat-search-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 132px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  transform-origin: bottom left;
+  animation: think-menu-in 0.16s ease-out;
+}
+
+.agent-code-view .chat-input-tools .chat-search-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.agent-code-view .chat-input-tools .chat-search-item svg {
+  display: block;
+  flex: none;
+}
+
+.agent-code-view .chat-input-tools .chat-search-item:hover:not(.active) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.agent-code-view .chat-input-tools .chat-search-item.active {
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
 .agent-code-view .chat-input-tools .chat-send-btn.btn {
