@@ -61,6 +61,7 @@ import TerminalView from './TerminalView'
 import { useAgentTerminalStore } from '../store/terminalStore'
 import { Suspense, lazy } from 'react'
 import { extToMonacoLang } from './MonacoEditor'
+import { useResizablePanel } from '../utils/useResizablePanel'
 
 const MonacoEditor = lazy(() => import('./MonacoEditor'))
 
@@ -2368,6 +2369,8 @@ export default function AgentCodeView() {
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null)
   // HTML 预览模式：'preview' 渲染成网页（沙箱 iframe，允许脚本），'source' 按源码逐行显示。
   const [htmlViewMode, setHtmlViewMode] = useState<'preview' | 'source'>('preview')
+  // Markdown 预览模式：'preview' 渲染成排版后的文档，'source' 按源码（Monaco）逐行显示。
+  const [mdViewMode, setMdViewMode] = useState<'preview' | 'source'>('preview')
   // HTML 预览 iframe 的 UI 注释（复用 agentAnnotateScript，同源注入）：激活态 + 注释列表
   const [htmlAnnotateActive, setHtmlAnnotateActive] = useState(false)
   const [htmlAnnotations, setHtmlAnnotations] = useState<UiAnnotation[]>([])
@@ -2563,212 +2566,46 @@ export default function AgentCodeView() {
     return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey) }
   }, [tabMenu])
 
-  // ── 区域：预览面板拖拽与侧边栏宽度管理 ──
+  // ── 区域：可拖拽面板宽度管理（预览区 / 侧边栏 / 右侧面板共用 useResizablePanel）──
   // 预览面板宽度：拖拽预览左边框时调整，文件树宽度固定不动
   const PREVIEW_MIN = 240, PREVIEW_MAX = 760
-  const [previewWidth, setPreviewWidth] = useState(PREVIEW_MIN)
-  const [previewResizing, setPreviewResizing] = useState(false)
-  const draggingRef = useRef<{ startX: number; startPreviewW: number } | null>(null)
-  // rAF 节流：拖动期间把宽度写入 CSS 变量，避免每帧 React 重渲
-  const rafRef = useRef<number | null>(null)
-  const applyPreviewWidth = useCallback((w: number) => {
-    const clamped = Math.max(PREVIEW_MIN, Math.min(PREVIEW_MAX, w))
-    const root = document.querySelector('.agent-code-right-body') as HTMLElement | null
-    if (root) root.style.setProperty('--agent-preview-width', `${clamped}px`)
-  }, [])
+  const { resizing: previewResizing, startResize: startPreviewResize } = useResizablePanel({
+    initialWidth: PREVIEW_MIN,
+    min: PREVIEW_MIN,
+    max: PREVIEW_MAX,
+    cssVarName: '--agent-preview-width',
+    rootSelector: '.agent-code-right-body',
+    direction: -1,
+  })
 
-  const onDragMove = useCallback((e: PointerEvent) => {
-    const d = draggingRef.current
-    if (!d) return
-    // 兜底：松开左键（pointerup 丢失防护）→ 立即结束拖拽并解绑。
-    // 指针捕获缺失时（鼠标移入 iframe/预览区）pointerup 可能丢失，导致
-    // draggingRef 残留 → 之后每次鼠标移动都触发宽度更新（表现为松开后仍跟随 + 卡顿）。
-    if (!(e.buttons & 1)) {
-      draggingRef.current = null
-      setPreviewResizing(false)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-      window.removeEventListener('pointermove', onDragMove)
-      window.removeEventListener('pointerup', onDragEnd)
-      window.removeEventListener('pointercancel', onDragEnd)
-      return
-    }
-    lastClientXRef.current = e.clientX
-    const dx = e.clientX - d.startX
-    const next = d.startPreviewW - dx
-    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
-    rafRef.current = requestAnimationFrame(() => applyPreviewWidth(next))
-  }, [applyPreviewWidth])
-
-  useEffect(() => {
-    applyPreviewWidth(previewWidth)
-  }, [previewWidth, applyPreviewWidth])
-
-  const onDragEnd = useCallback(() => {
-    const d = draggingRef.current
-    if (d) {
-      setPreviewWidth(Math.max(PREVIEW_MIN, Math.min(PREVIEW_MAX, d.startPreviewW - (lastClientXRef.current - d.startX))))
-    }
-    draggingRef.current = null
-    setPreviewResizing(false)
-    document.body.style.userSelect = ''
-    document.body.style.cursor = ''
-    window.removeEventListener('pointermove', onDragMove)
-    window.removeEventListener('pointerup', onDragEnd)
-    window.removeEventListener('pointercancel', onDragEnd)
-  }, [onDragMove])
-
-  const lastClientXRef = useRef(0)
-  const startResize = (type: 'tree' | 'preview') => (e: React.PointerEvent) => {
-    if (type === 'tree') return // 文件树宽度固定不动
-    e.preventDefault()
-    // 指针捕获：后续 pointermove/pointerup 强制派发到本元素（即使鼠标移入
-    // iframe/预览区），杜绝 pointerup 丢失导致的拖拽状态残留
-    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch {}
-    lastClientXRef.current = e.clientX
-    draggingRef.current = { startX: e.clientX, startPreviewW: previewWidth }
-    setPreviewResizing(true)
-    document.body.style.userSelect = 'none'
-    document.body.style.cursor = 'col-resize'
-    window.addEventListener('pointermove', onDragMove)
-    window.addEventListener('pointerup', onDragEnd)
-    window.addEventListener('pointercancel', onDragEnd)
-  }
-
-  // 会话侧边栏宽度：拖拽侧边栏右边框时调整
+  // 会话侧边栏宽度：拖拽侧边栏右边框时调整（向右拖拽增大）
   const SIDEBAR_MIN = 160, SIDEBAR_MAX = 420
-  const [sidebarWidth, setSidebarWidth] = useState(200)
-  const [sidebarResizing, setSidebarResizing] = useState(false)
-  const sidebarDragRef = useRef<{ startX: number; startW: number } | null>(null)
-  const sidebarRafRef = useRef<number | null>(null)
-  const applySidebarWidth = useCallback((w: number) => {
-    const clamped = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, w))
-    const root = document.querySelector('.agent-code-body') as HTMLElement | null
-    if (root) root.style.setProperty('--agent-sidebar-width', `${clamped}px`)
-  }, [])
-  const onSidebarDragMove = useCallback((e: PointerEvent) => {
-    const d = sidebarDragRef.current
-    if (!d) return
-    // 兜底：松开左键立即结束（pointerup 丢失防护，与预览拖拽同款）
-    if (!(e.buttons & 1)) {
-      sidebarDragRef.current = null
-      setSidebarResizing(false)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-      window.removeEventListener('pointermove', onSidebarDragMove)
-      window.removeEventListener('pointerup', onSidebarDragEnd)
-      return
-    }
-    lastClientXRef.current = e.clientX
-    const dx = e.clientX - d.startX
-    const next = d.startW + dx
-    if (sidebarRafRef.current !== null) cancelAnimationFrame(sidebarRafRef.current)
-    sidebarRafRef.current = requestAnimationFrame(() => applySidebarWidth(next))
-  }, [applySidebarWidth])
-  const onSidebarDragEnd = useCallback(() => {
-    const d = sidebarDragRef.current
-    if (d) setSidebarWidth(Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, d.startW + (lastClientXRef.current - d.startX))))
-    sidebarDragRef.current = null
-    setSidebarResizing(false)
-    document.body.style.userSelect = ''
-    document.body.style.cursor = ''
-    window.removeEventListener('pointermove', onSidebarDragMove)
-    window.removeEventListener('pointerup', onSidebarDragEnd)
-  }, [onSidebarDragMove])
-  useEffect(() => {
-    applySidebarWidth(sidebarWidth)
-  }, [sidebarWidth, applySidebarWidth])
-  const startSidebarResize = (e: React.PointerEvent) => {
-    e.preventDefault()
-    // 指针捕获：保证 pointerup 送达（与预览拖拽同款，防状态残留）
-    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch {}
-    lastClientXRef.current = e.clientX // 同步更新最后坐标，供 onSidebarDragEnd 使用（与预览拖拽共享 ref）
-    sidebarDragRef.current = { startX: e.clientX, startW: sidebarWidth }
-    setSidebarResizing(true)
-    document.body.style.userSelect = 'none'
-    document.body.style.cursor = 'col-resize'
-    window.addEventListener('pointermove', onSidebarDragMove)
-    window.addEventListener('pointerup', onSidebarDragEnd)
-  }
+  const { resizing: sidebarResizing, startResize: startSidebarResize } = useResizablePanel({
+    initialWidth: 200,
+    min: SIDEBAR_MIN,
+    max: SIDEBAR_MAX,
+    cssVarName: '--agent-sidebar-width',
+    rootSelector: '.agent-code-body',
+    direction: 1,
+  })
 
   // 浏览器 / 终端模式：右侧面板宽度可拖拽调整（聊天区 ↔ 右侧面板，手柄在右侧面板左边缘）
   const RIGHT_MIN = 260, RIGHT_MAX = 900
-  const [rightPanelWidth, setRightPanelWidth] = useState(() => {
-    try {
-      const v = Number(window.localStorage.getItem('agent-right-width') || '')
-      return v && Number.isFinite(v) ? Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, v)) : 480
-    } catch { return 480 }
+  const { resizing: rightResizing, startResize: startRightResize } = useResizablePanel({
+    initialWidth: 480,
+    min: RIGHT_MIN,
+    max: RIGHT_MAX,
+    cssVarName: '--agent-right-width',
+    rootSelector: '.agent-code-body',
+    direction: -1,
+    getInitial: () => {
+      try {
+        const v = Number(window.localStorage.getItem('agent-right-width') || '')
+        return v && Number.isFinite(v) ? v : 480
+      } catch { return 480 }
+    },
+    onCommit: (w) => { try { window.localStorage.setItem('agent-right-width', String(w)) } catch {} },
   })
-  const [rightResizing, setRightResizing] = useState(false)
-  const rightDragRef = useRef<{ startX: number; startW: number } | null>(null)
-  const rightRafRef = useRef<number | null>(null)
-  const applyRightWidth = useCallback((w: number) => {
-    const clamped = Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, w))
-    const root = document.querySelector('.agent-code-body') as HTMLElement | null
-    if (root) root.style.setProperty('--agent-right-width', `${clamped}px`)
-  }, [])
-  const onRightDragMove = useCallback((e: PointerEvent) => {
-    const d = rightDragRef.current
-    if (!d) return
-    // 兜底：松开左键立即结束（pointerup 丢失防护，与侧边栏拖拽同款）
-    if (!(e.buttons & 1)) {
-      rightDragRef.current = null
-      setRightResizing(false)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-      window.removeEventListener('pointermove', onRightDragMove)
-      window.removeEventListener('pointerup', onRightDragEnd)
-      return
-    }
-    lastClientXRef.current = e.clientX
-    const next = d.startW - (e.clientX - d.startX)
-    if (rightRafRef.current !== null) cancelAnimationFrame(rightRafRef.current)
-    rightRafRef.current = requestAnimationFrame(() => applyRightWidth(next))
-  }, [applyRightWidth])
-  const onRightDragEnd = useCallback(() => {
-    const d = rightDragRef.current
-    if (d) {
-      const w = Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, d.startW - (lastClientXRef.current - d.startX)))
-      setRightPanelWidth(w)
-      try { window.localStorage.setItem('agent-right-width', String(w)) } catch {}
-    }
-    rightDragRef.current = null
-    setRightResizing(false)
-    document.body.style.userSelect = ''
-    document.body.style.cursor = ''
-    window.removeEventListener('pointermove', onRightDragMove)
-    window.removeEventListener('pointerup', onRightDragEnd)
-  }, [onRightDragMove])
-  useEffect(() => {
-    applyRightWidth(rightPanelWidth)
-  }, [rightPanelWidth, applyRightWidth])
-  const startRightResize = (e: React.PointerEvent) => {
-    e.preventDefault()
-    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch {}
-    lastClientXRef.current = e.clientX
-    rightDragRef.current = { startX: e.clientX, startW: rightPanelWidth }
-    setRightResizing(true)
-    document.body.style.userSelect = 'none'
-    document.body.style.cursor = 'col-resize'
-    window.addEventListener('pointermove', onRightDragMove)
-    window.addEventListener('pointerup', onRightDragEnd)
-    window.addEventListener('pointercancel', onRightDragEnd)
-  }
-
-  // 拖拽监听器卸载安全网：若组件在拖拽过程中卸载，确保清理残留的 window 监听器和 body 样式。
-  useEffect(() => {
-    return () => {
-      window.removeEventListener('pointermove', onDragMove)
-      window.removeEventListener('pointerup', onDragEnd)
-      window.removeEventListener('pointermove', onSidebarDragMove)
-      window.removeEventListener('pointerup', onSidebarDragEnd)
-      window.removeEventListener('pointermove', onRightDragMove)
-      window.removeEventListener('pointerup', onRightDragEnd)
-      window.removeEventListener('pointercancel', onRightDragEnd)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-    }
-  }, [onDragMove, onDragEnd, onSidebarDragMove, onSidebarDragEnd, onRightDragMove, onRightDragEnd])
 
   // Persist to store on every change（跳过纯占位项目，防止干扰 seededRef 逻辑）
   useEffect(() => {
@@ -6841,7 +6678,7 @@ export default function AgentCodeView() {
             <div className={`agent-code-tree${rightPanelMode !== 'files' ? ' hidden' : ''}`}>
               <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={insertAtCursor} onFilesChanged={onWorkspaceFilesChanged} />
             </div>
-            <div className={`agent-code-resize-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}${rightPanelMode !== 'files' ? ' hidden' : ''}`} onPointerDown={startResize('preview')} />
+            <div className={`agent-code-resize-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}${rightPanelMode !== 'files' ? ' hidden' : ''}`} onPointerDown={startPreviewResize} />
             <div className={`agent-browser-wrap ${rightPanelMode === 'browser' ? '' : 'hidden'}`}>
               <AgentBrowser visible={rightPanelMode === 'browser' && treeOpen} onSendToAgent={sendAnnotationsToAgent} />
             </div>
@@ -6906,6 +6743,15 @@ export default function AgentCodeView() {
                         {htmlViewMode === 'preview' ? <CodeIcon size={12} /> : <EyeIcon size={12} />}
                       </button>
                     )}
+                    {isPreviewMarkdown && (
+                      <button
+                        className="btn btn-xs ac-icon-btn agent-code-preview-mdtoggle"
+                        onClick={() => setMdViewMode(m => m === 'preview' ? 'source' : 'preview')}
+                        title={mdViewMode === 'preview' ? '查看源码' : '渲染预览'}
+                      >
+                        {mdViewMode === 'preview' ? <CodeIcon size={12} /> : <EyeIcon size={12} />}
+                      </button>
+                    )}
                     {/* HTML 预览的 UI 注释：点击预览元素添加注释（发送给 Agent 自动定位修改） */}
                     {isPreviewHtml && htmlViewMode === 'preview' && (
                       <button
@@ -6916,8 +6762,9 @@ export default function AgentCodeView() {
                         {htmlAnnotations.length > 0 && <span className="agent-code-preview-annotate-count">{htmlAnnotations.length}</span>}
                       </button>
                     )}
-                    {/* 源码预览编辑：进入/退出编辑态；保存写回文件 */}
-                    {!isPreviewHtml && !isPreviewMarkdown && activeTab && activeTabPath !== GIT_DIFF_TAB && (
+                    {/* 源码预览编辑：进入/退出编辑态；保存写回文件。
+                        Markdown 在「源码」模式下同样允许编辑（渲染态不可直接编辑）。 */}
+                    {!isPreviewHtml && (!isPreviewMarkdown || mdViewMode === 'source') && activeTab && activeTabPath !== GIT_DIFF_TAB && (
                       previewEditing ? (
                         <>
                           <button className="btn btn-xs ac-icon-btn agent-code-preview-save" onClick={() => { if (previewDraft !== null) savePreviewFile(previewDraft) }} disabled={previewDraft === null || previewDraft === activeTab.content}>
@@ -7007,7 +6854,7 @@ export default function AgentCodeView() {
                               )}
                             </>
                           )
-                            : isPreviewMarkdown ? (
+                            : isPreviewMarkdown && mdViewMode === 'preview' ? (
                               <div className="agent-code-preview-md chat-msg-markdown">
                                 <AgentMarkdown content={activeTab.content ?? ''} />
                               </div>
