@@ -5,6 +5,7 @@ import { useChatStore } from '../store/chatStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
+import { usePopoverDismiss } from '../utils/usePopoverDismiss'
 import { ENGINE_LABELS, paramSetOf } from '../utils/engine'
 import { PlayIcon, CircleStopIcon, SettingsIcon, EllipsisVerticalIcon, CopyIcon, TrashIcon, DownloadIcon, GlobeIcon, ServerIcon, TerminalIcon, CheckIcon, MessageSquareIcon, ImageIcon, ScanIcon, RefreshCwIcon, AudioLines } from '@animateicons/react/lucide'
 import type { CardState } from '../../../shared/types'
@@ -108,24 +109,7 @@ export default function ModelCard({ card, style }: Props) {
   function toggleLogs() {
     setCardLogsExpanded(!cardLogsExpanded)
   }
-  useEffect(() => {
-    if (!cardLogsExpanded) return
-    function onDown(e: MouseEvent) {
-      const t = e.target as Node
-      if (popoverRef.current && popoverRef.current.contains(t)) return
-      if (logsBtnRef.current && logsBtnRef.current.contains(t)) return
-      setCardLogsExpanded(false)
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setCardLogsExpanded(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [cardLogsExpanded])
+  usePopoverDismiss(!!cardLogsExpanded, setCardLogsExpanded, logsBtnRef, undefined, popoverRef)
   const [modelExists, setModelExists] = useState(true)
   useEffect(() => {
     if (!card.template.modelPath) { setModelExists(true); return }
@@ -313,14 +297,8 @@ export default function ModelCard({ card, style }: Props) {
     setLogoMenu(null)
   }, [card.template.id, setModelLogoEntry])
   // Logo 菜单外部点击收起
-  useEffect(() => {
-    if (!logoMenu) return
-    const handler = (e: MouseEvent) => {
-      if (logoMenuRef.current && !logoMenuRef.current.contains(e.target as Node)) setLogoMenu(null)
-    }
-    window.addEventListener('mousedown', handler)
-    return () => window.removeEventListener('mousedown', handler)
-  }, [logoMenu])
+  const closeLogoMenu = useCallback(() => setLogoMenu(null), [setLogoMenu])
+  usePopoverDismiss(!!logoMenu, closeLogoMenu, undefined, undefined, logoMenuRef)
   return (
     <div className={`model-card ${isRunning ? 'running' : ''}`} style={style}>
       <div className="card-header">

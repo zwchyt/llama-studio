@@ -62,6 +62,8 @@ import { useAgentTerminalStore } from '../store/terminalStore'
 import { Suspense, lazy } from 'react'
 import { extToMonacoLang } from './MonacoEditor'
 import { useResizablePanel } from '../utils/useResizablePanel'
+import { useCollapseAnimation } from '../utils/useCollapseAnimation'
+import { usePopoverDismiss } from '../utils/usePopoverDismiss'
 
 const MonacoEditor = lazy(() => import('./MonacoEditor'))
 
@@ -798,9 +800,10 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
   onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void
   cardDefaultOpen?: boolean
 }) {
-  const [expanded, setExpanded] = useState(isStreaming ?? false)
-  const [visible, setVisible] = useState(isStreaming ?? false)
+  const bodyRef = useRef<HTMLDivElement>(null)
   const userToggledRef = useRef(false)
+  const { expanded, visible, setExpanded, setVisible, onBodyTransitionEnd, toggle: handleToggle } =
+    useCollapseAnimation(bodyRef, { initialExpanded: isStreaming ?? false, beforeToggle: () => { userToggledRef.current = true } })
   // 仅当「正在流式」时才显示「思考中」转圈。注意不能用 !closed 参与判断：
   // 模型在「调用工具、不输出闭合 </think>」时 closed 恒为 false，若用 !closed 会让
   // 思考块永远转圈，直到下一轮才补上闭合标签。改为只看 isStreaming（= 真正流式且未闭合），
@@ -819,8 +822,6 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
     (acc, it) => acc + (it.kind === 'think' ? (it.durationMs ?? 0) : it.kind === 'tools' ? (it.durationMs ?? 0) : 0),
     0
   )
-  const bodyRef = useRef<HTMLDivElement>(null)
-
   // 「思考链总计时」：头部时间 = 已定格思考段累计 + 已固化工具阶段 + 当前阶段实时读秒。
   // 阶段划分：think（真流式思考中）/ tools（链内工具执行中、消息仍流式）/ idle（链结束）。
   // tools 阶段实时读秒，阶段结束时把耗时固化进 frozenToolsRef——时间跨思考段/工具执行
@@ -898,11 +899,10 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
     prevThinkingRef.current = thinking
   }, [thinking])
 
-  // 展开/收起用 max-height 像素过渡（见 agent-code.css）：像素级线性插值 + overflow:hidden。
-  // 关键：首次展开挂载 Markdown 后【保持挂载】，收起只把 max-height 收到 0（不卸载 DOM）。
-  // 否则每次收起卸载、展开重新挂载会重解析 Markdown（KaTeX/高亮），在展开瞬间造成明显卡顿。
-  const expandedRef = useRef(expanded)
-  useEffect(() => { expandedRef.current = expanded }, [expanded])
+  // 展开/收起用 max-height 像素过渡（见 agent-code.css）：由 useCollapseAnimation 提供
+  // handleToggle / onBodyTransitionEnd。关键：首次展开挂载 Markdown 后【保持挂载】，
+  // 收起只把 max-height 收到 0（不卸载 DOM）。否则每次收起卸载、展开重新挂载会重解析
+  // Markdown（KaTeX/高亮），在展开瞬间造成明显卡顿。
 
   // 流式思考中（已展开）：内容持续增长，置 max-height:none 让其自适应，不做高度动画。
   // 收纳工具卡执行中同理（卡片从挂载到结果渲染持续增长）。
@@ -910,39 +910,6 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
     const el = bodyRef.current
     if ((thinking || hasLiveTools) && visible && expanded && el) el.style.maxHeight = 'none'
   }, [thinking, hasLiveTools, visible, expanded, renderValue])
-
-  // 过渡结束：展开完成后置 none 以自适应后续高度；收起完成后保持挂载、停在 max-height:0。
-  const onBodyTransitionEnd = (e: React.TransitionEvent<HTMLDivElement>) => {
-    if (e.propertyName !== 'max-height') return
-    const el = bodyRef.current
-    if (el && expandedRef.current) el.style.maxHeight = 'none'
-  }
-
-  const handleToggle = () => {
-    userToggledRef.current = true
-    const el = bodyRef.current
-    if (expanded) {
-      // 收起：固定当前像素高度→强制回流→过渡到 0；保持挂载不卸载
-      setExpanded(false)
-      if (el) {
-        el.style.maxHeight = el.scrollHeight + 'px'
-        void el.offsetHeight
-        el.style.maxHeight = '0px'
-      }
-    } else if (visible && el) {
-      // 已挂载（Markdown 已渲染）：直接过渡到内容高度，无重渲染 → 顺滑无卡顿
-      setExpanded(true)
-      el.style.maxHeight = el.scrollHeight + 'px'
-    } else {
-      // 首次展开：先挂载，待下一帧内容布局完成再从 0 过渡到内容高度
-      setVisible(true)
-      requestAnimationFrame(() => {
-        setExpanded(true)
-        const el2 = bodyRef.current
-        if (el2) el2.style.maxHeight = el2.scrollHeight + 'px'
-      })
-    }
-  }
 
   // 头部「思考中」状态判定：消息仍流式 且 正文尚未出现（正文 = 思考链终结信号）时，
   // 无论当前在思考、工具执行还是段间间隙，统一保持「思考中」+ 时间跳动；
@@ -1583,55 +1550,12 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
   const done = status === 'done'
   const failed = done && !!tc.failed
   const canRestore = done && canUndo && !tc.restored && BACKUP_TOOLS.has(tc.name)
-  const [expanded, setExpanded] = useState(defaultOpen ?? false)
-  // 展开/收起动画：与 ThinkBlock 同方案——裁剪层 max-height 像素过渡，
-  // 首次展开后保持挂载（visible），收起只收到 0 不卸载，避免 diff/高亮重解析卡顿。
-  const [visible, setVisible] = useState(defaultOpen ?? false)
+  // 展开/收起动画：与 ThinkBlock 同方案——由 useCollapseAnimation 提供
+  // handleToggle / onBodyTransitionEnd。裁剪层 max-height 像素过渡，首次展开后保持挂载
+  // （visible），收起只收到 0 不卸载，避免 diff/高亮重解析卡顿。
   const bodyRef = useRef<HTMLDivElement>(null)
-  const expandedRef = useRef(expanded)
-  useEffect(() => { expandedRef.current = expanded }, [expanded])
-
-  // 初始即展开（defaultOpen）：跳过动画，直接自适应高度
-  useLayoutEffect(() => {
-    if (expandedRef.current && bodyRef.current) bodyRef.current.style.maxHeight = 'none'
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // 展开：已挂载则直接过渡到内容高度；首次展开先挂载，待下一帧布局完成再从 0 过渡
-  const animExpand = useCallback(() => {
-    const el = bodyRef.current
-    if (el) {
-      setExpanded(true)
-      el.style.maxHeight = el.scrollHeight + 'px'
-    } else {
-      setVisible(true)
-      requestAnimationFrame(() => {
-        setExpanded(true)
-        const el2 = bodyRef.current
-        if (el2) el2.style.maxHeight = el2.scrollHeight + 'px'
-      })
-    }
-  }, [])
-
-  // 收起：固定当前像素高度→强制回流→过渡到 0；保持挂载不卸载
-  const animCollapse = useCallback(() => {
-    setExpanded(false)
-    const el = bodyRef.current
-    if (el) {
-      el.style.maxHeight = el.scrollHeight + 'px'
-      void el.offsetHeight
-      el.style.maxHeight = '0px'
-    }
-  }, [])
-
-  const handleToggle = () => { if (expandedRef.current) animCollapse(); else animExpand() }
-
-  // 过渡结束：展开完成后置 none 以自适应后续高度（如结果展开/实时输出增长）
-  const onBodyTransitionEnd = (e: React.TransitionEvent<HTMLDivElement>) => {
-    if (e.propertyName !== 'max-height') return
-    const el = bodyRef.current
-    if (el && expandedRef.current) el.style.maxHeight = 'none'
-  }
+  const { expanded, visible, setExpanded, setVisible, expandedRef, onBodyTransitionEnd, toggle: handleToggle } =
+    useCollapseAnimation(bodyRef, { initialExpanded: defaultOpen ?? false, skipFirstAnim: !!defaultOpen })
 
   // 顶栏「工具卡」按钮切换全局默认时，同步所有已挂载卡片的展开态。
   // 注意：批量切换不走逐卡 scrollHeight 动画——几十张卡同帧交错读(scrollHeight 强制回流)
@@ -1913,29 +1837,8 @@ const FileChangeSummary = React.memo(function FileChangeSummary({ toolCalls, onO
 
 // 通用弹窗关闭 hook：点击弹窗/触发按钮外部 或 Escape 键时关闭。
 // btnRef: 触发按钮 ref（点它不关闭）；popSelector: 弹窗 DOM 选择器（点内部不关闭）。
-function usePopoverDismiss(
-  open: boolean,
-  setOpen: (v: boolean) => void,
-  btnRef: React.RefObject<HTMLElement | null>,
-  popSelector: string
-) {
-  useEffect(() => {
-    if (!open) return
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e.type === 'keydown' && (e as KeyboardEvent).key === 'Escape') { setOpen(false); return }
-      const target = e.target as Node
-      if (btnRef.current?.contains(target)) return
-      // 注意：逗号选择器必须用 querySelectorAll 逐一检查——querySelector 只返回文档序第一个匹配，
-      // portal 到 body 的浮层面板排在卡片之后会被漏判，导致点选项被当成「点击外部」而误关弹层
-      const pops = document.querySelectorAll(popSelector)
-      for (const pop of pops) { if (pop.contains(target)) return }
-      setOpen(false)
-    }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', close)
-    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close) }
-  }, [open, setOpen, btnRef, popSelector])
-}
+// 浮层外部点击关闭逻辑已抽至 utils/usePopoverDismiss（支持 btnRef / popRef / popSelector 三种判定，
+// popRef 基于 contains 对 portal 安全；并统一处理 Esc 与事件阶段）。
 
 // 静态扩展名集合（提升到模块作用域避免每次渲染重建）
 const CODE_EXT = new Set([
@@ -2557,14 +2460,8 @@ export default function AgentCodeView() {
     setActiveTabPath(null)
   }, [])
   // 右键菜单：点菜单外 / Esc 关闭
-  useEffect(() => {
-    if (!tabMenu) return
-    const onDown = (e: PointerEvent) => { if (tabMenuRef.current && !tabMenuRef.current.contains(e.target as Node)) setTabMenu(null) }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setTabMenu(null) }
-    document.addEventListener('pointerdown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey) }
-  }, [tabMenu])
+  const closeTabMenu = useCallback(() => setTabMenu(null), [setTabMenu])
+  usePopoverDismiss(!!tabMenu, closeTabMenu, undefined, undefined, tabMenuRef)
 
   // ── 区域：可拖拽面板宽度管理（预览区 / 侧边栏 / 右侧面板共用 useResizablePanel）──
   // 预览面板宽度：拖拽预览左边框时调整，文件树宽度固定不动
@@ -2647,15 +2544,7 @@ export default function AgentCodeView() {
   // 思考程度自绘下拉（替代原生 <select>，使展开列表也可用项目暗色主题）
   const [thinkLevelOpen, setThinkLevelOpen] = useState(false)
   const thinkLevelMenuRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!thinkLevelOpen) return
-    function onDown(e: MouseEvent) {
-      if (thinkLevelMenuRef.current?.contains(e.target as Node)) return
-      setThinkLevelOpen(false)
-    }
-    document.addEventListener('pointerdown', onDown)
-    return () => document.removeEventListener('pointerdown', onDown)
-  }, [thinkLevelOpen])
+  usePopoverDismiss(thinkLevelOpen, setThinkLevelOpen, undefined, undefined, thinkLevelMenuRef)
   const [curToolName, setCurToolName] = useState('')  // 当前正在调用/执行的工具名（状态栏 name 标签）
   const [condensing, setCondensing] = useState(false)  // 正在压缩历史（顶部轻量提示）
   const [condenseOpen, setCondenseOpen] = useState(false)  // 压缩历史弹层开关
@@ -2844,14 +2733,8 @@ export default function AgentCodeView() {
   const searchProvider = useStore(s => s.searchProvider)
   const [searchMenuOpen, setSearchMenuOpen] = useState(false)
   const searchMenuRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!searchMenuOpen) return
-    const onDocClick = (e: MouseEvent) => {
-      if (searchMenuRef.current && !searchMenuRef.current.contains(e.target as Node)) setSearchMenuOpen(false)
-    }
-    document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
-  }, [searchMenuOpen])
+  const closeSearchMenu = useCallback(() => setSearchMenuOpen(false), [setSearchMenuOpen])
+  usePopoverDismiss(!!searchMenuOpen, closeSearchMenu, undefined, undefined, searchMenuRef)
   const applySearchChange = (enabled: boolean, provider: 'ddg' | 'bing') => {
     setSearchMenuOpen(false)
     const st = useStore.getState()
@@ -2925,15 +2808,8 @@ export default function AgentCodeView() {
     setLogoMenu(null)
   }, [])
   // Logo 菜单外部点击收起
-  useEffect(() => {
-    if (!logoMenu) return
-    function onDown(e: MouseEvent) {
-      if (logoMenuRef.current?.contains(e.target as Node)) return
-      setLogoMenu(null)
-    }
-    document.addEventListener('pointerdown', onDown)
-    return () => document.removeEventListener('pointerdown', onDown)
-  }, [logoMenu])
+  const closeLogoMenu = useCallback(() => setLogoMenu(null), [setLogoMenu])
+  usePopoverDismiss(!!logoMenu, closeLogoMenu, undefined, undefined, logoMenuRef)
 
   // 打开下拉时对未缓存的模型读取 GGUF 元数据并判定能力（只读头部，毫秒级）；
   // 检测成功即持久化到 model-capabilities.json，下次启动直接载入不再读盘
@@ -3045,18 +2921,7 @@ export default function AgentCodeView() {
     }
   }, [])
 
-  useEffect(() => {
-    if (!modelPickerOpen) return
-    function onDown(e: MouseEvent) {
-      const target = e.target as Node
-      if (modelBtnRef.current?.contains(target)) return
-      if (modelPickerRef.current && !modelPickerRef.current.contains(target)) {
-        setModelPickerOpen(false)
-      }
-    }
-    document.addEventListener('pointerdown', onDown)
-    return () => document.removeEventListener('pointerdown', onDown)
-  }, [modelPickerOpen])
+  usePopoverDismiss(modelPickerOpen, setModelPickerOpen, modelBtnRef, undefined, modelPickerRef)
 
   usePopoverDismiss(contextModalOpen, setContextModalOpen, ctxInlineRef, '.agent-card-ctx')
   usePopoverDismiss(condenseOpen, setCondenseOpen, condenseBtnRef, '.agent-card-condense')
@@ -3946,15 +3811,8 @@ export default function AgentCodeView() {
   }, [])
 
   // 源码预览浮动按钮关闭
-  useEffect(() => {
-    if (!previewSelPopover) return
-    const onDocMouseDown = (e: MouseEvent) => {
-      if (previewSelRef.current?.contains(e.target as Node)) return
-      setPreviewSelPopover(null)
-    }
-    window.addEventListener('mousedown', onDocMouseDown)
-    return () => window.removeEventListener('mousedown', onDocMouseDown)
-  }, [previewSelPopover])
+  const closePreviewSel = useCallback(() => setPreviewSelPopover(null), [setPreviewSelPopover])
+  usePopoverDismiss(!!previewSelPopover, closePreviewSel, undefined, undefined, previewSelRef)
 
   // 鼠标松开时读取选区：仅当选区落在「助手消息气泡」或「思考链」内且非空，才在选区上方弹出操作条。
   const handleMessagesMouseUp = useCallback(() => {
@@ -3975,16 +3833,8 @@ export default function AgentCodeView() {
     })
   }, [])
 
-  // 操作条开启时，点击其外部任意处即收起（不含操作条自身）。
-  useEffect(() => {
-    if (!selectionPopover) return
-    const onDocMouseDown = (e: MouseEvent) => {
-      if (selectionPopoverRef.current?.contains(e.target as Node)) return
-      setSelectionPopover(null)
-    }
-    window.addEventListener('mousedown', onDocMouseDown)
-    return () => window.removeEventListener('mousedown', onDocMouseDown)
-  }, [selectionPopover])
+  // 操作条开启时，点击其外部任意处即收起（不含操作条自身）。复用已有的 closeSelectionPopover（同时清除选区高亮）。
+  usePopoverDismiss(!!selectionPopover, closeSelectionPopover, undefined, undefined, selectionPopoverRef)
 
   // ── 输入框 @ 文件补全 ──
   // 把 [start, end) 区间的文本替换为 text（用于选中文件时替换触发用的 @查询串）
@@ -4062,15 +3912,8 @@ export default function AgentCodeView() {
   }, [insertAtCursor, replaceRange, input.length])
 
   // 点击浮层外部 / 切换工作区关闭浮层
-  useEffect(() => {
-    if (atQuery === null) return
-    const close = (e: MouseEvent) => {
-      if (atPopRef.current?.contains(e.target as Node)) return
-      setAtQuery(null)
-    }
-    document.addEventListener('pointerdown', close, true)
-    return () => document.removeEventListener('pointerdown', close, true)
-  }, [atQuery])
+  const closeAtQuery = useCallback(() => setAtQuery(null), [setAtQuery])
+  usePopoverDismiss(atQuery !== null, closeAtQuery, undefined, undefined, atPopRef, true)
 
   // 切换工作区目录时重置文件缓存（下次输入 @ 重新加载）
   useEffect(() => {
@@ -4122,15 +3965,8 @@ export default function AgentCodeView() {
   }, [input, autoResize])
 
   // 浮层外部点击关闭
-  useEffect(() => {
-    if (slashQuery === null) return
-    const close = (e: MouseEvent) => {
-      if (slashPopRef.current?.contains(e.target as Node)) return
-      setSlashQuery(null)
-    }
-    document.addEventListener('pointerdown', close, true)
-    return () => document.removeEventListener('pointerdown', close, true)
-  }, [slashQuery])
+  const closeSlashQuery = useCallback(() => setSlashQuery(null), [setSlashQuery])
+  usePopoverDismiss(slashQuery !== null, closeSlashQuery, undefined, undefined, slashPopRef, true)
 
 
   // ── 附件 / 图片 ──
