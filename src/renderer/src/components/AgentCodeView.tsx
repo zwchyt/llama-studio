@@ -1241,45 +1241,13 @@ const StreamingBadge = React.memo(function StreamingBadge({ modelLabel, live = t
 //   1) 节流：用 setInterval（~150ms）同步渲染值，把重解析频率与落盘频率解耦；
 //   2) 轻量插件栈：流式期间只用 remarkGfm + remarkLinkifyUrls，跳过 katex/raw/sanitize
 //      （这些最耗时的插件在「完成时」才用完整栈精确渲染）；
-//   3) content-visibility：视口外消息跳过渲染（CSS 侧），进一步降低整页重绘成本。
+//   3) content-visibility：视口外消息由 CSS 侧跳过渲染（见 .chat-msg 的 content-visibility: auto），
+//      降低长对话的整页重绘成本。
 // 流式 Markdown 重解析节流间隔。流式期间已改用轻量插件栈，单帧解析成本很低，
 // 故可把间隔压到 60ms：既让文字显示跟手（~16 次/秒重解析），又避免逐 commit 重解析。
 // 注：落盘节流 STREAM_FLUSH_MS 取更小值（见流式循环），二者配合使画面接近模型真实吐字节奏。
 const STREAM_MD_THROTTLE_MS = 40
-// ═══════════════════════════════════════════════════════════════════
-// 流式时序诊断（临时，排查「吐字卡顿」用；确认根因后整段删除）
-// 数据层：text_delta 每个 SSE chunk 推一次（pi-ai openai-completions.js），
-// 所以 arrival 间隔 ≈ 模型 token 节奏；commit 为 commitText 合并后的 store 更新节奏；
-// display 为 rAF 节流后的画面更新节奏（应 ≈ 节流间隔）；frames 记录掉帧（>16ms）。
-// 对比三者的 avg/p90：
-//   arrival p90 大 → 数据层分批（main/IPC 排队）；
-//   display p90 大且 commit 小、dropped-frames 多 → 渲染层重解析/重渲染占用主线程。
-const STREAM_DIAG = false
-const diagStats: Record<'arrivals' | 'commits' | 'displays' | 'frames', number[]> = { arrivals: [], commits: [], displays: [], frames: [] }
-const diagLast: Record<'arrival' | 'commit' | 'display', number> = { arrival: 0, commit: 0, display: 0 }
-// 渲染触发源追踪：记录每个嫌疑写入的最近时间戳，视图重渲染时打印离它最近的写入者，
-// 一次运行即可钉死「谁在 20次/秒 驱动整页重渲染」。
-const diagWrite: Record<'live' | 'skind' | 'tdone' | 'projects', number> = { live: 0, skind: 0, tdone: 0, projects: 0 }
-let diagTimer: ReturnType<typeof setInterval> | null = null
-function diagPush(kind: 'arrival' | 'commit' | 'display', now: number): void {
-  if (!STREAM_DIAG) return
-  const last = diagLast[kind]
-  if (last > 0) {
-    const gap = now - last
-    if (gap > 0 && gap < 8000) diagStats[kind === 'arrival' ? 'arrivals' : kind === 'commit' ? 'commits' : 'displays'].push(gap)
-  }
-  diagLast[kind] = now
-  if (!diagTimer) {
-    diagTimer = setInterval(() => {
-      const nonEmpty = diagStats.arrivals.length || diagStats.commits.length || diagStats.displays.length || diagStats.frames.length
-      if (!nonEmpty) return
-      const avg = (a: number[]) => (a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : 0)
-      const p90 = (a: number[]) => (a.length ? [...a].sort((x, y) => x - y)[Math.floor(a.length * 0.9)] ?? 0 : 0)
-      console.debug(`[stream-diag] arrival avg=${avg(diagStats.arrivals)} p90=${p90(diagStats.arrivals)} | commit avg=${avg(diagStats.commits)} p90=${p90(diagStats.commits)} | display avg=${avg(diagStats.displays)} p90=${p90(diagStats.displays)} | dropped-frames(${diagStats.frames.length}) p90=${p90(diagStats.frames)}`)
-      diagStats.arrivals = []; diagStats.commits = []; diagStats.displays = []; diagStats.frames = []
-    }, 4000)
-  }
-}
+
 // 帧对齐节流 hook：rAF + 时间戳，真正把「内容变化」与「显示更新」解耦。
 // 此前把 setDisplay 放在依赖 value 的 effect 里：内容一变就立即重渲染，rAF 循环形同虚设，
 // 每个 commit（~30ms）都全量重解析 markdown——节流从未生效。现在：
@@ -1301,14 +1269,10 @@ function useFrameThrottledValue(value: string, active: boolean | undefined, thro
     if (!on) return
     let raf = 0
     let last = performance.now()
-    let prevT = last
     const tick = (t: number) => {
-      if (STREAM_DIAG && t - prevT > 16) diagStats.frames.push(t - prevT)
-      prevT = t
       if (t - last >= throttleMs) {
         last = t
         setDisplay(latestRef.current)
-        diagPush('display', t)
       }
       raf = requestAnimationFrame(tick)
     }
@@ -1325,14 +1289,7 @@ const StreamingMarkdown = React.memo(function StreamingMarkdown({ content, isStr
   // 用 40ms（25fps）步进跟上数据节奏，避免「字一顿一顿」；完成时由 AgentMarkdown 接管。
   const interval = content.length > 8000 ? 100 : content.length > 2500 ? 70 : STREAM_MD_THROTTLE_MS
   const display = useFrameThrottledValue(content, !!isStreaming, interval)
-  // 诊断：测量本子树每次 render 的耗时（解析+diff+commit），>8ms 打印
-  const diagT0 = useRef(0)
-  if (STREAM_DIAG) diagT0.current = performance.now()
-  useLayoutEffect(() => {
-    if (!STREAM_DIAG) return
-    const dt = performance.now() - diagT0.current
-    if (dt > 8) console.debug(`[stream-diag] md-render ${dt.toFixed(1)}ms len=${display.length}`)
-  })
+
   if (!display) return null
   return (
     <ReactMarkdown
@@ -1918,8 +1875,9 @@ const AniIconButton = React.forwardRef<HTMLButtonElement, {
 
 /** 将浏览器可解码的音频（如 webm/opus）转成 16-bit PCM WAV 的 base64，供本地 STT 模型识别。 */
 async function encodeWavBase64(inputBuf: ArrayBuffer): Promise<string> {
-  const AC: any = window.AudioContext || (window as any).webkitAudioContext
-  const ac = new AC()
+  const AudioContextCtor: typeof AudioContext =
+    window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext!
+  const ac = new AudioContextCtor()
   const audioBuf = await ac.decodeAudioData(inputBuf)
   const numCh = audioBuf.numberOfChannels
   const sampleRate = audioBuf.sampleRate
@@ -2218,23 +2176,7 @@ export default function AgentCodeView() {
     return kind === 'sdcpp' || kind === 'audiocpp' || /ocr/i.test(card.template.name)
   }
   const agentCards = cards.filter(c => !isExcludedModel(c) || c.status === 'running')
-  // 诊断：整页渲染耗时探针（>15ms 打印；定位触发源：最近一次 diagWrite 写入者）
-  const diagViewT0 = useRef(0)
-  if (STREAM_DIAG) diagViewT0.current = performance.now()
-  useLayoutEffect(() => {
-    if (!STREAM_DIAG) return
-    const dt = performance.now() - diagViewT0.current
-    if (dt > 15) {
-      const now = performance.now()
-      let cause = 'other'
-      let best = 1e9
-      for (const k of Object.keys(diagWrite) as Array<keyof typeof diagWrite>) {
-        const d = now - diagWrite[k]
-        if (d < best) { best = d; cause = k }
-      }
-      console.debug(`[stream-diag] view-render ${dt.toFixed(1)}ms cause=${cause}(ago=${best.toFixed(0)}ms)`)
-    }
-  })
+
   // 顶栏 prefill 进度与内联上下文指示器已抽为自订阅小组件（AgentPrefillBar / AgentTopBarCtx），
   // 此处不再订阅 modelMetrics，避免主进程每 2s 广播指标时触发整个工作台全量重渲染。
   const apiBaseUrl = runningCard ? `http://127.0.0.1:${runningCard.template.serverPort}` : null
@@ -2661,9 +2603,11 @@ export default function AgentCodeView() {
   }, [listening, micTranscribing, startMic, stopMic])
   useEffect(() => () => { try { mediaRecorderRef.current?.stop() } catch { /* noop */ } if (micTimerRef.current) clearInterval(micTimerRef.current) }, [])
   const chatScrollRef = useRef<HTMLDivElement>(null)
-  const atBottomRef = useRef(true)
-  const [atBottom, setAtBottom] = useState(true)
-  const followingRef = useRef(true)
+const atBottomRef = useRef(true)
+const [atBottom, setAtBottom] = useState(true)
+const followingRef = useRef(true)
+// 标记“由代码主动贴底触发的 scroll”，用于在 onChatScroll 中排除，避免与用户上滚抢控制权。
+const programmaticScrollRef = useRef(false)
   const FOLLOW_THRESHOLD = 80
   const railIdRef = useRef(new WeakMap<HTMLElement, string>())
   const railIdCounterRef = useRef(0)
@@ -3179,6 +3123,12 @@ export default function AgentCodeView() {
     const el = chatScrollRef.current
     if (!el) return
     setSelectionPopover(null)
+    // 程序化贴底（pin / scrollToBottom / 消息增高引起的 scroll）不据此翻转跟随态：
+    // 否则会被“拉回底部→判为在底部→继续跟随”的反馈环路盖过用户上滚，导致滚动卡死。
+    if (programmaticScrollRef.current) {
+      programmaticScrollRef.current = false
+      return
+    }
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight
     const bottom = distance <= FOLLOW_THRESHOLD
     atBottomRef.current = bottom
@@ -3186,9 +3136,16 @@ export default function AgentCodeView() {
     followingRef.current = bottom
   }, [])
 
+  // 用户主动滚动（滚轮/触控）立即暂停自动跟随：必须在 rAF pin 执行前同步置位，
+  // 否则 pin 每帧把 scrollTop 拽回底部会盖过用户意图（仅用 onChatScroll 翻转因时序竞争仍会卡死）。
+  const pauseFollow = useCallback(() => {
+    followingRef.current = false
+    atBottomRef.current = false
+  }, [])
   const scrollToBottom = useCallback((smooth = false) => {
     const el = chatScrollRef.current
     if (el) {
+      programmaticScrollRef.current = true
       el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
       atBottomRef.current = true
       setAtBottom(true)
@@ -3217,10 +3174,8 @@ export default function AgentCodeView() {
     const pin = () => {
       const el = chatScrollRef.current
       if (el && followingRef.current) {
-        const t0 = performance.now()
+        programmaticScrollRef.current = true
         el.scrollTop = el.scrollHeight
-        const dt = performance.now() - t0
-        if (STREAM_DIAG && dt > 5) console.debug(`[stream-diag] pin ${dt.toFixed(1)}ms`)
       }
       raf = requestAnimationFrame(pin)
     }
@@ -4658,7 +4613,6 @@ export default function AgentCodeView() {
       const apply = (): void => {
         lastProjectsSyncAt = performance.now()
         updateSessionInProject(pid, sid, { messages: msgs })
-        diagWrite.projects = performance.now()
       }
       const now = performance.now()
       if (now - lastProjectsSyncAt >= SYNC_PROJECTS_MS) apply()
@@ -4692,9 +4646,7 @@ export default function AgentCodeView() {
       const apply = (): void => {
         lastTextCommitAt = performance.now()
         useStore.getState().setLiveAgentMsg(liveMsg)
-        diagWrite.live = performance.now()
         syncProjects()
-        diagPush('commit', lastTextCommitAt)
       }
       if (textCommitTimer) return // 已有排队提交，最新 liveMsg 会随其 apply 一起带走
       const now = performance.now()
@@ -4796,35 +4748,27 @@ export default function AgentCodeView() {
     }
     const client = new PiAgentClient({
       onTextDelta: (delta) => {
-        diagPush('arrival', performance.now())
         appendTextDelta(delta)
         // 状态栏阶段：只有含实际内容的增量才更新（纯文本即「输出中」）
         if (delta.trim()) {
           setStreamKind('text')
-          diagWrite.skind = performance.now()
         }
-        diagWrite.tdone = performance.now()
         commitText({ content: streamedText, segments: buildSegs() })
       },
       onThinkingStart: () => {
-        diagPush('arrival', performance.now())
         // openThinking 延迟到首个 thinking_delta（保持与原「首增量才推 <think>」行为一致），
         // 此处仅切状态栏阶段 + 标记思考未结束
         setStreamKind('think')
         setThinkDone(false)
       },
       onThinkingDelta: (delta) => {
-        diagPush('arrival', performance.now())
         appendThinkingDelta(delta)
         if (delta.trim()) {
           setStreamKind('think')
-          diagWrite.skind = performance.now()
         }
-        diagWrite.tdone = performance.now()
         commitText({ content: streamedText, segments: buildSegs() })
       },
       onThinkingEnd: () => {
-        diagPush('arrival', performance.now())
         closeThinking()
         commitText({ content: streamedText, segments: buildSegs() })
       },
@@ -5769,7 +5713,7 @@ export default function AgentCodeView() {
         <div className={`agent-code-sidebar-resize-handle${sidebarResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startSidebarResize} />
 
         <div className="agent-code-chat">
-          <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll} onMouseUp={handleMessagesMouseUp}>
+            <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll} onWheel={pauseFollow} onTouchMove={pauseFollow} onMouseUp={handleMessagesMouseUp}>
             {condensing && (
               <div className="agent-condensing"><LoaderIcon size={13} className="spin" /> 正在压缩历史…</div>
             )}

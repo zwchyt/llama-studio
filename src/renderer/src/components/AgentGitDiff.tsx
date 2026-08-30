@@ -21,28 +21,46 @@ export interface GitChangesData {
 }
 
 type DiffRow = { type: 'ctx' | 'add' | 'del'; text: string; oldLine?: number; newLine?: number; highlights?: { start: number; end: number }[] }
+// 一个 hunk（改动区）：记录其在 diff 中的行范围与对应的真实行号，用于计算 hunk 之间「未改动行」的真实间隔。
+type Hunk = { oldStart: number; oldCount: number; newStart: number; newCount: number; firstRow: number; lastRow: number }
+// 渲染单元：hunk = 一段改动（含上下文）；gap = 两个 hunk 之间按真实行号算出的未改动间隔。
+type DiffBlock =
+  | { kind: 'hunk'; rows: DiffRow[] }
+  | { kind: 'gap'; count: number; startLine: number; endLine: number }
 
-const HUNK_RE = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/
+// 同时捕获 old/new 的起止行号（含行数），供「未改动间隔」按真实行号计算。
+const HUNK_RE = /^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/
 
-// 把 unified diff 解析成带真实行号的行序列（忽略 diff/index/--- /+++ 等头部，只取 @@ 之后的内容）。
-function parseUnifiedDiff(diff: string): DiffRow[] {
+// 把 unified diff 解析成带真实行号的行序列（忽略 diff/index/--- /+++ 等头部，只取 @@ 之后的内容），
+// 同时记录每个 hunk 的行号范围。git 默认 3 行上下文会把大段未改动切成多个独立 hunk，
+// 因此「N 个隐藏的行」必须按 hunk 之间的真实行号差计算，而不是按 diff 上下文行数。
+function parseUnifiedDiff(diff: string): { rows: DiffRow[]; hunks: Hunk[] } {
   const rows: DiffRow[] = []
+  const hunks: Hunk[] = []
   let oldLine = 0
   let newLine = 0
   let inHunk = false
+  let cur: Hunk | null = null
   const lines = diff.endsWith('\n') ? diff.slice(0, -1).split('\n') : diff.split('\n')
   for (const line of lines) {
     const h = HUNK_RE.exec(line)
-    if (h) { oldLine = Number(h[1]); newLine = Number(h[2]); inHunk = true; continue }
+    if (h) {
+      oldLine = Number(h[1]); newLine = Number(h[3])
+      inHunk = true
+      cur = { oldStart: oldLine, oldCount: h[2] ? Number(h[2]) : 1, newStart: newLine, newCount: h[4] ? Number(h[4]) : 1, firstRow: rows.length, lastRow: rows.length - 1 }
+      hunks.push(cur)
+      continue
+    }
     if (!inHunk) continue
     if (line.startsWith('\\ No newline')) continue
     const marker = line[0]
     const text = (marker === ' ' || marker === '+' || marker === '-') ? line.slice(1) : line
-    if (marker === '+') { rows.push({ type: 'add', text, newLine }); newLine++; continue }
-    if (marker === '-') { rows.push({ type: 'del', text, oldLine }); oldLine++; continue }
+    if (marker === '+') { rows.push({ type: 'add', text, newLine }); newLine++; if (cur) cur.lastRow = rows.length - 1; continue }
+    if (marker === '-') { rows.push({ type: 'del', text, oldLine }); oldLine++; if (cur) cur.lastRow = rows.length - 1; continue }
     rows.push({ type: 'ctx', text, oldLine, newLine }); oldLine++; newLine++
+    if (cur) cur.lastRow = rows.length - 1
   }
-  return rows
+  return { rows, hunks }
 }
 
 // 未跟踪文件：无 diff，把整段内容按「全部新增」渲染。
@@ -55,8 +73,6 @@ const baseName = (p: string) => p.split('/').pop() || p
 const dirName = (p: string) => { const i = p.lastIndexOf('/'); return i >= 0 ? p.slice(0, i) : '' }
 
 const STATUS_LABEL: Record<string, string> = { M: '修改', A: '新增', D: '删除', R: '重命名', C: '复制', U: '冲突', '?': '未跟踪' }
-
-const MAX_ROWS = 40
 
 // ── 行内单词级差异高亮 ──
 // 按单词/空白/标点拆分为 token
@@ -158,7 +174,14 @@ function renderCodeWithHighlights(text: string, highlights?: { start: number; en
 }
 
 const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceCollapsed, onStage, onUnstage, focused }: { file: GitFileChange; onOpen: (relPath: string, line?: number) => void; forceCollapsed: boolean; onStage?: (path: string) => void; onUnstage?: (path: string) => void; focused?: boolean }) {
-  const rows = useMemo(() => (file.untracked ? contentToRows(file.content || '') : parseUnifiedDiff(file.diff)), [file])
+  const parsed = useMemo(() => {
+    if (file.untracked) {
+      const r = contentToRows(file.content || '')
+      return { rows: r, hunks: r.length ? [{ oldStart: 1, oldCount: r.length, newStart: 1, newCount: r.length, firstRow: 0, lastRow: r.length - 1 }] : [] }
+    }
+    return parseUnifiedDiff(file.diff)
+  }, [file])
+  const rows = parsed.rows
   const [collapsed, setCollapsed] = useState(forceCollapsed)
   // 顶部「全部展开/收起」变化时同步各文件的折叠态；单文件手动折叠不受影响（forceCollapsed 未变）。
   useEffect(() => { setCollapsed(forceCollapsed) }, [forceCollapsed])
@@ -177,15 +200,34 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
     const t = setTimeout(() => setFlash(false), 1600)
     return () => clearTimeout(t)
   }, [flash])
-  const [showAll, setShowAll] = useState(false)
   const added = rows.filter(r => r.type === 'add').length
   const removed = rows.filter(r => r.type === 'del').length
-  // 可见行用 useMemo 固定引用：此前每次渲染新建数组，下方行内高亮的
-  // useMemo 缓存永远失效，任意局部 state 变化（如复制按钮）都会全量重跑 LCS 高亮。
-  const visible = useMemo(() => (showAll ? rows : rows.slice(0, MAX_ROWS)), [showAll, rows])
-  // 对可见行计算行内单词级高亮（仅对展示的行计算，避免大文件全量计算）
-  const highlighted = useMemo(() => computeInlineHighlights(visible), [visible])
-  const hidden = rows.length - visible.length
+  // 行内单词级高亮：仅改动行有高亮；对全量行计算，避免分段后行号/高亮错位。
+  const highlighted = useMemo(() => computeInlineHighlights(rows), [rows])
+  // 渲染单元：把 hunk 之间的「按真实行号计算的未改动间隔」做成可折叠的「N 个隐藏的行」提示。
+  // 间隔数 = 下一个 hunk 起始行 − 当前 hunk 结束行 − 1（含两端各 3 行上下文），
+  // 因此能正确反映几百行的真实间隔，而非 git 默认 3 行上下文切出的极小 ctx 段。
+  const blocks = useMemo<DiffBlock[]>(() => {
+    const hs = parsed.hunks
+    const out: DiffBlock[] = []
+    for (let h = 0; h < hs.length; h++) {
+      const hk = hs[h]!
+      out.push({ kind: 'hunk', rows: highlighted.slice(hk.firstRow, hk.lastRow + 1) })
+      if (h + 1 < hs.length) {
+        const next = hs[h + 1]!
+        const gap = next.newStart - (hk.newStart + hk.newCount)
+        if (gap > 0) out.push({ kind: 'gap', count: gap, startLine: hk.newStart + hk.newCount, endLine: next.newStart - 1 })
+      }
+    }
+    // 文件开头（首个 hunk 之前）的大段未改动也折叠
+    if (hs.length && hs[0]!.newStart > 1) {
+      const lead = hs[0]!.newStart - 1
+      if (lead > 0) out.unshift({ kind: 'gap', count: lead, startLine: 1, endLine: hs[0]!.newStart - 1 })
+    }
+    return out
+  }, [parsed, highlighted])
+  // 未改动区间是否就地展开（点击提示展开该段，默认折叠为提示）
+  const [expandedGaps, setExpandedGaps] = useState<Record<number, boolean>>({})
   const dir = dirName(file.path)
   const { Icon: FileIcon, color: fileColor } = fileMeta(file.path)
   const [copied, setCopied] = useState(false)
@@ -236,25 +278,41 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
           <div className="agent-git-note">无文本差异（可能仅为模式/重命名变更）。</div>
         ) : (
           <div className="agent-git-diff-body">
-            {highlighted.map((r, i) => (
-              <div
-                className={`agent-git-row ${r.type}`}
-                key={i}
-                title="跳转到源文件此行"
-                onClick={() => onOpen(file.path, r.newLine ?? r.oldLine)}
-              >
-                <span className="agent-git-ln">{r.oldLine ?? ''}</span>
-                <span className="agent-git-ln">{r.newLine ?? ''}</span>
-                <span className="agent-git-sign">{r.type === 'add' ? '+' : r.type === 'del' ? '−' : ' '}</span>
-                <span className="agent-git-code">{renderCodeWithHighlights(r.text, r.highlights)}</span>
-              </div>
-            ))}
-            {hidden > 0 && (
-              <button className="agent-git-more" onClick={() => setShowAll(true)}>展开剩余 {hidden} 行</button>
-            )}
-            {showAll && rows.length > MAX_ROWS && (
-              <button className="agent-git-more" onClick={() => setShowAll(false)}>收起</button>
-            )}
+            {blocks.map((b, bi) => {
+              if (b.kind === 'hunk') {
+                return b.rows.map((r, i) => (
+                  <div
+                    className={`agent-git-row ${r.type}`}
+                    key={`h-${bi}-${i}`}
+                    title="跳转到源文件此行"
+                    onClick={() => onOpen(file.path, r.newLine ?? r.oldLine)}
+                  >
+                    <span className="agent-git-ln">{r.oldLine ?? ''}</span>
+                    <span className="agent-git-ln">{r.newLine ?? ''}</span>
+                    <span className="agent-git-sign">{r.type === 'add' ? '+' : r.type === 'del' ? '−' : ' '}</span>
+                    <span className="agent-git-code">{renderCodeWithHighlights(r.text, r.highlights)}</span>
+                  </div>
+                ))
+              }
+              // 未改动间隔：<10 行不显示折叠提示（两端上下文已随相邻 hunk 展示）；
+              // ≥10 行（含第 10 行）才折叠为「N 个隐藏的行」，展开后显示行号区间。
+              if (b.count < 10) return null
+              const open = expandedGaps[bi]
+              if (!open) {
+                return (
+                  <button key={`g-${bi}`} className="agent-git-more agent-git-hidden-hint" onClick={() => setExpandedGaps(s => ({ ...s, [bi]: true }))}>
+                    <span className="agent-git-hint-text">{b.count} 个隐藏的行</span>
+                    <span className="agent-git-code" />
+                  </button>
+                )
+              }
+              return (
+                <React.Fragment key={`g-${bi}`}>
+                  <div className="agent-git-note">第 {b.startLine}–{b.endLine} 行（共 {b.count} 行未改动）</div>
+                  <button className="agent-git-more" onClick={() => setExpandedGaps(s => ({ ...s, [bi]: false }))}>收起</button>
+                </React.Fragment>
+              )
+            })}
           </div>
         )
       )}
@@ -313,7 +371,7 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
   const totals = useMemo(() => {
     let added = 0, removed = 0
     for (const f of [...staged, ...unstaged]) {
-      const rows = f.untracked ? contentToRows(f.content || '') : parseUnifiedDiff(f.diff)
+      const rows = f.untracked ? contentToRows(f.content || '') : parseUnifiedDiff(f.diff).rows
       for (const r of rows) { if (r.type === 'add') added++; else if (r.type === 'del') removed++ }
     }
     return { added, removed }
