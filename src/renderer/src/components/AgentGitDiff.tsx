@@ -228,6 +228,24 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
   }, [parsed, highlighted])
   // 未改动区间是否就地展开（点击提示展开该段，默认折叠为提示）
   const [expandedGaps, setExpandedGaps] = useState<Record<number, boolean>>({})
+  const [gapContent, setGapContent] = useState<Record<number, string[]>>({})
+  // 展开 gap 时从磁盘读取对应行范围的真实代码
+  useEffect(() => {
+    for (const [key, isOpen] of Object.entries(expandedGaps)) {
+      if (!isOpen || gapContent[Number(key)] !== undefined) continue
+      const bi = Number(key)
+      const block = blocks[bi]
+      if (!block || block.kind !== 'gap') continue
+      const startLine = block.startLine
+      const count = block.count
+      window.api.readFile(file.path, { offset: startLine, limit: count, raw: true }).then(r => {
+        if (r.success && r.content) {
+          setGapContent(prev => ({ ...prev, [bi]: r.content!.split('\n') }))
+        }
+      }).catch(() => {})
+    }
+  }, [expandedGaps, blocks, file.path, gapContent])
+
   const dir = dirName(file.path)
   const { Icon: FileIcon, color: fileColor } = fileMeta(file.path)
   const [copied, setCopied] = useState(false)
@@ -308,7 +326,14 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
               }
               return (
                 <React.Fragment key={`g-${bi}`}>
-                  <div className="agent-git-note">第 {b.startLine}–{b.endLine} 行（共 {b.count} 行未改动）</div>
+                  {gapContent[bi] ? gapContent[bi]!.map((line, li) => (
+                    <div className="agent-git-row" key={`gl-${bi}-${li}`}>
+                      <span className="agent-git-ln">{b.startLine + li}</span>
+                      <span className="agent-git-ln" />
+                      <span className="agent-git-sign"> </span>
+                      <span className="agent-git-code">{line}</span>
+                    </div>
+                  )) : <div className="agent-git-note">加载中…</div>}
                   <button className="agent-git-more" onClick={() => setExpandedGaps(s => ({ ...s, [bi]: false }))}>收起</button>
                 </React.Fragment>
               )

@@ -2449,7 +2449,11 @@ export default function AgentCodeView() {
   // Persist to store on every change（跳过纯占位项目，防止干扰 seededRef 逻辑）
   useEffect(() => {
     const hasRealContent = projects.some(p => p.sessions.length > 0 || p.workspaceDir)
-    if (hasRealContent) setAgentProjects(projects)
+    if (hasRealContent) {
+      setAgentProjects(projects)
+    } else {
+      setAgentProjects([])
+    }
   }, [projects, setAgentProjects])
 
   // 应用启动后，store 从磁盘载入历史项目时，把本地状态同步为已持久化的内容（仅一次）

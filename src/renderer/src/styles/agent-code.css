@@ -6517,12 +6517,11 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 34px;
-  min-height: 34px;
-  padding: 0 10px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   flex-shrink: 0;
+  box-sizing: border-box;
 }
 
 .agent-git-title {
@@ -6531,16 +6530,20 @@
   gap: 5px;
   font-size: 12px;
   font-weight: 600;
+  line-height: 0;
   color: var(--text);
 }
 
 .agent-git-summary {
+  display: inline-flex;
+  align-items: center;
   font-size: 11px;
   color: var(--text-muted);
 }
 
 .agent-git-total-stat {
   display: inline-flex;
+  align-items: center;
   gap: 6px;
   margin-left: 8px;
   font-variant-numeric: tabular-nums;
@@ -6761,7 +6764,7 @@
   flex: 1;
   min-width: 0;
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
   border: none;
   background: transparent;
@@ -6780,6 +6783,8 @@
   font-weight: 500;
   white-space: nowrap;
   flex-shrink: 0;
+  position: relative;
+  top: -1px;
 }
 
 .agent-git-file-dir {

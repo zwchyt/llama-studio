@@ -6810,8 +6810,8 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('save-agent-projects', async (_e, projects: AgentProject[], opts?: { gcScope?: string[] }): Promise<{ success: boolean; error?: string }> => {
     try {
       ensureAgentProjectsDir()
-      // 没有任何含会话的项目 → 跳过落盘和 GC，防止误删磁盘数据
-      if (!projects || projects.length === 0 || projects.every(p => !p.sessions || p.sessions.length === 0)) {
+      // 空数组需要继续执行 GC 以清理已删除项目的残留会话文件
+      if (!projects) {
         return { success: true }
       }
       const liveIds = new Set<string>()

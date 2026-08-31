@@ -101,8 +101,8 @@ function markDirty(projects: AgentProject[]): void {
 }
 function scheduleSaveAgentProjects(p: AgentProject[]): void {
   if (saveAgentProjectsTimer) clearTimeout(saveAgentProjectsTimer)
-  // 空占位项目（无会话、无工作目录）不落盘，避免 IPC GC 误删磁盘已有会话文件
-  if (p.length === 0 || p.every(proj => proj.sessions.length === 0 && !proj.workspaceDir)) return
+  // 空占位项目（无会话、无工作目录）不落盘，但空数组需要落盘以触发 GC 清理已删除项目的残留文件
+  if (p.length > 0 && p.every(proj => proj.sessions.length === 0 && !proj.workspaceDir)) return
   if (useStore.getState().agentPhase != null) {
     // 生成中：只记最新 pending，不写盘（等流式结束统一补存）
     pendingProjects = p

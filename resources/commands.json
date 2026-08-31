@@ -49,9 +49,7 @@
       "name": "内存与缓存",
       "icon": "Database",
       "commands": [
-        { "arg": "--mlock", "label": "Memory Lock", "description": "强制系统将模型保留在 RAM 中（禁止交换到磁盘）", "type": "boolean", "default": false, "env": "LLAMA_ARG_MLOCK" },
-        { "arg": "--no-mmap", "label": "No Memory Map", "description": "禁用内存映射（mmap 默认开启，加载更快；勾选后改为全量读入内存）", "type": "boolean", "default": false, "env": "LLAMA_ARG_NO_MMAP" },
-        { "arg": "--direct-io", "label": "Direct I/O", "description": "绕过系统文件缓存直接读写磁盘", "type": "boolean", "default": false, "env": "LLAMA_ARG_DIO" },
+        { "arg": "--load-mode", "short": "-lm", "label": "Load Mode", "description": "模型加载模式（替换已废弃的 --mlock/--no-mmap/--direct-io）：auto=自动、none=无特殊、mmap=内存映射、mlock=锁内存、mmap+mlock=映射+锁内存、dio=DirectIO", "type": "select", "options": ["auto", "none", "mmap", "mlock", "mmap+mlock", "dio"], "default": "auto", "env": "LLAMA_ARG_LOAD_MODE" },
         { "arg": "--no-host", "label": "No Host Buffer", "description": "绕过宿主缓冲区，允许使用额外缓冲区以减少内存拷贝", "type": "boolean", "default": false, "env": "LLAMA_ARG_NO_HOST" },
         { "arg": "--cache-ram", "label": "Cache RAM (MiB)", "description": "KV 缓存内存上限（-1 = 无限制，0 = 禁用）", "type": "number", "default": 8192, "min": -1, "max": 1048576, "env": "LLAMA_ARG_CACHE_RAM" },
         { "arg": "--cache-prompt", "label": "Prompt Cache", "description": "启用提示缓存，重复 prompt 时大幅加速", "type": "boolean", "default": true, "env": "LLAMA_ARG_CACHE_PROMPT" },
@@ -73,7 +71,9 @@
         { "arg": "--fit-ctx", "short": "-fitc", "label": "Fit Minimum Context", "description": "自动显存适配时允许缩小到的最小上下文长度", "type": "number", "default": 4096, "min": 128, "max": 131072, "env": "LLAMA_ARG_FIT_CTX" },
         { "arg": "--cpu-moe", "short": "-cmoe", "label": "CPU MoE", "description": "将所有 MoE 权重保留在 CPU 中", "type": "boolean", "default": false, "env": "LLAMA_ARG_CPU_MOE" },
         { "arg": "--n-cpu-moe", "label": "CPU MoE Layers", "description": "将前 N 层的 MoE 专家权重保留在 CPU 中（单个数字）", "type": "string", "placeholder": "6", "env": "LLAMA_ARG_N_CPU_MOE" },
-        { "arg": "--op-offload", "label": "Operation Offload", "description": "将宿主张量操作卸载到设备", "type": "boolean", "default": true, "env": "LLAMA_ARG_OP_OFFLOAD" }
+        { "arg": "--op-offload", "label": "Operation Offload", "description": "将宿主张量操作卸载到设备", "type": "boolean", "default": true, "env": "LLAMA_ARG_OP_OFFLOAD" },
+        { "arg": "--n-cpu-ffn", "short": "-ncffn", "label": "CPU FFN Layers", "description": "将前 N 层的稠密 FFN 权重保留在 CPU（显存不足时；MoE 用 --n-cpu-moe）", "type": "string", "placeholder": "6", "env": "LLAMA_ARG_N_CPU_FFN" },
+        { "arg": "--lazy-mode", "short": "-lzm", "label": "Lazy Tensor Mode", "description": "按需从磁盘读取大张量以节省内存（auto=大于4GiB时启用；on=始终、off=常驻）", "type": "select", "options": ["auto", "on", "off"], "default": "auto", "env": "LLAMA_ARG_LAZY_MODE" }
       ]
     },
 
