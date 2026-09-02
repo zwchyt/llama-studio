@@ -67,6 +67,7 @@ export default function EnginesView() {
   // stable-diffusion.cpp CUDA 运行时下载状态（cudart 包独立通道）
   const [sdCudartBusy, setSdCudartBusy] = useState(false)
   const [sdCudartPercent, setSdCudartPercent] = useState(0)
+  const [sdCudartInstalled, setSdCudartInstalled] = useState<{ installed: boolean; found?: string[]; missing?: string[] } | null>(null)
 
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const deletePopoverRef = useRef<HTMLDivElement>(null)
@@ -95,6 +96,14 @@ export default function EnginesView() {
     window.api.onSdCudartProgress((d) => { setSdCudartPercent(d.percent ?? 0) })
     return () => window.api.removeSdCudartProgressListener()
   }, [])
+
+  useEffect(() => {
+    const sdBackend = backends.find(b => b.kind === 'sdcpp')
+    if (!sdBackend) { setSdCudartInstalled(null); return }
+    window.api.checkSdCudartInstalled(sdBackend.name).then(res => {
+      if (res) setSdCudartInstalled({ installed: res.installed, found: res.found, missing: res.missing })
+    }).catch(() => setSdCudartInstalled(null))
+  }, [backends])
 
   useEffect(() => {
     if (releaseInfo?.assets?.length && !selectedAssetUrl) {
@@ -223,7 +232,11 @@ export default function EnginesView() {
     }), '下载 CUDA 运行时失败')
     setSdCudartBusy(false)
     if (res && res.success) {
-      notify(`CUDA 运行时已安装（${(res.installed || []).length} 个 dll），重启模板后生效`, 'success')
+      const verified = res.verified ? '验证通过' : '验证失败'
+      const dllInfo = res.found?.length ? `（${res.found.join(', ')}）` : ''
+      notify(`CUDA 运行时已安装 ${verified}${dllInfo}，重启模板后生效`, 'success')
+      const updated = await safeCall(() => window.api.checkSdCudartInstalled(sdBackend.name))
+      if (updated) setSdCudartInstalled({ installed: updated.installed, found: updated.found, missing: updated.missing })
     } else if (res && !res.success) {
       notify(`安装失败：${res.error}`, 'error')
     }
@@ -543,18 +556,30 @@ export default function EnginesView() {
                 const asset = releaseInfo?.cudartAsset
                 if (!sdBackend) return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>请先安装 stable-diffusion.cpp 引擎。</div>
                 if (!asset) return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未检测到 CUDA 运行时发布包（此包仅 Windows 提供）。</div>
+                const cudartStatus = sdCudartInstalled
                 return (
-                  <div className="flex items-center gap-2 flex-wrap" style={{ width: '100%', marginTop: 2 }}>
+                  <div className="flex flex-col gap-2" style={{ width: '100%', marginTop: 2 }}>
                     <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{asset.name}（约 {(asset.size / 1024 / 1024).toFixed(0)}MB）</span>
-                    {sdCudartBusy ? (
-                      <button className="btn btn-secondary btn-sm" disabled>
-                        <Loader2 size={14} className="spin" /> 下载安装中... {sdCudartPercent}%
-                      </button>
-                    ) : (
-                      <button className="btn btn-secondary btn-sm" onClick={handleInstallSdCudart}>
-                        <Download size={13} /> 下载并安装 CUDA 运行时
-                      </button>
+                    {cudartStatus && (
+                      <span className="text-sm" style={{ color: cudartStatus.installed ? 'var(--success)' : 'var(--text-muted)' }}>
+                        {cudartStatus.installed
+                          ? `✓ CUDA 运行时已就绪（${cudartStatus.found?.join(', ')}）`
+                          : `未安装${cudartStatus.missing?.length ? '，缺少 ' + cudartStatus.missing.join(', ') : ''}`}
+                      </span>
                     )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {sdCudartBusy ? (
+                        <button className="btn btn-secondary btn-sm" disabled>
+                          <Loader2 size={14} className="spin" /> 下载安装中... {sdCudartPercent}%
+                        </button>
+                      ) : cudartStatus?.installed ? (
+                        <button className="btn btn-secondary btn-sm" disabled>CUDA 运行时已安装</button>
+                      ) : (
+                        <button className="btn btn-secondary btn-sm" onClick={handleInstallSdCudart}>
+                          <Download size={13} /> 下载并安装 CUDA 运行时
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )
               })()}

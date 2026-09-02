@@ -42,7 +42,7 @@ import './styles/titlebar.css'
   import { buildDefaultTemplate } from './utils/defaultTemplate'
 import { writeToTerminal } from './utils/terminalRegistry'
 import { useTerminalStore } from './store/terminalStore'
-import type { Template, ModelMetrics } from '../../shared/types'
+import type { Template, ModelMetrics, ReleaseInfo } from '../../shared/types'
 
 const searchParams = new URLSearchParams(window.location.search)
 const initChatUrl = searchParams.get('chat_url')
@@ -180,21 +180,42 @@ function AppMain() {
     // Stage 3: Low priority — defer to next microtask so it overlaps with UI render
     queueMicrotask(() => { checkUpdates() })
     queueMicrotask(() => { checkAppUpdate() })
-    // 启动 10s 后自动检测四个引擎（llama.cpp / TensorSharp / TurboQuant / BeeLlama）
-    // 是否有新版本，结果写入 store 供设置页各下载区块直接展示（不再依赖手动点击检查）
-    const engineCheckTimer = window.setTimeout(() => {
-      Promise.allSettled(Object.values(ENGINE_REPOS).map(async (repo) => [repo, await window.api.checkUpdates(repo)] as const))
-        .then(results => {
-          for (const r of results) {
-            if (r.status === 'fulfilled' && r.value[1]) {
-              useStore.getState().setEngineRelease(r.value[0], r.value[1])
-              // llama.cpp 同步更新旧版 releaseInfo 入口，保持顶部更新横幅行为一致
-              if (r.value[0] === ENGINE_REPOS.llamacpp) useStore.getState().setReleaseInfo(r.value[1])
+    const ENGINE_RELEASE_CACHE_TTL = 12 * 60 * 60 * 1000
+    let engineCheckTimer: ReturnType<typeof window.setTimeout> | null = null
+    const checkEngineReleasesFromNetwork = () => {
+      if (engineCheckTimer) return
+      engineCheckTimer = window.setTimeout(() => {
+        engineCheckTimer = null
+        Promise.allSettled(Object.values(ENGINE_REPOS).map(async (repo) => [repo, await window.api.checkUpdates(repo)] as const))
+          .then(results => {
+            const cache: Record<string, ReleaseInfo> = {}
+            const now = Date.now()
+            for (const r of results) {
+              if (r.status === 'fulfilled' && r.value[1]) {
+                cache[r.value[0]] = r.value[1]
+                useStore.getState().setEngineRelease(r.value[0], r.value[1])
+                if (r.value[0] === ENGINE_REPOS.llamacpp) useStore.getState().setReleaseInfo(r.value[1])
+              }
             }
+            window.api.setEngineReleasesCache(Object.keys(cache).length > 0 ? cache : null, now).catch(() => {})
+          })
+          .catch(() => {})
+      }, 30_000)
+    }
+    const applyEngineReleasesCache = async () => {
+      try {
+        const { cache, checkedAt } = await window.api.getEngineReleasesCache()
+        if (cache && checkedAt && Date.now() - checkedAt < ENGINE_RELEASE_CACHE_TTL) {
+          for (const [repo, info] of Object.entries(cache)) {
+            useStore.getState().setEngineRelease(repo, info)
+            if (repo === ENGINE_REPOS.llamacpp) useStore.getState().setReleaseInfo(info)
           }
-        })
-        .catch(() => {})
-    }, 30_000)
+          return
+        }
+      } catch { /* ignore */ }
+      checkEngineReleasesFromNetwork()
+    }
+    applyEngineReleasesCache()
     queueMicrotask(async () => {
       try {
         const agents = await window.api.listGlobalAgents() as AgentStatus[]
@@ -232,10 +253,21 @@ function AppMain() {
       }
     })
     return () => {
-      window.clearTimeout(engineCheckTimer)
+      if (engineCheckTimer) window.clearTimeout(engineCheckTimer)
       window.api.removeModelErrorListener()
       window.api.removeModelDiagnosisListener()
     }
+  }, [])
+
+  // 引擎发布信息变化时自动写回缓存（手动检查或下载后复查触发）
+  const syncEngineCache = async (releases: Record<string, ReleaseInfo | null>) => {
+    const now = Date.now()
+    const filtered = Object.fromEntries(Object.entries(releases).filter(([, v]) => v !== null)) as Record<string, ReleaseInfo>
+    await window.api.setEngineReleasesCache(Object.keys(filtered).length > 0 ? filtered : null, now).catch(() => {})
+  }
+  useEffect(() => {
+    const unsub = useStore.subscribe((s) => { syncEngineCache(s.engineReleases) })
+    return unsub
   }, [])
 
   useEffect(() => {

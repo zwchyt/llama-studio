@@ -72,7 +72,8 @@ interface LlamaCppApi {
   removeModelDiagnosisListener: () => void
   checkUpdates: (repo?: string) => Promise<ReleaseInfo>
   downloadRelease: (opts: { url: string; version: string; assetName: string; digest?: string }) => Promise<{ success: boolean; path?: string; cancelled?: boolean; paused?: boolean; error?: string }>
-  installSdCudart: (opts: { url: string; assetName: string; backendName: string; digest?: string }) => Promise<{ success: boolean; installed?: string[]; error?: string }>
+  installSdCudart: (opts: { url: string; assetName: string; backendName: string; digest?: string }) => Promise<{ success: boolean; installed?: string[]; verified?: boolean; found?: string[]; missing?: string[]; error?: string }>
+  checkSdCudartInstalled: (backendName: string) => Promise<{ installed: boolean; found?: string[]; missing?: string[] }>
   onSdCudartProgress: (cb: (data: { phase: string; percent: number; received?: number; total?: number; speed?: number }) => void) => void
   removeSdCudartProgressListener: () => void
   cancelBackendDownload: () => Promise<{ success: boolean }>
@@ -80,6 +81,8 @@ interface LlamaCppApi {
   resumeBackendDownload: () => Promise<{ success: boolean; path?: string; cancelled?: boolean; paused?: boolean; error?: string }>
   onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> }) => void) => void
   removeDownloadListener: () => void
+  getEngineReleasesCache: () => Promise<{ cache: Record<string, ReleaseInfo> | null; checkedAt: number | null }>
+  setEngineReleasesCache: (cache: Record<string, ReleaseInfo> | null, checkedAt: number | null) => Promise<{ success: boolean }>
   // ── 应用自身更新 ──
   checkAppUpdate: () => Promise<AppUpdateInfo>
   downloadAppUpdate: (opts: { url: string; assetName: string; digest?: string }) => Promise<{ success: boolean; path?: string; error?: string }>

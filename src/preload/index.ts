@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { ThinkingLevel } from '../shared/types'
+import type { ThinkingLevel, ReleaseInfo } from '../shared/types'
 
 const fullApi = {
   printToPDF: (html: string) => ipcRenderer.invoke('print-to-pdf', html),
@@ -50,6 +50,7 @@ const fullApi = {
   checkUpdates: (repo?: string) => ipcRenderer.invoke('check-updates', repo),
   downloadRelease: (opts: object) => ipcRenderer.invoke('download-release', opts),
   installSdCudart: (opts: { url: string; assetName: string; backendName: string; digest?: string }) => ipcRenderer.invoke('install-sd-cudart', opts),
+  checkSdCudartInstalled: (backendName: string) => ipcRenderer.invoke('check-sd-cudart-installed', backendName),
   onSdCudartProgress: (cb: (data: { phase: string; percent: number; received?: number; total?: number; speed?: number }) => void) => {
     ipcRenderer.removeAllListeners('sd-cudart-progress')
     ipcRenderer.on('sd-cudart-progress', (_e, data) => cb(data))
@@ -63,6 +64,8 @@ const fullApi = {
     ipcRenderer.on('download-progress', (_event, data) => callback(data))
   },
   removeDownloadListener: () => ipcRenderer.removeAllListeners('download-progress'),
+  getEngineReleasesCache: () => ipcRenderer.invoke('get-engine-releases-cache'),
+  setEngineReleasesCache: (cache: Record<string, ReleaseInfo> | null, checkedAt: number | null) => ipcRenderer.invoke('set-engine-releases-cache', cache, checkedAt),
   // ── 应用自身更新 ──
   checkAppUpdate: () => ipcRenderer.invoke('check-app-update'),
   downloadAppUpdate: (opts: { url: string; assetName: string; digest?: string }) => ipcRenderer.invoke('download-app-update', opts),

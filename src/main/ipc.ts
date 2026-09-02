@@ -17,7 +17,7 @@ import http from 'http'
 import { app } from 'electron'
 import { randomUUID, createHash } from 'crypto'
 import type * as ptyNs from 'node-pty'
-import type { AgentProject, AgentSession, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus, EngineKind } from '../shared/types'
+import type { AgentProject, AgentSession, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus, EngineKind, ReleaseInfo } from '../shared/types'
 import { registerCodeMapIpc, disposeCodeMaps } from './services/codeMapService'
 import { registerRetrievalIpc } from './services/retrievalService'
 import { registerMemoryStoreIpc } from './services/memoryStore'
@@ -410,7 +410,7 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
     return Promise.resolve()
   }
 }
-interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; ttsModelFolders: string[]; asrModelFolders: string[]; ocrModelFolders: string[]; sdModelFolders: string[]; sdVaeFolders: string[]; sdLlmFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean;       notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; slashCommands?: unknown }
+interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; ttsModelFolders: string[]; asrModelFolders: string[]; ocrModelFolders: string[]; sdModelFolders: string[]; sdVaeFolders: string[]; sdLlmFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; slashCommands?: unknown; engineReleasesCache?: Record<string, ReleaseInfo>; engineReleasesCheckedAt?: number }
 const UI_KEYS = new Set(['splashEnabled', 'soundEnabled', 'notificationSound', 'chatSidebarCollapsed', 'agentToolCardsExpanded', 'ttsEngine', 'ttsModelPath', 'ttsVocoderPath', 'slashCommands'])
 let settingsCache: AppSettings | null = null
 async function loadSettings(): Promise<AppSettings> {
@@ -435,10 +435,12 @@ async function loadSettings(): Promise<AppSettings> {
       agentToolCardsExpanded: data.agentToolCardsExpanded !== undefined ? data.agentToolCardsExpanded : true,
       ttsEngine: typeof data.ttsEngine === 'string' ? data.ttsEngine : 'system',
       ttsModelPath: typeof data.ttsModelPath === 'string' ? data.ttsModelPath : '',
-      ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : ''
+      ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : '',
+      engineReleasesCache: typeof data.engineReleasesCache === 'object' && data.engineReleasesCache !== null ? data.engineReleasesCache : undefined,
+      engineReleasesCheckedAt: typeof data.engineReleasesCheckedAt === 'number' ? data.engineReleasesCheckedAt : undefined
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true, engineReleasesCache: undefined, engineReleasesCheckedAt: undefined }; return settingsCache }
 }
 async function saveSettings(s: AppSettings): Promise<void> {
   await fsPromises.writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2))
@@ -466,10 +468,12 @@ function loadSettingsSync(): AppSettings {
       agentToolCardsExpanded: data.agentToolCardsExpanded !== undefined ? data.agentToolCardsExpanded : true,
       ttsEngine: typeof data.ttsEngine === 'string' ? data.ttsEngine : 'system',
       ttsModelPath: typeof data.ttsModelPath === 'string' ? data.ttsModelPath : '',
-      ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : ''
+      ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : '',
+      engineReleasesCache: typeof data.engineReleasesCache === 'object' && data.engineReleasesCache !== null ? data.engineReleasesCache : undefined,
+      engineReleasesCheckedAt: typeof data.engineReleasesCheckedAt === 'number' ? data.engineReleasesCheckedAt : undefined
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true, engineReleasesCache: undefined, engineReleasesCheckedAt: undefined }; return settingsCache }
 }
 interface RunningProcess { proc: ChildProcess; port: number; kind: EngineKind }
 const runningProcesses = new Map<string, RunningProcess>()
@@ -2977,7 +2981,7 @@ export function registerIpcHandlers(): void {
   // ── 共享的后端发布版本检查（llama.cpp 与 TensorSharp 通用，均直连 GitHub）──
   // repo 形如「owner/name」，由渲染进程显式传入；缺省为 llama.cpp。
   async function checkBackendRelease(repo: string) {
-    const release = await fetchGithubJsonCached(`https://api.github.com/repos/${repo}/releases/latest`) as any
+    let release = await fetchGithubJsonCached(`https://api.github.com/repos/${repo}/releases/latest`) as any
     if (!release || !release.assets) return { error: 'GitHub 返回数据无效' }
     const isMac = process.platform === 'darwin'
     const isLinux = process.platform === 'linux'
@@ -2985,15 +2989,13 @@ export function registerIpcHandlers(): void {
     const isTs = repo.toLowerCase().includes('tensorsharp')
     const isSdcpp = repo.toLowerCase().includes('stable-diffusion.cpp')
     const isAudioCpp = repo.toLowerCase().includes('audio.cpp')
-    const platformAssets = release.assets.filter((a: any) => {
+    // 平台资产筛选器（抽成函数，供 latest 和回退 releases 共用）
+    const filterPlatformAssets = (r: any) => r.assets.filter((a: any) => {
       const n = a.name.toLowerCase()
       if (n.startsWith('cudart-') || n.includes('cuda-runtime')) return false
-      // TensorSharp 的发布页同时包含 cli 与 server 两种资产，本项目只使用推理服务器
       if (isTs && !n.includes('tensorsharp-server')) return false
-      // stable-diffusion.cpp 的发布资产以 sd- 前缀命名（sd-<tag>-bin-win-… / -Darwin-… / -Linux-…）
       if (isSdcpp && !n.startsWith('sd-')) return false
       if (isMac) {
-        // sd 的 macOS 资产是 zip（Darwin/macOS 命名），audio.cpp 的 macOS 资产同为 zip，llama.cpp 系列是 tar.gz
         if (isSdcpp || isAudioCpp) {
           if (!n.endsWith('.zip')) return false
           if (!n.includes('darwin') && !n.includes('macos')) return false
@@ -3003,7 +3005,6 @@ export function registerIpcHandlers(): void {
           return true
         }
         if (!n.endsWith('.tar.gz')) return false
-        // llama.cpp 资产名用 macos，TensorSharp 用 osx
         if (isTs) {
           if (!n.includes('osx')) return false
           if (arch === 'x64' && n.includes('arm64')) return false
@@ -3011,11 +3012,10 @@ export function registerIpcHandlers(): void {
         }
         if (!n.includes('macos')) return false
         if (arch === 'arm64' && !n.includes('arm64')) return false
-        if (arch === 'x64' && !n.includes('x64')) return false
+        if (arch === 'x64' && n.includes('arm64')) return false
         return true
       }
       if (isLinux) {
-        // sd 的 Linux 资产是 zip（Linux-Ubuntu-…-x86_64 命名），audio.cpp 同，llama.cpp 系列是 tar.gz
         if (isSdcpp || isAudioCpp) {
           if (!n.endsWith('.zip')) return false
           if (!n.includes('linux')) return false
@@ -3024,7 +3024,6 @@ export function registerIpcHandlers(): void {
           return true
         }
         if (!n.endsWith('.tar.gz')) return false
-        // llama.cpp 资产名带发行版标识（ubuntu 等），Tensor 用 linux-x64
         if (isTs) return n.includes('linux-x64') && !n.includes('arm64')
         if (!n.includes('ubuntu')) return false
         if (arch === 'arm64' && !n.includes('arm64')) return false
@@ -3037,6 +3036,19 @@ export function registerIpcHandlers(): void {
       if (arch === 'arm64' && n.includes('x64')) return false
       return true
     })
+    let platformAssets = filterPlatformAssets(release)
+    // 兜底：若 latest release 无当前平台资产（如 llama.cpp 的 v0.3.0 仅有源码标记无包），
+    // 回退到 releases 列表找最新一个含有平台资产的可下载 release
+    if (platformAssets.length === 0 && !isTs && !isSdcpp && !isAudioCpp) {
+      const allReleases = await fetchGithubJsonCached(`https://api.github.com/repos/${repo}/releases?per_page=20`) as any[]
+      if (Array.isArray(allReleases)) {
+        for (const r of allReleases) {
+          if (!r || !r.assets) continue
+          platformAssets = filterPlatformAssets(r)
+          if (platformAssets.length > 0) { release = r; break }
+        }
+      }
+    }
     // 版本号解析（版本目录名 = tagName + '-' + 资产名，版本号位于开头）：
     // 点分版本：v3.1.2.0 → [3,1,2,0]、v0.4.2 → [0,4,2]、tqp-v0.3.0-… → [0,3,0]；
     // 构建号：b4379 → [4379]、4379 → [4379]；解析失败返回 null。
@@ -3077,8 +3089,8 @@ export function registerIpcHandlers(): void {
           : dn.includes('beellama') ? 'beellama'
           // sd 版本目录形如 master-813-bfbef5b-sd-master-bfbef5b-bin-win-cpu-x64
           : dn.includes('sd-master') || dn.includes('stable-diffusion') ? 'sdcpp'
-          // audio.cpp 版本目录形如 audiocpp-windows-cuda-portable-<hash>
-          : dn.includes('audiocpp') ? 'audiocpp'
+          // audio.cpp 版本目录形如 audiocpp-windows-cuda-portable-<hash> 或 audio-v0.7.1-bin-windows-x64-cuda13.3
+          : dn.includes('audiocpp') || dn.includes('audio-') ? 'audiocpp'
           : 'llamacpp'
         if (dirKind !== repoKind) continue
         // 兜底：目录名包含完整 tagName（历史命名差异 / 无法解析版本号的旧目录）
@@ -3384,10 +3396,23 @@ export function registerIpcHandlers(): void {
     }
   }
   ipcMain.handle('download-release', (event, opts: { url: string; version: string; assetName: string; digest?: string }) => downloadBackendRelease(event, opts))
+  // 检查 stable-diffusion.cpp 的 CUDA 运行时是否已安装（通过关键 dll 文件存在性判断）
+  ipcMain.handle('check-sd-cudart-installed', async (_event, backendName: string) => {
+    const targetDir = join(BACKEND_DIR, String(backendName || ''))
+    if (!isSafePath(BACKEND_DIR, targetDir) || !existsSync(targetDir)) return { installed: false }
+    const required = ['cudart64_12.dll', 'cublas64_12.dll', 'cublasLt64_12.dll']
+    const found: string[] = []
+    const missing: string[] = []
+    for (const n of required) {
+      if (existsSync(join(targetDir, n))) { found.push(n) } else { missing.push(n) }
+    }
+    return { installed: found.length === required.length, found, missing }
+  })
+
   // --- install-sd-cudart: 下载 stable-diffusion.cpp 的 CUDA 运行时包（cudart/cublas）并合并进已安装的引擎目录 ---
   // 主引擎包（sd-master-*-bin-win-cuda12-x64.zip）不含 CUDA 运行时，需此包补充；
   // 与主引擎不同，它不新建 backend 目录，而是把 dll 合并进已有 sd 后端目录
-  ipcMain.handle('install-sd-cudart', async (event, opts: { url: string; assetName: string; backendName: string; digest?: string }): Promise<{ success: boolean; installed?: string[]; error?: string }> => {
+  ipcMain.handle('install-sd-cudart', async (event, opts: { url: string; assetName: string; backendName: string; digest?: string }): Promise<{ success: boolean; installed?: string[]; verified?: boolean; found?: string[]; missing?: string[]; error?: string }> => {
     const targetDir = join(BACKEND_DIR, String(opts?.backendName || ''))
     if (!opts?.url || !opts?.assetName || !isSafePath(BACKEND_DIR, targetDir) || !existsSync(targetDir) ||
         !findAnyFile(targetDir, ['sd-server.exe', 'sd-server', 'sd-cli.exe', 'sd-cli'])) {
@@ -3449,12 +3474,16 @@ export function registerIpcHandlers(): void {
         installed.push(basename(f))
       }
       if (!['cudart64_12.dll', 'cublas64_12.dll', 'cublasLt64_12.dll'].some(n => existsSync(join(targetDir, n)))) {
-        throw new Error('CUDA 运行时安装不完整：缺少 cudart64_12.dll / cublas64_12.dll / cublasLt64_12.dll')
+        const missing = ['cudart64_12.dll', 'cublas64_12.dll', 'cublasLt64_12.dll'].filter(n => !existsSync(join(targetDir, n)))
+        throw new Error(`CUDA 运行时安装不完整：缺少 ${missing.join(' / ')}`)
       }
+      const required = ['cudart64_12.dll', 'cublas64_12.dll', 'cublasLt64_12.dll']
+      const found = required.filter(n => existsSync(join(targetDir, n)))
+      const missing = required.filter(n => !existsSync(join(targetDir, n)))
       try { rmSync(stagingDir, { recursive: true, force: true }) } catch {}
       try { unlinkSync(archivePath) } catch {}
       sendP('done', 0, 0, 100)
-      return { success: true, installed }
+      return { success: true, installed, verified: missing.length === 0, found, missing }
     } catch (err) {
       try { rmSync(stagingDir, { recursive: true, force: true }) } catch {}
       try { unlinkSync(archivePath) } catch {}
@@ -4047,6 +4076,17 @@ export function registerIpcHandlers(): void {
       ;(s as any)[key] = value
       await saveSettings(s)
     }
+    return { success: true }
+  })
+  ipcMain.handle('get-engine-releases-cache', async () => {
+    const s = await loadSettings()
+    return { cache: s.engineReleasesCache ?? null, checkedAt: s.engineReleasesCheckedAt ?? null }
+  })
+  ipcMain.handle('set-engine-releases-cache', async (_e, cache: Record<string, ReleaseInfo> | null, checkedAt: number | null) => {
+    const s = await loadSettings()
+    s.engineReleasesCache = cache ?? undefined
+    s.engineReleasesCheckedAt = checkedAt ?? undefined
+    await saveSettings(s)
     return { success: true }
   })
   ipcMain.handle('get-metrics', async () => {
@@ -4919,7 +4959,6 @@ export function registerIpcHandlers(): void {
     { name: 'Claude Code',       pkg: '@anthropic/claude-code',          cmd: 'claude',      nonNpm: true, logo: './agent-logos/Claude code.png', website: 'https://claude.com/product/claude-code' },
     { name: 'Zero',              pkg: '@gitlawb/zero',                   cmd: 'zero',        logo: './agent-logos/OpenClaude.png',    website: 'https://zero.gitlawb.com/' },
     { name: 'Grok',              pkg: 'grok',                            cmd: 'grok',        nonNpm: true, logo: './agent-logos/Grok.png',        website: 'https://x.ai/cli' },
-    { name: 'OMP',               pkg: '@oh-my-pi/pi-coding-agent',       cmd: 'omp',         nonNpm: true, logo: './agent-logos/omp.jpg',         website: 'https://omp.sh/' },
     { name: 'Claurst',           pkg: 'claurst',                         cmd: 'claurst',     logo: './agent-logos/Caurst.png',        website: 'https://claurst.kuber.studio/' },
     { name: 'Codeep',            pkg: 'codeep',                          cmd: 'codeep',      logo: './agent-logos/Codeep.png',        website: 'https://codeep.dev/' },
     { name: 'DeepSeek Code',     pkg: '@vegamo/deepcode-cli',            cmd: 'deepcode',    logo: './agent-logos/DeepSeek Code.png', website: 'https://deepcode.vegamo.cn/' },
@@ -4933,7 +4972,6 @@ export function registerIpcHandlers(): void {
     '@moonshot-ai/kimi-code': { exe: 'npm', args: ['install', '-g', '@moonshot-ai/kimi-code@latest'] },
     '@anthropic/claude-code': { exe: 'claude', args: ['update'] },
     'grok': { exe: 'grok', args: ['update'] },
-    '@oh-my-pi/pi-coding-agent': { exe: 'powershell.exe', args: ['-Command', 'irm https://omp.sh/install.ps1 | iex'] },
   }
   // Install commands per agent — non-npm agents use custom exe/args
   const INSTALL_OVERRIDES: Record<string, { exe: string; args: string[] }> = {
@@ -4941,7 +4979,6 @@ export function registerIpcHandlers(): void {
     '@moonshot-ai/kimi-code': { exe: 'npm', args: ['install', '-g', '--ignore-scripts', '@moonshot-ai/kimi-code'] },
     '@anthropic/claude-code': { exe: 'powershell.exe', args: ['-Command', 'irm https://claude.ai/install.ps1 | iex'] },
     'grok': { exe: 'powershell.exe', args: ['-Command', 'irm https://x.ai/cli/install.ps1 | iex'] },
-    '@oh-my-pi/pi-coding-agent': { exe: 'powershell.exe', args: ['-Command', 'irm https://omp.sh/install.ps1 | iex'] },
   }
   let agentsCache: { ts: number; result: { name: string; pkg: string; cmd: string; installed: boolean; version: string | null; logo?: string }[] } | null = null
   const AGENTS_CACHE_TTL = 30000
@@ -5129,7 +5166,6 @@ export function registerIpcHandlers(): void {
     // (Keeps update detection aligned with their non-npm / ps1 install channel.)
     const GITHUB_LATEST: Record<string, string> = {
       '@anthropic/claude-code': 'anthropics/claude-code',
-      '@oh-my-pi/pi-coding-agent': 'can1357/oh-my-pi',
     }
     for (const agent of installed) {
       const repo = GITHUB_LATEST[agent.pkg]

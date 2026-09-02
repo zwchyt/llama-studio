@@ -21,7 +21,7 @@ import {
   ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon, FolderIcon, PlusIcon, TrashIcon, PencilIcon, Trash2Icon,
   UserIcon, QuoteIcon, MicIcon, CircleStopIcon, PlayIcon, EyeIcon, ClockIcon, SparklesIcon, FileTextIcon,
   RefreshCwIcon, SendIcon, XIcon, CopyIcon, CodeIcon, MessageSquarePlusIcon, CheckIcon, SaveIcon,
-  RouteIcon
+  RouteIcon, EllipsisVerticalIcon
 } from '@animateicons/react/lucide'
 import { useStore } from '../store/useStore'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
@@ -2446,6 +2446,9 @@ export default function AgentCodeView() {
     onCommit: (w) => { try { window.localStorage.setItem('agent-right-width', String(w)) } catch {} },
   })
 
+  const sidebarHandleIconRef = useRef<AniIconHandle>(null)
+  const previewHandleIconRef = useRef<AniIconHandle>(null)
+
   // Persist to store on every change（跳过纯占位项目，防止干扰 seededRef 逻辑）
   useEffect(() => {
     const hasRealContent = projects.some(p => p.sessions.length > 0 || p.workspaceDir)
@@ -2782,8 +2785,8 @@ const programmaticScrollRef = useRef(false)
   const attachBtnRef = useRef<HTMLButtonElement>(null)
   const [filePickerOpen, setFilePickerOpen] = useState(false)
   const [treeOpen, setTreeOpen] = useState(true)
-  // 右侧面板模式：files=文件树+预览 / browser=内嵌浏览器 / terminal=内嵌终端
-  const [rightPanelMode, setRightPanelMode] = useState<'files' | 'browser' | 'terminal'>('files')
+  // 右侧面板模式：files=文件树+预览 / browser=内嵌浏览器 / terminal=内嵌终端 / diff=Git变更
+  const [rightPanelMode, setRightPanelMode] = useState<'files' | 'browser' | 'terminal' | 'diff'>('files')
   // 终端面板：首次真正切换到 terminal 模式后才挂载并常驻——挂载必然发生在可见容器内
   // （xterm open 于 display:none 容器会拿到失真尺寸）；此后面板级切换只切 CSS hidden，
   // 不卸载 xterm 实例，切回时不重建、不触发 replay 回放大段 backlog（避免界面卡顿）
@@ -3056,16 +3059,12 @@ const programmaticScrollRef = useRef(false)
     }
   }, [activeProject.workspaceDir])
 
-  // 打开（或切到）Git 变更标签：确保右侧面板展开，加入特殊标签并立即刷新。
+  // 打开 Git 变更面板：切换到 diff 模式并刷新
   const openGitDiff = useCallback(() => {
     setTreeOpen(true)
     setContextModalOpen(false)
-    setRightPanelMode('files')
-    setOpenTabs(prev => prev.some(t => t.path === GIT_DIFF_TAB)
-      ? prev
-      : [...prev, { path: GIT_DIFF_TAB, name: 'Git 变更', content: null, lines: null, truncated: false, loading: false, error: null }])
-    setActiveTabPath(GIT_DIFF_TAB)
-    void refreshGitChanges()
+    setRightPanelMode('diff')
+    void refreshGitChanges(true)
   }, [refreshGitChanges])
 
   // 消息底部文件变更汇总的跳转：打开变更面板并定位到指定文件的 diff（自动展开+滚动+短暂高亮）
@@ -3076,21 +3075,26 @@ const programmaticScrollRef = useRef(false)
   }, [openGitDiff])
   const onGitFocusHandled = useCallback(() => setGitFocusPath(null), [])
 
-  // 顶栏「变更」按钮切换态：变更标签已激活时再点即关闭该标签（收起变更界面），否则打开
+  // 顶栏「变更」按钮切换态：diff 模式且展开时再点收起，否则展开并切换到 diff
   const toggleGitDiff = useCallback(() => {
-    if (activeTabPath === GIT_DIFF_TAB) closeTab(GIT_DIFF_TAB)
-    else openGitDiff()
-  }, [activeTabPath, closeTab, openGitDiff])
+    if (rightPanelMode === 'diff' && treeOpen) {
+      setRightPanelMode('files')
+    } else {
+      setRightPanelMode('diff')
+      setTreeOpen(true)
+      void refreshGitChanges(true)
+    }
+  }, [rightPanelMode, treeOpen, refreshGitChanges])
 
-  // 文件监听回调：仅当 Git 变更标签已打开时，随文件改动静默刷新变更列表（不转圈）。
+  // 文件监听回调：仅当 diff 模式打开时，随文件改动静默刷新变更列表（不转圈）。
   const onWorkspaceFilesChanged = useCallback(() => {
-    if (openTabsRef.current.some(t => t.path === GIT_DIFF_TAB)) void refreshGitChanges(true)
-  }, [refreshGitChanges])
+    if (rightPanelMode === 'diff') void refreshGitChanges(true)
+  }, [rightPanelMode, refreshGitChanges])
 
-  // 切换工作区且 Git 变更标签已打开时，静默刷新为新工作区的改动。
+  // 切换工作区且 diff 模式打开时，静默刷新为新工作区的改动。
   useEffect(() => {
-    if (openTabsRef.current.some(t => t.path === GIT_DIFF_TAB)) void refreshGitChanges(true)
-  }, [activeProject.workspaceDir, refreshGitChanges])
+    if (rightPanelMode === 'diff') void refreshGitChanges(true)
+  }, [activeProject.workspaceDir, refreshGitChanges, rightPanelMode])
 
   // 打开源文件并跳转到指定行（供 Git diff 行点击使用）。openPreview 完成后由下方 effect 滚动+高亮。
   const openPreviewAtLine = useCallback(async (absPath: string, line: number) => {
@@ -5594,7 +5598,7 @@ const programmaticScrollRef = useRef(false)
   // ── 区域：JSX 渲染（顶栏、侧边栏、聊天区、预览区、弹层） ──
   return (
     <div className={`agent-code-view ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
-      <div className="agent-code-topbar">
+      <div className="agent-code-topbar" onDoubleClick={() => { const anyOpen = sidebarOpen || treeOpen; setSidebarOpen(!anyOpen); setTreeOpen(!anyOpen); setContextModalOpen(false) }}>
         <div className="agent-code-topbar-left">
           <button className="chat-collapse-btn" onClick={() => setSidebarOpen(v => !v)} style={{ marginTop: 0, width: 28, height: 28 }}>
             {sidebarOpen ? <ChevronLeftIcon size={14} /> : <ChevronRightIcon size={14} />}
@@ -5622,7 +5626,7 @@ const programmaticScrollRef = useRef(false)
           <TopbarBtn btnRef={trajBtnRef} active={trajOpen} onClick={() => setTrajOpen(v => !v)} icon={RouteIcon}>轨迹</TopbarBtn>
           <TopbarBtn btnRef={debugBtnRef} active={debugOpen} onClick={() => setDebugOpen(v => !v)} icon={Bug}>调试</TopbarBtn>
           <TopbarBtn btnRef={memoryBtnRef} active={memoryOpen} onClick={() => setMemoryOpen(v => !v)} icon={BookOpenIcon}>记忆</TopbarBtn>
-          <TopbarBtn active={activeTabPath === GIT_DIFF_TAB} onClick={toggleGitDiff} icon={GitBranchIcon}>变更</TopbarBtn>
+          <TopbarBtn active={rightPanelMode === 'diff'} onClick={toggleGitDiff} icon={GitBranchIcon}>变更</TopbarBtn>
           <TopbarBtn active={rightPanelMode === 'browser'} onClick={() => { setRightPanelMode(m => m === 'browser' ? 'files' : 'browser'); if (!treeOpen) setTreeOpen(true) }} icon={GlobeIcon}>浏览器</TopbarBtn>
           <TopbarBtn active={rightPanelMode === 'terminal'} onClick={() => { setRightPanelMode(m => m === 'terminal' ? 'files' : 'terminal'); if (!treeOpen) setTreeOpen(true) }} icon={TerminalIcon}>终端</TopbarBtn>
           <TopbarBtn
@@ -5714,7 +5718,9 @@ const programmaticScrollRef = useRef(false)
             </div>
           </div>
         </div>
-        <div className={`agent-code-sidebar-resize-handle${sidebarResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startSidebarResize} />
+        <div className={`agent-code-sidebar-resize-handle${sidebarResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startSidebarResize} onMouseEnter={() => sidebarHandleIconRef.current?.startAnimation()} onMouseLeave={() => sidebarHandleIconRef.current?.stopAnimation()}>
+          <EllipsisVerticalIcon ref={sidebarHandleIconRef} size={16} className="nav-animate-icon agent-resize-handle-icon" />
+        </div>
 
         <div className="agent-code-chat">
             <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll} onWheel={pauseFollow} onTouchMove={pauseFollow} onMouseUp={handleMessagesMouseUp}>
@@ -6451,32 +6457,41 @@ const programmaticScrollRef = useRef(false)
             </div>
             <input ref={fileInputRef} type="file" multiple hidden onChange={handleAttachmentSelect} />
           </div>
-        </div>
+         </div>
 
-        <div
-          className={`agent-code-right-edge-handle${rightResizing ? ' agent-code-resize-handle--active' : ''}${rightPanelMode === 'files' || !treeOpen ? ' hidden' : ''}`}
-          onPointerDown={startRightResize}
-        />
-        <div className={`agent-code-right-collapser ${rightPanelMode !== 'files' ? 'panel-resizable' : ''} ${treeOpen ? '' : 'collapsed'}`}>
-          <div className={`agent-code-right-body${rightPanelMode !== 'files' ? ' tree-collapsed' : ''}`}>
-            <div className={`agent-code-tree${rightPanelMode !== 'files' ? ' hidden' : ''}`}>
-              <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={insertAtCursor} onFilesChanged={onWorkspaceFilesChanged} />
-            </div>
-            <div className={`agent-code-resize-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}${rightPanelMode !== 'files' ? ' hidden' : ''}`} onPointerDown={startPreviewResize} />
-            <div className={`agent-browser-wrap ${rightPanelMode === 'browser' ? '' : 'hidden'}`}>
-              <AgentBrowser visible={rightPanelMode === 'browser' && treeOpen} onSendToAgent={sendAnnotationsToAgent} />
-            </div>
-            {/* 内嵌终端：首次点开后常驻（含 App.tsx 终端视图条件渲染配合，
-                同一 session 的 xterm 实例任意时刻只 attach 到一个 DOM 容器）；
-                面板级 files/browser 切换仅 hidden 不卸载，xterm 不重建、不触发 replay 回放 */}
-            {terminalMounted && currentView === 'agent-code' && (
-              <div className={`agent-browser-wrap${rightPanelMode === 'terminal' ? '' : ' hidden'}`}>
-                <div className="agent-terminal">
-                  <TerminalView store={useAgentTerminalStore} />
-                </div>
-              </div>
-            )}
-            <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''} ${rightPanelMode === 'browser' || rightPanelMode === 'terminal' ? 'hidden' : ''}`}>
+          {/* 手柄与面板同包在槽内：手柄 absolute 以槽为包含块、left:0 锚定面板真实左缘，
+              不再从 body 右缘用 --agent-right-width 镜像推算（变量与面板实际宽度脱节时会脱锚漂移） */}
+          <div className={`agent-code-right-slot${rightPanelMode !== 'files' ? ' panel-resizable' : ''}`}>
+          <div
+            className={`agent-code-right-edge-handle${rightResizing ? ' agent-code-resize-handle--active' : ''}${rightPanelMode === 'files' || !treeOpen ? ' hidden' : ''}`}
+            onPointerDown={startRightResize}
+            onMouseEnter={() => previewHandleIconRef.current?.startAnimation()}
+            onMouseLeave={() => previewHandleIconRef.current?.stopAnimation()}
+          >
+            <EllipsisVerticalIcon ref={previewHandleIconRef} size={16} className="nav-animate-icon agent-resize-handle-icon" />
+          </div>
+         <div className={`agent-code-right-collapser ${rightPanelMode !== 'files' ? 'panel-resizable' : ''} ${treeOpen ? '' : 'collapsed'}`}>
+           <div className={`agent-code-right-body${rightPanelMode !== 'files' ? ' tree-collapsed' : ''}`}>
+             <div className={`agent-code-tree${rightPanelMode !== 'files' ? ' hidden' : ''}`}>
+               <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={insertAtCursor} onFilesChanged={onWorkspaceFilesChanged} />
+             </div>
+             <div className={`agent-browser-wrap ${rightPanelMode === 'browser' ? '' : 'hidden'}`}>
+               <AgentBrowser visible={rightPanelMode === 'browser' && treeOpen} onSendToAgent={sendAnnotationsToAgent} />
+             </div>
+             {/* 内嵌终端：首次点开后常驻（含 App.tsx 终端视图条件渲染配合，
+                 同一 session 的 xterm 实例任意时刻只 attach 到一个 DOM 容器）；
+                 面板级 files/browser 切换仅 hidden 不卸载，xterm 不重建、不触发 replay 回放大段 backlog（避免界面卡顿） */}
+             {terminalMounted && currentView === 'agent-code' && (
+               <div className={`agent-browser-wrap${rightPanelMode === 'terminal' ? '' : ' hidden'}`}>
+                 <div className="agent-terminal">
+                   <TerminalView store={useAgentTerminalStore} />
+                 </div>
+               </div>
+             )}
+             <div className={`agent-code-diff-wrap${rightPanelMode === 'diff' ? '' : ' hidden'}`}>
+               <AgentGitDiff data={gitChanges} loading={gitLoading} onRefresh={refreshGitChanges} onOpenFile={openFileAtLine} workspaceDir={activeProject.workspaceDir} focusPath={gitFocusPath} onFocusHandled={onGitFocusHandled} />
+             </div>
+             <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''} ${rightPanelMode === 'browser' || rightPanelMode === 'terminal' || rightPanelMode === 'diff' ? 'hidden' : ''}`}>
               <div className="agent-code-preview">
                 <div className="agent-code-preview-header">
                   <div className="agent-code-preview-tabs">
@@ -6585,9 +6600,7 @@ const programmaticScrollRef = useRef(false)
                   )
                 })()}
                 <div className="agent-code-preview-body">
-                  {activeTabPath === GIT_DIFF_TAB ? (
-                    <AgentGitDiff data={gitChanges} loading={gitLoading} onRefresh={refreshGitChanges} onOpenFile={openFileAtLine} workspaceDir={activeProject.workspaceDir} focusPath={gitFocusPath} onFocusHandled={onGitFocusHandled} />
-                  ) : !activeTab ? null
+                  {!activeTab ? null
                     : activeTab.loading ? <div className="file-tree-loading">读取中…</div>
                       : activeTab.error ? <div className="agent-code-preview-error">{activeTab.error}</div>
                         : activeTab.isImage ? (
@@ -6662,6 +6675,7 @@ const programmaticScrollRef = useRef(false)
             </div>
           </div>
         </div>
+          </div>
       </div>
 
     </div>

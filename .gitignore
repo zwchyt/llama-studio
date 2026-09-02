@@ -103,3 +103,6 @@ scripts/.test-*
 
 # Bundled node runtime (build artifact)
 
+
+# Vinv local artifacts (captures, index, reports)
+.vinv/

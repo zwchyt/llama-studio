@@ -72,6 +72,7 @@
 }
 
 .agent-code-topbar {
+  user-select: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -283,7 +284,6 @@
   flex: 1;
   display: flex;
   position: relative;
-
   overflow: hidden;
   min-height: 0;
 }
@@ -303,23 +303,29 @@
   justify-content: center;
 }
 
-.agent-code-resize-handle::before {
+.agent-code-resize-handle::after {
   content: '';
-  display: block;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  box-shadow: 0 7px 0 var(--text-muted), 0 14px 0 var(--text-muted);
-  opacity: 0.45;
-  transition: opacity .2s;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
 }
 
-.agent-code-resize-handle:hover::before,
-.agent-code-resize-handle--active::before {
+.agent-code-resize-handle::before {
+  display: none;
+}
+
+.agent-resize-handle-icon {
+  color: var(--text-muted);
+  opacity: 0.6;
+  transition: opacity .2s, color .2s;
+}
+
+.agent-code-resize-handle:hover .agent-resize-handle-icon,
+.agent-code-resize-handle--active .agent-resize-handle-icon {
   opacity: 1;
-  background: var(--accent);
-  box-shadow: 0 7px 0 var(--accent), 0 14px 0 var(--accent);
+  color: var(--accent);
 }
 
 .agent-code-sidebar-resize-handle {
@@ -329,7 +335,7 @@
   left: calc(var(--agent-sidebar-width, 200px) + 16px);
   transform: translateX(-50%);
 
-  width: 9px;
+  width: 20px;
   cursor: col-resize;
   background: transparent;
   touch-action: none;
@@ -352,67 +358,84 @@
 }
 
 .agent-code-sidebar-resize-handle::before {
-  content: '';
-  display: block;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  box-shadow: 0 7px 0 var(--text-muted), 0 14px 0 var(--text-muted);
-  opacity: 0.45;
-  transition: opacity .2s, background .2s, box-shadow .2s;
+  display: none;
 }
 
-.agent-code-sidebar-resize-handle:hover::before,
-.agent-code-sidebar-resize-handle.agent-code-resize-handle--active::before {
+.agent-code-sidebar-resize-handle:hover .agent-resize-handle-icon,
+.agent-code-sidebar-resize-handle.agent-code-resize-handle--active .agent-resize-handle-icon {
   opacity: 1;
-  background: var(--accent);
-  box-shadow: 0 7px 0 var(--accent), 0 14px 0 var(--accent);
+  color: var(--accent);
 }
 
-/* 浏览器 / 终端模式：右侧面板左边缘的可拖拽调宽手柄（聊天区 ↔ 右侧面板） */
-.agent-code-right-edge-handle {
-  width: 9px;
+/* 浏览器 / 终端模式：右侧面板左边缘的可拖拽调宽手柄（聊天区 ↔ 右侧面板）。
+   手柄与面板同包在 .agent-code-right-slot 内，left:0 + translateX(-50%) 锚定面板真实
+   左缘（槽左缘 = 面板 border-box 左缘 − 8px margin，手柄中心与旧 right: var+16px 推算
+   逐像素一致）；不再从 body 右缘镜像推算宽度——窗口窄于内容导致面板被裁、或变量与
+   面板实际宽度脱节时，旧算法会让手柄脱锚漂向聊天区甚至越过 body 左边界 */
+.agent-code-right-slot {
+  position: relative;
   flex-shrink: 0;
-  align-self: stretch;
+  display: flex;
+}
+
+/* 可拖宽模式：行内其余成员均 shrink:0、聊天区有 300px 下限，空间不足时由槽吸收差额，
+   配合面板 max-width 封顶，避免整行溢出被 body 右缘切断（文件树模式保持不收缩） */
+.agent-code-right-slot.panel-resizable {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.agent-code-right-edge-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  transform: translateX(-50%);
+
+  width: 20px;
   cursor: col-resize;
   background: transparent;
   touch-action: none;
-  transition: background .2s;
-  position: relative;
-  z-index: var(--z-above);
+  transition: background .15s, opacity .2s ease;
+  z-index: calc(var(--z-above) + 1);
   display: flex;
   align-items: center;
   justify-content: center;
+
+  opacity: 1;
+}
+
+.agent-code-right-edge-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
 }
 
 .agent-code-right-edge-handle::before {
-  content: '';
-  display: block;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  box-shadow: 0 7px 0 var(--text-muted), 0 14px 0 var(--text-muted);
-  opacity: 0.45;
-  transition: opacity .2s;
+  display: none;
 }
 
-.agent-code-right-edge-handle:hover::before,
-.agent-code-right-edge-handle.agent-code-resize-handle--active::before {
+/* 悬停/拖拽中高亮三点图标：与侧栏手柄（.agent-code-sidebar-resize-handle:hover）同款，
+   此前缺失导致右侧手柄悬停时图标不变色 */
+.agent-code-right-edge-handle:hover .agent-resize-handle-icon,
+.agent-code-right-edge-handle.agent-code-resize-handle--active .agent-resize-handle-icon {
   opacity: 1;
-  background: var(--accent);
-  box-shadow: 0 7px 0 var(--accent), 0 14px 0 var(--accent);
+  color: var(--accent);
 }
 
 .agent-code-right-edge-handle.hidden {
   display: none;
 }
 
-/* 浏览器 / 终端模式下右侧面板整体宽度由 --agent-right-width 控制（文件树模式保持原布局） */
+/* 浏览器 / 终端模式下右侧面板整体宽度由 --agent-right-width 控制（文件树模式保持原布局）；
+   max-width 以槽为上限（100% = 槽内容宽，16 = 自身左右 margin，全局 border-box）：
+   侧栏打开/窗口较窄导致剩余空间不足 900px 时面板自动封顶，不再让 flex 行溢出 */
 .agent-code-right-collapser.panel-resizable {
   width: var(--agent-right-width, 480px);
-  max-width: none;
+  max-width: calc(100% - 16px);
 }
 
 .agent-code-chat {
@@ -461,7 +484,7 @@
   overflow: hidden;
   max-width: 2000px;
   transition: max-width 0.25s ease, opacity 0.2s ease, margin 0.25s ease;
-  margin: 8px 8px 8px 0;
+  margin: 8px 8px 8px 8px;
   border-radius: var(--radius, 10px);
   border: 1.5px solid var(--border-strong);
   background: var(--surface);
@@ -470,6 +493,7 @@
 .agent-code-right-body {
   flex: 1;
   display: flex;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -863,6 +887,19 @@
 }
 
 .agent-code-preview-group.hidden {
+  display: none;
+}
+
+.agent-code-diff-wrap {
+  display: flex;
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+}
+
+.agent-code-diff-wrap.hidden {
   display: none;
 }
 
@@ -2578,7 +2615,7 @@
   display: none;
 }
 
-/* 浏览器 / 终端模式下文件树收起，右侧列占满可用宽度 */
+/* 浏览器 / 终端 / diff 模式下文件树收起，右侧列占满可用宽度 */
 .agent-code-right-body.tree-collapsed .agent-browser-wrap {
   flex: 1;
   width: auto;
@@ -2587,6 +2624,12 @@
 
 .agent-code-right-body.tree-collapsed .agent-code-preview {
   width: 100%;
+  max-width: none;
+}
+
+.agent-code-right-body.tree-collapsed .agent-code-diff-wrap {
+  flex: 1;
+  width: auto;
   max-width: none;
 }
 
@@ -6508,7 +6551,10 @@
 .agent-git {
   display: flex;
   flex-direction: column;
+  flex: 1;
   height: 100%;
+  width: 100%;
+  align-self: stretch;
   min-height: 0;
   background: var(--bg);
 }
@@ -6838,7 +6884,7 @@
   bottom: 0;
   left: 82px;
   width: 0.5px;
-  background: #09852e;
+  background: #a3bf9d;
   z-index: 1;
 }
 
