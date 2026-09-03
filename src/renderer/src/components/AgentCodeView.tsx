@@ -2448,6 +2448,7 @@ export default function AgentCodeView() {
 
   const sidebarHandleIconRef = useRef<AniIconHandle>(null)
   const previewHandleIconRef = useRef<AniIconHandle>(null)
+  const previewPanelHandleIconRef = useRef<AniIconHandle>(null)
 
   // Persist to store on every change（跳过纯占位项目，防止干扰 seededRef 逻辑）
   useEffect(() => {
@@ -6470,10 +6471,18 @@ const programmaticScrollRef = useRef(false)
           >
             <EllipsisVerticalIcon ref={previewHandleIconRef} size={16} className="nav-animate-icon agent-resize-handle-icon" />
           </div>
+          <div
+            className={`agent-code-right-edge-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}${(openTabs.length === 0 || rightPanelMode !== 'files') ? ' hidden' : ''}`}
+            onPointerDown={startPreviewResize}
+            onMouseEnter={() => previewPanelHandleIconRef.current?.startAnimation()}
+            onMouseLeave={() => previewPanelHandleIconRef.current?.stopAnimation()}
+          >
+            <EllipsisVerticalIcon ref={previewPanelHandleIconRef} size={16} className="nav-animate-icon agent-resize-handle-icon" />
+          </div>
          <div className={`agent-code-right-collapser ${rightPanelMode !== 'files' ? 'panel-resizable' : ''} ${treeOpen ? '' : 'collapsed'}`}>
-           <div className={`agent-code-right-body${rightPanelMode !== 'files' ? ' tree-collapsed' : ''}`}>
-             <div className={`agent-code-tree${rightPanelMode !== 'files' ? ' hidden' : ''}`}>
-               <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={insertAtCursor} onFilesChanged={onWorkspaceFilesChanged} />
+            <div className={`agent-code-right-body${rightPanelMode !== 'files' ? ' tree-collapsed' : ''}`}>
+              <div className={`agent-code-tree${rightPanelMode !== 'files' ? ' hidden' : ''}`}>
+                <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={insertAtCursor} onFilesChanged={onWorkspaceFilesChanged} />
              </div>
              <div className={`agent-browser-wrap ${rightPanelMode === 'browser' ? '' : 'hidden'}`}>
                <AgentBrowser visible={rightPanelMode === 'browser' && treeOpen} onSendToAgent={sendAnnotationsToAgent} />
@@ -6488,11 +6497,11 @@ const programmaticScrollRef = useRef(false)
                  </div>
                </div>
              )}
-             <div className={`agent-code-diff-wrap${rightPanelMode === 'diff' ? '' : ' hidden'}`}>
-               <AgentGitDiff data={gitChanges} loading={gitLoading} onRefresh={refreshGitChanges} onOpenFile={openFileAtLine} workspaceDir={activeProject.workspaceDir} focusPath={gitFocusPath} onFocusHandled={onGitFocusHandled} />
-             </div>
-             <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''} ${rightPanelMode === 'browser' || rightPanelMode === 'terminal' || rightPanelMode === 'diff' ? 'hidden' : ''}`}>
-              <div className="agent-code-preview">
+              <div className={`agent-code-diff-wrap${rightPanelMode === 'diff' ? '' : ' hidden'}`}>
+                <AgentGitDiff data={gitChanges} loading={gitLoading} onRefresh={refreshGitChanges} onOpenFile={openFileAtLine} workspaceDir={activeProject.workspaceDir} focusPath={gitFocusPath} onFocusHandled={onGitFocusHandled} />
+              </div>
+                <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''} ${rightPanelMode === 'browser' || rightPanelMode === 'terminal' || rightPanelMode === 'diff' ? 'hidden' : ''}`}>
+                <div className="agent-code-preview">
                 <div className="agent-code-preview-header">
                   <div className="agent-code-preview-tabs">
                     {openTabs.map((t, tabIdx) => (

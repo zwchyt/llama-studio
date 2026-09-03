@@ -217,6 +217,9 @@ const fullApi = {
 	  gitChanges: (dir: string) => ipcRenderer.invoke('git-changes', dir),
 	  gitStageFile: (dir: string, path: string) => ipcRenderer.invoke('git-stage-file', dir, path),
 	  gitUnstageFile: (dir: string, path: string) => ipcRenderer.invoke('git-unstage-file', dir, path),
+	  gitDiscardFile: (dir: string, path: string) => ipcRenderer.invoke('git-discard-file', dir, path),
+	  gitStageAll: (dir: string) => ipcRenderer.invoke('git-stage-all', dir),
+	  gitDiscardAll: (dir: string) => ipcRenderer.invoke('git-discard-all', dir),
   setAgentWorkspace: (dir: string) => ipcRenderer.invoke('set-agent-workspace', dir),
 
   // ── 认知地图（codeMapService）──

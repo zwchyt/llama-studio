@@ -7360,6 +7360,39 @@ export function registerIpcHandlers(): void {
       return { success: false, error: e instanceof Error ? e.message : String(e) }
     }
   })
+
+  ipcMain.handle('git-discard-file', async (_e, dir: string, filePath: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const cwd = resolveAgentPath(dir || '')
+      if (!cwd || !existsSync(cwd)) return { success: false, error: '目录不存在' }
+      const r = await runGit(['restore', '--', filePath], cwd)
+      return { success: r.ok, error: r.ok ? undefined : r.stderr }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('git-stage-all', async (_e, dir: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const cwd = resolveAgentPath(dir || '')
+      if (!cwd || !existsSync(cwd)) return { success: false, error: '目录不存在' }
+      const r = await runGit(['add', '-u'], cwd)
+      return { success: r.ok, error: r.ok ? undefined : r.stderr }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('git-discard-all', async (_e, dir: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const cwd = resolveAgentPath(dir || '')
+      if (!cwd || !existsSync(cwd)) return { success: false, error: '目录不存在' }
+      const r = await runGit(['restore', '--', '.'], cwd)
+      return { success: r.ok, error: r.ok ? undefined : r.stderr }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
 }
 
 // ── 辅助函数 ──────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { CheckIcon, ChevronRightIcon, ChevronsUpIcon, ChevronsDownIcon, CopyIcon, GitBranchIcon, MinusIcon, PlusIcon, RefreshCwIcon } from '@animateicons/react/lucide'
+import { CheckIcon, ChevronRightIcon, ChevronsUpIcon, ChevronsDownIcon, CopyIcon, GitBranchIcon, MinusIcon, PlusIcon, RefreshCwIcon, HistoryIcon } from '@animateicons/react/lucide'
 import { fileMeta } from '../utils/fileIcon'
 
 // Git 变更（只读 diff 查看）：解析 `git diff HEAD` 的 unified 输出并按行渲染。
@@ -173,7 +173,7 @@ function renderCodeWithHighlights(text: string, highlights?: { start: number; en
   return parts.length > 0 ? parts : ' '
 }
 
-const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceCollapsed, onStage, onUnstage, focused }: { file: GitFileChange; onOpen: (relPath: string, line?: number) => void; forceCollapsed: boolean; onStage?: (path: string) => void; onUnstage?: (path: string) => void; focused?: boolean }) {
+const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceCollapsed, onStage, onUnstage, onDiscard, focused }: { file: GitFileChange; onOpen: (relPath: string, line?: number) => void; forceCollapsed: boolean; onStage?: (path: string) => void; onUnstage?: (path: string) => void; onDiscard?: (path: string) => void; focused?: boolean }) {
   const parsed = useMemo(() => {
     if (file.untracked) {
       const r = contentToRows(file.content || '')
@@ -278,6 +278,11 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
             {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
           </button>
         )}
+        {!file.staged && !file.untracked && onDiscard && (
+          <button className="agent-git-copy agent-git-discard" title="取消更改（恢复到上次提交）" onClick={(e) => { e.stopPropagation(); onDiscard(file.path) }}>
+            <HistoryIcon size={12} />
+          </button>
+        )}
         {!file.staged && onStage && (
           <button className="agent-git-copy agent-git-stage-add" title="暂存此文件" onClick={(e) => { e.stopPropagation(); onStage(file.path) }}>
             <PlusIcon size={12} />
@@ -372,6 +377,18 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
     const res = await window.api.gitUnstageFile(workspaceDir, path)
     if (res.success) onRefresh()
   }, [workspaceDir, onRefresh])
+  const handleDiscard = useCallback(async (path: string) => {
+    const res = await window.api.gitDiscardFile(workspaceDir, path)
+    if (res.success) onRefresh()
+  }, [workspaceDir, onRefresh])
+  const handleStageAll = useCallback(async () => {
+    const res = await window.api.gitStageAll(workspaceDir)
+    if (res.success) onRefresh()
+  }, [workspaceDir, onRefresh])
+  const handleDiscardAll = useCallback(async () => {
+    const res = await window.api.gitDiscardAll(workspaceDir)
+    if (res.success) onRefresh()
+  }, [workspaceDir, onRefresh])
   const staged = data?.staged ?? []
   const unstaged = data?.unstaged ?? []
   const total = staged.length + unstaged.length
@@ -401,17 +418,18 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
     }
     return { added, removed }
   }, [staged, unstaged])
-  const renderGroup = (title: string, list: GitFileChange[], key: 'staged' | 'unstaged') => {
+  const renderGroup = (title: string, list: GitFileChange[], key: 'staged' | 'unstaged', actions?: React.ReactNode) => {
     if (list.length === 0) return null
     const collapsed = sectionCollapsed[key]
     return (
       <div className="agent-git-section">
         <div className="agent-git-section-head" onClick={() => setSectionCollapsed(s => ({ ...s, [key]: !s[key] }))}>
-<ChevronRightIcon size={12} className={`agent-git-chev ${collapsed ? '' : 'open'}`} />
+          <ChevronRightIcon size={12} className={`agent-git-chev ${collapsed ? '' : 'open'}`} />
           <span className="agent-git-section-title">{title}</span>
           <span className="agent-git-section-count">{list.length}</span>
+          {actions && <span className="agent-git-section-actions" onClick={e => e.stopPropagation()}>{actions}</span>}
         </div>
-        {!collapsed && list.map(f => <GitFileBlock key={`${key}-${f.path}`} file={f} onOpen={openFile} forceCollapsed={!allExpanded} onStage={handleStage} onUnstage={handleUnstage} focused={focusRel === f.path} />)}
+        {!collapsed && list.map(f => <GitFileBlock key={`${key}-${f.path}`} file={f} onOpen={openFile} forceCollapsed={!allExpanded} onStage={handleStage} onUnstage={handleUnstage} onDiscard={handleDiscard} focused={focusRel === f.path} />)}
       </div>
     )
   }
@@ -452,7 +470,16 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
         ) : (
           <>
             {renderGroup('已暂存的更改', staged, 'staged')}
-            {renderGroup('更改', unstaged, 'unstaged')}
+            {renderGroup('更改', unstaged, 'unstaged', (
+              <>
+                <button className="agent-git-copy agent-git-discard" title="取消所有更改" onClick={handleDiscardAll}>
+                  <HistoryIcon size={12} />
+                </button>
+                <button className="agent-git-copy agent-git-stage-add" title="暂存所有更改" onClick={handleStageAll}>
+                  <PlusIcon size={12} />
+                </button>
+              </>
+            ))}
           </>
         )}
       </div>
