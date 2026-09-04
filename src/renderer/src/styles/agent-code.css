@@ -1830,6 +1830,7 @@
   cursor: pointer;
   user-select: none;
   transition: background var(--transition);
+  overflow: hidden;
 }
 
 .agent-file-changes-head:hover {
@@ -5390,6 +5391,7 @@
   display: flex;
   align-items: center;
   gap: 2px;
+  overflow: hidden;
 }
 
 .agent-code-view .chat-input-tools .agent-ctx-inline {
@@ -6568,6 +6570,7 @@
   background: var(--surface);
   flex-shrink: 0;
   box-sizing: border-box;
+  overflow: hidden;
 }
 
 .agent-git-title {
@@ -6578,6 +6581,7 @@
   font-weight: 600;
   line-height: 0;
   color: var(--text);
+  flex-shrink: 0;
 }
 
 .agent-git-summary {
@@ -6585,6 +6589,7 @@
   align-items: center;
   font-size: 12px;
   color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 .agent-git-total-stat {
@@ -6593,6 +6598,7 @@
   gap: 6px;
   margin-left: 8px;
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 
 .agent-git-total-stat .add {
@@ -6637,6 +6643,7 @@
 
 .agent-git-spacer {
   flex: 1;
+  flex-shrink: 1;
 }
 
 .agent-git-refresh {
@@ -6650,6 +6657,7 @@
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
+  flex-shrink: 0;
   transition: background .12s ease, color .12s ease;
 }
 

@@ -5682,10 +5682,10 @@ const programmaticScrollRef = useRef(false)
                       <button className="agent-code-session-del" onClick={e => { e.stopPropagation(); deleteProject(p.id) }}><TrashIcon size={13} /></button>
                     </span>
                     <span className="ac-icon-btn">
-                      <button className="agent-code-session-add" onClick={e => { e.stopPropagation(); addSessionToProject(p.id) }}><PlusIcon size={13} /></button>
+                      <button className="agent-code-session-add" onClick={e => { e.stopPropagation(); importSessionToProject(p.id) }} title="导入会话"><UploadIcon size={13} /></button>
                     </span>
                     <span className="ac-icon-btn">
-                      <button className="agent-code-session-add" onClick={e => { e.stopPropagation(); importSessionToProject(p.id) }} title="导入会话"><UploadIcon size={13} /></button>
+                      <button className="agent-code-session-add" onClick={e => { e.stopPropagation(); addSessionToProject(p.id) }}><PlusIcon size={13} /></button>
                     </span>
                   </div>
                   <div className={`agent-code-child-wrap ${p.expanded ? 'open' : ''}`} ref={el => { projectWrapRefs.current.set(p.id, el) }}>
