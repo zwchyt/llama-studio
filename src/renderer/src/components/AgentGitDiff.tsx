@@ -385,6 +385,10 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
     const res = await window.api.gitStageAll(workspaceDir)
     if (res.success) onRefresh()
   }, [workspaceDir, onRefresh])
+  const handleUnstageAll = useCallback(async () => {
+    const res = await window.api.gitUnstageAll(workspaceDir)
+    if (res.success) onRefresh()
+  }, [workspaceDir, onRefresh])
   const handleDiscardAll = useCallback(async () => {
     const res = await window.api.gitDiscardAll(workspaceDir)
     if (res.success) onRefresh()
@@ -469,7 +473,11 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
           <div className="agent-git-empty">工作区没有未提交的改动。</div>
         ) : (
           <>
-            {renderGroup('已暂存的更改', staged, 'staged')}
+            {renderGroup('已暂存的更改', staged, 'staged', (
+              <button className="agent-git-copy agent-git-stage-remove" title="取消所有暂存" onClick={handleUnstageAll}>
+                <MinusIcon size={12} />
+              </button>
+            ))}
             {renderGroup('更改', unstaged, 'unstaged', (
               <>
                 <button className="agent-git-copy agent-git-discard" title="取消所有更改" onClick={handleDiscardAll}>

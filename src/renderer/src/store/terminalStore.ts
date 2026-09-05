@@ -1,7 +1,6 @@
 import { createWithEqualityFn } from 'zustand/traditional'
 import { shallow } from 'zustand/shallow'
 import { disposeTerminal } from '../utils/terminalRegistry'
-import { useStore } from './useStore'
 
 export interface TerminalMeta {
   id: string
@@ -16,7 +15,7 @@ export interface TerminalMeta {
 interface TerminalStore {
   sessions: TerminalMeta[]
   activeId: string | null
-  open: (cwd?: string, opts?: { navigate?: boolean }) => Promise<void>
+  open: (cwd?: string) => Promise<void>
   close: (id: string) => void
   setActive: (id: string) => void
   markExited: (id: string) => void
@@ -58,18 +57,17 @@ function persistSessions(sessions: TerminalMeta[], storageKey: string): void {
   } catch { /* ignore */ }
 }
 
-/**
- * 创建一组独立终端会话（标签、PTY、持久化互不干扰）。
- * 主组：导航栏「终端」视图（useTerminalStore）
- * Agent 组：Agent Code 工作台内嵌终端（useAgentTerminalStore）
- */
+// 旧版导航栏「终端」视图已移除，清理其遗留的会话持久化数据
+try { localStorage.removeItem('terminal-sessions') } catch { /* ignore */ }
+
+/** Agent Code 工作台内嵌终端的终端组（标签、PTY、持久化） */
 function createTerminalStore(idPrefix: string, storageKey: string) {
   return createWithEqualityFn<TerminalStore>(
     (set, get) => ({
       sessions: loadPersistedSessions(storageKey),
       activeId: null,
 
-      open: async (cwd?: string, opts?: { navigate?: boolean }) => {
+      open: async (cwd?: string) => {
         const ownerKey = `${idPrefix}:${crypto.randomUUID()}`
         const id = `${idPrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
         const fallback = !window.api.terminalCreate
@@ -80,10 +78,6 @@ function createTerminalStore(idPrefix: string, storageKey: string) {
           persistSessions(sessions, storageKey)
           return { sessions, activeId: id }
         })
-        // 默认跳转到独立终端视图；内嵌终端（如 Agent Code 工作台）新建时传 navigate:false 原地使用
-        if (opts?.navigate !== false) {
-          useStore.getState().setView('terminal')
-        }
       },
 
       close: (id: string) => {
@@ -148,7 +142,5 @@ function createTerminalStore(idPrefix: string, storageKey: string) {
 
 export type TerminalStoreHook = ReturnType<typeof createTerminalStore>
 
-/** 导航栏「终端」视图的终端组 */
-export const useTerminalStore = createTerminalStore('term', 'terminal-sessions')
-/** Agent Code 工作台内嵌终端的终端组（独立会话，与导航栏终端互不干扰） */
+/** Agent Code 工作台内嵌终端（唯一的终端入口，会话独立持久化） */
 export const useAgentTerminalStore = createTerminalStore('agentterm', 'agent-terminal-sessions')

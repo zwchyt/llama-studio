@@ -264,7 +264,10 @@ interface LlamaCppApi {
 		  gitUnstageFile: (dir: string, path: string) => Promise<{ success: boolean; error?: string }>
 		  gitDiscardFile: (dir: string, path: string) => Promise<{ success: boolean; error?: string }>
 		  gitStageAll: (dir: string) => Promise<{ success: boolean; error?: string }>
+		  gitUnstageAll: (dir: string) => Promise<{ success: boolean; error?: string }>
 		  gitDiscardAll: (dir: string) => Promise<{ success: boolean; error?: string }>
+		  gitListBranches: (dir: string) => Promise<{ branches: Array<{ name: string; current: boolean }>; error?: string }>
+		  gitCheckoutBranch: (dir: string, branch: string) => Promise<{ success: boolean; error?: string }>
 		  setAgentWorkspace: (dir: string) => Promise<{ success: boolean }>
 		  // ── 认知地图（codeMapService）──
 		  codemapBuild: (dir: string) => Promise<CodeMapStatus | { error: string }>

@@ -6,7 +6,7 @@ import { paramSetOf } from '../utils/engine'
 import {
   LayoutDashboardIcon,
   HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
-  MessageSquareIcon, TerminalIcon, InfoIcon, FileTextIcon, CodeIcon, ChevronDownIcon,
+  MessageSquareIcon, InfoIcon, FileTextIcon, CodeIcon, ChevronDownIcon,
   SettingsIcon, BookOpenIcon, AudioLinesIcon, ImageIcon, MicIcon,
   BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon
 } from '@animateicons/react/lucide'
@@ -38,7 +38,6 @@ const NAV_GROUPS: NavDef[][] = [
     { key: 'monitoring', label: '模型运行数据', icon: ActivityIcon, color: '#ef4444', runningSource: 'models' },
     { key: 'token-stats', label: 'Token 统计', icon: TrendingUpIcon, color: '#f59e0b', runningSource: 'models' },
     { key: 'benchmark', label: '性能测试', icon: ChartBarIcon, color: '#f59e0b' },
-    { key: 'terminal', label: '终端', icon: TerminalIcon, color: '#64748b' },
     { key: 'ocr', label: 'OCR', icon: FileTextIcon, color: '#a855f7', runningSource: 'models' },
     { key: 'model-tools', label: '模型工具', icon: SlidersHorizontalIcon, color: '#06b6d4' },
     { key: 'knowledge', label: '知识库', icon: BookOpenIcon, color: '#0d9488' },

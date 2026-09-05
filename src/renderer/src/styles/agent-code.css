@@ -481,6 +481,8 @@
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
   max-width: 2000px;
   transition: max-width 0.25s ease, opacity 0.2s ease, margin 0.25s ease;
@@ -5391,7 +5393,246 @@
   display: flex;
   align-items: center;
   gap: 2px;
+  overflow: visible;
+  /* 会话区缩窄时：文本控件先收缩省略，仍放不下则整组换行，组件绝不互相重叠 */
+  flex-wrap: wrap;
+}
+
+.agent-code-view .chat-input-tools > * {
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+/* 图标按钮内是固定尺寸的 SVG，按钮框收缩只会让图标溢出、与相邻组件重叠——禁止收缩 */
+.agent-code-view .chat-input-tools .chat-upload-btn,
+.agent-code-view .chat-input-tools .chat-attach-btn,
+.agent-code-view .chat-input-tools .chat-mic-btn,
+.agent-code-view .chat-input-tools .chat-stop-btn,
+.agent-code-view .chat-input-tools .chat-send-btn,
+.agent-code-view .chat-input-tools .agent-ctx-inline {
+  width: auto;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+/* 文本类控件可收缩：文字省略而不是溢出按钮框与相邻组件重叠 */
+.agent-code-view .chat-input-tools .chat-model-dropdown-name,
+.agent-code-view .chat-input-tools .chat-branch-name,
+.agent-code-view .chat-input-tools .chat-think-level-label,
+.agent-code-view .chat-input-tools .chat-search-label {
+  min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 包裹层改为可收缩 flex：内部按钮随宽度收缩，文字由上面的省略规则兜底 */
+.chat-branch-wrap,
+.agent-code-view .chat-input-tools .chat-think-level,
+.agent-code-view .chat-input-tools .chat-search-switch {
+  display: flex;
+  min-width: 0;
+}
+
+.chat-branch-trigger,
+.agent-code-view .chat-input-tools .chat-think-level-trigger,
+.agent-code-view .chat-input-tools .chat-search-trigger {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chat-workspace-badge-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.chat-workspace-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  height: 28px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  /* 上限 140px，同时不超过收缩后的包裹层宽度（避免溢出与相邻组件重叠） */
+  max-width: min(140px, 100%);
+  overflow: hidden;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.chat-workspace-badge:hover,
+.chat-workspace-badge.active {
+  background: var(--bg);
+  border-color: var(--border-strong, var(--border));
+  color: var(--text);
+}
+
+.chat-workspace-badge:active {
+  transform: scale(0.97);
+}
+
+.chat-workspace-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-workspace-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 140px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg, 0 4px 16px rgba(0,0,0,0.18));
+  animation: think-menu-in 0.16s ease-out;
+}
+
+.chat-workspace-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-secondary, var(--text-muted));
+  text-align: left;
+  white-space: nowrap;
+  transition: background 0.1s, color 0.1s;
+}
+
+.chat-workspace-item:hover {
+  background: var(--surface-hover, var(--bg));
+  color: var(--text);
+}
+
+.chat-workspace-item.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.chat-workspace-check {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+/* Git 分支选择器 */
+.chat-branch-selector {
+}
+
+.chat-branch-wrap {
+  position: relative;
+}
+
+.chat-branch-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-secondary, var(--text-muted));
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.chat-branch-trigger:hover,
+.chat-branch-trigger.active {
+  background: var(--bg);
+  border-color: var(--border-strong, var(--border));
+  color: var(--text);
+}
+
+.chat-branch-name {
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-branch-caret {
+  opacity: 0.5;
+  transition: transform 0.15s ease;
+}
+
+.chat-branch-trigger.active .chat-branch-caret {
+  transform: rotate(180deg);
+}
+
+.chat-branch-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 140px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg, 0 4px 16px rgba(0,0,0,0.18));
+  animation: think-menu-in 0.16s ease-out;
+}
+
+.chat-branch-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-secondary, var(--text-muted));
+  text-align: left;
+  white-space: nowrap;
+  transition: background 0.1s, color 0.1s;
+}
+
+.chat-branch-item:hover {
+  background: var(--surface-hover, var(--bg));
+  color: var(--text);
+}
+
+.chat-branch-item.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.chat-branch-check {
+  margin-left: auto;
+  color: var(--accent);
 }
 
 .agent-code-view .chat-input-tools .agent-ctx-inline {
@@ -6581,7 +6822,11 @@
   font-weight: 600;
   line-height: 0;
   color: var(--text);
-  flex-shrink: 0;
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-git-summary {
@@ -6589,7 +6834,11 @@
   align-items: center;
   font-size: 12px;
   color: var(--text-muted);
-  flex-shrink: 0;
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-git-total-stat {

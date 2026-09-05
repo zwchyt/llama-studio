@@ -20,7 +20,6 @@ import BackendDownloadBanner from './components/BackendDownloadBanner'
 import { paramSetOf, ENGINE_REPOS } from './utils/engine'
 import ChatWindow from './components/ChatWindow'
 import LlamaChatView from './components/LlamaChatView'
-import TerminalView from './components/TerminalView'
 import ModelToolsView from './components/ModelToolsView'
 import KnowledgeView from './components/KnowledgeView'
 import TtsView from './components/TtsView'
@@ -41,7 +40,7 @@ import { useLayoutStore } from './store/layoutStore'
 import './styles/titlebar.css'
   import { buildDefaultTemplate } from './utils/defaultTemplate'
 import { writeToTerminal } from './utils/terminalRegistry'
-import { useTerminalStore } from './store/terminalStore'
+import { useAgentTerminalStore } from './store/terminalStore'
 import type { Template, ModelMetrics, ReleaseInfo } from '../../shared/types'
 
 const searchParams = new URLSearchParams(window.location.search)
@@ -273,15 +272,15 @@ function AppMain() {
   useEffect(() => {
     window.api.onTerminalData(({ id, data }) => writeToTerminal(id, data))
     window.api.onTerminalExited(({ id }) => {
-      const { markExited, sessions, activeId } = useTerminalStore.getState()
+      const { markExited, sessions, activeId } = useAgentTerminalStore.getState()
       markExited(id)
       if (id === activeId && sessions.length > 1) {
         const remaining = sessions.filter(s => s.id !== id)
-        if (remaining.length > 0) useTerminalStore.getState().setActive(remaining[remaining.length - 1].id)
+        if (remaining.length > 0) useAgentTerminalStore.getState().setActive(remaining[remaining.length - 1].id)
       }
     })
     window.api.onTerminalTitle(({ id, title }) => {
-      useTerminalStore.getState().updateTitle(id, title)
+      useAgentTerminalStore.getState().updateTitle(id, title)
     })
     return () => window.api.removeTerminalListeners()
   }, [])
@@ -589,7 +588,6 @@ function AppMain() {
       case 'imagegen': return <ImageGenView />
       case 'audiocpp': return <AudioCppView />
       case 'agent-code': return null
-      case 'terminal': return null
       default: return <CardsView />
     }
   }, [view])
@@ -610,7 +608,7 @@ function AppMain() {
           <div
             className="view-transition"
             key={view}
-            style={view === 'agent-code' || view === 'terminal' || view === 'chat' ? { display: 'none' } : {}}
+            style={view === 'agent-code' || view === 'chat' ? { display: 'none' } : {}}
           >
             {currentView}
           </div>
@@ -633,8 +631,7 @@ function AppMain() {
             <ChatView />
           </div>
           {/* Agent Code 工作台常驻挂载：切换侧边栏时不卸载组件，
-              保证正在进行的生成 / 工具循环不被打断，进度、滚动、输入框状态全部保留
-              （与下方 terminal 视图的常驻挂载做法一致）。 */}
+              保证正在进行的生成 / 工具循环不被打断，进度、滚动、输入框状态全部保留。 */}
           <div
             className="agent-code-host"
             style={{
@@ -648,25 +645,6 @@ function AppMain() {
           >
             <AgentCodeView />
           </div>
-          {/* 终端视图：仅 view==='terminal' 时挂载（不常驻 display:none），
-              避免与 Agent Code 工作台内嵌终端同时渲染同一 session 的 xterm 实例（同一实例
-              只能 attach 到一个 DOM 容器，双挂载会把终端内容搬去隐藏容器导致黑屏）。
-              切换走时 xterm 实例销毁、PTY 由主进程保活，切回时 terminalCreate 复用并 replay 恢复历史。 */}
-          {view === 'terminal' && (
-            <div
-              className="terminal-view-host"
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                flex: 1,
-                minHeight: 0,
-                padding: 0,
-                overflow: 'hidden',
-              }}
-            >
-              <TerminalView />
-            </div>
-          )}
         </main>
         <div style={{ flex: view === 'llama' ? 1 : 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: view === 'llama' ? 'flex' : 'none', flex: 1, overflow: 'hidden', flexDirection: 'column', padding: 24 }}>

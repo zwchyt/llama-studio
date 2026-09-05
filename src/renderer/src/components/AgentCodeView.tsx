@@ -2226,9 +2226,22 @@ export default function AgentCodeView() {
   // Git 变更以「特殊预览标签」形式打开；activeTabPath 命中该哨兵时，预览区渲染 AgentGitDiff。
   const [gitChanges, setGitChanges] = useState<GitChangesData | null>(null)
   const [gitLoading, setGitLoading] = useState(false)
+  // Git 分支选择器
+  const [currentBranch, setCurrentBranch] = useState<string | null>(null)
+  const [branches, setBranches] = useState<string[]>([])
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false)
+  const branchBtnRef = useRef<HTMLButtonElement>(null)
+  const branchMenuRef = useRef<HTMLDivElement>(null)
+  // 工作区切换菜单
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
+  const workspaceBtnRef = useRef<HTMLButtonElement>(null)
+  const workspaceMenuRef = useRef<HTMLDivElement>(null)
   // 点击 diff 行 → 打开源文件并跳到对应行：记录待跳转目标（内容渲染完成后由 effect 滚动+高亮）。
   const previewJumpRef = useRef<{ path: string; line: number } | null>(null)
   const [previewHighlightLine, setPreviewHighlightLine] = useState<number | null>(null)
+  // 性能优化：避免删除项目/切换会话时重复触发 codemap 构建与工作区同步
+  const lastCodeMapBuiltRef = useRef<string>('')
+  const lastWorkspaceSetRef = useRef<string>('')
   // monaco 源码预览编辑模式：previewEditing 控制只读/可编辑；previewDraft 为编辑中草稿
   const [previewEditing, setPreviewEditing] = useState(false)
   const [previewDraft, setPreviewDraft] = useState<string | null>(null)
@@ -2437,6 +2450,69 @@ export default function AgentCodeView() {
     cssVarName: '--agent-right-width',
     rootSelector: '.agent-code-body',
     direction: -1,
+    // 终端模式：顶栏「工作目录/文件路径」工具栏绝对定位在右上角、宽度不随面板收缩，
+    // 面板过窄时会被截断。拖拽开始时实测该工具栏宽度作为本次拖拽的下限——
+    // 手柄滑到文件路径左缘即停，不再缩小。浏览器模式无此工具栏，退回静态 min。
+    // 变更模式：顶栏「N 个文件 +32 −43」统计在 header overflow:hidden 下会先被裁掉，
+    // 同样实测 header 内容自然宽度（含被省略号压缩的部分）作为下限。
+    getMin: () => {
+      if (rightPanelMode === 'terminal') {
+        const bar = document.querySelector('.agent-terminal-cwd-bar')
+        if (!bar) return RIGHT_MIN
+        const w = Math.ceil(bar.getBoundingClientRect().width)
+        return w > 0 ? w + 6 : RIGHT_MIN
+      }
+      if (rightPanelMode === 'diff') {
+        const header = document.querySelector('.agent-git-header') as HTMLElement | null
+        if (!header) return RIGHT_MIN
+        const cs = getComputedStyle(header)
+        const gap = parseFloat(cs.columnGap || cs.gap) || 0
+        let natural = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)
+        const kids = [...header.children] as HTMLElement[]
+        kids.forEach((k, i) => {
+          // flex-grow 的占位元素（如把刷新按钮推到右端的 .agent-git-spacer）没有自己的内容，
+          // 自然宽度为 0；若按拉伸后的 rect/scrollWidth 计入，最小宽度会≈当前面板宽度，
+          // 拖拽一开始就被钳死（表现为手柄滑不动）——这里必须按 0 宽度处理。
+          const grow = parseFloat(getComputedStyle(k).flexGrow) || 0
+          const w = grow > 0 ? 0 : Math.max(k.getBoundingClientRect().width, k.scrollWidth)
+          natural += w
+          if (i < kids.length - 1) natural += gap
+        })
+        const w = Math.ceil(natural)
+        return w > 0 ? w + 4 : RIGHT_MIN
+      }
+      if (rightPanelMode === 'browser') {
+        // 浏览器模式：中间行（导航按钮 + URL 栏）宽度不足时会溢出 padding 区，
+        // 压到右侧绝对定位的图标组。URL 输入框可缩为 0（正常），但左侧导航按钮
+        // flex-shrink:0 缩不掉——实测中间行最小宽度，让手柄停在压到第一个图标之前。
+        const toolbar = document.querySelector('.agent-browser-toolbar') as HTMLElement | null
+        if (!toolbar) return RIGHT_MIN
+        const tcs = getComputedStyle(toolbar)
+        const tGap = parseFloat(tcs.columnGap || tcs.gap) || 0
+        const kids = [...toolbar.children].filter(el => !el.classList.contains('agent-browser-toolbar-right')) as HTMLElement[]
+        let mid = 0
+        kids.forEach((k, i) => {
+          if (i > 0) mid += tGap
+          if (k.classList.contains('agent-browser-urlbar')) {
+            // URL 栏最小宽度 = 自身内边距/边框 + 除输入框外的子元素（输入框 min-width:0 可缩没）
+            const ucs = getComputedStyle(k)
+            const uGap = parseFloat(ucs.columnGap || ucs.gap) || 0
+            let u = parseFloat(ucs.paddingLeft) + parseFloat(ucs.paddingRight) + parseFloat(ucs.borderLeftWidth) + parseFloat(ucs.borderRightWidth)
+            const nonInput = [...k.children].filter(c => !(c as HTMLElement).classList.contains('agent-browser-urlbar-input'))
+            nonInput.forEach((c, j) => {
+              if (j > 0) u += uGap
+              u += c.getBoundingClientRect().width
+            })
+            mid += u
+          } else {
+            mid += k.getBoundingClientRect().width
+          }
+        })
+        const w = Math.ceil(parseFloat(tcs.paddingLeft) + mid + parseFloat(tcs.paddingRight))
+        return w > 0 ? w + 4 : RIGHT_MIN
+      }
+      return RIGHT_MIN
+    },
     getInitial: () => {
       try {
         const v = Number(window.localStorage.getItem('agent-right-width') || '')
@@ -3097,6 +3173,48 @@ const programmaticScrollRef = useRef(false)
     if (rightPanelMode === 'diff') void refreshGitChanges(true)
   }, [activeProject.workspaceDir, refreshGitChanges, rightPanelMode])
 
+  // ── Git 分支：获取当前分支 + 列出所有本地分支 ──
+  const refreshBranch = useCallback(async () => {
+    const dir = activeProject.workspaceDir
+    if (!dir) { setCurrentBranch(null); setBranches([]); return }
+    try {
+      const [branchRes, listRes] = await Promise.all([
+        window.api.gitListBranches(dir),
+        window.api.gitListBranches(dir),
+      ])
+      const cur = branchRes.branches.find(b => b.current)
+      setCurrentBranch(cur?.name ?? null)
+      setBranches(listRes.branches.map(b => b.name))
+    } catch {
+      setCurrentBranch(null)
+      setBranches([])
+    }
+  }, [activeProject.workspaceDir])
+
+  const checkoutBranch = useCallback(async (branch: string) => {
+    const dir = activeProject.workspaceDir
+    if (!dir || branch === currentBranch) return
+    try {
+      const res = await window.api.gitCheckoutBranch(dir, branch)
+      if (res.success) {
+        setBranchMenuOpen(false)
+        await refreshBranch()
+        notify(`已切换到分支 ${branch}`, 'success')
+      } else {
+        notify(`切换失败：${res.error || '未知错误'}`, 'error')
+      }
+    } catch (e) {
+      notify(`切换失败：${e instanceof Error ? e.message : String(e)}`, 'error')
+    }
+  }, [activeProject.workspaceDir, currentBranch, refreshBranch])
+
+  // 工作区变化时刷新分支信息
+  useEffect(() => { void refreshBranch() }, [refreshBranch])
+
+  usePopoverDismiss(branchMenuOpen, setBranchMenuOpen, branchBtnRef, undefined, branchMenuRef)
+
+  usePopoverDismiss(workspaceMenuOpen, setWorkspaceMenuOpen, workspaceBtnRef, undefined, workspaceMenuRef)
+
   // 打开源文件并跳转到指定行（供 Git diff 行点击使用）。openPreview 完成后由下方 effect 滚动+高亮。
   const openPreviewAtLine = useCallback(async (absPath: string, line: number) => {
     setPreviewHighlightLine(null)
@@ -3430,13 +3548,23 @@ const programmaticScrollRef = useRef(false)
   }, [activeSessionId])
 
   useEffect(() => {
-    setWorkspaceRootForSession(activeSessionId, activeProject.workspaceDir)
+    const dir = activeProject.workspaceDir || ''
+    const sid = activeSessionId
+    // 性能优化：只在工作区+会话真正变化时才同步，避免删除项目时重复触发
+    const key = `${sid}|${dir}`
+    if (lastWorkspaceSetRef.current === key) return
+    lastWorkspaceSetRef.current = key
+
+    setWorkspaceRootForSession(sid, dir)
     // 工作区根同步给主进程（Read/Write 等文件工具的相对路径解析基准）。
     // Bash 已改用 pi 原生实现、cwd 固定为创建时工作区根，无需再同步 bash cwd。
-    window.api?.setAgentWorkspace(activeProject.workspaceDir || '').catch(() => { })
-    // ── 认知地图：工作区就绪后后台构建（幂等；主进程内部有快照增量校验）──
-    if (agentConfig.codeMapEnabled && activeProject.workspaceDir) {
-      window.api?.codemapBuild?.(activeProject.workspaceDir).catch(() => { })
+    window.api?.setAgentWorkspace(dir).catch(() => { })
+    // ── 认知地图：工作区变化时才构建（幂等；主进程内部有快照增量校验）──
+    if (agentConfig.codeMapEnabled && dir) {
+      if (lastCodeMapBuiltRef.current !== dir) {
+        lastCodeMapBuiltRef.current = dir
+        window.api?.codemapBuild?.(dir).catch(() => { })
+      }
     }
   }, [activeProject.workspaceDir, activeSessionId])
 
@@ -3570,17 +3698,26 @@ const programmaticScrollRef = useRef(false)
   }, [])
 
   const deleteProject = useCallback((id: string) => {
-    // 基于删除后的真实列表修正活动指针：此前 fallback 项目仅在列表清空时才真正插入，
-    // 但 activeProjectId 却无条件指向它 → 悬空 id，后续发送的消息全部写不进任何项目（静默丢失）。
+    // 性能优化：提前计算删除后的结果，一次性更新所有状态，减少中间渲染
     const next = projects.filter(p => p.id !== id)
     const result = next.length === 0 ? [freshProject('新项目')] : next
-    setProjects(result)
+
+    // 提前计算新的活动指针（在 setState 之前）
+    let newActiveId = activeProjectId
+    let newSessionId = activeSessionId
     if (activeProjectId === id) {
       const fallback = result[0]!
-      setActiveProjectId(fallback.id)
-      setActiveSessionId(fallback.sessions[0]?.id ?? '')
+      newActiveId = fallback.id
+      newSessionId = fallback.sessions[0]?.id ?? ''
     }
-  }, [projects, activeProjectId])
+
+    // 批量更新：先更新项目列表，再按需更新活动指针
+    setProjects(result)
+    if (activeProjectId === id) {
+      setActiveProjectId(newActiveId)
+      setActiveSessionId(newSessionId)
+    }
+  }, [projects, activeProjectId, activeSessionId])
 
   const exportSession = useCallback(async (sessId: string) => {
     try {
@@ -6367,6 +6504,73 @@ const programmaticScrollRef = useRef(false)
                   <AniIconButton className="chat-upload-btn" icon={PlusIcon} size={14} onClick={() => fileInputRef.current?.click()} title="添加附件" />
                   <AniIconButton ref={attachBtnRef} className={`chat-attach-btn${filePickerOpen ? ' active' : ''}`} icon={FolderOpenIcon} size={14} onClick={toggleFilePicker} title="选择文件" />
                   <AniIconButton className={`chat-mic-btn${listening || micTranscribing ? ' listening' : ''}`} icon={MicIcon} size={14} onClick={toggleListen} disabled={micTranscribing} title={micTranscribing ? '识别中…' : listening ? '停止录音' : '语音输入'} />
+                  {activeProject.workspaceDir && (
+                    <div className="chat-workspace-badge-wrap">
+                      <button
+                        ref={workspaceBtnRef}
+                        className={`chat-workspace-badge${workspaceMenuOpen ? ' active' : ''}`}
+                        title={`点击切换工作区：${activeProject.workspaceDir}`}
+                        onClick={() => setWorkspaceMenuOpen(v => !v)}
+                      >
+                        <FolderIcon size={12} />
+                        <span className="chat-workspace-name">
+                          {activeProject.workspaceDir.replace(/\\/g, '/').split('/').pop() || '工作区'}
+                        </span>
+                      </button>
+                      {workspaceMenuOpen && (
+                        <div ref={workspaceMenuRef} className="chat-workspace-menu">
+                          {projects.map(p => (
+                            <button
+                              key={p.id}
+                              className={`chat-workspace-item${p.id === activeProjectId ? ' active' : ''}`}
+                              onClick={() => {
+                                if (p.id !== activeProjectId) {
+                                  setActiveProjectId(p.id)
+                                  setActiveSessionId(p.sessions[0]?.id ?? '')
+                                }
+                                setWorkspaceMenuOpen(false)
+                              }}
+                            >
+                              <FolderIcon size={11} />
+                              <span>{p.title || '未命名'}</span>
+                              {p.id === activeProjectId && <CheckIcon size={11} className="chat-workspace-check" />}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {activeProject.workspaceDir && currentBranch && (
+                    <div className="chat-branch-selector">
+                      <div className="chat-branch-wrap">
+                        <button
+                          ref={branchBtnRef}
+                          className={`chat-branch-trigger${branchMenuOpen ? ' active' : ''}`}
+                          onClick={() => setBranchMenuOpen(v => !v)}
+                          title={`当前分支：${currentBranch}`}
+                        >
+                          <GitBranchIcon size={12} />
+                          <span className="chat-branch-name">{currentBranch}</span>
+                          <ChevronDownIcon size={10} className="chat-branch-caret" />
+                        </button>
+                        {branchMenuOpen && branches.length > 0 && (
+                          <div ref={branchMenuRef} className="chat-branch-menu">
+                            {branches.map(b => (
+                              <button
+                                key={b}
+                                className={`chat-branch-item${b === currentBranch ? ' active' : ''}`}
+                                onClick={() => checkoutBranch(b)}
+                              >
+                                <GitBranchIcon size={11} />
+                                <span>{b}</span>
+                                {b === currentBranch && <CheckIcon size={11} className="chat-branch-check" />}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   <AgentTopBarCtx
                     active={contextModalOpen}
                     onToggle={() => setContextModalOpen(v => !v)}

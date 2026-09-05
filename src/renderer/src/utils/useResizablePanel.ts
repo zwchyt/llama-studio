@@ -10,6 +10,8 @@ export type ResizablePanelOptions = {
   direction?: 1 | -1
   // 从持久化存储读取初始宽度（如右侧面板的 localStorage）
   getInitial?: () => number
+  // 拖拽开始时计算动态最小宽度（如终端模式：滑到顶栏文件路径工具栏左缘即停）
+  getMin?: () => number
   // 拖拽结束提交最终宽度（如右侧面板的 localStorage 持久化）
   onCommit?: (width: number) => void
 }
@@ -28,6 +30,10 @@ export function useResizablePanel(opts: ResizablePanelOptions) {
     return Math.max(min, Math.min(max, base))
   })
   const [resizing, setResizing] = useState(false)
+
+  // 最新 options 引用：startResize 时读取 getMin 计算本次拖拽的动态最小宽度
+  const optsRef = useRef(opts)
+  optsRef.current = opts
 
   const dragRef = useRef<{ startX: number; startW: number } | null>(null)
   const lastClientXRef = useRef(0)
@@ -51,13 +57,16 @@ export function useResizablePanel(opts: ResizablePanelOptions) {
     // 指针捕获：即使鼠标移入 iframe/预览区也强制派发 pointerup，杜绝状态残留
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch {}
 
+    // 本次拖拽的最小宽度：getMin 返回动态下限（不提供则用静态 min）
+    const minW = optsRef.current.getMin?.() ?? min
+
     lastClientXRef.current = e.clientX
     dragRef.current = { startX: e.clientX, startW: width }
 
     const finish = (commit: boolean) => {
       const d = dragRef.current
       if (commit && d) {
-        const finalW = clamp(d.startW + direction * (lastClientXRef.current - d.startX))
+        const finalW = Math.max(minW, Math.min(max, d.startW + direction * (lastClientXRef.current - d.startX)))
         setWidth(finalW)
         onCommit?.(finalW)
       }
@@ -80,8 +89,10 @@ export function useResizablePanel(opts: ResizablePanelOptions) {
       lastClientXRef.current = e.clientX
       const dx = e.clientX - d.startX
       const next = direction === 1 ? d.startW + dx : d.startW - dx
+      // 动态下限在拖拽过程中同样生效（applyWidth 内的静态 clamp 不感知 minW）
+      const clamped = Math.max(minW, Math.min(max, next))
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
-      rafRef.current = requestAnimationFrame(() => applyWidth(next))
+      rafRef.current = requestAnimationFrame(() => applyWidth(clamped))
     }
 
     const up = () => finish(true)

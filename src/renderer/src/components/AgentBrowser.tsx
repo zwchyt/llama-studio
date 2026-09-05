@@ -365,19 +365,21 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
           />
           {loading && <span className="agent-browser-loading-dot" />}
         </div>
-        <button className={`agent-browser-nav-btn${annotateActive ? ' agent-browser-nav-btn--active' : ''}`} onClick={toggleAnnotate}>
-          <MessageSquarePlusIcon size={14} />
-          {annotations.length > 0 && <span className="agent-browser-annotate-count">{annotations.length}</span>}
-        </button>
-        <button className="agent-browser-nav-btn" onClick={() => handleZoom(-1)} disabled={zoom <= 0.5} title="缩小">
-          <MinusIcon size={13} />
-        </button>
-        <button className="agent-browser-nav-btn" onClick={() => handleZoom(1)} disabled={zoom >= 2} title="放大">
-          <PlusIcon size={13} />
-        </button>
-        <button className="agent-browser-nav-btn" onClick={openExternal}>
-          <ExternalLinkIcon size={13} />
-        </button>
+        <div className="agent-browser-toolbar-right">
+          <button className={`agent-browser-nav-btn${annotateActive ? ' agent-browser-nav-btn--active' : ''}`} onClick={toggleAnnotate}>
+            <MessageSquarePlusIcon size={14} />
+            {annotations.length > 0 && <span className="agent-browser-annotate-count">{annotations.length}</span>}
+          </button>
+          <button className="agent-browser-nav-btn" onClick={() => handleZoom(-1)} disabled={zoom <= 0.5} title="缩小">
+            <MinusIcon size={13} />
+          </button>
+          <button className="agent-browser-nav-btn" onClick={() => handleZoom(1)} disabled={zoom >= 2} title="放大">
+            <PlusIcon size={13} />
+          </button>
+          <button className="agent-browser-nav-btn" onClick={openExternal}>
+            <ExternalLinkIcon size={13} />
+          </button>
+        </div>
       </div>
       {title && <div className="agent-browser-title" title={title}>{title}</div>}
       {initialUrl ? (

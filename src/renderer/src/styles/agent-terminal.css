@@ -1,4 +1,17 @@
-.terminal-exited-overlay {
+/* ── Agent Code 工作台 · 内嵌终端专属样式 ───────────
+   项目唯一的终端界面（TerminalView，agent-terminal-* 类名），样式仅在本文件维护。 */
+
+.agent-terminal-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.agent-terminal-exited-overlay {
   position: absolute;
   inset: 0;
   z-index: 2;
@@ -11,21 +24,25 @@
   color: #e6e6e6;
 }
 
-.terminal-exited-overlay p {
+.agent-terminal-exited-overlay p {
   margin: 0;
   font-size: 14px;
 }
 
-.terminal-tabbar {
+/* 顶部区域：标签栏 + 目录/字号工具栏 */
+.agent-terminal-tabbar {
   display: flex;
   align-items: stretch;
+  /* cwd 工具栏为绝对定位不占高，标签为空时列表高度为 0，
+     必须给最小高度，否则整条顶栏塌缩、右侧按钮被 overflow:hidden 裁掉 */
+  min-height: 30px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  min-height: 0;
+  position: relative;
 }
 
-.terminal-tabs-scroll {
+.agent-terminal-tabs-scroll {
   display: flex;
   overflow-x: auto;
   flex: 1;
@@ -33,11 +50,11 @@
   scrollbar-width: none;
 }
 
-.terminal-tabs-scroll::-webkit-scrollbar {
+.agent-terminal-tabs-scroll::-webkit-scrollbar {
   display: none;
 }
 
-.terminal-tab {
+.agent-terminal-tab {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -51,39 +68,39 @@
   flex-shrink: 0;
 }
 
-.terminal-tab-title {
+.agent-terminal-tab-title {
   max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.terminal-tab:hover {
+.agent-terminal-tab:hover {
   background: var(--surface-hover);
 }
 
-.terminal-tab.active {
+.agent-terminal-tab.active {
   color: var(--text);
   background: var(--bg);
   border-bottom: 1px solid var(--bg);
   margin-bottom: -1px;
 }
 
-.terminal-tab.exited {
+.agent-terminal-tab.exited {
   color: var(--text-muted);
   text-decoration: line-through;
   opacity: 0.6;
 }
 
-.terminal-tab.exited:hover {
+.agent-terminal-tab.exited:hover {
   opacity: 0.8;
 }
 
-.terminal-auto-input {
+.agent-terminal-auto-input {
   position: relative;
   display: inline-block;
 }
 
-.terminal-auto-input-mirror {
+.agent-terminal-auto-input-mirror {
   visibility: hidden;
   position: absolute;
   top: 0;
@@ -94,7 +111,11 @@
   pointer-events: none;
 }
 
-.terminal-cwd-bar {
+.agent-terminal-cwd-bar {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -103,7 +124,7 @@
   flex-shrink: 0;
 }
 
-.terminal-cwd-bar .terminal-cwd-input {
+.agent-terminal-cwd-bar .agent-terminal-cwd-input {
   field-sizing: content;
   min-width: 160px;
   max-width: 360px;
@@ -117,17 +138,17 @@
   outline: none;
 }
 
-.terminal-cwd-bar .terminal-cwd-input:focus {
+.agent-terminal-cwd-bar .agent-terminal-cwd-input:focus {
   border-color: var(--border-strong);
 }
 
-.terminal-cwd-bar .terminal-cwd-input::placeholder {
+.agent-terminal-cwd-bar .agent-terminal-cwd-input::placeholder {
   color: var(--text-muted);
   opacity: 0.6;
   font-family: inherit;
 }
 
-.terminal-tabbar-btn {
+.agent-terminal-tabbar-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -142,22 +163,23 @@
   transition: background 0.15s, color 0.15s;
 }
 
-.terminal-tabbar-btn:hover {
+.agent-terminal-tabbar-btn:hover {
   background: var(--surface-hover);
   color: var(--text);
 }
 
-.terminal-tabbar-btn.primary {
+.agent-terminal-tabbar-btn.primary {
   color: var(--accent);
 }
 
-.terminal-tabbar-btn.primary:hover {
+.agent-terminal-tabbar-btn.primary:hover {
   background: var(--surface-hover);
   color: var(--accent);
 }
 
-.terminal-empty {
+.agent-terminal-empty {
   flex: 1;
+  margin: 8px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -166,12 +188,12 @@
   color: var(--text-muted);
 }
 
-.terminal-empty p {
+.agent-terminal-empty p {
   margin: 0;
   font-size: 14px;
 }
 
-.terminal-new-btn {
+.agent-terminal-new-btn {
   padding: 8px 24px;
   background: var(--accent);
   color: #fff;
@@ -181,11 +203,11 @@
   font-size: 14px;
 }
 
-.terminal-new-btn:hover {
+.agent-terminal-new-btn:hover {
   opacity: 0.9;
 }
 
-.terminal-tab-close {
+.agent-terminal-tab-close {
   background: none;
   border: none;
   color: var(--text-muted);
@@ -196,19 +218,21 @@
   border-radius: 3px;
 }
 
-.terminal-tab-close:hover {
+.agent-terminal-tab-close:hover {
   color: var(--text);
   background: var(--surface-hover);
 }
 
-.terminal-screens {
+/* 终端屏幕区域（xterm 宿主） */
+.agent-terminal-screens {
   flex: 1;
   min-height: 0;
+  margin: 8px;
   display: flex;
   contain: layout style;
 }
 
-.terminal-screen {
+.agent-terminal-screen {
   flex: 1;
   min-height: 0;
   background: var(--color-terminal-bg, #1e1e1e);
@@ -216,24 +240,12 @@
   display: flex;
 }
 
-.terminal-screen .xterm {
+.agent-terminal-screen .xterm {
   flex: 1;
   min-height: 0;
 }
 
-.terminal-screen .xterm-viewport {
+.agent-terminal-screen .xterm-viewport {
   /* 避免 xterm 默认滚动条遮盖内容 */
   scrollbar-width: thin;
-}
-
-.terminal-view {
-  padding: 0 !important;
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  margin: 8px 8px 8px 16px;
-  border-radius: var(--radius, 10px);
-  border: 1.5px solid var(--border-strong);
-  overflow: hidden;
 }

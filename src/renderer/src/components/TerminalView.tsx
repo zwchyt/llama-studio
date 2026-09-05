@@ -1,12 +1,12 @@
 import React, { useRef, useEffect, useState } from 'react'
 import { createTerminal, attach, fitTerminal, disposeTerminal, updateTerminalTheme, getTerminalFontSize, setTerminalFontSize, TERMINAL_FONT_SIZE_DEFAULT, detachTerminal, isTerminalReady, beginReplayGate, applyReplayAndFlush, endReplayGate } from '../utils/terminalRegistry'
-import { useTerminalStore, type TerminalStoreHook } from '../store/terminalStore'
+import { useAgentTerminalStore, type TerminalStoreHook } from '../store/terminalStore'
 import { Terminal } from 'lucide-react'
 import { FolderOpenIcon, PlusIcon, MinusIcon, RefreshCwIcon } from '@animateicons/react/lucide'
 import { safeCall } from '../utils/safeCall'
 import { matchTerminalAction, getTerminalKeybinds, subscribeTerminalStore } from '../utils/terminal-keybinds'
 import '@xterm/xterm/css/xterm.css'
-import '../styles/terminal.css'
+import '../styles/agent-terminal.css'
 
 const CWD_KEY = 'terminal-last-cwd'
 
@@ -35,11 +35,11 @@ function AutoInput({
   }, [value, placeholder])
 
   return (
-    <span className="terminal-auto-input">
-      <span ref={mirrorRef} className="terminal-auto-input-mirror" aria-hidden>{value}</span>
+    <span className="agent-terminal-auto-input">
+      <span ref={mirrorRef} className="agent-terminal-auto-input-mirror" aria-hidden>{value}</span>
       <input
         ref={inputRef}
-        className="terminal-cwd-input"
+        className="agent-terminal-cwd-input"
         type="text"
         placeholder={placeholder}
         value={value}
@@ -66,7 +66,7 @@ function TerminalTabBar({ store }: { store: TerminalStoreHook }): React.JSX.Elem
 
   function handleNew(): void {
     try { localStorage.setItem(CWD_KEY, cwd) } catch { /* quota exceeded */ }
-    open(cwd || undefined, { navigate: false })
+    open(cwd || undefined)
   }
 
   function handleKeyDown(e: React.KeyboardEvent): void {
@@ -76,17 +76,17 @@ function TerminalTabBar({ store }: { store: TerminalStoreHook }): React.JSX.Elem
   }
 
   return (
-    <div className="terminal-tabbar">
-      <div className="terminal-tabs-scroll">
+    <div className="agent-terminal-tabbar">
+      <div className="agent-terminal-tabs-scroll">
         {sessions.map((s) => (
           <div
             key={s.id}
-            className={`terminal-tab ${s.id === activeId ? 'active' : ''} ${s.exited ? 'exited' : ''}`}
+            className={`agent-terminal-tab ${s.id === activeId ? 'active' : ''} ${s.exited ? 'exited' : ''}`}
             onClick={() => setActive(s.id)}
           >
-            <span className="terminal-tab-title">{s.title}</span>
+            <span className="agent-terminal-tab-title">{s.title}</span>
             <button
-              className="terminal-tab-close"
+              className="agent-terminal-tab-close"
               onClick={(e) => { e.stopPropagation(); close(s.id) }}
             >
               ×
@@ -94,28 +94,28 @@ function TerminalTabBar({ store }: { store: TerminalStoreHook }): React.JSX.Elem
           </div>
         ))}
       </div>
-      <div className="terminal-cwd-bar">
+      <div className="agent-terminal-cwd-bar">
         <AutoInput
           value={cwd}
           placeholder="工作目录（留空使用默认目录）"
           onChange={(e) => setCwd(e.target.value)}
           onKeyDown={handleKeyDown}
         />
-        <button className="terminal-tabbar-btn" onClick={handleBrowse}>
+        <button className="agent-terminal-tabbar-btn" onClick={handleBrowse}>
           <FolderOpenIcon size={13} />
         </button>
-        <button className="terminal-tabbar-btn primary" onClick={handleNew}>
+        <button className="agent-terminal-tabbar-btn primary" onClick={handleNew}>
           <PlusIcon size={13} />
         </button>
         <span style={{ width: 1, height: 16, background: 'var(--border)', margin: '0 4px' }} />
-        <button className="terminal-tabbar-btn" onClick={() => { setTerminalFontSize(fontSize - 1); setFontSize(getTerminalFontSize()) }}>
+        <button className="agent-terminal-tabbar-btn" onClick={() => { setTerminalFontSize(fontSize - 1); setFontSize(getTerminalFontSize()) }}>
           <MinusIcon size={13} />
         </button>
         <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 22, textAlign: 'center', userSelect: 'none' }}>{fontSize}</span>
-        <button className="terminal-tabbar-btn" onClick={() => { setTerminalFontSize(fontSize + 1); setFontSize(getTerminalFontSize()) }}>
+        <button className="agent-terminal-tabbar-btn" onClick={() => { setTerminalFontSize(fontSize + 1); setFontSize(getTerminalFontSize()) }}>
           <PlusIcon size={13} />
         </button>
-        <button className="terminal-tabbar-btn" onClick={() => { setTerminalFontSize(TERMINAL_FONT_SIZE_DEFAULT); setFontSize(getTerminalFontSize()) }}>
+        <button className="agent-terminal-tabbar-btn" onClick={() => { setTerminalFontSize(TERMINAL_FONT_SIZE_DEFAULT); setFontSize(getTerminalFontSize()) }}>
           <RefreshCwIcon size={12} />
         </button>
       </div>
@@ -209,7 +209,7 @@ function TermScreen({ id, visible, store }: { id: string; visible: boolean; stor
     }
   }, [id, session?.fallback, session?.cwd, session?.ownerKey])
 
-  return <div ref={ref} className="terminal-screen" style={{ display: visible ? '' : 'none' }} />
+  return <div ref={ref} className="agent-terminal-screen" style={{ display: visible ? '' : 'none' }} />
 }
 
 /** 无 PTY 时的回退终端：逐行执行命令 */
@@ -296,7 +296,7 @@ function FallbackTermScreen({ id: _id, cwd, visible }: { id: string; cwd: string
   }
 
   const display = (
-    <div className="terminal-screen" style={{ display: visible ? 'flex' : 'none', flexDirection: 'column', background: 'var(--color-terminal-bg, #1e1e1e)' }}>
+    <div className="agent-terminal-screen" style={{ display: visible ? 'flex' : 'none', flexDirection: 'column', background: 'var(--color-terminal-bg, #1e1e1e)' }}>
       <div style={{ flex: 1, overflow: 'auto', padding: '8px 12px', fontFamily: 'Consolas, monospace', fontSize: 13, color: 'var(--color-terminal-fg, #d4d4d4)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
         {lines.map((line, i) => (
           <div key={i} dangerouslySetInnerHTML={{ __html: ansiToHtml(line) }} />
@@ -341,8 +341,9 @@ function ansiToHtml(text: string): string {
 
 const MAX_MOUNTED_TERMINALS = 6
 
+/** Agent Code 工作台内嵌终端（项目唯一的终端界面） */
 export default function TerminalView({ store }: { store?: TerminalStoreHook | null }): React.JSX.Element {
-  const activeStore = store ?? useTerminalStore
+  const activeStore = store ?? useAgentTerminalStore
   const { sessions, activeId, open } = activeStore()
   const active = sessions.find((s) => s.id === activeId)
 
@@ -374,25 +375,25 @@ export default function TerminalView({ store }: { store?: TerminalStoreHook | nu
   }, [sessions, activeId])
 
   return (
-    <div className="terminal-view">
+    <div className="agent-terminal-view">
       <TerminalTabBar store={activeStore} />
       {sessions.length === 0 ? (
-        <div className="terminal-empty">
+        <div className="agent-terminal-empty">
           <Terminal size={48} strokeWidth={1.5} />
           <p>没有打开的终端</p>
           <p style={{ fontSize: 12 }}>点击右上角 + 新建终端</p>
         </div>
       ) : (
-        <div className="terminal-screens">
+        <div className="agent-terminal-screens">
           {sessions.filter((s) => !s.exited && mountedKeys.includes(s.id)).map((s) => (
             s.fallback
               ? <FallbackTermScreen key={s.id} id={s.id} cwd={s.cwd} visible={s.id === activeId} />
               : <TermScreen key={s.id} id={s.id} visible={s.id === activeId} store={activeStore} />
           ))}
           {active && active.exited && (
-            <div className="terminal-exited-overlay">
+            <div className="agent-terminal-exited-overlay">
               <p>终端已退出</p>
-              <button className="terminal-new-btn" onClick={() => open(undefined, { navigate: false })}>
+              <button className="agent-terminal-new-btn" onClick={() => open()}>
                 新建终端
               </button>
             </div>

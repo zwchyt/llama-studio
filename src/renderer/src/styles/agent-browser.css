@@ -38,8 +38,23 @@
   align-items: center;
   gap: 4px;
   padding: 6px 8px;
+  padding-right: 130px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+  flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.agent-browser-toolbar-right {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
   flex-shrink: 0;
 }
 

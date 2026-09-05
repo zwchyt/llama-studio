@@ -7383,11 +7383,58 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('git-unstage-all', async (_e, dir: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const cwd = resolveAgentPath(dir || '')
+      if (!cwd || !existsSync(cwd)) return { success: false, error: '目录不存在' }
+      // restore --staged . 会把已暂存的新增文件一并退回 untracked
+      const r = await runGit(['restore', '--staged', '--', '.'], cwd)
+      return { success: r.ok, error: r.ok ? undefined : r.stderr }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
   ipcMain.handle('git-discard-all', async (_e, dir: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const cwd = resolveAgentPath(dir || '')
       if (!cwd || !existsSync(cwd)) return { success: false, error: '目录不存在' }
       const r = await runGit(['restore', '--', '.'], cwd)
+      return { success: r.ok, error: r.ok ? undefined : r.stderr }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  // ── Git 分支管理 ──
+  ipcMain.handle('git-list-branches', async (_e, dir: string): Promise<{
+    branches: Array<{ name: string; current: boolean }>
+    error?: string
+  }> => {
+    try {
+      const cwd = resolveAgentPath(dir || '')
+      if (!cwd || !existsSync(cwd)) return { branches: [] }
+      const r = await runGit(['branch', '--no-color'], cwd)
+      if (!r.ok) return { branches: [], error: r.stderr }
+      const branches = r.stdout.split('\n')
+        .filter(Boolean)
+        .map(line => ({
+          current: line.startsWith('* '),
+          name: line.replace(/^\*\s+/, '').trim(),
+        }))
+      return { branches }
+    } catch (e) {
+      return { branches: [], error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('git-checkout-branch', async (_e, dir: string, branch: string): Promise<{
+    success: boolean; error?: string
+  }> => {
+    try {
+      const cwd = resolveAgentPath(dir || '')
+      if (!cwd || !existsSync(cwd)) return { success: false, error: '目录不存在' }
+      const r = await runGit(['checkout', branch], cwd)
       return { success: r.ok, error: r.ok ? undefined : r.stderr }
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) }

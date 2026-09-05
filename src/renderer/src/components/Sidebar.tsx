@@ -7,7 +7,7 @@ import { paramSetOf } from '../utils/engine'
 import {
   LayoutDashboardIcon,
   HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
-  MessageSquareIcon, TerminalIcon, InfoIcon, FileTextIcon, CodeIcon,
+  MessageSquareIcon, InfoIcon, FileTextIcon, CodeIcon,
   SettingsIcon, BookOpenIcon, AudioLinesIcon, ImageIcon, MicIcon,
   BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon
 } from '@animateicons/react/lucide'
@@ -206,14 +206,6 @@ export default function Sidebar() {
           {view === 'token-stats' && hasRunningModels && <span className="nav-dot" />}
         </NavItem>
 
-        <NavItem
-          icon={TerminalIcon}
-          label="终端"
-          active={view === 'terminal'}
-          onClick={() => setView('terminal')}
-        >
-          {view === 'terminal' && <span className="nav-active-dot" />}
-        </NavItem>
         <NavItem
           icon={FileTextIcon}
           label="OCR"
