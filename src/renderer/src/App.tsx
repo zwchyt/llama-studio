@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo } from 'react'
-import { useStore, type AgentStatus } from './store/useStore'
+import { useStore } from './store/useStore'
 import { useImageStore } from './store/imageStore'
 import Sidebar from './components/Sidebar'
 import CardsView from './components/CardsView'
@@ -215,17 +215,8 @@ function AppMain() {
       checkEngineReleasesFromNetwork()
     }
     applyEngineReleasesCache()
-    queueMicrotask(async () => {
-      try {
-        const agents = await window.api.listGlobalAgents() as AgentStatus[]
-        useStore.getState().setAgentStatuses(agents)
-        const installed = agents.filter(a => a.installed && a.version).map(a => ({ pkg: a.pkg, version: a.version! }))
-        if (installed.length > 0) {
-          const updates = await window.api.checkAgentUpdates(installed)
-          useStore.getState().setAgentUpdates(updates)
-        }
-      } catch { /* ignore */ }
-    })
+    // Agent 检测不在启动时触发：AgentsView 首次进入且无缓存数据时自行拉取，
+    // 避免应用启动就被 npm list + registry 检查拖慢
 
     window.api.onModelError((data) => {
       const s = useStore.getState()
@@ -265,7 +256,15 @@ function AppMain() {
     await window.api.setEngineReleasesCache(Object.keys(filtered).length > 0 ? filtered : null, now).catch(() => {})
   }
   useEffect(() => {
-    const unsub = useStore.subscribe((s) => { syncEngineCache(s.engineReleases) })
+    // subscribe 会在任意 store 字段变化时触发；只有 engineReleases 内容真正变化才写盘，
+    // 否则 metrics 每 2 秒广播一次都会重写 settings.json
+    let lastSig = JSON.stringify(useStore.getState().engineReleases)
+    const unsub = useStore.subscribe((s) => {
+      const sig = JSON.stringify(s.engineReleases)
+      if (sig === lastSig) return
+      lastSig = sig
+      syncEngineCache(s.engineReleases)
+    })
     return unsub
   }, [])
 

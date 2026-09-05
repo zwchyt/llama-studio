@@ -13,7 +13,7 @@
 import { ipcMain } from 'electron'
 import { join, resolve } from 'path'
 import { createHash, randomUUID } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, unlinkSync } from 'fs'
 import type {
   AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection,
 } from '../../shared/types'
@@ -37,6 +37,19 @@ interface MemoryFile {
 
 const stores = new Map<string, MemoryFile>()
 let memoryDir = ''
+
+/**
+ * 删除指定工作区的项目记忆（工作区不再被任何项目/会话引用时调用）。
+ * 同时丢弃内存缓存与待落盘定时器，防止去抖落盘把刚删的文件写回来。
+ */
+export function deleteMemoryForWorkspace(dir: string): void {
+  if (!memoryDir) return
+  const key = resolve(dir).toLowerCase()
+  const timer = pendingSaves.get(key)
+  if (timer) { clearTimeout(timer); pendingSaves.delete(key) }
+  stores.delete(key)
+  try { unlinkSync(join(memoryDir, `${sha1(key)}.json`)) } catch { /* 不存在则忽略 */ }
+}
 
 // ── 基础工具 ──
 

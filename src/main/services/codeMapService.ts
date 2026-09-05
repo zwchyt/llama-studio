@@ -14,7 +14,7 @@ import { join, resolve, relative, dirname, extname, sep } from 'path'
 import { createHash } from 'crypto'
 import {
   existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync,
-  watch, type FSWatcher,
+  watch, unlinkSync, type FSWatcher,
 } from 'fs'
 import type {
   CodeMapFileSkeleton, CodeMapStatus, CodeMapSymbol, CodeMapSymbolHit, CodeMapNeighbors,
@@ -309,6 +309,24 @@ function loadSnapshot(dir: string): Map<string, CodeMapFileSkeleton> | null {
     for (const f of snap.files) { if (f && typeof f.relPath === 'string') m.set(f.relPath, f) }
     return m
   } catch { return null }
+}
+
+/**
+ * 删除指定工作区的 codemap 快照（工作区不再被任何项目/会话引用时调用）。
+ * 快照是可重建的缓存；同时关闭 watcher、丢弃内存地图并清掉去抖定时器，
+ * 防止延迟落盘把刚删的快照写回来。
+ */
+export function deleteSnapshotForWorkspace(dir: string): void {
+  const key = resolve(dir)
+  const map = maps.get(key)
+  if (map) {
+    if (map.debounceTimer) clearTimeout(map.debounceTimer)
+    if (map.snapshotTimer) clearTimeout(map.snapshotTimer)
+    if (map.watcher) { try { map.watcher.close() } catch { /* ignore */ } }
+    maps.delete(key)
+  }
+  if (!snapshotDir) return
+  try { unlinkSync(snapshotPathFor(dir)) } catch { /* 不存在则忽略 */ }
 }
 
 // ── 构建（全量 / 快照校验式增量）──

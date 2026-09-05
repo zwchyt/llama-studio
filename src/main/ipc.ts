@@ -18,9 +18,9 @@ import { app } from 'electron'
 import { randomUUID, createHash } from 'crypto'
 import type * as ptyNs from 'node-pty'
 import type { AgentProject, AgentSession, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus, EngineKind, ReleaseInfo } from '../shared/types'
-import { registerCodeMapIpc, disposeCodeMaps } from './services/codeMapService'
+import { registerCodeMapIpc, disposeCodeMaps, deleteSnapshotForWorkspace } from './services/codeMapService'
 import { registerRetrievalIpc } from './services/retrievalService'
-import { registerMemoryStoreIpc } from './services/memoryStore'
+import { registerMemoryStoreIpc, deleteMemoryForWorkspace } from './services/memoryStore'
 import { readGgufMeta } from './services/ggufReader'
 import { registerKnowledgeIpc } from './services/knowledgeService'
 import { initTokenLedger, appendTokenUsage, readTokenUsage, clearTokenUsage } from './tokenLedger'
@@ -4981,7 +4981,11 @@ export function registerIpcHandlers(): void {
     'grok': { exe: 'powershell.exe', args: ['-Command', 'irm https://x.ai/cli/install.ps1 | iex'] },
   }
   let agentsCache: { ts: number; result: { name: string; pkg: string; cmd: string; installed: boolean; version: string | null; logo?: string }[] } | null = null
-  const AGENTS_CACHE_TTL = 30000
+  // 常规缓存 10 分钟；安装 Agent 后走短 TTL（15 秒），保证 5 秒安装轮询能及时看到安装结果
+  const AGENTS_CACHE_TTL = 10 * 60 * 1000
+  const AGENTS_SHORT_TTL = 15000
+  let agentsShortTtlUntil = 0
+  let agentsRefreshing = false
 
   /** Detect non-npm agents by checking if the binary exists in PATH */
   async function detectNonNpmAgents(results: { name: string; pkg: string; cmd: string; installed: boolean; version: string | null; logo?: string }[]): Promise<void> {
@@ -5020,25 +5024,36 @@ export function registerIpcHandlers(): void {
   }
 
   let resolvedNpmCmd: string | null = null
-  function findNpmCmd(): string {
+  let resolvingNpmCmd: Promise<string> | null = null
+  // 异步探测 npm 路径：execSync 会阻塞主进程（窗口卡死），必须用 spawn
+  async function findNpmCmd(): Promise<string> {
     if (resolvedNpmCmd) return resolvedNpmCmd
-    if (process.platform === 'win32') {
-      const appDataNpm = process.env.APPDATA ? join(process.env.APPDATA, 'npm', 'npm.cmd') : ''
-      if (appDataNpm && existsSync(appDataNpm)) { resolvedNpmCmd = appDataNpm; return resolvedNpmCmd }
-      try {
-        const lines = execSync('where npm.cmd', { encoding: 'utf8', timeout: 5000 }).trim().split(/\r?\n/)
-        const cwd = process.cwd().toLowerCase()
-        for (const line of lines) {
-          const p = line.trim()
-          if (p && !p.toLowerCase().startsWith(cwd)) {
-            resolvedNpmCmd = p
-            return resolvedNpmCmd
+    if (!resolvingNpmCmd) resolvingNpmCmd = (async () => {
+      if (process.platform === 'win32') {
+        const appDataNpm = process.env.APPDATA ? join(process.env.APPDATA, 'npm', 'npm.cmd') : ''
+        if (appDataNpm && existsSync(appDataNpm)) return appDataNpm
+        try {
+          const out = await new Promise<string>((resolve, reject) => {
+            const p = spawn('where', ['npm.cmd'], { windowsHide: true })
+            let buf = ''
+            p.stdout?.on('data', (d: Buffer) => { buf += d.toString() })
+            p.on('error', reject)
+            p.on('close', (code) => code === 0 ? resolve(buf) : reject(new Error(`where npm.cmd 退出码 ${code}`)))
+            const t = setTimeout(() => { try { p.kill() } catch {} reject(new Error('where npm.cmd 超时')) }, 5000)
+            p.on('close', () => clearTimeout(t))
+          })
+          const cwd = process.cwd().toLowerCase()
+          for (const line of out.trim().split(/\r?\n/)) {
+            const found = line.trim()
+            if (found && !found.toLowerCase().startsWith(cwd)) return found
           }
-        }
-      } catch {}
-    }
-    resolvedNpmCmd = 'npm'
-    return resolvedNpmCmd
+        } catch {}
+      }
+      return 'npm'
+    })()
+    const cmd = await resolvingNpmCmd
+    resolvedNpmCmd = cmd
+    return cmd
   }
   function npmGlobalEnv(): Record<string, string | undefined> {
     const npmBinDir = process.env.APPDATA ? join(process.env.APPDATA, 'npm') : ''
@@ -5048,12 +5063,32 @@ export function registerIpcHandlers(): void {
   }
 
   ipcMain.handle('list-global-agents', async () => {
-    if (agentsCache && (Date.now() - agentsCache.ts) < AGENTS_CACHE_TTL) {
+    const now = Date.now()
+    const ttl = now < agentsShortTtlUntil ? AGENTS_SHORT_TTL : AGENTS_CACHE_TTL
+    if (agentsCache && (now - agentsCache.ts) < ttl) {
       return agentsCache.result
     }
+    // 无缓存时同步等待完整检测结果
+    if (!agentsCache) {
+      const result = await fetchAgentsResult()
+      agentsCache = { ts: Date.now(), result }
+      return result
+    }
+    // stale-while-revalidate：先返回过期旧数据让界面即时可用，后台静默刷新
+    if (!agentsRefreshing) {
+      agentsRefreshing = true
+      fetchAgentsResult()
+        .then((result) => { agentsCache = { ts: Date.now(), result } })
+        .catch((err) => { console.warn('[list-global-agents] background refresh failed:', err) })
+        .finally(() => { agentsRefreshing = false })
+    }
+    return agentsCache.result
+  })
+
+  async function fetchAgentsResult(): Promise<{ name: string; pkg: string; cmd: string; installed: boolean; version: string | null; logo?: string }[]> {
+    const npmCmd = await findNpmCmd()
+    const isWin = process.platform === 'win32'
     const result = await new Promise<{ name: string; pkg: string; cmd: string; installed: boolean; version: string | null }[]>((resolve) => {
-      const npmCmd = findNpmCmd()
-      const isWin = process.platform === 'win32'
       const proc = spawn(isWin ? `"${npmCmd}" list -g --depth=0 --json` : npmCmd, isWin ? [] : ['list', '-g', '--depth=0', '--json'], { windowsHide: true, shell: isWin })
       let stdout = ''
       let stderr = ''
@@ -5099,9 +5134,8 @@ export function registerIpcHandlers(): void {
     })
     // Detect non-npm agents (e.g. kimi installed via PowerShell script)
     await detectNonNpmAgents(result)
-    agentsCache = { ts: Date.now(), result }
     return result
-  })
+  }
 
   ipcMain.handle('check-agent-updates', async (_e, installed: { pkg: string; version: string }[]) => {
     const results: Record<string, { latest: string }> = {}
@@ -5199,7 +5233,7 @@ export function registerIpcHandlers(): void {
         args = override.args
         env = npmGlobalEnv()
       } else {
-        exe = findNpmCmd()
+        exe = await findNpmCmd()
         args = ['install', '-g', `${opts.pkg}@latest`]
         env = undefined
       }
@@ -5236,6 +5270,8 @@ export function registerIpcHandlers(): void {
     if (!opts.pkg) return { success: false, error: '缺少包名' }
     const known = KNOWN_AGENTS.find(a => a.pkg === opts.pkg)
     if (!known) return { success: false, error: `未知 agent: ${opts.pkg}` }
+    // 安装期间检测轮询需要看到最新状态：15 秒内不做长缓存
+    agentsShortTtlUntil = Date.now() + 10 * 60 * 1000
     agentsCache = null
     try {
       const override = INSTALL_OVERRIDES[opts.pkg]
@@ -5244,7 +5280,7 @@ export function registerIpcHandlers(): void {
         exe = override.exe
         args = override.args
       } else {
-        exe = findNpmCmd()
+        exe = await findNpmCmd()
         args = ['install', '-g', opts.pkg]
       }
       const env = npmGlobalEnv()
@@ -6733,6 +6769,76 @@ export function registerIpcHandlers(): void {
   // 遗留单文件（旧版：所有会话塞进一个 agent-projects.json）
   const AGENT_PROJECTS_LEGACY_PATH = join(AGENT_PROJECTS_DIR, 'agent-projects.json')
   const AGENT_PROJECTS_ROOT_LEGACY_PATH = join(APP_ROOT, 'agent-projects.json')
+  // 会话派生数据目录：轨迹（pi 事件流）与审计（工具执行记录）。
+  // 严格按会话归属，文件名 = `pi-` + 应用会话 id；会话删除时必须随之清理，
+  // 否则孤儿文件无限增长（轨迹单会话可达数 MB）。
+  const AGENT_TRAJECTORY_DIR = join(AGENT_PROJECTS_DIR, 'trajectory')
+  const AGENT_TRACE_DIR = join(AGENT_PROJECTS_DIR, 'traces')
+
+  // 删除某会话的轨迹 / 审计文件（含 .1 轮转副本）；记忆与 codemap 按工作区哈希存储，
+  // 是项目级共享数据，不随单会话删除
+  function deleteSessionArtifacts(sessionId: string): void {
+    for (const dir of [AGENT_TRAJECTORY_DIR, AGENT_TRACE_DIR]) {
+      for (const suffix of ['.jsonl', '.jsonl.1']) {
+        try { unlinkSync(join(dir, `pi-${sessionId}${suffix}`)) } catch { /* 不存在则忽略 */ }
+      }
+    }
+  }
+
+  // 清扫孤儿派生数据：轨迹/审计文件还在、但对应会话文件已被删除的（历史版本遗留）
+  function sweepOrphanSessionArtifacts(liveIds: Set<string>): void {
+    for (const dir of [AGENT_TRAJECTORY_DIR, AGENT_TRACE_DIR]) {
+      let names: string[] = []
+      try { names = readdirSync(dir) } catch { continue }
+      for (const name of names) {
+        // 兼容新旧两种命名：pi-<sessionId>.jsonl（现行）与 <sessionId>.jsonl（更早版本）
+        const m = /^(?:pi-)?(.+)\.jsonl(\.1)?$/.exec(name)
+        if (m && m[1] && !liveIds.has(m[1])) {
+          try { unlinkSync(join(dir, name)) } catch { /* ignore */ }
+        }
+      }
+    }
+  }
+
+  // 启动加载时清理无引用的工作区级数据：memory/codemap 文件按 sha1(工作区路径) 命名，
+  // 不在现存会话工作区集合内的即为孤儿（项目已删除或历史遗留）
+  function sweepOrphanWorkspaceArtifacts(liveWorkspaceDirs: string[]): void {
+    const live = new Set(liveWorkspaceDirs.filter(Boolean).map(d => {
+      try { return createHash('sha1').update(resolve(d).toLowerCase()).digest('hex') } catch { return '' }
+    }))
+    for (const dir of [join(AGENT_PROJECTS_DIR, 'memory'), join(AGENT_PROJECTS_DIR, 'codemap')]) {
+      let names: string[] = []
+      try { names = readdirSync(dir) } catch { continue }
+      for (const name of names) {
+        if (!name.endsWith('.json')) continue
+        if (!live.has(name.slice(0, -5))) {
+          try { unlinkSync(join(dir, name)) } catch { /* ignore */ }
+        }
+      }
+    }
+  }
+
+  // 删除已无任何现存会话引用的工作区级数据（memory / codemap）。
+  // 只处理传入的候选工作区（来自被删除的会话文件），避免误伤未落盘的新会话。
+  function deleteWorkspaceArtifactsIfUnreferenced(workspaceDirs: string[]): void {
+    const candidates = [...new Set(workspaceDirs.filter(Boolean).map(d => { try { return resolve(d) } catch { return '' } }))]
+    if (candidates.length === 0) return
+    let files: string[] = []
+    try { files = readdirSync(AGENT_PROJECTS_DIR) } catch { return }
+    const live = new Set<string>()
+    for (const f of files) {
+      if (!f.endsWith('.json') || f === 'agent-projects.json') continue
+      try {
+        const raw = JSON.parse(readFileSync(join(AGENT_PROJECTS_DIR, f), 'utf-8')) as { workspaceDir?: string }
+        if (raw?.workspaceDir) live.add(resolve(raw.workspaceDir).toLowerCase())
+      } catch { /* 跳过损坏文件 */ }
+    }
+    for (const ws of candidates) {
+      if (live.has(ws.toLowerCase())) continue
+      deleteSnapshotForWorkspace(ws)
+      deleteMemoryForWorkspace(ws)
+    }
+  }
 
   // 单个会话落盘文件结构：在 AgentSession 基础上附带项目信息，便于按项目分组还原
   interface SessionFile {
@@ -6803,6 +6909,9 @@ export function registerIpcHandlers(): void {
       }
       return []
     }
+    // 会话集合确定后再清扫孤儿轨迹/审计，避免误删迁移中的遗留会话数据
+    sweepOrphanSessionArtifacts(new Set(sessions.map(s => s.id)))
+    sweepOrphanWorkspaceArtifacts(sessions.map(s => s.workspaceDir))
     // 按 projectId 分组
     const byProject = new Map<string, SessionFile[]>()
     for (const s of sessions) {
@@ -6882,20 +6991,26 @@ export function registerIpcHandlers(): void {
       const gcScope = opts?.gcScope
       let allFiles: string[] = []
       try { allFiles = readdirSync(AGENT_PROJECTS_DIR) } catch { allFiles = [] }
+      const deletedWorkspaceDirs: string[] = []
       for (const f of allFiles) {
         if (!f.endsWith('.json')) continue
         if (f === 'agent-projects.json') continue
         const sessionId = f.endsWith('.tasks.json') ? f.slice(0, -11) : f.slice(0, -5)
         if (!liveIds.has(sessionId)) {
-          if (gcScope && gcScope.length) {
-            try {
-              const ex = JSON.parse(readFileSync(join(AGENT_PROJECTS_DIR, f), 'utf-8'))
-              if (!gcScope.includes(ex.projectId)) continue
-            } catch { continue }
-          }
+          let wsDir: string | undefined
+          try {
+            const ex = JSON.parse(readFileSync(join(AGENT_PROJECTS_DIR, f), 'utf-8')) as { projectId?: string; workspaceDir?: string }
+            if (gcScope && gcScope.length && !gcScope.includes(ex.projectId || '')) continue
+            wsDir = ex.workspaceDir
+          } catch { if (gcScope && gcScope.length) continue }
           try { unlinkSync(join(AGENT_PROJECTS_DIR, f)) } catch { /* ignore */ }
+          // 会话删除的同时清掉其轨迹 / 审计派生文件，防止孤儿数据无限增长
+          deleteSessionArtifacts(sessionId)
+          if (wsDir) deletedWorkspaceDirs.push(wsDir)
         }
       }
+      // 工作区不再被任何现存会话引用时，清掉其 memory / codemap
+      if (deletedWorkspaceDirs.length) deleteWorkspaceArtifactsIfUnreferenced(deletedWorkspaceDirs)
       return { success: true }
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) }
