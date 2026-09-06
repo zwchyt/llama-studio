@@ -35,7 +35,9 @@ export default function SplashScreen({ startExit, onExited }: SplashScreenProps)
     const LOGO_TEXT = 'LLAMA-STUDIO'
     const LOGO_SIZE = 1.5
     const off = document.createElement('canvas')
-    const octx = off.getContext('2d')!
+    // willReadFrequently：buildLogo/buildLlamaShape 会反复 getImageData 采样像素，
+    // 加此标志让 Chromium 用 CPU 后备画布，避免每次读取的 GPU→CPU 回传（消除控制台性能警告）
+    const octx = off.getContext('2d', { willReadFrequently: true })!
     const logoTargets: { x: number; y: number }[] = new Array(N)
     let logoMode = false, logoProg = 0
     let logoFormedAt = 0            // logo 完全成形时刻，用于退场前的最短展示

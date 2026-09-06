@@ -5098,6 +5098,77 @@
   user-select: none;
 }
 
+/* ── 链内思考段独立折叠块（嵌套折叠）──
+   每个思考段一个可收起/展开子块：完成段默认收起（点击展开阅读），流式段自动展开、
+   结束后自动收起；折叠头沿用思考段时间标签的橙色等宽风格，流式段标签转次要色。
+   间距由外层容器（.agent-think-body 首元素 / .agent-think-item 10px）统一提供。 */
+.agent-think-fold-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
+  color: #d97c00;
+  user-select: none;
+  transition: opacity var(--transition);
+}
+
+.agent-think-fold-head:hover {
+  opacity: .8;
+}
+
+.agent-think-fold-label.live {
+  color: var(--text-secondary);
+}
+
+/* 折叠动画：与容器级 .agent-think-anim 同构的裁剪层 + 内容层分离方案 */
+.agent-think-fold-anim {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 折叠体内容层：纵向高度上限（约 14 行）——单段思考过长（六七十行）不再撑长整条
+   思考链，超出部分在折叠体内滚动；流式时由组件贴底跟随最新内容 */
+.agent-think-fold-body {
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-top: 4px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+
+.agent-think-fold-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.agent-think-fold-body::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+}
+
+.agent-think-fold-body::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* 过程正文段（链内阶段性正文输出）：文字用主文字色（近黑），比弱化的思考文本
+   （次要色）和彩色工具标签更醒目——链内主次层级：过程正文 > 思考文本；
+   正文内容比思考更接近结论，视觉上优先 */
+.agent-think-prose {
+  color: var(--text);
+}
+
 /* 思考块 pending 占位（首 token 未到 / 模型加载上下文中）：三点跳动 + 等待文案 */
 .agent-think-waiting {
   display: inline-flex;
