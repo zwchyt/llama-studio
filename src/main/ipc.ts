@@ -410,13 +410,13 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
     return Promise.resolve()
   }
 }
-interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; ttsModelFolders: string[]; asrModelFolders: string[]; ocrModelFolders: string[]; sdModelFolders: string[]; sdVaeFolders: string[]; sdLlmFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; slashCommands?: unknown; engineReleasesCache?: Record<string, ReleaseInfo>; engineReleasesCheckedAt?: number }
-const UI_KEYS = new Set(['splashEnabled', 'soundEnabled', 'notificationSound', 'chatSidebarCollapsed', 'agentToolCardsExpanded', 'ttsEngine', 'ttsModelPath', 'ttsVocoderPath', 'slashCommands'])
+interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; ttsModelFolders: string[]; asrModelFolders: string[]; ocrModelFolders: string[]; sdModelFolders: string[]; sdVaeFolders: string[]; sdLlmFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; slashCommands?: unknown; engineReleasesCache?: Record<string, ReleaseInfo>; engineReleasesCheckedAt?: number }
+const UI_KEYS = new Set(['splashEnabled', 'soundEnabled', 'notificationSound', 'chatSidebarCollapsed', 'ttsEngine', 'ttsModelPath', 'ttsVocoderPath', 'slashCommands'])
 let settingsCache: AppSettings | null = null
 async function loadSettings(): Promise<AppSettings> {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false }; return settingsCache }
     const data = JSON.parse(await fsPromises.readFile(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
@@ -432,7 +432,6 @@ async function loadSettings(): Promise<AppSettings> {
       soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
       notificationSound: data.notificationSound !== undefined ? data.notificationSound : 'chime',
       chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? data.chatSidebarCollapsed : false,
-      agentToolCardsExpanded: data.agentToolCardsExpanded !== undefined ? data.agentToolCardsExpanded : true,
       ttsEngine: typeof data.ttsEngine === 'string' ? data.ttsEngine : 'system',
       ttsModelPath: typeof data.ttsModelPath === 'string' ? data.ttsModelPath : '',
       ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : '',
@@ -440,7 +439,7 @@ async function loadSettings(): Promise<AppSettings> {
       engineReleasesCheckedAt: typeof data.engineReleasesCheckedAt === 'number' ? data.engineReleasesCheckedAt : undefined
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true, engineReleasesCache: undefined, engineReleasesCheckedAt: undefined }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, engineReleasesCache: undefined, engineReleasesCheckedAt: undefined }; return settingsCache }
 }
 async function saveSettings(s: AppSettings): Promise<void> {
   await fsPromises.writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2))
@@ -449,7 +448,7 @@ async function saveSettings(s: AppSettings): Promise<void> {
 function loadSettingsSync(): AppSettings {
   if (settingsCache) return settingsCache
   try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false, agentToolCardsExpanded: true }; return settingsCache }
+    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false }; return settingsCache }
     const data = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'))
     settingsCache = {
       externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
@@ -465,7 +464,6 @@ function loadSettingsSync(): AppSettings {
       soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
       notificationSound: data.notificationSound !== undefined ? data.notificationSound : 'chime',
       chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? data.chatSidebarCollapsed : false,
-      agentToolCardsExpanded: data.agentToolCardsExpanded !== undefined ? data.agentToolCardsExpanded : true,
       ttsEngine: typeof data.ttsEngine === 'string' ? data.ttsEngine : 'system',
       ttsModelPath: typeof data.ttsModelPath === 'string' ? data.ttsModelPath : '',
       ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : '',
@@ -473,7 +471,7 @@ function loadSettingsSync(): AppSettings {
       engineReleasesCheckedAt: typeof data.engineReleasesCheckedAt === 'number' ? data.engineReleasesCheckedAt : undefined
     }
     return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, agentToolCardsExpanded: true, engineReleasesCache: undefined, engineReleasesCheckedAt: undefined }; return settingsCache }
+  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, engineReleasesCache: undefined, engineReleasesCheckedAt: undefined }; return settingsCache }
 }
 interface RunningProcess { proc: ChildProcess; port: number; kind: EngineKind }
 const runningProcesses = new Map<string, RunningProcess>()
@@ -4068,7 +4066,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('get-ui-settings', async () => {
     const s = await loadSettings()
-    return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, notificationSound: s.notificationSound ?? 'chime', chatSidebarCollapsed: s.chatSidebarCollapsed ?? false, agentToolCardsExpanded: s.agentToolCardsExpanded ?? true, ttsEngine: s.ttsEngine ?? 'system', ttsModelPath: s.ttsModelPath ?? '', ttsVocoderPath: s.ttsVocoderPath ?? '', slashCommands: s.slashCommands ?? [] }
+    return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, notificationSound: s.notificationSound ?? 'chime', chatSidebarCollapsed: s.chatSidebarCollapsed ?? false, ttsEngine: s.ttsEngine ?? 'system', ttsModelPath: s.ttsModelPath ?? '', ttsVocoderPath: s.ttsVocoderPath ?? '', slashCommands: s.slashCommands ?? [] }
   })
   ipcMain.handle('set-ui-setting', async (_e, key: string, value: boolean | string) => {
     const s = await loadSettings()

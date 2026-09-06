@@ -1003,11 +1003,6 @@
   font-weight: 700;
 }
 
-.agent-code-project-item.active .agent-code-session-del {
-  opacity: 1;
-  color: var(--text-muted);
-}
-
 .agent-code-child-wrap {
   max-height: 0;
   opacity: 0;
@@ -1146,8 +1141,6 @@
 
 .agent-code-project-item:hover .agent-code-session-add,
 .agent-code-session-item:hover .agent-code-session-add,
-.agent-code-project-item.active .agent-code-session-add,
-.agent-code-session-item.active .agent-code-session-add,
 .agent-code-project-item:hover .agent-code-session-rename,
 .agent-code-session-item:hover .agent-code-session-rename {
   opacity: 1;
@@ -5136,11 +5129,14 @@
 }
 
 /* 折叠体内容层：纵向高度上限（约 14 行）——单段思考过长（六七十行）不再撑长整条
-   思考链，超出部分在折叠体内滚动；流式时由组件贴底跟随最新内容 */
+   思考链，超出部分在折叠体内滚动；流式时由组件贴底跟随最新内容。
+   注意不要加 overscroll-behavior: contain：overflow-y:auto 的元素无论内容是否溢出
+   都是滚动容器，contain 会把滚轮事件吞掉（内容不足 320px 时永远处于边界态，聊天区
+   完全滚不动；滚到边界时也无法继续滚动外层）。保持默认 auto，滚到边界后自然冒泡
+   到外层对话区继续滚动。 */
 .agent-think-fold-body {
   max-height: 320px;
   overflow-y: auto;
-  overscroll-behavior: contain;
   padding-top: 4px;
   font-size: 13px;
   line-height: 1.7;

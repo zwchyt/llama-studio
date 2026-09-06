@@ -153,7 +153,7 @@ interface LlamaCppApi {
   setMetricsPolling: (enabled: boolean) => Promise<{ success: boolean }>
   getRunningProcesses: () => Promise<string[]>
   getModelLogs: (id: string) => Promise<{ stream: string; text: string }[]>
-  getUiSettings: () => Promise<{ splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; agentToolCardsExpanded?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; ttsMode?: 'qwen3' | 'outetts'; ttsLang?: string; ttsMmprojPath?: string; ttsSpeakerFile?: string; sttModelPath?: string; sttMmprojPath?: string; sttPrompt?: string; sttResult?: string; slashCommands?: unknown }>
+  getUiSettings: () => Promise<{ splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; ttsMode?: 'qwen3' | 'outetts'; ttsLang?: string; ttsMmprojPath?: string; ttsSpeakerFile?: string; sttModelPath?: string; sttMmprojPath?: string; sttPrompt?: string; sttResult?: string; slashCommands?: unknown }>
   setUiSetting: (key: string, value: boolean | string) => Promise<void>
   listGlobalAgents: () => Promise<{ name: string; pkg: string; cmd: string; installed: boolean; version: string | null; website?: string }[]>
   launchAgent: (cmd: string, cwd: string) => Promise<{ success: boolean; error?: string }>

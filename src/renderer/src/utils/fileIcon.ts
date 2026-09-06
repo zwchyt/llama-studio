@@ -1,13 +1,23 @@
 import type { ElementType } from 'react'
+import { forwardRef, useImperativeHandle, createElement } from 'react'
 import { Palette } from 'lucide-react'
+import type { LucideProps } from 'lucide-react'
 import { FileCodeIcon, CodeIcon, CodeXmlIcon, FileTextIcon, ImageIcon, SettingsIcon, TerminalIcon, FileIcon } from '@animateicons/react/lucide'
+import type { IconHandle } from '@animateicons/react'
 
 export interface FileMeta { Icon: ElementType; color: string }
 
 // 按扩展名映射图标与配色（文件树 AgentFileTree 与 Git diff 面板 AgentGitDiff 共用，
 // 保证同一文件在两处显示相同的图标与颜色）。
-// 动态图标优先：animateicons 无 Braces（json）对应项 → CodeXml 近似替代；
-// 无 Palette（css）对应项 → 保留 lucide 静态。
+// 动态图标优先：animateicons 无 Braces（json）对应项 → CodeXml 近似替代。
+// animateicons 也无 Palette（css）对应项：静态 lucide 图标的 ref 是 DOM 元素，不暴露
+// startAnimation/stopAnimation（文件树 hover 动画调用会 TypeError），用适配器补上
+// 空操作 handle，保证 fileMeta 所有图标的 ref 契约与 @animateicons/react 一致。
+const PaletteAniIcon = forwardRef<IconHandle, LucideProps>(function PaletteAniIcon(props, ref) {
+  useImperativeHandle(ref, () => ({ startAnimation: () => {}, stopAnimation: () => {} }), [])
+  return createElement(Palette, props)
+})
+
 export function fileMeta(name: string): FileMeta {
   const dot = name.lastIndexOf('.')
   const ext = dot >= 0 ? name.slice(dot).toLowerCase() : ''
@@ -16,7 +26,7 @@ export function fileMeta(name: string): FileMeta {
     case '.js': case '.jsx': case '.mjs': case '.cjs': return { Icon: FileCodeIcon, color: '#e8a33d' }
     case '.json': return { Icon: CodeXmlIcon, color: '#cbcb41' }
     case '.md': case '.markdown': case '.txt': case '.rst': case '.log': return { Icon: FileTextIcon, color: '#9aa0a6' }
-    case '.css': case '.scss': case '.less': case '.sass': return { Icon: Palette, color: '#563d7c' }
+    case '.css': case '.scss': case '.less': case '.sass': return { Icon: PaletteAniIcon, color: '#563d7c' }
     case '.html': case '.htm': return { Icon: CodeIcon, color: '#e34c26' }
     case '.py': case '.go': case '.rs': case '.java': case '.c': case '.cpp': case '.h': return { Icon: CodeIcon, color: '#519aba' }
     case '.png': case '.jpg': case '.jpeg': case '.gif': case '.svg': case '.webp': case '.bmp': case '.ico': return { Icon: ImageIcon, color: '#a074c4' }

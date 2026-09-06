@@ -17,7 +17,7 @@ import { Bot, AlertCircle, Wrench, TerminalSquare, CheckCircle2, XCircle, Undo2,
 // 顶栏按钮动态图标（@animateicons 无 Panel*/Bug 对应项，用 Chevron 方向图标替代折叠语义）
 import {
   BrainIcon, LoaderIcon, SlidersHorizontalIcon, ActivityIcon, BookOpenIcon,
-  GitBranchIcon, GlobeIcon, TerminalIcon, ChevronsUpIcon, ChevronsDownIcon, FolderOpenIcon, DownloadIcon, UploadIcon,
+  GitBranchIcon, GlobeIcon, TerminalIcon, FolderOpenIcon, DownloadIcon, UploadIcon,
   ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon, FolderIcon, PlusIcon, TrashIcon, PencilIcon, Trash2Icon,
   UserIcon, QuoteIcon, MicIcon, CircleStopIcon, PlayIcon, EyeIcon, ClockIcon, SparklesIcon, FileTextIcon,
   RefreshCwIcon, SendIcon, XIcon, CopyIcon, CodeIcon, MessageSquarePlusIcon, CheckIcon, SaveIcon,
@@ -784,41 +784,49 @@ const StreamingThinkText = React.memo(function StreamingThinkText({ value }: { v
 })
 
 // 思考段独立折叠块（链内嵌套折叠）：每个思考段（含首段）一个可收起/展开的子块。
-// 完成段默认收起（与旧版多思考块行为一致），正在流式的段自动展开、结束后自动收起；
-// 用户手动操作后该段内不再被自动干预（粘性）。工具卡与过程正文不折叠，保持常显。
+// 折叠块跟随容器展开态：思考链被点开（或流式自动展开）时，链内思考内容默认全部
+// 展开；容器收起后折叠块随之收起，再次点开再次展开。用户手动收起过的折叠块保持
+// 粘性（容器重开不强行展开）。工具卡与过程正文不折叠，工具卡始终默认收起。
 // 折叠用 max-height 像素过渡 + 保持挂载（不卸载 DOM），与容器级 ThinkBlock 同方案。
 // 展开体设纵向高度上限（.agent-think-fold-body，内部滚动）：单段六七十行不再撑长整条链。
-const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, durationMs, streaming }: {
+const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, durationMs, streaming, containerExpanded }: {
   content: string
   durationMs?: number
   streaming?: boolean
+  containerExpanded?: boolean
 }) {
+  const active = !!streaming || !!containerExpanded
   const bodyRef = useRef<HTMLDivElement>(null)
   const userToggledRef = useRef(false)
   const { expanded, visible, setExpanded, setVisible, expandedRef, onBodyTransitionEnd, collapse, toggle: handleToggle } =
-    useCollapseAnimation(bodyRef, { initialExpanded: !!streaming, skipFirstAnim: !!streaming, beforeToggle: () => { userToggledRef.current = true } })
+    useCollapseAnimation(bodyRef, { initialExpanded: active, skipFirstAnim: active, beforeToggle: () => { userToggledRef.current = true } })
   // 流式段：帧对齐节流 + 逐行渲染（与旧 ThinkBlock 主文本同一套管线，重绘成本 ≈ 一行）；
   // 完成段：完整 Markdown（保持挂载，收起不卸载，避免再次展开重解析卡顿）
   const throttle = content.length > 20000 ? 90 : content.length > 8000 ? 60 : THINK_THROTTLE_MS
   const renderContent = useFrameThrottledValue(content, !!streaming, throttle)
-  // 随流式状态自动展开/收起：流式段生长中保持展开；段结束时像素过渡收起（保持挂载）
+  // 折叠块跟随容器展开态：容器展开（点开思考链/流式自动展开）时思考内容默认展开；
+  // 容器收起后随之收起（保持挂载）。用户手动收起过的折叠块保持粘性、不被强行展开。
   useEffect(() => {
     if (userToggledRef.current) return
-    if (streaming) {
+    if (active) {
       setVisible(true)
       requestAnimationFrame(() => setExpanded(true))
       return
     }
     if (visible && expandedRef.current) collapse()
     else { setExpanded(false); setVisible(false) }
-  }, [streaming]) // eslint-disable-line react-hooks/exhaustive-deps
-  // 流式内容持续增长：展开态直接自适应高度（同容器级流式处理，不做高度动画）
-  useEffect(() => {
+  }, [streaming, active]) // eslint-disable-line react-hooks/exhaustive-deps
+  // 程序化展开（容器点开联动 / 流式自动展开）时直接置自适应高度：不走 0→scrollHeight
+  // 过渡——容器高度测量早于折叠块展开，若留着 max-height:0 会出现「箭头已展开但内容
+  // 被裁剪为空」。手动点击折叠头（userToggled）仍保留展开动画，跳过本 effect。
+  // useLayoutEffect：绘制前生效，折叠块内容随容器同一帧完整呈现。
+  useLayoutEffect(() => {
     const el = bodyRef.current
-    if (streaming && visible && expanded && el) el.style.maxHeight = 'none'
-  }, [streaming, visible, expanded, renderContent])
+    if (active && visible && expanded && el && !userToggledRef.current) el.style.maxHeight = 'none'
+  }, [active, visible, expanded, renderContent])
   // 折叠体内滚动（展开体有高度上限）：流式时贴底跟随最新思考，用户向上滚动阅读时
-  // 暂停贴底、滚回底部附近自动恢复；段结束重置回顶部，再次展开从头阅读
+  // 暂停贴底、滚回底部附近自动恢复；链运行中段结束不重置滚动位置（保持阅读位置），
+  // 链结束后复位回顶部，再次展开从头阅读
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickBottomRef = useRef(true)
   useEffect(() => {
@@ -827,11 +835,11 @@ const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, duratio
     if (el && stickBottomRef.current) el.scrollTop = el.scrollHeight
   }, [renderContent, streaming])
   useEffect(() => {
-    if (streaming) return
+    if (active) return
     const el = scrollRef.current
     stickBottomRef.current = true
     if (el) el.scrollTop = 0
-  }, [streaming])
+  }, [active])
   const handleBodyScroll = (): void => {
     const el = scrollRef.current
     if (!el) return
@@ -860,7 +868,7 @@ const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, duratio
   )
 })
 
-const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, msgStreaming, bodyAppeared, durationMs, items, onPreviewFile, canUndoFor, onUndo, cardDefaultOpen, pending, streamStartAt, meta }: {
+const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, msgStreaming, bodyAppeared, durationMs, items, onPreviewFile, canUndoFor, onUndo, pending, streamStartAt, meta }: {
   value: string; closed: boolean; isStreaming?: boolean; msgStreaming?: boolean; bodyAppeared?: boolean; durationMs?: number
   // pending：首 token 前占位态（同一思考卡头部：「思考中」+ 流开始连续计时，不挂载内容），
   // 首个思考段到达后由同组件原地接管——不再「ThinkingLoader → ThinkBlock」两元素切换，
@@ -878,7 +886,6 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
   onPreviewFile?: (p: string, line?: number) => void
   canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean
   onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void
-  cardDefaultOpen?: boolean
 }) {
   const bodyRef = useRef<HTMLDivElement>(null)
   const userToggledRef = useRef(false)
@@ -903,14 +910,19 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
     0
   )
   // 「思考链总计时」：头部时间 = 已定格思考段累计 + 已固化工具阶段 + 当前阶段实时读秒。
-  // 阶段划分：think（真流式思考中）/ tools（链内工具执行中、消息仍流式）/ idle（链结束）。
+  // 阶段划分：think（真流式思考中，含工具批之间等待下一轮思考的间隙——运行未结束，计时
+  // 继续走）/ tools（链内工具执行中、消息仍流式）/ idle（链结束：最终正文已出现或消息完成）。
   // tools 阶段实时读秒，阶段结束时把耗时固化进 frozenToolsRef——时间跨思考段/工具执行
   // 连续增长、不回退：工具调用期间头部时间继续走，不再停止。
   const [elapsedMs, setElapsedMs] = useState(0)
   const phaseStartRef = useRef<number | null>(null)
   const frozenToolsRef = useRef(0)
   // pending 占位态以 isStreaming=true 挂载（同一「思考中」视觉），phase 自然归入 think，时钟照常走动
-  const phase: 'think' | 'tools' | 'idle' = isStreaming ? 'think' : (msgStreaming && hasLiveTools) ? 'tools' : 'idle'
+  const phase: 'think' | 'tools' | 'idle' = isStreaming
+    ? 'think'
+    : (msgStreaming && !bodyAppeared)
+      ? (hasLiveTools ? 'tools' : 'think')
+      : 'idle'
   const phaseRef = useRef<'think' | 'tools' | 'idle'>('idle')
   useEffect(() => {
     const prev = phaseRef.current
@@ -950,25 +962,29 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
     if (userToggledRef.current) return
     // pending 占位态：内容尚未到达，不挂载 body
     if (pending) return
-    // 思考流式中，或收纳的工具卡仍在执行：自动展开；全部完成且思考结束：自动收起
+    // 思考流式中，或收纳的工具卡仍在执行：自动展开
     if (thinking || hasLiveTools) {
       setVisible(true)
       requestAnimationFrame(() => setExpanded(true))
       return
     }
+    // 消息仍在流式且最终正文未出现（工具批全部完成 → 下一轮思考开始前的等待窗口）：
+    // 运行尚未结束，保持展开不收起——避免工具批间隙整链「收起 → 重开」闪跳
+    if (msgStreaming && !bodyAppeared) return
+    // 最终正文已出现（把版面让给结论气泡）或消息已完成：自动收起
     setExpanded(false)
     setVisible(false)
-  }, [thinking, hasLiveTools, pending])
+  }, [thinking, hasLiveTools, pending, msgStreaming, bodyAppeared])
 
-  // 当 closed 从外部变为 true（如 toolCalls 到达），立即收起思考块，
-  // 不等待 thinking->false 的 useEffect（可能滞后一帧）。
-  // 但若收纳的工具卡仍待执行/执行中，保持展开显示执行态，不在此处收起。
+  // closed 变为 true 时的立即收起仅在「运行已结束」（非流式）时生效；
+  // 运行中的收起一律走上面的自动展开 effect（含批间等待窗口的保持展开判断），
+  // 避免工具声明/批完成瞬间 hasLiveTools 短暂未跟上时把整链提前收起。
   useEffect(() => {
-    if (closed && !thinking && !hasLiveTools && !userToggledRef.current) {
+    if (closed && !thinking && !hasLiveTools && !userToggledRef.current && !(msgStreaming && !bodyAppeared)) {
       setExpanded(false)
       setVisible(false)
     }
-  }, [closed, thinking, hasLiveTools])
+  }, [closed, thinking, hasLiveTools, msgStreaming, bodyAppeared])
 
   const prevThinkingRef = useRef(thinking)
   useEffect(() => {
@@ -981,12 +997,13 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
   // 收起只把 max-height 收到 0（不卸载 DOM）。否则每次收起卸载、展开重新挂载会重解析
   // Markdown（KaTeX/高亮），在展开瞬间造成明显卡顿。
 
-  // 流式思考中（已展开）：内容持续增长，置 max-height:none 让其自适应，不做高度动画。
-  // 收纳工具卡执行中 / 链内思考段折叠块生长中同理（卡片从挂载到结果渲染持续增长）。
-  useEffect(() => {
+  // 容器展开时直接以自适应高度呈现（绘制前置 none，不走 0→测量高度 过渡）：
+  // 容器高度测量发生在链内折叠块展开之前，测量值偏小——若走过渡，动画期间内容被
+  // 裁剪、过渡结束后再「长高」，表现为展开卡顿/回跳。收起仍保留像素过渡动画。
+  useLayoutEffect(() => {
     const el = bodyRef.current
-    if ((thinking || hasLiveTools) && visible && expanded && el) el.style.maxHeight = 'none'
-  }, [thinking, hasLiveTools, visible, expanded])
+    if (expanded && el) el.style.maxHeight = 'none'
+  }, [expanded])
 
   // 头部「思考中」状态判定：消息仍流式 且 最终正文尚未出现（最终正文 = 思考链终结信号；
   // 过程正文已收纳链内，不影响该判定）时，无论当前在思考、工具执行还是段间间隙，
@@ -1040,6 +1057,7 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
                 content={value}
                 durationMs={durationMs}
                 streaming={thinking && !streamThinkItem}
+                containerExpanded={expanded}
               />
             ) : thinking ? (
               // pending 阶段（首 token 未到 / 模型加载上下文中）：动态等待提示，替代生硬的「（空）」
@@ -1058,13 +1076,13 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
                       content={it.content}
                       durationMs={it.durationMs}
                       streaming={it.streaming}
+                      containerExpanded={expanded}
                     />
                   )
                   : it.kind === 'tools'
                   ? (
                     <ToolCallGroup
                       toolCalls={it.toolCalls}
-                      cardDefaultOpen={cardDefaultOpen}
                       onPreviewFile={onPreviewFile!}
                       canUndoFor={canUndoFor}
                       onUndo={onUndo}
@@ -1394,13 +1412,12 @@ const StreamingMarkdown = React.memo(function StreamingMarkdown({ content, isStr
 // 下方独立成泡；流式期间「最后一段是正文」只是临时最终态，思考恢复后声明式地
 // 自动收纳回容器。legacy 工具卡无时间线信息，沿用旧规则收纳进容器尾部；
 // 无思考段时保持传统布局（工具卡独立成组、正文按序成泡）。
-const StreamingContent = React.memo(function StreamingContent({ content, streaming, thinkDone, toolCalls, onPreviewFile, canUndoFor, onUndo, cardDefaultOpen }: {
+const StreamingContent = React.memo(function StreamingContent({ content, streaming, thinkDone, toolCalls, onPreviewFile, canUndoFor, onUndo }: {
   content: string; streaming?: boolean; thinkDone?: boolean;
   toolCalls?: NonNullable<AgentMessage['toolCalls']>;
   onPreviewFile?: (p: string, line?: number) => void;
   canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean;
-  onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void;
-  cardDefaultOpen?: boolean
+  onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void
 }) {
   const { value, items, finalText, lastClosed, hasThink } = useMemo(() => {
     type Entry = { kind: 'think'; content: string; closed: boolean } | { kind: 'text'; content: string }
@@ -1447,7 +1464,7 @@ const StreamingContent = React.memo(function StreamingContent({ content, streami
     return (
       <>
         {toolCalls?.length ? (
-          <ToolCallGroup toolCalls={toolCalls} cardDefaultOpen={cardDefaultOpen} onPreviewFile={onPreviewFile!} canUndoFor={canUndoFor} onUndo={onUndo} />
+          <ToolCallGroup toolCalls={toolCalls} onPreviewFile={onPreviewFile!} canUndoFor={canUndoFor} onUndo={onUndo} />
         ) : null}
         {items.map((it, i) => it.kind === 'text' ? (
           <div key={i} className="chat-msg-bubble chat-msg-markdown">
@@ -1477,7 +1494,6 @@ const StreamingContent = React.memo(function StreamingContent({ content, streami
         onPreviewFile={onPreviewFile}
         canUndoFor={canUndoFor}
         onUndo={onUndo}
-        cardDefaultOpen={cardDefaultOpen}
       />
       {finalText != null && (
         // 最终结论气泡：仍在流式时用轻量流式栈；完成态走 AgentMarkdown 完整栈
@@ -1575,7 +1591,7 @@ const ToolResultView = React.memo(function ToolResultView({ result, truncated, t
 // 流式生成阶段的工具状态（写入/修改/调用参数生成中）统一改由输入框上方的常驻状态栏展示，
 // 会话区不再内联渲染生成状态行；此处仅保留 genToolVerb 供状态栏取用。
 
-const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPreviewFile, canUndo, onUndo, defaultOpen }: { tc: NonNullable<AgentMessage['toolCalls']>[number]; index: number; total: number; onPreviewFile: (p: string, line?: number) => void; canUndo?: boolean; onUndo?: () => void; defaultOpen?: boolean }) {
+const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPreviewFile, canUndo, onUndo }: { tc: NonNullable<AgentMessage['toolCalls']>[number]; index: number; total: number; onPreviewFile: (p: string, line?: number) => void; canUndo?: boolean; onUndo?: () => void }) {
   const meta = TOOL_META[tc.name]
   const Icon = meta?.icon || Wrench
   // 状态：await_approval(待人工确认) / executing(执行中) / done(已完成)。
@@ -1591,29 +1607,10 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
   // 展开/收起动画：与 ThinkBlock 同方案——由 useCollapseAnimation 提供
   // handleToggle / onBodyTransitionEnd。裁剪层 max-height 像素过渡，首次展开后保持挂载
   // （visible），收起只收到 0 不卸载，避免 diff/高亮重解析卡顿。
+  // 工具卡始终默认收起：是否展开由用户逐卡手动决定，无全局批量开关。
   const bodyRef = useRef<HTMLDivElement>(null)
-  const { expanded, visible, setExpanded, setVisible, expandedRef, onBodyTransitionEnd, toggle: handleToggle } =
-    useCollapseAnimation(bodyRef, { initialExpanded: defaultOpen ?? false, skipFirstAnim: !!defaultOpen })
-
-  // 顶栏「工具卡」按钮切换全局默认时，同步所有已挂载卡片的展开态。
-  // 注意：批量切换不走逐卡 scrollHeight 动画——几十张卡同帧交错读(scrollHeight 强制回流)
-  // 写(max-height)会引发布局抖动/掉帧（表现为闪烁），且首次挂载路径依赖 rAF 存在提交时序竞态。
-  // 改为同一次 commit 内直接到位（useLayoutEffect 在绘制前放开/归零高度）；单卡手动点击仍保留动画。
-  const batchToggleRef = useRef(false)
-  useEffect(() => {
-    const open = defaultOpen ?? false
-    if (open === expandedRef.current) return
-    batchToggleRef.current = true
-    if (open) { setVisible(true); setExpanded(true) } else { setExpanded(false) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defaultOpen])
-  useLayoutEffect(() => {
-    if (!batchToggleRef.current) return
-    batchToggleRef.current = false
-    const el = bodyRef.current
-    // 绘制前直接定高：展开置 none 自适应、收起归 0；none↔0 不可插值，天然跳过过渡不会闪
-    if (el) el.style.maxHeight = expanded ? 'none' : '0px'
-  }, [expanded])
+  const { expanded, visible, onBodyTransitionEnd, toggle: handleToggle } =
+    useCollapseAnimation(bodyRef)
   const parsed = useMemo(() => { try { return JSON.parse(tc.args || '{}') } catch { return null } }, [tc.args])
   const preview = getToolPreview(parsed)
   // 编辑工具的增删行数统计（显示在工具卡片上方，类似 git diff 的 +N -M）。
@@ -1754,10 +1751,10 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
   )
 })
 
-const ToolCallGroup = React.memo(function ToolCallGroup({ toolCalls, onPreviewFile, canUndoFor, onUndo, cardDefaultOpen }: { toolCalls: NonNullable<AgentMessage['toolCalls']>; onPreviewFile: (p: string, line?: number) => void; canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean; onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void; cardDefaultOpen?: boolean }) {
+const ToolCallGroup = React.memo(function ToolCallGroup({ toolCalls, onPreviewFile, canUndoFor, onUndo }: { toolCalls: NonNullable<AgentMessage['toolCalls']>; onPreviewFile: (p: string, line?: number) => void; canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean; onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void }) {
   return (
     <div className="agent-tool-list">
-      {toolCalls.map((tc, i) => <ToolCallCard key={tc.id || i} tc={tc} index={i} total={toolCalls.length} onPreviewFile={onPreviewFile} canUndo={canUndoFor ? canUndoFor(tc) : false} onUndo={onUndo ? () => onUndo(tc) : undefined} defaultOpen={cardDefaultOpen} />)}
+      {toolCalls.map((tc, i) => <ToolCallCard key={tc.id || i} tc={tc} index={i} total={toolCalls.length} onPreviewFile={onPreviewFile} canUndo={canUndoFor ? canUndoFor(tc) : false} onUndo={onUndo ? () => onUndo(tc) : undefined} />)}
     </div>
   )
 })
@@ -2011,7 +2008,6 @@ type RenderSegmentsOpts = {
   onPreviewFile: (p: string, line?: number) => void
   canUndoFor: AgentMsgRowActions['canUndoFor']
   onUndo: AgentMsgRowActions['onUndo']
-  toolCardExpandedDefault: boolean
   streamStartAt?: number  // 流开始时刻：思考块实时头部时间据此连续计时（含 TTFT）
   meta?: React.ReactNode  // 模型名 + token 计数徽标：常驻思考块头部（流式中含 t/s，完成后保留）
 }
@@ -2083,9 +2079,8 @@ function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']>, msgI
         items={items}
         onPreviewFile={o.onPreviewFile}
         canUndoFor={o.canUndoFor}
-        onUndo={(tc) => o.onUndo(msgId, tc)}
-        cardDefaultOpen={o.toolCardExpandedDefault}
-      />
+          onUndo={(tc) => o.onUndo(msgId, tc)}
+        />
     )
   }
   if (finalTextIdx >= 0 && finalText != null) {
@@ -2137,12 +2132,11 @@ const AgentUiBlock = React.memo(function AgentUiBlock({ msg, modelTemplateId }: 
   )
 })
 
-const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loading, actionsRef, toolCardExpandedDefault, streaming, modelLabel, thinkDone, streamStartAt, onRate, modelTemplateId }: {
+const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loading, actionsRef, streaming, modelLabel, thinkDone, streamStartAt, onRate, modelTemplateId }: {
   msg: AgentMessage
   isLast: boolean
   loading: boolean
   actionsRef: React.MutableRefObject<AgentMsgRowActions>
-  toolCardExpandedDefault: boolean
   streaming?: boolean
   modelLabel?: string
   thinkDone?: boolean
@@ -2202,7 +2196,6 @@ const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loadi
         {renderSegmentsFor(src.segments, msg.id, isStreaming, isStreaming ? liveToolCalls : undefined, {
           thinkDone: isStreaming ? !!thinkDone : true,
           onPreviewFile: a.onPreviewFile, canUndoFor: a.canUndoFor, onUndo: a.onUndo,
-          toolCardExpandedDefault,
           streamStartAt: isStreaming ? streamStartAt : undefined,
           meta
         })}
@@ -2220,7 +2213,7 @@ const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loadi
       {pendingFirstToken && (
         <ThinkBlock pending value="" closed={false} isStreaming msgStreaming bodyAppeared={false} streamStartAt={streamStartAt} />
       )}
-      <StreamingContent content={src.content} streaming={isStreaming} toolCalls={src.toolCalls || undefined} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(msg.id, tc)} cardDefaultOpen={toolCardExpandedDefault} />
+      <StreamingContent content={src.content} streaming={isStreaming} toolCalls={src.toolCalls || undefined} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(msg.id, tc)} />
       {!isStreaming && <AgentUiBlock msg={msg} modelTemplateId={modelTemplateId} />}
       {!isStreaming && hasToolCalls && fileSummary}
       {!isStreaming && !hasToolCalls && actions}
@@ -3179,9 +3172,7 @@ const programmaticScrollRef = useRef(false)
 
   const activeProject = projects.find(p => p.id === activeProjectId) || projects[0]!
   const activeSession = activeProject.sessions.find(s => s.id === activeSessionId) || activeProject.sessions[0] || null
-  const toolCardExpandedDefault = useStore(s => s.agentToolCardsExpanded)
-  const setToolCardsExpanded = useStore(s => s.setAgentToolCardsExpanded)
-  // 自定义 /命令：仅用户自定义部分（内建命令在 slashCommands.ts 中硬编码）
+  // 自定义 /命令
   const slashCommands = useStore(s => s.slashCommands)
   // 常驻状态栏数据源：本地 streamKind（思考/输出/工具阶段）+ streaming/loading 综合派生。
 
@@ -5831,11 +5822,6 @@ const programmaticScrollRef = useRef(false)
           <TopbarBtn active={rightPanelMode === 'diff'} onClick={toggleGitDiff} icon={GitBranchIcon}>变更</TopbarBtn>
           <TopbarBtn active={rightPanelMode === 'browser'} onClick={() => { setRightPanelMode(m => m === 'browser' ? 'files' : 'browser'); if (!treeOpen) setTreeOpen(true) }} icon={GlobeIcon}>浏览器</TopbarBtn>
           <TopbarBtn active={rightPanelMode === 'terminal'} onClick={() => { setRightPanelMode(m => m === 'terminal' ? 'files' : 'terminal'); if (!treeOpen) setTreeOpen(true) }} icon={TerminalIcon}>终端</TopbarBtn>
-          <TopbarBtn
-            onClick={() => setToolCardsExpanded(!toolCardExpandedDefault)}
-            title={toolCardExpandedDefault ? '折叠所有工具卡片' : '展开所有工具卡片'}
-            icon={toolCardExpandedDefault ? ChevronsUpIcon : ChevronsDownIcon}
-          >工具卡</TopbarBtn>
           </div>
           <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} style={{ marginTop: 0, width: 28, height: 28 }}>
             {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
@@ -6005,7 +5991,6 @@ const programmaticScrollRef = useRef(false)
                             isLast={isLast}
                             loading={loading}
                             actionsRef={msgRowActionsRef}
-                            toolCardExpandedDefault={toolCardExpandedDefault}
                             streaming
                             modelLabel={modelLabelRef.current}
                             thinkDone={thinkDone}
@@ -6019,7 +6004,7 @@ const programmaticScrollRef = useRef(false)
                           // 行内同时覆盖 segments 单容器布局与传统布局两种完成态。
                           // modelLabel 需与流式分支一致传入：思考块头部 meta（模型名+token）
                           // 在完成后保留不消失（模型名/t/s 由消息持久化字段还原，刷新不丢）。
-                          <AgentMessageRow msg={msg} isLast={isLast} loading={loading} actionsRef={msgRowActionsRef} toolCardExpandedDefault={toolCardExpandedDefault} streaming={streaming} modelLabel={modelLabelRef.current} modelTemplateId={runningCard?.template.id} />
+                          <AgentMessageRow msg={msg} isLast={isLast} loading={loading} actionsRef={msgRowActionsRef} streaming={streaming} modelLabel={modelLabelRef.current} modelTemplateId={runningCard?.template.id} />
                         )}
                       </>
                     )}

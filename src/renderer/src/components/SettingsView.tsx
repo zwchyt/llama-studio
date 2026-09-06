@@ -21,11 +21,11 @@ function getNotifPref(): 'banner' | 'manual' {
 export default function SettingsView() {
   const {
     soundEnabled, setSoundEnabled, notificationSound, setNotificationSound,
-    splashEnabled, setSplashEnabled, agentToolCardsExpanded, setAgentToolCardsExpanded,
+    splashEnabled, setSplashEnabled,
     paramTooltipEnabled, setParamTooltipEnabled
   } = useStore(
-    s => ({ soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, notificationSound: s.notificationSound, setNotificationSound: s.setNotificationSound, splashEnabled: s.splashEnabled, setSplashEnabled: s.setSplashEnabled, agentToolCardsExpanded: s.agentToolCardsExpanded, setAgentToolCardsExpanded: s.setAgentToolCardsExpanded, paramTooltipEnabled: s.paramTooltipEnabled, setParamTooltipEnabled: s.setParamTooltipEnabled }),
-    (a, b) => a.soundEnabled === b.soundEnabled && a.setSoundEnabled === b.setSoundEnabled && a.notificationSound === b.notificationSound && a.setNotificationSound === b.setNotificationSound && a.splashEnabled === b.splashEnabled && a.setSplashEnabled === b.setSplashEnabled && a.agentToolCardsExpanded === b.agentToolCardsExpanded && a.setAgentToolCardsExpanded === b.setAgentToolCardsExpanded && a.paramTooltipEnabled === b.paramTooltipEnabled && a.setParamTooltipEnabled === b.setParamTooltipEnabled
+    s => ({ soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, notificationSound: s.notificationSound, setNotificationSound: s.setNotificationSound, splashEnabled: s.splashEnabled, setSplashEnabled: s.setSplashEnabled, paramTooltipEnabled: s.paramTooltipEnabled, setParamTooltipEnabled: s.setParamTooltipEnabled }),
+    (a, b) => a.soundEnabled === b.soundEnabled && a.setSoundEnabled === b.setSoundEnabled && a.notificationSound === b.notificationSound && a.setNotificationSound === b.setNotificationSound && a.splashEnabled === b.splashEnabled && a.setSplashEnabled === b.setSplashEnabled && a.paramTooltipEnabled === b.paramTooltipEnabled && a.setParamTooltipEnabled === b.setParamTooltipEnabled
   )
   const { hoverExpandEnabled, setHoverExpandEnabled } = useSidebarStore()
   const [notifPref, setNotifPref] = useState<'banner' | 'manual'>(getNotifPref())
@@ -177,20 +177,6 @@ export default function SettingsView() {
               type="checkbox"
               checked={hoverExpandEnabled}
               onChange={() => setHoverExpandEnabled(!hoverExpandEnabled)}
-            />
-            <span className="toggle-track"></span>
-            <span className="toggle-thumb"></span>
-          </label>
-        </div>
-        <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-            开启：工具调用卡片展开，显示参数与结果详情。关闭：仅显示工具名称与状态。
-          </p>
-          <label className="toggle" style={{ marginTop: 4 }}>
-            <input
-              type="checkbox"
-              checked={agentToolCardsExpanded}
-              onChange={() => setAgentToolCardsExpanded(!agentToolCardsExpanded)}
             />
             <span className="toggle-track"></span>
             <span className="toggle-thumb"></span>

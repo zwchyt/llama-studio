@@ -261,7 +261,9 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
     }
     const onNodeMouseEnter = (e: React.MouseEvent) => {
       // 节点行任意位置（名称/留白）hover → 触发类型图标动画；图片节点兼做悬停缩略图
-      nodeIconRefs.current.get(node.path)?.startAnimation()
+      // 方法级 ?.()：Map 值类型契约由 fileIcon.ts 适配器保证，但防御未来混入的
+      // 静态图标 ref（DOM 元素）——get() 非 undefined 但缺方法时不再 TypeError
+      nodeIconRefs.current.get(node.path)?.startAnimation?.()
       if (!isImage) return
       const rect = e.currentTarget.getBoundingClientRect()
       imgHoverPath.current = node.path
@@ -275,7 +277,7 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
       }, 350)
     }
     const onNodeMouseLeave = () => {
-      nodeIconRefs.current.get(node.path)?.stopAnimation()
+      nodeIconRefs.current.get(node.path)?.stopAnimation?.()
       if (!isImage) return
       imgHoverPath.current = null
       if (imgHoverTimer.current) { clearTimeout(imgHoverTimer.current); imgHoverTimer.current = null }
@@ -447,8 +449,8 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
             <div className="file-tree-nodes">
               {results.map(f => (
                 <div className="file-tree-result" key={f.path} title={f.relPath}
-                  onMouseEnter={() => resultIconRefs.current.get(f.path)?.startAnimation()}
-                  onMouseLeave={() => resultIconRefs.current.get(f.path)?.stopAnimation()}
+                  onMouseEnter={() => resultIconRefs.current.get(f.path)?.startAnimation?.()}
+                  onMouseLeave={() => resultIconRefs.current.get(f.path)?.stopAnimation?.()}
                   onClick={() => onPreviewFile?.(f.path)}>
                   {(() => { const { Icon, color } = fileMeta(f.name); return <Icon ref={el => { if (el) resultIconRefs.current.set(f.path, el); else resultIconRefs.current.delete(f.path) }} size={14} style={{ color }} /> })()}
                   <span className="file-tree-result-name">{f.name}</span>

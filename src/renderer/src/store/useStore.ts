@@ -241,8 +241,7 @@ interface AppStore {
   splashEnabled: boolean
   setSplashEnabled: (v: boolean) => void
   // ── Agent Code 工具调用卡片默认展开 ──
-  agentToolCardsExpanded: boolean
-  setAgentToolCardsExpanded: (v: boolean) => void
+  // 已移除：工具卡始终默认收起，由用户逐卡手动展开（无全局批量开关）
   // ── 参数弹窗悬停提示框 ──
   paramTooltipEnabled: boolean
   setParamTooltipEnabled: (v: boolean) => void
@@ -677,14 +676,7 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
     window.api?.setUiSetting('splashEnabled', v)
   },
   // ── Agent Code 工具调用卡片默认展开 ──
-  agentToolCardsExpanded: (() => {
-    try { return localStorage.getItem('agentToolCardsExpanded') !== 'false' } catch { return true }
-  })(),
-  setAgentToolCardsExpanded: (v: boolean) => {
-    set({ agentToolCardsExpanded: v })
-    try { localStorage.setItem('agentToolCardsExpanded', String(v)) } catch { /* ignore */ }
-    window.api?.setUiSetting('agentToolCardsExpanded', v)
-  },
+  // 已移除：工具卡始终默认收起，由用户逐卡手动展开（无全局批量开关）
   // ── 参数弹窗悬停提示框（默认关闭）──
   paramTooltipEnabled: (() => {
     try { return localStorage.getItem('paramTooltipEnabled') === 'true' } catch { return false }
@@ -714,10 +706,6 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
       if (s.chatSidebarCollapsed !== undefined) {
         try { localStorage.setItem('chatSidebarCollapsed', String(s.chatSidebarCollapsed)) } catch { /* ignore */ }
         set({ chatSidebarCollapsed: s.chatSidebarCollapsed })
-      }
-      if (s.agentToolCardsExpanded !== undefined) {
-        try { localStorage.setItem('agentToolCardsExpanded', String(s.agentToolCardsExpanded)) } catch { /* ignore */ }
-        set({ agentToolCardsExpanded: s.agentToolCardsExpanded })
       }
       if (typeof s.ttsModelPath === 'string') set({ ttsModelPath: s.ttsModelPath })
       if (typeof s.ttsVocoderPath === 'string') set({ ttsVocoderPath: s.ttsVocoderPath })
