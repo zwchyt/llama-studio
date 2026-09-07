@@ -31,7 +31,6 @@ import AgentCodeView from './components/AgentCodeView'
 import TokenStatsView from './components/TokenStatsView'
 
 import AudioCppView from './components/AudioCppView'
-import ModelDiagnosisPanel from './components/ModelDiagnosisPanel'
 import TitleBar from './components/TitleBar'
 import TopNavBar from './components/TopNavBar'
 import LayoutModeToggle from './components/LayoutModeToggle'
@@ -599,7 +598,6 @@ function AppMain() {
       <ThemeToggle />
       <UpdateBannerGroup />
       <BackendDownloadBanner />
-      <ModelDiagnosisPanel />
       {layoutMode === 'topnav' && <TopNavBar />}
       <div className="main-layout">
         {layoutMode === 'sidebar' && <Sidebar />}

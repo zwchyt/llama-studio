@@ -2,16 +2,8 @@ import type { Spec } from '@json-render/core'
 
 const COMPONENT_WHITELIST: Array<{ type: string; props: string; desc: string }> = [
   { type: 'MessageCard', props: 'variant: "info"|"warning"|"critical", title, message', desc: '通用提示卡片，纯展示' },
-  { type: 'ErrorDiagnosisCard', props: 'severity: "info"|"warning"|"critical", title, cause, recommendations: string[]', desc: '错误诊断卡片，含原因与修复建议列表；可包含 children 子元素，自带复制/重试/关闭按钮' },
-  { type: 'InferenceMetrics', props: 'status: "pending"|"running"|"success"|"failed", promptTokensPerSec?, generationTokensPerSec?, ctxTokens?, ctxLimit?, kvCacheMb?, gpuMemMb?', desc: '推理指标卡：tokens/s、上下文占用、KV cache' },
   { type: 'GpuUsagePanel', props: 'engine, utilization? : number(0-100), memoryUsedMb?, memoryTotalMb?, temperature?', desc: 'GPU 状态面板，带利用率进度条' },
-  { type: 'ModelRuntimeStatus', props: 'modelName, engine, status: "pending"|"running"|"success"|"failed", port?, uptimeSec?, contextLength?', desc: '模型运行状态卡' },
-  { type: 'TaskTimeline', props: 'title?, steps: [{ title, status: "pending"|"running"|"success"|"failed", detail? }]', desc: '任务步骤时间线' },
-  { type: 'AgentStepCard', props: 'title, status, description?, durationMs?', desc: '单步执行状态卡' },
-  { type: 'ConfigurationDiff', props: 'title?, changes: [{ key, from, to }]', desc: '参数修改对照表，自带「应用建议」按钮（触发 apply 事件）' },
-  { type: 'ConfirmDangerousAction', props: 'title, message, dangerLevel: "danger"|"warning", confirmLabel?', desc: '危险操作确认卡，自带确认/取消按钮（触发 confirm/cancel 事件）' },
-  { type: 'DownloadProgressCard', props: 'fileName, progress: number(0-100), speedMbPerSec?, sizeMb?, status: "downloading"|"success"|"failed"|"pending"', desc: '下载进度卡' },
-  { type: 'LogExcerpt', props: 'title, level: "info"|"warning"|"error", start: number(行号), lines: string[], errorLine?: number(错误行下标)', desc: '日志片段展示' },
+  { type: 'Chart', props: 'type: "line"|"bar"|"pie", title?, data: [{...}], xKey, yKey', desc: '简单图表（折线/柱状/饼图）；data 需为对象数组，xKey/yKey 指定字段名' },
 ]
 
 const DYNAMIC_PATHS = [
@@ -19,14 +11,9 @@ const DYNAMIC_PATHS = [
   { path: '/metrics/vramUsedMb', desc: '显存已用（MB）' },
   { path: '/metrics/vramTotalMb', desc: '显存总量（MB）' },
   { path: '/metrics/gpuTemperature', desc: 'GPU 温度（℃）' },
-  { path: '/metrics/cpuUsage', desc: '进程 CPU 占用（百分比）' },
   { path: '/metrics/decodeTokS', desc: '解码速度数组（tok/s 采样）' },
-  { path: '/metrics/reqPerSec', desc: '每秒请求数数组' },
-  { path: '/metrics/ttftMs', desc: '首 token 延迟（ms）' },
-  { path: '/metrics/prefillTokS', desc: '预填充速度（tok/s）' },
   { path: '/metrics/nCtx', desc: '上下文窗口大小' },
   { path: '/metrics/nDecoded', desc: '已解码 token 数' },
-  { path: '/metrics/nPromptTokens', desc: '本次请求提示 token 数' },
   { path: '/metrics/isProcessing', desc: '是否正在生成（布尔）' },
 ]
 

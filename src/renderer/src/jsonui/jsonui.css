@@ -474,3 +474,14 @@
 @keyframes jui-blink {
   50% { opacity: .45; }
 }
+
+.jui-chart-body {
+  margin-top: 8px;
+}
+
+.jui-chart-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}

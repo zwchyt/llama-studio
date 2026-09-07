@@ -387,7 +387,7 @@ export default function ModelCard({ card, style }: Props) {
         >
           <ServerIcon ref={apiIconRef} size={12} className="nav-animate-icon" /> 仅 API
         </button>
-        {(isRunning || card.status === 'error') && logs && logs.length > 0 && (
+        {(isRunning || card.status === 'error') && (
           <button
             ref={logsBtnRef}
             className={`launch-mode-btn logs-toggle-btn ${cardLogsExpanded ? 'active' : ''}`}
@@ -396,6 +396,7 @@ export default function ModelCard({ card, style }: Props) {
             onMouseLeave={() => logsIconRef.current?.stopAnimation()}
           >
             <TerminalIcon ref={logsIconRef} size={12} className="nav-animate-icon" /> 日志
+            {logs && logs.length > 0 && <span className="logs-badge">{logs.length}</span>}
           </button>
         )}
       </div>
@@ -478,7 +479,7 @@ export default function ModelCard({ card, style }: Props) {
           </button>
         )}
       </div>
-      {(isRunning || card.status === 'error') && logs && logs.length > 0 && cardLogsExpanded && createPortal(
+      {(isRunning || card.status === 'error') && cardLogsExpanded && createPortal(
         <div ref={popoverRef} className="card-logs-section logs-popover open">
           <div className="card-logs-header">
             <span className="card-logs-count">
@@ -486,24 +487,26 @@ export default function ModelCard({ card, style }: Props) {
               {logs?.length || 0} 行
             </span>
             <div className="card-logs-header-actions">
-              <button className="card-logs-header-btn" onClick={handleCopyLogs}>
+              <button className="card-logs-header-btn" onClick={handleCopyLogs} disabled={!logs || logs.length === 0}>
                 {logCopied ? <CheckIcon size={12} className="nav-animate-icon" /> : <CopyIcon size={12} className="nav-animate-icon" />}
               </button>
-              <button className="card-logs-header-btn" onClick={handleClearLogs}>
+              <button className="card-logs-header-btn" onClick={handleClearLogs} disabled={!logs || logs.length === 0}>
                 <TrashIcon size={12} className="nav-animate-icon" />
               </button>
             </div>
           </div>
           <div className="card-logs-body" ref={logsBodyRef}>
             <div className="card-logs-scroll">
-              {logs && (() => {
+              {logs && logs.length > 0 ? (() => {
                 const start = Math.max(0, logs.length - RENDER_LOG_TAIL)
                 return logs.slice(start).map((entry, i) => (
                   <div key={start + i} className={`log-entry ${entry.className}`}>
                     {entry.text}
                   </div>
                 ))
-              })()}
+              })() : (
+                <div className="card-logs-empty">暂无日志</div>
+              )}
               <div ref={logsEndRef} />
             </div>
           </div>

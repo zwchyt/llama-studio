@@ -2111,15 +2111,19 @@ const agentUiDefaultHandlers = makeDefaultHandlers()
 
 const AgentUiBlock = React.memo(function AgentUiBlock({ msg, modelTemplateId }: { msg: AgentMessage; modelTemplateId?: string }) {
   const spec = useMemo(() => {
+    let parsed: Spec | null = null
     if (msg.uiSpecRaw) {
-      try { return JSON.parse(msg.uiSpecRaw) as Spec } catch { return null }
-    }
-    if (!msg.uiSpecChecked && msg.content) {
+      try { parsed = JSON.parse(msg.uiSpecRaw) as Spec } catch { return null }
+    } else if (!msg.uiSpecChecked && msg.content) {
       const raw = tryExtractSpec(msg.content)
       if (!raw) return null
-      try { return JSON.parse(raw) as Spec } catch { return null }
+      try { parsed = JSON.parse(raw) as Spec } catch { return null }
     }
-    return null
+    if (!parsed?.elements) return null
+    const elements = Object.fromEntries(
+      Object.entries(parsed.elements).map(([k, v]) => [k, { ...v, props: v.props ?? {} }])
+    )
+    return { ...parsed, elements }
   }, [msg.uiSpecRaw, msg.uiSpecChecked, msg.content])
   if (!spec) return null
   return (

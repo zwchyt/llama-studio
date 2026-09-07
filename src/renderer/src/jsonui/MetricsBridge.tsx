@@ -8,14 +8,9 @@ const METRIC_MAP: Record<string, (m: ModelMetrics) => unknown> = {
   '/metrics/vramUsedMb': (m) => m.vramUsedMb,
   '/metrics/vramTotalMb': (m) => m.vramTotalMb,
   '/metrics/gpuTemperature': (m) => m.gpuTemperature,
-  '/metrics/cpuUsage': (m) => m.cpuUsage,
   '/metrics/decodeTokS': (m) => m.decodeTokS,
-  '/metrics/reqPerSec': (m) => m.reqPerSec,
-  '/metrics/ttftMs': (m) => m.ttftMs,
-  '/metrics/prefillTokS': (m) => m.prefillTokS,
   '/metrics/nCtx': (m) => m.nCtx,
   '/metrics/nDecoded': (m) => m.nDecoded,
-  '/metrics/nPromptTokens': (m) => m.nPromptTokens,
   '/metrics/isProcessing': (m) => m.isProcessing,
 }
 
