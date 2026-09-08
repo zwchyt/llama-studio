@@ -58,7 +58,7 @@ export default function App() {
 function AppMain() {
   // 开屏动画：dataReady=初始化数据已就绪（触发爆炸退场），splashExited=开屏已完全卸载
   const appStartRef = React.useRef(performance.now())
-  // 开屏动画：默认开启；此处按用户设置快照一次，仅在本次启动生效（设置改动在下次启动时应用）
+  // 开屏动画：先按 localStorage 快照（通常正确），initUiSettings 异步从后端同步后会校正
   const [splashExited, setSplashExited] = React.useState(() => !useStore.getState().splashEnabled)
   const [dataReady, setDataReady] = React.useState(false)
   const processedHfDownloads = React.useRef(new Set<string>())
@@ -95,7 +95,10 @@ function AppMain() {
       return
     }
 
-    useStore.getState().initUiSettings()
+    useStore.getState().initUiSettings().then(() => {
+      // initUiSettings 从后端同步了正确值，校正开屏状态（首次启动时 localStorage 可能为空/陈旧）
+      setSplashExited(!useStore.getState().splashEnabled)
+    })
 
     // Agent Code 工作台：启动时从磁盘恢复项目（含会话）历史
     window.api.loadAgentProjects()
