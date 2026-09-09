@@ -413,65 +413,68 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
 interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; ttsModelFolders: string[]; asrModelFolders: string[]; ocrModelFolders: string[]; sdModelFolders: string[]; sdVaeFolders: string[]; sdLlmFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; slashCommands?: unknown; engineReleasesCache?: Record<string, ReleaseInfo>; engineReleasesCheckedAt?: number }
 const UI_KEYS = new Set(['splashEnabled', 'soundEnabled', 'notificationSound', 'chatSidebarCollapsed', 'ttsEngine', 'ttsModelPath', 'ttsVocoderPath', 'slashCommands'])
 let settingsCache: AppSettings | null = null
+function parseSettingsData(data: Record<string, unknown>): AppSettings {
+  return {
+    externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders as string[] : [],
+    imageModelFolders: Array.isArray(data.imageModelFolders) ? data.imageModelFolders as string[] : [],
+    ttsModelFolders: Array.isArray(data.ttsModelFolders) ? data.ttsModelFolders as string[] : [],
+    asrModelFolders: Array.isArray(data.asrModelFolders) ? data.asrModelFolders as string[] : [],
+    ocrModelFolders: Array.isArray(data.ocrModelFolders) ? data.ocrModelFolders as string[] : [],
+    sdModelFolders: Array.isArray(data.sdModelFolders) ? data.sdModelFolders as string[] : [],
+    sdVaeFolders: Array.isArray(data.sdVaeFolders) ? data.sdVaeFolders as string[] : [],
+    sdLlmFolders: Array.isArray(data.sdLlmFolders) ? data.sdLlmFolders as string[] : [],
+    metricsPolling: data.metricsPolling !== undefined ? !!data.metricsPolling : true,
+    splashEnabled: data.splashEnabled !== undefined ? !!data.splashEnabled : true,
+    soundEnabled: data.soundEnabled !== undefined ? !!data.soundEnabled : true,
+    notificationSound: typeof data.notificationSound === 'string' ? data.notificationSound : 'chime',
+    chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? !!data.chatSidebarCollapsed : false,
+    ttsEngine: typeof data.ttsEngine === 'string' ? data.ttsEngine : 'system',
+    ttsModelPath: typeof data.ttsModelPath === 'string' ? data.ttsModelPath : '',
+    ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : '',
+    engineReleasesCache: typeof data.engineReleasesCache === 'object' && data.engineReleasesCache !== null ? data.engineReleasesCache as Record<string, ReleaseInfo> : undefined,
+    engineReleasesCheckedAt: typeof data.engineReleasesCheckedAt === 'number' ? data.engineReleasesCheckedAt as number : undefined
+  }
+}
+const DEFAULT_SETTINGS: AppSettings = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false }
+async function readSettingsFile(path: string): Promise<AppSettings | null> {
+  try {
+    const raw = await fsPromises.readFile(path, 'utf-8')
+    const data = JSON.parse(raw)
+    return parseSettingsData(data)
+  } catch { return null }
+}
 async function loadSettings(): Promise<AppSettings> {
   if (settingsCache) return settingsCache
-  try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false }; return settingsCache }
-    const data = JSON.parse(await fsPromises.readFile(SETTINGS_PATH, 'utf-8'))
-    settingsCache = {
-      externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
-      imageModelFolders: Array.isArray(data.imageModelFolders) ? data.imageModelFolders : [],
-      ttsModelFolders: Array.isArray(data.ttsModelFolders) ? data.ttsModelFolders : [],
-      asrModelFolders: Array.isArray(data.asrModelFolders) ? data.asrModelFolders : [],
-      ocrModelFolders: Array.isArray(data.ocrModelFolders) ? data.ocrModelFolders : [],
-      sdModelFolders: Array.isArray(data.sdModelFolders) ? data.sdModelFolders : [],
-      sdVaeFolders: Array.isArray(data.sdVaeFolders) ? data.sdVaeFolders : [],
-      sdLlmFolders: Array.isArray(data.sdLlmFolders) ? data.sdLlmFolders : [],
-      metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true,
-      splashEnabled: data.splashEnabled !== undefined ? data.splashEnabled : true,
-      soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
-      notificationSound: data.notificationSound !== undefined ? data.notificationSound : 'chime',
-      chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? data.chatSidebarCollapsed : false,
-      ttsEngine: typeof data.ttsEngine === 'string' ? data.ttsEngine : 'system',
-      ttsModelPath: typeof data.ttsModelPath === 'string' ? data.ttsModelPath : '',
-      ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : '',
-      engineReleasesCache: typeof data.engineReleasesCache === 'object' && data.engineReleasesCache !== null ? data.engineReleasesCache : undefined,
-      engineReleasesCheckedAt: typeof data.engineReleasesCheckedAt === 'number' ? data.engineReleasesCheckedAt : undefined
-    }
-    return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, engineReleasesCache: undefined, engineReleasesCheckedAt: undefined }; return settingsCache }
+  let data = await readSettingsFile(SETTINGS_PATH)
+  if (!data && existsSync(SETTINGS_PATH + '.tmp')) {
+    data = await readSettingsFile(SETTINGS_PATH + '.tmp')
+    if (data) await fsPromises.copyFile(SETTINGS_PATH + '.tmp', SETTINGS_PATH)
+  }
+  settingsCache = data ?? { ...DEFAULT_SETTINGS }
+  return settingsCache
 }
 async function saveSettings(s: AppSettings): Promise<void> {
   await fsPromises.writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2))
   settingsCache = s
 }
+function readSettingsFileSync(path: string): AppSettings | null {
+  try {
+    const raw = readFileSync(path, 'utf-8')
+    const data = JSON.parse(raw)
+    return parseSettingsData(data)
+  } catch { return null }
+}
 function loadSettingsSync(): AppSettings {
   if (settingsCache) return settingsCache
-  try {
-    if (!existsSync(SETTINGS_PATH)) { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, chatSidebarCollapsed: false }; return settingsCache }
-    const data = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'))
-    settingsCache = {
-      externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders : [],
-      imageModelFolders: Array.isArray(data.imageModelFolders) ? data.imageModelFolders : [],
-      ttsModelFolders: Array.isArray(data.ttsModelFolders) ? data.ttsModelFolders : [],
-      asrModelFolders: Array.isArray(data.asrModelFolders) ? data.asrModelFolders : [],
-      ocrModelFolders: Array.isArray(data.ocrModelFolders) ? data.ocrModelFolders : [],
-      sdModelFolders: Array.isArray(data.sdModelFolders) ? data.sdModelFolders : [],
-      sdVaeFolders: Array.isArray(data.sdVaeFolders) ? data.sdVaeFolders : [],
-      sdLlmFolders: Array.isArray(data.sdLlmFolders) ? data.sdLlmFolders : [],
-      metricsPolling: data.metricsPolling !== undefined ? data.metricsPolling : true,
-      splashEnabled: data.splashEnabled !== undefined ? data.splashEnabled : true,
-      soundEnabled: data.soundEnabled !== undefined ? data.soundEnabled : true,
-      notificationSound: data.notificationSound !== undefined ? data.notificationSound : 'chime',
-      chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? data.chatSidebarCollapsed : false,
-      ttsEngine: typeof data.ttsEngine === 'string' ? data.ttsEngine : 'system',
-      ttsModelPath: typeof data.ttsModelPath === 'string' ? data.ttsModelPath : '',
-      ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : '',
-      engineReleasesCache: typeof data.engineReleasesCache === 'object' && data.engineReleasesCache !== null ? data.engineReleasesCache : undefined,
-      engineReleasesCheckedAt: typeof data.engineReleasesCheckedAt === 'number' ? data.engineReleasesCheckedAt : undefined
+  let data = readSettingsFileSync(SETTINGS_PATH)
+  if (!data && existsSync(SETTINGS_PATH + '.tmp')) {
+    data = readSettingsFileSync(SETTINGS_PATH + '.tmp')
+    if (data) {
+      try { writeFileSync(SETTINGS_PATH, JSON.stringify(data, null, 2)) } catch { /* ignore */ }
     }
-    return settingsCache
-  } catch { settingsCache = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false, engineReleasesCache: undefined, engineReleasesCheckedAt: undefined }; return settingsCache }
+  }
+  settingsCache = data ?? { ...DEFAULT_SETTINGS }
+  return settingsCache
 }
 interface RunningProcess { proc: ChildProcess; port: number; kind: EngineKind }
 const runningProcesses = new Map<string, RunningProcess>()
