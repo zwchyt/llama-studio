@@ -8,7 +8,8 @@ import {
   HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
   MessageSquareIcon, InfoIcon, FileTextIcon, CodeIcon, ChevronDownIcon,
   SettingsIcon, BookOpenIcon, AudioLinesIcon, ImageIcon, MicIcon,
-  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon
+  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon,
+  GitBranchIcon
 } from '@animateicons/react/lucide'
 import '../styles/topnav.css'
 
@@ -31,6 +32,7 @@ const NAV_GROUPS: NavDef[][] = [
   ],
   [
     { key: 'agent-code', label: 'Agent Code', icon: CodeIcon, color: '#10b981' },
+    { key: 'mermaid-test', label: 'Mermaid 测试', icon: GitBranchIcon, color: '#f59e0b' },
   ],
   [
     { key: 'llama', label: 'llama-server', icon: ServerIcon, color: '#14b8a6', runningSource: 'llama' },

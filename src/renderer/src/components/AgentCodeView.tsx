@@ -75,6 +75,7 @@ import { registry } from '../jsonui/registry'
 import { makeDefaultHandlers } from '../jsonui/defaultHandlers'
 import MetricsBridge from '../jsonui/MetricsBridge'
 import { tryExtractSpec } from '../jsonui/specGen'
+import { MermaidCard } from '../jsonui/components/MermaidCard'
 import '../styles/agent-code.css'
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -2110,7 +2111,37 @@ const stoppedBadge = (
 const agentUiDefaultHandlers = makeDefaultHandlers()
 
 const AgentUiBlock = React.memo(function AgentUiBlock({ msg, modelTemplateId }: { msg: AgentMessage; modelTemplateId?: string }) {
+  const dslCode = useMemo(() => {
+    const content = msg.content || ''
+    const MERMAID_KEYWORDS = [
+      'flowchart', 'graph', 'sequenceDiagram', 'classDiagram-v2', 'classDiagram',
+      'stateDiagram-v2', 'stateDiagram', 'gantt', 'erDiagram', 'journey', 'gitGraph',
+      'mindmap', 'timeline', 'pie', 'sankey-beta', 'xychart-beta', 'quadrantChart',
+      'requirementDiagram', 'architecture-beta', 'block-beta', 'packet-beta', 'kanban'
+    ]
+    const kwPattern = MERMAID_KEYWORDS.map(kw => kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+    const kwRe = new RegExp(`^(${kwPattern})(\\s|;|:|$)`)
+    const isMermaidKw = (line: string) => kwRe.test(line)
+    const lines = content.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim()
+      if (!trimmed || trimmed.startsWith('```') || trimmed.startsWith('#')) continue
+      if (isMermaidKw(trimmed)) {
+        let end = i + 1
+        while (end < lines.length) {
+          const next = lines[end].trim()
+          if (next === '' || next.startsWith('```') || isMermaidKw(next)) break
+          end++
+        }
+        const code = lines.slice(i, end).join('\n').replace(/```[\s\S]*?```/g, '').trim()
+        if (code.length > 5) return code
+      }
+    }
+    return null
+  }, [msg.content])
+
   const spec = useMemo(() => {
+    if (dslCode) return null
     let parsed: Spec | null = null
     if (msg.uiSpecRaw) {
       try { parsed = JSON.parse(msg.uiSpecRaw) as Spec } catch { return null }
@@ -2124,16 +2155,26 @@ const AgentUiBlock = React.memo(function AgentUiBlock({ msg, modelTemplateId }: 
       Object.entries(parsed.elements).map(([k, v]) => [k, { ...v, props: v.props ?? {} }])
     )
     return { ...parsed, elements }
-  }, [msg.uiSpecRaw, msg.uiSpecChecked, msg.content])
-  if (!spec) return null
-  return (
-    <div className="agent-msg-ui">
-      <JSONUIProvider registry={registry} initialState={{}} handlers={agentUiDefaultHandlers}>
-        {modelTemplateId ? <MetricsBridge modelId={modelTemplateId} /> : null}
-        <Renderer spec={spec} registry={registry} />
-      </JSONUIProvider>
-    </div>
-  )
+  }, [dslCode, msg.uiSpecRaw, msg.uiSpecChecked, msg.content])
+
+  if (spec) {
+    return (
+      <div className="agent-msg-ui">
+        <JSONUIProvider registry={registry} initialState={{}} handlers={agentUiDefaultHandlers}>
+          {modelTemplateId ? <MetricsBridge modelId={modelTemplateId} /> : null}
+          <Renderer spec={spec} registry={registry} />
+        </JSONUIProvider>
+      </div>
+    )
+  }
+  if (dslCode) {
+    return (
+      <div className="agent-msg-ui">
+        <MermaidCard code={dslCode} />
+      </div>
+    )
+  }
+  return null
 })
 
 const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loading, actionsRef, streaming, modelLabel, thinkDone, streamStartAt, onRate, modelTemplateId }: {

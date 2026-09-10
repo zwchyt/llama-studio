@@ -132,7 +132,7 @@ interface AppStore {
   /** 四引擎自动检测结果：repo → ReleaseInfo（启动 10s 后并行检测写入） */
   engineReleases: Record<string, ReleaseInfo | null>
   paths: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string; chatTemplates: string } | null
-  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'ocr' | 'benchmark' | 'agent-code' | 'model-tools' | 'knowledge' | 'tts' | 'stt' | 'imagegen' | 'engines' | 'folders' | 'token-stats' | 'audiocpp'
+  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'ocr' | 'benchmark' | 'agent-code' | 'model-tools' | 'knowledge' | 'tts' | 'stt' | 'imagegen' | 'engines' | 'folders' | 'token-stats' | 'audiocpp' | 'mermaid-test'
   showCreateModal: boolean
   editingTemplate: Template | null
   updateDismissed: boolean

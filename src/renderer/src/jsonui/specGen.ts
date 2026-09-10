@@ -1,9 +1,30 @@
 import type { Spec } from '@json-render/core'
 
 const COMPONENT_WHITELIST: Array<{ type: string; props: string; desc: string }> = [
-  { type: 'MessageCard', props: 'variant: "info"|"warning"|"critical", title, message', desc: '通用提示卡片，纯展示' },
-  { type: 'GpuUsagePanel', props: 'engine, utilization? : number(0-100), memoryUsedMb?, memoryTotalMb?, temperature?', desc: 'GPU 状态面板，带利用率进度条' },
-  { type: 'Chart', props: 'type: "line"|"bar"|"pie", title?, data: [{...}], xKey, yKey', desc: '简单图表（折线/柱状/饼图）；data 需为对象数组，xKey/yKey 指定字段名' },
+  { type: 'MessageCard', props: 'variant: "info" | "warning" | "critical", title, message', desc: '通用提示卡片，纯展示' },
+  { type: 'GpuUsagePanel', props: 'engine, utilization?: number(0-100), memoryUsedMb?, memoryTotalMb?, temperature?', desc: 'GPU 状态面板，带利用率进度条' },
+  { type: 'Chart', props: 'type: "line" | "bar" | "pie", title?, data: [{...}], xKey, yKey', desc: '简单图表（折线/柱状/饼图）' },
+  { type: 'MermaidCard', props: 'title?: string, code: string', desc: 'Mermaid 图形卡片' },
+  // 补充所有 Mermaid 图表类型别名，防止 validateSpec 拦截
+  { type: 'flowchart', props: 'code, title?', desc: '流程图' },
+  { type: 'sequence', props: 'code, title?', desc: '时序图' },
+  { type: 'class', props: 'code, title?', desc: '类图' },
+  { type: 'state', props: 'code, title?', desc: '状态图' },
+  { type: 'gantt', props: 'code, title?, dateFormat?, section?, data?, children?', desc: '甘特图' },
+  { type: 'er', props: 'code, title?', desc: 'ER图' },
+  { type: 'journey', props: 'code, title?', desc: '用户旅程图' },
+  { type: 'git', props: 'code, title?', desc: 'Git图' },
+  { type: 'mindmap', props: 'code, title?', desc: '思维导图' },
+  { type: 'timeline', props: 'code, title?', desc: '时间线图' },
+  { type: 'pie', props: 'code, title?, data?, labels?, values?', desc: '饼图' },
+  { type: 'sankey', props: 'code, title?', desc: '桑基图' },
+  { type: 'xychart', props: 'code, title?', desc: 'XY图表' },
+  { type: 'quadrant', props: 'code, title?', desc: '象限图' },
+  { type: 'requirement', props: 'code, title?', desc: '需求图' },
+  { type: 'architecture', props: 'code, title?', desc: '架构图' },
+  { type: 'block', props: 'code, title?', desc: '块图' },
+  { type: 'packet', props: 'code, title?', desc: '数据包图' },
+  { type: 'kanban', props: 'code, title?', desc: '看板图' },
 ]
 
 const DYNAMIC_PATHS = [

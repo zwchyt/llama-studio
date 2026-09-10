@@ -205,12 +205,8 @@ export class PiAgentManager {
 
   async prompt(sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>): Promise<void> {
     const bridge = this.getBridge(sessionId)
-    // 同步工作区根到 ipc.ts（Read/Write 等文件工具的相对路径解析依赖；会话切换每轮同步最稳）。
-    // Bash 不再需要同步 cwd：pi 原生 bash 使用创建时固定的工作区根目录（cd 不跨命令持久）。
     const cwd = bridge.session.sessionManager.getCwd()
     ipcInternal.handleSetAgentWorkspace?.(cwd)
-    // 台账补记「用户输入」：pi 不为 user 消息发事件，在入账前主动记录
-    //（否则轨迹面板只有模型/工具/LLM 行，看不到用户问了什么）。
     appendUserEntry(sessionId, text, images?.length)
     await bridge.session.prompt(text, images && images.length > 0 ? { images } : undefined)
   }

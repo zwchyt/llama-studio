@@ -9,7 +9,8 @@ import {
   HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
   MessageSquareIcon, InfoIcon, FileTextIcon, CodeIcon,
   SettingsIcon, BookOpenIcon, AudioLinesIcon, ImageIcon, MicIcon,
-  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon
+  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon,
+  GitBranchIcon
 } from '@animateicons/react/lucide'
 import '../styles/sidebar.css'
 
@@ -276,6 +277,14 @@ export default function Sidebar() {
           onClick={() => setView('agent-code')}
         >
           {view === 'agent-code' && <span className="nav-active-dot" />}
+        </NavItem>
+        <NavItem
+          icon={GitBranchIcon}
+          label="Mermaid 测试"
+          active={view === 'mermaid-test'}
+          onClick={() => setView('mermaid-test')}
+        >
+          {view === 'mermaid-test' && <span className="nav-active-dot" />}
         </NavItem>
 
         {/* ── 系统 ── */}
