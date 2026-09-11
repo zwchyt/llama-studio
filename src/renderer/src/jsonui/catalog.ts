@@ -40,7 +40,7 @@ export const catalog = defineCatalog(schema, {
           z.string()
         ).default(''),
       }),
-      description: 'Mermaid 图形卡片，支持 20 种图表：flowchart/sequence/class/state/gantt/er/journey/git/mindmap/timeline/pie/sankey/xychart/quadrant/requirement/architecture/block/packet/kanban。code 是纯 DSL 文本（不要包 ```mermaid 围栏）。',
+      description: 'Mermaid 图形卡片，支持 32 种图表：flowchart/sequence/class/state/gantt/er/journey/git/mindmap/timeline/pie/sankey/xychart/quadrant/requirement/architecture/block/packet/kanban/swimlane/usecase/c4/zenuml/radar/treemap/venn/ishikawa/wardley/cynefin/treeview/eventmodeling。code 字段放纯 Mermaid DSL 文本。',
     },
     // ===== Mermaid 图表类型别名（支持结构化数据输入）=====
     flowchart: {
@@ -217,6 +217,159 @@ export const catalog = defineCatalog(schema, {
         children: z.array(z.any()).optional(),
       }),
       description: '看板图（Mermaid 组件别名）',
+    },
+    swimlane: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: '泳道图（Mermaid 组件别名）',
+    },
+    usecase: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: '用例图（Mermaid 组件别名）',
+    },
+    c4: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: 'C4架构图（Mermaid 组件别名）',
+    },
+    c4context: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: 'C4 Context图（Mermaid 组件别名）',
+    },
+    c4container: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: 'C4 Container图（Mermaid 组件别名）',
+    },
+    c4component: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: 'C4 Component图（Mermaid 组件别名）',
+    },
+    c4dynamic: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: 'C4 Dynamic图（Mermaid 组件别名）',
+    },
+    c4deployment: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: 'C4 Deployment图（Mermaid 组件别名）',
+    },
+    zenuml: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: 'ZenUML时序图（Mermaid 组件别名）',
+    },
+    radar: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: '雷达图（Mermaid 组件别名）',
+    },
+    treemap: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: '树状图（Mermaid 组件别名）',
+    },
+    venn: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: '韦恩图（Mermaid 组件别名）',
+    },
+    ishikawa: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: '鱼骨图（Mermaid 组件别名）',
+    },
+    wardley: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: 'Wardley地图（Mermaid 组件别名）',
+    },
+    cynefin: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: 'Cynefin框架图（Mermaid 组件别名）',
+    },
+    treeview: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: '树视图（Mermaid 组件别名）',
+    },
+    eventmodeling: {
+      props: z.object({
+        code: z.string().default(''),
+        title: z.string().nullable().optional().default(null),
+        data: z.array(z.any()).optional(),
+        children: z.array(z.any()).optional(),
+      }),
+      description: '事件建模图（Mermaid 组件别名）',
     },
   },
   actions: {},

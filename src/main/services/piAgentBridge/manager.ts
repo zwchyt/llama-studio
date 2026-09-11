@@ -9,7 +9,7 @@ import { appendTokenUsage, type TokenUsageEntry } from '../../tokenLedger'
 import { appendSessionEvent, writeTrajectoryHeader, appendLlmRequest, summarizeLlmRequest, appendUserEntry, appendLlmSystemMessages } from './trajectory'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { ThinkingLevel } from '../../../shared/types'
-import { PI_TOOL_GUIDANCE, PI_UI_SPEC_GUIDANCE } from '../../../shared/agentGuidance'
+import { PI_TOOL_GUIDANCE, PI_CHART_ROUTING, PI_MERMAID_DSL_GUIDANCE, PI_MERMAID_JSON_GUIDANCE } from '../../../shared/agentGuidance'
 
 /** llama-studio 会话历史消息（pi 模式注入用，与 shared/types 的 AgentMessage 结构对应） */
 export interface PiHistoryMessage {
@@ -131,7 +131,7 @@ export class PiAgentManager {
       getContextWindow: () => opts.contextWindow ?? 128000,
       cwd: opts.cwd,
       agentDir: opts.agentDir,
-      appendSystemPrompt: [...PI_TOOL_GUIDANCE, ...PI_UI_SPEC_GUIDANCE],
+      appendSystemPrompt: [...PI_TOOL_GUIDANCE, ...PI_CHART_ROUTING, ...PI_MERMAID_DSL_GUIDANCE, ...PI_MERMAID_JSON_GUIDANCE],
       toolNames: effectiveToolNames,
       customTools: [...mainTools, ...(opts.customTools ?? [])]
     })
@@ -175,7 +175,7 @@ export class PiAgentManager {
       // 记录模型实际可见的全部工具名：pi 内置白名单 + 自研 customTools（诊断「模型
       // 为什么不用某工具」时的第一手证据）
       tools: [...effectiveToolNames, ...mainTools.map(t => t.name)],
-      systemPromptChars: [...PI_TOOL_GUIDANCE, ...PI_UI_SPEC_GUIDANCE].join('\n\n').length,
+      systemPromptChars: [...PI_TOOL_GUIDANCE, ...PI_CHART_ROUTING, ...PI_MERMAID_DSL_GUIDANCE, ...PI_MERMAID_JSON_GUIDANCE].join('\n\n').length,
       historyCount: opts.history?.length ?? 0
     })
   }

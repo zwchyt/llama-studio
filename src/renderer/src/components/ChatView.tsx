@@ -900,6 +900,18 @@ function preprocessInput(raw: string): string {
 }
 
 function parseUserContent(content: string): UserBlock[] {
+  // 检测整个内容是否为 Mermaid DSL 或 JSON（无围栏包裹）
+  const trimmed = content.trim()
+  if (trimmed) {
+    const MERMAID_KW_RE = /^(?:flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|erDiagram|journey|gitGraph|mindmap|timeline|pie|sankey-beta|xychart-beta|quadrantChart|requirementDiagram|architecture-beta|block-beta|packet-beta|kanban|swimlane-beta|usecase-beta|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment|radar-beta|treemap-beta|venn-beta|ishikawa-beta|wardley-beta|cynefin-beta|treeView-beta|eventmodeling)\b/i
+    if (MERMAID_KW_RE.test(trimmed)) {
+      return [{ type: 'code', lang: 'mermaid', code: trimmed }]
+    }
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try { JSON.parse(trimmed); return [{ type: 'code', lang: 'json', code: trimmed }] } catch { /* not json */ }
+    }
+  }
+
   // 第一步：用已闭合的围栏代码块（```...```）切分
   const fenceRe = /```(\w*)\s*\r?\n([\s\S]*?)```/g
   const rawSegments: UserBlock[] = []

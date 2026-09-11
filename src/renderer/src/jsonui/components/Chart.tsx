@@ -56,7 +56,7 @@ export function Chart({
               <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
               <XAxis dataKey={xKey} stroke="var(--text-muted)" />
               <YAxis stroke="var(--text-muted)" />
-              <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)' }} />
+              <Tooltip contentStyle={{ background: 'var(--surface)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--border)' }} />
               <Line type="monotone" dataKey={yKey} stroke="var(--accent)" dot={false} />
             </LineChart>
           ) : type === 'bar' ? (
@@ -64,12 +64,12 @@ export function Chart({
               <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
               <XAxis dataKey={xKey} stroke="var(--text-muted)" />
               <YAxis stroke="var(--text-muted)" />
-              <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)' }} />
+              <Tooltip contentStyle={{ background: 'var(--surface)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--border)' }} />
               <Bar dataKey={yKey} fill="var(--accent)" />
             </BarChart>
           ) : (
             <PieChart>
-              <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)' }} />
+              <Tooltip contentStyle={{ background: 'var(--surface)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--border)' }} />
               <Legend />
               <Pie data={data} dataKey={yKey} nameKey={xKey} outerRadius={80} label>
                 {data.map((_, i) => (

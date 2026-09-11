@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { CSSProperties } from 'react'
+import './mermaid.css'
 
 type MermaidModule = typeof import('mermaid')
 type MermaidInstance = MermaidModule['default']
@@ -44,6 +46,18 @@ type MermaidChartType =
   | 'block'
   | 'packet'
   | 'kanban'
+  | 'swimlane'
+  | 'usecase'
+  | 'c4'
+  | 'zenuml'
+  | 'radar'
+  | 'treemap'
+  | 'venn'
+  | 'ishikawa'
+  | 'wardley'
+  | 'cynefin'
+  | 'treeview'
+  | 'eventmodeling'
   | 'unknown'
 
 let renderSequence = 0
@@ -269,6 +283,58 @@ function detectChartType(code: string): MermaidChartType {
     return 'kanban'
   }
 
+  if (/^swimlane-beta\b/i.test(firstMeaningfulLine)) {
+    return 'swimlane'
+  }
+
+  if (/^(?:flowchart|graph)\b.*subgraph/i.test(firstMeaningfulLine) || /^flowchart\b.*\n.*subgraph/i.test(firstMeaningfulLine)) {
+    return 'swimlane'
+  }
+
+  if (/^usecase-beta\b/i.test(firstMeaningfulLine)) {
+    return 'usecase'
+  }
+
+  if (/^C4(?:Context|Container|Component|Dynamic|Deployment)?\b/i.test(firstMeaningfulLine)) {
+    return 'c4'
+  }
+
+  if (/^zenuml\b/i.test(firstMeaningfulLine)) {
+    return 'zenuml'
+  }
+
+  if (/^radar-beta\b/i.test(firstMeaningfulLine)) {
+    return 'radar'
+  }
+
+  if (/^treemap-beta\b/i.test(firstMeaningfulLine)) {
+    return 'treemap'
+  }
+
+  if (/^venn-beta\b/i.test(firstMeaningfulLine)) {
+    return 'venn'
+  }
+
+  if (/^ishikawa-beta\b/i.test(firstMeaningfulLine)) {
+    return 'ishikawa'
+  }
+
+  if (/^wardley-beta\b/i.test(firstMeaningfulLine)) {
+    return 'wardley'
+  }
+
+  if (/^cynefin-beta\b/i.test(firstMeaningfulLine)) {
+    return 'cynefin'
+  }
+
+  if (/^treeView-beta\b/i.test(firstMeaningfulLine)) {
+    return 'treeview'
+  }
+
+  if (/^eventmodeling\b/i.test(firstMeaningfulLine)) {
+    return 'eventmodeling'
+  }
+
   return 'unknown'
 }
 
@@ -320,7 +386,7 @@ function validateChartCode(code: string): ValidationResult {
     return {
       valid: false,
       error:
-        '无法识别 Mermaid 图表类型。代码应以 flowchart、sequenceDiagram、classDiagram、stateDiagram、gantt、erDiagram、pie、mindmap、timeline、gitGraph、sankey-beta 等关键字开头。',
+        '无法识别 Mermaid 图表类型。代码应以 flowchart、sequenceDiagram、classDiagram、stateDiagram、gantt、erDiagram、pie、mindmap、timeline、gitGraph、sankey-beta、swimlane-beta、usecase-beta、C4Context、radar-beta、treemap-beta、venn-beta、ishikawa-beta、wardley-beta、cynefin-beta、treeView-beta、eventmodeling 等关键字开头。',
     }
   }
 
@@ -365,6 +431,7 @@ function sanitizeSvg(svg: string): string {
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/\bon\w+\s*=/gi, 'data-blocked=')
     .replace(/javascript:/gi, 'blocked:')
+    .replace(/<svg\b/, '<svg style="max-width:100%;height:auto"')
 }
 
 async function getMermaid(): Promise<MermaidInstance> {
@@ -432,6 +499,10 @@ export function MermaidCard(renderProps: MermaidCardProps) {
   const [errorExpanded, setErrorExpanded] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [showCode, setShowCode] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [showDownloadMenu, setShowDownloadMenu] = useState(false)
+  const [scale, setScale] = useState(1)
+  const [translate, setTranslate] = useState({ x: 0, y: 0 })
 
   const requestIdRef = useRef(0)
 
@@ -517,6 +588,94 @@ export function MermaidCard(renderProps: MermaidCardProps) {
     })
   }, [])
 
+  const downloadMenuRef = useRef<HTMLDivElement>(null)
+
+  const triggerDownload = useCallback((filename: string, data: string | Blob, mime?: string) => {
+    const blob = data instanceof Blob ? data : new Blob([data], { type: mime || 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [])
+
+  const handleDownloadSvg = useCallback(() => {
+    if (!svg) return
+    triggerDownload(`${title || 'mermaid-chart'}.svg`, svg, 'image/svg+xml')
+    setShowDownloadMenu(false)
+  }, [svg, title, triggerDownload])
+
+  const handleDownloadCode = useCallback(() => {
+    if (!code) return
+    triggerDownload(`${title || 'mermaid-chart'}.mmd`, code, 'text/plain')
+    setShowDownloadMenu(false)
+  }, [code, title, triggerDownload])
+
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen((prev) => !prev)
+  }, [])
+
+  useEffect(() => {
+    if (!isFullscreen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsFullscreen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isFullscreen])
+
+  const ZOOM_MIN = 0.3, ZOOM_MAX = 3, ZOOM_STEP = 0.1
+  const zoomIn = useCallback(() => setScale((s) => Math.min(ZOOM_MAX, +(s + ZOOM_STEP).toFixed(2))), [])
+  const zoomOut = useCallback(() => setScale((s) => Math.max(ZOOM_MIN, +(s - ZOOM_STEP).toFixed(2))), [])
+  const zoomReset = useCallback(() => { setScale(1); setTranslate({ x: 0, y: 0 }) }, [])
+
+  const dragRef = useRef<{ startX: number; startY: number; tx: number; ty: number } | null>(null)
+  const svgContainerRef = useRef<HTMLDivElement>(null)
+  const fullscreenRef = useRef<HTMLDivElement>(null)
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    if (scale <= 1) return
+    e.preventDefault()
+    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+    dragRef.current = { startX: e.clientX, startY: e.clientY, tx: translate.x, ty: translate.y }
+  }, [scale, translate])
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragRef.current) return
+    const dx = e.clientX - dragRef.current.startX
+    const dy = e.clientY - dragRef.current.startY
+    setTranslate({ x: dragRef.current.tx + dx, y: dragRef.current.ty + dy })
+  }, [])
+
+  const onPointerUp = useCallback(() => {
+    dragRef.current = null
+  }, [])
+
+  useEffect(() => {
+    if (!isFullscreen) return
+    const el = fullscreenRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      setScale((s) => {
+        const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP
+        return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, +(s + delta).toFixed(2)))
+      })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [isFullscreen])
+
+  useEffect(() => {
+    if (!showDownloadMenu) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (downloadMenuRef.current && !downloadMenuRef.current.contains(e.target as Node)) {
+        setShowDownloadMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showDownloadMenu])
+
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') {
       return
@@ -601,15 +760,15 @@ export function MermaidCard(renderProps: MermaidCardProps) {
   const cardStyle: CSSProperties = {
     overflow: 'hidden',
     border: '1px solid var(--border, #d1d5db)',
-    borderRadius: 8,
+    borderRadius: 6,
     background: 'var(--surface, #ffffff)',
     color: 'var(--text, #111827)',
   }
 
   const titleStyle: CSSProperties = {
-    padding: '10px 14px',
+    padding: '6px 10px',
     borderBottom: '1px solid var(--border, #d1d5db)',
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: 600,
     lineHeight: 1.4,
     overflowWrap: 'anywhere',
@@ -617,8 +776,12 @@ export function MermaidCard(renderProps: MermaidCardProps) {
 
   const contentStyle: CSSProperties = {
     position: 'relative',
-    minHeight: 96,
-    padding: 12,
+    minHeight: isFullscreen ? 0 : 80,
+    padding: '4px 4px',
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
   }
 
   const centerStyle: CSSProperties = {
@@ -682,93 +845,197 @@ export function MermaidCard(renderProps: MermaidCardProps) {
     overflowWrap: 'anywhere',
   }
 
-  return (
+  const btnBase: CSSProperties = {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    padding: '2px 6px', borderRadius: 4, border: 'none',
+    background: 'transparent', cursor: 'pointer', fontSize: 11, lineHeight: '16px',
+    color: 'var(--text-muted, #6b7280)',
+  }
+
+  const svgIcon = (d: string, w = 13, h = 13) => (
+    <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d={d} />
+    </svg>
+  )
+
+  const chartContent = (
+    <div style={contentStyle}>
+      {error ? (
+        <div role="alert" style={errorStyle}>
+          <div style={errorHeaderStyle}>
+            <div style={errorMessageStyle}>
+              ⚠️ 图形渲染失败：{error}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setErrorExpanded((expanded) => !expanded)}
+            style={toggleStyle}
+            aria-expanded={errorExpanded}
+          >
+            {errorExpanded ? '▲ 隐藏原始代码' : '▼ 查看原始代码'}
+          </button>
+
+          {errorExpanded ? (
+            <pre style={codeStyle}>
+              <code>{code || '（空）'}</code>
+            </pre>
+          ) : null}
+        </div>
+      ) : showCode ? (
+        <pre style={{ ...codeStyle, margin: 0, maxHeight: isFullscreen ? 'none' : 400, flex: 1, overflow: 'auto' }}>
+          <code>{code || '（空）'}</code>
+        </pre>
+      ) : svg ? (
+        <div
+          ref={isFullscreen ? undefined : svgContainerRef}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          style={{
+            width: '100%',
+            flex: 1,
+            overflow: 'hidden',
+            lineHeight: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: scale > 1 ? (dragRef.current ? 'grabbing' : 'grab') : 'default',
+            touchAction: 'none',
+          }}
+        >
+          <div
+            style={{
+              transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,
+              transformOrigin: 'center center',
+              transition: dragRef.current ? 'none' : 'transform 0.15s ease',
+            }}
+            dangerouslySetInnerHTML={{ __html: svg }}
+          />
+        </div>
+      ) : (
+        <div style={centerStyle}>
+          {isLoading ? '⏳ 图形渲染中…' : '⏳ 准备渲染…'}
+        </div>
+      )}
+    </div>
+  )
+
+  const toolbar = (
+    <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
+      <button type="button" onClick={() => setShowCode(false)} title="图表"
+        style={{ ...btnBase,
+          background: !showCode ? 'color-mix(in srgb, var(--accent) 18%, transparent)' : 'transparent',
+          color: !showCode ? 'var(--accent)' : 'var(--text-muted, #6b7280)',
+        }}>
+        {svgIcon('M3 3h18v18H3zM3 15l4-4a2 2 0 012.8 0L15 16M14 14l1-1a2 2 0 012.8 0L21 16')}
+      </button>
+      <button type="button" onClick={() => setShowCode(true)} title="代码"
+        style={{ ...btnBase,
+          background: showCode ? 'color-mix(in srgb, var(--accent) 18%, transparent)' : 'transparent',
+          color: showCode ? 'var(--accent)' : 'var(--text-muted, #6b7280)',
+        }}>
+        &lt;/&gt;
+      </button>
+      <div style={{ width: 1, margin: '0 2px', borderLeft: '1px solid var(--border, #d1d5db)' }} />
+      <div ref={downloadMenuRef} style={{ position: 'relative' }}>
+        <button type="button" onClick={() => setShowDownloadMenu((v) => !v)} title="下载"
+          style={{ ...btnBase, opacity: svg || code ? 1 : 0.4 }}>
+          {svgIcon('M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3')}
+        </button>
+        {showDownloadMenu && (
+          <div style={{
+            position: 'absolute', top: '100%', right: 0, marginTop: 4,
+            minWidth: 140, padding: '4px 0', borderRadius: 6,
+            border: '1px solid var(--border, #d1d5db)',
+            background: 'var(--surface, #ffffff)',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+            zIndex: 100,
+          }}>
+            <button type="button" onClick={handleDownloadSvg} disabled={!svg}
+              style={{ display: 'block', width: '100%', padding: '5px 10px', border: 0,
+                background: 'transparent', textAlign: 'left', cursor: svg ? 'pointer' : 'default',
+                fontSize: 12, opacity: svg ? 1 : 0.4, color: 'var(--text, #111827)' }}>
+              SVG 图片
+            </button>
+            <button type="button" onClick={handleDownloadCode} disabled={!code}
+              style={{ display: 'block', width: '100%', padding: '5px 10px', border: 0,
+                background: 'transparent', textAlign: 'left', cursor: code ? 'pointer' : 'default',
+                fontSize: 12, opacity: code ? 1 : 0.4, color: 'var(--text, #111827)' }}>
+              源代码 (.mmd)
+            </button>
+          </div>
+        )}
+      </div>
+      <div style={{ width: 1, margin: '0 2px', borderLeft: '1px solid var(--border, #d1d5db)' }} />
+      <button type="button" onClick={zoomOut} title="缩小" disabled={scale <= ZOOM_MIN}
+        style={{ ...btnBase, opacity: scale > ZOOM_MIN ? 1 : 0.3 }}>
+        {svgIcon('M5 12h14', 12, 12)}
+      </button>
+      <button type="button" onClick={zoomReset} title={`${Math.round(scale * 100)}%`}
+        style={{ ...btnBase, fontSize: 10, padding: '2px 4px', minWidth: 36 }}>
+        {Math.round(scale * 100)}%
+      </button>
+      <button type="button" onClick={zoomIn} title="放大" disabled={scale >= ZOOM_MAX}
+        style={{ ...btnBase, opacity: scale < ZOOM_MAX ? 1 : 0.3 }}>
+        {svgIcon('M12 5v14M5 12h14', 12, 12)}
+      </button>
+      <button type="button" onClick={toggleFullscreen} title={isFullscreen ? '退出全屏' : '全屏'}
+        style={btnBase}>
+        {isFullscreen
+          ? svgIcon('M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3')
+          : svgIcon('M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3')}
+      </button>
+    </div>
+  )
+
+  const card = (
     <section
       style={cardStyle}
       aria-busy={isLoading}
       aria-label={title ? `Mermaid 图表：${title}` : 'Mermaid 图表'}
     >
       <header style={{ ...titleStyle, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span>{title || 'Mermaid 图表'}</span>
-        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-          <button
-            type="button"
-            onClick={() => setShowCode(false)}
-            style={{
-              padding: '2px 8px', borderRadius: 4, border: '1px solid',
-              borderColor: !showCode ? 'var(--accent, #3b82f6)' : 'var(--border, #d1d5db)',
-              background: !showCode ? 'var(--accent, #3b82f6)' : 'transparent',
-              color: !showCode ? '#fff' : 'var(--text-muted, #6b7280)',
-              cursor: 'pointer', fontSize: 11, lineHeight: '16px',
-            }}
-            title="显示图表"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2"/>
-              <path d="M3 15l4-4a2 2 0 012.8 0L15 16"/>
-              <path d="M14 14l1-1a2 2 0 012.8 0L21 16"/>
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowCode(true)}
-            style={{
-              padding: '2px 8px', borderRadius: 4, border: '1px solid',
-              borderColor: showCode ? 'var(--accent, #3b82f6)' : 'var(--border, #d1d5db)',
-              background: showCode ? 'var(--accent, #3b82f6)' : 'transparent',
-              color: showCode ? '#fff' : 'var(--text-muted, #6b7280)',
-              cursor: 'pointer', fontSize: 11, lineHeight: '16px',
-            }}
-            title="显示源代码"
-          >
-            &lt;/&gt;
-          </button>
-        </div>
+        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {title || 'Mermaid 图表'}
+        </span>
+        {toolbar}
       </header>
-
-      <div style={contentStyle}>
-        {error ? (
-          <div role="alert" style={errorStyle}>
-            <div style={errorHeaderStyle}>
-              <div style={errorMessageStyle}>
-                ⚠️ 图形渲染失败：{error}
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setErrorExpanded((expanded) => !expanded)}
-              style={toggleStyle}
-              aria-expanded={errorExpanded}
-            >
-              {errorExpanded ? '▲ 隐藏原始代码' : '▼ 查看原始代码'}
-            </button>
-
-            {errorExpanded ? (
-              <pre style={codeStyle}>
-                <code>{code || '（空）'}</code>
-              </pre>
-            ) : null}
-          </div>
-        ) : showCode ? (
-          <pre style={{ ...codeStyle, margin: 0, maxHeight: 400 }}>
-            <code>{code || '（空）'}</code>
-          </pre>
-        ) : svg ? (
-          <div
-            style={{
-              width: '100%',
-              overflowX: 'auto',
-              lineHeight: 0,
-            }}
-            dangerouslySetInnerHTML={{ __html: svg }}
-          />
-        ) : (
-          <div style={centerStyle}>
-            {isLoading ? '⏳ 图形渲染中…' : '⏳ 准备渲染…'}
-          </div>
-        )}
-      </div>
+      {chartContent}
     </section>
+  )
+
+  if (!isFullscreen) return card
+
+  return createPortal(
+    <div
+      ref={fullscreenRef}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 10000,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)',
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) setIsFullscreen(false) }}
+    >
+      <div style={{
+        width: '90vw', height: '90vh', display: 'flex', flexDirection: 'column',
+        overflow: 'hidden', borderRadius: 8,
+        border: '1px solid var(--border, #d1d5db)',
+        background: 'var(--surface, #ffffff)',
+        color: 'var(--text, #111827)',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+      }}>
+        <header style={{ ...titleStyle, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {title || 'Mermaid 图表'}
+          </span>
+          {toolbar}
+        </header>
+        {chartContent}
+      </div>
+    </div>,
+    document.body
   )
 }

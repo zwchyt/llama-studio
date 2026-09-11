@@ -9,13 +9,9 @@
 | `GpuUsagePanel.tsx` | `GpuUsagePanel` | GPU 显存/利用率/温度 | `engine`, `utilization?`, `memoryUsedMb?`, `memoryTotalMb?`, `temperature?` | — |
 | `MessageCard.tsx` | `MessageCard` | 通用提示卡片（纯展示） | `variant`, `title`, `message` | — |
 | `Chart.tsx` | `Chart` | 简单图表（折线/柱状/饼图） | `type`, `title?`, `data`, `xKey`, `yKey` | — |
-| `MermaidCard.tsx` | `MermaidCard` | Mermaid 图形（流程图/时序图/类图/状态图/甘特图/ER图/旅程图/Git图/思维导图/时间线/饼图/桑基图） | `title?`, `code` | — |
+| `MermaidCard.tsx` | `MermaidCard` | ~~已迁移到 `../mermaid/`~~ | — | — |
 
-`MermaidCard` 说明：
-- mermaid 库（~1MB）在卡片首次渲染时**动态 import**，不进主包
-- `code` 为 Mermaid DSL 纯文本，组件会自动剥掉可能存在的 ``` 围栏
-- DSL 语法错误时降级显示「错误信息 + 原始代码」，不白屏
-- 通过 MutationObserver 监听 `html.theme-dark` 类切换，浅/深主题自动重渲染（mermaid 内置主题 + 应用 CSS 变量配色）
+> **Mermaid 模块已独立**：`MermaidCard` 和 `parseContentToBlocks` 已迁移到 `src/renderer/src/mermaid/` 目录。本目录不再包含 Mermaid 相关代码。`registry.tsx` 通过 `import { MermaidCard } from '../mermaid'` 引用。
 
 ## 添加新卡片流程
 

@@ -75,7 +75,7 @@ import { registry } from '../jsonui/registry'
 import { makeDefaultHandlers } from '../jsonui/defaultHandlers'
 import MetricsBridge from '../jsonui/MetricsBridge'
 import { tryExtractSpec } from '../jsonui/specGen'
-import { MermaidCard } from '../jsonui/components/MermaidCard'
+import { MermaidCard, parseContentToBlocks } from '../mermaid'
 import '../styles/agent-code.css'
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -507,6 +507,26 @@ const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { content: 
       {normalized}
     </ReactMarkdown>
   )
+})
+
+const MERMAID_KW_RE = /^(?:flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|erDiagram|journey|gitGraph|mindmap|timeline|pie|sankey-beta|xychart-beta|quadrantChart|requirementDiagram|architecture-beta|block-beta|packet-beta|kanban|swimlane-beta|usecase-beta|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment|radar-beta|treemap-beta|venn-beta|ishikawa-beta|wardley-beta|cynefin-beta|treeView-beta|eventmodeling)\b/i
+
+function isMermaidOrJson(content: string): { type: 'mermaid' | 'json' | null; lang?: string } {
+  const trimmed = content.trim()
+  if (!trimmed) return { type: null }
+  if (MERMAID_KW_RE.test(trimmed)) return { type: 'mermaid', lang: 'mermaid' }
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try { JSON.parse(trimmed); return { type: 'json', lang: 'json' } } catch { /* not json */ }
+  }
+  return { type: null }
+}
+
+const UserMessageContent = React.memo(function UserMessageContent({ content }: { content: string }) {
+  const detected = useMemo(() => isMermaidOrJson(content), [content])
+  if (detected.type) {
+    return <CodeBlock language={detected.lang} value={content.trim()} />
+  }
+  return <AgentMarkdown content={content} />
 })
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -1462,21 +1482,34 @@ const StreamingContent = React.memo(function StreamingContent({ content, streami
   // 无思考段：传统布局——工具卡独立成组（不套思考链容器），正文段按序成泡
   // （此处 items 只含已完成的正文片段，生长中的正文段在 finalText）
   if (!hasThink) {
+    // 辅助函数：将文本内容分割成文本和Mermaid块
+    const renderContentWithMermaid = (content: string, isStreamingContent: boolean) => {
+      const blocks = parseContentToBlocks(content)
+      return blocks.map((block, i) => {
+        if (block.kind === 'mermaid') {
+          return (
+            <div key={`mermaid-${i}`} className="agent-msg-ui">
+              <MermaidCard code={block.code} />
+            </div>
+          )
+        }
+        return (
+          <div key={`text-${i}`} className={`chat-msg-bubble chat-msg-markdown${isStreamingContent ? ' chat-msg-bubble--streaming' : ''}`}>
+            {isStreamingContent ? <StreamingMarkdown content={block.content} isStreaming={isStreamingContent} /> : <AgentMarkdown content={block.content} />}
+          </div>
+        )
+      })
+    }
+    
     return (
       <>
         {toolCalls?.length ? (
           <ToolCallGroup toolCalls={toolCalls} onPreviewFile={onPreviewFile!} canUndoFor={canUndoFor} onUndo={onUndo} />
         ) : null}
         {items.map((it, i) => it.kind === 'text' ? (
-          <div key={i} className="chat-msg-bubble chat-msg-markdown">
-            <AgentMarkdown content={it.content} />
-          </div>
+          renderContentWithMermaid(it.content, false)
         ) : null)}
-        {finalText != null && (
-          <div className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>
-            {streaming ? <StreamingMarkdown content={finalText} isStreaming={streaming} /> : <AgentMarkdown content={finalText} />}
-          </div>
-        )}
+        {finalText != null && renderContentWithMermaid(finalText, !!streaming)}
       </>
     )
   }
@@ -1499,9 +1532,23 @@ const StreamingContent = React.memo(function StreamingContent({ content, streami
       {finalText != null && (
         // 最终结论气泡：仍在流式时用轻量流式栈；完成态走 AgentMarkdown 完整栈
         // 补齐 KaTeX 公式/raw HTML/sanitize，否则完成后公式不渲染。
-        <div className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>
-          {streaming ? <StreamingMarkdown content={finalText} isStreaming={streaming} /> : <AgentMarkdown content={finalText} />}
-        </div>
+        (() => {
+          const blocks = parseContentToBlocks(finalText)
+          return blocks.map((block, i) => {
+            if (block.kind === 'mermaid') {
+              return (
+                <div key={`mermaid-final-${i}`} className="agent-msg-ui">
+                  <MermaidCard code={block.code} />
+                </div>
+              )
+            }
+            return (
+              <div key={`text-final-${i}`} className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>
+                {streaming ? <StreamingMarkdown content={block.content} isStreaming={streaming} /> : <AgentMarkdown content={block.content} />}
+              </div>
+            )
+          })
+        })()
       )}
     </>
   )
@@ -2085,13 +2132,23 @@ function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']>, msgI
     )
   }
   if (finalTextIdx >= 0 && finalText != null) {
-    out.push(
-      // 最终结论气泡：仅它仍在流式时用轻量流式栈；完成态走 AgentMarkdown 完整栈
-      // 补齐 KaTeX 公式/raw HTML/sanitize，否则完成后公式不渲染。
-      <div key="seg-text-final" className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>
-        {streaming ? <StreamingMarkdown content={finalText} isStreaming /> : <AgentMarkdown content={finalText} />}
-      </div>
-    )
+    // 将最终文本分割成文本和Mermaid块，按顺序渲染
+    const blocks = parseContentToBlocks(finalText)
+    blocks.forEach((block, i) => {
+      if (block.kind === 'mermaid') {
+        out.push(
+          <div key={`mermaid-seg-final-${i}`} className="agent-msg-ui">
+            <MermaidCard code={block.code} />
+          </div>
+        )
+      } else {
+        out.push(
+          <div key={`text-seg-final-${i}`} className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>
+            {streaming ? <StreamingMarkdown content={block.content} isStreaming /> : <AgentMarkdown content={block.content} />}
+          </div>
+        )
+      }
+    })
   }
   return out
 }
@@ -2111,37 +2168,7 @@ const stoppedBadge = (
 const agentUiDefaultHandlers = makeDefaultHandlers()
 
 const AgentUiBlock = React.memo(function AgentUiBlock({ msg, modelTemplateId }: { msg: AgentMessage; modelTemplateId?: string }) {
-  const dslCode = useMemo(() => {
-    const content = msg.content || ''
-    const MERMAID_KEYWORDS = [
-      'flowchart', 'graph', 'sequenceDiagram', 'classDiagram-v2', 'classDiagram',
-      'stateDiagram-v2', 'stateDiagram', 'gantt', 'erDiagram', 'journey', 'gitGraph',
-      'mindmap', 'timeline', 'pie', 'sankey-beta', 'xychart-beta', 'quadrantChart',
-      'requirementDiagram', 'architecture-beta', 'block-beta', 'packet-beta', 'kanban'
-    ]
-    const kwPattern = MERMAID_KEYWORDS.map(kw => kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
-    const kwRe = new RegExp(`^(${kwPattern})(\\s|;|:|$)`)
-    const isMermaidKw = (line: string) => kwRe.test(line)
-    const lines = content.split('\n')
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].trim()
-      if (!trimmed || trimmed.startsWith('```') || trimmed.startsWith('#')) continue
-      if (isMermaidKw(trimmed)) {
-        let end = i + 1
-        while (end < lines.length) {
-          const next = lines[end].trim()
-          if (next === '' || next.startsWith('```') || isMermaidKw(next)) break
-          end++
-        }
-        const code = lines.slice(i, end).join('\n').replace(/```[\s\S]*?```/g, '').trim()
-        if (code.length > 5) return code
-      }
-    }
-    return null
-  }, [msg.content])
-
   const spec = useMemo(() => {
-    if (dslCode) return null
     let parsed: Spec | null = null
     if (msg.uiSpecRaw) {
       try { parsed = JSON.parse(msg.uiSpecRaw) as Spec } catch { return null }
@@ -2155,7 +2182,7 @@ const AgentUiBlock = React.memo(function AgentUiBlock({ msg, modelTemplateId }: 
       Object.entries(parsed.elements).map(([k, v]) => [k, { ...v, props: v.props ?? {} }])
     )
     return { ...parsed, elements }
-  }, [dslCode, msg.uiSpecRaw, msg.uiSpecChecked, msg.content])
+  }, [msg.uiSpecRaw, msg.uiSpecChecked, msg.content])
 
   if (spec) {
     return (
@@ -2167,13 +2194,8 @@ const AgentUiBlock = React.memo(function AgentUiBlock({ msg, modelTemplateId }: 
       </div>
     )
   }
-  if (dslCode) {
-    return (
-      <div className="agent-msg-ui">
-        <MermaidCard code={dslCode} />
-      </div>
-    )
-  }
+  
+  // Mermaid 已由 StreamingContent / renderSegmentsFor 内联渲染，AgentUiBlock 不再重复
   return null
 })
 
@@ -2238,6 +2260,7 @@ const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loadi
     // 最终正文独立成泡），完成后同一结构静态渲染（ThinkBlock closed、正文切 AgentMarkdown 完整栈）。
     return (
       <>
+        {!isStreaming && <AgentUiBlock msg={msg} modelTemplateId={modelTemplateId} />}
         {renderSegmentsFor(src.segments, msg.id, isStreaming, isStreaming ? liveToolCalls : undefined, {
           thinkDone: isStreaming ? !!thinkDone : true,
           onPreviewFile: a.onPreviewFile, canUndoFor: a.canUndoFor, onUndo: a.onUndo,
@@ -2246,7 +2269,6 @@ const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loadi
         })}
         {src.stopped && stoppedBadge}
         {fileSummary}
-        {!isStreaming && <AgentUiBlock msg={msg} modelTemplateId={modelTemplateId} />}
         {actions}
       </>
     )
@@ -2258,8 +2280,8 @@ const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loadi
       {pendingFirstToken && (
         <ThinkBlock pending value="" closed={false} isStreaming msgStreaming bodyAppeared={false} streamStartAt={streamStartAt} />
       )}
-      <StreamingContent content={src.content} streaming={isStreaming} toolCalls={src.toolCalls || undefined} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(msg.id, tc)} />
       {!isStreaming && <AgentUiBlock msg={msg} modelTemplateId={modelTemplateId} />}
+      <StreamingContent content={src.content} streaming={isStreaming} toolCalls={src.toolCalls || undefined} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(msg.id, tc)} />
       {!isStreaming && hasToolCalls && fileSummary}
       {!isStreaming && !hasToolCalls && actions}
     </>
@@ -6010,7 +6032,7 @@ const programmaticScrollRef = useRef(false)
                         </div>
                       ) : msg.content ? (
                         <>
-                          <div className="chat-msg-bubble chat-msg-markdown"><AgentMarkdown content={msg.content} /></div>
+                          <div className="chat-msg-bubble chat-msg-markdown"><UserMessageContent content={msg.content} /></div>
                           <div className="chat-msg-actions">
                             <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content)}><CopyIcon size={13} /></button>
                             <button className="chat-msg-action-btn" onClick={() => editAt(msg.id)} disabled={loading}><PencilIcon size={13} /></button>

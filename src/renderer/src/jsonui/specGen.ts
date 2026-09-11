@@ -25,6 +25,23 @@ const COMPONENT_WHITELIST: Array<{ type: string; props: string; desc: string }> 
   { type: 'block', props: 'code, title?', desc: '块图' },
   { type: 'packet', props: 'code, title?', desc: '数据包图' },
   { type: 'kanban', props: 'code, title?', desc: '看板图' },
+  { type: 'swimlane', props: 'code, title?', desc: '泳道图' },
+  { type: 'usecase', props: 'code, title?', desc: '用例图' },
+  { type: 'c4', props: 'code, title?', desc: 'C4架构图' },
+  { type: 'c4context', props: 'code, title?', desc: 'C4 Context图' },
+  { type: 'c4container', props: 'code, title?', desc: 'C4 Container图' },
+  { type: 'c4component', props: 'code, title?', desc: 'C4 Component图' },
+  { type: 'c4dynamic', props: 'code, title?', desc: 'C4 Dynamic图' },
+  { type: 'c4deployment', props: 'code, title?', desc: 'C4 Deployment图' },
+  { type: 'zenuml', props: 'code, title?', desc: 'ZenUML时序图' },
+  { type: 'radar', props: 'code, title?', desc: '雷达图' },
+  { type: 'treemap', props: 'code, title?', desc: '树状图' },
+  { type: 'venn', props: 'code, title?', desc: '韦恩图' },
+  { type: 'ishikawa', props: 'code, title?', desc: '鱼骨图' },
+  { type: 'wardley', props: 'code, title?', desc: 'Wardley地图' },
+  { type: 'cynefin', props: 'code, title?', desc: 'Cynefin框架图' },
+  { type: 'treeview', props: 'code, title?', desc: '树视图' },
+  { type: 'eventmodeling', props: 'code, title?', desc: '事件建模图' },
 ]
 
 const DYNAMIC_PATHS = [
