@@ -42,7 +42,44 @@ export function useCollapseAnimation<T extends HTMLElement = HTMLDivElement>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 展开目标高度追踪：展开动画期间，内容可能仍在「长高」——典型是思考链容器展开时，
+  // 链内嵌套折叠块（ThinkSegmentFold）在下一帧才展开，或 Markdown 懒渲染补齐高度。
+  // 若只在 expand() 那一刻量一次 scrollHeight，目标值偏小 → 动画停在半路，过渡结束
+  // 再被 maxHeight:'none' 弹到真实高度，表现为「展开到头又跳一下」。
+  // 这里在动画进行期间持续重测并追写目标值：过渡始终朝最新真实高度推进，收尾无缝。
+  const trackRafRef = useRef<number | undefined>(undefined)
+  const stopTrack = useCallback(() => {
+    if (trackRafRef.current != null) {
+      cancelAnimationFrame(trackRafRef.current)
+      trackRafRef.current = undefined
+    }
+  }, [])
+  const trackExpandTarget = useCallback(() => {
+    stopTrack()
+    const startedAt = Date.now()
+    const tick = () => {
+      const el = bodyRef.current
+      // 过渡时长 300ms + 余量；期间每帧把目标追到最新内容高度
+      if (!el || !expandedRef.current) {
+        trackRafRef.current = undefined
+        return
+      }
+      if (Date.now() - startedAt > 420) {
+        // 追踪结束：落回 none 自适应后续高度增长。
+        // 注意：追踪期间 max-height 每帧都在变，transitionend 不会触发（目标始终在动），
+        // 故这里必须自己收尾，否则元素会被锁死在某个固定像素高度、流式长高时被裁掉。
+        el.style.maxHeight = 'none'
+        trackRafRef.current = undefined
+        return
+      }
+      el.style.maxHeight = el.scrollHeight + 'px'
+      trackRafRef.current = requestAnimationFrame(tick)
+    }
+    trackRafRef.current = requestAnimationFrame(tick)
+  }, [bodyRef, stopTrack, expandedRef])
+
   const collapse = useCallback(() => {
+    stopTrack()
     setExpanded(false)
     const el = bodyRef.current
     if (el) {
@@ -51,7 +88,7 @@ export function useCollapseAnimation<T extends HTMLElement = HTMLDivElement>(
       void el.offsetHeight
       el.style.maxHeight = '0px'
     }
-  }, [bodyRef])
+  }, [bodyRef, stopTrack])
 
   const expand = useCallback(() => {
     const el = bodyRef.current
@@ -59,6 +96,8 @@ export function useCollapseAnimation<T extends HTMLElement = HTMLDivElement>(
       // 已挂载：直接过渡到内容高度（无重挂载 → 顺滑）
       setExpanded(true)
       el.style.maxHeight = el.scrollHeight + 'px'
+      // 内容可能在过渡期间继续长高（嵌套折叠块下一帧展开 / 懒渲染）→ 持续追写目标
+      trackExpandTarget()
     } else {
       // 首次展开：先挂载，待下一帧布局完成再从 0 过渡到内容高度
       setVisible(true)
@@ -66,9 +105,13 @@ export function useCollapseAnimation<T extends HTMLElement = HTMLDivElement>(
         setExpanded(true)
         const el2 = bodyRef.current
         if (el2) el2.style.maxHeight = el2.scrollHeight + 'px'
+        trackExpandTarget()
       })
     }
-  }, [bodyRef])
+  }, [bodyRef, trackExpandTarget])
+
+  // 卸载时中止目标追踪 rAF，避免卸载后写 DOM
+  useEffect(() => () => stopTrack(), [stopTrack])
 
   const toggle = useCallback(() => {
     beforeToggle?.()

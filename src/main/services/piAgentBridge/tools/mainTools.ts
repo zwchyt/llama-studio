@@ -550,19 +550,16 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
         const t = resolveKb(args.kb)
         if (!t.id) return t.error ?? '知识库不可用'
         const r = await exec.knowledgeQuery(t.id, String(args.query ?? ''), typeof args.limit === 'number' ? args.limit : undefined)
-        // 断层自动附正文：第一名逐字包含完整查询短语、且分数 ≥ 第二名 2 倍（或仅一条命中）时，
-        // 直接附带该块正文——省掉一轮 knowledge_read；分数咬得紧（多答案）时仍只回目录由模型挑。
+        // 自动附带「相关度最高」那一块的完整正文。
+        // 依据：BM25 已将 hits 按相关度降序排列，hits[0] 就是该查询下最相关的一块——与知识库
+        // 界面「试搜索」直接展示 hits[0].text 是同一语义。此前只在「正文逐字包含整个查询串」
+        // 这种极严条件下才附带，中文长查询几乎不可能满足，等于从不触发。
         let auto = ''
         const hs = r.hits ?? []
-        if (hs.length > 0) {
-          const normQ = String(args.query ?? '').toLowerCase().replace(/\s+/g, ' ').trim()
-          const top = hs[0]
-          const dominant = normQ.length >= 4
-            && top.text.toLowerCase().replace(/\s+/g, ' ').includes(normQ)
-            && (hs.length === 1 || top.score >= (hs[1]?.score ?? 0) * 2)
-          if (dominant) {
-            auto = `\n\n【已自动附带最相关块正文：相关度断层悬殊，无需再调用 knowledge_read】\n【${top.title ?? '（无标题）'}】(${top.docName} · 第${top.ordinal + 1}块 · 相关度 ${top.score})\n${top.text}`
-          }
+        const top = hs[0]
+        if (top) {
+          auto = `\n\n【已附带相关度最高的分块正文（相关度 ${top.score}，无需再调用 knowledge_read 读它）】\n`
+            + `【${top.title || '（无标题）'}】(${top.docName} · 第${top.ordinal + 1}块)\n${top.text}`
         }
         return formatKnowledgeCatalog(r) + auto
       }

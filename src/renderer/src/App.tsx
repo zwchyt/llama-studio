@@ -157,9 +157,15 @@ function AppMain() {
         ])
         setPaths(paths)
         setBackends(backendsData)
-        if (backendsData.length > 0) setActiveBackend(backendsData[0])
+        if (backendsData.length > 0) {
+          setActiveBackend(backendsData[0])
+          useStore.getState().setBackendsStatus('ready')
+        }
+        // 空数组保持 'loading'：首次启动时主进程立即返回空数组、扫描在后台进行，
+        // 不能据此判定"没有后端"（滥用会闪出错误的空态）。待 'backends-updated' 到达再切 ready。
       } catch (e) {
         console.error('初始化错误:', e)
+        useStore.getState().setBackendsStatus('error')
       } finally {
         setBackendsReady(true)
         // 同步主进程中实际在运行的模型状态（刷新后恢复运行中标识）
@@ -237,9 +243,11 @@ function AppMain() {
     })
 
     // 后端目录后台重扫完成且内容有变化时，主进程广播最新列表（list-backends 现在永远
-    // 用缓存即时应答，重扫在后台静默进行）——此处无缝热替换；当前选中后端仍存在则保留
+    // 用注册表即时应答，校验在后台静默进行）——此处无缝热替换；当前选中后端仍存在则保留。
+    // 收到广播即视为权威结果：无论是否为空都进入 'ready'，结束首屏 loading 态。
     window.api.onBackendsUpdated((list) => {
       setBackends(list)
+      useStore.getState().setBackendsStatus('ready')
       const cur = useStore.getState().activeBackend
       if ((!cur || !list.some(b => b.name === cur.name)) && list[0]) {
         setActiveBackend(list[0])

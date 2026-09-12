@@ -15,11 +15,11 @@ import '../styles/settings.css'
  */
 export default function EnginesView() {
   const {
-    backends, activeBackend, setActiveBackend, setCommandsSchema, setBackends,
+    backends, backendsStatus, activeBackend, setActiveBackend, setCommandsSchema, setBackends,
     releaseInfo, checkingUpdate, downloadProgress, setDownloadProgress, setCheckingUpdate, setReleaseInfo,
     engineReleases, setEngineRelease
   } = useStore(
-    s => ({ backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, engineReleases: s.engineReleases, setEngineRelease: s.setEngineRelease }),
+    s => ({ backends: s.backends, backendsStatus: s.backendsStatus, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, setBackends: s.setBackends, releaseInfo: s.releaseInfo, checkingUpdate: s.checkingUpdate, downloadProgress: s.downloadProgress, setDownloadProgress: s.setDownloadProgress, setCheckingUpdate: s.setCheckingUpdate, setReleaseInfo: s.setReleaseInfo, engineReleases: s.engineReleases, setEngineRelease: s.setEngineRelease }),
     shallow
   )
 
@@ -255,7 +255,7 @@ export default function EnginesView() {
         <div className="settings-section-title"><HardDrive /> 已安装的后端</div>
         {backends.length === 0 ? (
           <div className="text-center py-6 text-sm" style={{ color: 'var(--text-muted)' }}>
-            未安装后端。请在下方下载。
+            {backendsStatus === 'loading' ? '正在扫描后端…' : '未安装后端。请在下方下载。'}
           </div>
         ) : (
           <div className="flex flex-col gap-2">

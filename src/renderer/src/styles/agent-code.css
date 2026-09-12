@@ -254,7 +254,7 @@
   display: none;
 }
 
-.agent-code-topbar-right > .chat-collapse-btn {
+.agent-code-topbar-right>.chat-collapse-btn {
   flex-shrink: 0;
 }
 
@@ -746,8 +746,8 @@
   white-space: nowrap;
 }
 
-.agent-code-topbar-btn > svg,
-.agent-code-topbar-btn > span {
+.agent-code-topbar-btn>svg,
+.agent-code-topbar-btn>span {
   display: block;
   flex: none;
 }
@@ -965,12 +965,12 @@
   position: relative;
 }
 
-.agent-code-project-item > svg {
+.agent-code-project-item>svg {
   display: block;
   flex: none;
 }
 
-.agent-code-project-item > .agent-code-session-title {
+.agent-code-project-item>.agent-code-session-title {
   display: block;
   min-width: 0;
 }
@@ -1577,16 +1577,22 @@
 /* 执行中：工具名 shimmer 流光扫过 + 头部高亮底色（参考 Reasonix 的 data-running 效果），
    配合状态徽标「写入中/修改中」，执行中的视觉状态非常明显 */
 @keyframes agentToolShimmer {
-  0% { background-position: 100% 0; }
-  100% { background-position: -100% 0; }
+  0% {
+    background-position: 100% 0;
+  }
+
+  100% {
+    background-position: -100% 0;
+  }
 }
+
 .agent-tool-call.executing .agent-tool-call-name {
   background: linear-gradient(105deg,
-    var(--tool-accent, var(--accent)) 0%,
-    var(--tool-accent, var(--accent)) 38%,
-    #fff 46%, #fff 54%,
-    var(--tool-accent, var(--accent)) 62%,
-    var(--tool-accent, var(--accent)) 100%);
+      var(--tool-accent, var(--accent)) 0%,
+      var(--tool-accent, var(--accent)) 38%,
+      #fff 46%, #fff 54%,
+      var(--tool-accent, var(--accent)) 62%,
+      var(--tool-accent, var(--accent)) 100%);
   background-size: 220% 100%;
   background-position: 100% 0;
   -webkit-background-clip: text;
@@ -1594,9 +1600,11 @@
   color: transparent;
   animation: agentToolShimmer 1.8s linear infinite;
 }
+
 .agent-tool-call.executing .agent-tool-call-head {
   background: color-mix(in srgb, var(--tool-accent, var(--accent)) 10%, transparent);
 }
+
 .agent-tool-call.pending .agent-tool-call-head {
   background: color-mix(in srgb, var(--text-muted) 6%, transparent);
 }
@@ -2793,7 +2801,11 @@
   background: var(--bg);
   transition: background-color 0.45s ease;
 }
-.agent-code-preview-monaco { height: 100%; }
+
+.agent-code-preview-monaco {
+  height: 100%;
+}
+
 /* monaco 自身背景透明：容器 var(--bg) + 渐变过渡负责背景（主题水波切换时随界面缓慢过渡） */
 .agent-code-preview-monaco .monaco-editor,
 .agent-code-preview-monaco .monaco-editor-background,
@@ -2804,8 +2816,13 @@
 }
 
 /* 只读模式跳转行高亮（monaco decoration） */
-.monaco-hl-line { background: rgba(59, 130, 246, 0.18) !important; }
-.monaco-hl-line-edit { background: rgba(16, 185, 129, 0.16) !important; }
+.monaco-hl-line {
+  background: rgba(59, 130, 246, 0.18) !important;
+}
+
+.monaco-hl-line-edit {
+  background: rgba(16, 185, 129, 0.16) !important;
+}
 
 .agent-code-preview-image {
   display: flex;
@@ -3444,6 +3461,7 @@
   font-size: 12px;
   cursor: pointer;
 }
+
 .agent-audit-more:hover {
   color: var(--text-normal);
   border-color: var(--border-strong);
@@ -3557,12 +3575,15 @@
   color: var(--text-muted);
   transition: transform .12s ease-out;
 }
+
 .agent-traj .traj-caret.open {
   transform: rotate(0deg);
 }
+
 .agent-traj .traj-caret:not(.open) {
   transform: rotate(-90deg);
 }
+
 .agent-traj .traj-caret.sm {
   opacity: .55;
 }
@@ -3588,15 +3609,18 @@
   cursor: pointer;
   white-space: nowrap;
 }
+
 .traj-fold:hover:not(:disabled) {
   color: var(--text-normal);
   border-color: var(--border-strong);
 }
+
 .traj-fold.on {
   color: var(--text-normal);
   background: var(--surface-hover);
   border-color: var(--border-strong);
 }
+
 .traj-fold-icon {
   font-size: 11px;
   line-height: 1;
@@ -3609,12 +3633,14 @@
   display: flex;
   align-items: center;
 }
+
 .traj-search-icon {
   position: absolute;
   left: 7px;
   color: var(--text-muted);
   pointer-events: none;
 }
+
 .traj-search {
   width: 100%;
   font-size: 12px;
@@ -3625,6 +3651,7 @@
   color: var(--text);
   outline: none;
 }
+
 .traj-search:focus {
   border-color: var(--border-strong);
 }
@@ -3642,6 +3669,7 @@
   color: var(--text-muted);
   cursor: pointer;
 }
+
 .traj-clear:hover:not(:disabled) {
   color: #f87171;
   border-color: rgba(248, 113, 113, .45);
@@ -3668,31 +3696,53 @@
   color: var(--text-secondary);
   cursor: pointer;
 }
+
 .traj-chip em {
   font-style: normal;
   opacity: .65;
   font-variant-numeric: tabular-nums;
 }
+
 .traj-chip:hover {
   color: var(--text-normal);
   border-color: var(--border-strong);
 }
+
 .traj-chip.active {
   color: var(--text-normal);
   background: var(--surface-hover);
   border-color: var(--border-strong);
 }
+
 .traj-chip .dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
 }
-.traj-chip.src-flow .dot { background: var(--traj-flow); }
-.traj-chip.src-llm .dot { background: var(--traj-llm); }
-.traj-chip.src-assistant .dot { background: var(--traj-assistant); }
-.traj-chip.src-tool .dot { background: var(--traj-tool); }
-.traj-chip.src-user .dot { background: var(--traj-user); }
-.traj-chip.src-system .dot { background: var(--traj-system); }
+
+.traj-chip.src-flow .dot {
+  background: var(--traj-flow);
+}
+
+.traj-chip.src-llm .dot {
+  background: var(--traj-llm);
+}
+
+.traj-chip.src-assistant .dot {
+  background: var(--traj-assistant);
+}
+
+.traj-chip.src-tool .dot {
+  background: var(--traj-tool);
+}
+
+.traj-chip.src-user .dot {
+  background: var(--traj-user);
+}
+
+.traj-chip.src-system .dot {
+  background: var(--traj-system);
+}
 
 /* 时间线条带（参考 TrajectoryTimeline）：宽度按事件间隔比例 */
 .traj-timeline {
@@ -3702,6 +3752,7 @@
   height: 14px;
   margin: 2px 10px 6px;
 }
+
 .traj-tl-seg {
   flex-basis: 0;
   min-width: 3px;
@@ -3711,20 +3762,40 @@
   opacity: .8;
   cursor: pointer;
 }
+
 .traj-tl-seg:hover {
   opacity: 1;
 }
+
 .traj-tl-seg.dim {
   background: var(--border-strong);
   opacity: .35;
   cursor: default;
 }
-.traj-tl-seg.src-flow { background: var(--traj-flow); }
-.traj-tl-seg.src-llm { background: var(--traj-llm); }
-.traj-tl-seg.src-assistant { background: var(--traj-assistant); }
-.traj-tl-seg.src-tool { background: var(--traj-tool); }
-.traj-tl-seg.src-user { background: var(--traj-user); }
-.traj-tl-seg.src-system { background: var(--traj-system); }
+
+.traj-tl-seg.src-flow {
+  background: var(--traj-flow);
+}
+
+.traj-tl-seg.src-llm {
+  background: var(--traj-llm);
+}
+
+.traj-tl-seg.src-assistant {
+  background: var(--traj-assistant);
+}
+
+.traj-tl-seg.src-tool {
+  background: var(--traj-tool);
+}
+
+.traj-tl-seg.src-user {
+  background: var(--traj-user);
+}
+
+.traj-tl-seg.src-system {
+  background: var(--traj-system);
+}
 
 /* 台账滚动区 */
 .traj-ledger {
@@ -3741,6 +3812,7 @@
   display: flex;
   min-height: 0;
 }
+
 .traj-detail {
   flex: none;
   width: 320px;
@@ -3751,6 +3823,7 @@
   border-left: 1px solid var(--border);
   background: var(--bg);
 }
+
 .traj-detail-head {
   flex: none;
   display: flex;
@@ -3760,6 +3833,7 @@
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
 }
+
 .traj-detail-title {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3768,12 +3842,14 @@
   font-weight: 600;
   color: var(--text-secondary);
 }
+
 .traj-detail-actions {
   flex: none;
   display: flex;
   align-items: center;
   gap: 4px;
 }
+
 .traj-detail-btn {
   border: none;
   border-radius: 5px;
@@ -3783,10 +3859,12 @@
   font-size: 10.5px;
   cursor: pointer;
 }
+
 .traj-detail-btn:hover {
   color: var(--text);
   background: var(--border-strong, rgba(128, 128, 128, .25));
 }
+
 .traj-detail-body {
   flex: 1;
   min-height: 0;
@@ -3822,10 +3900,12 @@
   text-align: left;
   cursor: pointer;
 }
+
 .traj-turn-title {
   flex: none;
   letter-spacing: .02em;
 }
+
 .traj-turn-meta {
   margin-left: auto;
   font-weight: 400;
@@ -3833,11 +3913,13 @@
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
+
 /* 列标签行（与行内 traj-slot 槽位同宽对齐，参考 TrajectoryTurnHeader）*/
 .traj-turn-cols {
   display: flex;
   align-items: center;
 }
+
 .traj-turn-cols i {
   overflow: hidden;
   font-style: normal;
@@ -3849,12 +3931,21 @@
   text-align: right;
   white-space: nowrap;
 }
+
 .traj-turn-cols .w1,
-.traj-cell .traj-slot.w1 { width: 58px; }
+.traj-cell .traj-slot.w1 {
+  width: 58px;
+}
+
 .traj-turn-cols .w2,
-.traj-cell .traj-slot.w2 { width: 74px; }
+.traj-cell .traj-slot.w2 {
+  width: 74px;
+}
+
 .traj-turn-cols .w3,
-.traj-cell .traj-slot.w3 { width: 46px; }
+.traj-cell .traj-slot.w3 {
+  width: 46px;
+}
 
 /* 行卡片（参考 TrajectoryCell）*/
 .traj-cell {
@@ -3864,9 +3955,11 @@
   background: var(--bg);
   min-width: 0;
 }
+
 .traj-cell:hover {
   border-color: var(--border-strong);
 }
+
 .traj-cell.sub {
   /* 工具输出/结束缩进于对应「工具开始」之下（参考 subtool 缩进）*/
   margin-left: 20px;
@@ -3906,13 +3999,41 @@
   font-weight: 600;
   white-space: nowrap;
 }
-.traj-tag.src-flow { background: rgba(96, 165, 250, .14); color: var(--traj-flow); }
-.traj-tag.src-llm { background: rgba(34, 211, 238, .13); color: var(--traj-llm); }
-.traj-tag.src-assistant { background: rgba(192, 132, 252, .14); color: var(--traj-assistant); }
-.traj-tag.src-tool { background: rgba(251, 191, 36, .13); color: var(--traj-tool); }
-.traj-tag.src-user { background: rgba(52, 211, 153, .13); color: var(--traj-user); }
-.traj-tag.src-system { background: rgba(156, 163, 175, .15); color: var(--traj-system); }
-.traj-tag.compacted { background: rgba(217, 119, 6, .16); color: #d97706; }
+
+.traj-tag.src-flow {
+  background: rgba(96, 165, 250, .14);
+  color: var(--traj-flow);
+}
+
+.traj-tag.src-llm {
+  background: rgba(34, 211, 238, .13);
+  color: var(--traj-llm);
+}
+
+.traj-tag.src-assistant {
+  background: rgba(192, 132, 252, .14);
+  color: var(--traj-assistant);
+}
+
+.traj-tag.src-tool {
+  background: rgba(251, 191, 36, .13);
+  color: var(--traj-tool);
+}
+
+.traj-tag.src-user {
+  background: rgba(52, 211, 153, .13);
+  color: var(--traj-user);
+}
+
+.traj-tag.src-system {
+  background: rgba(156, 163, 175, .15);
+  color: var(--traj-system);
+}
+
+.traj-tag.compacted {
+  background: rgba(217, 119, 6, .16);
+  color: #d97706;
+}
 
 /* 消息生命周期徽标：区分 message_start / message_end（否则两行预览相同无法分辨状态） */
 .traj-phase {
@@ -3924,8 +4045,16 @@
   font-weight: 600;
   white-space: nowrap;
 }
-.traj-phase.ph-start { background: rgba(52, 211, 153, .14); color: var(--traj-user); }
-.traj-phase.ph-end { background: rgba(192, 132, 252, .13); color: var(--traj-assistant); }
+
+.traj-phase.ph-start {
+  background: rgba(52, 211, 153, .14);
+  color: var(--traj-user);
+}
+
+.traj-phase.ph-end {
+  background: rgba(192, 132, 252, .13);
+  color: var(--traj-assistant);
+}
 
 /* 行选中高亮（展开 = 选中，参考 TrajectoryCell data-selected）*/
 .traj-cell.sel {
@@ -3949,9 +4078,11 @@
   white-space: nowrap;
   color: var(--text-secondary);
 }
+
 .traj-text.err {
   color: #f87171;
 }
+
 .traj-run {
   margin-left: 5px;
   padding: 0 4px;
@@ -3961,6 +4092,7 @@
   color: var(--traj-assistant, #c084fc);
   background: color-mix(in srgb, var(--traj-assistant, #c084fc) 14%, transparent);
 }
+
 .traj-tc {
   margin-left: 5px;
   padding: 0 4px;
@@ -4022,6 +4154,7 @@
   font-size: 11px;
   cursor: pointer;
 }
+
 .traj-more:hover {
   color: var(--text-normal);
   border-color: var(--border-strong);
@@ -4609,10 +4742,29 @@
   transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) var(--rail-wave-delay, 0ms), background 0.2s ease var(--rail-wave-delay, 0ms);
 }
 
-.agent-chat-rail-item:hover .agent-chat-rail-dot,
+/* hover：弹性起伏（低频，观感好） */
+.agent-chat-rail-item:hover .agent-chat-rail-dot {
+  background: var(--accent);
+  transform: scale(1.8) translateX(-3px) translateY(-1px);
+}
+
+/* active（当前阅读位置）：同样有「起伏」——放大 + 右移，并带波次延迟形成涟漪；
+   与 hover 共用同一组 transform，滚动时由 .agent-chat-rail--scrolling 整体抑制，
+   只有滚动停止（140ms 后）才恢复，因此不会因逐点切换而逐帧合成掉帧。 */
 .agent-chat-rail-item--active .agent-chat-rail-dot {
   background: var(--accent);
   transform: scale(1.8) translateX(-3px) translateY(-1px);
+}
+
+/* 方案 A：滚动/跳转动画期间，轨道点只做瞬时变色，禁用 transform 弹性与波次延迟。
+   滚动停止 140ms 后由 JS 移除该类，波浪/起伏效果自动恢复。 */
+.agent-chat-rail--scrolling .agent-chat-rail-dot {
+  transition: background 0.12s linear !important;
+  transform: none !important;
+}
+
+.agent-chat-rail--scrolling .agent-chat-rail-item--active .agent-chat-rail-dot {
+  transform: none;
 }
 
 /* 预览卡片从 rail 左侧水平展开 */
@@ -4663,10 +4815,13 @@
   display: flex;
   gap: 10px;
   padding: 0 16px;
-  /* 视口外的消息跳过布局/绘制，降低长对话的整页重绘成本；
-     contain-intrinsic-size 提供估算高度，避免离屏跳过导致滚动条抖动。 */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 160px;
+  /* ── 已移除 content-visibility: auto / contain-intrinsic-size ──
+     原因（实测数据）：消息高度差异极大（用户气泡 ~60px、含图表的助手消息可达 2000px+），
+     任何固定的 contain-intrinsic-size 估算值都远离真实高度。滚动时「一条消息进入视口
+     （估算→真实，高度突增）」与「另一条离开视口（真实→估算，高度突减）」交替发生，
+     实测 scrollHeight 在 4756↔5060 间反复摆动（单帧 ±200px），
+     浏览器为补偿可见位置而反向调整 scrollTop → 表现为无法消除的上下抖动/跳动。
+     该优化对高度均匀的列表有效，对本场景（高度方差极大）本质不适用，故整体关闭。 */
 }
 
 /* 历史压缩中的顶部轻量提示 */
@@ -5173,6 +5328,7 @@
   font-size: 12px;
   color: var(--text-secondary);
 }
+
 .agent-think-waiting i {
   width: 5px;
   height: 5px;
@@ -5181,11 +5337,28 @@
   opacity: 0.3;
   animation: agent-think-wait-dot 1.2s ease-in-out infinite;
 }
-.agent-think-waiting i:nth-child(2) { animation-delay: 0.15s; }
-.agent-think-waiting i:nth-child(3) { animation-delay: 0.3s; }
+
+.agent-think-waiting i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.agent-think-waiting i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
 @keyframes agent-think-wait-dot {
-  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
-  30% { opacity: 1; transform: translateY(-2px); }
+
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
 }
 
 /* 思考/摘要异常留空的弱化占位 */
@@ -5413,7 +5586,7 @@
    稳定 key 让 React 只更新最后一行文本节点 → paint 区域收缩到最后一行，
    避免整块 <pre> 每帧重绘（代码输出「一卡一卡」的显示层根源）。
    仅作用于 Agent Code 界面（本文件只被 AgentCodeView 引入）。 */
-.agent-code-view .chat-code-pre code.code-streaming > span {
+.agent-code-view .chat-code-pre code.code-streaming>span {
   display: block;
   min-height: 1em;
 }
@@ -5465,7 +5638,7 @@
   flex-wrap: wrap;
 }
 
-.agent-code-view .chat-input-tools > * {
+.agent-code-view .chat-input-tools>* {
   min-width: 0;
   flex-shrink: 1;
 }
@@ -5566,7 +5739,7 @@
   background: var(--surface);
   border: 1px solid var(--border-strong, var(--border));
   border-radius: 8px;
-  box-shadow: var(--shadow-lg, 0 4px 16px rgba(0,0,0,0.18));
+  box-shadow: var(--shadow-lg, 0 4px 16px rgba(0, 0, 0, 0.18));
   animation: think-menu-in 0.16s ease-out;
 }
 
@@ -5601,10 +5774,6 @@
 .chat-workspace-check {
   margin-left: auto;
   color: var(--accent);
-}
-
-/* Git 分支选择器 */
-.chat-branch-selector {
 }
 
 .chat-branch-wrap {
@@ -5665,7 +5834,7 @@
   background: var(--surface);
   border: 1px solid var(--border-strong, var(--border));
   border-radius: 8px;
-  box-shadow: var(--shadow-lg, 0 4px 16px rgba(0,0,0,0.18));
+  box-shadow: var(--shadow-lg, 0 4px 16px rgba(0, 0, 0, 0.18));
   animation: think-menu-in 0.16s ease-out;
 }
 
@@ -6047,18 +6216,39 @@
 }
 
 @keyframes think-menu-in {
-  from { opacity: 0; transform: translateY(6px) scale(0.96); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 @keyframes think-item-in {
-  from { opacity: 0; transform: translateX(-8px); filter: blur(2px); }
-  to   { opacity: 1; transform: translateX(0); filter: blur(0); }
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+    filter: blur(2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+    filter: blur(0);
+  }
 }
 
 @keyframes think-grad {
-  0%   { background-position: 0% 50%; }
-  100% { background-position: 200% 50%; }
+  0% {
+    background-position: 0% 50%;
+  }
+
+  100% {
+    background-position: 200% 50%;
+  }
 }
 
 .agent-code-view .chat-input-tools .chat-think-level-menu {
@@ -6094,13 +6284,33 @@
   animation: think-item-in 0.22s ease-out both, think-grad 3s linear infinite;
 }
 
-.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(1) { animation-delay: 0.02s, 0s; }
-.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(2) { animation-delay: 0.05s, 0s; }
-.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(3) { animation-delay: 0.08s, 0s; }
-.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(4) { animation-delay: 0.11s, 0s; }
-.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(5) { animation-delay: 0.14s, 0s; }
-.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(6) { animation-delay: 0.17s, 0s; }
-.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(7) { animation-delay: 0.20s, 0s; }
+.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(1) {
+  animation-delay: 0.02s, 0s;
+}
+
+.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(2) {
+  animation-delay: 0.05s, 0s;
+}
+
+.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(3) {
+  animation-delay: 0.08s, 0s;
+}
+
+.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(4) {
+  animation-delay: 0.11s, 0s;
+}
+
+.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(5) {
+  animation-delay: 0.14s, 0s;
+}
+
+.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(6) {
+  animation-delay: 0.17s, 0s;
+}
+
+.agent-code-view .chat-input-tools .chat-think-level-item:nth-child(7) {
+  animation-delay: 0.20s, 0s;
+}
 
 .agent-code-view .chat-input-tools .chat-think-level-item:hover:not(.active) {
   background-image: none;
@@ -6537,6 +6747,7 @@
 }
 
 @keyframes agent-mic-pulse {
+
   0%,
   100% {
     transform: scale(1);
@@ -8106,6 +8317,7 @@
   color: var(--text-muted);
   flex-shrink: 0;
 }
+
 /* ── web_search 工具结果卡（WebSearchResults，对齐 WebSearch 演示设计）── */
 .agent-ws {
   margin-top: 4px;
@@ -8134,9 +8346,9 @@
 
 .agent-ws-shimmer {
   background: linear-gradient(105deg,
-    var(--text) 0%, var(--text) 38%,
-    #fff 46%, #fff 54%,
-    var(--text) 62%, var(--text) 100%);
+      var(--text) 0%, var(--text) 38%,
+      #fff 46%, #fff 54%,
+      var(--text) 62%, var(--text) 100%);
   background-size: 220% 100%;
   background-position: 100% 0;
   -webkit-background-clip: text;
@@ -8387,9 +8599,9 @@
   position: absolute;
   inset: 0;
   background: linear-gradient(90deg, var(--text) 0%, var(--text) 30%,
-    color-mix(in srgb, var(--text) 45%, transparent) 45%,
-    color-mix(in srgb, var(--text) 45%, transparent) 55%,
-    var(--text) 70%, var(--text) 100%);
+      color-mix(in srgb, var(--text) 45%, transparent) 45%,
+      color-mix(in srgb, var(--text) 45%, transparent) 55%,
+      var(--text) 70%, var(--text) 100%);
   background-size: 300% 100%;
   -webkit-background-clip: text;
   background-clip: text;
@@ -8410,11 +8622,14 @@
 }
 
 @keyframes agentTaskShine {
-  0%, 18% {
+
+  0%,
+  18% {
     background-position: 100% 0;
   }
 
-  82%, 100% {
+  82%,
+  100% {
     background-position: 0% 0;
   }
 }
@@ -8479,4 +8694,3 @@
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-

@@ -7,14 +7,17 @@ export const KNOWLEDGE_READ_TOOL_NAME = 'knowledge_read'
 
 export const KNOWLEDGE_SEARCH_DESCRIPTION_BASE =
   'Search the user-attached local knowledge base (BM25 keyword retrieval). ' +
-  'Returns ONLY a catalog of matching chunk titles with document name, chunk index and relevance score — NOT the full text. ' +
+  'Returns a catalog of matching chunk titles (document name, chunk index, relevance score) PLUS the full text of the single most relevant chunk, auto-attached at the end. ' +
   'Use it whenever the user question may be answered by their documents. ' +
-  'After scanning the titles, call knowledge_read with the docName+ordinal pairs of the chunks you want to actually read. ' +
+  'The auto-attached top chunk is already the best hit — do NOT call knowledge_read for it. ' +
+  'Only call knowledge_read with docName+ordinal pairs when you need the body of the OTHER catalog entries. ' +
   'Target library is selected via the optional kb parameter — its enum lists every existing knowledge base (single source of truth).'
 
 export const KNOWLEDGE_SEARCH_GUIDELINES: string[] = [
-  '知识库检索是两阶段流程：先用 knowledge_search 拿「标题目录」（每条仅几十字，极省 token），看目录挑中目标块后，再用 knowledge_read 只读选中块的正文。不要试图用 knowledge_search 直接获取正文。',
+  'knowledge_search 会在返回「标题目录」的同时，自动把相关度最高的那一块的完整正文附在末尾——所以一次检索通常就够用，不必再为它调用 knowledge_read。',
+  '只有当你要读的正文不在目录末尾附带的那一块里时，才用 knowledge_read 传对应的 docName 与 ordinal 去取。',
   '构造查询词时优先使用文档标题、章节名或领域关键词；BM25 是字面关键词匹配，同义改述可能漏检，必要时换词重搜。',
+  '若目录里第一条的相关度明显高于其余（且它不是你需要的块），说明换词重搜往往比顺着目录读更省事。',
 ]
 
 export const KNOWLEDGE_READ_DESCRIPTION_BASE =
@@ -95,7 +98,7 @@ export function formatKnowledgeCatalog(r: KnowledgeSearchResult): string {
   const catalog = r.hits
     .map((h, i) => `[${i + 1}] ${h.title || '（无标题）'} · ${h.docName} · 第${h.ordinal + 1}块 · 相关度 ${h.score}`)
     .join('\n')
-  return `${catalog}\n（以上为标题目录。需要某块完整内容时，调用 knowledge_read 并传对应的 docName 与 ordinal。）`
+  return `${catalog}\n（以上为标题目录，按相关度降序。第 [1] 条的完整正文已自动附在下方；如需其他条的正文，再用 knowledge_read 传对应 docName 与 ordinal。）`
 }
 
 interface KnowledgeReadResult {

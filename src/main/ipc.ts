@@ -152,6 +152,42 @@ function findAnyFile(dir: string, names: string[], maxDepth = 4): boolean {
   return walk(dir, 0)
 }
 
+// 后端主程序候选名（先按已知服务名精确匹配，再兜底取首个 .exe）。
+// 提到模块级作用域：注册表构建、后台轻量校验、run-model 兜底三处共用同一套查找策略。
+const BACKEND_EXE_NAMES = process.platform === 'win32'
+  ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe', 'sd-server.exe', 'sd-server', 'audiocpp_server.exe', 'audiocpp_server', 'audiocpp_cli.exe', 'audiocpp_cli']
+  : ['llama-server', 'main', 'server', 'TensorSharp.Server', 'sd-server', 'audiocpp_server', 'audiocpp_cli']
+// 在单个后端目录内查找可执行文件（有限深度递归，跳过 createdump.exe）。
+// 返回相对 basePath 的路径；未找到返回 null。
+async function findBackendExecutable(dir: string, depth = 0): Promise<string | null> {
+  if (depth > 2) return null
+  type Entry = { name: string; isDirectory(): boolean }
+  let files: Entry[] = []
+  try { files = (await fsPromises.readdir(dir, { withFileTypes: true })) as unknown as Entry[] } catch { return null }
+  for (const n of BACKEND_EXE_NAMES) {
+    const found = files.find(f => !f.isDirectory() && f.name.toLowerCase() === n)
+    if (found) return found.name
+  }
+  if (process.platform === 'win32') {
+    const exeFiles = files.filter(f => !f.isDirectory() && f.name.toLowerCase().endsWith('.exe') && f.name.toLowerCase() !== 'createdump.exe')
+    if (exeFiles.length > 0) return exeFiles[0].name
+  }
+  const subdirs = files.filter(f => f.isDirectory())
+  if (subdirs.length === 0) return null
+  const results: (string | null)[] = new Array(subdirs.length)
+  let next = 0
+  const workers = Array.from({ length: Math.min(2, subdirs.length) }, async () => {
+    for (;;) {
+      const idx = next++
+      if (idx >= subdirs.length) return
+      const sub = await findBackendExecutable(join(dir, subdirs[idx].name), depth + 1)
+      if (sub) results[idx] = join(subdirs[idx].name, sub)
+    }
+  })
+  await Promise.all(workers)
+  return results.find(r => r) ?? null
+}
+
 interface TerminalSession {
   id: string
   ownerKey: string | null
@@ -1243,6 +1279,8 @@ export function cleanupRunningProcesses(): void {
 
 export function registerIpcHandlers(): void {
   loadSettingsSync()
+  // 后端目录外部变更（用户手动拖入 / 删除 / 解压）由一级目录 watcher 触发后台轻量校验
+  startBackendWatcher()
   function invalidateModelsCache(): void {
     modelsCache = null
     modelsScanPromise = null
@@ -1745,102 +1783,230 @@ export function registerIpcHandlers(): void {
       percent: t.totalBytes > 0 ? Math.round((t.receivedBytes / t.totalBytes) * 100) : 0
     }))
   })
-  // 后端目录递归扫描结果缓存：内存缓存命中即时返回；磁盘缓存（任意年龄）也即时返回。
-  // 避免每次重启对 backend 目录（数百 exe/dll）全量重扫：首次 stat 会触发 Windows
-  // Defender 实时扫描，串行扫描时启动可拖慢 5-15s。
-  // 关键策略：过期缓存绝不让启动 IPC 同步等待重扫——立即返回旧数据 + 后台静默重扫，
-  // 完成后有变化才广播 'backends-updated' 让 renderer 刷新（无变化仅续期缓存时间戳）。
-  // 只有首次启动且从无缓存时才同步扫描（此时无旧数据可给）。
-  let backendScanCache: { t: number; value: unknown } | null = null
-  const BACKEND_CACHE_MS = 24 * 60 * 60 * 1000
-  const BACKEND_CACHE_FILE = join(app.getPath('userData'), 'backend-scan-cache.json')
-  let backendRescanInflight: Promise<unknown> | null = null
-  function invalidateBackendCache(): void {
-    backendScanCache = null
-    try { unlinkSync(BACKEND_CACHE_FILE) } catch { /* ignore */ }
+  // ── 后端注册表（版本化）──
+  // 背景：backend 目录含数百 exe/dll，Windows Defender 首次访问每个文件都会实时扫描；
+  // 若启动时同步递归全扫，冷启动可卡死 5-15s。
+  // 策略：把「扫描结果」升级为带目录指纹的注册表——list-backends 只读注册表即时返回
+  // （正常启动路径 readdir 次数为 0），真正的文件系统访问只有后台 revalidate 对已知后端
+  // 做的少量确定性 stat（root/exe/commands）。全量递归扫描退化为「首次构建 / 显式重检 /
+  // 局部发现新目录」三条通道。
+  const BACKEND_REGISTRY_VERSION = 2
+  const BACKEND_REGISTRY_FILE = join(app.getPath('userData'), 'backend-registry-v2.json')
+  let backendRegistryCache: BackendRegistry | null = null
+  let backendRevalidateInflight: Promise<void> | null = null
+  let backendWatchTimer: NodeJS.Timeout | null = null
+
+  interface BackendRegistryEntry {
+    id: string
+    name: string
+    path: string
+    exe: string | null
+    kind: EngineKind
+    hasCommands: boolean
+    // 目录指纹：用于启动时轻量校验，避免整树重扫
+    rootMtimeMs: number
+    exeMtimeMs: number | null
+    exeSize: number | null
+    commandsMtimeMs: number | null
   }
-  /** 后台静默重扫（单飞）：完成后与旧数据对比，有变化才写盘并广播各窗口 */
-  function scheduleBackendRescan(): void {
-    if (backendRescanInflight) return
-    backendRescanInflight = (async () => {
+  interface BackendRegistry {
+    version: number
+    updatedAt: number
+    backends: BackendRegistryEntry[]
+  }
+
+  // 后端索引诊断日志：默认静默（启动时注册表命中 / 后台校验正常无需打扰用户）。
+  // 排查「启动是否走注册表、是否触发重扫」时，把下面注释块换成原实现即可：
+  //   console.info('[backend-index]', { source, at: Date.now(), ...extra })
+  function logBackendIndex(_source: 'registry' | 'revalidate' | 'full-scan', _extra?: Record<string, unknown>): void {
+    /* noop */
+  }
+  // 原子写入：先写临时文件再 rename。Windows 下 Defender 可能短暂占用目标文件，做有限重试
+  async function writeJsonAtomic(file: string, data: unknown): Promise<void> {
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
+    await fsPromises.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8')
+    for (let i = 0; i < 4; i++) {
+      try { await fsPromises.rename(tmp, file); return } catch (e) {
+        if (i === 3) throw e
+        await new Promise(r => setTimeout(r, 60 * (i + 1)))
+      }
+    }
+  }
+  async function saveBackendRegistry(): Promise<void> {
+    if (!backendRegistryCache) return
+    backendRegistryCache.updatedAt = Date.now()
+    await writeJsonAtomic(BACKEND_REGISTRY_FILE, backendRegistryCache)
+  }
+  function loadBackendRegistryDisk(): BackendRegistry | null {
+    try {
+      if (!existsSync(BACKEND_REGISTRY_FILE)) return null
+      const parsed = JSON.parse(readFileSync(BACKEND_REGISTRY_FILE, 'utf-8')) as BackendRegistry
+      if (parsed?.version !== BACKEND_REGISTRY_VERSION || !Array.isArray(parsed.backends)) return null
+      const allInScope = parsed.backends.every(b => typeof b.path === 'string' && isSafePath(BACKEND_DIR, resolve(b.path)))
+      if (!allInScope) return null
+      return {
+        ...parsed,
+        backends: parsed.backends.map(b => ({ ...b, path: resolve(b.path) })),
+      }
+    } catch { return null }
+  }
+  // 注册 / 更新单个后端（安装完成、显式重检批量写回时调用）
+  async function registerBackend(input: {
+    name: string
+    basePath: string
+    exe: string | null
+    kind?: EngineKind
+  }): Promise<void> {
+    const kind = input.kind ?? detectEngineKind(input.exe, input.name)
+    const exePath = input.exe ? join(input.basePath, input.exe) : null
+    const commandsPath = join(input.basePath, commandsFileName(kind))
+
+    let rootStat: import('fs').Stats | null = null
+    let exeStat: import('fs').Stats | null = null
+    let commandsStat: import('fs').Stats | null = null
+    try { rootStat = await fsPromises.stat(input.basePath) } catch { return }
+    if (exePath) { try { exeStat = await fsPromises.stat(exePath) } catch { /* exe 可能真不存在 */ } }
+    try { commandsStat = await fsPromises.stat(commandsPath) } catch { /* 可选 */ }
+
+    const entry: BackendRegistryEntry = {
+      id: input.name,
+      name: input.name,
+      path: resolve(input.basePath),
+      exe: input.exe,
+      kind,
+      hasCommands: !!commandsStat,
+      rootMtimeMs: rootStat.mtimeMs,
+      exeMtimeMs: exeStat?.mtimeMs ?? null,
+      exeSize: exeStat?.size ?? null,
+      commandsMtimeMs: commandsStat?.mtimeMs ?? null,
+    }
+
+    if (!backendRegistryCache) backendRegistryCache = { version: BACKEND_REGISTRY_VERSION, updatedAt: Date.now(), backends: [] }
+    const idx = backendRegistryCache.backends.findIndex(b => b.id === entry.id)
+    if (idx >= 0) backendRegistryCache.backends[idx] = entry
+    else backendRegistryCache.backends.push(entry)
+    await saveBackendRegistry()
+  }
+  async function unregisterBackend(id: string): Promise<void> {
+    if (!backendRegistryCache) return
+    backendRegistryCache.backends = backendRegistryCache.backends.filter(b => b.id !== id)
+    await saveBackendRegistry()
+  }
+  function broadcastBackends(list: BackendRegistryEntry[]): void {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('backends-updated', list)
+    }
+  }
+  function sortBackendEntries(list: BackendRegistryEntry[]): BackendRegistryEntry[] {
+    return [...list].sort((a, b) => {
+      const n = (s: string) => parseInt((s.match(/(\d{3,6})/) || ['0', '0'])[1], 10)
+      return n(b.name) - n(a.name)
+    })
+  }
+  /** 后台轻量校验（单飞）：一级目录 diff + 只 stat 已知路径，不递归整树 */
+  function scheduleBackendRevalidate(): void {
+    if (backendRevalidateInflight) return
+    backendRevalidateInflight = (async () => {
       try {
-        const prev = JSON.stringify(backendScanCache?.value ?? null)
-        const fresh = await scanBackendsAndCache()
-        if (JSON.stringify(fresh) !== prev) {
-          for (const w of BrowserWindow.getAllWindows()) {
-            if (!w.isDestroyed()) w.webContents.send('backends-updated', fresh)
-          }
+        const prev = backendRegistryCache
+        // 1. 读取一级目录列表（一次 readdir，不递归）
+        let roots: string[] = []
+        try {
+          const entries = await fsPromises.readdir(BACKEND_DIR, { withFileTypes: true })
+          roots = entries.filter(e => e.isDirectory()).map(e => e.name)
+        } catch { roots = [] }
+
+        const known = new Set((prev?.backends ?? []).map(b => b.name.toLowerCase()))
+        const current = new Set(roots.map(n => n.toLowerCase()))
+
+        // 2. 对每个已知后端做轻量校验：只 stat 根目录 + exe + commands
+        const changed: BackendRegistryEntry[] = []
+        for (const b of prev?.backends ?? []) {
+          if (!current.has(b.name.toLowerCase())) continue // 目录已删除，下面统一处理
+          try {
+            const rootStat = await fsPromises.stat(b.path)
+            if (rootStat.mtimeMs === b.rootMtimeMs) { changed.push(b); continue }
+            // 根目录 mtime 变了：只校验已知 exe 是否还在，别扫
+            if (b.exe) {
+              try {
+                const exeStat = await fsPromises.stat(join(b.path, b.exe))
+                changed.push({ ...b, rootMtimeMs: rootStat.mtimeMs, exeMtimeMs: exeStat.mtimeMs, exeSize: exeStat.size })
+                continue
+              } catch { /* exe 消失了，走局部重发现 */ }
+            }
+            // exe 丢了：只扫这一个后端
+            const found = await findBackendExecutable(b.path)
+            if (found) {
+              const exeStat = await fsPromises.stat(join(b.path, found))
+              changed.push({ ...b, exe: found, kind: detectEngineKind(found, b.name), rootMtimeMs: rootStat.mtimeMs, exeMtimeMs: exeStat.mtimeMs, exeSize: exeStat.size })
+            }
+            // 找不到就丢弃这条记录
+          } catch { /* 目录不可访问，丢弃 */ }
         }
-      } catch { /* 静默：下次触发再试 */ } finally {
-        backendRescanInflight = null
+
+        // 3. 发现新目录：只扫这些，不扫已登记的
+        const newNames = roots.filter(n => !known.has(n.toLowerCase()))
+        for (const name of newNames) {
+          const basePath = join(BACKEND_DIR, name)
+          const exe = await findBackendExecutable(basePath)
+          if (!exe) continue
+          const kind = detectEngineKind(exe, name)
+          const commandsPath = join(basePath, commandsFileName(kind))
+          let rootStat: import('fs').Stats | null = null
+          let exeStat: import('fs').Stats | null = null
+          let cmdStat: import('fs').Stats | null = null
+          try { rootStat = await fsPromises.stat(basePath) } catch { continue }
+          try { exeStat = await fsPromises.stat(join(basePath, exe)) } catch { continue }
+          try { cmdStat = await fsPromises.stat(commandsPath) } catch { cmdStat = null }
+          changed.push({
+            id: name, name, path: basePath, exe, kind,
+            hasCommands: !!cmdStat,
+            rootMtimeMs: rootStat.mtimeMs,
+            exeMtimeMs: exeStat.mtimeMs,
+            exeSize: exeStat.size,
+            commandsMtimeMs: cmdStat?.mtimeMs ?? null,
+          })
+        }
+
+        const next: BackendRegistry = { version: BACKEND_REGISTRY_VERSION, updatedAt: Date.now(), backends: sortBackendEntries(changed) }
+        const changedJson = JSON.stringify(next.backends)
+        const prevJson = JSON.stringify(prev?.backends ?? [])
+        backendRegistryCache = next
+        await saveBackendRegistry()
+        logBackendIndex('revalidate', { total: next.backends.length, newDirs: newNames.length, changed: changedJson !== prevJson })
+        if (changedJson !== prevJson) broadcastBackends(next.backends)
+      } catch (e) {
+        console.warn('[backend-registry] revalidate failed:', e)
+      } finally {
+        backendRevalidateInflight = null
       }
     })()
   }
-  function loadBackendCacheDisk(): { t: number; value: unknown } | null {
+  /** 一级目录 watcher：只做失效信号 + debounce，不重建 */
+  function startBackendWatcher(): void {
+    if (!existsSync(BACKEND_DIR)) return
     try {
-      const parsed = JSON.parse(readFileSync(BACKEND_CACHE_FILE, 'utf-8')) as { t: number; value: unknown }
-      if (parsed && typeof parsed.t === 'number' && Array.isArray(parsed.value)) {
-        // 缓存条目存的是绝对路径：项目目录迁移后（如 C 盘桌面 → E 盘）这些路径全部失效，
-        // 若继续信任会导致 run-model 的 isSafePath 检查误报「访问被拒绝」。
-        // 因此校验所有条目仍位于当前 BACKEND_DIR 内，否则丢弃缓存触发重扫
-        const allInScope = parsed.value.every((b) => {
-          const p = (b as { path?: unknown })?.path
-          return typeof p === 'string' && isSafePath(BACKEND_DIR, p)
-        })
-        if (allInScope) return parsed
-      }
-    } catch { /* 缺失/损坏视为无缓存 */ }
-    return null
+      const watcher = watch(BACKEND_DIR, { persistent: false }, (_event, filename) => {
+        if (!filename) return
+        if (backendWatchTimer) clearTimeout(backendWatchTimer)
+        backendWatchTimer = setTimeout(() => {
+          backendWatchTimer = null
+          void scheduleBackendRevalidate()
+        }, 1000) // debounce：批量解压/删除时避免风暴
+      })
+      watcher.on('error', () => { /* 目录被删等瞬时错误，忽略 */ })
+    } catch { /* 平台不支持时降级为纯事件驱动 */ }
   }
-  function saveBackendCacheDisk(c: { t: number; value: unknown }): void {
-    try { writeFileSync(BACKEND_CACHE_FILE, JSON.stringify(c), 'utf-8') } catch { /* ignore */ }
-  }
+  /** 全量扫描通道（保留）：仅在注册表彻底损坏 / 用户显式重检时使用 */
   async function scanBackendsAndCache(): Promise<unknown> {
     if (!existsSync(BACKEND_DIR)) {
-      backendScanCache = { t: Date.now(), value: [] }
-      saveBackendCacheDisk(backendScanCache)
       return []
-    }
-    // 递归查找后端目录内的可执行文件（先按已知服务名精确匹配，再兜底取首个 .exe）
-    const findExecutable = async (dir: string, depth = 0): Promise<string | null> => {
-      if (depth > 10) return null
-      type Entry = { name: string; isDirectory(): boolean }
-      let files: Entry[] = []
-      try { files = (await fsPromises.readdir(dir, { withFileTypes: true })) as unknown as Entry[] } catch { return null }
-      const names = process.platform === 'win32'
-        ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe', 'sd-server.exe', 'sd-server', 'audiocpp_server.exe', 'audiocpp_server', 'audiocpp_cli.exe', 'audiocpp_cli']
-        : ['llama-server', 'main', 'server', 'TensorSharp.Server', 'sd-server', 'audiocpp_server', 'audiocpp_cli']
-      for (const n of names) {
-        const found = files.find(f => !f.isDirectory() && f.name.toLowerCase() === n)
-        if (found) return found.name
-      }
-      if (process.platform === 'win32') {
-        // 兜底：取目录内首个 .exe；跳过 createdump.exe（.NET 崩溃转储工具，非服务程序）
-        const exeFiles = files.filter(f => !f.isDirectory() && f.name.toLowerCase().endsWith('.exe') && f.name.toLowerCase() !== 'createdump.exe')
-        if (exeFiles.length > 0) return exeFiles[0].name
-      }
-      // 子目录并发搜索（限流 8）：树大时串行递归会放大 Defender 首访延迟；结果按下标保序，
-      // 与串行版"取首个命中"行为一致
-      const subdirs = files.filter(f => f.isDirectory())
-      if (subdirs.length === 0) return null
-      const results: (string | null)[] = new Array(subdirs.length)
-      let next = 0
-      const workers = Array.from({ length: Math.min(8, subdirs.length) }, async () => {
-        for (;;) {
-          const idx = next++
-          if (idx >= subdirs.length) return
-          const sub = await findExecutable(join(dir, subdirs[idx].name), depth + 1)
-          if (sub) results[idx] = join(subdirs[idx].name, sub)
-        }
-      })
-      await Promise.all(workers)
-      return results.find(r => r) ?? null
     }
     const entries = await fsPromises.readdir(BACKEND_DIR, { withFileTypes: true })
     const backends = await Promise.all(
       entries.filter(d => d.isDirectory()).map(async (d) => {
         const basePath = join(BACKEND_DIR, d.name)
-        const exe = await findExecutable(basePath)
+        const exe = await findBackendExecutable(basePath)
         // llama.cpp 分支（turboquant / beellama）与 llama.cpp 同名 exe，需结合目录名识别
         const kind = detectEngineKind(exe, d.name)
         // 参数集不同，自定义参数文件名也不同：TensorSharp → commands-tensorsharp.json，
@@ -1859,31 +2025,63 @@ export function registerIpcHandlers(): void {
       const n = (s: string) => parseInt((s.match(/(\d{3,6})/) || ['0', '0'])[1], 10)
       return n(b.name) - n(a.name)
     })
-    backendScanCache = { t: Date.now(), value: backends }
-    saveBackendCacheDisk(backendScanCache)
+    logBackendIndex('full-scan', { count: backends.length })
     return backends
   }
-  ipcMain.handle('list-backends', async () => {
-    const now = Date.now()
-    if (backendScanCache && now - backendScanCache.t < BACKEND_CACHE_MS) return backendScanCache.value
-    // 有任何可用缓存（内存已过期 / 磁盘任意年龄）：立即返回旧数据，绝不阻塞启动；
-    // 同时后台静默重扫保持数据新鲜（见 scheduleBackendRescan）
-    const staleMem = backendScanCache
-    const disk = staleMem ? null : loadBackendCacheDisk()
-    const usable = staleMem ?? disk
-    if (usable) {
-      if (!staleMem && disk) backendScanCache = disk
-      scheduleBackendRescan()
-      return usable.value
+  /** 重扫：registerBackend 批量写回注册表（显式重检 / 首次构建通道） */
+  async function rebuildBackendRegistryFromScan(): Promise<BackendRegistryEntry[]> {
+    const scanned = (await scanBackendsAndCache()) as Array<{ name: string; path: string; exe: string | null; kind: EngineKind }>
+    if (!backendRegistryCache) backendRegistryCache = { version: BACKEND_REGISTRY_VERSION, updatedAt: Date.now(), backends: [] }
+    backendRegistryCache.backends = []
+    for (const b of scanned) {
+      await registerBackend({ name: b.name, basePath: b.path, exe: b.exe, kind: b.kind })
     }
-    // 首次启动且无任何缓存：只能同步扫描（renderer 本就把它放在首屏关键路径之外）
-    return await scanBackendsAndCache()
+    backendRegistryCache.backends = sortBackendEntries(backendRegistryCache.backends)
+    await saveBackendRegistry()
+    return backendRegistryCache.backends
+  }
+  // 保留：作为极端情况的全量失效手段（不做任何扫描，仅丢弃注册表与旧缓存文件）。
+  // 供外部模块/调试通道显式触发重新构建，正常运行路径（安装 / 删除）已改为精确更新注册表。
+  function invalidateBackendCache(): void {
+    backendRegistryCache = null
+    try { unlinkSync(BACKEND_REGISTRY_FILE) } catch { /* ignore */ }
+    try { unlinkSync(join(app.getPath('userData'), 'backend-scan-cache.json')) } catch { /* ignore */ }
+  }
+  ipcMain.handle('list-backends', async () => {
+    // 正常启动路径：读注册表即时返回，绝不等待任何文件系统扫描。
+    if (!backendRegistryCache) backendRegistryCache = loadBackendRegistryDisk()
+    if (backendRegistryCache) {
+      logBackendIndex('registry', { count: backendRegistryCache.backends.length })
+      void scheduleBackendRevalidate()
+      return backendRegistryCache.backends
+    }
+    // 无注册表（老用户升级 / 首次启动）：立刻返回空数组，后台构建。
+    // 前端保持 loading 态，扫描完成后由 'backends-updated' 广播刷新。
+    void scheduleBackendRevalidate()
+    return []
   })
-  ipcMain.handle('delete-backend', (_e, backendName: string) => {
+  // 显式重检：全量重扫并写回注册表（供 UI「重新检测后端」调用）
+  ipcMain.handle('rescan-backends', async () => {
+    try {
+      const backends = await rebuildBackendRegistryFromScan()
+      broadcastBackends(backends)
+      return { success: true, backends }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  })
+  // 兜底通道：注册表彻底损坏或缓存被上游怀疑陈旧时，调用 invalidateBackendCache()
+  // 作废当前注册表（不扫描），下次 list-backends 会自动回到"空数组 + 后台重建"路径。
+  void invalidateBackendCache
+  ipcMain.handle('delete-backend', async (_e, backendName: string) => {
     try {
       const backendPath = join(BACKEND_DIR, backendName)
       if (!isSafePath(BACKEND_DIR, backendPath)) return { success: false, error: '访问被拒绝' }
-      if (!existsSync(backendPath)) return { success: true }
+      if (!existsSync(backendPath)) {
+        // 目录本就不存在：顺手清理可能残留的注册表条目
+        await unregisterBackend(backendName)
+        return { success: true }
+      }
       const rm = (dir: string) => {
         for (const e of readdirSync(dir, { withFileTypes: true })) {
           const p = join(dir, e.name)
@@ -1892,7 +2090,9 @@ export function registerIpcHandlers(): void {
         rmdirSync(dir)
       }
       rm(backendPath)
-      invalidateBackendCache()
+      // 顺序很重要：先删文件系统，成功后再删注册表条目。
+      // 删失败则保留注册表，避免"注册表丢了但目录还在"的中间态
+      await unregisterBackend(backendName)
       return { success: true }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -2305,7 +2505,7 @@ export function registerIpcHandlers(): void {
     return { name: basename(r.filePaths[0]), path: r.filePaths[0] }
   })
   ipcMain.handle('get-model-logs', (_e, id: string) => modelLogBuffers.get(String(id)) ?? [])
-  ipcMain.handle('run-model', (_e, opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: EngineKind; kind?: EngineKind }) => {
+  ipcMain.handle('run-model', async (_e, opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: EngineKind; kind?: EngineKind }) => {
     let stderrBuf = ''
     const broadcastDiagnosis = (msg: string) => {
       const diag = diagnoseModelFailure(null, `${stderrBuf}\n${msg}`, '', opts.id)
@@ -2314,9 +2514,16 @@ export function registerIpcHandlers(): void {
       })
     }
     if (runningProcesses.has(opts.id)) return { success: false, error: '已在运行中' }
-    const exePath = join(opts.backendPath, opts.exe)
+    let exeName = opts.exe
+    let exePath = join(opts.backendPath, exeName)
     if (!isSafePath(BACKEND_DIR, exePath)) return { success: false, error: '访问被拒绝' }
     if (!existsSync(exePath)) {
+      // 注册表里的 exe 字段可能失效（用户手动改名 / 旧注册表未写全）：
+      // 只扫这一个后端目录兜底重新解析，不做全量扫描
+      const found = await findBackendExecutable(opts.backendPath)
+      if (found) { exeName = found; exePath = join(opts.backendPath, found) }
+    }
+    if (!isSafePath(BACKEND_DIR, exePath) || !existsSync(exePath)) {
       broadcastDiagnosis(`可执行文件未找到: ${exePath}`)
       return { success: false, error: `可执行文件未找到: ${exePath}` }
     }
@@ -2328,7 +2535,7 @@ export function registerIpcHandlers(): void {
       const safeArgs = validateArgs(opts.args, allowed, boolean)
       // TensorSharp 引擎（按实际可执行文件判断，与参数集无关）官方默认后端为 ggml_cpu（不自动探测 GPU）；
       // 本机存在 NVIDIA GPU 且用户未显式指定 --backend 时，自动注入 ggml_cuda
-      const kind = opts.kind ?? detectEngineKind(opts.exe, opts.backendPath)
+      const kind = opts.kind ?? detectEngineKind(exeName, opts.backendPath)
       if (kind === 'tensorsharp' && !safeArgs.includes('--backend') && hasNvidiaGpu()) {
         safeArgs.push('--backend', 'ggml_cuda')
       }
@@ -3352,7 +3559,21 @@ export function registerIpcHandlers(): void {
       // 全流程成功收尾事件：send 管道 FIFO 保证它排在所有进度事件之后，
       // 渲染端收到 'done' 即清空横幅，避免 invoke 回执与进度事件跨管道乱序导致横幅卡在「解压中」
       event.sender.send('download-progress', progressPayload('done', lastT, lastT, 100, lastSpeed, '安装完成'))
-      invalidateBackendCache()
+      // 解压校验已通过、目录已原子替换：只扫这一个新目录并写入注册表（通常 1~2 层，
+      // 几毫秒到几十毫秒；且文件刚被解压读过一遍，Defender 不会重复首扫），
+      // 随后广播让列表无需重启即可刷新
+      try {
+        const exe = await findBackendExecutable(extractPath)
+        await registerBackend({
+          name: opts.version,
+          basePath: extractPath,
+          exe,
+          kind: detectEngineKind(exe, opts.version),
+        })
+        if (backendRegistryCache) broadcastBackends(backendRegistryCache.backends)
+      } catch (e) {
+        console.warn('[backend-registry] register after install failed:', e)
+      }
       return { success: true, path: extractPath }
     } catch (err) {
       console.log('[dl] 失败:', err)

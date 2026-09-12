@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { CSSProperties } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import './mermaid.css'
 
 type MermaidModule = typeof import('mermaid')
@@ -20,45 +20,11 @@ type MermaidCardProps = {
   title?: string | null
   children?: any
   emit?: (event: string, data?: any) => void
+  renderFallback?: (code: string) => ReactNode
+  fallbackLang?: string
 }
 
-type ValidationResult =
-  | { valid: true; chartType: MermaidChartType }
-  | { valid: false; error: string }
-
-type MermaidChartType =
-  | 'flowchart'
-  | 'sequence'
-  | 'class'
-  | 'state'
-  | 'gantt'
-  | 'er'
-  | 'journey'
-  | 'git'
-  | 'mindmap'
-  | 'timeline'
-  | 'pie'
-  | 'sankey'
-  | 'xychart'
-  | 'quadrant'
-  | 'requirement'
-  | 'architecture'
-  | 'block'
-  | 'packet'
-  | 'kanban'
-  | 'swimlane'
-  | 'usecase'
-  | 'c4'
-  | 'zenuml'
-  | 'radar'
-  | 'treemap'
-  | 'venn'
-  | 'ishikawa'
-  | 'wardley'
-  | 'cynefin'
-  | 'treeview'
-  | 'eventmodeling'
-  | 'unknown'
+type RenderState = 'pending' | 'chart' | 'code'
 
 let renderSequence = 0
 let mermaidImportPromise: Promise<MermaidInstance> | null = null
@@ -197,230 +163,19 @@ function getThemeVariables(): Record<string, string> {
   }
 }
 
-function detectChartType(code: string): MermaidChartType {
-  const firstMeaningfulLine = code
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.length > 0 && !line.startsWith('%%'))
-
-  if (!firstMeaningfulLine) {
-    return 'unknown'
-  }
-
-  if (/^(?:flowchart|graph)\b/i.test(firstMeaningfulLine)) {
-    return 'flowchart'
-  }
-
-  if (/^sequenceDiagram\b/i.test(firstMeaningfulLine)) {
-    return 'sequence'
-  }
-
-  if (/^classDiagram(?:-v2)?\b/i.test(firstMeaningfulLine)) {
-    return 'class'
-  }
-
-  if (/^stateDiagram(?:-v2)?\b/i.test(firstMeaningfulLine)) {
-    return 'state'
-  }
-
-  if (/^gantt\b/i.test(firstMeaningfulLine)) {
-    return 'gantt'
-  }
-
-  if (/^erDiagram\b/i.test(firstMeaningfulLine)) {
-    return 'er'
-  }
-
-  if (/^journey\b/i.test(firstMeaningfulLine)) {
-    return 'journey'
-  }
-
-  if (/^gitGraph\b/i.test(firstMeaningfulLine)) {
-    return 'git'
-  }
-
-  if (/^mindmap\b/i.test(firstMeaningfulLine)) {
-    return 'mindmap'
-  }
-
-  if (/^timeline\b/i.test(firstMeaningfulLine)) {
-    return 'timeline'
-  }
-
-  if (/^pie\b/i.test(firstMeaningfulLine)) {
-    return 'pie'
-  }
-
-  if (/^sankey-beta\b/i.test(firstMeaningfulLine)) {
-    return 'sankey'
-  }
-
-  if (/^xychart(?:-beta)?\b/i.test(firstMeaningfulLine)) {
-    return 'xychart'
-  }
-
-  if (/^quadrantChart\b/i.test(firstMeaningfulLine)) {
-    return 'quadrant'
-  }
-
-  if (/^requirementDiagram\b/i.test(firstMeaningfulLine)) {
-    return 'requirement'
-  }
-
-  if (/^architecture-beta\b/i.test(firstMeaningfulLine)) {
-    return 'architecture'
-  }
-
-  if (/^block-beta\b/i.test(firstMeaningfulLine)) {
-    return 'block'
-  }
-
-  if (/^packet-beta\b/i.test(firstMeaningfulLine)) {
-    return 'packet'
-  }
-
-  if (/^kanban\b/i.test(firstMeaningfulLine)) {
-    return 'kanban'
-  }
-
-  if (/^swimlane-beta\b/i.test(firstMeaningfulLine)) {
-    return 'swimlane'
-  }
-
-  if (/^(?:flowchart|graph)\b.*subgraph/i.test(firstMeaningfulLine) || /^flowchart\b.*\n.*subgraph/i.test(firstMeaningfulLine)) {
-    return 'swimlane'
-  }
-
-  if (/^usecase-beta\b/i.test(firstMeaningfulLine)) {
-    return 'usecase'
-  }
-
-  if (/^C4(?:Context|Container|Component|Dynamic|Deployment)?\b/i.test(firstMeaningfulLine)) {
-    return 'c4'
-  }
-
-  if (/^zenuml\b/i.test(firstMeaningfulLine)) {
-    return 'zenuml'
-  }
-
-  if (/^radar-beta\b/i.test(firstMeaningfulLine)) {
-    return 'radar'
-  }
-
-  if (/^treemap-beta\b/i.test(firstMeaningfulLine)) {
-    return 'treemap'
-  }
-
-  if (/^venn-beta\b/i.test(firstMeaningfulLine)) {
-    return 'venn'
-  }
-
-  if (/^ishikawa-beta\b/i.test(firstMeaningfulLine)) {
-    return 'ishikawa'
-  }
-
-  if (/^wardley-beta\b/i.test(firstMeaningfulLine)) {
-    return 'wardley'
-  }
-
-  if (/^cynefin-beta\b/i.test(firstMeaningfulLine)) {
-    return 'cynefin'
-  }
-
-  if (/^treeView-beta\b/i.test(firstMeaningfulLine)) {
-    return 'treeview'
-  }
-
-  if (/^eventmodeling\b/i.test(firstMeaningfulLine)) {
-    return 'eventmodeling'
-  }
-
-  return 'unknown'
-}
-
-function validateStructure(code: string, chartType: MermaidChartType): string | null {
-  switch (chartType) {
-    case 'gantt':
-      if (!code.includes('dateFormat')) {
-        return '甘特图缺少日期格式定义，请添加：dateFormat YYYY-MM-DD'
-      }
-      return null
-
-    case 'sequence':
-      if (!code.includes('participant') && !code.includes('actor') && !code.includes('->')) {
-        return '时序图缺少参与者或消息传递定义'
-      }
-      return null
-
-    case 'sankey':
-      return null
-
-    case 'pie': {
-      const dataLines = code
-        .split('\n')
-        .filter((l) => l.trim() && !l.includes('pie') && !l.includes('title'))
-      if (dataLines.length === 0) {
-        return '饼图缺少数据项，格式："标签" : 数值'
-      }
-      return null
-    }
-
-    default:
-      return null
-  }
-}
-
-function validateChartCode(code: string): ValidationResult {
-  const normalized = normalizeCode(code)
-
-  if (!normalized) {
-    return {
-      valid: false,
-      error: 'Mermaid 代码为空。',
-    }
-  }
-
-  const chartType = detectChartType(normalized)
-
-  if (chartType === 'unknown') {
-    return {
-      valid: false,
-      error:
-        '无法识别 Mermaid 图表类型。代码应以 flowchart、sequenceDiagram、classDiagram、stateDiagram、gantt、erDiagram、pie、mindmap、timeline、gitGraph、sankey-beta、swimlane-beta、usecase-beta、C4Context、radar-beta、treemap-beta、venn-beta、ishikawa-beta、wardley-beta、cynefin-beta、treeView-beta、eventmodeling 等关键字开头。',
-    }
-  }
-
-  const structuralError = validateStructure(normalized, chartType)
-  if (structuralError) {
-    return { valid: false, error: structuralError }
-  }
-
-  return {
-    valid: true,
-    chartType,
-  }
-}
-
-function formatRenderError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-
-  if (!message || message === '[object Object]') {
-    return 'Mermaid 图表渲染失败，请检查图表语法。'
-  }
-
-  return message
-    .replace(/^Error:\s*/i, '')
-    .replace(/\s+at\s+.+$/m, '')
-    .trim()
-}
-
 function isErrorSvg(svg: string): boolean {
+  if (!svg) return true
+  const trimmed = svg.trim()
+  // 不是 svg 或过短（空白图/碎片）视为渲染失败。
+  if (!/^\s*<svg\b/i.test(trimmed) || trimmed.length < 80) return true
   // mermaid 会在每张正常图的 SVG <style> 中预定义 .error-icon/.error-text 等样式规则，
   // 直接匹配整个 SVG 会把所有正常图误判为错误图。先剔除 <style> 块再检测实际内容。
-  const contentOnly = svg.replace(/<style[\s\S]*?<\/style>/gi, '')
+  const contentOnly = trimmed.replace(/<style[\s\S]*?<\/style>/gi, '')
   return (
     /error-icon/i.test(contentOnly) ||
     /syntax error/i.test(contentOnly) ||
+    /rendering error/i.test(contentOnly) ||
+    /mermaid-error/i.test(contentOnly) ||
     /class=["']error-text["']/i.test(contentOnly) ||
     /class=["']error["']/i.test(contentOnly)
   )
@@ -492,11 +247,15 @@ export function MermaidCard(renderProps: MermaidCardProps) {
     }
   }
 
-  const code = useMemo(() => normalizeCode(rawCode), [rawCode])
+  const renderCode = useMemo(() => normalizeCode(rawCode), [rawCode])
+  const fallbackCode = useMemo(() => {
+    const text = typeof rawCode === 'string' ? rawCode : ''
+    return text.trimEnd()
+  }, [rawCode])
+  const displayFallbackCode = fallbackCode || renderCode
 
+  const [renderState, setRenderState] = useState<RenderState>('pending')
   const [svg, setSvg] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [errorExpanded, setErrorExpanded] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [showCode, setShowCode] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -506,85 +265,61 @@ export function MermaidCard(renderProps: MermaidCardProps) {
 
   const requestIdRef = useRef(0)
 
-  const renderMermaid = useCallback(async (sourceCode: string, isDark: boolean) => {
-    const validation = validateChartCode(sourceCode)
-
-    if (!validation.valid) {
-      throw new Error(validation.error)
-    }
+  // 静默：能渲染返回安全 svg 字符串；不能正确渲染一律返回 null（绝不抛出任何错误信息）。
+  const renderMermaid = useCallback(async (sourceCode: string, isDark: boolean): Promise<string | null> => {
+    if (!sourceCode) return null
 
     return enqueueMermaidRender(async () => {
-      const mermaid = await getMermaid()
-      const fontFamily = getCssVariable(
-        '--font',
-        'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      )
-      const id = `jui-mermaid-${Date.now()}-${++renderSequence}`
-
-      // parse 预检：render 语法失败时不抛错而是返回内置错误图，真正的报错被吞掉；
-      // parse 失败会抛出带具体行列信息的语法错误，可直出给用户。
       try {
-        await mermaid.parse(sourceCode)
-      } catch (parseError) {
-        const detail =
-          parseError instanceof Error
-            ? parseError.message
-            : String((parseError as any)?.str ?? parseError ?? '')
-        throw new Error(
-          `Mermaid 语法解析失败：${detail || '未知语法错误'}。请检查第一行图表关键字与各行语法。`,
+        const mermaid = await getMermaid()
+        const fontFamily = getCssVariable(
+          '--font',
+          'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         )
-      }
 
-      // 两档配置：完整主题（美观）→ 最简配置（兜底）。完整配置渲染失败时自动降级，
-      // 避免 themeVariables/securityLevel 在个别图表类型上的渲染期异常让图完全画不出来。
-      const attempts: Array<{ label: string; config: Record<string, unknown> }> = [
-        {
-          label: 'full',
-          config: {
+        // parse 预检：失败即判定“不能正确渲染”，静默降级，不抛错。
+        try {
+          await mermaid.parse(sourceCode)
+        } catch {
+          return null
+        }
+
+        // 仅用 strict 安全等级重试两档主题（不使用 loose，避免不安全渲染）。
+        const configs: Array<Record<string, unknown>> = [
+          {
             securityLevel: 'strict',
             theme: isDark ? 'dark' : 'default',
             themeVariables: getThemeVariables(),
             fontFamily,
+            suppressErrorRendering: true,
           },
-        },
-        {
-          label: 'minimal',
-          config: {
-            securityLevel: 'loose',
+          {
+            securityLevel: 'strict',
             theme: 'default',
-            suppressErrorRendering: false,
+            suppressErrorRendering: true,
           },
-        },
-      ]
+        ]
 
-      let lastErrorSvg = ''
-      for (const attempt of attempts) {
-        mermaid.initialize({ startOnLoad: false, suppressErrorRendering: true, ...attempt.config })
-        try {
-          const result = await mermaid.render(id + '-' + attempt.label, sourceCode)
-          if (!isErrorSvg(result.svg)) {
-            return sanitizeSvg(result.svg)
+        for (let i = 0; i < configs.length; i++) {
+          mermaid.initialize({ startOnLoad: false, ...configs[i] })
+          try {
+            const result = await mermaid.render(
+              `jui-mermaid-${Date.now()}-${++renderSequence}-${i}`,
+              sourceCode,
+            )
+            if (result?.svg && !isErrorSvg(result.svg)) {
+              return sanitizeSvg(result.svg)
+            }
+          } catch {
+            // 渲染抛异常 = 不是合法图表 → 试下一个配置
+            continue
           }
-          lastErrorSvg = result.svg
-          console.warn(
-            `[MermaidCard] ${attempt.label} 配置返回错误图形，标记命中:`,
-            {
-              errorIcon: /error-icon/i.test(lastErrorSvg),
-              syntaxError: /syntax error/i.test(lastErrorSvg),
-              errorText: /error-text/i.test(lastErrorSvg),
-              errorClass: /class=(?:"|')error(?:"|')/i.test(lastErrorSvg),
-              svgHead: lastErrorSvg.slice(0, 300),
-            },
-          )
-        } catch (renderError) {
-          console.warn(`[MermaidCard] ${attempt.label} 配置渲染抛异常:`, renderError)
-          if (attempt.label === 'minimal') throw renderError
         }
+        return null
+      } catch {
+        // 加载/解析基础流程失败，同样静默降级当代码块。
+        return null
       }
-
-      throw new Error(
-        'Mermaid 两种配置（完整主题/最简兜底）均返回错误图形，请查看控制台 [MermaidCard] 日志定位具体原因。',
-      )
     })
   }, [])
 
@@ -607,10 +342,10 @@ export function MermaidCard(renderProps: MermaidCardProps) {
   }, [svg, title, triggerDownload])
 
   const handleDownloadCode = useCallback(() => {
-    if (!code) return
-    triggerDownload(`${title || 'mermaid-chart'}.mmd`, code, 'text/plain')
+    if (!displayFallbackCode) return
+    triggerDownload(`${title || 'mermaid-chart'}.mmd`, displayFallbackCode, 'text/plain')
     setShowDownloadMenu(false)
-  }, [code, title, triggerDownload])
+  }, [displayFallbackCode, title, triggerDownload])
 
   const toggleFullscreen = useCallback(() => {
     setIsFullscreen((prev) => !prev)
@@ -635,7 +370,7 @@ export function MermaidCard(renderProps: MermaidCardProps) {
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     if (scale <= 1) return
     e.preventDefault()
-    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+      ; (e.target as HTMLElement).setPointerCapture(e.pointerId)
     dragRef.current = { startX: e.clientX, startY: e.clientY, tx: translate.x, ty: translate.y }
   }, [scale, translate])
 
@@ -687,47 +422,46 @@ export function MermaidCard(renderProps: MermaidCardProps) {
     const isCurrentRequest = () =>
       !disposed && requestId === requestIdRef.current
 
-    const setSafeState = (
-      updater: () => void,
-    ) => {
+    const setSafeState = (updater: () => void) => {
       if (isCurrentRequest()) {
         updater()
       }
     }
 
     const render = async (isDark: boolean) => {
-      if (!code) {
+      if (!renderCode) {
         setSafeState(() => {
           setSvg(null)
-          setError('Mermaid 代码为空。')
           setIsLoading(false)
+          setRenderState('code')
         })
         return
       }
 
       setSafeState(() => {
         setIsLoading(true)
-        setError(null)
         setSvg(null)
+        setShowCode(false)
+        setRenderState('pending')
       })
 
+      let nextSvg: string | null = null
       try {
-        const output = await renderMermaid(code, isDark)
-
-        setSafeState(() => {
-          setSvg(output)
-          setError(null)
-        })
-      } catch (renderError) {
-        setSafeState(() => {
-          setSvg(null)
-          setError(formatRenderError(renderError))
-        })
-      } finally {
-        setSafeState(() => {
-          setIsLoading(false)
-        })
+        nextSvg = await renderMermaid(renderCode, isDark)
+      } catch {
+        nextSvg = null
       }
+
+      setSafeState(() => {
+        setIsLoading(false)
+        if (nextSvg) {
+          setSvg(nextSvg)
+          setRenderState('chart')
+        } else {
+          setSvg(null)
+          setRenderState('code')
+        }
+      })
     }
 
     const root = document.documentElement
@@ -737,11 +471,9 @@ export function MermaidCard(renderProps: MermaidCardProps) {
 
     const observer = new MutationObserver(() => {
       const nextIsDark = root.classList.contains('theme-dark')
-
       if (nextIsDark === isDark) {
         return
       }
-
       isDark = nextIsDark
       void render(isDark)
     })
@@ -755,7 +487,13 @@ export function MermaidCard(renderProps: MermaidCardProps) {
       disposed = true
       observer.disconnect()
     }
-  }, [code, renderMermaid])
+  }, [renderCode, renderMermaid])
+
+  useEffect(() => {
+    setRenderState('pending')
+    setShowCode(false)
+    setSvg(null)
+  }, [renderCode])
 
   const cardStyle: CSSProperties = {
     overflow: 'hidden',
@@ -776,57 +514,16 @@ export function MermaidCard(renderProps: MermaidCardProps) {
 
   const contentStyle: CSSProperties = {
     position: 'relative',
-    minHeight: isFullscreen ? 0 : 80,
+    // 加载态预留接近真实图表的高度：mermaid.render 是异步的，完成前只显示一行提示文字，
+    // 若占位过矮（原 80px），渲染完成的瞬间容器会从 80px 猛增到数百 px →
+    // 聊天区 scrollHeight 突变 → 滚动条跳变/抖动（尤其同时有多张图时）。
+    // 预留 260px 可把突变幅度压到很小，视觉上几乎无感。
+    minHeight: isFullscreen ? 0 : 260,
     padding: '4px 4px',
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
-  }
-
-  const centerStyle: CSSProperties = {
-    display: 'flex',
-    minHeight: 72,
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: 'var(--text-muted, #6b7280)',
-    fontSize: 13,
-  }
-
-  const errorStyle: CSSProperties = {
-    border: '1px solid var(--border, #d1d5db)',
-    borderRadius: 6,
-    background: 'var(--bg, #f5f5f5)',
-    padding: 12,
-    color: 'var(--text, #111827)',
-  }
-
-  const errorHeaderStyle: CSSProperties = {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  }
-
-  const errorMessageStyle: CSSProperties = {
-    flex: 1,
-    minWidth: 0,
-    overflowWrap: 'anywhere',
-    fontSize: 13,
-    lineHeight: 1.5,
-  }
-
-  const toggleStyle: CSSProperties = {
-    display: 'block',
-    width: '100%',
-    marginTop: 10,
-    padding: 0,
-    border: 0,
-    background: 'transparent',
-    color: 'var(--text-muted, #6b7280)',
-    cursor: 'pointer',
-    textAlign: 'left',
-    fontSize: 12,
   }
 
   const codeStyle: CSSProperties = {
@@ -859,34 +556,38 @@ export function MermaidCard(renderProps: MermaidCardProps) {
     </svg>
   )
 
+  if (renderState === 'code') {
+    if (!displayFallbackCode) {
+      return null
+    }
+
+    if (renderProps.renderFallback) {
+      return renderProps.renderFallback(displayFallbackCode)
+    }
+
+    return (
+      <pre style={{ ...codeStyle, margin: 0, maxHeight: 'none' }}>
+        <code>{displayFallbackCode}</code>
+      </pre>
+    )
+  }
+
+  if (renderState === 'pending') {
+    return (
+      <div
+        style={{
+          minHeight: isFullscreen ? 0 : 260,
+        }}
+        aria-hidden="true"
+      />
+    )
+  }
+
   const chartContent = (
     <div style={contentStyle}>
-      {error ? (
-        <div role="alert" style={errorStyle}>
-          <div style={errorHeaderStyle}>
-            <div style={errorMessageStyle}>
-              ⚠️ 图形渲染失败：{error}
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setErrorExpanded((expanded) => !expanded)}
-            style={toggleStyle}
-            aria-expanded={errorExpanded}
-          >
-            {errorExpanded ? '▲ 隐藏原始代码' : '▼ 查看原始代码'}
-          </button>
-
-          {errorExpanded ? (
-            <pre style={codeStyle}>
-              <code>{code || '（空）'}</code>
-            </pre>
-          ) : null}
-        </div>
-      ) : showCode ? (
+      {showCode ? (
         <pre style={{ ...codeStyle, margin: 0, maxHeight: isFullscreen ? 'none' : 400, flex: 1, overflow: 'auto' }}>
-          <code>{code || '（空）'}</code>
+          <code>{displayFallbackCode}</code>
         </pre>
       ) : svg ? (
         <div
@@ -915,25 +616,23 @@ export function MermaidCard(renderProps: MermaidCardProps) {
             dangerouslySetInnerHTML={{ __html: svg }}
           />
         </div>
-      ) : (
-        <div style={centerStyle}>
-          {isLoading ? '⏳ 图形渲染中…' : '⏳ 准备渲染…'}
-        </div>
-      )}
+      ) : null}
     </div>
   )
 
   const toolbar = (
     <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
       <button type="button" onClick={() => setShowCode(false)} title="图表"
-        style={{ ...btnBase,
+        style={{
+          ...btnBase,
           background: !showCode ? 'color-mix(in srgb, var(--accent) 18%, transparent)' : 'transparent',
           color: !showCode ? 'var(--accent)' : 'var(--text-muted, #6b7280)',
         }}>
         {svgIcon('M3 3h18v18H3zM3 15l4-4a2 2 0 012.8 0L15 16M14 14l1-1a2 2 0 012.8 0L21 16')}
       </button>
       <button type="button" onClick={() => setShowCode(true)} title="代码"
-        style={{ ...btnBase,
+        style={{
+          ...btnBase,
           background: showCode ? 'color-mix(in srgb, var(--accent) 18%, transparent)' : 'transparent',
           color: showCode ? 'var(--accent)' : 'var(--text-muted, #6b7280)',
         }}>
@@ -942,7 +641,7 @@ export function MermaidCard(renderProps: MermaidCardProps) {
       <div style={{ width: 1, margin: '0 2px', borderLeft: '1px solid var(--border, #d1d5db)' }} />
       <div ref={downloadMenuRef} style={{ position: 'relative' }}>
         <button type="button" onClick={() => setShowDownloadMenu((v) => !v)} title="下载"
-          style={{ ...btnBase, opacity: svg || code ? 1 : 0.4 }}>
+          style={{ ...btnBase, opacity: svg || displayFallbackCode ? 1 : 0.4 }}>
           {svgIcon('M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3')}
         </button>
         {showDownloadMenu && (
@@ -955,15 +654,19 @@ export function MermaidCard(renderProps: MermaidCardProps) {
             zIndex: 100,
           }}>
             <button type="button" onClick={handleDownloadSvg} disabled={!svg}
-              style={{ display: 'block', width: '100%', padding: '5px 10px', border: 0,
+              style={{
+                display: 'block', width: '100%', padding: '5px 10px', border: 0,
                 background: 'transparent', textAlign: 'left', cursor: svg ? 'pointer' : 'default',
-                fontSize: 12, opacity: svg ? 1 : 0.4, color: 'var(--text, #111827)' }}>
+                fontSize: 12, opacity: svg ? 1 : 0.4, color: 'var(--text, #111827)'
+              }}>
               SVG 图片
             </button>
-            <button type="button" onClick={handleDownloadCode} disabled={!code}
-              style={{ display: 'block', width: '100%', padding: '5px 10px', border: 0,
-                background: 'transparent', textAlign: 'left', cursor: code ? 'pointer' : 'default',
-                fontSize: 12, opacity: code ? 1 : 0.4, color: 'var(--text, #111827)' }}>
+            <button type="button" onClick={handleDownloadCode} disabled={!displayFallbackCode}
+              style={{
+                display: 'block', width: '100%', padding: '5px 10px', border: 0,
+                background: 'transparent', textAlign: 'left', cursor: displayFallbackCode ? 'pointer' : 'default',
+                fontSize: 12, opacity: displayFallbackCode ? 1 : 0.4, color: 'var(--text, #111827)'
+              }}>
               源代码 (.mmd)
             </button>
           </div>

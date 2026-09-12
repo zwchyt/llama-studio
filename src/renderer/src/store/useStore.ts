@@ -119,9 +119,19 @@ function scheduleSaveAgentProjects(p: AgentProject[]): void {
   }, 800)
 }
 
+/**
+ * 后端列表状态机：
+ * 'loading' — 尚未拿到任何权威结果（首次启动时主进程立即返回空数组并后台扫描），
+ *             UI 必须显示加载态而不是"还没有后端"空态；
+ * 'ready'   — 已拿到非空结果，或收到过 'backends-updated' 广播（哪怕确认为空）；
+ * 'error'   — 拉取失败。
+ */
+export type BackendListStatus = 'loading' | 'ready' | 'error'
+
 interface AppStore {
   cards: CardState[]
   backends: BackendVersion[]
+  backendsStatus: BackendListStatus
   backendsReady: boolean
   models: ModelFileInfo[]
   imageModels: ModelFileInfo[]
@@ -174,6 +184,7 @@ interface AppStore {
   setActiveBackend: (b: BackendVersion) => void
   setCommandsSchema: (s: CommandsSchema) => void
   setBackends: (b: BackendVersion[]) => void
+  setBackendsStatus: (s: BackendListStatus) => void
   setBackendsReady: (v: boolean) => void
   setModels: (m: ModelFileInfo[]) => void
   setImageModels: (m: ModelFileInfo[]) => void
@@ -326,7 +337,7 @@ interface AppStore {
 // createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
 export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
-  cards: [], backends: [], backendsReady: false, models: [], imageModels: [], chatTemplates: [], activeBackend: null,
+  cards: [], backends: [], backendsStatus: 'loading' as BackendListStatus, backendsReady: false, models: [], imageModels: [], chatTemplates: [], activeBackend: null,
   commandsSchema: null, releaseInfo: null, engineReleases: {}, paths: null,
   view: 'cards', showCreateModal: false, editingTemplate: null,
   updateDismissed: false, checkingUpdate: false, downloadProgress: null,
@@ -388,6 +399,7 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
   setActiveBackend: (b) => set({ activeBackend: b }),
   setCommandsSchema: (s) => set({ commandsSchema: s }),
   setBackends: (b) => set({ backends: b }),
+  setBackendsStatus: (s) => set({ backendsStatus: s }),
   setBackendsReady: (v) => set({ backendsReady: v }),
   setModels: (m) => set({ models: m }),
   setImageModels: (m) => set({ imageModels: m }),

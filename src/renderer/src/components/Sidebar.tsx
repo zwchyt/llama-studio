@@ -90,8 +90,8 @@ export default function Sidebar() {
   const { collapsed, collapsing, hoverExpanded, hoverExpandEnabled, setHoverExpanded } = useSidebarStore()
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const { view, setView, backends, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, hasRunningModels } = useStore(
-    s => ({ view: s.view, setView: s.setView, backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
+  const { view, setView, backends, backendsStatus, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, hasRunningModels } = useStore(
+    s => ({ view: s.view, setView: s.setView, backends: s.backends, backendsStatus: s.backendsStatus, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
     shallow
   )
 
@@ -346,7 +346,7 @@ export default function Sidebar() {
           <>
             <span className="nav-section-label" style={{ marginTop: 12 }}>后端</span>
             <div className="sidebar-no-backend-hint" style={{ padding: '8px 10px', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-              未找到后端。<br />请在设置中下载。
+              {backendsStatus === 'loading' ? '扫描后端中…' : <>未找到后端。<br />请在设置中下载。</>}
             </div>
           </>
         )}

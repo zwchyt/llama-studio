@@ -383,6 +383,16 @@ function MarkdownCode({ className, children, node, isStreaming }: { className?: 
   }
   const text = (typeof nodeText === 'string' ? nodeText : nodeToText(children)).replace(/\n$/, '')
   const match = /language-([^\s]+)/.exec(className || '')
+  // mermaid 代码块：能渲染就渲染成图表；不能渲染由 MermaidCard 内部静默降级为普通代码块（无任何报错）。
+  // 流式期间仍用 CodeBlock 逐行显示，避免未闭合围栏被提前当图表渲染。
+  if (match?.[1]?.toLowerCase() === 'mermaid' && !isStreaming) {
+    return (
+      <MermaidCard
+        code={text}
+        renderFallback={(c) => <CodeBlock language="" value={c} isStreaming={isStreaming} />}
+      />
+    )
+  }
   if (match) {
     return <CodeBlock language={match[1]} value={text} isStreaming={isStreaming} />
   }
@@ -524,7 +534,7 @@ function isMermaidOrJson(content: string): { type: 'mermaid' | 'json' | null; la
 const UserMessageContent = React.memo(function UserMessageContent({ content }: { content: string }) {
   const detected = useMemo(() => isMermaidOrJson(content), [content])
   if (detected.type) {
-    return <CodeBlock language={detected.lang} value={content.trim()} />
+    return <CodeBlock language={detected.lang ?? ''} value={content.trim()} />
   }
   return <AgentMarkdown content={content} />
 })
@@ -910,8 +920,24 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
 }) {
   const bodyRef = useRef<HTMLDivElement>(null)
   const userToggledRef = useRef(false)
-  const { expanded, visible, setExpanded, setVisible, onBodyTransitionEnd, toggle: handleToggle } =
-    useCollapseAnimation(bodyRef, { initialExpanded: isStreaming ?? false, beforeToggle: () => { userToggledRef.current = true } })
+  // 标记「本次 expanded=true 是用户手动点击展开」：仅这类展开走 max-height 像素过渡动画，
+  // 自动展开（流式 / 容器联动）仍走自适应高度（见下方 useLayoutEffect）。为 true 时表示
+  // 「这一次展开」需要动画，由 useLayoutEffect 消费放行，过渡结束（或收起）时复位。
+  const manualExpandRef = useRef(false)
+  const { expanded, visible, setExpanded, setVisible, expandedRef, onBodyTransitionEnd: rawBodyTransitionEnd, toggle: handleToggle } =
+    useCollapseAnimation(bodyRef, {
+      initialExpanded: isStreaming ?? false,
+      beforeToggle: () => {
+        userToggledRef.current = true
+        // 点击时若当前是收起态 → 这次是「手动展开」，需要走动画
+        manualExpandRef.current = !expandedRef.current
+      },
+    })
+  // 过渡结束后：手动展开的标记复位，并把 max-height 落回 none 以自适应后续内容增长。
+  const handleBodyTransitionEnd = useCallback((e: React.TransitionEvent<HTMLDivElement>) => {
+    if (e.propertyName === 'max-height') manualExpandRef.current = false
+    rawBodyTransitionEnd(e)
+  }, [rawBodyTransitionEnd])
   // 仅当「正在流式」时才显示「思考中」转圈。注意不能用 !closed 参与判断：
   // 模型在「调用工具、不输出闭合 </think>」时 closed 恒为 false，若用 !closed 会让
   // 思考块永远转圈，直到下一轮才补上闭合标签。改为只看 isStreaming（= 真正流式且未闭合），
@@ -948,16 +974,16 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
   useEffect(() => {
     const prev = phaseRef.current
     phaseRef.current = phase
-// 退出 tools 阶段：固化该阶段已读秒时长（思考段累计在 chainTotalMs，工具段在此固化）。
-  // 工具批全 done 时已把该批跨度定格进 seg.durationMs（chainTotalMs 已含），
-  // 这里只补未定格的剩余（多批工具时中间批已定格，差额 = 最后一批的实时跨度），避免双计。
-  if (prev === 'tools' && phase !== 'tools' && phaseStartRef.current != null) {
-    const stamped = (items ?? []).reduce(
-      (acc, it) => acc + (it.kind === 'tools' ? (it.durationMs ?? 0) : 0),
-      0
-    )
-    frozenToolsRef.current += Math.max(0, (Date.now() - phaseStartRef.current) - stamped)
-  }
+    // 退出 tools 阶段：固化该阶段已读秒时长（思考段累计在 chainTotalMs，工具段在此固化）。
+    // 工具批全 done 时已把该批跨度定格进 seg.durationMs（chainTotalMs 已含），
+    // 这里只补未定格的剩余（多批工具时中间批已定格，差额 = 最后一批的实时跨度），避免双计。
+    if (prev === 'tools' && phase !== 'tools' && phaseStartRef.current != null) {
+      const stamped = (items ?? []).reduce(
+        (acc, it) => acc + (it.kind === 'tools' ? (it.durationMs ?? 0) : 0),
+        0
+      )
+      frozenToolsRef.current += Math.max(0, (Date.now() - phaseStartRef.current) - stamped)
+    }
     if (phase === 'idle') { phaseStartRef.current = null; setElapsedMs(0); return }
     if (phase !== prev) { phaseStartRef.current = Date.now(); setElapsedMs(0) }
     if (phaseStartRef.current == null) phaseStartRef.current = Date.now()
@@ -1021,9 +1047,17 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
   // 容器展开时直接以自适应高度呈现（绘制前置 none，不走 0→测量高度 过渡）：
   // 容器高度测量发生在链内折叠块展开之前，测量值偏小——若走过渡，动画期间内容被
   // 裁剪、过渡结束后再「长高」，表现为展开卡顿/回跳。收起仍保留像素过渡动画。
+  //
+  // 例外：用户「手动点击」展开时必须走像素过渡（0 → scrollHeight），否则无动画。
+  // 原因：手动展开时 useCollapseAnimation.expand() 刚把 max-height 设为具体像素值，
+  // 若同一帧本 effect 又置 none，过渡的起止值都被抹掉 → 浏览器直接跳到最终高度，
+  // 表现为「展开生硬、收起才有缓冲」的不对称。用 manualExpandRef 放行手动展开一帧，
+  // 由 transitionend（onBodyTransitionEnd）在动画结束后再置 none 自适应。
   useLayoutEffect(() => {
     const el = bodyRef.current
-    if (expanded && el) el.style.maxHeight = 'none'
+    if (!el || !expanded) return
+    if (manualExpandRef.current) return // 手动展开：保持 expand() 设好的像素值，交给过渡
+    el.style.maxHeight = 'none'
   }, [expanded])
 
   // 头部「思考中」状态判定：消息仍流式 且 最终正文尚未出现（最终正文 = 思考链终结信号；
@@ -1066,7 +1100,7 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
         )}
       </button>
       {visible && (
-        <div className="agent-think-anim" ref={bodyRef} onTransitionEnd={onBodyTransitionEnd}>
+        <div className="agent-think-anim" ref={bodyRef} onTransitionEnd={handleBodyTransitionEnd}>
           {/* 裁剪层（无 padding/border）做 max-height 动画；内容层承载 padding/字体；首次展开后保持挂载，收起只收到 0；
 	              流式期间父组件已不会再高频重渲染（store 节流 + 模块级 memo），
 	              因此过渡期间 Markdown 不会被重解析，不会卡。 */}
@@ -1101,19 +1135,19 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
                     />
                   )
                   : it.kind === 'tools'
-                  ? (
-                    <ToolCallGroup
-                      toolCalls={it.toolCalls}
-                      onPreviewFile={onPreviewFile!}
-                      canUndoFor={canUndoFor}
-                      onUndo={onUndo}
-                    />
-                  )
-                  : (
-                    // 过程正文段：阶段性输出按时间线收纳链内（最终结论在容器下方独立成泡）；
-                    // 文字用主文字色（agent-think-prose），比弱化的思考文本更黑更明显，区分主次
-                    <AgentMarkdown content={it.content} />
-                  )}
+                    ? (
+                      <ToolCallGroup
+                        toolCalls={it.toolCalls}
+                        onPreviewFile={onPreviewFile!}
+                        canUndoFor={canUndoFor}
+                        onUndo={onUndo}
+                      />
+                    )
+                    : (
+                      // 过程正文段：阶段性输出按时间线收纳链内（最终结论在容器下方独立成泡）；
+                      // 文字用主文字色（agent-think-prose），比弱化的思考文本更黑更明显，区分主次
+                      <AgentMarkdown content={it.content} />
+                    )}
               </div>
             ))}
           </div>
@@ -1484,13 +1518,19 @@ const StreamingContent = React.memo(function StreamingContent({ content, streami
   if (!hasThink) {
     // 辅助函数：将文本内容分割成文本和Mermaid块
     const renderContentWithMermaid = (content: string, isStreamingContent: boolean) => {
-      const blocks = parseContentToBlocks(content)
+      // streaming 透传：流式期间未闭合的 mermaid 代码不会产出图表块（否则会拿残码
+      // 渲染出一张「渲染失败」错误卡，等代码补全后再替换成正确的图 —— 先错图后对图的闪替）。
+      const blocks = parseContentToBlocks(content, isStreamingContent)
       return blocks.map((block, i) => {
         if (block.kind === 'mermaid') {
           return (
-            <div key={`mermaid-${i}`} className="agent-msg-ui">
-              <MermaidCard code={block.code} />
-            </div>
+            <MermaidCard
+              key={`mermaid-${i}`}
+              code={block.code}
+              renderFallback={(fallbackCode) => (
+                <CodeBlock language="" value={fallbackCode} />
+              )}
+            />
           )
         }
         return (
@@ -1500,13 +1540,13 @@ const StreamingContent = React.memo(function StreamingContent({ content, streami
         )
       })
     }
-    
+
     return (
       <>
         {toolCalls?.length ? (
           <ToolCallGroup toolCalls={toolCalls} onPreviewFile={onPreviewFile!} canUndoFor={canUndoFor} onUndo={onUndo} />
         ) : null}
-        {items.map((it, i) => it.kind === 'text' ? (
+        {items.map((it) => it.kind === 'text' ? (
           renderContentWithMermaid(it.content, false)
         ) : null)}
         {finalText != null && renderContentWithMermaid(finalText, !!streaming)}
@@ -1533,12 +1573,16 @@ const StreamingContent = React.memo(function StreamingContent({ content, streami
         // 最终结论气泡：仍在流式时用轻量流式栈；完成态走 AgentMarkdown 完整栈
         // 补齐 KaTeX 公式/raw HTML/sanitize，否则完成后公式不渲染。
         (() => {
-          const blocks = parseContentToBlocks(finalText)
+          // streaming 透传：流式期间不把未闭合的 mermaid 代码当图表渲染（见该函数注释）
+          const blocks = parseContentToBlocks(finalText, !!streaming)
           return blocks.map((block, i) => {
             if (block.kind === 'mermaid') {
               return (
                 <div key={`mermaid-final-${i}`} className="agent-msg-ui">
-                  <MermaidCard code={block.code} />
+                  <MermaidCard
+                    code={block.code}
+                    renderFallback={(c) => <CodeBlock language="" value={c} />}
+                  />
                 </div>
               )
             }
@@ -2127,18 +2171,22 @@ function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']>, msgI
         items={items}
         onPreviewFile={o.onPreviewFile}
         canUndoFor={o.canUndoFor}
-          onUndo={(tc) => o.onUndo(msgId, tc)}
-        />
+        onUndo={(tc) => o.onUndo(msgId, tc)}
+      />
     )
   }
   if (finalTextIdx >= 0 && finalText != null) {
     // 将最终文本分割成文本和Mermaid块，按顺序渲染
-    const blocks = parseContentToBlocks(finalText)
+    // streaming 透传：流式期间不把未闭合的 mermaid 代码当图表渲染（见该函数注释）
+    const blocks = parseContentToBlocks(finalText, streaming)
     blocks.forEach((block, i) => {
       if (block.kind === 'mermaid') {
         out.push(
           <div key={`mermaid-seg-final-${i}`} className="agent-msg-ui">
-            <MermaidCard code={block.code} />
+            <MermaidCard
+              code={block.code}
+              renderFallback={(c) => <CodeBlock language="" value={c} />}
+            />
           </div>
         )
       } else {
@@ -2194,7 +2242,7 @@ const AgentUiBlock = React.memo(function AgentUiBlock({ msg, modelTemplateId }: 
       </div>
     )
   }
-  
+
   // Mermaid 已由 StreamingContent / renderSegmentsFor 内联渲染，AgentUiBlock 不再重复
   return null
 })
@@ -2643,7 +2691,7 @@ export default function AgentCodeView() {
         return v && Number.isFinite(v) ? v : 480
       } catch { return 480 }
     },
-    onCommit: (w) => { try { window.localStorage.setItem('agent-right-width', String(w)) } catch {} },
+    onCommit: (w) => { try { window.localStorage.setItem('agent-right-width', String(w)) } catch { } },
   })
 
   const sidebarHandleIconRef = useRef<AniIconHandle>(null)
@@ -2811,19 +2859,38 @@ export default function AgentCodeView() {
   }, [listening, micTranscribing, startMic, stopMic])
   useEffect(() => () => { try { mediaRecorderRef.current?.stop() } catch { /* noop */ } if (micTimerRef.current) clearInterval(micTimerRef.current) }, [])
   const chatScrollRef = useRef<HTMLDivElement>(null)
-const atBottomRef = useRef(true)
-const [atBottom, setAtBottom] = useState(true)
-const followingRef = useRef(true)
-// 标记“由代码主动贴底触发的 scroll”，用于在 onChatScroll 中排除，避免与用户上滚抢控制权。
-const programmaticScrollRef = useRef(false)
+  const atBottomRef = useRef(true)
+  const [atBottom, setAtBottom] = useState(true)
+  const followingRef = useRef(true)
+  // 标记“由代码主动贴底触发的 scroll”，用于在 onChatScroll 中排除，避免与用户上滚抢控制权。
+  const programmaticScrollRef = useRef(false)
+  // smooth 滚动的抑制截止时间戳：smooth 动画会连发数十次 scroll 事件，布尔标志只能挡第一次，
+  // 后续会被误判为“用户滚动”而翻转 atBottom/following（按钮闪烁、贴底失效）。
+  // 用时间窗口在整个动画期间持续抑制，而不是只挡一帧。
+  const smoothScrollUntilRef = useRef(0)
   const FOLLOW_THRESHOLD = 80
-  const railIdRef = useRef(new WeakMap<HTMLElement, string>())
-  const railIdCounterRef = useRef(0)
   const railTargetsRef = useRef(new Map<string, HTMLElement>())
   const [railItems, setRailItems] = useState<{ id: string; label: string; description?: string; ariaLabel: string }[]>([])
   const [activeRailId, setActiveRailId] = useState('')
   const [railOverflowing, setRailOverflowing] = useState(false)
   const railFrameRef = useRef<number | undefined>(undefined)
+  // 滚动/跳转动画进行中：用于暂时抑制轨道点的「波浪起伏」过渡（transform 弹性 + 波次延迟）。
+  // 原因：滚动时 activeRailId 会逐点切换，每切换一次就触发全部点的 transform/background 过渡，
+  // 波次延迟最长 300ms + 弹性曲线 → 16 个点反复合成，滚动明显掉帧。动画期间只保留瞬时变色。
+  const [railScrolling, setRailScrolling] = useState(false)
+  const railScrollIdleTimerRef = useRef<number | undefined>(undefined)
+  // 滚动动画互斥锁：任何 animateScrollTo 动画进行期间为 true。
+  // 作用：阻止「流式贴底 pin」「messages 变更的 useLayoutEffect 贴底」「scrollToBottom 瞬时分支」
+  // 在动画途中抢写 scrollTop —— 多个写入源互相覆盖正是「点击轨道点上下抖动」的根因。
+  const railAnimatingRef = useRef(false)
+  // 当前动画的中止器：新的动画开始时先中止旧动画，避免两条补间同时写 scrollTop（互抢抖动）。
+  const railAnimCancelRef = useRef<(() => void) | null>(null)
+  const markRailScrolling = useCallback(() => {
+    setRailScrolling(true)
+    if (railScrollIdleTimerRef.current) window.clearTimeout(railScrollIdleTimerRef.current)
+    // 节流：滚动停止 140ms 后恢复波浪效果
+    railScrollIdleTimerRef.current = window.setTimeout(() => setRailScrolling(false), 140)
+  }, [])
   const pendingSendRef = useRef<Array<{ text: string; attachments: Attachment[] }>>([])
   // 发送互斥门闩：handleSend 在真正把 loading 置真前还有一段异步准备（系统提示词/
   // 历史压缩），排队重放多条消息时第二条可能在该窗口绕过 loading 检查并发启
@@ -2855,7 +2922,7 @@ const programmaticScrollRef = useRef(false)
   // 队列/历史同步：followUp/steer 用户消息不在发送时写入聊天，而是在 SDK 真正执行该条
   // （queue_update 出队）时由 appendQueuedUserMsg 补写，避免多个追加问题提前堆在对话里。
   const prevQueueRef = useRef<{ followUp: string[] }>({ followUp: [] })
-  const appendLiveUserMsgRef = useRef<(m: AgentMessage) => void>(() => {})
+  const appendLiveUserMsgRef = useRef<(m: AgentMessage) => void>(() => { })
   // 前端 followUp 队列：追加的问题不再交给 SDK 自动续跑（单轮 runPiTurn 会吞掉回复），
   // 而是前端排队，当前轮 runPiTurn 结束后自动发起独立新轮（产生独立 user + assistant）。
   const followUpQueueRef = useRef<{ text: string; attachments: Attachment[] }[]>([])
@@ -2896,7 +2963,7 @@ const programmaticScrollRef = useRef(false)
     const cur = piReadyRef.current
     const sid = cur.sid
     if (cur.ready && sid && !loading) {
-      window.api.piAgent.dispose(`pi-${sid}`).catch(() => {})
+      window.api.piAgent.dispose(`pi-${sid}`).catch(() => { })
       piReadyRef.current = { sid: null, ready: false }
     }
   }
@@ -2928,7 +2995,7 @@ const programmaticScrollRef = useRef(false)
   const loadModelLogos = useStore(s => s.loadModelLogos)
   // 打开下拉时兜底补读（App 启动已全局加载；此处幂等，只读缺失项）
   useEffect(() => {
-    if (modelPickerOpen) void loadModelLogos().catch(() => {})
+    if (modelPickerOpen) void loadModelLogos().catch(() => { })
   }, [modelPickerOpen, loadModelLogos])
   // 已有 Logo 时点击弹出的菜单（更换/移除）：固定定位坐标来自点击处
   const [logoMenu, setLogoMenu] = useState<{ id: string; x: number; y: number } | null>(null)
@@ -2967,19 +3034,19 @@ const programmaticScrollRef = useRef(false)
   // 检测成功即持久化到 model-capabilities.json，下次启动直接载入不再读盘
   useEffect(() => {
     if (!modelPickerOpen) return
-    void loadModelCapabilities().catch(() => {})
+    void loadModelCapabilities().catch(() => { })
     const store = useStore.getState()
     const missing = store.cards.filter(c => !(c.template.id in modelCaps) && !!c.template.modelPath)
     if (missing.length === 0) return
-    ;(async () => {
-      await Promise.allSettled(missing.map(async (card) => {
-        const res = await window.api.readGgufMeta(card.template.modelPath!)
-        if ('error' in res || !card.template.modelPath) return
-        const caps = detectModelCapabilities({ architecture: res.architecture, chatTemplate: res.chatTemplate, kv: res.kv })
-        useStore.getState().setModelCapabilitiesEntry(card.template.id, caps)
-        void window.api.saveModelCapabilities(card.template.id, caps).catch(() => {})
-      }))
-    })()
+      ; (async () => {
+        await Promise.allSettled(missing.map(async (card) => {
+          const res = await window.api.readGgufMeta(card.template.modelPath!)
+          if ('error' in res || !card.template.modelPath) return
+          const caps = detectModelCapabilities({ architecture: res.architecture, chatTemplate: res.chatTemplate, kv: res.kv })
+          useStore.getState().setModelCapabilitiesEntry(card.template.id, caps)
+          void window.api.saveModelCapabilities(card.template.id, caps).catch(() => { })
+        }))
+      })()
     // modelCaps 不参与依赖：缓存命中判断用引用快照，避免打开一次列表触发两轮读取
   }, [modelPickerOpen])
   const modelBtnRef = useRef<HTMLButtonElement>(null)
@@ -3178,15 +3245,15 @@ const programmaticScrollRef = useRef(false)
           question: q.question,
           options: (q.options ?? []).map(o => ({ label: o, description: '' }))
         })))
-        .then((r) => { window.api.piAgent.askResolve(id, r).catch(() => {}) })
+        .then((r) => { window.api.piAgent.askResolve(id, r).catch(() => { }) })
         .catch(() => {
-          window.api.piAgent.askResolve(id, 'User declined to answer the questions. Continue with the task using your best judgment.').catch(() => {})
+          window.api.piAgent.askResolve(id, 'User declined to answer the questions. Continue with the task using your best judgment.').catch(() => { })
         })
     })
     window.api.piAgent.onApprove((id, req) => {
       // 复用现有审批弹窗（approvalReq），确定时回传给 main
       approvalResolveRef.current = (approved) => {
-        window.api.piAgent.approveResolve(id, approved).catch(() => {})
+        window.api.piAgent.approveResolve(id, approved).catch(() => { })
       }
       setApprovalReq({ id: String(id), name: req.toolName, args: JSON.stringify(req.args) })
     })
@@ -3196,7 +3263,7 @@ const programmaticScrollRef = useRef(false)
   useEffect(() => {
     const prev = piReadyRef.current
     if (prev.ready && prev.sid !== activeSessionId) {
-      window.api.piAgent.dispose(`pi-${prev.sid}`).catch(() => {})
+      window.api.piAgent.dispose(`pi-${prev.sid}`).catch(() => { })
       piReadyRef.current = { sid: '', ready: false }
     }
   }, [activeSessionId])
@@ -3372,9 +3439,10 @@ const programmaticScrollRef = useRef(false)
     const el = chatScrollRef.current
     if (!el) return
     setSelectionPopover(null)
-    // 程序化贴底（pin / scrollToBottom / 消息增高引起的 scroll）不据此翻转跟随态：
+    // 程序化滚动（pin / scrollToBottom / smooth 动画）不据此翻转跟随态：
     // 否则会被“拉回底部→判为在底部→继续跟随”的反馈环路盖过用户上滚，导致滚动卡死。
-    if (programmaticScrollRef.current) {
+    // smooth 动画期间会连发数十次 scroll 事件，故用时间窗口（而非布尔单次标志）持续抑制。
+    if (programmaticScrollRef.current || Date.now() < smoothScrollUntilRef.current) {
       programmaticScrollRef.current = false
       return
     }
@@ -3391,16 +3459,127 @@ const programmaticScrollRef = useRef(false)
     followingRef.current = false
     atBottomRef.current = false
   }, [])
-  const scrollToBottom = useCallback((smooth = false) => {
-    const el = chatScrollRef.current
-    if (el) {
-      programmaticScrollRef.current = true
-      el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
-      atBottomRef.current = true
-      setAtBottom(true)
-      followingRef.current = true
+
+  // ── 统一的滚动动画（轨道跳转 / 回到底部 共用）──
+  // 上滑、下滑、贴底全部走这一条实现，保证「速度与缓动完全一致」，
+  // 不再出现「上滑走原生 smooth、下滑走逐帧赋值 → 手感不同」的问题。
+  // 特性：
+  //   - 时间驱动的补间（非比例衰减），首帧不突跳；
+  //   - easeInOutCubic 缓入缓出，两端慢中间快，观感平滑；
+  //   - 时长按距离自适应，但设了「每 px 毫秒数」的上限，长距离不会瞬移；
+  //   - getTargetTop 每帧重新求值 → 内容增长（懒渲染）时目标自动吸收，不会停在半路。
+  const animateScrollTo = useCallback((
+    el: HTMLElement,
+    getTargetTop: () => number,
+    opts?: { maxDuration?: number; onDone?: () => void },
+  ) => {
+    const maxDuration = opts?.maxDuration ?? 900
+    // 若已有动画在跑，先中止它（不触发其 onDone），避免两条补间互抢 scrollTop。
+    if (railAnimCancelRef.current) {
+      try { railAnimCancelRef.current() } catch { /* ignore */ }
+      railAnimCancelRef.current = null
     }
-  }, [])
+    markRailScrolling()
+    railAnimatingRef.current = true
+    const startTop = el.scrollTop
+    // 真实距离必须由「当前位置 → 目标位置」求得，而不是 scrollHeight 相关量：
+    // 早期版本用 |scrollHeight - clientHeight - scrollTop|（即到容器底部的距离）来估时长，
+    // 那只对「下滑到底」成立；向上滑时该值≈0 → duration 取下限 320ms，
+    // 于是 5000px 的上滑只花 320ms，快得像瞬移（用户反馈的「往上直接一瞬间滑上去」）。
+    // 改为先求一次目标，用 |目标 - 当前| 作为距离，上下滑即对称一致。
+    const firstTargetTop = getTargetTop()
+    const approxDist = Math.abs(firstTargetTop - startTop)
+    // 速度控制：约 0.75ms/px（比原生 smooth 略慢更从容），并夹在 [320, maxDuration]。
+    // 上下滑共用同一公式 → 相同距离耗时相同，速度一致。
+    const duration = Math.min(maxDuration, Math.max(320, approxDist * 0.75))
+    let phaseStart = Date.now()
+    let phaseFrom = startTop
+    let done = false
+    let raf = 0
+    const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
+    const deadline = Date.now() + maxDuration + 400
+    const finish = () => {
+      if (done) return
+      done = true
+      cancelAnimationFrame(raf)
+      if (railAnimCancelRef.current === cancel) railAnimCancelRef.current = null
+      railAnimatingRef.current = false
+      opts?.onDone?.()
+    }
+    // 供「被新动画抢占」时调用：只做清理，不回调 onDone（避免旧动画收尾覆盖新动画状态）。
+    const cancel = () => {
+      if (done) return
+      done = true
+      cancelAnimationFrame(raf)
+      railAnimatingRef.current = false
+    }
+    railAnimCancelRef.current = cancel
+    const step = () => {
+      if (done) return
+      const targetTop = getTargetTop()
+      const t = Math.min(1, (Date.now() - phaseStart) / duration)
+      if (t >= 1) {
+        const remain = targetTop - el.scrollTop
+        // 内容仍在增长导致目标又变远 → 再补一轮短动画（而非硬跳），保持尾部平滑
+        if (remain > 4 && Date.now() < deadline) {
+          phaseStart = Date.now()
+          phaseFrom = el.scrollTop
+          raf = requestAnimationFrame(step)
+          return
+        }
+        el.scrollTop = targetTop
+        finish()
+        return
+      }
+      el.scrollTop = phaseFrom + (targetTop - phaseFrom) * easeInOutCubic(t)
+      if (Date.now() >= deadline) { el.scrollTop = getTargetTop(); finish(); return }
+      raf = requestAnimationFrame(step)
+    }
+    raf = requestAnimationFrame(step)
+  }, [markRailScrolling])
+
+  const scrollToBottom = useCallback((smooth = false, force = false) => {
+    const el = chatScrollRef.current
+    if (!el) return
+    // 若有滚动动画正在进行（如点击轨道点触发的补间），不要中途抢写 scrollTop：
+    // 否则瞬时贴底与动画互相覆盖，表现为「点击点后画面上下抖动/卡顿」。
+    // force=true 表示「用户主动要求贴底」（点最后一颗点/点回到底部按钮），
+    // 此时应抢占并中止旧动画，而不是被忽略。
+    if (railAnimatingRef.current && !force) return
+    programmaticScrollRef.current = true
+    atBottomRef.current = true
+    setAtBottom(true)
+    followingRef.current = true
+    if (!smooth) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'auto' })
+      return
+    }
+    // 贴底动画：复用统一的 animateScrollTo（与轨道跳转同一实现，速度/缓动一致）。
+    // 目标每帧取「最新 scrollHeight - clientHeight」，故下滚途中懒渲染长高不会被落空。
+    const prevAnchor = el.style.overflowAnchor
+    el.style.overflowAnchor = 'none'
+    // 抑制窗口覆盖整段动画：rAF 每帧写 scrollTop 会产生 scroll 事件，
+    // 若窗口过期会被 onChatScroll 误判为用户滚动 → 提前翻转 following 退出。
+    smoothScrollUntilRef.current = Date.now() + 1400
+    animateScrollTo(el, () => el.scrollHeight - el.clientHeight, {
+      maxDuration: 900,
+      onDone: () => {
+        const cur = chatScrollRef.current
+        if (!cur) return
+        cur.style.overflowAnchor = prevAnchor
+        smoothScrollUntilRef.current = 0
+        if (followingRef.current) {
+          programmaticScrollRef.current = true
+          cur.scrollTop = cur.scrollHeight - cur.clientHeight // 精确贴底
+          // 贴底后把高亮同步到「最后一颗」：否则 updateActiveRailItem 在本帧取数时
+          // 视口中心仍偏向中间消息，高亮会残留在半路那颗点上，与"已到底"观感矛盾。
+          const t = [...railTargetsRef.current.keys()]
+          const lastId = t.length > 0 ? t[t.length - 1] : ''
+          if (lastId) setActiveRailId(current => current === lastId ? current : lastId)
+        }
+      },
+    })
+  }, [animateScrollTo])
 
   // 贴底滚动必须在 paint 前执行（useLayoutEffect）：finalize 切换完成态行件的同一帧，
   // DOM 布局已含新增的 actions/文件汇总（高度突变），若在 paint 后（useEffect）才滚动，
@@ -3422,7 +3601,9 @@ const programmaticScrollRef = useRef(false)
     let raf = 0
     const pin = () => {
       const el = chatScrollRef.current
-      if (el && followingRef.current) {
+      // 滚动动画进行中不抢滚动控制权：直接赋值 scrollTop 会打断补间动画，
+      // 表现为「点击轨道点后上下抖动 / 停在半路」。动画由 animateScrollTo 收尾后恢复贴底。
+      if (el && followingRef.current && !railAnimatingRef.current && Date.now() >= smoothScrollUntilRef.current) {
         programmaticScrollRef.current = true
         el.scrollTop = el.scrollHeight
       }
@@ -3477,7 +3658,7 @@ const programmaticScrollRef = useRef(false)
       .replace(/【\d+.*?】/g, '')
       .replace(/\s+/g, ' ')
       .trim()
-}
+  }
 
   const updateActiveRailItem = useCallback(() => {
     const viewport = chatScrollRef.current
@@ -3498,21 +3679,23 @@ const programmaticScrollRef = useRef(false)
       return
     }
 
-    const viewportCenter = viewportRect.top + viewportRect.height / 2
-    let nearestId = targets[0]?.[0] ?? ''
-    let nearestDistance = Number.POSITIVE_INFINITY
-
+    // ── 判定基准：视口「上沿参考线」之前最后一条用户提问 ──
+    // 轨道点 = 用户提问索引（模型输出不入表），故语义不是「中心最近」，而是
+    // 「当前阅读进度落在哪一轮提问之后」：取所有 top 已越过参考线（视口上沿下方一点点）
+    // 的提问中，位置最靠下的那条；若一条都没越过，则取第一条。
+    // 用 getBoundingClientRect 在阈值点位的判断对 content-visibility 的估算框不敏感：
+    // 只需比较 top 的高低顺序，不需要真实高度（估算框只影响高度、不影响 top 的单调性）。
+    const refLine = viewportRect.top + Math.min(120, viewportRect.height * 0.25)
+    let chosen = targets[0]?.[0] ?? ''
     for (const [id, element] of targets) {
       const rect = element.getBoundingClientRect()
-      const messageCenter = rect.top + rect.height / 2
-      const distance = Math.abs(messageCenter - viewportCenter)
-      if (distance < nearestDistance) {
-        nearestDistance = distance
-        nearestId = id
+      if (rect.top <= refLine) {
+        chosen = id // 依次覆盖 → 最终得到「已越过参考线的最靠下一条」
+      } else {
+        break // 自上而下有序，一旦越过参考线即可停止
       }
     }
-
-    setActiveRailId(current => current === nearestId ? current : nearestId)
+    setActiveRailId(current => current === chosen ? current : chosen)
   }, [FOLLOW_THRESHOLD])
 
   const syncRailItems = useCallback(() => {
@@ -3528,16 +3711,16 @@ const programmaticScrollRef = useRef(false)
     const nextItems: { id: string; label: string; description?: string; ariaLabel: string }[] = []
 
     for (const node of messageNodes) {
-      let id = railIdRef.current.get(node)
-      if (!id) {
-        railIdCounterRef.current += 1
-        id = `msg-rail-${railIdCounterRef.current}`
-        railIdRef.current.set(node, id)
-      }
-      targets.set(id, node)
+      // 每条消息都生成一个点（用户气泡 + 模型气泡各一个）——用于对比验证是否卡顿。
       const originalIndex = nodeIndexMap.get(node) ?? 0
       const msg = messages[originalIndex]
       const from = node.dataset.from ?? 'conversation'
+      // rail id 直接复用消息的稳定 id（消息行以 key={msg.id} 渲染，DOM 节点会跨渲染复用）。
+      // 旧实现用「DOM 节点 → 自增 id」的 WeakMap：节点被 React 复用（增删/编辑重发/压缩历史）时，
+      // 绑定在节点上的旧 id 会落到另一条消息上，导致点的预览文本与实际消息错位/看似重复渲染。
+      // 用 msg.id 作为 key，天然与消息一一对应，且稳定唯一。
+      const id = msg?.id ?? `msg-rail-idx-${originalIndex}`
+      targets.set(id, node)
       const preview = msg ? getMessagePreview(msg, messages, originalIndex) : { label: from, description: undefined }
       nextItems.push({
         id,
@@ -3548,7 +3731,24 @@ const programmaticScrollRef = useRef(false)
     }
 
     railTargetsRef.current = targets
-    setRailItems(nextItems)
+    // 只在「条目内容真正变化」时才 setState：滚动动画期间 syncRailItems 会被每帧调用，
+    // 若无条件 setRailItems(新数组引用) 会触发整条 rail 每帧重渲染（16 个点 + 预览文本
+    // 每帧重算），造成可见的掉帧/顿挫。用内容比对跳过无意义的渲染。
+    setRailItems(prev => {
+      if (prev.length === nextItems.length) {
+        let same = true
+        for (let i = 0; i < nextItems.length; i += 1) {
+          const a = prev[i]
+          const b = nextItems[i]
+          if (a.id !== b.id || a.label !== b.label || a.description !== b.description || a.ariaLabel !== b.ariaLabel) {
+            same = false
+            break
+          }
+        }
+        if (same) return prev // 引用不变 → React 跳过渲染
+      }
+      return nextItems
+    })
     setRailOverflowing(viewport.scrollHeight > viewport.clientHeight + 1 && nextItems.length > 1)
   }, [activeSession?.messages])
 
@@ -3565,26 +3765,64 @@ const programmaticScrollRef = useRef(false)
     const target = railTargetsRef.current.get(item.id)
     if (!viewport || !target) return
 
-    const lastId = railItems.at(-1)?.id
-    followingRef.current = false
-    const viewportRect = viewport.getBoundingClientRect()
-    const targetRect = target.getBoundingClientRect()
-    const top = viewport.scrollTop + targetRect.top - viewportRect.top - (viewport.clientHeight - targetRect.height) / 2
-    if (item.id === lastId) {
-      followingRef.current = true
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' })
-    } else {
-      viewport.scrollTo({ top, behavior: 'smooth' })
+    // 每条消息一个点。点击一律把该消息滚到「视口顶部附近」（提问在上、回答在下方展开，
+    // 比居中更符合阅读习惯）。唯一例外：末颗点即最后一条消息 → 等同贴底。
+    const liveIds = [...railTargetsRef.current.keys()]
+    const isLast = liveIds.length > 0 && liveIds[liveIds.length - 1] === item.id
+    const allMsgNodes = viewport.querySelectorAll<HTMLElement>('[data-slot="message"]')
+    const lastMsgNode = allMsgNodes.length > 0 ? allMsgNodes[allMsgNodes.length - 1] : null
+    if (isLast && lastMsgNode === target) {
+      // 末颗且它就是最后一条消息 → 等同贴底，复用统一出口（含 following/锚定处理）
+      scrollToBottom(true, true)
+      setActiveRailId(item.id)
+      scheduleRailSync()
+      return
     }
+    // 跳向某条用户提问：显式进入离底态（露出“回到底部”按钮）。
+    // 与「跳到底部」共用同一个 animateScrollTo → 上下滑动动画速度/缓动完全一致。
+    followingRef.current = false
+    atBottomRef.current = false
+    setAtBottom(false)
+    const prevAnchor = viewport.style.overflowAnchor
+    viewport.style.overflowAnchor = 'none'
+    smoothScrollUntilRef.current = Date.now() + 1400
+    // 目标位置每帧重算：消息高度可能因懒渲染变化，重算可保证最终精确落在目标处。
+    // 用「不变式」求目标的绝对内容偏移：contentTop = scrollTop + (tgtRect.top - viewRect.top)。
+    // 该值不随滚动变化（下滚 δ 时两 rect.top 同步减 δ、scrollTop 加 δ，互相抵消），
+    // 因此不会出现「目标跟着视口跑」的自我引用问题；只在内容高度变化时更新。
+    // 对齐策略：把用户提问滚到「视口顶部稍下方」——提问在上、模型回答在下方依次展开，
+    // 符合「按提问索引跳转」的阅读习惯（居中对齐会让提问悬在中间、下方留白）。
+    const RAIL_TOP_GAP = 12
+    const computeTop = () => {
+      const cur = chatScrollRef.current
+      const tgt = railTargetsRef.current.get(item.id)
+      if (!cur || !tgt) return cur?.scrollTop ?? viewport.scrollTop
+      const vRect = cur.getBoundingClientRect()
+      const tRect = tgt.getBoundingClientRect()
+      const contentTop = cur.scrollTop + (tRect.top - vRect.top) // 目标的绝对内容偏移（滚动不变）
+      const raw = contentTop - RAIL_TOP_GAP
+      const maxTop = cur.scrollHeight - cur.clientHeight
+      return Math.max(0, Math.min(maxTop, raw))
+    }
+    animateScrollTo(viewport, computeTop, {
+      maxDuration: 900,
+      onDone: () => {
+        const cur = chatScrollRef.current
+        if (cur) cur.style.overflowAnchor = prevAnchor
+        smoothScrollUntilRef.current = 0
+        scheduleRailSync()
+      },
+    })
     setActiveRailId(item.id)
     scheduleRailSync()
-  }, [railItems, scheduleRailSync])
+  }, [animateScrollTo, scheduleRailSync, scrollToBottom])
 
   useEffect(() => {
     const viewport = chatScrollRef.current
     if (!viewport) return
     let raf = 0
     const onScroll = () => {
+      markRailScrolling()
       cancelAnimationFrame(raf)
       raf = requestAnimationFrame(() => {
         scheduleRailSync()
@@ -3596,7 +3834,7 @@ const programmaticScrollRef = useRef(false)
       viewport.removeEventListener('scroll', onScroll)
       cancelAnimationFrame(raf)
     }
-  }, [scheduleRailSync, updateActiveRailItem])
+  }, [scheduleRailSync, updateActiveRailItem, markRailScrolling])
 
   useEffect(() => {
     const viewport = chatScrollRef.current
@@ -3619,6 +3857,11 @@ const programmaticScrollRef = useRef(false)
       resizeObserver?.disconnect()
     }
   }, [scheduleRailSync])
+
+  // 卸载时清理轨道滚动节流定时器，避免卸载后 setState
+  useEffect(() => () => {
+    if (railScrollIdleTimerRef.current) window.clearTimeout(railScrollIdleTimerRef.current)
+  }, [])
 
   // 测量输入框区域高度，写入 CSS 变量，使浮动按钮精确浮在输入框上方
   useEffect(() => {
@@ -4332,10 +4575,10 @@ const programmaticScrollRef = useRef(false)
     // pi 引擎：中止 pi session
     if (piReadyRef.current.ready) {
       const sid = `pi-${piReadyRef.current.sid}`
-      window.api.piAgent.abort(sid).catch(() => {})
+      window.api.piAgent.abort(sid).catch(() => { })
       // 清空 steer/followUp 队列，避免 abort 后队列自动续跑；
       // 重置 prevQueue 使随后 SDK 的 queue_update（移除条目）不被误判为「已执行」而补写历史
-      window.api.piAgent.clearQueue(sid).catch(() => {})
+      window.api.piAgent.clearQueue(sid).catch(() => { })
       followUpQueueRef.current = []
       prevQueueRef.current = { followUp: [] }
       setQueueInfo({ followUp: [] })
@@ -4950,10 +5193,12 @@ const programmaticScrollRef = useRef(false)
     let textSinceLastTool = false
     const buildSegs = (): NonNullable<AgentMessage['segments']> =>
       liveSegs.map(s => s.kind === 'tools'
-        ? { kind: 'tools', toolCalls: s.ids
+        ? {
+          kind: 'tools', toolCalls: s.ids
             .map(id => toolCalls.find(t => t.id === id))
             .filter((t): t is NonNullable<AgentMessage['toolCalls']>[number] => !!t),
-            ...(s.durationMs != null ? { durationMs: s.durationMs } : {}) }
+          ...(s.durationMs != null ? { durationMs: s.durationMs } : {})
+        }
         : s.kind === 'think'
           ? { kind: 'think', content: s.content, ...(s.durationMs != null ? { durationMs: s.durationMs } : {}) }
           : { kind: 'text', content: s.content })
@@ -5076,7 +5321,7 @@ const programmaticScrollRef = useRef(false)
           setTaskPanelCollapsed(false)
           setTaskCardClosing(false)
           try {
-            const args = JSON.parse(tc.args) as { title?: string; merge?: boolean; todos?: Array<{ id?: string; [k: string]: unknown }> }
+            const args = JSON.parse(tc.args) as { title?: string; merge?: boolean; todos?: Array<{ id?: string;[k: string]: unknown }> }
             if (args.todos?.length) {
               if (typeof args.title === 'string' && args.title.trim()) {
                 setPlanTitle(args.title.trim())
@@ -5255,10 +5500,10 @@ const programmaticScrollRef = useRef(false)
       setStreamKind('idle')
       setCurToolName('')
       setThinkDone(true)
-// 停止/失败兜底：未完成工具（待执行/执行中）标记为已完成（失败），
-        // 避免卡片永远停在「待执行/写入中」——参考项目同款：中止时工具卡收敛为终态
-        closeOpenThink()
-        if (toolCalls.some(t => (t.status ?? 'pending') !== 'done')) {
+      // 停止/失败兜底：未完成工具（待执行/执行中）标记为已完成（失败），
+      // 避免卡片永远停在「待执行/写入中」——参考项目同款：中止时工具卡收敛为终态
+      closeOpenThink()
+      if (toolCalls.some(t => (t.status ?? 'pending') !== 'done')) {
         for (const t of toolCalls) {
           if ((t.status ?? 'pending') !== 'done') {
             t.status = 'done'
@@ -5720,7 +5965,7 @@ const programmaticScrollRef = useRef(false)
     sendAnnotationsToAgent(formatAnnotations(htmlAnnotations))
     setHtmlAnnotations([])
     const win = htmlPreviewRef.current?.contentWindow as (Window & { __agentAnnotate?: any }) | null
-    try { win?.__agentAnnotate?.clear() } catch {}
+    try { win?.__agentAnnotate?.clear() } catch { }
   }, [htmlAnnotations, sendAnnotationsToAgent])
 
   // ── HTML 预览 iframe 的 UI 注释（同源 iframe：直接读写 contentWindow）──
@@ -5732,24 +5977,24 @@ const programmaticScrollRef = useRef(false)
     if (!HTML_ANNOTATE_ENABLED) return
     const win = htmlPreviewRef.current?.contentWindow as (Window & { __agentAnnotate?: any }) | null
     if (!win) return
-    try { (win as any).eval(AGENT_ANNOTATE_SCRIPT) } catch {}
+    try { (win as any).eval(AGENT_ANNOTATE_SCRIPT) } catch { }
   }, [])
 
   const toggleHtmlAnnotate = useCallback(() => {
     const win = htmlPreviewRef.current?.contentWindow as (Window & { __agentAnnotate?: any }) | null
-    try { win?.__agentAnnotate?.toggle() } catch {}
+    try { win?.__agentAnnotate?.toggle() } catch { }
   }, [])
 
   const clearHtmlAnnotations = useCallback(() => {
     setHtmlAnnotations([])
     const win = htmlPreviewRef.current?.contentWindow as (Window & { __agentAnnotate?: any }) | null
-    try { win?.__agentAnnotate?.clear() } catch {}
+    try { win?.__agentAnnotate?.clear() } catch { }
   }, [])
 
   const removeHtmlAnnotation = useCallback((id: string) => {
     setHtmlAnnotations(prev => prev.filter(a => a.id !== id))
     const win = htmlPreviewRef.current?.contentWindow as (Window & { __agentAnnotate?: any }) | null
-    try { win?.__agentAnnotate?.removeById(id) } catch {}
+    try { win?.__agentAnnotate?.removeById(id) } catch { }
   }, [])
 
   // HTML 预览 iframe 的注释状态：同源 iframe 用 postMessage 事件驱动推送
@@ -5872,23 +6117,23 @@ const programmaticScrollRef = useRef(false)
           {/* Prefill 进度条：复用「模型运行数据」面板的同一数据源（modelMetrics[].prefillProgress），
               自订阅指标，仅在 prefill 进行中（pp < 1）显示，完成后自动消失。 */}
           <div className="agent-code-topbar-right-scroll">
-          <AgentPrefillBar />
-          <TopbarBtn
-            btnRef={condenseBtnRef}
-            active={condenseOpen}
-            onClick={() => setCondenseOpen(v => !v)}
-            icon={condensing ? LoaderIcon : BrainIcon}
-            iconClassName={condensing ? 'spin' : undefined}
-          >压缩历史</TopbarBtn>
-          <TopbarBtn btnRef={promptBtnRef} active={promptModalOpen} onClick={openPromptModal} icon={SlidersHorizontalIcon}>提示词</TopbarBtn>
-          <TopbarBtn btnRef={kbBtnRef} active={kbModalOpen} onClick={openKbModal} icon={Database} title="知识库列表（智能体可检索全部库）">知识库</TopbarBtn>
-          <TopbarBtn btnRef={auditBtnRef} active={auditOpen} onClick={() => setAuditOpen(v => !v)} icon={ActivityIcon}>审计</TopbarBtn>
-          <TopbarBtn btnRef={trajBtnRef} active={trajOpen} onClick={() => setTrajOpen(v => !v)} icon={RouteIcon}>轨迹</TopbarBtn>
-          <TopbarBtn btnRef={debugBtnRef} active={debugOpen} onClick={() => setDebugOpen(v => !v)} icon={Bug}>调试</TopbarBtn>
-          <TopbarBtn btnRef={memoryBtnRef} active={memoryOpen} onClick={() => setMemoryOpen(v => !v)} icon={BookOpenIcon}>记忆</TopbarBtn>
-          <TopbarBtn active={rightPanelMode === 'diff'} onClick={toggleGitDiff} icon={GitBranchIcon}>变更</TopbarBtn>
-          <TopbarBtn active={rightPanelMode === 'browser'} onClick={() => { setRightPanelMode(m => m === 'browser' ? 'files' : 'browser'); if (!treeOpen) setTreeOpen(true) }} icon={GlobeIcon}>浏览器</TopbarBtn>
-          <TopbarBtn active={rightPanelMode === 'terminal'} onClick={() => { setRightPanelMode(m => m === 'terminal' ? 'files' : 'terminal'); if (!treeOpen) setTreeOpen(true) }} icon={TerminalIcon}>终端</TopbarBtn>
+            <AgentPrefillBar />
+            <TopbarBtn
+              btnRef={condenseBtnRef}
+              active={condenseOpen}
+              onClick={() => setCondenseOpen(v => !v)}
+              icon={condensing ? LoaderIcon : BrainIcon}
+              iconClassName={condensing ? 'spin' : undefined}
+            >压缩历史</TopbarBtn>
+            <TopbarBtn btnRef={promptBtnRef} active={promptModalOpen} onClick={openPromptModal} icon={SlidersHorizontalIcon}>提示词</TopbarBtn>
+            <TopbarBtn btnRef={kbBtnRef} active={kbModalOpen} onClick={openKbModal} icon={Database} title="知识库列表（智能体可检索全部库）">知识库</TopbarBtn>
+            <TopbarBtn btnRef={auditBtnRef} active={auditOpen} onClick={() => setAuditOpen(v => !v)} icon={ActivityIcon}>审计</TopbarBtn>
+            <TopbarBtn btnRef={trajBtnRef} active={trajOpen} onClick={() => setTrajOpen(v => !v)} icon={RouteIcon}>轨迹</TopbarBtn>
+            <TopbarBtn btnRef={debugBtnRef} active={debugOpen} onClick={() => setDebugOpen(v => !v)} icon={Bug}>调试</TopbarBtn>
+            <TopbarBtn btnRef={memoryBtnRef} active={memoryOpen} onClick={() => setMemoryOpen(v => !v)} icon={BookOpenIcon}>记忆</TopbarBtn>
+            <TopbarBtn active={rightPanelMode === 'diff'} onClick={toggleGitDiff} icon={GitBranchIcon}>变更</TopbarBtn>
+            <TopbarBtn active={rightPanelMode === 'browser'} onClick={() => { setRightPanelMode(m => m === 'browser' ? 'files' : 'browser'); if (!treeOpen) setTreeOpen(true) }} icon={GlobeIcon}>浏览器</TopbarBtn>
+            <TopbarBtn active={rightPanelMode === 'terminal'} onClick={() => { setRightPanelMode(m => m === 'terminal' ? 'files' : 'terminal'); if (!treeOpen) setTreeOpen(true) }} icon={TerminalIcon}>终端</TopbarBtn>
           </div>
           <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} style={{ marginTop: 0, width: 28, height: 28 }}>
             {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
@@ -5978,7 +6223,7 @@ const programmaticScrollRef = useRef(false)
         </div>
 
         <div className="agent-code-chat">
-            <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll} onWheel={pauseFollow} onTouchMove={pauseFollow} onMouseUp={handleMessagesMouseUp}>
+          <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll} onWheel={pauseFollow} onTouchMove={pauseFollow} onMouseUp={handleMessagesMouseUp}>
             {condensing && (
               <div className="agent-condensing"><LoaderIcon size={13} className="spin" /> 正在压缩历史…</div>
             )}
@@ -6014,7 +6259,7 @@ const programmaticScrollRef = useRef(false)
               // 它订阅 liveAgentMsg 切片（实时内容不落 projects store，整页不随之重渲染）。
               const streamingMsg = streamingHere && isLast && msg.role === 'assistant'
               return (
-                 <div key={msg.id} className={`chat-msg chat-msg-${msg.role}`} data-slot="message" data-from={msg.role}>
+                <div key={msg.id} className={`chat-msg chat-msg-${msg.role}`} data-slot="message" data-from={msg.role}>
                   {msg.role !== 'user' && (
                     <div className="chat-msg-avatar"><Bot size={14} /></div>
                   )}
@@ -6084,12 +6329,14 @@ const programmaticScrollRef = useRef(false)
             })}
             <div ref={msgEndRef} />
           </div>
-          <div className={`agent-chat-rail${railOverflowing && railItems.length > 1 ? ' agent-chat-rail--visible' : ''}`}>
+          <div className={`agent-chat-rail${railOverflowing && railItems.length > 1 ? ' agent-chat-rail--visible' : ''}${railScrolling ? ' agent-chat-rail--scrolling' : ''}`}>
             {(() => {
               const activeIndex = railItems.findIndex(it => it.id === activeRailId)
               return railItems.map((item, index) => {
                 const distance = activeIndex >= 0 ? Math.abs(index - activeIndex) : 0
-                const delay = distance * 20
+                // 滚动期间不写波次延迟：此时过渡已被 --scrolling 类禁用，延迟无意义，
+                // 且能避免每个点的内联 style 随 activeIndex 每次变化而重建。
+                const delay = railScrolling ? 0 : distance * 20
                 return (
                   <button
                     key={item.id}
@@ -6097,7 +6344,7 @@ const programmaticScrollRef = useRef(false)
                     onClick={() => scrollToRailItem(item)}
                     aria-label={item.ariaLabel}
                     type="button"
-                    style={{ '--rail-wave-delay': `${delay}ms` } as React.CSSProperties}
+                    style={railScrolling ? undefined : ({ '--rail-wave-delay': `${delay}ms` } as React.CSSProperties)}
                   >
                     <span className="agent-chat-rail-dot" />
                     <span className="agent-chat-rail-preview">
@@ -6298,7 +6545,7 @@ const programmaticScrollRef = useRef(false)
           {/* 滚动到底部浮动按钮：仅当消息列表较长且用户已向上滚动（非贴底）时显示。
               置于 .agent-code-chat（非滚动容器）内，用 --chat-input-h 变量精确浮在输入框上方。 */}
           {!atBottom && (
-            <button className="agent-code-scroll-bottom-btn" onClick={() => scrollToBottom(true)} >
+            <button className="agent-code-scroll-bottom-btn" onClick={() => scrollToBottom(true, true)} >
               <ChevronDownIcon size={18} />
             </button>
           )}
@@ -6431,15 +6678,15 @@ const programmaticScrollRef = useRef(false)
                 {slashList.length === 0 ? (
                   <div className="chat-at-empty">无匹配命令</div>
                 ) : (
-                   slashList.map((c, i) => (
-                     <button
-                       className={`chat-slash-item${i === slashIdx ? ' active' : ''}`}
-                       key={c.name}
-                       ref={i === slashIdx ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
-                       onMouseEnter={() => setSlashIdx(i)}
-                       onClick={() => onPickSlash(c)}
-                       title={c.template}
-                     >
+                  slashList.map((c, i) => (
+                    <button
+                      className={`chat-slash-item${i === slashIdx ? ' active' : ''}`}
+                      key={c.name}
+                      ref={i === slashIdx ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
+                      onMouseEnter={() => setSlashIdx(i)}
+                      onClick={() => onPickSlash(c)}
+                      title={c.template}
+                    >
                       <span className="chat-slash-name">/{c.name}</span>
                       <span className="chat-slash-desc">{c.description}</span>
                     </button>
@@ -6498,7 +6745,7 @@ const programmaticScrollRef = useRef(false)
                       {card.status === 'running' ? <CircleStopIcon size={12} /> : <PlayIcon size={12} />}
                     </button>
                   </div>
-</div>
+                </div>
               ))}
             </div>
             {logoMenu && (() => {
@@ -6616,7 +6863,7 @@ const programmaticScrollRef = useRef(false)
                   })()}
                 </div>
                 {/* ③ 底部按钮行：文件目录 + 模型列表（左）… 发送（右） */}
-                  <div className="chat-input-tools">
+                <div className="chat-input-tools">
                   <AniIconButton className="chat-upload-btn" icon={PlusIcon} size={14} onClick={() => fileInputRef.current?.click()} title="添加附件" />
                   <AniIconButton ref={attachBtnRef} className={`chat-attach-btn${filePickerOpen ? ' active' : ''}`} icon={FolderOpenIcon} size={14} onClick={toggleFilePicker} title="选择文件" />
                   <AniIconButton className={`chat-mic-btn${listening || micTranscribing ? ' listening' : ''}`} icon={MicIcon} size={14} onClick={toggleListen} disabled={micTranscribing} title={micTranscribing ? '识别中…' : listening ? '停止录音' : '语音输入'} />
@@ -6729,46 +6976,46 @@ const programmaticScrollRef = useRef(false)
                             {l}
                           </li>
                         ))}
-                       </ul>
-                      )}
-                    </div>
-                    <div
-                      ref={searchMenuRef}
-                      className={`chat-search-switch${searchMenuOpen ? ' open' : ''}`}
+                      </ul>
+                    )}
+                  </div>
+                  <div
+                    ref={searchMenuRef}
+                    className={`chat-search-switch${searchMenuOpen ? ' open' : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className="chat-search-trigger"
+                      disabled={loading}
+                      onClick={() => setSearchMenuOpen(v => !v)}
                     >
-                      <button
-                        type="button"
-                        className="chat-search-trigger"
-                        disabled={loading}
-                        onClick={() => setSearchMenuOpen(v => !v)}
-                      >
-                        {!searchEnabled ? (
-                          <SearchX size={14} />
-                        ) : searchProvider === 'bing' ? (
-                          <Globe size={14} />
-                        ) : (
-                          <Search size={14} />
-                        )}
-                        <span className="chat-search-label">{!searchEnabled ? '搜索关' : searchProvider === 'bing' ? '必应' : 'DDG'}</span>
-                      </button>
-                      {searchMenuOpen && (
-                        <ul className="chat-search-menu">
-                          <li
-                            className={`chat-search-item${!searchEnabled ? ' active' : ''}`}
-                            onClick={() => applySearchChange(false, searchProvider)}
-                          ><SearchX size={12} />关闭网络搜索</li>
-                          <li
-                            className={`chat-search-item${searchEnabled && searchProvider === 'bing' ? ' active' : ''}`}
-                            onClick={() => applySearchChange(true, 'bing')}
-                          ><Globe size={12} />必应 Bing（国内）</li>
-                          <li
-                            className={`chat-search-item${searchEnabled && searchProvider === 'ddg' ? ' active' : ''}`}
-                            onClick={() => applySearchChange(true, 'ddg')}
-                          ><Search size={12} />DuckDuckGo</li>
-                        </ul>
+                      {!searchEnabled ? (
+                        <SearchX size={14} />
+                      ) : searchProvider === 'bing' ? (
+                        <Globe size={14} />
+                      ) : (
+                        <Search size={14} />
                       )}
-                    </div>
-                    {loading ? (
+                      <span className="chat-search-label">{!searchEnabled ? '搜索关' : searchProvider === 'bing' ? '必应' : 'DDG'}</span>
+                    </button>
+                    {searchMenuOpen && (
+                      <ul className="chat-search-menu">
+                        <li
+                          className={`chat-search-item${!searchEnabled ? ' active' : ''}`}
+                          onClick={() => applySearchChange(false, searchProvider)}
+                        ><SearchX size={12} />关闭网络搜索</li>
+                        <li
+                          className={`chat-search-item${searchEnabled && searchProvider === 'bing' ? ' active' : ''}`}
+                          onClick={() => applySearchChange(true, 'bing')}
+                        ><Globe size={12} />必应 Bing（国内）</li>
+                        <li
+                          className={`chat-search-item${searchEnabled && searchProvider === 'ddg' ? ' active' : ''}`}
+                          onClick={() => applySearchChange(true, 'ddg')}
+                        ><Search size={12} />DuckDuckGo</li>
+                      </ul>
+                    )}
+                  </div>
+                  {loading ? (
                     <AniIconButton className="btn btn-ghost chat-stop-btn" icon={CircleStopIcon} size={16} onClick={handleStop} title="停止" />
                   ) : (
                     <AniIconButton className="btn btn-primary chat-send-btn" icon={SendIcon} size={16} onClick={() => handleSend()} disabled={(!input.trim() && attachedFiles.length === 0 && refChips.length === 0 && codeSnippets.length === 0) || !apiBaseUrl} title="发送" />
@@ -6778,11 +7025,11 @@ const programmaticScrollRef = useRef(false)
             </div>
             <input ref={fileInputRef} type="file" multiple hidden onChange={handleAttachmentSelect} />
           </div>
-         </div>
+        </div>
 
-          {/* 手柄与面板同包在槽内：手柄 absolute 以槽为包含块、left:0 锚定面板真实左缘，
+        {/* 手柄与面板同包在槽内：手柄 absolute 以槽为包含块、left:0 锚定面板真实左缘，
               不再从 body 右缘用 --agent-right-width 镜像推算（变量与面板实际宽度脱节时会脱锚漂移） */}
-          <div className={`agent-code-right-slot${rightPanelMode !== 'files' ? ' panel-resizable' : ''}`}>
+        <div className={`agent-code-right-slot${rightPanelMode !== 'files' ? ' panel-resizable' : ''}`}>
           <div
             className={`agent-code-right-edge-handle${rightResizing ? ' agent-code-resize-handle--active' : ''}${rightPanelMode === 'files' || !treeOpen ? ' hidden' : ''}`}
             onPointerDown={startRightResize}
@@ -6799,212 +7046,212 @@ const programmaticScrollRef = useRef(false)
           >
             <EllipsisVerticalIcon ref={previewPanelHandleIconRef} size={16} className="nav-animate-icon agent-resize-handle-icon" />
           </div>
-         <div className={`agent-code-right-collapser ${rightPanelMode !== 'files' ? 'panel-resizable' : ''} ${treeOpen ? '' : 'collapsed'}`}>
+          <div className={`agent-code-right-collapser ${rightPanelMode !== 'files' ? 'panel-resizable' : ''} ${treeOpen ? '' : 'collapsed'}`}>
             <div className={`agent-code-right-body${rightPanelMode !== 'files' ? ' tree-collapsed' : ''}`}>
               <div className={`agent-code-tree${rightPanelMode !== 'files' ? ' hidden' : ''}`}>
                 <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={insertAtCursor} onFilesChanged={onWorkspaceFilesChanged} />
-             </div>
-             <div className={`agent-browser-wrap ${rightPanelMode === 'browser' ? '' : 'hidden'}`}>
-               <AgentBrowser visible={rightPanelMode === 'browser' && treeOpen} onSendToAgent={sendAnnotationsToAgent} />
-             </div>
-             {/* 内嵌终端：首次点开后常驻（含 App.tsx 终端视图条件渲染配合，
+              </div>
+              <div className={`agent-browser-wrap ${rightPanelMode === 'browser' ? '' : 'hidden'}`}>
+                <AgentBrowser visible={rightPanelMode === 'browser' && treeOpen} onSendToAgent={sendAnnotationsToAgent} />
+              </div>
+              {/* 内嵌终端：首次点开后常驻（含 App.tsx 终端视图条件渲染配合，
                  同一 session 的 xterm 实例任意时刻只 attach 到一个 DOM 容器）；
                  面板级 files/browser 切换仅 hidden 不卸载，xterm 不重建、不触发 replay 回放大段 backlog（避免界面卡顿） */}
-             {terminalMounted && currentView === 'agent-code' && (
-               <div className={`agent-browser-wrap${rightPanelMode === 'terminal' ? '' : ' hidden'}`}>
-                 <div className="agent-terminal">
-                   <TerminalView store={useAgentTerminalStore} />
-                 </div>
-               </div>
-             )}
+              {terminalMounted && currentView === 'agent-code' && (
+                <div className={`agent-browser-wrap${rightPanelMode === 'terminal' ? '' : ' hidden'}`}>
+                  <div className="agent-terminal">
+                    <TerminalView store={useAgentTerminalStore} />
+                  </div>
+                </div>
+              )}
               <div className={`agent-code-diff-wrap${rightPanelMode === 'diff' ? '' : ' hidden'}`}>
                 <AgentGitDiff data={gitChanges} loading={gitLoading} onRefresh={refreshGitChanges} onOpenFile={openFileAtLine} workspaceDir={activeProject.workspaceDir} focusPath={gitFocusPath} onFocusHandled={onGitFocusHandled} />
               </div>
-                <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''} ${rightPanelMode === 'browser' || rightPanelMode === 'terminal' || rightPanelMode === 'diff' ? 'hidden' : ''}`}>
+              <div className={`agent-code-preview-group ${openTabs.length === 0 ? 'collapsed' : ''} ${rightPanelMode === 'browser' || rightPanelMode === 'terminal' || rightPanelMode === 'diff' ? 'hidden' : ''}`}>
                 <div className="agent-code-preview">
-                <div className="agent-code-preview-header">
-                  <div className="agent-code-preview-tabs">
-                    {openTabs.map((t, tabIdx) => (
-                      <div
-                        key={t.path}
-                        className={`agent-code-preview-tab ac-icon-btn ${t.path === activeTabPath ? 'active' : ''}`}
-                        onClick={() => setActiveTabPath(t.path)}
-                        onContextMenu={(e) => { e.preventDefault(); setTabMenu({ x: e.clientX, y: e.clientY, path: t.path }) }}
-                        onMouseDown={(e) => {
-                          const el = e.currentTarget
-                          el.setAttribute('draggable', 'true')
-                          const cleanup = () => { el.removeAttribute('draggable'); document.removeEventListener('mouseup', cleanup) }
-                          document.addEventListener('mouseup', cleanup)
-                        }}
-                        onDragStart={(e) => { e.dataTransfer.setData('text/x-tab-idx', String(tabIdx)); e.dataTransfer.effectAllowed = 'move' }}
-                        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
-                        onDrop={(e) => {
-                          e.preventDefault()
-                          const fromIdx = Number(e.dataTransfer.getData('text/x-tab-idx'))
-                          if (isNaN(fromIdx) || fromIdx === tabIdx) return
-                          setOpenTabs(prev => {
-                            const next = [...prev]
-                            const [moved] = next.splice(fromIdx, 1)
-                            next.splice(tabIdx, 0, moved)
-                            return next
-                          })
-                        }}
-                        onDragEnd={(e) => { (e.currentTarget as HTMLElement).removeAttribute('draggable') }}
-                      >
-                        <span className="agent-code-preview-tab-name">{t.name}</span>
-                        <button
-                          className="agent-code-preview-tab-close"
-                          onClick={(e) => { e.stopPropagation(); closeTab(t.path) }}
+                  <div className="agent-code-preview-header">
+                    <div className="agent-code-preview-tabs">
+                      {openTabs.map((t, tabIdx) => (
+                        <div
+                          key={t.path}
+                          className={`agent-code-preview-tab ac-icon-btn ${t.path === activeTabPath ? 'active' : ''}`}
+                          onClick={() => setActiveTabPath(t.path)}
+                          onContextMenu={(e) => { e.preventDefault(); setTabMenu({ x: e.clientX, y: e.clientY, path: t.path }) }}
+                          onMouseDown={(e) => {
+                            const el = e.currentTarget
+                            el.setAttribute('draggable', 'true')
+                            const cleanup = () => { el.removeAttribute('draggable'); document.removeEventListener('mouseup', cleanup) }
+                            document.addEventListener('mouseup', cleanup)
+                          }}
+                          onDragStart={(e) => { e.dataTransfer.setData('text/x-tab-idx', String(tabIdx)); e.dataTransfer.effectAllowed = 'move' }}
+                          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
+                          onDrop={(e) => {
+                            e.preventDefault()
+                            const fromIdx = Number(e.dataTransfer.getData('text/x-tab-idx'))
+                            if (isNaN(fromIdx) || fromIdx === tabIdx) return
+                            setOpenTabs(prev => {
+                              const next = [...prev]
+                              const [moved] = next.splice(fromIdx, 1)
+                              next.splice(tabIdx, 0, moved)
+                              return next
+                            })
+                          }}
+                          onDragEnd={(e) => { (e.currentTarget as HTMLElement).removeAttribute('draggable') }}
                         >
-                          <XIcon size={10} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                  <span className="agent-code-preview-actions">
-                    {isPreviewHtml && (
-                      <button
-                        className="btn btn-xs ac-icon-btn agent-code-preview-htmltoggle"
-                        onClick={() => setHtmlViewMode(m => m === 'preview' ? 'source' : 'preview')}
-                        title={htmlViewMode === 'preview' ? '查看源码' : '渲染预览'}
-                      >
-                        {htmlViewMode === 'preview' ? <CodeIcon size={12} /> : <EyeIcon size={12} />}
-                      </button>
-                    )}
-                    {isPreviewMarkdown && (
-                      <button
-                        className="btn btn-xs ac-icon-btn agent-code-preview-mdtoggle"
-                        onClick={() => setMdViewMode(m => m === 'preview' ? 'source' : 'preview')}
-                        title={mdViewMode === 'preview' ? '查看源码' : '渲染预览'}
-                      >
-                        {mdViewMode === 'preview' ? <CodeIcon size={12} /> : <EyeIcon size={12} />}
-                      </button>
-                    )}
-                    {/* HTML 预览的 UI 注释：点击预览元素添加注释（发送给 Agent 自动定位修改） */}
-                    {isPreviewHtml && htmlViewMode === 'preview' && (
-                      <button
-                        className={`btn btn-xs ac-icon-btn agent-code-preview-annotate${htmlAnnotateActive ? ' active' : ''}`}
-                        onClick={toggleHtmlAnnotate}
-                      >
-                        <MessageSquarePlusIcon size={12} />
-                        {htmlAnnotations.length > 0 && <span className="agent-code-preview-annotate-count">{htmlAnnotations.length}</span>}
-                      </button>
-                    )}
-                    {/* 源码预览编辑：进入/退出编辑态；保存写回文件。
-                        Markdown 在「源码」模式下同样允许编辑（渲染态不可直接编辑）。 */}
-                    {!isPreviewHtml && (!isPreviewMarkdown || mdViewMode === 'source') && activeTab && activeTabPath !== GIT_DIFF_TAB && (
-                      previewEditing ? (
-                        <>
-                          <button className="btn btn-xs ac-icon-btn agent-code-preview-save" onClick={() => { if (previewDraft !== null) savePreviewFile(previewDraft) }} disabled={previewDraft === null || previewDraft === activeTab.content}>
-                            <SaveIcon size={12} /> 保存
+                          <span className="agent-code-preview-tab-name">{t.name}</span>
+                          <button
+                            className="agent-code-preview-tab-close"
+                            onClick={(e) => { e.stopPropagation(); closeTab(t.path) }}
+                          >
+                            <XIcon size={10} />
                           </button>
-                          <button className="btn btn-xs ac-icon-btn" onClick={() => { setPreviewDraft(null); setPreviewEditing(false) }}>
-                            <XIcon size={12} /> 取消
-                          </button>
-                        </>
-                      ) : (
-                        <button className="btn btn-xs ac-icon-btn" onClick={() => setPreviewEditing(true)} title="编辑此文件">
-                          <PencilIcon size={12} />
-                        </button>
-                      )
-                    )}
-                    <button className="btn btn-xs agent-code-preview-close ac-icon-btn" onClick={() => activeTab && closeTab(activeTab.path)} disabled={!activeTab}>
-                      <XIcon size={12} />
-                    </button>
-                  </span>
-                </div>
-                {tabMenu && (() => {
-                  const MENU_W = 160, MENU_H = 140
-                  const x = Math.min(tabMenu.x, window.innerWidth - MENU_W - 8)
-                  const y = Math.min(tabMenu.y, window.innerHeight - MENU_H - 8)
-                  return (
-                    <div ref={tabMenuRef} className="file-tree-ctx-menu" style={{ left: Math.max(8, x), top: Math.max(8, y) }} onContextMenu={(e) => e.preventDefault()}>
-                      <button className="file-tree-ctx-item" onClick={() => { closeTab(tabMenu.path); setTabMenu(null) }}><XIcon size={13} /> 关闭</button>
-                      <button className="file-tree-ctx-item" onClick={() => { closeOtherTabs(tabMenu.path); setTabMenu(null) }}><XIcon size={13} /> 关闭其他</button>
-                      <button className="file-tree-ctx-item" onClick={() => { closeAllTabs(); setTabMenu(null) }}><Trash2Icon size={13} /> 关闭全部</button>
-                      {tabMenu.path !== GIT_DIFF_TAB && (
-                        <button className="file-tree-ctx-item" onClick={() => { navigator.clipboard.writeText(tabMenu.path).catch(() => { }); setTabMenu(null) }}><CopyIcon size={13} /> 复制路径</button>
-                      )}
+                        </div>
+                      ))}
                     </div>
-                  )
-                })()}
-                <div className="agent-code-preview-body">
-                  {!activeTab ? null
-                    : activeTab.loading ? <div className="file-tree-loading">读取中…</div>
-                      : activeTab.error ? <div className="agent-code-preview-error">{activeTab.error}</div>
-                        : activeTab.isImage ? (
-                          activeTab.imageDataUrl
-                            ? <div className="agent-code-preview-image"><img src={activeTab.imageDataUrl} alt={activeTab.name} /></div>
-                            : <div className="agent-code-preview-error">无法预览该图片</div>
+                    <span className="agent-code-preview-actions">
+                      {isPreviewHtml && (
+                        <button
+                          className="btn btn-xs ac-icon-btn agent-code-preview-htmltoggle"
+                          onClick={() => setHtmlViewMode(m => m === 'preview' ? 'source' : 'preview')}
+                          title={htmlViewMode === 'preview' ? '查看源码' : '渲染预览'}
+                        >
+                          {htmlViewMode === 'preview' ? <CodeIcon size={12} /> : <EyeIcon size={12} />}
+                        </button>
+                      )}
+                      {isPreviewMarkdown && (
+                        <button
+                          className="btn btn-xs ac-icon-btn agent-code-preview-mdtoggle"
+                          onClick={() => setMdViewMode(m => m === 'preview' ? 'source' : 'preview')}
+                          title={mdViewMode === 'preview' ? '查看源码' : '渲染预览'}
+                        >
+                          {mdViewMode === 'preview' ? <CodeIcon size={12} /> : <EyeIcon size={12} />}
+                        </button>
+                      )}
+                      {/* HTML 预览的 UI 注释：点击预览元素添加注释（发送给 Agent 自动定位修改） */}
+                      {isPreviewHtml && htmlViewMode === 'preview' && (
+                        <button
+                          className={`btn btn-xs ac-icon-btn agent-code-preview-annotate${htmlAnnotateActive ? ' active' : ''}`}
+                          onClick={toggleHtmlAnnotate}
+                        >
+                          <MessageSquarePlusIcon size={12} />
+                          {htmlAnnotations.length > 0 && <span className="agent-code-preview-annotate-count">{htmlAnnotations.length}</span>}
+                        </button>
+                      )}
+                      {/* 源码预览编辑：进入/退出编辑态；保存写回文件。
+                        Markdown 在「源码」模式下同样允许编辑（渲染态不可直接编辑）。 */}
+                      {!isPreviewHtml && (!isPreviewMarkdown || mdViewMode === 'source') && activeTab && activeTabPath !== GIT_DIFF_TAB && (
+                        previewEditing ? (
+                          <>
+                            <button className="btn btn-xs ac-icon-btn agent-code-preview-save" onClick={() => { if (previewDraft !== null) savePreviewFile(previewDraft) }} disabled={previewDraft === null || previewDraft === activeTab.content}>
+                              <SaveIcon size={12} /> 保存
+                            </button>
+                            <button className="btn btn-xs ac-icon-btn" onClick={() => { setPreviewDraft(null); setPreviewEditing(false) }}>
+                              <XIcon size={12} /> 取消
+                            </button>
+                          </>
+                        ) : (
+                          <button className="btn btn-xs ac-icon-btn" onClick={() => setPreviewEditing(true)} title="编辑此文件">
+                            <PencilIcon size={12} />
+                          </button>
                         )
-                          : isPreviewHtml && htmlViewMode === 'preview' ? (
-                            <>
-                              <iframe
-                                ref={htmlPreviewRef}
-                                className="agent-code-preview-html"
-                                title={activeTab.name}
-                                // 不设 sandbox：预览页常需 localStorage/字体等同源能力，
-                                // 而 allow-scripts+allow-same-origin 的沙箱可被逃逸（Chromium
-                                // 每次挂载都告警），安全上等价于无沙箱。预览内容为用户
-                                // 本地生成的文件，直接同源运行，避免假沙箱告警与功能破坏。
-                                srcDoc={buildHtmlSrcDoc(activeTab.content ?? '', activeTab.path)}
-                                onLoad={injectHtmlAnnotate}
-                              />
-                              {/* UI 注释面板（复用浏览器注释面板样式） */}
-                              {htmlAnnotations.length > 0 && (
-                                <div className="agent-browser-annotations">
-                                  <div className="agent-browser-annotations-head">
-                                    <span>UI 注释（{htmlAnnotations.length}）</span>
-                                    <button className="agent-browser-annotations-clear" onClick={clearHtmlAnnotations}><Trash2Icon size={11} /> 清空</button>
-                                  </div>
-                                  <div className="agent-browser-annotations-list">
-                                    {htmlAnnotations.map(a => (
-                                      <div className="agent-browser-annotations-item" key={a.id}>
-                                        <div className="agent-browser-annotations-note">
-                                          <span className={`agent-ann-kind kind-${a.kind}`}>{ANNOTATION_KIND_LABEL[a.kind]}</span>{a.note}
+                      )}
+                      <button className="btn btn-xs agent-code-preview-close ac-icon-btn" onClick={() => activeTab && closeTab(activeTab.path)} disabled={!activeTab}>
+                        <XIcon size={12} />
+                      </button>
+                    </span>
+                  </div>
+                  {tabMenu && (() => {
+                    const MENU_W = 160, MENU_H = 140
+                    const x = Math.min(tabMenu.x, window.innerWidth - MENU_W - 8)
+                    const y = Math.min(tabMenu.y, window.innerHeight - MENU_H - 8)
+                    return (
+                      <div ref={tabMenuRef} className="file-tree-ctx-menu" style={{ left: Math.max(8, x), top: Math.max(8, y) }} onContextMenu={(e) => e.preventDefault()}>
+                        <button className="file-tree-ctx-item" onClick={() => { closeTab(tabMenu.path); setTabMenu(null) }}><XIcon size={13} /> 关闭</button>
+                        <button className="file-tree-ctx-item" onClick={() => { closeOtherTabs(tabMenu.path); setTabMenu(null) }}><XIcon size={13} /> 关闭其他</button>
+                        <button className="file-tree-ctx-item" onClick={() => { closeAllTabs(); setTabMenu(null) }}><Trash2Icon size={13} /> 关闭全部</button>
+                        {tabMenu.path !== GIT_DIFF_TAB && (
+                          <button className="file-tree-ctx-item" onClick={() => { navigator.clipboard.writeText(tabMenu.path).catch(() => { }); setTabMenu(null) }}><CopyIcon size={13} /> 复制路径</button>
+                        )}
+                      </div>
+                    )
+                  })()}
+                  <div className="agent-code-preview-body">
+                    {!activeTab ? null
+                      : activeTab.loading ? <div className="file-tree-loading">读取中…</div>
+                        : activeTab.error ? <div className="agent-code-preview-error">{activeTab.error}</div>
+                          : activeTab.isImage ? (
+                            activeTab.imageDataUrl
+                              ? <div className="agent-code-preview-image"><img src={activeTab.imageDataUrl} alt={activeTab.name} /></div>
+                              : <div className="agent-code-preview-error">无法预览该图片</div>
+                          )
+                            : isPreviewHtml && htmlViewMode === 'preview' ? (
+                              <>
+                                <iframe
+                                  ref={htmlPreviewRef}
+                                  className="agent-code-preview-html"
+                                  title={activeTab.name}
+                                  // 不设 sandbox：预览页常需 localStorage/字体等同源能力，
+                                  // 而 allow-scripts+allow-same-origin 的沙箱可被逃逸（Chromium
+                                  // 每次挂载都告警），安全上等价于无沙箱。预览内容为用户
+                                  // 本地生成的文件，直接同源运行，避免假沙箱告警与功能破坏。
+                                  srcDoc={buildHtmlSrcDoc(activeTab.content ?? '', activeTab.path)}
+                                  onLoad={injectHtmlAnnotate}
+                                />
+                                {/* UI 注释面板（复用浏览器注释面板样式） */}
+                                {htmlAnnotations.length > 0 && (
+                                  <div className="agent-browser-annotations">
+                                    <div className="agent-browser-annotations-head">
+                                      <span>UI 注释（{htmlAnnotations.length}）</span>
+                                      <button className="agent-browser-annotations-clear" onClick={clearHtmlAnnotations}><Trash2Icon size={11} /> 清空</button>
+                                    </div>
+                                    <div className="agent-browser-annotations-list">
+                                      {htmlAnnotations.map(a => (
+                                        <div className="agent-browser-annotations-item" key={a.id}>
+                                          <div className="agent-browser-annotations-note">
+                                            <span className={`agent-ann-kind kind-${a.kind}`}>{ANNOTATION_KIND_LABEL[a.kind]}</span>{a.note}
+                                          </div>
+                                          {a.kind === 'area' && a.rect
+                                            ? <div className="agent-browser-annotations-sel" title={`${Math.round(a.rect.w)}×${Math.round(a.rect.h)} @ (${Math.round(a.rect.x)}, ${Math.round(a.rect.y)})`}>区域 {Math.round(a.rect.w)}×{Math.round(a.rect.h)} @ ({Math.round(a.rect.x)},{Math.round(a.rect.y)}) · 覆盖 {a.elements.length} 元素</div>
+                                            : a.kind === 'text'
+                                              ? <div className="agent-browser-annotations-sel" title={a.text}>"{a.text}"</div>
+                                              : <div className="agent-browser-annotations-sel" title={a.elements.map(e => e.selector).join('\n')}>{a.elements.length > 1 ? `多选 ${a.elements.length} 个元素` : (a.elements[0]?.selector || '')}</div>}
+                                          {a.component && <div className="agent-browser-annotations-comp" title={a.component}>{a.component}</div>}
+                                          <button className="agent-browser-annotations-del" onClick={() => removeHtmlAnnotation(a.id)}><XIcon size={11} /></button>
                                         </div>
-                                        {a.kind === 'area' && a.rect
-                                          ? <div className="agent-browser-annotations-sel" title={`${Math.round(a.rect.w)}×${Math.round(a.rect.h)} @ (${Math.round(a.rect.x)}, ${Math.round(a.rect.y)})`}>区域 {Math.round(a.rect.w)}×{Math.round(a.rect.h)} @ ({Math.round(a.rect.x)},{Math.round(a.rect.y)}) · 覆盖 {a.elements.length} 元素</div>
-                                          : a.kind === 'text'
-                                            ? <div className="agent-browser-annotations-sel" title={a.text}>"{a.text}"</div>
-                                            : <div className="agent-browser-annotations-sel" title={a.elements.map(e => e.selector).join('\n')}>{a.elements.length > 1 ? `多选 ${a.elements.length} 个元素` : (a.elements[0]?.selector || '')}</div>}
-                                        {a.component && <div className="agent-browser-annotations-comp" title={a.component}>{a.component}</div>}
-                                        <button className="agent-browser-annotations-del" onClick={() => removeHtmlAnnotation(a.id)}><XIcon size={11} /></button>
-                                      </div>
-                                    ))}
+                                      ))}
+                                    </div>
+                                    <button className="agent-browser-annotations-send" onClick={sendHtmlAnnotations}>
+                                      <SendIcon size={12} /> 发送给 Agent
+                                    </button>
                                   </div>
-                                  <button className="agent-browser-annotations-send" onClick={sendHtmlAnnotations}>
-                                    <SendIcon size={12} /> 发送给 Agent
-                                  </button>
+                                )}
+                              </>
+                            )
+                              : isPreviewMarkdown && mdViewMode === 'preview' ? (
+                                <div className="agent-code-preview-md chat-msg-markdown">
+                                  <AgentMarkdown content={activeTab.content ?? ''} />
+                                </div>
+                              ) : (
+                                <div className="agent-code-preview-editor" onMouseDown={previewEditing ? undefined : handlePreviewMouseDown} onMouseUp={previewEditing ? undefined : handlePreviewMouseUp}>
+                                  <Suspense fallback={<div className="file-tree-loading">加载编辑器…</div>}>
+                                    <MonacoEditor
+                                      value={previewEditing && previewDraft !== null ? previewDraft : activeTab?.content ?? ''}
+                                      language={extToMonacoLang(activeTabPath || '')}
+                                      readOnly={!previewEditing}
+                                      highlightLine={previewEditing ? null : previewHighlightLine}
+                                      onChange={v => { if (previewEditing) setPreviewDraft(v) }}
+                                      onSave={v => savePreviewFile(v)}
+                                      onSelectionAction={previewEditing ? undefined : (text, startLine, endLine) => addCodeSnippet(startLine, endLine, text)}
+                                    />
+                                  </Suspense>
                                 </div>
                               )}
-                            </>
-                          )
-                            : isPreviewMarkdown && mdViewMode === 'preview' ? (
-                              <div className="agent-code-preview-md chat-msg-markdown">
-                                <AgentMarkdown content={activeTab.content ?? ''} />
-                              </div>
-                            )                             : (
-                              <div className="agent-code-preview-editor" onMouseDown={previewEditing ? undefined : handlePreviewMouseDown} onMouseUp={previewEditing ? undefined : handlePreviewMouseUp}>
-                                <Suspense fallback={<div className="file-tree-loading">加载编辑器…</div>}>
-                                  <MonacoEditor
-                                    value={previewEditing && previewDraft !== null ? previewDraft : activeTab?.content ?? ''}
-                                    language={extToMonacoLang(activeTabPath || '')}
-                                    readOnly={!previewEditing}
-                                    highlightLine={previewEditing ? null : previewHighlightLine}
-                                    onChange={v => { if (previewEditing) setPreviewDraft(v) }}
-                                    onSave={v => savePreviewFile(v)}
-                                    onSelectionAction={previewEditing ? undefined : (text, startLine, endLine) => addCodeSnippet(startLine, endLine, text)}
-                                  />
-                                </Suspense>
-                              </div>
-                            )}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
-          </div>
       </div>
 
     </div>
