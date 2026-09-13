@@ -22,7 +22,8 @@ const DOC_TEXT_CAP = 4 * 1024 * 1024 // 单文档文本上限（4MB）
 // ── 检索参数 ──
 const BM25_K1 = 1.2
 const BM25_B = 0.75
-const QUERY_LIMIT_DEFAULT = 4
+// 与工具 spec（knowledgeSpecs.createKnowledgeSearchSpec）声明一致：缺省 8 条目录，上限 12
+const QUERY_LIMIT_DEFAULT = 8
 const QUERY_LIMIT_MAX = 12
 const LOW_CONFIDENCE_SCORE = 3.0
 const LOW_CONFIDENCE_COVERAGE = 0.4
@@ -412,31 +413,34 @@ export function listKnowledgeBases(): { id: string; name: string }[] {
 export function readKnowledgeChunks(
   kbId: string,
   refs: { docName?: string; ordinal?: number }[]
-): { hits: { docName: string; ordinal: number; title: string; text: string }[]; error?: string } {
+): { hits: { docName: string; ordinal: number; title: string; text: string; kbName: string }[]; error?: string } {
   const kb = loadKb(kbId)
   if (!kb) return { hits: [], error: '知识库不存在' }
   const list = Array.isArray(refs) ? refs.slice(0, 8) : []
   if (list.length === 0) return { hits: [], error: '未指定要读取的块' }
-  const out: { docName: string; ordinal: number; title: string; text: string }[] = []
+  const out: { docName: string; ordinal: number; title: string; text: string; kbName: string }[] = []
   for (const r of list) {
     if (typeof r?.ordinal !== 'number' || !Number.isInteger(r.ordinal) || r.ordinal < 0) continue
     const name = typeof r.docName === 'string' ? r.docName : ''
     const c = kb.chunks.find(x => x.ordinal === r.ordinal && (name ? x.docName === name : true))
     if (c && !out.some(o => o.docName === c.docName && o.ordinal === c.ordinal)) {
-      out.push({ docName: c.docName, ordinal: c.ordinal, title: c.title || deriveChunkTitle(c.text), text: c.text })
+      out.push({ docName: c.docName, ordinal: c.ordinal, title: c.title || deriveChunkTitle(c.text), text: c.text, kbName: kb.name })
     }
   }
   return { hits: out }
 }
 
-// ── 查询单库（主进程内部复用：pi Agent 的 knowledge_search 工具直调，不经 IPC）──
+// ── 查询单库（Agent 工具按库逐个调用；跨库合并在 mainTools 工具层做）──
 export function queryKnowledgeBase(kbId: string, query: string, limit?: number): { hits: KnowledgeHit[]; lowConfidence: boolean } {
   if (!query || typeof query !== 'string') return { hits: [], lowConfidence: true }
   const kb = loadKb(kbId)
   if (!kb) return { hits: [], lowConfidence: true }
   const idx = getIndex(kb)
   const cap = Math.max(1, Math.min(Math.floor(limit ?? QUERY_LIMIT_DEFAULT), QUERY_LIMIT_MAX))
-  return search(idx, query.slice(0, 2000), cap)
+  const r = search(idx, query.slice(0, 2000), cap)
+  // 标注来源库：跨库合并目录/读取时模型需要知道每条来自哪个库
+  for (const h of r.hits) h.kbName = kb.name
+  return r
 }
 
 // ── IPC 注册（由 ipc.ts 的 registerIpcHandlers 调用）──

@@ -540,6 +540,8 @@ export interface KnowledgeHit {
   /** 最小匹配（BM25 时从块内容取；向量检索时由相似度取得），用于排序展示 */
   title?: string
   score: number
+  /** 命中来源知识库名（跨库合并检索时区分条目归属） */
+  kbName?: string
 }
 
 /** Pi SDK 会话级「思考程度」（与 @earendil-works/pi-agent-core 的 ThinkingLevel 完全一致）。

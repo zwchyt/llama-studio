@@ -11,7 +11,7 @@ export type ContentBlock =
   | { kind: 'text'; content: string }
   | { kind: 'mermaid'; code: string }
   | { kind: 'chart'; code: string }
-  | { kind: 'svg'; code: string }
+  | { kind: 'svg'; code: string; streaming?: boolean }
 
 /**
  * 把助手消息正文拆成「普通文本」与「Mermaid 图表」块。
@@ -101,9 +101,26 @@ export function parseContentToBlocks(content: string, streaming = false): Conten
       const isSvgFence = /^```\s*svg\b/i.test(trimmed)
       const codeBlockEnd = lines.findIndex((l, idx) => idx > i && l.trim().startsWith('```'))
 
-      // 围栏未闭合（流式中最常见）：整段原样留在文本里，交给 Markdown 渲染成代码块；
-      // 绝不能在此推出 mermaid 块，否则就是「半截代码去渲染」。
+      // 围栏未闭合（流式中最常见）：
+      //  · chart/recharts 围栏：JSON 是「合法 JSON 的前缀」，可以容错修复出部分
+      //    spec（data 几个点画几个点）→ 产出 streaming 图表块实时渲染。recharts
+      //    是数据驱动的，天然支持边输出边生长；修复不出（数据行还没成形）时保持
+      //    普通代码块，等下个 commit 再试 —— 不存在「拿残码渲染报错」的问题。
+      //  · mermaid / 其它：整段原样留在文本里，交给 Markdown 渲染成代码块；
+      //    绝不能推出 mermaid 块，否则就是「半截代码去渲染」（mermaid 语法解析
+      //    遇到残码会抛错，先错图后对图的闪替不可避免，详见文件头）。
       if (codeBlockEnd === -1) {
+        // 流式期间的 svg 围栏：**围栏一打开就立即产出 streaming svg 块**——
+        // 卡片框架先亮出来（不再等 <svg 标签写完才出现，消除框架闪烁），
+        // SVG 是浏览器容错解析的标签树，半截代码 innerHTML 注入即可渐进渲染，
+        // 随输出逐步成形。finalize 后 looksLikeSvg 不过的仍会降级回普通代码块。
+        // chart/mermaid 不做实时渲染（JSON 半截解析/乐观渲染效果不合适，已移除）。
+        if (streaming && isSvgFence) {
+          flushText()
+          blocks.push({ kind: 'svg', code: lines.slice(i + 1).join('\n').trim(), streaming: true })
+          i = lines.length
+          break
+        }
         currentText += lines.slice(i).join('\n') + '\n'
         i = lines.length
         break

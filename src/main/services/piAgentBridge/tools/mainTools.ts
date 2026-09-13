@@ -80,16 +80,18 @@ export interface MainToolExecutors {
   webSearch: (query: string) => Promise<string>
   webSearchBing: (query: string) => Promise<string>
   fetchWebpage: (url: string) => Promise<string>
-  /** 知识库 BM25 检索（knowledgeService 内部函数直调） */
+  /** 知识库 BM25 检索（knowledgeService 内部函数直调）；hits.kbName 标注来源库 */
   knowledgeQuery(kbId: string, query: string, limit?: number): Promise<{
-    hits: Array<{ docName: string; ordinal: number; text: string; title?: string; score: number }>
+    hits: Array<{ docName: string; ordinal: number; text: string; title?: string; score: number; kbName?: string }>
     lowConfidence: boolean
   }>
   /** 知识库按引用读取选中块正文（两阶段检索第二段） */
   knowledgeRead(kbId: string, refs: { docName?: string; ordinal?: number }[]): Promise<{
-    hits: Array<{ docName: string; ordinal: number; title: string; text: string }>
+    hits: Array<{ docName: string; ordinal: number; title: string; text: string; kbName: string }>
     error?: string
   }>
+  /** 知识库元信息（库名+文档清单）：跨库读取时按 docName 定位条目归属库 */
+  describeKb(kbId: string): { name: string; docs: string[] } | null
   /** 询问用户（跨进程弹窗；由 IPC 层提供实现） */
   askUser(questions: AskUserQuestionInput[]): Promise<string>
   /** 破坏性操作审批（由 IPC 层提供实现；未提供则放行） */
@@ -524,21 +526,14 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
   // 知识库两阶段检索：绑定了库、或本机存在任何知识库时注册。
   // 定义/提示词/输出格式全部来自 src/shared/tools/knowledgeSpecs（纯数据文件，main 与 renderer 双侧共享，
   // 消除 main → renderer 跨构建图 import；执行走本进程 executors，因为 pi 的 ToolDefinition.execute 无法跨 IPC）。
-  // 第一段 knowledge_search 只返回「标题目录」（每条几十字，极省 token）；模型按标题挑中后，
-  // 用第二段 knowledge_read 精确读取选中块的正文，避免把无关整块灌进上下文。
-  // 库列表以代码级 enum 注入工具参数 kb（模型从真实库名中选择，而非提示词描述）。
+  // knowledge_search 省略 kb 时一次检索全部知识库并按相关度合并（每条标注来源库名），模型无需逐库试错；
+  // kb 仅用于显式缩小范围。只返回「标题目录」（每条几十字，极省 token），并自动附带全局最优那一块的正文；
+  // 模型按目录挑中后用 knowledge_read 精确读取（refs 带库名可跨库，省略时按 docName 全库唯一定位）。
   const kbLibs = ctx?.knowledgeBases ?? []
   const kbNames = kbLibs.map(l => l.name)
-  const resolveKb = (want: unknown): { id?: string; error?: string } => {
-    const name = typeof want === 'string' ? want.trim() : ''
-    if (name) {
-      const hit = kbLibs.find(l => l.name === name || l.id === name)
-      return hit ? { id: hit.id } : { error: `未找到知识库「${name}」。可用的知识库：${kbNames.join('、') || '（无）'}` }
-    }
-    if (ctx?.knowledgeBaseId) return { id: ctx.knowledgeBaseId }
-    if (kbLibs.length === 1) return { id: kbLibs[0].id }
-    if (kbLibs.length > 1) return { error: `本机有多个知识库，请在 kb 参数中指定其一：${kbNames.join('、')}` }
-    return { error: '本机尚未创建任何知识库。' }
+  const findKb = (want: string): { id?: string; error?: string } => {
+    const hit = kbLibs.find(l => l.name === want || l.id === want)
+    return hit ? { id: hit.id } : { error: `未找到知识库「${want}」。可用的知识库：${kbNames.join('、') || '（无）'}` }
   }
   let knowledgeSearch: ToolDefinition | null = null
   let knowledgeRead: ToolDefinition | null = null
@@ -547,32 +542,91 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     knowledgeSearch = make({
       ...searchSpec,
       execute: async (args) => {
-        const t = resolveKb(args.kb)
-        if (!t.id) return t.error ?? '知识库不可用'
-        const r = await exec.knowledgeQuery(t.id, String(args.query ?? ''), typeof args.limit === 'number' ? args.limit : undefined)
-        // 自动附带「相关度最高」那一块的完整正文。
-        // 依据：BM25 已将 hits 按相关度降序排列，hits[0] 就是该查询下最相关的一块——与知识库
-        // 界面「试搜索」直接展示 hits[0].text 是同一语义。此前只在「正文逐字包含整个查询串」
-        // 这种极严条件下才附带，中文长查询几乎不可能满足，等于从不触发。
-        let auto = ''
-        const hs = r.hits ?? []
-        const top = hs[0]
-        if (top) {
-          auto = `\n\n【已附带相关度最高的分块正文（相关度 ${top.score}，无需再调用 knowledge_read 读它）】\n`
-            + `【${top.title || '（无标题）'}】(${top.docName} · 第${top.ordinal + 1}块)\n${top.text}`
+        // 目标库：显式 kb → 单库；省略 → 全部库一次查完（默认路径）。
+        let targets: { id: string }[]
+        const want = typeof args.kb === 'string' ? args.kb.trim() : ''
+        if (want) {
+          const t = findKb(want)
+          if (!t.id) return t.error ?? '知识库不可用'
+          targets = [{ id: t.id }]
+        } else if (kbLibs.length > 0) {
+          targets = kbLibs
+        } else if (ctx?.knowledgeBaseId) {
+          targets = [{ id: ctx.knowledgeBaseId }]
+        } else {
+          return '本机尚未创建任何知识库。'
         }
-        return formatKnowledgeCatalog(r) + auto
+        const query = String(args.query ?? '')
+        const cap = Math.max(1, Math.min(Math.floor(typeof args.limit === 'number' ? args.limit : 8), 12))
+        const results = await Promise.all(targets.map(t => exec.knowledgeQuery(t.id, query, cap)))
+        // 各库内部已按 BM25 降序并做过噪音剪枝；跨库合并按分排序（分数跨库近似可比）。
+        // hits.kbName 由 queryKnowledgeBase 填充，目录可直接区分条目归属。
+        const merged = results.flatMap(r => r.hits ?? []).sort((a, b) => b.score - a.score).slice(0, cap)
+        const lowConfidence = results.length > 0 && results.every(r => r.lowConfidence)
+        if (merged.length === 0) {
+          const libLabel = kbNames.length > 1 ? `（已检索 ${kbNames.length} 个知识库：${kbNames.join('、')}）` : ''
+          return `知识库未命中任何内容。${libLabel}\nBM25 是字面匹配：请换更具体的关键词重搜——中文文档用中文词、代码术语用英文标识符（如 sequenceDiagram）。`
+        }
+        // 自动附带跨库合并后的全局最优块的完整正文：BM25 已降序，hits[0] 就是所有库中最相关的块。
+        const top = merged[0]
+        const auto = `\n\n【已附带相关度最高的分块正文（相关度 ${top.score}，无需再调用 knowledge_read 读它）】\n`
+          + `【${top.title || '（无标题）'}】(${top.kbName ? `${top.kbName} · ` : ''}${top.docName} · 第${top.ordinal + 1}块)\n${top.text}`
+        // 全部库都低置信时明确告知，避免模型把噪音块当可靠证据
+        const hint = lowConfidence
+          ? '\n\n（低置信检索：命中可能只沾到部分查询词。建议换更具体的关键词重搜，或用 knowledge_read 核对目录其他条目。）'
+          : ''
+        return formatKnowledgeCatalog({ hits: merged, lowConfidence }) + auto + hint
       }
     })
     knowledgeRead = make({
       ...createKnowledgeReadSpec(kbNames),
       execute: async (args) => {
-        const t = resolveKb(args.kb)
-        if (!t.id) return t.error ?? '知识库不可用'
         const refs = parseChunkRefs(args.refs)
         if (refs.length === 0) return '未指定有效的块引用（需要 docName + ordinal）。'
-        const r = await exec.knowledgeRead(t.id, refs)
-        return formatKnowledgeChunks(r)
+        // 逐条解析归属库：ref.kb → 顶层 kb → docName 全库唯一定位。目录条目来自不同库时，
+        // 一次读取调用即可覆盖（describeKb 提供各库文档清单，按库缓存避免重复解析）。
+        const docCache = new Map<string, { name: string; docs: string[] } | null>()
+        const docHolder = (kbId: string, docName: string): boolean => {
+          if (!docCache.has(kbId)) docCache.set(kbId, exec.describeKb(kbId))
+          return docCache.get(kbId)?.docs.includes(docName) ?? false
+        }
+        const plan: { ref: { docName: string; ordinal: number }; kbId?: string; error?: string }[] = []
+        for (const r of refs) {
+          const want = r.kb ?? (typeof args.kb === 'string' ? args.kb.trim() : '')
+          if (want) {
+            const lib = kbLibs.find(l => l.name === want || l.id === want)
+            if (!lib) { plan.push({ ref: r, error: `未找到知识库「${want}」（可用：${kbNames.join('、')}）` }); continue }
+            plan.push({ ref: r, kbId: lib.id }); continue
+          }
+          const holders = kbLibs.filter(l => docHolder(l.id, r.docName))
+          if (holders.length === 1) { plan.push({ ref: r, kbId: holders[0].id }); continue }
+          if (holders.length === 0) { plan.push({ ref: r, error: `所有知识库中都找不到文档「${r.docName}」，请对照检索目录核对库名与文档名` }); continue }
+          plan.push({ ref: r, error: `文档「${r.docName}」在多个库中存在（${holders.map(h => h.name).join('、')}），请为该条目指定 kb` })
+        }
+        const byKb = new Map<string, { docName: string; ordinal: number }[]>()
+        for (const p of plan) {
+          if (!p.kbId) continue
+          const g = byKb.get(p.kbId) ?? []
+          g.push({ docName: p.ref.docName, ordinal: p.ref.ordinal })
+          byKb.set(p.kbId, g)
+        }
+        const errors = plan.filter(p => p.error).map(p => p.error!)
+        if (byKb.size === 0) return errors.join('\n') || '没有可读取的条目。'
+        const entries = [...byKb.entries()]
+        const groups = await Promise.all(entries.map(([id, rs]) => exec.knowledgeRead(id, rs)))
+        type ReadHit = { docName: string; ordinal: number; title: string; text: string; kbName: string }
+        const found = new Map<string, ReadHit>()
+        entries.forEach(([id], i) => { for (const h of groups[i].hits ?? []) found.set(`${id}|${h.docName}|${h.ordinal}`, h) })
+        // 按模型传入 refs 的顺序输出（跨库分组读取会打乱顺序）
+        const ordered: ReadHit[] = []
+        for (const p of plan) {
+          if (!p.kbId) continue
+          const h = found.get(`${p.kbId}|${p.ref.docName}|${p.ref.ordinal}`)
+          if (h && !ordered.some(o => o.kbName === h.kbName && o.docName === h.docName && o.ordinal === h.ordinal)) ordered.push(h)
+        }
+        if (ordered.length === 0) return errors.join('\n') || '没有匹配到任何块（文档名或块号不存在，请对照目录重试）。'
+        const body = formatKnowledgeChunks({ hits: ordered })
+        return errors.length > 0 ? `${body}\n（部分条目未读取：${errors.join('；')}）` : body
       }
     })
   }

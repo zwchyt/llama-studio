@@ -341,7 +341,7 @@ function safeParseArgs(raw: string): Record<string, unknown> {
 // ── 生产执行器：ipc.ts 提取的 handler 直调（registerIpcHandlers 后可用）──
 import { ipcInternal } from '../../ipc'
 import { handleCodeSearchQuery } from '../retrievalService'
-import { queryKnowledgeBase, readKnowledgeChunks, listKnowledgeBases } from '../knowledgeService'
+import { queryKnowledgeBase, readKnowledgeChunks, listKnowledgeBases, describeKnowledgeBase } from '../knowledgeService'
 
 export function createIpcExecutors(): MainToolExecutors {
   const requireInternal = (name: keyof typeof ipcInternal): void => {
@@ -403,6 +403,7 @@ export function createIpcExecutors(): MainToolExecutors {
     },
     knowledgeQuery: async (kbId, query, limit) => queryKnowledgeBase(kbId, query, limit),
     knowledgeRead: async (kbId, refs) => readKnowledgeChunks(kbId, refs),
+    describeKb: (kbId) => describeKnowledgeBase(kbId),
     // 默认实现：无窗口通道时由 piAgentIpc 覆写为跨进程弹窗
     askUser: async (questions) =>
       JSON.stringify({

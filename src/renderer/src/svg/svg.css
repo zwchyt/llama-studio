@@ -16,3 +16,19 @@
      卡片没有自己的背景开关，跟着应用主题走。
      见 global.css / theme-dark.css 里 --svg-canvas 的注释。 */
 }
+
+/* 流式实时预览：半截 SVG innerHTML 注入后的容器。
+   围栏一打开卡片就出现（此时 <svg> 的 width/height/viewBox 可能还没输出），
+   所以容器给最小高度占位防闪烁；svg 强制宽度撑满卡片，避免属性未到时
+   高度塌成 0 导致「看不见正在渲染」。 */
+.svg-card-live {
+  width: 100%;
+  min-height: 140px;
+  line-height: 0;
+}
+
+.svg-card-live svg {
+  width: 100%;
+  height: auto;
+  min-height: 140px;
+}

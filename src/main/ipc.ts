@@ -451,8 +451,17 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
 interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; ttsModelFolders: string[]; asrModelFolders: string[]; ocrModelFolders: string[]; sdModelFolders: string[]; sdVaeFolders: string[]; sdLlmFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; slashCommands?: unknown; engineReleasesCache?: Record<string, ReleaseInfo>; engineReleasesCheckedAt?: number }
 const UI_KEYS = new Set(['splashEnabled', 'soundEnabled', 'notificationSound', 'chatSidebarCollapsed', 'ttsEngine', 'ttsModelPath', 'ttsVocoderPath', 'slashCommands'])
 let settingsCache: AppSettings | null = null
+// 隔离模式：settings.json 存在但持续读不出来（被占用/损坏）时置真。
+// 读仍返回默认值供 UI 显示，但拒绝一切写盘——「设置暂时保存不上」永远好过
+// 「用过期的空数据把用户的模型路径整份覆盖」。
+let settingsQuarantined = false
+const SETTINGS_READ_RETRY = 3
+const SETTINGS_READ_RETRY_DELAY = 40
 function parseSettingsData(data: Record<string, unknown>): AppSettings {
+  // 无损解析：先透传原始 JSON 的全部键（slashCommands 等不在下方白名单里的字段
+  // 不再在下次保存时被抹掉），已知键再逐个做类型收敛覆盖
   return {
+    ...data,
     externalModelFolders: Array.isArray(data.externalModelFolders) ? data.externalModelFolders as string[] : [],
     imageModelFolders: Array.isArray(data.imageModelFolders) ? data.imageModelFolders as string[] : [],
     ttsModelFolders: Array.isArray(data.ttsModelFolders) ? data.ttsModelFolders as string[] : [],
@@ -469,61 +478,111 @@ function parseSettingsData(data: Record<string, unknown>): AppSettings {
     ttsEngine: typeof data.ttsEngine === 'string' ? data.ttsEngine : 'system',
     ttsModelPath: typeof data.ttsModelPath === 'string' ? data.ttsModelPath : '',
     ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : '',
+    slashCommands: data.slashCommands ?? [],
     engineReleasesCache: typeof data.engineReleasesCache === 'object' && data.engineReleasesCache !== null ? data.engineReleasesCache as Record<string, ReleaseInfo> : undefined,
     engineReleasesCheckedAt: typeof data.engineReleasesCheckedAt === 'number' ? data.engineReleasesCheckedAt as number : undefined
-  }
+  } as AppSettings
 }
 const DEFAULT_SETTINGS: AppSettings = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false }
-async function readSettingsFile(path: string): Promise<AppSettings | null> {
+type SettingsReadResult = { ok: true; settings: AppSettings } | { ok: false; missing: boolean }
+async function readSettingsFile(path: string): Promise<SettingsReadResult> {
   try {
     const raw = await fsPromises.readFile(path, 'utf-8')
-    const data = JSON.parse(raw)
-    return parseSettingsData(data)
-  } catch { return null }
-}
-async function loadSettings(): Promise<AppSettings> {
-  if (settingsCache) return settingsCache
-  let data = await readSettingsFile(SETTINGS_PATH)
-  if (!data && existsSync(SETTINGS_PATH + '.tmp')) {
-    data = await readSettingsFile(SETTINGS_PATH + '.tmp')
-    if (data) await fsPromises.copyFile(SETTINGS_PATH + '.tmp', SETTINGS_PATH)
+    return { ok: true, settings: parseSettingsData(JSON.parse(raw)) }
+  } catch (e) {
+    // ENOENT（文件还没有）与其他错误（被占用/权限/损坏）严格区分：后者绝不当空文件处理
+    return { ok: false, missing: (e as NodeJS.ErrnoException)?.code === 'ENOENT' }
   }
-  settingsCache = data ?? { ...DEFAULT_SETTINGS }
+}
+const settingsReadDelay = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
+async function loadSettings(): Promise<AppSettings> {
+  // 隔离期间不信任旧缓存：每次都重读磁盘，文件恢复可读即自动解除隔离
+  if (settingsCache && !settingsQuarantined) return settingsCache
+  let missing = false
+  for (let i = 0; i < SETTINGS_READ_RETRY; i++) {
+    const r = await readSettingsFile(SETTINGS_PATH)
+    if (r.ok) { settingsCache = r.settings; settingsQuarantined = false; return settingsCache }
+    missing = r.missing
+    if (missing) break
+    await settingsReadDelay(SETTINGS_READ_RETRY_DELAY) // 杀软/同步盘的短暂锁文件：稍候重试
+  }
+  // 候选兜底：.tmp 是上次未完成的原子写（更新），.bak 是上上次完好内容（更旧）
+  const fallbacks = missing ? [SETTINGS_PATH + '.tmp'] : [SETTINGS_PATH + '.tmp', SETTINGS_PATH + '.bak']
+  for (const fp of fallbacks) {
+    const r = await readSettingsFile(fp)
+    if (r.ok) {
+      if (fp === SETTINGS_PATH + '.tmp') { try { await fsPromises.copyFile(fp, SETTINGS_PATH) } catch { /* ignore */ } }
+      settingsCache = r.settings
+      settingsQuarantined = false
+      return settingsCache
+    }
+  }
+  if (missing) { settingsCache = { ...DEFAULT_SETTINGS }; settingsQuarantined = false; return settingsCache }
+  settingsCache = { ...DEFAULT_SETTINGS }
+  settingsQuarantined = true
   return settingsCache
 }
 // 串行化写入队列：启动时多个 handler（如 set-engine-releases-cache 被连写两次）并发保存时，
 // 固定的 settings.json.tmp 会被前一次 rename 消费掉，导致后一次 rename 报 ENOENT
 let settingsWriteChain: Promise<void> = Promise.resolve()
-async function saveSettings(s: AppSettings): Promise<void> {
-  // 原子写：先写 .tmp 再 rename，避免中途崩溃撕裂 settings.json
-  // （loadSettings 既有「主文件损坏回退 .tmp」逻辑由此真正生效）
+// 原子落盘：先写 .tmp 再 rename；rename 前把当前完好文件轮换为 .bak（供主文件损坏时兜底）
+function writeSettingsAtomically(s: AppSettings): Promise<void> {
   const write = settingsWriteChain.then(async () => {
     const tmpPath = SETTINGS_PATH + '.tmp'
     await fsPromises.writeFile(tmpPath, JSON.stringify(s, null, 2))
+    try { await fsPromises.copyFile(SETTINGS_PATH, SETTINGS_PATH + '.bak') } catch { /* 首次写时主文件尚不存在 */ }
     await fsPromises.rename(tmpPath, SETTINGS_PATH)
   })
-  // 吞掉链上错误，保证单次失败不会卡死后续写入；错误仍由本次调用方接收
   settingsWriteChain = write.then(() => {}, () => {})
-  await write
-  settingsCache = s
+  return write
 }
-function readSettingsFileSync(path: string): AppSettings | null {
-  try {
-    const raw = readFileSync(path, 'utf-8')
-    const data = JSON.parse(raw)
-    return parseSettingsData(data)
-  } catch { return null }
-}
-function loadSettingsSync(): AppSettings {
-  if (settingsCache) return settingsCache
-  let data = readSettingsFileSync(SETTINGS_PATH)
-  if (!data && existsSync(SETTINGS_PATH + '.tmp')) {
-    data = readSettingsFileSync(SETTINGS_PATH + '.tmp')
-    if (data) {
-      try { writeFileSync(SETTINGS_PATH, JSON.stringify(data, null, 2)) } catch { /* ignore */ }
+// ── 一切设置修改的唯一入口 ──
+// 写之前以磁盘实况为真源重读，在最新内容上应用变更后落盘。内存缓存只是读加速：
+// 过期缓存（另一实例已写入、或首读失败时的默认值）从机制上无法再整份覆盖磁盘——
+// 这正是「启动时模型路径被清空」问题的根治点。
+async function updateSettings<T>(mutate: (s: AppSettings) => T): Promise<T> {
+  const r = await readSettingsFile(SETTINGS_PATH)
+  if (r.ok) {
+    settingsCache = r.settings
+    settingsQuarantined = false
+  } else {
+    await loadSettings() // 走重试 / .tmp / .bak / 隔离判定
+    if (settingsQuarantined) {
+      throw new Error('settings.json 读取失败（可能被杀毒软件/同步盘占用或已损坏），已暂停写入以保护现有数据')
     }
   }
-  settingsCache = data ?? { ...DEFAULT_SETTINGS }
+  const result = mutate(settingsCache!)
+  await writeSettingsAtomically(settingsCache!)
+  return result
+}
+// 隔离模式抛错 → handler 统一转成可显示的失败结果返回给 renderer
+const settingsWriteFailed = (e: unknown): { success: false; error: string } =>
+  ({ success: false, error: e instanceof Error ? e.message : String(e) })
+function readSettingsFileSync(path: string): SettingsReadResult {
+  try {
+    return { ok: true, settings: parseSettingsData(JSON.parse(readFileSync(path, 'utf-8'))) }
+  } catch (e) {
+    return { ok: false, missing: (e as NodeJS.ErrnoException)?.code === 'ENOENT' }
+  }
+}
+function loadSettingsSync(): AppSettings {
+  if (settingsCache && !settingsQuarantined) return settingsCache
+  const main = readSettingsFileSync(SETTINGS_PATH)
+  if (main.ok) { settingsCache = main.settings; settingsQuarantined = false; return settingsCache }
+  const fallbacks = main.missing ? [SETTINGS_PATH + '.tmp'] : [SETTINGS_PATH + '.tmp', SETTINGS_PATH + '.bak']
+  for (const fp of fallbacks) {
+    const r = readSettingsFileSync(fp)
+    if (r.ok) {
+      if (fp === SETTINGS_PATH + '.tmp') { try { copyFileSync(fp, SETTINGS_PATH) } catch { /* ignore */ } }
+      settingsCache = r.settings
+      settingsQuarantined = false
+      return settingsCache
+    }
+  }
+  // 同步路径（仅启动时一次）不做重试；非「文件不存在」的失败交给隔离模式，
+  // 后续任一次异步 loadSettings / updateSettings 读盘成功即自动解除
+  settingsCache = { ...DEFAULT_SETTINGS }
+  settingsQuarantined = !main.missing
   return settingsCache
 }
 interface RunningProcess { proc: ChildProcess; port: number; kind: EngineKind }
@@ -1409,20 +1468,24 @@ export function registerIpcHandlers(): void {
     const r = await dialog.showOpenDialog({ title: 'Add External Model Folder', properties: ['openDirectory'] })
     if (r.canceled || !r.filePaths.length) return { success: false }
     const folder = r.filePaths[0]
-    const s = await loadSettings()
-    if (!s.externalModelFolders.includes(folder)) {
-      s.externalModelFolders.push(folder)
-      await saveSettings(s)
+    try {
+      const folders = await updateSettings(s => {
+        if (!s.externalModelFolders.includes(folder)) s.externalModelFolders.push(folder)
+        return s.externalModelFolders
+      })
       invalidateModelsCache()
-    }
-    return { success: true, folders: s.externalModelFolders }
+      return { success: true, folders }
+    } catch (e) { return settingsWriteFailed(e) }
   })
   ipcMain.handle('remove-external-model-folder', async (_e, folder: string) => {
-    const s = await loadSettings()
-    s.externalModelFolders = s.externalModelFolders.filter(f => f !== folder)
-    await saveSettings(s)
-    invalidateModelsCache()
-    return { success: true, folders: s.externalModelFolders }
+    try {
+      const folders = await updateSettings(s => {
+        s.externalModelFolders = s.externalModelFolders.filter(f => f !== folder)
+        return s.externalModelFolders
+      })
+      invalidateModelsCache()
+      return { success: true, folders }
+    } catch (e) { return settingsWriteFailed(e) }
   })
   // ── 图片模型文件夹 ──
   const IMAGE_MODELS_CACHE_TTL = 30_000
@@ -1478,20 +1541,24 @@ export function registerIpcHandlers(): void {
     const r = await dialog.showOpenDialog({ title: '添加图片模型文件夹', properties: ['openDirectory'] })
     if (r.canceled || !r.filePaths.length) return { success: false }
     const folder = r.filePaths[0]
-    const s = await loadSettings()
-    if (!s.imageModelFolders.includes(folder)) {
-      s.imageModelFolders.push(folder)
-      await saveSettings(s)
+    try {
+      const folders = await updateSettings(s => {
+        if (!s.imageModelFolders.includes(folder)) s.imageModelFolders.push(folder)
+        return s.imageModelFolders
+      })
       invalidateImageModelsCache()
-    }
-    return { success: true, folders: s.imageModelFolders }
+      return { success: true, folders }
+    } catch (e) { return settingsWriteFailed(e) }
   })
   ipcMain.handle('remove-image-model-folder', async (_e, folder: string) => {
-    const s = await loadSettings()
-    s.imageModelFolders = s.imageModelFolders.filter(f => f !== folder)
-    await saveSettings(s)
-    invalidateImageModelsCache()
-    return { success: true, folders: s.imageModelFolders }
+    try {
+      const folders = await updateSettings(s => {
+        s.imageModelFolders = s.imageModelFolders.filter(f => f !== folder)
+        return s.imageModelFolders
+      })
+      invalidateImageModelsCache()
+      return { success: true, folders }
+    } catch (e) { return settingsWriteFailed(e) }
   })
   // ── 语音合成（TTS）模型文件夹 ──
   // 与文字/图片模型文件夹同设计：目录不复制文件，TTS 模型（OuteTTS / WavTokenizer 的 GGUF）
@@ -1501,20 +1568,24 @@ export function registerIpcHandlers(): void {
     const r = await dialog.showOpenDialog({ title: '添加语音合成模型文件夹', properties: ['openDirectory'] })
     if (r.canceled || !r.filePaths.length) return { success: false }
     const folder = r.filePaths[0]
-    const s = await loadSettings()
-    if (!s.ttsModelFolders.includes(folder)) {
-      s.ttsModelFolders.push(folder)
-      await saveSettings(s)
+    try {
+      const folders = await updateSettings(s => {
+        if (!s.ttsModelFolders.includes(folder)) s.ttsModelFolders.push(folder)
+        return s.ttsModelFolders
+      })
       invalidateModelsCache()
-    }
-    return { success: true, folders: s.ttsModelFolders }
+      return { success: true, folders }
+    } catch (e) { return settingsWriteFailed(e) }
   })
   ipcMain.handle('remove-tts-model-folder', async (_e, folder: string) => {
-    const s = await loadSettings()
-    s.ttsModelFolders = s.ttsModelFolders.filter(f => f !== folder)
-    await saveSettings(s)
-    invalidateModelsCache()
-    return { success: true, folders: s.ttsModelFolders }
+    try {
+      const folders = await updateSettings(s => {
+        s.ttsModelFolders = s.ttsModelFolders.filter(f => f !== folder)
+        return s.ttsModelFolders
+      })
+      invalidateModelsCache()
+      return { success: true, folders }
+    } catch (e) { return settingsWriteFailed(e) }
   })
   // ── 语音转写（ASR）模型文件夹 ──
   // 与 TTS 模型文件夹同设计：ASR 模型（Qwen3-ASR / granite-speech 主模型 GGUF）归入通用模型列表，
@@ -1524,20 +1595,24 @@ export function registerIpcHandlers(): void {
     const r = await dialog.showOpenDialog({ title: '添加语音转写模型文件夹', properties: ['openDirectory'] })
     if (r.canceled || !r.filePaths.length) return { success: false }
     const folder = r.filePaths[0]
-    const s = await loadSettings()
-    if (!s.asrModelFolders.includes(folder)) {
-      s.asrModelFolders.push(folder)
-      await saveSettings(s)
+    try {
+      const folders = await updateSettings(s => {
+        if (!s.asrModelFolders.includes(folder)) s.asrModelFolders.push(folder)
+        return s.asrModelFolders
+      })
       invalidateModelsCache()
-    }
-    return { success: true, folders: s.asrModelFolders }
+      return { success: true, folders }
+    } catch (e) { return settingsWriteFailed(e) }
   })
   ipcMain.handle('remove-asr-model-folder', async (_e, folder: string) => {
-    const s = await loadSettings()
-    s.asrModelFolders = s.asrModelFolders.filter(f => f !== folder)
-    await saveSettings(s)
-    invalidateModelsCache()
-    return { success: true, folders: s.asrModelFolders }
+    try {
+      const folders = await updateSettings(s => {
+        s.asrModelFolders = s.asrModelFolders.filter(f => f !== folder)
+        return s.asrModelFolders
+      })
+      invalidateModelsCache()
+      return { success: true, folders }
+    } catch (e) { return settingsWriteFailed(e) }
   })
   // ── OCR 模型文件夹 ──
   ipcMain.handle('list-ocr-model-folders', async () => (await loadSettings()).ocrModelFolders)
@@ -1545,20 +1620,24 @@ export function registerIpcHandlers(): void {
     const r = await dialog.showOpenDialog({ title: '添加 OCR 模型文件夹', properties: ['openDirectory'] })
     if (r.canceled || !r.filePaths.length) return { success: false }
     const folder = r.filePaths[0]
-    const s = await loadSettings()
-    if (!s.ocrModelFolders.includes(folder)) {
-      s.ocrModelFolders.push(folder)
-      await saveSettings(s)
+    try {
+      const folders = await updateSettings(s => {
+        if (!s.ocrModelFolders.includes(folder)) s.ocrModelFolders.push(folder)
+        return s.ocrModelFolders
+      })
       invalidateModelsCache()
-    }
-    return { success: true, folders: s.ocrModelFolders }
+      return { success: true, folders }
+    } catch (e) { return settingsWriteFailed(e) }
   })
   ipcMain.handle('remove-ocr-model-folder', async (_e, folder: string) => {
-    const s = await loadSettings()
-    s.ocrModelFolders = s.ocrModelFolders.filter(f => f !== folder)
-    await saveSettings(s)
-    invalidateModelsCache()
-    return { success: true, folders: s.ocrModelFolders }
+    try {
+      const folders = await updateSettings(s => {
+        s.ocrModelFolders = s.ocrModelFolders.filter(f => f !== folder)
+        return s.ocrModelFolders
+      })
+      invalidateModelsCache()
+      return { success: true, folders }
+    } catch (e) { return settingsWriteFailed(e) }
   })
   // ── stable-diffusion.cpp 模型文件夹（图像生成三合一：扩散模型 / VAE / LLM 文本编码器）──
   // 三种角色共用一套 handler，kind 决定读写 settings 里对应的数组
@@ -1575,23 +1654,27 @@ export function registerIpcHandlers(): void {
     const r = await dialog.showOpenDialog({ title: `添加${SD_FOLDER_TITLES[kind]}文件夹`, properties: ['openDirectory'] })
     if (r.canceled || !r.filePaths.length) return { success: false }
     const folder = r.filePaths[0]
-    const s = await loadSettings()
     const key = sdFolderKey(kind)
-    if (!s[key].includes(folder)) {
-      s[key].push(folder)
-      await saveSettings(s)
+    try {
+      const folders = await updateSettings(s => {
+        if (!s[key].includes(folder)) s[key].push(folder)
+        return s[key]
+      })
       invalidateModelsCache()
-    }
-    return { success: true, folders: s[key] }
+      return { success: true, folders }
+    } catch (e) { return settingsWriteFailed(e) }
   })
   ipcMain.handle('remove-sd-model-folder', async (_e, kind: SdFolderKind, folder: string) => {
     if (kind !== 'model' && kind !== 'vae' && kind !== 'llm') return { success: false }
-    const s = await loadSettings()
     const key = sdFolderKey(kind)
-    s[key] = s[key].filter(f => f !== folder)
-    await saveSettings(s)
-    invalidateModelsCache()
-    return { success: true, folders: s[key] }
+    try {
+      const folders = await updateSettings(s => {
+        s[key] = s[key].filter(f => f !== folder)
+        return s[key]
+      })
+      invalidateModelsCache()
+      return { success: true, folders }
+    } catch (e) { return settingsWriteFailed(e) }
   })
   // ── 自定义聊天模板 (Jinja) ──
   ipcMain.handle('list-chat-templates', async () => {
@@ -4250,9 +4333,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('get-metrics-polling', () => metricsPollingEnabled)
   ipcMain.handle('set-metrics-polling', async (_e, enabled: boolean) => {
     metricsPollingEnabled = enabled
-    const s = await loadSettings()
-    s.metricsPolling = enabled
-    await saveSettings(s)
+    try {
+      await updateSettings(s => { s.metricsPolling = enabled })
+    } catch (e) { return settingsWriteFailed(e) }
     if (enabled) startMetricsInterval()
     else stopMetricsInterval()
     return { success: true }
@@ -4262,11 +4345,10 @@ export function registerIpcHandlers(): void {
     return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, notificationSound: s.notificationSound ?? 'chime', chatSidebarCollapsed: s.chatSidebarCollapsed ?? false, ttsEngine: s.ttsEngine ?? 'system', ttsModelPath: s.ttsModelPath ?? '', ttsVocoderPath: s.ttsVocoderPath ?? '', slashCommands: s.slashCommands ?? [] }
   })
   ipcMain.handle('set-ui-setting', async (_e, key: string, value: boolean | string) => {
-    const s = await loadSettings()
-    if (UI_KEYS.has(key)) {
-      ;(s as any)[key] = value
-      await saveSettings(s)
-    }
+    if (!UI_KEYS.has(key)) return { success: true }
+    try {
+      await updateSettings(s => { (s as any)[key] = value })
+    } catch (e) { return settingsWriteFailed(e) }
     return { success: true }
   })
   ipcMain.handle('get-engine-releases-cache', async () => {
@@ -4274,10 +4356,12 @@ export function registerIpcHandlers(): void {
     return { cache: s.engineReleasesCache ?? null, checkedAt: s.engineReleasesCheckedAt ?? null }
   })
   ipcMain.handle('set-engine-releases-cache', async (_e, cache: Record<string, ReleaseInfo> | null, checkedAt: number | null) => {
-    const s = await loadSettings()
-    s.engineReleasesCache = cache ?? undefined
-    s.engineReleasesCheckedAt = checkedAt ?? undefined
-    await saveSettings(s)
+    try {
+      await updateSettings(s => {
+        s.engineReleasesCache = cache ?? undefined
+        s.engineReleasesCheckedAt = checkedAt ?? undefined
+      })
+    } catch (e) { return settingsWriteFailed(e) }
     return { success: true }
   })
   ipcMain.handle('get-metrics', async () => {

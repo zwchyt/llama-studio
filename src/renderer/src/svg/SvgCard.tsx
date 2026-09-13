@@ -34,6 +34,18 @@ export type SvgCardProps = {
   title?: string | null
   children?: unknown
   renderFallback?: (code: string) => ReactNode
+  /**
+   * 流式实时预览：code 是还没输出完的半截 SVG，用 innerHTML 注入渐进渲染
+   * （浏览器容错解析，写到一个标签画一个）。流结束（false）后走沙箱 img 全量渲染。
+   */
+  streaming?: boolean
+}
+
+/** 流式预览的轻量净化：剥 <script> 与内联事件处理器（innerHTML 注入的 SVG 不会跑 <script>，但事件属性会活）。 */
+function sanitizeLiveSvg(svg: string): string {
+  return svg
+    .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
+    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
 }
 
 function pickCode(p: SvgCardProps): string {
@@ -53,10 +65,35 @@ export function SvgCard(input: SvgCardProps) {
   /**
    * 下载 / 复制 / 查看源码取的都是**模型原文**，不经过任何运行时改写 ——
    * 所以这里直接返回字符串，零成本，也不必等 DOM 渲染完成。
-   * 引用要稳定（useCallback）：FigureFrame 拿它当依赖，每次渲染都换新函数
+   * 引用要稳定（useCallback）：FigureFrame 拿它当依赖，每次渲染换新函数
    * 会让下游反复重新取值。
    */
   const getSvgSource = useCallback(() => (code ? code : null), [code])
+  const fileName = typeof input.title === 'string' && input.title ? input.title : 'svg'
+
+  /**
+   * 流式实时预览：不经过 <img>（截断的 data URI 是一张破图），直接把半截 SVG
+   * innerHTML 注入容器 —— 浏览器容错解析，已输出的标签立即成形，随流生长。
+   * 注入前做轻量净化（剥 <script> 与内联事件）；流结束后换回沙箱 img 全量渲染。
+   */
+  if (input.streaming) {
+    return (
+      <FigureFrame
+        title={input.title ?? null}
+        getSvgSource={getSvgSource}
+        fileName={fileName}
+        invertible
+        themeCanvas="var(--svg-canvas, var(--surface))"
+      >
+        <div
+          className="svg-card-live"
+          // 半截 SVG：innerHTML 的容错解析正好把它画到当前写到的标签为止。
+          // 内容还没到时给空容器——卡片框架已占位，避免高度塌陷闪烁。
+          dangerouslySetInnerHTML={code ? { __html: sanitizeLiveSvg(code) } : undefined}
+        />
+      </FigureFrame>
+    )
+  }
 
   const renderable = !!code && looksLikeSvg(code) && !broken
 
@@ -69,7 +106,6 @@ export function SvgCard(input: SvgCardProps) {
     typeof input.title === 'string' && input.title
       ? input.title.slice(0, MAX_ALT_LEN)
       : 'SVG 图形'
-  const fileName = typeof input.title === 'string' && input.title ? input.title : 'svg'
 
   return (
     <FigureFrame

@@ -1620,6 +1620,7 @@ const StreamingContent = React.memo(function StreamingContent({ content, streami
             <SvgCard
               key={`svg-${i}`}
               code={block.code}
+              streaming={block.streaming === true}
               renderFallback={(fallbackCode) => (
                 <CodeBlock language="" value={fallbackCode} />
               )}
@@ -1694,6 +1695,7 @@ const StreamingContent = React.memo(function StreamingContent({ content, streami
                 <div key={`svg-final-${i}`} className="agent-msg-ui">
                   <SvgCard
                     code={block.code}
+                    streaming={block.streaming === true}
                     renderFallback={(c) => <CodeBlock language="" value={c} />}
                   />
                 </div>
@@ -3010,6 +3012,14 @@ export default function AgentCodeView() {
   // 用时间窗口在整个动画期间持续抑制，而不是只挡一帧。
   const smoothScrollUntilRef = useRef(0)
   const FOLLOW_THRESHOLD = 80
+  // 上一次 scroll 事件的位置：用于判断用户滚动方向（只有向下滚回底部才重新跟随）。
+  const lastScrollTopRef = useRef(0)
+  // 程序化滚动写入的目标位置：scroll 事件只有落在该值上才判定为程序滚动；
+  // 若用户滚动与程序写入被合并成同一条 scroll 事件（位置 ≠ 目标），仍按用户输入处理，
+  // 否则流式期间拖滚动条/键盘上滚会被 pin 同帧拽回。
+  const programmaticScrollTopRef = useRef(0)
+  // 重新跟随阈值：必须真正滚到最底（而非停留在 80px 观察带内）才重新接管贴底。
+  const REATTACH_THRESHOLD = 4
   const railTargetsRef = useRef(new Map<string, HTMLElement>())
   const [railItems, setRailItems] = useState<{ id: string; label: string; description?: string; ariaLabel: string }[]>([])
   const [activeRailId, setActiveRailId] = useState('')
@@ -3581,26 +3591,49 @@ export default function AgentCodeView() {
     const el = chatScrollRef.current
     if (!el) return
     setSelectionPopover(null)
-    // 程序化滚动（pin / scrollToBottom / smooth 动画）不据此翻转跟随态：
+    // 先记录本次位置：方向始终与「上一条 scroll 事件的位置」比较，
+    // 程序化滚动引起的位置变化也要计入基准，否则下一条用户事件的方向会算错。
+    const top = el.scrollTop
+    const prevTop = lastScrollTopRef.current
+    lastScrollTopRef.current = top
+    // 程序化滚动（pin / scrollToBottom）不据此翻转跟随态：
     // 否则会被“拉回底部→判为在底部→继续跟随”的反馈环路盖过用户上滚，导致滚动卡死。
     // smooth 动画期间会连发数十次 scroll 事件，故用时间窗口（而非布尔单次标志）持续抑制。
-    if (programmaticScrollRef.current || Date.now() < smoothScrollUntilRef.current) {
+    if (programmaticScrollRef.current) {
       programmaticScrollRef.current = false
+      // 位置与程序写入目标一致才认作程序滚动。同一渲染帧内用户滚动与程序写入
+      // 只会产生一条 scroll 事件，位置偏离目标说明混入了用户输入，必须按用户滚动处理。
+      if (Math.abs(top - programmaticScrollTopRef.current) <= 1) return
+    } else if (Date.now() < smoothScrollUntilRef.current) {
       return
     }
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+    const distance = el.scrollHeight - top - el.clientHeight
+    // FOLLOW_THRESHOLD 只表达「视口贴近底部」的 UI 态（回到底部按钮），不再驱动跟随翻转。
     const bottom = distance <= FOLLOW_THRESHOLD
     atBottomRef.current = bottom
     setAtBottom(bottom)
-    followingRef.current = bottom
+    // 重新跟随须同时满足「真正滚到最底」且「方向向下」。只用距离阈值时，近底处的
+    // 小幅上滚会在同帧被重新接管、再被 rAF pin 拽回，表现为滚轮被吃掉；方向判断
+    // 同时覆盖滚动条拖拽与键盘翻页的向上意图。
+    if (distance <= REATTACH_THRESHOLD && top > prevTop) {
+      followingRef.current = true
+    } else if (top < prevTop) {
+      followingRef.current = false
+    }
   }, [])
 
-  // 用户主动滚动（滚轮/触控）立即暂停自动跟随：必须在 rAF pin 执行前同步置位，
+  // 向上滚动立即暂停自动跟随：必须在 rAF pin 执行前同步置位，
   // 否则 pin 每帧把 scrollTop 拽回底部会盖过用户意图（仅用 onChatScroll 翻转因时序竞争仍会卡死）。
+  // 向下滚动不暂停：在底部继续下滚本无位移、无 scroll 事件可把跟随翻回来，若在此暂停
+  // 会导致「明明在最底下却不跟走」。
   const pauseFollow = useCallback(() => {
     followingRef.current = false
     atBottomRef.current = false
   }, [])
+  // 滚轮带方向：仅上滚（deltaY < 0）暂停跟随。ctrl+wheel 是捏合缩放，delta 正负交替，忽略。
+  const onChatWheel = useCallback((e: React.WheelEvent) => {
+    if (e.deltaY < 0 && !e.ctrlKey) pauseFollow()
+  }, [pauseFollow])
 
   // ── 统一的滚动动画（轨道跳转 / 回到底部 共用）──
   // 上滑、下滑、贴底全部走这一条实现，保证「速度与缓动完全一致」，
@@ -3688,12 +3721,18 @@ export default function AgentCodeView() {
     // force=true 表示「用户主动要求贴底」（点最后一颗点/点回到底部按钮），
     // 此时应抢占并中止旧动画，而不是被忽略。
     if (railAnimatingRef.current && !force) return
-    programmaticScrollRef.current = true
     atBottomRef.current = true
     setAtBottom(true)
     followingRef.current = true
     if (!smooth) {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'auto' })
+      const maxTop = el.scrollHeight - el.clientHeight
+      // 仅在确有位移时写入并置程序化标志：已在底部时重复调用不产生 scroll 事件，
+      // 滞留的标志会把用户的下一条真实滚动误判为程序滚动而漏处理。
+      if (maxTop - el.scrollTop > 0.5) {
+        programmaticScrollRef.current = true
+        programmaticScrollTopRef.current = maxTop
+        el.scrollTo({ top: maxTop, behavior: 'auto' })
+      }
       return
     }
     // 贴底动画：复用统一的 animateScrollTo（与轨道跳转同一实现，速度/缓动一致）。
@@ -3711,8 +3750,10 @@ export default function AgentCodeView() {
         cur.style.overflowAnchor = prevAnchor
         smoothScrollUntilRef.current = 0
         if (followingRef.current) {
+          const maxTop = cur.scrollHeight - cur.clientHeight
           programmaticScrollRef.current = true
-          cur.scrollTop = cur.scrollHeight - cur.clientHeight // 精确贴底
+          programmaticScrollTopRef.current = maxTop
+          cur.scrollTop = maxTop // 精确贴底
           // 贴底后把高亮同步到「最后一颗」：否则 updateActiveRailItem 在本帧取数时
           // 视口中心仍偏向中间消息，高亮会残留在半路那颗点上，与"已到底"观感矛盾。
           const t = [...railTargetsRef.current.keys()]
@@ -3746,8 +3787,14 @@ export default function AgentCodeView() {
       // 滚动动画进行中不抢滚动控制权：直接赋值 scrollTop 会打断补间动画，
       // 表现为「点击轨道点后上下抖动 / 停在半路」。动画由 animateScrollTo 收尾后恢复贴底。
       if (el && followingRef.current && !railAnimatingRef.current && Date.now() >= smoothScrollUntilRef.current) {
-        programmaticScrollRef.current = true
-        el.scrollTop = el.scrollHeight
+        const maxTop = el.scrollHeight - el.clientHeight
+        // 仅在确有位移时写入并置程序化标志：位置未变时不产生 scroll 事件，
+        // 滞留的标志会把用户的下一条真实滚动误判为程序滚动而漏处理（滚轮时灵时不灵）。
+        if (maxTop - el.scrollTop > 0.5) {
+          programmaticScrollRef.current = true
+          programmaticScrollTopRef.current = maxTop
+          el.scrollTop = maxTop
+        }
       }
       raf = requestAnimationFrame(pin)
     }
@@ -4034,8 +4081,9 @@ export default function AgentCodeView() {
       const h = taskCardRef.current && taskModalOpen ? taskCardRef.current.offsetHeight : 0
       root.style.setProperty('--task-card-h', `${h}px`)
       const el = chatScrollRef.current
-      // 实时计算贴底（不依赖缓存的 atBottomRef，避免 padding 变化引发的 scroll 误判）
-      if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 80) scrollToBottom()
+      // 实时计算贴底（不依赖缓存的 atBottomRef，避免 padding 变化引发的 scroll 误判）；
+      // 只在本来就跟随时才续贴：用户已上滚暂停跟随时，任务卡/计划项刷新不得把人拽回底部。
+      if (el && followingRef.current && el.scrollHeight - el.scrollTop - el.clientHeight < 80) scrollToBottom()
     }
     apply()
     const ro = new ResizeObserver(apply)
@@ -6392,7 +6440,7 @@ export default function AgentCodeView() {
         </div>
 
         <div className="agent-code-chat">
-          <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll} onWheel={pauseFollow} onTouchMove={pauseFollow} onMouseUp={handleMessagesMouseUp}>
+          <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll} onWheel={onChatWheel} onTouchMove={pauseFollow} onMouseUp={handleMessagesMouseUp}>
             {condensing && (
               <div className="agent-condensing"><LoaderIcon size={13} className="spin" /> 正在压缩历史…</div>
             )}
