@@ -1,0 +1,57 @@
+/* ══════════════════════════════════════════════════════════
+   recharts/ 模块自带样式。全部基于主题 CSS 变量，
+   因此浅色 / 黑暗主题与配色工作台都会自动跟着变，
+   本文件不含任何写死的颜色值（调色板也是从主题色推导出来的）。
+
+   卡片外壳（.rc-card / .rc-card-title）已迁到 figure/figure.css 的
+   .fig-card —— 它与 SVG 卡片共用同一套外壳和工具条，分成两份必然漂移。
+   本文件现在只负责「图表本体」：调色板、加载/失败占位、坐标轴文字。
+   ══════════════════════════════════════════════════════════ */
+
+/* 调色板：前四色直接用语义色，后四色用 color-mix 把它们往正文色调和，
+   拉开相邻扇区/线条的区分度，同时仍然完全跟随主题（没有写死的 hex）。
+   想换配色只改这里，spec 里的 colors 字段也可以逐图覆盖。
+
+   注意这一层同时是「导出 SVG」的关键：图表元素上写的是
+   fill="var(--rc-c1)"，脱离文档后这些变量不存在，整张图会变黑。
+   serializeSvg 会在导出前逐元素把 var() 换成实时计算值。 */
+.rc-chart {
+  --rc-c1: var(--accent);
+  --rc-c2: var(--success);
+  --rc-c3: var(--warning);
+  --rc-c4: var(--danger);
+  --rc-c5: color-mix(in srgb, var(--accent) 55%, var(--text) 45%);
+  --rc-c6: color-mix(in srgb, var(--success) 55%, var(--text) 45%);
+  --rc-c7: color-mix(in srgb, var(--warning) 55%, var(--text) 45%);
+  --rc-c8: color-mix(in srgb, var(--danger) 55%, var(--text) 45%);
+  position: relative;
+  width: 100%;
+}
+
+.rc-chart-loading {
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.rc-chart-failed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Recharts 默认给坐标轴文字与网格用了偏灰的写死值，
+   这里统一收编到主题变量，避免暗色主题下刻度看不清。 */
+.rc-chart .recharts-cartesian-axis-tick-value {
+  fill: var(--text-muted);
+}
+
+.rc-chart .recharts-polar-angle-axis-tick-value,
+.rc-chart .recharts-polar-radius-axis-tick-value {
+  fill: var(--text-muted);
+}

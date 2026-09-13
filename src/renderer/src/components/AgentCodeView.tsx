@@ -13,7 +13,7 @@ import katex from 'katex'
 import katexCssInline from 'katex/dist/katex.min.css?inline'
 import katexJsInline from 'katex/dist/katex.min.js?raw'
 import '../styles/monitoring.css'
-import { Bot, AlertCircle, Wrench, TerminalSquare, CheckCircle2, XCircle, Undo2, Bug, Brain, FileDiff, Eye, Image as ImageIcon, Database, Copy, Check, Search, SearchX, Globe } from 'lucide-react'
+import { Bot, AlertCircle, Wrench, TerminalSquare, CheckCircle2, XCircle, Undo2, Bug, Brain, FileDiff, Eye, Image as ImageIcon, Database, Copy, Check, Search, SearchX, Globe, CodeXml } from 'lucide-react'
 // 顶栏按钮动态图标（@animateicons 无 Panel*/Bug 对应项，用 Chevron 方向图标替代折叠语义）
 import {
   BrainIcon, LoaderIcon, SlidersHorizontalIcon, ActivityIcon, BookOpenIcon,
@@ -76,6 +76,10 @@ import { makeDefaultHandlers } from '../jsonui/defaultHandlers'
 import MetricsBridge from '../jsonui/MetricsBridge'
 import { tryExtractSpec } from '../jsonui/specGen'
 import { MermaidCard, parseContentToBlocks } from '../mermaid'
+// SVG 图表卡片（独立模块）。内部用 React.lazy 懒加载真正的 Recharts 渲染层，
+// 所以这里引它不会把 recharts 库拉进主包。
+import { ChartCard } from '../recharts'
+import { SvgCard } from '../svg/SvgCard'
 import '../styles/agent-code.css'
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -1533,6 +1537,28 @@ const StreamingContent = React.memo(function StreamingContent({ content, streami
             />
           )
         }
+        if (block.kind === 'chart') {
+          return (
+            <ChartCard
+              key={`chart-${i}`}
+              code={block.code}
+              renderFallback={(fallbackCode) => (
+                <CodeBlock language="" value={fallbackCode} />
+              )}
+            />
+          )
+        }
+        if (block.kind === 'svg') {
+          return (
+            <SvgCard
+              key={`svg-${i}`}
+              code={block.code}
+              renderFallback={(fallbackCode) => (
+                <CodeBlock language="" value={fallbackCode} />
+              )}
+            />
+          )
+        }
         return (
           <div key={`text-${i}`} className={`chat-msg-bubble chat-msg-markdown${isStreamingContent ? ' chat-msg-bubble--streaming' : ''}`}>
             {isStreamingContent ? <StreamingMarkdown content={block.content} isStreaming={isStreamingContent} /> : <AgentMarkdown content={block.content} />}
@@ -1580,6 +1606,26 @@ const StreamingContent = React.memo(function StreamingContent({ content, streami
               return (
                 <div key={`mermaid-final-${i}`} className="agent-msg-ui">
                   <MermaidCard
+                    code={block.code}
+                    renderFallback={(c) => <CodeBlock language="" value={c} />}
+                  />
+                </div>
+              )
+            }
+            if (block.kind === 'chart') {
+              return (
+                <div key={`chart-final-${i}`} className="agent-msg-ui">
+                  <ChartCard
+                    code={block.code}
+                    renderFallback={(c) => <CodeBlock language="" value={c} />}
+                  />
+                </div>
+              )
+            }
+            if (block.kind === 'svg') {
+              return (
+                <div key={`svg-final-${i}`} className="agent-msg-ui">
+                  <SvgCard
                     code={block.code}
                     renderFallback={(c) => <CodeBlock language="" value={c} />}
                   />
@@ -2189,6 +2235,24 @@ function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']>, msgI
             />
           </div>
         )
+      } else if (block.kind === 'chart') {
+        out.push(
+          <div key={`chart-seg-final-${i}`} className="agent-msg-ui">
+            <ChartCard
+              code={block.code}
+              renderFallback={(c) => <CodeBlock language="" value={c} />}
+            />
+          </div>
+        )
+      } else if (block.kind === 'svg') {
+        out.push(
+          <div key={`svg-seg-final-${i}`} className="agent-msg-ui">
+            <SvgCard
+              code={block.code}
+              renderFallback={(c) => <CodeBlock language="" value={c} />}
+            />
+          </div>
+        )
       } else {
         out.push(
           <div key={`text-seg-final-${i}`} className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>
@@ -2216,29 +2280,57 @@ const stoppedBadge = (
 const agentUiDefaultHandlers = makeDefaultHandlers()
 
 const AgentUiBlock = React.memo(function AgentUiBlock({ msg, modelTemplateId }: { msg: AgentMessage; modelTemplateId?: string }) {
-  const spec = useMemo(() => {
+  const [showSpec, setShowSpec] = useState(false)
+
+  // 一次解析出两样东西：渲染用的 spec，以及给用户看的原文 raw。
+  //
+  // 原文必须单独留一份：Spec 已经不再出现在正文里了（parseContentToBlocks 会把
+  // 那段 JSON 从消息正文中摘掉），这里是用户唯一还能看到「模型到底给了什么」的
+  // 入口。raw 用的是归一化后的 JSON（与渲染所用的是同一份），所以展开看到的
+  // 就是真正被渲染的东西，不会出现「显示的 spec 和渲染的对不上」。
+  const ui = useMemo(() => {
     let parsed: Spec | null = null
+    let raw: string | null = null
     if (msg.uiSpecRaw) {
       try { parsed = JSON.parse(msg.uiSpecRaw) as Spec } catch { return null }
+      raw = msg.uiSpecRaw
     } else if (!msg.uiSpecChecked && msg.content) {
-      const raw = tryExtractSpec(msg.content)
-      if (!raw) return null
-      try { parsed = JSON.parse(raw) as Spec } catch { return null }
+      const extracted = tryExtractSpec(msg.content)
+      if (!extracted) return null
+      try { parsed = JSON.parse(extracted) as Spec } catch { return null }
+      raw = extracted
     }
     if (!parsed?.elements) return null
     const elements = Object.fromEntries(
       Object.entries(parsed.elements).map(([k, v]) => [k, { ...v, props: v.props ?? {} }])
     )
-    return { ...parsed, elements }
+    return { spec: { ...parsed, elements }, raw }
   }, [msg.uiSpecRaw, msg.uiSpecChecked, msg.content])
 
-  if (spec) {
+  if (ui) {
     return (
       <div className="agent-msg-ui">
         <JSONUIProvider registry={registry} initialState={{}} handlers={agentUiDefaultHandlers}>
           {modelTemplateId ? <MetricsBridge modelId={modelTemplateId} /> : null}
-          <Renderer spec={spec} registry={registry} />
+          <Renderer spec={ui.spec} registry={registry} />
         </JSONUIProvider>
+        {ui.raw ? (
+          <div className="agent-msg-spec">
+            <button
+              type="button"
+              className="agent-msg-spec-toggle"
+              aria-expanded={showSpec}
+              title={showSpec ? '收起模型输出的 UI Spec' : '展开模型输出的 UI Spec'}
+              onClick={() => setShowSpec((v) => !v)}
+            >
+              <CodeXml size={12} />
+              <span>{showSpec ? '收起 Spec' : '查看 Spec'}</span>
+            </button>
+            {showSpec ? (
+              <pre className="agent-msg-spec-body"><code>{ui.raw}</code></pre>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     )
   }
@@ -2308,13 +2400,19 @@ const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loadi
     // 最终正文独立成泡），完成后同一结构静态渲染（ThinkBlock closed、正文切 AgentMarkdown 完整栈）。
     return (
       <>
-        {!isStreaming && <AgentUiBlock msg={msg} modelTemplateId={modelTemplateId} />}
         {renderSegmentsFor(src.segments, msg.id, isStreaming, isStreaming ? liveToolCalls : undefined, {
           thinkDone: isStreaming ? !!thinkDone : true,
           onPreviewFile: a.onPreviewFile, canUndoFor: a.canUndoFor, onUndo: a.onUndo,
           streamStartAt: isStreaming ? streamStartAt : undefined,
           meta
         })}
+        {/* 动态 UI 卡片必须排在正文**之后**。
+            它渲染的是「结论的可视化」，曾经排在 renderSegmentsFor 之前，结果图表
+            跑到思考链与模型信息（模型名/token/t/s）上面去了，读起来整个颠倒。
+            .agent-msg-ui 的 border-top 虚线 + margin-top 本来也是为「在下面」写的。
+            注意 renderSegmentsFor 内部是「思考链在前、最终正文在后」，所以放在它
+            之后 = 正文之下，正好是 css 注释写的那个位置。 */}
+        {!isStreaming && <AgentUiBlock msg={msg} modelTemplateId={modelTemplateId} />}
         {src.stopped && stoppedBadge}
         {fileSummary}
         {actions}
@@ -2328,8 +2426,9 @@ const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loadi
       {pendingFirstToken && (
         <ThinkBlock pending value="" closed={false} isStreaming msgStreaming bodyAppeared={false} streamStartAt={streamStartAt} />
       )}
-      {!isStreaming && <AgentUiBlock msg={msg} modelTemplateId={modelTemplateId} />}
       <StreamingContent content={src.content} streaming={isStreaming} toolCalls={src.toolCalls || undefined} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(msg.id, tc)} />
+      {/* 同上：卡片在正文之后，不要提到 StreamingContent 前面 */}
+      {!isStreaming && <AgentUiBlock msg={msg} modelTemplateId={modelTemplateId} />}
       {!isStreaming && hasToolCalls && fileSummary}
       {!isStreaming && !hasToolCalls && actions}
     </>
@@ -6944,6 +7043,13 @@ export default function AgentCodeView() {
                     className={`chat-model-dropdown${modelPickerOpen ? ' active' : ''}${runningCard ? ' running' : ''}${runningCard?.ready ? ' ready' : ''}`}
                     onClick={() => setModelPickerOpen(v => !v)}
                   >
+                    {runningCard && (
+                      <span className="chat-model-logo chat-model-dropdown-logo">
+                        {modelLogos[runningCard.template.id]
+                          ? <img src={modelLogos[runningCard.template.id]!} className="chat-model-logo-img" alt="" />
+                          : <ImageIcon size={11} />}
+                      </span>
+                    )}
                     <span className="chat-model-dropdown-name">{runningCard ? modelLabel : '选择模型'}</span>
                   </button>
                   <div

@@ -1,0 +1,252 @@
+/* ══════════════════════════════════════════════════════════
+   figure/ 模块自带样式 —— SVG 卡片与 Recharts 图表卡片共用的外壳。
+
+   这一层原来是各写一份的（svg/svg.css 的 .svg-card、recharts/chart.css 的
+   .rc-card），两套规则的观感必须手动保持一致。现在外壳只剩这一份，
+   两张卡片只在「画布底色」上还有差异，而那是通过 themeCanvas 属性传的，
+   不再需要两份 CSS。
+
+   颜色全部走主题 CSS 变量，浅色 / 暗色主题与配色工作台自动跟随。
+   ══════════════════════════════════════════════════════════ */
+
+/* 刻意**没有** border-left: 3px solid var(--accent)。
+   项目里 .jui-card / .agent-mem-row / .agent-debug-row / blockquote 都用这条
+   左边条来标记「这是一个内容块」，那是文本块语境的约定：左边条像引用符号，
+   帮读者分清哪几行属于同一块。
+   但图形卡片里装的是图片本身，左边条在这里没有语义，而且浅色主题下
+   --accent 是 #0a0a0a，3px 近黑压在浅灰卡面上偏重，还会和同样取 --accent
+   的黑色折线糊在一起。所以这里只用四边等宽的 1px 边框。
+   改动前请先想清楚：这是有意偏离，不是漏写。 */
+.fig-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px 12px;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+
+/* ── 头部：标题占满左侧，工具条贴右 ──
+   工具条平时压到半透明、悬停整张卡片才完全显形：每一张图都顶着一排按钮
+   会持续抢注意力，而这些按钮是低频操作。
+   但「已展开源码」时不能压暗（用户正在看它），所以用 --pinned 钉住。 */
+.fig-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  margin-bottom: 6px;
+}
+
+.fig-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fig-tools {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.4;
+  transition: opacity var(--transition);
+}
+
+.fig-card:hover .fig-tools,
+.fig-tools:focus-within,
+.fig-tools--pinned {
+  opacity: 1;
+}
+
+.fig-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+
+.fig-btn:hover {
+  background: var(--hover-bg, rgba(128, 128, 128, 0.15));
+  color: var(--text);
+}
+
+.fig-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.fig-btn--on {
+  background: var(--hover-bg, rgba(128, 128, 128, 0.15));
+  color: var(--text);
+}
+
+/* ── 画布 ──
+   刻意不写 overflow: hidden —— Recharts 的 Tooltip 是绝对定位的 HTML 元素，
+   越界时会被裁掉。圆角由 background 自己遵守，不需要靠裁剪。
+
+   底色永远由调用方内联给（见 FigureFrame 的 themeCanvas），没有 CSS 类分支：
+   卡片不自带「背景切换」了，整张卡跟着应用主题走，全局只有一个控制入口。 */
+.fig-canvas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border-radius: 6px;
+  transition: background var(--transition);
+}
+
+/* ── 反相：让「假定浅色背景」的图形（目前只有模型写的 SVG）在深色主题下也能看 ──
+   invert(1) 把黑↔白翻过来，hue-rotate(180deg) 再把色相转回去 —— 这是业界处理
+   「第三方图片深色模式」的标准手法，结果是「深底 + 浅字 + 大致相同的彩色」。
+   注意它是近似：颜色由反相推导，与模型原色有色差；对插画类图形可能不自然。
+
+   只反相画布的**直接子元素**，绝不反相画布自己 —— 否则画布底色会一起被翻成浅色，
+   浅色图形落在浅色底上等于隐形。
+
+   判定条件只有一条：**应用处于深色主题**。卡片不再提供单独的背景开关，
+   「卡片深底 / 应用浅色」这种矛盾组合从源头上不存在了，所以规则退化成一条。
+   带 fig-invertible 的两个元素是卡片画布与放大层的 stage —— 共用同一个类，
+   两处观感永远一致。 */
+html.theme-dark .fig-invertible > * {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+/* 取源码失败等瞬时提示，一闪即走，不占布局（在卡片底部出现一行） */
+.fig-notice {
+  width: fit-content;
+  margin-top: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--code-bg);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ── 源码面板 ──
+   大图表序列化出来可以有几万字符，必须给上限并允许内部滚动，
+   否则一张图能把整条会话撑到几屏高。 */
+.fig-source {
+  max-height: 320px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+  color: var(--code-text, var(--text));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.fig-source code {
+  font: inherit;
+  color: inherit;
+}
+
+/* ── 放大层 ──
+   用 portal 挂到 body：聊天容器里存在多层 stacking context 与
+   overflow 裁剪，留在原地会盖不住侧边栏，也会被消息气泡裁掉。 */
+.fig-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal, 1000);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.72);
+  cursor: zoom-out;
+}
+
+/* 放大层分两层，是为了把「底色」和「图形」分开：
+   底色在 stage 上，反相滤镜作用在子元素 img 上。如果两者都在 img 上，
+   反相会把底色一起翻掉（深底变浅底），浅色图形就落在浅色底上消失了。
+   结构：.fig-zoom > .fig-zoom-stage(底色/位移/拖拽) > img(只负责反相) */
+.fig-zoom-stage {
+  position: relative;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+  cursor: grab;
+  user-select: none;
+  /* 关键：不设 touch-action: none 的话，指针拖拽会被浏览器的
+     滚动 / 缩放手势接管，pointermove 中途断掉，拖起来一顿一顿的。 */
+  touch-action: none;
+  will-change: transform;
+}
+
+.fig-zoom-stage:active {
+  cursor: grabbing;
+}
+
+/* 放大层的图片必须给**确定宽度**，只写 max-* 会塌成 0×0。
+   原因：模型写的 SVG 常常只有 viewBox、没有 width/height（本项目里很常见），
+   这种 <img> 没有内在尺寸，于是 width: auto 会反过来去问包含块要宽度 ——
+   而包含块 .fig-zoom-stage 的宽度又是按内容算的，两边互相依赖，
+   Chrome 直接把两者都解析成 0。
+   实测（Chrome，窗口 1280×800，图片 naturalWidth=300）：
+     旧写法 img box 0×0 / stage 0×0 —— 放大层只剩一层黑底，图完全看不见。
+     给确定 width 后 img box 1163×578 / stage 1163×578，图形正常铺满。
+   取 min(92vw, 1400px)：跟着窗口走，又不会在超宽屏上把图拉成巨幅。
+   object-fit: contain 兜住极端宽高比（比如又高又窄的图）：
+   那种情况下 max-height 会压住高度，contain 让图形居中留白，而不是被拉变形。 */
+.fig-zoom-img {
+  display: block;
+  width: min(92vw, 1400px);
+  height: auto;
+  max-height: 82vh;
+  object-fit: contain;
+}
+
+.fig-zoom-bar {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  transform: translateX(-50%);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  cursor: default;
+}
+
+.fig-zoom-pct {
+  min-width: 46px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.fig-zoom-hint {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+  pointer-events: none;
+}

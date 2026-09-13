@@ -1,0 +1,260 @@
+/* ══════════════════════════════════════════════════════════
+   配色工作台 —— 独立弹窗样式
+   全部走应用现有的 CSS 变量，所以它自身也会跟着被调色（所见即所改）。
+   ══════════════════════════════════════════════════════════ */
+
+.cs-trigger {
+  position: fixed;
+  top: 3px;
+  right: 216px;
+  width: 32px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  z-index: 10000;
+  -webkit-app-region: no-drag;
+  transition: background 0.15s, color 0.15s;
+}
+
+.cs-trigger:hover,
+.cs-trigger.on {
+  background: var(--hover-bg, rgba(128, 128, 128, 0.15));
+  color: var(--text);
+}
+
+.cs-panel {
+  position: fixed;
+  top: 36px;
+  right: 12px;
+  width: 330px;
+  max-height: calc(100vh - 52px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  font-size: 13px;
+  z-index: 10001;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+}
+
+.cs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.cs-title {
+  font-weight: 500;
+}
+
+.cs-x {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+
+.cs-x:hover {
+  background: var(--hover-bg, rgba(128, 128, 128, 0.15));
+  color: var(--text);
+}
+
+.cs-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.cs-tab {
+  flex: 1;
+  padding: 5px 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.cs-tab.on {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: transparent;
+}
+
+.cs-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 12px 8px;
+}
+
+.cs-sec {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cs-sec:last-child {
+  border-bottom: none;
+}
+
+.cs-sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.cs-mini {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+
+.cs-mini:hover {
+  background: var(--hover-bg, rgba(128, 128, 128, 0.15));
+  color: var(--text);
+}
+
+.cs-slider {
+  margin-bottom: 9px;
+}
+
+.cs-slider-top {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cs-slider-val {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-slider input[type='range'] {
+  width: 100%;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--border-strong);
+  border-radius: 99px;
+  outline: none;
+  cursor: pointer;
+}
+
+.cs-slider input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  cursor: pointer;
+}
+
+.cs-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.cs-swatch {
+  width: 26px;
+  height: 20px;
+  padding: 0;
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.cs-swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.cs-swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 4px;
+}
+
+.cs-name {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cs-hex {
+  width: 66px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-foot {
+  display: flex;
+  gap: 6px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.cs-foot button {
+  flex: 1;
+  padding: 5px 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.cs-foot button:hover {
+  background: var(--hover-bg, rgba(128, 128, 128, 0.15));
+  color: var(--text);
+}
+
+.cs-hint {
+  padding: 0 12px 10px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}

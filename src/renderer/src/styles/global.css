@@ -58,6 +58,15 @@
   --table-head-bg: #f1f1f2;
   --quote-bg: #f4f4f5;
 
+  /* 模型生成的 SVG（```svg 围栏 → SvgCard）的画布底色。
+     这类 SVG 是用字面颜色画的（fill="#333" 这种），默认假定「白底黑字」，
+     我们拿不到它的语义、没法像 mermaid 那样把主题变量喂进去重绘。
+     两个主题**都**取 --surface：与卡片同色 → 不出现「灰卡片套白框」的内框。
+     深色下的可见性不靠垫白底，而是靠 figure.css 里那条反相规则
+     （html.theme-dark .fig-invertible > *），所以暗色主题那侧也取 --surface
+     （见 theme-dark.css）。卡片跟着应用主题走，没有自己的背景开关。 */
+  --svg-canvas: var(--surface);
+
   /* ── 终端主题（全局深色，不论 app 亮暗模式） ── */
   --color-terminal-bg: #1e1e1e;
   --color-terminal-fg: #d4d4d4;

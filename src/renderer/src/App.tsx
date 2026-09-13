@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react'
+import React, { useEffect, useMemo, lazy, Suspense } from 'react'
 import { useStore } from './store/useStore'
 import { useImageStore } from './store/imageStore'
 import Sidebar from './components/Sidebar'
@@ -25,7 +25,11 @@ import KnowledgeView from './components/KnowledgeView'
 import TtsView from './components/TtsView'
 import SttView from './components/SttView'
 import OcrView from './components/OcrView'
-import BenchmarkView from './components/BenchmarkView'
+// BenchmarkView 静态引入了 recharts（约 1.3MB）。如果这里也用静态 import，
+// Rollup 必须把 recharts 提到主包——因为 recharts/ChartCard 里的懒加载 chunk
+// 与它共享同一份依赖，只要有一个 eager 引入者，整条依赖链就回不到懒 chunk。
+// 隔一层 lazy 之后，recharts 变成两者共享的按需 chunk，首屏不再背这 1.3MB。
+const BenchmarkView = lazy(() => import('./components/BenchmarkView'))
 import ImageGenView from './components/ImageGenView'
 import AgentCodeView from './components/AgentCodeView'
 import MermaidTestView from './components/MermaidTestView'
@@ -590,7 +594,11 @@ function AppMain() {
       case 'welcome': return <WelcomeView />
       case 'llama': return <LlamaChatView />
       case 'ocr': return <OcrView />
-      case 'benchmark': return <BenchmarkView />
+      case 'benchmark': return (
+        <Suspense fallback={<div style={{ padding: 24, color: 'var(--text-secondary)' }}>加载基准测试…</div>}>
+          <BenchmarkView />
+        </Suspense>
+      )
       case 'model-tools': return <ModelToolsView />
       case 'knowledge': return <KnowledgeView />
       case 'tts': return <TtsView />

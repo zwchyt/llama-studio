@@ -8,10 +8,15 @@
 |---|---|---|---|---|
 | `GpuUsagePanel.tsx` | `GpuUsagePanel` | GPU 显存/利用率/温度 | `engine`, `utilization?`, `memoryUsedMb?`, `memoryTotalMb?`, `temperature?` | — |
 | `MessageCard.tsx` | `MessageCard` | 通用提示卡片（纯展示） | `variant`, `title`, `message` | — |
-| `Chart.tsx` | `Chart` | 简单图表（折线/柱状/饼图） | `type`, `title?`, `data`, `xKey`, `yKey` | — |
+| `Chart.tsx` | `Chart` | ~~已迁移到 `../recharts/`，由 `ChartCard` 渲染~~ | 见 `../recharts/types.ts` 的 `ChartSpec` | — |
 | `MermaidCard.tsx` | `MermaidCard` | ~~已迁移到 `../mermaid/`~~ | — | — |
 
 > **Mermaid 模块已独立**：`MermaidCard` 和 `parseContentToBlocks` 已迁移到 `src/renderer/src/mermaid/` 目录。本目录不再包含 Mermaid 相关代码。`registry.tsx` 通过 `import { MermaidCard } from '../mermaid'` 引用。
+
+> **图表模块已独立**：原 `Chart.tsx` 已删除，实现迁到 `src/renderer/src/recharts/`（`ChartCard` + `ChartView` + `parseChartSpec`）。
+> 卡片名 `Chart` 仍然可用，但 `registry.tsx` 里它指向 `UniversalChart`（不是本目录的组件），
+> 经 `normalizeChartSpec` 判定后交给 `ChartCard` 渲染，支持 line/bar/area/pie/scatter/radar 六种类型。
+> 另外正文里的 chart 围栏走 `../recharts/`、svg 围栏走 `../svg/`，都是独立模块，与本目录无关。
 
 ## 添加新卡片流程
 

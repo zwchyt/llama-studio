@@ -42,7 +42,7 @@ function padv(s: string, n: number): string {
 // ─────────────────────────────────────────────────────────────
 // 启动标题栏 + 列头（进程启动时打印一次）
 // ─────────────────────────────────────────────────────────────
-const APP_VERSION = 'v1.0.186'
+const APP_VERSION = 'v1.0.207'
 const EV_VERSION = 'electron-vite 5.0.0'
 
 // 启动期 spinner（TTY 下旋转；非 TTY 不启动）

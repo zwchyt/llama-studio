@@ -7,7 +7,8 @@
 
 /* ── 切换主题的瞬间禁用一切过渡：类挂在 <html> 上、不依赖 .theme-dark，
    浅↔深两个方向都生效。避免各元素以不同步的 transition 时长渐变造成整屏闪烁。
-   切换落定后下一帧即移除，hover 等常规过渡不受影响。 ── */
+   移除时机见 themeStore.ts：圆形揭示路径要挂满整个动画（它还兼任下面的滚动条守卫），
+   即时回退路径则下一帧就摘。hover 等常规过渡不受影响。 ── */
 html.theme-switching,
 html.theme-switching *,
 html.theme-switching *::before,
@@ -15,9 +16,33 @@ html.theme-switching *::after {
   transition: none !important;
 }
 
-/* ── 圆形揭示过渡：关闭 View Transitions 默认的整屏淡入淡出，改由 JS 对
-   ::view-transition-new(root) 做 clip-path 圆形放大动画，新主题从按钮位置扩散铺满。
-   仅在主题切换的一瞬存在，平时无副作用。 ── */
+/* ── 过渡期间滚动条守卫 ──
+   这是「点按钮切主题时，右边框会闪出一条滑动条」的正解。
+   成因：startViewTransition 的 top-layer 覆盖层只在揭示动画那几百毫秒里存在，它会在极短
+   时间内让文档产生溢出（快照按设备像素取整后落回 CSS 像素，会差出不足 1px），
+   浏览器随即给滚动容器补上一条滚动条；覆盖层一撤、溢出消失，滚动条又没了。
+   于是现象就是「只有点按钮切主题才闪一下，平时根本看不见」，且明暗两个方向都会闪。
+   这里在过渡期间把滚动条整个按住：
+     ① 根滚动容器禁止滚动 —— 从源头掐掉「补一条根滚动条」这条路，顺带避免它
+        挤压 ICB 宽度导致整页重排；
+     ② 所有滚动条的 thumb 变透明 —— 兜住内层滚动容器（内容卡片等）万一也冒出来的情况。
+        只改颜色、保留 5px 宽度，不动布局，所以不会引发回流。
+   类摘掉后一切自动复原，浅色 / 黑暗两个方向都生效。 ── */
+html.theme-switching,
+html.theme-switching body {
+  overflow: hidden;
+}
+
+html.theme-switching::-webkit-scrollbar-thumb,
+html.theme-switching *::-webkit-scrollbar-thumb {
+  background: transparent !important;
+}
+
+/* ── 圆形揭示过渡：关闭 View Transitions 默认的整屏淡入淡出，改由下面的
+   @keyframes 对 ::view-transition-new(root) 做 clip-path 圆形放大，
+   新主题从按钮位置扩散铺满。仅在主题切换的一瞬存在，平时无副作用。
+   圆心 --vt-x/--vt-y、半径 --vt-r、节奏 --vt-reveal-ms/--vt-reveal-ease
+   都由 themeStore.ts 在启动过渡之前写到 <html> 上。 ── */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
@@ -25,6 +50,42 @@ html.theme-switching *::after {
 }
 ::view-transition-old(root) { z-index: 0; }
 ::view-transition-new(root) { z-index: 1; }
+
+/* 圆形揭示本体。
+   为什么是 CSS @keyframes 而不是 JS 的 element.animate()：
+   JS 路径必须等 transition.ready 的 promise resolve 之后才能挂上动画，
+   而伪元素在 ready 之前就已经渲染了——中间会有一帧「新主题完整可见、还没被
+   裁剪」被合成出来，那一帧就是眼睛看到的「顿一下」。CSS 动画在伪元素诞生的
+   第一帧就已经生效，没有这个空窗。forwards 保证动画结束后停在裁剪态，
+   否则收尾瞬间会闪回未裁剪的新主题。 ── */
+html.theme-reveal::view-transition-new(root) {
+  /* 拆成长写而不是 animation 简写：简写里只要有一个 var() 在计算期失效，
+     整条声明都会被判无效、动画直接不播；长写只影响出问题的那一项。 */
+  animation-name: vt-circle-reveal;
+  animation-duration: var(--vt-reveal-ms, 900ms);
+  animation-timing-function: var(--vt-reveal-ease, ease-in-out);
+  animation-fill-mode: forwards;
+}
+
+@keyframes vt-circle-reveal {
+  from { clip-path: circle(0px at var(--vt-x, 50%) var(--vt-y, 50%)); }
+  to   { clip-path: circle(var(--vt-r, 150%) at var(--vt-x, 50%) var(--vt-y, 50%)); }
+}
+
+/* 覆盖层容器本身永远不许成为滚动容器：即便快照尺寸和视口差出不到 1px，
+   overflow: clip 也只会裁掉、不会生出滚动条（这也是浏览器默认值，写出来是为了钉死）。 */
+::view-transition {
+  overflow: clip;
+}
+
+/* group 层是 old / new 两个快照的“容器盒”，浏览器默认给它挂了 0.25s 的几何动画
+   （width / height / transform 在 old→new 之间插值）。上面只关掉了 old/new 的
+   animation，group 没关：只要两帧快照的盒子差 1px（例如某一帧多算了滚动条占位），
+   整页位图——含右边缘那条滚动条像素——就会被缩放/平移一次，
+   表现为“项目右边框处滚动条闪一下”。这里连同 group 一起关掉。 ── */
+::view-transition-group(root) {
+  animation: none;
+}
 
 /* ── 核心变量整体换值（柔和石墨灰调：背景不纯黑、文字不刺眼） ── */
 html.theme-dark {
@@ -57,22 +118,50 @@ html.theme-dark {
   --table-head-bg: #2e3138;
   --quote-bg: #2c2f36;
   --hover-bg: rgba(255, 255, 255, .07);
+
+  /* 模型生成的 SVG 画布底色。这里**和浅色主题一样**取 --surface，
+     不再是白底（见 global.css）：
+     深色下「看得见」交给了 figure.css 里那条反相规则
+     （html.theme-dark .fig-invertible > * → invert(1) hue-rotate(180deg)），
+     所以底色要跟卡面一致、让翻白后的线条落在深色上；
+     如果这里仍写 #ffffff，就会在深色卡面里重新变出一块白框 —— 正是要消掉的东西。
+     卡片没有自己的背景开关，跟着应用主题走。 */
+  --svg-canvas: var(--surface);
+
+  /* ── 派生档位 ──
+     下面这些是「比主色再亮/再深一档」的中间态。之前它们在规则里写死
+     （#565c68 / #3b3f47 / #e2e5ea / #3a3e47），导致配色工作台调完主色后
+     这些地方停在原地、露出色差。改成由核心变量 color-mix 派生，
+     主色一动它们自动跟着走，无需再单独维护。
+     color-mix 在 Chromium 111+ 可用（本机 Electron 43 远高于此）。 ── */
+  --border-stronger: color-mix(in srgb, var(--border-strong) 88%, var(--text) 12%);
+  --surface-active: color-mix(in srgb, var(--surface-hover) 92%, var(--text) 8%);
+  --surface-raised: color-mix(in srgb, var(--surface-hover) 70%, var(--border-strong) 30%);
+  /* 抬升面（选中胶囊、主按钮）上的文字，比正文再亮一档；朝白提亮是深色主题的语义 */
+  --text-raised: color-mix(in srgb, var(--text) 65%, #ffffff 35%);
 }
 
 html.theme-dark body {
-  color: #9298a2;
+  color: var(--text-secondary);
 }
 
 /* ══════════════════════════════════════════════════════════
    定点压制：旧样式中硬编码的浅色背景
+
+   ★ 约定：本节一律引用变量，不再写死中性色值。
+     写死会让「配色工作台」（src/renderer/src/colorStudio）调完主色后，
+     这些地方停在原地、露出明显色差。
+     例外只有两类，它们本来就该独立于主题中性色：
+       · 语义色（绿 / 琥珀 / 红 / 蓝）—— 不该随色温滑杆变调
+       · 白色半透明叠加（rgba(255,255,255,.0x)）—— 是相对量，落在任何底色上都成立
    ══════════════════════════════════════════════════════════ */
 
 /* ── 全局按钮 / 提示 / 标签页 ── */
-/* 主按钮（启动等）：深灰抬升底 + 柔白字，不再反白 */
+/* 主按钮（启动等）：抬升底 + 亮字，不再反白 */
 .theme-dark .btn-primary {
-  background: #4b505b;
-  color: #e2e5ea;
-  border-color: #565c68;
+  background: var(--border-strong);
+  color: var(--text-raised);
+  border-color: var(--border-stronger);
 }
 
 /* 停止等危险按钮：浅灰描边 #cdcacc 在深底下像个亮圈，改为无描边，
@@ -82,32 +171,32 @@ html.theme-dark body {
 }
 
 .theme-dark .tooltip {
-  background: #33363d;
+  background: var(--surface-hover);
   color: var(--text);
 }
 
 .theme-dark .param-tab.active {
-  background: #4b505b;
+  background: var(--border-strong);
   color: var(--text);
 }
 
 /* ── 我的模板：搜索框与头部按钮 ── */
 .theme-dark .template-search-bar,
 .theme-dark .header-input-btn {
-  background: #33363d;
+  background: var(--surface-hover);
 }
 
 .theme-dark .header-input-btn:hover:not(:disabled) {
-  background: #383c44;
-  border-color: #565c68;
+  background: var(--border);
+  border-color: var(--border-stronger);
 }
 
 .theme-dark .header-input-btn:active:not(:disabled) {
-  background: #3b3f47;
+  background: var(--surface-active);
 }
 
 .theme-dark .template-search-bar:focus-within {
-  border-color: #565c68;
+  border-color: var(--border-stronger);
   box-shadow: 0 0 0 3px rgba(255, 255, 255, .05);
 }
 
@@ -115,22 +204,22 @@ html.theme-dark body {
 .theme-dark .models-view .models-filter-inline,
 .theme-dark .models-view .page-actions .btn,
 .theme-dark .models-view .page-actions .models-filter-inline {
-  background: #33363d;
+  background: var(--surface-hover);
 }
 
 .theme-dark .models-view .page-actions .btn:hover:not(:disabled) {
-  background: #383c44;
+  background: var(--border);
 }
 
-/* ── 模型卡片：启动模式选中态（深灰选中胶囊，不再反白） ── */
+/* ── 模型卡片：启动模式选中态（选中胶囊，不再反白） ── */
 .theme-dark .launch-mode-btn.active {
-  background: #4b505b;
-  color: #e2e5ea;
-  border-color: #565c68;
+  background: var(--border-strong);
+  color: var(--text-raised);
+  border-color: var(--border-stronger);
 }
 
 /* ── 模型卡片：运行中描边为写死的浅灰 #d4d5d3，深底下换成绿色半透描边，
-   与既有的绿色辉光呢光语义一致 ── */
+   与既有的绿色辉光语义一致（语义色，不随主题中性色走） ── */
 .theme-dark .model-card.running {
   border-color: rgba(74, 222, 128, .35);
 }
@@ -141,25 +230,26 @@ html.theme-dark body {
   filter: brightness(.85) saturate(.9);
 }
 
-/* ── “添加模板”虚线卡：悬停增亮原为黑色半透，深底下不可见，换成白色半透 ── */
+/* ── “添加模板”虚线卡：悬停增亮原为黑色半透，深底下不可见，换成白色半透。
+   白色叠加是相对量，落在任何底色上都成立，刻意不变量化 ── */
 .theme-dark .add-card:hover {
   background: rgba(255, 255, 255, .04);
 }
 
 /* ── 参数弹窗：参数名的绿色为写死的暗橄榄绿 #4f5f4f，深底下几乎不可读，
-   提亮为柔和浅绿（保持绿色语义，亮度适配深底且不刺眼） ── */
+   提亮为柔和浅绿（语义色，刻意不变量化） ── */
 .theme-dark .cmd-label {
   color: #a4c5a4;
 }
 
 /* ── 性能测试：日志区为写死的浅灰底 #cfcfcf + 纯黑文字，深底下整块发亮；
-   换成与代码块一致的深底，文字提亮为柔白，stderr 的绿色同步提亮 ── */
+   换成与代码块一致的深底，文字同步用代码块文字色 ── */
 .theme-dark .benchmark-log {
-  background: #26292f;
+  background: var(--code-bg);
 }
 
 .theme-dark .benchmark-log-stdout {
-  color: #ccd2da;
+  color: var(--code-text);
 }
 
 .theme-dark .benchmark-log-stderr {
@@ -181,7 +271,7 @@ html.theme-dark body {
 /* ── 设置页 / 关于页卡片 ── */
 .theme-dark .settings-section,
 .theme-dark .about-card {
-  background: #2a2d33;
+  background: var(--surface);
 }
 
 /* ── 聊天视图：代码块、引用、表格头、预览 ── */
@@ -191,7 +281,7 @@ html.theme-dark body {
 
 .theme-dark .chat-msg-markdown blockquote {
   background: var(--quote-bg);
-  border-left-color: #4b505b;
+  border-left-color: var(--border-strong);
 }
 
 .theme-dark .chat-msg-markdown th {
@@ -200,7 +290,7 @@ html.theme-dark body {
 
 .theme-dark .chat-file-preview-markdown blockquote {
   background: var(--quote-bg);
-  border-left-color: #4b505b;
+  border-left-color: var(--border-strong);
 }
 
 .theme-dark .chat-file-preview-markdown pre {
@@ -208,33 +298,33 @@ html.theme-dark body {
 }
 
 .theme-dark .chat-file-preview-html-btn.active {
-  background: #4b505b;
+  background: var(--border-strong);
   color: var(--text);
 }
 
 /* ── Agent Code 工作台：上下文面板 ── */
 .theme-dark .agent-ctx-panel {
-  background: #2a2d33;
+  background: var(--surface);
 }
 
 /* ── Agent Code 工作台：用户消息气泡 ──
    气泡底色由局部变量 --agent-bubble-bg 写死为浅灰 #e3e3e3，
    黑暗下文字已变浅而气泡仍是浅底，导致浅底浅字看不清；
-   这里整体换成深灰，气泡内的文字/代码卡片随全局变量自动协调 */
+   这里整体换成悬停面，气泡内的文字/代码卡片随全局变量自动协调 */
 .theme-dark .agent-code-view {
-  --agent-bubble-bg: #33363d;
+  --agent-bubble-bg: var(--surface-hover);
   --agent-selection-bg: rgba(129, 147, 230, 0.32);
 }
 
 /* ── 顶部导航布局（新布局同步适配） ── */
 .theme-dark .topnav-item.active,
 .theme-dark .topnav-item:hover {
-  background: #33363d;
+  background: var(--surface-hover);
 }
 
 /* ── 聊天视图：预览激活态按钮、代码块头部、文件标签选中态 ── */
 .theme-dark .chat-settings-btn.preview-active {
-  background: #4b505b;
+  background: var(--border-strong);
   color: var(--text);
 }
 
@@ -243,29 +333,29 @@ html.theme-dark body {
 }
 
 .theme-dark .chat-file-tab.active {
-  background: #4b505b;
+  background: var(--border-strong);
   color: var(--text);
-  border-color: #565c68;
+  border-color: var(--border-stronger);
 }
 
 /* ── Agent Code 工作台：上下文进度条、标签页选中态、引用胶囊 ── */
 .theme-dark .agent-ctx-inline-bar,
 .theme-dark .agent-ctx-bar {
-  background: #3a3e47;
+  background: var(--surface-raised);
 }
 
 .theme-dark .agent-code-tab-switch .btn-xs.active {
-  background: #4b505b;
+  background: var(--border-strong);
   color: var(--text);
 }
 
 .theme-dark .agent-ref-chip {
-  background: #33363d;
-  border-color: #4b505b;
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
 }
 
 .theme-dark .agent-ref-chip-icon {
-  color: #9298a2;
+  color: var(--text-secondary);
 }
 
 .theme-dark .agent-ref-chip-label {
@@ -285,7 +375,7 @@ html.theme-dark body {
 
 /* 模型卡片“打开聊天”按钮：行内浅灰底 #c1c1c1 → 深色 */
 .theme-dark .card-run-btn[style*="193, 193, 193"] {
-  background: #4b505b !important;
+  background: var(--border-strong) !important;
   color: var(--text) !important;
 }
 

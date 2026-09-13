@@ -24,13 +24,34 @@ export const catalog = defineCatalog(schema, {
     },
     Chart: {
       props: z.object({
-        type: z.enum(['line', 'bar', 'pie']),
-        title: z.string().nullable(),
+        type: z.enum(['line', 'bar', 'area', 'pie', 'scatter', 'radar']),
+        title: z.string().nullable().optional().default(null),
         data: z.array(z.record(z.string(), z.any())),
         xKey: z.string(),
-        yKey: z.string(),
+        // 单序列用 yKey；多序列改用 series，此时 yKey 可省
+        yKey: z.string().optional(),
+        series: z
+          .array(
+            z.union([
+              z.string(),
+              z.object({
+                key: z.string(),
+                name: z.string().optional(),
+                color: z.string().optional(),
+              }),
+            ])
+          )
+          .optional(),
+        stacked: z.boolean().optional(),
+        height: z.number().optional(),
+        unit: z.string().optional(),
+        colors: z.array(z.string()).optional(),
       }),
-      description: '简单图表（折线/柱状/饼图）；data 由调用方提供具体值，xKey/yKey 指定字段',
+      description:
+        'SVG 图表（折线 line / 柱状 bar / 面积 area / 饼图 pie / 散点 scatter / 雷达 radar）。' +
+        'data 每行是一个数据点，xKey 是类目字段，yKey 是取值字段；多序列用 series:["a","b"]。' +
+        '正文里也可以直接写 ```chart 围栏 + 同样的 JSON，效果一致。' +
+        '注意：结构类图形（流程图/时序图/ER 图等）请用 MermaidCard，不要用 Chart。',
     },
     MermaidCard: {
       props: z.object({

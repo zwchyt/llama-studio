@@ -6,6 +6,7 @@ import './styles/global.css'
 import './styles/fonts.css'
 import './store/fontStore' // 启动时应用已保存的字体预设（模块副作用）
 import './cursor-theme'
+import './colorStudio/ColorStudio' // 配色工作台弹窗：自挂载，无需改动任何既有组件（模块副作用）
 
 // 全局兜底：捕获未处理的 Promise rejection（防止 IPC 裸 await 导致界面卡死）
 window.addEventListener('unhandledrejection', (e) => {

@@ -2229,7 +2229,12 @@
   user-select: none;
 }
 
-/* 消息内 json-render 动态 UI 卡片区：正文之下、操作按钮之上 */
+/* 消息内 json-render 动态 UI 卡片区：正文之下、操作按钮之上。
+   这个位置是有意的 —— 卡片渲染的是「结论的可视化」，必须排在正文之后，
+   否则会跑到思考链与模型信息（模型名/token/t/s）上面去，读起来整个颠倒。
+   下面的 border-top 虚线 + margin-top 也只有在「上面有正文」时才成立。
+   ⚠️ 如果哪天在 AgentCodeView 里看到 AgentUiBlock 被排到了 renderSegmentsFor
+   或 StreamingContent 之前，那是挪错了，不是本注释过期。 */
 .agent-msg-ui {
   margin-top: 10px;
   border-top: 1px dashed var(--border);
@@ -2243,6 +2248,60 @@
 
 .agent-msg-ui .jui-card {
   box-shadow: none;
+}
+
+/* Spec 原文开关。正文里那段 JSON 已被 parseContentToBlocks 摘掉，这里是用户
+   唯一还能看到「模型到底给了什么」的入口，所以默认收起、不抢注意力。 */
+.agent-msg-spec {
+  margin-top: 8px;
+}
+
+.agent-msg-spec-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+
+.agent-msg-spec-toggle:hover {
+  background: var(--hover-bg, rgba(128, 128, 128, 0.15));
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.agent-msg-spec-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 展开体：Spec 动辄几十行，必须限高并允许内部滚动，否则一条消息能撑到几屏高 */
+.agent-msg-spec-body {
+  max-height: 340px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+  color: var(--code-text, var(--text));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.agent-msg-spec-body code {
+  font: inherit;
+  color: inherit;
 }
 
 /* 工具卡独立时间标签：卡片上方，实色 #d97c00（橙）为最高层级 */
@@ -6801,6 +6860,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.agent-code-view .chat-input-row .chat-model-dropdown-logo {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  flex-shrink: 0;
 }
 
 .agent-code-view .chat-input-row .chat-model-dropdown-caret {

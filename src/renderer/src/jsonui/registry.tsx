@@ -4,7 +4,7 @@ import { catalog } from './catalog'
 import './jsonui.css'
 import { GpuUsagePanel } from './components/GpuUsagePanel'
 import { MessageCard } from './components/MessageCard'
-import { Chart } from './components/Chart'
+import { ChartCard, normalizeChartSpec } from '../recharts'
 import { MermaidCard, convertToMermaid, detectChartTypeFromProps } from '../mermaid'
 
 // ===== 智能路由组件：100% 自动检测 =====
@@ -18,9 +18,11 @@ function UniversalChart(renderProps: any) {
     return <MermaidCard {...renderProps} />
   }
 
-  // ===== 检测 2：如果是 recharts 数据（有 data、xKey、yKey）=====
-  if (props.data && props.xKey && props.yKey) {
-    return <Chart props={props} />
+  // ===== 检测 2：能归一化成 ChartSpec 就交给图表卡片 =====
+  // 这里用 normalizeChartSpec 实打实校验一遍，而不是靠「有 data / xKey / yKey」
+  // 猜字段名：猜中的 spec 若解析不出来，卡片会渲染成空白；校验过再渲染则不会。
+  if (normalizeChartSpec(props)) {
+    return <ChartCard props={props} />
   }
 
   // ===== 检测 3：如果是 Mermaid 结构化数据 =====
