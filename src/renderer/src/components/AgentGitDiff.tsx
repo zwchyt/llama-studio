@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { CheckIcon, ChevronRightIcon, ChevronsUpIcon, ChevronsDownIcon, CopyIcon, GitBranchIcon, MinusIcon, PlusIcon, RefreshCwIcon, HistoryIcon } from '@animateicons/react/lucide'
+import { CheckIcon, ChevronRightIcon, ChevronsUpIcon, ChevronsDownIcon, CopyIcon, GitBranchIcon, MinusIcon, PlusIcon, RefreshCwIcon, HistoryIcon, AlignJustifyIcon, FolderIcon, FolderOpenIcon } from '@animateicons/react/lucide'
 import { fileMeta } from '../utils/fileIcon'
 
 // Git 变更（只读 diff 查看）：解析 `git diff HEAD` 的 unified 输出并按行渲染。
@@ -173,7 +173,7 @@ function renderCodeWithHighlights(text: string, highlights?: { start: number; en
   return parts.length > 0 ? parts : ' '
 }
 
-const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceCollapsed, onStage, onUnstage, onDiscard, focused }: { file: GitFileChange; onOpen: (relPath: string, line?: number) => void; forceCollapsed: boolean; onStage?: (path: string) => void; onUnstage?: (path: string) => void; onDiscard?: (path: string) => void; focused?: boolean }) {
+const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceCollapsed, onStage, onUnstage, onDiscard, focused, hideDir }: { file: GitFileChange; onOpen: (relPath: string, line?: number) => void; forceCollapsed: boolean; onStage?: (path: string) => void; onUnstage?: (path: string) => void; onDiscard?: (path: string) => void; focused?: boolean; hideDir?: boolean }) {
   const parsed = useMemo(() => {
     if (file.untracked) {
       const r = contentToRows(file.content || '')
@@ -266,7 +266,7 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
         >
           <FileIcon size={11} style={{ color: fileColor }} />
           <span className="agent-git-file-name">{baseName(file.path)}</span>
-          {dir && <span className="agent-git-file-dir">{dir}</span>}
+          {dir && !hideDir && <span className="agent-git-file-dir">{dir}</span>}
         </button>
         <span className="agent-git-stat">
           <span className="add">+{added}</span>
@@ -350,6 +350,69 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
   )
 })
 
+// ── 数形视图：把变更文件按目录层级组织成可折叠树 ──
+type GitTreeNode =
+  | { kind: 'dir'; name: string; path: string; children: GitTreeNode[] }
+  | { kind: 'file'; name: string; path: string; file: GitFileChange }
+
+function buildGitTree(files: GitFileChange[]): GitTreeNode[] {
+  const root: Extract<GitTreeNode, { kind: 'dir' }> = { kind: 'dir', name: '', path: '', children: [] }
+  for (const f of files) {
+    const segs = f.path.split('/')
+    let cur = root
+    for (let i = 0; i < segs.length - 1; i++) {
+      const seg = segs[i]!
+      let next = cur.children.find((c): c is Extract<GitTreeNode, { kind: 'dir' }> => c.kind === 'dir' && c.name === seg)
+      if (!next) {
+        next = { kind: 'dir', name: seg, path: cur.path ? `${cur.path}/${seg}` : seg, children: [] }
+        cur.children.push(next)
+      }
+      cur = next
+    }
+    cur.children.push({ kind: 'file', name: baseName(f.path), path: f.path, file: f })
+  }
+  // 目录在前、文件在后，各自按名称排序（目录树的自然阅读顺序）
+  const sortRec = (n: Extract<GitTreeNode, { kind: 'dir' }>) => {
+    n.children.sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'dir' ? -1 : 1))
+    for (const c of n.children) if (c.kind === 'dir') sortRec(c)
+  }
+  sortRec(root)
+  return root.children
+}
+
+function countTreeFiles(node: GitTreeNode): number {
+  if (node.kind === 'file') return 1
+  return node.children.reduce((s, c) => s + countTreeFiles(c), 0)
+}
+
+// 递归目录节点：折叠状态由父层 collapsedDirs 集合统一管理（重渲染不丢）。
+// 叶子文件复用 GitFileBlock（hideDir：目录信息由树的层级体现，叶子上不再重复）。
+function GitTreeDir({ node, depth, collapsedDirs, toggleDir, renderFile }: {
+  node: Extract<GitTreeNode, { kind: 'dir' }>
+  depth: number
+  collapsedDirs: Set<string>
+  toggleDir: (path: string) => void
+  renderFile: (file: GitFileChange, depth: number) => React.ReactNode
+}) {
+  const open = !collapsedDirs.has(node.path)
+  const fileCount = countTreeFiles(node)
+  return (
+    <div className="agent-git-tree-dir">
+      <div className="agent-git-tree-head" style={{ paddingLeft: depth * 14 }} onClick={() => toggleDir(node.path)}>
+        <ChevronRightIcon size={12} className={`agent-git-chev ${open ? 'open' : ''}`} />
+        {open ? <FolderOpenIcon size={13} className="agent-git-tree-folder" /> : <FolderIcon size={13} className="agent-git-tree-folder" />}
+        <span className="agent-git-tree-name">{node.name}</span>
+        <span className="agent-git-tree-count">{fileCount}</span>
+      </div>
+      {open && node.children.map(c =>
+        c.kind === 'dir'
+          ? <GitTreeDir key={`d-${c.path}`} node={c} depth={depth + 1} collapsedDirs={collapsedDirs} toggleDir={toggleDir} renderFile={renderFile} />
+          : <React.Fragment key={`f-${c.path}`}>{renderFile(c.file, depth + 1)}</React.Fragment>
+      )}
+    </div>
+  )
+}
+
 export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, workspaceDir, focusPath, onFocusHandled }: {
   data: GitChangesData | null
   loading: boolean
@@ -363,6 +426,12 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
   const [allExpanded, setAllExpanded] = useState(false)  // 默认全部折叠（单文件级）
   // 分区级折叠：整段「已暂存的更改 / 更改」可各自收起
   const [sectionCollapsed, setSectionCollapsed] = useState<{ staged: boolean; unstaged: boolean }>({ staged: false, unstaged: false })
+  // 视图切换：数形（目录树）/ 列表（平铺）；选择持久化，下次打开保持
+  const [view, setView] = useState<'tree' | 'list'>(() => (localStorage.getItem('agent-git-view') === 'tree' ? 'tree' : 'list'))
+  const switchView = useCallback((v: 'tree' | 'list') => {
+    setView(v)
+    try { localStorage.setItem('agent-git-view', v) } catch { /* 存储不可用 */ }
+  }, [])
   // 打开文件回调固定引用：内联函数会击穿 GitFileBlock 的 memo，任意父层重渲染都会重渲染全部文件块
   const openFile = useCallback((relPath: string, line?: number) => {
     const root = workspaceDir.replace(/[\\/]+$/, '')
@@ -397,6 +466,9 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
   const unstaged = data?.unstaged ?? []
   const total = staged.length + unstaged.length
   const hasFiles = !!data?.isRepo && total > 0
+  // 数形视图：两个分区各自的目录树（staged/unstaged 语义独立，树也各自构建）
+  const stagedTree = useMemo(() => buildGitTree(staged), [staged])
+  const unstagedTree = useMemo(() => buildGitTree(unstaged), [unstaged])
   // 定位目标匹配：绝对路径归一化（反斜杠→正斜杠、小写）后与各变更文件比对
   const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
   const focusRel = useMemo(() => {
@@ -422,7 +494,7 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
     }
     return { added, removed }
   }, [staged, unstaged])
-  const renderGroup = (title: string, list: GitFileChange[], key: 'staged' | 'unstaged', actions?: React.ReactNode) => {
+  const renderGroup = (title: string, list: GitFileChange[], key: 'staged' | 'unstaged', tree: GitTreeNode[], actions?: React.ReactNode) => {
     if (list.length === 0) return null
     const collapsed = sectionCollapsed[key]
     return (
@@ -433,10 +505,30 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
           <span className="agent-git-section-count">{list.length}</span>
           {actions && <span className="agent-git-section-actions" onClick={e => e.stopPropagation()}>{actions}</span>}
         </div>
-        {!collapsed && list.map(f => <GitFileBlock key={`${key}-${f.path}`} file={f} onOpen={openFile} forceCollapsed={!allExpanded} onStage={handleStage} onUnstage={handleUnstage} onDiscard={handleDiscard} focused={focusRel === f.path} />)}
+        {!collapsed && (view === 'tree'
+          ? tree.map(n =>
+              n.kind === 'dir'
+                ? <GitTreeDir key={`d-${n.path}`} node={n} depth={0} collapsedDirs={collapsedDirs} toggleDir={toggleDir} renderFile={renderTreeFile} />
+                : <React.Fragment key={`f-${n.path}`}>{renderTreeFile(n.file, 0)}</React.Fragment>)
+          : list.map(f => <GitFileBlock key={`${key}-${f.path}`} file={f} onOpen={openFile} forceCollapsed={!allExpanded} onStage={handleStage} onUnstage={handleUnstage} onDiscard={handleDiscard} focused={focusRel === f.path} />))}
       </div>
     )
   }
+  // 数形视图的目录折叠集合（默认全部展开；集合里的是收起的目录）
+  const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set())
+  const toggleDir = useCallback((path: string) => {
+    setCollapsedDirs(prev => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }, [])
+  const renderTreeFile = useCallback((f: GitFileChange, depth: number) => (
+    <div key={`tf-${f.path}`} style={{ paddingLeft: depth * 12 }}>
+      <GitFileBlock file={f} onOpen={openFile} forceCollapsed={!allExpanded} onStage={handleStage} onUnstage={handleUnstage} onDiscard={handleDiscard} focused={focusRel === f.path} hideDir />
+    </div>
+  ), [openFile, allExpanded, handleStage, handleUnstage, handleDiscard, focusRel])
   return (
     <div className="agent-git">
       <div className="agent-git-header">
@@ -456,6 +548,15 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
           </span>
         )}
         <span className="agent-git-spacer" />
+        {/* 视图切换：数形（目录树）/ 列表（平铺），选择持久化 */}
+        <div className="agent-git-viewswitch">
+          <button className={view === 'tree' ? 'on' : ''} title="以数形方式查看（目录树）" onClick={() => switchView('tree')}>
+            <FolderIcon size={12} />
+          </button>
+          <button className={view === 'list' ? 'on' : ''} title="以列表方式查看" onClick={() => switchView('list')}>
+            <AlignJustifyIcon size={12} />
+          </button>
+        </div>
         <button className="agent-git-refresh" onClick={() => onRefresh()}>
           <RefreshCwIcon size={12} className={loading ? 'spin' : ''} />
         </button>
@@ -473,12 +574,12 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
           <div className="agent-git-empty">工作区没有未提交的改动。</div>
         ) : (
           <>
-            {renderGroup('已暂存的更改', staged, 'staged', (
+            {renderGroup('已暂存的更改', staged, 'staged', stagedTree, (
               <button className="agent-git-copy agent-git-stage-remove" title="取消所有暂存" onClick={handleUnstageAll}>
                 <MinusIcon size={12} />
               </button>
             ))}
-            {renderGroup('更改', unstaged, 'unstaged', (
+            {renderGroup('更改', unstaged, 'unstaged', unstagedTree, (
               <>
                 <button className="agent-git-copy agent-git-discard" title="取消所有更改" onClick={handleDiscardAll}>
                   <HistoryIcon size={12} />

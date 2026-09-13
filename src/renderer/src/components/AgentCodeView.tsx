@@ -13,7 +13,7 @@ import katex from 'katex'
 import katexCssInline from 'katex/dist/katex.min.css?inline'
 import katexJsInline from 'katex/dist/katex.min.js?raw'
 import '../styles/monitoring.css'
-import { Bot, AlertCircle, Wrench, TerminalSquare, CheckCircle2, XCircle, Undo2, Bug, Brain, FileDiff, Eye, Image as ImageIcon, Database, Copy, Check, Search, SearchX, Globe, CodeXml } from 'lucide-react'
+import { Bot, AlertCircle, Wrench, TerminalSquare, CheckCircle2, XCircle, Undo2, Bug, Brain, FileDiff, Eye, Image as ImageIcon, Database, Copy, Check, Search, SearchX, Globe, ChevronUp, AlignLeft } from 'lucide-react'
 // 顶栏按钮动态图标（@animateicons 无 Panel*/Bug 对应项，用 Chevron 方向图标替代折叠语义）
 import {
   BrainIcon, LoaderIcon, SlidersHorizontalIcon, ActivityIcon, BookOpenIcon,
@@ -523,24 +523,91 @@ const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { content: 
   )
 })
 
-const MERMAID_KW_RE = /^(?:flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|erDiagram|journey|gitGraph|mindmap|timeline|pie|sankey-beta|xychart-beta|quadrantChart|requirementDiagram|architecture-beta|block-beta|packet-beta|kanban|swimlane-beta|usecase-beta|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment|radar-beta|treemap-beta|venn-beta|ishikawa-beta|wardley-beta|cynefin-beta|treeView-beta|eventmodeling)\b/i
+// ── 用户消息气泡：纯文本渲染 + 超长折叠成胶囊 ────────────────────────────
+// 用户输入一律按普通字符串显示：不走 Markdown（rehype-raw/sanitize 管线会把
+// <LineChart> 这类自定义标签剥成空白）、不渲染 HTML/SVG/图表组件、不套代码块
+// 框、不做语法高亮。{text} 文本插值天然转义，`<`、```、反引号都原样可见，
+// 任何内容都不会「显示成空白」。pre-wrap + 等宽字体保留换行/空格/缩进，代码
+// 结构不乱；超长行自动换行不撑破气泡。
+// 超长消息折叠：超过阈值（行数/字符数双阈值）后整条消息收进一枚胶囊——单行
+// 预览 + 行数 + 箭头，长文不塞进气泡；点击展开成完整气泡，底部「收起」退回。
+// 复制按钮始终复制完整原文，发送给模型的内容不变。
+const USER_FOLD_LINES = 10
+const USER_FOLD_CHARS = 1000
 
-function isMermaidOrJson(content: string): { type: 'mermaid' | 'json' | null; lang?: string } {
-  const trimmed = content.trim()
-  if (!trimmed) return { type: null }
-  if (MERMAID_KW_RE.test(trimmed)) return { type: 'mermaid', lang: 'mermaid' }
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    try { JSON.parse(trimmed); return { type: 'json', lang: 'json' } } catch { /* not json */ }
-  }
-  return { type: null }
-}
+// 输入框折叠：内容高度超过上限（≈3 行）即视为超长——输入中保持紧凑内部滚动，
+// 失焦后整个输入框收成「已折叠 N 行」胶囊，点击展开到 55vh 编辑
+const INPUT_FOLD_CAP = 63
 
-const UserMessageContent = React.memo(function UserMessageContent({ content }: { content: string }) {
-  const detected = useMemo(() => isMermaidOrJson(content), [content])
-  if (detected.type) {
-    return <CodeBlock language={detected.lang ?? ''} value={content.trim()} />
+const UserMessageEntry = React.memo(function UserMessageEntry({ content, packedText }: { content: string; packedText?: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const [packedOpen, setPackedOpen] = useState(false)
+  const text = typeof content === 'string' ? content : String(content ?? '')
+  // 打包段是 outgoing 组装时的第一个 part（已 trim），content 一定以它开头；
+  // 余下部分（用户后输入的文字 + 引用块）就是气泡正文
+  const packed = packedText ?? ''
+  const rest = packed && content.startsWith(packed)
+    ? content.slice(packed.length).replace(/^\n+/, '')
+    : content
+  const lineCount = useMemo(() => text.split('\n').length, [text])
+  const foldable = useMemo(
+    () => lineCount > USER_FOLD_LINES || text.length > USER_FOLD_CHARS,
+    [lineCount, text]
+  )
+
+  // 含打包段：chip 显示打包内容（点击可展开/收起该段）+ 用户输入的文字照常显示
+  if (packed) {
+    return (
+      <>
+        <div
+          className="chat-input-fold-chip user-msg-fold-chip"
+          title={packedOpen ? '点击收起打包内容' : '点击显示打包内容'}
+          onClick={() => setPackedOpen(v => !v)}
+        >
+          {packedOpen
+            ? <ChevronUp size={12} className="chat-input-fold-chip-icon" />
+            : <AlignLeft size={12} className="chat-input-fold-chip-icon" />}
+          <span className="chat-input-fold-chip-label">已折叠 {packed.split('\n').length} 行</span>
+        </div>
+        {packedOpen ? (
+          <div className="chat-msg-bubble chat-msg-markdown">
+            <div className="user-plain-text">{packed}</div>
+          </div>
+        ) : null}
+        {rest.trim() ? (
+          <div className="chat-msg-bubble chat-msg-markdown">
+            <div className="user-plain-text">{rest}</div>
+          </div>
+        ) : null}
+      </>
+    )
   }
-  return <AgentMarkdown content={content} />
+
+  // 折叠态：与输入框打包 chip 完全同款的小胶囊（图标 + 已折叠 N 行 + 悬停全文
+  // 预览），点击展开完整气泡；右对齐由 .chat-msg-user .chat-msg-body 的 flex-end 保证
+  if (foldable && !expanded) {
+    return (
+      <div
+        className="chat-input-fold-chip user-msg-fold-chip"
+        title="点击展开完整内容"
+        onClick={() => setExpanded(true)}
+      >
+        <AlignLeft size={12} className="chat-input-fold-chip-icon" />
+        <span className="chat-input-fold-chip-label">已折叠 {lineCount} 行</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="chat-msg-bubble chat-msg-markdown">
+      <div className="user-plain-text">{text}</div>
+      {foldable ? (
+        <button type="button" className="user-plain-toggle" onClick={() => setExpanded(false)}>
+          <ChevronUp size={12} />收起
+        </button>
+      ) : null}
+    </div>
+  )
 })
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -2280,31 +2347,23 @@ const stoppedBadge = (
 const agentUiDefaultHandlers = makeDefaultHandlers()
 
 const AgentUiBlock = React.memo(function AgentUiBlock({ msg, modelTemplateId }: { msg: AgentMessage; modelTemplateId?: string }) {
-  const [showSpec, setShowSpec] = useState(false)
-
-  // 一次解析出两样东西：渲染用的 spec，以及给用户看的原文 raw。
-  //
-  // 原文必须单独留一份：Spec 已经不再出现在正文里了（parseContentToBlocks 会把
-  // 那段 JSON 从消息正文中摘掉），这里是用户唯一还能看到「模型到底给了什么」的
-  // 入口。raw 用的是归一化后的 JSON（与渲染所用的是同一份），所以展开看到的
-  // 就是真正被渲染的东西，不会出现「显示的 spec 和渲染的对不上」。
+  // 一次解析出渲染用的 spec。正文里已不再展示 Spec 原文（parseContentToBlocks 会把
+  // 那段 JSON 摘掉，避免同一份信息显示两遍）；图形代码由各图表卡工具条自带的
+  // 「查看源码」负责展示。
   const ui = useMemo(() => {
     let parsed: Spec | null = null
-    let raw: string | null = null
     if (msg.uiSpecRaw) {
       try { parsed = JSON.parse(msg.uiSpecRaw) as Spec } catch { return null }
-      raw = msg.uiSpecRaw
     } else if (!msg.uiSpecChecked && msg.content) {
       const extracted = tryExtractSpec(msg.content)
       if (!extracted) return null
       try { parsed = JSON.parse(extracted) as Spec } catch { return null }
-      raw = extracted
     }
     if (!parsed?.elements) return null
     const elements = Object.fromEntries(
       Object.entries(parsed.elements).map(([k, v]) => [k, { ...v, props: v.props ?? {} }])
     )
-    return { spec: { ...parsed, elements }, raw }
+    return { ...parsed, elements }
   }, [msg.uiSpecRaw, msg.uiSpecChecked, msg.content])
 
   if (ui) {
@@ -2312,25 +2371,8 @@ const AgentUiBlock = React.memo(function AgentUiBlock({ msg, modelTemplateId }: 
       <div className="agent-msg-ui">
         <JSONUIProvider registry={registry} initialState={{}} handlers={agentUiDefaultHandlers}>
           {modelTemplateId ? <MetricsBridge modelId={modelTemplateId} /> : null}
-          <Renderer spec={ui.spec} registry={registry} />
+          <Renderer spec={ui} registry={registry} />
         </JSONUIProvider>
-        {ui.raw ? (
-          <div className="agent-msg-spec">
-            <button
-              type="button"
-              className="agent-msg-spec-toggle"
-              aria-expanded={showSpec}
-              title={showSpec ? '收起模型输出的 UI Spec' : '展开模型输出的 UI Spec'}
-              onClick={() => setShowSpec((v) => !v)}
-            >
-              <CodeXml size={12} />
-              <span>{showSpec ? '收起 Spec' : '查看 Spec'}</span>
-            </button>
-            {showSpec ? (
-              <pre className="agent-msg-spec-body"><code>{ui.raw}</code></pre>
-            ) : null}
-          </div>
-        ) : null}
       </div>
     )
   }
@@ -2990,7 +3032,7 @@ export default function AgentCodeView() {
     // 节流：滚动停止 140ms 后恢复波浪效果
     railScrollIdleTimerRef.current = window.setTimeout(() => setRailScrolling(false), 140)
   }, [])
-  const pendingSendRef = useRef<Array<{ text: string; attachments: Attachment[] }>>([])
+  const pendingSendRef = useRef<Array<{ text: string; attachments: Attachment[]; packedText?: string }>>([])
   // 发送互斥门闩：handleSend 在真正把 loading 置真前还有一段异步准备（系统提示词/
   // 历史压缩），排队重放多条消息时第二条可能在该窗口绕过 loading 检查并发启
   // 第二轮生成（两条流并发写同一会话），用同步 ref 封死该窗口。
@@ -2998,7 +3040,7 @@ export default function AgentCodeView() {
   // 流式归属会话：渲染层据此判定「当前会话是否正在流式」，避免 A 会话生成时
   // 切到 B 会话，B 的末条助手消息被误渲染为流式中（状态串扰）。
   const streamingSessionRef = useRef<string | null>(null)
-  const handleSendRef = useRef<(text?: string, attachments?: Attachment[]) => void>(() => { })
+  const handleSendRef = useRef<(text?: string, attachments?: Attachment[], packedHint?: string) => void>(() => { })
   const abortRef = useRef<{ aborted: boolean; resolve: (() => void) | null }>({ aborted: false, resolve: null })
   const currentStreamIdRef = useRef<string | null>(null)
   // 流开始时刻（ms）：pending 思考卡与思考块实时头部时间共用此锚点连续计时（含 TTFT、不回退）
@@ -3024,7 +3066,7 @@ export default function AgentCodeView() {
   const appendLiveUserMsgRef = useRef<(m: AgentMessage) => void>(() => { })
   // 前端 followUp 队列：追加的问题不再交给 SDK 自动续跑（单轮 runPiTurn 会吞掉回复），
   // 而是前端排队，当前轮 runPiTurn 结束后自动发起独立新轮（产生独立 user + assistant）。
-  const followUpQueueRef = useRef<{ text: string; attachments: Attachment[] }[]>([])
+  const followUpQueueRef = useRef<{ text: string; attachments: Attachment[]; packedText?: string }[]>([])
   const runPiTurnRef = useRef<((pid: string, sid: string, displayMsgs: AgentMessage[], opts: { port: number; text: string; workspaceDir: string; approveWriteEdit?: boolean; knowledgeBaseId?: string; memory?: AgentSession['memory'] }) => Promise<{ errored: boolean; aborted: boolean }>) | null>(null)
   const inputHistoryRef = useRef<string[]>([])
   const historyIdxRef = useRef<number>(-1)
@@ -4229,13 +4271,33 @@ export default function AgentCodeView() {
     if (activeSessionId === sessId) setActiveSessionId(next[0]!.id)
   }, [projects, activeSessionId])
 
-  // ── 输入框自动增高 ──
+  // ── 输入框自动增高 + 超长自动打包 chip ──
+  // 内容高度超过折叠上限（INPUT_FOLD_CAP ≈ 3 行）时，整段内容（连同前面的部分）
+  // 自动打包进「已折叠 N 行」chip（样式与「引用」胶囊一致：图标 + 标签 + 悬停
+  // 浮出内容预览，纯展示不可点击），输入框清空继续输入；再次超限就接着并入
+  // 同一个 chip。chip 里的内容发送时拼回正文（见 handleSend 的 outgoing 组装），
+  // 打包不丢任何内容。
+  const [packedInput, setPackedInput] = useState<string | null>(null)
+  const inputOverflowRef = useRef(false)
   const autoResize = useCallback(() => {
     const el = textareaRef.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = Math.min(el.scrollHeight, 220) + 'px'
+    el.style.height = Math.min(el.scrollHeight, INPUT_FOLD_CAP) + 'px'
+    inputOverflowRef.current = el.scrollHeight > INPUT_FOLD_CAP + 1
   }, [])
+
+  // 高度重测 + 自动打包（useLayoutEffect 是防闪烁的关键）：必须在 DOM 更新后、
+  // 浏览器绘制前同步完成测量与打包——若放 useEffect，粘贴的长文本会先被画出来
+  // 一帧再收进 chip，出现「文本闪一下变胶囊」的过渡；layout 阶段完成的 setState
+  // 会在同一帧内同步重渲染，用户只看得到最终态（空框 + chip），没有任何中间画面。
+  useLayoutEffect(() => {
+    autoResize()
+    if (input && inputOverflowRef.current) {
+      setPackedInput(prev => (prev ? `${prev}\n\n` : '') + input)
+      setInput('')
+    }
+  }, [autoResize, input])
 
   // 把文本插入到输入框光标处（追加/插入文本，不触发发送）
   // 用于文件浏览器右键「发送到输入框」：插入文件名到当前光标位置
@@ -5623,14 +5685,14 @@ export default function AgentCodeView() {
       if (!abortRef.current.aborted) {
         for (const pending of queue) {
           if (pending.text.trim() || pending.attachments.length) {
-            setTimeout(() => handleSendRef.current(pending.text || undefined, pending.attachments), 0)
+            setTimeout(() => handleSendRef.current(pending.text || undefined, pending.attachments, pending.packedText), 0)
           }
         }
       }
       // 前端 followUp 队列：当前轮结束后自动发起独立新轮，产生独立 user + assistant 回复
       const nextFU = followUpQueueRef.current.shift()
       if (nextFU && !abortRef.current.aborted) {
-        const fuUserMsg: AgentMessage = { id: newMsgId(), role: 'user', content: nextFU.text, attachments: nextFU.attachments.length ? nextFU.attachments : undefined }
+        const fuUserMsg: AgentMessage = { id: newMsgId(), role: 'user', content: nextFU.text, attachments: nextFU.attachments.length ? nextFU.attachments : undefined, packedText: nextFU.packedText }
         const fuMsgs = [...msgs, fuUserMsg]
         updateSessionInProject(pid, sid, { messages: fuMsgs })
         setQueueInfo(prev => ({ ...prev, followUp: prev.followUp.slice(1) }))
@@ -5642,7 +5704,7 @@ export default function AgentCodeView() {
   runPiTurnRef.current = runPiTurn
 
   // ── 区域：发送消息（构建附件、创建会话、调用 agent） ──
-  const handleSend = useCallback(async (overrideText?: string, overrideAttachments?: Attachment[]) => {
+  const handleSend = useCallback(async (overrideText?: string, overrideAttachments?: Attachment[], packedHint?: string) => {
     // 用户手势内预热音频：否则完成提示音（await 后播放）会被自动播放策略静默拦截
     warmUpAudio()
     const attachmentsForSend: Attachment[] = overrideAttachments ?? attachedFiles.map(a => ({
@@ -5652,10 +5714,13 @@ export default function AgentCodeView() {
       content: a.isImage ? undefined : a.content,
     }))
     // 引用胶囊：仅在非 override（非重新生成/重发）时拼入正文，作为引用块；最后接用户自己输入的正文。
+    // 超长打包 chip 的内容是用户正文的前段，排在最前。
     const rawBody = overrideText ?? input
     let outgoing = rawBody
-    if (overrideText === undefined && (refChips.length > 0 || codeSnippets.length > 0)) {
+    if (overrideText === undefined && (packedInput || refChips.length > 0 || codeSnippets.length > 0)) {
       const parts: string[] = []
+      // 超长打包 chip：整段被打包的正文（用户消息本体的前段）
+      if (packedInput?.trim()) parts.push(packedInput.trim())
       // 代码片段胶囊：以 fenced code block + 文件行号标注注入
       for (const snip of codeSnippets) {
         const ext = (/\.([a-z0-9]+)$/i.exec(snip.fileName)?.[1] || '').toLowerCase()
@@ -5677,7 +5742,7 @@ export default function AgentCodeView() {
       const cmd = findCommand(parsedCmd.name, slashCommands)
       if (!cmd) {
         notify(`未知命令 /${parsedCmd.name}（输入 / 查看可用命令）`, 'error')
-        if (text) { setInput(text); setRefChips([]); setCodeSnippets([]) }
+        if (text) { setInput(text); setPackedInput(null); setRefChips([]); setCodeSnippets([]) }
         return
       }
       // 动作型命令：renderer 侧直接处理（状态查询 / UI 动作），不发给模型
@@ -5685,6 +5750,7 @@ export default function AgentCodeView() {
         setInput('')
         if (textareaRef.current) textareaRef.current.style.height = 'auto'
         setAttachedFiles([])
+        setPackedInput(null)
         setRefChips([])
         setCodeSnippets([])
         await runSlashAction(cmd.name, parsedCmd.args)
@@ -5694,16 +5760,16 @@ export default function AgentCodeView() {
     }
     if (!apiBaseUrl || !runningCard) {
       // 模型未启动：把建议文本保留在输入框，待启动后手动发送（胶囊已合入文本，清空避免重复）
-      if (resolvedText) { setInput(resolvedText); setRefChips([]); setCodeSnippets([]) }
+      if (resolvedText) { setInput(resolvedText); setPackedInput(null); setRefChips([]); setCodeSnippets([]) }
       return
     }
     if (sendingRef.current && !loading) {
       // 异步准备窗口（loading 已置真前）：沿用原排队兜底，避免并发双流
-      pendingSendRef.current.push({ text: outgoing, attachments: attachmentsForSend })
+      pendingSendRef.current.push({ text: outgoing, attachments: attachmentsForSend, packedText: overrideText === undefined ? packedInput?.trim() || undefined : undefined })
       setInput('')
       if (textareaRef.current) textareaRef.current.style.height = 'auto'
       setAttachedFiles([])
-      if (overrideText === undefined) { setRefChips([]); setCodeSnippets([]) }
+      if (overrideText === undefined) { setPackedInput(null); setRefChips([]); setCodeSnippets([]) }
       return
     }
     if (loading) {
@@ -5712,16 +5778,16 @@ export default function AgentCodeView() {
         setInput('')
         if (textareaRef.current) textareaRef.current.style.height = 'auto'
         setAttachedFiles([])
-        if (overrideText === undefined) { setRefChips([]); setCodeSnippets([]) }
+        if (overrideText === undefined) { setPackedInput(null); setRefChips([]); setCodeSnippets([]) }
         return
       }
       setInput('')
       if (textareaRef.current) textareaRef.current.style.height = 'auto'
       setAttachedFiles([])
-      if (overrideText === undefined) { setRefChips([]); setCodeSnippets([]) }
+      if (overrideText === undefined) { setPackedInput(null); setRefChips([]); setCodeSnippets([]) }
       // 运行中：追加（followUp）走前端队列，当前轮 runPiTurn 结束后自动发起独立新轮，
       // 让模型真正作答（SDK 自动续跑会被单轮 runPiTurn 架构吞掉回复）。
-      followUpQueueRef.current.push({ text: resolvedText, attachments: attachmentsForSend })
+      followUpQueueRef.current.push({ text: resolvedText, attachments: attachmentsForSend, packedText: overrideText === undefined ? packedInput?.trim() || undefined : undefined })
       setQueueInfo(prev => ({ ...prev, followUp: [...prev.followUp, resolvedText] }))
       return
     }
@@ -5759,9 +5825,11 @@ export default function AgentCodeView() {
 
       // 构建附件（已在上文算好 attachmentsForSend）
       const attachments = attachmentsForSend
-      if (overrideText === undefined) { setAttachedFiles([]); setRefChips([]); setCodeSnippets([]) }
+      if (overrideText === undefined) { setAttachedFiles([]); setPackedInput(null); setRefChips([]); setCodeSnippets([]) }
 
-      const userMsg: AgentMessage = { id: newMsgId(), role: 'user', content: resolvedText, attachments: attachments.length ? attachments : undefined }
+      // packedText：本次发送含「超长打包 chip」的那段正文 → 气泡里该段显示为 chip
+      const packedPart = overrideText === undefined ? packedInput?.trim() || undefined : packedHint
+      const userMsg: AgentMessage = { id: newMsgId(), role: 'user', content: resolvedText, attachments: attachments.length ? attachments : undefined, packedText: packedPart }
       // 仅在该会话尚无任何用户消息时，用首条消息自动生成标题（后续不再覆盖，保留手动重命名）
       const shouldAutoTitle = !baseMessages.some(m => m.role === 'user')
       let displayMsgs: AgentMessage[] = [...baseMessages, userMsg]
@@ -5810,13 +5878,13 @@ export default function AgentCodeView() {
       pendingSendRef.current = []
       for (const pending of queue) {
         if (pending.text.trim() || pending.attachments.length) {
-          setTimeout(() => handleSendRef.current(pending.text || undefined, pending.attachments), 0)
+          setTimeout(() => handleSendRef.current(pending.text || undefined, pending.attachments, pending.packedText), 0)
         }
       }
     } finally {
       sendingRef.current = false
     }
-  }, [input, attachedFiles, refChips, codeSnippets, loading, apiBaseUrl, runningCard, activeProjectId, activeSessionId, activeSession, activeProject, updateSessionInProject, condenseSessionMemory])
+  }, [input, attachedFiles, packedInput, refChips, codeSnippets, loading, apiBaseUrl, runningCard, activeProjectId, activeSessionId, activeSession, activeProject, updateSessionInProject, condenseSessionMemory])
 
   // 始终持有最新的 handleSend，供排队回调使用，避免过期闭包
   handleSendRef.current = handleSend
@@ -6120,13 +6188,14 @@ export default function AgentCodeView() {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // IME 组合输入中（中文/日文输入法选词）不触发发送，避免误发消息
     if (e.nativeEvent.isComposing || e.keyCode === 229) return
-    // 光标在最开头且无选区时按退格：像删文字一样删掉最后一个引用/代码片段胶囊
-    if ((e.key === 'Backspace' || e.key === 'Delete') && (refChips.length > 0 || codeSnippets.length > 0) && !input) {
+    // 光标在最开头且无选区时按退格：像删文字一样从右往左删掉最后一个胶囊
+    // （超长打包 chip 排最右 → 引用胶囊 → 代码片段胶囊）
+    if ((e.key === 'Backspace' || e.key === 'Delete') && (packedInput !== null || refChips.length > 0 || codeSnippets.length > 0) && !input) {
       const el = e.currentTarget
       if ((el.selectionStart ?? 0) === 0 && (el.selectionEnd ?? 0) === 0) {
         e.preventDefault()
-        // 优先删引用胶囊，引用删完后删代码片段胶囊
-        if (refChips.length > 0) setRefChips(prev => prev.slice(0, -1))
+        if (packedInput !== null) setPackedInput(null)
+        else if (refChips.length > 0) setRefChips(prev => prev.slice(0, -1))
         else setCodeSnippets(prev => prev.slice(0, -1))
         return
       }
@@ -6377,7 +6446,7 @@ export default function AgentCodeView() {
                         </div>
                       ) : msg.content ? (
                         <>
-                          <div className="chat-msg-bubble chat-msg-markdown"><UserMessageContent content={msg.content} /></div>
+                          <UserMessageEntry content={msg.content} packedText={msg.packedText} />
                           <div className="chat-msg-actions">
                             <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content)}><CopyIcon size={13} /></button>
                             <button className="chat-msg-action-btn" onClick={() => editAt(msg.id)} disabled={loading}><PencilIcon size={13} /></button>
@@ -6923,10 +6992,28 @@ export default function AgentCodeView() {
                         <button className="agent-ref-chip-remove" onClick={() => removeCodeSnippet(snip.id)} disabled={loading}><XIcon size={10} /></button>
                       </div>
                     ))}
-                    <textarea ref={textareaRef} className="chat-input" placeholder="" rows={1} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown} />
+                    {packedInput ? (
+                      /* 超长打包 chip：完全按「引用」胶囊样式与功能——图标 + 标签 +
+                         × 移除按钮 + 悬停全文预览；输入框为空时 Backspace/Delete
+                         也能删掉它。chip 里的正文发送时拼回正文 */
+                      <div className="chat-input-fold-chip">
+                        <AlignLeft size={12} className="chat-input-fold-chip-icon" />
+                        <span className="chat-input-fold-chip-label">已折叠 {packedInput.split('\n').length} 行</span>
+                        <button className="agent-ref-chip-remove" title="移除" onClick={() => setPackedInput(null)}>
+                          <XIcon size={10} />
+                        </button>
+                        <span className="chat-input-fold-chip-tip">{packedInput}</span>
+                      </div>
+                    ) : null}
+                    <textarea
+                      ref={textareaRef}
+                      className="chat-input"
+                      placeholder="" rows={1} value={input}
+                      onChange={handleInputChange} onKeyDown={handleKeyDown}
+                    />
                   </div>
                   {loading && runningCard && (() => {
-                    const hasInput = input.trim() !== '' || attachedFiles.length > 0 || refChips.length > 0 || codeSnippets.length > 0
+                    const hasInput = input.trim() !== '' || attachedFiles.length > 0 || refChips.length > 0 || codeSnippets.length > 0 || !!packedInput?.trim()
                     const queueHas = queueInfo.followUp.length > 0
                     if (!hasInput && !queueHas) return null
                     return (
@@ -7125,7 +7212,7 @@ export default function AgentCodeView() {
                   {loading ? (
                     <AniIconButton className="btn btn-ghost chat-stop-btn" icon={CircleStopIcon} size={16} onClick={handleStop} title="停止" />
                   ) : (
-                    <AniIconButton className="btn btn-primary chat-send-btn" icon={SendIcon} size={16} onClick={() => handleSend()} disabled={(!input.trim() && attachedFiles.length === 0 && refChips.length === 0 && codeSnippets.length === 0) || !apiBaseUrl} title="发送" />
+                    <AniIconButton className="btn btn-primary chat-send-btn" icon={SendIcon} size={16} onClick={() => handleSend()} disabled={(!input.trim() && attachedFiles.length === 0 && refChips.length === 0 && codeSnippets.length === 0 && !packedInput?.trim()) || !apiBaseUrl} title="发送" />
                   )}
                 </div>
               </div>

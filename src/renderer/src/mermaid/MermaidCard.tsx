@@ -22,6 +22,11 @@ type MermaidCardProps = {
   emit?: (event: string, data?: any) => void
   renderFallback?: (code: string) => ReactNode
   fallbackLang?: string
+  /**
+   * 是否提供缩放/全屏查看。默认 true（直连的 ```mermaid 围栏照常）。
+   * jsonui 路径传 false：卡片只保留 下载 / 图表·代码切换，不出现 缩放组 和 全屏。
+   */
+  zoomable?: boolean
 }
 
 type RenderState = 'pending' | 'chart' | 'code'
@@ -215,6 +220,7 @@ function enqueueMermaidRender<T>(task: () => Promise<T>): Promise<T> {
 
 export function MermaidCard(renderProps: MermaidCardProps) {
   // ===== 智能提取 code 和 title（支持 props/state/扁平/children）=====
+  const zoomable = renderProps.zoomable !== false
   const title =
     renderProps.props?.title ??
     renderProps.title ??
@@ -672,25 +678,29 @@ export function MermaidCard(renderProps: MermaidCardProps) {
           </div>
         )}
       </div>
-      <div style={{ width: 1, margin: '0 2px', borderLeft: '1px solid var(--border, #d1d5db)' }} />
-      <button type="button" onClick={zoomOut} title="缩小" disabled={scale <= ZOOM_MIN}
-        style={{ ...btnBase, opacity: scale > ZOOM_MIN ? 1 : 0.3 }}>
-        {svgIcon('M5 12h14', 12, 12)}
-      </button>
-      <button type="button" onClick={zoomReset} title={`${Math.round(scale * 100)}%`}
-        style={{ ...btnBase, fontSize: 10, padding: '2px 4px', minWidth: 36 }}>
-        {Math.round(scale * 100)}%
-      </button>
-      <button type="button" onClick={zoomIn} title="放大" disabled={scale >= ZOOM_MAX}
-        style={{ ...btnBase, opacity: scale < ZOOM_MAX ? 1 : 0.3 }}>
-        {svgIcon('M12 5v14M5 12h14', 12, 12)}
-      </button>
-      <button type="button" onClick={toggleFullscreen} title={isFullscreen ? '退出全屏' : '全屏'}
-        style={btnBase}>
-        {isFullscreen
-          ? svgIcon('M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3')
-          : svgIcon('M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3')}
-      </button>
+      {zoomable ? (
+        <>
+          <div style={{ width: 1, margin: '0 2px', borderLeft: '1px solid var(--border, #d1d5db)' }} />
+          <button type="button" onClick={zoomOut} title="缩小" disabled={scale <= ZOOM_MIN}
+            style={{ ...btnBase, opacity: scale > ZOOM_MIN ? 1 : 0.3 }}>
+            {svgIcon('M5 12h14', 12, 12)}
+          </button>
+          <button type="button" onClick={zoomReset} title={`${Math.round(scale * 100)}%`}
+            style={{ ...btnBase, fontSize: 10, padding: '2px 4px', minWidth: 36 }}>
+            {Math.round(scale * 100)}%
+          </button>
+          <button type="button" onClick={zoomIn} title="放大" disabled={scale >= ZOOM_MAX}
+            style={{ ...btnBase, opacity: scale < ZOOM_MAX ? 1 : 0.3 }}>
+            {svgIcon('M12 5v14M5 12h14', 12, 12)}
+          </button>
+          <button type="button" onClick={toggleFullscreen} title={isFullscreen ? '退出全屏' : '全屏'}
+            style={btnBase}>
+            {isFullscreen
+              ? svgIcon('M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3')
+              : svgIcon('M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3')}
+          </button>
+        </>
+      ) : null}
     </div>
   )
 

@@ -15,14 +15,16 @@ function UniversalChart(renderProps: any) {
 
   // ===== 检测 1：如果有 code，直接用 MermaidCard =====
   if (code) {
-    return <MermaidCard {...renderProps} />
+    // zoomable={false}：jsonui 渲染的图表不带放大/全屏，只保留 复制 / 下载 / 查看源码。
+    // 直连的 ```mermaid / ```chart 围栏不经这里，缩放功能照常。
+    return <MermaidCard {...renderProps} zoomable={false} />
   }
 
   // ===== 检测 2：能归一化成 ChartSpec 就交给图表卡片 =====
   // 这里用 normalizeChartSpec 实打实校验一遍，而不是靠「有 data / xKey / yKey」
   // 猜字段名：猜中的 spec 若解析不出来，卡片会渲染成空白；校验过再渲染则不会。
   if (normalizeChartSpec(props)) {
-    return <ChartCard props={props} />
+    return <ChartCard props={props} zoomable={false} />
   }
 
   // ===== 检测 3：如果是 Mermaid 结构化数据 =====
@@ -43,7 +45,7 @@ function UniversalChart(renderProps: any) {
     const detectedType = detectChartTypeFromProps(props)
     const convertedCode = convertToMermaid(props, detectedType)
     if (convertedCode) {
-      return <MermaidCard props={{ ...props, code: convertedCode, title: props.title }} />
+      return <MermaidCard props={{ ...props, code: convertedCode, title: props.title }} zoomable={false} />
     }
   }
 
@@ -54,7 +56,7 @@ function UniversalChart(renderProps: any) {
       const mermaidKeywords = ['flowchart', 'graph', 'sequenceDiagram', 'classDiagram',
         'stateDiagram', 'gantt', 'erDiagram', 'pie', 'mindmap', 'timeline', 'gitGraph', 'sankey']
       if (mermaidKeywords.some(kw => firstChild.includes(kw))) {
-        return <MermaidCard props={{ code: renderProps.children.join('\n'), title: props.title }} />
+        return <MermaidCard props={{ code: renderProps.children.join('\n'), title: props.title }} zoomable={false} />
       }
     }
   }

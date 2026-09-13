@@ -247,6 +247,10 @@ export interface AgentMessage {
   // uiSpecChecked 标记是否已尝试过提取（避免对每条消息重复做昂贵的解析）。
   uiSpecRaw?: string
   uiSpecChecked?: boolean
+  // 用户消息发送时含「超长打包 chip」的那段内容（输入框超限自动打包的部分，已 trim）。
+  // 气泡渲染时该段显示为折叠 chip，其余部分（用户后输入的文字）照常显示为文本气泡；
+  // 无此字段的旧消息不受影响。
+  packedText?: string
 }
 
 // 助手消息的有序片段：严格按模型产生的先后顺序记录，

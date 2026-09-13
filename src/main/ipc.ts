@@ -491,12 +491,20 @@ async function loadSettings(): Promise<AppSettings> {
   settingsCache = data ?? { ...DEFAULT_SETTINGS }
   return settingsCache
 }
+// 串行化写入队列：启动时多个 handler（如 set-engine-releases-cache 被连写两次）并发保存时，
+// 固定的 settings.json.tmp 会被前一次 rename 消费掉，导致后一次 rename 报 ENOENT
+let settingsWriteChain: Promise<void> = Promise.resolve()
 async function saveSettings(s: AppSettings): Promise<void> {
   // 原子写：先写 .tmp 再 rename，避免中途崩溃撕裂 settings.json
   // （loadSettings 既有「主文件损坏回退 .tmp」逻辑由此真正生效）
-  const tmpPath = SETTINGS_PATH + '.tmp'
-  await fsPromises.writeFile(tmpPath, JSON.stringify(s, null, 2))
-  await fsPromises.rename(tmpPath, SETTINGS_PATH)
+  const write = settingsWriteChain.then(async () => {
+    const tmpPath = SETTINGS_PATH + '.tmp'
+    await fsPromises.writeFile(tmpPath, JSON.stringify(s, null, 2))
+    await fsPromises.rename(tmpPath, SETTINGS_PATH)
+  })
+  // 吞掉链上错误，保证单次失败不会卡死后续写入；错误仍由本次调用方接收
+  settingsWriteChain = write.then(() => {}, () => {})
+  await write
   settingsCache = s
 }
 function readSettingsFileSync(path: string): AppSettings | null {

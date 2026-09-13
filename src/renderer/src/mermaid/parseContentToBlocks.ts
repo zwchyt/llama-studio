@@ -50,8 +50,8 @@ export type ContentBlock =
  * 第四种是 json-render Spec（```json 里那段 { root, elements }）：它跟上面三种
  * 相反 —— 不是「把代码换成卡片」，而是「正文里干脆不再展示这段代码」。
  * AgentCodeView 的 AgentUiBlock 会在消息里单独把 Spec 渲染成组件，正文再留一份
- * 原文就是同一份信息显示两遍（而且它动辄几十行）。原文没丢：AgentUiBlock 上的
- * 「查看 Spec」开关能展开。
+ * 原文就是同一份信息显示两遍（而且它动辄几十行），所以原文一并省去 ——
+ * 各图表卡工具条自带的「查看源码」可以看到对应图形的代码。
  */
 export function parseContentToBlocks(content: string, streaming = false): ContentBlock[] {
   if (!content) return []

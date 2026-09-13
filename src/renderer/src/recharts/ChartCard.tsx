@@ -41,6 +41,11 @@ export type ChartCardProps = {
   emit?: (event: string, data?: unknown) => void
   renderFallback?: (code: string) => ReactNode
   fallbackLang?: string
+  /**
+   * 是否提供「放大查看」。默认 true（直连的 ```chart 围栏照常）。
+   * jsonui 路径传 false：FigureFrame 只保留 复制 / 下载 / 查看源码。
+   */
+  zoomable?: boolean
 }
 
 function pickCode(p: ChartCardProps): string {
@@ -115,7 +120,7 @@ export function ChartCard(input: ChartCardProps) {
   const height = spec.height ?? 240
 
   return (
-    <FigureFrame title={title} getSvgSource={getSvgSource} fileName={title || 'chart'}>
+    <FigureFrame title={title} getSvgSource={getSvgSource} fileName={title || 'chart'} zoomable={input.zoomable}>
       {/* 外层写死高度：图表 chunk 是异步加载的，占位若不留足高度，
           加载完成的瞬间容器会从几十 px 猛增到 240px+ → 聊天区 scrollHeight 突变
           → 滚动条跳变。这与 MermaidCard 里处理加载占位是同一个问题。 */}

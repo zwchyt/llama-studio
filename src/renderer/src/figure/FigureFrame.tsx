@@ -67,6 +67,12 @@ export type FigureFrameProps = {
    * 否则浅色主题下深色图形会消失在遮罩里 —— 默认值给 --surface 正是为此。
    */
   themeCanvas?: string
+  /**
+   * 是否提供「放大查看」按钮。默认 true（SvgCard 与直连的 ```chart 围栏照常）。
+   * jsonui 路径传 false：工具条只保留 复制 / 下载 / 查看源码。
+   * 放大层只能从这个按钮打开，隐藏按钮后其余缩放逻辑自然不可达。
+   */
+  zoomable?: boolean
   children: ReactNode
 }
 
@@ -100,6 +106,7 @@ export function FigureFrame({
   fileName,
   invertible,
   themeCanvas = 'var(--surface)',
+  zoomable = true,
   children,
 }: FigureFrameProps) {
   const [showSource, setShowSource] = useState(false)
@@ -241,9 +248,11 @@ export function FigureFrame({
           <ToolButton label={showSource ? '收起源码' : '查看源码'} active={showSource} onClick={onToggleSource}>
             <CodeXml size={13} />
           </ToolButton>
-          <ToolButton label="放大查看" onClick={onOpenZoom}>
-            <Maximize2 size={13} />
-          </ToolButton>
+          {zoomable ? (
+            <ToolButton label="放大查看" onClick={onOpenZoom}>
+              <Maximize2 size={13} />
+            </ToolButton>
+          ) : null}
         </div>
       </div>
 
