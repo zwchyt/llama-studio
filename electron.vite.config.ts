@@ -1,5 +1,5 @@
 import { resolve } from 'path'
-import { statSync } from 'fs'
+import { statSync, readFileSync } from 'fs'
 import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import { createLogger, type Logger } from 'vite'
@@ -42,7 +42,8 @@ function padv(s: string, n: number): string {
 // ─────────────────────────────────────────────────────────────
 // 启动标题栏 + 列头（进程启动时打印一次）
 // ─────────────────────────────────────────────────────────────
-const APP_VERSION = 'v1.0.207'
+// L27：版本号从 package.json 读取（构建始终在项目根执行），避免硬编码漂移
+const APP_VERSION = `v${(JSON.parse(readFileSync(resolve('package.json'), 'utf-8')) as { version: string }).version}`
 const EV_VERSION = 'electron-vite 5.0.0'
 
 // 启动期 spinner（TTY 下旋转；非 TTY 不启动）

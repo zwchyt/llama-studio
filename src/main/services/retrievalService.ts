@@ -65,6 +65,11 @@ interface WsIndex {
 
 const indexes = new Map<string, WsIndex>()
 
+/** 工作区被删除/不再被任何项目引用时清理内存索引（与 codeMapService.deleteSnapshotForWorkspace 配对调用） */
+export function disposeIndexForWorkspace(dir: string): void {
+  indexes.delete(resolve(dir))
+}
+
 function getOrCreateIndex(dir: string): WsIndex {
   const key = resolve(dir)
   let idx = indexes.get(key)
@@ -345,7 +350,7 @@ export function handleCodeSearchQuery(dir: string, query: string, limit?: number
   }
   const idx = getOrCreateIndex(dir)
   if (!idx.built) {
-    if (!idx.building) void buildIndex(idx, files) // 后台建索引，本次先返回 building
+    if (!idx.building) void buildIndex(idx, files).catch((err) => console.warn('[retrieval] 建索引失败：', err)) // 后台建索引，本次先返回 building
     return Promise.resolve({ status: 'building', results: [], lowConfidence: true, indexedChunks: idx.chunks.size })
   }
   resyncIndex(idx, files) // 增量对账：只重分块哈希变更的文件

@@ -1265,8 +1265,11 @@ function SessionList({ sessions, activeId, onSelect, onNew, onRename, onDeleteRe
         setExportMenuId(null)
       }
     }
-    setTimeout(() => document.addEventListener('click', handler), 0)
-    return () => document.removeEventListener('click', handler)
+    const timer = setTimeout(() => document.addEventListener('click', handler), 0)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('click', handler)
+    }
   }, [exportMenuId])
 
   function exportSession(s: ChatSession, format: 'json' | 'md'): void {

@@ -15,7 +15,9 @@ extraResources:
     to: resources
   - from: assets/llama-studio-icon.png
     to: assets/llama-studio-icon.png
-  # Ripgrep 工具的引擎二进制（运行时从 process.resourcesPath/bin/rg.exe 解析，见 ipc.ts resolveRgPath）
+  # Ripgrep 工具的引擎二进制（运行时从 process.resourcesPath/bin/rg.exe 解析，见 ipc.ts resolveRgPath）。
+  # 注意：仅打包 Windows 二进制；下方 mac/linux target 为预留配置，未映射对应平台资源，
+  # 这些平台构建后 resolveRgPath 的非 win32 分支会回落 PATH 中的 rg。
   - from: node_modules/@vscode/ripgrep-win32-x64/bin
     to: bin
 win:

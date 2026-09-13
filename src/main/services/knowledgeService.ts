@@ -10,7 +10,7 @@
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 import { ipcMain } from 'electron'
 import { join, resolve, sep } from 'path'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'fs'
 import { randomUUID } from 'crypto'
 import type { KnowledgeBaseMeta, KnowledgeHit } from '../../shared/types'
 import { tokenize } from './retrievalService'
@@ -71,6 +71,22 @@ function saveKb(kb: KbFile): void {
 
 function metaOf(kb: KbFile): KnowledgeBaseMeta {
   return { id: kb.id, name: kb.name, createdAt: kb.createdAt, docCount: kb.docs.length, chunkCount: kb.chunks.length }
+}
+
+// ── KB 元数据缓存（M11）：列表/重名检测只需元信息，却会全量解析含全部分块的大 JSON。
+// 按 (kbId → 文件 mtime) 缓存 meta，文件未变时零解析；保存/改名后 mtime 变化自动失效。──
+const kbMetaCache = new Map<string, { meta: KnowledgeBaseMeta; mtimeMs: number }>()
+function cachedKbMeta(id: string): KnowledgeBaseMeta | null {
+  const fp = kbPath(id)
+  let mtimeMs = -1
+  try { mtimeMs = statSync(fp).mtimeMs } catch { return null }
+  const hit = kbMetaCache.get(id)
+  if (hit && hit.mtimeMs === mtimeMs) return hit.meta
+  const kb = loadKb(id)
+  if (!kb) return null
+  const meta = metaOf(kb)
+  kbMetaCache.set(id, { meta, mtimeMs })
+  return meta
 }
 
 // ── 块标题：入库时从块首提取（Markdown 标题 / 中文编号标题），否则取首句截断。
@@ -286,9 +302,20 @@ function chunkText(text: string, opts: KnowledgeChunkOptions = {}): string[] {
 }
 
 // ── 惰性构建 / 取内存索引 ──
+// M12：容量上限（Map 插入序即最旧，简易 LRU）——重建成本低，防多库场景无界驻留
+const KB_INDEX_MAX = 16
+function evictIndexes(): void {
+  while (indexes.size >= KB_INDEX_MAX) {
+    const oldest = indexes.keys().next().value
+    if (oldest === undefined) break
+    indexes.delete(oldest)
+  }
+}
+
 function getIndex(kb: KbFile): KbIndex {
   const cached = indexes.get(kb.id)
   if (cached) return cached
+  evictIndexes()
   const idx: KbIndex = { chunks: [], df: new Map(), totalLen: 0 }
   for (const c of kb.chunks) {
     // 文档名+块标题的词也计入 tf：让「拿文件名/标题当查询词」能命中对应块；
@@ -374,10 +401,8 @@ export function listKnowledgeBases(): { id: string; name: string }[] {
   const out: { id: string; name: string }[] = []
   for (const f of readdirSync(KNOWLEDGE_DIR)) {
     if (!f.endsWith('.json')) continue
-    try {
-      const kb = JSON.parse(readFileSync(join(KNOWLEDGE_DIR, f), 'utf-8')) as KbFile
-      if (kb?.id && kb?.name) out.push({ id: kb.id, name: kb.name })
-    } catch { /* 忽略坏文件 */ }
+    const meta = cachedKbMeta(f.slice(0, -5))
+    if (meta) out.push({ id: meta.id, name: meta.name })
   }
   return out
 }
@@ -424,8 +449,8 @@ export function registerKnowledgeIpc(appRoot: string): void {
     const out: KnowledgeBaseMeta[] = []
     for (const f of readdirSync(KNOWLEDGE_DIR)) {
       if (!f.endsWith('.json')) continue
-      const kb = loadKb(f.slice(0, -5))
-      if (kb) out.push(metaOf(kb))
+      const meta = cachedKbMeta(f.slice(0, -5))
+      if (meta) out.push(meta)
     }
     out.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
     return out
@@ -532,7 +557,8 @@ export function registerKnowledgeIpc(appRoot: string): void {
       const existingNames = new Set<string>()
       for (const f of readdirSync(KNOWLEDGE_DIR)) {
         if (!f.endsWith('.json')) continue
-        try { existingNames.add((JSON.parse(readFileSync(join(KNOWLEDGE_DIR, f), 'utf-8')) as KbFile).name) } catch { /* ignore */ }
+        const meta = cachedKbMeta(f.slice(0, -5))
+        if (meta) existingNames.add(meta.name)
       }
       if (existingNames.has(finalName)) {
         let i = 2

@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, unlinkSync, existsSync, mkdirSync } from 'fs'
+import { appendFileSync, readFileSync, unlinkSync, existsSync, mkdirSync, statSync, openSync, readSync, closeSync } from 'fs'
 import { join, dirname } from 'path'
 
 /**
@@ -30,7 +30,16 @@ export function initTokenLedger(chatsDir: string): void {
   // 启动时从已有记录恢复 lastPromptByPort（避免重启后首个请求记成全量）
   try {
     if (!existsSync(ledgerPath)) return
-    const lines = readFileSync(ledgerPath, 'utf-8').split('\n')
+    // 只读尾部 1MB：lastPromptByPort 仅需每端口最后一条记录，避免文件增长后启动时全量同步解析
+    const stat = statSync(ledgerPath)
+    const start = Math.max(0, stat.size - 1024 * 1024)
+    const len = stat.size - start
+    const buf = Buffer.alloc(len)
+    const fd = openSync(ledgerPath, 'r')
+    try { readSync(fd, buf, 0, len, start) } finally { closeSync(fd) }
+    const lines = buf.toString('utf-8').split('\n')
+    // 截断点可能落在某行中间：丢弃首条半行（其丢失仅导致该端口首个请求回退为全量记账）
+    if (start > 0) lines.shift()
     for (const line of lines) {
       const t = line.trim()
       if (!t) continue

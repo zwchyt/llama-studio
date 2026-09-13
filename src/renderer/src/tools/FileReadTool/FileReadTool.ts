@@ -20,7 +20,7 @@ export const definition: Omit<ToolDefinition['function'], 'type'> = {
 // ── 短期读取缓存 ──
 // Agent 探索项目时模型常对同一文件重复 Read（尤其上下文被裁剪后）。
 // 按 file_path|offset|limit 缓存格式化结果，命中则直接返回，避免反复读盘与重复轮次。
-const readCache = new Map<string, string>()
+const readCache = new Map<string, { mtimeMs: number; content: string }>()
 const READ_CACHE_MAX = 200
 
 // 缓存 key 使用归一化绝对路径（相对路径按当前会话工作区解析、统一分隔符、小写）：
@@ -66,7 +66,15 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
   const { file_path, offset, limit } = args as unknown as FileReadInput
   const cacheKey = readCacheKey(file_path, offset, limit)
   const cached = readCache.get(cacheKey)
-  if (cached !== undefined) return `${cached}\n\n(命中读取缓存，未重复读盘；该文件内容已在上方，请直接基于已有内容分析，不要再次读取同一文件)`
+  if (cached !== undefined) {
+    // mtime 新鲜度校验：Bash 等旁路修改不触发 invalidateReadCache，陈旧缓存靠 stat 自愈
+    // （照抄 pi 主进程版 mainTools 的 readCacheFresh 方案）
+    const st = await window.api.statFile(file_path)
+    if (st && st.mtimeMs === cached.mtimeMs) {
+      return `${cached.content}\n\n(命中读取缓存，未重复读盘；该文件内容已在上方，请直接基于已有内容分析，不要再次读取同一文件)`
+    }
+    readCache.delete(cacheKey)
+  }
   // raw=true 获取纯净原文（无行号前缀），用于 hashline 锚点格式化
   const res = await window.api.readFile(file_path, { offset, limit, raw: true })
   if (!res.success) {
@@ -98,7 +106,11 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
     return root.replace(/[\\/]+$/, '') + '/' + file_path.replace(/^[\\/]+/, '')
   })()
   const result = `File: ${displayPath}\nLines: ${startLine}-${endLine} of ${totalLines}\n\n${hashlineContent}${truncHint}`
-  if (readCache.size >= READ_CACHE_MAX) readCache.clear()
-  readCache.set(cacheKey, result)
+  if (readCache.size >= READ_CACHE_MAX) {
+    const oldest = readCache.keys().next().value
+    if (oldest !== undefined) readCache.delete(oldest) // FIFO 逐条淘汰，替代全量清空
+  }
+  const st = await window.api.statFile(file_path)
+  readCache.set(cacheKey, { mtimeMs: st?.mtimeMs ?? 0, content: result })
   return result
 }

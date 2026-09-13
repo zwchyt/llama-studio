@@ -3120,7 +3120,8 @@ export default function AgentCodeView() {
   }, [])
   // 移除：删文件 + 清映射记录 + 还原占位图标
   const removeModelLogo = useCallback(async (card: CardState) => {
-    const res = await window.api.removeModelLogo(card.template.id)
+    const res = await safeCall(() => window.api.removeModelLogo(card.template.id), '移除 Logo 失败')
+    if (!res) return
     if (!res.success) { notify(`移除 Logo 失败：${res.error}`, 'error'); return }
     setModelLogoEntry(card.template.id, null)
     setLogoMenu(null)

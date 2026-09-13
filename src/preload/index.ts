@@ -1,7 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { ThinkingLevel, ReleaseInfo } from '../shared/types'
+import type { ThinkingLevel, ReleaseInfo, AgentProject, AgentMemoryCandidate, ChatSession, CommandsSchema, Template, TodoUpdate } from '../shared/types'
 
+// ⚠️ 单监听通道契约：下方 fullApi 中所有 on* 方法均为 removeAllListeners(channel) + on(...)
+// 的「单监听替换」语义——同通道重复注册会顶掉前一个监听者，而非累积（这也是 detach 后
+// 旧监听器最多滞留一个、下次注册自愈的原因）。多个消费者需要同一事件时，必须自行聚合到
+// 一个监听器，或另开独立通道（参照 AgentTrajectoryPanel 改走 trajectory-read 轮询的设计）。
 const fullApi = {
   printToPDF: (html: string) => ipcRenderer.invoke('print-to-pdf', html),
   savePng: (dataUrl: string) => ipcRenderer.invoke('save-png', dataUrl),
@@ -9,13 +13,13 @@ const fullApi = {
   listModelsRefresh: () => ipcRenderer.invoke('list-models-refresh'),
   deleteModel: (filePath: string) => ipcRenderer.invoke('delete-model', filePath),
   renameModel: (oldPath: string, newName: string) => ipcRenderer.invoke('rename-model', oldPath, newName),
-  startModelDownload: (opts: object) => ipcRenderer.invoke('start-model-download', opts),
+  startModelDownload: (opts: { url: string; filename: string; repoId?: string; modelFolder?: string }) => ipcRenderer.invoke('start-model-download', opts),
   pauseModelDownload: (id: string) => ipcRenderer.invoke('pause-model-download', id),
   resumeModelDownload: (id: string) => ipcRenderer.invoke('resume-model-download', id),
   cancelModelDownload: (id: string) => ipcRenderer.invoke('cancel-model-download', id),
   retryModelDownload: (id: string) => ipcRenderer.invoke('retry-model-download', id),
   listModelDownloads: () => ipcRenderer.invoke('list-model-downloads'),
-  onModelDownloadProgress: (cb: (data: object) => void) => {
+  onModelDownloadProgress: (cb: (data: { id: string; filename: string; percent: number; receivedBytes: number; totalBytes: number; speed: number; phase: string; destPath: string; repoId?: string }) => void) => {
     ipcRenderer.removeAllListeners('model-download-progress')
     ipcRenderer.on('model-download-progress', (_e, data) => cb(data))
   },
@@ -25,17 +29,18 @@ const fullApi = {
     ipcRenderer.removeAllListeners('backends-updated')
     ipcRenderer.on('backends-updated', (_e, data) => cb(data))
   },
+  removeBackendsUpdatedListener: () => ipcRenderer.removeAllListeners('backends-updated'),
   deleteBackend: (name: string) => ipcRenderer.invoke('delete-backend', name),
   getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => ipcRenderer.invoke('get-commands', backendName, paramSet),
-  saveBackendCommands: (backendName: string, schema: object, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => ipcRenderer.invoke('save-backend-commands', backendName, schema, paramSet),
+  saveBackendCommands: (backendName: string, schema: CommandsSchema, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => ipcRenderer.invoke('save-backend-commands', backendName, schema, paramSet),
   listTemplates: () => ipcRenderer.invoke('list-templates'),
-  saveTemplate: (template: object) => ipcRenderer.invoke('save-template', template),
+  saveTemplate: (template: Template) => ipcRenderer.invoke('save-template', template),
   deleteTemplate: (id: string) => ipcRenderer.invoke('delete-template', id),
   importTemplate: () => ipcRenderer.invoke('import-template'),
-  exportTemplate: (template: object) => ipcRenderer.invoke('export-template', template),
+  exportTemplate: (template: Template) => ipcRenderer.invoke('export-template', template),
   checkFileExists: (filePath: string) => ipcRenderer.invoke('check-file-exists', filePath),
   pickModelFile: () => ipcRenderer.invoke('pick-model-file'),
-  runModel: (opts: object) => ipcRenderer.invoke('run-model', opts),
+  runModel: (opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp'; kind?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' }) => ipcRenderer.invoke('run-model', opts),
   stopModel: (id: string) => ipcRenderer.invoke('stop-model', id),
   onModelError: (cb: (data: { id: string; error: string }) => void) => {
     ipcRenderer.removeAllListeners('model-error')
@@ -48,7 +53,7 @@ const fullApi = {
   },
   removeModelDiagnosisListener: () => ipcRenderer.removeAllListeners('model-diagnosis'),
   checkUpdates: (repo?: string) => ipcRenderer.invoke('check-updates', repo),
-  downloadRelease: (opts: object) => ipcRenderer.invoke('download-release', opts),
+  downloadRelease: (opts: { url: string; version: string; assetName: string; digest?: string }) => ipcRenderer.invoke('download-release', opts),
   installSdCudart: (opts: { url: string; assetName: string; backendName: string; digest?: string }) => ipcRenderer.invoke('install-sd-cudart', opts),
   checkSdCudartInstalled: (backendName: string) => ipcRenderer.invoke('check-sd-cudart-installed', backendName),
   onSdCudartProgress: (cb: (data: { phase: string; percent: number; received?: number; total?: number; speed?: number }) => void) => {
@@ -79,14 +84,14 @@ const fullApi = {
   hfSearch: (query: string, opts?: { sort?: string; library?: string; limit?: number; offset?: number }) => ipcRenderer.invoke('hf-search', query, opts),
   hfGetFiles: (repoId: string) => ipcRenderer.invoke('hf-get-files', repoId),
   hfModelInfo: (repoId: string) => ipcRenderer.invoke('hf-model-info', repoId),
-  hfDownloadModel: (opts: object) => ipcRenderer.invoke('hf-download-model', opts),
+  hfDownloadModel: (opts: { repoId: string; filename: string; downloadUrl: string }) => ipcRenderer.invoke('hf-download-model', opts),
   hfOpenModelsDir: () => ipcRenderer.invoke('hf-open-models-dir'),
   msSearch: (query: string, opts?: { sort?: string; library?: string; limit?: number; page?: number }) => ipcRenderer.invoke('ms-search', query, opts),
   msGetFiles: (repoId: string) => ipcRenderer.invoke('ms-get-files', repoId),
   msModelInfo: (repoId: string) => ipcRenderer.invoke('ms-model-info', repoId),
   msModelAvatar: (repoId: string) => ipcRenderer.invoke('ms-model-avatar', repoId),
   hfModelAvatar: (author: string) => ipcRenderer.invoke('hf-model-avatar', author),
-  msDownloadModel: (opts: object) => ipcRenderer.invoke('ms-download-model', opts),
+  msDownloadModel: (opts: { repoId: string; filename: string; downloadUrl: string }) => ipcRenderer.invoke('ms-download-model', opts),
   msOpenModelsDir: () => ipcRenderer.invoke('ms-open-models-dir'),
   onHfDownloadProgress: (callback: (data: { percent: number; phase: string; filename: string; destPath: string }) => void) => {
     ipcRenderer.removeAllListeners('hf-download-progress')
@@ -160,12 +165,12 @@ const fullApi = {
   checkAgentUpdates: (installed: { pkg: string; version: string }[]) => ipcRenderer.invoke('check-agent-updates', installed),
   // ── 原生聊天 ──
   listChatSessions: () => ipcRenderer.invoke('list-chat-sessions'),
-  saveChatSession: (session: object) => ipcRenderer.invoke('save-chat-session', session),
+  saveChatSession: (session: ChatSession) => ipcRenderer.invoke('save-chat-session', session),
   deleteChatSession: (id: string) => ipcRenderer.invoke('delete-chat-session', id),
   listTokenUsage: () => ipcRenderer.invoke('list-token-usage'),
   clearTokenUsage: () => ipcRenderer.invoke('clear-token-usage'),
-  chatStream: (opts: { streamId: string; port: number; body: object }) => ipcRenderer.invoke('chat-completion-stream', opts),
-  chatCompletion: (opts: { port: number; body: object }) => ipcRenderer.invoke('chat-completion', opts),
+  chatStream: (opts: { streamId: string; port: number; body: Record<string, unknown> }) => ipcRenderer.invoke('chat-completion-stream', opts),
+  chatCompletion: (opts: { port: number; body: Record<string, unknown> }) => ipcRenderer.invoke('chat-completion', opts),
   getServerProps: (port: number) => ipcRenderer.invoke('server-props', port),
   saveChatImage: (dataUrl: string) => ipcRenderer.invoke('save-chat-image', dataUrl),
   readChatImage: (ref: string) => ipcRenderer.invoke('read-chat-image', ref),
@@ -191,6 +196,7 @@ const fullApi = {
   // ── Agent Code 工作台 文件操作 ──
   readFile: (filePath: string, opts?: { maxBytes?: number; raw?: boolean }) => ipcRenderer.invoke('read-file', filePath, opts),
   readFileBase64: (filePath: string) => ipcRenderer.invoke('read-file-base64', filePath),
+  statFile: (filePath: string) => ipcRenderer.invoke('stat-file', filePath) as Promise<{ mtimeMs: number; size: number } | null>,
   getFilePath: (file: File) => webUtils.getPathForFile(file),
   writeFile: (filePath: string, content: string) => ipcRenderer.invoke('write-file', filePath, content),
   writeTempFile: (fileName: string, base64: string) => ipcRenderer.invoke('write-temp-file', fileName, base64),
@@ -208,11 +214,11 @@ const fullApi = {
   },
   // ── Agent Code 工作台 项目持久化 ──
   loadAgentProjects: () => ipcRenderer.invoke('load-agent-projects'),
-  saveAgentProjects: (projects: object, opts?: { gcScope?: string[] }) => ipcRenderer.invoke('save-agent-projects', projects, opts),
+  saveAgentProjects: (projects: AgentProject[], opts?: { gcScope?: string[] }) => ipcRenderer.invoke('save-agent-projects', projects, opts),
   exportAgentSession: (sessionId: string) => ipcRenderer.invoke('export-agent-session', { sessionId }),
   importAgentSession: (projectId: string) => ipcRenderer.invoke('import-agent-session', { projectId }),
   // ── Agent Tracing 落盘 ──
-  agentTraceAppend: (sessionId: string, entry: object) => ipcRenderer.invoke('agent-trace-append', sessionId, entry),
+  agentTraceAppend: (sessionId: string, entry: Record<string, unknown>) => ipcRenderer.invoke('agent-trace-append', sessionId, entry),
 	  deletePath: (targetPath: string, recursive: boolean) => ipcRenderer.invoke('delete-path', targetPath, recursive),
 	  gitChanges: (dir: string) => ipcRenderer.invoke('git-changes', dir),
 	  gitStageFile: (dir: string, path: string) => ipcRenderer.invoke('git-stage-file', dir, path),
@@ -235,7 +241,7 @@ const fullApi = {
   // ── 代码混合检索（retrievalService）──
   codesearchQuery: (dir: string, query: string, limit?: number) => ipcRenderer.invoke('codesearch-query', dir, query, limit),
   // ── 长期记忆（memoryStore）──
-  memstoreUpsert: (dir: string, candidates: object[]) => ipcRenderer.invoke('memstore-upsert', dir, candidates),
+  memstoreUpsert: (dir: string, candidates: AgentMemoryCandidate[]) => ipcRenderer.invoke('memstore-upsert', dir, candidates),
   memstoreInject: (dir: string, capChars: number) => ipcRenderer.invoke('memstore-inject', dir, capChars),
   memstoreContradict: (dir: string, probeText: string) => ipcRenderer.invoke('memstore-contradict', dir, probeText),
   memstoreList: (dir: string) => ipcRenderer.invoke('memstore-list', dir),
@@ -255,7 +261,7 @@ const fullApi = {
   knowledgeRenameDoc: (kbId: string, docId: string, name: string) => ipcRenderer.invoke('knowledge-rename-doc', kbId, docId, name),
 
   // ── Agent Code 任务清单（Todo / Task）──
-  agentTodoWrite: (sessionId: string, input: object) => ipcRenderer.invoke('agent-todo-write', sessionId, input),
+  agentTodoWrite: (sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }) => ipcRenderer.invoke('agent-todo-write', sessionId, input),
   agentTaskGet: (sessionId: string, taskId: string) => ipcRenderer.invoke('agent-task-get', sessionId, taskId),
   agentTaskList: (sessionId: string) => ipcRenderer.invoke('agent-task-list', sessionId),
   // ── 工具调用（网络搜索）──
@@ -339,7 +345,7 @@ const fullApi = {
   windowClose: () => ipcRenderer.invoke('window-close'),
   // ── pi-agent（pi SDK 驱动的 agent 会话）──
   piAgent: {
-    create: (opts: object) => ipcRenderer.invoke('pi-agent-create', opts),
+    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => ipcRenderer.invoke('pi-agent-create', opts),
     warmup: () => ipcRenderer.invoke('pi-agent-warmup'),
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-prompt', sessionId, text, images),
     steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-steer', sessionId, text, images),
@@ -377,6 +383,7 @@ const chatApi = {
   getFilePath: (file: File) => webUtils.getPathForFile(file),
 }
 
+// ── 按窗口分流：chat 窗口只暴露最小 API 集（openExternal/waitForServer/getFilePath）──
 const isChatWindow = process.argv.includes('--window-mode=chat')
 
 const api = isChatWindow ? chatApi : fullApi
@@ -389,7 +396,7 @@ if (process.contextIsolated) {
     console.error('[preload] contextBridge.exposeInMainWorld 失败:', error,
       'isChatWindow=', isChatWindow)
   }
-} else {
-  ;(window as any).electron = electronAPI
-  ;(window as any).api = api
 }
+// （contextIsolation=false 时的裸挂载 fallback 已删除：主窗口 sandbox:true 强制开启
+// contextIsolation、chat 窗口亦显式 contextIsolation:true，该分支不可达；且裸挂载 api
+// 到 window 会绕过 contextBridge 的原型链隔离，属不安全死代码）

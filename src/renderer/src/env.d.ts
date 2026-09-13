@@ -51,6 +51,7 @@ interface LlamaCppApi {
   removeModelDownloadListener: () => void
   listBackends: () => Promise<BackendVersion[]>
   onBackendsUpdated: (cb: (backends: BackendVersion[]) => void) => void
+  removeBackendsUpdatedListener: () => void
   deleteBackend: (name: string) => Promise<{ success: boolean; error?: string }>
   getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp') => Promise<CommandsSchema | null>
   saveBackendCommands: (backendName: string, schema: object, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp') => Promise<{ success: boolean; error?: string }>
@@ -243,7 +244,8 @@ interface LlamaCppApi {
   // ── Agent Code 目录操作 ──
   listDir: (dirPath: string) => Promise<{ success: boolean; entries?: { name: string; isDir: boolean; fileCount: number; size?: number }[]; truncated?: boolean; total?: number; error?: string }>
   // ── Agent Code 文件操作 ──
-  readFile: (filePath: string, opts?: { maxBytes?: number; offset?: number; limit?: number; raw?: boolean }) => Promise<{ success: boolean; content?: string; lines?: number; totalLines?: number; startLine?: number; truncated?: boolean; error?: string; errorType?: string; fileSize?: number; suggestedCommand?: string }>
+	    readFile: (filePath: string, opts?: { maxBytes?: number; offset?: number; limit?: number; raw?: boolean }) => Promise<{ success: boolean; content?: string; lines?: number; totalLines?: number; startLine?: number; truncated?: boolean; error?: string; errorType?: string; fileSize?: number; suggestedCommand?: string }>
+	    statFile: (filePath: string) => Promise<{ mtimeMs: number; size: number } | null>
   readFileBase64: (filePath: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>
   getFilePath: (file: File) => string
   writeFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>

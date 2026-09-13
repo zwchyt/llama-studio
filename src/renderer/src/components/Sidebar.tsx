@@ -2,8 +2,6 @@ import React, { useCallback, useRef, forwardRef } from 'react'
 import { useStore } from '../store/useStore'
 import { useSidebarStore } from '../store/sidebarStore'
 import { shallow } from 'zustand/shallow'
-import { safeCall } from '../utils/safeCall'
-import { paramSetOf } from '../utils/engine'
 import {
   LayoutDashboardIcon,
   HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
@@ -90,8 +88,8 @@ export default function Sidebar() {
   const { collapsed, collapsing, hoverExpanded, hoverExpandEnabled, setHoverExpanded } = useSidebarStore()
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const { view, setView, backends, backendsStatus, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, hasRunningModels } = useStore(
-    s => ({ view: s.view, setView: s.setView, backends: s.backends, backendsStatus: s.backendsStatus, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
+  const { view, setView, backends, backendsStatus, activeBackend, setActiveBackend, paths, activeChatUrl, hasRunningModels } = useStore(
+    s => ({ view: s.view, setView: s.setView, backends: s.backends, backendsStatus: s.backendsStatus, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, paths: s.paths, activeChatUrl: s.activeChatUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
     shallow
   )
 
@@ -112,13 +110,12 @@ export default function Sidebar() {
   const isCollapsed = collapsed && !hoverExpanded
   const isHoverExpanded = hoverExpanded
 
-  async function switchBackend(name: string) {
+  function switchBackend(name: string) {
     const b = backends.find((x) => x.name === name)
     if (!b) return
     setActiveBackend(b)
-    // 切换后端时按其类型加载默认参数集
-    const cmds = await safeCall(() => window.api.getCommands(name, paramSetOf(b.kind)), '切换后端失败')
-    if (cmds) setCommandsSchema(cmds)
+    // 参数集 schema 由 App 的 activeBackend watcher 统一拉取，此处不再重复请求，
+    // 避免快速切换后端时新旧响应乱序覆盖
   }
   return (
     <div

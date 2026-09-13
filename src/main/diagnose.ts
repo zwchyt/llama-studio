@@ -17,13 +17,13 @@ interface DiagnosisRule {
   patterns: RegExp[]
 }
 
-const RULES: DiagnosisRule[] = [
+export const RULES: DiagnosisRule[] = [
   {
     severity: 'warning',
     title: '上下文窗口设置过大',
     cause: 'KV cache 所需内存超过可用（显存/系统）内存。',
     recommendations: ['减小 --ctx-size 为当前值的一半', '--mlock 改为 off（允许换页）', '改用 KV cache 更省内存的量化（Q8 → Q4_0）'],
-    patterns: [/kv cache.*(?:out of memory|failed|overflow|insufficient|not enough)/i, /failed to alloc.*kv/i, /llama_kv_cache.*(?:failed|insufficient)/i],
+    patterns: [/kv cache.*(?:out of memory|failed|overflow|insufficient|not enough)/i, /failed to alloc.*kv/i, /llama_kv_cache.*(?:failed|insufficient)/i, /not enough space.*kv/i],
   },
   {
     severity: 'critical',
@@ -60,13 +60,8 @@ const RULES: DiagnosisRule[] = [
     recommendations: ['改用标准 GGUF Q4_K_M / Q8_0 量化', '更新 llama.cpp 后端版本', '使用官方转换工具重新导出模型'],
     patterns: [/unknown quantization/i, /incompatible tensor/i, /unsupported\s+(?:file|format|quant)/i, /failed to parse\s+gguf/i],
   },
-  {
-    severity: 'warning',
-    title: '上下文窗口设置过大',
-    cause: 'KV cache 所需内存超过可用（显存/系统）内存。',
-    recommendations: ['减小 --ctx-size 为当前值的一半', '--mlock 改为 off（允许换页）', '改用 KV cache 更省内存的量化（Q8 → Q4_0）'],
-    patterns: [/kv cache.*(?:out of memory|failed|overflow)/i, /failed to allocate.*kv/i, /kv cache.*insufficient/i, /not enough space.*kv/i],
-  },
+  // （原第 7 条规则与首条标题/文案重复、3/4 pattern 为其子集而永不命中，
+  // 唯一可达的 /not enough space.*kv/i 已并入上方首条，此处删除）
   {
     severity: 'warning',
     title: '模型元数据异常',

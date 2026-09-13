@@ -58,8 +58,6 @@ interface ChatStore {
   // 消息
   appendMessage: (sessionId: string, msg: ChatMessage) => void
   appendUserMessage: (sessionId: string, content: string, attachments?: Attachment[]) => string
-  // 流式：向最后一条 assistant 消息追加内容
-  appendDeltaToLast: (sessionId: string, delta: string) => void
   // 标记最后一条 assistant 消息出错
   markLastMessageError: (sessionId: string, error: string) => void
   // 标记最后一条 assistant 消息被用户手动停止
@@ -231,27 +229,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     return id
   },
 
-  appendDeltaToLast: (sessionId, delta) => {
-    set((s) => ({
-      sessions: s.sessions.map((x) => {
-        if (x.id !== sessionId) return x
-        const msgs = [...x.messages]
-        const last = msgs[msgs.length - 1]
-        if (last && last.role === 'assistant') {
-          msgs[msgs.length - 1] = { ...last, content: last.content + delta }
-        }
-        return { ...x, messages: msgs }
-      })
-    }))
-    // 节流落盘：每 3 秒最多 persist 一次，防止崩溃/断电丢失已生成内容
-    if (!streamPersistTimers.has(sessionId)) {
-      streamPersistTimers.set(sessionId, setTimeout(() => {
-        streamPersistTimers.delete(sessionId)
-        get().persist(sessionId)
-      }, STREAM_PERSIST_INTERVAL))
-    }
-  },
-
   markLastMessageError: (sessionId, error) => {
     set((s) => ({
       sessions: s.sessions.map((x) => {
@@ -323,7 +300,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         x.id === sessionId ? { ...x, messages, updatedAt: new Date().toISOString() } : x
       )
     }))
-    get().persist(sessionId)
+    // 节流落盘：流式同步路径 ~50ms 调一次，全量 persist 收敛为每会话 3 秒一次（尾部触发，
+    // 防止崩溃/断电丢失已生成内容）；流结束时 clearStreamForSession 取消定时器、由调用方做最终 persist
+    if (!streamPersistTimers.has(sessionId)) {
+      streamPersistTimers.set(sessionId, setTimeout(() => {
+        streamPersistTimers.delete(sessionId)
+        get().persist(sessionId)
+      }, STREAM_PERSIST_INTERVAL))
+    }
   },
 
   branchSession: (sessionId, messageId) => {

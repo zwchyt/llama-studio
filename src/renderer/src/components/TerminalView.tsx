@@ -4,6 +4,7 @@ import { useAgentTerminalStore, type TerminalStoreHook } from '../store/terminal
 import { Terminal } from 'lucide-react'
 import { FolderOpenIcon, PlusIcon, MinusIcon, RefreshCwIcon } from '@animateicons/react/lucide'
 import { safeCall } from '../utils/safeCall'
+import { ansiToHtml } from '../utils/ansiToHtml'
 import { matchTerminalAction, getTerminalKeybinds, subscribeTerminalStore } from '../utils/terminal-keybinds'
 import '@xterm/xterm/css/xterm.css'
 import '../styles/agent-terminal.css'
@@ -320,24 +321,7 @@ function FallbackTermScreen({ id: _id, cwd, visible }: { id: string; cwd: string
   return display
 }
 
-/** 简易 ANSI 转 HTML（仅支持颜色/加粗/重置） */
-function ansiToHtml(text: string): string {
-  const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  const ansiMap: Record<string, string> = {
-    '0': '',
-    '1': 'font-weight:bold',
-    '30': 'color:#363636', '31': 'color:#f67576', '32': 'color:#85df7b',
-    '33': 'color:#fa994c', '34': 'color:#3d8dff', '35': 'color:#b06dff',
-    '36': 'color:#6dcbf4', '37': 'color:#d4d4d4',
-    '90': 'color:#747474', '91': 'color:#f99', '92': 'color:#87d9a4',
-    '93': 'color:#ffb26b', '94': 'color:#55a2ff', '95': 'color:#a888f2',
-    '96': 'color:#8ee5e5', '97': 'color:#f8f8f8',
-  }
-  return escaped.replace(/\x1b\[([\d;]+)m/g, (_, codes) => {
-    const styles = (codes as string).split(';').map((c) => ansiMap[c] || '').filter(Boolean)
-    return styles.length ? `<span style="${styles.join(';')}">` : '</span>'
-  })
-}
+// ansiToHtml 已抽至 utils/ansiToHtml.ts（纯函数，供单元测试回归锁定转义行为）
 
 const MAX_MOUNTED_TERMINALS = 6
 

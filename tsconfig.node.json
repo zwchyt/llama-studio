@@ -1,5 +1,7 @@
 {
   "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
+  // 注：两个 Knowledge 工具目录虽在 renderer 下，但被主进程侧（pi bridge 知识库工具）引用，
+  // 有意纳入 node 工程（node 主进程也直接 import 其逻辑），故与 main/preload 一并类型检查
   "include": ["electron.vite.config.*", "src/main/**/*", "src/preload/**/*", "src/preload", "src/shared/**/*", "src/renderer/src/tools/KnowledgeSearchTool/**/*", "src/renderer/src/tools/KnowledgeReadTool/**/*"],
   "compilerOptions": {
     "composite": true,

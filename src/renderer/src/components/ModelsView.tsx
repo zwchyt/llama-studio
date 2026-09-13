@@ -400,7 +400,7 @@ export default function ModelsView() {
           </div>
         )}
           {filteredModels.map(m => (
-            <ModelFileRow key={m.path} model={m} isImage={imageModels.some(im => im.path === m.path)} isSd={!!m.sdRole} isTts={m.tts} isOcr={m.ocr} onDeleted={refresh} />
+            <ModelFileRow key={m.path} model={m} isImage={imagePathSet.has(m.path)} isSd={!!m.sdRole} isTts={m.tts} isOcr={m.ocr} onDeleted={refresh} />
           ))}
       </div>
       </div>

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMe
 import { createPortal } from 'react-dom'
 import { BookOpen, Plus, Trash2, FileText, Loader2, Search, Upload, X, AlertTriangle, Download, FileUp, Pencil, Check, ChevronUp, ChevronDown, Copy, Eye, Settings2 } from 'lucide-react'
 import { notify } from '../store/notificationStore'
+import { safeCall } from '../utils/safeCall'
 import CustomSelect from './CustomSelect'
 import { extractTextFromFile } from '../utils/extractText'
 import type { KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit } from '../../../shared/types'
@@ -228,7 +229,8 @@ export default function KnowledgeView() {
   async function handleCreate() {
     const name = newName.trim()
     if (!name) return
-    const res = await window.api.knowledgeCreate(name)
+    const res = await safeCall(() => window.api.knowledgeCreate(name), '创建知识库失败')
+    if (!res) return
     if (res.success && res.meta) {
       setNewName(''); setCreating(false)
       await refreshBases()
@@ -269,7 +271,8 @@ export default function KnowledgeView() {
   }
 
   async function handleDeleteBase(id: string) {
-    const res = await window.api.knowledgeDelete(id)
+    const res = await safeCall(() => window.api.knowledgeDelete(id), '删除知识库失败')
+    if (!res) return
     if (res.success) {
       const list = await refreshBases()
       if (activeId === id) setActiveId(list[0]?.id || null)
@@ -350,7 +353,8 @@ export default function KnowledgeView() {
 
   async function handleDeleteDoc(docId: string) {
     if (!activeId) return
-    const res = await window.api.knowledgeDeleteDoc(activeId, docId)
+    const res = await safeCall(() => window.api.knowledgeDeleteDoc(activeId, docId), '删除文档失败')
+    if (!res) return
     if (res.success) { await loadDocs(activeId); await refreshBases() }
   }
 
@@ -364,7 +368,7 @@ export default function KnowledgeView() {
 
   // ── 打开/关闭预览时加载文档全文 ──
   useEffect(() => {
-    if (!previewDoc || !activeId) { setDocContent(null); return }
+    if (!previewDoc || !activeId) { setDocContent(null); setContentLoading(false); return }
     let cancelled = false
     setContentLoading(true); setDocContent(null); setHlQuery(''); setHlIdx(0); setViewMode('full')
     window.api.knowledgeDocContent(activeId, previewDoc.id).then(res => {
@@ -380,6 +384,12 @@ export default function KnowledgeView() {
         setPreviewDoc(null)
       }
       setContentLoading(false)
+    }).catch(() => {
+      // IPC 失败兜底：不 catch 会导致预览弹窗 loading 永久转圈
+      if (cancelled) return
+      notify('读取文档内容失败', 'error')
+      setContentLoading(false)
+      setPreviewDoc(null)
     })
     return () => { cancelled = true }
   }, [previewDoc, activeId])

@@ -847,12 +847,20 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
       if (dirsOnly) entries = entries.filter((e) => e.isDir)
 
       if (recursive) {
+        // 预算上限（与 renderer 版 ListDirTool 对齐）：防海量目录根串行 IPC 与无界输出
+        const MAX_DEPTH = 8
+        const MAX_DIRS = 500
+        let visited = 0
+        let truncated = false
         const lines: string[] = [`- ${path}/`]
         const childPath = (parent: string, name: string): string => `${parent}\\${name}`
         const walk = async (dir: string, depth: number): Promise<void> => {
+          if (depth > MAX_DEPTH || visited >= MAX_DIRS) { truncated = true; return }
           const r = await exec.listDir(dir)
           if (!r.success) return
           for (const s of (r.entries ?? []).filter((e) => e.isDir)) {
+            if (visited >= MAX_DIRS) { truncated = true; return }
+            visited++
             lines.push(`${'  '.repeat(depth + 1)}- ${s.name}/`)
             await walk(childPath(dir, s.name), depth + 1)
           }
@@ -862,6 +870,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
           lines.push(`  - ${e.name}/`)
           await walk(childPath(path, e.name), 1)
         }
+        if (truncated) lines.push(`\n(已截断：超过深度 ${MAX_DEPTH} 层或 ${MAX_DIRS} 个目录上限；如需查看深层目录，请对具体子目录单独调用)`)
         return lines.join('\n')
       }
 

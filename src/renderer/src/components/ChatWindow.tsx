@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { ExternalLink, Copy, Check, RefreshCw, Loader } from 'lucide-react'
 
 export default function ChatWindow({ url }: { url: string }) {
@@ -8,6 +8,7 @@ export default function ChatWindow({ url }: { url: string }) {
   const [waiting, setWaiting] = useState(true)
   const [invalid, setInvalid] = useState(false)
   const [elapsed, setElapsed] = useState(0)
+  const reloadingRef = useRef(false)
 
   const isValidUrl = (u: string): boolean => {
     try {
@@ -49,13 +50,16 @@ export default function ChatWindow({ url }: { url: string }) {
   }
 
   const handleReload = () => {
+    if (reloadingRef.current) return
     if (!isValidUrl(url)) return
+    reloadingRef.current = true
     setShowIframe(false)
     setWaiting(true)
     const urlObj = new URL(url)
     const port = parseInt(urlObj.port, 10)
     ;(async () => {
       const ready = await window.api.waitForServer(port)
+      reloadingRef.current = false
       setWaiting(false)
       if (ready) {
         setReloadKey(prev => prev + 1)

@@ -306,7 +306,15 @@ function loadSnapshot(dir: string): Map<string, CodeMapFileSkeleton> | null {
     const snap = JSON.parse(readFileSync(p, 'utf-8')) as Snapshot
     if (snap.version !== SNAPSHOT_VERSION || resolve(snap.dir) !== resolve(dir)) return null
     const m = new Map<string, CodeMapFileSkeleton>()
-    for (const f of snap.files) { if (f && typeof f.relPath === 'string') m.set(f.relPath, f) }
+    for (const f of snap.files) {
+      // 字段级归一化：损坏快照（手改/异常写入）的残缺骨架会让后续 symbols/imports 迭代抛 TypeError
+      if (!f || typeof f.relPath !== 'string') continue
+      m.set(f.relPath, {
+        ...f,
+        symbols: Array.isArray(f.symbols) ? f.symbols : [],
+        imports: Array.isArray(f.imports) ? f.imports : []
+      })
+    }
     return m
   } catch { return null }
 }
@@ -417,7 +425,11 @@ function startWatcher(map: WorkspaceMap): void {
         map.debounceTimer = setTimeout(() => flushChanges(map), WATCH_DEBOUNCE_MS)
       }
     )
-    w.on('error', () => { /* 目录被删除等瞬时错误，忽略 */ })
+    w.on('error', (err) => {
+      // 目录被删除等瞬时错误：留痕并触发一次全量重建，避免 watcher 静默失效后外部编辑丢失
+      console.warn('[codeMap] watcher error，触发全量重建：', err)
+      void buildMap(map.dir).catch(() => { /* 重建失败退化为工具写钩子 + 手动 build 模式 */ })
+    })
     map.watcher = w
   } catch { /* 监视不可用时地图退化为「工具写钩子 + 手动 build」模式 */ }
 }

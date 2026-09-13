@@ -57,6 +57,9 @@ const NAV_GROUPS: NavDef[][] = [
   ],
 ]
 
+/** @animateicons 图标实例：ref 上暴露的动画控制方法（库未导出该类型，断言收敛到各 ref 回调处） */
+type NavIconInstance = { startAnimation: () => void; stopAnimation: () => void }
+
 export default function TopNavBar() {
   const { view, setView, backends, backendsStatus, activeBackend, setActiveBackend, setCommandsSchema, paths, activeChatUrl, hasRunningModels } = useStore(
     s => ({ view: s.view, setView: s.setView, backends: s.backends, backendsStatus: s.backendsStatus, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, setCommandsSchema: s.setCommandsSchema, paths: s.paths, activeChatUrl: s.activeChatUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
@@ -65,7 +68,7 @@ export default function TopNavBar() {
   const [openMenu, setOpenMenu] = useState<null | 'backend' | 'folders'>(null)
   const rightRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const iconRefs = useRef<Record<string, { startAnimation: () => void; stopAnimation: () => void }>>({})
+  const iconRefs = useRef<Record<string, NavIconInstance | null>>({})
 
   const handleIconEnter = useCallback((key: string) => {
     iconRefs.current[key]?.startAnimation()
@@ -227,7 +230,7 @@ export default function TopNavBar() {
                       : { background: `${item.color}1c`, color: item.color }}
                   >
                     <IconComp 
-                      ref={(el: any) => { iconRefs.current[iconRefKey] = el }}
+                      ref={(el) => { iconRefs.current[iconRefKey] = el ? (el as unknown as NavIconInstance) : null }}
                       className="nav-animate-icon"
                       size={14}
                     />
@@ -260,7 +263,7 @@ export default function TopNavBar() {
               onMouseLeave={() => handleIconLeave('backend')}
             >
               <span className="topnav-ico" style={{ background: '#3b82f61c', color: '#3b82f6' }}>
-                <HardDriveIcon size={14} ref={(el: any) => { if (el) iconRefs.current['backend'] = el }} className="nav-animate-icon" />
+                <HardDriveIcon size={14} ref={(el) => { if (el) iconRefs.current['backend'] = el as unknown as NavIconInstance }} className="nav-animate-icon" />
               </span>
               <span className="topnav-backend-name">
                 {activeBackend?.name || '后端'}
@@ -277,7 +280,7 @@ export default function TopNavBar() {
                     onMouseEnter={() => handleIconEnter(`backend-${b.name}`)}
                     onMouseLeave={() => handleIconLeave(`backend-${b.name}`)}
                   >
-                    <HardDriveIcon size={14} style={{ color: '#3b82f6' }} ref={(el: any) => { if (el) iconRefs.current[`backend-${b.name}`] = el }} className="nav-animate-icon" />
+                    <HardDriveIcon size={14} style={{ color: '#3b82f6' }} ref={(el) => { if (el) iconRefs.current[`backend-${b.name}`] = el as unknown as NavIconInstance }} className="nav-animate-icon" />
                     <span className="topnav-menu-item-label">{b.name}</span>
                     {activeBackend?.name === b.name && <span className="topnav-active-dot" />}
                   </button>
@@ -301,7 +304,7 @@ export default function TopNavBar() {
               onMouseLeave={() => handleIconLeave('folders')}
             >
               <span className="topnav-ico" style={{ background: '#f59e0b1c', color: '#f59e0b' }}>
-                <FolderOpenIcon size={14} ref={(el: any) => { if (el) iconRefs.current['folders'] = el }} className="nav-animate-icon" />
+                <FolderOpenIcon size={14} ref={(el) => { if (el) iconRefs.current['folders'] = el as unknown as NavIconInstance }} className="nav-animate-icon" />
               </span>
               <ChevronDownIcon size={13} />
             </button>
@@ -315,7 +318,7 @@ export default function TopNavBar() {
                     onMouseEnter={() => handleIconEnter(`folder-${f.label}`)}
                     onMouseLeave={() => handleIconLeave(`folder-${f.label}`)}
                   >
-                    <FolderOpenIcon size={14} style={{ color: '#f59e0b' }} ref={(el: any) => { if (el) iconRefs.current[`folder-${f.label}`] = el }} className="nav-animate-icon" />
+                    <FolderOpenIcon size={14} style={{ color: '#f59e0b' }} ref={(el) => { if (el) iconRefs.current[`folder-${f.label}`] = el as unknown as NavIconInstance }} className="nav-animate-icon" />
                     <span className="topnav-menu-item-label">打开 {f.label}</span>
                   </button>
                 ))}

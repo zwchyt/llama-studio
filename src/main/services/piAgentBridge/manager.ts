@@ -70,6 +70,11 @@ export class PiAgentManager {
     this.executors = {
       ...executors,
       recordUndo: (toolCallId, filePath, content) => {
+        // 上限 200 条（FIFO，Map 首键即最旧）：条目含原文件全文，防长期会话无界累积
+        if (this.undoStore.size >= 200) {
+          const oldest = this.undoStore.keys().next().value
+          if (oldest !== undefined) this.undoStore.delete(oldest)
+        }
         this.undoStore.set(toolCallId, { path: filePath, content })
       },
       removeUndo: (toolCallId) => {
@@ -418,6 +423,7 @@ function fetchModelPathFromProps(port: number, timeoutMs = 800): Promise<string 
   return new Promise((resolve) => {
     const req = httpGet(`http://127.0.0.1:${port}/props`, (res) => {
       let body = ''
+      res.on('error', () => resolve(null)) // 连接中断时 IncomingMessage 会发 error，无监听器会成未捕获异常
       res.on('data', (c) => { body += c })
       res.on('end', () => {
         try {

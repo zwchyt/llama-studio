@@ -324,8 +324,9 @@ interface ImageUiState {
 let elapsedTimer: ReturnType<typeof setInterval> | null = null
 let progressTimer: ReturnType<typeof setInterval> | null = null
 
-// 图像生成日志解析器按模板 id 常驻（由 App 全局 model-log 事件驱动，组件卸载后仍解析，
-// 保证进度在生成期间任何时刻都可用）。set 节流避免高刷进度条触发过多 React 渲染。
+// 图像生成日志解析器按模板 id 缓存（由 App 全局 model-log 事件驱动，组件卸载后仍解析，
+// 保证进度在生成期间任何时刻都可用；新一轮生成时由 resetSdGen 丢弃条目，下次日志按需重建）。
+// set 节流避免高刷进度条触发过多 React 渲染。
 const sdLogParsers = new Map<string, ReturnType<typeof createSdLogParser>>()
 let lastSdEmitAt = 0
 const SD_EMIT_THROTTLE_MS = 80
@@ -362,7 +363,8 @@ export const useImageStore = createWithEqualityFn<ImageUiState>((set) => ({
     if (!parser.ingest(text)) return
     const snap = parser.snapshot()
     const now = Date.now()
-    if (now - lastSdEmitAt < SD_EMIT_THROTTLE_MS) return
+    // done 终态绕过节流：确保「生成完成」快照不被 80ms 窗口吞掉
+    if (snap.stage !== 'done' && now - lastSdEmitAt < SD_EMIT_THROTTLE_MS) return
     lastSdEmitAt = now
     set(s => ({
       sdGenProgress: {
@@ -373,7 +375,7 @@ export const useImageStore = createWithEqualityFn<ImageUiState>((set) => ({
   },
 
   resetSdGen: (id) => {
-    sdLogParsers.get(id)?.reset()
+    sdLogParsers.delete(id)
     set(s => {
       if (!s.sdGenProgress[id]) return s
       const next = { ...s.sdGenProgress }

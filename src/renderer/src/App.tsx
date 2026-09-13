@@ -261,6 +261,7 @@ function AppMain() {
       if (engineCheckTimer) window.clearTimeout(engineCheckTimer)
       window.api.removeModelErrorListener()
       window.api.removeModelDiagnosisListener()
+      window.api.removeBackendsUpdatedListener()
     }
   }, [])
 

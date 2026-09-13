@@ -135,6 +135,10 @@ export async function readGgufMeta(path: string): Promise<GgufMetadata> {
     if (version < 2 || version > 3) throw new Error(`不支持的 GGUF 版本: ${version}`)
     const tensorCount = await r.u64()
     const kvCount = await r.u64()
+    // 头部计数 sanity check：正常 GGUF 的 KV 几十~几百条、tensor 数千条内。
+    // 恶意/损坏文件可声明天文数字——虽不致死循环（下方 ensure() 的 fileSize 上界必然终止读取），
+    // 但会在大量小对象上长时间同步跑死事件循环并膨胀内存，直接拒绝。
+    if (kvCount > 100_000 || tensorCount > 1_000_000) throw new Error('GGUF 头部计数异常')
 
     const kv: GgufKvEntry[] = []
     const rawValues = new Map<string, Scalar>()      // 标量值原文，供便捷字段提取

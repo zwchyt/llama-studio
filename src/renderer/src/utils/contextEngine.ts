@@ -83,14 +83,12 @@ export async function buildContextPack(opts: {
   const anchors = extractAnchors(queryText)
   if (anchors.paths.length === 0 && anchors.symbols.length === 0) return null
 
-  // 符号落位：精确 + 前缀命中（主进程侧已排序）
-  const symHits: CodeMapSymbolHit[] = []
-  for (const s of anchors.symbols) {
-    try {
-      const hits = await window.api.codemapSymbol(workspaceDir, s, 5)
-      if (Array.isArray(hits)) symHits.push(...hits)
-    } catch { /* 地图未就绪或通道异常：该锚点静默跳过 */ }
-  }
+  // 符号落位：精确 + 前缀命中（主进程侧已排序）；各锚点查询相互独立，并行发出（Promise.all 保序）
+  const symHitGroups = await Promise.all(
+    anchors.symbols.map(s => window.api.codemapSymbol(workspaceDir, s, 5).catch(() => null))
+  )
+  // 地图未就绪或通道异常的锚点 resolve 为 null，静默跳过
+  const symHits: CodeMapSymbolHit[] = symHitGroups.flatMap(hits => (Array.isArray(hits) ? hits : []))
 
   // 锚点文件 = 路径锚点（用户显式指涉，优先）+ 符号命中文件
   const anchorFiles: string[] = []

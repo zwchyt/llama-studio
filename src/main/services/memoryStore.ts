@@ -13,6 +13,7 @@
 import { ipcMain } from 'electron'
 import { join, resolve } from 'path'
 import { createHash, randomUUID } from 'crypto'
+import { anchorAbsWithin, sanitizeAnchorPath } from '../ipc-helpers/security'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, unlinkSync } from 'fs'
 import type {
   AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection,
@@ -163,6 +164,7 @@ function upsertEntries(dir: string, candidates: AgentMemoryCandidate[]): AgentMe
   for (const cand of candidates) {
     const content = (cand.content || '').trim().slice(0, CONTENT_CAP)
     if (!content) continue
+    const anchorPath = sanitizeAnchorPath(dir, cand.anchorPath)
     const candTokens = tokenize(content)
     // 同类别活跃条目里找最相似者
     let best: AgentMemoryEntry | null = null
@@ -178,7 +180,7 @@ function upsertEntries(dir: string, candidates: AgentMemoryCandidate[]): AgentMe
       best.confidence = Math.min(1, Math.max(best.confidence, cand.confidence ?? 0) + 0.05)
       best.hits += 1
       best.updatedAt = now
-      if (cand.anchorPath) { best.anchorPath = cand.anchorPath; best.anchorSymbol = cand.anchorSymbol }
+      if (anchorPath) { best.anchorPath = anchorPath; best.anchorSymbol = cand.anchorSymbol }
       if (cand.source === 'user') best.source = 'user' // 用户确认过的结论升格来源
       merged++
     } else {
@@ -194,7 +196,7 @@ function upsertEntries(dir: string, candidates: AgentMemoryCandidate[]): AgentMe
         lastUsedAt: now,
         hits: 1,
         contradictions: 0,
-        ...(cand.anchorPath ? { anchorPath: cand.anchorPath } : {}),
+        ...(anchorPath ? { anchorPath } : {}),
         ...(cand.anchorSymbol ? { anchorSymbol: cand.anchorSymbol } : {}),
       })
       added++
@@ -220,11 +222,14 @@ const CATEGORY_ORDER: AgentMemoryEntry['category'][] = [
   'correction', 'convention', 'command', 'error_fix', 'decision', 'file_role',
 ]
 
+// 锚点路径收敛/清洗函数已抽至 ipc-helpers/security.ts（供单元测试直接导入）
+
 // 锚点校验：文件还在吗；指定了符号时，符号（子串）还能在文件里搜到吗
 function verifyAnchor(workspaceDir: string, e: AgentMemoryEntry): boolean {
   if (!e.anchorPath) return true // 无锚点条目视为无需校验
   try {
-    const abs = join(workspaceDir, e.anchorPath)
+    const abs = anchorAbsWithin(workspaceDir, e.anchorPath)
+    if (!abs) return false
     if (!existsSync(abs)) return false
     if (e.anchorSymbol) {
       if (statSync(abs).size > ANCHOR_READ_CAP) return true // 超大文件跳过内容校验，视为有效
@@ -244,8 +249,10 @@ const anchorCache = new Map<string, { ok: boolean; mtimeMs: number; at: number }
 
 function verifyAnchorCached(workspaceDir: string, e: AgentMemoryEntry): boolean {
   if (!e.anchorPath) return true
+  const abs = anchorAbsWithin(workspaceDir, e.anchorPath)
+  if (!abs) return false
   let mtimeMs = -1
-  try { mtimeMs = statSync(join(workspaceDir, e.anchorPath)).mtimeMs } catch { /* 不存在 */ }
+  try { mtimeMs = statSync(abs).mtimeMs } catch { /* 不存在 */ }
   const key = `${workspaceDir}|${e.anchorPath}|${e.anchorSymbol ?? ''}`
   if (mtimeMs < 0) { anchorCache.delete(key); return false }
   const now = Date.now()

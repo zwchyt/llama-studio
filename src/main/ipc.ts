@@ -3,7 +3,7 @@ import https from 'https'
 import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
   unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, watch, promises as fsPromises,
-  createReadStream, copyFileSync
+  createReadStream, copyFileSync, openSync, readSync, closeSync, realpathSync
 } from 'fs'
 import * as readline from 'readline'
 import { join, extname, basename, dirname, resolve, sep, relative, isAbsolute } from 'path'
@@ -19,12 +19,13 @@ import { randomUUID, createHash } from 'crypto'
 import type * as ptyNs from 'node-pty'
 import type { AgentProject, AgentSession, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus, EngineKind, ReleaseInfo } from '../shared/types'
 import { registerCodeMapIpc, disposeCodeMaps, deleteSnapshotForWorkspace } from './services/codeMapService'
-import { registerRetrievalIpc } from './services/retrievalService'
+import { registerRetrievalIpc, disposeIndexForWorkspace } from './services/retrievalService'
 import { registerMemoryStoreIpc, deleteMemoryForWorkspace } from './services/memoryStore'
 import { readGgufMeta } from './services/ggufReader'
 import { registerKnowledgeIpc } from './services/knowledgeService'
 import { initTokenLedger, appendTokenUsage, readTokenUsage, clearTokenUsage } from './tokenLedger'
 import { diagnoseModelFailure } from './diagnose'
+import { confineRead, validateUrlAsync } from './ipc-helpers/security'
 
 let ptyModule: typeof ptyNs | null = null
 async function getPty(): Promise<typeof ptyNs> {
@@ -103,12 +104,13 @@ export interface IpcInternalHandlers {
 }
 export const ipcInternal: Partial<IpcInternalHandlers> = {}
 
-function countExtractedFiles(dir: string): number {
+function countExtractedFiles(dir: string, depth = 0): number {
+  if (depth > 64) return 0 // 防恶意 zip 数千层嵌套目录导致栈溢出
   let count = 0
   const entries = readdirSync(dir, { withFileTypes: true })
   for (const e of entries) {
     const p = join(dir, e.name)
-    if (e.isDirectory()) count += countExtractedFiles(p)
+    if (e.isDirectory()) count += countExtractedFiles(p, depth + 1)
     else count++
   }
   return count
@@ -490,7 +492,11 @@ async function loadSettings(): Promise<AppSettings> {
   return settingsCache
 }
 async function saveSettings(s: AppSettings): Promise<void> {
-  await fsPromises.writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2))
+  // 原子写：先写 .tmp 再 rename，避免中途崩溃撕裂 settings.json
+  // （loadSettings 既有「主文件损坏回退 .tmp」逻辑由此真正生效）
+  const tmpPath = SETTINGS_PATH + '.tmp'
+  await fsPromises.writeFile(tmpPath, JSON.stringify(s, null, 2))
+  await fsPromises.rename(tmpPath, SETTINGS_PATH)
   settingsCache = s
 }
 function readSettingsFileSync(path: string): AppSettings | null {
@@ -559,6 +565,33 @@ function canBroadcast(id: string): boolean {
   if (now - last >= BROADCAST_THROTTLE_MS) { broadcastTimes.set(id, now); return true }
   return false
 }
+
+// 下载进度广播工厂：统一 throttle + percent/speedBucket 去重 + payload 组装 + isDestroyed 守卫。
+// hfDual=true 时 repoId 存在则同时广播 hf-download-progress（HF 下载双通道历史行为）。
+function makeDownloadBroadcaster(channels: string[], hfDual = false): (t: DownloadTask, force?: boolean) => void {
+  return (t, force = false) => {
+    if (!force && !canBroadcast(t.id)) return
+    const percent = t.totalBytes > 0 ? Math.round((t.receivedBytes / t.totalBytes) * 100) : 0
+    const speedBucket = Math.round(t.speed / (500 * 1024))
+    if (!force) {
+      const last = lastSent.get(t.id)
+      if (last && last.percent === percent && last.phase === t.phase && last.speedBucket === speedBucket) return
+    }
+    lastSent.set(t.id, { percent, phase: t.phase, speedBucket })
+    const payload = {
+      id: t.id, filename: t.filename, percent,
+      receivedBytes: t.receivedBytes, totalBytes: t.totalBytes,
+      speed: t.speed, phase: t.phase, destPath: t.destPath,
+      repoId: t.repoId
+    }
+    BrowserWindow.getAllWindows().forEach(win => {
+      if (!win.isDestroyed()) {
+        for (const ch of channels) win.webContents.send(ch, payload)
+        if (hfDual && t.repoId) win.webContents.send('hf-download-progress', payload)
+      }
+    })
+  }
+}
 // 启动时从 .env 载入 GITHUB_TOKEN，避免 dev 环境未注入环境变量时 GitHub API 走 60/hr 匿名限额。
 // 优先用已存在的 process.env.GITHUB_TOKEN；否则按 项目根/.env、userData/.env 顺序读取。
 function loadGitHubTokenFromEnvFile(): void {
@@ -584,8 +617,11 @@ loadGitHubTokenFromEnvFile()
 function fetchJson(url: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const headers: Record<string, string> = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36', Accept: 'application/json' }
+    // GITHUB_TOKEN 仅随 api.github.com 请求发送，避免凭据外泄到 HF/ModelScope/npm 等第三方主机
     const token = process.env.GITHUB_TOKEN
-    if (token) headers.Authorization = `Bearer ${token}`
+    let isGithubApi = false
+    try { isGithubApi = new URL(url).hostname === 'api.github.com' } catch { /* 非法 URL：不带凭据 */ }
+    if (token && isGithubApi) headers.Authorization = `Bearer ${token}`
     const req = net.request({ url, headers })
     const timeout = setTimeout(() => { req.abort(); reject(new Error('请求超时')) }, 10000)
     req.on('response', (res) => {
@@ -1623,25 +1659,7 @@ export function registerIpcHandlers(): void {
       destPath: finalPath, receivedBytes: 0, totalBytes: 0, speed: 0,
       phase: 'downloading', repoId: opts.repoId
     }
-    const broadcastProgress = (t: DownloadTask, force = false) => {
-      if (!force && !canBroadcast(t.id)) return
-      const percent = t.totalBytes > 0 ? Math.round((t.receivedBytes / t.totalBytes) * 100) : 0
-      const speedBucket = Math.round(t.speed / (500 * 1024))
-      if (!force) {
-        const last = lastSent.get(t.id)
-        if (last && last.percent === percent && last.phase === t.phase && last.speedBucket === speedBucket) return
-      }
-      lastSent.set(t.id, { percent, phase: t.phase, speedBucket })
-      const payload = {
-        id: t.id, filename: t.filename,
-        percent, receivedBytes: t.receivedBytes, totalBytes: t.totalBytes,
-        speed: t.speed, phase: t.phase, destPath: t.destPath,
-        repoId: t.repoId
-      }
-      BrowserWindow.getAllWindows().forEach(win => {
-        if (!win.isDestroyed()) win.webContents.send('model-download-progress', payload)
-      })
-    }
+    const broadcastProgress = makeDownloadBroadcaster(['model-download-progress'])
     task.cancelFn = startDownload(
       opts.url, tmpPath, 0,
       (received, total, speed) => { task.receivedBytes = received; task.totalBytes = total; task.speed = speed; broadcastProgress(task) },
@@ -1687,21 +1705,8 @@ export function registerIpcHandlers(): void {
     const tmpPath = task.destPath + '.tmp'
 
     try { task.receivedBytes = statSync(tmpPath).size } catch { }
-    const broadcastProgress = (t: DownloadTask, force = false) => {
-      if (!force && !canBroadcast(t.id)) return
-      const payload = {
-        id: t.id, filename: t.filename, phase: t.phase, speed: t.speed,
-        percent: t.totalBytes > 0 ? Math.round((t.receivedBytes / t.totalBytes) * 100) : 0,
-        receivedBytes: t.receivedBytes, totalBytes: t.totalBytes, destPath: t.destPath,
-        repoId: t.repoId
-      }
-      BrowserWindow.getAllWindows().forEach(win => {
-        if (!win.isDestroyed()) {
-          win.webContents.send('model-download-progress', payload)
-          if (t.repoId) win.webContents.send('hf-download-progress', payload)
-        }
-      })
-    }
+    // 统一工厂（补上旧版缺失的 percent/speedBucket 去重，消除重复广播）
+    const broadcastProgress = makeDownloadBroadcaster(['model-download-progress'], true)
     const startByte = task.receivedBytes
     task.cancelFn = startDownload(
       task.url, tmpPath, startByte,
@@ -1747,21 +1752,7 @@ export function registerIpcHandlers(): void {
     task.totalBytes = 0
     task.phase = 'downloading'
     const tmpPath = task.destPath + '.tmp'
-    const broadcast = (t: DownloadTask, force = false) => {
-      if (!force && !canBroadcast(t.id)) return
-      const payload = {
-        id: t.id, filename: t.filename, phase: t.phase, speed: t.speed,
-        percent: t.totalBytes > 0 ? Math.round((t.receivedBytes / t.totalBytes) * 100) : 0,
-        receivedBytes: t.receivedBytes, totalBytes: t.totalBytes, destPath: t.destPath,
-        repoId: t.repoId
-      }
-      BrowserWindow.getAllWindows().forEach(win => {
-        if (!win.isDestroyed()) {
-          win.webContents.send('model-download-progress', payload)
-          if (t.repoId) win.webContents.send('hf-download-progress', payload)
-        }
-      })
-    }
+    const broadcast = makeDownloadBroadcaster(['model-download-progress'], true)
     task.cancelFn = startDownload(
       task.url, tmpPath, 0,
       (r, t, speed) => { task.receivedBytes = r; task.totalBytes = t; task.speed = speed; broadcast(task) },
@@ -2082,14 +2073,8 @@ export function registerIpcHandlers(): void {
         await unregisterBackend(backendName)
         return { success: true }
       }
-      const rm = (dir: string) => {
-        for (const e of readdirSync(dir, { withFileTypes: true })) {
-          const p = join(dir, e.name)
-          e.isDirectory() ? rm(p) : unlinkSync(p)
-        }
-        rmdirSync(dir)
-      }
-      rm(backendPath)
+      // 异步删除：避免大量小文件时同步递归阻塞主进程（后端目录可达数千文件）
+      await fsPromises.rm(backendPath, { recursive: true, force: true })
       // 顺序很重要：先删文件系统，成功后再删注册表条目。
       // 删失败则保留注册表，避免"注册表丢了但目录还在"的中间态
       await unregisterBackend(backendName)
@@ -2297,6 +2282,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('save-images', (_e, opts: { images: string[]; mode?: string; seed?: number; steps?: number; cfg?: number; width?: number; height?: number; prompt?: string; negativePrompt?: string; sampler?: string; scheduler?: string; model?: string }): Promise<{ ok: boolean; files?: string[]; error?: string }> => {
     try {
       if (!opts || !Array.isArray(opts.images) || opts.images.length === 0) return Promise.resolve({ ok: false, error: '无图片数据' })
+      if (opts.images.length > 64) return Promise.resolve({ ok: false, error: '图片数量超过上限（64 张）' })
       if (!existsSync(CHAT_IMAGES_DIR)) mkdirSync(CHAT_IMAGES_DIR, { recursive: true })
       const files = opts.images.map((dataUrl, i) => {
         const comma = String(dataUrl || '').indexOf(',')
@@ -2523,6 +2509,8 @@ export function registerIpcHandlers(): void {
       const found = await findBackendExecutable(opts.backendPath)
       if (found) { exeName = found; exePath = join(opts.backendPath, found) }
     }
+    // 兜底扫描的 await 间隙内可能已有同 ID 启动（快速双击）：置位前复查一次封死 TOCTOU
+    if (runningProcesses.has(opts.id)) return { success: false, error: '已在运行中' }
     if (!isSafePath(BACKEND_DIR, exePath) || !existsSync(exePath)) {
       broadcastDiagnosis(`可执行文件未找到: ${exePath}`)
       return { success: false, error: `可执行文件未找到: ${exePath}` }
@@ -3969,27 +3957,8 @@ export function registerIpcHandlers(): void {
     if (!isSafePath(MODELS_DIR, finalPath)) return { success: false, error: '访问被拒绝' }
     const tmpPath = finalPath + '.tmp'
     const task: DownloadTask = { id, url: opts.downloadUrl, filename: opts.filename, destPath: finalPath, receivedBytes: 0, totalBytes: 0, speed: 0, phase: 'downloading', repoId: opts.repoId }
-    const broadcast = (force = false) => {
-      if (!force && !canBroadcast(task.id)) return
-      const percent = task.totalBytes > 0 ? Math.round(task.receivedBytes / task.totalBytes * 100) : 0
-      const speedBucket = Math.round(task.speed / (500 * 1024))
-      if (!force) {
-        const last = lastSent.get(task.id)
-        if (last && last.percent === percent && last.phase === task.phase && last.speedBucket === speedBucket) return
-      }
-      lastSent.set(task.id, { percent, phase: task.phase, speedBucket })
-      const payload = {
-        id: task.id, filename: task.filename, phase: task.phase,
-        percent, speed: task.speed, destPath: task.destPath,
-        receivedBytes: task.receivedBytes, totalBytes: task.totalBytes,
-        repoId: task.repoId
-      }
-      BrowserWindow.getAllWindows().forEach(win => {
-        if (!win.isDestroyed()) {
-          win.webContents.send('hf-download-progress', payload)
-        }
-      })
-    }
+    const hfBroadcast = makeDownloadBroadcaster(['hf-download-progress'])
+    const broadcast = (force = false): void => hfBroadcast(task, force)
     task.cancelFn = startDownload(
       opts.downloadUrl, tmpPath, 0,
       (r, t, speed) => { task.receivedBytes = r; task.totalBytes = t; task.speed = speed; broadcast() },
@@ -4004,33 +3973,25 @@ export function registerIpcHandlers(): void {
     downloadTasks.set(id, task)
     return { success: true }
   })
-  const checkFileCache = new Map<string, boolean>()
   ipcMain.handle('check-file-exists', async (_e, filePath: string) => {
-    if (checkFileCache.has(filePath)) return checkFileCache.get(filePath)
-    let exists: boolean
-    if (isSafePath(MODELS_DIR, filePath)) {
-      exists = existsSync(filePath)
-    } else {
-      const s = await loadSettings()
-      // 白名单包含全部可注册的模型文件夹（外部 / 图片 / TTS / OCR / sd 三件套），
-      // 否则通过设置添加的目录（如 stable-diffusion.cpp 模型文件夹）会被误判为文件缺失
-      const allowedRoots = [
-        ...s.externalModelFolders,
-        ...s.imageModelFolders,
-        ...s.ttsModelFolders,
-        ...s.asrModelFolders,
-        ...s.ocrModelFolders,
-        ...s.sdModelFolders,
-        ...s.sdVaeFolders,
-        ...s.sdLlmFolders
-      ]
-      const allowed = allowedRoots.some(f => isSafePath(f, filePath))
-      // 不在白名单时返回 false 但不缓存，方便用户后续添加文件夹后立即生效
-      if (!allowed) return false
-      exists = existsSync(filePath)
-    }
-    checkFileCache.set(filePath, exists)
-    return exists
+    // 不做缓存：existsSync 是微秒级本地调用，缓存反而让「用户删除文件后」状态永久陈旧
+    if (isSafePath(MODELS_DIR, filePath)) return existsSync(filePath)
+    const s = await loadSettings()
+    // 白名单包含全部可注册的模型文件夹（外部 / 图片 / TTS / OCR / sd 三件套），
+    // 否则通过设置添加的目录（如 stable-diffusion.cpp 模型文件夹）会被误判为文件缺失
+    const allowedRoots = [
+      ...s.externalModelFolders,
+      ...s.imageModelFolders,
+      ...s.ttsModelFolders,
+      ...s.asrModelFolders,
+      ...s.ocrModelFolders,
+      ...s.sdModelFolders,
+      ...s.sdVaeFolders,
+      ...s.sdLlmFolders
+    ]
+    const allowed = allowedRoots.some(f => isSafePath(f, filePath))
+    if (!allowed) return false
+    return existsSync(filePath)
   })
   ipcMain.handle('select-directory', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -5121,27 +5082,8 @@ export function registerIpcHandlers(): void {
     if (!isSafePath(MODELS_DIR, finalPath)) return { success: false, error: '访问被拒绝' }
     const tmpPath = finalPath + '.tmp'
     const task: DownloadTask = { id, url: opts.downloadUrl, filename: opts.filename, destPath: finalPath, receivedBytes: 0, totalBytes: 0, speed: 0, phase: 'downloading', repoId: opts.repoId }
-    const broadcast = (force = false) => {
-      if (!force && !canBroadcast(task.id)) return
-      const percent = task.totalBytes > 0 ? Math.round(task.receivedBytes / task.totalBytes * 100) : 0
-      const speedBucket = Math.round(task.speed / (500 * 1024))
-      if (!force) {
-        const last = lastSent.get(task.id)
-        if (last && last.percent === percent && last.phase === task.phase && last.speedBucket === speedBucket) return
-      }
-      lastSent.set(task.id, { percent, phase: task.phase, speedBucket })
-      const payload = {
-        id: task.id, filename: task.filename, phase: task.phase,
-        percent, speed: task.speed, destPath: task.destPath,
-        receivedBytes: task.receivedBytes, totalBytes: task.totalBytes,
-        repoId: task.repoId
-      }
-      BrowserWindow.getAllWindows().forEach(win => {
-        if (!win.isDestroyed()) {
-          win.webContents.send('hf-download-progress', payload)
-        }
-      })
-    }
+    const hfBroadcast = makeDownloadBroadcaster(['hf-download-progress'])
+    const broadcast = (force = false): void => hfBroadcast(task, force)
     task.cancelFn = startDownload(
       opts.downloadUrl, tmpPath, 0,
       (r, t, speed) => { task.receivedBytes = r; task.totalBytes = t; task.speed = speed; broadcast() },
@@ -5584,10 +5526,16 @@ export function registerIpcHandlers(): void {
     return session ?? null
   }
 
+  // PTY 尺寸钳制：防渲染层传入 NaN/负数/超大值触发 ConPTY 异常分配
+  const clampPty = (v: unknown, def: number, max: number): number => {
+    const n = Math.floor(Number(v))
+    return Number.isFinite(n) ? Math.min(Math.max(n, 2), max) : def
+  }
+
   ipcMain.handle('terminal:create', async (_e, opts: { id?: string; cwd?: string; cols?: number; rows?: number; ownerKey?: string }) => {
     const ownerKey = (opts.ownerKey || '').trim() || null
-    const cols = opts.cols ?? 80
-    const rows = opts.rows ?? 24
+    const cols = clampPty(opts.cols, 80, 1000)
+    const rows = clampPty(opts.rows, 24, 300)
     const cwd = opts.cwd && existsSync(opts.cwd) ? opts.cwd : app.getPath('home')
 
     // 若已有该 owner 的活跃 session，直接 attach 并返回 replay
@@ -5673,7 +5621,7 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('terminal:resize', (_e, { id, cols, rows }: { id: string; cols: number; rows: number }) => {
-    try { sessions.get(id)?.pty.resize(cols, rows) } catch {}
+    try { sessions.get(id)?.pty.resize(clampPty(cols, 80, 1000), clampPty(rows, 24, 300)) } catch {}
   })
 
   ipcMain.handle('terminal:kill', (_e, { id }: { id: string }) => {
@@ -5684,6 +5632,9 @@ export function registerIpcHandlers(): void {
   })
 
   // ── 终端回退模式：无 PTY 时逐条执行命令 ──
+  // 输出上限 + 超时：防止海量输出无界累积内存、命令挂起占死通道
+  const EXEC_OUTPUT_CAP = 512 * 1024
+  const EXEC_TIMEOUT_MS = 30_000
   ipcMain.handle('terminal:exec', async (_e, { command, cwd }: { command: string; cwd?: string }) => {
     try {
       const execCwd = cwd && existsSync(cwd) ? cwd : app.getPath('home')
@@ -5692,10 +5643,12 @@ export function registerIpcHandlers(): void {
       let exitCode: number | null = null
       await new Promise<void>((resolve, reject) => {
         const child = spawn(command, [], { shell: true, cwd: execCwd, windowsHide: true })
-        child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
-        child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-        child.on('error', (err) => reject(err))
-        child.on('close', (code) => { exitCode = code; resolve() })
+        const cap = (buf: string, chunk: Buffer): string => (buf.length < EXEC_OUTPUT_CAP ? buf + chunk.toString() : buf)
+        const timer = setTimeout(() => { child.kill(); reject(new Error(`命令执行超时（${EXEC_TIMEOUT_MS / 1000}s），已终止`)) }, EXEC_TIMEOUT_MS)
+        child.stdout?.on('data', (chunk: Buffer) => { stdout = cap(stdout, chunk) })
+        child.stderr?.on('data', (chunk: Buffer) => { stderr = cap(stderr, chunk) })
+        child.on('error', (err) => { clearTimeout(timer); reject(err) })
+        child.on('close', (code) => { clearTimeout(timer); exitCode = code; resolve() })
       })
       return { success: true, stdout, stderr, exitCode }
     } catch (err) {
@@ -5769,7 +5722,7 @@ export function registerIpcHandlers(): void {
   const handleFetchWebpage = async (url: string): Promise<string> => {
     if (!url?.trim()) return JSON.stringify({ error: 'URL 不能为空' })
     try {
-      validateUrl(url)
+      await validateUrlAsync(url)
       const html = await fetchText(url, 15_000)
       const text = stripHtml(html)
         .replace(/\s*\x0a\s*\x0a\s*/g, '\x0a\x0a')
@@ -5793,7 +5746,10 @@ export function registerIpcHandlers(): void {
       const katexCssPath = join(dirname(katexPkgPath), 'dist', 'katex.min.css')
       katexCss = readFileSync(katexCssPath, 'utf-8')
     } catch { /* 找不到就跳过，公式仍可见只是缺少样式 */ }
-    const finalHtml = html.replace('</head>', `<style>${katexCss}</style></head>`)
+    // CSP：导出 HTML 由聊天内容拼成（可能含模型输出），显式禁掉脚本执行面（script-src 回落到
+    // default-src 'none'）；打印只需内联样式与图片，导出模板本身不含脚本，功能不受影响
+    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: blob: file: https: http:; font-src data:;">`
+    const finalHtml = html.replace('</head>', `<style>${katexCss}</style>${cspMeta}</head>`)
 
     const pdfWindow = new BrowserWindow({
       show: false,
@@ -5836,11 +5792,7 @@ export function registerIpcHandlers(): void {
   // 未指定 limit 时默认最多读取的行数（参考 grok-build 的「默认截断到 1000 行」），
   // 避免大文件一次性全文读入占用大量上下文；超出 token 预算时仍会引导改用 Grep。
   const DEFAULT_READ_LINES = 2000
-  // 禁止读取的敏感/系统根目录（绝对路径，匹配前缀即拒绝）
-  const FORBID_READ_ROOTS: string[] = [
-    'C:\\Windows', 'C:\\Program Files', 'C:\\ProgramData',
-    '/etc', '/proc', '/sys', '/boot', '/usr/lib', '/Library'
-  ]
+  // 读侧黑名单常量与 confineRead 已抽至 ipc-helpers/security.ts（供单元测试直接导入）
 
   function detectEncoding(buffer: Buffer): 'utf16le' | 'utf8' {
     return buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe ? 'utf16le' : 'utf8'
@@ -5878,12 +5830,9 @@ export function registerIpcHandlers(): void {
     return { binary: false, encoding: 'utf8' }
   }
 
-  function confineRead(target: string): boolean {
-    const norm = resolve(target).toLowerCase()
-    return FORBID_READ_ROOTS.some(r => norm.startsWith(r.toLowerCase()))
-  }
+// confineRead（含敏感目录/UNC 判定）已抽至 ipc-helpers/security.ts
 
-  // 流式读取指定行范围（仅收集 offset..offset+limit-1 行，不整文件载入），
+// 流式读取指定行范围（仅收集 offset..offset+limit-1 行，不整文件载入），
   // 同时统计总行数（继续读到文件末尾计数，但不保留多余行内容）。
   function readFileLinesStream(filePath: string, encoding: 'utf16le' | 'utf8', offset: number, limit: number): Promise<{ lines: string[]; totalLines: number }> {
     const out: string[] = []
@@ -5904,6 +5853,24 @@ export function registerIpcHandlers(): void {
       rl.on('close', () => resolve({ lines: out, totalLines: lineNo }))
       rl.on('error', (e: Error) => reject(e))
     })
+  }
+
+  // 大文件专用：只读头部若干字节做二进制/编码嗅探（与 readFileContent 返回形状一致，content 恒空）。
+  // 避免 >32MiB 文件被完整同步读入内存、嗅探完随即丢弃再流式重读。
+  function readFileHead(filePath: string, bytes: number): { content: string; encoding: string; fileExists: boolean; binary?: boolean } {
+    let fd: number | null = null
+    try {
+      fd = openSync(filePath, 'r')
+      const buf = Buffer.alloc(bytes)
+      const n = readSync(fd, buf, 0, bytes, 0)
+      const { binary, encoding } = analyzeBuffer(buf.subarray(0, n))
+      return { content: '', encoding, fileExists: true, binary }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { content: '', encoding: 'utf8', fileExists: false }
+      throw e
+    } finally {
+      if (fd !== null) closeSync(fd)
+    }
   }
 
   function readFileContent(filePath: string): { content: string; encoding: string; fileExists: boolean; binary?: boolean } {
@@ -5974,6 +5941,10 @@ export function registerIpcHandlers(): void {
       if (confineRead(filePath)) {
         return { success: false, error: `权限不足，禁止读取受保护的系统目录：${filePath}`, errorType: 'PermissionDenied' }
       }
+      // 敏感文件名（.env/id_rsa/*.pem 等）：目录不命中黑名单也拒绝盲读
+      if (isSensitiveName(basename(filePath))) {
+        return { success: false, error: `禁止读取凭证/敏感文件：${filePath}`, errorType: 'PermissionDenied' }
+      }
 
       // 结构化错误：检查路径是否存在、是否为目录、权限等
       let fileStat: import('fs').Stats
@@ -6026,7 +5997,8 @@ export function registerIpcHandlers(): void {
         content = content.replace(/[\uD800-\uDBFF]$/u, '')
         totalLines = content.split('\n').length
       } else {
-        const r = readFileContent(filePath)
+        // 大文件只嗅探头部（readFileContent 会把整个文件读入内存）
+        const r = fileSize > STREAM_READ_THRESHOLD ? readFileHead(filePath, 64 * 1024) : readFileContent(filePath)
         if (!r.fileExists) {
           return { success: false, error: `文件不存在：${filePath}`, errorType: 'FileNotFound' }
         }
@@ -6276,15 +6248,43 @@ export function registerIpcHandlers(): void {
   ipcInternal.handleWriteFile = handleWriteFile
   ipcMain.handle('write-file', (_e, filePath, content) => handleWriteFile(filePath, content))
 
-  // ── 麦克风录音：将 base64 编码的 WAV 写入系统临时目录，返回路径供本地 STT 使用 ──
+  // ── 麦克风录音等：将 base64 编码文件写入系统临时目录专用子目录，返回路径供本地使用 ──
+  // 安全：basename 剥离路径成分 + 扩展名白名单 + 专用子目录圈死落点，防渲染层失陷后任意路径写
+  const TEMP_AUDIO_DIR = join(tmpdir(), 'llama-studio-tmp')
+  const TEMP_FILE_EXTS = new Set(['.wav', '.mp3', '.webm', '.ogg', '.m4a', '.txt'])
   ipcMain.handle('write-temp-file', async (_e, fileName: string, base64: string) => {
     try {
-      const fp = join(tmpdir(), fileName)
-      await fsPromises.writeFile(fp, Buffer.from(base64, 'base64'))
+      const base = basename(String(fileName || ''))
+      const ext = extname(base).toLowerCase()
+      if (!base || !TEMP_FILE_EXTS.has(ext)) return { success: false, error: `不支持的临时文件名/扩展名：${fileName}` }
+      mkdirSync(TEMP_AUDIO_DIR, { recursive: true })
+      const fp = join(TEMP_AUDIO_DIR, base)
+      await fsPromises.writeFile(fp, Buffer.from(String(base64 || ''), 'base64'))
       return { success: true, path: fp }
     } catch (e) {
       return { success: false, error: `写入临时文件失败：${e instanceof Error ? e.message : String(e)}` }
     }
+  })
+  // 启动清理：删除专用临时目录中超过 24h 的遗留文件（历史版本/崩溃残留均无清理路径）
+  ;(async () => {
+    try {
+      for (const f of readdirSync(TEMP_AUDIO_DIR)) {
+        const fp = join(TEMP_AUDIO_DIR, f)
+        try {
+          if (Date.now() - statSync(fp).mtimeMs > 24 * 3600 * 1000) void fsPromises.unlink(fp)
+        } catch { /* 忽略单个文件 */ }
+      }
+    } catch { /* 目录不存在则忽略 */ }
+  })()
+
+  // 文件元信息（mtime/size，无内容读取）：供 renderer Read 工具缓存做新鲜度校验
+  ipcMain.handle('stat-file', (_e, filePath: string) => {
+    try {
+      const p = resolveAgentPath(filePath)
+      if (confineRead(p)) return null
+      const st = statSync(p)
+      return { mtimeMs: st.mtimeMs, size: st.size }
+    } catch { return null }
   })
 
   // ── Agent Code: glob / grep ──
@@ -6406,6 +6406,7 @@ export function registerIpcHandlers(): void {
       if (!opts || !opts.path) return { success: false, error: '缺少搜索目录' }
       opts.path = resolveAgentPath(opts.path)
       if (opts.path.startsWith('\\\\') || opts.path.startsWith('//')) return { success: false, error: '不支持 UNC 路径' }
+      if (confineRead(opts.path)) return { success: false, error: '不允许访问系统/敏感目录' }
       if (!existsSync(opts.path)) return { success: false, error: '目录不存在' }
       const limit = Math.max(1, Math.min(opts.limit ?? 100, 2000))
       // 遍历预算超时（借鉴 DeepSeek-Reasonix glob 的 ctx 可取消）：超大 monorepo 搜 ** 时，
@@ -6480,6 +6481,7 @@ export function registerIpcHandlers(): void {
       if (!dirPath) return { success: false, error: '缺少路径' }
       const resolved = resolve(redirectToWorkspaceIfMissing(resolveAgentPath(dirPath)))
       if (resolved.startsWith('\\\\') || resolved.startsWith('//')) return { success: false, error: '不支持 UNC 路径' }
+      if (confineRead(resolved)) return { success: false, error: '不允许访问系统/敏感目录' }
       if (!existsSync(resolved)) return { success: false, error: '目录不存在' }
       const stat = statSync(resolved)
       if (!stat.isDirectory()) return { success: false, error: '路径不是目录' }
@@ -6561,12 +6563,13 @@ export function registerIpcHandlers(): void {
   }
 
   const handleGrep = async (opts: { pattern: string; path: string; glob?: string; output_mode?: string; head_limit?: number; '-i'?: boolean; context?: number; '-n'?: boolean; type?: string; timeout_seconds?: number }): Promise<{ success: boolean; content?: string; numFiles?: number; truncated?: boolean; timedOut?: boolean; error?: string }> => {
-    // timeout_seconds 可调（借鉴 Reasonix grep 的 timeout_seconds，1-300s 封顶），
-    // 0/省略回退默认 20s，避免大仓库搜索被固定超时截断、也防止模型设极大值挂起。
+    // timeout_seconds 可调（借鉴 Reasonix grep 的 timeout_seconds，1-30s 封顶）。
+    // JS 版遍历/匹配全程同步不让出事件循环，上限过长会让主进程长时间无响应，故收到 30s；
+    // 更大规模的搜索应使用 rg 版（异步进程、可中断）。
     const DEFAULT_GREP_TIMEOUT_MS = 20_000
     const reqSec = typeof opts.timeout_seconds === 'number' && opts.timeout_seconds > 0 ? opts.timeout_seconds : 0
     const timeoutMs = reqSec > 0
-      ? Math.min(Math.max(reqSec * 1000, 1000), 300_000)
+      ? Math.min(Math.max(reqSec * 1000, 1000), 30_000)
       : DEFAULT_GREP_TIMEOUT_MS
     let timedOut = false
     // 同步遍历/逐文件匹配全程不让出事件循环，setTimeout 置标志永远不会触发，
@@ -6585,6 +6588,7 @@ export function registerIpcHandlers(): void {
       if (!opts || !opts.path) return returnResult({ success: false, error: '缺少搜索目录' })
       opts.path = resolveAgentPath(opts.path)
       if (opts.path.startsWith('\\\\') || opts.path.startsWith('//')) return returnResult({ success: false, error: '不支持 UNC 路径' })
+      if (confineRead(opts.path)) return returnResult({ success: false, error: '不允许访问系统/敏感目录' })
       if (!existsSync(opts.path)) return returnResult({ success: false, error: '目录不存在' })
       const root = opts.path
       const mode = (opts.output_mode || 'files_with_matches') as 'content' | 'files_with_matches' | 'count'
@@ -6730,6 +6734,7 @@ export function registerIpcHandlers(): void {
       if (!opts.path) return { success: false, error: '缺少搜索目录' }
       const searchPath = resolveAgentPath(opts.path)
       if (searchPath.startsWith('\\\\') || searchPath.startsWith('//')) return { success: false, error: '不支持 UNC 路径' }
+      if (confineRead(searchPath)) return { success: false, error: '不允许访问系统/敏感目录' }
       if (!existsSync(searchPath)) return { success: false, error: '目录不存在' }
       const mode = (opts.output_mode || 'files_with_matches') as 'content' | 'files_with_matches' | 'count'
       if (!['content', 'files_with_matches', 'count'].includes(mode)) return { success: false, error: `无效 output_mode：${mode}` }
@@ -6738,7 +6743,7 @@ export function registerIpcHandlers(): void {
       const headLimit = opts.head_limit === undefined ? 250 : opts.head_limit
       const maxItems = headLimit === 0 ? Infinity : headLimit
       const reqSec = typeof opts.timeout_seconds === 'number' && opts.timeout_seconds > 0 ? opts.timeout_seconds : 0
-      const timeoutMs = reqSec > 0 ? Math.min(Math.max(reqSec * 1000, 1000), 300_000) : 20_000
+      const timeoutMs = reqSec > 0 ? Math.min(Math.max(reqSec * 1000, 1000), 30_000) : 20_000
 
       const args: string[] = ['--color', 'never', '--no-heading', '--with-filename', '--no-messages']
       for (const p of SENSITIVE_FILES) args.push('--glob', `!${p}`)
@@ -7058,6 +7063,7 @@ export function registerIpcHandlers(): void {
     for (const ws of candidates) {
       if (live.has(ws.toLowerCase())) continue
       deleteSnapshotForWorkspace(ws)
+      disposeIndexForWorkspace(ws) // M13：同步清理 retrievalService 的内存分块索引
       deleteMemoryForWorkspace(ws)
     }
   }
@@ -7526,6 +7532,10 @@ export function registerIpcHandlers(): void {
       const resolved = resolve(resolveAgentPath(targetPath))
       if (!isAgentPathInScope(resolved)) return { success: false, error: '访问被拒绝：路径不在安全范围内' }
       if (!existsSync(resolved)) return { success: false, error: '路径不存在' }
+      // M30 加固：realpath 解析符号链接/junction 的真实落点后二次校验，
+      // 防止工作区内的链接指向外部目录而被删除
+      const real = realpathSync(resolved)
+      if (!isAgentPathInScope(real)) return { success: false, error: '访问被拒绝：路径不在安全范围内' }
       const isDir = statSync(resolved).isDirectory()
       if (!isDir) {
         unlinkSync(resolved)
@@ -7798,6 +7808,9 @@ function decodeCommandOutput(buf: Buffer | string | undefined): string {
   }
 }
 
+// fetch-webpage 响应体上限：下游仅截取 8192 字符，5MB 远超所需，防恶意超大响应耗尽内存
+const FETCH_TEXT_MAX_BYTES = 5 * 1024 * 1024
+
 function fetchText(url: string, timeout = 10_000): Promise<string> {
   return new Promise((resolve, reject) => {
     const req = net.request({ url, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36' } })
@@ -7809,8 +7822,18 @@ function fetchText(url: string, timeout = 10_000): Promise<string> {
         return
       }
       const chunks: Buffer[] = []
-      res.on('data', (c: Buffer) => chunks.push(c))
-      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')))
+      let received = 0
+      // 响应体阶段：总量上限 + 空闲超时（每收到数据重置），防 body 中途 stall 永挂
+      let idle = setTimeout(() => { req.abort(); reject(new Error('响应接收超时')) }, timeout)
+      res.on('data', (c: Buffer) => {
+        clearTimeout(idle)
+        received += c.length
+        if (received > FETCH_TEXT_MAX_BYTES) { req.abort(); reject(new Error('响应体过大')); return }
+        chunks.push(c)
+        idle = setTimeout(() => { req.abort(); reject(new Error('响应接收超时')) }, timeout)
+      })
+      res.on('end', () => { clearTimeout(idle); resolve(Buffer.concat(chunks).toString('utf-8')) })
+      res.on('error', (err: Error) => { clearTimeout(idle); reject(err) })
     })
     req.on('error', (err) => { clearTimeout(t); reject(err) })
     req.end()
@@ -7869,12 +7892,5 @@ function firstReadmeParagraph(md: string): string {
   return result
 }
 
-function validateUrl(url: string): void {
-  if (/\\/.test(url)) throw new Error('URL 中包含反斜杠')
-  const parsed = new URL(url)
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('不支持的协议')
-  if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '0.0.0.0' ||
-      parsed.hostname.startsWith('192.168.') || parsed.hostname.startsWith('10.') ||
-      parsed.hostname.startsWith('172.16.')) throw new Error('不允许访问内网地址')
-}
+// isPrivateIp / validateUrl / validateUrlAsync 已抽至 ipc-helpers/security.ts（供单元测试直接导入）
 

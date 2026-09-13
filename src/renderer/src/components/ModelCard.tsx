@@ -291,7 +291,8 @@ export default function ModelCard({ card, style }: Props) {
   }, [card.template.id, setModelLogoEntry])
   // 移除：删文件 + 清映射记录 + 还原字母头像
   const removeCardLogo = useCallback(async () => {
-    const res = await window.api.removeModelLogo(card.template.id)
+    const res = await safeCall(() => window.api.removeModelLogo(card.template.id), '移除 Logo 失败')
+    if (!res) return
     if (!res.success) { notify(`移除 Logo 失败：${res.error}`, 'error'); return }
     setModelLogoEntry(card.template.id, null)
     setLogoMenu(null)

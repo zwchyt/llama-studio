@@ -1,16 +1,24 @@
 {
   "name": "llama-studio",
-  "version": "1.0.207",
+  "version": "1.0.208",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",
   "main": "out/main/index.js",
   "homepage": "./",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "electron-vite dev --logLevel silent",
     "build": "node scripts/build-filtered.js",
     "preview": "electron-vite preview --logLevel silent",
     "package": "electron-vite build && electron-builder --publish never",
-    "postinstall": "electron-rebuild -w node-pty"
+    "postinstall": "electron-rebuild -w node-pty",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test:audit": "vitest run tests/audit",
+    "test:e2e": "playwright test tests/e2e",
+    "audit:secrets": "node scripts/audit-secrets.mjs",
+    "audit:all": "npm run typecheck && npm run test:audit && npm run audit:secrets"
   },
   "trustedDependencies": [
     "electron"
@@ -62,6 +70,9 @@
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@electron-toolkit/utils": "^4.0.0",
+    "@playwright/test": "^1.63.0",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "^20.14.8",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -71,10 +82,12 @@
     "electron-rebuild": "^3.2.9",
     "electron-vite": "^5.0.0",
     "eslint-plugin-react": "^7.37.5",
+    "jsdom": "^30.0.1",
     "lucide-react": "^0.400.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^7.0.2",
-    "vite": "^5.3.1"
+    "vite": "^5.3.1",
+    "vitest": "^3"
   }
 }

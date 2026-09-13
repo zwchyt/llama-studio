@@ -107,3 +107,20 @@ scripts/.test-*
 
 # Vinv local artifacts (captures, index, reports)
 .vinv/
+
+# ── 测试基础设施产物（本地生成，不入库）──
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# ── 内部审计/修复记录文档 ──
+# 描述本项目已修复的安全问题与复现样本，不提交到公共仓库；
+# 如需入库请删除下面两行
+REACT-CODE-REVIEW.md
+REACT-CODE-REVIEW-PART2.md
+tests/
+vitest.config.ts
+playwright.config.ts
+scripts/audit-secrets.mjs
+.gitleaks.toml

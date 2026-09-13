@@ -34,7 +34,10 @@ function toWorkspaceRel(dir: string, p: string): string | undefined {
   const normP = p.replace(/\\/g, '/')
   if (normP.toLowerCase().startsWith(normDir + '/')) return normP.slice(normDir.length + 1)
   if (/^[a-zA-Z]:\//.test(normP) || normP.startsWith('/')) return undefined
-  return normP.replace(/^\.\//, '')
+  const rel = normP.replace(/^\.\//, '')
+  // 拒绝含 .. 段的相对路径（越出工作区）；主进程 upsert/verifyAnchor 另有兜底校验
+  if (!rel || rel.split('/').includes('..')) return undefined
+  return rel
 }
 
 function parseArgs(argsJson: string): Record<string, unknown> {

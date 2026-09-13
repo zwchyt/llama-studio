@@ -45,17 +45,26 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
   if (dirsOnly) entries = entries.filter(e => e.isDir)
 
   if (recursive) {
-    // 递归收集子目录，按深度缩进，整棵树一次返回
+    // 递归收集子目录，按深度缩进，整棵树一次返回。
+    // 预算上限（照抄 AnalyzeDirTool 的 MAX_DEPTH/MAX_DIRS 做法）：防止对海量目录根
+    // （如模型传入 C:\Users）串行发起海量 IPC，并避免无界输出灌爆上下文
+    const MAX_DEPTH = 8
+    const MAX_DIRS = 500
+    let visited = 0
+    let truncated = false
     const lines: string[] = [`- ${targetPath}/`]
     const childPath = (parent: string, name: string) => `${parent}\\${name}`
     const dirSummary = (fileCount: number): string => {
       return fileCount > 0 ? `  [${formatFileCount(fileCount)}]` : ''
     }
     const walk = async (dir: string, depth: number): Promise<void> => {
+      if (depth > MAX_DEPTH || visited >= MAX_DIRS) { truncated = true; return }
       const r = await window.api.listDir(dir)
       if (!r.success) return
       const subs = (r.entries ?? []).filter(e => e.isDir)
       for (const s of subs) {
+        if (visited >= MAX_DIRS) { truncated = true; return }
+        visited++
         const indent = '  '.repeat(depth + 1)
         lines.push(`${indent}- ${s.name}/${dirSummary(s.fileCount)}`)
         await walk(childPath(dir, s.name), depth + 1)
@@ -66,6 +75,7 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
       lines.push(`  - ${e.name}/${dirSummary(e.fileCount)}`)
       await walk(childPath(targetPath, e.name), 1)
     }
+    if (truncated) lines.push(`\n(已截断：超过深度 ${MAX_DEPTH} 层或 ${MAX_DIRS} 个目录上限；如需查看深层目录，请对具体子目录单独调用)`)
     return lines.join('\n')
   }
 

@@ -86,7 +86,10 @@ export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promis
   const contextWindow = options.getContextWindow?.() ?? 128000
 
   const modelRuntime = await getModelRuntime(agentDir)
-  modelRuntime.registerProvider(LLAMA_STUDIO_PROVIDER_ID, {
+  // H-11 防御性加固：provider id 带 port 后缀，杜绝未来多会话/多端口时同名覆盖 baseUrl
+  // （当前渲染端单活跃会话实际不可达；条目按端口数有界，dispose 不注销可接受）
+  const providerId = `${LLAMA_STUDIO_PROVIDER_ID}-${port}`
+  modelRuntime.registerProvider(providerId, {
     name: 'Llama Studio (Local)',
     baseUrl: `http://127.0.0.1:${port}/v1`,
     api: 'openai-completions',
@@ -107,7 +110,7 @@ export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promis
       }
     ]
   })
-  const model = modelRuntime.getModel(LLAMA_STUDIO_PROVIDER_ID, LLAMA_STUDIO_MODEL_ID)
+  const model = modelRuntime.getModel(providerId, LLAMA_STUDIO_MODEL_ID)
   if (!model) throw new Error('本地模型注册失败（ModelRuntime.getModel 未找到）')
 
   const { DefaultResourceLoader, SessionManager, SettingsManager, createAgentSession } = pi
