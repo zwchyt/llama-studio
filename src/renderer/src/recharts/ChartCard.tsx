@@ -15,8 +15,10 @@ import './chart.css'
  * 与 MermaidCard 的策略保持一致：不把「渲染失败」的错误卡摆到用户面前。
  *
  * 卡片外壳（标题 / 工具条 / 放大层 / 源码面板）由 figure/FigureFrame 提供，
- * 与 SvgCard 共用同一份实现。两者的唯一差异是「源码从哪来」：
- * SvgCard 直接返回模型原文，本文件必须现场序列化 DOM。
+ * 与 SvgCard 共用同一份实现。两者都要交两份「源码」，只是来源不同：
+ *   · 真 SVG（下载 / 放大）—— SvgCard 直接返回模型原文；本文件必须序列化 DOM。
+ *   · 可读源码（面板 / 复制）—— 都是模型原文；本文件在围栏路径下就是那段 JSON，
+ *     只有 jsonui 路径（props 直接给对象）没有原文，才回落到序列化 SVG。
  */
 
 // 懒加载：ChartView 静态 import 'recharts'，隔一层 React.lazy 之后 Vite 会把它
@@ -91,11 +93,13 @@ export function ChartCard(input: ChartCardProps) {
   /** 图表所在的容器。序列化时从它里面找活的 <svg>。 */
   const hostRef = useRef<HTMLDivElement | null>(null)
 
+  const code = pickCode(input)
+
   /**
-   * 图表不像 SvgCard 那样有「源码」可交：Recharts 的图是运行时用 React 建出来的
-   * DOM，模型给的是数据 spec。所以下载 / 复制 / 查看源码都必须现场把活的 <svg>
-   * 序列化出来 —— 见 serializeSvg 的注释，两件必须做的事（补 xmlns、
-   * 把 var(--x) 解析成实时计算值），少一件导出的文件就是坏的。
+   * 下载 .svg / 放大层要的是**真 SVG**：Recharts 的图是运行时用 React 建出来的
+   * DOM，模型给的是数据 spec，所以必须现场把活的 <svg> 序列化出来 ——
+   * 见 serializeSvg 的注释，两件必须做的事（补 xmlns、把 var(--x) 解析成实时计算值），
+   * 少一件导出的文件就是坏的。
    *
    * 尺寸没问题：ChartView 外层是 ResponsiveContainer，它会量出像素值再传下去，
    * 所以 svg 上带的是数值 width/height 加 viewBox，脱离文档也能正常打开。
@@ -110,7 +114,16 @@ export function ChartCard(input: ChartCardProps) {
    */
   const getSvgSource = useCallback(() => serializeSvg(hostRef.current), [])
 
-  const code = pickCode(input)
+  /**
+   * 「查看源码 / 复制」要的是**模型原文**：围栏路径下 code 就是那段 JSON
+   * （```chart / ```json 都是），那才是用户想看的「这段图表的代码」。
+   *
+   * 这两件事曾经也走 getSvgSource，于是源码面板里显示的是序列化出来的 SVG ——
+   * 用户会以为「我的 JSON 被改写成 SVG 了」。jsonui 路径（props 直接给对象、
+   * 没有原文）才回落到序列化 SVG。
+   */
+  const getSourceText = useCallback(() => code || serializeSvg(hostRef.current), [code])
+
   const degrade = (): ReactNode =>
     input.renderFallback && code ? input.renderFallback(code) : null
 
@@ -120,7 +133,13 @@ export function ChartCard(input: ChartCardProps) {
   const height = spec.height ?? 240
 
   return (
-    <FigureFrame title={title} getSvgSource={getSvgSource} fileName={title || 'chart'} zoomable={input.zoomable}>
+    <FigureFrame
+      title={title}
+      getSvgSource={getSvgSource}
+      getSourceText={getSourceText}
+      fileName={title || 'chart'}
+      zoomable={input.zoomable}
+    >
       {/* 外层写死高度：图表 chunk 是异步加载的，占位若不留足高度，
           加载完成的瞬间容器会从几十 px 猛增到 240px+ → 聊天区 scrollHeight 突变
           → 滚动条跳变。这与 MermaidCard 里处理加载占位是同一个问题。 */}

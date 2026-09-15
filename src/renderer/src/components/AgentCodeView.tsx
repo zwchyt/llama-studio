@@ -2,12 +2,6 @@
 // ║ 区域：导入声明                                                              ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import remarkMath from 'remark-math'
-import rehypeKatex from 'rehype-katex'
-import rehypeRaw from 'rehype-raw'
-import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import 'katex/dist/katex.min.css'
 import katex from 'katex'
 import katexCssInline from 'katex/dist/katex.min.css?inline'
@@ -52,6 +46,7 @@ import AGENT_ANNOTATE_SCRIPT from '../utils/agentAnnotateScript.js?raw'
 
 import AgentContextPanel from './AgentContextPanel'
 import CodeBlock from './CodeBlock'
+import { Markdown } from '../markdown/markstream'
 import WebSearchResults from './WebSearchResults'
 import AskUserQuestionInline from './AskUserQuestionInline'
 import AgentFilePicker from './AgentFilePicker'
@@ -69,12 +64,6 @@ const MonacoEditor = lazy(() => import('./MonacoEditor'))
 
 import type { AgentMessage, AgentSession, AgentProject, Attachment, TodoUpdate, CardState, AgentMemoryEntry, KnowledgeBaseMeta, ThinkingLevel } from '../../../shared/types'
 import { THINKING_LEVELS } from '../../../shared/types'
-import { JSONUIProvider, Renderer } from '@json-render/react'
-import type { Spec } from '@json-render/core'
-import { registry } from '../jsonui/registry'
-import { makeDefaultHandlers } from '../jsonui/defaultHandlers'
-import MetricsBridge from '../jsonui/MetricsBridge'
-import { tryExtractSpec } from '../jsonui/specGen'
 import { MermaidCard, parseContentToBlocks } from '../mermaid'
 // SVG 图表卡片（独立模块）。内部用 React.lazy 懒加载真正的 Recharts 渲染层，
 // 所以这里引它不会把 recharts 库拉进主包。
@@ -311,140 +300,19 @@ const TaskPieIcon = ({ pct }: { pct: number }) => {
 }
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║ 区域：Markdown 渲染组件（链接、代码块、公式、安全清洗）                      ║
+// ║ 区域：Markdown 渲染（统一走 markstream）                                      ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
-function MarkdownPre({ children }: { children?: React.ReactNode }) {
-  return <>{children}</>
-}
-
-const SAFE_URL_RE = /^(https?:|mailto:)/i
-function MarkdownLink({ href, children }: { href?: string; children?: React.ReactNode }) {
-  const url = typeof href === 'string' ? href : ''
-  const safe = SAFE_URL_RE.test(url)
-  return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={(e) => {
-        e.preventDefault()
-        if (safe) window.api.openExternal(url)
-      }}
-    >
-      {children}
-    </a>
-  )
-}
-
-function remarkLinkifyUrls() {
-  const URL_RE = /(https?:\/\/[^\s<>"')]+)/g
-  const splitText = (value: string): any[] => {
-    const out: any[] = []
-    let last = 0
-    let m: RegExpExecArray | null
-    URL_RE.lastIndex = 0
-    while ((m = URL_RE.exec(value)) !== null) {
-      if (m.index > last) out.push({ type: 'text', value: value.slice(last, m.index) })
-      out.push({
-        type: 'link',
-        url: m[0],
-        data: { hProperties: { href: m[0] } },
-        children: [{ type: 'text', value: m[0] }],
-      })
-      last = m.index + m[0].length
-    }
-    if (last < value.length) out.push({ type: 'text', value: value.slice(last) })
-    return out
-  }
-  const visit = (node: any) => {
-    if (!node || typeof node !== 'object') return
-    if (Array.isArray(node)) { node.forEach(visit); return }
-    if (Array.isArray(node.children)) {
-      for (let i = 0; i < node.children.length; i++) {
-        const child = node.children[i]
-        if (child && child.type === 'text' && typeof child.value === 'string' && (URL_RE.lastIndex = 0, URL_RE.test(child.value))) {
-          URL_RE.lastIndex = 0
-          node.children.splice(i, 1, ...splitText(child.value))
-          i += splitText(child.value).length - 1
-        } else {
-          visit(child)
-        }
-      }
-    }
-  }
-  return (tree: any) => { visit(tree) }
-}
-
-function MarkdownCode({ className, children, node, isStreaming }: { className?: string; children?: React.ReactNode; node?: any; isStreaming?: boolean }) {
-  const nodeText: string | undefined = node?.children?.[0]?.value
-  const nodeToText = (n: React.ReactNode): string => {
-    if (n == null) return ''
-    if (typeof n === 'string') return n
-    if (typeof n === 'number') return String(n)
-    if (Array.isArray(n)) return n.map(nodeToText).join('')
-    if (typeof n === 'object' && 'props' in (n as any)) return nodeToText((n as any).props?.children)
-    return ''
-  }
-  const text = (typeof nodeText === 'string' ? nodeText : nodeToText(children)).replace(/\n$/, '')
-  const match = /language-([^\s]+)/.exec(className || '')
-  // mermaid 代码块：能渲染就渲染成图表；不能渲染由 MermaidCard 内部静默降级为普通代码块（无任何报错）。
-  // 流式期间仍用 CodeBlock 逐行显示，避免未闭合围栏被提前当图表渲染。
-  if (match?.[1]?.toLowerCase() === 'mermaid' && !isStreaming) {
-    return (
-      <MermaidCard
-        code={text}
-        renderFallback={(c) => <CodeBlock language="" value={c} isStreaming={isStreaming} />}
-      />
-    )
-  }
-  if (match) {
-    return <CodeBlock language={match[1]} value={text} isStreaming={isStreaming} />
-  }
-  if (text.includes('\n')) {
-    return <CodeBlock language="" value={text} isStreaming={isStreaming} />
-  }
-  return <code className="chat-code-in-line">{text}</code>
-}
-
-// 流式专用 code 渲染器：把 isStreaming=true 透传给 CodeBlock（逐行 span 渲染，
-// 只更新最后一行、跳过 hljs），消除代码输出时整块重绘的显示层卡顿。
-function MarkdownCodeStreaming(props: React.ComponentProps<typeof MarkdownCode>) {
-  return <MarkdownCode {...props} isStreaming />
-}
-
-const SANITIZE_SCHEMA = {
-  ...defaultSchema,
-  attributes: {
-    ...defaultSchema.attributes,
-    div: [...(defaultSchema.attributes?.div || []), 'align', 'style'],
-    p: [...(defaultSchema.attributes?.p || []), 'align', 'style'],
-    span: [...(defaultSchema.attributes?.span || []), 'style'],
-    img: [...(defaultSchema.attributes?.img || []), 'width', 'height', 'style', 'loading'],
-    table: [...(defaultSchema.attributes?.table || []), 'style'],
-    td: [...(defaultSchema.attributes?.td || []), 'style', 'colspan', 'rowspan'],
-    th: [...(defaultSchema.attributes?.th || []), 'style', 'colspan', 'rowspan'],
-    '*': [...(defaultSchema.attributes?.['*'] || []), 'style'],
-  },
-  protocols: {
-    ...defaultSchema.protocols,
-    src: [...(defaultSchema.protocols?.src || ['http', 'https']), 'data'],
-  },
-}
-
-// 数学定界符归一：remark-math 只识别 $...$ / $$...$$，而模型普遍输出 \(...\) / \[...\]。
-// 渲染前将后者转为前者；围栏/行内代码先占位保护，避免误改代码里的转义序列。
-function normalizeMathDelimiters(md: string): string {
-  if (!md.includes('\\(') && !md.includes('\\[')) return md
-  const protected_: string[] = []
-  const work = md.replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`/g, m => {
-    protected_.push(m)
-    return `\x00MATH${protected_.length - 1}\x00`
-  })
-  const out = work
-    .replace(/\\\[([\s\S]+?)\\\]/g, (_, tex) => `\n$$\n${tex}\n$$\n`)
-    .replace(/\\\((.+?)\\\)/g, (_, tex) => `$${tex}$`)
-  return out.replace(/\x00MATH(\d+)\x00/g, (_, i) => protected_[Number(i)]!)
-}
+// 原先这里手写的 MarkdownCode / MarkdownCodeStreaming / MarkdownPre / MarkdownLink /
+// remarkLinkifyUrls / SANITIZE_SCHEMA / normalizeMathDelimiters 全部搬到了
+// ../markdown/markstream 的 ls-agent 覆写集合里：
+//   · code_block   → CodeBlock（流式逐行 span，结束一次性 hljs）+ ```mermaid → MermaidCard
+//   · inline_code  → chat-code-in-line
+//   · link         → 只放行 http(s)/mailto，其余走 window.api.openExternal
+//   · 裸 URL 自动成链改由 markdown-it 的 linkify 负责（旧 remarkLinkifyUrls 的等价物）
+//   · \(...\) / \[...\] 数学定界符由解析器原生识别，不再需要文本预归一
+//   · 模型注入的 HTML 由 markstream 默认的 htmlPolicy="safe" 清洗后渲染（tokenizeHtml +
+//     sanitizeHtmlAttrs，相当于旧 rehype-sanitize 的作用），不再需要手写 schema
+// 本文件保留的 katex 依赖只服务于 iframe / 导出路径，与正文渲染无关。
 
 // ── 顶栏指标隔离组件：自订阅 modelMetrics，避免主进程每 2s 广播指标时
 //    触发整个工作台全量重渲染（原实现直接在 AgentCodeView 订阅整棵 modelMetrics 树）──
@@ -505,22 +373,9 @@ const AgentPrefillBar = React.memo(function AgentPrefillBar() {
   )
 })
 
+// 完成态正文：final=true 收敛，代码块一次性高亮，mermaid 渲染成图表
 const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { content: string }) {
-  const normalized = useMemo(() => normalizeMathDelimiters(content), [content])
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMath, remarkLinkifyUrls]}
-      // 顺序关键：先 rehypeRaw 解析原始 HTML，再 rehypeSanitize 清洗（含模型注入的 HTML），
-      // 最后由 rehypeKatex 渲染数学公式。KaTeX 的产物（大量 class 与 MathML 标签）不再经过
-      // sanitize，避免被默认 schema 剥离导致公式无法渲染；同时未信任内容仍被 sanitize 保护。
-      rehypePlugins={[rehypeRaw, [rehypeSanitize, SANITIZE_SCHEMA], rehypeKatex]}
-      remarkRehypeOptions={{ allowDangerousHtml: true }}
-      urlTransform={(url) => /^(https?:|mailto:|file:|data:)/i.test(url) ? url : defaultUrlTransform(url)}
-      components={{ code: MarkdownCode as any, pre: MarkdownPre as any, a: MarkdownLink as any }}
-    >
-      {normalized}
-    </ReactMarkdown>
-  )
+  return <Markdown content={content} final variant="agent" />
 })
 
 // ── 用户消息气泡：纯文本渲染 + 超长折叠成胶囊 ────────────────────────────
@@ -825,7 +680,7 @@ function parseThinkSegments(content: string): ContentSegment[] {
 // 渲染采用「单容器」方案（见 renderSegmentsFor）：整条消息只有一个思考链容器，
 // 思考段 / 工具卡 / 过程正文按时间线交错收纳其中，仅最终正文段独立成泡。
 
-// 思考块渲染节流间隔（与正文 STREAM_MD_THROTTLE_MS=40 同频）。
+// 思考块渲染节流间隔（与正文流式落盘节奏 ~30ms 同频）。
 // 此前 120ms（8fps）在思考吐字快时每 120ms 跳一大块文字（4-5 个 token），观感「一顿一顿」；
 // StreamingThinkText 逐行渲染后每次更新的重绘成本只有一行，40ms（25fps）完全撑得住。
 const THINK_THROTTLE_MS = 40
@@ -1464,20 +1319,11 @@ const StreamingBadge = React.memo(function StreamingBadge({ modelLabel, live = t
  * 消除「ThinkingLoader → 思考块」两元素替换的视觉跳变与计时回退。
  * ───────────────────────────────────────────────────────── */
 
-// ── 流式正文（非思考段）Markdown 节流渲染 ──
-// 模型主输出（正文）在流式期间每 ~30ms 落盘一次（STREAM_FLUSH_MS），若不优化，每次都触发 react-markdown
-// + remark-gfm/math + rehype-katex + rehype-raw + rehype-sanitize 对「完整且持续变长」的
-// 文本做一次全量解析 → 内容越长单帧开销越大，表现为文字跳动/卡顿。
-// 三管齐下：
-//   1) 节流：用 setInterval（~150ms）同步渲染值，把重解析频率与落盘频率解耦；
-//   2) 轻量插件栈：流式期间只用 remarkGfm + remarkLinkifyUrls，跳过 katex/raw/sanitize
-//      （这些最耗时的插件在「完成时」才用完整栈精确渲染）；
-//   3) content-visibility：视口外消息由 CSS 侧跳过渲染（见 .chat-msg 的 content-visibility: auto），
-//      降低长对话的整页重绘成本。
-// 流式 Markdown 重解析节流间隔。流式期间已改用轻量插件栈，单帧解析成本很低，
-// 故可把间隔压到 60ms：既让文字显示跟手（~16 次/秒重解析），又避免逐 commit 重解析。
-// 注：落盘节流 STREAM_FLUSH_MS 取更小值（见流式循环），二者配合使画面接近模型真实吐字节奏。
-const STREAM_MD_THROTTLE_MS = 40
+// ── 流式正文（非思考段）Markdown 渲染 ──
+// 模型主输出在流式期间每 ~30ms 落盘一次（STREAM_FLUSH_MS）。旧实现对每次落盘都做一次
+// react-markdown 全量解析（remark-gfm/math + rehype-katex/raw/sanitize），文本越长单帧越贵，
+// 于是叠了「帧节流 + 轻量插件栈」两层防御。改走 markstream 后这两层都不需要了，
+// 具体理由见下面 StreamingMarkdown 的注释。
 
 // 帧对齐节流 hook：rAF + 时间戳，真正把「内容变化」与「显示更新」解耦。
 // 此前把 setDisplay 放在依赖 value 的 effect 里：内容一变就立即重渲染，rAF 循环形同虚设，
@@ -1512,24 +1358,16 @@ function useFrameThrottledValue(value: string, active: boolean | undefined, thro
   }, [on, throttleMs])
   return display
 }
-// 流式专用轻量 Markdown：插件栈大幅精简（去掉 rehypeKatex / rehypeRaw / rehypeSanitize），
-// 仅保 gfm + 链接识别，单帧解析开销显著下降；完成时由 AgentMarkdown 完整栈接管。
+// 流式正文 Markdown：直接把落盘的最新内容交给 markstream。
+// 旧实现的两层防御——rAF 帧节流（把重解析频率与 30ms 落盘频率解耦）+ 轻量插件栈
+// （跳过 katex/raw/sanitize）——在 markstream 下都不再需要：
+//   · 解析器对「追加式」输入做节点级复用（只重解析尾部变化），单次更新成本与全文长度弱相关；
+//     实测 50 tok/s 喂入时单次更新 7.1ms（react-markdown 现状 48.0ms），阻塞总时长 176ms vs 5878ms。
+//   · 公式/HTML 的「重」插件不再是独立管线，mid-state 由解析器自己维护。
+// 因此这里去掉节流直传 content，让画面贴住模型真实吐字节奏。
 const StreamingMarkdown = React.memo(function StreamingMarkdown({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
-  // 自适应节流：文本越长单帧重解析越贵（remark 对全文 O(n) 重解析），按长度分级降频，
-  // 保证「每秒解析成本」有界且节奏均匀；数据层 ~26ms/增量（≈38 tok/s），正文显示
-  // 用 40ms（25fps）步进跟上数据节奏，避免「字一顿一顿」；完成时由 AgentMarkdown 接管。
-  const interval = content.length > 8000 ? 100 : content.length > 2500 ? 70 : STREAM_MD_THROTTLE_MS
-  const display = useFrameThrottledValue(content, !!isStreaming, interval)
-
-  if (!display) return null
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkLinkifyUrls]}
-      components={{ code: MarkdownCodeStreaming as any, pre: MarkdownPre as any, a: MarkdownLink as any }}
-    >
-      {display}
-    </ReactMarkdown>
-  )
+  if (!content) return null
+  return <Markdown content={content} final={!isStreaming} variant="agent" />
 })
 
 // 旧消息（无 segments）的内容渲染：与 segments 消息同构的「单容器」方案——
@@ -2318,6 +2156,12 @@ function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']>, msgI
           <div key={`svg-seg-final-${i}`} className="agent-msg-ui">
             <SvgCard
               code={block.code}
+              // streaming 必须透传：parseContentToBlocks 在流式期间会为「围栏还没闭合」的
+              // ```svg 产出 { kind:'svg', streaming:true }，SvgCard 靠这个标记走 innerHTML
+              // 渐进渲染分支（随输出逐步成形）。漏传的话它会走 <img src="data:..."> 全量分支，
+              // 半截 SVG 过不了 looksLikeSvg → 降级成普通代码块，实时渲染就没了。
+              // 注意与上面 StreamingContent 里同名调用点保持一致，两处不可漂移。
+              streaming={block.streaming === true}
               renderFallback={(c) => <CodeBlock language="" value={c} />}
             />
           </div>
@@ -2346,42 +2190,6 @@ const stoppedBadge = (
 // （selector 按消息 id 短路：非本行 commit 返回 null，零重渲染，保持「仅流式行 ~50ms
 // 更新」的性能特性）；finalize 时 live 清空 → 回退到 msg 完成态渲染。流式/完成切换
 // 只变化 props、不卸载重挂，思考块/工具卡/正文容器 DOM 全程连续 → 消除完成瞬间的跳动。
-const agentUiDefaultHandlers = makeDefaultHandlers()
-
-const AgentUiBlock = React.memo(function AgentUiBlock({ msg, modelTemplateId }: { msg: AgentMessage; modelTemplateId?: string }) {
-  // 一次解析出渲染用的 spec。正文里已不再展示 Spec 原文（parseContentToBlocks 会把
-  // 那段 JSON 摘掉，避免同一份信息显示两遍）；图形代码由各图表卡工具条自带的
-  // 「查看源码」负责展示。
-  const ui = useMemo(() => {
-    let parsed: Spec | null = null
-    if (msg.uiSpecRaw) {
-      try { parsed = JSON.parse(msg.uiSpecRaw) as Spec } catch { return null }
-    } else if (!msg.uiSpecChecked && msg.content) {
-      const extracted = tryExtractSpec(msg.content)
-      if (!extracted) return null
-      try { parsed = JSON.parse(extracted) as Spec } catch { return null }
-    }
-    if (!parsed?.elements) return null
-    const elements = Object.fromEntries(
-      Object.entries(parsed.elements).map(([k, v]) => [k, { ...v, props: v.props ?? {} }])
-    )
-    return { ...parsed, elements }
-  }, [msg.uiSpecRaw, msg.uiSpecChecked, msg.content])
-
-  if (ui) {
-    return (
-      <div className="agent-msg-ui">
-        <JSONUIProvider registry={registry} initialState={{}} handlers={agentUiDefaultHandlers}>
-          {modelTemplateId ? <MetricsBridge modelId={modelTemplateId} /> : null}
-          <Renderer spec={ui} registry={registry} />
-        </JSONUIProvider>
-      </div>
-    )
-  }
-
-  // Mermaid 已由 StreamingContent / renderSegmentsFor 内联渲染，AgentUiBlock 不再重复
-  return null
-})
 
 const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loading, actionsRef, streaming, modelLabel, thinkDone, streamStartAt, onRate, modelTemplateId }: {
   msg: AgentMessage
@@ -2450,13 +2258,7 @@ const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loadi
           streamStartAt: isStreaming ? streamStartAt : undefined,
           meta
         })}
-        {/* 动态 UI 卡片必须排在正文**之后**。
-            它渲染的是「结论的可视化」，曾经排在 renderSegmentsFor 之前，结果图表
-            跑到思考链与模型信息（模型名/token/t/s）上面去了，读起来整个颠倒。
-            .agent-msg-ui 的 border-top 虚线 + margin-top 本来也是为「在下面」写的。
-            注意 renderSegmentsFor 内部是「思考链在前、最终正文在后」，所以放在它
-            之后 = 正文之下，正好是 css 注释写的那个位置。 */}
-        {!isStreaming && <AgentUiBlock msg={msg} modelTemplateId={modelTemplateId} />}
+
         {src.stopped && stoppedBadge}
         {fileSummary}
         {actions}
@@ -2471,8 +2273,7 @@ const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loadi
         <ThinkBlock pending value="" closed={false} isStreaming msgStreaming bodyAppeared={false} streamStartAt={streamStartAt} />
       )}
       <StreamingContent content={src.content} streaming={isStreaming} toolCalls={src.toolCalls || undefined} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(msg.id, tc)} />
-      {/* 同上：卡片在正文之后，不要提到 StreamingContent 前面 */}
-      {!isStreaming && <AgentUiBlock msg={msg} modelTemplateId={modelTemplateId} />}
+
       {!isStreaming && hasToolCalls && fileSummary}
       {!isStreaming && !hasToolCalls && actions}
     </>
@@ -5686,16 +5487,13 @@ export default function AgentCodeView() {
         // 本轮结束：segments 已是实时时间线顺序（buildSegs），流式/完成态一致交错
         closeOpenThink()
         // modelLabel/lastTps/decodedTokens 随最终 commit 持久化：刷新后完成态徽标可还原模型名、最后速率与真实解码数
-        // uiSpecRaw：正文中提取 json-render Spec（校验通过才写），消息行下方渲染动态 UI 卡片
         commit({
           content: streamedText,
           toolCalls: [...toolCalls],
           segments: buildSegs(),
           modelLabel: modelLabelRef.current,
           lastTps: lastRateRef.current ?? undefined,
-          decodedTokens: finalDecoded ?? decodedNow(),
-          uiSpecRaw: streamedText ? (tryExtractSpec(streamedText) ?? undefined) : undefined,
-          uiSpecChecked: true
+          decodedTokens: finalDecoded ?? decodedNow()
         }, true)
       }
       return { errored: false, aborted: abortRef.current.aborted }
@@ -7253,7 +7051,7 @@ export default function AgentCodeView() {
                         <li
                           className={`chat-search-item${searchEnabled && searchProvider === 'ddg' ? ' active' : ''}`}
                           onClick={() => applySearchChange(true, 'ddg')}
-                        ><Search size={12} />DuckDuckGo</li>
+                        ><Search size={12} />DuckDuckGo（国际）</li>
                       </ul>
                     )}
                   </div>

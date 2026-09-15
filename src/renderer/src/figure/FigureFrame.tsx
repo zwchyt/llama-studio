@@ -20,12 +20,16 @@ import './figure.css'
 /**
  * 图形卡片外壳：标题 + 工具条 + 画布 + 源码面板 + 放大层。
  *
- * SvgCard（```svg 围栏）和 ChartCard（Recharts）共用这一层，
- * 两者的差异被收敛成一个 `getSvgSource` 回调：
- *   - SvgCard  直接返回模型给的源码字符串，零成本
- *   - ChartCard 需要序列化 DOM 里活的 <svg>（见 serializeSvg 的注释）
+ * SvgCard（```svg 围栏）和 ChartCard（Recharts）共用这一层，两者的差异被收敛成
+ * 两个回调 —— 它们要的东西**不是同一份**，混在一起会出错：
+ *   - getSvgSource：**真 SVG**，只服务「下载 .svg」与放大层（放大层是 <img>，
+ *     没有命名空间/真实尺寸就不是一张图，不能拿 JSON 去顶）。
+ *     SvgCard 直接返回模型给的源码；ChartCard 必须序列化 DOM 里活的 <svg>。
+ *   - getSourceText（可选）：**可读源码**，服务源码面板与「复制」。
+ *     围栏路径下就是模型原文（```chart 是那段 JSON、```svg 是 SVG 本身），
+ *     jsonui 路径没有原文时才回落到 getSvgSource。
  *
- * 所有功能都从这个回调派生，所以新增图形类型时不必再改本文件。
+ * 所以新增图形类型时仍然不必再改本文件：把两个回调接上即可。
  *
  * 画布底色**没有**卡片级的开关：早先这里有一个「背景切换」按钮（跟随主题 /
  * 白底 / 深底），后来去掉了 —— 应用本身已经有主题开关，卡片再挂一个等于两个
@@ -40,8 +44,17 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 
 export type FigureFrameProps = {
   title?: string | null
-  /** 取 SVG 源码。**必须用 useCallback 保持引用稳定**，否则每次渲染都会重新序列化。 */
+  /**
+   * 取**真 SVG**（下载 .svg 与放大层用）。
+   * **必须用 useCallback 保持引用稳定**，否则每次渲染都会重新序列化。
+   */
   getSvgSource?: () => string | null
+  /**
+   * 取**可读源码**（源码面板与「复制」用）。省略时回落到 getSvgSource。
+   * 围栏路径（```chart / ```json）要传模型原文，否则面板里会显示序列化出来的 SVG，
+   * 用户会以为「我的 JSON 被改写成 SVG 了」。
+   */
+  getSourceText?: () => string | null
   /** 下载文件名（不含扩展名） */
   fileName?: string
   /**
@@ -103,6 +116,7 @@ function ToolButton({
 export function FigureFrame({
   title,
   getSvgSource,
+  getSourceText,
   fileName,
   invertible,
   themeCanvas = 'var(--surface)',
@@ -110,7 +124,14 @@ export function FigureFrame({
   children,
 }: FigureFrameProps) {
   const [showSource, setShowSource] = useState(false)
-  const [source, setSource] = useState<string | null>(null)
+  /**
+   * 两份「源码」分开存，它们回答的是不同问题：
+   *   · svgSource  → 怎么把这张图**存成文件 / 放大看**（必须是真 SVG）
+   *   · sourceText → 用户点「查看源码」时他想看的**原文**（图表就是那段 JSON）
+   * 合用一个 state 时，```chart / ```json 卡片的面板里会显示序列化出来的 SVG。
+   */
+  const [svgSource, setSvgSource] = useState<string | null>(null)
+  const [sourceText, setSourceText] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [zoom, setZoom] = useState(false)
   const [scale, setScale] = useState(1)
@@ -128,17 +149,29 @@ export function FigureFrame({
     noticeTimer.current = window.setTimeout(() => setNotice(null), 2200)
   }, [])
 
-  /** 读一次源码并缓存进 state。取不到（例如图表懒 chunk 还没到位）返回 null。 */
-  const readSource = useCallback((): string | null => {
-    let s: string | null = null
+  /**
+   * 读一次两份源码并缓存进 state。取不到（例如图表懒 chunk 还没到位）返回 null。
+   * text 拿不到时回落到 svg —— 面板宁可显示 SVG 也不能空着。
+   */
+  const readSources = useCallback((): { svg: string | null; text: string | null } => {
+    let svg: string | null = null
     try {
-      s = getSvgSource?.() ?? null
+      svg = getSvgSource?.() ?? null
     } catch {
-      s = null
+      svg = null
     }
-    setSource(s)
-    return s
-  }, [getSvgSource])
+    let text: string | null = svg
+    if (getSourceText) {
+      try {
+        text = getSourceText() ?? svg
+      } catch {
+        text = svg
+      }
+    }
+    setSvgSource(svg)
+    setSourceText(text)
+    return { svg, text }
+  }, [getSvgSource, getSourceText])
 
   useEffect(() => {
     return () => {
@@ -148,15 +181,17 @@ export function FigureFrame({
   }, [])
 
   const onDownload = () => {
-    const s = readSource()
-    if (!s) return flash('图形尚未就绪，稍后再试')
-    downloadSvg(fileName || title || 'figure', s)
+    // 下载要的是真 SVG：拿模型原文（JSON）存成 .svg 会得到一个打不开的文件。
+    const { svg } = readSources()
+    if (!svg) return flash('图形尚未就绪，稍后再试')
+    downloadSvg(fileName || title || 'figure', svg)
   }
 
   const onCopy = async () => {
-    const s = readSource()
-    if (!s) return flash('图形尚未就绪，稍后再试')
-    const ok = await copyToClipboard(s)
+    // 复制跟面板同源：用户想带走的是「这段图表的代码」，图表就是那段 JSON。
+    const { text } = readSources()
+    if (!text) return flash('图形尚未就绪，稍后再试')
+    const ok = await copyToClipboard(text)
     if (!ok) return flash('复制失败，可展开源码手动选中')
     setCopied(true)
     if (copiedTimer.current) window.clearTimeout(copiedTimer.current)
@@ -166,12 +201,12 @@ export function FigureFrame({
   const onToggleSource = () => {
     const next = !showSource
     setShowSource(next)
-    if (next) readSource()
+    if (next) readSources()
   }
 
   const onOpenZoom = () => {
-    const s = readSource()
-    if (!s) return flash('图形尚未就绪，稍后再试')
+    const { svg } = readSources()
+    if (!svg) return flash('图形尚未就绪，稍后再试')
     setScale(1)
     setOffset({ x: 0, y: 0 })
     setZoom(true)
@@ -229,17 +264,17 @@ export function FigureFrame({
   // 于是它既不会被反相，也不会命中那条规则。
   const invertClass = invertible ? ' fig-invertible' : ''
 
-  // data URI 只在 source 变化时算一次。放大层每次拖拽（pointermove）都会重渲染，
+  // data URI 只在 svgSource 变化时算一次。放大层每次拖拽（pointermove）都会重渲染，
   // 而序列化出来的图表 SVG 动辄几万字符 —— 每帧都重新 encodeURIComponent 一遍
   // 会让拖拽明显发卡，所以在这里缓存住。
-  const zoomUri = useMemo(() => (source ? toSvgDataUri(source) : ''), [source])
+  const zoomUri = useMemo(() => (svgSource ? toSvgDataUri(svgSource) : ''), [svgSource])
 
   return (
     <div className="fig-card">
       <div className="fig-head">
         <div className="fig-title">{title ?? ''}</div>
         <div className={`fig-tools${showSource || copied ? ' fig-tools--pinned' : ''}`}>
-          <ToolButton label={copied ? '已复制' : '复制 SVG 源码'} onClick={onCopy}>
+          <ToolButton label={copied ? '已复制' : '复制源码'} onClick={onCopy}>
             {copied ? <Check size={13} /> : <Copy size={13} />}
           </ToolButton>
           <ToolButton label="下载 .svg" onClick={onDownload}>
@@ -263,12 +298,12 @@ export function FigureFrame({
       {notice ? <div className="fig-notice">{notice}</div> : null}
 
       {showSource ? (
-        <pre className="fig-source" aria-label="SVG 源码">
-          <code>{source ?? '（源码暂不可用）'}</code>
+        <pre className="fig-source" aria-label="源码">
+          <code>{sourceText ?? '（源码暂不可用）'}</code>
         </pre>
       ) : null}
 
-      {zoom && source
+      {zoom && svgSource
         ? createPortal(
             <div
               ref={overlayRef}

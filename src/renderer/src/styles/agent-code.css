@@ -2241,11 +2241,6 @@
   padding-top: 10px;
 }
 
-.agent-msg-ui .jui-view {
-  max-width: none;
-  padding: 0;
-}
-
 .agent-msg-ui .jui-card {
   box-shadow: none;
 }

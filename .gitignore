@@ -124,3 +124,4 @@ vitest.config.ts
 playwright.config.ts
 scripts/audit-secrets.mjs
 .gitleaks.toml
+settings.json.bak

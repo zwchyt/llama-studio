@@ -1,0 +1,39 @@
+/*
+ * markstream 渲染层与既有排版的衔接补丁。
+ *
+ * markstream 的根元素是 <div class="markstream-react">，它把整段内容多包了一层。
+ * 旧 CSS 里「直接子元素首尾外边距归零」的规则（.chat-msg-markdown>*:first-child 等）
+ * 因此只作用到这一层根元素上，根元素内部第一个 <p>/<h1> 的 margin-top 会漏出来。
+ * 这里把规则推到根元素内部补回来。
+ *
+ * 作用域限定在 .markstream-react 下，不影响任何非 markstream 的 DOM。
+ */
+
+.markstream-react > *:first-child {
+  margin-top: 0;
+}
+
+.markstream-react > *:last-child {
+  margin-bottom: 0;
+}
+
+/* 代码块是自绘组件（CodeBlock），markstream 默认给代码块节点套了外层间距，
+   这里把外层间距收掉，避免和 .chat-code-block 自身的 margin 叠加。 */
+.markstream-react .code-block-node:first-child,
+.markstream-react .code-block-node:last-child {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+/* 数学公式的兜底样式（MsMathBlock / MsMathInline 在 KaTeX 渲染不出内容时用）。
+   按等宽字体原样显示 LaTeX 源码，让它看起来像一次刻意的降级而不是排版事故。
+   正常情况（含语法错误，KaTeX 会自己渲染成红字）不会走到这里。 */
+.markstream-react .ms-math-fallback {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.8;
+  margin: 0.5rem 0;
+}

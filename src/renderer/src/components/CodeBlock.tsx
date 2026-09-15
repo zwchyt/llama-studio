@@ -4,7 +4,10 @@ import { Check, Copy, ChevronDown } from 'lucide-react'
 
 /**
  * 代码块组件：用 highlight.js 高亮，带语言标签、复制按钮和折叠/展开。
- * 供 react-markdown 的 code 渲染器使用。
+ * 供 markstream 的 code_block 节点覆写使用（见 ../markdown/markstream）。
+ *
+ * isStreaming 的语义由覆写组件按 `stream`（= <MarkdownRender> 的 codeBlockStream）透传：
+ * 流式实例 true / 结束实例 false。
  *
  * 流式显示优化（isStreaming=true）：
  * 代码输出是「一卡一卡」的显示层根源——旧实现每次值变化都 textContent 全文替换 +

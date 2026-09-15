@@ -10,12 +10,14 @@
    ══════════════════════════════════════════════════════════ */
 
 /* 刻意**没有** border-left: 3px solid var(--accent)。
-   项目里 .jui-card / .agent-mem-row / .agent-debug-row / blockquote 都用这条
-   左边条来标记「这是一个内容块」，那是文本块语境的约定：左边条像引用符号，
+   项目里 .agent-mem-row / .agent-debug-row / blockquote 用那条 3px accent
+   左边条标记「这是一个内容块」，那是文本块语境的约定：左边条像引用符号，
    帮读者分清哪几行属于同一块。
    但图形卡片里装的是图片本身，左边条在这里没有语义，而且浅色主题下
    --accent 是 #0a0a0a，3px 近黑压在浅灰卡面上偏重，还会和同样取 --accent
    的黑色折线糊在一起。所以这里只用四边等宽的 1px 边框。
+   （.jui-card 原先也在这条「内容块」约定里，后来出于同样理由与本文件对齐、
+   一起去掉了 —— 见 jsonui/jsonui.css 里 .jui-card 的注释。）
    改动前请先想清楚：这是有意偏离，不是漏写。 */
 .fig-card {
   background: var(--surface);

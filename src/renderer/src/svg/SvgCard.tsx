@@ -9,17 +9,18 @@ import './svg.css'
  * SVG 卡片：把模型输出的 ```svg 围栏内容渲染成一张图。
  *
  * 为什么必须走 <img src="data:...">：
- *   AgentCodeView 的 markdown 管线是 rehype-raw → rehype-sanitize → rehype-katex，
- *   而 SANITIZE_SCHEMA 继承的 defaultSchema 白名单里**没有任何 SVG 标签**
- *   （实测 53 个标签全是 HTML：a/b/div/img/span/table…，svg/path/circle 一个不在）。
- *   所以模型内联写的 <svg> 会被整段剥掉，只留下文字内容漏出来。
- *   而 img 标签本身、以及 src 上的 data 协议都在白名单里（见 AgentCodeView.tsx
- *   的 SANITIZE_SCHEMA），所以包成 data URI 就能过——**不需要放宽 sanitizer**。
+ *   markdown 渲染已改为 markstream（见 ../markdown/markstream），默认 htmlPolicy="safe"：
+ *   safe 的标签白名单（SAFE_ALLOWED_HTML_TAGS）里一个 SVG 标签都没有，模型内联写的 <svg>
+ *   不会被解析成图形，而是原样显示成源码。
+ *   包成 data URI 的 img 则是真正的图片节点，能正常渲染 —— **不需要放宽任何安全策略**。
+ *   历史背景：旧管线（rehype-raw → rehype-sanitize）的 defaultSchema 白名单里同样没有任何 SVG
+ *   标签（实测 53 个标签全是 HTML），内联 <svg> 会被整段剥掉、只漏出文字内容。
  *
  * 卡片外壳（标题 / 工具条 / 放大层 / 源码面板）全部由 FigureFrame 提供，
  * 本文件只负责「拿到 SVG 源码」和「把它变成一张图」。
- * 这是 SvgCard 与 ChartCard 唯一的分工差异：本文件给的是模型原文，
- * ChartCard 给的是运行时序列化结果。
+ * 与 ChartCard 的分工差异：这里的两份源码**是同一份**（模型写的 SVG 原文，
+ * 既能当图显示、也能当源码看），所以不必传 getSourceText；
+ * ChartCard 的真 SVG 得现场序列化，可读源码才回落到模型原文。
  *
  * 降级策略与 MermaidCard / ChartCard 一致：校验不过或图片加载失败，
  * 一律交给调用方的 renderFallback 渲染成普通代码块，不摆错误卡给用户看。
@@ -65,6 +66,8 @@ export function SvgCard(input: SvgCardProps) {
   /**
    * 下载 / 复制 / 查看源码取的都是**模型原文**，不经过任何运行时改写 ——
    * 所以这里直接返回字符串，零成本，也不必等 DOM 渲染完成。
+   * （唯一的例外是下载：downloadSvg 会给根标签补 xmlns，否则存下来的 .svg
+   *   是独立文档、双击打不开。见 figure/serializeSvg 的 ensureSvgNamespace。）
    * 引用要稳定（useCallback）：FigureFrame 拿它当依赖，每次渲染换新函数
    * 会让下游反复重新取值。
    */

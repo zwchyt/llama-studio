@@ -283,6 +283,22 @@ export default function Sidebar() {
         >
           {view === 'mermaid-test' && <span className="nav-active-dot" />}
         </NavItem>
+        <NavItem
+          icon={ChartBarIcon}
+          label="Recharts 测试"
+          active={view === 'recharts-test'}
+          onClick={() => setView('recharts-test')}
+        >
+          {view === 'recharts-test' && <span className="nav-active-dot" />}
+        </NavItem>
+        <NavItem
+          icon={ImageIcon}
+          label="SVG 测试"
+          active={view === 'svg-test'}
+          onClick={() => setView('svg-test')}
+        >
+          {view === 'svg-test' && <span className="nav-active-dot" />}
+        </NavItem>
 
         {/* ── 系统 ── */}
         <span className="nav-section-label" style={{ marginTop: 12 }}>系统</span>

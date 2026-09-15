@@ -1,6 +1,12 @@
 import type { ChartSeries, ChartSpec, ChartType } from './types'
 
 const CHART_TYPES: readonly ChartType[] = ['line', 'bar', 'area', 'pie', 'scatter', 'radar']
+/**
+ * `{"type": "Chart", ...}`（只给组件名、没给图表种类）时的兜底种类。
+ * 选 bar 而不是 line：这类数据多是「类目 + 数值」（季度 / 月份 / 机型…）的对比，
+ * 柱状比折线更贴近模型想表达的东西。要改只动这一个常量。
+ */
+const DEFAULT_CHART_TYPE: ChartType = 'bar'
 /** 上限是为了挡住模型偶发的「几千个点」输出：Recharts 逐点建 DOM，过量会直接卡住渲染。 */
 const MAX_POINTS = 2000
 const MAX_SERIES = 8
@@ -106,7 +112,15 @@ export function normalizeChartSpec(input: unknown): ChartSpec | null {
     areachart: 'area',
     donut: 'pie',
   }
-  const type = (CHART_TYPES.includes(typeRaw as ChartType) ? typeRaw : alias[typeRaw]) as ChartType | undefined
+  // `{"type": "Chart", ...}`：模型把 jsonui 的**组件名**当成了图表种类。
+  // 这种对象除了「图表种类」一项之外与 ChartSpec 完全同构（data / xKey / series
+  // 都在），不认它等于把一整份数据当源码摊在正文里。给它一个默认种类，
+  // 比退化成代码块好得多 —— 卡片工具条本来就能查看源码。
+  // 只在 type 明确等于组件名时才兜底：type 缺失或写错（如 "piee"）仍旧判失败，
+  // 免得把任意带 data/xKey 的 JSON 都误当图表。
+  const type: ChartType | undefined = CHART_TYPES.includes(typeRaw as ChartType)
+    ? (typeRaw as ChartType)
+    : (alias[typeRaw] ?? (typeRaw === 'chart' ? DEFAULT_CHART_TYPE : undefined))
   if (!type) return null
 
   const data = normalizeData(raw.data)

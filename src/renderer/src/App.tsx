@@ -33,6 +33,8 @@ const BenchmarkView = lazy(() => import('./components/BenchmarkView'))
 import ImageGenView from './components/ImageGenView'
 import AgentCodeView from './components/AgentCodeView'
 import MermaidTestView from './components/MermaidTestView'
+import RechartsTestView from './components/RechartsTestView'
+import SvgTestView from './components/SvgTestView'
 import TokenStatsView from './components/TokenStatsView'
 
 import AudioCppView from './components/AudioCppView'
@@ -607,6 +609,8 @@ function AppMain() {
       case 'imagegen': return <ImageGenView />
       case 'audiocpp': return <AudioCppView />
       case 'mermaid-test': return <MermaidTestView />
+      case 'recharts-test': return <RechartsTestView />
+      case 'svg-test': return <SvgTestView />
       case 'agent-code': return null
       default: return <CardsView />
     }

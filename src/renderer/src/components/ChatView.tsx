@@ -1,10 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react'
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
-import rehypeRaw from 'rehype-raw'
-import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import 'katex/dist/katex.min.css'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
@@ -30,25 +27,7 @@ import { getDocument } from 'pdfjs-dist'
 import mammoth from 'mammoth'
 import CodeBlock from './CodeBlock'
 import ConfirmModal from './ConfirmModal'
-// ── Markdown 文件预览 rehype-sanitize schema（同 AgentCodeView 配置）──
-const FILE_PREVIEW_SANITIZE_SCHEMA = {
-  ...defaultSchema,
-  attributes: {
-    ...defaultSchema.attributes,
-    div: [...(defaultSchema.attributes?.div || []), 'align', 'style'],
-    p: [...(defaultSchema.attributes?.p || []), 'align', 'style'],
-    span: [...(defaultSchema.attributes?.span || []), 'style'],
-    img: [...(defaultSchema.attributes?.img || []), 'width', 'height', 'style', 'loading'],
-    table: [...(defaultSchema.attributes?.table || []), 'style'],
-    td: [...(defaultSchema.attributes?.td || []), 'style', 'colspan', 'rowspan'],
-    th: [...(defaultSchema.attributes?.th || []), 'style', 'colspan', 'rowspan'],
-    '*': [...(defaultSchema.attributes?.['*'] || []), 'style'],
-  },
-  protocols: {
-    ...defaultSchema.protocols,
-    src: [...(defaultSchema.protocols?.src || ['http', 'https']), 'data'],
-  },
-}
+import { Markdown, setPreviewFileBaseDirs } from '../markdown/markstream'
 import CustomSelect from './CustomSelect'
 
 // 导入 worker 模块使其注册 globalThis.pdfjsWorker，pdfjs 的 fake worker 回退自动使用它
@@ -463,46 +442,9 @@ function formatFileSize(bytes: number): string {
 }
 
 // ── Markdown code 组件 ─────────────────────────────────────
-// react-markdown v10 不再传 inline prop，用 className 是否含 language- 区分块级/行内
-function MarkdownCode({ className, children }: { className?: string; children?: React.ReactNode }) {
-  const text = String(children ?? '').replace(/\n$/, '')
-  const match = /language-(\w+)/.exec(className || '')
-  if (match) {
-    return <CodeBlock language={match[1]} value={text} />
-  }
-  // 无 language class：若含换行则按块处理，否则按行内
-  if (text.includes('\n')) {
-    return <CodeBlock language="" value={text} />
-  }
-  return <code className="chat-code-in-line">{text}</code>
-}
-
-// 块级代码容器：直接透传 children，丢弃默认的 <pre> 包裹，
-// 避免 CodeBlock 的 <div> 被非法嵌套进 <pre> 导致代码块错位。
-function MarkdownPre({ children }: { children?: React.ReactNode }) {
-  return <>{children}</>
-}
-
-// 文件预览图片渲染器：处理相对路径图片（通过 ref 读取 fileBaseDirs）
-let _fileBaseDirs = new Map<number, string>()
-let _previewFileIdx = 0
-function setPreviewFileBaseDirs(dirs: Map<number, string>, idx: number) {
-  _fileBaseDirs = dirs
-  _previewFileIdx = idx
-}
-function PreviewMarkdownImage({ src, alt }: { src?: string; alt?: string }) {
-  const [dataSrc, setDataSrc] = useState<string | undefined>(undefined)
-  useEffect(() => {
-    if (!src || /^(https?:|data:|file:\/\/|\/)/.test(src)) { setDataSrc(src); return }
-    const dir = _fileBaseDirs.get(_previewFileIdx)
-    if (!dir) { setDataSrc(src); return }
-    const abs = (dir + '/' + src).replace(/\\/g, '/').replace(/\/+/g, '/')
-    window.api.readFileBase64(abs).then(r => {
-      setDataSrc(r.success ? r.dataUrl : src)
-    }).catch(() => setDataSrc(src))
-  }, [src])
-  return <img src={dataSrc || src || ''} alt={alt || ''} style={{ maxWidth: '100%', height: 'auto' }} />
-}
+// ── Markdown 渲染统一走 markstream（见 ../markdown/markstream）────────────
+// 代码块 / 行内代码 / 链接 / 图片 / mermaid 的覆写组件、以及 HTML 清洗策略（htmlPolicy）、
+// deferNodesUntilVisible=false 等配置全部收敛在那一层，本文件不再直接依赖 react-markdown。
 
 // ── 思考链（reasoning）解析 ─────────────────────────────────
 // 把含 <think>...</think> 的内容切分成「普通文本 / 思考内容」片段序列。
@@ -535,80 +477,18 @@ function parseThinkSegments(content: string): ContentSegment[] {
   return segments
 }
 
-// ── 流式 Markdown 半截保护（借鉴 DeepSeek-Reasonix 的 flushableMarkdownPrefix）──
-// 流式输出时，正文可能以「未闭合的 Markdown」结尾（如未闭合的 ``` 代码块、
-// 未完成的表格行），直接交给 ReactMarkdown 会渲染出残缺/闪烁的样式。
-// 这里把内容切成「已安全闭合的前缀」+「末尾未闭合的残留」，残留部分用纯文本暂显，
-// 待流结束（isStreaming=false）再由原 renderSegments 用完整 ReactMarkdown 渲染。
-type SafeSplit = { safe: string; pending: string }
-
-// 判断文本中是否包含未闭合的围栏代码块（``` 出现奇数次）
-function hasUnclosedFence(text: string): boolean {
-  const fences = text.match(/^```/gm)?.length ?? 0
-  return fences % 2 === 1
-}
-
-// 在最后一个「完整块边界」处切分：优先在空行边界切，若末尾处于未闭合代码块内则回退到代码块起点。
-function splitMarkdownAtSafeBoundary(text: string): SafeSplit {
-  if (!text) return { safe: '', pending: '' }
-  // 没有未闭合代码块时，整段都是安全的（段落/列表在 ReactMarkdown 中增量渲染也稳定）
-  if (!hasUnclosedFence(text)) {
-    return { safe: text, pending: '' }
-  }
-  // 有未闭合代码块：找到最后一个 ``` 起始位置，把之前的完整内容作为 safe
-  const lastFence = text.lastIndexOf('```')
-  // 该 ``` 是未闭合的开围栏，其后的内容全部视为 pending
-  const safe = text.slice(0, lastFence)
-  const pending = text.slice(lastFence)
-  // 若 safe 末尾不洁净（紧接代码块），仍保留；safe 部分不含未闭合围栏，可安全渲染
-  return { safe, pending }
-}
-
-// 流式正文渲染：已闭合部分用 ReactMarkdown，未闭合残留用 <pre> 暂显，避免闪烁。
-// 分级渲染：流式期间只用轻量插件栈（仅 gfm，跳过数学公式等重插件），单帧解析
-// 开销大幅下降、长回复不卡顿；流结束后由 FinalMarkdown 完整栈精确重渲一次。
+// ── 流式正文渲染 ───────────────────────────────────────────
+// 旧实现（flushableMarkdownPrefix 式半截保护）已删除：markstream 的解析器原生把未闭合的
+// 围栏 / 表格行 / 公式保持在 mid-state（loading 节点），由 code_block 覆写组件决定怎么显示，
+// 不需要再手动在「安全前缀 / 残留」之间切分、也不必把残留丢给 <pre> 暂显。
 const SafeStreamMarkdown = React.memo(function SafeStreamMarkdown({ text }: { text: string }) {
-  const { safe, pending } = useMemo(() => splitMarkdownAtSafeBoundary(text), [text])
-  return (
-    <>
-      {safe ? (
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any, pre: MarkdownPre as any }}>
-          {safe}
-        </ReactMarkdown>
-      ) : null}
-      {pending ? (
-        <pre className="streaming-raw" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>
-          {pending}
-        </pre>
-      ) : null}
-    </>
-  )
+  return <Markdown content={text} final={false} variant="chat" />
 })
 
-// ── 最终渲染（完整插件栈）─────────────────────────────────
-// 数学定界符归一：remark-math 只识别 $...$ / $$...$$，而模型普遍输出 \(...\) / \[...\]。
-// 渲染前把后者转为前者；围栏/行内代码先占位保护，避免误改代码里的转义序列。
-function normalizeMathDelimiters(md: string): string {
-  if (!md.includes('\\(') && !md.includes('\\[')) return md
-  const shielded: string[] = []
-  const work = md.replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`/g, m => {
-    shielded.push(m)
-    return `\x00MD${shielded.length - 1}\x00`
-  })
-  const out = work
-    .replace(/\\\[([\s\S]+?)\\\]/g, (_, tex) => `\n$$\n${tex}\n$$\n`)
-    .replace(/\\\((.+?)\\\)/g, (_, tex) => `$${tex}$`)
-  return out.replace(/\x00MD(\d+)\x00/g, (_, i) => shielded[Number(i)]!)
-}
-
-// 消息/思考完成后的精确渲染：补齐数学公式（含定界符归一）；流式期间走轻量栈
+// 消息/思考完成后的精确渲染：final=true 让解析器收敛，数学公式（$ / $$ / \(\) / \[\] 全部原生支持）
+// 由 markstream 内置的 KaTeX 节点渲染。
 const FinalMarkdown = React.memo(function FinalMarkdown({ content }: { content: string }) {
-  const normalized = useMemo(() => normalizeMathDelimiters(content), [content])
-  return (
-    <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ code: MarkdownCode as any, pre: MarkdownPre as any }}>
-      {normalized}
-    </ReactMarkdown>
-  )
+  return <Markdown content={content} final variant="chat" />
 })
 
 // 思考块：可折叠（流式时自动展开，完成后自动折叠）
@@ -765,10 +645,8 @@ const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, 
         <div className={`chat-think-body chat-msg-markdown ${expanded ? 'open' : ''}`} ref={bodyRef} onTransitionEnd={onBodyTransitionEnd}>
           {displayValue ? (
             thinking ? (
-              // 思考中走轻量插件栈（跳过公式渲染），结束后由 FinalMarkdown 完整栈精确重渲
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: MarkdownCode as any, pre: MarkdownPre as any }}>
-                {displayValue}
-              </ReactMarkdown>
+              // 思考中：final=false（未闭合围栏/公式保持 mid-state）；结束后 FinalMarkdown 收敛
+              <Markdown content={displayValue} final={false} variant="chat" />
             ) : (
               <FinalMarkdown content={displayValue} />
             )
@@ -2180,7 +2058,7 @@ export default function ChatView() {
             }
           } catch { /* 内联失败不影响文本预览 */ }
         }
-        // 存储文件基准目录，供 ReactMarkdown img 渲染器解析相对路径
+        // 存储文件基准目录，供 markstream 的 img 覆写组件解析相对路径
         if (hasFilePath) {
           const dir = filePath.replace(/[\\/][^\\/]*$/, '').replace(/\\/g, '/')
           _setFileBaseDirs(prev => { const n = new Map(prev); n.set(idx, dir); return n })
@@ -3948,24 +3826,13 @@ ${msgsHtml}
                         </div>
                       )
                     }
-                    // Markdown 文件 → ReactMarkdown 渲染
+                    // Markdown 文件 → markstream 渲染（图片走 ls-chat-preview 的相对路径解析）
                     if (isMarkdownFile(f.name)) {
-                      // 更新图片渲染器的 ref，使其能解析相对路径
+                      // 更新图片渲染器的模块级 ref，使其能解析相对路径
                       setPreviewFileBaseDirs(fileBaseDirs, filePreviewIndex)
-                      const previewComponents = {
-                        img: PreviewMarkdownImage
-                      }
                       return (
                         <div className="chat-file-preview-markdown">
-                          <ReactMarkdown
-                            remarkPlugins={[remarkGfm, remarkMath]}
-                            rehypePlugins={[rehypeKatex, rehypeRaw, [rehypeSanitize, FILE_PREVIEW_SANITIZE_SCHEMA]]}
-                            remarkRehypeOptions={{ allowDangerousHtml: true }}
-                            urlTransform={(url) => /^(https?:|mailto:|file:|data:)/i.test(url) ? url : defaultUrlTransform(url)}
-                            components={previewComponents}
-                          >
-                            {textContent}
-                          </ReactMarkdown>
+                          <Markdown content={textContent} final variant="chat-preview" />
                         </div>
                       )
                     }

@@ -1,6 +1,6 @@
 {
   "name": "llama-studio",
-  "version": "1.0.210",
+  "version": "1.0.211",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",
   "main": "out/main/index.js",
@@ -14,11 +14,7 @@
     "preview": "electron-vite preview --logLevel silent",
     "package": "electron-vite build && electron-builder --publish never",
     "postinstall": "electron-rebuild -w node-pty",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "test:audit": "vitest run tests/audit",
-    "test:e2e": "playwright test tests/e2e",
-    "audit:secrets": "node scripts/audit-secrets.mjs",
-    "audit:all": "npm run typecheck && npm run test:audit && npm run audit:secrets"
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
   },
   "trustedDependencies": [
     "electron"
@@ -28,11 +24,9 @@
   },
   "dependencies": {
     "@animateicons/react": "^0.4.3",
-    "@earendil-works/pi-agent-core": "^0.84.3",
-    "@earendil-works/pi-ai": "^0.84.3",
-    "@earendil-works/pi-coding-agent": "^0.84.3",
-    "@json-render/core": "^0.20.0",
-    "@json-render/react": "^0.20.0",
+    "@earendil-works/pi-agent-core": "^0.85.1",
+    "@earendil-works/pi-ai": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
     "@vscode/ripgrep": "^1.18.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
@@ -45,15 +39,13 @@
     "jspdf": "^4.2.1",
     "katex": "^0.17.0",
     "mammoth": "^1.12.0",
+    "markstream-react": "^2.0.12",
     "mermaid": "^12.0.0",
     "monaco-editor": "^0.56.0",
     "node-pty": "^1.1.0",
     "pdfjs-dist": "^3.11.174",
-    "react-markdown": "^10.1.0",
     "recharts": "^3.10.1",
     "rehype-katex": "^7.0.1",
-    "rehype-raw": "^7.0.0",
-    "rehype-sanitize": "^6.0.0",
     "rehype-stringify": "^10.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
@@ -70,9 +62,6 @@
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@electron-toolkit/utils": "^4.0.0",
-    "@playwright/test": "^1.63.0",
-    "@testing-library/dom": "^10.4.1",
-    "@testing-library/react": "^16.3.3",
     "@types/node": "^20.14.8",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -87,7 +76,6 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^7.0.2",
-    "vite": "^5.3.1",
-    "vitest": "^3"
+    "vite": "^5.3.1"
   }
 }

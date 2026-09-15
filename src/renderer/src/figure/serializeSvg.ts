@@ -5,6 +5,39 @@
  * `recharts/ChartCard` 都能安全地引它，不会把组件拖进彼此的依赖图。
  */
 
+const SVG_NS = 'http://www.w3.org/2000/svg'
+const XML_DECL = /^<\?xml[^>]*\?>\s*/i
+const LEADING_COMMENT = /^<!--[\s\S]*?-->\s*/
+
+/**
+ * 给根 <svg> 补上 xmlns（已有则原样返回）。
+ *
+ * 这是**必须**的一步，而且只在「脱离 HTML 文档」时才暴露出来：
+ *   · 内联在 HTML 里的 <svg>（含 innerHTML 注入）由 HTML 解析器负责命名空间，
+ *     写不写 xmlns 都能画出来 —— 所以流式实时预览从来不需要它；
+ *   · 一旦包成 data URI 交给 <img>，payload 是按**独立 XML 文档**解析的，
+ *     根元素没有 xmlns 就不会被认作 SVG，浏览器直接判加载失败（触发 onError）。
+ *     模型写的 SVG 经常只有 width/height/viewBox，xmlns 是想不起来的。
+ *
+ * 与 parseSvg 的 looksLikeSvg 同构：都是「剥掉 XML 声明与前置注释后再看根标签」，
+ * 保证「校验通过」的东西这里也一定补得上。
+ */
+export function ensureSvgNamespace(svg: string): string {
+  const src = svg.trim()
+  if (!src) return src
+  let offset = 0
+  const decl = XML_DECL.exec(src)
+  if (decl) offset += decl[0].length
+  const comment = LEADING_COMMENT.exec(src.slice(offset))
+  if (comment) offset += comment[0].length
+  const rest = src.slice(offset)
+  const open = /^<svg\b[^>]*>/i.exec(rest)
+  if (!open) return src
+  const tag = open[0]
+  if (/\sxmlns\s*=/i.test(tag)) return src
+  return src.slice(0, offset) + tag.replace(/^<svg\b/i, `<svg xmlns="${SVG_NS}"`) + rest.slice(tag.length)
+}
+
 /**
  * SVG 源码 → data URI。
  *
@@ -17,9 +50,12 @@
  *   <img> 里的 SVG 运行在受限上下文——不执行 <script>、不加载外部资源、
  *   拿不到父文档。所以模型即使写出 <svg onload=...> 也是惰性的。
  *   这让「显示 SVG」不必以放宽 sanitizer 白名单为代价。
+ *
+ * 补 xmlns 在这里做而不是在调用方：本函数是「把源码变成一张能显示的图」的
+ * 唯一出口（卡片画布与放大层都走它），缺了命名空间的源码对两者同样是破图。
  */
 export function toSvgDataUri(svg: string): string {
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg.trim())}`
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(ensureSvgNamespace(svg))}`
 }
 
 /**
@@ -115,7 +151,9 @@ function safeFileName(name: string): string {
 }
 
 export function downloadSvg(fileName: string, svgSource: string): void {
-  const blob = new Blob([svgSource], { type: 'image/svg+xml;charset=utf-8' })
+  // 同样要补 xmlns：存成 .svg 文件后它就是独立文档，缺命名空间的根元素双击打不开。
+  // （ChartCard 那条路 serializeSvg 已经补过了，这里是给 SvgCard 的「模型原文」兜底。）
+  const blob = new Blob([ensureSvgNamespace(svgSource)], { type: 'image/svg+xml;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url

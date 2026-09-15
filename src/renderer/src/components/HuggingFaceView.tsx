@@ -1,10 +1,7 @@
 import React, { useState, useCallback, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import rehypeRaw from 'rehype-raw'
-import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
+import { Markdown, setHfImageBase } from '../markdown/markstream'
 import {
   Search, Download, Heart, ChevronDown, ChevronLeft,
   FolderOpen, CheckCircle, Loader2, X, AlertCircle, Pause, Play, RotateCcw
@@ -41,28 +38,11 @@ function formatDate(iso: string): string {
   if (isNaN(d.getTime())) return '未知'
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
-const readmeSanitizeSchema = {
-  ...defaultSchema,
-  tagNames: [
-    ...(defaultSchema.tagNames || []),
-    'div', 'span', 'section', 'figure', 'figcaption', 'picture', 'source',
-    'svg', 'path', 'details', 'summary', 'img', 'a',
-  ],
-  attributes: {
-    ...defaultSchema.attributes,
-    img: [...(defaultSchema.attributes?.img || []), 'src', 'alt', 'title', 'width', 'height', 'loading'],
-    a: [...(defaultSchema.attributes?.a || []), 'href', 'target', 'rel'],
-  },
-  clobberPrefix: 'user-content-',
-}
-
-function resolveImgSrc(src: string | undefined, base: string): string {
-  if (!src) return ''
-  if (/^https?:\/\//i.test(src) || src.startsWith('data:') || src.startsWith('#')) return src
-  const clean = src.replace(/^[./]+/, '')
-  return base.replace(/\/+$/, '') + '/' + clean
-}
-
+// README 正文渲染：统一走 markstream（见 ../markdown/markstream 的 ls-hf 覆写集合）。
+// 旧实现里 readmeSanitizeSchema（放开 div/span/svg/details 等标签）与 resolveImgSrc 都已删除——
+// HTML 清洗交给 markstream 默认的 htmlPolicy="safe"（tokenizeHtml + sanitizeHtmlAttrs：
+// 标准标签白名单 + 危险属性/危险协议拦截），不再需要手写 schema；
+// 相对路径图片的基址解析搬到了覆写组件里。
 const ReadmeMarkdown = React.memo(function ReadmeMarkdown({
   content,
   id,
@@ -75,32 +55,9 @@ const ReadmeMarkdown = React.memo(function ReadmeMarkdown({
   const base = isHF
     ? `https://huggingface.co/${id}/resolve/main/`
     : `https://modelscope.cn/models/${id}/resolve/master/`
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeRaw, [rehypeSanitize, readmeSanitizeSchema]]}
-      components={{
-        img: ({ node, src, alt, ...rest }) => (
-          <img src={resolveImgSrc(src as string, base)} alt={(alt as string) || ''} loading="lazy" {...rest} />
-        ),
-        a: ({ node, href, children, ...rest }) => {
-          const handleClick = (e: React.MouseEvent) => {
-            if (href && /^https?:\/\//i.test(href)) {
-              e.preventDefault()
-              window.api.openExternal(href)
-            }
-          }
-          return (
-            <a href={href} target="_blank" rel="noopener noreferrer" onClick={handleClick} {...rest}>
-              {children}
-            </a>
-          )
-        },
-      }}
-    >
-      {content}
-    </ReactMarkdown>
-  )
+  // 覆写组件是全局注册的、拿不到本实例的闭包，渲染前把当前基址写进模块级变量
+  setHfImageBase(base)
+  return <Markdown content={content} final variant="hf" />
 })
 
 function quantLabel(filename: string): { label: string; color: string } {

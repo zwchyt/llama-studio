@@ -243,10 +243,6 @@ export interface AgentMessage {
   modelLabel?: string  // 生成该消息的模型名（流式开始固化；持久化供刷新后徽标还原）
   lastTps?: number     // 流式结束瞬间的最后采样速率（t/s），持久化后完成态徽标常驻
   decodedTokens?: number  // 服务端 /slots n_decoded 差值（真实解码 token 数；流式中定时同步、完成时持久化，无此字段/旧消息回退估算）
-  // json-render 动态 UI：content 中提取出的合法 Spec JSON 原文（校验通过才写），渲染时解析。
-  // uiSpecChecked 标记是否已尝试过提取（避免对每条消息重复做昂贵的解析）。
-  uiSpecRaw?: string
-  uiSpecChecked?: boolean
   // 用户消息发送时含「超长打包 chip」的那段内容（输入框超限自动打包的部分，已 trim）。
   // 气泡渲染时该段显示为折叠 chip，其余部分（用户后输入的文字）照常显示为文本气泡；
   // 无此字段的旧消息不受影响。
