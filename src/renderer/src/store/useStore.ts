@@ -32,9 +32,11 @@ export interface AgentStatus {
   website?: string
 }
 export const MAX_LOG_LINES = 5000
+const ERROR_RE = /\berror\b/i
+const WARN_RE = /\bwarn(ing)?\b/i
 function logClass(text: string): string {
-  if (/\berror\b/i.test(text)) return 'log-error'
-  if (/\bwarn(ing)?\b/i.test(text)) return 'log-warn'
+  if (ERROR_RE.test(text)) return 'log-error'
+  if (WARN_RE.test(text)) return 'log-warn'
   return 'log-stdout'
 }
 
@@ -51,10 +53,19 @@ function flushModelLogs(): void {
   useStore.setState((s) => {
     const nextLogs = { ...s.modelLogs }
     batch.forEach((entries, id) => {
-      const existing = nextLogs[id] || []
+      const existing = nextLogs[id]
       const newEntries = entries.map(e => ({ stream: e.stream, text: e.text, className: logClass(e.text) }))
-      const merged = existing.concat(newEntries)
-      nextLogs[id] = merged.length > MAX_LOG_LINES ? merged.slice(-MAX_LOG_LINES) : merged
+      const existingLen = existing?.length || 0
+      const newLen = newEntries.length
+      const total = existingLen + newLen
+      if (total <= MAX_LOG_LINES) {
+        nextLogs[id] = existing ? existing.concat(newEntries) : newEntries
+      } else {
+        const overflow = total - MAX_LOG_LINES
+        const start = existingLen - overflow
+        const keep = start > 0 ? existing.slice(start) : []
+        nextLogs[id] = keep.concat(newEntries)
+      }
     })
     return { modelLogs: nextLogs }
   })
@@ -495,26 +506,31 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
         }
       }
     }
+
+    let changed = false
     for (const k in partial) {
       const key = k as keyof ModelMetrics
       const pv = partial[key]
       const ev = existing[key]
       const next = (key === 'nPromptTokensCache' || key === 'nPromptTokensProcessed') ? (pv ?? ev) : pv
       if (next !== ev) {
-        return {
-          modelMetrics: {
-            ...s.modelMetrics, [id]: {
-              ...existing,
-              ...partial,
-              nPromptTokensCache: partial.nPromptTokensCache ?? existing.nPromptTokensCache,
-              nPromptTokensProcessed: partial.nPromptTokensProcessed ?? existing.nPromptTokensProcessed,
-              lastUpdated: Date.now(),
-            }
-          }
+        changed = true
+        break
+      }
+    }
+    if (!changed) return s
+
+    return {
+      modelMetrics: {
+        ...s.modelMetrics, [id]: {
+          ...existing,
+          ...partial,
+          nPromptTokensCache: partial.nPromptTokensCache ?? existing.nPromptTokensCache,
+          nPromptTokensProcessed: partial.nPromptTokensProcessed ?? existing.nPromptTokensProcessed,
+          lastUpdated: Date.now(),
         }
       }
     }
-    return s
   }),
   clearModelMetrics: (id) => set((s) => {
     const next = { ...s.modelMetrics }

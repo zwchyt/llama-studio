@@ -107,6 +107,98 @@ function getToolPreview(input: unknown): string {
 // ║ 区域：Diff 计算与展示组件（分栏对比、行号渲染）                              ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 type DiffRow = { type: 'equal' | 'del' | 'ins' | 'replace'; left: string | null; right: string | null; leftNum: number | null; rightNum: number | null }
+
+// 轻量级 diff 统计：仅计算增删行数，不生成完整 DiffRow。
+// 将 LCS DP 压到一维数组，只追踪长度，大幅降低内存和 CPU。
+function countDiffStats(oldText: string, newText: string): { added: number; removed: number } {
+  const a = oldText.split('\n')
+  const b = newText.split('\n')
+  const n = a.length, m = b.length
+
+  const MAX_DIFF_CELLS = 500_000
+  if (n === 0) return { added: m, removed: 0 }
+  if (m === 0) return { added: 0, removed: n }
+
+  // 超大文件退化为 worst-case：旧的全部删除，新的全部新增
+  if (n * m > MAX_DIFF_CELLS) {
+    return { added: m, removed: n }
+  }
+
+  // 用较短数组做外层循环，减少内存和比较次数
+  const [shorter, longer] = n <= m ? [a, b] : [b, a]
+  const sn = shorter.length, lm = longer.length
+  const prev = new Array(lm + 1).fill(0)
+  const curr = new Array(lm + 1).fill(0)
+
+  for (let i = sn - 1; i >= 0; i--) {
+    for (let j = lm - 1; j >= 0; j--) {
+      curr[j] = shorter[i] === longer[j] ? prev[j + 1] + 1 : Math.max(prev[j], curr[j + 1])
+    }
+    for (let j = 0; j <= lm; j++) prev[j] = curr[j]
+  }
+
+  const lcs = prev[0]
+  return {
+    added: m - lcs,
+    removed: n - lcs,
+  }
+}
+
+// Edit 工具增删行数统计（+N -M 徽标）：工具卡片（ToolCallCard，单卡）与文件变更汇总
+// （FileChangeSummary，按文件聚合）需要的是同一份结果，各自实现会让同一 args 的 LCS
+// 跑两遍。此处收敛为唯一实现（顺带消除两处参数解析逻辑漂移的风险），并以 tc.id 缓存。
+//
+// ⚠️ 缓存键必须用 tc.id，不能用 tc 对象：工具状态流转
+// （pending → executing → done）每一步都是 `toolCalls[i] = { ...toolCalls[i], ... }`，
+// 即每次换新对象。若以对象为键，「卡片算完时缓存的那个对象」与「汇总阶段拿到的对象」
+// 必然不是同一个 → 缓存永不命中；反过来若把 memo 依赖改成对象，则流式期间每次状态
+// 流转都会重算一次，总次数反而比现在更多。
+//
+// 命中时校验 args：同一 id 的 args 理论上只写一次，但留此护栏可在未来某处改为原地
+// 改写 tc.args 时自动失效重算，而不是永久展示陈旧的 +N -M。
+// 容量有界：按插入顺序 FIFO 淘汰，避免长会话里 args 字符串被缓存无限持有。
+type EditDiffStat = { added: number; removed: number }
+const EDIT_STAT_CACHE_MAX = 256
+const editStatCache = new Map<string, { args: string; stat: EditDiffStat | null }>()
+
+// 兼容两代参数：自研旧式 old_string/new_string；pi 原生 path + edits[]（逐条累加）。
+function getEditDiffStat(tc: NonNullable<AgentMessage['toolCalls']>[number]): EditDiffStat | null {
+  if (tc.name !== 'Edit') return null
+  const args = tc.args || ''
+  const cached = tc.id ? editStatCache.get(tc.id) : undefined
+  if (cached && cached.args === args) return cached.stat
+
+  let stat: EditDiffStat | null = null
+  let parsed: { old_string?: unknown; new_string?: unknown; edits?: unknown } | null = null
+  try { parsed = JSON.parse(args || '{}') } catch { parsed = null }
+  if (parsed && typeof parsed === 'object') {
+    let added = 0
+    let removed = 0
+    const acc = (o: string, n: string): void => {
+      const s = countDiffStats(o, n)
+      added += s.added
+      removed += s.removed
+    }
+    if (typeof parsed.old_string === 'string' && typeof parsed.new_string === 'string') {
+      acc(parsed.old_string, parsed.new_string)
+    } else if (Array.isArray(parsed.edits)) {
+      for (const e of parsed.edits as Array<{ oldText?: unknown; newText?: unknown }>) {
+        if (e && typeof e.oldText === 'string' && typeof e.newText === 'string') acc(e.oldText, e.newText)
+      }
+    }
+    if (added !== 0 || removed !== 0) stat = { added, removed }
+  }
+
+  if (tc.id) {
+    if (editStatCache.size >= EDIT_STAT_CACHE_MAX) {
+      const oldest = editStatCache.keys().next().value
+      if (oldest !== undefined) editStatCache.delete(oldest)
+    }
+    editStatCache.set(tc.id, { args, stat })
+  }
+  return stat
+}
+
 function computeSplitDiff(oldText: string, newText: string): DiffRow[] {
   const a = oldText.split('\n')
   const b = newText.split('\n')
@@ -1659,27 +1751,11 @@ const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPrev
   const parsed = useMemo(() => { try { return JSON.parse(tc.args || '{}') } catch { return null } }, [tc.args])
   const preview = getToolPreview(parsed)
   // 编辑工具的增删行数统计（显示在工具卡片上方，类似 git diff 的 +N -M）。
-  // useMemo：内部跑 LCS diff，流式重渲染下不缓存会对大编辑反复重算。
-  // 兼容两代参数：自研旧式 old_string/new_string，pi 原生 path + edits[]（逐条累加）。
-  const editDiffStat = useMemo(() => {
-    if (tc.name !== 'Edit') return null
-    let added = 0
-    let removed = 0
-    const acc = (o: string, n: string): void => {
-      const rows = computeSplitDiff(o, n)
-      added += rows.filter(r => r.type === 'ins' || r.type === 'replace').length
-      removed += rows.filter(r => r.type === 'del' || r.type === 'replace').length
-    }
-    if (parsed && typeof parsed.old_string === 'string' && typeof parsed.new_string === 'string') {
-      acc(parsed.old_string, parsed.new_string)
-    } else if (parsed && Array.isArray(parsed.edits)) {
-      for (const e of parsed.edits) {
-        if (e && typeof e.oldText === 'string' && typeof e.newText === 'string') acc(e.oldText, e.newText)
-      }
-    }
-    if (added === 0 && removed === 0) return null
-    return { added, removed }
-  }, [tc.name, parsed])
+  // 实现收敛在模块级 getEditDiffStat（内部跑 LCS diff + 按 tc.id 缓存），与
+  // FileChangeSummary 的汇总共用同一份结果，避免同一 args 被算两遍。
+  // 依赖仍按 [tc.name, parsed] 而非 [tc]：parsed 由 tc.args 派生，仅在参数真正变化时
+  // 变化；以 tc 为依赖会因状态流转换对象而每次重算（缓存能挡住，但白付一次查表）。
+  const editDiffStat = useMemo(() => getEditDiffStat(tc), [tc.name, parsed])
   const bashCmd = (() => {
     if (tc.name !== 'Bash') return null
     const c = parsed && typeof parsed.command === 'string' ? parsed.command : null
@@ -1826,19 +1902,13 @@ const FileChangeSummary = React.memo(function FileChangeSummary({ toolCalls, onO
       if (!fp) continue
       let added = 0
       let removed = 0
-      const acc = (o: string, n: string): void => {
-        const rows = computeSplitDiff(o, n)
-        added += rows.filter(r => r.type === 'ins' || r.type === 'replace').length
-        removed += rows.filter(r => r.type === 'del' || r.type === 'replace').length
-      }
       if (tc.name === 'Edit') {
-        // 兼容两代参数：自研旧式 old_string/new_string，pi 原生 path + edits[]（逐条累加）
-        if (typeof parsed.old_string === 'string' && typeof parsed.new_string === 'string') {
-          acc(parsed.old_string, parsed.new_string)
-        } else if (Array.isArray(parsed.edits)) {
-          for (const e of parsed.edits) {
-            if (e && typeof e.oldText === 'string' && typeof e.newText === 'string') acc(e.oldText, e.newText)
-          }
+        // 与工具卡片共用同一份统计（getEditDiffStat 按 tc.id 缓存）：
+        // 卡片在上方已经算过，这里直接命中，不再跑第二遍 LCS。
+        const stat = getEditDiffStat(tc)
+        if (stat) {
+          added = stat.added
+          removed = stat.removed
         }
       } else if (tc.name === 'Write' && typeof parsed.content === 'string') {
         // Write 无旧内容可比，按写入行数计为新增
@@ -2291,7 +2361,7 @@ export default function AgentCodeView() {
     const kind = paramSetOf(card.template.paramSet ?? backends.find(b => b.name === card.template.backendVersion)?.kind)
     return kind === 'sdcpp' || kind === 'audiocpp' || /ocr/i.test(card.template.name)
   }
-  const agentCards = cards.filter(c => !isExcludedModel(c) || c.status === 'running')
+  const agentCards = useMemo(() => cards.filter(c => !isExcludedModel(c) || c.status === 'running'), [cards, backends])
 
   // 顶栏 prefill 进度与内联上下文指示器已抽为自订阅小组件（AgentPrefillBar / AgentTopBarCtx），
   // 此处不再订阅 modelMetrics，避免主进程每 2s 广播指标时触发整个工作台全量重渲染。
@@ -2822,6 +2892,15 @@ export default function AgentCodeView() {
   // 重新跟随阈值：必须真正滚到最底（而非停留在 80px 观察带内）才重新接管贴底。
   const REATTACH_THRESHOLD = 4
   const railTargetsRef = useRef(new Map<string, HTMLElement>())
+  // 轨道预览缓存（见 syncRailItems 注释）：getMessagePreview 会对「每条消息的完整正文」
+  // 跑 4 次 stripThinkContent 正则 + 空白折叠，100 条消息单次约 3ms；而 syncRailItems 被
+  // MutationObserver（流式文本改写）/ scroll（贴底 rAF 每帧写 scrollTop）/ ResizeObserver
+  // 以 20~60 次/秒驱动，其中绝大多数调用产出的结果完全相同 → 纯重算浪费。
+  // 按「消息 id + content 引用 + 下一条 content 引用 + role」缓存：未变的消息 O(1) 命中，
+  // 只有正在流式的那一条会重算，预览仍随流式实时更新。
+  // 引用比较是安全的：commit() 用 msgs.map 只替换 live 那一条的消息对象，其余消息对象与其
+  // content 字符串引用都保持不变；会话切换 / 编辑重发 / 压缩历史时 content 必为新引用 → 自动失效。
+  const railPreviewCacheRef = useRef(new Map<string, { content: string; nextContent: string | undefined; role: string; preview: { label: string; description?: string } }>())
   const [railItems, setRailItems] = useState<{ id: string; label: string; description?: string; ariaLabel: string }[]>([])
   const [activeRailId, setActiveRailId] = useState('')
   const [railOverflowing, setRailOverflowing] = useState(false)
@@ -3699,6 +3778,10 @@ export default function AgentCodeView() {
 
     const targets = new Map<string, HTMLElement>()
     const nextItems: { id: string; label: string; description?: string; ariaLabel: string }[] = []
+    // 预览缓存：命中条件见 railPreviewCacheRef 声明处。只有「content 引用变了」的消息
+    // （即正在流式的那一条）才真正重跑 getMessagePreview。
+    const previewCache = railPreviewCacheRef.current
+    const aliveIds = new Set<string>()
 
     for (const node of messageNodes) {
       // 每条消息都生成一个点（用户气泡 + 模型气泡各一个）——用于对比验证是否卡顿。
@@ -3711,13 +3794,32 @@ export default function AgentCodeView() {
       // 用 msg.id 作为 key，天然与消息一一对应，且稳定唯一。
       const id = msg?.id ?? `msg-rail-idx-${originalIndex}`
       targets.set(id, node)
-      const preview = msg ? getMessagePreview(msg, messages, originalIndex) : { label: from, description: undefined }
+      let preview: { label: string; description?: string }
+      if (msg) {
+        aliveIds.add(id)
+        // 预览同时依赖「本条 content」与「下一条 content」（下一条是助手消息时取它作 description），
+        // 两者任一换新引用即失效重算，因此缓存键必须带上 nextContent。
+        const nextContent = messages[originalIndex + 1]?.content
+        const hit = previewCache.get(id)
+        if (hit && hit.content === msg.content && hit.nextContent === nextContent && hit.role === msg.role) {
+          preview = hit.preview
+        } else {
+          preview = getMessagePreview(msg, messages, originalIndex)
+          previewCache.set(id, { content: msg.content, nextContent, role: msg.role, preview })
+        }
+      } else {
+        preview = { label: from, description: undefined }
+      }
       nextItems.push({
         id,
         label: preview.label,
         description: preview.description,
         ariaLabel: `Go to ${from} message`,
       })
+    }
+    // 清理已不在列表里的消息（编辑重发 / 压缩历史 / 切换会话），避免缓存无限增长
+    if (previewCache.size > aliveIds.size) {
+      for (const key of previewCache.keys()) if (!aliveIds.has(key)) previewCache.delete(key)
     }
 
     railTargetsRef.current = targets

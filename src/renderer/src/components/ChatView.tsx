@@ -46,9 +46,9 @@ const markdownProcessor = unified()
   .use(rehypeKatex as any, { throwOnError: false })
   .use(rehypeStringify, { allowDangerousHtml: true })
 
-function markdownToHtml(text: string): string {
+async function markdownToHtmlAsync(text: string): Promise<string> {
   try {
-    const result = markdownProcessor.processSync(text)
+    const result = await markdownProcessor.process(text)
     return String(result)
   } catch {
     return escapeHtml(text)
@@ -214,6 +214,33 @@ async function checkVisionSupport(port: number): Promise<boolean | null> {
 }
 
 // ── 工具调用展示块（与 ThinkBlock 同构，可折叠）────
+const ToolCallItem = React.memo(function ToolCallItem({ tc }: { tc: ToolCallInfo }) {
+  const argsStr = useMemo(() => {
+    const raw = tc.function.arguments
+    try { return JSON.stringify(JSON.parse(raw), null, 2) } catch { return raw }
+  }, [tc.function.arguments])
+  const resultStr = useMemo(() => {
+    const raw = tc.result
+    if (!raw) return raw
+    try { return JSON.stringify(JSON.parse(raw), null, 2) } catch { return raw }
+  }, [tc.result])
+
+  return (
+    <div className="chat-tool-call">
+      <div className="chat-tool-call-name">
+        <Wrench size={11} />
+        <span>{tc.function.name}</span>
+      </div>
+      {argsStr && argsStr !== '{}' && (
+        <div className="chat-tool-call-args">{argsStr}</div>
+      )}
+      {resultStr && (
+        <div className="chat-tool-call-result">{resultStr}</div>
+      )}
+    </div>
+  )
+})
+
 function ToolCallBlock({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
   const [expanded, setExpanded] = useState(false)
 
@@ -227,28 +254,9 @@ function ToolCallBlock({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
         <ChevronDown size={13} className={`chat-tool-chevron ${expanded ? 'open' : ''}`} />
       </button>
       <div className={`chat-tool-body ${expanded ? 'open' : ''}`}>
-        {toolCalls.map((tc, i) => {
-          let argsStr = tc.function.arguments
-          try { argsStr = JSON.stringify(JSON.parse(tc.function.arguments), null, 2) } catch { /* keep raw */ }
-          let resultStr = tc.result
-          if (resultStr) {
-            try { resultStr = JSON.stringify(JSON.parse(resultStr), null, 2) } catch { /* keep raw */ }
-          }
-          return (
-            <div key={i} className="chat-tool-call">
-              <div className="chat-tool-call-name">
-                <Wrench size={11} />
-                <span>{tc.function.name}</span>
-              </div>
-              {argsStr && argsStr !== '{}' && (
-                <div className="chat-tool-call-args">{argsStr}</div>
-              )}
-              {resultStr && (
-                <div className="chat-tool-call-result">{resultStr}</div>
-              )}
-            </div>
-          )
-        })}
+        {toolCalls.map((tc, i) => (
+          <ToolCallItem key={i} tc={tc} />
+        ))}
       </div>
     </div>
   )
@@ -667,6 +675,24 @@ type UserBlock =
   | { type: 'code'; lang: string; code: string }
   | { type: 'text'; text: string }
 
+// 模块级正则：避免在每次函数调用时重新编译
+const INDENT_RE = /^( {4,}|\t)/
+const FENCE_CLOSE_RE = /```(\w*)\s*\r?\n([\s\S]*?)```/g
+const FENCE_OPEN_RE = /```(\w*)\s*(?:\r?\n|$)/
+const STRIP_INDENT_RE = /^( {4}|\t)/
+const STRIP_NEWLINES_RE = /^\n+|\n+$/g
+const BACKTICK_RE = /(?:^|\n)```/
+const THINK_STRIP_RE = /<think>[\s\S]*?<\/think>/g
+const THINK_TAIL_STRIP_RE = /<think>[\s\S]*$/g
+const MERMAID_KW_RE = /^(?:flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|erDiagram|journey|gitGraph|mindmap|timeline|pie|sankey-beta|xychart-beta|quadrantChart|requirementDiagram|architecture-beta|block-beta|packet-beta|kanban|swimlane-beta|usecase-beta|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment|radar-beta|treemap-beta|venn-beta|ishikawa-beta|wardley-beta|cynefin-beta|treeView-beta|eventmodeling)\b/i
+
+// 消息气泡 DOM 节点注册表：消除 MessageNav / 滚动逻辑中的全量 querySelectorAll
+const msgElMap = new Map<string, HTMLElement>()
+function registerMsgEl(id: string, el: HTMLElement | null) {
+  if (el) msgElMap.set(id, el)
+  else msgElMap.delete(id)
+}
+
 // 缩进代码块检测：连续 2+ 行以 4 空格或 Tab 开头，自动识别为代码块
 function parseIndentedBlocks(text: string): UserBlock[] {
   const lines = text.split('\n')
@@ -683,7 +709,7 @@ function parseIndentedBlocks(text: string): UserBlock[] {
   }
   const flushCode = () => {
     if (codeBuf.length > 0) {
-      const code = codeBuf.map(l => l.replace(/^( {4}|\t)/, '')).join('\n').replace(/^\n+|\n+$/g, '')
+      const code = codeBuf.map(l => l.replace(STRIP_INDENT_RE, '')).join('\n').replace(STRIP_NEWLINES_RE, '')
       blocks.push({ type: 'code', lang: '', code })
       codeBuf = []
     }
@@ -691,7 +717,7 @@ function parseIndentedBlocks(text: string): UserBlock[] {
   }
 
   for (const line of lines) {
-    const indented = /^( {4,}|\t)/.test(line)
+    const indented = INDENT_RE.test(line)
     if (indented) {
       codeBuf.push(line)
       if (!inCode && codeBuf.length >= 2) {
@@ -733,7 +759,7 @@ const codePatterns = [
 
 function preprocessInput(raw: string): string {
   // 已有围栏代码块 → 不动
-  if (/(?:^|\n)```/.test(raw)) return raw
+  if (BACKTICK_RE.test(raw)) return raw
 
   const lines = raw.split('\n')
 
@@ -745,7 +771,7 @@ function preprocessInput(raw: string): string {
   for (const line of lines) {
     const trimmed = line.trim()
     if (trimmed === '') continue // 空行不参与判断
-    if (/^( {4,}|\t)/.test(line)) {
+    if (INDENT_RE.test(line)) {
       hasIndent = true
       indentRun++
     } else {
@@ -781,7 +807,6 @@ function parseUserContent(content: string): UserBlock[] {
   // 检测整个内容是否为 Mermaid DSL 或 JSON（无围栏包裹）
   const trimmed = content.trim()
   if (trimmed) {
-    const MERMAID_KW_RE = /^(?:flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|gantt|erDiagram|journey|gitGraph|mindmap|timeline|pie|sankey-beta|xychart-beta|quadrantChart|requirementDiagram|architecture-beta|block-beta|packet-beta|kanban|swimlane-beta|usecase-beta|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment|radar-beta|treemap-beta|venn-beta|ishikawa-beta|wardley-beta|cynefin-beta|treeView-beta|eventmodeling)\b/i
     if (MERMAID_KW_RE.test(trimmed)) {
       return [{ type: 'code', lang: 'mermaid', code: trimmed }]
     }
@@ -791,11 +816,11 @@ function parseUserContent(content: string): UserBlock[] {
   }
 
   // 第一步：用已闭合的围栏代码块（```...```）切分
-  const fenceRe = /```(\w*)\s*\r?\n([\s\S]*?)```/g
+  FENCE_CLOSE_RE.lastIndex = 0
   const rawSegments: UserBlock[] = []
   let lastIdx = 0
   let m: RegExpExecArray | null
-  while ((m = fenceRe.exec(content)) !== null) {
+  while ((m = FENCE_CLOSE_RE.exec(content)) !== null) {
     if (m.index > lastIdx) {
       rawSegments.push({ type: 'text', text: content.slice(lastIdx, m.index) })
     }
@@ -807,7 +832,7 @@ function parseUserContent(content: string): UserBlock[] {
   // 支持用户刚打完 ```lang 尚未按回车的场景
   if (lastIdx < content.length) {
     const remaining = content.slice(lastIdx)
-    const openMatch = remaining.match(/```(\w*)\s*(?:\r?\n|$)/)
+    const openMatch = remaining.match(FENCE_OPEN_RE)
     if (openMatch) {
       const openIdx = openMatch.index!
       // opening 之前的文本
@@ -864,7 +889,7 @@ const UserMessageContent = React.memo(function UserMessageContent({ content }: {
 })
 
 // ── 单条消息 ───────────────────────────────────────────────
-const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled, onContinue, continueDisabled, onDelete, deleteDisabled, onImageClick, onBranch, serverPort, speakingId, onSpeak, onStopTts }: {
+const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCopy, onEdit, onRegenerate, regenDisabled, onContinue, continueDisabled, onDelete, deleteDisabled, onImageClick, onBranch, serverPort, speakingId, onSpeak, onStopTts, registerMsgEl }: {
   msg: ChatMessage
   isStreaming?: boolean
   onCopy?: () => void
@@ -881,8 +906,14 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
   speakingId?: string | null
   onSpeak?: (id: string, text: string) => void
   onStopTts?: () => void
+  registerMsgEl?: (id: string, el: HTMLElement | null) => void
 }) {
   const isUser = msg.role === 'user'
+  const msgIdRef = useRef(msg.id)
+  msgIdRef.current = msg.id
+  const setRef = useCallback((el: HTMLDivElement | null) => {
+    registerMsgEl?.(msgIdRef.current, el)
+  }, [registerMsgEl])
   const [copied, setCopied] = useState(false)
 
   // 助手消息解析思考链片段（含 <think>...</think>）
@@ -936,7 +967,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
   if (isStreaming) {
     return (
       <>
-        <div className="chat-msg chat-msg-assistant" data-msg-id={msg.id}>
+        <div className="chat-msg chat-msg-assistant" data-msg-id={msg.id} ref={setRef}>
           <div className="chat-msg-avatar"><Bot size={14} /></div>
           <div className="chat-msg-body">
             {msg.toolCalls && msg.toolCalls.length > 0 && (
@@ -960,7 +991,7 @@ const MessageBubble = React.memo(function MessageBubble({ msg, isStreaming, onCo
 
   return (
     <>
-      <div className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-assistant'}`} data-msg-id={msg.id}>
+      <div className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-assistant'}`} data-msg-id={msg.id} ref={setRef}>
         {!isUser && (
           <div className="chat-msg-avatar">
             <Bot size={14} />
@@ -1496,18 +1527,16 @@ const MessageNav = React.memo(function MessageNav({
       setScrollRatio(scrollable > 0 ? el.scrollTop / scrollable : 0)
       setViewportRatio(clientH / totalH)
       if (totalH <= 0) { setNodes([]); return }
-      const msgEls = el.querySelectorAll<HTMLElement>('[data-msg-id]')
-      const msgMap = new Map(userMsgs.map(m => [m.id, m]))
       const newNodes: { topRatio: number; msg: ChatMessage }[] = []
       const containerRect = el.getBoundingClientRect()
-      msgEls.forEach((msgEl) => {
-        const msgId = msgEl.dataset.msgId
-        const msg = msgId ? msgMap.get(msgId) : undefined
-        if (!msg) return
+      const msgMap = new Map(userMsgs.map(m => [m.id, m]))
+      for (const [msgId, msgEl] of msgElMap) {
+        const msg = msgMap.get(msgId)
+        if (!msg) continue
         const rect = msgEl.getBoundingClientRect()
         const top = rect.top - containerRect.top + el.scrollTop
         newNodes.push({ topRatio: top / totalH, msg })
-      })
+      }
       setNodes(newNodes)
     }
     el.addEventListener('scroll', update, { passive: true })
@@ -1531,9 +1560,9 @@ const MessageNav = React.memo(function MessageNav({
   }, [])
 
   const handleClick = useCallback((msgId: string) => {
-    const el = containerRef.current?.querySelector(`[data-msg-id="${msgId}"]`)
+    const el = msgElMap.get(msgId)
     if (el && containerRef.current) {
-      const top = (el as HTMLElement).offsetTop - containerRef.current.offsetTop - 20
+      const top = el.offsetTop - containerRef.current.offsetTop - 20
       containerRef.current.scrollTop = top
     }
   }, [containerRef])
@@ -1595,11 +1624,13 @@ const MessageNav = React.memo(function MessageNav({
 
 // ── Token 用量指示器 ───────────────────────────────────────
 function ContextBar({ port }: { port?: number }) {
-  const metrics = useStore(s => {
+  const cards = useStore(s => s.cards)
+  const modelMetrics = useStore(s => s.modelMetrics)
+  const metrics = useMemo(() => {
     if (!port) return undefined
-    const card = s.cards.find(c => c.template.serverPort === port && c.status === 'running')
-    return card ? s.modelMetrics[card.template.id] : undefined
-  })
+    const card = cards.find(c => c.template.serverPort === port && c.status === 'running')
+    return card ? modelMetrics[card.template.id] : undefined
+  }, [port, cards, modelMetrics])
   const nCtx = metrics?.nCtx ?? 0
   const nPromptTokens = metrics?.nPromptTokens ?? 0
 
@@ -2091,22 +2122,48 @@ export default function ChatView() {
     return iconMap[ext] || (ext.length <= 4 ? '📄' : '📄')
   }
 
-  // 预处理：代码内容自动缩进（仅用于预览，发送时仍用原始 input）
-  const processedInput = useMemo(() => preprocessInput(input), [input])
+  // 预处理：代码内容自动缩进 + 代码块检测（单次遍历）
+  const { processedInput, hasCodeBlocks } = useMemo(() => {
+    const raw = input
+    // 已有围栏代码块 → 不动，且视为存在代码块
+    if (BACKTICK_RE.test(raw)) return { processedInput: raw, hasCodeBlocks: true }
 
-  // 只有实际存在代码块时才显示预览（避免空壳子）
-  const hasCodeBlocks = useMemo(() => {
-    // 围栏代码块：行首出现 ```
-    if (/(?:^|\n)```/.test(processedInput)) return true
-    // 缩进代码块：连续 2+ 行缩进
-    const lines = processedInput.split('\n')
-    let run = 0
+    const lines = raw.split('\n')
+    let indentRun = 0
+    let hasIndent = false
+    let hasNonIndent = false
+    let nonEmptyCount = 0
+    let matchCount = 0
+    let foundIndentedBlock = false
+
     for (const line of lines) {
-      run = /^( {4,}|\t)/.test(line) ? run + 1 : 0
-      if (run >= 2) return true
+      const trimmed = line.trim()
+      if (trimmed === '') continue
+      nonEmptyCount++
+      const indented = INDENT_RE.test(line)
+      if (indented) {
+        hasIndent = true
+        indentRun++
+        if (indentRun >= 2 && !foundIndentedBlock) foundIndentedBlock = true
+      } else {
+        hasNonIndent = true
+        indentRun = 0
+      }
+      if (codePatterns.some(p => p.test(trimmed))) matchCount++
     }
-    return false
-  }, [processedInput])
+
+    let processed = raw
+    if (!hasIndent || hasNonIndent) {
+      if (nonEmptyCount >= 2 && matchCount / nonEmptyCount > 0.3) {
+        processed = lines.map(l => '    ' + l).join('\n')
+      }
+    }
+
+    return {
+      processedInput: processed,
+      hasCodeBlocks: foundIndentedBlock || processed !== raw,
+    }
+  }, [input])
 
   const showInputPreview = hasCodeBlocks && !inputPreviewDismissed
   // 看门狗：防止流卡住导致输入框永久冻结（per-stream，支持多会话并发）
@@ -2498,13 +2555,15 @@ export default function ChatView() {
         const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
         setAtBottom(atBottom)
         if (!atBottom) setAutoScroll(false)
-        const userEls = el.querySelectorAll('.chat-msg-user[data-msg-id]')
         const containerTop = el.scrollTop
         let visible: string | null = null
-        userEls.forEach((node) => {
-          const top = (node as HTMLElement).offsetTop
-          if (top <= containerTop + 120) visible = (node as HTMLElement).dataset.msgId || null
-        })
+        const userMsgs = activeSession?.messages.filter(m => m.role === 'user') || []
+        for (const msg of userMsgs) {
+          const msgEl = msgElMap.get(msg.id)
+          if (!msgEl) continue
+          const top = msgEl.offsetTop
+          if (top <= containerTop + 120) visible = msg.id
+        }
         if (visible) setActiveNavMsgId(visible)
       }
       requestAnimationFrame(throttledScroll.current!)
@@ -2561,19 +2620,19 @@ export default function ChatView() {
   const handleExportPdf = useCallback(async () => {
     if (!activeSession) return
     try {
-      const stripThink = (t: string) => t.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/g, '').trim()
-      const msgsHtml = activeSession.messages
+      const stripThink = (t: string) => t.replace(THINK_STRIP_RE, '').replace(THINK_TAIL_STRIP_RE, '').trim()
+      const tasks = activeSession.messages
         .filter(m => m.role !== 'system' && (m.content || m.error))
-        .map(m => {
+        .map(async (m) => {
           const text = stripThink(m.content || '')
           if (!text) return ''
           const roleLabel = m.role === 'user' ? '用户' : '助手'
           const color = m.role === 'user' ? '#2563eb' : '#000'
           const textColor = m.role === 'user' ? '#333' : '#555'
-          const body = markdownToHtml(text)
+          const body = await markdownToHtmlAsync(text)
           return `<div class="msg"><span class="role" style="color:${color};font-weight:700">${roleLabel}</span><div style="color:${textColor}">${body}</div></div>`
         })
-        .join('')
+      const msgsHtml = (await Promise.all(tasks)).join('')
 
       const html = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -3221,7 +3280,7 @@ ${msgsHtml}
     }
     // 剥离 <think> 标签（UI 专用格式，发给模型会干扰其推理启动逻辑）
     const stripThink = (text: string) =>
-      text.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/g, '').trim()
+      text.replace(THINK_STRIP_RE, '').replace(THINK_TAIL_STRIP_RE, '').trim()
     let lastAsstHadText = false
     for (const m of currentSession.messages) {
       if (m.role === 'system') continue
@@ -3465,6 +3524,7 @@ ${msgsHtml}
                     speakingId={speakingId}
                     onSpeak={speak}
                     onStopTts={stopTts}
+                    registerMsgEl={registerMsgEl}
                   />
                 ))
               )

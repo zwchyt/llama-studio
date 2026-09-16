@@ -125,3 +125,6 @@ playwright.config.ts
 scripts/audit-secrets.mjs
 .gitleaks.toml
 settings.json.bak
+
+# 性能测试产物（可随时重建）
+perf-tests

@@ -11,6 +11,24 @@ export type ContentBlock =
   | { kind: 'chart'; code: string }
   | { kind: 'svg'; code: string; streaming?: boolean }
 
+const MERMAID_KEYWORDS = [
+  'flowchart', 'graph', 'sequenceDiagram', 'classDiagram-v2', 'classDiagram',
+  'stateDiagram-v2', 'stateDiagram', 'gantt', 'erDiagram', 'journey', 'gitGraph',
+  'mindmap', 'timeline', 'pie', 'sankey-beta', 'xychart-beta', 'quadrantChart',
+  'requirementDiagram', 'architecture-beta', 'block-beta', 'packet-beta', 'kanban',
+  'swimlane-beta', 'usecase-beta', 'C4Context', 'C4Container', 'C4Component',
+  'C4Dynamic', 'C4Deployment', 'zenuml', 'radar-beta', 'treemap-beta',
+  'venn-beta', 'ishikawa-beta', 'wardley-beta', 'cynefin-beta', 'treeView-beta',
+  'eventmodeling'
+]
+const kwPattern = MERMAID_KEYWORDS.map(kw => kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+const kwRe = new RegExp(`^(${kwPattern})(\\s|;|:|$)`)
+const isMermaidKw = (line: string) => kwRe.test(line)
+const MERMAID_FENCE_RE = /^```\s*mermaid\b/i
+const CHART_FENCE_RE = /^```\s*(chart|recharts|json|jsonc)\b/i
+const SVG_FENCE_RE = /^```\s*svg\b/i
+const FENCE_CLEAN_RE = /```[\s\S]*?```/g
+
 /**
  * 把助手消息正文拆成「普通文本」与「Mermaid 图表」块。
  *
@@ -48,27 +66,6 @@ export type ContentBlock =
 export function parseContentToBlocks(content: string, streaming = false): ContentBlock[] {
   if (!content) return []
 
-  const MERMAID_KEYWORDS = [
-    'flowchart', 'graph', 'sequenceDiagram', 'classDiagram-v2', 'classDiagram',
-    'stateDiagram-v2', 'stateDiagram', 'gantt', 'erDiagram', 'journey', 'gitGraph',
-    'mindmap', 'timeline', 'pie', 'sankey-beta', 'xychart-beta', 'quadrantChart',
-    'requirementDiagram', 'architecture-beta', 'block-beta', 'packet-beta', 'kanban',
-    'swimlane-beta', 'usecase-beta', 'C4Context', 'C4Container', 'C4Component',
-    'C4Dynamic', 'C4Deployment', 'zenuml', 'radar-beta', 'treemap-beta',
-    'venn-beta', 'ishikawa-beta', 'wardley-beta', 'cynefin-beta', 'treeView-beta',
-    'eventmodeling'
-  ]
-  const kwPattern = MERMAID_KEYWORDS.map(kw => kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
-  const kwRe = new RegExp(`^(${kwPattern})(\\s|;|:|$)`)
-  const isMermaidKw = (line: string) => kwRe.test(line)
-
-  // 判断一段「已取出的代码」首行是否为合法 mermaid 关键字。
-  // 用于围栏 ```mermaid 的关键字校验（防模型误标语言）。
-  const codeLooksLikeMermaid = (code: string): boolean => {
-    const firstLine = code.split('\n').find(l => l.trim() !== '') ?? ''
-    return isMermaidKw(firstLine.trim())
-  }
-
   const lines = content.split('\n')
   const blocks: ContentBlock[] = []
   let currentText = ''
@@ -82,16 +79,31 @@ export function parseContentToBlocks(content: string, streaming = false): Conten
     }
   }
 
+  // 判断一段「已取出的代码」首行是否为合法 mermaid 关键字。
+  // 用于围栏 ```mermaid 的关键字校验（防模型误标语言）。
+  const codeLooksLikeMermaid = (code: string): boolean => {
+    const firstLine = code.split('\n').find(l => l.trim() !== '') ?? ''
+    return isMermaidKw(firstLine.trim())
+  }
+
+  // 从 i 往后找下一行围栏的闭合位置；找不到返回 -1
+  const findFenceEnd = (start: number): number => {
+    for (let j = start + 1; j < lines.length; j++) {
+      if (lines[j].trim().startsWith('```')) return j
+    }
+    return -1
+  }
+
   while (i < lines.length) {
     const line = lines[i]
     const trimmed = line.trim()
 
     // ── 围栏代码块 ```mermaid ... ``` ──
     if (trimmed.startsWith('```')) {
-      const isMermaidFence = /^```\s*mermaid\b/i.test(trimmed)
-      const isChartFence = /^```\s*(chart|recharts|json|jsonc)\b/i.test(trimmed)
-      const isSvgFence = /^```\s*svg\b/i.test(trimmed)
-      const codeBlockEnd = lines.findIndex((l, idx) => idx > i && l.trim().startsWith('```'))
+      const isMermaidFence = MERMAID_FENCE_RE.test(trimmed)
+      const isChartFence = CHART_FENCE_RE.test(trimmed)
+      const isSvgFence = SVG_FENCE_RE.test(trimmed)
+      const codeBlockEnd = findFenceEnd(i)
 
       // 围栏未闭合（流式中最常见）：
       //  · chart/recharts 围栏：JSON 是「合法 JSON 的前缀」，可以容错修复出部分
@@ -199,7 +211,7 @@ export function parseContentToBlocks(content: string, streaming = false): Conten
       }
 
       flushText()
-      const code = lines.slice(i, end).join('\n').replace(/```[\s\S]*?```/g, '').trim()
+      const code = lines.slice(i, end).join('\n').replace(FENCE_CLEAN_RE, '').trim()
       if (code.length > 5) {
         blocks.push({ kind: 'mermaid', code })
         i = end

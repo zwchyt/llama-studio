@@ -197,6 +197,29 @@ function renderKatex(tex: string, displayMode: boolean): string {
   }
 }
 
+// KaTeX 结果缓存。
+// 同一段 TeX 在会话里会被反复渲染：流式期间每次 commit 重跑、历史消息因工具状态流转重渲染、
+// 同一条消息在 streaming / final 两个实例里各实例化一次。单次 renderToString 看似便宜
+// （行内 0.06ms / 块级 0.16ms），但 30KB 的公式文档一次渲染要跑 ~30 次，量就上来了。
+// 键 = displayMode + TeX；命中直接返回同一字符串，React 侧 dangerouslySetInnerHTML 的
+// __html 值不变即跳过 DOM 写入。
+// 容量有界（FIFO 淘汰）：流式期间 TeX 持续生长会不断产生新键，必须防止无限持有。
+const KATEX_CACHE_MAX = 512
+const katexCache = new Map<string, string>()
+
+function renderKatexCached(tex: string, displayMode: boolean): string {
+  const key = (displayMode ? 'D\u0000' : 'I\u0000') + tex
+  const hit = katexCache.get(key)
+  if (hit !== undefined) return hit
+  const html = renderKatex(tex, displayMode)
+  if (katexCache.size >= KATEX_CACHE_MAX) {
+    const oldest = katexCache.keys().next().value
+    if (oldest !== undefined) katexCache.delete(oldest)
+  }
+  katexCache.set(key, html)
+  return html
+}
+
 // KaTeX 在 throwOnError:false 下不抛异常，而是把**源码本身**渲染成红字回显：
 //   <span class="katex-error" style="color:#cc0000">\frac{1}{2</span>
 // 用这个类名判断本次结果是不是「错误回显」。
@@ -218,17 +241,18 @@ function isKatexError(html: string): boolean {
  *   · 流结束（loading=false）后一律以本次结果为准 → 真写错的公式仍显示红字，便于定位。
  */
 function useKatexHtml(tex: string, displayMode: boolean, loading: boolean): string {
-  const [html, setHtml] = React.useState(() => {
-    const first = renderKatex(tex, displayMode)
-    return loading && isKatexError(first) ? '' : first
-  })
-  React.useEffect(() => {
-    const next = renderKatex(tex, displayMode)
-    const usable = next !== '' && !(loading && isKatexError(next))
-    // 值相同则 React 会跳过重渲染，不必额外做 memo
-    setHtml(prev => (usable ? next : prev))
-  }, [tex, displayMode, loading])
-  return html
+  // 用 useMemo 而不是 useState + useEffect：
+  // 旧写法里 useState 的惰性初始化跑一次 renderToString，紧接着的 useEffect 又跑一次
+  // —— 同一 TeX 挂载时算两遍，且 effect 里的 setHtml 还会再排一次渲染。
+  const computed = React.useMemo(() => renderKatexCached(tex, displayMode), [tex, displayMode])
+  const lastGoodRef = React.useRef('')
+  const usable = computed !== '' && !(loading && isKatexError(computed))
+  if (usable) lastGoodRef.current = computed
+  // 与旧实现语义一致：
+  //   可用的结果（非空且不是「流式中的错误回显」）→ 直接用本次结果；
+  //   流式中的非法半截 TeX → 冻结在上一次成功的结果（没有就留空），不闪源码；
+  //   流结束后 → 一律以本次结果为准，真写错的公式仍显示红字，便于定位。
+  return usable ? computed : lastGoodRef.current
 }
 
 // 块级：交给 markstream 的 .math-block（居中 / 可横向滚动 / min-height:40px 防抖动），

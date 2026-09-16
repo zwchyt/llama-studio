@@ -9,6 +9,8 @@
 // ║ 增量：不建独立监视器——每次查询前与认知地图做哈希对账，只重分块变更文件         ║
 // ║      （删除立即摘除；单次对账文件数设上限，超出部分下次查询继续补齐）。        ║
 // ║ 索引仅驻内存（不落盘）：重启后首次查询触发重建，构建期间返回 building 状态。   ║
+// ║ 缓存：请求级 LRU 结果缓存（键 = limit + 查询串），只缓存 status=ready 的结果； ║
+// ║      索引内容变化（对账发现增删/重分块）即整体失效，不会返回陈旧结果。         ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 import { ipcMain } from 'electron'
 import { join, resolve } from 'path'
@@ -56,6 +58,7 @@ interface WsIndex {
   chunks: Map<number, Chunk>
   byFile: Map<string, number[]>       // relPath → chunk id 列表
   df: Map<string, number>             // term → 含该词的块数（增量维护）
+  postings: Map<string, number[]>     // term → chunk id 列表（倒排索引）
   totalLen: number
   fileHashes: Map<string, string>     // relPath → 已索引的内容哈希（与地图对账）
   nextId: number
@@ -65,16 +68,99 @@ interface WsIndex {
 
 const indexes = new Map<string, WsIndex>()
 
+// ── 请求级结果缓存 ──
+// Agent 探索项目时会对同一工作区反复发起相同检索（上下文被裁剪后会重问同一问题），
+// 命中时直接返回上次结果，省掉「索引对账 + BM25 全量打分 + 结果结构化克隆」。
+// 关键取舍：
+//   · 键必须含 limit —— 同一查询不同 limit 输出的是不同截断，混用会串味；
+//   · 只缓存 status=ready —— building/no-map 是瞬时状态，缓存会把「稍后可用」冻死；
+//   · 返回同一个对象引用（IPC 出站会结构化克隆、调用方只读，故不深拷贝，
+//     否则每命中一次就复制一份结果，缓存收益会被复制成本吃掉）。
+const RESULT_CACHE_MAX = 256
+
+interface ResultCache {
+  entries: Map<string, CodeSearchResponse>
+  hits: number
+  misses: number
+}
+
+const resultCaches = new Map<string, ResultCache>()
+let resultCacheEnabled = true
+
+function cacheOf(key: string): ResultCache {
+  let c = resultCaches.get(key)
+  if (!c) {
+    c = { entries: new Map(), hits: 0, misses: 0 }
+    resultCaches.set(key, c)
+  }
+  return c
+}
+
+/** LRU 读取：命中时把条目移到队尾（Map 保持插入序，故首键即最久未用） */
+function cacheGet(key: string, cacheKey: string): CodeSearchResponse | undefined {
+  const c = cacheOf(key)
+  const hit = c.entries.get(cacheKey)
+  if (hit === undefined) { c.misses++; return undefined }
+  c.entries.delete(cacheKey)
+  c.entries.set(cacheKey, hit)
+  c.hits++
+  return hit
+}
+
+function cacheSet(key: string, cacheKey: string, value: CodeSearchResponse): void {
+  const c = cacheOf(key)
+  c.entries.set(cacheKey, value)
+  while (c.entries.size > RESULT_CACHE_MAX) {
+    const oldest = c.entries.keys().next()
+    if (oldest.done) break
+    c.entries.delete(oldest.value)
+  }
+}
+
+/** 结果缓存计量（命中/未命中/当前容量），供诊断与离线性能测试读取 */
+export interface ResultCacheStats {
+  enabled: boolean
+  size: number
+  hits: number
+  misses: number
+}
+
+export function getResultCacheStats(dir: string): ResultCacheStats {
+  const c = resultCaches.get(resolve(dir))
+  return { enabled: resultCacheEnabled, size: c?.entries.size ?? 0, hits: c?.hits ?? 0, misses: c?.misses ?? 0 }
+}
+
+/**
+ * 清空结果缓存（不传 dir 则清空全部工作区）。
+ * 调用时机：索引内容变化、工作区被删除、以及离线性能测试需要在冷缓存下起测。
+ */
+export function clearResultCache(dir?: string): void {
+  if (dir === undefined) { resultCaches.clear(); return }
+  resultCaches.delete(resolve(dir))
+}
+
+/**
+ * 开关结果缓存。
+ * 生产恒为开启；关闭仅供离线性能测试构造「未优化」对照 ——
+ * 否则无法在同一份代码上分离出缓存带来的收益。
+ */
+export function setResultCacheEnabled(enabled: boolean): void {
+  resultCacheEnabled = enabled
+  if (!enabled) resultCaches.clear()
+}
+
 /** 工作区被删除/不再被任何项目引用时清理内存索引（与 codeMapService.deleteSnapshotForWorkspace 配对调用） */
 export function disposeIndexForWorkspace(dir: string): void {
-  indexes.delete(resolve(dir))
+  const key = resolve(dir)
+  indexes.delete(key)
+  resultCaches.delete(key)
 }
 
 function getOrCreateIndex(dir: string): WsIndex {
   const key = resolve(dir)
   let idx = indexes.get(key)
   if (!idx) {
-    idx = { dir: key, chunks: new Map(), byFile: new Map(), df: new Map(), totalLen: 0, fileHashes: new Map(), nextId: 1, building: false, built: false }
+    idx = { dir: key, chunks: new Map(), byFile: new Map(), df: new Map(), postings: new Map(), totalLen: 0, fileHashes: new Map(), nextId: 1, building: false, built: false }
     indexes.set(key, idx)
   }
   return idx
@@ -191,16 +277,27 @@ function chunkFile(relPath: string, content: string, skel: CodeMapFileSkeleton):
 function removeFileChunks(idx: WsIndex, relPath: string): void {
   const ids = idx.byFile.get(relPath)
   if (!ids) return
+  const removing = new Set(ids)
+  const terms = new Set<string>()
   for (const id of ids) {
     const c = idx.chunks.get(id)
     if (!c) continue
     for (const term of c.tf.keys()) {
+      terms.add(term)
       const d = (idx.df.get(term) ?? 1) - 1
       if (d <= 0) idx.df.delete(term)
       else idx.df.set(term, d)
     }
     idx.totalLen -= c.len
     idx.chunks.delete(id)
+  }
+  // 倒排表按「受影响词」各过滤一次，而不是每块过滤一遍 —— 否则热词的长表会被反复重扫
+  for (const term of terms) {
+    const arr = idx.postings.get(term)
+    if (!arr) continue
+    const next = arr.filter((x) => !removing.has(x))
+    if (next.length) idx.postings.set(term, next)
+    else idx.postings.delete(term)
   }
   idx.byFile.delete(relPath)
   idx.fileHashes.delete(relPath)
@@ -217,7 +314,13 @@ function indexFile(idx: WsIndex, relPath: string, skel: CodeMapFileSkeleton): vo
     const id = idx.nextId++
     idx.chunks.set(id, c)
     ids.push(id)
-    for (const term of c.tf.keys()) idx.df.set(term, (idx.df.get(term) ?? 0) + 1)
+    for (const term of c.tf.keys()) {
+      idx.df.set(term, (idx.df.get(term) ?? 0) + 1)
+      // id 单调递增，且重分块时先移除旧 id 再追加 → 倒排表始终保持升序
+      const arr = idx.postings.get(term)
+      if (arr) arr.push(id)
+      else idx.postings.set(term, [id])
+    }
     idx.totalLen += c.len
   }
   idx.byFile.set(relPath, ids)
@@ -240,19 +343,23 @@ async function buildIndex(idx: WsIndex, files: ReadonlyMap<string, CodeMapFileSk
   }
 }
 
-// 查询前与地图哈希对账：变更/新增文件重分块，删除文件摘除；单次上限外的余量下次补齐
-function resyncIndex(idx: WsIndex, files: ReadonlyMap<string, CodeMapFileSkeleton>): void {
+// 查询前与地图哈希对账：变更/新增文件重分块，删除文件摘除；单次上限外的余量下次补齐。
+// 返回值 = 索引内容是否发生变化 —— 结果缓存必须据此整体失效（见 handleCodeSearchQuery）。
+function resyncIndex(idx: WsIndex, files: ReadonlyMap<string, CodeMapFileSkeleton>): boolean {
+  let changed = false
   let done = 0
   for (const rel of [...idx.fileHashes.keys()]) {
-    if (!files.has(rel)) removeFileChunks(idx, rel) // 删除：立即摘除（墓碑等效）
+    if (!files.has(rel)) { removeFileChunks(idx, rel); changed = true } // 删除：立即摘除（墓碑等效）
   }
   for (const [rel, skel] of files) {
     if (done >= RESYNC_FILES_PER_QUERY) break
     if (idx.fileHashes.get(rel) !== skel.hash) {
       indexFile(idx, rel, skel)
       done++
+      changed = true
     }
   }
+  return changed
 }
 
 // ── 检索：BM25 + 精确加权 + 重排序 ──
@@ -287,8 +394,16 @@ function search(idx: WsIndex, query: string, limit: number): { hits: CodeSearchH
     qIdf.set(term, v)
     qIdfTotal += v
   }
+  // 倒排索引：按查询词收集候选 chunk id（OR 语义），只对候选集评分
+  const candidateIds = new Set<number>()
+  for (const term of qSet) {
+    const arr = idx.postings.get(term)
+    if (arr) for (const id of arr) candidateIds.add(id)
+  }
   const scored: { id: number; score: number; coverage: number }[] = []
-  for (const [id, c] of idx.chunks) {
+  for (const id of candidateIds) {
+    const c = idx.chunks.get(id)
+    if (!c) continue
     let score = 0
     let matchedIdf = 0
     for (const term of qSet) {
@@ -353,8 +468,18 @@ export function handleCodeSearchQuery(dir: string, query: string, limit?: number
     if (!idx.building) void buildIndex(idx, files).catch((err) => console.warn('[retrieval] 建索引失败：', err)) // 后台建索引，本次先返回 building
     return Promise.resolve({ status: 'building', results: [], lowConfidence: true, indexedChunks: idx.chunks.size })
   }
-  resyncIndex(idx, files) // 增量对账：只重分块哈希变更的文件
+  // 增量对账：只重分块哈希变更的文件。索引内容一旦变化，结果缓存整体失效 ——
+  // 这是缓存正确性的唯一保证（对账必须先于缓存查询）。
+  if (resyncIndex(idx, files)) clearResultCache(idx.dir)
   const cap = Math.max(1, Math.min(Math.floor(limit ?? RESULT_LIMIT_DEFAULT), RESULT_LIMIT_MAX))
-  const { hits, lowConfidence } = search(idx, String(query).slice(0, 2000), cap)
-  return Promise.resolve({ status: 'ready', results: hits, lowConfidence, indexedChunks: idx.chunks.size })
+  const q = String(query).slice(0, 2000)
+  const cacheKey = `${cap}|${q}`
+  if (resultCacheEnabled) {
+    const hit = cacheGet(idx.dir, cacheKey)
+    if (hit !== undefined) return Promise.resolve(hit)
+  }
+  const { hits, lowConfidence } = search(idx, q, cap)
+  const res: CodeSearchResponse = { status: 'ready', results: hits, lowConfidence, indexedChunks: idx.chunks.size }
+  if (resultCacheEnabled) cacheSet(idx.dir, cacheKey, res)
+  return Promise.resolve(res)
 }

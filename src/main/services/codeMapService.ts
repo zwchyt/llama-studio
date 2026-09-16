@@ -296,13 +296,20 @@ function saveSnapshot(map: WorkspaceMap): void {
     if (!existsSync(snapshotDir)) mkdirSync(snapshotDir, { recursive: true })
     const snap: Snapshot = { version: SNAPSHOT_VERSION, dir: map.dir, builtAt: map.builtAt ?? Date.now(), files: [...map.files.values()] }
     writeFileSync(snapshotPathFor(map.dir), JSON.stringify(snap))
+    snapshotCache.delete(resolve(map.dir))
   } catch { /* 快照失败不影响内存地图可用性 */ }
 }
+
+// ── 快照 mtime 缓存：避免重复 readFileSync + JSON.parse ──
+const snapshotCache = new Map<string, { mtimeMs: number; snap: Snapshot; map: Map<string, CodeMapFileSkeleton> }>()
 
 function loadSnapshot(dir: string): Map<string, CodeMapFileSkeleton> | null {
   try {
     const p = snapshotPathFor(dir)
     if (!existsSync(p)) return null
+    const st = statSync(p)
+    const cached = snapshotCache.get(resolve(dir))
+    if (cached && cached.mtimeMs === st.mtimeMs) return cached.map
     const snap = JSON.parse(readFileSync(p, 'utf-8')) as Snapshot
     if (snap.version !== SNAPSHOT_VERSION || resolve(snap.dir) !== resolve(dir)) return null
     const m = new Map<string, CodeMapFileSkeleton>()
@@ -315,6 +322,7 @@ function loadSnapshot(dir: string): Map<string, CodeMapFileSkeleton> | null {
         imports: Array.isArray(f.imports) ? f.imports : []
       })
     }
+    snapshotCache.set(resolve(dir), { mtimeMs: st.mtimeMs, snap, map: m })
     return m
   } catch { return null }
 }
@@ -334,6 +342,7 @@ export function deleteSnapshotForWorkspace(dir: string): void {
     maps.delete(key)
   }
   if (!snapshotDir) return
+  snapshotCache.delete(key)
   try { unlinkSync(snapshotPathFor(dir)) } catch { /* 不存在则忽略 */ }
 }
 
