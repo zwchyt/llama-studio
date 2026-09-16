@@ -1,6 +1,6 @@
 {
   "name": "llama-studio",
-  "version": "1.0.212",
+  "version": "1.0.213",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",
   "main": "out/main/index.js",
@@ -41,6 +41,7 @@
     "mammoth": "^1.12.0",
     "markstream-react": "^2.0.12",
     "mermaid": "^12.0.0",
+    "mermaid-formatter": "^0.3.0",
     "monaco-editor": "^0.56.0",
     "node-pty": "^1.1.0",
     "pdfjs-dist": "^3.11.174",

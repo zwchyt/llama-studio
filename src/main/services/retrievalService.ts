@@ -373,10 +373,36 @@ function fileRoleWeight(relPath: string): number {
   return 1
 }
 
+/**
+ * 查询期 scratch 缓冲：跨查询复用内部容器，避免每次检索都新建一批 Set / Map / 数组。
+ *
+ * 复用是安全的：`search()` 是同步函数、不递归、中途不让出事件循环，因此同一次调用期间
+ * 这些容器不会被另一次调用踩到；返回给调用方的只有 `hits`（每次都新建），
+ * 所以被结果缓存存下来的返回值不会被后续查询改写。
+ *
+ * `pool` 与 `scored` 分开：`scored` 每次截断到本次命中数，`pool` 只增不减，
+ * 用于复用评分槽位对象本身（避免每次查询重新分配 N 个 `{id,score,coverage}`）。
+ */
+interface SearchScratch {
+  qSet: Set<string>
+  qIdf: Map<string, number>
+  candidateIds: Set<number>
+  scored: { id: number; score: number; coverage: number }[]
+  pool: { id: number; score: number; coverage: number }[]
+  perFile: Map<string, number>
+}
+const scratch: SearchScratch = {
+  qSet: new Set(), qIdf: new Map(), candidateIds: new Set(),
+  scored: [], pool: [], perFile: new Map(),
+}
+
 function search(idx: WsIndex, query: string, limit: number): { hits: CodeSearchHit[]; lowConfidence: boolean } {
   const qTokens = tokenize(query)
   if (qTokens.length === 0) return { hits: [], lowConfidence: true }
-  const qSet = new Set(qTokens)
+  const s = scratch
+  const qSet = s.qSet
+  qSet.clear()
+  for (const t of qTokens) qSet.add(t)
   // 查询中的「完整标识符」（长度 ≥4 的原始词）用于精确加权
   const exactIdents = [...new Set(
     [...query.matchAll(/[A-Za-z_$][\w$]{3,}/g)].map(m => m[0].toLowerCase())
@@ -386,7 +412,8 @@ function search(idx: WsIndex, query: string, limit: number): { hits: CodeSearchH
   const avgdl = idx.totalLen / N
   const now = Date.now()
   // 预算每个查询词的 idf（未入库词 df=0 → idf 最大），供加权覆盖率用
-  const qIdf = new Map<string, number>()
+  const qIdf = s.qIdf
+  qIdf.clear()
   let qIdfTotal = 0
   for (const term of qSet) {
     const df = idx.df.get(term) ?? 0
@@ -395,12 +422,16 @@ function search(idx: WsIndex, query: string, limit: number): { hits: CodeSearchH
     qIdfTotal += v
   }
   // 倒排索引：按查询词收集候选 chunk id（OR 语义），只对候选集评分
-  const candidateIds = new Set<number>()
+  const candidateIds = s.candidateIds
+  candidateIds.clear()
   for (const term of qSet) {
     const arr = idx.postings.get(term)
     if (arr) for (const id of arr) candidateIds.add(id)
   }
-  const scored: { id: number; score: number; coverage: number }[] = []
+  const scored = s.scored
+  scored.length = 0
+  const pool = s.pool
+  let slot = 0
   for (const id of candidateIds) {
     const c = idx.chunks.get(id)
     if (!c) continue
@@ -423,11 +454,15 @@ function search(idx: WsIndex, query: string, limit: number): { hits: CodeSearchH
     }
     score *= fileRoleWeight(c.relPath)
     if (now - c.mtimeMs < 24 * 3600 * 1000) score *= FRESH_BOOST
-    scored.push({ id, score, coverage })
+    const cell = pool[slot] ?? (pool[slot] = { id: 0, score: 0, coverage: 0 })
+    cell.id = id; cell.score = score; cell.coverage = coverage
+    scored.push(cell)
+    slot++
   }
   scored.sort((a, b) => b.score - a.score)
   // 多样性约束：单文件最多 PER_FILE_CAP 块
-  const perFile = new Map<string, number>()
+  const perFile = s.perFile
+  perFile.clear()
   const hits: CodeSearchHit[] = []
   for (const { id, score } of scored) {
     if (hits.length >= limit) break

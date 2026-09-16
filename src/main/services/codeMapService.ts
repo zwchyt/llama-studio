@@ -16,6 +16,8 @@ import {
   existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync,
   watch, unlinkSync, type FSWatcher,
 } from 'fs'
+import { stat as statAsync, readFile as readFileAsync } from 'fs/promises'
+import { runPool, DEFAULT_POOL_CONCURRENCY } from '../ipc-helpers/pool'
 import type {
   CodeMapFileSkeleton, CodeMapStatus, CodeMapSymbol, CodeMapSymbolHit, CodeMapNeighbors,
 } from '../../shared/types'
@@ -26,7 +28,8 @@ const FILE_SIZE_CAP = 512 * 1024  // 超过此大小的文件只记指纹、不�
 const MAX_SYMBOLS_PER_FILE = 200
 const MAX_IMPORTS_PER_FILE = 100
 const SIGNATURE_CAP = 160         // 符号签名（声明行原文）截断长度
-const BATCH_SIZE = 25             // 每解析 N 个文件让出一次事件循环，避免阻塞主进程
+const PARSE_CONCURRENCY = DEFAULT_POOL_CONCURRENCY // 全量构建的解析并发度（= libuv 线程池宽度）
+
 const WATCH_DEBOUNCE_MS = 600     // 监视事件去抖窗口
 const FULL_RESCAN_RATIO = 0.3     // 单窗口变更文件占比超此值 → 放弃增量、全量重扫
 const SNAPSHOT_DEBOUNCE_MS = 5000 // 增量落盘去抖：避免每次文件保存都同步序列化整张地图
@@ -50,10 +53,33 @@ const CODE_EXTS = new Set([
 // 只记录指纹、不做符号提取的「数据/样式」类扩展名
 const NO_SYMBOL_EXTS = new Set(['.css', '.scss', '.less', '.json', '.yml', '.yaml', '.toml'])
 
+/**
+ * 符号名的三元组（trigram）倒排索引 —— 供「前缀兜底查询」使用。
+ *
+ * 背景：`codemap-symbol` 的精确命中走 symbolIndex 的哈希查找（O(1)），但前缀兜底
+ * 原先要遍历整张 symbolIndex（O(全部符号名数)）。符号量大时（数千文件 × 每文件数十符号）
+ * 每次查询都要把几万个键过一遍，是这条链路上最贵的一段。
+ *
+ * 做法：对**小写符号名**建 trigram → 键序号 的倒排表。凡以 q 为前缀的符号名必然包含
+ * q 的每一个 trigram，因此取 q 中最稀有的那个 trigram 的倒排表即为**精确超集**，
+ * 再逐个 `startsWith` 校验即可得到与全量扫描**完全一致**的候选集，
+ * 候选规模从 O(全部符号名) 降到 O(命中数)。q 长度 < 3 时无 trigram 可用，退回全量扫描。
+ *
+ * 倒排表按 symbolIndex 的插入序构建，因此候选顺序与原先的全量扫描顺序一致 ——
+ * 结果集与截断行为保持不变。
+ */
+interface SymbolTrigramIndex {
+  postings: Map<string, number[]>  // trigram → 键序号（升序，同一键内去重）
+  keys: string[]                   // 键序号 → 小写符号名（与 symbolIndex 键同序）
+}
+
+const EMPTY_TRIGRAM_INDEX: SymbolTrigramIndex = { postings: new Map(), keys: [] }
+
 interface WorkspaceMap {
   dir: string                              // resolve 后的工作区根
   files: Map<string, CodeMapFileSkeleton>  // relPath → 骨架
   symbolIndex: Map<string, CodeMapSymbolHit[]>  // 小写符号名 → 命中列表
+  symbolTrigrams: SymbolTrigramIndex       // 符号名的 trigram 倒排表（前缀查询用）
   state: CodeMapStatus['state']
   filesIndexed: number
   totalFiles: number
@@ -228,6 +254,35 @@ function parseFile(root: string, relPath: string): CodeMapFileSkeleton | null {
   return base
 }
 
+/**
+ * `parseFile` 的异步版本：语义完全一致，仅把 stat / readFile 换成 fs/promises。
+ *
+ * 全量构建走这条路径 —— 同步 readFileSync 会让 libuv 线程池形同虚设（等待无法重叠），
+ * 换成异步读之后，`runPool` 才能真正把多个文件的 I/O 等待叠在一起。
+ * 增量重解析（单文件、低频）仍用同步版本，避免为一次调用引入额外的调度开销。
+ */
+async function parseFileAsync(root: string, relPath: string): Promise<CodeMapFileSkeleton | null> {
+  const abs = join(root, relPath)
+  let st
+  try { st = await statAsync(abs) } catch { return null }
+  if (!st.isFile()) return null
+  const ext = extname(relPath).toLowerCase()
+  const base: CodeMapFileSkeleton = {
+    relPath, lang: ext, size: st.size, mtimeMs: st.mtimeMs, hash: '', symbols: [], imports: [],
+  }
+  if (st.size > FILE_SIZE_CAP) {
+    base.hash = `oversize:${st.size}:${Math.floor(st.mtimeMs)}`
+    return base
+  }
+  let content: string
+  try { content = await readFileAsync(abs, 'utf-8') } catch { return null }
+  base.hash = sha1(content)
+  const lines = content.split('\n')
+  base.symbols = extractSymbols(ext, lines)
+  base.imports = extractImports(ext, lines)
+  return base
+}
+
 // 相对 import 说明符 → 地图内 relPath（尝试补扩展名 / index 文件）
 const RESOLVE_SUFFIXES = ['', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.vue', '.svelte', '.py',
   '/index.ts', '/index.tsx', '/index.js', '/index.jsx']
@@ -257,6 +312,49 @@ function rebuildSymbolIndex(map: WorkspaceMap): void {
     }
   }
   map.symbolIndex = idx
+  map.symbolTrigrams = buildSymbolTrigramIndex(idx)
+}
+
+/** 由 symbolIndex 的键构建 trigram 倒排表（构建成本 O(符号名数 × 平均长度)，仅在地图变更时执行） */
+function buildSymbolTrigramIndex(idx: Map<string, CodeMapSymbolHit[]>): SymbolTrigramIndex {
+  const postings = new Map<string, number[]>()
+  const keys: string[] = []
+  for (const key of idx.keys()) {
+    const i = keys.length
+    keys.push(key)
+    if (key.length < 3) continue
+    for (let k = 0; k + 3 <= key.length; k++) {
+      const g = key.slice(k, k + 3)
+      let arr = postings.get(g)
+      if (!arr) { arr = []; postings.set(g, arr) }
+      // 同一个键内重复出现的 trigram 只登记一次（键按序号升序写入，末位即本键序号）
+      else if (arr[arr.length - 1] === i) continue
+      arr.push(i)
+    }
+  }
+  return { postings, keys }
+}
+
+/**
+ * 前缀候选：trigram 倒排表 → 精确超集 → `startsWith` 校验。
+ * 返回 `null` 表示查询串过短、索引不可用，调用方应退回全量扫描。
+ */
+function prefixKeysViaTrigram(map: WorkspaceMap, q: string): string[] | null {
+  const t = map.symbolTrigrams
+  if (q.length < 3) return null
+  let best: number[] | null = null
+  for (let k = 0; k + 3 <= q.length; k++) {
+    const arr = t.postings.get(q.slice(k, k + 3))
+    if (!arr) return []  // 任一 trigram 都不存在 → 不可能有前缀命中
+    if (best === null || arr.length < best.length) best = arr
+  }
+  if (best === null) return null
+  const out: string[] = []
+  for (const i of best) {
+    const key = t.keys[i]!
+    if (key.startsWith(q)) out.push(key)
+  }
+  return out
 }
 
 // ── 目录遍历：收集候选文件（带容量护栏）──
@@ -353,7 +451,7 @@ function getOrCreate(dir: string): WorkspaceMap {
   let m = maps.get(key)
   if (!m) {
     m = {
-      dir: key, files: new Map(), symbolIndex: new Map(),
+      dir: key, files: new Map(), symbolIndex: new Map(), symbolTrigrams: EMPTY_TRIGRAM_INDEX,
       state: 'idle', filesIndexed: 0, totalFiles: 0, fromSnapshot: false,
       building: false, watcher: null, pendingChanges: new Set(), debounceTimer: null,
       snapshotTimer: null,
@@ -376,7 +474,8 @@ async function buildMap(dir: string): Promise<void> {
     const prev = loadSnapshot(map.dir)
     map.fromSnapshot = !!prev
     const next = new Map<string, CodeMapFileSkeleton>()
-    let batch = 0
+    // 阶段一：快照校验（同步 stat，命中即复用旧骨架，零读盘零解析）
+    const toParse: string[] = []
     for (const rel of rels) {
       // 快照校验：mtime + size 未变 → 直接复用旧骨架，跳过读盘与解析
       const old = prev?.get(rel) ?? map.files.get(rel)
@@ -390,11 +489,17 @@ async function buildMap(dir: string): Promise<void> {
           }
         } catch { continue }
       }
-      const skel = parseFile(map.dir, rel)
+      toParse.push(rel)
+    }
+    // 阶段二：并发池解析（异步读 + 解析）
+    // 串行 await 时同一时刻只有一个 I/O 在途；有界并发池 + 动态共享队列把等待重叠起来，
+    // 宽度取 libuv 线程池默认值（超过该宽度吞吐进入平台期）。事件循环的让出由 await 自然完成。
+    const parseOne = async (rel: string): Promise<void> => {
+      const skel = await parseFileAsync(map.dir, rel)
       if (skel) next.set(rel, skel)
       map.filesIndexed++
-      if (++batch >= BATCH_SIZE) { batch = 0; await new Promise<void>(r => setImmediate(r)) }
     }
+    await runPool(toParse, parseOne, PARSE_CONCURRENCY)
     map.files = next
     resolveImports(map)
     rebuildSymbolIndex(map)
@@ -531,6 +636,7 @@ export function registerCodeMapIpc(appRoot: string): void {
   })
 
   // 符号查询：精确命中优先，余量按前缀补足
+  // 前缀兜底走 trigram 倒排索引（候选集 O(命中数)），不再遍历整张 symbolIndex
   ipcMain.handle('codemap-symbol', (_e, dir: string, name: string, limit?: number): CodeMapSymbolHit[] => {
     const map = getOrCreate(dir)
     const cap = Math.max(1, Math.min(limit ?? 20, 100))
@@ -538,9 +644,20 @@ export function registerCodeMapIpc(appRoot: string): void {
     if (!q) return []
     const out: CodeMapSymbolHit[] = [...(map.symbolIndex.get(q) ?? [])]
     if (out.length < cap) {
-      for (const [key, hits] of map.symbolIndex) {
-        if (out.length >= cap) break
-        if (key !== q && key.startsWith(q)) out.push(...hits.slice(0, cap - out.length))
+      const keys = prefixKeysViaTrigram(map, q)
+      if (keys) {
+        // 索引命中：候选已按 symbolIndex 的键序给出，顺序与原先的全量扫描一致
+        for (const key of keys) {
+          if (out.length >= cap) break
+          if (key === q) continue // 精确项已在上方加入
+          out.push(...(map.symbolIndex.get(key) ?? []).slice(0, cap - out.length))
+        }
+      } else {
+        // 查询串 < 3 字符：无 trigram 可用，退回全量扫描
+        for (const [key, hits] of map.symbolIndex) {
+          if (out.length >= cap) break
+          if (key !== q && key.startsWith(q)) out.push(...hits.slice(0, cap - out.length))
+        }
       }
     }
     return out.slice(0, cap)

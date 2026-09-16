@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, ReactNode } from 'react'
+import { formatMermaid } from 'mermaid-formatter'
 import './mermaid.css'
 
 type MermaidModule = typeof import('mermaid')
@@ -59,7 +60,14 @@ function normalizeCode(raw: string | undefined | null): string {
     trimmed,
   )
   const code = (fencedCodeBlock?.[1] ?? trimmed).trim()
-  return normalizeMermaidKeyword(code)
+  // 格式化：自动缩进嵌套块（group/loop/alt 等）、规范化箭头间距
+  let formatted: string
+  try {
+    formatted = formatMermaid(code)
+  } catch {
+    formatted = code
+  }
+  return normalizeMermaidKeyword(formatted)
 }
 
 // 关键词规范化：模型常输出错误的 mermaid 关键字，在此统一修正

@@ -14,7 +14,8 @@ import { ipcMain } from 'electron'
 import { join, resolve } from 'path'
 import { createHash, randomUUID } from 'crypto'
 import { anchorAbsWithin, sanitizeAnchorPath } from '../ipc-helpers/security'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, unlinkSync } from 'fs'
+import { existsSync, readFileSync, statSync } from 'fs'
+import { appendFile, writeFile, rename, mkdir as mkdirAsync, unlink as unlinkAsync } from 'fs/promises'
 import type {
   AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection,
 } from '../../shared/types'
@@ -29,6 +30,7 @@ const ARCHIVE_AT_CONTRADICTIONS = 2  // 矛盾标记累计达此值 → 自动�
 const ANCHOR_READ_CAP = 256 * 1024   // 锚点符号校验时最多读取的文件字节数
 const DEFAULT_CONF_USER = 0.9        // 用户来源条目默认置信度
 const DEFAULT_CONF_AGENT = 0.6      // agent 归纳条目默认置信度
+const JOURNAL_COMPACT_AFTER = 200   // 增量 journal 行数达此值 → 异步整库压实（防 journal 无限增长）
 
 interface MemoryFile {
   version: number
@@ -41,7 +43,8 @@ let memoryDir = ''
 
 /**
  * 删除指定工作区的项目记忆（工作区不再被任何项目/会话引用时调用）。
- * 同时丢弃内存缓存与待落盘定时器，防止去抖落盘把刚删的文件写回来。
+ * 同时丢弃内存缓存与待落盘定时器，防止去抖落盘把刚删的文件写回来；
+ * 删除动作排进写入队列尾部，保证「先落盘、后删除」，不会出现删完又被在途写入写回。
  */
 export function deleteMemoryForWorkspace(dir: string): void {
   if (!memoryDir) return
@@ -49,7 +52,11 @@ export function deleteMemoryForWorkspace(dir: string): void {
   const timer = pendingSaves.get(key)
   if (timer) { clearTimeout(timer); pendingSaves.delete(key) }
   stores.delete(key)
-  try { unlinkSync(join(memoryDir, `${sha1(key)}.json`)) } catch { /* 不存在则忽略 */ }
+  journalLines.delete(key)
+  void enqueueWrite(key, async () => {
+    try { await unlinkAsync(journalPathFor(dir)) } catch { /* 不存在则忽略 */ }
+    try { await unlinkAsync(storePathFor(dir)) } catch { /* 不存在则忽略 */ }
+  })
 }
 
 // ── 基础工具 ──
@@ -60,6 +67,11 @@ function sha1(text: string): string {
 
 function storePathFor(dir: string): string {
   return join(memoryDir, `${sha1(resolve(dir).toLowerCase())}.json`)
+}
+
+/** 增量 journal：与整库快照同目录、同哈希名，仅后缀不同（JSONL，一行一次增量写） */
+function journalPathFor(dir: string): string {
+  return join(memoryDir, `${sha1(resolve(dir).toLowerCase())}.jsonl`)
 }
 
 function loadStore(dir: string): MemoryFile {
@@ -73,23 +85,101 @@ function loadStore(dir: string): MemoryFile {
       const raw = JSON.parse(readFileSync(p, 'utf-8')) as MemoryFile
       if (raw?.version === STORE_VERSION && Array.isArray(raw.entries)) store = raw
     }
+    replayJournal(store)
   } catch { /* 损坏的存储文件按空库处理，不阻塞对话 */ }
   stores.set(key, store)
   return store
 }
 
-function saveStore(store: MemoryFile): void {
-  try {
-    if (!existsSync(memoryDir)) mkdirSync(memoryDir, { recursive: true })
-    writeFileSync(storePathFor(store.dir), JSON.stringify(store, null, 2), 'utf-8')
-  } catch (e) {
-    console.warn('[memoryStore] 落盘失败：', e)
+/**
+ * 回放增量 journal（按 id 覆盖 / 追加）。
+ * 回放是**幂等**的 —— 同一条目重复应用结果相同，因此「压实已写盘但 journal 未清空」
+ * 或「进程在压实中途退出」都不会污染状态。
+ */
+function replayJournal(store: MemoryFile): void {
+  const jp = journalPathFor(store.dir)
+  if (!existsSync(jp)) return
+  let text: string
+  try { text = readFileSync(jp, 'utf-8') } catch { return }
+  for (const line of text.split('\n')) {
+    if (!line) continue
+    try {
+      const rec = JSON.parse(line) as { v?: number; entries?: AgentMemoryEntry[] }
+      if (rec?.v !== STORE_VERSION || !Array.isArray(rec.entries)) continue
+      for (const e of rec.entries) {
+        if (!e || typeof e.id !== 'string') continue
+        const i = store.entries.findIndex(x => x.id === e.id)
+        if (i >= 0) store.entries[i] = e
+        else store.entries.push(e)
+      }
+    } catch { /* 单行损坏不影响其余记录 */ }
   }
 }
 
-// LRU 时钟落盘去抖：注入发生在每条用户消息的热路径上，同步整库写盘在条目多时有感。
+// ── 异步增量落盘 ──
+//
+// 写入分两级，全部走 fs/promises —— 主进程不再有「整库 readFileSync/writeFileSync」
+// 阻塞事件循环（这正是复合事务无法重叠等待的根因）：
+//   1) 增量：把本次 upsert 触及的条目追加到 journal（JSONL），代价 O(变更条目数)，
+//      而不是 O(整库条目数)；
+//   2) 压实：journal 行数达阈值时整库原子落盘（tmp + rename）并清空 journal。
+// 同一 store 的写操作按提交顺序串行排队，保证「追加 → 压实 → 追加」不被打乱；
+// 回放的幂等性则兜住压实中途崩溃的边界。
+const writeQueues = new Map<string, Promise<void>>()
+const journalLines = new Map<string, number>()
+
+function enqueueWrite(key: string, task: () => Promise<void>): Promise<void> {
+  const prev = writeQueues.get(key) ?? Promise.resolve()
+  const next = prev.then(task, task).catch(e => {
+    console.warn('[memoryStore] 落盘失败：', e)
+  })
+  writeQueues.set(key, next)
+  return next
+}
+
+/** 整库原子落盘 + 清空 journal（压实，以及语义重要的低频写路径） */
+async function compactStore(store: MemoryFile): Promise<void> {
+  if (!memoryDir) return
+  if (!existsSync(memoryDir)) await mkdirAsync(memoryDir, { recursive: true })
+  const p = storePathFor(store.dir)
+  const tmp = `${p}.tmp`
+  await writeFile(tmp, JSON.stringify(store, null, 2), 'utf-8')
+  await rename(tmp, p)   // 原子替换：读者永远看不到写了一半的库
+  await writeFile(journalPathFor(store.dir), '', 'utf-8')
+  journalLines.set(resolve(store.dir).toLowerCase(), 0)
+}
+
+/** 全量落盘（异步、排队）：等它 resolve 才算真正持久化 */
+function saveStore(store: MemoryFile): Promise<void> {
+  return enqueueWrite(resolve(store.dir).toLowerCase(), () => compactStore(store))
+}
+
+/**
+ * 异步增量写：只追加本次变更的条目，不重写整库。
+ * 超过阈值时在同一队列内顺带压实，因此 journal 不会无限增长。
+ */
+function persistIncremental(store: MemoryFile, touched: readonly AgentMemoryEntry[]): Promise<void> {
+  if (touched.length === 0) return Promise.resolve()
+  const key = resolve(store.dir).toLowerCase()
+  return enqueueWrite(key, async () => {
+    if (!memoryDir) return
+    if (!existsSync(memoryDir)) await mkdirAsync(memoryDir, { recursive: true })
+    const line = JSON.stringify({ v: STORE_VERSION, entries: touched })
+    await appendFile(journalPathFor(store.dir), `${line}\n`, 'utf-8')
+    const n = (journalLines.get(key) ?? 0) + 1
+    journalLines.set(key, n)
+    if (n >= JOURNAL_COMPACT_AFTER) await compactStore(store)
+  })
+}
+
+/** 等待该工作区已排队的写入全部落盘（「返回成功即已持久化」的语义） */
+async function flushWrites(dir: string): Promise<void> {
+  await (writeQueues.get(resolve(dir).toLowerCase()) ?? Promise.resolve())
+}
+
+// LRU 时钟落盘去抖：注入发生在每条用户消息的热路径上，整库写盘在条目多时有感。
 // lastUsedAt 仅影响淘汰排序，丢失最近几秒的刷新无实质影响，故延迟合并写入。
-// 其余写路径（沉淀/矛盾/归档）语义重要且低频，仍保持同步落盘。
+// 其余写路径（沉淀走增量 journal、矛盾/归档走整库压实）语义重要且低频，立即排队落盘。
 const pendingSaves = new Map<string, NodeJS.Timeout>()
 const SAVE_DEBOUNCE_MS = 3000
 function scheduleSaveStore(store: MemoryFile): void {
@@ -98,7 +188,7 @@ function scheduleSaveStore(store: MemoryFile): void {
   if (prev) clearTimeout(prev)
   pendingSaves.set(key, setTimeout(() => {
     pendingSaves.delete(key)
-    saveStore(store)
+    void saveStore(store)
   }, SAVE_DEBOUNCE_MS))
 }
 
@@ -161,6 +251,7 @@ function upsertEntries(dir: string, candidates: AgentMemoryCandidate[]): AgentMe
   const now = Date.now()
   let added = 0
   let merged = 0
+  const touched: AgentMemoryEntry[] = []   // 本次变更涉及的条目 —— 增量 journal 只记这些
   for (const cand of candidates) {
     const content = (cand.content || '').trim().slice(0, CONTENT_CAP)
     if (!content) continue
@@ -183,8 +274,9 @@ function upsertEntries(dir: string, candidates: AgentMemoryCandidate[]): AgentMe
       if (anchorPath) { best.anchorPath = anchorPath; best.anchorSymbol = cand.anchorSymbol }
       if (cand.source === 'user') best.source = 'user' // 用户确认过的结论升格来源
       merged++
+      touched.push(best)
     } else {
-      store.entries.push({
+      const entry: AgentMemoryEntry = {
         id: randomUUID(),
         category: cand.category,
         content,
@@ -198,12 +290,18 @@ function upsertEntries(dir: string, candidates: AgentMemoryCandidate[]): AgentMe
         contradictions: 0,
         ...(anchorPath ? { anchorPath } : {}),
         ...(cand.anchorSymbol ? { anchorSymbol: cand.anchorSymbol } : {}),
-      })
+      }
+      store.entries.push(entry)
       added++
+      touched.push(entry)
     }
   }
   const evicted = evictIfNeeded(store)
-  if (added || merged || evicted) saveStore(store)
+  if (added || merged || evicted) {
+    // 淘汰会改写多条既有条目的 archived 字段，逐条记增量不划算 —— 直接整库压实
+    if (evicted) void saveStore(store)
+    else void persistIncremental(store, touched)
+  }
   return { added, merged, evicted, total: store.entries.filter(e => !e.archived).length }
 }
 
@@ -341,7 +439,7 @@ function markContradiction(dir: string, probeText: string): { marked: number; ar
       console.log(`[memoryStore] 矛盾归档：[${e.category}] ${e.content.slice(0, 60)}`)
     }
   }
-  if (marked) saveStore(store)
+  if (marked) void saveStore(store)
   return { marked, archived }
 }
 
@@ -351,10 +449,14 @@ export function registerMemoryStoreIpc(appRoot: string): void {
   memoryDir = join(appRoot, 'Agent session', 'memory')
 
   // 沉淀写入：候选条目去重合并 / 新增，附带容量淘汰
-  ipcMain.handle('memstore-upsert', (_e, dir: string, candidates: AgentMemoryCandidate[]): AgentMemoryUpsertResult => {
+  // 异步 handler：本次落盘（增量追加，通常只有几百字节）完成后才回执，
+  // 语义仍是「返回即已持久化」，但等待期间事件循环不被同步 I/O 占住。
+  ipcMain.handle('memstore-upsert', async (_e, dir: string, candidates: AgentMemoryCandidate[]): Promise<AgentMemoryUpsertResult> => {
     try {
       if (!dir || !Array.isArray(candidates) || candidates.length === 0) return { added: 0, merged: 0, evicted: 0, total: 0 }
-      return upsertEntries(dir, candidates)
+      const res = upsertEntries(dir, candidates)
+      await flushWrites(dir)
+      return res
     } catch (e) {
       console.warn('[memoryStore] upsert 失败：', e)
       return { added: 0, merged: 0, evicted: 0, total: 0 }
@@ -390,14 +492,14 @@ export function registerMemoryStoreIpc(appRoot: string): void {
   })
 
   // 用户裁决归档（软删除，留审计）
-  ipcMain.handle('memstore-archive', (_e, dir: string, id: string): { success: boolean } => {
+  ipcMain.handle('memstore-archive', async (_e, dir: string, id: string): Promise<{ success: boolean }> => {
     try {
       const store = loadStore(dir)
       const entry = store.entries.find(e => e.id === id)
       if (!entry) return { success: false }
       entry.archived = true
       entry.updatedAt = Date.now()
-      saveStore(store)
+      await saveStore(store)
       return { success: true }
     } catch {
       return { success: false }

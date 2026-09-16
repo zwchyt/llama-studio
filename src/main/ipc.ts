@@ -26,6 +26,7 @@ import { registerKnowledgeIpc } from './services/knowledgeService'
 import { initTokenLedger, appendTokenUsage, readTokenUsage, clearTokenUsage } from './tokenLedger'
 import { diagnoseModelFailure } from './diagnose'
 import { confineRead, validateUrlAsync } from './ipc-helpers/security'
+import { runPool } from './ipc-helpers/pool'
 
 let ptyModule: typeof ptyNs | null = null
 async function getPty(): Promise<typeof ptyNs> {
@@ -177,16 +178,12 @@ async function findBackendExecutable(dir: string, depth = 0): Promise<string | n
   const subdirs = files.filter(f => f.isDirectory())
   if (subdirs.length === 0) return null
   const results: (string | null)[] = new Array(subdirs.length)
-  let next = 0
-  const workers = Array.from({ length: Math.min(2, subdirs.length) }, async () => {
-    for (;;) {
-      const idx = next++
-      if (idx >= subdirs.length) return
-      const sub = await findBackendExecutable(join(dir, subdirs[idx].name), depth + 1)
-      if (sub) results[idx] = join(subdirs[idx].name, sub)
-    }
-  })
-  await Promise.all(workers)
+  // 有界并发池（动态共享队列）：子目录探测是纯 I/O 等待，并发 2 路即可重叠；
+  // 宽度刻意压低 —— 该探测发生在启动热路径上，避免与首屏其它 I/O 抢 libuv 线程池。
+  await runPool(subdirs, async (sub, idx) => {
+    const found = await findBackendExecutable(join(dir, sub.name), depth + 1)
+    if (found) results[idx] = join(sub.name, found)
+  }, 2)
   return results.find(r => r) ?? null
 }
 

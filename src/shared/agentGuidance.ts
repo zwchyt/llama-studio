@@ -41,6 +41,7 @@ export const PI_MERMAID_DSL_GUIDANCE: string[] = [
   '## Mermaid DSL 输出格式',
   '- 输出 ```mermaid 代码块（原生 Mermaid DSL）。',
   '- Mermaid DSL 必须以图表关键字开头，用真实换行。',
+  '- 每条声明（participant/arrow/note 等）单独一行；group/loop/alt 等嵌套块内缩进 2 格。',
   '- 桑基图(sankey-beta)用 CSV 格式（"来源","目标"，值），不要用 --> 箭头',
   '- 方块图(block-beta)宽度写在标签后面：a["前端"]:2（不是 a:2["前端"]）',
   '',
