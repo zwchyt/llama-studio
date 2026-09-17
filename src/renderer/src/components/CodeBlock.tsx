@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import hljs from 'highlight.js/lib/common'
 import { Check, Copy, ChevronDown } from 'lucide-react'
+import { WindowedText } from './agent-code/WindowedText'
 
 /**
  * 代码块组件：用 highlight.js 高亮，带语言标签、复制按钮和折叠/展开。
@@ -23,6 +24,14 @@ interface CodeBlockProps {
   isStreaming?: boolean
 }
 
+// 超过该行数即切换为行窗口（仅完成态）。取值理由：阈值以下逐行行号列 + 代码列的成本可接受，
+// 且能保留原有折行视觉；阈值以上是「上千个 span + 两个完整行列表」的固定成本，展开即卡。
+export const CODE_WINDOW_LINES = 300
+// 与 .chat-code-window 的 12.5px × 1.6 对齐（见 styles/agent-code.css 末尾
+// 「长内容行窗口：固定行高契约」）
+const CODE_WINDOW_ROW_HEIGHT = 20
+const CODE_WINDOW_VIEW_HEIGHT = 420
+
 export default function CodeBlock({ language, value, showLineNumbers, isStreaming }: CodeBlockProps) {
   const codeRef = useRef<HTMLElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -35,8 +44,20 @@ export default function CodeBlock({ language, value, showLineNumbers, isStreamin
   // 只高亮视口附近的块：视口内通常 2~3 块，其余留纯文本，滚动到时再补。
   const [inView, setInView] = useState(false)
 
+  // 长块降级判定必须放在下面两个 effect 之前：依赖数组在 render 期间求值，晚声明会触发 TDZ。
+  const lines = useMemo(() => value.split('\n'), [value])
+  const lineCount = lines.length
+  // 长块降级：整块 hljs 高亮是「一个 HTML 字符串塞进一个 <code>」，无法按行窗口化；逐行 hljs
+  // 又会因跨行字符串 / 注释 / 模板串错色。所以超阈值的完成态块改为纯文本行窗口，头部标注已
+  // 省略高亮，复制仍用完整原文。阈值以下完全走原路径（含语法高亮与折行）。
+  const windowed = !isStreaming && lineCount > CODE_WINDOW_LINES
+  // 流式态：逐行 span 只保证「只更新最后一行」，不保证 DOM 有界——行数持续增长时节点线性增加。
+  // 超阈值同样改走行窗口 + 贴底跟随；阈值以下保留逐行 span（对短块它更省，且能逐行着色）。
+  const streamingWindowed = !!isStreaming && lineCount > CODE_WINDOW_LINES
+  const windowedAny = windowed || streamingWindowed
+
   useEffect(() => {
-    if (isStreaming) return
+    if (isStreaming || windowed) return
     const el = rootRef.current
     if (!el) return
     // 无 IntersectionObserver（测试环境）时退化为立即高亮，保持旧行为
@@ -50,11 +71,11 @@ export default function CodeBlock({ language, value, showLineNumbers, isStreamin
     )
     io.observe(el)
     return () => io.disconnect()
-  }, [isStreaming])
+  }, [isStreaming, windowed])
 
-  // 完成态：单次 hljs 高亮（值已稳定，无需防抖）。流式态：跳过（逐行 span 已保证可见）。
+  // 完成态：单次 hljs 高亮（值已稳定，无需防抖）。流式态 / 长块窗口态：跳过。
   useEffect(() => {
-    if (isStreaming || !inView) return
+    if (isStreaming || windowed || !inView) return
     const el = codeRef.current
     if (!el) return
     const t0 = performance.now()
@@ -74,9 +95,7 @@ export default function CodeBlock({ language, value, showLineNumbers, isStreamin
     }
     const dt = performance.now() - t0
     if (dt > 10) console.debug(`[stream-diag] hljs ${dt.toFixed(1)}ms lang=${language || 'auto'} chars=${value.length}`)
-  }, [value, language, isStreaming, inView])
-
-  const lines = useMemo(() => value.split('\n'), [value])
+  }, [value, language, isStreaming, inView, windowed])
 
   const handleCopy = () => {
     navigator.clipboard.writeText(value)
@@ -85,7 +104,6 @@ export default function CodeBlock({ language, value, showLineNumbers, isStreamin
   }
 
   const langLabel = language || 'text'
-  const lineCount = lines.length
 
   return (
     <div ref={rootRef} className={`chat-code-block ${collapsed ? 'collapsed' : ''}`}>
@@ -100,32 +118,51 @@ export default function CodeBlock({ language, value, showLineNumbers, isStreamin
             <ChevronDown size={13} className={`agent-tool-chev ${collapsed ? '' : 'open'}`} />
           </button>
           <span className="chat-code-lang">{langLabel}</span>
-          {showLineNumbers && <span className="chat-code-line-count">{lineCount} 行</span>}
+          {(showLineNumbers || windowedAny) && (
+            <span className="chat-code-line-count">
+              {lineCount} 行{windowed ? ' · 窗口渲染，已省略语法高亮' : streamingWindowed ? ' · 流式窗口渲染' : ''}
+            </span>
+          )}
         </div>
         <button className="chat-code-copy" onClick={handleCopy}>
           {copied ? <Check size={12} /> : <Copy size={12} />}
           {copied ? '已复制' : '复制'}
         </button>
       </div>
-      <div className={`chat-code-body ${showLineNumbers ? 'with-lines' : ''} ${collapsed ? 'hidden' : ''}`}>
-        {showLineNumbers && (
-          <pre className="chat-code-line-nums" aria-hidden="true">
-            {lines.map((_, i) => (
-              <span key={i}>{i + 1}</span>
-            ))}
-          </pre>
+      <div className={`chat-code-body ${showLineNumbers && !windowedAny ? 'with-lines' : ''} ${collapsed ? 'hidden' : ''}`}>
+        {windowedAny ? (
+          <WindowedText
+            text={value}
+            lineNumbers
+            followTail={streamingWindowed}
+            rowHeight={CODE_WINDOW_ROW_HEIGHT}
+            viewHeight={CODE_WINDOW_VIEW_HEIGHT}
+            className="agent-window chat-code-window"
+            rowAttr="data-code-row"
+            ariaLabel={`代码块（${streamingWindowed ? '流式' : ''}窗口渲染，共 ${lineCount} 行）`}
+          />
+        ) : (
+          <>
+            {showLineNumbers && (
+              <pre className="chat-code-line-nums" aria-hidden="true">
+                {lines.map((_, i) => (
+                  <span key={i}>{i + 1}</span>
+                ))}
+              </pre>
+            )}
+            <pre className="chat-code-pre">
+              {isStreaming ? (
+                <code className={`code-streaming language-${langLabel}`}>
+                  {lines.map((ln, i) => (
+                    <span key={i}>{ln || '\u00A0'}</span>
+                  ))}
+                </code>
+              ) : (
+                <code ref={codeRef} className={`hljs language-${langLabel}`} />
+              )}
+            </pre>
+          </>
         )}
-        <pre className="chat-code-pre">
-          {isStreaming ? (
-            <code className={`code-streaming language-${langLabel}`}>
-              {lines.map((ln, i) => (
-                <span key={i}>{ln || '\u00A0'}</span>
-              ))}
-            </code>
-          ) : (
-            <code ref={codeRef} className={`hljs language-${langLabel}`} />
-          )}
-        </pre>
       </div>
     </div>
   )

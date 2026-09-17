@@ -5214,10 +5214,37 @@
 /* 展开/收起动画：裁剪层（无 padding/border，仅 max-height 动画）+ 内容层（padding/字体/排版）分离，
    避免在带 padding/border 的元素上做 max-height 动画导致逐帧盒模型重排卡顿。
    像素值由组件按 scrollHeight 动态设置（展开→内容高度，收起→0），过渡结束后展开态置 none 自适应后续高度。 */
+/* ══════════════════════════════════════════════════════════════════════════════
+   思考链展开/收起节奏
+   ──────────────────────────────────────────────────────────────────────────────
+   展开与收起共用下面这一组变量，两个方向速度绝对一致（此前两边各自写死 0.3s，
+   虽然数值相同，但收起时「外层 + 链内每个折叠块」会同时各跑一遍过渡，两层叠加
+   使体感速度约为展开的两倍——那是节奏问题，不是 CSS 数值问题）。
+   JS 侧 useCollapseAnimation 的 COLLAPSE_DURATION_MS 必须与这里保持一致：
+   展开目标追踪的收尾判定晚于过渡时长，否则会在过渡中途落成 none、看起来跳一下。 */
+:root {
+  /* 高度揭示曲线必须「匀速感」而不是「快出」。
+     原来用 cubic-bezier(0.32, 0.72, 0, 1) 是强 ease-out——t=0.2 时已经走完约七成高度，
+     视觉上就是「一下弹开」，这正是「闪现」感的来源，跟时长无关。
+     换成标准 ease-in-out 后，揭示在整段时长里均匀推进，读起来才是「从上到下缓慢显现」。 */
+  --think-collapse-dur: 0.5s;
+  --think-collapse-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  /* 内容层入场淡入时长：刻意短于高度过渡，让字先到位、高度再收尾 */
+  --think-fade-dur: 0.3s;
+}
+
+/* 内容层入场淡入。用 @keyframes 而不是 transition：内容层是随展开才挂载的，
+   挂载时就已经是终态，transition 找不到「起始态」，只有入场动画能在挂载时自动播放。 */
+@keyframes agentThinkReveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 .agent-think-anim {
   max-height: 0;
   overflow: hidden;
-  transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: max-height var(--think-collapse-dur, 0.5s) var(--think-collapse-ease, cubic-bezier(0.4, 0, 0.2, 1));
+  animation: agentThinkReveal var(--think-fade-dur, 0.3s) ease-out both;
 }
 
 /* 内容层：左侧细竖线 + 缩进替代原卡片分隔线（与工具块展开体一致），
@@ -5276,11 +5303,12 @@
   color: var(--text-secondary);
 }
 
-/* 折叠动画：与容器级 .agent-think-anim 同构的裁剪层 + 内容层分离方案 */
+/* 折叠动画：与容器级 .agent-think-anim 同构的裁剪层 + 内容层分离方案，
+   时长/曲线同样取自 --think-collapse-dur / --think-collapse-ease，保证与外层一致 */
 .agent-think-fold-anim {
   max-height: 0;
   overflow: hidden;
-  transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: max-height var(--think-collapse-dur, 0.5s) var(--think-collapse-ease, cubic-bezier(0.4, 0, 0.2, 1));
 }
 
 /* 折叠体内容层：纵向高度上限（约 14 行）——单段思考过长（六七十行）不再撑长整条
@@ -5369,9 +5397,10 @@
   opacity: 0.7;
 }
 
-/* 思考链流式文本：逐行 span（稳定 key → 只更新最后一行，paint 区域收缩到最后一行），
-   与正文代码块同构，消除思考链每 ~120ms 全量 markdown 重解析 + 整块重绘的卡顿。
-   字号/行高/颜色继承 .agent-think-body；思考结束后由 AgentMarkdown 接管完整排版。 */
+/* 思考文本（预览 / 完整窗口回退）：保留换行的纯文本块，字号/行高/颜色继承
+   .agent-think-body；内容长度与滚动上限由外层 .agent-think-fold-body 与
+   ThinkTextContent 的预览截断（THINK_PREVIEW_LINES / THINK_PREVIEW_CHARS）共同约束，
+   不再是「每行一个 span」的逐行渲染。 */
 .agent-think-stream {
   white-space: pre-wrap;
   word-break: break-word;
@@ -5379,9 +5408,75 @@
   min-width: 0;
 }
 
-.agent-think-stream-line {
-  display: block;
-  min-height: 1em;
+/* 思考文本默认预览：与流式文本同视觉，顶部控制行提供「查看完整思考」与复制 */
+.agent-think-text-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.agent-think-text-controls .btn-ghost {
+  color: var(--text-secondary);
+}
+
+.agent-think-text-controls span {
+  margin-right: auto;
+}
+
+/* 通用长文本行窗口（思考完整文本 / 工具结果共用）：固定高内滚，仅挂载视口附近行 */
+.agent-window {
+  overflow: auto;
+  font: inherit;
+  color: inherit;
+  scrollbar-width: thin;
+}
+
+.agent-window::-webkit-scrollbar {
+  width: 6px;
+}
+
+.agent-window::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+}
+
+.agent-window-row {
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-window-num {
+  display: inline-block;
+  width: 38px;
+  padding-right: 8px;
+  margin-right: 8px;
+  text-align: right;
+  color: var(--text-muted);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 思考完整文本窗口：与上方思考体用虚线分隔 */
+.agent-think-window {
+  border-top: 1px dashed var(--border);
+  padding: 4px 0;
+}
+
+/* 工具结果行窗口：沿用 .agent-tool-lined 的外观（底色/边框/等宽字体），
+   行高固定 + nowrap（超长行横向滚动），故不用 .agent-tool-lined 的 pre-wrap */
+.agent-tool-lined-window {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
 }
 
 /* 思考链面板内的链元素（思考续段 / 工具卡组）：与思考文本及彼此之间显式留距。
@@ -8882,4 +8977,68 @@
 .agent-kb-copy:hover {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   长内容行窗口：固定行高契约
+   ──────────────────────────────────────────────────────────────────────────────
+   行窗口（WindowedRows / WindowedText）要求「行高固定 + 行不折行」，首行索引才能由
+   scrollTop 直接算出，不必逐行测量（见 agent-code/utils/textRows.ts）。因此每一处启用
+   行窗口的地方都要有对应的固定行高类。TS 侧常量与这里的数值必须一致：
+
+     WINDOW_ROW_HEIGHT      = 23  → .agent-window（默认，思考完整文本）
+     LINED_PRE_ROW_HEIGHT   = 17  → .agent-tool-lined-window（工具结果 / 写入内容）
+     CODE_WINDOW_ROW_HEIGHT = 20  → .chat-code-window（代码块）
+     DIFF_WINDOW_ROW_HEIGHT = 17  → .agent-tool-diff-window（Diff 行）
+
+   改动任一处务必同步另一处，否则窗口滚动时会出现行错位。
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* 代码块窗口：沿用 .chat-code-pre 的等宽字体与字号（12.5px × 1.6 = 20px 行高）。
+   背景与 .chat-code-pre 保持一致：浅色写死 #dfdfdf，暗色走 --code-bg。 */
+.chat-code-window {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  background: #dfdfdf;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12.5px;
+  line-height: 20px;
+}
+
+.theme-dark .chat-code-window {
+  background: var(--code-bg);
+}
+
+/* Diff 窗口：原 .agent-tool-diff-code 是 pre-wrap + overflow-wrap: anywhere，行高随内容
+   变化，无法窗口化。窗口态改为单行 nowrap，并把上下内边距归零，使行高稳定等于 17px。 */
+.agent-tool-diff-window .agent-tool-diff-row {
+  height: 17px;
+  overflow: hidden;
+}
+
+.agent-tool-diff-window .agent-tool-diff-num,
+.agent-tool-diff-window .agent-tool-diff-code {
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 17px;
+  white-space: pre;
+}
+
+.agent-tool-diff-window .agent-tool-diff-code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 非行号工具结果窗口：外观与内边距沿用 .agent-tool-result-pre（底色/边框/等宽 11px），
+   行高固定 17px 以便窗口化（.agent-tool-result-pre 是 pre-wrap，行高随内容变化）。 */
+.agent-tool-result-window {
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
 }

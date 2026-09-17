@@ -14,7 +14,7 @@
 //
 // 组件体内把域对象二次解构为局部名，使下方 JSX 与拆分前的写法逐字一致。
 
-import React from 'react'
+import React, { useEffect, useMemo } from 'react'
 import { Bot, Bug, Database, Copy, Check } from 'lucide-react'
 import {
   ActivityIcon, BookOpenIcon, BrainIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon,
@@ -26,6 +26,8 @@ import { useStore } from '../../../store/useStore'
 import { clearAudit } from '../../../utils/auditLog'
 import { clearDebug } from '../../../utils/debugLog'
 import { KEEP_RECENT_TURNS } from '../utils/constants'
+import { useAgentMessageHeights } from '../hooks/useAgentMessageHeights'
+import { useAgentVirtualMessages } from '../hooks/useAgentVirtualMessages'
 import { AgentPrefillBar, HistorySummaryBubble, TopbarBtn, UserMessageEntry, AgentMessageRow } from '../agent-message'
 import { AuditPanel, DebugPanel, MemoryPanel } from '../agent-panels'
 import AgentContextPanel from '../../AgentContextPanel'
@@ -144,6 +146,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   const {
     activeRailId, atBottom, chatScrollRef, onChatScroll, onChatWheel, pauseFollow,
     railItems, railOverflowing, railScrolling, scrollToBottom, scrollToRailItem,
+    historyStartIndex, loadEarlierMessages, registerVirtualApi,
   } = scroll
   const {
     gitChanges, gitLoading, gitFocusPath, onGitFocusHandled, refreshGitChanges,
@@ -169,6 +172,126 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     setProjRenamingId, projRenameText, setProjRenameText, projRenameInputRef,
     confirmProjRename, startSessRename, confirmSessRename,
   } = sessionActions
+  // ── 消息级屏外卸载 ──
+  // 已加载区间（与渲染同源）：虚拟化只在这个区间内做，historyStartIndex 之前的消息本来就不挂载。
+  const loadedMessages = useMemo(
+    () => activeSession?.messages.slice(historyStartIndex) ?? [],
+    [activeSession?.messages, historyStartIndex],
+  )
+  // 高度持续变化、不参与缓存的那一条：正在流式输出、且属于当前会话的末条助手消息。
+  const volatileId = useMemo(() => {
+    if (!streaming || streamingSessionRef.current !== activeSession?.id) return null
+    const msgs = activeSession?.messages ?? []
+    const last = msgs[msgs.length - 1]
+    return last && last.role === 'assistant' ? last.id : null
+  }, [activeSession, streaming])
+  const { heightsRef, version: heightsVersion } = useAgentMessageHeights({
+    sessionId: activeSession?.id,
+    viewportRef: chatScrollRef,
+    messages: loadedMessages,
+    volatileId,
+  })
+  // 必须常驻挂载的原始下标：流式中那条 + 正在编辑那条（窗口滚动时不能被顶掉）。
+  const pinnedIndices = useMemo(() => {
+    const msgs = activeSession?.messages ?? []
+    const out: number[] = []
+    if (volatileId) {
+      const i = msgs.findIndex(m => m.id === volatileId)
+      if (i >= 0) out.push(i)
+    }
+    if (editingMsgId) {
+      const i = msgs.findIndex(m => m.id === editingMsgId)
+      if (i >= 0) out.push(i)
+    }
+    return out
+  }, [activeSession?.messages, volatileId, editingMsgId])
+  const virtual = useAgentVirtualMessages({
+    viewportRef: chatScrollRef,
+    messages: loadedMessages,
+    startIndex: historyStartIndex,
+    heightsRef,
+    heightsVersion,
+    pinnedIndices,
+  })
+
+  // 把虚拟化的「确保挂载」注册给滚动逻辑：点目录点跳向已被屏外卸载的消息时，
+  // 由它先把窗口扩到包含该条，等 DOM 就位后再走统一的滚动动画。
+  useEffect(() => {
+    registerVirtualApi({ ensureMounted: virtual.ensureMounted })
+    return () => registerVirtualApi(null)
+  }, [registerVirtualApi, virtual.ensureMounted])
+
+  // 消息列表元素缓存（useMemo）：目录高亮 / rail 波浪 / 贴底按钮等纯滚动状态变化
+  // 不再重建整棵消息树；仅消息数据、流式状态、编辑态或相关回调变化时重建。
+  // 依赖均为稳定引用（useCallback 回调 / ref / store 内消息数组），不会击穿缓存。
+  const messageListNode = useMemo(() => {
+    if (!activeSession || activeSession.messages.length === 0) return null
+    // 只渲染虚拟窗口内的消息；窗口外的消息由等高占位（spacerTop / spacerBottom）顶住高度，
+    // 滚动条长度与位置保持不变。data-message-index 仍是会话内原始下标，目录与搜索据此对齐。
+    return activeSession.messages.slice(historyStartIndex + virtual.windowStart, historyStartIndex + virtual.windowEnd).map((msg, visibleIndex) => {
+      const i = historyStartIndex + virtual.windowStart + visibleIndex
+      const isLast = i === activeSession.messages.length - 1
+      // 流式状态仅归属于发起它的会话：切会话后不校验归属会误判末条助手消息为流式中。
+      const streamingHere = streaming && streamingSessionRef.current === activeSession.id
+      const streamingMsg = streamingHere && isLast && msg.role === 'assistant'
+      return (
+        <div key={msg.id} className={`chat-msg chat-msg-${msg.role}`} data-slot="message" data-from={msg.role} data-message-index={i}>
+          {msg.role !== 'user' && (
+            <div className="chat-msg-avatar"><Bot size={14} /></div>
+          )}
+          <div className="chat-msg-body">
+            {msg.role === 'user' ? (
+              editingMsgId === msg.id ? (
+                <div className="chat-msg-edit">
+                  {/* 内联回调 ref 每次渲染重新执行：随内容自动撑高（上限由 CSS max-height 封顶） */}
+                  <textarea className="agent-msg-edit-area" value={editDraft} ref={el => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 2 + 'px' } }} onChange={e => setEditDraft(e.target.value)} autoFocus spellCheck={false} onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) confirmEdit(); if (e.key === 'Escape') setEditingMsgId(null) }} />
+                  <div className="agent-msg-edit-actions">
+                    <span className="agent-msg-edit-hint">Ctrl+Enter 保存 · Esc 取消</span>
+                    <button className="btn btn-primary btn-xs" onClick={confirmEdit}>保存</button>
+                    <button className="btn btn-ghost btn-xs" onClick={() => setEditingMsgId(null)}>取消</button>
+                  </div>
+                </div>
+              ) : msg.content ? (
+                <>
+                  <UserMessageEntry content={msg.content} packedText={msg.packedText} />
+                  <div className="chat-msg-actions">
+                    <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content)}><CopyIcon size={13} /></button>
+                    <button className="chat-msg-action-btn" onClick={() => editAt(msg.id)} disabled={loading}><PencilIcon size={13} /></button>
+                    <button className="chat-msg-action-btn" onClick={() => resendAt(msg.id)} disabled={loading}><SendIcon size={13} /></button>
+                    <button className="chat-msg-action-btn" onClick={() => branchAt(msg.id)} disabled={loading}><GitBranchIcon size={13} /></button>
+                  </div>
+                </>
+              ) : null
+            ) : (
+              <>
+                {/* 交错渲染：segments 单容器时间线布局（思考链→工具卡→正文→…）；流式行走实时 content 渲染，
+                    finalize 仅变化 streaming prop，DOM 不卸载重挂 → 完成瞬间零跳动。 */}
+                {streamingMsg ? (
+                  <AgentMessageRow
+                    msg={msg}
+                    isLast={isLast}
+                    loading={loading}
+                    actionsRef={msgRowActionsRef}
+                    streaming
+                    modelLabel={modelLabelRef.current}
+                    thinkDone={thinkDone}
+                    streamStartAt={streamStartAtRef.current ?? undefined}
+                    onRate={handleStreamRate}
+                    modelTemplateId={runningCard?.template.id}
+                  />
+                ) : (
+                  <AgentMessageRow msg={msg} isLast={isLast} loading={loading} actionsRef={msgRowActionsRef} streaming={streaming} modelLabel={modelLabelRef.current} modelTemplateId={runningCard?.template.id} />
+                )}
+              </>
+            )}
+          </div>
+          {msg.role === 'user' && (
+            <div className="chat-msg-avatar"><UserIcon size={14} /></div>
+          )}
+        </div>
+      )
+    })
+  }, [activeSession, historyStartIndex, virtual.windowStart, virtual.windowEnd, streaming, loading, thinkDone, editingMsgId, editDraft, confirmEdit, copyMessage, editAt, resendAt, branchAt, msgRowActionsRef, modelLabelRef, streamStartAtRef, handleStreamRate, runningCard, setEditDraft, setEditingMsgId])
   return (
     <div className={`agent-code-view ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
       <div className="agent-code-topbar" onDoubleClick={() => { const anyOpen = sidebarOpen || treeOpen; setSidebarOpen(!anyOpen); setTreeOpen(!anyOpen); setContextModalOpen(false) }}>
@@ -251,6 +374,14 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
             {activeSession?.memory?.summary && (
               <HistorySummaryBubble summary={activeSession.memory.summary} count={activeSession.memory.coveredMsgIds.length} />
             )}
+            {historyStartIndex > 0 && (
+              <div style={{ padding: '8px 16px', textAlign: 'center' }}>
+                <button type="button" className="btn btn-ghost btn-xs" onClick={loadEarlierMessages}>
+                  加载更早消息（还有 {historyStartIndex} 条）
+                </button>
+                <div className="text-muted">目录和搜索仅包含已加载消息</div>
+              </div>
+            )}
             {!activeSession || activeSession.messages.length === 0 ? (
               <div className="agent-welcome">
                 <div className="agent-welcome-title">
@@ -271,83 +402,13 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                   ))}
                 </div>
               </div>
-            ) : activeSession.messages.map((msg, i) => {
-              const isLast = i === activeSession.messages.length - 1
-              // 流式状态仅归属于发起它的会话：全局 streaming 标志不区分会话，
-              // 切会话后若不校验归属，另一会话的末条助手消息会被误判为流式中。
-              const streamingHere = streaming && streamingSessionRef.current === activeSession.id
-              // 流式消息（不限是否已产生工具批）：分派给独立组件 AgentStreamingMessage——
-              // 它订阅 liveAgentMsg 切片（实时内容不落 projects store，整页不随之重渲染）。
-              const streamingMsg = streamingHere && isLast && msg.role === 'assistant'
-              return (
-                <div key={msg.id} className={`chat-msg chat-msg-${msg.role}`} data-slot="message" data-from={msg.role}>
-                  {msg.role !== 'user' && (
-                    <div className="chat-msg-avatar"><Bot size={14} /></div>
-                  )}
-                  <div className="chat-msg-body">
-                    {msg.role === 'user' ? (
-                      editingMsgId === msg.id ? (
-                        <div className="chat-msg-edit">
-                          {/* 内联回调 ref 每次渲染重新执行：随内容自动撑高（上限由 CSS max-height 封顶） */}
-                          <textarea className="agent-msg-edit-area" value={editDraft} ref={el => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 2 + 'px' } }} onChange={e => setEditDraft(e.target.value)} autoFocus spellCheck={false} onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) confirmEdit(); if (e.key === 'Escape') setEditingMsgId(null) }} />
-                          <div className="agent-msg-edit-actions">
-                            <span className="agent-msg-edit-hint">Ctrl+Enter 保存 · Esc 取消</span>
-                            <button className="btn btn-primary btn-xs" onClick={confirmEdit}>保存</button>
-                            <button className="btn btn-ghost btn-xs" onClick={() => setEditingMsgId(null)}>取消</button>
-                          </div>
-                        </div>
-                      ) : msg.content ? (
-                        <>
-                          <UserMessageEntry content={msg.content} packedText={msg.packedText} />
-                          <div className="chat-msg-actions">
-                            <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content)}><CopyIcon size={13} /></button>
-                            <button className="chat-msg-action-btn" onClick={() => editAt(msg.id)} disabled={loading}><PencilIcon size={13} /></button>
-                            <button className="chat-msg-action-btn" onClick={() => resendAt(msg.id)} disabled={loading}><SendIcon size={13} /></button>
-                            <button className="chat-msg-action-btn" onClick={() => branchAt(msg.id)} disabled={loading}><GitBranchIcon size={13} /></button>
-                          </div>
-                        </>
-                      ) : null
-                    ) : (
-                      <>
-                        {/* 交错渲染：消息 finalized 后（非流式），若已按流式时间线切分为
-                            segments，则严格按 思考链 → 工具卡 → 正文气泡 → 思考链 → … 的真实
-                            时间线顺序排列（方案 A 时间线平铺，中途正文原位插回）。流式进行中一律
-                            走下面的实时 content 渲染（保证思考链/工具状态实时显示，不延迟到工具批
-                            到达才出现）；旧消息（无 segments）也走传统布局。 */}
-                        {streamingMsg ? (
-                          // 流式中的末条助手消息：同一行组件 AgentMessageRow 渲染——
-                          // 组件内部按消息 id 订阅 liveAgentMsg 切片（~50ms commit 只重渲染该行）。
-                          // finalize 时仅变化 streaming prop（live 清空后回退 msg 完成态），
-                          // DOM 不卸载重挂 → 完成瞬间「思考过程/工具卡」零跳动。
-                          <AgentMessageRow
-                            msg={msg}
-                            isLast={isLast}
-                            loading={loading}
-                            actionsRef={msgRowActionsRef}
-                            streaming
-                            modelLabel={modelLabelRef.current}
-                            thinkDone={thinkDone}
-                            streamStartAt={streamStartAtRef.current ?? undefined}
-                            onRate={handleStreamRate}
-                            modelTemplateId={runningCard?.template.id}
-                          />
-                        ) : (
-                          // 已完成消息：抽成 React.memo 行组件——msg 引用在流式 commit 间不变，
-                          // 整行跳过 reconcile（只更新流式那条消息），消除整页渲染基线。
-                          // 行内同时覆盖 segments 单容器布局与传统布局两种完成态。
-                          // modelLabel 需与流式分支一致传入：思考块头部 meta（模型名+token）
-                          // 在完成后保留不消失（模型名/t/s 由消息持久化字段还原，刷新不丢）。
-                          <AgentMessageRow msg={msg} isLast={isLast} loading={loading} actionsRef={msgRowActionsRef} streaming={streaming} modelLabel={modelLabelRef.current} modelTemplateId={runningCard?.template.id} />
-                        )}
-                      </>
-                    )}
-                  </div>
-                  {msg.role === 'user' && (
-                    <div className="chat-msg-avatar"><UserIcon size={14} /></div>
-                  )}
-                </div>
-              )
-            })}
+            ) : (
+              <>
+                {virtual.spacerTop > 0 && <div data-slot="message-spacer" aria-hidden="true" style={{ height: virtual.spacerTop }} />}
+                {messageListNode}
+                {virtual.spacerBottom > 0 && <div data-slot="message-spacer" aria-hidden="true" style={{ height: virtual.spacerBottom }} />}
+              </>
+            )}
             <div ref={msgEndRef} />
           </div>
           <div className={`agent-chat-rail${railOverflowing && railItems.length > 1 ? ' agent-chat-rail--visible' : ''}${railScrolling ? ' agent-chat-rail--scrolling' : ''}`}>
@@ -561,8 +622,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               </div>
             </div>
           )}
-          {/* 会话内消息搜索（Ctrl/Cmd+F 唤出，浮在对话区右上）*/}
-          <AgentMessageSearch containerRef={chatScrollRef} revision={activeSession?.messages.length ?? 0} />
+          {/* 会话内消息搜索（Ctrl/Cmd+F 唤出，浮在对话区右上）。
+              传完整 messages：索引要与消息节点的 data-message-index 对齐（该属性是会话内原始下标，
+              不是已加载区间的相对下标），这样屏外未加载的消息也能被搜到。*/}
+          <AgentMessageSearch key={activeSession?.id} containerRef={chatScrollRef} messages={activeSession?.messages ?? []} onEnsureMessage={virtual.ensureMounted} />
           {/* 滚动到底部浮动按钮：仅当消息列表较长且用户已向上滚动（非贴底）时显示。
               置于 .agent-code-chat（非滚动容器）内，用 --chat-input-h 变量精确浮在输入框上方。 */}
           {!atBottom && (

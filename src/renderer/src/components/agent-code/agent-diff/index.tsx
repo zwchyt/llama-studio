@@ -11,6 +11,7 @@
 
 import React, { useMemo } from 'react'
 import type { AgentMessage } from '../../../../../shared/types'
+import { WindowedRows } from '../WindowedText'
 
 export type DiffRow = { type: 'equal' | 'del' | 'ins' | 'replace'; left: string | null; right: string | null; leftNum: number | null; rightNum: number | null }
 
@@ -171,30 +172,62 @@ export function computeSplitDiff(oldText: string, newText: string): DiffRow[] {
 // Edit 工具的分栏 diff 视图（左原内容 / 右新内容，带行号与 +/- 标记）。
 // React.memo + useMemo：LCS 为 O(n×m) 动态规划，流式期间父组件高频重渲染，
 // 不缓存时大编辑每帧反复重算（单次可达数十毫秒），是流式卡顿的确定来源。
+//
+// 行数超阈值时改走行窗口（只挂载视口附近的行）。阈值以下保持逐行 DOM：短 diff 的成本可接受，
+// 且能保留原有折行视觉——窗口态为了固定行高必须 nowrap，超长行只能省略号截断。
+export const DIFF_WINDOW_ROWS = 400
+// 与 .agent-tool-diff-window 的 11px × line-height 1.5 对齐（见 styles/agent-code.css
+// 末尾「长内容行窗口：固定行高契约」），视口高度对齐原 .agent-tool-diff-body 的 max-height。
+const DIFF_WINDOW_ROW_HEIGHT = 17
+const DIFF_WINDOW_VIEW_HEIGHT = 420
+
 export const ToolEditDiff = React.memo(function ToolEditDiff({ oldText, newText }: { oldText: string; newText: string }) {
   const rows = useMemo(() => computeSplitDiff(oldText, newText), [oldText, newText])
+  // 行内容两个分支共用：窗口态由 WindowedRows 提供行外层，非窗口态自己包一层。
+  const renderRow = (idx: number) => {
+    const r = rows[idx]!
+    return (
+      <>
+        <span className="agent-tool-diff-num left">{r.leftNum ?? ''}</span>
+        <pre className="agent-tool-diff-code left">
+          {(r.type === 'del' || r.type === 'replace') && <span className="agent-tool-diff-mark">-</span>}
+          {r.left ?? ''}
+        </pre>
+        <span className="agent-tool-diff-num right">{r.rightNum ?? ''}</span>
+        <pre className="agent-tool-diff-code right">
+          {(r.type === 'ins' || r.type === 'replace') && <span className="agent-tool-diff-mark">+</span>}
+          {r.right ?? ''}
+        </pre>
+      </>
+    )
+  }
   return (
     <div className="agent-tool-diff">
       <div className="agent-tool-diff-head">
         <span>原内容</span>
         <span>新内容</span>
       </div>
-      <div className="agent-tool-diff-body">
-        {rows.map((r, idx) => (
-          <div className={`agent-tool-diff-row ${r.type}`} key={idx}>
-            <span className="agent-tool-diff-num left">{r.leftNum ?? ''}</span>
-            <pre className="agent-tool-diff-code left">
-              {(r.type === 'del' || r.type === 'replace') && <span className="agent-tool-diff-mark">-</span>}
-              {r.left ?? ''}
-            </pre>
-            <span className="agent-tool-diff-num right">{r.rightNum ?? ''}</span>
-            <pre className="agent-tool-diff-code right">
-              {(r.type === 'ins' || r.type === 'replace') && <span className="agent-tool-diff-mark">+</span>}
-              {r.right ?? ''}
-            </pre>
-          </div>
-        ))}
-      </div>
+      {rows.length > DIFF_WINDOW_ROWS ? (
+        <WindowedRows
+          count={rows.length}
+          viewHeight={DIFF_WINDOW_VIEW_HEIGHT}
+          rowHeight={DIFF_WINDOW_ROW_HEIGHT}
+          className="agent-window agent-tool-diff-window"
+          rowAttr="data-diff-row"
+          rowClassName={i => `agent-tool-diff-row ${rows[i]!.type}`}
+          contentWidth="100%"
+          ariaLabel={`Diff（窗口渲染，共 ${rows.length} 行）`}
+          renderRow={renderRow}
+        />
+      ) : (
+        <div className="agent-tool-diff-body">
+          {rows.map((r, idx) => (
+            <div className={`agent-tool-diff-row ${r.type}`} key={idx}>
+              {renderRow(idx)}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 })

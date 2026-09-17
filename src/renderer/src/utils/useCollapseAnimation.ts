@@ -10,6 +10,11 @@ export type CollapseAnimationOptions = {
   beforeToggle?: () => void
 }
 
+// 展开/收起过渡时长（ms）：必须与 agent-code.css 里 --think-collapse-dur 保持一致（当前 0.5s）。
+// 这里只用于「展开目标追踪」的收尾判定——追踪窗口必须略长于过渡时长，否则会在过渡
+// 中途把 max-height 落成 none，表现为「展开到一半跳一下」。
+export const COLLAPSE_DURATION_MS = 500
+
 // 折叠/展开动画引擎：裁剪层（外层 max-height）像素级过渡 + overflow:hidden。
 // 与 AgentCodeView 中 ThinkBlock / ToolCallCard 原内联实现保持一致的关键约定：
 //   - 首次展开：先 setVisible(true) 挂载内容，下一帧布局完成后从 0 过渡到 scrollHeight；
@@ -59,12 +64,12 @@ export function useCollapseAnimation<T extends HTMLElement = HTMLDivElement>(
     const startedAt = Date.now()
     const tick = () => {
       const el = bodyRef.current
-      // 过渡时长 300ms + 余量；期间每帧把目标追到最新内容高度
+      // 过渡时长 + 余量；期间每帧把目标追到最新内容高度
       if (!el || !expandedRef.current) {
         trackRafRef.current = undefined
         return
       }
-      if (Date.now() - startedAt > 420) {
+      if (Date.now() - startedAt > COLLAPSE_DURATION_MS + 140) {
         // 追踪结束：落回 none 自适应后续高度增长。
         // 注意：追踪期间 max-height 每帧都在变，transitionend 不会触发（目标始终在动），
         // 故这里必须自己收尾，否则元素会被锁死在某个固定像素高度、流式长高时被裁掉。
@@ -99,10 +104,14 @@ export function useCollapseAnimation<T extends HTMLElement = HTMLDivElement>(
       // 内容可能在过渡期间继续长高（嵌套折叠块下一帧展开 / 懒渲染）→ 持续追写目标
       trackExpandTarget()
     } else {
-      // 首次展开：先挂载，待下一帧布局完成再从 0 过渡到内容高度
+      // 首次展开：在同一个 commit 里同时挂载并置展开态。
+      // 旧实现把 setExpanded 放进 rAF，于是「容器已展开」这个事实晚一帧才传给子级
+      // （思考段折叠块 / 重型内容），子级再各花一帧挂载 → 外层 max-height 过渡已经开跑，
+      // 内容却分几帧才陆续出现，表现为展开呈阶梯状、末段还跳一下。
+      // 同步置位后，下一帧量到的 scrollHeight 已是最终高度，一次过渡到位。
       setVisible(true)
+      setExpanded(true)
       requestAnimationFrame(() => {
-        setExpanded(true)
         const el2 = bodyRef.current
         if (el2) el2.style.maxHeight = el2.scrollHeight + 'px'
         trackExpandTarget()

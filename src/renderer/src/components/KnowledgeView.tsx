@@ -8,29 +8,42 @@ import { extractTextFromFile } from '../utils/extractText'
 import type { KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit } from '../../../shared/types'
 import '../styles/knowledge.css'
 
-// ── 预览高亮：按大小写不敏感切分文本为 命中/未命中 片段 ──
-function splitHighlight(text: string, q: string): { t: string; hit: boolean }[] {
-  const query = q.trim()
-  if (!query) return [{ t: text, hit: false }]
+// ── 高亮：按「命中词」切分文本为 命中/未命中 片段 ──
+// 必须按词切，不能按整条查询串：检索走的是 tokenize 后的词（中文是二元组），
+// 块常常只命中其中一两个词——用整条查询串做 indexOf 会一个都匹配不到，
+// 于是出现「块被检索出来了却完全没有高亮」，让人看不出它为什么会被搜出来。
+// 传入单个词时行为与旧实现完全一致（文档预览仍走这条路）。
+function splitHighlight(text: string, terms: string[]): { t: string; hit: boolean }[] {
+  const list = terms.map(t => t.trim().toLowerCase()).filter(Boolean)
+  if (list.length === 0) return [{ t: text, hit: false }]
   const lower = text.toLowerCase()
-  const ql = query.toLowerCase()
   const out: { t: string; hit: boolean }[] = []
   let pos = 0
   while (pos < text.length) {
-    const i = lower.indexOf(ql, pos)
-    if (i === -1) { out.push({ t: text.slice(pos), hit: false }); break }
-    if (i > pos) out.push({ t: text.slice(pos, i), hit: false })
-    out.push({ t: text.slice(i, i + query.length), hit: true })
-    pos = i + query.length
+    // 从当前位置起找最先出现的那个词；同一位置取最长的，避免短词把长词切断
+    let best = -1
+    let bestLen = 0
+    for (const term of list) {
+      const i = lower.indexOf(term, pos)
+      if (i === -1) continue
+      if (best === -1 || i < best || (i === best && term.length > bestLen)) {
+        best = i
+        bestLen = term.length
+      }
+    }
+    if (best === -1) { out.push({ t: text.slice(pos), hit: false }); break }
+    if (best > pos) out.push({ t: text.slice(pos, best), hit: false })
+    out.push({ t: text.slice(best, best + bestLen), hit: true })
+    pos = best + bestLen
   }
   return out
 }
 
-function Hl({ text, q }: { text: string; q: string }) {
-  if (!q.trim()) return <>{text}</>
+function Hl({ text, terms }: { text: string; terms: string[] }) {
+  if (terms.length === 0) return <>{text}</>
   return (
     <>
-      {splitHighlight(text, q).map((s, i) =>
+      {splitHighlight(text, terms).map((s, i) =>
         s.hit ? <mark key={i} className="kb-hl">{s.t}</mark> : <React.Fragment key={i}>{s.t}</React.Fragment>
       )}
     </>
@@ -195,11 +208,21 @@ export default function KnowledgeView() {
   const [renaming, setRenaming] = useState<{ kind: 'kb' | 'doc'; id: string } | null>(null)
   const [renameValue, setRenameValue] = useState('')
 
-  // 试搜索
+  // 试搜索（跨全部知识库，不局限于当前选中的库）
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
   const [hits, setHits] = useState<KnowledgeHit[]>([])
   const [lowConf, setLowConf] = useState(false)
+  /** 置信度偏低的库名（只含「有命中但不达标」的库） */
+  const [lowKbNames, setLowKbNames] = useState<string[]>([])
+  /** 完全没命中的库名：这不是「不可靠」，只是库里没有相关内容 */
+  const [missKbNames, setMissKbNames] = useState<string[]>([])
+  /** 库内真实存在的高 idf 词，低置信时一键填入搜索框重搜 */
+  const [suggested, setSuggested] = useState('')
+  /** 本次检索覆盖的库数（用于展示检索范围） */
+  const [searchedCount, setSearchedCount] = useState(0)
+  /** top 分相对第二名的倍数（0 = 命中不足两条）：用于解释置信度判定 */
+  const [topMargin, setTopMargin] = useState(0)
   const [searched, setSearched] = useState(false)
 
   const activeBase = bases.find(b => b.id === activeId) || null
@@ -358,12 +381,30 @@ export default function KnowledgeView() {
     if (res.success) { await loadDocs(activeId); await refreshBases() }
   }
 
-  async function handleSearch() {
-    if (!activeId || !query.trim()) return
+  // 跨全部知识库检索：不再依赖 activeId——「试搜索」是用来验证整个检索链路的，
+  // 只搜当前库既容易漏掉内容，也会让人误以为别的库没建好。
+  // override 用于「按建议关键词重搜」：直接带着新词再搜一次，不必先改输入框。
+  async function handleSearch(override?: string) {
+    const q = (override ?? query).trim()
+    if (!q) return
+    if (override !== undefined) setQuery(override)
     setSearching(true); setSearched(true)
-    const res = await window.api.knowledgeQuery(activeId, query.trim(), 6).catch(() => ({ hits: [], lowConfidence: true }))
-    setHits(res.hits); setLowConf(res.lowConfidence)
+    const res = await window.api.knowledgeQueryAll(q, 6).catch(() => null)
+    // IPC 边界不信任返回结构：主进程可能是旧版本（改了 main 但没重启），缺字段时逐个兜底。
+    // 直接 setState(res.xxx) 会在字段缺失时写入 undefined，下一次渲染读 .length 就把整个面板崩掉。
+    setHits(res?.hits ?? [])
+    setLowConf(res?.lowConfidence ?? false)
+    setLowKbNames(res?.lowKbNames ?? [])
+    setMissKbNames(res?.missKbNames ?? [])
+    setSuggested(res?.suggestedQuery ?? '')
+    setSearchedCount(res?.searched?.length ?? 0)
+    setTopMargin(res?.topMargin ?? 0)
     setSearching(false)
+  }
+
+  function resetSearch() {
+    setSearched(false); setHits([]); setLowConf(false)
+    setLowKbNames([]); setMissKbNames([]); setSuggested(''); setSearchedCount(0); setTopMargin(0)
   }
 
   // ── 打开/关闭预览时加载文档全文 ──
@@ -548,7 +589,7 @@ export default function KnowledgeView() {
               <div
                 key={b.id}
                 className={`kb-list-item ${activeId === b.id ? 'active' : ''}`}
-                onClick={() => setActiveId(b.id)}
+                onClick={() => { setActiveId(b.id); resetSearch() }}
                 onDoubleClick={() => startRename('kb', b.id, b.name)}
               >
                 {renaming?.kind === 'kb' && renaming.id === b.id ? (
@@ -601,12 +642,103 @@ export default function KnowledgeView() {
           </div>
         </div>
 
-        {/* 右栏：文档管理 + 试搜索 */}
+        {/* 右栏：全局检索 + 文档管理 */}
         <div className="kb-main">
-          {!activeBase ? (
+          {/* 全局搜索栏：常驻右栏顶部，跨全部知识库检索。
+              不再依赖当前选中的库——只搜一个库既容易漏内容，也看不出别的库有没有建好。 */}
+          {bases.length > 0 && (
+            <div className="kb-search">
+              <div className="kb-search-bar">
+                <Search size={15} />
+                <input
+                  className="kb-input"
+                  value={query}
+                  onChange={e => {
+                    setQuery(e.target.value)
+                    // 清空输入即复位结果区，恢复默认布局（不留旧卡片）
+                    if (!e.target.value.trim()) resetSearch()
+                  }}
+                  onKeyDown={e => { if (e.key === 'Enter') handleSearch() }}
+                  placeholder={bases.length > 1 ? `跨全部 ${bases.length} 个知识库搜索：输入关键词…` : '输入关键词，验证检索质量…'}
+                />
+                {searched && (
+                  <button className="btn btn-ghost btn-sm" onClick={resetSearch} disabled={searching} title="退出搜索，回到文档管理">返回</button>
+                )}
+                <button className="btn btn-primary btn-sm" onClick={() => handleSearch()} disabled={!query.trim() || searching}>
+                  {searching ? <Loader2 size={13} className="kb-spin" /> : '搜索'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {searched ? (
+            /* 搜索态：结果独占主区域，文档管理让位——避免两套列表堆在一起 */
+            <div className="kb-hits">
+              <div className="kb-hits-meta">
+                <span>
+                  跨 {searchedCount} 个知识库 · 命中 {hits.length} 条
+                  {/* 排序优势：倍数够大说明 top 明显优于其余，是「高置信」的依据之一 */}
+                  {topMargin > 0 && ` · top 是第二名的 ${topMargin} 倍`}
+                </span>
+                {/* 单个库的弱化说明：不用告警色。
+                    某个库区分度不足 / 没命中，不代表这次检索整体不可靠——
+                    只要 top 明显领先，就不该报警告。 */}
+                {(lowKbNames.length > 0 || missKbNames.length > 0) && (
+                  <span className="kb-hits-note">
+                    {lowKbNames.length > 0 && `${lowKbNames.join('、')} 区分度不足`}
+                    {lowKbNames.length > 0 && missKbNames.length > 0 && ' · '}
+                    {missKbNames.length > 0 && `${missKbNames.join('、')} 无命中`}
+                  </span>
+                )}
+              </div>
+              {lowConf && (
+                <div className="kb-lowconf">
+                  命中置信度较低，结果可能不相关——建议换更具体的关键词重搜。
+                  {suggested && (
+                    <span className="kb-lowconf-sug">
+                      建议关键词：
+                      {suggested.split(/\s+/).map(t => (
+                        <button key={t} className="kb-sug-chip" onClick={() => handleSearch(t)} disabled={searching}>{t}</button>
+                      ))}
+                      <button className="kb-sug-chip primary" onClick={() => handleSearch(suggested)} disabled={searching}>用这组词重搜</button>
+                    </span>
+                  )}
+                </div>
+              )}
+              {hits.length === 0 ? (
+                <div className="kb-empty-sm">
+                  未检索到相关内容。BM25 是字面匹配——换更具体的关键词，中文用中文词、代码术语用英文标识符。
+                  {suggested && (
+                    <span className="kb-lowconf-sug">
+                      可试：
+                      {suggested.split(/\s+/).map(t => (
+                        <button key={t} className="kb-sug-chip" onClick={() => handleSearch(t)} disabled={searching}>{t}</button>
+                      ))}
+                    </span>
+                  )}
+                </div>
+              ) : hits.map((h, i) => (
+                <div key={i} className="kb-hit">
+                  <div className="kb-hit-head">
+                    {h.kbName && <span className="kb-hit-kb">{h.kbName}</span>}
+                    <span className="kb-hit-doc">{h.docName} · 第 {h.ordinal + 1} 块</span>
+                    <span className="kb-hit-score">{h.score.toFixed(2)}</span>
+                  </div>
+                  {/* 命中词（按 idf 降序）：正文高亮可能因为分词差异落空，
+                      这里直接列出「是靠哪些词命中的」，保证任何情况下都能看出命中依据 */}
+                  {h.matched && h.matched.length > 0 && (
+                    <div className="kb-hit-matched">
+                      {h.matched.map(t => <span key={t} className="kb-hit-term">{t}</span>)}
+                    </div>
+                  )}
+                  <div className="kb-hit-text"><Hl text={h.text} terms={h.matched ?? []} /></div>
+                </div>
+              ))}
+            </div>
+          ) : !activeBase ? (
             <div className="kb-empty">
               <BookOpen size={40} strokeWidth={1.2} style={{ opacity: 0.3 }} />
-              <p>选择或新建一个知识库开始</p>
+              <p>{bases.length > 0 ? '从左侧选一个知识库管理文档，或直接在上方搜索全部知识库' : '选择或新建一个知识库开始'}</p>
             </div>
           ) : (
             <>
@@ -730,46 +862,6 @@ export default function KnowledgeView() {
                 ))}
               </div>
 
-              {/* 试搜索 */}
-              <div className="kb-search">
-                <div className="kb-search-bar">
-                  <Search size={15} />
-                  <input
-                    className="kb-input"
-                    value={query}
-                    onChange={e => {
-                      setQuery(e.target.value)
-                      // 清空输入即复位结果区，恢复默认布局（不留旧卡片）
-                      if (!e.target.value.trim()) { setSearched(false); setHits([]); setLowConf(false) }
-                    }}
-                    onKeyDown={e => { if (e.key === 'Enter') handleSearch() }}
-                    placeholder="试搜索：输入关键词，验证检索质量…"
-                  />
-                  <button className="btn btn-primary btn-sm" onClick={handleSearch} disabled={!query.trim() || searching}>
-                    {searching ? <Loader2 size={13} className="kb-spin" /> : '搜索'}
-                  </button>
-                </div>
-                {searched && (
-                  <div className="kb-hits">
-                    {hits.length === 0 ? (
-                      <div className="kb-empty-sm">未检索到相关内容</div>
-                    ) : (
-                      <>
-                        {lowConf && <div className="kb-lowconf">命中置信度较低，结果可能不相关</div>}
-                        {hits.map((h, i) => (
-                          <div key={i} className="kb-hit">
-                            <div className="kb-hit-head">
-                              <span className="kb-hit-doc">{h.docName} · 第 {h.ordinal + 1} 块</span>
-                              <span className="kb-hit-score">{h.score.toFixed(2)}</span>
-                            </div>
-                            <div className="kb-hit-text"><Hl text={h.text} q={query} /></div>
-                          </div>
-                        ))}
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
             </>
           )}
         </div>
@@ -832,13 +924,13 @@ export default function KnowledgeView() {
               ) : !docContent ? (
                 <div className="kb-empty-sm">无法加载文档内容</div>
               ) : viewMode === 'full' ? (
-                <div className="kb-preview-text"><Hl text={docContent.text} q={hlQuery} /></div>
+                <div className="kb-preview-text"><Hl text={docContent.text} terms={hlQuery.trim() ? [hlQuery] : []} /></div>
               ) : (
                 <div className="kb-chunk-list">
                   {docContent.chunks.map(c => (
                     <div key={c.ordinal} className="kb-chunk-card">
                       <div className="kb-chunk-head">第 {c.ordinal + 1} 块 · {c.text.replace(/\s/g, '').length.toLocaleString()} 字</div>
-                      <div className="kb-chunk-text"><Hl text={c.text} q={hlQuery} /></div>
+                      <div className="kb-chunk-text"><Hl text={c.text} terms={hlQuery.trim() ? [hlQuery] : []} /></div>
                     </div>
                   ))}
                 </div>

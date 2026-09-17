@@ -14,7 +14,8 @@ import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallba
 import { Brain, ChevronUp, AlignLeft } from 'lucide-react'
 import { ChevronRightIcon, CircleStopIcon, RefreshCwIcon, CopyIcon } from '@animateicons/react/lucide'
 import { useStore } from '../../../store/useStore'
-import { useCollapseAnimation } from '../../../utils/useCollapseAnimation'
+import { useCollapseAnimation, COLLAPSE_DURATION_MS } from '../../../utils/useCollapseAnimation'
+import { ThinkTextContent } from './ThinkTextContent'
 import { Markdown } from '../../../markdown/markstream'
 import { MermaidCard, parseContentToBlocks } from '../../../mermaid'
 import { ChartCard } from '../../../recharts'
@@ -244,20 +245,10 @@ type ThinkChainItem =
   | { kind: 'tools'; toolCalls: NonNullable<AgentMessage['toolCalls']>; durationMs?: number }
   | { kind: 'text'; content: string }
 
-// 思考链流式文本：逐行 span 渲染（稳定 key → React 只更新最后一行文本节点，
-// 浏览器 paint 区域收缩到最后一行）。与正文代码块同构——思考文本增长时整块
-// markdown 重解析 + 整块重绘是思考链「一卡一卡」的显示层根源；流式期间用纯文本
-// 逐行展示（重绘成本 ≈ 一行），思考结束/收起后由 AgentMarkdown 接管完整排版。
-const StreamingThinkText = React.memo(function StreamingThinkText({ value }: { value: string }) {
-  const lines = useMemo(() => value.split('\n'), [value])
-  return (
-    <div className="agent-think-stream">
-      {lines.map((ln, i) => (
-        <span key={i} className="agent-think-stream-line">{ln || '\u00A0'}</span>
-      ))}
-    </div>
-  )
-})
+// 思考文本渲染（流式预览 / 完整纯文本窗口 / 短段 Markdown）已抽至
+// ThinkTextContent.tsx；行窗口用共享组件 WindowedText.tsx：默认只挂载有界预览
+// （THINK_PREVIEW_LINES / THINK_PREVIEW_CHARS），「查看完整思考」走行窗口
+// （TEXT_ROW_CHARS 分段，超长自然行不再绕过窗口化）；复制始终使用完整原文。
 
 // 思考段独立折叠块（链内嵌套折叠）：每个思考段（含首段）一个可收起/展开的子块。
 // 折叠块跟随容器展开态：思考链被点开（或流式自动展开）时，链内思考内容默认全部
@@ -276,17 +267,37 @@ const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, duratio
   const userToggledRef = useRef(false)
   const { expanded, visible, setExpanded, setVisible, expandedRef, onBodyTransitionEnd, collapse, toggle: handleToggle } =
     useCollapseAnimation(bodyRef, { initialExpanded: active, skipFirstAnim: active, beforeToggle: () => { userToggledRef.current = true } })
-  // 流式段：帧对齐节流 + 逐行渲染（与旧 ThinkBlock 主文本同一套管线，重绘成本 ≈ 一行）；
-  // 完成段：完整 Markdown（保持挂载，收起不卸载，避免再次展开重解析卡顿）
+  // 隐藏段冻结展示输入并停止 rAF 节流；原文仍由消息数据保留，重开时读取最新值。
+  // 必须同时检查外层思考链，否则收起外层后内部 streaming 仍会持续更新隐藏 DOM。
+  const contentActive = visible && expanded && containerExpanded !== false
+  const lastVisibleContent = useRef(content)
+  if (contentActive) lastVisibleContent.current = content
   const throttle = content.length > 20000 ? 90 : content.length > 8000 ? 60 : THINK_THROTTLE_MS
-  const renderContent = useFrameThrottledValue(content, !!streaming, throttle)
+  const renderContent = useFrameThrottledValue(lastVisibleContent.current, !!streaming && contentActive, throttle)
   // 折叠块跟随容器展开态：容器展开（点开思考链/流式自动展开）时思考内容默认展开；
   // 容器收起后随之收起（保持挂载）。用户手动收起过的折叠块保持粘性、不被强行展开。
+  //
+  // 展开侧走「渲染期同步置位」而不是 effect + rAF：容器展开时本段必须与容器同一个 commit
+  // 就把内容挂上。旧写法下本段要晚两帧才挂载，而外层 .agent-think-anim 的 max-height
+  // 过渡已经开跑 → 展开呈阶梯状、末段再跳一下。渲染期 setState 自身是 React 支持的
+  // 「从 props 派生 state」用法，会立即重渲染本组件再提交，不产生额外帧。
+  if (!userToggledRef.current && active && (!visible || !expanded)) {
+    if (!visible) setVisible(true)
+    if (!expanded) setExpanded(true)
+  }
+  // 收起侧仍留在 effect：collapse() 要读 DOM 高度并写 max-height，不能放在渲染期。
   useEffect(() => {
     if (userToggledRef.current) return
-    if (active) {
-      setVisible(true)
-      requestAnimationFrame(() => setExpanded(true))
+    if (active) return
+    // 容器收起引起的收起：不跑本段自己的像素过渡，只切状态并保持内容高度，
+    // 由外层 .agent-think-anim 统一按同一时长裁剪。
+    // 否则外层与链内每个折叠块会同时各跑一遍过渡，两层叠加使「收起」的体感速度约为
+    // 「展开」的两倍（内层先把内容压掉、外层再收窗口），这正是展开/收起节奏不一致的来源。
+    // 内容保持挂载也让外层有东西可裁——提前卸载会让收缩途中出现一段空白。
+    if (containerExpanded === false) {
+      const el = bodyRef.current
+      if (el) el.style.maxHeight = 'none'
+      setExpanded(false)
       return
     }
     if (visible && expandedRef.current) collapse()
@@ -305,11 +316,30 @@ const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, duratio
   // 链结束后复位回顶部，再次展开从头阅读
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickBottomRef = useRef(true)
+  // 完整思考窗口 / Markdown 的挂载门：初值直接 true。
+  // 段体只有 visible 为真才渲染，visible 为真本身就意味着「要显示」，重型内容应当与段体
+  // 同帧就位。旧写法 useState(active) 在首次挂载时 active 还是 false（外层尚未展开），
+  // 于是先渲染轻量预览、几帧后才换成重型内容——展开瞬间的「闪一下」正来自这里。
+  // 收起后释放逻辑不变：contentActive 变 false → 过渡结束后卸载。
+  const [heavyMounted, setHeavyMounted] = useState(true)
   useEffect(() => {
-    if (!streaming) return
+    if (contentActive) { setHeavyMounted(true); return }
+    // transitionend 可能因隐藏父容器、减少动画或卸载而缺失，提供超时释放兜底。
+    // 超时必须晚于过渡时长（COLLAPSE_DURATION_MS），否则重型内容会在收起动画途中被卸载，
+    // 收缩的最后一小段会露出空白。
+    const timer = window.setTimeout(() => setHeavyMounted(false), COLLAPSE_DURATION_MS + 150)
+    return () => window.clearTimeout(timer)
+  }, [contentActive])
+  const handleFoldTransitionEnd = useCallback((e: React.TransitionEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return
+    onBodyTransitionEnd(e)
+    if (e.propertyName === 'max-height' && !expandedRef.current) setHeavyMounted(false)
+  }, [onBodyTransitionEnd])
+  useEffect(() => {
+    if (!streaming || !contentActive) return
     const el = scrollRef.current
     if (el && stickBottomRef.current) el.scrollTop = el.scrollHeight
-  }, [renderContent, streaming])
+  }, [renderContent, streaming, contentActive])
   useEffect(() => {
     if (active) return
     const el = scrollRef.current
@@ -321,6 +351,8 @@ const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, duratio
     if (!el) return
     stickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
   }
+  // 稳定引用：避免每次渲染都用新箭头函数打破 ThinkTextContent 的 React.memo
+  const renderMarkdown = useCallback((t: string) => <AgentMarkdown content={t} />, [])
   return (
     <div className="agent-think-fold">
       <button className="agent-think-fold-head" onClick={handleToggle}>
@@ -334,9 +366,9 @@ const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, duratio
         <ChevronRightIcon size={11} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
       </button>
       {visible && (
-        <div className="agent-think-fold-anim" ref={bodyRef} onTransitionEnd={onBodyTransitionEnd}>
+        <div className="agent-think-fold-anim" ref={bodyRef} onTransitionEnd={handleFoldTransitionEnd}>
           <div className="agent-think-fold-body" ref={scrollRef} onScroll={handleBodyScroll}>
-            {streaming ? <StreamingThinkText value={renderContent} /> : <AgentMarkdown content={content} />}
+            <ThinkTextContent text={streaming ? renderContent : lastVisibleContent.current} streaming={streaming} mounted={heavyMounted} renderMarkdown={renderMarkdown} />
           </div>
         </div>
       )}
@@ -455,9 +487,11 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
     // pending 占位态：内容尚未到达，不挂载 body
     if (pending) return
     // 思考流式中，或收纳的工具卡仍在执行：自动展开
+    // 同一 commit 置 visible + expanded：只置 visible 会让裁剪层以 max-height:0 先绘一帧
+    // （整链闪一下空白），下一帧才由布局 effect 放开高度。同步置位后挂载即自适应高度。
     if (thinking || hasLiveTools) {
       setVisible(true)
-      requestAnimationFrame(() => setExpanded(true))
+      setExpanded(true)
       return
     }
     // 消息仍在流式且最终正文未出现（工具批全部完成 → 下一轮思考开始前的等待窗口）：
@@ -703,11 +737,9 @@ function useFrameThrottledValue(value: string, active: boolean | undefined, thro
   const latestRef = useRef(value)
   latestRef.current = value
   const [display, setDisplay] = useState(value)
-  // 非节流态：内容变化立即透传（依赖 value 保证最新）
-  useEffect(() => {
-    if (on) return
-    setDisplay(latestRef.current)
-  }, [value, on])
+  // 非节流态：内容变化立即透传。用渲染期同步而非 effect——effect 晚一个 commit，
+  // 在「节流 → 非节流」切换（流式结束）与思考链展开的瞬间会多闪一帧旧内容。
+  if (!on && display !== latestRef.current) setDisplay(latestRef.current)
   // 节流态：rAF 循环按 throttleMs 上限取最新内容更新（不依赖 value，循环不被重置）
   useEffect(() => {
     if (!on) return

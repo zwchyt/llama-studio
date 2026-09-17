@@ -538,6 +538,10 @@ export interface KnowledgeHit {
   score: number
   /** 命中来源知识库名（跨库合并检索时区分条目归属） */
   kbName?: string
+  /** 本条实际命中的查询词（tokenize 后），按 idf 降序。
+      检索走的是词/二元组匹配，块可能只命中其中一两个词——
+      界面据此做高亮与「为什么这条会被搜出来」的解释。 */
+  matched?: string[]
 }
 
 /** Pi SDK 会话级「思考程度」（与 @earendil-works/pi-agent-core 的 ThinkingLevel 完全一致）。

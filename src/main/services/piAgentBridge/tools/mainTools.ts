@@ -11,6 +11,7 @@ import {
   createKnowledgeReadSpec,
   parseChunkRefs,
   formatKnowledgeChunks,
+  mergeKbHits,
 } from '../../../../shared/tools/knowledgeSpecs'
 
 export interface MainToolExecutors {
@@ -80,10 +81,13 @@ export interface MainToolExecutors {
   webSearch: (query: string) => Promise<string>
   webSearchBing: (query: string) => Promise<string>
   fetchWebpage: (url: string) => Promise<string>
-  /** 知识库 BM25 检索（knowledgeService 内部函数直调）；hits.kbName 标注来源库 */
+  /** 知识库 BM25 检索（knowledgeService 内部函数直调）；hits.kbName 标注来源库。
+      suggestedQuery：库内真实存在的高 idf 词，低置信时用作自动重搜的查询、也回给模型照抄。
+      hits[].matched：本条实际命中的查询词（按 idf 降序），目录行据此说明命中依据。 */
   knowledgeQuery(kbId: string, query: string, limit?: number): Promise<{
-    hits: Array<{ docName: string; ordinal: number; text: string; title?: string; score: number; kbName?: string }>
+    hits: Array<{ docName: string; ordinal: number; text: string; title?: string; score: number; kbName?: string; matched?: string[] }>
     lowConfidence: boolean
+    suggestedQuery: string
   }>
   /** 知识库按引用读取选中块正文（两阶段检索第二段） */
   knowledgeRead(kbId: string, refs: { docName?: string; ordinal?: number }[]): Promise<{
@@ -559,23 +563,79 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
         const query = String(args.query ?? '')
         const cap = Math.max(1, Math.min(Math.floor(typeof args.limit === 'number' ? args.limit : 8), 12))
         const results = await Promise.all(targets.map(t => exec.knowledgeQuery(t.id, query, cap)))
-        // 各库内部已按 BM25 降序并做过噪音剪枝；跨库合并按分排序（分数跨库近似可比）。
-        // hits.kbName 由 queryKnowledgeBase 填充，目录可直接区分条目归属。
-        const merged = results.flatMap(r => r.hits ?? []).sort((a, b) => b.score - a.score).slice(0, cap)
-        const lowConfidence = results.length > 0 && results.every(r => r.lowConfidence)
+        // 各库内部已按 BM25 降序并做过噪音剪枝；这里用共享的 mergeKbHits 做跨库合并：
+        // 按分降序 + 全局相对剪枝 + 绝对下限。全局剪枝这一刀很关键——各库内部的剪枝是
+        // 以「本库最高分」为基准的，弱库（本次查询只有弱命中）的弱条目会被漏下来，
+        // 合并进目录就成了「跟关键词毫无关系」的结果。界面「试搜索」走同一份实现。
+        const merge = (rs: typeof results) => mergeKbHits(rs, cap)
+        // 建议关键词：各库按 idf 给出的高区分度词取并集（去重、保序，最多 6 个）。
+        // 它既是自动重搜的查询，也是回给模型照抄的「改用这些词」。
+        const suggestFrom = (rs: typeof results): string => {
+          const seen = new Set<string>()
+          const out: string[] = []
+          for (const r of rs) {
+            for (const term of (r.suggestedQuery ?? '').split(/\s+/)) {
+              if (!term || seen.has(term)) continue
+              seen.add(term)
+              out.push(term)
+              if (out.length >= 6) return out.join(' ')
+            }
+          }
+          return out.join(' ')
+        }
+
+        let merged = merge(results)
+        let lowConfidence = results.length > 0 && results.every(r => r.lowConfidence)
+        let suggestion = suggestFrom(results)
+        let retried = false
+        // 实际被采纳的那一组结果（重搜可能被替换掉），后面的「部分库低置信」标注要读它，
+        // 否则重搜成功后仍会按原始结果打上低置信标记。
+        let adopted = results
+        // 零命中 / 低置信 → 先用建议关键词自动重搜一次（确定性兜底，不依赖模型配合）。
+        // 只在建议词与原查询确实不同、且确有建议词时做，避免同词重复检索。
+        if ((merged.length === 0 || lowConfidence) && suggestion && suggestion !== query.trim()) {
+          const retry = await Promise.all(targets.map(t => exec.knowledgeQuery(t.id, suggestion, cap)))
+          const retryMerged = merge(retry)
+          const retryLow = retry.length > 0 && retry.every(r => r.lowConfidence)
+          // 只在重搜确实更好时采纳：不再低置信，或最高分比原来高。
+          // 否则保留原结果——避免「重搜反而更差」把本来可用的信息换掉。
+          if (!retryLow || (retryMerged[0]?.score ?? 0) > (merged[0]?.score ?? 0)) {
+            merged = retryMerged
+            lowConfidence = retryLow
+            suggestion = suggestFrom(retry) || suggestion
+            adopted = retry
+            retried = true
+          }
+        }
+
+        const libLabel = kbNames.length > 1 ? `（已检索 ${kbNames.length} 个知识库：${kbNames.join('、')}）` : ''
         if (merged.length === 0) {
-          const libLabel = kbNames.length > 1 ? `（已检索 ${kbNames.length} 个知识库：${kbNames.join('、')}）` : ''
-          return `知识库未命中任何内容。${libLabel}\nBM25 是字面匹配：请换更具体的关键词重搜——中文文档用中文词、代码术语用英文标识符（如 sequenceDiagram）。`
+          return `知识库未命中任何内容。${libLabel}\n`
+            + (suggestion ? `建议改用这些关键词重搜：${suggestion}\n` : '')
+            + 'BM25 是字面匹配：请换更具体的关键词重搜——中文文档用中文词、代码术语用英文标识符（如 sequenceDiagram）。'
+            + (retried ? '\n（已按建议关键词自动重搜过一次，仍无命中。）' : '')
+        }
+        // 重搜后仍然低置信：整批丢弃，不把噪音目录与正文交给模型。
+        // 低相关度的命中比「没有命中」更危险——模型会把噪音块当可靠证据引用。
+        // 这里只回一条「换关键词重搜」的指令，并直接给出建议词，让模型照抄即可。
+        if (lowConfidence) {
+          return `知识库检索置信度不足，本次结果已丢弃（低相关度命中比无命中更容易误导）。${libLabel}\n`
+            + (suggestion ? `建议改用这些关键词重搜：${suggestion}\n` : '建议换更具体的关键词重搜。\n')
+            + 'BM25 是字面匹配：中文文档用中文词、代码术语用英文标识符（如 sequenceDiagram）。'
+            + (retried ? '\n（已按建议关键词自动重搜过一次，仍不达标。）' : '')
+            + '\n若换词后仍无结果，说明当前知识库里很可能没有相关内容，请直接说明，不要勉强引用。'
         }
         // 自动附带跨库合并后的全局最优块的完整正文：BM25 已降序，hits[0] 就是所有库中最相关的块。
         const top = merged[0]
         const auto = `\n\n【已附带相关度最高的分块正文（相关度 ${top.score}，无需再调用 knowledge_read 读它）】\n`
           + `【${top.title || '（无标题）'}】(${top.kbName ? `${top.kbName} · ` : ''}${top.docName} · 第${top.ordinal + 1}块)\n${top.text}`
-        // 全部库都低置信时明确告知，避免模型把噪音块当可靠证据
-        const hint = lowConfidence
-          ? '\n\n（低置信检索：命中可能只沾到部分查询词。建议换更具体的关键词重搜，或用 knowledge_read 核对目录其他条目。）'
+        // 多库合并时可能只有部分库不达标（全部不达标已在上一步拦掉）：此时目录照给，
+        // 但用 O1 的头部标记提示模型对这批条目保持怀疑。
+        const someLow = adopted.some(r => r.lowConfidence)
+        const hint = someLow
+          ? '\n\n（其中部分知识库的命中置信度偏低，对应条目请谨慎引用，必要时换关键词重搜。）'
           : ''
-        return formatKnowledgeCatalog({ hits: merged, lowConfidence }) + auto + hint
+        return formatKnowledgeCatalog({ hits: merged, lowConfidence: someLow }) + auto + hint
       }
     })
     knowledgeRead = make({

@@ -1,19 +1,38 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Search, ChevronUp, ChevronDown, X } from 'lucide-react'
 
-// 会话内消息搜索：Ctrl/Cmd+F 打开，在消息滚动容器内查找文本，用 CSS Custom Highlight API
-// 高亮所有匹配（不改动 React 的 DOM，安全），并支持上/下一个跳转 + 计数。
-// 若浏览器不支持 Highlight API，则退化为「滚动到匹配所在位置」（无底色高亮）。
-export default function AgentMessageSearch({ containerRef, revision }: {
+// 会话内消息搜索：Ctrl/Cmd+F 打开，支持上/下一个跳转 + 计数。
+//
+// 匹配来源是「数据层」而非 DOM：逐条扫 messages[i].content。旧实现用 TreeWalker 扫滚动容器内的
+// 文本节点，屏外卸载后未挂载的消息直接漏结果、计数还会随挂载范围抖动。
+// 高亮仍走 CSS Custom Highlight API，但 Range 只能指向真实文本节点，因此只对「已挂载」的匹配
+// 消息建 Range；未挂载的匹配项跳转时先请求挂载（onEnsureMessage），挂载后补上 Range。
+// 浏览器不支持 Highlight API 时退化为「滚动到匹配所在消息」（无底色）。
+
+type Match = { msgIndex: number; nth: number }
+
+export default function AgentMessageSearch({ containerRef, messages, onEnsureMessage }: {
   containerRef: React.RefObject<HTMLDivElement | null>
-  revision: number
+  /** 当前已加载并参与渲染的消息，索引必须与消息节点的 data-message-index 对齐 */
+  messages: readonly { content?: string }[]
+  /** 匹配项所在消息尚未挂载时调用，请上层先把它挂上（屏外卸载接入后生效） */
+  onEnsureMessage?: (index: number) => void
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [count, setCount] = useState(0)
   const [active, setActive] = useState(0) // 1-based
-  const rangesRef = useRef<Range[]>([])
+  const matchesRef = useRef<Match[]>([])
+  const rangesRef = useRef<(Range | null)[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // messages 用 ref 持有，避免把数组引用放进 compute 的依赖里——流式期间每次 commit
+  // 都会换数组引用，那样会让 compute 每帧换新身份、防抖重算被反复重置。
+  // 重算由下方 signature 驱动：只有「条数」或「末条内容」变化才认为需要重新统计。
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
+  const tail = messages[messages.length - 1]?.content ?? ''
+  const signature = `${messages.length}|${tail.length}|${tail.slice(-16)}`
 
   const supported = typeof (window as any).Highlight !== 'undefined' && !!(CSS as any).highlights
 
@@ -22,6 +41,7 @@ export default function AgentMessageSearch({ containerRef, revision }: {
       ;(CSS as any).highlights?.delete('agent-search')
       ;(CSS as any).highlights?.delete('agent-search-active')
     } catch { /* ignore */ }
+    matchesRef.current = []
     rangesRef.current = []
   }, [])
 
@@ -47,51 +67,76 @@ export default function AgentMessageSearch({ containerRef, revision }: {
     const q = query.trim()
     if (!root || !open || !q) { clearHighlights(); setCount(0); setActive(0); return }
     const lower = q.toLowerCase()
-    const ranges: Range[] = []
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-      acceptNode: (n) => {
-        const p = (n as Text).parentElement
-        if (!p || p.closest('.agent-msg-search')) return NodeFilter.FILTER_REJECT
-        return n.nodeValue && n.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
-      },
-    })
-    let node: Node | null
-    while ((node = walker.nextNode())) {
-      const text = node.nodeValue || ''
+    const list = messagesRef.current
+
+    // 1) 数据层统计匹配：不依赖 DOM，屏外未挂载的消息同样计入。
+    const matches: Match[] = []
+    for (let i = 0; i < list.length; i += 1) {
+      const text = list[i]?.content ?? ''
+      if (!text) continue
       const hay = text.toLowerCase()
+      let nth = 0
       let idx = hay.indexOf(lower)
       while (idx !== -1) {
-        const r = document.createRange()
-        r.setStart(node, idx)
-        r.setEnd(node, idx + q.length)
-        ranges.push(r)
-        idx = hay.indexOf(lower, idx + q.length)
+        matches.push({ msgIndex: i, nth })
+        nth += 1
+        idx = hay.indexOf(lower, idx + lower.length)
       }
     }
+    matchesRef.current = matches
+
+    // 2) 已挂载的匹配消息补 Range，未挂载的留 null（Range 必须指向真实文本节点）。
+    const ranges: (Range | null)[] = new Array(matches.length).fill(null)
+    const byMsg = new Map<number, Range[]>()
+    for (let i = 0; i < matches.length; i += 1) {
+      const m = matches[i]!
+      let list2 = byMsg.get(m.msgIndex)
+      if (!list2) {
+        const node = root.querySelector<HTMLElement>(`[data-message-index="${m.msgIndex}"]`)
+        list2 = node ? collectRanges(node, lower) : []
+        byMsg.set(m.msgIndex, list2)
+      }
+      ranges[i] = list2[m.nth] ?? null
+    }
     rangesRef.current = ranges
-    setCount(ranges.length)
-    setActive(ranges.length ? 1 : 0)
+
+    setCount(matches.length)
+    setActive(matches.length ? 1 : 0)
     if (supported) {
-      try { (CSS as any).highlights.set('agent-search', new (window as any).Highlight(...ranges)) } catch { /* ignore */ }
+      try {
+        const live = ranges.filter((r): r is Range => r !== null)
+        ;(CSS as any).highlights.set('agent-search', new (window as any).Highlight(...live))
+      } catch { /* ignore */ }
     }
   }, [query, open, containerRef, supported, clearHighlights])
 
-  // query / 打开状态 / 会话内容（revision）变化时，防抖重算匹配
+  // query / 打开状态 / 会话内容（signature）变化时，防抖重算匹配
   useEffect(() => {
     const id = setTimeout(compute, 60)
     return () => clearTimeout(id)
-  }, [compute, revision])
+  }, [compute, signature])
 
   // 高亮当前匹配并滚动到视图中央
   useEffect(() => {
-    if (active < 1 || active > rangesRef.current.length) return
-    const r = rangesRef.current[active - 1]!
+    if (active < 1 || active > matchesRef.current.length) return
+    const idx = active - 1
+    const r = rangesRef.current[idx]
     if (supported) {
-      try { (CSS as any).highlights.set('agent-search-active', new (window as any).Highlight(r)) } catch { /* ignore */ }
+      try {
+        if (r) (CSS as any).highlights.set('agent-search-active', new (window as any).Highlight(r))
+        else (CSS as any).highlights?.delete('agent-search-active')
+      } catch { /* ignore */ }
     }
-    const el = r.startContainer.parentElement
-    el?.scrollIntoView({ block: 'center' })
-  }, [active, supported, count])
+    if (r) {
+      r.startContainer.parentElement?.scrollIntoView({ block: 'center' })
+      return
+    }
+    // 该匹配项所在消息尚未挂载：请上层先挂载，同时尽量滚到它所在的消息节点。
+    const m = matchesRef.current[idx]
+    if (!m) return
+    onEnsureMessage?.(m.msgIndex)
+    containerRef.current?.querySelector<HTMLElement>(`[data-message-index="${m.msgIndex}"]`)?.scrollIntoView({ block: 'center' })
+  }, [active, supported, count, onEnsureMessage, containerRef])
 
   useEffect(() => { if (!open) clearHighlights() }, [open, clearHighlights])
   useEffect(() => () => clearHighlights(), [clearHighlights])
@@ -123,4 +168,31 @@ export default function AgentMessageSearch({ containerRef, revision }: {
       <button className="agent-msg-search-btn" onClick={() => setOpen(false)} title="关闭 (Esc)"><X size={13} /></button>
     </div>
   )
+}
+
+// 收集某个消息节点内的全部匹配 Range（跳过搜索框自身）。
+// 注意：DOM 里的文本是渲染后的形态（Markdown / 工具卡），与数据层 content 的字符构成不完全
+// 一致，所以这里的第 nth 个 Range 是「尽力对齐」，取不到时该匹配项就没有高亮底色。
+function collectRanges(node: HTMLElement, lower: string): Range[] {
+  const out: Range[] = []
+  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => {
+      const p = (n as Text).parentElement
+      if (!p || p.closest('.agent-msg-search')) return NodeFilter.FILTER_REJECT
+      return n.nodeValue && n.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+    },
+  })
+  let t: Node | null
+  while ((t = walker.nextNode())) {
+    const hay = (t.nodeValue || '').toLowerCase()
+    let idx = hay.indexOf(lower)
+    while (idx !== -1) {
+      const r = document.createRange()
+      r.setStart(t, idx)
+      r.setEnd(t, idx + lower.length)
+      out.push(r)
+      idx = hay.indexOf(lower, idx + lower.length)
+    }
+  }
+  return out
 }

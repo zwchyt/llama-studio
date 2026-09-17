@@ -11,6 +11,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { getMessagePreview } from '../utils/text'
+import { useAgentHistoryWindow } from './useAgentHistoryWindow'
 import type { AgentSession } from '../../../../../shared/types'
 
 export function useAgentScroll({ activeSession, streaming, setSelectionPopover, taskCardRef, taskModalOpen }: {
@@ -40,6 +41,20 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
   // 重新跟随阈值：必须真正滚到最底（而非停留在 80px 观察带内）才重新接管贴底。
   const REATTACH_THRESHOLD = 4
   const railTargetsRef = useRef(new Map<string, HTMLElement>())
+  // 已挂载消息的 [id, 元素] 有序表：只承担「位置」职责，供二分读取 getBoundingClientRect。
+  const railEntriesRef = useRef<[string, HTMLElement][]>([])
+  // 目录条目的权威顺序，来自数据层 messages，与 DOM 是否挂载无关。
+  // 末条判定 / 溢出判定读它：屏外卸载后 DOM 里没有节点，也不能因此丢顺序。
+  const railIdsRef = useRef<string[]>([])
+  // id → 会话内原始下标：跳转到「当前未挂载」的消息时，要靠它告诉虚拟化该把哪一条纳入窗口。
+  const railIndexOfRef = useRef(new Map<string, number>())
+  // 虚拟化桥：消息级屏外卸载（useAgentVirtualMessages）与滚动逻辑分处两个组件，
+  // 这里留一个注册口，让「跳转到未挂载消息」能先请求挂载、再等 DOM 就位后滚动。
+  const virtualApiRef = useRef<{ ensureMounted: (index: number) => void } | null>(null)
+  const registerVirtualApi = useCallback((api: { ensureMounted: (index: number) => void } | null) => {
+    virtualApiRef.current = api
+  }, [])
+  const railDirtyRef = useRef(true)
   // 轨道预览缓存（见 syncRailItems 注释）：getMessagePreview 会对「每条消息的完整正文」
   // 跑 4 次 stripThinkContent 正则 + 空白折叠，100 条消息单次约 3ms；而 syncRailItems 被
   // MutationObserver（流式文本改写）/ scroll（贴底 rAF 每帧写 scrollTop）/ ResizeObserver
@@ -114,6 +129,10 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     followingRef.current = false
     atBottomRef.current = false
   }, [])
+  const { historyStartIndex, loadEarlierMessages } = useAgentHistoryWindow(
+    activeSession?.id, activeSession?.messages ?? [], chatScrollRef, pauseFollow,
+  )
+
   // 滚轮带方向：仅上滚（deltaY < 0）暂停跟随。ctrl+wheel 是捏合缩放，delta 正负交替，忽略。
   const onChatWheel = useCallback((e: React.WheelEvent) => {
     if (e.deltaY < 0 && !e.ctrlKey) pauseFollow()
@@ -240,8 +259,8 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
           cur.scrollTop = maxTop // 精确贴底
           // 贴底后把高亮同步到「最后一颗」：否则 updateActiveRailItem 在本帧取数时
           // 视口中心仍偏向中间消息，高亮会残留在半路那颗点上，与"已到底"观感矛盾。
-          const t = [...railTargetsRef.current.keys()]
-          const lastId = t.length > 0 ? t[t.length - 1] : ''
+          // 末条 id 取自数据层顺序（railIdsRef），不依赖 DOM 节点是否存在。
+          const lastId = railIdsRef.current.at(-1) ?? ''
           if (lastId) setActiveRailId(current => current === lastId ? current : lastId)
         }
       },
@@ -291,7 +310,7 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
 
   const updateActiveRailItem = useCallback(() => {
     const viewport = chatScrollRef.current
-    const targets = [...railTargetsRef.current.entries()]
+    const targets = railEntriesRef.current
     if (!viewport || targets.length === 0) return
 
     const viewportRect = viewport.getBoundingClientRect()
@@ -308,73 +327,71 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
       return
     }
 
-    // ── 判定基准：视口「上沿参考线」之前最后一条用户提问 ──
-    // 轨道点 = 用户提问索引（模型输出不入表），故语义不是「中心最近」，而是
-    // 「当前阅读进度落在哪一轮提问之后」：取所有 top 已越过参考线（视口上沿下方一点点）
-    // 的提问中，位置最靠下的那条；若一条都没越过，则取第一条。
-    // 用 getBoundingClientRect 在阈值点位的判断对 content-visibility 的估算框不敏感：
-    // 只需比较 top 的高低顺序，不需要真实高度（估算框只影响高度、不影响 top 的单调性）。
+    // 消息节点按文档顺序排列，位置单调：二分查找将每帧布局读取从 O(N) 降为 O(log N)。
     const refLine = viewportRect.top + Math.min(120, viewportRect.height * 0.25)
-    let chosen = targets[0]?.[0] ?? ''
-    for (const [id, element] of targets) {
-      const rect = element.getBoundingClientRect()
-      if (rect.top <= refLine) {
-        chosen = id // 依次覆盖 → 最终得到「已越过参考线的最靠下一条」
-      } else {
-        break // 自上而下有序，一旦越过参考线即可停止
-      }
+    let low = 0
+    let high = targets.length
+    while (low < high) {
+      const mid = (low + high) >>> 1
+      if (targets[mid]![1].getBoundingClientRect().top <= refLine) low = mid + 1
+      else high = mid
     }
+    const chosen = targets[Math.max(0, low - 1)]![0]
     setActiveRailId(current => current === chosen ? current : chosen)
   }, [FOLLOW_THRESHOLD])
 
+  // 目录条目改由数据层生成（activeSession.messages 的已加载区间），不再从 DOM 反查。
+  // 原因：屏外卸载后消息节点可能不存在，若仍以 DOM 为条目来源，目录会缺项、条目顺序也会
+  // 随挂载范围抖动（rail id 落在哪条消息上取决于当时谁在 DOM 里）。
+  // DOM 只保留「位置」职责：按 data-message-index 建一次索引，供二分与跳转取节点；
+  // 取不到节点的条目仍进目录（顺序正确），只是暂时不参与位置二分。
   const syncRailItems = useCallback(() => {
     const viewport = chatScrollRef.current
     if (!viewport) return
 
-    const messages = activeSession?.messages ?? []
-    const messageNodes = Array.from(viewport.querySelectorAll<HTMLElement>('[data-slot="message"]'))
-    const nodeIndexMap = new Map<HTMLElement, number>()
-    messageNodes.forEach((node, index) => nodeIndexMap.set(node, index))
+    const all = activeSession?.messages ?? []
+    const messages = all.slice(historyStartIndex)
+    const nodeByIndex = new Map<number, HTMLElement>()
+    for (const node of viewport.querySelectorAll<HTMLElement>('[data-slot="message"]')) {
+      const idx = Number(node.dataset.messageIndex)
+      if (Number.isFinite(idx)) nodeByIndex.set(idx, node)
+    }
 
     const targets = new Map<string, HTMLElement>()
+    const ids: string[] = []
+    const indexById = new Map<string, number>()
     const nextItems: { id: string; label: string; description?: string; ariaLabel: string }[] = []
     // 预览缓存：命中条件见 railPreviewCacheRef 声明处。只有「content 引用变了」的消息
     // （即正在流式的那一条）才真正重跑 getMessagePreview。
     const previewCache = railPreviewCacheRef.current
     const aliveIds = new Set<string>()
 
-    for (const node of messageNodes) {
-      // 每条消息都生成一个点（用户气泡 + 模型气泡各一个）——用于对比验证是否卡顿。
-      const originalIndex = nodeIndexMap.get(node) ?? 0
-      const msg = messages[originalIndex]
-      const from = node.dataset.from ?? 'conversation'
-      // rail id 直接复用消息的稳定 id（消息行以 key={msg.id} 渲染，DOM 节点会跨渲染复用）。
-      // 旧实现用「DOM 节点 → 自增 id」的 WeakMap：节点被 React 复用（增删/编辑重发/压缩历史）时，
-      // 绑定在节点上的旧 id 会落到另一条消息上，导致点的预览文本与实际消息错位/看似重复渲染。
-      // 用 msg.id 作为 key，天然与消息一一对应，且稳定唯一。
-      const id = msg?.id ?? `msg-rail-idx-${originalIndex}`
-      targets.set(id, node)
+    for (let i = 0; i < messages.length; i += 1) {
+      const msg = messages[i]!
+      const originalIndex = historyStartIndex + i
+      // rail id 直接复用消息的稳定 id：与数据一一对应，编辑重发 / 压缩历史 / 屏外卸载都不会错位。
+      const id = msg.id
+      aliveIds.add(id)
+      ids.push(id)
+      indexById.set(id, originalIndex)
+      const node = nodeByIndex.get(originalIndex)
+      if (node) targets.set(id, node)
+      // 预览同时依赖「本条 content」与「下一条 content」（下一条是助手消息时取它作 description），
+      // 两者任一换新引用即失效重算，因此缓存键必须带上 nextContent。
+      const nextContent = all[originalIndex + 1]?.content
+      const hit = previewCache.get(id)
       let preview: { label: string; description?: string }
-      if (msg) {
-        aliveIds.add(id)
-        // 预览同时依赖「本条 content」与「下一条 content」（下一条是助手消息时取它作 description），
-        // 两者任一换新引用即失效重算，因此缓存键必须带上 nextContent。
-        const nextContent = messages[originalIndex + 1]?.content
-        const hit = previewCache.get(id)
-        if (hit && hit.content === msg.content && hit.nextContent === nextContent && hit.role === msg.role) {
-          preview = hit.preview
-        } else {
-          preview = getMessagePreview(msg, messages, originalIndex)
-          previewCache.set(id, { content: msg.content, nextContent, role: msg.role, preview })
-        }
+      if (hit && hit.content === msg.content && hit.nextContent === nextContent && hit.role === msg.role) {
+        preview = hit.preview
       } else {
-        preview = { label: from, description: undefined }
+        preview = getMessagePreview(msg, all, originalIndex)
+        previewCache.set(id, { content: msg.content, nextContent, role: msg.role, preview })
       }
       nextItems.push({
         id,
         label: preview.label,
         description: preview.description,
-        ariaLabel: `Go to ${from} message`,
+        ariaLabel: `Go to ${msg.role} message`,
       })
     }
     // 清理已不在列表里的消息（编辑重发 / 压缩历史 / 切换会话），避免缓存无限增长
@@ -383,6 +400,10 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     }
 
     railTargetsRef.current = targets
+    railEntriesRef.current = [...targets.entries()]
+    railIdsRef.current = ids
+    railIndexOfRef.current = indexById
+    railDirtyRef.current = false
     // 只在「条目内容真正变化」时才 setState：滚动动画期间 syncRailItems 会被每帧调用，
     // 若无条件 setRailItems(新数组引用) 会触发整条 rail 每帧重渲染（16 个点 + 预览文本
     // 每帧重算），造成可见的掉帧/顿挫。用内容比对跳过无意义的渲染。
@@ -402,36 +423,25 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
       return nextItems
     })
     setRailOverflowing(viewport.scrollHeight > viewport.clientHeight + 1 && nextItems.length > 1)
-  }, [activeSession?.messages])
+  }, [activeSession?.messages, historyStartIndex])
 
   const scheduleRailSync = useCallback(() => {
-    if (railFrameRef.current) cancelAnimationFrame(railFrameRef.current)
+    if (railFrameRef.current) return
     railFrameRef.current = requestAnimationFrame(() => {
-      syncRailItems()
+      railFrameRef.current = undefined
+      if (railDirtyRef.current) syncRailItems()
+      const viewport = chatScrollRef.current
+      if (viewport) setRailOverflowing(viewport.scrollHeight > viewport.clientHeight + 1 && railIdsRef.current.length > 1)
       updateActiveRailItem()
     })
   }, [syncRailItems, updateActiveRailItem])
 
-  const scrollToRailItem = useCallback((item: { id: string }) => {
+  // 把某条「已挂载」的消息滚到视口顶部附近：轨道点跳转与「屏外卸载后补挂载」共用的出口。
+  // 跳向某条用户提问时显式进入离底态（露出“回到底部”按钮）；与「跳到底部」共用同一个
+  // animateScrollTo → 上下滑动动画速度/缓动完全一致。
+  const animateToRailTarget = useCallback((id: string) => {
     const viewport = chatScrollRef.current
-    const target = railTargetsRef.current.get(item.id)
-    if (!viewport || !target) return
-
-    // 每条消息一个点。点击一律把该消息滚到「视口顶部附近」（提问在上、回答在下方展开，
-    // 比居中更符合阅读习惯）。唯一例外：末颗点即最后一条消息 → 等同贴底。
-    const liveIds = [...railTargetsRef.current.keys()]
-    const isLast = liveIds.length > 0 && liveIds[liveIds.length - 1] === item.id
-    const allMsgNodes = viewport.querySelectorAll<HTMLElement>('[data-slot="message"]')
-    const lastMsgNode = allMsgNodes.length > 0 ? allMsgNodes[allMsgNodes.length - 1] : null
-    if (isLast && lastMsgNode === target) {
-      // 末颗且它就是最后一条消息 → 等同贴底，复用统一出口（含 following/锚定处理）
-      scrollToBottom(true, true)
-      setActiveRailId(item.id)
-      scheduleRailSync()
-      return
-    }
-    // 跳向某条用户提问：显式进入离底态（露出“回到底部”按钮）。
-    // 与「跳到底部」共用同一个 animateScrollTo → 上下滑动动画速度/缓动完全一致。
+    if (!viewport) return
     followingRef.current = false
     atBottomRef.current = false
     setAtBottom(false)
@@ -447,7 +457,7 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     const RAIL_TOP_GAP = 12
     const computeTop = () => {
       const cur = chatScrollRef.current
-      const tgt = railTargetsRef.current.get(item.id)
+      const tgt = railTargetsRef.current.get(id)
       if (!cur || !tgt) return cur?.scrollTop ?? viewport.scrollTop
       const vRect = cur.getBoundingClientRect()
       const tRect = tgt.getBoundingClientRect()
@@ -465,35 +475,68 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
         scheduleRailSync()
       },
     })
-    setActiveRailId(item.id)
+    setActiveRailId(id)
     scheduleRailSync()
-  }, [animateScrollTo, scheduleRailSync, scrollToBottom])
+  }, [animateScrollTo, scheduleRailSync])
+
+  const scrollToRailItem = useCallback((item: { id: string }) => {
+    const viewport = chatScrollRef.current
+    if (!viewport) return
+
+    // 每条消息一个点。点击一律把该消息滚到「视口顶部附近」（提问在上、回答在下方展开，
+    // 比居中更符合阅读习惯）。唯一例外：末颗点即最后一条消息 → 等同贴底。
+    // 末条判定读数据层顺序（railIdsRef）：不再扫 DOM 找「最后一个消息节点」，
+    // 那个查询在长会话里是 O(全部节点)，而且屏外卸载后最后一条未必在 DOM 里。
+    const ids = railIdsRef.current
+    const isLast = ids.length > 0 && ids[ids.length - 1] === item.id
+    if (isLast) {
+      // 末颗且它就是最后一条消息 → 等同贴底，复用统一出口（含 following/锚定处理）
+      scrollToBottom(true, true)
+      setActiveRailId(item.id)
+      scheduleRailSync()
+      return
+    }
+    if (railTargetsRef.current.has(item.id)) {
+      animateToRailTarget(item.id)
+      return
+    }
+    // 目标当前未挂载（被屏外卸载顶掉了）：先请虚拟化把窗口扩到包含它，
+    // 等 DOM 就位（两帧：一帧提交挂载、一帧完成布局）再走同一套滚动动画。
+    const api = virtualApiRef.current
+    const index = railIndexOfRef.current.get(item.id)
+    if (!api || index === undefined) return
+    api.ensureMounted(index)
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const node = chatScrollRef.current?.querySelector<HTMLElement>(`[data-slot="message"][data-message-index="${index}"]`)
+      if (!node) return
+      railTargetsRef.current.set(item.id, node)
+      animateToRailTarget(item.id)
+    }))
+  }, [animateToRailTarget, scheduleRailSync, scrollToBottom])
 
   useEffect(() => {
     const viewport = chatScrollRef.current
     if (!viewport) return
-    let raf = 0
     const onScroll = () => {
       markRailScrolling()
-      cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => {
-        scheduleRailSync()
-        updateActiveRailItem()
-      })
+      scheduleRailSync()
     }
     viewport.addEventListener('scroll', onScroll, { passive: true })
-    return () => {
-      viewport.removeEventListener('scroll', onScroll)
-      cancelAnimationFrame(raf)
-    }
-  }, [scheduleRailSync, updateActiveRailItem, markRailScrolling])
+    return () => viewport.removeEventListener('scroll', onScroll)
+  }, [scheduleRailSync, markRailScrolling])
 
   useEffect(() => {
     const viewport = chatScrollRef.current
     if (!viewport) return
 
+    // 数据变化 / 挂载消息范围变化才重建目录。正文 token、代码高亮及思考计时
+    // 只改变位置，不应重新扫描整棵 DOM 和重建所有目录项。
+    railDirtyRef.current = true
     scheduleRailSync()
-    const mutationObserver = typeof MutationObserver !== 'undefined' ? new MutationObserver(scheduleRailSync) : null
+    const mutationObserver = typeof MutationObserver !== 'undefined' ? new MutationObserver(records => {
+      if (records.some(record => record.type === 'childList' && record.target === viewport)) railDirtyRef.current = true
+      scheduleRailSync()
+    }) : null
     mutationObserver?.observe(viewport, {
       childList: true,
       characterData: true,
@@ -505,6 +548,7 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
 
     return () => {
       if (railFrameRef.current) cancelAnimationFrame(railFrameRef.current)
+      railFrameRef.current = undefined
       mutationObserver?.disconnect()
       resizeObserver?.disconnect()
     }
@@ -539,9 +583,10 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
   }, [])
 
   return {
+    historyStartIndex, loadEarlierMessages,
     chatScrollRef, atBottom, railItems, activeRailId, railOverflowing, railScrolling,
     onChatScroll, onChatWheel, pauseFollow, markRailScrolling,
     animateScrollTo, scrollToBottom, updateActiveRailItem, syncRailItems,
-    scheduleRailSync, scrollToRailItem, resetFollow,
+    scheduleRailSync, scrollToRailItem, resetFollow, registerVirtualApi,
   }
 }

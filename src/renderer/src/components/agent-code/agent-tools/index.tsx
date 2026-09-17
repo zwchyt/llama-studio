@@ -20,9 +20,14 @@ import { fileMeta } from '../../../utils/fileIcon'
 import { TOOL_METAS, WRITE_EDIT_TOOLS, BACKUP_TOOLS } from '../../../utils/tools'
 import WebSearchResults from '../../WebSearchResults'
 import { getEditDiffStat, ToolEditDiff } from '../agent-diff'
+import { LinedPre, LINED_PRE_WINDOW_CHARS } from './LinedPre'
+import { WindowedText } from '../WindowedText'
 import { dirName, resolveWorkspacePath } from '../utils/paths'
 import { formatDuration } from '../utils/format'
 import type { AgentMessage } from '../../../../../shared/types'
+
+// LinedPre 已抽至 ./LinedPre（长内容行窗口），此处 re-export 保持原导入路径可用
+export { LinedPre } from './LinedPre'
 
 // 工具头部预览摘要（参考 pi-web：显示文件名 / 命令 / 模式等主要参数；文件路径只取文件名）
 export function getToolPreview(input: unknown): string {
@@ -59,20 +64,8 @@ export function formatToolArgs(raw: string | undefined): string {
   }
 }
 
-// 带行号的等宽文本块（工具写入内容 / Read 结果）
-export function LinedPre({ text, maxHeight }: { text: string; maxHeight?: number }) {
-  const lines = text.split('\n')
-  return (
-    <div className="agent-tool-lined" style={maxHeight ? { maxHeight } : undefined}>
-      {lines.map((line, i) => (
-        <div className="agent-tool-lined-row" key={i}>
-          <span className="agent-tool-lined-num">{i + 1}</span>
-          <span className="agent-tool-lined-code">{line === '' ? ' ' : line}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
+// 带行号的等宽文本块（工具写入内容 / Read 结果）已抽至 ./LinedPre.tsx：
+// 阈值以下逐行 DOM（原行为），以上走行窗口只挂载视口附近行。
 
 export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPreviewFile, headFilePath }: { name: string; args: string; onPreviewFile: (p: string, line?: number) => void; headFilePath?: string }) {
   const parsed = (() => { try { return JSON.parse(args) } catch { return null } })()
@@ -128,30 +121,66 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
   )
 })
 
+// 非行号结果的窗口参数：行高与 .agent-tool-result-window 的 11px × line-height 1.5 对齐
+// （见 styles/agent-code.css 末尾「长内容行窗口：固定行高契约」），视口高度对齐原 max-height。
+const TOOL_RESULT_WINDOW_ROW_HEIGHT = 17
+const TOOL_RESULT_WINDOW_VIEW_HEIGHT = 360
+
+// 取前 n 行的有界前缀：不 split 全文——超大文本 split('\n') 会生成与行数同量的字符串对象，
+// 正是这一步要避免的开销。
+function boundedHead(text: string, n: number): string {
+  let pos = 0
+  for (let i = 0; i < n; i += 1) {
+    const next = text.indexOf('\n', pos)
+    if (next === -1) return text
+    pos = next + 1
+  }
+  return text.slice(0, pos) + '…'
+}
+
 export const ToolResultView = React.memo(function ToolResultView({ result, truncated, total, lined }: { result: string; truncated?: boolean; total?: number; lined?: boolean }) {
-  const lines = result.split('\n')
-  const lineCount = lines.length
   // 所有工具结果默认收起，点击「展开」才显示完整内容
   const [expanded, setExpanded] = useState(false)
+  // 超长结果不 split：阈值判断只看字符数，这样不必先 split 全文就能决定走不走窗口。
+  const oversized = result.length > LINED_PRE_WINDOW_CHARS
+  const lines = useMemo(() => (oversized ? null : result.split('\n')), [result, oversized])
+  const lineCount = lines ? lines.length : 0
   // 收起预览：>12 行显示前 12 行；2~12 行多行结果折叠为首行预览；单行无需收起。
   // 注意 collapsed 不能只按 >12 行判定，否则 ≤12 行的短结果点「收起」内容不变、按钮看似无效。
-  const isLong = lineCount > 12
-  const isMulti = lineCount > 1
+  const isLong = lines ? lineCount > 12 : true
+  const isMulti = lines ? lineCount > 1 : true
   const shownText = expanded
     ? result
-    : (isLong ? lines.slice(0, 12).join('\n') + '\n…' : (isMulti ? lines.slice(0, 1).join('\n') + '\n…' : result))
+    : lines
+      ? (isLong ? lines.slice(0, 12).join('\n') + '\n…' : (isMulti ? lines.slice(0, 1).join('\n') + '\n…' : result))
+      : boundedHead(result, 12)
+  // 超长结果的「行数」无法廉价获得（那要先 split 全文），改报字符数。
+  const meta = truncated ? `已截断，共 ${total} 字符` : (lines ? `共 ${lineCount} 行` : `共 ${result.length} 字符`)
+  // 展开 + 超长 + 非行号：走行窗口，只挂载视口附近的行（行号类由 LinedPre 自己处理）。
+  const windowed = expanded && oversized && !lined
   return (
     <div className="agent-tool-result">
       <div className="agent-tool-result-head">
-        <span className="agent-tool-result-label">
-          结果{truncated ? `（已截断，共 ${total} 字符）` : `（共 ${lineCount} 行）`}
-        </span>
+        <span className="agent-tool-result-label">结果（{meta}）</span>
         <button className="agent-tool-subtoggle" onClick={() => setExpanded(v => !v)}>
           <ChevronRightIcon size={11} className={`agent-tool-chev ${expanded ? 'open' : ''}`} />
-          {expanded ? '收起' : (isLong ? `展开（显示前 12 / 共 ${lineCount} 行）` : (isMulti ? `展开（显示首行 / 共 ${lineCount} 行）` : '展开'))}
+          {expanded ? '收起' : (isLong ? `展开（显示前 12 / ${meta}）` : (isMulti ? `展开（显示首行 / ${meta}）` : '展开'))}
         </button>
       </div>
-      {lined ? <LinedPre text={shownText} /> : <pre className="agent-tool-result-pre">{shownText}</pre>}
+      {lined ? (
+        <LinedPre text={shownText} />
+      ) : windowed ? (
+        <WindowedText
+          text={result}
+          rowHeight={TOOL_RESULT_WINDOW_ROW_HEIGHT}
+          viewHeight={TOOL_RESULT_WINDOW_VIEW_HEIGHT}
+          className="agent-window agent-tool-result-window"
+          rowAttr="data-tool-row"
+          ariaLabel={`工具结果（窗口渲染，共 ${result.length} 字符）`}
+        />
+      ) : (
+        <pre className="agent-tool-result-pre">{shownText}</pre>
+      )}
     </div>
   )
 })

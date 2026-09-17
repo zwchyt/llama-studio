@@ -244,12 +244,10 @@
 }
 
 /* ── 试搜索 ── */
+/* 全局搜索栏：常驻右栏顶部，跨全部知识库检索；不参与滚动，也不占满剩余高度
+   （结果区由 .kb-hits 接管，见下） */
 .kb-search {
   flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 45%;
 }
 
 .kb-search-bar {
@@ -273,13 +271,98 @@
   background: transparent;
 }
 
+/* 搜索结果：搜索态下独占右栏主区域（文档管理让位，不再两套列表堆叠） */
 .kb-hits {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: 8px;
   align-items: start;
   padding-right: 4px;
+}
+
+/* 信息行 / 提示 / 空态横跨整行：.kb-hits 是栅格，子项默认只占一格 */
+.kb-hits>.kb-hits-meta,
+.kb-hits>.kb-lowconf,
+.kb-hits>.kb-empty-sm {
+  grid-column: 1 / -1;
+}
+
+/* 检索范围 + 置信度告警 */
+.kb-hits-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* 单个库的弱化说明（某库区分度不足 / 无命中）：刻意不用告警色。
+   某个库没搜好不等于整次检索不可靠，用告警色会造成「明明 top 分遥遥领先却报警」的误导。 */
+.kb-hits-note {
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+/* 命中项的来源库徽标：跨库检索后必须一眼看出每条来自哪个库 */
+.kb-hit-kb {
+  flex-shrink: 0;
+  margin-right: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  white-space: nowrap;
+}
+
+/* 命中项头部：来源库徽标 + 文档名（占满中段并省略） + 分数 */
+.kb-hit-head .kb-hit-doc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 低置信 / 零命中时的建议关键词：点单个词或整组直接重搜 */
+.kb-lowconf-sug {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: 6px;
+}
+
+.kb-sug-chip {
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-family: var(--font-mono, 'SF Mono', monospace);
+  cursor: pointer;
+}
+
+.kb-sug-chip:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.kb-sug-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.kb-sug-chip.primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .kb-lowconf {
@@ -316,6 +399,24 @@
   font-family: var(--font-mono, 'SF Mono', monospace);
 }
 
+/* 命中词列表：正文高亮可能因分词差异落空（BM25 按二元组匹配），
+   这里直接列出「靠哪些词命中的」，保证任何情况下都能看出命中依据 */
+.kb-hit-matched {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-bottom: 5px;
+}
+
+.kb-hit-term {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-family: var(--font-mono, 'SF Mono', monospace);
+}
+
 .kb-hit-text {
   font-size: 12px;
   line-height: 1.5;
@@ -329,7 +430,9 @@
 }
 
 @keyframes kb-rotate {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ── 删除确认悬浮弹窗（锚定在删除按钮旁） ── */
@@ -356,8 +459,15 @@
 }
 
 @keyframes kb-pop-in {
-  from { opacity: 0; transform: translateX(-4px) scale(0.97); }
-  to { opacity: 1; transform: none; }
+  from {
+    opacity: 0;
+    transform: translateX(-4px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .kb-del-pop-title {
@@ -487,7 +597,7 @@
   transition: background .12s, color .12s;
 }
 
-.kb-view-toggle button + button {
+.kb-view-toggle button+button {
   border-left: 1px solid var(--border-strong, var(--border));
 }
 
@@ -719,7 +829,9 @@ mark.kb-hl.cur {
   border-top: 1px solid var(--border);
 }
 
-.kb-manual-space { flex: 1; }
+.kb-manual-space {
+  flex: 1;
+}
 
 .kb-manual-btn {
   font-size: 12px;

@@ -244,8 +244,8 @@ interface LlamaCppApi {
   // ── Agent Code 目录操作 ──
   listDir: (dirPath: string) => Promise<{ success: boolean; entries?: { name: string; isDir: boolean; fileCount: number; size?: number }[]; truncated?: boolean; total?: number; error?: string }>
   // ── Agent Code 文件操作 ──
-	    readFile: (filePath: string, opts?: { maxBytes?: number; offset?: number; limit?: number; raw?: boolean }) => Promise<{ success: boolean; content?: string; lines?: number; totalLines?: number; startLine?: number; truncated?: boolean; error?: string; errorType?: string; fileSize?: number; suggestedCommand?: string }>
-	    statFile: (filePath: string) => Promise<{ mtimeMs: number; size: number } | null>
+  readFile: (filePath: string, opts?: { maxBytes?: number; offset?: number; limit?: number; raw?: boolean }) => Promise<{ success: boolean; content?: string; lines?: number; totalLines?: number; startLine?: number; truncated?: boolean; error?: string; errorType?: string; fileSize?: number; suggestedCommand?: string }>
+  statFile: (filePath: string) => Promise<{ mtimeMs: number; size: number } | null>
   readFileBase64: (filePath: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>
   getFilePath: (file: File) => string
   writeFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>
@@ -257,80 +257,89 @@ interface LlamaCppApi {
   saveAgentProjects: (projects: AgentProject[], opts?: { gcScope?: string[] }) => Promise<{ success: boolean; error?: string }>
   exportAgentSession: (sessionId: string) => Promise<{ success: boolean; canceled?: boolean; error?: string }>
   importAgentSession: (projectId: string) => Promise<{ success: boolean; canceled?: boolean; sessionId?: string; session?: AgentSession; error?: string }>
-	  // ── Agent Tracing 落盘 ──
-	  agentTraceAppend: (sessionId: string, entry: object) => Promise<{ success: boolean; error?: string }>
-		  // ── Agent Code 文件删除 ──
-		  deletePath: (targetPath: string, recursive: boolean) => Promise<{ success: boolean; message?: string; error?: string }>
-		  gitChanges: (dir: string) => Promise<{ isRepo: boolean; staged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>; unstaged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>; error?: string }>
-		  gitStageFile: (dir: string, path: string) => Promise<{ success: boolean; error?: string }>
-		  gitUnstageFile: (dir: string, path: string) => Promise<{ success: boolean; error?: string }>
-		  gitDiscardFile: (dir: string, path: string) => Promise<{ success: boolean; error?: string }>
-		  gitStageAll: (dir: string) => Promise<{ success: boolean; error?: string }>
-		  gitUnstageAll: (dir: string) => Promise<{ success: boolean; error?: string }>
-		  gitDiscardAll: (dir: string) => Promise<{ success: boolean; error?: string }>
-		  gitListBranches: (dir: string) => Promise<{ branches: Array<{ name: string; current: boolean }>; error?: string }>
-		  gitCheckoutBranch: (dir: string, branch: string) => Promise<{ success: boolean; error?: string }>
-		  setAgentWorkspace: (dir: string) => Promise<{ success: boolean }>
-		  // ── 认知地图（codeMapService）──
-		  codemapBuild: (dir: string) => Promise<CodeMapStatus | { error: string }>
-		  codemapStatus: (dir: string) => Promise<CodeMapStatus>
-		  codemapSymbol: (dir: string, name: string, limit?: number) => Promise<CodeMapSymbolHit[]>
-		  codemapSkeleton: (dir: string, relPath: string) => Promise<CodeMapFileSkeleton | null>
-		  codemapNeighbors: (dir: string, relPath: string) => Promise<CodeMapNeighbors>
-		  codemapInvalidate: (dir: string, absPaths: string[]) => Promise<{ success: boolean }>
-		  // ── 代码混合检索（retrievalService）──
-		  codesearchQuery: (dir: string, query: string, limit?: number) => Promise<CodeSearchResponse>
-		  // ── 长期记忆（memoryStore）──
-		  memstoreUpsert: (dir: string, candidates: AgentMemoryCandidate[]) => Promise<AgentMemoryUpsertResult>
-		  memstoreInject: (dir: string, capChars: number) => Promise<AgentMemoryInjection>
-		  memstoreContradict: (dir: string, probeText: string) => Promise<{ marked: number; archived: number }>
-		  memstoreList: (dir: string) => Promise<AgentMemoryEntry[]>
-		  memstoreArchive: (dir: string, id: string) => Promise<{ success: boolean }>
-		  // ── 本地知识库 RAG（knowledgeService）──
-		  knowledgeList: () => Promise<KnowledgeBaseMeta[]>
-		  knowledgeCreate: (name: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
-		  knowledgeDelete: (id: string) => Promise<{ success: boolean; error?: string }>
-		  knowledgeGet: (kbId: string) => Promise<{ id: string; name: string; createdAt: string; docs: KnowledgeDoc[] } | null>
-		knowledgeAddDoc: (kbId: string, doc: { name: string; text: string; chunking?: { mode?: 'auto' | 'heading' | 'delim' | 'single' | 'manual' | 'code'; size?: number; delimiter?: string; ranges?: number[][]; lang?: string } }) => Promise<{ success: boolean; chunkCount?: number; meta?: KnowledgeBaseMeta; error?: string }>
-		  knowledgeDeleteDoc: (kbId: string, docId: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
-		  knowledgeQuery: (kbId: string, query: string, limit?: number) => Promise<{ hits: KnowledgeHit[]; lowConfidence: boolean }>
-		  knowledgeDocContent: (kbId: string, docId: string) => Promise<{ success: boolean; error?: string } & Partial<KnowledgeDocContent>>
-		  knowledgeExport: (kbId: string) => Promise<{ success: boolean; name?: string; json?: string; error?: string }>
-		  knowledgeImport: (json: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
-		  knowledgeRename: (kbId: string, name: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
-		  knowledgeRenameDoc: (kbId: string, docId: string, name: string) => Promise<{ success: boolean; error?: string }>
-		  // ── Agent Code 任务清单（Todo / Task）──
-		  agentTodoWrite: (sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }) => Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }>
-		  agentTaskGet: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
-		  agentTaskList: (sessionId: string) => Promise<{ success: boolean; tasks: AgentTask[] }>
-		  // ── 窗口控制 ──
-		  windowMinimize: () => Promise<void>
-		  windowMaximize: () => Promise<void>
-		  windowClose: () => Promise<void>
-		  // ── pi-agent（pi SDK 驱动的 agent 会话）──
-		  piAgent: {
-		    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
-		    warmup: () => Promise<{ success: boolean }>
-		    prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
-		    steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
-		    followUp: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
-		    clearQueue: (sessionId: string) => Promise<{ success: boolean }>
-		    abort: (sessionId: string) => Promise<{ success: boolean }>
-		    dispose: (sessionId: string) => Promise<{ success: boolean }>
-		    list: () => Promise<{ sessionIds: string[] }>
-		    onEvent: (cb: (sessionId: string, event: unknown) => void) => void
-		    onAsk: (cb: (id: number, questions: Array<{ question: string; options?: string[]; allowFreeform?: boolean }>) => void) => void
-		    askResolve: (id: number, result: string) => Promise<{ success: boolean }>
-	    onApprove: (cb: (id: number, req: { toolName: string; args: Record<string, unknown> }) => void) => void
-	    approveResolve: (id: number, approved: boolean) => Promise<{ success: boolean }>
-	    undo: (sessionId: string, toolCallId: string) => Promise<{ success: boolean; path?: string; error?: string }>
+  // ── Agent Tracing 落盘 ──
+  agentTraceAppend: (sessionId: string, entry: object) => Promise<{ success: boolean; error?: string }>
+  // ── Agent Code 文件删除 ──
+  deletePath: (targetPath: string, recursive: boolean) => Promise<{ success: boolean; message?: string; error?: string }>
+  gitChanges: (dir: string) => Promise<{ isRepo: boolean; staged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>; unstaged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>; error?: string }>
+  gitStageFile: (dir: string, path: string) => Promise<{ success: boolean; error?: string }>
+  gitUnstageFile: (dir: string, path: string) => Promise<{ success: boolean; error?: string }>
+  gitDiscardFile: (dir: string, path: string) => Promise<{ success: boolean; error?: string }>
+  gitStageAll: (dir: string) => Promise<{ success: boolean; error?: string }>
+  gitUnstageAll: (dir: string) => Promise<{ success: boolean; error?: string }>
+  gitDiscardAll: (dir: string) => Promise<{ success: boolean; error?: string }>
+  gitListBranches: (dir: string) => Promise<{ branches: Array<{ name: string; current: boolean }>; error?: string }>
+  gitCheckoutBranch: (dir: string, branch: string) => Promise<{ success: boolean; error?: string }>
+  setAgentWorkspace: (dir: string) => Promise<{ success: boolean }>
+  // ── 认知地图（codeMapService）──
+  codemapBuild: (dir: string) => Promise<CodeMapStatus | { error: string }>
+  codemapStatus: (dir: string) => Promise<CodeMapStatus>
+  codemapSymbol: (dir: string, name: string, limit?: number) => Promise<CodeMapSymbolHit[]>
+  codemapSkeleton: (dir: string, relPath: string) => Promise<CodeMapFileSkeleton | null>
+  codemapNeighbors: (dir: string, relPath: string) => Promise<CodeMapNeighbors>
+  codemapInvalidate: (dir: string, absPaths: string[]) => Promise<{ success: boolean }>
+  // ── 代码混合检索（retrievalService）──
+  codesearchQuery: (dir: string, query: string, limit?: number) => Promise<CodeSearchResponse>
+  // ── 长期记忆（memoryStore）──
+  memstoreUpsert: (dir: string, candidates: AgentMemoryCandidate[]) => Promise<AgentMemoryUpsertResult>
+  memstoreInject: (dir: string, capChars: number) => Promise<AgentMemoryInjection>
+  memstoreContradict: (dir: string, probeText: string) => Promise<{ marked: number; archived: number }>
+  memstoreList: (dir: string) => Promise<AgentMemoryEntry[]>
+  memstoreArchive: (dir: string, id: string) => Promise<{ success: boolean }>
+  // ── 本地知识库 RAG（knowledgeService）──
+  knowledgeList: () => Promise<KnowledgeBaseMeta[]>
+  knowledgeCreate: (name: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
+  knowledgeDelete: (id: string) => Promise<{ success: boolean; error?: string }>
+  knowledgeGet: (kbId: string) => Promise<{ id: string; name: string; createdAt: string; docs: KnowledgeDoc[] } | null>
+  knowledgeAddDoc: (kbId: string, doc: { name: string; text: string; chunking?: { mode?: 'auto' | 'heading' | 'delim' | 'single' | 'manual' | 'code'; size?: number; delimiter?: string; ranges?: number[][]; lang?: string } }) => Promise<{ success: boolean; chunkCount?: number; meta?: KnowledgeBaseMeta; error?: string }>
+  knowledgeDeleteDoc: (kbId: string, docId: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
+  knowledgeQuery: (kbId: string, query: string, limit?: number) => Promise<{ hits: KnowledgeHit[]; lowConfidence: boolean; suggestedQuery: string }>
+  knowledgeQueryAll: (query: string, limit?: number) => Promise<{
+    hits: KnowledgeHit[]
+    lowConfidence: boolean
+    lowKbNames: string[]
+    missKbNames: string[]
+    suggestedQuery: string
+    topMargin: number
+    searched: { id: string; name: string }[]
+  }>
+  knowledgeDocContent: (kbId: string, docId: string) => Promise<{ success: boolean; error?: string } & Partial<KnowledgeDocContent>>
+  knowledgeExport: (kbId: string) => Promise<{ success: boolean; name?: string; json?: string; error?: string }>
+  knowledgeImport: (json: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
+  knowledgeRename: (kbId: string, name: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
+  knowledgeRenameDoc: (kbId: string, docId: string, name: string) => Promise<{ success: boolean; error?: string }>
+  // ── Agent Code 任务清单（Todo / Task）──
+  agentTodoWrite: (sessionId: string, input: { merge: boolean; todos: TodoUpdate[] }) => Promise<{ success: boolean; tasks?: AgentTask[]; error?: string }>
+  agentTaskGet: (sessionId: string, taskId: string) => Promise<{ success: boolean; task?: AgentTask; error?: string }>
+  agentTaskList: (sessionId: string) => Promise<{ success: boolean; tasks: AgentTask[] }>
+  // ── 窗口控制 ──
+  windowMinimize: () => Promise<void>
+  windowMaximize: () => Promise<void>
+  windowClose: () => Promise<void>
+  // ── pi-agent（pi SDK 驱动的 agent 会话）──
+  piAgent: {
+    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
+    warmup: () => Promise<{ success: boolean }>
+    prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
+    steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
+    followUp: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
+    clearQueue: (sessionId: string) => Promise<{ success: boolean }>
+    abort: (sessionId: string) => Promise<{ success: boolean }>
+    dispose: (sessionId: string) => Promise<{ success: boolean }>
+    list: () => Promise<{ sessionIds: string[] }>
+    onEvent: (cb: (sessionId: string, event: unknown) => void) => void
+    onAsk: (cb: (id: number, questions: Array<{ question: string; options?: string[]; allowFreeform?: boolean }>) => void) => void
+    askResolve: (id: number, result: string) => Promise<{ success: boolean }>
+    onApprove: (cb: (id: number, req: { toolName: string; args: Record<string, unknown> }) => void) => void
+    approveResolve: (id: number, approved: boolean) => Promise<{ success: boolean }>
+    undo: (sessionId: string, toolCallId: string) => Promise<{ success: boolean; path?: string; error?: string }>
     setThinkingLevel: (sessionId: string, level: ThinkingLevel) => Promise<{ success: boolean }>
-	    // ── 轨迹台账（事件流落盘的查询侧；read 支持 fromSeq 增量）──
-	    trajectoryList: () => Promise<Array<{ sessionId: string; bytes: number; mtimeMs: number }>>
-	    trajectoryRead: (sessionId: string, fromSeq: number) => Promise<{ entries: Array<{ seq: number; ts: number; type: string; src: 'flow' | 'assistant' | 'tool' | 'user' | 'system'; payload: unknown }>; nextSeq: number }>
-	    trajectoryClear: (sessionId: string) => Promise<{ success: boolean; error?: string }>
-	  }
-	}
+    // ── 轨迹台账（事件流落盘的查询侧；read 支持 fromSeq 增量）──
+    trajectoryList: () => Promise<Array<{ sessionId: string; bytes: number; mtimeMs: number }>>
+    trajectoryRead: (sessionId: string, fromSeq: number) => Promise<{ entries: Array<{ seq: number; ts: number; type: string; src: 'flow' | 'assistant' | 'tool' | 'user' | 'system'; payload: unknown }>; nextSeq: number }>
+    trajectoryClear: (sessionId: string) => Promise<{ success: boolean; error?: string }>
+  }
+}
 declare global {
   interface Window { api: LlamaCppApi }
 }
