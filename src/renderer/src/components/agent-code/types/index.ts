@@ -26,6 +26,13 @@ export type AgentMsgRowActions = {
   handleUndoAll: (msgId: string, toolCalls: AgentMessage['toolCalls']) => void
   copyMessage: (content: string) => void | Promise<void>
   regenerateAt: (msgId: string) => void | Promise<void>
+  /** 继续生成：从被中断处续写（仅纯聊天模式渲染） */
+  continueAt: (msgId: string) => void | Promise<void>
+  /** 删除单条消息（仅纯聊天模式渲染） */
+  deleteMessage: (msgId: string) => void | Promise<void>
+  /** 语音朗读 / 停止（仅纯聊天模式渲染） */
+  speakMessage: (msgId: string, text: string) => void
+  stopSpeak: () => void
 }
 
 // ── renderSegmentsFor 的渲染选项 ──

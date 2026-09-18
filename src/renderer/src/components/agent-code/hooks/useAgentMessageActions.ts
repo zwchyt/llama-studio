@@ -1,6 +1,6 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║ 区域：useAgentMessageActions —— 消息级操作（复制 / 重生成 / 重发 / 分支 /     ║
-// ║        编辑 / 撤销）                                                         ║
+// ║        编辑 / 撤销 / 继续生成 / 删除单条 / 朗读）                              ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 // 搬移自 AgentCodeView.tsx 的「消息级操作」整块，逻辑与注释均未改动。
 //
@@ -29,7 +29,7 @@ import React from 'react'
 
 type RunPiTurn = (
   pid: string, sid: string, displayMsgs: AgentMessage[],
-  opts: { port: number; text: string; workspaceDir: string; approveWriteEdit?: boolean; knowledgeBaseId?: string; memory?: AgentSession['memory'] }
+  opts: { port: number; text: string; workspaceDir: string; approveWriteEdit?: boolean; knowledgeBaseId?: string; memory?: AgentSession['memory']; plainChat?: boolean; chatTools?: string[] }
 ) => Promise<{ errored: boolean; aborted: boolean }>
 
 export function useAgentMessageActions({
@@ -37,7 +37,7 @@ export function useAgentMessageActions({
   loading, runningCard, updateSessionInProject, setProjects, setActiveSessionId,
   runPiTurn, backupsRef, piReadyRef, regenRollbackRef, handleUndoRef,
   editingMsgId, setEditingMsgId, editDraft, setEditDraft,
-  openFileAtLine, openGitDiffAt,
+  openFileAtLine, openGitDiffAt, speak, stopSpeak,
 }: {
   activeSession: AgentSession | null
   activeProject: AgentProject
@@ -61,6 +61,9 @@ export function useAgentMessageActions({
   openFileAtLine: (abs: string, line?: number) => void
   /** 打开 Git diff：供消息行的工具卡「查看变更」动作使用（来自 Git 域） */
   openGitDiffAt: ReturnType<typeof useAgentGit>['openGitDiffAt']
+  /** 语音朗读（来自 useTts）：仅纯聊天模式的消息行会用到 */
+  speak: (id: string, text: string) => void
+  stopSpeak: () => void
 }) {
 
   // ── 消息级操作：复制 / 重新生成 / 重发 / 分支 / 编辑 / 撤销 ──
@@ -126,6 +129,44 @@ export function useAgentMessageActions({
     })
     rollbackIfFailed(r)
   }, [loading, runningCard, activeSession, activeProject, activeProjectId, activeSessionId, updateSessionInProject, runPiTurn])
+
+  // 继续生成：把「接续指令」作为一条 continuation 消息追加后重跑一轮。
+  // 指令必须发给模型、但不能当成用户消息显示——所以带 continuation 标记，
+  // 消息列表渲染时跳过它（与 ChatView 的临时拼消息同效）。
+  const continueAt = useCallback(async (msgId: string) => {
+    if (loading || !runningCard || !activeSession) return
+    const msgs = activeSession.messages
+    const idx = msgs.findIndex(m => m.id === msgId)
+    if (idx < 0 || msgs[idx]!.role !== 'assistant') return
+    // 只允许续写最后一条助手消息，否则会把中间的消息接出重复内容
+    if (idx !== msgs.length - 1) { notify('只能续写最后一条回复', 'error'); return }
+    const hasText = !!msgs[idx]!.content.trim()
+    const prompt = hasText
+      ? '请从助手消息被中断的位置继续往后写。直接续写，不要重复任何已有内容（包括用户的问题），不要加开场白或过渡语。'
+      : '助手在推理过程中被中断了，还没有产出可见的回答。请继续推理并直接给出最终答案。不要重复用户的问题。'
+    const base = msgs.slice(0, idx + 1)
+    regenRollbackRef.current = { sid: activeSessionId, messages: msgs.map(m => ({ ...m })) }
+    const contMsg: AgentMessage = { id: uniqueId('msg'), role: 'user', content: prompt, continuation: true }
+    // pi SDK：重建 session 后由 prompt 发出接续指令；displayMsgs 末位是这条指令，历史里保留被续写的回复
+    piReadyRef.current = { sid: '', ready: false }
+    const r = await runPiTurn(activeProjectId, activeSessionId, [...base, contMsg], {
+      port: runningCard.template.serverPort,
+      text: prompt,
+      workspaceDir: activeProject.workspaceDir,
+      approveWriteEdit: !!activeProject.approveWriteEdit,
+      knowledgeBaseId: activeProject.knowledgeBaseId,
+      plainChat: activeSession.plainChat === true,
+      chatTools: activeSession.chatTools,
+    })
+    rollbackIfFailed(r)
+  }, [loading, runningCard, activeSession, activeProject, activeProjectId, activeSessionId, updateSessionInProject, runPiTurn])
+
+  // 删除单条消息（纯聊天模式）：仅移除该条，不改动其它消息，也不重跑
+  const deleteMessage = useCallback((msgId: string) => {
+    if (loading || !activeSession) return
+    const rest = activeSession.messages.filter(m => m.id !== msgId)
+    updateSessionInProject(activeProjectId, activeSessionId, { messages: rest })
+  }, [loading, activeSession, activeProjectId, activeSessionId, updateSessionInProject])
 
   // 分支：从指定 user 消息处复制出一条新会话（不自动运行）
   const branchAt = useCallback((msgId: string) => {
@@ -255,10 +296,16 @@ export function useAgentMessageActions({
     handleUndoAll,
     copyMessage,
     regenerateAt,
+    continueAt,
+    deleteMessage,
+    // 朗读前先剥离思考链：<think> 内容不该被念出来
+    speakMessage: (msgId, text) => speak(msgId, parseThinkSegments(text).filter(s => s.type === 'text').map(s => s.value).join('')),
+    stopSpeak,
   }
 
   return {
     copyMessage, regenerateAt, resendAt, branchAt, editAt, confirmEdit,
+    continueAt, deleteMessage,
     handleUndo, handleUndoAll, canUndoFor, onUndoTool, msgRowActionsRef,
   }
 }

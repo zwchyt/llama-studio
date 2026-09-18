@@ -5,7 +5,7 @@ import { shallow } from 'zustand/shallow'
 import {
   LayoutDashboardIcon,
   HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
-  MessageSquareIcon, InfoIcon, FileTextIcon, CodeIcon,
+  InfoIcon, FileTextIcon, CodeIcon,
   SettingsIcon, BookOpenIcon, AudioLinesIcon, ImageIcon, MicIcon,
   BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon,
   GitBranchIcon
@@ -165,16 +165,9 @@ export default function Sidebar() {
           {view === 'llama' && <span className="nav-active-dot" />}
           {view === 'llama' && activeChatUrl && <span className="nav-dot" />}
         </NavItem>
-        <NavItem
-          icon={MessageSquareIcon}
-          label="聊天"
-          active={view === 'chat'}
-          onClick={() => setView('chat')}
-          style={view === 'chat' && hasRunningModels ? { color: 'var(--success)' } : {}}
-        >
-          {view === 'chat' && <span className="nav-active-dot" />}
-          {view === 'chat' && hasRunningModels && <span className="nav-dot" />}
-        </NavItem>
+        {/* 「聊天」导航项已移除：原生聊天界面的功能已并入 Agent Code 的纯聊天模式
+            （输入区工具栏的「纯聊天」开关）。ChatView 组件与 chatStore 仍保留在代码里，
+            只是不再从这里进入。 */}
         <NavItem
           icon={ActivityIcon}
           label="模型运行数据"

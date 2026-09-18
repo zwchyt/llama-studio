@@ -143,6 +143,24 @@
   color: var(--text);
 }
 
+/* 联动开关的开启态：与组标题同排，一眼看出底色层这一对是一起动的 */
+.cs-mini.on {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.cs-mini.on:hover {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* 被联动的一对变量上的标记 */
+.cs-link-mark {
+  margin-left: 5px;
+  font-size: 11px;
+  color: var(--accent);
+}
+
 .cs-slider {
   margin-bottom: 9px;
 }
@@ -156,6 +174,16 @@
 }
 
 .cs-slider-val {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 亮 / 暗两侧的变量个数、以及底色层的明度差读数：
+   把「提亮 / 压暗」的作用范围和「两层还差多少」直接写出来，
+   否则用户只能拖完看画面变化去猜，又回到「一个一个试」 */
+.cs-split {
+  margin: 3px 0 0;
+  font-size: 11px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }

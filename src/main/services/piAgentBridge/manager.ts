@@ -5,11 +5,12 @@ import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import type { Message } from '@earendil-works/pi-ai'
 import { createPiAgentBridge, type PiAgentBridge } from './index'
 import { createMainTools, type MainToolExecutors } from './tools/mainTools'
+import { PLAIN_CHAT_TOOL_NAMES as CHAT_TOOL_NAMES } from '../../../shared/types'
 import { appendTokenUsage, type TokenUsageEntry } from '../../tokenLedger'
 import { appendSessionEvent, writeTrajectoryHeader, appendLlmRequest, summarizeLlmRequest, appendUserEntry, appendLlmSystemMessages } from './trajectory'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { ThinkingLevel } from '../../../shared/types'
-import { PI_TOOL_GUIDANCE, PI_CHART_ROUTING, PI_MERMAID_DSL_GUIDANCE, PI_CHART_FENCE_GUIDANCE, PI_SVG_GUIDANCE, PI_MERMAID_JSON_GUIDANCE } from '../../../shared/agentGuidance'
+import { PI_TOOL_GUIDANCE, PI_CHART_ROUTING, PI_MERMAID_DSL_GUIDANCE, PI_CHART_FENCE_GUIDANCE, PI_SVG_GUIDANCE, PI_MERMAID_JSON_GUIDANCE, PLAIN_CHAT_SYSTEM_PROMPT } from '../../../shared/agentGuidance'
 
 /** llama-studio 会话历史消息（pi 模式注入用，与 shared/types 的 AgentMessage 结构对应） */
 export interface PiHistoryMessage {
@@ -39,6 +40,17 @@ export interface PiAgentSessionOptions {
   knowledgeBaseId?: string
   /** 网络搜索开关（默认开启）。关闭后两个搜索工具都不激活。 */
   searchEnabled?: boolean
+  /** 纯聊天模式：不注册任何工具，也不注入任何编码 agent 的提示词，只保留对话本身。
+      缺省 = 原来的 agent 模式。要关的提示词有三处，缺一处模型就会以为自己能调工具：
+        ① appendSystemPrompt —— 本文件注入的工具 / 图表指引（约 4.5k tokens）
+        ② systemPrompt —— pi 自带的默认提示词，里面写着「你是 pi 里的编码助手」和
+           「你还可能有其它自定义工具」；必须整段替换，光清 ① 清不掉它
+        ③ contextFiles —— AGENTS.md 等逐级发现的项目规则，普通对话用不上
+      工具侧则是 toolNames 传空数组。 */
+  plainChat?: boolean
+  /** 纯聊天模式下启用的工具名（只认 CHAT_TOOL_NAMES 里那四个，其余一律忽略）。
+      与 plainChat 配套：只影响纯聊天模式，工作台模式的工具白名单不受影响。 */
+  chatTools?: string[]
   /** 搜索引擎：'bing'（国内版，默认）| 'ddg'（DuckDuckGo）。互斥，同时只激活一个。 */
   searchProvider?: 'ddg' | 'bing'
   /** 会话事件回调（由 IPC 层转推 renderer） */
@@ -113,6 +125,12 @@ export class PiAgentManager {
   async createSession(opts: PiAgentSessionOptions): Promise<void> {
     if (this.bridges.has(opts.sessionId)) this.disposeSession(opts.sessionId)
     this.ports.set(opts.sessionId, opts.port)
+    // 纯聊天：默认工具与提示词一起关（见 PiAgentSessionOptions.plainChat 的说明）。
+    // chatTools 允许按需开启原生聊天那四个工具，但默认是空 = 纯对话。
+    // 关掉工具时 web_search 那套互斥白名单、知识库工具、自定义工具都不会被激活，
+    // 所以下面仍照常创建 customTools——pi 的 tools 是「激活名单」，
+    // 名字不在名单里的工具只进定义池、不会出现在发给模型的请求里。
+    const plainChat = opts.plainChat === true
     // 网络搜索：互斥白名单（同时只激活一个引擎；关闭则都不激活）
     const baseToolNames = this.toolNames.filter(
       n => n !== 'web_search' && n !== 'web_search_bing'
@@ -122,7 +140,20 @@ export class PiAgentManager {
     const searchToolNames = searchEnabled
       ? [searchProvider === 'bing' ? 'web_search_bing' : 'web_search']
       : []
-    const effectiveToolNames = [...baseToolNames, ...searchToolNames]
+    const effectiveToolNames = plainChat
+      // 纯聊天模式：只认原生聊天那四个工具，且默认全关（chatTools 缺省 = 空）。
+      // 搜索工具名要按 provider 映射成实际注册名（web_search_bing / web_search），
+      // 与下面 agent 模式的处理保持一致；其余三个直接按名字取。
+      ? (() => {
+        const want = new Set(opts.chatTools ?? [])
+        const out = this.toolNames.filter(n => (CHAT_TOOL_NAMES as readonly string[]).includes(n) && n !== 'web_search' && want.has(n))
+        // knowledge_search 的返回里会指引模型用 knowledge_read 取其它条目正文，
+        // 所以启用检索时把读取工具一起带上，否则模型只能看目录、读不到内容。
+        if (want.has('knowledge_search')) out.push('knowledge_read')
+        if (want.has('web_search') && searchEnabled) out.push(searchProvider === 'bing' ? 'web_search_bing' : 'web_search')
+        return out
+      })()
+      : [...baseToolNames, ...searchToolNames]
 
     const mainTools = await createMainTools(this.executors, {
       sessionId: opts.sessionId.replace(/^pi-/, ''),
@@ -136,7 +167,9 @@ export class PiAgentManager {
       getContextWindow: () => opts.contextWindow ?? 128000,
       cwd: opts.cwd,
       agentDir: opts.agentDir,
-      appendSystemPrompt: [...PI_TOOL_GUIDANCE, ...PI_CHART_ROUTING, ...PI_MERMAID_DSL_GUIDANCE, ...PI_CHART_FENCE_GUIDANCE, ...PI_SVG_GUIDANCE, ...PI_MERMAID_JSON_GUIDANCE],
+      systemPrompt: plainChat ? PLAIN_CHAT_SYSTEM_PROMPT : undefined,
+      noContextFiles: plainChat,
+      appendSystemPrompt: plainChat ? [] : [...PI_TOOL_GUIDANCE, ...PI_CHART_ROUTING, ...PI_MERMAID_DSL_GUIDANCE, ...PI_CHART_FENCE_GUIDANCE, ...PI_SVG_GUIDANCE, ...PI_MERMAID_JSON_GUIDANCE],
       toolNames: effectiveToolNames,
       customTools: [...mainTools, ...(opts.customTools ?? [])]
     })

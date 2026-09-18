@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { useSidebarStore } from '../store/sidebarStore'
 import { Bell, BellOff, Activity, Type, Volume2, Check } from 'lucide-react'
 import { SOUND_OPTIONS, previewSound } from '../utils/sound'
+import { dataUrlToBlobUrl } from '../utils/audioUrl'
 
 import FontSelector from './FontSelector'
 import { CURSOR_SCHEMES, getCursorSchemeId, applyCursorScheme, CURSOR_STORAGE_KEY, schemeCursorValue, type CursorRole } from '../cursor-theme'
@@ -22,17 +23,68 @@ export default function SettingsView() {
   const {
     soundEnabled, setSoundEnabled, notificationSound, setNotificationSound,
     splashEnabled, setSplashEnabled,
-    paramTooltipEnabled, setParamTooltipEnabled
+    paramTooltipEnabled, setParamTooltipEnabled,
+    ttsEngine, setTtsEngine, ttsEdgeVoice, setTtsEdgeVoice, ttsRate, setTtsRate,
   } = useStore(
-    s => ({ soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, notificationSound: s.notificationSound, setNotificationSound: s.setNotificationSound, splashEnabled: s.splashEnabled, setSplashEnabled: s.setSplashEnabled, paramTooltipEnabled: s.paramTooltipEnabled, setParamTooltipEnabled: s.setParamTooltipEnabled }),
-    (a, b) => a.soundEnabled === b.soundEnabled && a.setSoundEnabled === b.setSoundEnabled && a.notificationSound === b.notificationSound && a.setNotificationSound === b.setNotificationSound && a.splashEnabled === b.splashEnabled && a.setSplashEnabled === b.setSplashEnabled && a.paramTooltipEnabled === b.paramTooltipEnabled && a.setParamTooltipEnabled === b.setParamTooltipEnabled
+    s => ({ soundEnabled: s.soundEnabled, setSoundEnabled: s.setSoundEnabled, notificationSound: s.notificationSound, setNotificationSound: s.setNotificationSound, splashEnabled: s.splashEnabled, setSplashEnabled: s.setSplashEnabled, paramTooltipEnabled: s.paramTooltipEnabled, setParamTooltipEnabled: s.setParamTooltipEnabled, ttsEngine: s.ttsEngine, setTtsEngine: s.setTtsEngine, ttsEdgeVoice: s.ttsEdgeVoice, setTtsEdgeVoice: s.setTtsEdgeVoice, ttsRate: s.ttsRate, setTtsRate: s.setTtsRate }),
+    (a, b) => a.soundEnabled === b.soundEnabled && a.setSoundEnabled === b.setSoundEnabled && a.notificationSound === b.notificationSound && a.setNotificationSound === b.setNotificationSound && a.splashEnabled === b.splashEnabled && a.setSplashEnabled === b.setSplashEnabled && a.paramTooltipEnabled === b.paramTooltipEnabled && a.setParamTooltipEnabled === b.setParamTooltipEnabled && a.ttsEngine === b.ttsEngine && a.setTtsEngine === b.setTtsEngine && a.ttsEdgeVoice === b.ttsEdgeVoice && a.setTtsEdgeVoice === b.setTtsEdgeVoice && a.ttsRate === b.ttsRate && a.setTtsRate === b.setTtsRate
   )
   const { hoverExpandEnabled, setHoverExpandEnabled } = useSidebarStore()
+  // Edge 音色列表（进设置页且选了 Edge 引擎时才拉，失败不阻塞界面）
+  const [edgeVoices, setEdgeVoices] = useState<Array<{ name: string; label: string; gender: string; locale: string }>>([])
+  const [voiceErr, setVoiceErr] = useState('')
+  // 试听失败与「列表获取失败」分开存：混在一个状态里会让报错张冠李戴，
+  // 之前就是试听失败却显示成「音色列表获取失败」，把排查方向带偏了
+  const [previewErr, setPreviewErr] = useState('')
+  const [voicePreviewing, setVoicePreviewing] = useState(false)
+  // 试听用的 blob URL：CSP 的 media-src 不含 data:，必须转成 blob 才能播放；用完要释放
+  const previewBlobRef = useRef<string | null>(null)
   const [notifPref, setNotifPref] = useState<'banner' | 'manual'>(getNotifPref())
   const [metricsPolling, setMetricsPolling] = useState(true)
   const [cursorScheme, setCursorScheme] = useState<string>(getCursorSchemeId())
   const [previewId, setPreviewId] = useState<string | null>(null)
   const previewScheme = CURSOR_SCHEMES.find(s => s.id === (previewId ?? cursorScheme)) || CURSOR_SCHEMES[0]
+
+  // Edge 音色列表：仅在选了 Edge 引擎时拉一次（在线接口，失败只提示不阻塞）
+  useEffect(() => {
+    if (ttsEngine !== 'edge' || edgeVoices.length > 0) return
+    // 防御：preload 只在窗口创建时执行一次，改了 preload 必须完全重启应用（只热重载
+    // renderer 不够），否则 window.api 上还没有这个方法。直接调用会抛出未捕获异常，
+    // 把整个设置页打崩——所以先探测再调用，给一句能指导操作的提示。
+    if (typeof window.api?.edgeTtsVoices !== 'function') {
+      setVoiceErr('主进程尚未加载 Edge TTS 接口（preload 改动需完全重启应用，热重载无效）')
+      return
+    }
+    let alive = true
+    window.api.edgeTtsVoices()
+      .then(v => { if (alive) setEdgeVoices(v.filter(x => x.locale.startsWith('zh'))) })
+      .catch(e => { if (alive) setVoiceErr(e instanceof Error ? e.message : String(e)) })
+    return () => { alive = false }
+  }, [ttsEngine, edgeVoices.length])
+
+  // 试听当前音色 + 语速：与消息朗读走同一条合成路径，听到的就是实际效果
+  const previewVoice = async (): Promise<void> => {
+    if (voicePreviewing) return
+    setVoicePreviewing(true)
+    try {
+      if (typeof window.api?.edgeTtsSynthesize !== 'function') {
+        throw new Error('主进程尚未加载 Edge TTS 接口（preload 改动需完全重启应用）')
+      }
+      const dataUrl = await window.api.edgeTtsSynthesize({ text: '这是一段语音试听，用来挑选音色和语速。', voice: ttsEdgeVoice, rate: ttsRate })
+      // 必须先转 blob URL：CSP 的 media-src 是 'self' blob:，不含 data:，
+      // 直接把 data URL 喂给 <audio> 会被拒（play() 抛 NotSupportedError）
+      if (previewBlobRef.current) { try { URL.revokeObjectURL(previewBlobRef.current) } catch { /* ignore */ } }
+      const url = dataUrlToBlobUrl(dataUrl)
+      previewBlobRef.current = url
+      const a = new Audio(url)
+      a.onended = () => setVoicePreviewing(false)
+      a.onerror = () => setVoicePreviewing(false)
+      await a.play()
+    } catch (e) {
+      setPreviewErr(e instanceof Error ? e.message : String(e))
+      setVoicePreviewing(false)
+    }
+  }
   const previewRoles: CursorRole[] = ['default', 'pointer', 'wait']
   const roleLabels: Record<CursorRole, string> = { default: '箭头', pointer: '手型', wait: '忙碌', progress: '后台', notAllowed: '禁止', move: '移动', help: '帮助' }
   function handleCursorSchemeChange(v: string) {
@@ -152,6 +204,77 @@ export default function SettingsView() {
               )
             })}
           </div>
+        </div>
+
+        {/* ── 消息朗读（TTS）── */}
+        <div className="settings-section-title" style={{ marginTop: 16 }}><Volume2 /> 消息朗读</div>
+        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            消息上的朗读按钮用哪种声音。Edge 是微软的在线神经网络音色，比系统自带的自然很多（约 1.5 秒出音）；断网或接口异常时自动回退到系统语音。
+          </p>
+          <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap' }}>
+            {([['edge', 'Edge 在线语音（推荐）'], ['system', '系统内置语音']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={`launch-mode-btn${ttsEngine === id ? ' active' : ''}`}
+                style={{ flex: '1 1 auto', minWidth: 0, padding: '5px 8px', fontSize: 12, lineHeight: 1.3, textAlign: 'center' }}
+                onClick={() => setTtsEngine(id)}
+              >
+                {ttsEngine === id && <Check size={12} style={{ marginRight: 4, verticalAlign: 'middle' }} />}
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {ttsEngine === 'edge' && (
+          <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              音色（{edgeVoices.length > 0 ? `${edgeVoices.length} 个中文音色` : '加载中…'}）
+            </p>
+            <div style={{ display: 'flex', gap: 8, width: '100%', alignItems: 'center', flexWrap: 'wrap' }}>
+              <select
+                value={ttsEdgeVoice}
+                onChange={(e) => setTtsEdgeVoice(e.target.value)}
+                style={{ flex: '1 1 220px', minWidth: 0, padding: '6px 8px', fontSize: 12, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
+              >
+                {/* 列表还没拉回来时也把当前值渲染出来，避免下拉显示空白 */}
+                {(edgeVoices.length > 0
+                  ? edgeVoices
+                  : [{ name: ttsEdgeVoice, label: ttsEdgeVoice.split('-')[2]?.replace(/Neural$/, '') || ttsEdgeVoice, gender: '', locale: '' }]
+                ).map(v => (
+                  <option key={v.name} value={v.name}>{v.label}{v.gender ? `（${v.gender}）` : ''} · {v.locale}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="launch-mode-btn"
+                style={{ padding: '5px 10px', fontSize: 12 }}
+                onClick={previewVoice}
+                disabled={voicePreviewing}
+              >
+                {voicePreviewing ? '合成中…' : '试听'}
+              </button>
+            </div>
+            {voiceErr && <p style={{ fontSize: 12, color: 'var(--danger, #e24b4a)', lineHeight: 1.6 }}>音色列表获取失败：{voiceErr}</p>}
+            {previewErr && <p style={{ fontSize: 12, color: 'var(--danger, #e24b4a)', lineHeight: 1.6 }}>试听失败：{previewErr}</p>}
+          </div>
+        )}
+
+        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            语速：{ttsRate.toFixed(2)}×（1.00 为原速；原来的固定值是 2.00×，偏快且放大机械感）
+          </p>
+          <input
+            type="range"
+            min={0.5}
+            max={2}
+            step={0.05}
+            value={ttsRate}
+            onChange={(e) => setTtsRate(parseFloat(e.target.value))}
+            style={{ width: '100%' }}
+          />
         </div>
 
         <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>

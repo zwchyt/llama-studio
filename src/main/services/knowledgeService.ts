@@ -3,8 +3,9 @@
 // ║                                                                              ║
 // ║ 分块：段落感知贪心合并（目标 ~1000 字符），段落不从中间截断，                  ║
 // ║       边界断开；单文档块数设上限防失控。                                       ║
-// ║ 检索：复用 retrievalService 的 tokenize（驼峰/下划线拆分 + CJK 二元组），       ║
-// ║       精简 BM25 打分（idf + k1/b），附 idf 加权覆盖率做低置信兜底。            ║
+// ║ 检索：复用 retrievalService 的 tokenize（驼峰/下划线拆分 + 命令行 flag + CJK 二元组），      ║
+// ║       精简 BM25 打分（idf + k1/b）+ 词序（相邻词对）加权，附 idf 加权覆盖率做低置信兜底。   ║
+// ║       跨库合并走 RRF 排名融合（各库 idf 量纲不同，裸分不可跨库比较）。                      ║
 // ║ 持久化：每个知识库一个 JSON（KNOWLEDGE_DIR/<kbId>.json），含文档与全部分块。   ║
 // ║ 索引：按 kbId 惰性构建、驻内存缓存；文档增删时失效，下次查询重建。             ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -42,6 +43,10 @@ const QUERY_LIMIT_DEFAULT = 8
 const QUERY_LIMIT_MAX = 12
 const LOW_CONFIDENCE_SCORE = 3.0
 const LOW_CONFIDENCE_COVERAGE = 0.4
+// 查询词平均 idf 低于此值即视为「这批词没有区分度」：idf < 0.5 约等于该词出现在 60% 以上的块里。
+// 此时 MIN_HIT_SCORE 这个绝对下限会误杀——全库得分都低是因为词太常见，不是内容不相关。
+// 实测：拿文档名本身当查询（「Mermaid 渲染格式」）在对应库里 0 命中，原因见 search() 里的判据注释。
+const LOW_IDF_AVG = 0.5
 // 排序优势判据：top 分是第二名的多少倍以上，就认为本次检索有明确区分度。
 // 为什么需要它：上面两个阈值都是「绝对量」，单独用会误判——coverage 尤其明显，
 // 查询词一多，命中再准也匹配不全所有词，coverage 天然偏低，于是「top 15、第二名 3.5、
@@ -55,6 +60,45 @@ const DOMINANT_MIN_SCORE = 1.0
 // 用途：界面要能说明「为什么这条会被搜出来」——检索走的是词/二元组匹配，
 // 块可能只命中其中一两个词，只靠整条查询串做高亮会一个都匹配不到。
 const MATCHED_TERM_KEEP = 8
+
+// ── 词序（短语邻接）加权 ──
+// BM25 是词袋模型：词与词之间没有顺序概念。「git commit --amend -m」和
+// 「commit branch / commit merge / commit checkout...」（Mermaid gitGraph 语法示例）
+// 在它眼里都是「git×N commit×M」——实测前者只拿到 5.09，后者靠 commit 出现 9 次拿到 10.59。
+// 旧实现只在块「逐字包含完整查询串」时给一个定值 ×2.5，两个问题：
+//   1) 全有全无——词序部分吻合的块拿不到任何表示；
+//   2) 定值太小——拼不过高词频，正确块加权后仍是 5.09 < 10.59，照样排第二。
+// 现在改成按「相邻词对」计分：查询按空白切成词，两两相邻的词在块里也相邻出现才算命中，
+// 按命中比例给加成。词序吻合得越多加成越高，全中时分数最多放大 1+PHRASE_BOOST_MAX 倍。
+const PHRASE_BOOST_MAX = 3.0
+// 两个相邻查询词之间允许夹杂的非字母数字字符数：覆盖 `--`、空格、换行、markdown 反引号等
+const ADJACENCY_GAP = 4
+// 参与邻接检查的相邻词对上限（长查询只取前几对，避免正则开销随查询长度线性增长）
+const ADJACENCY_PAIR_MAX = 8
+// 只对原始 BM25 分最高的这些块做邻接检查并重排。块文本正则扫描是开销大头，
+// 而「块内相邻出现了查询词」的块必然因为词都命中而已经排在前列，无需全量扫描。
+const ADJACENCY_CANDIDATES = 64
+// 库级质量软衰减的参考分：库内最高分低于它时，该库的融合权重按比例削弱。
+// 否则「本库只有一条勉强过线的弱命中」会靠排名第一拿到与「强命中库」同等的融合权重。
+const FUSION_SCALE = 6.0
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** 把查询切成相邻词对的正则：每对要求「前词 + 至多 ADJACENCY_GAP 个非字母数字字符 + 后词」。
+    单词查询退化为整串包含（与旧行为一致），且沿用旧的 length>=4 门槛避免短词噪声。 */
+function buildPhraseMatchers(query: string): RegExp[] {
+  const words = query.trim().split(/\s+/).filter(Boolean).slice(0, ADJACENCY_PAIR_MAX + 1)
+  if (words.length === 0) return []
+  if (words.length === 1) {
+    const w = words[0]!
+    return w.length >= 4 ? [new RegExp(escapeRe(w), 'i')] : []
+  }
+  const res: RegExp[] = []
+  for (let i = 0; i + 1 < words.length && res.length < ADJACENCY_PAIR_MAX; i++) {
+    res.push(new RegExp(`${escapeRe(words[i]!)}[^A-Za-z0-9]{0,${ADJACENCY_GAP}}${escapeRe(words[i + 1]!)}`, 'i'))
+  }
+  return res
+}
 
 // ── 持久化数据结构 ──
 interface KbChunk { docId: string; docName: string; ordinal: number; text: string; title?: string }
@@ -347,9 +391,14 @@ function getIndex(kb: KbFile): KbIndex {
   evictIndexes()
   const idx: KbIndex = { chunks: [], df: new Map(), totalLen: 0 }
   for (const c of kb.chunks) {
-    // 文档名+块标题的词也计入 tf：让「拿文件名/标题当查询词」能命中对应块；
-    // 同文档多块共享这些词会被 IDF 自然压权，不会淹没正文关键词
-    const headTokens = tokenize(`${c.docName} ${c.title ?? ''}`)
+    // 文档名属于「文档级」信息，只能计入该文档的首块；块标题由本块正文提取，属于块自身内容。
+    // 之前把文档名计进每一块，会让文件名里的词 df = 块数 = N、idf 塌到 ~0.5/N
+    // （实测 30 块的库 idf=0.02，正常应约 1.5），后果有两个：
+    //   1) 「拿文件名当查询词」反而搜不出东西——与这段代码原本的目的正好相反；
+    //   2) 文件名里恰好也出现在正文中的词（如 Mermaid 库的 mermaid/渲染/格式）被一起压权，
+    //      正文里明明很有区分度的词被压成噪声，整个库得分低到过不了 MIN_HIT_SCORE。
+    // 只计首块后 df 回到「文档数」量级，idf 恢复正常，文件名查询会命中该文档首块。
+    const headTokens = tokenize(`${c.ordinal === 0 ? c.docName : ''} ${c.title ?? ''}`)
     const tokens = [...tokenize(c.text), ...headTokens]
     const tf = new Map<string, number>()
     for (const t of tokens) tf.set(t, (tf.get(t) ?? 0) + 1)
@@ -368,16 +417,15 @@ function search(idx: KbIndex, query: string, limit: number): { hits: KnowledgeHi
   const N = idx.chunks.length
   if (N === 0) return { hits: [], lowConfidence: true, suggestedQuery: '' }
   const avgdl = idx.totalLen / N || 1
-  // 整句精确命中加权：BM25 是词袋模型不认短语——「git reset --soft HEAD~1」与讲其它 reset 变体的块词频几乎相同。
-  // 原文逐字包含完整查询串的块视为强命中，分数放大以与近义变体块拉开差距（配合下方相对阈值剪枝）
-  const PHRASE_BOOST = 2.5
-  const normQ = query.toLowerCase().replace(/\s+/g, ' ').trim()
+  // 词序匹配器：查询按空白切词、相邻词两两成对（理由见文件头 PHRASE_BOOST_MAX 处注释）
+  const phraseRes = buildPhraseMatchers(query)
 
   // 查询词集：先按 df 过滤并算好 idf（截断与覆盖率都要用）。
   // df=0 的词在库里根本不存在，参与打分只会占坑——而且它们 idf 最高，截断时还会把
   // 真正能命中的词挤出去，所以直接剔除。
   const qIdf = new Map<string, number>()
-  for (const term of new Set(qTokens)) {
+  const qTerms = new Set(qTokens)
+  for (const term of qTerms) {
     const df = idx.df.get(term) ?? 0
     if (df <= 0) continue
     qIdf.set(term, Math.log(1 + (N - df + 0.5) / (df + 0.5)))
@@ -392,7 +440,7 @@ function search(idx: KbIndex, query: string, limit: number): { hits: KnowledgeHi
   let qIdfTotal = 0
   for (const term of effective) qIdfTotal += qIdf.get(term) ?? 0
 
-  const scored: { i: number; score: number; coverage: number }[] = []
+  const scored: { i: number; score: number; coverage: number; adjacent: number }[] = []
   for (let i = 0; i < N; i++) {
     const c = idx.chunks[i]
     let score = 0
@@ -405,17 +453,57 @@ function search(idx: KbIndex, query: string, limit: number): { hits: KnowledgeHi
       score += idf * (tf * (BM25_K1 + 1)) / (tf + BM25_K1 * (1 - BM25_B + BM25_B * c.len / avgdl))
     }
     if (score <= 0) continue
-    if (normQ.length >= 4 && c.text.toLowerCase().replace(/\s+/g, ' ').includes(normQ)) score *= PHRASE_BOOST
-    scored.push({ i, score, coverage: qIdfTotal > 0 ? matchedIdf / qIdfTotal : 0 })
+    scored.push({ i, score, coverage: qIdfTotal > 0 ? matchedIdf / qIdfTotal : 0, adjacent: 0 })
   }
   scored.sort((a, b) => b.score - a.score)
+  // 词序加权放在打分之后、只作用于前列候选：块文本正则扫描是开销大头，
+  // 而「相邻出现了查询词」的块必然因为词都命中而已经在前面，没必要全量扫。
+  if (phraseRes.length > 0) {
+    let boosted = false
+    for (let k = 0; k < Math.min(scored.length, ADJACENCY_CANDIDATES); k++) {
+      const s = scored[k]!
+      const c = idx.chunks[s.i]!
+      let hitPairs = 0
+      for (const re of phraseRes) if (re.test(c.text)) hitPairs++
+      if (hitPairs === 0) continue
+      s.adjacent = hitPairs / phraseRes.length
+      s.score *= 1 + PHRASE_BOOST_MAX * s.adjacent
+      boosted = true
+    }
+    if (boosted) scored.sort((a, b) => b.score - a.score)
+  }
   // 双重剪枝：相对阈值（最高分 × 15%，只沾到常见词/文档名共享词的块不进目录）
   // + 绝对下限 MIN_HIT_SCORE。只有相对阈值时，「整库都弱」会把一堆弱块放进来
   // （bestScore 本身低 → 阈值低 → 只沾一个常见词的块也过线）。
   const bestScore = scored[0]?.score ?? 0
-  const cutoff = Math.max(bestScore * RELATIVE_NOISE_RATIO, MIN_HIT_SCORE)
+  // 但绝对下限在「查询词全是库内常见词」时会反过来误杀：所有 idf 都趋近 0 时全库得分都极低，
+  // 门槛会把整个库判成「未命中」——分数低是因为词太常见，不代表内容不相关。
+  // 实测：拿文档名本身当查询（「Mermaid 渲染格式」），这几个词因为被计入了每个块的
+  // headTokens（getIndex 把 docName/title 的词也放进 tf）而 df = 块数 = 30、idf 塌到 0.02，
+  // 全库得分 0.04 远低于门槛 1.0 → 该库 0 命中，而它恰恰是唯一相关的库。
+  // 判据要同时满足两条：
+  //   1) 平均 idf 过低 —— 词本身没有区分度，低分是词的性质而非内容不相关；
+  //   2) 绝对下限确实是压死结果的那一刀（bestScore 本就低于门槛）。
+  // 第二条保证本就能出结果的查询行为完全不变——只在这一刀会清空结果时才放开。
+  // 放开后结果仍会被标成低置信（bestScore < LOW_CONFIDENCE_SCORE 且无排序优势），
+  // 界面照常给黄色提示与建议关键词，不会把弱结果伪装成强结果。
+  const avgIdf = effective.size > 0 ? qIdfTotal / effective.size : 0
+  const noDiscrimination = avgIdf < LOW_IDF_AVG && bestScore < MIN_HIT_SCORE
+  const cutoff = noDiscrimination
+    ? bestScore * RELATIVE_NOISE_RATIO
+    : Math.max(bestScore * RELATIVE_NOISE_RATIO, MIN_HIT_SCORE)
+  // 融合权重用的分母：把「本库根本不存在」的查询词也计入（按 df=0 时的 idf 上界）。
+  // 不能复用上面的 coverage —— 它的分母剔除了 df=0 的词，于是「库里没有 amend」
+  // 反而让只命中 git/commit 的块拿到 coverage=1.00，置信度判定和跨库排序双双被误导：
+  // 越是缺关键词的库，越显得自信。
+  const missingIdf = Math.log(1 + (N + 0.5) / 0.5)
+  let qIdfFull = qIdfTotal
+  for (const term of qTerms) if (!qIdf.has(term)) qIdfFull += missingIdf
+  // 库级质量软衰减：库内最高分达不到 FUSION_SCALE 时按比例削弱，避免弱命中库靠排名第一
+  // 拿到与强命中库同等的融合权重。
+  const libQuality = Math.min(1, bestScore / FUSION_SCALE)
   const hits: KnowledgeHit[] = []
-  for (const { i, score } of scored) {
+  for (const { i, score, adjacent } of scored) {
     if (hits.length >= limit) break
     if (score < cutoff) break
     const c = idx.chunks[i]
@@ -425,7 +513,16 @@ function search(idx: KbIndex, query: string, limit: number): { hits: KnowledgeHi
       .filter(t => c.tf.has(t))
       .sort((a, b) => (qIdf.get(b) ?? 0) - (qIdf.get(a) ?? 0))
       .slice(0, MATCHED_TERM_KEEP)
-    hits.push({ docName: c.docName, ordinal: c.ordinal, text: c.text, title: c.title || deriveChunkTitle(c.text), score: Math.round(score * 100) / 100, matched })
+    // 本条的融合权重 = 全量覆盖率 × 库级质量。全量覆盖率的分子只算「进入 effective 的词」
+    // 的命中 idf，与分母口径一致。
+    let matchedIdfFull = 0
+    for (const term of effective) if (c.tf.has(term)) matchedIdfFull += qIdf.get(term) ?? 0
+    hits.push({
+      docName: c.docName, ordinal: c.ordinal, text: c.text, title: c.title || deriveChunkTitle(c.text),
+      score: Math.round(score * 100) / 100, matched,
+      ...(adjacent > 0 ? { adjacent: Math.round(adjacent * 100) / 100 } : {}),
+      fusionWeight: qIdfFull > 0 ? Math.round((matchedIdfFull / qIdfFull) * libQuality * 1000) / 1000 : 0,
+    })
   }
   // 置信度判定 = 绝对阈值 + 排序优势（后者可推翻前者，理由见文件头常量处注释）。
   // 排序优势：top 明显领先第二名，且 top 分不是噪声量级。
@@ -438,10 +535,15 @@ function search(idx: KbIndex, query: string, limit: number): { hits: KnowledgeHi
   const lowConfidence = hits.length === 0 || (weakAbsolute && !dominant)
   // 建议关键词：库内真实存在、且 idf 最高的那几个词，供低置信时直接照抄重搜。
   // 中文经二元组切分后这里会是若干二元组（如「回滚 部署 失败」），对 BM25 而言正是有效查询。
-  const suggestedQuery = [...effective]
-    .sort((a, b) => (qIdf.get(b) ?? 0) - (qIdf.get(a) ?? 0))
-    .slice(0, SUGGEST_TERM_COUNT)
-    .join(' ')
+  // 例外：noDiscrimination 时这批词就是用户原查询里那些没有区分度的词，
+  // 原样建议回去等于「用同样的词再搜一次」——既帮不上忙，还会让工具白跑一轮自动重搜。
+  // 这种情况直接不给建议，界面只留「换更具体的关键词」的提示，工具也跳过重搜。
+  const suggestedQuery = noDiscrimination
+    ? ''
+    : [...effective]
+      .sort((a, b) => (qIdf.get(b) ?? 0) - (qIdf.get(a) ?? 0))
+      .slice(0, SUGGEST_TERM_COUNT)
+      .join(' ')
   return { hits, lowConfidence, suggestedQuery }
 }
 
@@ -525,8 +627,8 @@ export function queryAllKnowledgeBases(query: string, limit?: number): AllKbSear
   if (!query || typeof query !== 'string' || !bases.length) return { ...empty, searched: bases }
   const cap = Math.max(1, Math.min(Math.floor(limit ?? QUERY_LIMIT_DEFAULT), QUERY_LIMIT_MAX))
   const per = bases.map(b => queryKnowledgeBase(b.id, query, cap))
-  // 合并 + 全局相对剪枝：与工具侧共用 mergeKbHits，保证「跨库搜索」两处行为一致。
-  // （各库内部那次剪枝以「本库最高分」为基准，弱库的弱条目会被漏下来，由全局剪枝兜住。）
+  // 合并：与工具侧共用 mergeKbHits（RRF 排名融合 + 全局相对剪枝），保证「跨库搜索」两处行为一致。
+  // 注意不要在这里再按 score 排序或比较——score 是各库内部的 BM25 分，量纲不可比。
   const hits = mergeKbHits(per, cap)
   const withHits = per.filter(r => r.hits.length > 0)
   const lowKbNames: string[] = []
@@ -562,7 +664,11 @@ export function queryAllKnowledgeBases(query: string, limit?: number): AllKbSear
     suggestedQuery: terms.join(' '),
     // top 相对第二名的倍数：界面用它解释「为什么这次算高置信」——
     // 倍数够大就说明 top 明显优于其余，不该被绝对阈值误判成低置信。
-    topMargin: (hits[1]?.score ?? 0) > 0 ? Math.round((hits[0]!.score / hits[1]!.score) * 10) / 10 : 0,
+    // 只在「前两名同属一个库」时才算：库内 BM25 分可比，跨库不可比（idf 各算各的）。
+    // 跨库时给 0，界面会跳过这段说明，免得用一个没意义的倍数去解释排序。
+    topMargin: hits[0] && hits[1] && hits[0].kbName === hits[1].kbName && hits[1].score > 0
+      ? Math.round((hits[0].score / hits[1].score) * 10) / 10
+      : 0,
     searched: bases,
   }
 }

@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore } from '../store/useStore'
-import { useChatStore } from '../store/chatStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
@@ -449,24 +448,17 @@ export default function ModelCard({ card, style }: Props) {
                 useStore.getState().setView('ocr')
                 return
               }
-              const id = card.template.id
-              const port = card.template.serverPort || 8080
-              const name = card.template.name
-              const st = useChatStore.getState()
-              let session = st.sessions.find(s => s.templateId === id)
-              if (!session) {
-                const newId = st.createSession(id, port, name)
-                session = st.sessions.find(s => s.id === newId)!
-              } else {
-                st.selectSession(session.id)
-              }
-              useStore.getState().setView('chat')
+              // 原生聊天界面已并入 Agent Code 的纯聊天模式：这里只投递一条待处理指令，
+              // 由 AgentCodeView 自己建一个 plainChat 会话（它常驻挂载，
+              // 外部直接写 agentProjects 传不进它的 projects 状态）。
+              useStore.getState().setPendingPlainChat({ title: card.template.name })
+              useStore.getState().setView('agent-code')
             }}
             onMouseEnter={() => actionIconRef.current?.startAnimation()}
             onMouseLeave={() => actionIconRef.current?.stopAnimation()}
           >
             {effectiveParamSet === 'audiocpp' ? <AudioLines ref={actionIconRef} size={14} className="nav-animate-icon" /> : effectiveParamSet === 'sdcpp' ? <ImageIcon ref={actionIconRef} size={14} className="nav-animate-icon" /> : isOcrModel ? <ScanIcon ref={actionIconRef} size={14} className="nav-animate-icon" /> : <MessageSquareIcon ref={actionIconRef} size={14} className="nav-animate-icon" />}
-            <span className="btn-label">{effectiveParamSet === 'audiocpp' ? '音频工作台' : effectiveParamSet === 'sdcpp' ? '图像生成' : isOcrModel ? 'OCR 识别' : '原生聊天'}</span>
+            <span className="btn-label">{effectiveParamSet === 'audiocpp' ? '音频工作台' : effectiveParamSet === 'sdcpp' ? '图像生成' : isOcrModel ? 'OCR 识别' : '纯聊天'}</span>
           </button>
         )}
         {!isRunning && (

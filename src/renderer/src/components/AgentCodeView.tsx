@@ -2,12 +2,13 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║ 区域：导入声明                                                              ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
-import { useRef, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import 'katex/dist/katex.min.css'
 import '../styles/monitoring.css'
 import {useStore} from '../store/useStore'
 import {paramSetOf} from '../utils/engine'
 import {usePopoverDismiss} from '../utils/usePopoverDismiss'
+import {useTts} from '../utils/useTts'
 // ── agent-code 拆分模块（批次 4：hooks）──
 import {useAgentProjects} from './agent-code/hooks/useAgentProjects'
 import {useAgentInput} from './agent-code/hooks/useAgentInput'
@@ -32,7 +33,8 @@ import {useAgentModelControl} from './agent-code/hooks/useAgentModelControl'
 // ── agent-code 拆分模块（批次 5：agent-view 布局）──
 import {AgentCodeViewLayout} from './agent-code/agent-view/AgentCodeViewLayout'
 
-import type { AgentMessage, CardState } from '../../../shared/types'
+import { uniqueId } from './agent-code/utils/ids'
+import type { AgentMessage, AgentSession, CardState } from '../../../shared/types'
 import '../styles/agent-code.css'
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -118,7 +120,10 @@ export default function AgentCodeView() {
     taskModalOpen, setTaskModalOpen, setTaskCardClosing,
     setCurrentPlanItems, setPlanTitle, setTaskPanelCollapsed,
     editingMsgId, setEditingMsgId, editDraft, setEditDraft,
-  } = (ui = useAgentUiState({ agentCards, loading, piReadyRef }))
+  } = (ui = useAgentUiState({
+    agentCards, loading, piReadyRef,
+    activeProjectId, activeSessionId, activeSession, updateSessionInProject,
+  }))
 
   // ── 三块可拖拽面板（预览区 / 侧边栏 / 右侧面板，见 agent-code/hooks/useAgentPanels.ts）──
   const panels = useAgentPanels({ rightPanelMode })
@@ -169,6 +174,22 @@ export default function AgentCodeView() {
   // ── 会话生命周期 / 工作区同步 / 记忆沉淀（见 agent-code/hooks/useAgentSessionEffects.ts）──
   useAgentSessionEffects({ storedProjects, setAgentProjects, projects: projectsDomain, run, ui, scroll })
 
+  // ── 消费「开一个纯聊天会话」的外部请求（模型卡片的「纯聊天」按钮投递）──
+  // 不能直接写 store 的 agentProjects：本组件常驻挂载，projects 状态只在首次挂载时读一次
+  // store，之后再写也传不进来。所以改成投递一条待处理指令、由这里自己建会话并切过去。
+  // 订阅 pendingPlainChat 是为了让写入能触发重渲染，否则 effect 不会重新执行。
+  const pendingPlainChat = useStore(s => s.pendingPlainChat)
+  useEffect(() => {
+    if (!pendingPlainChat) return
+    useStore.getState().setPendingPlainChat(null)
+    // 当前会话已经是「还没说过话的纯聊天会话」就直接复用：否则连点几次按钮会堆出一串空会话
+    if (activeSession && activeSession.plainChat && activeSession.messages.length === 0) return
+    const sid = uniqueId('sess')
+    const sess: AgentSession = { id: sid, title: pendingPlainChat.title || '纯聊天', messages: [], plainChat: true }
+    setProjects(prev => prev.map(p => p.id === activeProjectId ? { ...p, sessions: [...p.sessions, sess] } : p))
+    setActiveSessionId(sid)
+  }, [pendingPlainChat, activeProjectId, activeSession, setProjects, setActiveSessionId])
+
   // ── 视图副作用：侧栏可见性 / 跳行高亮 / 输入区测高（见 agent-code/hooks/useAgentViewEffects.ts）──
   useAgentViewEffects({ preview: previewDomain, ui, scroll, chatInputAreaRef })
 
@@ -206,7 +227,12 @@ export default function AgentCodeView() {
     appendQueuedUserMsg: sessionActions.appendQueuedUserMsg,
     queueRemoved: sessionActions.queueRemoved,
     runSlashAction,
+    // 发消息时无条件贴底：恢复被用户上滚关掉的跟随，否则新消息会在视野外生成
+    scrollToBottom: scroll.scrollToBottom,
   }))
+
+  // ── 语音朗读（纯聊天模式的消息行用；复用原生聊天的同一份实现）──
+  const { speakingId, speak, stop: stopSpeak } = useTts()
 
   // ── 消息级操作（自持逻辑、复用循环域与项目域的共享引用，见 agent-code/hooks/useAgentMessageActions.ts）──
   let messageActions!: ReturnType<typeof useAgentMessageActions>
@@ -216,6 +242,7 @@ export default function AgentCodeView() {
     runPiTurn, backupsRef, piReadyRef, regenRollbackRef, handleUndoRef,
     editingMsgId, setEditingMsgId, editDraft, setEditDraft,
     openFileAtLine: previewDomain.openFileAtLine, openGitDiffAt: git.openGitDiffAt,
+    speak, stopSpeak,
   }))
 
   // ── 提示词 / 知识库弹层、欢迎页建议与注释发送（见 agent-code/hooks/useAgentModals.tsx）──
@@ -267,6 +294,8 @@ export default function AgentCodeView() {
         modelLabel,
         handleModelAction: modelControl.handleModelAction,
         handleStop: sessionActions.handleStop,
+        // 正在朗读的消息 id（纯聊天模式用；plainChat 本身由 ui 域提供，不重复传）
+        speakingId,
         // ── 散装值：DOM ref 与输入区键盘处理 ──
         msgEndRef,
         msgRowActionsRef,

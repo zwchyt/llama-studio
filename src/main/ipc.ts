@@ -23,6 +23,7 @@ import { registerRetrievalIpc, disposeIndexForWorkspace } from './services/retri
 import { registerMemoryStoreIpc, deleteMemoryForWorkspace } from './services/memoryStore'
 import { readGgufMeta } from './services/ggufReader'
 import { registerKnowledgeIpc } from './services/knowledgeService'
+import { synthesizeEdgeTts, listEdgeVoices } from './services/edgeTts'
 import { initTokenLedger, appendTokenUsage, readTokenUsage, clearTokenUsage } from './tokenLedger'
 import { diagnoseModelFailure } from './diagnose'
 import { confineRead, validateUrlAsync } from './ipc-helpers/security'
@@ -5860,6 +5861,16 @@ export function registerIpcHandlers(): void {
       if (!pdfWindow.isDestroyed()) pdfWindow.close()
     }
   })
+
+  // ── Edge TTS（聊天朗读用）──
+  // 合成返回 data URL：与「语音合成」视图同一条播放路径（renderer 侧 new Audio(url)），
+  // 免去临时文件与自定义协议的往返。
+  ipcMain.handle('edge-tts-synthesize', async (_e, opts: { text: string; voice: string; rate?: number; pitch?: number }): Promise<string> => {
+    const mp3 = await synthesizeEdgeTts(opts)
+    return `data:audio/mpeg;base64,${mp3.toString('base64')}`
+  })
+
+  ipcMain.handle('edge-tts-voices', async () => listEdgeVoices())
 
   ipcMain.handle('save-png', async (_e, dataUrl: string): Promise<string> => {
     const chatDir = join(CHATS_DIR, 'images')

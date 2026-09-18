@@ -199,6 +199,9 @@ interface LlamaCppApi {
   // ── PDF 导出 ──
   printToPDF: (html: string) => Promise<string>
   savePng: (dataUrl: string) => Promise<string>
+  // ── Edge TTS（聊天朗读）──
+  edgeTtsSynthesize: (opts: { text: string; voice: string; rate?: number; pitch?: number }) => Promise<string>
+  edgeTtsVoices: () => Promise<Array<{ name: string; label: string; gender: string; locale: string }>>
   // ── OCR ──
   ocrStream: (opts: { streamId: string; port: number; image: string; prompt: string; templateArgs?: Record<string, string | number | boolean | null> }) => Promise<{ success: boolean; error?: string }>
   abortOcrStream: (streamId: string) => Promise<{ success: boolean }>
@@ -318,7 +321,7 @@ interface LlamaCppApi {
   windowClose: () => Promise<void>
   // ── pi-agent（pi SDK 驱动的 agent 会话）──
   piAgent: {
-    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
+    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
     warmup: () => Promise<{ success: boolean }>
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
     steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>

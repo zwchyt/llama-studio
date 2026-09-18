@@ -236,6 +236,9 @@ export interface AgentMessage {
   toolCalls?: { id: string; name: string; args: string; status?: 'pending' | 'await_approval' | 'executing' | 'done'; result?: string; truncated?: boolean; resultTotal?: number; failed?: boolean; durationMs?: number; restored?: boolean; backupPath?: string }[]
   attachments?: Attachment[]  // 用户消息的附件（图片 / 文件）
   stopped?: boolean           // 用户手动停止生成，消息内容不完整
+  /** 「继续生成」注入的接续指令：需要发给模型，但不作为用户消息显示在界面上。
+      与 ChatView 的做法一致（那里是临时拼进 API 消息、不落会话）。 */
+  continuation?: boolean
   // 按流式时间线切分的有序片段：思考段 / 正文段 / 工具批段交错排列，
   // 用于「工具栏 → 思考链 → 工具栏 → 思考链 → …」的交错渲染。
   // 旧消息（无此字段）回退到「工具卡片在顶部 + 思考链在下方」的传统布局。
@@ -256,10 +259,23 @@ export type AgentSegment =
   | { kind: 'text'; content: string }
   | { kind: 'tools'; toolCalls: NonNullable<AgentMessage['toolCalls']>; durationMs?: number }
 
+/** 纯聊天模式允许启用的工具：就是原生聊天界面那四个（与 ChatView 的 TOOL_ORDER 一致）。
+    只作用于纯聊天模式；工作台模式仍走主进程里写死的那套白名单，两边互不干扰。 */
+export const PLAIN_CHAT_TOOL_NAMES = ['get_datetime', 'web_search', 'fetch_webpage', 'knowledge_search'] as const
+
 export interface AgentSession {
   id: string
   title: string
   messages: AgentMessage[]
+  /** 纯聊天模式：不注册任何工具，也不注入编码 agent 的工具 / 图表指引，只保留对话本身，
+      等于把工作台当原生聊天用。缺省（undefined）= 原来的 agent 模式，旧会话不受影响。
+      工具与指引在主进程里是两处独立注入（toolNames / appendSystemPrompt），必须一起关——
+      只关工具的话模型仍会按「工作台 agent」的口径回答，还白占约 4.5k tokens 的系统提示。 */
+  plainChat?: boolean
+  /** 纯聊天模式下启用的工具名（只允许原生聊天那四个：get_datetime / web_search /
+      fetch_webpage / knowledge_search）。缺省 = 一个都不启用，即纯对话。
+      注意这只影响纯聊天模式；工作台模式仍走主进程写死的那套工具白名单，两者互不干扰。 */
+  chatTools?: string[]
   // 上下文摘要/压缩记忆：超过预算高水位时，最早若干轮对话被模型压缩为摘要。
   // 发送时以摘要替代被覆盖的最早连续前缀消息，无此字段的旧会话不受影响。
   memory?: {
@@ -542,6 +558,17 @@ export interface KnowledgeHit {
       检索走的是词/二元组匹配，块可能只命中其中一两个词——
       界面据此做高亮与「为什么这条会被搜出来」的解释。 */
   matched?: string[]
+  /** 词序吻合度（0-1）：查询里相邻的词在块里也相邻出现的比例。
+      BM25 是词袋模型，只看词不看词序，「git commit --amend」和「commit ... commit」
+      在它眼里一样；这个值补回词序信息，>0 时界面标「短语命中」。 */
+  adjacent?: number
+  /** 跨库融合权重（0-1）：命中查询词的 idf 占「全部查询词 idf」的比例，
+      再按本库最高分做软衰减。库内 BM25 分依赖本库的 N/df，跨库不可比，
+      合并排序时改用它给排名分加权。单库检索时无意义，可缺省。 */
+  fusionWeight?: number
+  /** 跨库融合后的最终得分（RRF × fusionWeight），由 mergeKbHits 写入。
+      原始分保留在 score 里供展示，但跨库排序只看这个——两者不可混用。 */
+  fusionScore?: number
 }
 
 /** Pi SDK 会话级「思考程度」（与 @earendil-works/pi-agent-core 的 ThinkingLevel 完全一致）。

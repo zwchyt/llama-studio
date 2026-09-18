@@ -14,8 +14,9 @@
 //
 // 组件体内把域对象二次解构为局部名，使下方 JSX 与拆分前的写法逐字一致。
 
-import React, { useEffect, useMemo } from 'react'
-import { Bot, Bug, Database, Copy, Check } from 'lucide-react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { Bot, Bug, Database, Copy, Check, ImageDown } from 'lucide-react'
+import html2canvas from 'html2canvas'
 import {
   ActivityIcon, BookOpenIcon, BrainIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon,
   EllipsisVerticalIcon, GitBranchIcon, GlobeIcon, LoaderIcon, PencilIcon, QuoteIcon, RouteIcon,
@@ -82,6 +83,8 @@ export interface AgentCodeViewLayoutProps {
   modelLabel: string
   handleModelAction: (card: CardState) => Promise<void>
   handleStop: () => void
+  /** 正在朗读的消息 id（纯聊天模式用；非该模式恒为 null） */
+  speakingId: string | null
 
   /** ── 散装值：DOM ref ── */
   msgEndRef: React.RefObject<HTMLDivElement | null>
@@ -99,6 +102,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     projects: projectsDomain, inputDomain, preview: previewDomain, hints: hintsDomain,
     run, ui, condense, messageActions, scroll, git, mic, loop, panels, modals, sessionActions,
     cards, agentCards, runningCard, apiBaseUrl, modelLabel, handleModelAction, handleStop,
+    speakingId,
     msgEndRef, msgRowActionsRef, chatInputAreaRef, taskCardRef,
     handleKeyDown, handleInputChange,
   } = view
@@ -138,11 +142,13 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     modelLogos, modelPickerOpen, modelPickerRef, modelPickerWidth, pickModelLogo,
     planTitle, rejectBtnRef, removeModelLogo, resolveApproval, searchEnabled,
     searchMenuOpen, searchMenuRef, searchProvider, setModelPickerOpen, setSearchMenuOpen,
+    plainChat, togglePlainChat,
+    chatTools, chatToolsMenuOpen, setChatToolsMenuOpen, chatToolsMenuRef, toggleChatTool,
     setTaskCardClosing, setTaskModalOpen, setTaskPanelCollapsed, taskCardClosing,
     taskDoneCount, taskModalOpen, taskPanelCollapsed, toggleLogoMenu, applySearchChange,
   } = ui
   const { condensing, condenseMsg, setCondenseMsg, handleManualCondense } = condense
-  const { copyMessage, editAt, resendAt, branchAt, confirmEdit } = messageActions
+  const { copyMessage, editAt, resendAt, branchAt, confirmEdit, deleteMessage } = messageActions
   const {
     activeRailId, atBottom, chatScrollRef, onChatScroll, onChatWheel, pauseFollow,
     railItems, railOverflowing, railScrolling, scrollToBottom, scrollToRailItem,
@@ -221,6 +227,25 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     return () => registerVirtualApi(null)
   }, [registerVirtualApi, virtual.ensureMounted])
 
+  // 导出为图片（仅纯聊天模式）：html2canvas 截取消息区 → PNG 落盘。
+  // 注意消息区是虚拟滚动的（屏外消息被卸载、用等高占位顶住），所以导出的是
+  // 「当前这一屏」而不是整段对话——按钮 title 里写明，免得以为导出了全部。
+  const [exporting, setExporting] = useState(false)
+  const handleExportImage = useCallback(async () => {
+    const el = chatScrollRef.current
+    if (!el || exporting) return
+    setExporting(true)
+    try {
+      const canvas = await html2canvas(el, { useCORS: true, backgroundColor: '#fff' })
+      const filePath = await window.api.savePng(canvas.toDataURL('image/png'))
+      notify(`PNG 已保存: ${filePath}`, 'success')
+    } catch {
+      notify('导出图片失败', 'error')
+    } finally {
+      setExporting(false)
+    }
+  }, [chatScrollRef, exporting])
+
   // 消息列表元素缓存（useMemo）：目录高亮 / rail 波浪 / 贴底按钮等纯滚动状态变化
   // 不再重建整棵消息树；仅消息数据、流式状态、编辑态或相关回调变化时重建。
   // 依赖均为稳定引用（useCallback 回调 / ref / store 内消息数组），不会击穿缓存。
@@ -230,6 +255,9 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     // 滚动条长度与位置保持不变。data-message-index 仍是会话内原始下标，目录与搜索据此对齐。
     return activeSession.messages.slice(historyStartIndex + virtual.windowStart, historyStartIndex + virtual.windowEnd).map((msg, visibleIndex) => {
       const i = historyStartIndex + virtual.windowStart + visibleIndex
+      // 「继续生成」注入的接续指令：必须发给模型，但不作为用户消息显示在界面上（直接跳过渲染）。
+      // 下标 i 仍按会话内原始位置计算，目录 / 虚拟窗口 / 搜索对齐不受影响。
+      if (msg.continuation) return null
       const isLast = i === activeSession.messages.length - 1
       // 流式状态仅归属于发起它的会话：切会话后不校验归属会误判末条助手消息为流式中。
       const streamingHere = streaming && streamingSessionRef.current === activeSession.id
@@ -253,12 +281,16 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                 </div>
               ) : msg.content ? (
                 <>
-                  <UserMessageEntry content={msg.content} packedText={msg.packedText} />
+                  <UserMessageEntry content={msg.content} packedText={msg.packedText} attachments={plainChat ? msg.attachments : undefined} />
                   <div className="chat-msg-actions">
-                    <button className="chat-msg-action-btn" onClick={() => copyMessage(msg.content)}><CopyIcon size={13} /></button>
-                    <button className="chat-msg-action-btn" onClick={() => editAt(msg.id)} disabled={loading}><PencilIcon size={13} /></button>
-                    <button className="chat-msg-action-btn" onClick={() => resendAt(msg.id)} disabled={loading}><SendIcon size={13} /></button>
-                    <button className="chat-msg-action-btn" onClick={() => branchAt(msg.id)} disabled={loading}><GitBranchIcon size={13} /></button>
+                    <button className="chat-msg-action-btn" title="复制" onClick={() => copyMessage(msg.content)}><CopyIcon size={13} /></button>
+                    <button className="chat-msg-action-btn" title="编辑" onClick={() => editAt(msg.id)} disabled={loading}><PencilIcon size={13} /></button>
+                    <button className="chat-msg-action-btn" title="重新发送" onClick={() => resendAt(msg.id)} disabled={loading}><SendIcon size={13} /></button>
+                    <button className="chat-msg-action-btn" title="创建分支" onClick={() => branchAt(msg.id)} disabled={loading}><GitBranchIcon size={13} /></button>
+                    {/* 删除消息只在纯聊天模式提供（工作台模式的用户消息是工作流的输入，删掉会让上下文断裂） */}
+                    {plainChat && (
+                      <button className="chat-msg-action-btn" title="删除这条消息" onClick={() => deleteMessage(msg.id)} disabled={loading}><Trash2Icon size={13} /></button>
+                    )}
                   </div>
                 </>
               ) : null
@@ -278,9 +310,11 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                     streamStartAt={streamStartAtRef.current ?? undefined}
                     onRate={handleStreamRate}
                     modelTemplateId={runningCard?.template.id}
+                    plainChat={plainChat}
+                    speakingId={speakingId}
                   />
                 ) : (
-                  <AgentMessageRow msg={msg} isLast={isLast} loading={loading} actionsRef={msgRowActionsRef} streaming={streaming} modelLabel={modelLabelRef.current} modelTemplateId={runningCard?.template.id} />
+                  <AgentMessageRow msg={msg} isLast={isLast} loading={loading} actionsRef={msgRowActionsRef} streaming={streaming} modelLabel={modelLabelRef.current} modelTemplateId={runningCard?.template.id} plainChat={plainChat} speakingId={speakingId} />
                 )}
               </>
             )}
@@ -323,6 +357,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
             <TopbarBtn active={rightPanelMode === 'diff'} onClick={toggleGitDiff} icon={GitBranchIcon}>变更</TopbarBtn>
             <TopbarBtn active={rightPanelMode === 'browser'} onClick={() => { setRightPanelMode(m => m === 'browser' ? 'files' : 'browser'); if (!treeOpen) setTreeOpen(true) }} icon={GlobeIcon}>浏览器</TopbarBtn>
             <TopbarBtn active={rightPanelMode === 'terminal'} onClick={() => { setRightPanelMode(m => m === 'terminal' ? 'files' : 'terminal'); if (!treeOpen) setTreeOpen(true) }} icon={TerminalIcon}>终端</TopbarBtn>
+            {/* 导出图片只在纯聊天模式出现（工作台模式的消息带工具卡与文件改动，截图意义不大） */}
+            {plainChat && (
+              <TopbarBtn active={false} onClick={handleExportImage} icon={ImageDown} title="把当前可见的对话导出为 PNG（消息区是虚拟滚动的，只截当前这一屏）">导出图片</TopbarBtn>
+            )}
           </div>
           <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} style={{ marginTop: 0, width: 28, height: 28 }}>
             {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
@@ -649,6 +687,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
             search={{
               searchEnabled, searchProvider, searchMenuOpen, searchMenuRef,
               setSearchMenuOpen, applySearchChange,
+            }}
+            chatMode={{
+              plainChat, togglePlainChat,
+              chatTools, chatToolsMenuOpen, setChatToolsMenuOpen, chatToolsMenuRef, toggleChatTool,
             }}
             run={{
               apiBaseUrl, curToolName, followUpQueueRef, handleSend, handleStop,

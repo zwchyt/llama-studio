@@ -116,11 +116,11 @@ const KNOWLEDGE_SEARCH_TOOL: ToolDefinition = {
   type: 'function',
   function: {
     name: 'knowledge_search',
-    description: '在当前会话附加的本地知识库中检索相关资料（BM25 关键词检索）。当用户的问题可能涉及知识库文档内容时调用此工具。',
+    description: '在当前会话附加的本地知识库中检索相关资料（BM25 字面词法检索，没有向量/语义通道，同义改述可能漏检）。当用户的问题可能涉及知识库文档内容时调用此工具。',
     parameters: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: '检索关键词（用文档中可能出现的词语，而非完整问句）' }
+        query: { type: 'string', description: '检索词（用文档中可能出现的词语，而非完整问句）。例外：问的是具体命令 / API / 报错原文时，把它整条原样传入并保留 --flag 参数——检索对相邻词对加权，词序和参数本身就是有效信号。' }
       },
       required: ['query']
     }

@@ -1,6 +1,6 @@
 {
   "name": "llama-studio",
-  "version": "1.0.215",
+  "version": "1.0.216",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",
   "main": "out/main/index.js",
@@ -54,6 +54,7 @@
     "remark-rehype": "^11.1.2",
     "thinking-orbs": "^0.3.1",
     "unified": "^11.0.5",
+    "ws": "^8.21.3",
     "zod": "^4.4.3",
     "zustand": "^4.5.2"
   },

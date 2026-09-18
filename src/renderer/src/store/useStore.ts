@@ -255,6 +255,17 @@ interface AppStore {
   setSoundEnabled: (v: boolean) => void
   notificationSound: string
   setNotificationSound: (v: string) => void
+  // ── 聊天朗读（TTS）──
+  /** 朗读引擎：'edge' = Edge 在线神经网络语音（默认，音质好、约 1.5s 出音）；
+      'system' = 浏览器/系统内置语音（离线可用，但机械感强）。Edge 失败会自动回退到 system。 */
+  ttsEngine: 'system' | 'edge'
+  setTtsEngine: (v: 'system' | 'edge') => void
+  /** Edge 音色全名，如 zh-CN-XiaoxiaoNeural */
+  ttsEdgeVoice: string
+  setTtsEdgeVoice: (v: string) => void
+  /** 朗读语速倍率，1 = 原速（两种引擎共用） */
+  ttsRate: number
+  setTtsRate: (v: number) => void
   // ── 聊天界面 ──
   chatSidebarCollapsed: boolean
   setChatSidebarCollapsed: (v: boolean) => void
@@ -328,6 +339,12 @@ interface AppStore {
   // ── Agent Code ──
   agentProjects: AgentProject[]
   setAgentProjects: (p: AgentProject[]) => void
+  /** 外部（模型卡片的「纯聊天」按钮）请求开一个纯聊天会话。
+      写入后由 AgentCodeView 消费并清空。之所以走这条投递而不是直接写 agentProjects：
+      AgentCodeView 是常驻挂载的，它的 projects 状态只在首次挂载时读一次 store，
+      之后再写 agentProjects 也传不进组件，必须让组件自己建会话。 */
+  pendingPlainChat: { title: string } | null
+  setPendingPlainChat: (v: { title: string } | null) => void
   // ── Agent Code 工具执行阶段（pi-web 风格状态机，驱动前端状态栏）──
   agentPhase: { kind: 'running_tools'; tools: { name: string; verb: string }[] } | { kind: 'waiting_model' } | null
   setAgentPhase: (phase: AppStore['agentPhase']) => void
@@ -586,6 +603,30 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
     try { localStorage.setItem('notificationSound', v) } catch { /* ignore */ }
     window.api?.setUiSetting('notificationSound', v)
   },
+  // 朗读默认走 Edge：音质明显好于系统语音，实测约 1.5s 出音
+  // （本地 TTS 模型要 10s+，所以聊天朗读不走本地模型）。失败时 useTts 会回退到系统语音。
+  ttsEngine: (() => {
+    try { return localStorage.getItem('ttsEngine') === 'system' ? 'system' : 'edge' } catch { return 'edge' }
+  })(),
+  setTtsEngine: (v) => {
+    set({ ttsEngine: v })
+    try { localStorage.setItem('ttsEngine', v) } catch { /* ignore */ }
+  },
+  ttsEdgeVoice: (() => {
+    try { return localStorage.getItem('ttsEdgeVoice') || 'zh-CN-XiaoxiaoNeural' } catch { return 'zh-CN-XiaoxiaoNeural' }
+  })(),
+  setTtsEdgeVoice: (v) => {
+    set({ ttsEdgeVoice: v })
+    try { localStorage.setItem('ttsEdgeVoice', v) } catch { /* ignore */ }
+  },
+  // 原代码把语速硬编码成 2.0（双倍速），是听感差的另一大来源；这里放开并默认 1.1
+  ttsRate: (() => {
+    try { const v = parseFloat(localStorage.getItem('ttsRate') || ''); return Number.isFinite(v) ? v : 1.1 } catch { return 1.1 }
+  })(),
+  setTtsRate: (v) => {
+    set({ ttsRate: v })
+    try { localStorage.setItem('ttsRate', String(v)) } catch { /* ignore */ }
+  },
   // ── 基准测试持久结果（localStorage 持久化，刷新/重启后恢复最近一次结果卡片）──
   benchmarkResult: (() => {
     try {
@@ -666,6 +707,8 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
     set({ agentProjects: p })
     scheduleSaveAgentProjects(p)
   },
+  pendingPlainChat: null,
+  setPendingPlainChat: (v) => set({ pendingPlainChat: v }),
   agentPhase: null,
   setAgentPhase: (phase) => {
     const prev = useStore.getState().agentPhase

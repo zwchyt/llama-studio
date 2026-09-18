@@ -69,6 +69,21 @@ function loadKbChunkPrefs(): Record<string, KbChunkPref> {
   } catch { return {} }
 }
 
+// ── 命中卡片高度由用户自己调（结果区右上角的滑块），选择持久化 ──
+// 块正文长度差异很大，固定值不可能人人合适：给一个可调区间，默认取中偏上。
+const KB_HIT_H_KEY = 'llama-studio-kb-hit-height'
+const HIT_H_MIN = 120
+const HIT_H_MAX = 560
+const HIT_H_STEP = 20
+const HIT_H_DEFAULT = 260
+
+function loadHitHeight(): number {
+  try {
+    const v = Number(localStorage.getItem(KB_HIT_H_KEY))
+    return Number.isFinite(v) && v >= HIT_H_MIN && v <= HIT_H_MAX ? v : HIT_H_DEFAULT
+  } catch { return HIT_H_DEFAULT }
+}
+
 // ── 手动分块编辑器：行号预览，点击两行定义一个块的区间；点击已覆盖行删除该区间 ──
 function ManualChunkModal({ fileName, text, ranges, onChange, onCancel, onConfirm, busy }: {
   fileName: string
@@ -168,6 +183,12 @@ export default function KnowledgeView() {
   // 手动分块：拖入单个文件后打开行号预览，点击行号区间定义块边界
   const [manualEditor, setManualEditor] = useState<{ name: string; text: string } | null>(null)
   const [manualRanges, setManualRanges] = useState<number[][]>([])
+  // 命中卡片高度（px）：用户用结果区右上角的滑块调，写进 localStorage 下次沿用
+  const [hitHeight, setHitHeight] = useState(loadHitHeight)
+
+  useEffect(() => {
+    try { localStorage.setItem(KB_HIT_H_KEY, String(hitHeight)) } catch { /* ignore */ }
+  }, [hitHeight])
 
   // 切换知识库时恢复该库自己的分块偏好（无记录则回默认值）
   useEffect(() => {
@@ -536,6 +557,34 @@ export default function KnowledgeView() {
     }
   }
 
+  // 库级提示合成一行：以前拆成两个 span + space-between，窄一点的栏里就折成两三行，
+  // 看上去像横在卡片上方的一条空带。合成一句并允许省略号截断，整行永远只有一行高。
+  const kbNote = [
+    lowKbNames.length > 0 ? `${lowKbNames.join('、')} 区分度不足` : '',
+    missKbNames.length > 0 ? `${missKbNames.join('、')} 无命中` : ''
+  ].filter(Boolean).join(' · ')
+
+  // ── 低置信提示要讲清「为什么」──
+  // suggested 为空是「查询词无区分度」的可靠信号：search() 在这个分支里会主动清空建议词
+  // （拿同一批没有区分度的词再搜一次，结果完全一样，所以它干脆不给建议）。
+  // 这种情况必须说原因：用户搜的词本身很正常，是它在库里太常见而已——
+  // 只写「结果可能不相关」会让人以为检索坏了，也不知道下一步该干什么。
+  const lowConfNoSignal = lowConf && !suggested && hits.length > 0
+  const hitScoreRange = (() => {
+    if (hits.length === 0) return ''
+    const ss = hits.map(h => h.score)
+    const lo = Math.min(...ss)
+    const hi = Math.max(...ss)
+    return lo === hi ? hi.toFixed(2) : `${lo.toFixed(2)}–${hi.toFixed(2)}`
+  })()
+  // 命中是否全来自同一个文档：是的话说明这次检索实际只表达了「这个文档提到了这些词」
+  const hitDocCount = new Set(hits.map(h => `${h.kbName ?? ''}\u0000${h.docName}`)).size
+  const lowConfReason = lowConfNoSignal
+    ? `查询词在库里过于常见、没有区分度：命中 ${hits.length} 条，分数挤在 ${hitScoreRange} 之间`
+      + (hitDocCount === 1 ? `，且都来自同一个文档的 ${hits.length} 个块` : '')
+      + '。这个排序没有参考价值——改用文档里实际出现的说法（具体名词、命令、英文标识符）重搜，比逐条读更有效。'
+    : ''
+
   return (
     <div className="kb-view">
       <div className="kb-header">
@@ -668,33 +717,50 @@ export default function KnowledgeView() {
                   {searching ? <Loader2 size={13} className="kb-spin" /> : '搜索'}
                 </button>
               </div>
+              {/* 结果统计挂在搜索框正下方：它说明的是「这次搜索」，属于搜索栏的附属信息。
+                  之前它放在结果栅格内部占一整行，加上下栅格间距和右栏间距，
+                  卡片上方会凭空多出约 44px 的空带——看着就像结果被挤下去了。 */}
+              {searched && (
+                <div className="kb-hits-meta">
+                  <span
+                    className="kb-hits-stat"
+                    title="结果按「跨知识库融合排名」排序：各库的 BM25 分是各自算 idf 的，量纲不同、不可跨库比较，所以卡片上显示的相关度不一定递减。"
+                  >
+                    跨 {searchedCount} 库 · 命中 {hits.length} 条 · 按融合排名
+                    {/* 排序优势：倍数够大说明 top 明显优于其余，是「高置信」的依据之一。
+                        只有前两名同库时才有值——库内 BM25 分可比，跨库不可比（各库 idf 各算各的）。 */}
+                    {topMargin > 0 && ` · top ${topMargin}×`}
+                  </span>
+                  {/* 单个库的弱化说明：不用告警色。
+                      某个库区分度不足 / 没命中，不代表这次检索整体不可靠——
+                      只要 top 明显领先，就不该报警告。 */}
+                  {kbNote && <span className="kb-hits-note" title={kbNote}>{kbNote}</span>}
+                  {/* 卡片高度自己调：块正文长度差异大，固定值不可能人人合适 */}
+                  <label className="kb-hit-h" title="调整每个命中卡片的高度（卡片内可滚动）">
+                    <span>块高</span>
+                    <input
+                      type="range"
+                      min={HIT_H_MIN}
+                      max={HIT_H_MAX}
+                      step={HIT_H_STEP}
+                      value={hitHeight}
+                      onChange={e => setHitHeight(Number(e.target.value))}
+                    />
+                    <span className="kb-hit-h-val">{hitHeight}</span>
+                  </label>
+                </div>
+              )}
             </div>
           )}
 
           {searched ? (
             /* 搜索态：结果独占主区域，文档管理让位——避免两套列表堆在一起 */
-            <div className="kb-hits">
-              <div className="kb-hits-meta">
-                <span>
-                  跨 {searchedCount} 个知识库 · 命中 {hits.length} 条
-                  {/* 排序优势：倍数够大说明 top 明显优于其余，是「高置信」的依据之一 */}
-                  {topMargin > 0 && ` · top 是第二名的 ${topMargin} 倍`}
-                </span>
-                {/* 单个库的弱化说明：不用告警色。
-                    某个库区分度不足 / 没命中，不代表这次检索整体不可靠——
-                    只要 top 明显领先，就不该报警告。 */}
-                {(lowKbNames.length > 0 || missKbNames.length > 0) && (
-                  <span className="kb-hits-note">
-                    {lowKbNames.length > 0 && `${lowKbNames.join('、')} 区分度不足`}
-                    {lowKbNames.length > 0 && missKbNames.length > 0 && ' · '}
-                    {missKbNames.length > 0 && `${missKbNames.join('、')} 无命中`}
-                  </span>
-                )}
-              </div>
+            <div className="kb-hits" style={{ ['--kb-hit-h' as string]: `${hitHeight}px` }}>
               {lowConf && (
                 <div className="kb-lowconf">
-                  命中置信度较低，结果可能不相关——建议换更具体的关键词重搜。
-                  {suggested && (
+                  {lowConfReason || '命中置信度较低，结果可能不相关——建议换更具体的关键词重搜。'}
+                  {/* 无区分度时不给建议词：那批词就是用户原查询里没区分度的词，建议回去等于让他再搜一次同样的东西 */}
+                  {!lowConfNoSignal && suggested && (
                     <span className="kb-lowconf-sug">
                       建议关键词：
                       {suggested.split(/\s+/).map(t => (
@@ -707,7 +773,7 @@ export default function KnowledgeView() {
               )}
               {hits.length === 0 ? (
                 <div className="kb-empty-sm">
-                  未检索到相关内容。BM25 是字面匹配——换更具体的关键词，中文用中文词、代码术语用英文标识符。
+                  未检索到相关内容。检索是字面词法匹配——换更具体的关键词，中文用中文词、代码术语用英文标识符；命令 / API 原文请整条原样输入（保留词序与 --flag）。
                   {suggested && (
                     <span className="kb-lowconf-sug">
                       可试：
@@ -722,13 +788,23 @@ export default function KnowledgeView() {
                   <div className="kb-hit-head">
                     {h.kbName && <span className="kb-hit-kb">{h.kbName}</span>}
                     <span className="kb-hit-doc">{h.docName} · 第 {h.ordinal + 1} 块</span>
-                    <span className="kb-hit-score">{h.score.toFixed(2)}</span>
+                    {/* 这个数字是「库内 BM25 相关度」，量纲随库而变（各库 idf 各算各的），
+                        所以列表里不一定单调递减——排序看的是跨库融合排名。悬停说明，免得被当成排序坏了。 */}
+                    <span
+                      className="kb-hit-score"
+                      title="库内 BM25 相关度：只在同一个知识库内可比，跨库不可比。列表顺序按跨库融合排名。"
+                    >
+                      {h.score.toFixed(2)}
+                    </span>
                   </div>
-                  {/* 命中词（按 idf 降序）：正文高亮可能因为分词差异落空，
-                      这里直接列出「是靠哪些词命中的」，保证任何情况下都能看出命中依据 */}
-                  {h.matched && h.matched.length > 0 && (
+                  {/* 命中词（按 idf 降序）+ 词序吻合度：正文高亮可能因为分词差异落空，
+                      这里直接列出「靠哪些词、词序对不对」，保证任何情况下都能看出命中依据 */}
+                  {((h.adjacent ?? 0) > 0 || (h.matched && h.matched.length > 0)) && (
                     <div className="kb-hit-matched">
-                      {h.matched.map(t => <span key={t} className="kb-hit-term">{t}</span>)}
+                      {(h.adjacent ?? 0) > 0 && (
+                        <span className="kb-hit-seq">词序吻合 {Math.round((h.adjacent ?? 0) * 100)}%</span>
+                      )}
+                      {(h.matched ?? []).map(t => <span key={t} className="kb-hit-term">{t}</span>)}
                     </div>
                   )}
                   <div className="kb-hit-text"><Hl text={h.text} terms={h.matched ?? []} /></div>

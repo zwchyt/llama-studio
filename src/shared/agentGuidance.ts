@@ -430,3 +430,13 @@ export const PI_SVG_GUIDANCE: string[] = [
 
 // 注入系统提示的内置指引全文（用于 token 估算）
 export const AGENT_SYSTEM_GUIDANCE = [...PI_TOOL_GUIDANCE, ...PI_CHART_ROUTING, ...PI_MERMAID_DSL_GUIDANCE, ...PI_CHART_FENCE_GUIDANCE, ...PI_SVG_GUIDANCE, ...PI_MERMAID_JSON_GUIDANCE]
+
+// 纯聊天模式的系统提示词：整段**替换** pi 的默认提示词（不是追加）。
+// 必须替换——pi 的默认提示词是给编码 agent 写的，里面有两句会直接误导模型：
+//   「You are an expert coding assistant operating inside pi, a coding agent harness.
+//     You help users by reading files, executing commands, editing code, and writing new files.」
+//   「In addition to the tools above, you may have access to other custom tools depending on the project.」
+// 即使 tools 传空数组、Available tools 显示成 (none)，这两句仍在，
+// 模型读完就会以为自己能调工具（这就是纯聊天模式下模型仍然「知道」有工具的原因）。
+export const PLAIN_CHAT_SYSTEM_PROMPT =
+  'You are a helpful assistant. Answer the user directly and concisely.'

@@ -248,6 +248,12 @@
    （结果区由 .kb-hits 接管，见下） */
 .kb-search {
   flex-shrink: 0;
+  /* 搜索框 + 结果统计行：统计（含块高滑块）紧贴在搜索框下方 6px，属于搜索栏的附属说明。
+     之前统计行放在结果栅格内部，卡片上方会多出「右栏间距 12px + 栅格行 + 上下栅格间距 16px」，
+     看着就是一条空白带、结果像被挤下去了。现在结果栅格里只剩卡片。 */
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .kb-search-bar {
@@ -280,31 +286,72 @@
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: 8px;
   align-items: start;
+  /* 必须显式写 start：栅格里 align-content 的默认值 normal 等价于 stretch，
+     容器（flex:1，高度确定）比内容高时会把富余空间平均分配给每一行、把行撑高。
+     卡片是固定高度又被 align-items:start 钉在行顶部，于是每张卡片下方都空出一块——
+     表现就是「块高滑低时每块下面出现空白，滑高到撑满就没有」。
+     align-content 只管行、align-items 只管行内对齐，两者互不覆盖，缺一不可。 */
+  align-content: start;
   padding-right: 4px;
 }
 
-/* 信息行 / 提示 / 空态横跨整行：.kb-hits 是栅格，子项默认只占一格 */
-.kb-hits>.kb-hits-meta,
+/* 提示 / 空态横跨整行：.kb-hits 是栅格，子项默认只占一格。
+   （结果统计行已移出栅格、挂在 .kb-search 下，不再是栅格子项。） */
 .kb-hits>.kb-lowconf,
 .kb-hits>.kb-empty-sm {
   grid-column: 1 / -1;
 }
 
-/* 检索范围 + 置信度告警 */
+/* 结果统计行（挂在 .kb-search 下，不是栅格子项）：强制单行 + 承载块高滑块。
+   以前这里是两段文字 space-between，窄栏里会折成两三行，看着就像横在卡片上方的空带；
+   现在压成一行、把库级提示做省略号截断（完整内容在 title 里），
+   并把它移出结果栅格，卡片上方不再多出一整行。 */
 .kb-hits-meta {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-wrap: nowrap;
+  gap: 10px;
   font-size: 11px;
+  line-height: 1.4;
   color: var(--text-muted);
+}
+
+.kb-hits-stat {
+  flex-shrink: 0;
 }
 
 /* 单个库的弱化说明（某库区分度不足 / 无命中）：刻意不用告警色。
    某个库没搜好不等于整次检索不可靠，用告警色会造成「明明 top 分遥遥领先却报警」的误导。 */
 .kb-hits-note {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-muted);
   opacity: 0.8;
+}
+
+/* 块高滑块：靠右、紧凑。块正文长度差异大，固定高度不可能人人合适 */
+.kb-hit-h {
+  flex-shrink: 0;
+  /* 靠右：库级提示为空时没有 flex:1 的元素占位，用 auto 外边距把它推到行尾 */
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.kb-hit-h input[type='range'] {
+  width: 72px;
+  margin: 0;
+}
+
+.kb-hit-h-val {
+  min-width: 24px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 命中项的来源库徽标：跨库检索后必须一眼看出每条来自哪个库 */
@@ -367,6 +414,8 @@
 
 .kb-lowconf {
   font-size: 11px;
+  /* 提示要讲清原因，会写成两三句话，行高放宽一点才读得下去 */
+  line-height: 1.6;
   color: var(--warning, #f59e0b);
   background: #f59e0b1a;
   border-radius: var(--radius-sm);
@@ -374,6 +423,12 @@
 }
 
 .kb-hit {
+  /* 高度由结果区右上角的滑块控制（--kb-hit-h 写在 .kb-hits 上，卡片继承）。
+     统一高度 + 内部滚动：块正文动辄上千字，不限高的话一张卡片就能撑满整个结果区，
+     同一行里高矮不齐也没法横向比较。 */
+  display: flex;
+  flex-direction: column;
+  height: var(--kb-hit-h, 260px);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -384,6 +439,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
   margin-bottom: 4px;
 }
 
@@ -404,6 +460,9 @@
 .kb-hit-matched {
   display: flex;
   flex-wrap: wrap;
+  /* 不参与压缩：卡片是固定高度，这行被压扁会变成半截字，
+     让它保持自然高度、由下面的正文区去滚动 */
+  flex-shrink: 0;
   gap: 3px;
   margin-bottom: 5px;
 }
@@ -417,12 +476,46 @@
   font-family: var(--font-mono, 'SF Mono', monospace);
 }
 
+/* 词序吻合标记：BM25 只看词不看词序，「整条命令原样出现」与「碰巧重复同一个词」得分可能相近。
+   用成功色区分于普通的命中词 chip，一眼看出这条是靠词序赢的 */
+.kb-hit-seq {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--success, #16a34a) 14%, transparent);
+  color: var(--success, #16a34a);
+  font-size: 10px;
+}
+
 .kb-hit-text {
+  /* 正文区吃掉卡片剩余高度并在内部滚动。
+     min-height: 0 是 flex 子项能滚动的前提：缺了它内容会把卡片撑开、overflow 直接失效。 */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* 细滚动条：默认滚动条在窄卡片里太抢眼，会盖住正文 */
+.kb-hit-text::-webkit-scrollbar {
+  width: 6px;
+}
+
+.kb-hit-text::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.kb-hit-text::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.kb-hit-text::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 .kb-spin {

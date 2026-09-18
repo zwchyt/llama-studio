@@ -5,6 +5,7 @@
 //   · 顶栏卡片按钮 ref（上下文 / 压缩 / 审计 / 轨迹 / 调试 / 提示词 / 知识库 / 记忆）
 //   · 模型选择器（打开态、宽度估算、能力徽标、Logo 菜单与设置/移除）
 //   · 联网搜索开关（searchEnabled / searchProvider 与其变更回调 applySearchChange）
+//   · 纯聊天模式开关（会话级 AgentSession.plainChat 与其切换回调 togglePlainChat）
 //   · 侧栏 / 文件树 / 右侧面板模式 / 终端挂载 / 各功能面板开关
 //   · 任务清单卡（Todo 面板）：打开态、关闭过渡态、计划项与标题、派生计数
 //   · 破坏性审批弹窗（approvalReq / resolveApproval / 键盘导航）
@@ -24,14 +25,20 @@ import { safeCall } from '../../../utils/safeCall'
 import { detectModelCapabilities } from '../../../utils/modelCapabilities'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { askUserQuestionRegistry } from '../../../utils/askUserQuestionRegistry'
-import type { CardState, KnowledgeBaseMeta, TodoUpdate } from '../../../../../shared/types'
+import type { AgentSession, CardState, KnowledgeBaseMeta, TodoUpdate } from '../../../../../shared/types'
 
 export function useAgentUiState({
   agentCards, loading, piReadyRef,
+  activeProjectId, activeSessionId, activeSession, updateSessionInProject,
 }: {
   agentCards: CardState[]
   loading: boolean
   piReadyRef: React.RefObject<{ sid: string | null; ready: boolean }>
+  /** 纯聊天开关是会话级字段（AgentSession.plainChat），需要会话指针与写回函数 */
+  activeProjectId: string
+  activeSessionId: string
+  activeSession: AgentSession | null
+  updateSessionInProject: (projId: string, sessId: string, upd: Partial<AgentSession>) => void
 }) {
 
   const ctxInlineRef = useRef<HTMLButtonElement>(null)
@@ -63,6 +70,46 @@ export function useAgentUiState({
       piReadyRef.current = { sid: null, ready: false }
     }
   }
+  // ── 纯聊天模式开关（会话级字段 AgentSession.plainChat）──
+  // 打开后主进程既不注册任何工具、也不注入编码 agent 的工具 / 图表指引，等于把工作台当原生聊天用。
+  // 重建方式与上面的联网搜索开关一致：pi 会话的 tools / systemPrompt 在创建那一刻就固定了，
+  // 只改会话字段不会生效，必须 dispose 掉让下一轮重建（重建会重新注入历史，对话不会丢）。
+  const plainChat = activeSession?.plainChat === true
+  const togglePlainChat = useCallback(() => {
+    if (!activeProjectId || !activeSessionId) return
+    updateSessionInProject(activeProjectId, activeSessionId, { plainChat: !plainChat })
+    const cur = piReadyRef.current
+    if (cur.ready && cur.sid && !loading) {
+      window.api.piAgent.dispose(`pi-${cur.sid}`).catch(() => { })
+      piReadyRef.current = { sid: null, ready: false }
+    }
+  }, [activeProjectId, activeSessionId, plainChat, updateSessionInProject, loading, piReadyRef])
+
+  // ── 纯聊天模式的工具开关（只认原生聊天那四个，见 PLAIN_CHAT_TOOL_NAMES）──
+  // 默认全关 = 纯对话。开关某个工具同样要重建 pi 会话（工具集在会话创建那一刻就固定了）。
+  // 网络搜索不单独存：它沿用全局 searchEnabled，与左侧搜索开关是同一份状态，避免两处打架。
+  const chatTools = activeSession?.chatTools ?? []
+  const [chatToolsMenuOpen, setChatToolsMenuOpen] = useState(false)
+  const chatToolsMenuRef = useRef<HTMLDivElement>(null)
+  const closeChatToolsMenu = useCallback(() => setChatToolsMenuOpen(false), [])
+  usePopoverDismiss(!!chatToolsMenuOpen, closeChatToolsMenu, undefined, undefined, chatToolsMenuRef)
+  const toggleChatTool = useCallback((name: string) => {
+    if (!activeProjectId || !activeSessionId) return
+    if (name === 'web_search') {
+      const st = useStore.getState()
+      st.setSearchEnabled(!st.searchEnabled)
+    } else {
+      const next = chatTools.includes(name) ? chatTools.filter(n => n !== name) : [...chatTools, name]
+      updateSessionInProject(activeProjectId, activeSessionId, { chatTools: next })
+    }
+    // 工具集变了必须重建会话（与纯聊天开关、联网搜索开关同一套做法）
+    const cur = piReadyRef.current
+    if (cur.ready && cur.sid && !loading) {
+      window.api.piAgent.dispose(`pi-${cur.sid}`).catch(() => { })
+      piReadyRef.current = { sid: null, ready: false }
+    }
+  }, [activeProjectId, activeSessionId, chatTools, updateSessionInProject, loading, piReadyRef])
+
   // 各模型的能力徽标（key = template.id；null = 读取失败/非 GGUF，不显示图标）：
   // 全局 store 共享 + model-capabilities.json 持久化，检测结果不重复读盘
   const modelCaps = useStore(s => s.modelCapabilities)
@@ -267,6 +314,8 @@ export function useAgentUiState({
     modelPickerOpen, setModelPickerOpen, modelPickerRef,
     searchEnabled, searchProvider, searchMenuOpen, setSearchMenuOpen, searchMenuRef,
     closeSearchMenu, applySearchChange,
+    plainChat, togglePlainChat,
+    chatTools, chatToolsMenuOpen, setChatToolsMenuOpen, chatToolsMenuRef, closeChatToolsMenu, toggleChatTool,
     modelCaps, loadModelCapabilities, modelPickerWidth,
     modelLogos, setModelLogoEntry, loadModelLogos,
     logoMenu, setLogoMenu, logoMenuRef, toggleLogoMenu, pickModelLogo, removeModelLogo, closeLogoMenu,

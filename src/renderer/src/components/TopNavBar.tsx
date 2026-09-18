@@ -6,7 +6,7 @@ import { paramSetOf } from '../utils/engine'
 import {
   LayoutDashboardIcon,
   HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
-  MessageSquareIcon, InfoIcon, FileTextIcon, CodeIcon, ChevronDownIcon,
+  InfoIcon, FileTextIcon, CodeIcon, ChevronDownIcon,
   SettingsIcon, BookOpenIcon, AudioLinesIcon, ImageIcon, MicIcon,
   BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon,
   GitBranchIcon
@@ -38,7 +38,8 @@ const NAV_GROUPS: NavDef[][] = [
   ],
   [
     { key: 'llama', label: 'llama-server', icon: ServerIcon, color: '#14b8a6', runningSource: 'llama' },
-    { key: 'chat', label: '聊天', icon: MessageSquareIcon, color: '#ec4899', runningSource: 'models' },
+    // 「聊天」项已移除：原生聊天界面的功能已并入 Agent Code 的纯聊天模式。
+    // ChatView 组件与 chatStore 仍保留在代码里，只是不再从导航进入。
     { key: 'monitoring', label: '模型运行数据', icon: ActivityIcon, color: '#ef4444', runningSource: 'models' },
     { key: 'token-stats', label: 'Token 统计', icon: TrendingUpIcon, color: '#f59e0b', runningSource: 'models' },
     { key: 'benchmark', label: '性能测试', icon: ChartBarIcon, color: '#f59e0b' },

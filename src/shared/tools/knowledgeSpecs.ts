@@ -6,8 +6,12 @@ export const KNOWLEDGE_SEARCH_TOOL_NAME = 'knowledge_search'
 export const KNOWLEDGE_READ_TOOL_NAME = 'knowledge_read'
 
 export const KNOWLEDGE_SEARCH_DESCRIPTION_BASE =
-  'Search ALL local knowledge bases at once (BM25 keyword retrieval) and return a merged, score-ranked catalog. ' +
+  'Search ALL local knowledge bases at once (BM25 lexical keyword retrieval — no embeddings, so paraphrases may miss) ' +
+  'and return a catalog merged by cross-library rank fusion. ' +
   'Each catalog entry is labeled with its source library (kb), document name and chunk index. ' +
+  'Entries are ordered by fusion rank. The 相关度 value on each line is that library\'s own BM25 score: ' +
+  'it is comparable only within one library and NOT across libraries, so it does not necessarily decrease down the list — ' +
+  'judge by rank order, the word-order match marker (词序吻合) and the matched terms, never by comparing two numbers from different libraries. ' +
   'The full text of the single most relevant chunk is auto-attached at the end. ' +
   'Use it whenever the user question may be answered by their documents. ' +
   'The auto-attached top chunk is already the best hit — do NOT call knowledge_read for it. ' +
@@ -18,9 +22,11 @@ export const KNOWLEDGE_SEARCH_GUIDELINES: string[] = [
   'knowledge_search 一次调用即检索全部知识库并合并排序，目录每条都标注来源库名——不要为「选库」单独发起多次调用，也不要逐库排除。',
   'knowledge_search 会在返回「标题目录」的同时，自动把相关度最高的那一块的完整正文附在末尾——所以一次检索通常就够用，不必再为它调用 knowledge_read。',
   '只有当你要读的正文不在目录末尾附带的那一块里时，才用 knowledge_read 传对应条目的 kb（库名）、docName 与 ordinal 去取。',
-  '构造查询词时优先使用文档标题、章节名或领域关键词；BM25 是字面关键词匹配，同义改述可能漏检——中文文档换中文词、代码术语换英文标识符再试一次。',
-  'query 只传 2–6 个关键词，不要原样转述用户的整句提问。长查询会掺进「如何/应该/什么」这类低信息量词，把所有块的分数一起抬高，真正相关的块反而拉不开差距；中文长句还会被切成大量跨词假词（「如何配置」→「何配」）造成误匹配。正确做法是自己从问题里抽出最有区分度的名词 / 标识符再检索，必要时换关键词多搜一次，而不是把问题原样丢进来。',
-  '若目录里第一条的相关度明显高于其余（且它不是你需要的块），说明换词重搜往往比顺着目录读更省事。',
+  '构造查询词时优先使用文档标题、章节名或领域关键词；检索是字面词法匹配（没有向量/语义通道），同义改述可能漏检——中文文档换中文词、代码术语换英文标识符再试一次。',
+  '查询内容本身是命令、API 调用、报错或配置项时，把它整条原样传入，保留词序与 --flag / -m 这类参数，不要拆成零散关键词。检索对「相邻词对」加权：整条命令原样出现会显著加分，打乱词序或删掉参数恰好丢掉这部分信号（实测「git commit --amend -m」拆成关键词后，讲 Mermaid gitGraph 语法的块会靠 commit 词频排到正确的块前面）。',
+  'query 一般只传 2–6 个关键词，不要原样转述用户的整句提问。长查询会掺进「如何/应该/什么」这类低信息量词，把所有块的分数一起抬高，真正相关的块反而拉不开差距；中文长句还会被切成大量跨词假词（「如何配置」→「何配」）造成误匹配。正确做法是自己从问题里抽出最有区分度的名词 / 标识符再检索，必要时换关键词多搜一次，而不是把问题原样丢进来。（例外：问题本身就是一条命令 / API / 报错原文时，按上一条整条传入。）',
+  '目录按跨库融合排名降序，每行还标了「词序吻合 X%」与命中词——判断该读哪条请优先看排名、词序吻合度和命中词。行尾的相关度是各库内部的 BM25 分，跨库不可比、列表里不一定递减，不要拿两个不同库的条目去比这个数字。',
+  '查询词全是常见词（在库里几乎每个块都出现）时，检索会返回一批分数很低的命中并标记低置信，且不给建议关键词——这种情况直接换更有区分度的词，不要反复用同一批词重搜。',
 ]
 
 export const KNOWLEDGE_READ_DESCRIPTION_BASE =
@@ -63,6 +69,13 @@ export interface KnowledgeSearchHit {
   kbName?: string
   /** 本条实际命中的查询词（tokenize 后，按 idf 降序）：供目录行说明命中依据 */
   matched?: string[]
+  /** 词序吻合度（0-1）：查询里相邻的词在块里也相邻出现的比例。
+      BM25 是词袋模型不认词序，这个值是「整条命令原样出现」与「碰巧重复同一个词」的区分依据。 */
+  adjacent?: number
+  /** 跨库融合权重（0-1），由各库 search() 计算，mergeKbHits 用它给排名分加权 */
+  fusionWeight?: number
+  /** 跨库融合后的最终得分（RRF × fusionWeight），由 mergeKbHits 写入 */
+  fusionScore?: number
 }
 
 export interface KnowledgeSearchResult {
@@ -97,9 +110,11 @@ export function createKnowledgeSearchSpec(kbNames?: string[]): {
         query: {
           type: 'string',
           description:
-            'Search keywords, NOT the question. Pass 2-6 distinctive terms extracted from the user question ' +
-            '(document titles, section names, domain terms, code identifiers). Drop filler words such as how / should / what / please. ' +
-            'BM25 is literal keyword matching: a full sentence adds low-information words that flatten the ranking and returns weaker hits.'
+            'Search query, NOT the user\'s whole question. Usually pass 2-6 distinctive terms extracted from the question ' +
+            '(document titles, section names, domain terms, code identifiers); drop filler words such as how / should / what / please. ' +
+            'Exception: when the question is about an exact command, API call, error message or config key, pass that string verbatim — ' +
+            'keep its word order and flags such as --amend / -m. Retrieval is lexical and gives a word-order bonus when adjacent query words ' +
+            'appear adjacently in a chunk, so shuffling terms or stripping flags loses signal, and paraphrases may miss.'
         },
         limit: { type: 'number', description: 'Max number of merged title entries to return. Default 8, max 12.' },
         kb: kbProp
@@ -118,21 +133,48 @@ export function createKnowledgeSearchSpec(kbNames?: string[]): {
     所以必须配下面的绝对下限。 */
 export const RELATIVE_NOISE_RATIO = 0.15
 /** 绝对下限：低于此分一律丢弃，无论相对阈值多宽松。
-    效果：某库对本次查询其实没有实质命中时，返回的是「未命中」而不是硬凑出来的弱结果。 */
+    效果：某库对本次查询其实没有实质命中时，返回的是「未命中」而不是硬凑出来的弱结果。
+    例外：查询词平均 idf 过低（词本身没有区分度）时全库得分都会低于此值，
+    这一刀会把唯一相关的库也清空（实测：拿文档名当查询）。此时 search() 会降级为纯相对阈值，
+    详见 knowledgeService 里 LOW_IDF_AVG / noDiscrimination 处注释。 */
 export const MIN_HIT_SCORE = 1.0
 /** 目录行里展示的命中词个数（已按 idf 降序）：太多会让目录行变长、白耗 token */
 export const CATALOG_MATCHED_SHOW = 4
 
-/** 合并多库检索结果：按分降序 → 全局相对剪枝 + 绝对下限 → 截断。
-    工具侧与知识库界面共用，保证「跨库搜索」在两处行为一致。 */
-export function mergeKbHits<T extends { score: number }>(per: readonly { hits: T[] }[], limit: number): T[] {
-  const merged = per.flatMap(r => r.hits).sort((a, b) => b.score - a.score)
-  // 全局剪枝：各库内部那次是以「本库最高分」为基准的——A 库 30 分、B 库 1.9 分时，
-  // B 库以 1.9 为基准（阈值仅 0.285），只沾到一个常见词的块全被留下，
-  // 合并进目录就成了「跟关键词毫无关系」的结果。以全局最高分为基准再砍一刀。
-  const globalBest = merged[0]?.score ?? 0
-  const cutoff = Math.max(globalBest * RELATIVE_NOISE_RATIO, MIN_HIT_SCORE)
-  return merged.filter(h => h.score >= cutoff).slice(0, limit)
+/** RRF（倒数排名融合）的平滑常数：第 r 名贡献 1/(RRF_K + r)。
+    取 20 是常用值——排名靠前的名次差异被放大，靠后的名次差异迅速抹平。 */
+export const RRF_K = 20
+
+/** 合并多库检索结果：按「跨库融合分」降序 → 全局相对剪枝 → 截断。
+    工具侧与知识库界面共用，保证「跨库搜索」在两处行为一致。
+
+    为什么不再直接比 BM25 分：每个库的 idf 是各自算的，只依赖本库的块数 N 与文档频率 df，
+    所以同一个词在不同库里的 idf 可能相差几十倍。实测本机数据：词 `git` 在「Mermaid渲染格式规范」
+    库里 idf=3.03（30 块、只有 1 块提到），在「Github相关知识」库里 idf=0.09（5 块、5 块全提到），
+    相差 35 倍；再叠加 BM25 的长度归一化（两库平均块长 47.5 vs 99.8 词），
+    直接把两库的裸分排序等于拿摄氏度和华氏度比大小——正确命中会被系统性压下去。
+
+    RRF 只用名次、不用分数量纲，天然规避这个问题：每个库各自出排名，第 r 名贡献 1/(RRF_K+r)。
+    再乘上库内算好的 fusionWeight（命中查询词的比例 × 库级质量软衰减），
+    让「只命中一两个词」和「整库都只有弱命中」的条目自然沉底。 */
+export function mergeKbHits<T extends { score: number; fusionWeight?: number; fusionScore?: number }>(
+  per: readonly { hits: T[] }[], limit: number
+): T[] {
+  const fused = per.flatMap(r => r.hits.map((h, rank) => ({ h, fusion: (h.fusionWeight ?? 1) / (RRF_K + rank) })))
+  fused.sort((a, b) => b.fusion - a.fusion)
+  // 全局剪枝：各库内部那次是以「本库最高分」为基准的，弱库的弱条目会被漏下来。
+  // 这里以融合分的最高值为基准再砍一刀——注意不再掺 MIN_HIT_SCORE：
+  // 它是绝对分尺度上的门槛，而融合分是无量纲的，混用会把阈值算成另一回事。
+  // 绝对下限并没有丢：每个库内部的 search() 已经逐条卡过 MIN_HIT_SCORE。
+  const globalBest = fused[0]?.fusion ?? 0
+  const cutoff = globalBest * RELATIVE_NOISE_RATIO
+  return fused
+    .filter(f => f.fusion >= cutoff)
+    .slice(0, limit)
+    .map(f => {
+      f.h.fusionScore = Math.round(f.fusion * 10000) / 10000
+      return f.h
+    })
 }
 
 export function formatKnowledgeCatalog(r: KnowledgeSearchResult): string {
@@ -144,7 +186,10 @@ export function formatKnowledgeCatalog(r: KnowledgeSearchResult): string {
       // 已按 idf 降序，只列前几个，避免目录行变长白耗 token。
       const m = (h.matched ?? []).slice(0, CATALOG_MATCHED_SHOW)
       const hitLabel = m.length > 0 ? ` · 命中 ${m.join('/')}` : ''
-      return `[${i + 1}] ${h.title || '（无标题）'} · ${h.kbName ? `${h.kbName} · ` : ''}${h.docName} · 第${h.ordinal + 1}块 · 相关度 ${h.score}${hitLabel}`
+      // 词序吻合标记：BM25 只看词不看词序，「整条命令原样出现」和「碰巧重复了同一个词」
+      // 分数可能相近。这个词序比例是模型区分两者最直接的信号，比分数可靠。
+      const seqLabel = (h.adjacent ?? 0) > 0 ? ` · 词序吻合 ${Math.round((h.adjacent ?? 0) * 100)}%` : ''
+      return `[${i + 1}] ${h.title || '（无标题）'} · ${h.kbName ? `${h.kbName} · ` : ''}${h.docName} · 第${h.ordinal + 1}块 · 相关度 ${h.score}${seqLabel}${hitLabel}`
     })
     .join('\n')
   // 低置信标记放在目录「头部」而不是末尾：末尾的尾注很容易被模型跳过，
@@ -152,7 +197,9 @@ export function formatKnowledgeCatalog(r: KnowledgeSearchResult): string {
   const head = r.lowConfidence
     ? '⚠️ 低置信检索：以下条目可能只沾到部分查询词，引用前请先核对原文或换关键词重搜。\n'
     : ''
-  return `${head}${catalog}\n（以上为标题目录，跨全部知识库按相关度降序。第 [1] 条的完整正文已自动附在下方；如需其他条的正文，再用 knowledge_read 传对应 kb、docName 与 ordinal。）`
+  // 排序口径必须写清楚：条目按「跨库融合分」排序，而显示的相关度是各库内部的 BM25 分，
+  // 两者量纲不同，所以列表里的相关度不一定单调递减。不说清楚会让模型以为结果乱了。
+  return `${head}${catalog}\n（以上为标题目录，按跨知识库融合排名降序。相关度是各库内部 BM25 分，只在同一个库内可比、跨库不可比，故不一定单调递减；判断该读哪条请优先看排名、词序吻合度与命中词。第 [1] 条的完整正文已自动附在下方；如需其他条的正文，再用 knowledge_read 传对应 kb、docName 与 ordinal。）`
 }
 
 interface KnowledgeReadResult {

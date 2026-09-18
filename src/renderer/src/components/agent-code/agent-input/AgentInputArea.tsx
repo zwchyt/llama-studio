@@ -20,7 +20,7 @@
 // 类型会自动跟随，不需要同步改这里。
 
 import React from 'react'
-import { AlertCircle, AlignLeft, Brain, Eye, Globe, Image as ImageIcon, Search, SearchX, Wrench } from 'lucide-react'
+import { AlertCircle, AlignLeft, Brain, Eye, Globe, Image as ImageIcon, MessageSquare, Search, SearchX, Wrench } from 'lucide-react'
 import { CheckIcon, ChevronDownIcon, CircleStopIcon, CodeIcon, FileTextIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, MicIcon, PlayIcon, PlusIcon, QuoteIcon, RefreshCwIcon, SendIcon, TrashIcon, XIcon } from '@animateicons/react/lucide'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import AgentFilePicker from '../../AgentFilePicker'
@@ -29,7 +29,7 @@ import { AgentTopBarCtx, AniIconButton } from '../agent-message'
 import { TaskArrowIcon, TaskCheckIcon, TaskDashedIcon, TaskFilledCheckIcon, TaskPieIcon, TaskRollingCount, TaskXIcon } from '../agent-task'
 import { TOOL_META, formatToolArgs } from '../agent-tools'
 import { TOOL_METAS } from '../../../utils/tools'
-import { THINKING_LEVELS } from '../../../../../shared/types'
+import { THINKING_LEVELS, PLAIN_CHAT_TOOL_NAMES } from '../../../../../shared/types'
 import type { Attachment, CardState, ThinkingLevel, TodoUpdate } from '../../../../../shared/types'
 import { useStore } from '../../../store/useStore'
 import type { useAgentGit } from '../hooks/useAgentGit'
@@ -37,6 +37,14 @@ import type { useAgentInput } from '../hooks/useAgentInput'
 import type { useAgentInputHints } from '../hooks/useAgentInputHints'
 import type { useAgentProjects } from '../hooks/useAgentProjects'
 import type { useAgentScroll } from '../hooks/useAgentScroll'
+
+/** 纯聊天工具的中文名（与 PLAIN_CHAT_TOOL_NAMES 一一对应） */
+const PLAIN_CHAT_TOOL_LABELS: Record<string, string> = {
+  get_datetime: '获取时间',
+  web_search: '网络搜索',
+  fetch_webpage: '网页抓取',
+  knowledge_search: '知识库检索',
+}
 
 export type AgentInputAreaProps = {
 
@@ -78,6 +86,17 @@ export type AgentInputAreaProps = {
     searchMenuRef: React.RefObject<HTMLDivElement | null>
     setSearchMenuOpen: React.Dispatch<React.SetStateAction<boolean>>
     applySearchChange: (enabled: boolean, provider: 'ddg' | 'bing') => void
+  }
+  chatMode: {
+    /** 当前会话是否处于纯聊天模式（AgentSession.plainChat） */
+    plainChat: boolean
+    togglePlainChat: () => void
+    /** 纯聊天模式下启用的工具名（只含原生聊天那四个） */
+    chatTools: string[]
+    chatToolsMenuOpen: boolean
+    setChatToolsMenuOpen: React.Dispatch<React.SetStateAction<boolean>>
+    chatToolsMenuRef: React.RefObject<HTMLDivElement | null>
+    toggleChatTool: (name: string) => void
   }
   run: {
     apiBaseUrl: string | null
@@ -147,7 +166,7 @@ export type AgentInputAreaProps = {
 
 
 export function AgentInputArea({
-  inputDomain, hintsDomain, mic, models, search, run, task, approval, shell, handleKeyDown, handleInputChange,
+  inputDomain, hintsDomain, mic, models, search, chatMode, run, task, approval, shell, handleKeyDown, handleInputChange,
 }: AgentInputAreaProps) {
   // ── 域解构：把分组 props 摊平回局部名字，组件体内沿用原 JSX 的标识符 ──
 
@@ -167,6 +186,11 @@ export function AgentInputArea({
   const { listening, micTranscribing, toggleListen } = mic
   const { agentCards, modelBtnRef, modelCaps, modelLabel, modelLogos, modelPickerOpen, modelPickerRef, modelPickerWidth, handleModelAction, logoMenu, logoMenuRef, toggleLogoMenu, pickModelLogo, removeModelLogo, setModelPickerOpen, thinkLevelMenuRef, thinkLevelOpen, setThinkLevelOpen, thinkingLevel, setThinkingLevel } = models
   const { searchEnabled, searchProvider, searchMenuOpen, searchMenuRef, setSearchMenuOpen, applySearchChange } = search
+  const { plainChat, togglePlainChat, chatTools, chatToolsMenuOpen, setChatToolsMenuOpen, chatToolsMenuRef, toggleChatTool } = chatMode
+  // 已启用的纯聊天工具数（网络搜索沿用全局 searchEnabled，与左侧搜索开关同一份状态）
+  const chatToolOnCount = PLAIN_CHAT_TOOL_NAMES.filter(
+    n => (n === 'web_search' ? searchEnabled : chatTools.includes(n))
+  ).length
   const { apiBaseUrl, curToolName, followUpQueueRef, handleSend, handleStop, loading, piReadyRef, prevQueueRef, queueInfo, setQueueInfo, runningCard, streamKind, streaming, thinkDone } = run
   const { currentPlanItems, planTitle, setTaskCardClosing, setTaskModalOpen, setTaskPanelCollapsed, taskCardClosing, taskCardRef, taskDoneCount, taskModalOpen, taskPanelCollapsed } = task
   const { allowBtnRef, approvalReq, autoApproveBtnRef, autoApproveRef, rejectBtnRef, resolveApproval } = approval
@@ -627,6 +651,53 @@ export function AgentInputArea({
                 </ul>
               )}
             </div>
+            {/* 纯聊天开关（会话级）：打开后主进程不注册任何工具、也不注入编码 agent 的
+                工具 / 图表指引，只做普通对话。复用搜索开关的按钮外观，开启态用强调色标出。
+                切换会作废当前 pi 会话，下一轮按新模式重建（历史会重新注入，对话不丢）。 */}
+            <button
+              type="button"
+              className={`chat-search-trigger chat-plain-toggle${plainChat ? ' on' : ''}`}
+              disabled={loading}
+              onClick={togglePlainChat}
+              title={plainChat
+                ? '当前是纯聊天模式：不注册任何工具，也不注入编码 agent 的工具 / 图表指引。点击恢复工作台模式。'
+                : '切到纯聊天模式：关掉全部工具与工具 / 图表指引，把工作台当原生聊天用（下一轮生效）。'}
+            >
+              <MessageSquare size={14} />
+              <span className="chat-search-label">纯聊天</span>
+            </button>
+            {/* 纯聊天工具开关（仅纯聊天模式）：只列原生聊天那四个工具，默认全关。
+                工作台模式不显示——那边的 20+ 工具走主进程白名单，与此互不干扰。 */}
+            {plainChat && (
+              <div ref={chatToolsMenuRef} className={`chat-search-switch${chatToolsMenuOpen ? ' open' : ''}`}>
+                <button
+                  type="button"
+                  className="chat-search-trigger"
+                  disabled={loading}
+                  onClick={() => setChatToolsMenuOpen(v => !v)}
+                  title="纯聊天模式下可启用的工具（默认全关）"
+                >
+                  <Wrench size={14} />
+                  <span className="chat-search-label">工具{chatToolOnCount > 0 ? ` ${chatToolOnCount}` : ''}</span>
+                </button>
+                {chatToolsMenuOpen && (
+                  <ul className="chat-search-menu">
+                    {PLAIN_CHAT_TOOL_NAMES.map(name => {
+                      const on = name === 'web_search' ? searchEnabled : chatTools.includes(name)
+                      return (
+                        <li
+                          key={name}
+                          className={`chat-search-item${on ? ' active' : ''}`}
+                          onClick={() => toggleChatTool(name)}
+                        >
+                          {on ? <CheckIcon size={12} /> : <XIcon size={12} />}{PLAIN_CHAT_TOOL_LABELS[name] ?? name}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
+            )}
             <div
               ref={searchMenuRef}
               className={`chat-search-switch${searchMenuOpen ? ' open' : ''}`}

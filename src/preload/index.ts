@@ -9,6 +9,9 @@ import type { ThinkingLevel, ReleaseInfo, AgentProject, AgentMemoryCandidate, Ch
 const fullApi = {
   printToPDF: (html: string) => ipcRenderer.invoke('print-to-pdf', html),
   savePng: (dataUrl: string) => ipcRenderer.invoke('save-png', dataUrl),
+  // ── Edge TTS（聊天朗读）：合成返回 audio data URL，音色列表用于设置界面下拉 ──
+  edgeTtsSynthesize: (opts: { text: string; voice: string; rate?: number; pitch?: number }) => ipcRenderer.invoke('edge-tts-synthesize', opts),
+  edgeTtsVoices: () => ipcRenderer.invoke('edge-tts-voices'),
   listModels: () => ipcRenderer.invoke('list-models'),
   listModelsRefresh: () => ipcRenderer.invoke('list-models-refresh'),
   deleteModel: (filePath: string) => ipcRenderer.invoke('delete-model', filePath),
@@ -346,7 +349,7 @@ const fullApi = {
   windowClose: () => ipcRenderer.invoke('window-close'),
   // ── pi-agent（pi SDK 驱动的 agent 会话）──
   piAgent: {
-    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => ipcRenderer.invoke('pi-agent-create', opts),
+    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => ipcRenderer.invoke('pi-agent-create', opts),
     warmup: () => ipcRenderer.invoke('pi-agent-warmup'),
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-prompt', sessionId, text, images),
     steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-steer', sessionId, text, images),

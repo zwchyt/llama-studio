@@ -52,6 +52,10 @@ export type RunPiTurn = (
     approveWriteEdit?: boolean
     knowledgeBaseId?: string
     memory?: AgentSession['memory']
+    /** 纯聊天模式：不注册工具、不注入工具/图表指引（会话级开关，见 AgentSession.plainChat） */
+    plainChat?: boolean
+    /** 纯聊天模式下启用的工具（只认原生聊天那四个） */
+    chatTools?: string[]
   }
 ) => Promise<{ errored: boolean; aborted: boolean }>
 
@@ -65,6 +69,7 @@ export function useAgentLoop({
   appendLiveUserMsgRef, streamingSessionRef, streamStartAtRef, lastRateRef,
   modelLabelRef, backupsRef, thinkingLevelRef,
   condenseSessionMemory, appendQueuedUserMsg, queueRemoved, runSlashAction,
+  scrollToBottom,
 }: {
   /** 项目 / 会话域：useAgentProjects 的完整返回值（本域只消费其中 7 项） */
   projects: ReturnType<typeof useAgentProjects>
@@ -107,6 +112,8 @@ export function useAgentLoop({
   appendQueuedUserMsg: (text: string) => void
   queueRemoved: (prev: string[], next: string[]) => string[]
   runSlashAction: (name: string, args: string) => Promise<void>
+  /** 无条件贴底（来自 useAgentScroll）。发消息时用它恢复跟随，见 runPiTurn 里的说明 */
+  scrollToBottom: (smooth?: boolean, force?: boolean) => void
 }) {
   const {
     input, setInput, textareaRef, packedInput, setPackedInput,
@@ -119,6 +126,11 @@ export function useAgentLoop({
   const piClientRef = useRef<PiAgentClient | null>(null)
   const handleSendRef = useRef<(text?: string, attachments?: Attachment[], packedHint?: string) => void>(() => { })
   const runPiTurnRef = useRef<RunPiTurn | null>(null)
+  // 上次建 pi 会话时用的「模式签名」。纯聊天开关与它启用的工具集都是会话级字段，
+  // 但 pi 会话建好之后 tools / systemPrompt 就固定了——只改会话字段不会生效，
+  // 必须检测到签名变了重建一次。重建会重新注入历史（与切换会话走的是同一条路径），
+  // 所以不会丢对话。签名把工具集也带上，开关某个聊天工具同样能触发重建。
+  const piPlainRef = useRef<string | null>(null)
 
 
   // ── pi-agent 模式：pi SDK 驱动的单轮 agent 运行 ──
@@ -127,11 +139,20 @@ export function useAgentLoop({
     pid: string,
     sid: string,
     displayMsgs: AgentMessage[],
-    opts: { port: number; text: string; workspaceDir: string; approveWriteEdit?: boolean; knowledgeBaseId?: string; memory?: AgentSession['memory'] }
+    opts: { port: number; text: string; workspaceDir: string; approveWriteEdit?: boolean; knowledgeBaseId?: string; memory?: AgentSession['memory']; plainChat?: boolean; chatTools?: string[] }
   ): Promise<{ errored: boolean; aborted: boolean }> => {
     const piSessionId = `pi-${sid}`
-    // 首次进入该会话（或会话切换/重建）：创建 pi session 并注入历史
-    if (piReadyRef.current.sid !== sid || !piReadyRef.current.ready) {
+    // 发消息/重跑是明确的用户意图，这里无条件恢复「贴底跟随」并立刻滚到底。
+    // 不这么做的话：用户读长回答时往上滚过一次，pauseFollow 就把 followingRef 置了 false，
+    // 之后再发消息，新增的这条只会在下方生成而不被滚进视野，得手动往下滑才看得到。
+    // force=true：即便此刻有轨道补间动画在跑也要抢占（scrollToBottom 的早退分支在
+    // 重置 followingRef 之前，不加 force 会被直接忽略）。
+    scrollToBottom(false, true)
+    const plain = opts.plainChat === true
+    const chatTools = plain ? [...(opts.chatTools ?? [])].sort() : []
+    const modeSig = plain ? `plain:${chatTools.join(',')}` : 'agent'
+    // 首次进入该会话（或会话切换/重建）、以及模式或聊天工具集变化时：创建 pi session 并注入历史
+    if (piReadyRef.current.sid !== sid || !piReadyRef.current.ready || piPlainRef.current !== modeSig) {
       // 新 pi 会话：清空上一会话的撤销备份引用
       backupsRef.current = {}
       // 压缩记忆：被 coveredMsgIds 覆盖的最早连续前缀用摘要替代注入，使压缩真正
@@ -162,6 +183,8 @@ export function useAgentLoop({
         cwd: opts.workspaceDir || '.',
         approveWriteEdit: opts.approveWriteEdit === true,
         knowledgeBaseId: opts.knowledgeBaseId || undefined,
+        plainChat: plain,
+        chatTools,
         searchEnabled: useStore.getState().searchEnabled,
         searchProvider: useStore.getState().searchProvider,
         contextWindow: (() => {
@@ -172,6 +195,7 @@ export function useAgentLoop({
       })
       if (!res?.success) throw new Error('pi-agent 会话创建失败')
       piReadyRef.current = { sid, ready: true }
+      piPlainRef.current = modeSig
     }
     // 应用当前选择的思考程度（同步方法，按模型能力自动 clamp；不支持思考的模型无效但非致命）
     try { await window.api.piAgent.setThinkingLevel(piSessionId, thinkingLevelRef.current) } catch { /* 模型不支持思考时 SDK 自行 clamp，忽略异常 */ }
@@ -545,17 +569,20 @@ export function useAgentLoop({
             return { type: 'image' as const, data: base64, mimeType: mime }
           })
       await window.api.piAgent.prompt(piSessionId, opts.text, images && images.length > 0 ? images : undefined)
+      // 对话完成提示音：必须紧跟「输出结束」这一时刻播放（与 ChatView 一致——那边是在流结束
+      // 事件里直接播的）。绝不能放到下面那次指标查询之后：queryMetricsNow 是 IPC + 两次 HTTP
+      // （/slots 与 /metrics），刚生成完时 llama-server 还在收尾，这一等就是几十到几百毫秒，
+      // 提示音会明显滞后于输出结束（实测的延迟就是这么来的）。
+      // 用户手动停止（aborted）或出错（走 catch）时不播放。
+      if (!abortRef.current.aborted && useStore.getState().soundEnabled) {
+        playNotificationSound(useStore.getState().notificationSound)
+      }
       // 输出已结束：此刻主动查询端点最新解码数（与 /slots 的 n_decoded 当前值精确一致）
       if (tidNow) {
         try {
           const v = await window.api.queryMetricsNow(tidNow)
           if (typeof v === 'number' && v > 0) finalDecoded = v
         } catch { /* 查询失败回退广播值 */ }
-      }
-      // 对话完成提示音：与 ChatView 的完成提示一致（d610b1c 重构到 pi 桥时遗漏，
-      // 此处补回）。用户手动停止（aborted）或出错（走 catch）时不播放。
-      if (!abortRef.current.aborted && useStore.getState().soundEnabled) {
-        playNotificationSound(useStore.getState().notificationSound)
       }
       // 先结束流式态：让最终 commit 直接走「完成态交错」渲染分支（streamingMsg=false），
       // 避免 StreamingContent 把思考/正文再重复渲染一遍（工具卡+思考重复显示的根源之一）。
@@ -793,6 +820,9 @@ export function useAgentLoop({
         approveWriteEdit: !!activeProject.approveWriteEdit,
         knowledgeBaseId: activeProject.knowledgeBaseId,
         memory: memoryForTurn,
+        // 纯聊天开关与它启用的工具集都是会话级字段：这里实时读，变化后由 runPiTurn 的守卫重建 pi 会话
+        plainChat: activeSession?.plainChat === true,
+        chatTools: activeSession?.chatTools,
       })
     } catch (e) {
       // 准备阶段（系统提示词构建/历史压缩）异常：本轮 agent 未启动，其收尾逻辑

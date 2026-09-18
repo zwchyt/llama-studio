@@ -11,7 +11,7 @@
 //           stoppedBadge、AgentMessageRow
 
 import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
-import { Brain, ChevronUp, AlignLeft } from 'lucide-react'
+import { Brain, ChevronUp, AlignLeft, Play, Square, Trash2, Volume2 } from 'lucide-react'
 import { ChevronRightIcon, CircleStopIcon, RefreshCwIcon, CopyIcon } from '@animateicons/react/lucide'
 import { useStore } from '../../../store/useStore'
 import { useCollapseAnimation, COLLAPSE_DURATION_MS } from '../../../utils/useCollapseAnimation'
@@ -24,7 +24,7 @@ import CodeBlock from '../../CodeBlock'
 import { ToolCallGroup, FileChangeSummary } from '../agent-tools'
 import { fmtCompactTok, fmtThinkDur, formatDuration } from '../utils/format'
 import type { AgentMsgRowActions, RenderSegmentsOpts, AniIconHandle } from '../types'
-import type { AgentMessage } from '../../../../../shared/types'
+import type { AgentMessage, Attachment } from '../../../../../shared/types'
 
 // ── 顶栏指标隔离组件：自订阅 modelMetrics，避免主进程每 2s 广播指标时
 //    触发整个工作台全量重渲染（原实现直接在 AgentCodeView 订阅整棵 modelMetrics 树）──
@@ -104,9 +104,35 @@ const USER_FOLD_CHARS = 1000
 
 // INPUT_FOLD_CAP 已抽至 agent-code/utils/constants.ts（输入区与消息区共用）
 
-export const UserMessageEntry = React.memo(function UserMessageEntry({ content, packedText }: { content: string; packedText?: string }) {
+export const UserMessageEntry = React.memo(function UserMessageEntry({ content, packedText, attachments }: { content: string; packedText?: string; attachments?: Attachment[] }) {
   const [expanded, setExpanded] = useState(false)
   const [packedOpen, setPackedOpen] = useState(false)
+  // 图片附件放大预览（点击缩略图 → 全屏）。仅纯聊天模式下调用方会传 attachments，
+  // 工作台模式不传 → 这里自然什么都不渲染，不需要额外分支。
+  const [zoom, setZoom] = useState<string | null>(null)
+  const images = useMemo(
+    () => (attachments ?? []).filter(a => a.type === 'image' && (a.fullDataUrl || a.dataUrl)),
+    [attachments]
+  )
+  const imageNode = images.length > 0 ? (
+    <div className="user-msg-images">
+      {images.map((a, i) => (
+        <img
+          key={`${a.name}-${i}`}
+          className="user-msg-image"
+          src={a.dataUrl || a.fullDataUrl}
+          alt={a.name}
+          title={`${a.name}（点击放大）`}
+          onClick={() => setZoom(a.fullDataUrl || a.dataUrl || null)}
+        />
+      ))}
+    </div>
+  ) : null
+  const lightboxNode = zoom ? (
+    <div className="user-msg-lightbox" onClick={() => setZoom(null)} title="点击任意处关闭">
+      <img src={zoom} alt="" />
+    </div>
+  ) : null
   const text = typeof content === 'string' ? content : String(content ?? '')
   // 打包段是 outgoing 组装时的第一个 part（已 trim），content 一定以它开头；
   // 余下部分（用户后输入的文字 + 引用块）就是气泡正文
@@ -144,6 +170,8 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
             <div className="user-plain-text">{rest}</div>
           </div>
         ) : null}
+        {imageNode}
+        {lightboxNode}
       </>
     )
   }
@@ -152,18 +180,23 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
   // 预览），点击展开完整气泡；右对齐由 .chat-msg-user .chat-msg-body 的 flex-end 保证
   if (foldable && !expanded) {
     return (
-      <div
-        className="chat-input-fold-chip user-msg-fold-chip"
-        title="点击展开完整内容"
-        onClick={() => setExpanded(true)}
-      >
-        <AlignLeft size={12} className="chat-input-fold-chip-icon" />
-        <span className="chat-input-fold-chip-label">已折叠 {lineCount} 行</span>
-      </div>
+      <>
+        <div
+          className="chat-input-fold-chip user-msg-fold-chip"
+          title="点击展开完整内容"
+          onClick={() => setExpanded(true)}
+        >
+          <AlignLeft size={12} className="chat-input-fold-chip-icon" />
+          <span className="chat-input-fold-chip-label">已折叠 {lineCount} 行</span>
+        </div>
+        {imageNode}
+        {lightboxNode}
+      </>
     )
   }
 
   return (
+    <>
     <div className="chat-msg-bubble chat-msg-markdown">
       <div className="user-plain-text">{text}</div>
       {foldable ? (
@@ -172,6 +205,9 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
         </button>
       ) : null}
     </div>
+    {imageNode}
+    {lightboxNode}
+    </>
   )
 })
 
@@ -1151,7 +1187,7 @@ export const stoppedBadge = (
 // 更新」的性能特性）；finalize 时 live 清空 → 回退到 msg 完成态渲染。流式/完成切换
 // 只变化 props、不卸载重挂，思考块/工具卡/正文容器 DOM 全程连续 → 消除完成瞬间的跳动。
 
-export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loading, actionsRef, streaming, modelLabel, thinkDone, streamStartAt, onRate, modelTemplateId }: {
+export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loading, actionsRef, streaming, modelLabel, thinkDone, streamStartAt, onRate, modelTemplateId, plainChat, speakingId }: {
   msg: AgentMessage
   isLast: boolean
   loading: boolean
@@ -1162,6 +1198,10 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
   streamStartAt?: number  // 流开始时刻：pending 思考卡与思考块实时计时共用（连续不回退）
   onRate?: (v: number | null) => void  // t/s 采样上报（parent 持久化进消息）
   modelTemplateId?: string  // 模型指标 key（StreamingBadge 订阅 modelMetrics[templateId].nDecoded 取真实解码数）
+  /** 纯聊天模式：额外显示朗读 / 继续生成 / 删除（工作台模式不显示这些聊天向操作） */
+  plainChat?: boolean
+  /** 正在朗读的消息 id */
+  speakingId?: string | null
 }) {
   // 流式切片订阅：id 不匹配时返回 null（引用恒定 → 该行不随其它 commit 重渲染）。
   // 流式行：live 每次 commit 是新对象 → 只这一行跟随更新。
@@ -1178,9 +1218,26 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
   ) : null
   const actions = !isStreaming ? (
     <div className="chat-msg-actions">
-      <button className="chat-msg-action-btn" onClick={() => a.copyMessage(msg.content || '')}><CopyIcon size={13} /></button>
+      <button className="chat-msg-action-btn" title="复制" onClick={() => a.copyMessage(msg.content || '')}><CopyIcon size={13} /></button>
       {isLast && (
-        <button className="chat-msg-action-btn" onClick={() => a.regenerateAt(msg.id)} disabled={loading}><RefreshCwIcon size={13} /></button>
+        <button className="chat-msg-action-btn" title="重新生成" onClick={() => a.regenerateAt(msg.id)} disabled={loading}><RefreshCwIcon size={13} /></button>
+      )}
+      {/* 朗读 / 继续生成 / 删除只在纯聊天模式出现：工作台模式的消息带工具调用与文件改动，
+          这些聊天向操作在那边没有意义，也不该混进工作流的操作区 */}
+      {plainChat && msg.role === 'assistant' && (
+        <>
+          <button
+            className="chat-msg-action-btn"
+            title={speakingId === msg.id ? '停止朗读' : '朗读'}
+            onClick={() => (speakingId === msg.id ? a.stopSpeak() : a.speakMessage(msg.id, msg.content || ''))}
+          >
+            {speakingId === msg.id ? <Square size={12} /> : <Volume2 size={13} />}
+          </button>
+          {isLast && (
+            <button className="chat-msg-action-btn" title="继续生成" onClick={() => a.continueAt(msg.id)} disabled={loading}><Play size={13} /></button>
+          )}
+          <button className="chat-msg-action-btn" title="删除这条回复" onClick={() => a.deleteMessage(msg.id)} disabled={loading}><Trash2 size={13} /></button>
+        </>
       )}
     </div>
   ) : null

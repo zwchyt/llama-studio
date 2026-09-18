@@ -38,6 +38,12 @@ export interface PiAgentBridgeOptions {
   toolNames: string[]
   /** 追加到 system prompt 的工具使用指导（如计划工具说明） */
   appendSystemPrompt?: string[]
+  /** 整段替换 pi 的默认 system prompt（不是追加）。纯聊天模式用它，
+      因为 pi 默认提示词里写着「你是 pi 里的编码助手」以及「你还可能有其它自定义工具」——
+      不替换的话，即使一个工具都没注册，模型也会以为自己能调工具。 */
+  systemPrompt?: string
+  /** 不加载 AGENTS.md 等逐级发现的上下文文件（纯聊天模式用，项目规则与普通对话无关） */
+  noContextFiles?: boolean
   /** pi 格式的自定义工具定义（由 llama-studio 的工具适配而来） */
   customTools: ToolDefinition[]
   /** 会话创建完成后的回调（注册事件订阅用） */
@@ -117,10 +123,15 @@ export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promis
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir,
+    // 注意这两个是不同的东西：systemPrompt 整段替换 pi 的默认提示词，appendSystemPrompt 只追加。
+    // 工具描述与「你还可能有其它自定义工具」那句在默认提示词里，只清 appendSystemPrompt 是清不掉的。
+    systemPrompt: options.systemPrompt,
     appendSystemPrompt: options.appendSystemPrompt,
+    noContextFiles: options.noContextFiles,
     // 不加载任何扩展/技能/提示模板/主题：这些是 pi TUI 的生态（用户 ~/.pi/agent 下的
     // status 等扩展在会话重建后会持有过期 ctx 崩溃，且与 llama-studio 的 UI 无关）。
-    // 保留 contextFiles（AGENTS.md 逐级发现，对模型理解项目有帮助）。
+    // 默认保留 contextFiles（AGENTS.md 逐级发现，对模型理解项目有帮助），
+    // 纯聊天模式下由 noContextFiles 关掉。
     noExtensions: true,
     noSkills: true,
     noPromptTemplates: true,

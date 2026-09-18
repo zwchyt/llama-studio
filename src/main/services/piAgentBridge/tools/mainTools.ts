@@ -83,9 +83,11 @@ export interface MainToolExecutors {
   fetchWebpage: (url: string) => Promise<string>
   /** 知识库 BM25 检索（knowledgeService 内部函数直调）；hits.kbName 标注来源库。
       suggestedQuery：库内真实存在的高 idf 词，低置信时用作自动重搜的查询、也回给模型照抄。
-      hits[].matched：本条实际命中的查询词（按 idf 降序），目录行据此说明命中依据。 */
+      hits[].matched：本条实际命中的查询词（按 idf 降序），目录行据此说明命中依据。
+      hits[].adjacent：词序吻合度（0-1），区分「整条命令原样出现」与「碰巧重复同一个词」。
+      hits[].fusionWeight / fusionScore：跨库融合用（各库 idf 量纲不同，裸分不可跨库比较）。 */
   knowledgeQuery(kbId: string, query: string, limit?: number): Promise<{
-    hits: Array<{ docName: string; ordinal: number; text: string; title?: string; score: number; kbName?: string; matched?: string[] }>
+    hits: Array<{ docName: string; ordinal: number; text: string; title?: string; score: number; kbName?: string; matched?: string[]; adjacent?: number; fusionWeight?: number; fusionScore?: number }>
     lowConfidence: boolean
     suggestedQuery: string
   }>
@@ -564,9 +566,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
         const cap = Math.max(1, Math.min(Math.floor(typeof args.limit === 'number' ? args.limit : 8), 12))
         const results = await Promise.all(targets.map(t => exec.knowledgeQuery(t.id, query, cap)))
         // 各库内部已按 BM25 降序并做过噪音剪枝；这里用共享的 mergeKbHits 做跨库合并：
-        // 按分降序 + 全局相对剪枝 + 绝对下限。全局剪枝这一刀很关键——各库内部的剪枝是
-        // 以「本库最高分」为基准的，弱库（本次查询只有弱命中）的弱条目会被漏下来，
-        // 合并进目录就成了「跟关键词毫无关系」的结果。界面「试搜索」走同一份实现。
+        // RRF 排名融合 + 全局相对剪枝。不能用原始 BM25 分排序——各库 idf 各算各的，量纲不同。
         const merge = (rs: typeof results) => mergeKbHits(rs, cap)
         // 建议关键词：各库按 idf 给出的高区分度词取并集（去重、保序，最多 6 个）。
         // 它既是自动重搜的查询，也是回给模型照抄的「改用这些词」。
@@ -597,9 +597,9 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
           const retry = await Promise.all(targets.map(t => exec.knowledgeQuery(t.id, suggestion, cap)))
           const retryMerged = merge(retry)
           const retryLow = retry.length > 0 && retry.every(r => r.lowConfidence)
-          // 只在重搜确实更好时采纳：不再低置信，或最高分比原来高。
-          // 否则保留原结果——避免「重搜反而更差」把本来可用的信息换掉。
-          if (!retryLow || (retryMerged[0]?.score ?? 0) > (merged[0]?.score ?? 0)) {
+          // 只在重搜确实更好时采纳：不再低置信，或融合分更高。
+          // 用融合分而非原始 BM25 分比较——后者各库各算 idf，跨库比大小没有意义。
+          if (!retryLow || (retryMerged[0]?.fusionScore ?? 0) > (merged[0]?.fusionScore ?? 0)) {
             merged = retryMerged
             lowConfidence = retryLow
             suggestion = suggestFrom(retry) || suggestion
@@ -612,7 +612,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
         if (merged.length === 0) {
           return `知识库未命中任何内容。${libLabel}\n`
             + (suggestion ? `建议改用这些关键词重搜：${suggestion}\n` : '')
-            + 'BM25 是字面匹配：请换更具体的关键词重搜——中文文档用中文词、代码术语用英文标识符（如 sequenceDiagram）。'
+            + '检索是字面词法匹配（没有向量/语义通道）：请换更具体的关键词重搜——中文文档用中文词、代码术语用英文标识符（如 sequenceDiagram）；命令 / API / 报错原文请整条原样传入，保留词序与 --flag 参数。'
             + (retried ? '\n（已按建议关键词自动重搜过一次，仍无命中。）' : '')
         }
         // 重搜后仍然低置信：整批丢弃，不把噪音目录与正文交给模型。
@@ -621,13 +621,13 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
         if (lowConfidence) {
           return `知识库检索置信度不足，本次结果已丢弃（低相关度命中比无命中更容易误导）。${libLabel}\n`
             + (suggestion ? `建议改用这些关键词重搜：${suggestion}\n` : '建议换更具体的关键词重搜。\n')
-            + 'BM25 是字面匹配：中文文档用中文词、代码术语用英文标识符（如 sequenceDiagram）。'
+            + '检索是字面词法匹配：中文文档用中文词、代码术语用英文标识符（如 sequenceDiagram）；命令 / API / 报错原文整条原样传入，保留词序与 --flag 参数。'
             + (retried ? '\n（已按建议关键词自动重搜过一次，仍不达标。）' : '')
             + '\n若换词后仍无结果，说明当前知识库里很可能没有相关内容，请直接说明，不要勉强引用。'
         }
-        // 自动附带跨库合并后的全局最优块的完整正文：BM25 已降序，hits[0] 就是所有库中最相关的块。
+        // 自动附带跨库合并后的全局最优块的完整正文：mergeKbHits 已按融合排名降序，hits[0] 就是所有库中最相关的块。
         const top = merged[0]
-        const auto = `\n\n【已附带相关度最高的分块正文（相关度 ${top.score}，无需再调用 knowledge_read 读它）】\n`
+        const auto = `\n\n【已附带排名最高的分块正文（库内相关度 ${top.score}${top.adjacent ? `，词序吻合 ${Math.round(top.adjacent * 100)}%` : ''}，无需再调用 knowledge_read 读它）】\n`
           + `【${top.title || '（无标题）'}】(${top.kbName ? `${top.kbName} · ` : ''}${top.docName} · 第${top.ordinal + 1}块)\n${top.text}`
         // 多库合并时可能只有部分库不达标（全部不达标已在上一步拦掉）：此时目录照给，
         // 但用 O1 的头部标记提示模型对这批条目保持怀疑。

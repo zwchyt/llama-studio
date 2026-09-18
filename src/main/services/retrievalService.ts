@@ -166,11 +166,27 @@ function getOrCreateIndex(dir: string): WsIndex {
   return idx
 }
 
-// ── 分词：ASCII 标识符（整词 + 驼峰/下划线子词）+ CJK 二元组（覆盖中文注释/查询）──
+// ── 分词：ASCII 标识符（整词 + 驼峰/下划线子词）+ 命令行 flag + CJK 二元组（覆盖中文注释/查询）──
+// flag（-m / --amend）单独成词并保留前导短横线。旧实现只抓 [A-Za-z0-9_$]+，于是
+// `--amend` 被降级成裸词 `amend`、`-m` 更因为单字符被长度过滤整条丢掉——结果是
+// 「git commit --amend -m」切出来只剩 [git, commit, amend]，和「随便提一句 amend」
+// 在检索眼里完全等价，CLI 查询里最有区分度的那部分信息全没了。
+// 现在 flag 走独立分支：保留前缀（`--amend` ≠ `amend`，df 不同、idf 不同），
+// 同时仍补一个去前缀的裸词，保证只写 `amend` 的文档还能被 `--amend` 命中。
+// 前导 (?<![\w-]) 是为了不误伤连字符词：`well-known` 里 `-known` 前是字母 l，不当作 flag。
+const TOKEN_RE = /(?<![\w-])(--?[A-Za-z][A-Za-z0-9-]*)|([A-Za-z0-9_$]+)|([\u4e00-\u9fff]+)/g
+
 export function tokenize(text: string): string[] {
   const out: string[] = []
-  for (const m of text.matchAll(/[A-Za-z0-9_$]+|[\u4e00-\u9fff]+/g)) {
-    const tok = m[0]
+  for (const m of text.matchAll(TOKEN_RE)) {
+    const flag = m[1]
+    if (flag !== undefined) {
+      out.push(flag.toLowerCase())
+      const bare = flag.replace(/^-+/, '').toLowerCase()
+      if (bare.length >= 2) out.push(bare)
+      continue
+    }
+    const tok = m[2] ?? m[3] ?? ''
     if (/[\u4e00-\u9fff]/.test(tok)) {
       if (tok.length === 1) { out.push(tok); continue }
       for (let i = 0; i + 1 < tok.length; i++) out.push(tok.slice(i, i + 2))
