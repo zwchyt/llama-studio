@@ -35,6 +35,9 @@ import {AgentCodeViewLayout} from './agent-code/agent-view/AgentCodeViewLayout'
 
 import { uniqueId } from './agent-code/utils/ids'
 import type { AgentMessage, AgentSession, CardState } from '../../../shared/types'
+// chat.css = CodeBlock 组件的全局基础样式（.chat-code-* 与 .hljs* 主题），模型中心的 README 也靠它。
+// 必须早于 agent-code.css 引入：Agent Code 里那张表被同名的作用域规则覆盖，顺序反过来会改变胜出方。
+import '../styles/chat.css'
 import '../styles/agent-code.css'
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -231,7 +234,7 @@ export default function AgentCodeView() {
     scrollToBottom: scroll.scrollToBottom,
   }))
 
-  // ── 语音朗读（纯聊天模式的消息行用；复用原生聊天的同一份实现）──
+  // ── 语音朗读（纯聊天模式的消息行用）──
   const { speakingId, speak, stop: stopSpeak } = useTts()
 
   // ── 消息级操作（自持逻辑、复用循环域与项目域的共享引用，见 agent-code/hooks/useAgentMessageActions.ts）──

@@ -569,10 +569,9 @@ export function useAgentLoop({
             return { type: 'image' as const, data: base64, mimeType: mime }
           })
       await window.api.piAgent.prompt(piSessionId, opts.text, images && images.length > 0 ? images : undefined)
-      // 对话完成提示音：必须紧跟「输出结束」这一时刻播放（与 ChatView 一致——那边是在流结束
-      // 事件里直接播的）。绝不能放到下面那次指标查询之后：queryMetricsNow 是 IPC + 两次 HTTP
-      // （/slots 与 /metrics），刚生成完时 llama-server 还在收尾，这一等就是几十到几百毫秒，
-      // 提示音会明显滞后于输出结束（实测的延迟就是这么来的）。
+      // 对话完成提示音：必须紧跟「输出结束」这一时刻播放。绝不能放到下面那次指标查询之后：
+      // queryMetricsNow 是 IPC + 两次 HTTP（/slots 与 /metrics），刚生成完时 llama-server
+      // 还在收尾，这一等就是几十到几百毫秒，提示音会明显滞后于输出结束（实测的延迟就是这么来的）。
       // 用户手动停止（aborted）或出错（走 catch）时不播放。
       if (!abortRef.current.aborted && useStore.getState().soundEnabled) {
         playNotificationSound(useStore.getState().notificationSound)

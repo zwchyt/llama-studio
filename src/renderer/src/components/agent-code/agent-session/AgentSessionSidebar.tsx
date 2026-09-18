@@ -10,7 +10,7 @@
 // 归属与更新时序。
 
 import React from 'react'
-import { FolderOpenIcon, FolderIcon, TrashIcon, UploadIcon, PlusIcon, DownloadIcon, PencilIcon } from '@animateicons/react/lucide'
+import { FolderOpenIcon, FolderIcon, TrashIcon, UploadIcon, PlusIcon, DownloadIcon, PencilIcon, CodeIcon, MessageSquareIcon } from '@animateicons/react/lucide'
 import { TopbarBtn } from '../agent-message'
 import type { AgentProject } from '../../../../../shared/types'
 
@@ -44,6 +44,9 @@ export type AgentSessionSidebarProps = {
   sessRenameInputRef: React.RefObject<HTMLInputElement | null>
   startSessRename: (sessId: string, currentTitle: string) => void
   confirmSessRename: (projId: string, sessId: string) => void
+  // 模式切换：false=编码模式（工作台全套控件），true=通用模式（会话级 AgentSession.plainChat）
+  plainChat: boolean
+  setPlainChat: (on: boolean) => void
 }
 
 export function AgentSessionSidebar({
@@ -53,9 +56,15 @@ export function AgentSessionSidebar({
   projRenamingId, setProjRenamingId, projRenameText, setProjRenameText, projRenameInputRef, confirmProjRename,
   sessRenamingId, setSessRenamingId, sessRenameText, setSessRenameText, sessRenameInputRef,
   startSessRename, confirmSessRename,
+  plainChat, setPlainChat,
 }: AgentSessionSidebarProps) {
   return (
       <div className="agent-code-sidebar">
+        {/* 模式切换（当前会话）：通用模式只收掉编码专属控件，工具与系统提示词由主进程按 plainChat 重建 */}
+        <div className="agent-code-mode-switch">
+          <TopbarBtn baseClass="agent-code-mode-btn" active={!plainChat} icon={CodeIcon} size={14} onClick={() => setPlainChat(false)} title="编码模式：完整工作台（文件工具、终端、变更、审计、轨迹等）">编码模式</TopbarBtn>
+          <TopbarBtn baseClass="agent-code-mode-btn" active={plainChat} icon={MessageSquareIcon} size={14} onClick={() => setPlainChat(true)} title="通用模式：隐藏编码相关控件，作为日常对话使用">通用模式</TopbarBtn>
+        </div>
         <TopbarBtn baseClass="agent-code-session-new-btn" icon={FolderOpenIcon} size={14} onClick={createProject}>新建项目</TopbarBtn>
         <div className="agent-code-sidebar-header"><span>项目</span></div>
         <div className="agent-code-session-list">

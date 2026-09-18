@@ -165,9 +165,8 @@ export default function Sidebar() {
           {view === 'llama' && <span className="nav-active-dot" />}
           {view === 'llama' && activeChatUrl && <span className="nav-dot" />}
         </NavItem>
-        {/* 「聊天」导航项已移除：原生聊天界面的功能已并入 Agent Code 的纯聊天模式
-            （输入区工具栏的「纯聊天」开关）。ChatView 组件与 chatStore 仍保留在代码里，
-            只是不再从这里进入。 */}
+        {/* 「聊天」导航项与 ChatView 界面已移除：原生聊天的功能已并入 Agent Code
+            的纯聊天模式（输入区工具栏的「纯聊天」开关）。 */}
         <NavItem
           icon={ActivityIcon}
           label="模型运行数据"

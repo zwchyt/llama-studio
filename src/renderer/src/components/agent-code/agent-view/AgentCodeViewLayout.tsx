@@ -15,18 +15,19 @@
 // 组件体内把域对象二次解构为局部名，使下方 JSX 与拆分前的写法逐字一致。
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Bot, Bug, Database, Copy, Check, ImageDown } from 'lucide-react'
+import { Bot, Bug, Database, Copy, Check, ImageDown, FileDown, Wrench } from 'lucide-react'
 import html2canvas from 'html2canvas'
 import {
-  ActivityIcon, BookOpenIcon, BrainIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon,
+  ActivityIcon, BookOpenIcon, BrainIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon,
   EllipsisVerticalIcon, GitBranchIcon, GlobeIcon, LoaderIcon, PencilIcon, QuoteIcon, RouteIcon,
-  SendIcon, SlidersHorizontalIcon, SparklesIcon, TerminalIcon, Trash2Icon, UserIcon, CopyIcon,
+  SendIcon, SlidersHorizontalIcon, SparklesIcon, TerminalIcon, Trash2Icon, UserIcon, CopyIcon, XIcon,
 } from '@animateicons/react/lucide'
 import { notify } from '../../../store/notificationStore'
 import { useStore } from '../../../store/useStore'
 import { clearAudit } from '../../../utils/auditLog'
 import { clearDebug } from '../../../utils/debugLog'
 import { KEEP_RECENT_TURNS } from '../utils/constants'
+import { buildSessionPdfHtml } from '../utils/exportSessionPdf'
 import { useAgentMessageHeights } from '../hooks/useAgentMessageHeights'
 import { useAgentVirtualMessages } from '../hooks/useAgentVirtualMessages'
 import { AgentPrefillBar, HistorySummaryBubble, TopbarBtn, UserMessageEntry, AgentMessageRow } from '../agent-message'
@@ -38,6 +39,7 @@ import { AgentSessionSidebar } from '../agent-session/AgentSessionSidebar'
 import { AgentInputArea } from '../agent-input/AgentInputArea'
 import { AgentPreviewSlot } from '../agent-preview/AgentPreviewSlot'
 import type { AgentMsgRowActions } from '../types'
+import { PLAIN_CHAT_TOOL_NAMES } from '../../../../../shared/types'
 import type { CardState } from '../../../../../shared/types'
 import type { useAgentProjects } from '../hooks/useAgentProjects'
 import type { useAgentInput } from '../hooks/useAgentInput'
@@ -54,6 +56,14 @@ import type { useAgentLoop } from '../hooks/useAgentLoop'
 import type { useAgentPanels } from '../hooks/useAgentPanels'
 import type { useAgentModals } from '../hooks/useAgentModals'
 import type { useAgentSessionActions } from '../hooks/useAgentSessionActions'
+
+/** 通用模式可启用的工具中文名（与 PLAIN_CHAT_TOOL_NAMES 一一对应） */
+const PLAIN_CHAT_TOOL_LABELS: Record<string, string> = {
+  get_datetime: '获取时间',
+  web_search: '网络搜索',
+  fetch_webpage: '网页抓取',
+  knowledge_search: '知识库检索',
+}
 
 export interface AgentCodeViewLayoutProps {
   /** ── 域对象（各 hook 的完整返回值）── */
@@ -83,7 +93,7 @@ export interface AgentCodeViewLayoutProps {
   modelLabel: string
   handleModelAction: (card: CardState) => Promise<void>
   handleStop: () => void
-  /** 正在朗读的消息 id（纯聊天模式用；非该模式恒为 null） */
+  /** 正在朗读的消息 id（通用模式用；非该模式恒为 null） */
   speakingId: string | null
 
   /** ── 散装值：DOM ref ── */
@@ -142,7 +152,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     modelLogos, modelPickerOpen, modelPickerRef, modelPickerWidth, pickModelLogo,
     planTitle, rejectBtnRef, removeModelLogo, resolveApproval, searchEnabled,
     searchMenuOpen, searchMenuRef, searchProvider, setModelPickerOpen, setSearchMenuOpen,
-    plainChat, togglePlainChat,
+    plainChat, setPlainChat,
     chatTools, chatToolsMenuOpen, setChatToolsMenuOpen, chatToolsMenuRef, toggleChatTool,
     setTaskCardClosing, setTaskModalOpen, setTaskPanelCollapsed, taskCardClosing,
     taskDoneCount, taskModalOpen, taskPanelCollapsed, toggleLogoMenu, applySearchChange,
@@ -178,6 +188,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     setProjRenamingId, projRenameText, setProjRenameText, projRenameInputRef,
     confirmProjRename, startSessRename, confirmSessRename,
   } = sessionActions
+  // 通用模式已启用的工具数（网络搜索沿用全局 searchEnabled，与输入区左侧的搜索开关是同一份状态）
+  const chatToolOnCount = PLAIN_CHAT_TOOL_NAMES.filter(
+    n => (n === 'web_search' ? searchEnabled : chatTools.includes(n))
+  ).length
   // ── 消息级屏外卸载 ──
   // 已加载区间（与渲染同源）：虚拟化只在这个区间内做，historyStartIndex 之前的消息本来就不挂载。
   const loadedMessages = useMemo(
@@ -227,7 +241,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     return () => registerVirtualApi(null)
   }, [registerVirtualApi, virtual.ensureMounted])
 
-  // 导出为图片（仅纯聊天模式）：html2canvas 截取消息区 → PNG 落盘。
+  // 导出为图片（仅通用模式）：html2canvas 截取消息区 → PNG 落盘。
   // 注意消息区是虚拟滚动的（屏外消息被卸载、用等高占位顶住），所以导出的是
   // 「当前这一屏」而不是整段对话——按钮 title 里写明，免得以为导出了全部。
   const [exporting, setExporting] = useState(false)
@@ -245,6 +259,22 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
       setExporting(false)
     }
   }, [chatScrollRef, exporting])
+
+  // 导出为 PDF（仅通用模式）：遍历全部消息重排成打印 HTML，主进程隐藏窗口 printToPDF。
+  // 与上面的「导出图片」互补——那个只截得到当前一屏，长对话要完整记录得用这个。
+  const [pdfExporting, setPdfExporting] = useState(false)
+  const handleExportPdf = useCallback(async () => {
+    if (!activeSession || pdfExporting) return
+    setPdfExporting(true)
+    try {
+      const filePath = await window.api.printToPDF(await buildSessionPdfHtml(activeSession))
+      notify(`PDF 已保存: ${filePath}`, 'success')
+    } catch {
+      notify('导出 PDF 失败', 'error')
+    } finally {
+      setPdfExporting(false)
+    }
+  }, [activeSession, pdfExporting])
 
   // 消息列表元素缓存（useMemo）：目录高亮 / rail 波浪 / 贴底按钮等纯滚动状态变化
   // 不再重建整棵消息树；仅消息数据、流式状态、编辑态或相关回调变化时重建。
@@ -287,7 +317,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                     <button className="chat-msg-action-btn" title="编辑" onClick={() => editAt(msg.id)} disabled={loading}><PencilIcon size={13} /></button>
                     <button className="chat-msg-action-btn" title="重新发送" onClick={() => resendAt(msg.id)} disabled={loading}><SendIcon size={13} /></button>
                     <button className="chat-msg-action-btn" title="创建分支" onClick={() => branchAt(msg.id)} disabled={loading}><GitBranchIcon size={13} /></button>
-                    {/* 删除消息只在纯聊天模式提供（工作台模式的用户消息是工作流的输入，删掉会让上下文断裂） */}
+                    {/* 删除消息只在通用模式提供（编码模式的用户消息是工作流的输入，删掉会让上下文断裂） */}
                     {plainChat && (
                       <button className="chat-msg-action-btn" title="删除这条消息" onClick={() => deleteMessage(msg.id)} disabled={loading}><Trash2Icon size={13} /></button>
                     )}
@@ -341,27 +371,69 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               自订阅指标，仅在 prefill 进行中（pp < 1）显示，完成后自动消失。 */}
           <div className="agent-code-topbar-right-scroll">
             <AgentPrefillBar />
-            <TopbarBtn
-              btnRef={condenseBtnRef}
-              active={condenseOpen}
-              onClick={() => setCondenseOpen(v => !v)}
-              icon={condensing ? LoaderIcon : BrainIcon}
-              iconClassName={condensing ? 'spin' : undefined}
-            >压缩历史</TopbarBtn>
+            {/* 通用模式（plainChat）收掉编码工作台的六个入口：压缩历史 / 审计 / 轨迹 / 调试 / 记忆 / 变更。
+                提示词、知识库、浏览器、终端不受影响——通用模式同样用得上。 */}
+            {!plainChat && (
+              <TopbarBtn
+                btnRef={condenseBtnRef}
+                active={condenseOpen}
+                onClick={() => setCondenseOpen(v => !v)}
+                icon={condensing ? LoaderIcon : BrainIcon}
+                iconClassName={condensing ? 'spin' : undefined}
+              >压缩历史</TopbarBtn>
+            )}
             <TopbarBtn btnRef={promptBtnRef} active={promptModalOpen} onClick={openPromptModal} icon={SlidersHorizontalIcon}>提示词</TopbarBtn>
             <TopbarBtn btnRef={kbBtnRef} active={kbModalOpen} onClick={openKbModal} icon={Database} title="知识库列表（智能体可检索全部库）">知识库</TopbarBtn>
-            <TopbarBtn btnRef={auditBtnRef} active={auditOpen} onClick={() => setAuditOpen(v => !v)} icon={ActivityIcon}>审计</TopbarBtn>
-            <TopbarBtn btnRef={trajBtnRef} active={trajOpen} onClick={() => setTrajOpen(v => !v)} icon={RouteIcon}>轨迹</TopbarBtn>
-            <TopbarBtn btnRef={debugBtnRef} active={debugOpen} onClick={() => setDebugOpen(v => !v)} icon={Bug}>调试</TopbarBtn>
-            <TopbarBtn btnRef={memoryBtnRef} active={memoryOpen} onClick={() => setMemoryOpen(v => !v)} icon={BookOpenIcon}>记忆</TopbarBtn>
-            <TopbarBtn active={rightPanelMode === 'diff'} onClick={toggleGitDiff} icon={GitBranchIcon}>变更</TopbarBtn>
+            {!plainChat && (
+              <TopbarBtn btnRef={auditBtnRef} active={auditOpen} onClick={() => setAuditOpen(v => !v)} icon={ActivityIcon}>审计</TopbarBtn>
+            )}
+            {!plainChat && (
+              <TopbarBtn btnRef={trajBtnRef} active={trajOpen} onClick={() => setTrajOpen(v => !v)} icon={RouteIcon}>轨迹</TopbarBtn>
+            )}
+            {!plainChat && (
+              <TopbarBtn btnRef={debugBtnRef} active={debugOpen} onClick={() => setDebugOpen(v => !v)} icon={Bug}>调试</TopbarBtn>
+            )}
+            {!plainChat && (
+              <TopbarBtn btnRef={memoryBtnRef} active={memoryOpen} onClick={() => setMemoryOpen(v => !v)} icon={BookOpenIcon}>记忆</TopbarBtn>
+            )}
+            {!plainChat && (
+              <TopbarBtn active={rightPanelMode === 'diff'} onClick={toggleGitDiff} icon={GitBranchIcon}>变更</TopbarBtn>
+            )}
             <TopbarBtn active={rightPanelMode === 'browser'} onClick={() => { setRightPanelMode(m => m === 'browser' ? 'files' : 'browser'); if (!treeOpen) setTreeOpen(true) }} icon={GlobeIcon}>浏览器</TopbarBtn>
             <TopbarBtn active={rightPanelMode === 'terminal'} onClick={() => { setRightPanelMode(m => m === 'terminal' ? 'files' : 'terminal'); if (!treeOpen) setTreeOpen(true) }} icon={TerminalIcon}>终端</TopbarBtn>
-            {/* 导出图片只在纯聊天模式出现（工作台模式的消息带工具卡与文件改动，截图意义不大） */}
+            {/* 导出只在通用模式出现（编码模式的消息带工具卡与文件改动，截图意义不大） */}
             {plainChat && (
-              <TopbarBtn active={false} onClick={handleExportImage} icon={ImageDown} title="把当前可见的对话导出为 PNG（消息区是虚拟滚动的，只截当前这一屏）">导出图片</TopbarBtn>
+              <>
+                <TopbarBtn active={false} onClick={handleExportImage} icon={ImageDown} title="把当前可见的对话导出为 PNG（消息区是虚拟滚动的，只截当前这一屏）">导出图片</TopbarBtn>
+                <TopbarBtn active={false} onClick={handleExportPdf} icon={FileDown} title="把整段对话导出为 PDF（遍历全部消息，不受虚拟滚动限制）">导出 PDF</TopbarBtn>
+              </>
             )}
           </div>
+          {/* 通用模式的工具开关（原在输入区，随模式切换一起上移到顶栏）。
+              必须放在 -right-scroll 之外：那个容器 overflow-x:auto 会把向下展开的菜单裁掉。 */}
+          {plainChat && (
+            <div ref={chatToolsMenuRef} className="agent-code-tools-switch">
+              <TopbarBtn active={chatToolsMenuOpen} onClick={() => setChatToolsMenuOpen(v => !v)} icon={Wrench} title="通用模式下可启用的工具（默认全关）">
+                工具{chatToolOnCount > 0 ? ` ${chatToolOnCount}` : ''}
+              </TopbarBtn>
+              {chatToolsMenuOpen && (
+                <ul className="agent-code-tools-menu">
+                  {PLAIN_CHAT_TOOL_NAMES.map(name => {
+                    const on = name === 'web_search' ? searchEnabled : chatTools.includes(name)
+                    return (
+                      <li
+                        key={name}
+                        className={`agent-code-tools-item${on ? ' active' : ''}`}
+                        onClick={() => toggleChatTool(name)}
+                      >
+                        {on ? <CheckIcon size={12} /> : <XIcon size={12} />}{PLAIN_CHAT_TOOL_LABELS[name] ?? name}
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
           <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} style={{ marginTop: 0, width: 28, height: 28 }}>
             {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
           </button>
@@ -398,6 +470,8 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
           sessRenameInputRef={sessRenameInputRef}
           startSessRename={startSessRename}
           confirmSessRename={confirmSessRename}
+          plainChat={plainChat}
+          setPlainChat={setPlainChat}
         />
         </div>
         <div className={`agent-code-sidebar-resize-handle${sidebarResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startSidebarResize} onMouseEnter={() => sidebarHandleIconRef.current?.startAnimation()} onMouseLeave={() => sidebarHandleIconRef.current?.stopAnimation()}>
@@ -689,8 +763,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               setSearchMenuOpen, applySearchChange,
             }}
             chatMode={{
-              plainChat, togglePlainChat,
-              chatTools, chatToolsMenuOpen, setChatToolsMenuOpen, chatToolsMenuRef, toggleChatTool,
+              plainChat,
             }}
             run={{
               apiBaseUrl, curToolName, followUpQueueRef, handleSend, handleStop,

@@ -34,7 +34,14 @@ import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { INPUT_FOLD_CAP } from '../utils/constants'
 import { previewLineNoFromTarget } from '../utils/dom'
 import { uniqueId } from '../utils/ids'
+import { binaryDocLabel, extractTextFromBuffer, extractTextFromFile, isBinaryDoc } from '../../../utils/extractText'
 import type { CodeSnippet } from '../types'
+
+// PDF/docx 抽出的正文没有文件名上下文，标出来源；解析失败也要留一行，免得模型收到空附件却无人报错
+function wrapBinaryDocText(name: string, text: string): string {
+  const label = binaryDocLabel(name)
+  return text ? `[${label}: ${name}]\n${text}` : `[${label}: ${name}]（文本提取失败）`
+}
 
 export function useAgentInput() {
 
@@ -277,6 +284,9 @@ export function useAgentInput() {
       })
       return { isImage: true, dataUrl, text: '' }
     }
+    if (isBinaryDoc(file.name)) {
+      return { isImage: false, text: wrapBinaryDocText(file.name, await extractTextFromFile(file)) }
+    }
     const text = await new Promise<string>((res, rej) => {
       const r = new FileReader()
       r.onload = () => res(r.result as string)
@@ -312,11 +322,24 @@ export function useAgentInput() {
       return [...prev, { id: uniqueId('fp-att'), path: entry.path, name: entry.name, isDir: false }]
     })
     try {
-      const res = await window.api.readFile(entry.path, { maxBytes: 128 * 1024 })
-      if (res.success && typeof res.content === 'string') {
+      // 工作区里的 PDF/docx：主进程 readFile 只做文本读取，二进制会返回乱码，
+      // 所以走 base64 + 浏览器侧解析这条路（与附件选择器同一个抽取函数）。
+      let text: string | null = null
+      if (isBinaryDoc(entry.name)) {
+        const b64 = await window.api.readFileBase64(entry.path)
+        const base64 = b64.dataUrl?.split(',')[1] ?? ''
+        if (b64.success && base64) {
+          const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+          text = wrapBinaryDocText(entry.name, await extractTextFromBuffer(entry.name, bytes.buffer as ArrayBuffer))
+        }
+      } else {
+        const res = await window.api.readFile(entry.path, { maxBytes: 128 * 1024 })
+        if (res.success && typeof res.content === 'string') text = res.content
+      }
+      if (text !== null) {
         setAttachedFiles(prev => {
           if (prev.some(a => a.name === entry.name)) return prev
-          return [...prev, { id: uniqueId('fp-read'), name: entry.name, isImage: false, content: res.content! }]
+          return [...prev, { id: uniqueId('fp-read'), name: entry.name, isImage: false, content: text }]
         })
       }
     } catch { /* 读取失败，静默跳过 */ }

@@ -5,7 +5,7 @@
 //   · 顶栏卡片按钮 ref（上下文 / 压缩 / 审计 / 轨迹 / 调试 / 提示词 / 知识库 / 记忆）
 //   · 模型选择器（打开态、宽度估算、能力徽标、Logo 菜单与设置/移除）
 //   · 联网搜索开关（searchEnabled / searchProvider 与其变更回调 applySearchChange）
-//   · 纯聊天模式开关（会话级 AgentSession.plainChat 与其切换回调 togglePlainChat）
+//   · 通用模式开关（会话级 AgentSession.plainChat 与其设置回调 setPlainChat）
 //   · 侧栏 / 文件树 / 右侧面板模式 / 终端挂载 / 各功能面板开关
 //   · 任务清单卡（Todo 面板）：打开态、关闭过渡态、计划项与标题、派生计数
 //   · 破坏性审批弹窗（approvalReq / resolveApproval / 键盘导航）
@@ -70,14 +70,16 @@ export function useAgentUiState({
       piReadyRef.current = { sid: null, ready: false }
     }
   }
-  // ── 纯聊天模式开关（会话级字段 AgentSession.plainChat）──
-  // 打开后主进程既不注册任何工具、也不注入编码 agent 的工具 / 图表指引，等于把工作台当原生聊天用。
+  // ── 通用模式开关（会话级字段 AgentSession.plainChat，界面上的「编码模式 / 通用模式」分段按钮）──
+  // 打开后主进程既不注册编码工具、也不注入编码 agent 的工具 / 图表指引，同时顶栏与输入区收掉编码专属控件。
   // 重建方式与上面的联网搜索开关一致：pi 会话的 tools / systemPrompt 在创建那一刻就固定了，
   // 只改会话字段不会生效，必须 dispose 掉让下一轮重建（重建会重新注入历史，对话不会丢）。
+  // 运行中（loading）不改工具集：只写会话字段，本轮结束后 runPiTurn 比对 modeSig 时再重建。
   const plainChat = activeSession?.plainChat === true
-  const togglePlainChat = useCallback(() => {
+  const setPlainChat = useCallback((on: boolean) => {
     if (!activeProjectId || !activeSessionId) return
-    updateSessionInProject(activeProjectId, activeSessionId, { plainChat: !plainChat })
+    if (plainChat === on) return
+    updateSessionInProject(activeProjectId, activeSessionId, { plainChat: on })
     const cur = piReadyRef.current
     if (cur.ready && cur.sid && !loading) {
       window.api.piAgent.dispose(`pi-${cur.sid}`).catch(() => { })
@@ -85,9 +87,9 @@ export function useAgentUiState({
     }
   }, [activeProjectId, activeSessionId, plainChat, updateSessionInProject, loading, piReadyRef])
 
-  // ── 纯聊天模式的工具开关（只认原生聊天那四个，见 PLAIN_CHAT_TOOL_NAMES）──
+  // ── 通用模式的工具开关（只认那四个，见 PLAIN_CHAT_TOOL_NAMES；入口在界面顶栏的「工具」下拉）──
   // 默认全关 = 纯对话。开关某个工具同样要重建 pi 会话（工具集在会话创建那一刻就固定了）。
-  // 网络搜索不单独存：它沿用全局 searchEnabled，与左侧搜索开关是同一份状态，避免两处打架。
+  // 网络搜索不单独存：它沿用全局 searchEnabled，与输入区的搜索开关是同一份状态，避免两处打架。
   const chatTools = activeSession?.chatTools ?? []
   const [chatToolsMenuOpen, setChatToolsMenuOpen] = useState(false)
   const chatToolsMenuRef = useRef<HTMLDivElement>(null)
@@ -314,7 +316,7 @@ export function useAgentUiState({
     modelPickerOpen, setModelPickerOpen, modelPickerRef,
     searchEnabled, searchProvider, searchMenuOpen, setSearchMenuOpen, searchMenuRef,
     closeSearchMenu, applySearchChange,
-    plainChat, togglePlainChat,
+    plainChat, setPlainChat,
     chatTools, chatToolsMenuOpen, setChatToolsMenuOpen, chatToolsMenuRef, closeChatToolsMenu, toggleChatTool,
     modelCaps, loadModelCapabilities, modelPickerWidth,
     modelLogos, setModelLogoEntry, loadModelLogos,

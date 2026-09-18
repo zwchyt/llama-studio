@@ -12,7 +12,6 @@ import ModelMonitoringView from './components/ModelMonitoringView'
 import AboutView from './components/AboutView'
 import AgentsView from './components/AgentsView'
 import WelcomeView from './components/WelcomeView'
-import ChatView from './components/ChatView'
 import CreateModal from './components/CreateModal'
 import SplashScreen from './components/SplashScreen'
 import UpdateBannerGroup from './components/UpdateBannerGroup'
@@ -593,7 +592,6 @@ function AppMain() {
       case 'token-stats': return <TokenStatsView />
       case 'about': return <AboutView />
       case 'agents': return <AgentsView />
-      case 'chat': return null
       case 'welcome': return <WelcomeView />
       case 'llama': return <LlamaChatView />
       case 'ocr': return <OcrView />
@@ -631,27 +629,9 @@ function AppMain() {
           <div
             className="view-transition"
             key={view}
-            style={view === 'agent-code' || view === 'chat' ? { display: 'none' } : {}}
+            style={view === 'agent-code' ? { display: 'none' } : {}}
           >
             {currentView}
-          </div>
-          {/* 原生聊天视图常驻挂载：流式生成期间切换侧边栏再返回时，
-              流监听、思考链展开状态、停止按钮与滚动位置全部保留，
-              避免卸载导致 chunk 丢失与流状态被强制清除（与下方 Agent Code / 终端一致）。 */}
-          <div
-            className="chat-view-host"
-            style={{
-              display: view === 'chat' ? 'flex' : 'none',
-              flexDirection: 'column',
-              flex: 1,
-              minHeight: 0,
-              // 与原 .view-transition 宿主的 24px 内边距保持一致（.content>* 规则），
-              // 避免常驻挂载后聊天卡片贴近内容区两侧边缘
-              padding: 24,
-              overflow: 'hidden',
-            }}
-          >
-            <ChatView />
           </div>
           {/* Agent Code 工作台常驻挂载：切换侧边栏时不卸载组件，
               保证正在进行的生成 / 工具循环不被打断，进度、滚动、输入框状态全部保留。 */}

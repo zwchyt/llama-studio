@@ -132,7 +132,7 @@ export function useAgentMessageActions({
 
   // 继续生成：把「接续指令」作为一条 continuation 消息追加后重跑一轮。
   // 指令必须发给模型、但不能当成用户消息显示——所以带 continuation 标记，
-  // 消息列表渲染时跳过它（与 ChatView 的临时拼消息同效）。
+  // 消息列表渲染时跳过它。
   const continueAt = useCallback(async (msgId: string) => {
     if (loading || !runningCard || !activeSession) return
     const msgs = activeSession.messages
