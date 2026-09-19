@@ -98,6 +98,12 @@ export interface MainToolExecutors {
   }>
   /** 知识库元信息（库名+文档清单）：跨库读取时按 docName 定位条目归属库 */
   describeKb(kbId: string): { name: string; docs: string[] } | null
+  /** 知识库列表（utility process 经 RPC 回主进程读取） */
+  listKb(): Promise<{ id: string; name: string }[]>
+  /** 模型端口登记信息（token 记账用；未登记返回 null） */
+  getPortModelInfo(port: number): Promise<{ templateId: string; modelPath: string | null } | null | undefined>
+  /** 同步 agent 工作区根到主进程（Read/Bash 等文件工具的相对路径解析基准） */
+  setAgentWorkspace(cwd: string): Promise<void>
   /** 询问用户（跨进程弹窗；由 IPC 层提供实现） */
   askUser(questions: AskUserQuestionInput[]): Promise<string>
   /** 破坏性操作审批（由 IPC 层提供实现；未提供则放行） */

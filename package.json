@@ -1,6 +1,6 @@
 {
   "name": "llama-studio",
-  "version": "1.0.218",
+  "version": "1.0.219",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",
   "main": "out/main/index.js",
@@ -9,6 +9,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "build:pi-worker": "node scripts/build-pi-worker.mjs",
     "dev": "electron-vite dev --logLevel silent",
     "build": "node scripts/build-filtered.js",
     "preview": "electron-vite preview --logLevel silent",

@@ -194,9 +194,9 @@ export function useAgentSessionEffects({
 
   // 进入 Agent Code 界面即预热 pi SDK 运行时（提前加载 pi 系 ESM 模块 + ModelRuntime，
   // 首次对话免一次性初始化等待）。失败静默：正常创建路径会重新初始化。
-  // 注意：pi 包动态 import 的模块求值会同步阻塞 main 进程事件循环（实测约 1.1s，冷机更久），
-  // 必须与启动拥堵窗口错峰：等浏览器空闲（requestIdleCallback）且至少 15s 后才执行——
-  // 启动初期主进程正忙于首屏 IPC / Defender 磁盘扫描，此时插入同步阻塞会造成整窗"未响应"。
+  // pi SDK 现运行在独立 utility process（见 src/main/piWorker.ts / workerClient.ts），
+  // 其模块求值不再阻塞主进程事件循环；仍保留空闲错峰（15s + requestIdleCallback）
+  // 是为了不与首屏加载抢 CPU/磁盘（Defender 冷扫描），只影响预热完成时间。
   useEffect(() => {
     const warm = (): void => {
       window.api?.piAgent?.warmup?.().catch(() => { })

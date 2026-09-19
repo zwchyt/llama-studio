@@ -1,8 +1,9 @@
 import { resolve } from 'path'
-import { statSync, readFileSync } from 'fs'
+import { statSync, readFileSync, existsSync } from 'fs'
+import { spawnSync } from 'child_process'
 import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
-import { createLogger, type Logger } from 'vite'
+import { createLogger, type Logger, type Plugin } from 'vite'
 
 // ─────────────────────────────────────────────────────────────
 // 终端可视化工具（非 TTY 时降级为纯文本，避免污染日志/CI）
@@ -189,6 +190,58 @@ function makeBuildPanel(proc: 'main' | 'preload') {
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// pi-agent utility process 宿主打包：electron-vite 构建会清空 out/，
+// 且 main 只支持单产物 CJS（sandbox preload 限制），因此 piWorker
+// 由 scripts/build-pi-worker.mjs 用 esbuild 单独打成 ESM(.mjs)。
+// 本插件在 main 每次构建完成后自动执行（dev watch 模式下同样生效）。
+// ─────────────────────────────────────────────────────────────
+function makePiWorkerPlugin(): Plugin {
+  let ran = false
+  return {
+    name: 'ls-pi-worker-esm',
+    apply: 'build',
+    closeBundle() {
+      // watch 模式重复构建时跳过后续触发（产物不变）
+      if (ran && existsSync(resolve('out/main/piWorker.mjs'))) return
+      ran = true
+      const start = Date.now()
+      // esbuild 输出静默捕获，失败才透传 stderr，保持面板整洁
+      const r = spawnSync(process.execPath, [resolve('scripts/build-pi-worker.mjs')], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        encoding: 'utf-8'
+      })
+      if (r.status !== 0) {
+        if (r.stderr) process.stderr.write(r.stderr)
+        throw new Error(`piWorker 打包失败 (exit=${r.status})`)
+      }
+      let size = ''
+      try {
+        const bytes = statSync(resolve('out/main/piWorker.mjs')).size
+        size = (bytes / 1024 / 1024).toFixed(1) + ' MB'
+      } catch {
+        /* 产物尚未落盘时忽略 */
+      }
+      const ms = `${Date.now() - start}ms`
+      const SEP = '  '
+      const PROC_W = 8
+      const STATUS_W = 13
+      const OUTPUT_W = 12
+      const row =
+        SEP +
+        padv('piWorker', PROC_W) +
+        SEP +
+        padv(green('✓ esbuild'), STATUS_W) +
+        SEP +
+        padv(size, OUTPUT_W) +
+        SEP +
+        ms
+      // 与 main 行同格式；重启 spinner 继续等 preload
+      printRow(row, true, 'building preload…')
+    },
+  }
+}
+
 export default defineConfig({
   // 注：electron-vite 自身的 "built successfully" / "-----" / "starting electron app"
   // 等提示由 CLI 的 `--logLevel silent` 抑制（见 package.json 的 dev/preview 脚本），
@@ -196,7 +249,7 @@ export default defineConfig({
 
   main: {
     customLogger: makeCustomLogger(),
-    plugins: [makeBuildPanel('main')],
+    plugins: [makeBuildPanel('main'), makePiWorkerPlugin()],
   },
   preload: {
     customLogger: makeCustomLogger(),

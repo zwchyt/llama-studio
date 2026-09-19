@@ -160,7 +160,7 @@ export class PiAgentManager {
       approveWriteEdit: opts.approveWriteEdit,
       workspaceDir: opts.cwd,
       knowledgeBaseId: opts.knowledgeBaseId,
-      knowledgeBases: listKnowledgeBases()
+      knowledgeBases: await this.executors.listKb()
     })
     const bridge = await createPiAgentBridge({
       getPort: () => opts.port,
@@ -184,7 +184,7 @@ export class PiAgentManager {
       // pi 模式不经过 chat-completion-stream（原入账点在 ipc.ts 聊天流 handler），
       // 必须在此补记，否则导航栏 Token 统计永远只有旧模型（legacy/ChatView）的记录。
       if (event.type === 'turn_end' && event.message?.role === 'assistant') {
-        this.recordUsage(opts.sessionId, event.message.usage)
+        void this.recordUsage(opts.sessionId, event.message.usage)
       }
       opts.onEvent(opts.sessionId, event)
     })
@@ -219,12 +219,12 @@ export class PiAgentManager {
   }
 
   /** pi 请求结束入账：usage（pi 格式 input/output）→ tokenLedger（llama-studio 记账簿） */
-  private recordUsage(sessionId: string, usage: { input?: number; output?: number } | undefined): void {
+  private async recordUsage(sessionId: string, usage: { input?: number; output?: number } | undefined): Promise<void> {
     if (!usage || typeof usage.input !== 'number' || typeof usage.output !== 'number') return
     if (usage.input < 0 || usage.output < 0) return
     const port = this.ports.get(sessionId)
     if (!port) return
-    const info = ipcInternal.getPortModelInfo?.(port)
+    const info = await this.executors.getPortModelInfo(port)
     const base: TokenUsageEntry = {
       ts: Date.now(),
       port,
@@ -244,7 +244,7 @@ export class PiAgentManager {
   async prompt(sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>): Promise<void> {
     const bridge = this.getBridge(sessionId)
     const cwd = bridge.session.sessionManager.getCwd()
-    ipcInternal.handleSetAgentWorkspace?.(cwd)
+    await this.executors.setAgentWorkspace(cwd)
     appendUserEntry(sessionId, text, images?.length)
     await bridge.session.prompt(text, images && images.length > 0 ? { images } : undefined)
   }
@@ -371,85 +371,6 @@ function safeParseArgs(raw: string): Record<string, unknown> {
   }
 }
 
-// ── 生产执行器：ipc.ts 提取的 handler 直调（registerIpcHandlers 后可用）──
-import { ipcInternal } from '../../ipc'
-import { handleCodeSearchQuery } from '../retrievalService'
-import { queryKnowledgeBase, readKnowledgeChunks, listKnowledgeBases, describeKnowledgeBase } from '../knowledgeService'
-
-export function createIpcExecutors(): MainToolExecutors {
-  const requireInternal = (name: keyof typeof ipcInternal): void => {
-    if (!ipcInternal[name]) throw new Error(`${name} 未注册（registerIpcHandlers 未调用）`)
-  }
-  return {
-    readFile: (filePath, opts) => {
-      requireInternal('handleReadFile')
-      return ipcInternal.handleReadFile!(filePath, opts)
-    },
-    writeFile: (filePath, content) => {
-      requireInternal('handleWriteFile')
-      return ipcInternal.handleWriteFile!(filePath, content)
-    },
-    glob: (opts) => {
-      requireInternal('handleGlob')
-      return ipcInternal.handleGlob!(opts)
-    },
-    listDir: (dirPath) => {
-      requireInternal('handleListDir')
-      return ipcInternal.handleListDir!(dirPath)
-    },
-    grep: (opts) => {
-      requireInternal('handleGrep')
-      return ipcInternal.handleGrep!(opts)
-    },
-    ripgrep: (opts) => {
-      requireInternal('handleRipgrep')
-      return ipcInternal.handleRipgrep!(opts)
-    },
-    deletePath: (path, recursive) => {
-      requireInternal('handleDeletePath')
-      return ipcInternal.handleDeletePath!(path, recursive)
-    },
-    todoWrite: (sessionId, input) => {
-      requireInternal('handleAgentTodoWrite')
-      return ipcInternal.handleAgentTodoWrite!(sessionId, input)
-    },
-    taskGet: (sessionId, taskId) => {
-      requireInternal('handleAgentTaskGet')
-      return ipcInternal.handleAgentTaskGet!(sessionId, taskId)
-    },
-    taskList: (sessionId) => {
-      requireInternal('handleAgentTaskList')
-      return ipcInternal.handleAgentTaskList!(sessionId)
-    },
-    codesearchQuery: (dir, query, limit) => handleCodeSearchQuery(dir, query, limit),
-    webSearch: (query) => {
-      requireInternal('handleWebSearch')
-      return ipcInternal.handleWebSearch!(query)
-    },
-    webSearchBing: (query) => {
-      requireInternal('handleWebSearchBing')
-      return ipcInternal.handleWebSearchBing!(query)
-    },
-    fetchWebpage: (url) => {
-      requireInternal('handleFetchWebpage')
-      return ipcInternal.handleFetchWebpage!(url)
-    },
-    knowledgeQuery: async (kbId, query, limit) => queryKnowledgeBase(kbId, query, limit),
-    knowledgeRead: async (kbId, refs) => readKnowledgeChunks(kbId, refs),
-    describeKb: (kbId) => describeKnowledgeBase(kbId),
-    // 默认实现：无窗口通道时由 piAgentIpc 覆写为跨进程弹窗
-    askUser: async (questions) =>
-      JSON.stringify({
-        answers: questions.map((q) => ({ question: q.question, answer: '' })),
-        note: '用户不可用，请基于最佳判断继续。'
-      }),
-    // recordUndo/undo 由 PiAgentManager 构造时包装覆盖（统一管理撤销备份）
-    recordUndo: () => {},
-    removeUndo: () => {},
-    undo: async () => ({ success: false, error: '撤销未启用' })
-  }
-}
-
 // ── 模型名获取：llama.cpp /props 返回实际加载的 model_path ──
 // 比 run-model 启动参数登记（portModelInfos）更可靠：用户切换模型、进程残留、
 // 端口复用等情况下依然返回 llama.cpp 真正加载的模型文件。
@@ -471,4 +392,51 @@ function fetchModelPathFromProps(port: number, timeoutMs = 800): Promise<string 
     req.setTimeout(timeoutMs, () => { req.destroy(); resolve(null) })
     req.on('error', () => resolve(null))
   })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// utility process 模式：工具执行器经 RPC 回主进程执行（pi SDK 在 worker 里，
+// 文件/搜索/知识库等真正动磁盘与内部服务的逻辑仍在主进程，行为与原先一致）。
+// createWorkerExecutors 只组装一个 MainToolExecutors，每个方法把 (方法名, 参数)
+// 通过 callTool 发给主进程，等 tool-result 回包后 resolve。
+// ─────────────────────────────────────────────────────────────────────────────
+export type WorkerToolCaller = <T = unknown>(name: string, args: unknown[]) => Promise<T>
+export type WorkerToolEventCaller = <T = unknown>(event: Record<string, unknown>) => Promise<T>
+
+export function createWorkerExecutors(
+  callTool: WorkerToolCaller,
+  callToolEvent: WorkerToolEventCaller
+): MainToolExecutors {
+  // callTool 返回 Promise<unknown>；这里按 MainToolExecutors 各方法的返回类型逐个断言。
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const c = callTool as (name: string, args: unknown[]) => any
+  return {
+    readFile: (filePath, opts) => c('readFile', [filePath, opts]),
+    writeFile: (filePath, content) => c('writeFile', [filePath, content]),
+    glob: (opts) => c('glob', [opts]),
+    listDir: (dirPath) => c('listDir', [dirPath]),
+    grep: (opts) => c('grep', [opts]),
+    ripgrep: (opts) => c('ripgrep', [opts]),
+    deletePath: (path, recursive) => c('deletePath', [path, recursive]),
+    todoWrite: (sessionId, input) => c('todoWrite', [sessionId, input]),
+    taskGet: (sessionId, taskId) => c('taskGet', [sessionId, taskId]),
+    taskList: (sessionId) => c('taskList', [sessionId]),
+    codesearchQuery: (dir, query, limit) => c('codesearchQuery', [dir, query, limit]),
+    webSearch: (query) => c('webSearch', [query]),
+    webSearchBing: (query) => c('webSearchBing', [query]),
+    fetchWebpage: (url) => c('fetchWebpage', [url]),
+    knowledgeQuery: (kbId, query, limit) => c('knowledgeQuery', [kbId, query, limit]),
+    knowledgeRead: (kbId, refs) => c('knowledgeRead', [kbId, refs]),
+    describeKb: (kbId) => c('describeKb', [kbId]),
+    listKb: () => c('listKb', []),
+    getPortModelInfo: (port) => c('getPortModelInfo', [port]),
+    setAgentWorkspace: (cwd) => c('setAgentWorkspace', [cwd]),
+    // ask/approve 走独立通道：需要主进程弹窗等用户输入，可能长时间挂起
+    askUser: (questions) => callToolEvent<string>({ type: 'ask', questions }),
+    approve: (toolName, args) => callToolEvent<boolean>({ type: 'approve', toolName, args }),
+    // recordUndo/removeUndo/undo 由 PiAgentManager 构造时在 worker 内包装（撤销备份存 worker 本地即可）
+    recordUndo: () => {},
+    removeUndo: () => {},
+    undo: async () => ({ success: false, error: '撤销未启用' })
+  }
 }

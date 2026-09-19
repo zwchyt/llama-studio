@@ -13,6 +13,10 @@ npmRebuild: false
 extraResources:
   - from: resources
     to: resources
+  # pi-agent utility process 宿主（ESM）。utilityProcess.fork 无法从 asar 内读文件，
+  # 必须作为真实文件放到 resourcesPath，运行时优先从这里加载（见 workerClient.ts resolveWorkerEntry）。
+  - from: out/main/piWorker.mjs
+    to: piWorker.mjs
   - from: assets/llama-studio-icon.png
     to: assets/llama-studio-icon.png
   # Ripgrep 工具的引擎二进制（运行时从 process.resourcesPath/bin/rg.exe 解析，见 ipc.ts resolveRgPath）。
