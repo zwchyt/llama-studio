@@ -5,14 +5,16 @@
 //   · 顶栏卡片按钮 ref（上下文 / 压缩 / 审计 / 轨迹 / 调试 / 提示词 / 知识库 / 记忆）
 //   · 模型选择器（打开态、宽度估算、能力徽标、Logo 菜单与设置/移除）
 //   · 联网搜索开关（searchEnabled / searchProvider 与其变更回调 applySearchChange）
-//   · 通用模式开关（会话级 AgentSession.plainChat 与其设置回调 setPlainChat）
-//   · 侧栏 / 文件树 / 右侧面板模式 / 终端挂载 / 各功能面板开关
+//   · 通用模式派生量（plainChat 由当前工作区模式推导；不再有「把当前会话改成通用」的路径）
+//   · 文件树 / 右侧面板模式（**按模式分槽**：切模式恢复该模式上次的面板布局，互不污染）
+//   · 侧栏可见性 / 终端挂载 / 各功能面板开关
 //   · 任务清单卡（Todo 面板）：打开态、关闭过渡态、计划项与标题、派生计数
 //   · 破坏性审批弹窗（approvalReq / resolveApproval / 键盘导航）
 //   · 提示词卡与知识库卡的草稿态
 //   · 用户消息内联编辑态（editingMsgId / editDraft）
 //
-// 外部输入：agentCards（模型下拉列表）、loading 与 piReadyRef（联网搜索变更需作废 pi 会话）。
+// 外部输入：agentCards（模型下拉列表）、loading 与 piReadyRef（联网搜索变更需作废 pi 会话）、
+//           mode（当前工作区模式）。
 // 对外输出：上述全部 state（值 + setter）与 ref、以及若干派生值 / 回调。
 //
 // 注意：面板的 usePopoverDismiss 调用与 handleModelAction 仍留在主组件
@@ -25,16 +27,22 @@ import { safeCall } from '../../../utils/safeCall'
 import { detectModelCapabilities } from '../../../utils/modelCapabilities'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { askUserQuestionRegistry } from '../../../utils/askUserQuestionRegistry'
-import type { AgentSession, CardState, KnowledgeBaseMeta, TodoUpdate } from '../../../../../shared/types'
+import type { AgentMode, AgentSession, CardState, KnowledgeBaseMeta, TodoUpdate } from '../../../../../shared/types'
+
+/** 右侧面板模式：files=文件树+预览 / browser=内嵌浏览器 / terminal=内嵌终端 / diff=Git变更 */
+export type RightPanelMode = 'files' | 'browser' | 'terminal' | 'diff'
+/** 按模式分槽的面板状态（切模式时各恢复各的） */
+type ModePanelState = { treeOpen: boolean; rightPanelMode: RightPanelMode }
 
 export function useAgentUiState({
-  agentCards, loading, piReadyRef,
+  agentCards, loading, piReadyRef, mode,
   activeProjectId, activeSessionId, activeSession, updateSessionInProject,
 }: {
   agentCards: CardState[]
   loading: boolean
   piReadyRef: React.RefObject<{ sid: string | null; ready: boolean }>
-  /** 纯聊天开关是会话级字段（AgentSession.plainChat），需要会话指针与写回函数 */
+  /** 当前工作区模式：通用模式（'chat'）下顶栏与输入区收掉编码专属控件 */
+  mode: AgentMode
   activeProjectId: string
   activeSessionId: string
   activeSession: AgentSession | null
@@ -70,22 +78,13 @@ export function useAgentUiState({
       piReadyRef.current = { sid: null, ready: false }
     }
   }
-  // ── 通用模式开关（会话级字段 AgentSession.plainChat，界面上的「编码模式 / 通用模式」分段按钮）──
-  // 打开后主进程既不注册编码工具、也不注入编码 agent 的工具 / 图表指引，同时顶栏与输入区收掉编码专属控件。
-  // 重建方式与上面的联网搜索开关一致：pi 会话的 tools / systemPrompt 在创建那一刻就固定了，
-  // 只改会话字段不会生效，必须 dispose 掉让下一轮重建（重建会重新注入历史，对话不会丢）。
-  // 运行中（loading）不改工具集：只写会话字段，本轮结束后 runPiTurn 比对 modeSig 时再重建。
-  const plainChat = activeSession?.plainChat === true
-  const setPlainChat = useCallback((on: boolean) => {
-    if (!activeProjectId || !activeSessionId) return
-    if (plainChat === on) return
-    updateSessionInProject(activeProjectId, activeSessionId, { plainChat: on })
-    const cur = piReadyRef.current
-    if (cur.ready && cur.sid && !loading) {
-      window.api.piAgent.dispose(`pi-${cur.sid}`).catch(() => { })
-      piReadyRef.current = { sid: null, ready: false }
-    }
-  }, [activeProjectId, activeSessionId, plainChat, updateSessionInProject, loading, piReadyRef])
+  // ── 通用模式派生量（不再是「可切换的会话开关」，而是工作区自带的属性）──
+  // 模式归属工作区（AgentProject.mode），因此这里只做推导，没有任何写入口——
+  // 也就不存在「把一条编码会话原地改成通用会话」这条路径（见 useAgentProjects.forkChatToCode
+  // 提供的单向转换：复制上下文新建编码会话，原会话不动）。
+  // 主进程侧的表现不变：通用模式既不注册编码工具、也不注入编码 agent 的工具 / 图表指引，
+  // 顶栏与输入区同时收掉编码专属控件。
+  const plainChat = mode === 'chat'
 
   // ── 通用模式的工具开关（只认那四个，见 PLAIN_CHAT_TOOL_NAMES；入口在界面顶栏的「工具」下拉）──
   // 默认全关 = 纯对话。开关某个工具同样要重建 pi 会话（工具集在会话创建那一刻就固定了）。
@@ -197,9 +196,38 @@ export function useAgentUiState({
   }, [modelPickerOpen])
   const modelBtnRef = useRef<HTMLButtonElement>(null)
   const attachBtnRef = useRef<HTMLButtonElement>(null)
-  const [treeOpen, setTreeOpen] = useState(true)
-  // 右侧面板模式：files=文件树+预览 / browser=内嵌浏览器 / terminal=内嵌终端 / diff=Git变更
-  const [rightPanelMode, setRightPanelMode] = useState<'files' | 'browser' | 'terminal' | 'diff'>('files')
+  // ── 右侧面板状态按模式分槽 ──
+  // 要求：切模式恢复该模式上次的面板布局，且不污染另一个模式的会话状态。
+  // 编码模式默认展开文件树；通用模式没有文件树，右槽默认收起（只留顶栏可进的浏览器）。
+  const [panelByMode, setPanelByMode] = useState<Record<AgentMode, ModePanelState>>(() => ({
+    code: { treeOpen: true, rightPanelMode: 'files' },
+    chat: { treeOpen: false, rightPanelMode: 'files' },
+  }))
+  const treeOpen = panelByMode[mode].treeOpen
+  const rightPanelMode = panelByMode[mode].rightPanelMode
+  // 用 ref 持有当前模式：两个 setter 的身份因此恒定，下游 hook（useAgentPanels / useAgentGit /
+  // 布局层）的依赖数组不必跟着模式变；同时它们永远写入「调用时刻」的模式槽，
+  // 不会因为某个闭包创建于切换之前而把状态写进另一个模式的槽里。
+  const modeRef = useRef(mode)
+  modeRef.current = mode
+  // 两个 setter 都保持 useState setter 的完整签名（值 / 更新函数皆可），
+  // 这样 useAgentPanels / useAgentGit / 布局层的调用点一行都不用改。
+  const setTreeOpen = useCallback((v: React.SetStateAction<boolean>) => {
+    setPanelByMode(prev => {
+      const cur = prev[modeRef.current]
+      const nextVal = typeof v === 'function' ? v(cur.treeOpen) : v
+      return nextVal === cur.treeOpen ? prev : { ...prev, [modeRef.current]: { ...cur, treeOpen: nextVal } }
+    })
+  }, [])
+  const setRightPanelMode = useCallback((v: React.SetStateAction<RightPanelMode>) => {
+    setPanelByMode(prev => {
+      const cur = prev[modeRef.current]
+      const nextVal = typeof v === 'function' ? v(cur.rightPanelMode) : v
+      return nextVal === cur.rightPanelMode ? prev : { ...prev, [modeRef.current]: { ...cur, rightPanelMode: nextVal } }
+    })
+  }, [])
+  // 终端挂载保持全局（不按模式分槽）：xterm 实例任意时刻只能 attach 到一个 DOM 容器，
+  // 若随模式卸掉容器会导致实例重挂并回放整段 backlog（界面卡顿）。
   const [terminalMounted, setTerminalMounted] = useState(false)
   useEffect(() => {
     if (rightPanelMode === 'terminal') setTerminalMounted(true)
@@ -316,7 +344,7 @@ export function useAgentUiState({
     modelPickerOpen, setModelPickerOpen, modelPickerRef,
     searchEnabled, searchProvider, searchMenuOpen, setSearchMenuOpen, searchMenuRef,
     closeSearchMenu, applySearchChange,
-    plainChat, setPlainChat,
+    plainChat, mode,
     chatTools, chatToolsMenuOpen, setChatToolsMenuOpen, chatToolsMenuRef, closeChatToolsMenu, toggleChatTool,
     modelCaps, loadModelCapabilities, modelPickerWidth,
     modelLogos, setModelLogoEntry, loadModelLogos,

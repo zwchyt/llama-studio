@@ -43,7 +43,7 @@ function wrapBinaryDocText(name: string, text: string): string {
   return text ? `[${label}: ${name}]\n${text}` : `[${label}: ${name}]（文本提取失败）`
 }
 
-export function useAgentInput() {
+export function useAgentInput({ draftScope = 'default' }: { draftScope?: string } = {}) {
 
   const [input, setInput] = useState('')
 
@@ -53,6 +53,23 @@ export function useAgentInput() {
   const historyIdxRef = useRef<number>(-1)
 
   const [packedInput, setPackedInput] = useState<string | null>(null)
+
+  // ── 输入草稿按作用域隔离（当前传入的是工作区模式：通用 / 编码）──
+  // 切模式时把当前草稿（含已折叠成胶囊的长文本）存回原作用域，再恢复目标作用域的草稿。
+  // 用 layout effect 而不是 useEffect：在同一帧内完成切换，不会先画出旧文本再替换。
+  // scopeRef 记录上一个作用域，effect 因 input 变化重跑时（每次敲字）会立刻早退。
+  const draftsRef = useRef<Record<string, { text: string; packed: string | null }>>({})
+  const scopeRef = useRef(draftScope)
+  useLayoutEffect(() => {
+    const prev = scopeRef.current
+    if (prev === draftScope) return
+    scopeRef.current = draftScope
+    draftsRef.current[prev] = { text: input, packed: packedInput }
+    const next = draftsRef.current[draftScope]
+    setInput(next?.text ?? '')
+    setPackedInput(next?.packed ?? null)
+  }, [draftScope, input, packedInput])
+
   const inputOverflowRef = useRef(false)
   const autoResize = useCallback(() => {
     const el = textareaRef.current

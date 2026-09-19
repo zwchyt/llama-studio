@@ -14,12 +14,14 @@ import { getMessagePreview } from '../utils/text'
 import { useAgentHistoryWindow } from './useAgentHistoryWindow'
 import type { AgentSession } from '../../../../../shared/types'
 
-export function useAgentScroll({ activeSession, streaming, setSelectionPopover, taskCardRef, taskModalOpen }: {
+export function useAgentScroll({ activeSession, streaming, setSelectionPopover, taskCardRef, taskModalOpen, scrollScope = 'default' }: {
   activeSession: AgentSession | null
   streaming: boolean
   setSelectionPopover: (v: { text: string; x: number; y: number } | null) => void
   taskCardRef: React.RefObject<HTMLDivElement | null>
   taskModalOpen: boolean
+  /** 滚动位置的作用域（当前传入工作区模式）：切作用域时保存 / 恢复滚动偏移 */
+  scrollScope?: string
 }) {
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)
@@ -581,6 +583,38 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     atBottomRef.current = true
     setAtBottom(true)
   }, [])
+
+  // ── 滚动位置按作用域隔离（当前传入的是工作区模式：通用 / 编码）──
+  // 切模式时保存当前偏移、恢复目标模式上次的偏移。刻意只写 scrollTop 与跟随标志，
+  // 不参与贴底 / 轨道动画那套状态机；并且只在 scrollScope 真正变化时跑，
+  // 因此对「切换会话」这条既有路径没有任何影响。
+  const scrollTopByScopeRef = useRef<Record<string, number>>({})
+  const scrollScopeRef = useRef(scrollScope)
+  useLayoutEffect(() => {
+    const prev = scrollScopeRef.current
+    if (prev === scrollScope) return
+    scrollScopeRef.current = scrollScope
+    const box0 = chatScrollRef.current
+    if (box0) scrollTopByScopeRef.current[prev] = box0.scrollTop
+    const target = scrollTopByScopeRef.current[scrollScope] ?? 0
+    const restore = () => {
+      const box = chatScrollRef.current
+      if (!box) return
+      const max = Math.max(0, box.scrollHeight - box.clientHeight)
+      const top = Math.min(target, max)
+      box.scrollTop = top
+      lastScrollTopRef.current = top
+      const atEnd = max - top <= FOLLOW_THRESHOLD
+      atBottomRef.current = atEnd
+      setAtBottom(atEnd)
+      // 恢复的是「历史位置」时关掉跟随，否则会被上面的贴底 layout effect 立刻拽回底部。
+      followingRef.current = atEnd
+    }
+    restore()
+    // 消息列表（含虚拟化窗口）首帧未必已算出真实高度，下一帧再对齐一次
+    const raf = requestAnimationFrame(restore)
+    return () => cancelAnimationFrame(raf)
+  }, [scrollScope])
 
   return {
     historyStartIndex, loadEarlierMessages,

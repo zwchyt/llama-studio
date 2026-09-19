@@ -33,8 +33,7 @@ import {useAgentModelControl} from './agent-code/hooks/useAgentModelControl'
 // ── agent-code 拆分模块（批次 5：agent-view 布局）──
 import {AgentCodeViewLayout} from './agent-code/agent-view/AgentCodeViewLayout'
 
-import { uniqueId } from './agent-code/utils/ids'
-import type { AgentMessage, AgentSession, CardState } from '../../../shared/types'
+import type { AgentMessage, CardState } from '../../../shared/types'
 // chat.css = CodeBlock 组件的全局基础样式（.chat-code-* 与 .hljs* 主题），模型中心的 README 也靠它。
 // 必须早于 agent-code.css 引入：Agent Code 里那张表被同名的作用域规则覆盖，顺序反过来会改变胜出方。
 import '../styles/chat.css'
@@ -95,7 +94,7 @@ export default function AgentCodeView() {
   const {
     input, setInput, textareaRef,
     autoResize, insertAtCursor, replaceRange, setSelectionPopover,
-  } = (inputDomain = useAgentInput())
+  } = (inputDomain = useAgentInput({ draftScope: projectsDomain.mode }))
 
   // ── 流式运行态与跨域共享 ref（见 agent-code/hooks/useAgentRunState.ts）──
   let run!: ReturnType<typeof useAgentRunState>
@@ -125,6 +124,8 @@ export default function AgentCodeView() {
     editingMsgId, setEditingMsgId, editDraft, setEditDraft,
   } = (ui = useAgentUiState({
     agentCards, loading, piReadyRef,
+    // 模式由所属工作区决定（不再挂在会话上），所以这里传的是 projects 域的模式
+    mode: projectsDomain.mode,
     activeProjectId, activeSessionId, activeSession, updateSessionInProject,
   }))
 
@@ -134,7 +135,7 @@ export default function AgentCodeView() {
   // ── 预览标签页与内容读取（自持 state 与回调，见 agent-code/hooks/useAgentPreviewTabs.ts）──
   // 整个域对象同时透传给 AgentPreviewSlot，避免在调用处铺开 30 余个 props。
   let previewDomain!: ReturnType<typeof useAgentPreviewTabs>
-  previewDomain = useAgentPreviewTabs({ setRightPanelMode })
+  previewDomain = useAgentPreviewTabs({ setRightPanelMode, setTreeOpen })
 
   // 通用弹窗关闭：点击弹窗/触发按钮外部 或 Escape 键时关闭。
   // 实现见 utils/usePopoverDismiss（支持 btnRef / popRef / popSelector 三种判定，
@@ -165,6 +166,7 @@ export default function AgentCodeView() {
   let scroll!: ReturnType<typeof useAgentScroll>
   scroll = useAgentScroll({
     activeSession, streaming, setSelectionPopover, taskCardRef, taskModalOpen,
+    scrollScope: projectsDomain.mode,
   })
 
   // ── Git 变更 / 分支（自持 state 与 ref，见 agent-code/hooks/useAgentGit.ts）──
@@ -181,17 +183,16 @@ export default function AgentCodeView() {
   // 不能直接写 store 的 agentProjects：本组件常驻挂载，projects 状态只在首次挂载时读一次
   // store，之后再写也传不进来。所以改成投递一条待处理指令、由这里自己建会话并切过去。
   // 订阅 pendingPlainChat 是为了让写入能触发重渲染，否则 effect 不会重新执行。
+  // 注意新会话归属**通用工作区**（不是当前项目）：所以走 openNewChatSession，
+  // 它会把模式一并切到通用——普通聊天不会被塞进编码项目里变成编码上下文。
   const pendingPlainChat = useStore(s => s.pendingPlainChat)
   useEffect(() => {
     if (!pendingPlainChat) return
     useStore.getState().setPendingPlainChat(null)
-    // 当前会话已经是「还没说过话的纯聊天会话」就直接复用：否则连点几次按钮会堆出一串空会话
-    if (activeSession && activeSession.plainChat && activeSession.messages.length === 0) return
-    const sid = uniqueId('sess')
-    const sess: AgentSession = { id: sid, title: pendingPlainChat.title || '纯聊天', messages: [], plainChat: true }
-    setProjects(prev => prev.map(p => p.id === activeProjectId ? { ...p, sessions: [...p.sessions, sess] } : p))
-    setActiveSessionId(sid)
-  }, [pendingPlainChat, activeProjectId, activeSession, setProjects, setActiveSessionId])
+    // 当前已经是「通用模式下还没说过话的会话」就直接复用：否则连点几次按钮会堆出一串空会话
+    if (projectsDomain.mode === 'chat' && activeSession && activeSession.messages.length === 0) return
+    projectsDomain.openNewChatSession(pendingPlainChat.title)
+  }, [pendingPlainChat, projectsDomain, activeSession])
 
   // ── 视图副作用：侧栏可见性 / 跳行高亮 / 输入区测高（见 agent-code/hooks/useAgentViewEffects.ts）──
   useAgentViewEffects({ preview: previewDomain, ui, scroll, chatInputAreaRef })

@@ -1,5 +1,6 @@
 import { createWithEqualityFn } from 'zustand/traditional'
 import type { AgentMessage, AgentProject } from '../../../shared/types'
+import { isChatWorkspace } from '../../../shared/types'
 import { shallow } from 'zustand/shallow'
 import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, AppUpdateInfo, RunningStatus, ModelMetrics, ModelDownloadPhase, HfDownloadPhase } from '../../../shared/types'
 interface CardState {
@@ -112,8 +113,14 @@ function markDirty(projects: AgentProject[]): void {
 }
 function scheduleSaveAgentProjects(p: AgentProject[]): void {
   if (saveAgentProjectsTimer) clearTimeout(saveAgentProjectsTimer)
-  // 空占位项目（无会话、无工作目录）不落盘，但空数组需要落盘以触发 GC 清理已删除项目的残留文件
-  if (p.length > 0 && p.every(proj => proj.sessions.length === 0 && !proj.workspaceDir)) return
+  // 空占位项目（无会话、无工作目录）不落盘，但空数组需要落盘以触发 GC 清理已删除项目的残留文件。
+  // 通用工作区是本地合成的容器（可能只带一条自动创建的空会话），同样不算「有内容」——
+  // 否则全新安装时会在磁盘存档尚未加载完成前就把占位数据写盘，把用户的真实项目覆盖掉。
+  const isEmptyShell = (proj: AgentProject): boolean =>
+    isChatWorkspace(proj)
+      ? proj.sessions.every(s => s.messages.length === 0)
+      : (proj.sessions.length === 0 && !proj.workspaceDir)
+  if (p.length > 0 && p.every(isEmptyShell)) return
   if (useStore.getState().agentPhase != null) {
     // 生成中：只记最新 pending，不写盘（等流式结束统一补存）
     pendingProjects = p

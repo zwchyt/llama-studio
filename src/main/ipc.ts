@@ -7180,6 +7180,10 @@ export function registerIpcHandlers(): void {
     // 项目级设置随每个会话文件冗余存储（项目本身无独立文件，重启后靠这里还原）
     knowledgeBaseId?: string
     systemPrompt?: string
+    // 会话级状态：通用模式的工具开关与压缩摘要。不落盘的话重启后会静默复位 / 丢失。
+    // 注意工作区的「模式」（通用 / 编码）不在这里存：通用工作区靠 CHAT_WORKSPACE_ID 哨兵识别。
+    chatTools?: string[]
+    memory?: AgentSession['memory']
   }
 
   function ensureAgentProjectsDir(): void {
@@ -7260,7 +7264,12 @@ export function registerIpcHandlers(): void {
         // 项目级设置：取该组会话文件里最近一次写入的值（save 侧每个文件都冗余了同一份）
         knowledgeBaseId: [...sessList].reverse().find(s => typeof s.knowledgeBaseId === 'string')?.knowledgeBaseId,
         systemPrompt: [...sessList].reverse().find(s => typeof s.systemPrompt === 'string')?.systemPrompt,
-        sessions: sessList.map(s => ({ id: s.id, title: s.title, messages: s.messages })),
+        sessions: sessList.map(s => ({
+          id: s.id, title: s.title, messages: s.messages,
+          // 会话级状态一并还原（通用模式的工具开关 / 压缩摘要）
+          ...(s.chatTools ? { chatTools: s.chatTools } : {}),
+          ...(s.memory ? { memory: s.memory } : {}),
+        })),
       })
       orderInfo.push({ id: projectId, minCreated: Math.min(...sessList.map(s => s.createdAt)) })
     }
@@ -7310,6 +7319,8 @@ export function registerIpcHandlers(): void {
             messages: s.messages || [],
             knowledgeBaseId: p.knowledgeBaseId,
             systemPrompt: p.systemPrompt,
+            ...(s.chatTools ? { chatTools: s.chatTools } : {}),
+            ...(s.memory ? { memory: s.memory } : {}),
           }
           await fsPromises.writeFile(existingPath, JSON.stringify(file, null, 2))
         }

@@ -21,6 +21,7 @@ import { useAgentTerminalStore } from '../../../store/terminalStore'
 import { useStore } from '../../../store/useStore'
 import { GIT_DIFF_TAB } from '../utils/constants'
 import { AgentMarkdown } from '../agent-message'
+import { PdfViewer } from './PdfViewer'
 import type { useAgentPreviewTabs } from '../hooks/useAgentPreviewTabs'
 import type { AgentProject } from '../../../../../shared/types'
 
@@ -37,6 +38,9 @@ export type AgentPreviewSlotProps = {
   activeProject: AgentProject
   rightPanelMode: RightPanelMode
   treeOpen: boolean
+  /** 通用模式（由所属工作区的 mode 推导）：文件树列整列不出现——它是编码工作台的东西。
+      预览 / 浏览器 / 终端保留（顶栏仍能进入），所以只收树，不整块收掉右侧面板。 */
+  plainChat: boolean
   rightResizing: boolean
   previewResizing: boolean
   startRightResize: (e: React.PointerEvent) => void
@@ -69,7 +73,7 @@ export type AgentPreviewSlotProps = {
 }
 
 export function AgentPreviewSlot({
-  preview, activeProject, rightPanelMode, treeOpen, rightResizing, previewResizing,
+  preview, activeProject, rightPanelMode, treeOpen, plainChat, rightResizing, previewResizing,
   startRightResize, startPreviewResize, previewHandleIconRef, previewPanelHandleIconRef,
   terminalMounted, handlePreviewMouseDown, handlePreviewMouseUp,
   openFileAtLine, addCodeSnippet, insertAtCursor,
@@ -88,8 +92,14 @@ export function AgentPreviewSlot({
     isPreviewHtml, isPreviewMarkdown, buildHtmlSrcDoc,
     openPreview, savePreviewFile, closeTab, closeOtherTabs, closeAllTabs,
   } = preview
+  // 文件树列在「非 files 视图」与通用模式下都不出现，两种情况都算「树已收起」。
+  const treeHidden = plainChat || rightPanelMode !== 'files'
+  // 树收起后若又没有打开的预览标签、也不在浏览器/终端/变更模式，右侧槽里其实空无一物：
+  // 此时整槽收起，否则会剩一条约 19px 的边框空条挂在右缘（树是 display:none，
+  // 但 collapser 自身的 border + margin 仍在）。
+  const slotEmpty = plainChat && rightPanelMode === 'files' && openTabs.length === 0
   return (
-    <div className={`agent-code-right-slot${rightPanelMode !== 'files' ? ' panel-resizable' : ''}`}>
+    <div className={`agent-code-right-slot${rightPanelMode !== 'files' || slotEmpty ? ' panel-resizable' : ''}`}>
       <div
         className={`agent-code-right-edge-handle${rightResizing ? ' agent-code-resize-handle--active' : ''}${rightPanelMode === 'files' || !treeOpen ? ' hidden' : ''}`}
         onPointerDown={startRightResize}
@@ -106,9 +116,9 @@ export function AgentPreviewSlot({
       >
         <EllipsisVerticalIcon ref={previewPanelHandleIconRef} size={16} className="nav-animate-icon agent-resize-handle-icon" />
       </div>
-      <div className={`agent-code-right-collapser ${rightPanelMode !== 'files' ? 'panel-resizable' : ''} ${treeOpen ? '' : 'collapsed'}`}>
-        <div className={`agent-code-right-body${rightPanelMode !== 'files' ? ' tree-collapsed' : ''}`}>
-          <div className={`agent-code-tree${rightPanelMode !== 'files' ? ' hidden' : ''}`}>
+      <div className={`agent-code-right-collapser ${rightPanelMode !== 'files' ? 'panel-resizable' : ''} ${treeOpen && !slotEmpty ? '' : 'collapsed'}`}>
+        <div className={`agent-code-right-body${treeHidden ? ' tree-collapsed' : ''}`}>
+          <div className={`agent-code-tree${treeHidden ? ' hidden' : ''}`}>
             <AgentFileTree workspaceDir={activeProject.workspaceDir} onPreviewFile={openPreview} onSendFileName={insertAtCursor} onFilesChanged={onWorkspaceFilesChanged} />
           </div>
           <div className={`agent-browser-wrap ${rightPanelMode === 'browser' ? '' : 'hidden'}`}>
@@ -198,8 +208,9 @@ export function AgentPreviewSlot({
                     </button>
                   )}
                   {/* 源码预览编辑：进入/退出编辑态；保存写回文件。
-                    Markdown 在「源码」模式下同样允许编辑（渲染态不可直接编辑）。 */}
-                  {!isPreviewHtml && (!isPreviewMarkdown || mdViewMode === 'source') && activeTab && activeTabPath !== GIT_DIFF_TAB && (
+                    Markdown 在「源码」模式下同样允许编辑（渲染态不可直接编辑）。
+                    PDF / DOCX 不给编辑：预览的是抽取文本，写回会毁掉原文件（保存处另有兜底）。 */}
+                  {!isPreviewHtml && (!isPreviewMarkdown || mdViewMode === 'source') && activeTab && !activeTab.isBinaryDoc && activeTabPath !== GIT_DIFF_TAB && (
                     previewEditing ? (
                       <>
                         <button className="btn btn-xs ac-icon-btn agent-code-preview-save" onClick={() => { if (previewDraft !== null) savePreviewFile(previewDraft) }} disabled={previewDraft === null || previewDraft === activeTab.content}>
@@ -244,6 +255,12 @@ export function AgentPreviewSlot({
                           ? <div className="agent-code-preview-image"><img src={activeTab.imageDataUrl} alt={activeTab.name} /></div>
                           : <div className="agent-code-preview-error">无法预览该图片</div>
                       )
+                        : activeTab.isPdf ? (
+                          // 版面渲染：pdf.js 逐页画 canvas（key 绑 path，切标签即销毁旧文档）
+                          activeTab.pdfData
+                            ? <PdfViewer key={activeTab.path} data={activeTab.pdfData} />
+                            : <div className="agent-code-preview-error">无法预览该 PDF</div>
+                        )
                         : isPreviewHtml && htmlViewMode === 'preview' ? (
                           <>
                             <iframe

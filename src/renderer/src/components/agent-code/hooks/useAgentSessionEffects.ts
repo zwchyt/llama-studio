@@ -41,7 +41,7 @@ export function useAgentSessionEffects({
   scroll: ReturnType<typeof useAgentScroll>
 }) {
   const {
-    projects, setProjects, setActiveProjectId, setActiveSessionId,
+    projects, hydrateProjects,
     activeProject, activeProjectId, activeSessionId,
   } = projectsDomain
   const { piReadyRef } = run
@@ -61,29 +61,32 @@ export function useAgentSessionEffects({
   const milestoneNotedRef = useRef('')
   const prevSessionRef = useRef<{ pid: string; sid: string; dir: string } | null>(null)
 
-  // Persist to store on every change（跳过纯占位项目，防止干扰 seededRef 逻辑）
+  // Persist to store on every change（跳过纯占位项目与通用工作区里的空会话，防止干扰 seededRef 逻辑）
   useEffect(() => {
-    const hasRealContent = projects.some(p => p.sessions.length > 0 || p.workspaceDir)
-    if (hasRealContent) {
-      setAgentProjects(projects)
-    } else {
-      setAgentProjects([])
-    }
+    // 只有出现真实内容（工作区目录，或含消息的会话）才回写 store。
+    // 刻意不推空数组：store 初值本来就是 []，推一次空数组会触发一次「无作用域的全量 GC」，
+    // 而启动瞬间磁盘存档可能还没加载完——那一下会把用户已有的会话文件全部删掉。
+    // 已删除项目/会话的残留文件由 markDirty 的「项目被删除」分支在下一次真实保存时带走。
+    const hasRealContent = projects.some(p => p.workspaceDir || p.sessions.some(s => s.messages.length > 0))
+    if (hasRealContent) setAgentProjects(projects)
   }, [projects, setAgentProjects])
 
-  // 应用启动后，store 从磁盘载入历史项目时，把本地状态同步为已持久化的内容（仅一次）
+  // 应用启动后，store 从磁盘载入历史项目时，把本地状态同步为已持久化的内容（仅一次）。
+  // 走 hydrateProjects 而不是裸 setProjects：它顺带做旧存档迁移（补 mode / 把带 plainChat 的
+  // 会话迁进通用工作区）并按模式重建两个活动指针。
   useEffect(() => {
     if (seededRef.current) return
-    if (storedProjects.length > 0) {
-      // 仅当 loaded 数据含实际内容时才应用 + 加锁，避免空占位项目提前锁死
-      const hasReal = storedProjects.some(p => p.sessions.length > 0 || p.workspaceDir)
-      if (!hasReal) return
-      setProjects(storedProjects)
-      setActiveProjectId(storedProjects[0]!.id)
-      setActiveSessionId(storedProjects[0]!.sessions[0]?.id || '')
-      seededRef.current = true
-    }
-  }, [storedProjects])
+    if (storedProjects.length === 0) return
+    const hasReal = (list: AgentProject[]): boolean =>
+      list.some(p => p.workspaceDir || p.sessions.some(s => s.messages.length > 0))
+    // 仅当 loaded 数据含实际内容时才应用 + 加锁，避免空占位项目提前锁死
+    if (!hasReal(storedProjects)) return
+    // 本地已经产生真实内容了（用户已经开始用）就不要再被存档覆盖：
+    // 那样会把活动会话指针重置回每个模式的第一条，正在聊的会话会被切走。
+    if (hasReal(projects)) { seededRef.current = true; return }
+    hydrateProjects(storedProjects)
+    seededRef.current = true
+  }, [storedProjects, projects, hydrateProjects])
 
   // ── pi 引擎：切换会话时释放旧 pi session（下次进入自动重建并注入历史）──
   useEffect(() => {

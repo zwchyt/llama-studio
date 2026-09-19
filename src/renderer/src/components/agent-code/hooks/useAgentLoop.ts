@@ -37,6 +37,7 @@ import { parseSlashCommand, findCommand, expandCommandTemplate } from '../../../
 import { newMsgId, uniqueId } from '../utils/ids'
 import { MIN_EXEC_DISPLAY_MS, KEEP_RECENT_TURNS } from '../utils/constants'
 import type { AgentMessage, AgentSession, Attachment, CardState, ThinkingLevel, TodoUpdate } from '../../../../../shared/types'
+import { projectMode } from '../../../../../shared/types'
 import type { useAgentInput } from './useAgentInput'
 import type { useAgentProjects } from './useAgentProjects'
 
@@ -52,9 +53,9 @@ export type RunPiTurn = (
     approveWriteEdit?: boolean
     knowledgeBaseId?: string
     memory?: AgentSession['memory']
-    /** 纯聊天模式：不注册工具、不注入工具/图表指引（会话级开关，见 AgentSession.plainChat） */
+    /** 通用模式：不注册工具、不注入工具/图表指引。由所属工作区模式推导（见 projectMode） */
     plainChat?: boolean
-    /** 纯聊天模式下启用的工具（只认原生聊天那四个） */
+    /** 通用模式下启用的工具（只认原生聊天那四个） */
     chatTools?: string[]
   }
 ) => Promise<{ errored: boolean; aborted: boolean }>
@@ -819,8 +820,9 @@ export function useAgentLoop({
         approveWriteEdit: !!activeProject.approveWriteEdit,
         knowledgeBaseId: activeProject.knowledgeBaseId,
         memory: memoryForTurn,
-        // 纯聊天开关与它启用的工具集都是会话级字段：这里实时读，变化后由 runPiTurn 的守卫重建 pi 会话
-        plainChat: activeSession?.plainChat === true,
+        // 模式由所属工作区决定（不是会话字段）：切工作区即换模式，同一会话不会被改造成另一种模式。
+        // 工具集是会话级字段，这里实时读；变化后由 runPiTurn 的 modeSig 守卫重建 pi 会话。
+        plainChat: projectMode(activeProject) === 'chat',
         chatTools: activeSession?.chatTools,
       })
     } catch (e) {

@@ -28,13 +28,18 @@ import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { CODE_EXT, MD_EXT, IMG_EXT } from '../utils/fileExt'
 import { renderMathInHtml } from '../utils/mathHtml'
 import { dirName, pathDir } from '../utils/paths'
+import { extractTextFromBuffer, isBinaryDoc } from '../../../utils/extractText'
 import type { PreviewTab } from '../types'
 import type { UiAnnotation } from '../../AgentBrowser'
 
-export function useAgentPreviewTabs({ setRightPanelMode }: {
+export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
   setRightPanelMode: React.Dispatch<React.SetStateAction<'files' | 'browser' | 'terminal' | 'diff'>>
+  /** 打开文件时把右侧面板展开（通用模式默认收起，否则预览不可见） */
+  setTreeOpen: React.Dispatch<React.SetStateAction<boolean>>
 }) {
   const PREVIEW_MAX_BYTES = 128 * 1024
+  // PDF / DOCX 要在渲染进程整体解码，给原始体积留个上限（base64 约 4/3 倍 → 约 48MB 文件）
+  const BINARY_DOC_MAX_B64 = 64 * 1024 * 1024
   // PreviewTab 类型已抽至 agent-code/types
   const [openTabs, setOpenTabs] = useState<PreviewTab[]>([])
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null)
@@ -66,6 +71,9 @@ export function useAgentPreviewTabs({ setRightPanelMode }: {
   const savePreviewFile = useCallback(async (content: string) => {
     const tab = openTabsRef.current.find(t => t.path === activeTabPath) || null
     if (!tab || tab.path.startsWith('pi-undo:')) { notify('当前标签不支持保存', 'error'); return }
+    // 二进制文档的 content 是抽取出的文本而非文件本体，写回等于用一段文本盖掉整个 PDF/DOCX。
+    // 编辑按钮已按 isBinaryDoc 隐藏，这里兜住 Monaco 的 Ctrl+S 那条路。
+    if (tab.isBinaryDoc) { notify('PDF / DOCX 预览的是抽取文本，不能写回原文件', 'error'); return }
     try {
       const res = await window.api.writeFile(tab.path, content)
       if (!res.success) { notify('保存失败：' + (res.error || '未知错误'), 'error'); return }
@@ -174,12 +182,19 @@ export function useAgentPreviewTabs({ setRightPanelMode }: {
     const name = dirName(path)
     const ext = (/\.([a-z0-9]+)$/i.exec(path)?.[1] || '').toLowerCase()
     const isImage = IMG_EXT.has(ext)
-    // 切回文件预览模式（若当前是浏览器）
+    // PDF 走版面渲染（pdf.js 画页面）；DOCX 只有文本抽取一条路。两者都不能当文本读：
+    // 主进程 readFile 的 25k token 预算守卫会把二进制残骸估成「内容过多…请使用 Grep」，
+    // 那是给 agent 工具看的建议语，对预览毫无意义（src/main/ipc.ts 的 MAX_READ_TOKENS）。
+    const isPdf = !isImage && /\.pdf$/i.test(name)
+    const binaryDoc = !isImage && !isPdf && isBinaryDoc(name)
+    // 切回文件预览模式（若当前是浏览器），并把右侧面板展开——
+    // 通用模式的右槽默认收起（没有文件树），不主动展开的话「打开文件」看起来毫无反应。
     setRightPanelMode('files')
+    setTreeOpen(true)
     // 已打开则仅切换到该标签，不重复读取
     setOpenTabs(prev => {
       if (prev.some(t => t.path === path)) return prev
-      return [...prev, { path, name, content: null, lines: null, truncated: false, loading: true, error: null, isImage, imageDataUrl: null }]
+      return [...prev, { path, name, content: null, lines: null, truncated: false, loading: true, error: null, isImage, imageDataUrl: null, isBinaryDoc: isPdf || binaryDoc, isPdf, pdfData: null }]
     })
     setActiveTabPath(path)
     // 图片：读为 data URL 直接渲染 <img>，不当文本读（二进制会被拒）
@@ -189,6 +204,39 @@ export function useAgentPreviewTabs({ setRightPanelMode }: {
         ...t, loading: false, isImage: true,
         error: r.success ? null : (r.error || '读取失败'),
         imageDataUrl: r.success ? (r.dataUrl ?? null) : null,
+      } : t))
+      return
+    }
+    if (isPdf || binaryDoc) {
+      const r = await window.api.readFileBase64(path)
+      const base64 = r.dataUrl?.split(',')[1] ?? ''
+      if (!r.success || !base64) {
+        setOpenTabs(prev => prev.map(t => t.path === path ? { ...t, loading: false, error: r.error || '读取失败' } : t))
+        return
+      }
+      // read-file-base64 没有体积上限，而版面渲染要把整个 PDF 待在内存里解码：
+      // 超过约 48MB（base64 后 64M 字符）直接拒，免得主进程 readFileSync 与解码一起把界面冻住
+      if (base64.length > BINARY_DOC_MAX_B64) {
+        setOpenTabs(prev => prev.map(t => t.path === path ? { ...t, loading: false, error: '文件过大（超过约 48MB），预览里不解码' } : t))
+        return
+      }
+      const bin = atob(base64)
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+      // PDF：字节交给 PdfViewer 逐页画 canvas（它自己会复制一份再交给 pdf.js）
+      if (isPdf) {
+        setOpenTabs(prev => prev.map(t => t.path === path ? { ...t, loading: false, pdfData: bytes } : t))
+        return
+      }
+      // DOCX：抽取纯文本，只读展示
+      const text = await extractTextFromBuffer(name, bytes.buffer as ArrayBuffer)
+      setOpenTabs(prev => prev.map(t => t.path === path ? {
+        ...t,
+        loading: false,
+        // 抽不出任何文本时给一句能看懂的话，别把解析库的异常抛给人看
+        content: text || null,
+        error: text ? null : '未能抽取到文本：文档可能是扫描件或图片型页面',
+        lines: text ? text.split('\n').length : null,
       } : t))
       return
     }

@@ -56,6 +56,11 @@ export interface PreviewTab {
   error: string | null
   isImage?: boolean
   imageDataUrl?: string | null
+  /** PDF / DOCX：禁止编辑与写回——把文本存回 .pdf 会毁掉原文件。 */
+  isBinaryDoc?: boolean
+  /** PDF：版面渲染（pdf.js 逐页画 canvas），pdfData 是原始字节，只在内存里，不落会话 JSON */
+  isPdf?: boolean
+  pdfData?: Uint8Array | null
 }
 
 // ── 输入区引用的代码片段（预览区框选 → 附加到输入框）──

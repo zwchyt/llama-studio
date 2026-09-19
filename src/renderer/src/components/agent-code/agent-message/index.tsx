@@ -12,10 +12,11 @@
 
 import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { Brain, ChevronUp, AlignLeft, Play, Square, Trash2, Volume2 } from 'lucide-react'
-import { ChevronRightIcon, CircleStopIcon, RefreshCwIcon, CopyIcon } from '@animateicons/react/lucide'
+import { ChevronRightIcon, CircleStopIcon, FileTextIcon, RefreshCwIcon, CopyIcon } from '@animateicons/react/lucide'
 import { useStore } from '../../../store/useStore'
 import { useCollapseAnimation, COLLAPSE_DURATION_MS } from '../../../utils/useCollapseAnimation'
 import { ThinkTextContent } from './ThinkTextContent'
+import { AttachmentTextPreview } from './AttachmentTextPreview'
 import { Markdown } from '../../../markdown/markstream'
 import { MermaidCard, parseContentToBlocks } from '../../../mermaid'
 import { ChartCard } from '../../../recharts'
@@ -107,11 +108,16 @@ const USER_FOLD_CHARS = 1000
 export const UserMessageEntry = React.memo(function UserMessageEntry({ content, packedText, attachments }: { content: string; packedText?: string; attachments?: Attachment[] }) {
   const [expanded, setExpanded] = useState(false)
   const [packedOpen, setPackedOpen] = useState(false)
-  // 图片附件放大预览（点击缩略图 → 全屏）。仅纯聊天模式下调用方会传 attachments，
-  // 工作台模式不传 → 这里自然什么都不渲染，不需要额外分支。
+  // 图片附件放大预览（点击缩略图 → 全屏）
   const [zoom, setZoom] = useState<string | null>(null)
+  // 文件附件（PDF / DOCX / txt / 代码…）点开看抽取文本——即模型真正读到的那段
+  const [previewAtt, setPreviewAtt] = useState<Attachment | null>(null)
   const images = useMemo(
     () => (attachments ?? []).filter(a => a.type === 'image' && (a.fullDataUrl || a.dataUrl)),
+    [attachments]
+  )
+  const files = useMemo(
+    () => (attachments ?? []).filter(a => a.type === 'file'),
     [attachments]
   )
   const imageNode = images.length > 0 ? (
@@ -132,6 +138,31 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
     <div className="user-msg-lightbox" onClick={() => setZoom(null)} title="点击任意处关闭">
       <img src={zoom} alt="" />
     </div>
+  ) : null
+  const fileNode = files.length > 0 ? (
+    <div className="user-msg-files">
+      {files.map((a, i) => (
+        <button
+          type="button"
+          key={`${a.name}-${i}`}
+          className="user-msg-file"
+          title={`${a.name}（点击预览抽取到的文本）`}
+          onClick={() => setPreviewAtt(a)}
+        >
+          <FileTextIcon size={12} />
+          <span className="user-msg-file-name">{a.name}</span>
+        </button>
+      ))}
+    </div>
+  ) : null
+  // 附件区统一出口：图片缩略图 + 文件卡片 + 两个浮层（图片全屏 / 附件文本预览）
+  const attachmentNode = images.length > 0 || files.length > 0 ? (
+    <>
+      {imageNode}
+      {fileNode}
+      {lightboxNode}
+      {previewAtt && <AttachmentTextPreview att={previewAtt} onClose={() => setPreviewAtt(null)} />}
+    </>
   ) : null
   const text = typeof content === 'string' ? content : String(content ?? '')
   // 打包段是 outgoing 组装时的第一个 part（已 trim），content 一定以它开头；
@@ -170,8 +201,7 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
             <div className="user-plain-text">{rest}</div>
           </div>
         ) : null}
-        {imageNode}
-        {lightboxNode}
+        {attachmentNode}
       </>
     )
   }
@@ -189,14 +219,15 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
           <AlignLeft size={12} className="chat-input-fold-chip-icon" />
           <span className="chat-input-fold-chip-label">已折叠 {lineCount} 行</span>
         </div>
-        {imageNode}
-        {lightboxNode}
+        {attachmentNode}
       </>
     )
   }
 
   return (
     <>
+    {/* 只发附件没写文字时正文为空：不渲染空气泡，只留下面的附件区 */}
+    {text.trim() ? (
     <div className="chat-msg-bubble chat-msg-markdown">
       <div className="user-plain-text">{text}</div>
       {foldable ? (
@@ -205,8 +236,8 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
         </button>
       ) : null}
     </div>
-    {imageNode}
-    {lightboxNode}
+    ) : null}
+    {attachmentNode}
     </>
   )
 })

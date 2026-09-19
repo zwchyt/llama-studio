@@ -21,6 +21,7 @@ import { parseThinkSegments } from '../agent-message'
 import { uniqueId } from '../utils/ids'
 import { dirName } from '../utils/paths'
 import type { AgentMessage, AgentProject, AgentSession, CardState } from '../../../../../shared/types'
+import { projectMode } from '../../../../../shared/types'
 import type { useAgentProjects } from './useAgentProjects'
 import type { useAgentGit } from './useAgentGit'
 import type { AgentMsgRowActions } from '../types'
@@ -155,7 +156,8 @@ export function useAgentMessageActions({
       workspaceDir: activeProject.workspaceDir,
       approveWriteEdit: !!activeProject.approveWriteEdit,
       knowledgeBaseId: activeProject.knowledgeBaseId,
-      plainChat: activeSession.plainChat === true,
+      // 模式由所属工作区决定（不是会话字段）
+      plainChat: projectMode(activeProject) === 'chat',
       chatTools: activeSession.chatTools,
     })
     rollbackIfFailed(r)

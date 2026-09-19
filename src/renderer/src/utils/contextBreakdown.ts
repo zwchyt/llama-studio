@@ -31,9 +31,10 @@ export function estimateContextMeasured(
   const covered = new Set(session?.memory?.coveredMsgIds ?? [])
 
   // 系统提示 / 模型信息：内置工具指引（主进程注入系统提示）+ 项目自定义系统提示 + 跨会话项目记忆。
-  // 纯聊天模式主进程不注入内置指引（也不注册任何工具），这里必须跟着归零——
+  // 通用模式（工作区 mode === 'chat'）主进程不注入内置指引（也不注册任何工具），这里必须跟着归零——
   // 否则面板会显示一份实际没发出去的系统提示占用，数字对不上。
-  let systemTok = session?.plainChat ? 0 : estimateTextTokens(AGENT_SYSTEM_GUIDANCE.join('\n\n'))
+  // 注意模式读的是 project.mode 而不是 session.plainChat：模式归属工作区，会话层已无该字段。
+  let systemTok = project?.mode === 'chat' ? 0 : estimateTextTokens(AGENT_SYSTEM_GUIDANCE.join('\n\n'))
   if (project) {
     systemTok += estimateTextTokens(project.systemPrompt ?? '')
     systemTok += estimateTextTokens(project.memory?.notes ?? '')

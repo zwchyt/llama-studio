@@ -19,7 +19,7 @@
 | `agent-diff/` | Diff：`computeSplitDiff` / `getEditDiffStat` / `ToolEditDiff`（行数超 `DIFF_WINDOW_ROWS` 走行窗口） |
 | `agent-panels/` | 面板：`AuditPanel` / `MemoryPanel` / `DebugPanel` |
 | `agent-task/` | 待办视觉：`RollDigit` / `TaskCheckIcon` / `TaskPieIcon` |
-| `agent-session/` | 会话视图：`AgentSessionSidebar`（项目 / 会话树） |
+| `agent-session/` | 会话视图：`AgentSessionSidebar`（工作区切换 通用/编码 + 聊天列表 / 项目会话树） |
 | `agent-preview/` | 预览视图：`AgentPreviewSlot`（文件树 / 浏览器 / 终端 / 变更 / 预览） |
 | `agent-input/` | 输入视图：`AgentInputArea`（输入框 / 附件 / 补全浮层 / 状态栏） |
 
@@ -39,7 +39,7 @@
 
 | Hook | 职责 |
 | --- | --- |
-| `hooks/useAgentProjects` | 项目 / 会话列表状态与增删改 |
+| `hooks/useAgentProjects` | 工作区（项目）/ 会话列表状态与增删改；**模式（通用 / 编码）归属工作区**，每模式独立的可见列表与活动指针 |
 | `hooks/useAgentInput` | 输入域：正文 / `textareaRef` / 打包 chip / 附件 / 引用胶囊 / 代码片段 / 历史回溯 / 选区浮层 |
 | `hooks/useAgentRunState` | 流式运行态（loading / streaming / 思考等级 / 队列）与跨域共享 ref |
 | `hooks/useAgentMic` | 麦克风语音输入 |

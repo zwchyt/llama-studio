@@ -263,18 +263,86 @@ export type AgentSegment =
     只作用于纯聊天模式；工作台模式仍走主进程里写死的那套白名单，两边互不干扰。 */
 export const PLAIN_CHAT_TOOL_NAMES = ['get_datetime', 'web_search', 'fetch_webpage', 'knowledge_search'] as const
 
+/** ── 工作区模式（通用 / 编码）──
+    模式归属「工作区」（AgentProject），不归属会话：会话永远跟着自己所属的工作区走。
+    因此不存在「同一个会话在两种模式间来回变」——切模式 = 切工作区 + 切会话列表，
+    已有会话的上下文不受任何影响。
+      · 'code' = 编码工作台：真实目录、文件树、终端、变更、审计、轨迹…
+      · 'chat' = 通用聊天：没有工作区概念，只有一份扁平的聊天历史。 */
+export type AgentMode = 'code' | 'chat'
+
+/** 通用模式的唯一工作区哨兵 id。它是一条「伪项目」——workspaceDir 恒为空、不参与
+    git / 文件树 / 工作区同步，存在的唯一目的是把普通聊天会话挂进现有的
+    project → sessions 结构里，避免为通用模式另起一套平行的数据结构。 */
+export const CHAT_WORKSPACE_ID = '__agent_chat_workspace__'
+
+/** 是否为通用工作区（伪项目） */
+export function isChatWorkspace(p: Pick<AgentProject, 'id'>): boolean {
+  return p.id === CHAT_WORKSPACE_ID
+}
+
+/** 取工作区模式。两道判定，缺一不可：
+    ① 显式的 mode 字段（内存态、以及未来可能落盘的形态）；
+    ② 哨兵 id 兜底 —— 磁盘上的会话文件只存 projectId/workspaceDir，不带 mode，
+       重启后通用工作区只能靠 id 认出来，否则它会被当成编码项目、聊天会话跑进编码列表。
+    缺省视为 'code'，兼容没有 mode 字段的旧存档。 */
+export function projectMode(p: { id?: string; mode?: AgentMode } | null | undefined): AgentMode {
+  if (!p) return 'code'
+  if (p.mode === 'chat') return 'chat'
+  return p.id === CHAT_WORKSPACE_ID ? 'chat' : 'code'
+}
+
+/** 新建一个空的通用工作区（无目录、无会话） */
+export function freshChatWorkspace(): AgentProject {
+  return { id: CHAT_WORKSPACE_ID, title: '通用聊天', workspaceDir: '', expanded: true, sessions: [], mode: 'chat' }
+}
+
+/** 清掉会话上的 plainChat 残留（模式已由所属工作区承载） */
+function stripPlainChat(s: AgentSession): AgentSession {
+  if (s.plainChat === undefined) return s
+  const next: AgentSession = { ...s }
+  delete next.plainChat
+  return next
+}
+
+/** ── 旧存档迁移（幂等）──
+    1. 为每个项目补 mode：带 workspaceDir 的真实项目 → 'code'；
+    2. 把编码项目里 plainChat === true 的会话摘出来，统一迁进通用工作区；
+    3. 通用工作区里的会话清掉 plainChat 残留。
+    迁移后「模式」只有工作区一个来源，会话层面不再有模式字段。 */
+export function normalizeProjects(list: AgentProject[]): AgentProject[] {
+  const out: AgentProject[] = []
+  const moved: AgentSession[] = []
+  for (const p of list) {
+    if (isChatWorkspace(p)) {
+      out.push({ ...p, mode: 'chat', workspaceDir: '', sessions: p.sessions.map(stripPlainChat) })
+      continue
+    }
+    const keep: AgentSession[] = []
+    for (const s of p.sessions) {
+      if (s.plainChat === true) moved.push(stripPlainChat(s))
+      else keep.push(stripPlainChat(s))
+    }
+    out.push({ ...p, mode: 'code', sessions: keep })
+  }
+  if (moved.length > 0) {
+    const idx = out.findIndex(isChatWorkspace)
+    if (idx >= 0) out[idx] = { ...out[idx]!, sessions: [...moved, ...out[idx]!.sessions] }
+    else out.push({ ...freshChatWorkspace(), sessions: moved })
+  }
+  return out
+}
+
 export interface AgentSession {
   id: string
   title: string
   messages: AgentMessage[]
-  /** 纯聊天模式：不注册任何工具，也不注入编码 agent 的工具 / 图表指引，只保留对话本身，
-      等于把工作台当原生聊天用。缺省（undefined）= 原来的 agent 模式，旧会话不受影响。
-      工具与指引在主进程里是两处独立注入（toolNames / appendSystemPrompt），必须一起关——
-      只关工具的话模型仍会按「工作台 agent」的口径回答，还白占约 4.5k tokens 的系统提示。 */
+  /** @deprecated 模式已改由所属工作区承载（见 AgentProject.mode / projectMode）。
+      本字段仅用于读取旧存档，normalizeProjects 迁移后一律被清除，新代码不要再读写它。 */
   plainChat?: boolean
-  /** 纯聊天模式下启用的工具名（只允许原生聊天那四个：get_datetime / web_search /
+  /** 通用模式下启用的工具名（只允许原生聊天那四个：get_datetime / web_search /
       fetch_webpage / knowledge_search）。缺省 = 一个都不启用，即纯对话。
-      注意这只影响纯聊天模式；工作台模式仍走主进程写死的那套工具白名单，两者互不干扰。 */
+      注意这只影响通用模式；编码模式仍走主进程写死的那套工具白名单，两者互不干扰。 */
   chatTools?: string[]
   // 上下文摘要/压缩记忆：超过预算高水位时，最早若干轮对话被模型压缩为摘要。
   // 发送时以摘要替代被覆盖的最早连续前缀消息，无此字段的旧会话不受影响。
@@ -294,6 +362,9 @@ export interface AgentProject {
   workspaceDir: string
   expanded: boolean
   sessions: AgentSession[]
+  /** 工作区模式（通用 / 编码）。缺省 = 'code'，兼容旧存档；
+      通用工作区（CHAT_WORKSPACE_ID）恒为 'chat'。经 normalizeProjects 后一定被写死。 */
+  mode?: AgentMode
   systemPrompt?: string      // 自定义系统提示词（按项目）；为空则用默认工具指引
   approveWriteEdit?: boolean  // 是否对 Write / Edit 也要求人工确认（Delete / Bash 始终要求）
   knowledgeBaseId?: string   // 项目绑定的知识库（Agent 获得 knowledge_search 工具检索库内文档）

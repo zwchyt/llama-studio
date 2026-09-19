@@ -146,6 +146,31 @@
   position: relative;
 }
 
+/* 输入框上方的上下文行（仅编码模式）：当前工作区目录 + git 分支。
+   从底部工具行里提出来单独占一行——它们描述的是「这段对话在哪个工作区里」，
+   属于上下文而不是操作按钮，混在一排图标里不容易被看见。
+   两个下拉仍是 bottom:100% 向上弹出，放在输入框上方反而比原来更不容易被容器裁掉。 */
+.chat-input-context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.chat-input-context > * {
+  min-width: 0;
+}
+
+/* 名称截断：原来靠 `.chat-input-tools .chat-branch-name` 那条作用域规则带的 min-width: 0，
+   移出工具行后那条不再命中，这里显式补回，避免长分支名把胶囊撑破。
+   （overflow / text-overflow / max-width 由 .chat-branch-name、.chat-workspace-name 的基础规则提供） */
+.chat-input-context .chat-branch-name,
+.chat-input-context .chat-workspace-name {
+  min-width: 0;
+}
+
 .chat-at-file-pop {
   position: absolute;
   left: 54px;
@@ -1556,10 +1581,12 @@
   box-shadow: var(--shadow);
 }
 
-/* ── 侧栏顶部：编码模式 / 通用模式分段切换（写当前会话的 AgentSession.plainChat）──
-   两个入口互斥。选中态刻意不用 --accent 实心：亮色主题下 --accent = #0a0a0a，
-   分段控件会变成一个纯黑块；改成与下方会话项同一套「浅一档灰 + 主文本色 + 描边」。 */
-.agent-code-mode-switch {
+/* ── 侧栏顶部：工作区切换（通用 / 编码）──
+   它切的是「工作区」，不是「当前会话的类型」：只换下方列表与右侧面板，不碰任何会话。
+   观感上刻意做成带说明的分段选择器，而不是一个全局开关。
+   选中态不用 --accent 实心：亮色主题下 --accent = #0a0a0a，会变成一个纯黑块；
+   改成与下方会话项同一套「浅一档灰 + 主文本色 + 描边」。 */
+.agent-code-workspace-switch {
   display: flex;
   gap: 4px;
   margin: 8px 12px 0;
@@ -1570,7 +1597,7 @@
   flex-shrink: 0;
 }
 
-.agent-code-mode-btn {
+.agent-code-workspace-btn {
   display: inline-flex;
   flex: 1 1 0;
   min-width: 0;
@@ -1578,13 +1605,13 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  padding: 6px 2px;
+  padding: 7px 2px;
   border: 1px solid transparent;
   border-radius: calc(var(--radius-sm) - 2px);
   background: transparent;
   color: var(--text-secondary);
   font-family: inherit;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;
@@ -1593,21 +1620,126 @@
 }
 
 /* 图标不参与压缩：侧栏拖到最窄（160px）时由文字承担溢出，按钮边缘已 overflow:hidden */
-.agent-code-mode-btn svg {
+.agent-code-workspace-btn svg {
   flex: none;
 }
 
-.agent-code-mode-btn:hover {
+.agent-code-workspace-btn:hover {
   background: var(--surface-hover);
   color: var(--text);
 }
 
-.agent-code-mode-btn.active,
-.agent-code-mode-btn.active:hover {
+.agent-code-workspace-btn.active,
+.agent-code-workspace-btn.active:hover {
   background: var(--surface-hover);
   color: var(--text);
   border-color: var(--border-strong);
   font-weight: 700;
+}
+
+/* 切换器下方的说明：点明「这里换的是工作区，不是当前会话」 */
+.agent-code-workspace-hint {
+  margin: 6px 14px 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ── 通用模式：扁平的聊天历史列表（没有项目层级，视觉更轻）── */
+.agent-code-chat-list {
+  padding: 0 8px 8px;
+}
+
+.agent-code-chat-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 1px 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--radius-sm);
+  transition: background .18s ease, color .18s ease;
+}
+
+.agent-code-chat-item:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.agent-code-chat-item.active {
+  background: var(--surface-hover);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.agent-code-chat-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.agent-code-chat-item.active .agent-code-chat-icon {
+  color: var(--text);
+}
+
+/* 会话类型标签：通用 / 编码（列表里一眼能分清归属） */
+.agent-code-mode-tag {
+  flex: none;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.agent-code-chat-empty {
+  padding: 14px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+/* 「基于此聊天新建编码会话」：常显——它是聊天列表里唯一的功能性动作，
+   不跟随 hover 淡入，否则用户根本发现不了这个转换入口。 */
+.agent-code-session-fork {
+  flex-shrink: 0;
+  padding: 3px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: background .15s, color .15s;
+}
+
+.agent-code-session-fork:hover {
+  background: rgba(37, 99, 235, .15);
+  color: var(--text);
+}
+
+/* 聊天列表里的导出 / 重命名 / 删除：沿用会话项的「hover 才显形」规则 */
+.agent-code-chat-item:hover .agent-code-session-del,
+.agent-code-chat-item:hover .agent-code-session-add,
+.agent-code-chat-item:hover .agent-code-session-rename,
+.agent-code-chat-item:hover .agent-code-session-export {
+  opacity: 1;
+}
+
+/* 侧栏计数（当前列表条数） */
+.agent-code-sidebar-count {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 .agent-code-project-group {
@@ -1882,13 +2014,21 @@
 }
 
 .agent-welcome {
+  /* ── 欢迎页配色 ──
+     全站是灰阶语言（--accent 本身就是纯黑），欢迎页是唯一「上色」的地方：
+     它是空状态的门面，用两套模式色区分通用 / 编码，比纯灰更容易一眼分辨。
+     颜色只落在图标、描边与极浅底纹上，正文仍走 --text 系列，可读性不受影响。
+     通用 = 蓝，编码 = 紫，hero 图标取两者之间的靛蓝做呼应。 */
+  --wc-chat: #2563eb;
+  --wc-code: #7c3aed;
+  --wc-hero: #6366f1;
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 40px 24px;
+  gap: 12px;
+  padding: 32px 24px;
   text-align: center;
 }
 
@@ -1902,8 +2042,14 @@
   letter-spacing: .2px;
 }
 
+/* hero 图标：从裸图标改成一块淡靛蓝圆角小方块，给页面一个视觉落点。
+   必须用 content-box——全局的 border-box 会把 padding 算进 18px 里，把图形压小。 */
 .agent-welcome-icon {
-  color: var(--text-muted);
+  box-sizing: content-box;
+  padding: 6px;
+  border-radius: 10px;
+  color: var(--wc-hero);
+  background: color-mix(in srgb, var(--wc-hero) 13%, var(--surface));
 }
 
 .agent-welcome-desc {
@@ -1911,34 +2057,117 @@
   color: var(--text-secondary);
 }
 
-.agent-welcome-hint {
-  font-size: 11px;
-  color: var(--text-muted);
-  text-align: center;
-  max-width: 520px;
+/* ── 欢迎页的工作区选择：两张大卡片 ──
+   这是模式的主要入口（会话栏顶部的分段控件用于「对话过程中随时切」，这里用于「开始前先选」）。
+   两套模式色经 --mode-accent 下发，图标 / 描边 / 选中底纹 / 勾选 / 标题色全部由它派生，
+   换色只需改 .agent-welcome 上那两个变量。
+   选中态不用 --accent 实心：亮色主题下 --accent = #0a0a0a，实心会变成一块纯黑。 */
+.agent-welcome-modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
   width: 100%;
+  /* 与输入框内侧同宽（见 .agent-code-chat.hero-input 里的 --hero-inner） */
+  max-width: var(--hero-inner, 520px);
+  margin-top: 4px;
+}
+
+.agent-mode-card {
+  --mode-accent: var(--text-muted);
+  --mode-tint: var(--surface-hover);
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
+  gap: 12px;
+  padding: 14px 34px 14px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius, 10px);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease, transform .08s ease;
 }
 
-.agent-welcome-chip {
+.agent-mode-card.mode-chat {
+  --mode-accent: var(--wc-chat);
+  --mode-tint: color-mix(in srgb, var(--wc-chat) 12%, var(--surface));
+}
+
+.agent-mode-card.mode-code {
+  --mode-accent: var(--wc-code);
+  --mode-tint: color-mix(in srgb, var(--wc-code) 12%, var(--surface));
+}
+
+.agent-mode-card:hover {
+  background: var(--mode-tint);
+  border-color: color-mix(in srgb, var(--mode-accent) 40%, var(--border-strong));
+  box-shadow: var(--shadow);
+}
+
+.agent-mode-card:active {
+  transform: translateY(1px);
+}
+
+.agent-mode-card.active,
+.agent-mode-card.active:hover {
+  background: var(--mode-tint);
+  border-color: color-mix(in srgb, var(--mode-accent) 65%, transparent);
+}
+
+.agent-mode-card-icon {
+  flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  user-select: none;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid color-mix(in srgb, var(--mode-accent) 25%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--mode-accent) 18%, var(--surface));
+  color: var(--mode-accent);
 }
 
-.agent-welcome-key {
-  color: var(--text-muted);
+.agent-mode-card.active .agent-mode-card-icon {
+  border-color: color-mix(in srgb, var(--mode-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--mode-accent) 26%, var(--surface));
+}
+
+.agent-mode-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.agent-mode-card-name {
+  font-size: 13px;
   font-weight: 600;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+/* 选中的那个模式，名字直接取自己的模式色：一眼看出「现在是哪一个」 */
+.agent-mode-card.active .agent-mode-card-name {
+  color: var(--mode-accent);
+}
+
+.agent-mode-card-desc {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 选中标记钉在右上角；卡片已预留 padding-right 34px，不会压到文字 */
+.agent-mode-card-check {
+  position: absolute;
+  top: 11px;
+  right: 11px;
+  color: var(--mode-accent);
 }
 
 .agent-welcome-suggestions {
@@ -1948,34 +2177,128 @@
   gap: 10px;
   margin-top: 12px;
   width: 100%;
-  max-width: 520px;
+  max-width: var(--hero-inner, 520px);
 }
 
+/* ── 空会话的「hero 输入」──
+   没有消息时输入框不再贴底，而是抬到中间，与欢迎内容组成一个整体居中的块：
+   标题 → 模式卡片 → 输入框 → 快捷建议（顺序与主流助手的空状态一致：先给输入口，再给例子）。
+   结构完全不动——仍是同一个 AgentInputArea 实例，只改排布与外观，
+   所以附件 / @ 补全 / 模型选择 / 麦克风等功能一个不少，也不会因换位置而重挂丢焦点。
+   一旦有了消息，hero-input 类被摘掉，输入区立刻回到贴底的常规外观。 */
+.agent-code-chat.hero-input {
+  /* ── hero 区的宽度基准（改这三个变量就能整体缩放）──
+     --hero-w   输入区外框宽度
+     --hero-pad 输入区左右内边距
+     --hero-inner 内容区对齐宽度 = 外框 − 两侧内边距
+     模式卡片、建议项、快捷键提示都用 --hero-inner，所以三者左右边缘与输入框内侧严格对齐。 */
+  --hero-w: 760px;
+  --hero-pad: 24px;
+  --hero-inner: calc(var(--hero-w) - var(--hero-pad) * 2);
+  /* 与欢迎页 hero 图标同一个靛蓝，用于聚焦环 */
+  --hero-accent: #6366f1;
+  justify-content: center;
+  gap: 14px;
+}
+
+/* 消息区不再撑满，改为按内容高度参与居中；flex-shrink 保留，
+   窗口太矮时它照旧收缩并可滚动，不会把内容顶出可视区。
+   同时把欢迎块的 flex:1 去掉——容器高度此时由内容决定，留 flex-grow 会形成循环依赖。 */
+.agent-code-chat.hero-input .chat-messages {
+  flex: 0 1 auto;
+  min-height: 0;
+}
+
+.agent-code-chat.hero-input .agent-welcome {
+  flex: 0 0 auto;
+  padding-bottom: 0;
+}
+
+/* 输入区脱掉「底栏」外观：去掉顶部隔断线、收窄到 hero 宽度并居中 */
+.agent-code-chat.hero-input .chat-input-area {
+  flex-shrink: 0;
+  align-self: center;
+  width: 100%;
+  max-width: var(--hero-w);
+  padding: 0 var(--hero-pad) 4px;
+  border-top: none;
+  background: transparent;
+}
+
+/* 输入框本体：更大的圆角与内边距 + 浮起投影，与底部那条扁平的输入区明显区分开 */
+.agent-code-chat.hero-input .chat-input-field {
+  padding: 10px 10px 8px 12px;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.agent-code-chat.hero-input .chat-input-field:hover:not(:focus-within) {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+}
+
+/* 聚焦时保留浮起投影（默认的 focus-within 规则会把 box-shadow 整个换成聚焦环），
+   并把环换成靛蓝，与 hero 图标呼应 */
+.agent-code-chat.hero-input .chat-input-field:focus-within {
+  border-color: color-mix(in srgb, var(--hero-accent) 45%, var(--border-strong));
+  box-shadow: var(--shadow-md), 0 0 0 3px color-mix(in srgb, var(--hero-accent) 18%, transparent);
+}
+
+/* 建议项在输入框下方，宽度直接取内容区宽度（不再靠 padding 凑对齐） */
+.agent-code-chat.hero-input .agent-welcome-suggestions {
+  align-self: center;
+  width: 100%;
+  max-width: var(--hero-inner);
+  margin-top: 0;
+  padding: 0;
+}
+
+/* 建议项：图标各给一个柔和色，hover 时整块底纹与描边跟着该色走。
+   四色分散在色轮上（蓝 / 紫 / 青 / 琥珀），让这一片有生气但不花；
+   用 4n 循环而不是逐项写死，是为了切换模式换掉建议项后配色仍然稳定。 */
 .agent-suggestion {
+  --sug-accent: var(--text-muted);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 9px;
+  padding: 12px 14px;
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
   transition: border-color .15s, background .15s, transform .08s, box-shadow .15s;
 }
 
+.agent-suggestion:nth-child(4n + 1) {
+  --sug-accent: #2563eb;
+}
+
+.agent-suggestion:nth-child(4n + 2) {
+  --sug-accent: #7c3aed;
+}
+
+.agent-suggestion:nth-child(4n + 3) {
+  --sug-accent: #0d9488;
+}
+
+.agent-suggestion:nth-child(4n + 4) {
+  --sug-accent: #d97706;
+}
+
 .agent-suggestion-icon {
   flex-shrink: 0;
-  color: var(--text-muted);
+  color: var(--sug-accent);
   display: inline-flex;
   align-items: center;
 }
 
 .agent-suggestion:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-hover);
+  border-color: color-mix(in srgb, var(--sug-accent) 38%, var(--border-strong));
+  background: color-mix(in srgb, var(--sug-accent) 10%, var(--surface));
   box-shadow: var(--shadow);
 }
 
@@ -3496,6 +3819,48 @@
   min-height: 100%;
   padding: 16px;
   box-sizing: border-box;
+}
+
+/* ── 文件预览面板的 PDF 版面渲染：pdf.js 逐页画 canvas ──
+   每页用 aspect-ratio 按真实宽高比占位，未渲染的页也撑住滚动高度；canvas 绝对定位铺满
+   这个框，所以「渲染完成」那一瞬没有布局位移，滚动条也不会随进度跳。 */
+.pdf-viewer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.pdf-page {
+  position: relative;
+  flex: none;
+  width: 100%;
+  max-width: 900px;
+  min-height: 120px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.pdf-page canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.pdf-page-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 /* HTML 渲染预览：沙箱 iframe 铺满预览区，白底（贴近真实浏览器）。 */
@@ -7233,7 +7598,7 @@
   cursor: not-allowed;
 }
 
-/* ── 用户消息里的图片附件（仅通用模式渲染）──
+/* ── 用户消息里的图片附件（编码 / 通用两个模式都渲染）──
    缩略图按最大边长约束，避免竖长图把气泡撑得过高；点击开全屏预览。 */
 .user-msg-images {
   display: flex;
@@ -7271,6 +7636,152 @@
   max-height: 100%;
   border-radius: 8px;
   object-fit: contain;
+}
+
+/* ── 用户消息里的文件附件卡片（PDF / DOCX / txt / 代码…，两个模式都渲染）──
+   点开 = 模型实际读到的那段抽取文本，与 AttachmentTextPreview 同一份内容。 */
+.user-msg-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  justify-content: flex-end;
+}
+
+.user-msg-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 240px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+
+.user-msg-file:hover {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.user-msg-file svg {
+  flex: none;
+}
+
+.user-msg-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 输入区附件条：可预览的文件 chip 给出可点提示（图片 chip 不加 .previewable） */
+.chat-attach-chip.previewable {
+  cursor: pointer;
+}
+
+.chat-attach-chip.previewable:hover {
+  background: var(--surface-hover);
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
+/* ── 附件文本预览层：遮罩 + 居中卡片，正文原样换行滚动 ── */
+.att-preview-mask {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  cursor: zoom-out;
+}
+
+.att-preview {
+  display: flex;
+  flex-direction: column;
+  width: min(860px, 100%);
+  max-height: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  cursor: default;
+}
+
+.att-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-hover);
+}
+
+.att-preview-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.att-preview-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.att-preview-meta {
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.att-preview-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.att-preview-close:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.att-preview-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .agent-code-view .chat-input-tools .chat-search-label {

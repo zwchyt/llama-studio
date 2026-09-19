@@ -19,8 +19,9 @@ import { Bot, Bug, Database, Copy, Check, ImageDown, FileDown, Wrench } from 'lu
 import html2canvas from 'html2canvas'
 import {
   ActivityIcon, BookOpenIcon, BrainIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon,
-  EllipsisVerticalIcon, GitBranchIcon, GlobeIcon, LoaderIcon, PencilIcon, QuoteIcon, RouteIcon,
-  SendIcon, SlidersHorizontalIcon, SparklesIcon, TerminalIcon, Trash2Icon, UserIcon, CopyIcon, XIcon,
+  CodeIcon, EllipsisVerticalIcon, GitBranchIcon, GlobeIcon, LoaderIcon, MessageSquareIcon, PencilIcon,
+  QuoteIcon, RouteIcon, SendIcon, SlidersHorizontalIcon, SparklesIcon, TerminalIcon, Trash2Icon,
+  UserIcon, CopyIcon, XIcon,
 } from '@animateicons/react/lucide'
 import { notify } from '../../../store/notificationStore'
 import { useStore } from '../../../store/useStore'
@@ -118,10 +119,13 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   } = view
 
   const {
-    projects, activeProject, activeProjectId, activeSession, activeSessionId,
+    activeProject, activeProjectId, activeSession, activeSessionId,
     setActiveProjectId, setActiveSessionId, updateProject, createProject, deleteProject,
     exportSession, importSessionToProject, addSessionToProject, deleteSession,
     projectWrapRefs, toggleProjectExpanded,
+    // ── 工作区模式（通用 / 编码）──
+    mode, switchMode, chatWorkspace, codeProjects,
+    createSessionInCurrentMode, forkChatToCode,
   } = projectsDomain
   const {
     insertAtCursor, selectionPopover, selectionPopoverRef, copySelection, quoteSelection,
@@ -129,7 +133,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   } = inputDomain
   const {
     htmlAnnotateActive, htmlAnnotations, injectHtmlAnnotate, toggleHtmlAnnotate,
-    clearHtmlAnnotations, removeHtmlAnnotation, openFileAtLine,
+    clearHtmlAnnotations, removeHtmlAnnotation, openFileAtLine, openTabs,
   } = previewDomain
   const {
     loading, streaming, thinkDone, condenseOpen, setCondenseOpen,
@@ -152,7 +156,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     modelLogos, modelPickerOpen, modelPickerRef, modelPickerWidth, pickModelLogo,
     planTitle, rejectBtnRef, removeModelLogo, resolveApproval, searchEnabled,
     searchMenuOpen, searchMenuRef, searchProvider, setModelPickerOpen, setSearchMenuOpen,
-    plainChat, setPlainChat,
+    plainChat,
     chatTools, chatToolsMenuOpen, setChatToolsMenuOpen, chatToolsMenuRef, toggleChatTool,
     setTaskCardClosing, setTaskModalOpen, setTaskPanelCollapsed, taskCardClosing,
     taskDoneCount, taskModalOpen, taskPanelCollapsed, toggleLogoMenu, applySearchChange,
@@ -180,7 +184,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   const { resizing: rightResizing, startResize: startRightResize } = panels.rightResize
   const {
     openPromptModal, saveSystemPrompt, openKbModal,
-    AGENT_SUGGESTIONS, sendSuggestion, sendAnnotationsToAgent, sendHtmlAnnotations,
+    SUGGESTIONS, sendSuggestion, sendAnnotationsToAgent, sendHtmlAnnotations,
   } = modals
   const {
     addCodeSnippet, changeProjectDir, sessRenamingId, setSessRenamingId,
@@ -192,6 +196,11 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   const chatToolOnCount = PLAIN_CHAT_TOOL_NAMES.filter(
     n => (n === 'web_search' ? searchEnabled : chatTools.includes(n))
   ).length
+  // 右侧面板开关：编码模式常驻；通用模式只有在确实打开了预览标签时才需要它
+  const showRightToggle = mode === 'code' || openTabs.length > 0
+  // 空会话：欢迎页与「hero 输入」同时成立——输入框从底部抬到中间，与欢迎内容组成一个居中块。
+  // 一旦有了消息就恢复成贴底的常规输入区（用户要的「运行时就回到下面」）。
+  const chatEmpty = !activeSession || activeSession.messages.length === 0
   // ── 消息级屏外卸载 ──
   // 已加载区间（与渲染同源）：虚拟化只在这个区间内做，historyStartIndex 之前的消息本来就不挂载。
   const loadedMessages = useMemo(
@@ -309,9 +318,11 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                     <button className="btn btn-ghost btn-xs" onClick={() => setEditingMsgId(null)}>取消</button>
                   </div>
                 </div>
-              ) : msg.content ? (
+              ) : msg.content || msg.attachments?.length ? (
                 <>
-                  <UserMessageEntry content={msg.content} packedText={msg.packedText} attachments={plainChat ? msg.attachments : undefined} />
+                  {/* 附件两种模式都渲染（图片缩略图 + 文件卡片点击看抽取文本）；
+                      只发附件不发文字时也要有这条消息的气泡，否则附件整块消失 */}
+                  <UserMessageEntry content={msg.content} packedText={msg.packedText} attachments={msg.attachments} />
                   <div className="chat-msg-actions">
                     <button className="chat-msg-action-btn" title="复制" onClick={() => copyMessage(msg.content)}><CopyIcon size={13} /></button>
                     <button className="chat-msg-action-btn" title="编辑" onClick={() => editAt(msg.id)} disabled={loading}><PencilIcon size={13} /></button>
@@ -355,7 +366,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
         </div>
       )
     })
-  }, [activeSession, historyStartIndex, virtual.windowStart, virtual.windowEnd, streaming, loading, thinkDone, editingMsgId, editDraft, confirmEdit, copyMessage, editAt, resendAt, branchAt, msgRowActionsRef, modelLabelRef, streamStartAtRef, handleStreamRate, runningCard, setEditDraft, setEditingMsgId])
+  }, [activeSession, historyStartIndex, virtual.windowStart, virtual.windowEnd, streaming, loading, thinkDone, editingMsgId, editDraft, confirmEdit, copyMessage, editAt, resendAt, branchAt, msgRowActionsRef, modelLabelRef, streamStartAtRef, handleStreamRate, runningCard, setEditDraft, setEditingMsgId, plainChat])
   return (
     <div className={`agent-code-view ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
       <div className="agent-code-topbar" onDoubleClick={() => { const anyOpen = sidebarOpen || treeOpen; setSidebarOpen(!anyOpen); setTreeOpen(!anyOpen); setContextModalOpen(false) }}>
@@ -371,8 +382,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               自订阅指标，仅在 prefill 进行中（pp < 1）显示，完成后自动消失。 */}
           <div className="agent-code-topbar-right-scroll">
             <AgentPrefillBar />
-            {/* 通用模式（plainChat）收掉编码工作台的六个入口：压缩历史 / 审计 / 轨迹 / 调试 / 记忆 / 变更。
-                提示词、知识库、浏览器、终端不受影响——通用模式同样用得上。 */}
+            {/* ── 顶栏按钮按当前工作区模式动态显示（不需要的直接不渲染，不置灰）──
+                编码模式专属：压缩历史 / 审计 / 轨迹 / 调试 / 记忆 / 变更 / 终端
+                通用模式专属：导出图片 / 导出 PDF / 工具开关
+                两种模式都有：提示词 / 知识库 / 浏览器（通用聊天也会看网页） */}
             {!plainChat && (
               <TopbarBtn
                 btnRef={condenseBtnRef}
@@ -400,7 +413,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               <TopbarBtn active={rightPanelMode === 'diff'} onClick={toggleGitDiff} icon={GitBranchIcon}>变更</TopbarBtn>
             )}
             <TopbarBtn active={rightPanelMode === 'browser'} onClick={() => { setRightPanelMode(m => m === 'browser' ? 'files' : 'browser'); if (!treeOpen) setTreeOpen(true) }} icon={GlobeIcon}>浏览器</TopbarBtn>
-            <TopbarBtn active={rightPanelMode === 'terminal'} onClick={() => { setRightPanelMode(m => m === 'terminal' ? 'files' : 'terminal'); if (!treeOpen) setTreeOpen(true) }} icon={TerminalIcon}>终端</TopbarBtn>
+            {/* 终端是编码工作台的东西：通用模式直接不渲染 */}
+            {!plainChat && (
+              <TopbarBtn active={rightPanelMode === 'terminal'} onClick={() => { setRightPanelMode(m => m === 'terminal' ? 'files' : 'terminal'); if (!treeOpen) setTreeOpen(true) }} icon={TerminalIcon}>终端</TopbarBtn>
+            )}
             {/* 导出只在通用模式出现（编码模式的消息带工具卡与文件改动，截图意义不大） */}
             {plainChat && (
               <>
@@ -434,20 +450,29 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               )}
             </div>
           )}
-          <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} style={{ marginTop: 0, width: 28, height: 28 }}>
-            {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
-          </button>
+          {/* 右侧面板开关：编码模式常驻（面板里是文件树+预览）；
+              通用模式只在确实打开了预览标签时才出现——否则它是个点了没反应的按钮。 */}
+          {showRightToggle && (
+            <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} style={{ marginTop: 0, width: 28, height: 28 }}>
+              {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
+            </button>
+          )}
         </div>
       </div>
 
       <div className={`agent-code-body ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
         <div className="agent-code-sidebar-collapser">
         <AgentSessionSidebar
-          projects={projects}
+          mode={mode}
+          switchMode={switchMode}
+          chatSessions={chatWorkspace?.sessions ?? []}
+          codeProjects={codeProjects}
           activeProjectId={activeProjectId}
           activeSessionId={activeSessionId}
           setActiveProjectId={setActiveProjectId}
           setActiveSessionId={setActiveSessionId}
+          createSessionInCurrentMode={createSessionInCurrentMode}
+          forkChatToCode={forkChatToCode}
           projectWrapRefs={projectWrapRefs}
           createProject={createProject}
           toggleProjectExpanded={toggleProjectExpanded}
@@ -470,15 +495,13 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
           sessRenameInputRef={sessRenameInputRef}
           startSessRename={startSessRename}
           confirmSessRename={confirmSessRename}
-          plainChat={plainChat}
-          setPlainChat={setPlainChat}
         />
         </div>
         <div className={`agent-code-sidebar-resize-handle${sidebarResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startSidebarResize} onMouseEnter={() => sidebarHandleIconRef.current?.startAnimation()} onMouseLeave={() => sidebarHandleIconRef.current?.stopAnimation()}>
           <EllipsisVerticalIcon ref={sidebarHandleIconRef} size={16} className="nav-animate-icon agent-resize-handle-icon" />
         </div>
 
-        <div className="agent-code-chat">
+        <div className={`agent-code-chat${chatEmpty ? ' hero-input' : ''}`}>
           <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll} onWheel={onChatWheel} onTouchMove={pauseFollow} onMouseUp={handleMessagesMouseUp}>
             {condensing && (
               <div className="agent-condensing"><LoaderIcon size={13} className="spin" /> 正在压缩历史…</div>
@@ -494,24 +517,46 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                 <div className="text-muted">目录和搜索仅包含已加载消息</div>
               </div>
             )}
-            {!activeSession || activeSession.messages.length === 0 ? (
+            {chatEmpty ? (
               <div className="agent-welcome">
                 <div className="agent-welcome-title">
-                  <SparklesIcon size={20} className="agent-welcome-icon" />
+                  <SparklesIcon size={18} className="agent-welcome-icon" />
                   一个LLM本地智能体
                 </div>
-                <div className="agent-welcome-desc">描述任务，或随便问点什么。</div>
-                <div className="agent-welcome-hint">
-                  <span className="agent-welcome-chip"><span className="agent-welcome-key">⏎</span> 发送</span>
-                  <span className="agent-welcome-chip"><span className="agent-welcome-key">@</span> 文件</span>
+                <div className="agent-welcome-desc">
+                  {plainChat ? '随便问点什么，我会直接回答。' : '描述任务，我来改代码。'}
                 </div>
-                <div className="agent-welcome-suggestions">
-                  {AGENT_SUGGESTIONS.map((s) => (
-                    <button key={s.text} className="agent-suggestion" onClick={() => sendSuggestion(s.text)}>
-                      <span className="agent-suggestion-icon">{s.icon}</span>
-                      {s.text}
-                    </button>
-                  ))}
+
+                {/* ── 工作区选择（欢迎页是模式的主要入口）──
+                    两张大卡片：点一下即切换工作区与列表。会话栏顶部那个分段控件
+                    仍然保留——它的用途是「对话过程中随时切」，这里则是「开始前先选」。 */}
+                <div className="agent-welcome-modes">
+                  <button
+                    type="button"
+                    className={`agent-mode-card mode-chat${plainChat ? ' active' : ''}`}
+                    aria-pressed={plainChat}
+                    onClick={() => switchMode('chat')}
+                  >
+                    <span className="agent-mode-card-icon"><MessageSquareIcon size={16} /></span>
+                    <span className="agent-mode-card-body">
+                      <span className="agent-mode-card-name">通用模式</span>
+                      <span className="agent-mode-card-desc">无工作区 · 知识库 · 网页</span>
+                    </span>
+                    {plainChat && <CheckIcon size={13} className="agent-mode-card-check" />}
+                  </button>
+                  <button
+                    type="button"
+                    className={`agent-mode-card mode-code${plainChat ? '' : ' active'}`}
+                    aria-pressed={!plainChat}
+                    onClick={() => switchMode('code')}
+                  >
+                    <span className="agent-mode-card-icon"><CodeIcon size={16} /></span>
+                    <span className="agent-mode-card-body">
+                      <span className="agent-mode-card-name">编码模式</span>
+                      <span className="agent-mode-card-desc">文件树 · 终端 · 变更</span>
+                    </span>
+                    {!plainChat && <CheckIcon size={13} className="agent-mode-card-check" />}
+                  </button>
                 </div>
               </div>
             ) : (
@@ -783,7 +828,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               activeProject, activeProjectId, activeSessionId, attachBtnRef,
               branchBtnRef, branchMenuOpen, branchMenuRef, branches, cards,
               chatInputAreaRef, checkoutBranch, contextModalOpen, ctxInlineRef,
-              currentBranch, projects, scrollToBottom, setActiveProjectId,
+              currentBranch,
+              // 工作区切换菜单只列真实项目：通用工作区（伪项目）不是可选的工作区
+              projects: codeProjects,
+              scrollToBottom, setActiveProjectId,
               setActiveSessionId, setBranchMenuOpen, setContextModalOpen,
               setWorkspaceMenuOpen, workspaceBtnRef, workspaceMenuOpen,
               workspaceMenuRef,
@@ -791,6 +839,20 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
             handleKeyDown={handleKeyDown}
             handleInputChange={handleInputChange}
           />
+          {/* 建议项放在输入区**之后**：空会话时输入框被抬到中间（.hero-input），
+              这样整块的顺序就是「标题 → 模式卡片 → 输入框 → 快捷建议」——
+              和主流助手的空状态一致：先给输入口，再给几个可直接点的例子。
+              有消息后 chatEmpty 为假，这里整块不渲染，回到常规的贴底输入区。 */}
+          {chatEmpty && (
+            <div className="agent-welcome-suggestions">
+              {SUGGESTIONS[plainChat ? 'chat' : 'code'].map((s) => (
+                <button key={s.text} className="agent-suggestion" onClick={() => sendSuggestion(s.text)}>
+                  <span className="agent-suggestion-icon">{s.icon}</span>
+                  {s.text}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* 手柄与面板同包在槽内：手柄 absolute 以槽为包含块、left:0 锚定面板真实左缘，
@@ -800,6 +862,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
           activeProject={activeProject}
           rightPanelMode={rightPanelMode}
           treeOpen={treeOpen}
+          plainChat={plainChat}
           rightResizing={rightResizing}
           previewResizing={previewResizing}
           startRightResize={startRightResize}

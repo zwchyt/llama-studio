@@ -1,4 +1,4 @@
-// 纯聊天模式的「导出 PDF」：整段会话重新排版成打印 HTML，交主进程 printToPDF 落盘。
+// 通用模式的「导出 PDF」：整段会话重新排版成打印 HTML，交主进程 printToPDF 落盘。
 // 与「导出图片」互补而非重复：消息区是虚拟滚动的，html2canvas 只能截到当前一屏；
 // 这里遍历会话的全部消息，长对话也能一次导完。
 import { unified } from 'unified'
@@ -53,6 +53,9 @@ const PDF_STYLE = `
   th, td { border: 1px solid #ccc; padding: 4pt 8pt; text-align: left; }
   th { background: #f0f0f0; font-weight: 700; }
   tr:nth-child(even) { background: #fafafa; }
+  .atts { display: flex; flex-wrap: wrap; gap: 6pt; margin-top: 6pt; }
+  .atts img { max-width: 160pt; max-height: 120pt; border: 1px solid #ddd; border-radius: 3pt; object-fit: contain; }
+  .att-file { font-size: 9pt; color: #666; border: 1px solid #ddd; border-radius: 9pt; padding: 2pt 7pt; }
   @page { margin: 0; }
 `
 
@@ -60,12 +63,21 @@ export async function buildSessionPdfHtml(session: AgentSession): Promise<string
   const modelLabel = [...session.messages].reverse().find(m => m.role === 'assistant' && m.modelLabel)?.modelLabel
   const body = await Promise.all(
     session.messages
-      // continuation 是「继续生成」注入的接续指令，界面上不显示，导出的对话记录里也不该出现
-      .filter(m => !m.continuation && m.content.trim())
+      // continuation 是「继续生成」注入的接续指令，界面上不显示，导出的对话记录里也不该出现。
+      // 空正文要有附件也算一条消息（只发文件不打字），否则整条消息在导出里消失。
+      .filter(m => !m.continuation && (m.content.trim() || (m.attachments?.length ?? 0) > 0))
       .map(async m => {
         const roleLabel = m.role === 'user' ? '用户' : '助手'
         const stopped = m.stopped ? ' <span class="stopped">（已停止，内容不完整）</span>' : ''
-        return `<div class="msg ${m.role}"><span class="role">${roleLabel}${stopped}</span><div class="body">${await markdownToHtml(m.content)}</div></div>`
+        // 图片用缩略图那一路 data URL（原图 base64 会把导出文件撑爆）；
+        // 文件类附件只落名字——它的抽取文本是喂给模型的提示，不是对话内容
+        const atts = (m.attachments ?? []).map(a =>
+          a.type === 'image' && (a.dataUrl || a.fullDataUrl)
+            ? `<img src="${a.dataUrl || a.fullDataUrl}" alt="${escapeHtml(a.name)}">`
+            : `<span class="att-file">附件：${escapeHtml(a.name)}</span>`
+        ).join('')
+        const attBlock = atts ? `<div class="atts">${atts}</div>` : ''
+        return `<div class="msg ${m.role}"><span class="role">${roleLabel}${stopped}</span><div class="body">${await markdownToHtml(m.content)}${attBlock}</div></div>`
       })
   )
   return `<!DOCTYPE html>

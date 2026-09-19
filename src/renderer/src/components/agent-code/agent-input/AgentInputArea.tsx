@@ -19,13 +19,14 @@
 // 注：组内成员类型尽量用 ReturnType<typeof 对应 hook> 表达，hook 增删成员时
 // 类型会自动跟随，不需要同步改这里。
 
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { AlertCircle, AlignLeft, Brain, Eye, Globe, Image as ImageIcon, Search, SearchX, Wrench } from 'lucide-react'
 import { CheckIcon, ChevronDownIcon, CircleStopIcon, CodeIcon, FileTextIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, MicIcon, PlayIcon, PlusIcon, QuoteIcon, RefreshCwIcon, SendIcon, TrashIcon, XIcon } from '@animateicons/react/lucide'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import AgentFilePicker from '../../AgentFilePicker'
 import AskUserQuestionInline from '../../AskUserQuestionInline'
 import { AgentTopBarCtx, AniIconButton } from '../agent-message'
+import { AttachmentTextPreview, type PreviewableAttachment } from '../agent-message/AttachmentTextPreview'
 import { TaskArrowIcon, TaskCheckIcon, TaskDashedIcon, TaskFilledCheckIcon, TaskPieIcon, TaskRollingCount, TaskXIcon } from '../agent-task'
 import { TOOL_META, formatToolArgs } from '../agent-tools'
 import { TOOL_METAS } from '../../../utils/tools'
@@ -80,8 +81,8 @@ export type AgentInputAreaProps = {
     applySearchChange: (enabled: boolean, provider: 'ddg' | 'bing') => void
   }
   chatMode: {
-    /** 当前会话是否处于通用模式（AgentSession.plainChat）：true 时收掉工作区/分支/思考强度等编码控件。
-        模式切换本身在左侧会话栏顶部，通用工具开关在界面顶栏，均不由本组件渲染。 */
+    /** 当前工作区是否处于通用模式（由所属工作区的 mode 推导）：true 时收掉工作区/分支/思考强度等编码控件。
+        工作区切换本身在左侧会话栏顶部，通用工具开关在界面顶栏，均不由本组件渲染。 */
     plainChat: boolean
   }
   run: {
@@ -177,6 +178,13 @@ export function AgentInputArea({
   const { currentPlanItems, planTitle, setTaskCardClosing, setTaskModalOpen, setTaskPanelCollapsed, taskCardClosing, taskCardRef, taskDoneCount, taskModalOpen, taskPanelCollapsed } = task
   const { allowBtnRef, approvalReq, autoApproveBtnRef, autoApproveRef, rejectBtnRef, resolveApproval } = approval
   const { activeProject, activeProjectId, activeSessionId, attachBtnRef, branchBtnRef, branchMenuOpen, branchMenuRef, branches, cards, chatInputAreaRef, checkoutBranch, contextModalOpen, ctxInlineRef, currentBranch, projects, scrollToBottom, setActiveProjectId, setActiveSessionId, setBranchMenuOpen, setContextModalOpen, setWorkspaceMenuOpen, workspaceBtnRef, workspaceMenuOpen, workspaceMenuRef } = shell
+  // 附件 chip 点开看抽取文本（PDF / DOCX / 文本文件），与消息气泡里的文件卡片同一个预览层
+  const [attPreview, setAttPreview] = useState<PreviewableAttachment | null>(null)
+  // 通用模式收掉「选择文件」（工作区文件选择器）：若切换时它正开着，先关掉再收按钮，
+  // 否则切回编码模式会看到上次遗留的弹层自己冒出来。
+  useEffect(() => {
+    if (plainChat) setFilePickerOpen(false)
+  }, [plainChat, setFilePickerOpen])
   return (
     <div className="chat-input-area" ref={chatInputAreaRef}>
       {/* 破坏性工具审批面板：内联显示在输入框内（与提问工具 AskUserQuestionInline 同款位置/风格），不弹窗 */}
@@ -324,7 +332,8 @@ export function AgentInputArea({
         </div>
       )}
 
-      {filePickerOpen && activeProject.workspaceDir && (
+      {/* 工作区文件选择器：编码专属，通用模式不渲染（触发按钮同样收掉，见底部工具栏） */}
+      {!plainChat && filePickerOpen && activeProject.workspaceDir && (
         <AgentFilePicker
           workspaceDir={activeProject.workspaceDir}
           attached={filePickerAttached}
@@ -337,15 +346,24 @@ export function AgentInputArea({
       )}
       {attachedFiles.length > 0 && (
         <div className="chat-attach-tray">
-          {attachedFiles.map(att => (
-            <div className="chat-attach-chip" key={att.id}>
-              {att.isImage && att.dataUrl
-                ? <img src={att.dataUrl} className="chat-attach-thumb" alt={att.name} />
-                : <FileTextIcon size={14} className="chat-attach-fileicon" />}
-              <span className="chat-attach-name" title={att.name}>{att.name}</span>
-              <button className="chat-attach-remove" onClick={() => removeAttachment(att.id)} disabled={loading}><XIcon size={11} /></button>
-            </div>
-          ))}
+          {attachedFiles.map(att => {
+            // 文件附件带抽取文本 → 整个 chip 可点开预览；图片 chip 维持不可点（缩略图已说明内容）
+            const previewable = !att.isImage && !!att.content
+            return (
+              <div
+                className={`chat-attach-chip${previewable ? ' previewable' : ''}`}
+                key={att.id}
+                onClick={previewable ? () => setAttPreview({ name: att.name, content: att.content }) : undefined}
+                title={previewable ? `${att.name}（点击预览抽取到的文本）` : att.name}
+              >
+                {att.isImage && att.dataUrl
+                  ? <img src={att.dataUrl} className="chat-attach-thumb" alt={att.name} />
+                  : <FileTextIcon size={14} className="chat-attach-fileicon" />}
+                <span className="chat-attach-name" title={att.name}>{att.name}</span>
+                <button className="chat-attach-remove" onClick={e => { e.stopPropagation(); removeAttachment(att.id) }} disabled={loading}><XIcon size={11} /></button>
+              </div>
+            )
+          })}
           {attachedFiles.length > 1 && (
             <button className="chat-attach-clear-all" onClick={() => { setAttachedFiles([]); setFilePickerAttached([]) }} disabled={loading}>
               <XIcon size={12} />全部清除
@@ -392,6 +410,82 @@ export function AgentInputArea({
           </div>
         )
       })()}
+      {/* ── 输入框上方的上下文行（仅编码模式）──
+          当前工作区目录 + git 分支。这两项描述的是「这段对话跑在哪个工作区里」，
+          属于**上下文**而不是操作按钮，所以从底部工具行里提出来单独占一行。
+          两个下拉都是 bottom:100% 向上弹出，放在这里反而比原来更不容易被容器裁掉。
+          通用模式没有工作区概念，整行不渲染。 */}
+      {!plainChat && (activeProject.workspaceDir || currentBranch) && (
+        <div className="chat-input-context">
+          {activeProject.workspaceDir && (
+            <div className="chat-workspace-badge-wrap">
+              <button
+                ref={workspaceBtnRef}
+                className={`chat-workspace-badge${workspaceMenuOpen ? ' active' : ''}`}
+                title={`点击切换工作区：${activeProject.workspaceDir}`}
+                onClick={() => setWorkspaceMenuOpen(v => !v)}
+              >
+                <FolderIcon size={12} />
+                <span className="chat-workspace-name">
+                  {activeProject.workspaceDir.replace(/\\/g, '/').split('/').pop() || '工作区'}
+                </span>
+              </button>
+              {workspaceMenuOpen && (
+                <div ref={workspaceMenuRef} className="chat-workspace-menu">
+                  {projects.map(p => (
+                    <button
+                      key={p.id}
+                      className={`chat-workspace-item${p.id === activeProjectId ? ' active' : ''}`}
+                      onClick={() => {
+                        if (p.id !== activeProjectId) {
+                          setActiveProjectId(p.id)
+                          setActiveSessionId(p.sessions[0]?.id ?? '')
+                        }
+                        setWorkspaceMenuOpen(false)
+                      }}
+                    >
+                      <FolderIcon size={11} />
+                      <span>{p.title || '未命名'}</span>
+                      {p.id === activeProjectId && <CheckIcon size={11} className="chat-workspace-check" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {activeProject.workspaceDir && currentBranch && (
+            <div className="chat-branch-selector">
+              <div className="chat-branch-wrap">
+                <button
+                  ref={branchBtnRef}
+                  className={`chat-branch-trigger${branchMenuOpen ? ' active' : ''}`}
+                  onClick={() => setBranchMenuOpen(v => !v)}
+                  title={`当前分支：${currentBranch}`}
+                >
+                  <GitBranchIcon size={12} />
+                  <span className="chat-branch-name">{currentBranch}</span>
+                  <ChevronDownIcon size={10} className="chat-branch-caret" />
+                </button>
+                {branchMenuOpen && branches.length > 0 && (
+                  <div ref={branchMenuRef} className="chat-branch-menu">
+                    {branches.map(b => (
+                      <button
+                        key={b}
+                        className={`chat-branch-item${b === currentBranch ? ' active' : ''}`}
+                        onClick={() => checkoutBranch(b)}
+                      >
+                        <GitBranchIcon size={11} />
+                        <span>{b}</span>
+                        {b === currentBranch && <CheckIcon size={11} className="chat-branch-check" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       <div className="chat-input-row">
         <div className="chat-input-field" onDragOver={handleInputDragOver} onDrop={handleInputDrop}>
           {/* ① 状态栏：并入输入框顶部，无框无底；默认只显示 orb 图标，模型运行时才显示文字 */}
@@ -509,79 +603,18 @@ export function AgentInputArea({
               )
             })()}
           </div>
-          {/* ③ 底部按钮行：文件目录 + 模型列表（左）… 发送（右） */}
+          {/* ③ 底部按钮行：附件 / 麦克风（左）… 上下文 · 模型 · 搜索 · 发送（右）
+              （工作区目录与 git 分支已上移到 .chat-input-context） */}
           <div className="chat-input-tools">
             <AniIconButton className="chat-upload-btn" icon={PlusIcon} size={14} onClick={() => fileInputRef.current?.click()} title="添加附件" />
-            <AniIconButton ref={attachBtnRef} className={`chat-attach-btn${filePickerOpen ? ' active' : ''}`} icon={FolderOpenIcon} size={14} onClick={toggleFilePicker} title="选择文件" />
+            {/* 「选择文件」浏览的是工作区目录（AgentFilePicker），编码专属：通用模式收掉。
+                「添加附件」走系统文件选择，聊天同样用得上，两模式都保留。 */}
+            {!plainChat && (
+              <AniIconButton ref={attachBtnRef} className={`chat-attach-btn${filePickerOpen ? ' active' : ''}`} icon={FolderOpenIcon} size={14} onClick={toggleFilePicker} title="选择文件" />
+            )}
             <AniIconButton className={`chat-mic-btn${listening || micTranscribing ? ' listening' : ''}`} icon={MicIcon} size={14} onClick={toggleListen} disabled={micTranscribing} title={micTranscribing ? '识别中…' : listening ? '停止录音' : '语音输入'} />
-            {/* 通用模式收掉三件编码工作台专属控件：项目路径、git 分支、思考强度 */}
-            {!plainChat && activeProject.workspaceDir && (
-              <div className="chat-workspace-badge-wrap">
-                <button
-                  ref={workspaceBtnRef}
-                  className={`chat-workspace-badge${workspaceMenuOpen ? ' active' : ''}`}
-                  title={`点击切换工作区：${activeProject.workspaceDir}`}
-                  onClick={() => setWorkspaceMenuOpen(v => !v)}
-                >
-                  <FolderIcon size={12} />
-                  <span className="chat-workspace-name">
-                    {activeProject.workspaceDir.replace(/\\/g, '/').split('/').pop() || '工作区'}
-                  </span>
-                </button>
-                {workspaceMenuOpen && (
-                  <div ref={workspaceMenuRef} className="chat-workspace-menu">
-                    {projects.map(p => (
-                      <button
-                        key={p.id}
-                        className={`chat-workspace-item${p.id === activeProjectId ? ' active' : ''}`}
-                        onClick={() => {
-                          if (p.id !== activeProjectId) {
-                            setActiveProjectId(p.id)
-                            setActiveSessionId(p.sessions[0]?.id ?? '')
-                          }
-                          setWorkspaceMenuOpen(false)
-                        }}
-                      >
-                        <FolderIcon size={11} />
-                        <span>{p.title || '未命名'}</span>
-                        {p.id === activeProjectId && <CheckIcon size={11} className="chat-workspace-check" />}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            {!plainChat && activeProject.workspaceDir && currentBranch && (
-              <div className="chat-branch-selector">
-                <div className="chat-branch-wrap">
-                  <button
-                    ref={branchBtnRef}
-                    className={`chat-branch-trigger${branchMenuOpen ? ' active' : ''}`}
-                    onClick={() => setBranchMenuOpen(v => !v)}
-                    title={`当前分支：${currentBranch}`}
-                  >
-                    <GitBranchIcon size={12} />
-                    <span className="chat-branch-name">{currentBranch}</span>
-                    <ChevronDownIcon size={10} className="chat-branch-caret" />
-                  </button>
-                  {branchMenuOpen && branches.length > 0 && (
-                    <div ref={branchMenuRef} className="chat-branch-menu">
-                      {branches.map(b => (
-                        <button
-                          key={b}
-                          className={`chat-branch-item${b === currentBranch ? ' active' : ''}`}
-                          onClick={() => checkoutBranch(b)}
-                        >
-                          <GitBranchIcon size={11} />
-                          <span>{b}</span>
-                          {b === currentBranch && <CheckIcon size={11} className="chat-branch-check" />}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+            {/* 工作区目录与 git 分支已上移到输入框上方那一行（.chat-input-context），
+                它们描述的是「这段对话在哪个工作区里」，属于上下文而非操作按钮。 */}
             <AgentTopBarCtx
               active={contextModalOpen}
               onToggle={() => setContextModalOpen(v => !v)}
@@ -681,6 +714,7 @@ export function AgentInputArea({
           </div>
         </div>
       </div>
+      {attPreview && <AttachmentTextPreview att={attPreview} onClose={() => setAttPreview(null)} />}
       <input ref={fileInputRef} type="file" multiple hidden onChange={handleAttachmentSelect} />
     </div>
   )
