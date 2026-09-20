@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { useSidebarStore } from '../store/sidebarStore'
-import { Bell, BellOff, Activity, Type, Volume2, Check } from 'lucide-react'
+import { Bell, BellOff, Activity, Type, Volume2, Check, Brain } from 'lucide-react'
 import { SOUND_OPTIONS, previewSound } from '../utils/sound'
 import { dataUrlToBlobUrl } from '../utils/audioUrl'
+import { agentConfig, setAgentConfigOverride } from '../utils/agentConfig'
 
 import FontSelector from './FontSelector'
 import { CURSOR_SCHEMES, getCursorSchemeId, applyCursorScheme, CURSOR_STORAGE_KEY, schemeCursorValue, type CursorRole } from '../cursor-theme'
@@ -43,6 +44,12 @@ export default function SettingsView() {
   const [metricsPolling, setMetricsPolling] = useState(true)
   const [cursorScheme, setCursorScheme] = useState<string>(getCursorSchemeId())
   const [previewId, setPreviewId] = useState<string | null>(null)
+  // 长期记忆：三态合成一个控件（关闭 / 自动写入 / 写入前确认）。
+  // 初值取配置单例（含 localStorage 覆盖项）。此前该开关只有默认值、没有任何 UI 入口，
+  // 想关掉只能在 DevTools 里手写 localStorage('agentConfigOverrides') 并重启。
+  const [memMode, setMemMode] = useState<'off' | 'auto' | 'confirm'>(
+    () => (agentConfig.longTermMemoryEnabled ? agentConfig.memoryWriteMode : 'off')
+  )
   const previewScheme = CURSOR_SCHEMES.find(s => s.id === (previewId ?? cursorScheme)) || CURSOR_SCHEMES[0]
 
   // Edge 音色列表：仅在选了 Edge 引擎时拉一次（在线接口，失败只提示不阻塞）
@@ -163,6 +170,51 @@ export default function SettingsView() {
             选择全局字体预设，即时生效并自动保存。均为系统自带字体，无需下载。
           </p>
           <FontSelector />
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title"><Brain /> Agent 长期记忆</div>
+        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            智能体在会话中沉淀的结论（用户纠正与偏好、已验证命令、改动热点、决策记录等）
+            会按工作区跨会话累积，并在新建会话时注入系统提示词。
+          </p>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            沉淀规则是机械的（正则命中与计数阈值），误报不少，所以默认选「写入前确认」：
+            候选先进待确认队列，在顶栏「记忆」面板里逐条采纳或忽略，不确认就不落库。
+          </p>
+          <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap' }}>
+            {([['off', '关闭'], ['confirm', '写入前确认（推荐）'], ['auto', '自动写入']] as const).map(([id, label]) => {
+              const selected = memMode === id
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className={`launch-mode-btn${selected ? ' active' : ''}`}
+                  style={{ flex: '1 1 auto', minWidth: 0, padding: '5px 8px', fontSize: 12, lineHeight: 1.3, textAlign: 'center' }}
+                  onClick={() => {
+                    setMemMode(id)
+                    // 两项配置合成一个控件：off 只动总开关，auto/confirm 打开总开关并设置写入方式。
+                    // setAgentConfigOverride 就地改写单例 + 落 localStorage，已 import agentConfig
+                    // 的读取方（memoryWriter / useAgentLoop …）下一次读取就是新值。
+                    if (id === 'off') {
+                      setAgentConfigOverride('longTermMemoryEnabled', false)
+                    } else {
+                      setAgentConfigOverride('longTermMemoryEnabled', true)
+                      setAgentConfigOverride('memoryWriteMode', id)
+                    }
+                  }}
+                >
+                  {selected && <Check size={12} style={{ marginRight: 4, verticalAlign: 'middle' }} />}
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+            关闭后停止沉淀与注入；已有条目和待确认队列都保留，可在「记忆」面板查看、归档、删除或清空。
+          </p>
         </div>
       </div>
 

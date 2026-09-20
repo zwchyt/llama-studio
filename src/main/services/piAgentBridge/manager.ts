@@ -53,8 +53,33 @@ export interface PiAgentSessionOptions {
   chatTools?: string[]
   /** 搜索引擎：'bing'（国内版，默认）| 'ddg'（DuckDuckGo）。互斥，同时只激活一个。 */
   searchProvider?: 'ddg' | 'bing'
+  /** 项目自定义系统提示词（渲染层「提示词」卡片保存的内容，用户手写） */
+  projectSystemPrompt?: string
+  /** 项目记忆：跨会话长期携带的结论 / 约定（渲染层「项目记忆」文本域，用户手写） */
+  projectMemoryNotes?: string
+  /** 长期记忆注入文本。由渲染层调 memstore-inject 生成后传下来 —— 不能在这里直接
+      调 memoryStore：本 manager 跑在 utilityProcess 里，而 memoryStore 依赖 ipcMain /
+      app 等主进程 API，且它在主进程侧才有注册好的 memoryDir。 */
+  memoryInjection?: string
   /** 会话事件回调（由 IPC 层转推 renderer） */
   onEvent: (sessionId: string, event: AgentSessionEvent) => void
+}
+
+/**
+ * 把「用户可编辑的项目级提示词」拼成 appendSystemPrompt 的尾部段落。
+ * 这三段都来自渲染层，主进程只做拼装。与 PI_TOOL_GUIDANCE 那批静态常量分开，
+ * 是因为纯聊天模式要清掉编码 agent 指引、但不该连用户自己写的指令一起清掉 ——
+ * 用户手写的提示词被静默忽略，正是这次要修的问题之一。
+ */
+function buildUserPromptSections(opts: PiAgentSessionOptions): string[] {
+  const out: string[] = []
+  const sys = (opts.projectSystemPrompt || '').trim()
+  if (sys) out.push(`## 项目自定义指令\n${sys}`)
+  const mem = (opts.projectMemoryNotes || '').trim()
+  if (mem) out.push(`## 项目记忆（跨会话，人工维护）\n${mem}`)
+  const inj = (opts.memoryInjection || '').trim()
+  if (inj) out.push(`## 跨会话长期记忆\n${inj}`)
+  return out
 }
 
 export class PiAgentManager {
@@ -162,6 +187,15 @@ export class PiAgentManager {
       knowledgeBaseId: opts.knowledgeBaseId,
       knowledgeBases: await this.executors.listKb()
     })
+    // 追加进 system prompt 的两批内容分开算：
+    //   codingGuidance —— 静态的编码 agent 指引，纯聊天模式必须清掉（见 plainChat 说明）
+    //   userPromptSections —— 用户可编辑的三段（项目指令 / 项目记忆 / 长期记忆注入），
+    //     两种模式都追加。它们不是「编码 agent 指引」，纯聊天模式没有理由吞掉用户自己
+    //     写的东西；此前这三段全都没有送达模型，用户在界面上编辑保存后毫无效果。
+    const codingGuidance = plainChat
+      ? []
+      : [...PI_TOOL_GUIDANCE, ...PI_CHART_ROUTING, ...PI_MERMAID_DSL_GUIDANCE, ...PI_CHART_FENCE_GUIDANCE, ...PI_SVG_GUIDANCE, ...PI_MERMAID_JSON_GUIDANCE]
+    const userPromptSections = buildUserPromptSections(opts)
     const bridge = await createPiAgentBridge({
       getPort: () => opts.port,
       getContextWindow: () => opts.contextWindow ?? 128000,
@@ -169,7 +203,7 @@ export class PiAgentManager {
       agentDir: opts.agentDir,
       systemPrompt: plainChat ? PLAIN_CHAT_SYSTEM_PROMPT : undefined,
       noContextFiles: plainChat,
-      appendSystemPrompt: plainChat ? [] : [...PI_TOOL_GUIDANCE, ...PI_CHART_ROUTING, ...PI_MERMAID_DSL_GUIDANCE, ...PI_CHART_FENCE_GUIDANCE, ...PI_SVG_GUIDANCE, ...PI_MERMAID_JSON_GUIDANCE],
+      appendSystemPrompt: [...codingGuidance, ...userPromptSections],
       toolNames: effectiveToolNames,
       customTools: [...mainTools, ...(opts.customTools ?? [])]
     })
@@ -213,7 +247,9 @@ export class PiAgentManager {
       // 记录模型实际可见的全部工具名：pi 内置白名单 + 自研 customTools（诊断「模型
       // 为什么不用某工具」时的第一手证据）
       tools: [...effectiveToolNames, ...mainTools.map(t => t.name)],
-      systemPromptChars: [...PI_TOOL_GUIDANCE, ...PI_CHART_ROUTING, ...PI_MERMAID_DSL_GUIDANCE, ...PI_CHART_FENCE_GUIDANCE, ...PI_SVG_GUIDANCE, ...PI_MERMAID_JSON_GUIDANCE].join('\n\n').length,
+      // 必须与实际下发的内容一致（含用户三段），否则轨迹台账里的字符数会低报，
+      // 排查「提示词为什么这么长」时给出错误线索
+      systemPromptChars: [...codingGuidance, ...userPromptSections].join('\n\n').length,
       historyCount: opts.history?.length ?? 0
     })
   }

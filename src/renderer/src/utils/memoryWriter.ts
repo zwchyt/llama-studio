@@ -8,9 +8,15 @@
 // ║   ④ 会话终局写：切换会话 / 项目时对旧会话做机械提炼 → decision 条目             ║
 // ║ 另提供矛盾探针：Bash 实测失败时对相似的「已验证命令」条目记矛盾标记。            ║
 // ║ 所有写入去重合并由存储侧负责（相似条目 hits+1，不重复新增），此处只管产出候选。  ║
+// ║                                                                              ║
+// ║ 落库方式由 agentConfig.memoryWriteMode 决定：                                  ║
+// ║   'auto'    直接提交（火忘式，失败静默）                                        ║
+// ║   'confirm' 先进待确认队列，用户在「记忆」面板裁决后再提交                        ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 import type { AgentMemoryCandidate, AgentMessage, TodoUpdate } from '../../../shared/types'
 import { agentConfig } from './agentConfig'
+import { useMemoryPendingStore } from '../store/memoryPendingStore'
+import { notify } from '../store/notificationStore'
 
 // 单条候选正文上限（与存储侧 CONTENT_CAP 对齐方向，此处先裁一刀）
 const CANDIDATE_TEXT_CAP = 300
@@ -24,6 +30,20 @@ const SESSION_END_MIN_MSGS = 4
 // 火忘式提交：任何失败都不得影响 agent 主循环
 function submit(dir: string, candidates: AgentMemoryCandidate[]): void {
   if (!agentConfig.longTermMemoryEnabled || !dir || candidates.length === 0) return
+  // 写入前确认：候选进待确认队列，等用户在「记忆」面板裁决后再落库。
+  // 刻意不用阻塞式弹窗 —— 六个触发点里有四个发生在不该被打断的时刻（发消息途中、
+  // 后台压缩进行中、切换会话的瞬间、计划收束时），弹窗会把它们全变成「等用户回答」。
+  // 队列则把「什么时候决定」还给用户，代价是必须给足可见性：角标 + 一条 toast。
+  if (agentConfig.memoryWriteMode === 'confirm') {
+    const n = useMemoryPendingStore.getState().enqueue(dir, candidates)
+    // n === 0 表示全是队列里已有的重复候选，不再打扰。
+    // 提示里带上队列总数：连续几条消息各沉淀一条时，后面的 toast 仍能反映积压规模。
+    if (n > 0) {
+      const total = useMemoryPendingStore.getState().items.length
+      notify(`智能体沉淀了 ${n} 条记忆待确认（队列共 ${total} 条）`, 'info')
+    }
+    return
+  }
   window.api?.memstoreUpsert?.(dir, candidates).catch(() => { })
 }
 
@@ -66,16 +86,33 @@ export function noteApprovalRejected(dir: string, sid: string, toolName: string,
 // 轻量启发式：短消息 + 纠正/约束语气词。原话逐字保留（禁止转述），锚点无从谈起故不设。
 const CORRECTION_PATTERN = /不对|不是这样|错了|搞错|别再|不要再|不许|撤销|改回|回退|记住|以后都|下次|应该用|应该改|改成|不准|禁止/
 
+// 项目约定语气：描述的是**可复用规则**而不是一次性纠正 —— 落成 convention 类别，
+// 注入时与「用户纠正与偏好」分在不同分组，便于模型按语义取用。
+// 此前 convention 类别零写入方，面板上的「项目约定」永远为空。
+const CONVENTION_PATTERN = /一律|统一|规范|约定|命名|缩进|格式|风格|必须用|都要|全部用|标准|不要用|只用|优先用|保持一致/
+
 export function noteUserCorrection(dir: string, sid: string, text: string): void {
   const t = (text || '').trim()
   if (!t || t.length > 400 || !CORRECTION_PATTERN.test(t)) return
-  submit(dir, [{
+  const candidates: AgentMemoryCandidate[] = [{
     category: 'correction',
     content: `用户纠正 / 约束（原话）：「${t.slice(0, CANDIDATE_TEXT_CAP)}」`,
     source: 'user',
     origin: `user-correction:${sid}`,
     confidence: 0.9,
-  }])
+  }]
+  // 同一句话若同时带约定语气，额外落一条 convention。存储侧的相似合并按「同类别」比较，
+  // 两个类别各存一份不会互相吞掉，注入时也能各归各的分组。
+  if (CONVENTION_PATTERN.test(t)) {
+    candidates.push({
+      category: 'convention',
+      content: `项目约定（用户原话）：「${t.slice(0, CANDIDATE_TEXT_CAP)}」`,
+      source: 'user',
+      origin: `user-convention:${sid}`,
+      confidence: 0.85,
+    })
+  }
+  submit(dir, candidates)
 }
 
 // ── 触发点 ②：里程碑写（Todo 计划全部 completed）──
@@ -97,17 +134,82 @@ export function noteMilestone(dir: string, sid: string, planTitle: string, todos
 // 与改动热点文件（Write/Edit 成功目标）。摘要正文交给 LLM，这些事实走机械通道。
 const VERIFIED_CMD_PATTERN = /^(npm|npx|pnpm|yarn|node|python3?|pip3?|cargo|go|make|tsc|vite|electron|dotnet|mvn|gradle|cmake|pytest|jest)\b/i
 
+/** 单次压缩批次最多沉淀的 error_fix 条数（一次批次里通常只有一两处真正的试错） */
+const ERROR_FIX_CAP = 2
+
+/** 顺序展开后的工具调用记录（错误→修正的配对需要在时间序上比较，不能边遍历边判定） */
+interface ToolCallRec {
+  name: string
+  /** Bash 的命令行 */
+  cmd?: string
+  /** Write / Edit 的工作区相对路径 */
+  file?: string
+  /** 真失败：只有「跑完了且 failed」才算，中断 / 未完成不算试错信号 */
+  failed: boolean
+}
+
+/** 命令族：取首个可执行程序名，用于判断两条命令是不是「同一件事」 */
+function cmdFamily(cmd: string): string {
+  return (cmd.trim().match(/^[^\s|&;]+/)?.[0] || '').toLowerCase()
+}
+
+/**
+ * 错误→修正配对：批次里「先失败、随后同类成功」的组合，是最值得跨会话保留的经验。
+ * 这是 error_fix 类别唯一的机械来源（此前该类别零写入方，面板上的「错误解法」永远为空）。
+ * 只做同类配对 —— 命令按命令族、文件按路径 —— 避免把「A 文件写失败、B 文件写成功」
+ * 误配成一次修正。
+ */
+function buildErrorFixes(seq: readonly ToolCallRec[], sid: string): AgentMemoryCandidate[] {
+  const out: AgentMemoryCandidate[] = []
+  for (let i = 0; i < seq.length && out.length < ERROR_FIX_CAP; i++) {
+    const bad = seq[i]!
+    if (!bad.failed) continue
+    for (let j = i + 1; j < seq.length; j++) {
+      const good = seq[j]!
+      if (good.failed) continue
+      if (bad.cmd && good.cmd && cmdFamily(bad.cmd) === cmdFamily(good.cmd)) {
+        out.push({
+          category: 'error_fix',
+          content: `命令 \`${bad.cmd.slice(0, 120)}\` 执行失败，改用 \`${good.cmd.slice(0, 120)}\` 成功`,
+          source: 'agent',
+          origin: `condense:${sid}`,
+          confidence: 0.55,
+        })
+        break
+      }
+      if (bad.file && good.file && bad.file === good.file) {
+        out.push({
+          category: 'error_fix',
+          content: `对 ${bad.file} 的写入首次失败，重试后成功（具体报错见该会话轨迹）`,
+          source: 'agent',
+          origin: `condense:${sid}`,
+          confidence: 0.5,
+          anchorPath: bad.file,
+        })
+        break
+      }
+    }
+  }
+  return out
+}
+
 export function noteCondenseFacts(dir: string, sid: string, batch: AgentMessage[]): void {
   const candidates: AgentMemoryCandidate[] = []
   const seenCmds = new Set<string>()
   const editedFiles = new Set<string>()
+  const seq: ToolCallRec[] = []
   for (const m of batch) {
     if (m.role !== 'assistant' || !m.toolCalls) continue
     for (const tc of m.toolCalls) {
-      if (tc.status !== 'done' || tc.failed) continue
       const args = parseArgs(tc.args)
-      if (tc.name === 'Bash' && typeof args.command === 'string') {
-        const cmd = args.command.trim()
+      const cmd = tc.name === 'Bash' && typeof args.command === 'string' ? args.command.trim() : undefined
+      const file = tc.name === 'Write' || tc.name === 'Edit'
+        ? toWorkspaceRel(dir, typeof args.file_path === 'string' ? args.file_path : typeof args.path === 'string' ? args.path : '')
+        : undefined
+      // 失败记录也要进 seq（错误→修正配对需要它），但不参与下面两个正向沉淀
+      seq.push({ name: tc.name, cmd, file, failed: tc.status === 'done' && !!tc.failed })
+      if (tc.status !== 'done' || tc.failed) continue
+      if (cmd) {
         if (VERIFIED_CMD_PATTERN.test(cmd) && !seenCmds.has(cmd) && seenCmds.size < CONDENSE_COMMAND_CAP) {
           seenCmds.add(cmd)
           candidates.push({
@@ -118,10 +220,8 @@ export function noteCondenseFacts(dir: string, sid: string, batch: AgentMessage[
             confidence: 0.5,
           })
         }
-      } else if (tc.name === 'Write' || tc.name === 'Edit') {
-        const p = typeof args.file_path === 'string' ? args.file_path : typeof args.path === 'string' ? args.path : ''
-        const rel = toWorkspaceRel(dir, p)
-        if (rel) editedFiles.add(rel)
+      } else if (file) {
+        editedFiles.add(file)
       }
     }
   }
@@ -136,6 +236,7 @@ export function noteCondenseFacts(dir: string, sid: string, batch: AgentMessage[
       anchorPath: list[0],
     })
   }
+  candidates.push(...buildErrorFixes(seq, sid))
   submit(dir, candidates)
 }
 

@@ -27,6 +27,7 @@ import { safeCall } from '../../../utils/safeCall'
 import { detectModelCapabilities } from '../../../utils/modelCapabilities'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { askUserQuestionRegistry } from '../../../utils/askUserQuestionRegistry'
+import { noteApprovalRejected } from '../../../utils/memoryWriter'
 import type { AgentMode, AgentSession, CardState, KnowledgeBaseMeta, TodoUpdate } from '../../../../../shared/types'
 
 /** 右侧面板模式：files=文件树+预览 / browser=内嵌浏览器 / terminal=内嵌终端 / diff=Git变更 */
@@ -198,9 +199,11 @@ export function useAgentUiState({
   const attachBtnRef = useRef<HTMLButtonElement>(null)
   // ── 右侧面板状态按模式分槽 ──
   // 要求：切模式恢复该模式上次的面板布局，且不污染另一个模式的会话状态。
-  // 编码模式默认展开文件树；通用模式没有文件树，右槽默认收起（只留顶栏可进的浏览器）。
+  // 两种模式的文件树都默认收起：首屏把横向空间全留给对话区，需要看文件时由顶栏
+  // 右上角的开关（或双击顶栏 / 打开文件 / 浏览器 / 终端 / 变更）再展开。
+  // 注意这里是「每个模式各自的默认值」，切模式后仍会回到该模式上次的开合状态。
   const [panelByMode, setPanelByMode] = useState<Record<AgentMode, ModePanelState>>(() => ({
-    code: { treeOpen: true, rightPanelMode: 'files' },
+    code: { treeOpen: false, rightPanelMode: 'files' },
     chat: { treeOpen: false, rightPanelMode: 'files' },
   }))
   const treeOpen = panelByMode[mode].treeOpen
@@ -232,7 +235,9 @@ export function useAgentUiState({
   useEffect(() => {
     if (rightPanelMode === 'terminal') setTerminalMounted(true)
   }, [rightPanelMode])
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  // 会话侧栏默认收起：首屏只留对话区，点顶栏左上角的开关（或双击顶栏）再展开。
+  // 不持久化，每次进入工作台都是收起态。
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [contextModalOpen, setContextModalOpen] = useState(false)
   const [auditOpen, setAuditOpen] = useState(false)  // 操作审计面板开关
   const [trajOpen, setTrajOpen] = useState(false)  // 轨迹台账面板开关
@@ -271,6 +276,11 @@ export function useAgentUiState({
   const [reqCount, setReqCount] = useState(0)
   const [cumTokens, setCumTokens] = useState(0)
   const [approvalReq, setApprovalReq] = useState<{ id: string; name: string; args: string } | null>(null)
+  // 渲染期同步的镜像：resolveApproval 的依赖数组为空（身份必须恒定，否则审批面板的
+  // 键盘 effect 每次渲染都要重挂），直接读 approvalReq 会拿到过期值 —— 拒绝时沉淀
+  // 「用户拒绝过哪类操作」需要当次的工具名与参数。（与下方 modeRef 同款写法）
+  const approvalReqRef = useRef<{ id: string; name: string; args: string } | null>(null)
+  approvalReqRef.current = approvalReq
   const approvalResolveRef = useRef<((approved: boolean) => void) | null>(null)
   const autoApproveRef = useRef(false)
   const rejectBtnRef = useRef<HTMLButtonElement>(null)
@@ -293,9 +303,17 @@ export function useAgentUiState({
   const resolveApproval = useCallback((approved: boolean) => {
     const r = approvalResolveRef.current
     approvalResolveRef.current = null
+    const req = approvalReqRef.current
     setApprovalReq(null)
+    // 一次拒绝 = 一条最有价值的偏好信号（比关键词匹配的 noteUserCorrection 可靠得多）：
+    // 沉淀「用户拒绝过哪类操作」，供下个会话提前说明意图与影响。
+    // 此前 noteApprovalRejected 全仓零调用，这条信号从未进过记忆库。
+    if (!approved && req) {
+      const dir = useStore.getState().agentProjects.find(p => p.id === activeProjectId)?.workspaceDir
+      if (dir) noteApprovalRejected(dir, activeSessionId, req.name, req.args)
+    }
     if (r) r(approved)
-  }, [])
+  }, [activeProjectId, activeSessionId])
   // 审批面板键盘导航：方向键切换按钮，Enter 确认允许，Escape 拒绝
   useEffect(() => {
     if (!approvalReq) return

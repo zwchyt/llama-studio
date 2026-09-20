@@ -185,6 +185,12 @@ export function AgentInputArea({
   useEffect(() => {
     if (plainChat) setFilePickerOpen(false)
   }, [plainChat, setFilePickerOpen])
+  // 发送键的可用条件与禁用原因收成一处：此前 disabled 里含 !apiBaseUrl，但 title 恒为
+  // 「发送」——模型没启动时按钮灰掉却不说明原因，用户只能猜（这是最常遇到的一种）。
+  // 顺带消掉原来在 JSX 里重复两遍的长表达式。
+  const hasPayload = input.trim() !== '' || attachedFiles.length > 0 || refChips.length > 0 || codeSnippets.length > 0 || !!packedInput?.trim()
+  const sendDisabled = !hasPayload || !apiBaseUrl
+  const sendTitle = !apiBaseUrl ? '请先启动一个模型' : !hasPayload ? '输入内容后发送' : '发送'
   return (
     <div className="chat-input-area" ref={chatInputAreaRef}>
       {/* 破坏性工具审批面板：内联显示在输入框内（与提问工具 AskUserQuestionInline 同款位置/风格），不弹窗 */}
@@ -709,7 +715,7 @@ export function AgentInputArea({
             {loading ? (
               <AniIconButton className="btn btn-ghost chat-stop-btn" icon={CircleStopIcon} size={16} onClick={handleStop} title="停止" />
             ) : (
-              <AniIconButton className="btn btn-primary chat-send-btn" icon={SendIcon} size={16} onClick={() => handleSend()} disabled={(!input.trim() && attachedFiles.length === 0 && refChips.length === 0 && codeSnippets.length === 0 && !packedInput?.trim()) || !apiBaseUrl} title="发送" />
+              <AniIconButton className="btn btn-primary chat-send-btn" icon={SendIcon} size={16} onClick={() => handleSend()} disabled={sendDisabled} title={sendTitle} />
             )}
           </div>
         </div>

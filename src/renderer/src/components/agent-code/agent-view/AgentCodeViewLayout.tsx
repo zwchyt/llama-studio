@@ -14,7 +14,7 @@
 //
 // 组件体内把域对象二次解构为局部名，使下方 JSX 与拆分前的写法逐字一致。
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Bot, Bug, Database, Copy, Check, ImageDown, FileDown, Wrench } from 'lucide-react'
 import html2canvas from 'html2canvas'
 import {
@@ -25,6 +25,7 @@ import {
 } from '@animateicons/react/lucide'
 import { notify } from '../../../store/notificationStore'
 import { useStore } from '../../../store/useStore'
+import { useMemoryPendingStore } from '../../../store/memoryPendingStore'
 import { clearAudit } from '../../../utils/auditLog'
 import { clearDebug } from '../../../utils/debugLog'
 import { KEEP_RECENT_TURNS } from '../utils/constants'
@@ -285,6 +286,89 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     }
   }, [activeSession, pdfExporting])
 
+  // ── 顶栏右侧按钮条的溢出提示（样式见 agent-code.css 的 .ovf-left / .ovf-right）──
+  // 该条是 overflow-x: auto + 滚动条隐藏，被滚出视野的按钮此前没有任何迹象。
+  // 渐隐不能写成常驻 CSS：容器宽度按内容收缩（flex-shrink: 1 + min-width: 0），
+  // 不溢出时渐隐区会正好落在最后一个按钮上，变成假提示。所以这里读真实的
+  // scrollWidth / clientWidth / scrollLeft 同步成 class。
+  const topbarScrollRef = useRef<HTMLDivElement>(null)
+  const [topbarOvf, setTopbarOvf] = useState({ left: false, right: false })
+  useEffect(() => {
+    const el = topbarScrollRef.current
+    if (!el) return
+    const sync = () => {
+      const max = el.scrollWidth - el.clientWidth
+      const left = el.scrollLeft > 1
+      const right = max > 1 && el.scrollLeft < max - 1
+      // 同值时原样返回：滚动过程中本函数每帧都会跑，只有「进入/离开溢出状态」才值得重渲染
+      setTopbarOvf(prev => (prev.left === left && prev.right === right ? prev : { left, right }))
+    }
+    sync()
+    el.addEventListener('scroll', sync, { passive: true })
+    // 容器尺寸变化（窗口缩放 / 侧栏拖拽）
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    // 子项增删（模式切换会换掉整组按钮、PrefillBar 会挂载/卸载）不改变容器尺寸时
+    // ResizeObserver 不触发，用 MutationObserver 兜住。按钮与 PrefillBar 都是直接子元素，
+    // 不需要 subtree —— 免得 PrefillBar 内部进度文字每次更新都白跑一遍 sync。
+    const mo = new MutationObserver(sync)
+    mo.observe(el, { childList: true })
+    return () => {
+      el.removeEventListener('scroll', sync)
+      ro.disconnect()
+      mo.disconnect()
+    }
+  }, [])
+
+  // 长期记忆「清空」：放在卡片头部，与审计 / 调试卡片的清空按钮同位（此前只有记忆卡
+  // 没有这个入口）。条目列表由 MemoryPanel 自己持有，清空后靠 key 重挂触发重新拉取 ——
+  // 比为此往上引一条刷新回调穿透 props 更简单。
+  const [memoryReloadKey, setMemoryReloadKey] = useState(0)
+  const clearPendingMemory = useMemoryPendingStore(s => s.clearForDir)
+  const handleClearMemory = useCallback(async () => {
+    const dir = activeProject.workspaceDir
+    if (!dir) return
+    // 待确认队列一并清掉：用户点「清空」的意图是「这个工作区的记忆清干净」，
+    // 留下未裁决的候选会让人以为没生效。数量写进提示里，不做静默丢弃。
+    const pendingBefore = useMemoryPendingStore.getState().items.filter(i => i.dir === dir).length
+    clearPendingMemory(dir)
+    try {
+      const r = await window.api.memstoreClear(dir)
+      setMemoryReloadKey(k => k + 1)
+      notify(
+        pendingBefore > 0
+          ? `已清空长期记忆（${r?.removed ?? 0} 条，含 ${pendingBefore} 条待确认）`
+          : `已清空长期记忆（${r?.removed ?? 0} 条）`,
+        'success'
+      )
+    } catch {
+      notify('清空长期记忆失败', 'error')
+    }
+  }, [activeProject.workspaceDir, clearPendingMemory])
+
+  // 顶栏「记忆」角标：待确认候选数。队列是「写入前确认」模式下的唯一可见入口，
+  // 没有角标的话沉淀出来的候选会一直躺着没人裁决。
+  const pendingMemoryCount = useMemoryPendingStore(s => s.items.length)
+
+  // ── 顶栏「浏览器 / 终端」开关 ──
+  // 两个坑一起修：
+  // ①「是否已打开」必须同时看 rightPanelMode 和 treeOpen。只看 mode 的话，面板被右侧
+  //    那个开关收起之后（mode 仍是 browser/terminal）按钮依旧显示为选中，用户再点一次
+  //    本想关掉，实际却走「打开」分支把面板重新展开。
+  // ② 收起时必须连面板一起收（setTreeOpen(false)），并且把 mode 复位成 'files'。
+  //    原来只把 mode 切回 'files' 而面板仍展开着，文件树又只在 files 模式下渲染，
+  //    于是「关闭」的结果是当面亮出文件树（用户反馈的现象）；而若只收起面板、不复位
+  //    mode，右侧开关再展开时会停在 browser/terminal，文件树就彻底没了入口。
+  const toggleRightPanel = useCallback((panel: 'browser' | 'terminal') => {
+    if (treeOpen && rightPanelMode === panel) {
+      setRightPanelMode('files')
+      setTreeOpen(false)
+    } else {
+      setRightPanelMode(panel)
+      if (!treeOpen) setTreeOpen(true)
+    }
+  }, [treeOpen, rightPanelMode, setRightPanelMode, setTreeOpen])
+
   // 消息列表元素缓存（useMemo）：目录高亮 / rail 波浪 / 贴底按钮等纯滚动状态变化
   // 不再重建整棵消息树；仅消息数据、流式状态、编辑态或相关回调变化时重建。
   // 依赖均为稳定引用（useCallback 回调 / ref / store 内消息数组），不会击穿缓存。
@@ -380,7 +464,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
         <div className="agent-code-topbar-right">
           {/* Prefill 进度条：复用「模型运行数据」面板的同一数据源（modelMetrics[].prefillProgress），
               自订阅指标，仅在 prefill 进行中（pp < 1）显示，完成后自动消失。 */}
-          <div className="agent-code-topbar-right-scroll">
+          <div
+            ref={topbarScrollRef}
+            className={`agent-code-topbar-right-scroll${topbarOvf.left ? ' ovf-left' : ''}${topbarOvf.right ? ' ovf-right' : ''}`}
+          >
             <AgentPrefillBar />
             {/* ── 顶栏按钮按当前工作区模式动态显示（不需要的直接不渲染，不置灰）──
                 编码模式专属：压缩历史 / 审计 / 轨迹 / 调试 / 记忆 / 变更 / 终端
@@ -407,15 +494,23 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               <TopbarBtn btnRef={debugBtnRef} active={debugOpen} onClick={() => setDebugOpen(v => !v)} icon={Bug}>调试</TopbarBtn>
             )}
             {!plainChat && (
-              <TopbarBtn btnRef={memoryBtnRef} active={memoryOpen} onClick={() => setMemoryOpen(v => !v)} icon={BookOpenIcon}>记忆</TopbarBtn>
+              <TopbarBtn
+                btnRef={memoryBtnRef}
+                active={memoryOpen}
+                onClick={() => setMemoryOpen(v => !v)}
+                icon={BookOpenIcon}
+                title={pendingMemoryCount > 0 ? `${pendingMemoryCount} 条记忆待你确认` : undefined}
+              >
+                记忆{pendingMemoryCount > 0 && <span className="agent-code-topbar-badge">{pendingMemoryCount}</span>}
+              </TopbarBtn>
             )}
             {!plainChat && (
-              <TopbarBtn active={rightPanelMode === 'diff'} onClick={toggleGitDiff} icon={GitBranchIcon}>变更</TopbarBtn>
+              <TopbarBtn active={treeOpen && rightPanelMode === 'diff'} onClick={toggleGitDiff} icon={GitBranchIcon}>变更</TopbarBtn>
             )}
-            <TopbarBtn active={rightPanelMode === 'browser'} onClick={() => { setRightPanelMode(m => m === 'browser' ? 'files' : 'browser'); if (!treeOpen) setTreeOpen(true) }} icon={GlobeIcon}>浏览器</TopbarBtn>
+            <TopbarBtn active={treeOpen && rightPanelMode === 'browser'} onClick={() => toggleRightPanel('browser')} icon={GlobeIcon}>浏览器</TopbarBtn>
             {/* 终端是编码工作台的东西：通用模式直接不渲染 */}
             {!plainChat && (
-              <TopbarBtn active={rightPanelMode === 'terminal'} onClick={() => { setRightPanelMode(m => m === 'terminal' ? 'files' : 'terminal'); if (!treeOpen) setTreeOpen(true) }} icon={TerminalIcon}>终端</TopbarBtn>
+              <TopbarBtn active={treeOpen && rightPanelMode === 'terminal'} onClick={() => toggleRightPanel('terminal')} icon={TerminalIcon}>终端</TopbarBtn>
             )}
             {/* 导出只在通用模式出现（编码模式的消息带工具卡与文件改动，截图意义不大） */}
             {plainChat && (
@@ -715,9 +810,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
             <div className="agent-task-card agent-card-memstore">
               <div className="agent-task-card-header">
                 <span>长期记忆 · {activeProject.title}</span>
+                <button className="agent-audit-clear" onClick={handleClearMemory}><Trash2Icon size={12} /> 清空</button>
               </div>
               <div className="agent-task-card-body agent-card-memstore-body">
-                <MemoryPanel dir={activeProject.workspaceDir} />
+                <MemoryPanel key={memoryReloadKey} dir={activeProject.workspaceDir} />
               </div>
             </div>
           )}

@@ -21,7 +21,7 @@
 // 注：上述 --task-card-h 写入逻辑在当前代码中已不存在（无 CSS 消费方），
 // 原注释随本次搬移一并归档于此，避免信息丢失。
 
-import React, { useEffect } from 'react'
+import React, { useEffect, useRef } from 'react'
 import type { useAgentPreviewTabs } from './useAgentPreviewTabs'
 import type { useAgentUiState } from './useAgentUiState'
 import type { useAgentScroll } from './useAgentScroll'
@@ -38,10 +38,21 @@ export function useAgentViewEffects({
   const { setSidebarOpen } = ui
   const { chatScrollRef } = scroll
 
+  // ── 历史说明（原文件遗留注释，保留备查）──
   // 终端面板：首次真正切换到 terminal 模式后才挂载并常驻——挂载必然发生在可见容器内
   // （xterm open 于 display:none 容器会拿到失真尺寸）；此后面板级切换只切 CSS hidden，
   // 不卸载 xterm 实例，切回时不重建、不触发 replay 回放大段 backlog（避免界面卡顿）
+  // 注：该挂载逻辑现由 useAgentUiState 的 terminalMounted effect 承担，此注释仅备查。
+
+  // 侧栏可见性跟随预览标签：标签全部关掉后自动展开侧栏（把腾出来的横向空间交给它）。
+  // 首次挂载必须跳过：侧栏默认收起，若挂载时按「当前没有标签」判定，会立刻把侧栏顶开，
+  // 用户看到的默认态就变回展开了。只有挂载之后的标签数变化才参与联动。
+  const sidebarTabSyncRef = useRef(false)
   useEffect(() => {
+    if (!sidebarTabSyncRef.current) {
+      sidebarTabSyncRef.current = true
+      return
+    }
     setSidebarOpen(openTabs.length === 0)
   }, [openTabs.length])
 

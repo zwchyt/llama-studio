@@ -30,7 +30,7 @@ import { playNotificationSound, warmUpAudio } from '../../../utils/sound'
 import { agentConfig } from '../../../utils/agentConfig'
 import { PiAgentClient } from '../../../utils/piAgentClient'
 import { computeContextBudget, splitAgentTurns } from '../../../utils/contextBudget'
-import { noteUserCorrection } from '../../../utils/memoryWriter'
+import { noteUserCorrection, probeContradiction } from '../../../utils/memoryWriter'
 import { recordAudit } from '../../../utils/auditLog'
 import { recordDebugTurn, type DebugToolCall } from '../../../utils/debugLog'
 import { parseSlashCommand, findCommand, expandCommandTemplate } from '../../../agent/slashCommands'
@@ -57,6 +57,12 @@ export type RunPiTurn = (
     plainChat?: boolean
     /** 通用模式下启用的工具（只认原生聊天那四个） */
     chatTools?: string[]
+    /** 项目自定义系统提示词（「提示词」卡片保存的内容）。由调用方从 activeProject 取，
+        不经 runPiTurn 自己的闭包 —— 它的依赖数组只有 updateSessionInProject，
+        直接读 activeProject 会拿到过期值。 */
+    projectSystemPrompt?: string
+    /** 项目记忆：跨会话长期携带的结论 / 约定（「提示词」卡片保存的内容） */
+    projectMemoryNotes?: string
   }
 ) => Promise<{ errored: boolean; aborted: boolean }>
 
@@ -140,7 +146,9 @@ export function useAgentLoop({
     pid: string,
     sid: string,
     displayMsgs: AgentMessage[],
-    opts: { port: number; text: string; workspaceDir: string; approveWriteEdit?: boolean; knowledgeBaseId?: string; memory?: AgentSession['memory']; plainChat?: boolean; chatTools?: string[] }
+    // 与上方导出的 RunPiTurn 共用同一份 opts 类型：原先两处各写一遍，改了一处另一处
+    // 就静默漂移（新增 projectSystemPrompt 时正是这样漏掉内联声明的）。
+    opts: Parameters<RunPiTurn>[3]
   ): Promise<{ errored: boolean; aborted: boolean }> => {
     const piSessionId = `pi-${sid}`
     // 发消息/重跑是明确的用户意图，这里无条件恢复「贴底跟随」并立刻滚到底。
@@ -178,6 +186,17 @@ export function useAgentLoop({
       for (const m of prior.slice(coveredPrefix)) {
         history.push({ role: m.role, content: m.content, toolCalls: m.toolCalls, attachments: m.attachments })
       }
+      // ── 长期记忆注入文本（阶段 2.3 的读取侧，此前从未接线）──
+      // 只能在这里取一次：pi 的 system prompt 建会话后固定，改字段不生效，所以注入时机
+      // 就是会话创建时刻；会话重建（切会话 / 压缩 / 模式切换）会重新取一次。
+      // 走 memstore-inject IPC 而非直接读存储：本函数在渲染进程，memoryStore 在主进程。
+      let memoryInjection = ''
+      if (opts.workspaceDir) {
+        try {
+          const inj = await window.api.memstoreInject(opts.workspaceDir, agentConfig.memoryInjectChars)
+          memoryInjection = inj?.text || ''
+        } catch { /* 注入失败不阻塞对话（与 memoryWriter 的火忘式提交同一原则） */ }
+      }
       const res = await window.api.piAgent.create({
         sessionId: piSessionId,
         port: opts.port,
@@ -188,6 +207,10 @@ export function useAgentLoop({
         chatTools,
         searchEnabled: useStore.getState().searchEnabled,
         searchProvider: useStore.getState().searchProvider,
+        // 用户可编辑的三段提示词：此前只写进了 project 对象，从未送达模型
+        projectSystemPrompt: opts.projectSystemPrompt,
+        projectMemoryNotes: opts.projectMemoryNotes,
+        memoryInjection: memoryInjection || undefined,
         contextWindow: (() => {
           const rc = useStore.getState().cards.find(c => c.status === 'running')
           return rc ? useStore.getState().modelMetrics[rc.template.id]?.nCtx || undefined : undefined
@@ -500,6 +523,17 @@ export function useAgentLoop({
         } catch { /* 审计埋点不影响主流程 */ }
         // 调试面板：本轮工具调用链（有序）
         turnToolTrace.push({ name, durationMs: elapsed === Number.MAX_SAFE_INTEGER ? 0 : elapsed, failed: isError })
+        // ── 矛盾探针（阶段 2.3）：Bash 实测失败 → 对相似的「已验证命令」记忆条目记矛盾标记
+        // （置信度腰斩，累计两次自动归档）。此前 probeContradiction 全仓零调用，
+        // contradictions 恒为 0，「矛盾 ×N」徽标与矛盾归档整条链路都不可达。
+        // 只探 Bash：探针文本就是失败的命令行，是唯一能机械拿到「实测打脸」证据的工具。
+        if (isError && name === 'Bash' && opts.workspaceDir) {
+          try {
+            const rawArgs = toolCalls.find(t => t.id === id)?.args || ''
+            const cmd = (JSON.parse(rawArgs || '{}') as { command?: unknown }).command
+            if (typeof cmd === 'string' && cmd.trim()) probeContradiction(opts.workspaceDir, cmd)
+          } catch { /* 探针失败不影响主流程 */ }
+        }
         // 最小展示时长：执行太快（本地 IO 不足一帧）时延迟置 done，让「写入中」徽标可见
         const applyDone = (): void => {
           // 与 start 同样的兜底：按工具名找正在执行的同类工具
@@ -824,6 +858,9 @@ export function useAgentLoop({
         // 工具集是会话级字段，这里实时读；变化后由 runPiTurn 的 modeSig 守卫重建 pi 会话。
         plainChat: projectMode(activeProject) === 'chat',
         chatTools: activeSession?.chatTools,
+        // 项目级提示词：从 activeProject 实时取（本回调的依赖数组里有 activeProject）
+        projectSystemPrompt: activeProject.systemPrompt,
+        projectMemoryNotes: activeProject.memory?.notes,
       })
     } catch (e) {
       // 准备阶段（系统提示词构建/历史压缩）异常：本轮 agent 未启动，其收尾逻辑

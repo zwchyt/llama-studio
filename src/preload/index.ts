@@ -249,6 +249,9 @@ const fullApi = {
   memstoreContradict: (dir: string, probeText: string) => ipcRenderer.invoke('memstore-contradict', dir, probeText),
   memstoreList: (dir: string) => ipcRenderer.invoke('memstore-list', dir),
   memstoreArchive: (dir: string, id: string) => ipcRenderer.invoke('memstore-archive', dir, id),
+  memstoreUnarchive: (dir: string, id: string) => ipcRenderer.invoke('memstore-unarchive', dir, id),
+  memstoreDelete: (dir: string, id: string) => ipcRenderer.invoke('memstore-delete', dir, id),
+  memstoreClear: (dir: string) => ipcRenderer.invoke('memstore-clear', dir),
   // ── 本地知识库 RAG（knowledgeService）──
   knowledgeList: () => ipcRenderer.invoke('knowledge-list'),
   knowledgeCreate: (name: string) => ipcRenderer.invoke('knowledge-create', name),
@@ -349,7 +352,7 @@ const fullApi = {
   windowClose: () => ipcRenderer.invoke('window-close'),
   // ── pi-agent（pi SDK 驱动的 agent 会话）──
   piAgent: {
-    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => ipcRenderer.invoke('pi-agent-create', opts),
+    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; projectSystemPrompt?: string; projectMemoryNotes?: string; memoryInjection?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => ipcRenderer.invoke('pi-agent-create', opts),
     warmup: () => ipcRenderer.invoke('pi-agent-warmup'),
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-prompt', sessionId, text, images),
     steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-steer', sessionId, text, images),

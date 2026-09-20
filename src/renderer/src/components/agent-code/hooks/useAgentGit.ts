@@ -68,16 +68,22 @@ export function useAgentGit({ workspaceDir, rightPanelMode, treeOpen, setRightPa
   }, [openGitDiff])
   const onGitFocusHandled = useCallback(() => setGitFocusPath(null), [])
 
-  // 顶栏「变更」按钮切换态：diff 模式且展开时再点收起，否则展开并切换到 diff
+  // 顶栏「变更」按钮切换态：diff 模式且面板展开时再点收起，否则展开并切换到 diff。
+  // 收起时必须**同时收起面板**：原来只把 mode 切回 'files'，面板却仍然展开着，
+  // 而文件树只在 files 模式下渲染（AgentPreviewSlot 的 treeHidden），于是「关掉变更面板」
+  // 的实际结果是当面亮出一棵文件树——用户反馈的「关闭的时候把文件树展开了」。
+  // mode 仍复位成 'files'：右侧那个面板开关只切显隐、不改模式，若 mode 停在 'diff'，
+  // 文件树就再没有任何入口了。
   const toggleGitDiff = useCallback(() => {
     if (rightPanelMode === 'diff' && treeOpen) {
       setRightPanelMode('files')
+      setTreeOpen(false)
     } else {
       setRightPanelMode('diff')
       setTreeOpen(true)
       void refreshGitChanges(true)
     }
-  }, [rightPanelMode, treeOpen, refreshGitChanges])
+  }, [rightPanelMode, treeOpen, setRightPanelMode, setTreeOpen, refreshGitChanges])
 
   // 文件监听回调：仅当 diff 模式打开时，随文件改动静默刷新变更列表（不转圈）。
   const onWorkspaceFilesChanged = useCallback(() => {

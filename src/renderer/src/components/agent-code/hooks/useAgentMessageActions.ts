@@ -24,14 +24,10 @@ import type { AgentMessage, AgentProject, AgentSession, CardState } from '../../
 import { projectMode } from '../../../../../shared/types'
 import type { useAgentProjects } from './useAgentProjects'
 import type { useAgentGit } from './useAgentGit'
+import type { RunPiTurn } from './useAgentLoop'
 import type { AgentMsgRowActions } from '../types'
 
 import React from 'react'
-
-type RunPiTurn = (
-  pid: string, sid: string, displayMsgs: AgentMessage[],
-  opts: { port: number; text: string; workspaceDir: string; approveWriteEdit?: boolean; knowledgeBaseId?: string; memory?: AgentSession['memory']; plainChat?: boolean; chatTools?: string[] }
-) => Promise<{ errored: boolean; aborted: boolean }>
 
 export function useAgentMessageActions({
   activeSession, activeProject, activeProjectId, activeSessionId,
@@ -106,6 +102,9 @@ export function useAgentMessageActions({
       workspaceDir: activeProject.workspaceDir,
       approveWriteEdit: !!activeProject.approveWriteEdit,
       knowledgeBaseId: activeProject.knowledgeBaseId,
+      // 项目级提示词同样要带上：重新生成 / 重发会重建 pi 会话，漏传等于把项目指令丢掉
+      projectSystemPrompt: activeProject.systemPrompt,
+      projectMemoryNotes: activeProject.memory?.notes,
     })
     rollbackIfFailed(r)
   }, [loading, runningCard, activeSession, activeProject, activeProjectId, activeSessionId, updateSessionInProject, runPiTurn])
@@ -127,6 +126,9 @@ export function useAgentMessageActions({
       workspaceDir: activeProject.workspaceDir,
       approveWriteEdit: !!activeProject.approveWriteEdit,
       knowledgeBaseId: activeProject.knowledgeBaseId,
+      // 项目级提示词同样要带上：重新生成 / 重发会重建 pi 会话，漏传等于把项目指令丢掉
+      projectSystemPrompt: activeProject.systemPrompt,
+      projectMemoryNotes: activeProject.memory?.notes,
     })
     rollbackIfFailed(r)
   }, [loading, runningCard, activeSession, activeProject, activeProjectId, activeSessionId, updateSessionInProject, runPiTurn])
@@ -159,6 +161,8 @@ export function useAgentMessageActions({
       // 模式由所属工作区决定（不是会话字段）
       plainChat: projectMode(activeProject) === 'chat',
       chatTools: activeSession.chatTools,
+      projectSystemPrompt: activeProject.systemPrompt,
+      projectMemoryNotes: activeProject.memory?.notes,
     })
     rollbackIfFailed(r)
   }, [loading, runningCard, activeSession, activeProject, activeProjectId, activeSessionId, updateSessionInProject, runPiTurn])

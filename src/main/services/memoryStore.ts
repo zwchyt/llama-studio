@@ -219,6 +219,28 @@ function jaccard(a: Set<string>, b: Set<string>): number {
   return inter / (a.size + b.size - inter)
 }
 
+// ── 锚点符号推导 ──
+// 候选只带 anchorPath 时，从锚点文件里廉价抓一个「本应存在」的符号（首个导出声明的名字），
+// 交给 verifyAnchor 做符号级校验：文件被重命名 / 结构大改后符号消失，该条记忆即降级为
+// 「需验证」而不再以事实口吻注入。此前 anchorSymbol 只有读取方、没有任何写入方，
+// 符号级校验从未真正跑过 —— 锚点校验实际退化成「文件还在不在」。
+const SYMBOL_RE = /^\s*export\s+(?:default\s+)?(?:async\s+)?(?:function|const|let|var|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/m
+const SYMBOL_SCAN_CAP = 64 * 1024
+// 只对源码类文件推导符号：二进制 / 资源文件读进来也匹配不到，白白多一次读盘
+const SYMBOL_EXT = /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|swift|rb|php|cs|cpp|cc|h|hpp|vue|svelte|sh)$/i
+
+function deriveAnchorSymbol(workspaceDir: string, relPath: string): string | undefined {
+  if (!SYMBOL_EXT.test(relPath)) return undefined
+  try {
+    const abs = anchorAbsWithin(workspaceDir, relPath)
+    if (!abs || !existsSync(abs)) return undefined
+    if (statSync(abs).size > SYMBOL_SCAN_CAP) return undefined
+    return SYMBOL_RE.exec(readFileSync(abs, 'utf-8'))?.[1]
+  } catch {
+    return undefined
+  }
+}
+
 // ── 淘汰：活跃条目超上限时按「置信度 + 最近使用」联合评分归档最低分 ──
 
 function evictIfNeeded(store: MemoryFile): number {
@@ -256,6 +278,8 @@ function upsertEntries(dir: string, candidates: AgentMemoryCandidate[]): AgentMe
     const content = (cand.content || '').trim().slice(0, CONTENT_CAP)
     if (!content) continue
     const anchorPath = sanitizeAnchorPath(dir, cand.anchorPath)
+    // 候选没带符号时从锚点文件推导一个，让符号级校验真正生效（见 deriveAnchorSymbol）
+    const anchorSymbol = cand.anchorSymbol || (anchorPath ? deriveAnchorSymbol(dir, anchorPath) : undefined)
     const candTokens = tokenize(content)
     // 同类别活跃条目里找最相似者
     let best: AgentMemoryEntry | null = null
@@ -271,7 +295,12 @@ function upsertEntries(dir: string, candidates: AgentMemoryCandidate[]): AgentMe
       best.confidence = Math.min(1, Math.max(best.confidence, cand.confidence ?? 0) + 0.05)
       best.hits += 1
       best.updatedAt = now
-      if (anchorPath) { best.anchorPath = anchorPath; best.anchorSymbol = cand.anchorSymbol }
+      if (anchorPath) {
+        best.anchorPath = anchorPath
+        // 只在真的拿到符号时才覆盖：原实现直接写 cand.anchorSymbol，候选不带符号时
+        // 会把已校验过的符号抹成 undefined，让锚点校验悄悄退回「文件还在不在」
+        if (anchorSymbol) best.anchorSymbol = anchorSymbol
+      }
       if (cand.source === 'user') best.source = 'user' // 用户确认过的结论升格来源
       merged++
       touched.push(best)
@@ -289,7 +318,7 @@ function upsertEntries(dir: string, candidates: AgentMemoryCandidate[]): AgentMe
         hits: 1,
         contradictions: 0,
         ...(anchorPath ? { anchorPath } : {}),
-        ...(cand.anchorSymbol ? { anchorSymbol: cand.anchorSymbol } : {}),
+        ...(anchorSymbol ? { anchorSymbol } : {}),
       }
       store.entries.push(entry)
       added++
@@ -503,6 +532,59 @@ export function registerMemoryStoreIpc(appRoot: string): void {
       return { success: true }
     } catch {
       return { success: false }
+    }
+  })
+
+  // 撤销归档（恢复为活跃条目）。
+  // 必须一并把 contradictions 归零：归档多半就是被矛盾仲裁打进去的（阈值 2 次），
+  // 计数留着的话，恢复后下一次矛盾立刻又满足阈值、条目瞬间被打回归档，
+  // 表现为「点恢复没反应」。
+  ipcMain.handle('memstore-unarchive', async (_e, dir: string, id: string): Promise<{ success: boolean }> => {
+    try {
+      const store = loadStore(dir)
+      const entry = store.entries.find(e => e.id === id)
+      if (!entry) return { success: false }
+      entry.archived = false
+      entry.contradictions = 0
+      entry.updatedAt = Date.now()
+      await saveStore(store)
+      return { success: true }
+    } catch {
+      return { success: false }
+    }
+  })
+
+  // 彻底删除单条记忆（界面上只对「已归档」条目开放入口）。
+  // 注意这与本模块的「归档而非物理删除，留审计」原则相反 —— 这里是真的从库里移除，
+  // 删掉就没有副本了。所以调用方必须确认这是用户的显式删除意图，不要把它当作
+  // 归档的替代品（归档走 memstore-archive）。
+  // 落盘走整库压实：compactStore 会把 journal 一并清空，因此不会出现「删完又被
+  // 在途增量回放写回」——队列内先前的 append 一定排在这次 compact 之前。
+  ipcMain.handle('memstore-delete', async (_e, dir: string, id: string): Promise<{ success: boolean }> => {
+    try {
+      const store = loadStore(dir)
+      const i = store.entries.findIndex(e => e.id === id)
+      if (i < 0) return { success: false }
+      store.entries.splice(i, 1)
+      await saveStore(store)
+      return { success: true }
+    } catch {
+      return { success: false }
+    }
+  })
+
+  // 清空该工作区的全部记忆条目（含已归档）。物理清空而非归档：
+  // 「清空」是用户的明确意图，留一堆归档条目反而会让面板看起来没生效。
+  ipcMain.handle('memstore-clear', async (_e, dir: string): Promise<{ success: boolean; removed: number }> => {
+    try {
+      const store = loadStore(dir)
+      const removed = store.entries.length
+      store.entries = []
+      // saveStore 走整库压实（tmp + rename）并清空 journal，不会留下可回放的旧增量
+      await saveStore(store)
+      return { success: true, removed }
+    } catch {
+      return { success: false, removed: 0 }
     }
   })
 }

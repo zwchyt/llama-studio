@@ -289,6 +289,9 @@ interface LlamaCppApi {
   memstoreContradict: (dir: string, probeText: string) => Promise<{ marked: number; archived: number }>
   memstoreList: (dir: string) => Promise<AgentMemoryEntry[]>
   memstoreArchive: (dir: string, id: string) => Promise<{ success: boolean }>
+  memstoreUnarchive: (dir: string, id: string) => Promise<{ success: boolean }>
+  memstoreDelete: (dir: string, id: string) => Promise<{ success: boolean }>
+  memstoreClear: (dir: string) => Promise<{ success: boolean; removed: number }>
   // ── 本地知识库 RAG（knowledgeService）──
   knowledgeList: () => Promise<KnowledgeBaseMeta[]>
   knowledgeCreate: (name: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
@@ -321,7 +324,7 @@ interface LlamaCppApi {
   windowClose: () => Promise<void>
   // ── pi-agent（pi SDK 驱动的 agent 会话）──
   piAgent: {
-    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
+    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; projectSystemPrompt?: string; projectMemoryNotes?: string; memoryInjection?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
     warmup: () => Promise<{ success: boolean }>
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
     steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>

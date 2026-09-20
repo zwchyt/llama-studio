@@ -388,7 +388,11 @@
   transition: opacity var(--transition);
 }
 
-.chat-msg:hover .chat-msg-actions {
+/* 悬停显形 + 键盘显形：仅靠 :hover 的话，Tab 聚焦到隐藏的操作按钮上时
+   按钮仍不可见（opacity: 0 的元素照样可被 Tab 命中），触屏设备更是完全够不到。
+   :focus-within 让「焦点进入这一行」与「鼠标移入这一行」等价。 */
+.chat-msg:hover .chat-msg-actions,
+.chat-msg:focus-within .chat-msg-actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -840,6 +844,27 @@
   display: none;
 }
 
+/* ── 顶栏溢出提示 ──
+   滚动条被隐藏后，被滚出视野的按钮此前没有任何迹象，用户不知道顶栏还能横向滚动。
+   ovf-left / ovf-right 由 JS 按「真实溢出 + 当前滚动位置」切换，只在确实还有内容
+   被滚出去的那一侧做 28px 渐隐。
+   注意不能写成常驻渐隐：容器宽度按内容收缩（flex-shrink: 1 + min-width: 0），
+   不溢出时渐隐区正好落在最后一个按钮上，会变成假提示。 */
+.agent-code-topbar-right-scroll.ovf-right {
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+
+.agent-code-topbar-right-scroll.ovf-left {
+  mask-image: linear-gradient(to right, transparent, #000 28px);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px);
+}
+
+.agent-code-topbar-right-scroll.ovf-left.ovf-right {
+  mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+}
+
 .agent-code-topbar-right>.chat-collapse-btn {
   flex-shrink: 0;
 }
@@ -1087,6 +1112,11 @@
   border: 1.5px solid var(--border-strong);
 }
 
+/* ── 会话侧栏 / 文件树面板：默认收起 ──
+   两个侧栏的首屏默认态都是收起（状态在 useAgentUiState 里，默认值 sidebarOpen=false、
+   treeOpen=false），这里负责收起态的收尾：滑出视野后必须同时失去命中能力，
+   否则会留下一条能点、能 Tab 聚焦的隐形面板（收起是默认态，这条路径是常态而非边角）。
+   展开/收起仍走 margin-left 过渡，所以只在收起时禁用指针，展开态不受影响。 */
 .agent-code-sidebar-collapser {
   display: flex;
   width: calc(var(--agent-sidebar-width, 200px) + 16px);
@@ -1099,6 +1129,7 @@
 .sidebar-collapsed .agent-code-sidebar-collapser {
   margin-left: calc(-1 * (var(--agent-sidebar-width, 200px) + 16px));
   opacity: 0;
+  pointer-events: none;
 }
 
 .agent-code-sidebar {
@@ -1142,6 +1173,10 @@
   margin-left: 0;
 
   margin-right: 0;
+  /* 收起后边框必须一并归零：border-box 的 max-width:0 压不掉 1.5px 边框，
+     元素仍占 3px，右槽跟着留一条（透明但占位的）空条，对话区右缘对不齐。
+     文件树收起已是编码模式的首屏默认态，这条空条会常驻，不能只靠 slotEmpty 兜底。 */
+  border-width: 0;
 }
 
 .agent-ctx-panel {
@@ -1413,6 +1448,26 @@
 
 .agent-code-topbar-btn.active:hover {
   background: var(--surface-hover);
+}
+
+/* 顶栏按钮上的计数角标（目前只有「记忆」用：待确认候选数）。
+   必须用后代选择器而不是裸类名 —— 上面的 `.agent-code-topbar-btn>span`
+   把按钮内所有 span 强制成了 display:block，同层级的裸类名压不过它。 */
+.agent-code-topbar-btn .agent-code-topbar-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  margin-left: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .agent-code-task-panel {
@@ -1726,11 +1781,16 @@
   color: var(--text);
 }
 
-/* 聊天列表里的导出 / 重命名 / 删除：沿用会话项的「hover 才显形」规则 */
+/* 聊天列表里的导出 / 重命名 / 删除：沿用会话项的「hover 才显形」规则，
+   并补 :focus-within —— 否则 Tab 会聚焦到不可见的按钮上（见 .chat-msg-actions 同款说明） */
 .agent-code-chat-item:hover .agent-code-session-del,
 .agent-code-chat-item:hover .agent-code-session-add,
 .agent-code-chat-item:hover .agent-code-session-rename,
-.agent-code-chat-item:hover .agent-code-session-export {
+.agent-code-chat-item:hover .agent-code-session-export,
+.agent-code-chat-item:focus-within .agent-code-session-del,
+.agent-code-chat-item:focus-within .agent-code-session-add,
+.agent-code-chat-item:focus-within .agent-code-session-rename,
+.agent-code-chat-item:focus-within .agent-code-session-export {
   opacity: 1;
 }
 
@@ -1909,7 +1969,9 @@
 }
 
 .agent-code-project-item:hover .agent-code-session-del,
-.agent-code-session-item:hover .agent-code-session-del {
+.agent-code-session-item:hover .agent-code-session-del,
+.agent-code-project-item:focus-within .agent-code-session-del,
+.agent-code-session-item:focus-within .agent-code-session-del {
   opacity: 1;
 }
 
@@ -1939,12 +2001,18 @@
 .agent-code-project-item:hover .agent-code-session-add,
 .agent-code-session-item:hover .agent-code-session-add,
 .agent-code-project-item:hover .agent-code-session-rename,
-.agent-code-session-item:hover .agent-code-session-rename {
+.agent-code-session-item:hover .agent-code-session-rename,
+.agent-code-project-item:focus-within .agent-code-session-add,
+.agent-code-session-item:focus-within .agent-code-session-add,
+.agent-code-project-item:focus-within .agent-code-session-rename,
+.agent-code-session-item:focus-within .agent-code-session-rename {
   opacity: 1;
 }
 
 .agent-code-project-item:hover .agent-code-session-export,
-.agent-code-session-item:hover .agent-code-session-export {
+.agent-code-session-item:hover .agent-code-session-export,
+.agent-code-project-item:focus-within .agent-code-session-export,
+.agent-code-session-item:focus-within .agent-code-session-export {
   opacity: 1;
 }
 
@@ -5242,6 +5310,13 @@
   border-left-color: var(--border-strong);
 }
 
+/* 归档行压到 55% 透明度后，行内的「恢复 / 删除」图标按钮会跟着一起变淡，
+   几乎看不出是可点的。悬停（或键盘聚焦）时把整行提回来。 */
+.agent-mem-row.archived:hover,
+.agent-mem-row.archived:focus-within {
+  opacity: .9;
+}
+
 .agent-mem-line {
   display: flex;
   align-items: center;
@@ -5315,6 +5390,178 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 命中次数：被沉淀 / 确认过几次（相似条目合并时 +1），越高说明该结论越稳定 */
+.agent-mem-hits {
+  color: var(--text-muted);
+}
+
+/* 出处（触发点 + 会话 id）：判断这条记忆可不可信的关键线索。
+   该字段一直存在存储里，此前面板从不显示，用户只能看一个置信度百分比、无从追溯来源。 */
+.agent-mem-origin {
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 已归档行内的出处：与时间同行，需限宽省略（.agent-mem-time 是 margin-left:auto） */
+.agent-mem-origin-inline {
+  font-size: 10px;
+  color: var(--text-muted);
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 恢复（撤销归档）：与归档按钮同款，hover 用正向绿以区别于归档的红色 */
+.agent-mem-restore {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.agent-mem-restore:hover {
+  color: #6a8f1f;
+}
+
+/* 彻底删除：仅已归档条目提供入口，hover 用红以区别于恢复的绿 */
+.agent-mem-delete {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.agent-mem-delete:hover {
+  color: #e01a4f;
+}
+
+/* 删除的两步确认：行内小按钮，不为一个图标动作引入模态 */
+.agent-mem-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agent-mem-confirm-yes,
+.agent-mem-confirm-no {
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+}
+
+.agent-mem-confirm-yes {
+  color: #e01a4f;
+  border-color: rgba(224, 26, 79, .45);
+}
+
+.agent-mem-confirm-yes:hover {
+  background: rgba(224, 26, 79, .12);
+}
+
+.agent-mem-confirm-no {
+  color: var(--text-secondary);
+}
+
+.agent-mem-confirm-no:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+/* ── 待确认区（「写入前确认」模式：候选先入队，用户裁决后才落库）──
+   用琥珀色描边与已落库条目区分开：这一块是「还没决定」的东西，不是记忆本身。 */
+.agent-mem-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+}
+
+.agent-mem-pending-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.agent-mem-pending-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.agent-mem-pending-bulk {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.agent-mem-pending-row {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  background: var(--bg);
+}
+
+/* 采纳 / 忽略推到行尾（这一行没有 .agent-mem-time 承担 margin-left:auto） */
+.agent-mem-pending-actions {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.agent-mem-pending-adoptall,
+.agent-mem-pending-ignoreall,
+.agent-mem-pending-yes,
+.agent-mem-pending-no {
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+}
+
+.agent-mem-pending-adoptall,
+.agent-mem-pending-yes {
+  color: #6a8f1f;
+  border-color: rgba(106, 143, 31, .45);
+}
+
+.agent-mem-pending-adoptall:hover,
+.agent-mem-pending-yes:hover {
+  background: rgba(106, 143, 31, .14);
+}
+
+.agent-mem-pending-ignoreall,
+.agent-mem-pending-no {
+  color: var(--text-secondary);
+}
+
+.agent-mem-pending-ignoreall:hover,
+.agent-mem-pending-no:hover {
+  color: var(--text);
+  background: var(--surface-hover);
 }
 
 .agent-mem-archived-toggle {
@@ -5914,9 +6161,14 @@
 }
 
 /* ============================================================
-   模型输出文字选区体验
+   会话文字选区体验
    1) 自定义选区高亮颜色（脱离浏览器默认蓝，改用主题强调色）。
       颜色由 --agent-selection-bg / --agent-selection-fg 控制，可集中改。
+      作用域是整个会话面板（.agent-code-chat），而不是只到消息正文：
+      欢迎页的标题与说明、快捷建议、输入框里的文字同样是「会话里的文字」，
+      原来只覆盖 .chat-msg-markdown / .agent-think-body，这些地方左键拖选
+      会掉回系统默认蓝（与相邻消息的选区颜色不一致）。
+      右侧预览区不在此作用域内，它有自己的同款规则。
    2) 选中后弹出的浮动操作条 .agent-sel-popover。
    ============================================================ */
 .agent-code-view {
@@ -5927,18 +6179,14 @@
   --agent-bubble-bg: #e3e3e3;
 }
 
-.agent-code-view .chat-messages .chat-msg-markdown ::selection,
-.agent-code-view .chat-messages .chat-msg-markdown::selection,
-.agent-code-view .chat-messages .agent-think-body ::selection,
-.agent-code-view .chat-messages .agent-think-body::selection {
+.agent-code-view .agent-code-chat ::selection,
+.agent-code-view .agent-code-chat::selection {
   background: var(--agent-selection-bg);
   color: var(--agent-selection-fg);
 }
 
-.agent-code-view .chat-messages .chat-msg-markdown ::-moz-selection,
-.agent-code-view .chat-messages .chat-msg-markdown::-moz-selection,
-.agent-code-view .chat-messages .agent-think-body ::-moz-selection,
-.agent-code-view .chat-messages .agent-think-body::-moz-selection {
+.agent-code-view .agent-code-chat ::-moz-selection,
+.agent-code-view .agent-code-chat::-moz-selection {
   background: var(--agent-selection-bg);
   color: var(--agent-selection-fg);
 }
@@ -10257,4 +10505,31 @@
   font-size: 11px;
   line-height: 1.5;
   color: var(--text);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   键盘焦点兜底
+   ══════════════════════════════════════════════════════════════════════════════
+   本文件此前只有 3 条 :focus-visible（.agent-ctx-inline / 审批页脚 / 提问页脚），
+   却有 13 处 outline: none —— 其中 12 处是「裸禁用、无任何补偿」。用 Tab 走查界面时
+   焦点位置完全不可见，触屏与键盘用户都受影响。
+
+   这里不逐个控件补，改为在文件末尾加一条兜底规则：
+   · :where(...) 把选择器本身的特异性压到 0，规则整体只有 (0,2,0)，不会意外压过
+     其它按组件写的样式；
+   · 放在文件末尾，同特异性时按顺序胜出，正好盖住上面那 12 处裸 outline: none
+     （它们是 (0,1,0) 或 (0,2,0)，:focus 写法与本规则同为 (0,2,0)）；
+   · 排除三个「已有自己的焦点环」的控件，否则会叠成双重环。排除项也包在 :where() 里，
+     避免 :not() 把它们的特异性算进来（否则整条规则会膨胀到 (0,6,0)）：
+       .agent-ctx-inline              顶栏上下文胶囊，用 box-shadow 环（722 行）
+       .agent-msg-edit-area           消息内联编辑框，用 3px accent 环（3247 行）
+       .agent-ask-question-other-input 提问面板的自定义输入，用 2px accent 环（9310 行）
+     .chat-input 单独排除：它自己不带环，但父级 .chat-input-field:focus-within
+     已经给了整块 composer 一个 3px accent 环（7947 行），再在里面的 textarea
+     上画一圈会变成嵌套的双框。
+
+   只覆盖可交互元素，不用通配符，避免给纯容器加框。 */
+.agent-code-view :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input)) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }

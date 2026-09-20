@@ -93,7 +93,10 @@ export function AgentPreviewSlot({
     openPreview, savePreviewFile, closeTab, closeOtherTabs, closeAllTabs,
   } = preview
   // 文件树列在「非 files 视图」与通用模式下都不出现，两种情况都算「树已收起」。
-  const treeHidden = plainChat || rightPanelMode !== 'files'
+  // 再加一条 !treeOpen：顶栏关闭 浏览器/终端/变更 时会把 mode 复位成 'files' 并同时
+  // 收起面板，两个 state 在同一次渲染生效——若只看 mode，整块面板会在 200ms 的收起
+  // 过渡里先亮出一棵文件树再淡出（明显闪一下）。面板收起时树本来就不该渲染。
+  const treeHidden = plainChat || rightPanelMode !== 'files' || !treeOpen
   // 树收起后若又没有打开的预览标签、也不在浏览器/终端/变更模式，右侧槽里其实空无一物：
   // 此时整槽收起，否则会剩一条约 19px 的边框空条挂在右缘（树是 display:none，
   // 但 collapser 自身的 border + margin 仍在）。

@@ -32,6 +32,27 @@ try {
     // electron 与 node 内建模块保持外部（utility process 运行时由 Electron 提供）。
     external: ['electron'],
     // node: 前缀的内建模块 esbuild 在 platform:'node' 下自动外部化。
+    //
+    // ── 为什么必须补一个 require ──
+    // 打进 bundle 的 CJS 依赖用的是**裸**内建名（`require("child_process")`，没有 node:
+    // 前缀），例如 cross-spawn（pi SDK 的 utils/child-process.js 引它）与
+    // google-auth-library。esbuild 在 ESM 产物里把它们转成 __require 垫片，而垫片是
+    //   typeof require !== "undefined" ? require : throw new Error('Dynamic require of ...')
+    // —— ESM 里没有 require，于是运行时直接抛
+    //   Error: Dynamic require of "child_process" is not supported
+    // 当前产物里有 114 处这类调用（fs / path / crypto / stream / child_process …），
+    // 只要走到哪个就炸哪个，属系统性打包问题而非单点。
+    // 用 createRequire 在模块作用域补一个真实 require，垫片就会走它（相对本 .mjs 解析），
+    // 全部 114 处一并可用。
+    // 注意：banner 必须是**词法声明**而不是挂到 globalThis —— 垫片的 typeof 检查在
+    // 模块作用域求值，词法绑定才会被它看到；且 banner 会被 esbuild 放在产物最顶端，
+    // 早于垫片定义，不存在 TDZ 问题（改完请确认产物里 const require 在 var __require 之前）。
+    banner: {
+      js: [
+        "import { createRequire as __piCreateRequire } from 'node:module';",
+        "const require = __piCreateRequire(import.meta.url);",
+      ].join('\n'),
+    },
     // 静默：由 electron.vite.config.ts 的面板插件负责输出格式（失败信息走 catch）。
     logLevel: 'silent',
   })

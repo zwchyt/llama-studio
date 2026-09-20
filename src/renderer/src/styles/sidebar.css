@@ -203,3 +203,12 @@
 .sidebar-wrapper.collapsed .nav-item.active {
   background: rgba(74, 222, 128, .16);
 }
+
+/* 键盘焦点：本文件此前没有任何 :focus / :outline 规则，导航项是纯 <button>，
+   Tab 走查时焦点位置不可见。导航项已是 32px 高、圆角 6px 的实心块，直接给一圈
+   outline 即可，不需要额外补偿。offset 取 -2px 让焦点环贴在按钮内侧，
+   避免与相邻导航项（gap 为 0）的环互相重叠。 */
+.nav-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
