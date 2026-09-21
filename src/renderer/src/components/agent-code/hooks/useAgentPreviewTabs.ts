@@ -33,7 +33,7 @@ import type { PreviewTab } from '../types'
 import type { UiAnnotation } from '../../AgentBrowser'
 
 export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
-  setRightPanelMode: React.Dispatch<React.SetStateAction<'files' | 'browser' | 'terminal' | 'diff'>>
+  setRightPanelMode: React.Dispatch<React.SetStateAction<'files' | 'browser' | 'terminal' | 'diff' | 'menu'>>
   /** 打开文件时把右侧面板展开（通用模式默认收起，否则预览不可见） */
   setTreeOpen: React.Dispatch<React.SetStateAction<boolean>>
 }) {

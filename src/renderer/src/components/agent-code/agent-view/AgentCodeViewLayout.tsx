@@ -20,7 +20,7 @@ import html2canvas from 'html2canvas'
 import {
   ActivityIcon, BookOpenIcon, BrainIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon,
   CodeIcon, EllipsisVerticalIcon, GitBranchIcon, GlobeIcon, LoaderIcon, MessageSquareIcon, PencilIcon,
-  QuoteIcon, RouteIcon, SendIcon, SlidersHorizontalIcon, SparklesIcon, TerminalIcon, Trash2Icon,
+  QuoteIcon, RouteIcon, SendIcon, SlidersHorizontalIcon, SparklesIcon, Trash2Icon,
   UserIcon, CopyIcon, XIcon,
 } from '@animateicons/react/lucide'
 import { notify } from '../../../store/notificationStore'
@@ -150,7 +150,8 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     promptDraft, promptModalOpen, reqCount, rightPanelMode, setApproveWriteEditDraft,
     setAuditOpen, setContextModalOpen, setDebugOpen, setEditDraft, setEditingMsgId,
     setKbCopiedId, setMemoryDraft, setMemoryOpen, setPromptDraft, setPromptModalOpen,
-    setRightPanelMode, setSidebarOpen, setTrajOpen, setTreeOpen, sidebarOpen,
+    setRightPanelMode, setRightPanelModeAndOpen, setSidebarOpen, setTrajOpen, setTreeOpen, sidebarOpen,
+    openPanels, closePanel, closeOtherPanels, closePanelsRight, closeAllPanels,
     terminalMounted, trajBtnRef, trajOpen, treeOpen,
     allowBtnRef, approvalReq, autoApproveBtnRef, autoApproveRef, attachBtnRef,
     ctxInlineRef, currentPlanItems, logoMenu, logoMenuRef, modelBtnRef, modelCaps,
@@ -369,6 +370,45 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     }
   }, [treeOpen, rightPanelMode, setRightPanelMode, setTreeOpen])
 
+  // ── 顶栏「»」展开按钮：点开不是下拉菜单，而是把右侧面板展开成一个四视图
+  // 选择界面（rightPanelMode='menu'，界面本体在 AgentPreviewSlot 里），点哪张
+  // 卡片面板就切到哪个视图。菜单态下再点 » 或卡片 X（closeRightMenu）收起面板。 ──
+  const openRightMenu = useCallback(() => {
+    setRightPanelModeAndOpen('menu', true)
+  }, [setRightPanelModeAndOpen])
+  const closeRightMenu = useCallback(() => {
+    setTreeOpen(false)
+  }, [setTreeOpen])
+  // » 按钮：面板已展开时再点=收起整块面板；面板收起时点开——
+  //   · 有已打开的工作区（openPanels 在收起时原样保留）：恢复它们，并显示收起前
+  //     正在显示的那个（mode 停在 menu 的遗留情况退到最后打开的那个）；
+  //   · 从未打开过任何工作区：才进入四视图选择界面（rightPanelMode='menu'）。
+  // （要在已展开的状态下换工作区，用标签条上的「+」。）
+  const toggleRightEntry = useCallback(() => {
+    if (treeOpen) { closeRightMenu(); return }
+    if (openPanels.length > 0) {
+      const target = rightPanelMode !== 'menu' && openPanels.includes(rightPanelMode)
+        ? rightPanelMode
+        : openPanels[openPanels.length - 1]
+      // diff 走 toggleGitDiff：mode='diff' 且面板收起时它正是「展开并刷新」分支
+      if (target === 'diff') toggleGitDiff()
+      else setRightPanelModeAndOpen(target, true)
+    } else {
+      openRightMenu()
+    }
+  }, [treeOpen, rightPanelMode, openPanels, closeRightMenu, openRightMenu, toggleGitDiff, setRightPanelModeAndOpen])
+  // 选择界面 / 标签条点某个工作区：只负责「展开并显示」它，不承载收起语义
+  // （关掉用标签条上的 ×，收起整块面板用 »）。
+  const showRightTab = useCallback((tab: 'files' | 'diff' | 'browser' | 'terminal') => {
+    if (tab === 'diff') {
+      // toggleGitDiff 自带「切到 diff + 展开 + 拉取变更」，仅在尚未处于 diff 时调用
+      if (!(treeOpen && rightPanelMode === 'diff')) toggleGitDiff()
+      return
+    }
+    setRightPanelMode(tab)
+    setTreeOpen(true)
+  }, [treeOpen, rightPanelMode, toggleGitDiff, setRightPanelMode, setTreeOpen])
+
   // 消息列表元素缓存（useMemo）：目录高亮 / rail 波浪 / 贴底按钮等纯滚动状态变化
   // 不再重建整棵消息树；仅消息数据、流式状态、编辑态或相关回调变化时重建。
   // 依赖均为稳定引用（useCallback 回调 / ref / store 内消息数组），不会击穿缓存。
@@ -470,9 +510,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
           >
             <AgentPrefillBar />
             {/* ── 顶栏按钮按当前工作区模式动态显示（不需要的直接不渲染，不置灰）──
-                编码模式专属：压缩历史 / 审计 / 轨迹 / 调试 / 记忆 / 变更 / 终端
+                编码模式专属：压缩历史 / 审计 / 轨迹 / 调试 / 记忆
                 通用模式专属：导出图片 / 导出 PDF / 工具开关
-                两种模式都有：提示词 / 知识库 / 浏览器（通用聊天也会看网页） */}
+                两种模式都有：提示词 / 知识库
+                （变更 / 浏览器 / 终端与文件树在右缘「»」按钮的四视图菜单里；通用模式浏览器仍在顶栏） */}
             {!plainChat && (
               <TopbarBtn
                 btnRef={condenseBtnRef}
@@ -504,17 +545,12 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                 记忆{pendingMemoryCount > 0 && <span className="agent-code-topbar-badge">{pendingMemoryCount}</span>}
               </TopbarBtn>
             )}
-            {!plainChat && (
-              <TopbarBtn active={treeOpen && rightPanelMode === 'diff'} onClick={toggleGitDiff} icon={GitBranchIcon}>变更</TopbarBtn>
-            )}
-            <TopbarBtn active={treeOpen && rightPanelMode === 'browser'} onClick={() => toggleRightPanel('browser')} icon={GlobeIcon}>浏览器</TopbarBtn>
-            {/* 终端是编码工作台的东西：通用模式直接不渲染 */}
-            {!plainChat && (
-              <TopbarBtn active={treeOpen && rightPanelMode === 'terminal'} onClick={() => toggleRightPanel('terminal')} icon={TerminalIcon}>终端</TopbarBtn>
-            )}
+            {/* 变更 / 浏览器 / 终端与文件树已整合到顶栏右缘「»」展开按钮的四视图菜单 */}
             {/* 导出只在通用模式出现（编码模式的消息带工具卡与文件改动，截图意义不大） */}
             {plainChat && (
               <>
+                {/* 通用模式没有文件树/变更/终端，浏览器维持顶栏入口即可 */}
+                <TopbarBtn active={treeOpen && rightPanelMode === 'browser'} onClick={() => toggleRightPanel('browser')} icon={GlobeIcon}>浏览器</TopbarBtn>
                 <TopbarBtn active={false} onClick={handleExportImage} icon={ImageDown} title="把当前可见的对话导出为 PNG（消息区是虚拟滚动的，只截当前这一屏）">导出图片</TopbarBtn>
                 <TopbarBtn active={false} onClick={handleExportPdf} icon={FileDown} title="把整段对话导出为 PDF（遍历全部消息，不受虚拟滚动限制）">导出 PDF</TopbarBtn>
               </>
@@ -545,10 +581,23 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               )}
             </div>
           )}
-          {/* 右侧面板开关：编码模式常驻（面板里是文件树+预览）；
-              通用模式只在确实打开了预览标签时才出现——否则它是个点了没反应的按钮。 */}
-          {showRightToggle && (
-            <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} style={{ marginTop: 0, width: 28, height: 28 }}>
+          {/* 右侧面板展开按钮：编码模式下它不再只是「展开文件树」——点开后面板直接
+              展开成四视图选择界面（文件树 / 变更 / 终端 / 浏览器），点哪个侧边面板
+              就切成哪个界面。通用模式没有这四样，维持原来的单按钮开合，
+              且只在确实打开了预览标签时才出现（否则是点了没反应的按钮）。 */}
+          {plainChat ? (
+            showRightToggle && (
+              <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} style={{ marginTop: 0, width: 28, height: 28 }}>
+                {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
+              </button>
+            )
+          ) : (
+            <button
+              className="chat-collapse-btn"
+              onClick={toggleRightEntry}
+              style={{ marginTop: 0, width: 28, height: 28 }}
+              title="展开右侧面板：文件树 / 变更 / 终端 / 浏览器"
+            >
               {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
             </button>
           )}
@@ -971,6 +1020,12 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
           openFileAtLine={openFileAtLine}
           addCodeSnippet={addCodeSnippet}
           insertAtCursor={insertAtCursor}
+          showRightTab={showRightTab}
+          openPanels={openPanels}
+          closePanel={closePanel}
+          closeOtherPanels={closeOtherPanels}
+          closePanelsRight={closePanelsRight}
+          closeAllPanels={closeAllPanels}
           htmlAnnotateActive={htmlAnnotateActive}
           htmlAnnotations={htmlAnnotations}
           injectHtmlAnnotate={injectHtmlAnnotate}

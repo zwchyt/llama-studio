@@ -33,6 +33,7 @@ import { TOOL_METAS } from '../../../utils/tools'
 import { THINKING_LEVELS } from '../../../../../shared/types'
 import type { Attachment, CardState, ThinkingLevel, TodoUpdate } from '../../../../../shared/types'
 import { useStore } from '../../../store/useStore'
+import { useThemeStore } from '../../../store/themeStore'
 import type { useAgentGit } from '../hooks/useAgentGit'
 import type { useAgentInput } from '../hooks/useAgentInput'
 import type { useAgentInputHints } from '../hooks/useAgentInputHints'
@@ -191,6 +192,8 @@ export function AgentInputArea({
   const hasPayload = input.trim() !== '' || attachedFiles.length > 0 || refChips.length > 0 || codeSnippets.length > 0 || !!packedInput?.trim()
   const sendDisabled = !hasPayload || !apiBaseUrl
   const sendTitle = !apiBaseUrl ? '请先启动一个模型' : !hasPayload ? '输入内容后发送' : '发送'
+  // 动画小球的配色随应用亮/暗主题走：此前写死 light，暗底下对比度全靠运气。
+  const orbTheme = useThemeStore(s => s.theme)
   return (
     <div className="chat-input-area" ref={chatInputAreaRef}>
       {/* 破坏性工具审批面板：内联显示在输入框内（与提问工具 AskUserQuestionInline 同款位置/风格），不弹窗 */}
@@ -377,30 +380,6 @@ export function AgentInputArea({
           )}
         </div>
       )}
-      <div ref={modelPickerRef} className={`chat-model-picker${modelPickerOpen ? ' open' : ''}`} style={{ width: modelPickerWidth }}>
-        {agentCards.map(card => (
-          <div key={card.template.id} className={`chat-model-item ${card.status}`} onClick={() => handleModelAction(card)}>
-            <div className="chat-model-logo" onClick={e => { e.stopPropagation(); toggleLogoMenu(e, card) }}>
-              {modelLogos[card.template.id]
-                ? <img src={modelLogos[card.template.id]!} alt={card.template.name} className="chat-model-logo-img" />
-                : <ImageIcon size={12} />}
-            </div>
-            <div className="chat-model-item-info">
-              <div className="chat-model-item-name">{card.template.name}</div>
-              {modelCaps[card.template.id] && (
-                <span className="chat-model-caps">
-                  {modelCaps[card.template.id]?.thinking && <span className="chat-model-cap cap-thinking"><Brain size={13} /></span>}
-                  {modelCaps[card.template.id]?.tools && <span className="chat-model-cap cap-tools"><Wrench size={13} /></span>}
-                  {modelCaps[card.template.id]?.vision && <span className="chat-model-cap cap-vision"><Eye size={13} /></span>}
-                </span>
-              )}
-              <button className="chat-model-item-action" onClick={e => { e.stopPropagation(); handleModelAction(card) }}>
-                {card.status === 'running' ? <CircleStopIcon size={12} /> : <PlayIcon size={12} />}
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
       {logoMenu && (() => {
         const menuCard = cards.find(c => c.template.id === logoMenu.id)
         if (!menuCard) return null
@@ -528,7 +507,7 @@ export function AgentInputArea({
             }
             return (
               <div className={`agent-status-bar agent-status-bar--${kind}`}>
-                <ThinkingOrb state={orbState} size={20} theme="light" paused={false} className="agent-status-orb" aria-label={text} />
+                <ThinkingOrb state={orbState} size={20} theme={orbTheme} paused={false} className="agent-status-orb" aria-label={text} />
                 {kind === 'running' && name && <span className="agent-status-bar-name">{name}</span>}
                 {kind === 'running' && <span className="agent-status-bar-text">{text}</span>}
               </div>
@@ -573,12 +552,13 @@ export function AgentInputArea({
               />
             </div>
             {loading && runningCard && (() => {
-              const hasInput = input.trim() !== '' || attachedFiles.length > 0 || refChips.length > 0 || codeSnippets.length > 0 || !!packedInput?.trim()
+              // 判据复用顶部 hasPayload：此前这里把同一长表达式又抄了一遍，
+              // 新增一种可发送内容时漏改一处就会出现「发送键亮着但这里不出现」的分歧。
               const queueHas = queueInfo.followUp.length > 0
-              if (!hasInput && !queueHas) return null
+              if (!hasPayload && !queueHas) return null
               return (
                 <div className="chat-queue-actions">
-                  {hasInput && (
+                  {hasPayload && (
                     <button
                       type="button"
                       className="chat-queue-act chat-queue-act-followup"
@@ -588,8 +568,10 @@ export function AgentInputArea({
                   {queueHas && (() => {
                     const _last = queueInfo.followUp[queueInfo.followUp.length - 1] ?? ''
                     const _prev = _last.length > 14 ? _last.slice(0, 14) + '…' : _last
+                    // 这个按钮整颗都是「清空」——提示里必须写明后果，
+                    // 否则用户点开只想看排队内容，一次误点就把全部追加提问清了。
                     const _tip = [
-                      `追加（${queueInfo.followUp.length}）：`,
+                      `追加队列（${queueInfo.followUp.length} 条）——点击将全部清空：`,
                       ...queueInfo.followUp.map(t => '  • ' + t),
                     ].join('\n')
                     return (
@@ -601,7 +583,7 @@ export function AgentInputArea({
                       >
                         <span className="chat-queue-count">追加 {queueInfo.followUp.length}</span>
                         {_last && <span className="chat-queue-preview">：{_prev}</span>}
-                        <XIcon size={11} />
+                        <XIcon size={11} className="chat-queue-clear-x" />
                       </button>
                     )
                   })()}
@@ -626,20 +608,48 @@ export function AgentInputArea({
               onToggle={() => setContextModalOpen(v => !v)}
               btnRef={ctxInlineRef}
             />
-            <button
-              ref={modelBtnRef}
-              className={`chat-model-dropdown${modelPickerOpen ? ' active' : ''}${runningCard ? ' running' : ''}${runningCard?.ready ? ' ready' : ''}`}
-              onClick={() => setModelPickerOpen(v => !v)}
-            >
-              {runningCard && (
-                <span className="chat-model-logo chat-model-dropdown-logo">
-                  {modelLogos[runningCard.template.id]
-                    ? <img src={modelLogos[runningCard.template.id]!} className="chat-model-logo-img" alt="" />
-                    : <ImageIcon size={11} />}
-                </span>
-              )}
-              <span className="chat-model-dropdown-name">{runningCard ? modelLabel : '选择模型'}</span>
-            </button>
+            {/* 模型按钮 + 选择面板包进一个相对定位锚点：面板像思考等级/搜索菜单那样
+                直接弹在按钮正上方（CSS 负责 bottom:100% + 右缘对齐），不再靠 JS 算坐标。 */}
+            <div className="chat-model-anchor">
+              <button
+                ref={modelBtnRef}
+                className={`chat-model-dropdown${modelPickerOpen ? ' active' : ''}${runningCard ? ' running' : ''}${runningCard?.ready ? ' ready' : ''}`}
+                onClick={() => setModelPickerOpen(v => !v)}
+              >
+                {runningCard && (
+                  <span className="chat-model-logo chat-model-dropdown-logo">
+                    {modelLogos[runningCard.template.id]
+                      ? <img src={modelLogos[runningCard.template.id]!} className="chat-model-logo-img" alt="" />
+                      : <ImageIcon size={11} />}
+                  </span>
+                )}
+                <span className="chat-model-dropdown-name">{runningCard ? modelLabel : '选择模型'}</span>
+              </button>
+              <div ref={modelPickerRef} className={`chat-model-picker${modelPickerOpen ? ' open' : ''}`} style={{ width: modelPickerWidth }}>
+                {agentCards.map(card => (
+                  <div key={card.template.id} className={`chat-model-item ${card.status}`} onClick={() => handleModelAction(card)}>
+                    <div className="chat-model-logo" onClick={e => { e.stopPropagation(); toggleLogoMenu(e, card) }}>
+                      {modelLogos[card.template.id]
+                        ? <img src={modelLogos[card.template.id]!} alt={card.template.name} className="chat-model-logo-img" />
+                        : <ImageIcon size={12} />}
+                    </div>
+                    <div className="chat-model-item-info">
+                      <div className="chat-model-item-name">{card.template.name}</div>
+                      {modelCaps[card.template.id] && (
+                        <span className="chat-model-caps">
+                          {modelCaps[card.template.id]?.thinking && <span className="chat-model-cap cap-thinking"><Brain size={13} /></span>}
+                          {modelCaps[card.template.id]?.tools && <span className="chat-model-cap cap-tools"><Wrench size={13} /></span>}
+                          {modelCaps[card.template.id]?.vision && <span className="chat-model-cap cap-vision"><Eye size={13} /></span>}
+                        </span>
+                      )}
+                      <button className="chat-model-item-action" onClick={e => { e.stopPropagation(); handleModelAction(card) }}>
+                        {card.status === 'running' ? <CircleStopIcon size={12} /> : <PlayIcon size={12} />}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
             {!plainChat && (
               <div
                 ref={thinkLevelMenuRef}

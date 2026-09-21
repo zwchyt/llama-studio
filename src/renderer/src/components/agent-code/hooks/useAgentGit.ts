@@ -15,9 +15,9 @@ import type { GitChangesData } from '../../AgentGitDiff'
 
 export function useAgentGit({ workspaceDir, rightPanelMode, treeOpen, setRightPanelMode, setTreeOpen, setContextModalOpen }: {
   workspaceDir: string | undefined
-  rightPanelMode: 'files' | 'browser' | 'terminal' | 'diff'
+  rightPanelMode: 'files' | 'browser' | 'terminal' | 'diff' | 'menu'
   treeOpen: boolean
-  setRightPanelMode: (v: 'files' | 'browser' | 'terminal' | 'diff') => void
+  setRightPanelMode: (v: 'files' | 'browser' | 'terminal' | 'diff' | 'menu') => void
   setTreeOpen: (v: boolean) => void
   setContextModalOpen: (v: boolean) => void
 }) {

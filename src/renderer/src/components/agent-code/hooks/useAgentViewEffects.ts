@@ -1,12 +1,11 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║ 区域：useAgentViewEffects —— 与 DOM 布局相关的副作用（侧栏可见性 / 跳行 / 测高）║
+// ║ 区域：useAgentViewEffects —— 与 DOM 布局相关的副作用（跳行 / 测高）             ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
-// 搬移自 AgentCodeView.tsx 的三段 effect（逻辑与注释未变）：
-//   1. 侧栏可见性跟随预览标签：无打开标签时自动展开侧栏
-//   2. 预览跳行：内容渲染完成后把目标行滚到中间并短暂高亮（仅代码预览有效）
-//   3. 输入框区域测高：写入 CSS 变量 --chat-input-h，使浮动按钮精确浮在输入框上方
+// 搬移自 AgentCodeView.tsx 的两段 effect（逻辑与注释未变）：
+//   1. 预览跳行：内容渲染完成后把目标行滚到中间并短暂高亮（仅代码预览有效）
+//   2. 输入框区域测高：写入 CSS 变量 --chat-input-h，使浮动按钮精确浮在输入框上方
 //
-// 依赖注入采用「整域透传」：preview / ui / scroll 直接传各 hook 的返回值。
+// 依赖注入采用「整域透传」：preview / scroll 直接传各 hook 的返回值。
 // chatInputAreaRef 由调用方持有（同一 ref 也作为 props 传给布局组件）。
 //
 // ── 历史说明（原文件遗留注释，保留备查）──
@@ -21,21 +20,18 @@
 // 注：上述 --task-card-h 写入逻辑在当前代码中已不存在（无 CSS 消费方），
 // 原注释随本次搬移一并归档于此，避免信息丢失。
 
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect } from 'react'
 import type { useAgentPreviewTabs } from './useAgentPreviewTabs'
-import type { useAgentUiState } from './useAgentUiState'
 import type { useAgentScroll } from './useAgentScroll'
 
 export function useAgentViewEffects({
-  preview, ui, scroll, chatInputAreaRef,
+  preview, scroll, chatInputAreaRef,
 }: {
   preview: ReturnType<typeof useAgentPreviewTabs>
-  ui: ReturnType<typeof useAgentUiState>
   scroll: ReturnType<typeof useAgentScroll>
   chatInputAreaRef: React.RefObject<HTMLDivElement | null>
 }) {
   const { openTabs, activeTabPath, previewJumpRef, setPreviewHighlightLine } = preview
-  const { setSidebarOpen } = ui
   const { chatScrollRef } = scroll
 
   // ── 历史说明（原文件遗留注释，保留备查）──
@@ -44,17 +40,9 @@ export function useAgentViewEffects({
   // 不卸载 xterm 实例，切回时不重建、不触发 replay 回放大段 backlog（避免界面卡顿）
   // 注：该挂载逻辑现由 useAgentUiState 的 terminalMounted effect 承担，此注释仅备查。
 
-  // 侧栏可见性跟随预览标签：标签全部关掉后自动展开侧栏（把腾出来的横向空间交给它）。
-  // 首次挂载必须跳过：侧栏默认收起，若挂载时按「当前没有标签」判定，会立刻把侧栏顶开，
-  // 用户看到的默认态就变回展开了。只有挂载之后的标签数变化才参与联动。
-  const sidebarTabSyncRef = useRef(false)
-  useEffect(() => {
-    if (!sidebarTabSyncRef.current) {
-      sidebarTabSyncRef.current = true
-      return
-    }
-    setSidebarOpen(openTabs.length === 0)
-  }, [openTabs.length])
+  // 注：曾有「侧栏可见性跟随预览标签」的联动 effect（开标签收侧栏、关完自动展开），
+  // 已按用户反馈移除——预览的打开/关闭不再触碰会话侧栏，其开合完全由用户控制
+  // （顶栏左上角开关 / 双击顶栏），收起就保持收起。
 
   // 内容渲染完成后执行跳转：把目标行滚到中间并短暂高亮。仅对代码预览有效（Markdown 无行结构）。
   useEffect(() => {

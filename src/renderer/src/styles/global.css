@@ -1407,6 +1407,14 @@ select {
   display: flex;
 }
 
+/* @animateicons 的图标组件外层是 <motion.div className="inline-flex items-center
+   justify-center">——库直接用 Tailwind 工具类。本项目未引入 Tailwind，这里手工补齐
+   用到的几条：漏掉 .inline-flex 时 wrapper 退化为 display:block，里面的行内 SVG 走
+   基线对齐、被撑出一段下延空隙，图标就会比相邻文字「偏上一截」。 */
+.inline-flex {
+  display: inline-flex;
+}
+
 .flex-col {
   flex-direction: column;
 }

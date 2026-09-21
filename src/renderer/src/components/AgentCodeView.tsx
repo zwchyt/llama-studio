@@ -194,8 +194,8 @@ export default function AgentCodeView() {
     projectsDomain.openNewChatSession(pendingPlainChat.title)
   }, [pendingPlainChat, projectsDomain, activeSession])
 
-  // ── 视图副作用：侧栏可见性 / 跳行高亮 / 输入区测高（见 agent-code/hooks/useAgentViewEffects.ts）──
-  useAgentViewEffects({ preview: previewDomain, ui, scroll, chatInputAreaRef })
+  // ── 视图副作用：预览跳行高亮 / 输入区测高（见 agent-code/hooks/useAgentViewEffects.ts）──
+  useAgentViewEffects({ preview: previewDomain, scroll, chatInputAreaRef })
 
   // ── 会话动作：队列补写 / 片段引用 / 停止 / 目录 / 重命名（见 agent-code/hooks/useAgentSessionActions.ts）──
   const sessionActions = useAgentSessionActions({ projects: projectsDomain, run, ui, preview: previewDomain, inputDomain })

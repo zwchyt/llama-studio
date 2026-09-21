@@ -30,10 +30,12 @@ import { askUserQuestionRegistry } from '../../../utils/askUserQuestionRegistry'
 import { noteApprovalRejected } from '../../../utils/memoryWriter'
 import type { AgentMode, AgentSession, CardState, KnowledgeBaseMeta, TodoUpdate } from '../../../../../shared/types'
 
-/** 右侧面板模式：files=文件树+预览 / browser=内嵌浏览器 / terminal=内嵌终端 / diff=Git变更 */
-export type RightPanelMode = 'files' | 'browser' | 'terminal' | 'diff'
-/** 按模式分槽的面板状态（切模式时各恢复各的） */
-type ModePanelState = { treeOpen: boolean; rightPanelMode: RightPanelMode }
+/** 右侧面板模式：files=文件树+预览 / browser=内嵌浏览器 / terminal=内嵌终端 / diff=Git变更 / menu=顶栏「»」展开的工作区选择界面 */
+export type RightPanelMode = 'files' | 'browser' | 'terminal' | 'diff' | 'menu'
+/** 可常驻在标签条上的四个工作区（menu 只是选择界面，不进标签条） */
+export type PanelView = 'files' | 'diff' | 'terminal' | 'browser'
+/** 按模式分槽的面板状态（切模式时各恢复各的）；openPanels=已打开的工作区标签，rightPanelMode=当前显示的那个 */
+type ModePanelState = { treeOpen: boolean; rightPanelMode: RightPanelMode; openPanels: PanelView[] }
 
 export function useAgentUiState({
   agentCards, loading, piReadyRef, mode,
@@ -203,11 +205,12 @@ export function useAgentUiState({
   // 右上角的开关（或双击顶栏 / 打开文件 / 浏览器 / 终端 / 变更）再展开。
   // 注意这里是「每个模式各自的默认值」，切模式后仍会回到该模式上次的开合状态。
   const [panelByMode, setPanelByMode] = useState<Record<AgentMode, ModePanelState>>(() => ({
-    code: { treeOpen: false, rightPanelMode: 'files' },
-    chat: { treeOpen: false, rightPanelMode: 'files' },
+    code: { treeOpen: false, rightPanelMode: 'menu', openPanels: [] },
+    chat: { treeOpen: false, rightPanelMode: 'menu', openPanels: [] },
   }))
   const treeOpen = panelByMode[mode].treeOpen
   const rightPanelMode = panelByMode[mode].rightPanelMode
+  const openPanels = panelByMode[mode].openPanels
   // 用 ref 持有当前模式：两个 setter 的身份因此恒定，下游 hook（useAgentPanels / useAgentGit /
   // 布局层）的依赖数组不必跟着模式变；同时它们永远写入「调用时刻」的模式槽，
   // 不会因为某个闭包创建于切换之前而把状态写进另一个模式的槽里。
@@ -227,6 +230,80 @@ export function useAgentUiState({
       const cur = prev[modeRef.current]
       const nextVal = typeof v === 'function' ? v(cur.rightPanelMode) : v
       return nextVal === cur.rightPanelMode ? prev : { ...prev, [modeRef.current]: { ...cur, rightPanelMode: nextVal } }
+    })
+  }, [])
+  // 同时设置 rightPanelMode 和 treeOpen，确保只触发一次 setPanelByMode，渲染节奏与左侧栏一致
+  const setRightPanelModeAndOpen = useCallback((panelMode: RightPanelMode, open: boolean) => {
+    setPanelByMode(prev => {
+      const cur = prev[modeRef.current]
+      if (cur.rightPanelMode === panelMode && cur.treeOpen === open) return prev
+      return { ...prev, [modeRef.current]: { ...cur, rightPanelMode: panelMode, treeOpen: open } }
+    })
+  }, [])
+  // 面板展开时把「当前显示的工作区」补进已打开标签集：变更跳转、消息里点文件、
+  // 浏览器/终端开关等都只改 rightPanelMode，不登记的话标签条会漏掉这些进来的视图。
+  useEffect(() => {
+    if (!treeOpen || rightPanelMode === 'menu' || openPanels.includes(rightPanelMode)) return
+    setPanelByMode(prev => {
+      const cur = prev[modeRef.current]
+      if (cur.openPanels.includes(rightPanelMode)) return prev
+      return { ...prev, [modeRef.current]: { ...cur, openPanels: [...cur.openPanels, rightPanelMode] } }
+    })
+  }, [treeOpen, rightPanelMode, openPanels])
+  // 关掉某个标签：它正在显示就切到剩下的最后一个；标签全关完就收起面板。
+  const closePanel = useCallback((view: PanelView) => {
+    setPanelByMode(prev => {
+      const cur = prev[modeRef.current]
+      if (!cur.openPanels.includes(view)) return prev
+      const rest = cur.openPanels.filter(v => v !== view)
+      if (rest.length === 0) {
+        return { ...prev, [modeRef.current]: { treeOpen: false, rightPanelMode: 'files', openPanels: [] } }
+      }
+      const wasActive = cur.rightPanelMode === view
+      return {
+        ...prev,
+        [modeRef.current]: {
+          ...cur,
+          openPanels: rest,
+          rightPanelMode: wasActive ? rest[rest.length - 1] : cur.rightPanelMode,
+        },
+      }
+    })
+  }, [])
+  // ── 标签条右键菜单：关闭其他 / 关闭右侧 / 关闭全部 ──
+  // 语义与 closePanel 对齐：被关掉的标签若正在显示，改显示保留集里的最后一个；
+  // 全部关完则整块面板收起、rightPanelMode 复位 files（与逐个 × 关到空一致）。
+  const closeOtherPanels = useCallback((keep: PanelView) => {
+    setPanelByMode(prev => {
+      const cur = prev[modeRef.current]
+      if (!cur.openPanels.includes(keep) || cur.openPanels.length <= 1) return prev
+      return { ...prev, [modeRef.current]: { ...cur, openPanels: [keep], rightPanelMode: keep } }
+    })
+  }, [])
+  // 「右侧」= 打开顺序里排在 view 之后的所有标签（标签条按 openPanels 顺序渲染）
+  const closePanelsRight = useCallback((view: PanelView) => {
+    setPanelByMode(prev => {
+      const cur = prev[modeRef.current]
+      const idx = cur.openPanels.indexOf(view)
+      if (idx < 0 || idx === cur.openPanels.length - 1) return prev
+      const rest = cur.openPanels.slice(0, idx + 1)
+      // 当前显示的工作区被关掉了（或停在 menu 选择界面）就切到被右键的这个
+      const keepActive = cur.rightPanelMode !== 'menu' && rest.includes(cur.rightPanelMode)
+      return {
+        ...prev,
+        [modeRef.current]: {
+          ...cur,
+          openPanels: rest,
+          rightPanelMode: keepActive ? cur.rightPanelMode : view,
+        },
+      }
+    })
+  }, [])
+  const closeAllPanels = useCallback(() => {
+    setPanelByMode(prev => {
+      const cur = prev[modeRef.current]
+      if (cur.openPanels.length === 0 && !cur.treeOpen) return prev
+      return { ...prev, [modeRef.current]: { treeOpen: false, rightPanelMode: 'files', openPanels: [] } }
     })
   }, [])
   // 终端挂载保持全局（不按模式分槽）：xterm 实例任意时刻只能 attach 到一个 DOM 容器，
@@ -369,7 +446,8 @@ export function useAgentUiState({
     logoMenu, setLogoMenu, logoMenuRef, toggleLogoMenu, pickModelLogo, removeModelLogo, closeLogoMenu,
     modelBtnRef, attachBtnRef,
     // 侧栏 / 文件树 / 右侧面板 / 终端
-    treeOpen, setTreeOpen, rightPanelMode, setRightPanelMode,
+    treeOpen, setTreeOpen, rightPanelMode, setRightPanelMode, setRightPanelModeAndOpen,
+    openPanels, closePanel, closeOtherPanels, closePanelsRight, closeAllPanels,
     terminalMounted, setTerminalMounted,
     // 功能面板开关
     sidebarOpen, setSidebarOpen, contextModalOpen, setContextModalOpen,

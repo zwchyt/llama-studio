@@ -288,6 +288,19 @@
   align-items: center;
   margin-bottom: 8px;
   width: 100%;
+  /* 附件过多时限高滚动，避免托盘把输入框挤到视口外（约 3 行 chip 的高度） */
+  max-height: 92px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.chat-attach-tray::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-attach-tray::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
 }
 
 .chat-attach-clear-all {
@@ -919,6 +932,231 @@
   color: var(--accent);
 }
 
+/* ── 右侧面板顶部：已打开工作区的标签条 + 当前工作目录 ──
+   标签条常驻（选择工作区界面也在它下面展开），× 单独关掉某个工作区，「+」开选择界面 */
+.agent-code-panel-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 8px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+
+.agent-code-panel-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.agent-code-panel-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.agent-code-panel-tab {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.agent-code-panel-tab.active {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.agent-code-panel-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 2px 4px 7px;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.agent-code-panel-tab.active .agent-code-panel-tab-btn {
+  color: var(--text);
+}
+
+.agent-code-panel-tab-btn:hover {
+  color: var(--text);
+}
+
+.agent-code-panel-tab-close {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 5px 3px 1px;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.agent-code-panel-tab-close:hover {
+  opacity: 1;
+  color: #e5484d;
+}
+
+.agent-code-panel-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.agent-code-panel-tab-add:hover,
+.agent-code-panel-tab-add.active {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+/* 「+」按钮的下拉菜单 */
+.agent-code-add-workspace-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  z-index: var(--z-panel);
+  min-width: 140px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  animation: think-menu-in 0.16s ease-out;
+}
+
+.agent-code-add-workspace-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.agent-code-add-workspace-item:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.agent-code-panel-cwd {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.agent-code-panel-cwd-icon {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.agent-code-panel-cwd-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* 「»」/「+」展开的工作区选择界面：上下竖排四个入口，打开一个不影响其它已开的工作区 */
+.agent-code-panel-picker {
+  flex: 1;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  gap: 14px;
+  padding: 28px 24px;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  animation: think-menu-in 0.16s ease-out;
+}
+
+.agent-code-panel-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.agent-code-panel-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.12s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.agent-code-panel-picker-item:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12), 0 0 0 1px var(--border);
+  transform: translateY(-1px);
+}
+
+.agent-code-panel-picker-item:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  background: var(--surface-hover);
+}
+
+.picker-files { border-left: 3px solid #b08d57; }
+.picker-files svg { color: #b08d57; }
+.picker-diff { border-left: 3px solid #5a9e6f; }
+.picker-diff svg { color: #5a9e6f; }
+.picker-terminal { border-left: 3px solid #5b8a8a; }
+.picker-terminal svg { color: #5b8a8a; }
+.picker-browser { border-left: 3px solid #6a7fa8; }
+.picker-browser svg { color: #6a7fa8; }
+
+.agent-code-panel-picker-name {
+  flex: none;
+}
+
+.agent-code-panel-picker-tag {
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  background: var(--surface-hover);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
 .agent-code-warning {
   display: inline-flex;
   align-items: center;
@@ -1035,15 +1273,12 @@
    面板实际宽度脱节时，旧算法会让手柄脱锚漂向聊天区甚至越过 body 左边界 */
 .agent-code-right-slot {
   position: relative;
-  flex-shrink: 0;
-  display: flex;
-}
-
-/* 可拖宽模式：行内其余成员均 shrink:0、聊天区有 300px 下限，空间不足时由槽吸收差额，
-   配合面板 max-width 封顶，避免整行溢出被 body 右缘切断（文件树模式保持不收缩） */
-.agent-code-right-slot.panel-resizable {
+  /* 所有模式都可收缩（原仅 panel-resizable 收缩、文件树模式 shrink:0）：文件树视图
+     默认带预览列后面板更宽，窗口较窄时由槽吸收差额（聊天区有 300px 下限），
+     配合面板 max-width 封顶，避免整行溢出被 body 右缘切断 */
   flex-shrink: 1;
   min-width: 0;
+  display: flex;
 }
 
 .agent-code-right-edge-handle {
@@ -1142,6 +1377,9 @@
   flex-direction: column;
   background: var(--surface);
   overflow: hidden;
+  /* 容器查询上下文：行内时间标签按侧栏自身宽度收放（见 @container ac-side） */
+  container-type: inline-size;
+  container-name: ac-side;
 }
 
 .agent-code-right-collapser {
@@ -1151,13 +1389,26 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  max-width: 2000px;
-  transition: max-width 0.25s ease, opacity 0.2s ease, margin 0.25s ease;
-  margin: 8px 8px 8px 8px;
+  /* 以槽为上限（100% = 槽内容宽，16 = 自身左右 margin）：文件树视图也封顶——
+     该视图默认带预览列后面板更宽，窗口较窄时槽收缩（flex-shrink:1）、面板跟随，
+     不再溢出被 body 右缘切断（panel-resizable 另有同名规则，等价冗余保留） */
+  max-width: calc(100% - 16px);
+  /* 时长走变量：JS 按「时长 ∝ 位移」换算（--agent-right-collapse-dur），
+     让宽面板的滑动 px/s 与左栏一致，而不是固定 0.25s 导致宽面板显得飞快 */
+  transition: margin-right var(--agent-right-collapse-dur, 0.25s) ease, opacity 0.2s ease;
+  margin: 8px;
   border-radius: var(--radius, 10px);
   border: 1.5px solid var(--border-strong);
   background: var(--surface);
 }
+
+/* 收起位移 = 面板实测宽度 + 16px 外边距，与左侧栏「恰好滑出自身宽度」同算法；
+   时长按位移等比换算（--agent-right-collapse-dur），两侧滑动 px/s 一致。
+   两个变量均由 JS 用 ResizeObserver 实测写入（见 AgentPreviewSlot.tsx）——
+   面板宽度是动态的（文件树模式内容撑开 / 可拖模式 --agent-right-width /
+   窗口收窄被 max-width 封顶），CSS 无法引用自身宽度算 margin（百分比相对包含块）。
+   不用写死的 -2000px：那会让 480px 宽的面板在过渡前 ~25% 时长内就飞出屏
+   （收起显得比左栏快数倍），展开时前 ~60% 时长又是看不见面板的空窗期。 */
 
 .agent-code-right-body {
   flex: 1;
@@ -1167,16 +1418,18 @@
 }
 
 .agent-code-right-collapser.collapsed {
-  max-width: 0;
+  /* 宽度冻结为收起前实测值：文件树视图收起的第一帧树就 display:none（treeHidden 含
+     !treeOpen，防关闭浏览器/终端时树在淡出中闪一下），内容驱动宽度会从「树+预览」
+     骤降到只剩预览——不冻结的话实际滑动距离变短、提前出屏，收起速度就比变更/终端/
+     浏览器这些内容宽度不变的工作区快一截。冻结后位移=实测宽度、全程滑满，速度一致。 */
+  width: var(--agent-right-collapse-offset, 480px);
+  margin-right: calc(-1 * (var(--agent-right-collapse-offset, 480px) + 16px));
+  /* 收起期间解除 panel-resizable 的 max-width: calc(100% - 16px) 封顶：该封顶以槽宽为
+     基准，槽随 margin 收缩时会把面板横向挤压变窄；解除后面板以真实宽度整体滑出。
+     （JS 侧的 ResizeObserver 在收起态也会跳过测量，见 AgentPreviewSlot.tsx。） */
+  max-width: none;
   opacity: 0;
   pointer-events: none;
-  margin-left: 0;
-
-  margin-right: 0;
-  /* 收起后边框必须一并归零：border-box 的 max-width:0 压不掉 1.5px 边框，
-     元素仍占 3px，右槽跟着留一条（透明但占位的）空条，对话区右缘对不齐。
-     文件树收起已是编码模式的首屏默认态，这条空条会常驻，不能只靠 slotEmpty 兜底。 */
-  border-width: 0;
 }
 
 .agent-ctx-panel {
@@ -2029,6 +2282,178 @@
 .agent-code-session-export:hover {
   background: rgba(37, 99, 235, .15);
   color: #3b82f6;
+}
+
+/* ── 侧栏列表过滤框：只决定「渲染哪些行」，不改任何会话数据 ── */
+.agent-code-sidebar-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 8px 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.agent-code-sidebar-filter:focus-within {
+  border-color: var(--border-strong);
+}
+
+.agent-code-sidebar-filter-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.agent-code-sidebar-filter-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  outline: none;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.agent-code-sidebar-filter-input::placeholder {
+  color: var(--text-muted);
+}
+
+.agent-code-sidebar-filter-clear {
+  flex: none;
+  display: flex;
+  padding: 2px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.agent-code-sidebar-filter-clear:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+/* 会话「最后活跃」相对时间：占位原「通用/编码」行标签（该标签已删，
+   列表内容本来就只有一种模式，顶部还有分段控件标明归属）。
+   文案是紧凑式（≤3 字符，见 relTimeLabel），但整簇（图标+时间+操作按钮）在
+   侧栏拖到最窄（SIDEBAR_MIN=160）时仍会挤出行容器——时间让位：标题与操作按钮
+   一个是内容一个是功能，时间只是辅助信息，最先丢它。 */
+.agent-code-session-time {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+@container ac-side (max-width: 190px) {
+  .agent-code-session-time {
+    display: none;
+  }
+}
+
+/* 行 hover / 聚焦时动作图标淡入、时间让位，避免一行右侧挤成一片 */
+.agent-code-chat-item:hover .agent-code-session-time,
+.agent-code-session-item:hover .agent-code-session-time,
+.agent-code-chat-item:focus-within .agent-code-session-time,
+.agent-code-session-item:focus-within .agent-code-session-time {
+  opacity: 0;
+}
+
+/* ── 行「⋯」操作菜单：项目行与会话行共用（原项目行四个、聊天行 fork+导出/重命名/删除
+   四个常驻图标均已收进这里）。触发按钮与菜单包在 .agent-code-proj-menu-wrap（position:relative）里，
+   外点/Esc 收合的判定就以这个包为界（见 AgentSessionSidebar 的 effect）。 ── */
+.agent-code-proj-menu-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.agent-code-proj-menu-btn {
+  opacity: 0;
+  padding: 3px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: opacity .15s, background .15s, color .15s;
+}
+
+.agent-code-project-item:hover .agent-code-proj-menu-btn,
+.agent-code-project-item:focus-within .agent-code-proj-menu-btn,
+.agent-code-chat-item:hover .agent-code-proj-menu-btn,
+.agent-code-chat-item:focus-within .agent-code-proj-menu-btn,
+.agent-code-proj-menu-wrap.open .agent-code-proj-menu-btn {
+  opacity: 1;
+}
+
+.agent-code-proj-menu-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.agent-code-proj-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: var(--z-panel);
+  min-width: 132px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .28);
+}
+
+.agent-code-proj-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.agent-code-proj-menu-item:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+/* 危险区：删除项目与日常操作以分隔线隔离，配色沿用行内删除按钮 */
+.agent-code-proj-menu-item.danger {
+  color: #e5484d;
+}
+
+.agent-code-proj-menu-item.danger:hover {
+  background: rgba(255, 80, 80, .15);
+  color: #e5484d;
+}
+
+.agent-code-proj-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+/* 列表行键盘导航（role=option/button + tabIndex）的焦点指示：
+   内描边避免溢出到相邻行 */
+.agent-code-chat-item:focus-visible,
+.agent-code-session-item:focus-visible,
+.agent-code-project-item:focus-visible {
+  outline: 1.5px solid var(--border-strong);
+  outline-offset: -1.5px;
 }
 
 .agent-code-add-sess-btn {
@@ -3693,20 +4118,56 @@
   max-width: none;
 }
 
+/* 文件树视图（树可见）的预览组：默认占 --agent-preview-width（与 .agent-code-preview 同源，
+   预览拖宽手柄对两者同步生效）——没打开文件时即显示「选择文件以预览」空态占位。
+   原来 flex-basis:0：只开文件树时预览组塌成 0 宽（看不到默认预览界面）；
+   并开变更等工作区时面板按 --agent-right-width 定宽，树吃满 fit-content（最宽 380px）
+   又把预览组挤成窄条，空态被 overflow 裁成一块「空白截断」区域。 */
+.agent-code-right-body:not(.tree-collapsed) .agent-code-preview-group:not(.collapsed) {
+  flex: 1 1 var(--agent-preview-width, 480px);
+}
+
+/* 文件目录树宽度固定（基础规则 flex-shrink:0 + fit-content，160~380px 封顶）：
+   拖手柄只改预览区域大小——预览组 flex 伸缩吸收全部宽度变化，树本身不缩不伸；
+   面板右锚定，宽度变化时树随面板左缘整体移动，与预览在视觉上联动。
+   （窗口极端收窄时预览组 min-width:0 先缩到尽，仍不够才裁面板右缘，不动树。） */
+
+/* 并开其它工作区（panel-resizable：面板按 --agent-right-width 定宽）时的文件树视图：
+   树按内容宽、预览组填满剩余，预览内容 100% 跟组——拖面板左缘手柄（整面板调宽）时
+   预览随之扩大/收窄，不会出现「预览比组窄」的空白缝或「预览比组宽」的裁断。 */
+.agent-code-right-collapser.panel-resizable .agent-code-right-body:not(.tree-collapsed) .agent-code-preview-group:not(.collapsed) {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.agent-code-right-collapser.panel-resizable .agent-code-right-body:not(.tree-collapsed) .agent-code-preview {
+  width: 100%;
+}
+
+
+
 .agent-code-tree-header {
   display: none;
 }
 
 .agent-code-preview {
   width: var(--agent-preview-width, 480px);
-  min-width: 240px;
-  max-width: 760px;
+  /* min/max 都相对组宽封顶：面板被窗口挤压时预览随组收缩（查看源码/取消等头部按钮
+     不被推出可视区），而不是钉死 240px 下限被 overflow 裁掉右半 */
+  min-width: min(240px, 100%);
+  max-width: min(760px, 100%);
   display: flex;
   flex-direction: column;
   background: var(--surface);
   overflow: hidden;
   /* UI 注释面板（.agent-browser-annotations）绝对定位基准 */
   position: relative;
+}
+
+.agent-code-preview--empty {
+  flex: 1;
+  width: auto;
+  max-width: none;
 }
 
 /* HTML 预览的 UI 注释按钮：激活态橙色（与浏览器注释按钮一致） + 计数徽标 */
@@ -3847,6 +4308,33 @@
   overflow-y: auto;
   overflow-x: hidden;
   background: var(--bg);
+}
+
+.agent-code-preview-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 8px;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.agent-code-preview-empty-icon {
+  opacity: 0.35;
+  margin-bottom: 4px;
+}
+
+.agent-code-preview-empty-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.agent-code-preview-empty-desc {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 /* monaco 编辑器容器：铺满预览区（body 自身滚动，monaco 内部滚动） */
@@ -6462,6 +6950,19 @@
     animation: none;
     transition: none;
   }
+
+  /* 面板内四视图选择界面：入场淡入与卡片悬停过渡在减弱动效下关闭 */
+  .agent-code-panel-picker {
+    animation: none;
+  }
+
+  .agent-code-panel-picker-item {
+    transition: none;
+  }
+
+  .agent-code-panel-tab {
+    transition: none;
+  }
 }
 
 /* 思考时长（弱化等宽数字；思考中随主色高亮） */
@@ -8105,6 +8606,11 @@
   color: var(--text);
 }
 
+/* 悬停时把清除图标染成危险色：明示「点这个按钮会清空全部排队」而非展开 */
+.agent-code-view .chat-queue-actions .chat-queue-indicator:hover .chat-queue-clear-x {
+  color: #e5484d;
+}
+
 .agent-code-view .chat-queue-actions .chat-queue-preview {
   max-width: 160px;
   overflow: hidden;
@@ -8497,12 +9003,19 @@
   cursor: not-allowed;
 }
 
+/* 模型按钮的相对定位锚点：选择面板改为贴在该按钮正上方弹出
+   （与思考等级 / 搜索菜单同款做法），不再挂在输入区右下角算坐标 */
+.chat-model-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
 .chat-model-picker {
   position: absolute;
-  right: 55px;
-  bottom: calc(100% + 8px);
+  right: 0;
+  bottom: calc(100% + 6px);
   width: 300px;
-  max-width: calc(100% - 24px);
+  max-width: calc(100vw - 64px);
   max-height: 320px;
   overflow-y: auto;
   padding: 4px;
