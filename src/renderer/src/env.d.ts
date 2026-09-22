@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, ChatSession, TokenUsageEntry, ChatStreamChunk, AgentProject, AgentSession, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit, ThinkingLevel } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, SystemMetrics, ChatSession, TokenUsageEntry, TokenUsageLedger, ChatStreamChunk, AgentProject, AgentSession, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit, ThinkingLevel } from '../../shared/types'
 // 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
 interface ImagePromptPresetPayload {
   id: string; tag: string; cn: string; group: string
@@ -149,11 +149,15 @@ interface LlamaCppApi {
   getMetrics: () => Promise<{ metrics: Record<string, Partial<ModelMetrics>> }>
   onMetricsUpdate: (cb: (data: Partial<ModelMetrics> & { id: string }) => void) => void
   removeMetricsUpdateListener: () => void
+  onSystemMetricsUpdate: (cb: (data: Partial<SystemMetrics>) => void) => void
+  removeSystemMetricsListener: () => void
   queryMetricsNow: (id: string) => Promise<number | null>
   getMetricsPolling: () => Promise<boolean>
   setMetricsPolling: (enabled: boolean) => Promise<{ success: boolean }>
   getRunningProcesses: () => Promise<string[]>
   getModelLogs: (id: string) => Promise<{ stream: string; text: string }[]>
+  getChartPresets: () => Promise<{ path: string; groups: { mermaid: { label: string; code: string }[]; recharts: { label: string; code: string }[]; svg: { label: string; code: string }[] }; error?: string }>
+  pickChartFile: (group: 'mermaid' | 'recharts' | 'svg') => Promise<{ canceled: boolean; path?: string; name?: string; code?: string; error?: string }>
   getUiSettings: () => Promise<{ splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; ttsMode?: 'qwen3' | 'outetts'; ttsLang?: string; ttsMmprojPath?: string; ttsSpeakerFile?: string; sttModelPath?: string; sttMmprojPath?: string; sttPrompt?: string; sttResult?: string; slashCommands?: unknown }>
   setUiSetting: (key: string, value: boolean | string) => Promise<void>
   listGlobalAgents: () => Promise<{ name: string; pkg: string; cmd: string; installed: boolean; version: string | null; website?: string }[]>
@@ -165,7 +169,7 @@ interface LlamaCppApi {
   listChatSessions: () => Promise<ChatSession[]>
   saveChatSession: (session: object) => Promise<{ success: boolean; id?: string; error?: string }>
   deleteChatSession: (id: string) => Promise<{ success: boolean }>
-  listTokenUsage: () => Promise<TokenUsageEntry[]>
+  listTokenUsage: () => Promise<TokenUsageLedger>
   clearTokenUsage: () => Promise<{ success: boolean }>
   chatStream: (opts: { streamId: string; port: number; body: object }) => Promise<{ success: boolean; error?: string }>
   chatCompletion: (opts: { port: number; body: object }) => Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }>

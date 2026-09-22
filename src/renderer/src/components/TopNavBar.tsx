@@ -32,9 +32,6 @@ const NAV_GROUPS: NavDef[][] = [
   ],
   [
     { key: 'agent-code', label: 'Agent Code', icon: CodeIcon, color: '#10b981' },
-    { key: 'mermaid-test', label: 'Mermaid 测试', icon: GitBranchIcon, color: '#f59e0b' },
-    { key: 'recharts-test', label: 'Recharts 测试', icon: ChartBarIcon, color: '#3b82f6' },
-    { key: 'svg-test', label: 'SVG 测试', icon: ImageIcon, color: '#8b5cf6' },
   ],
   [
     { key: 'llama', label: 'llama-server', icon: ServerIcon, color: '#14b8a6', runningSource: 'llama' },
@@ -49,6 +46,9 @@ const NAV_GROUPS: NavDef[][] = [
     { key: 'stt', label: '语音转写', icon: MicIcon, color: '#f43f5e' },
     { key: 'imagegen', label: '图像生成', icon: ImageIcon, color: '#8b5cf6', runningSource: 'models' },
     { key: 'audiocpp', label: '音频工作室', icon: AudioLinesIcon, color: '#0ea5e9' },
+    { key: 'mermaid-test', label: 'Mermaid 测试', icon: GitBranchIcon, color: '#f59e0b' },
+    { key: 'recharts-test', label: 'Recharts 测试', icon: ChartBarIcon, color: '#3b82f6' },
+    { key: 'svg-test', label: 'SVG 测试', icon: ImageIcon, color: '#8b5cf6' },
   ],
   [
     { key: 'agents', label: 'AI Agent', icon: BrainIcon, color: '#d946ef' },

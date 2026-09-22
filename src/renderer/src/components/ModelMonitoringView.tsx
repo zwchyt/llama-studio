@@ -47,10 +47,16 @@ interface MetricCardProps {
   accentColor: string
   history?: number[]
   barMax?: number
+  /** 无历史序列时的进度条当前值（如系统资源的 内存/显存：只有瞬时值、不存历史） */
+  barValue?: number
 }
 
-function MetricCard({ label, value, unit, icon, accentColor, history, barMax }: MetricCardProps) {
+function MetricCard({ label, value, unit, icon, accentColor, history, barMax, barValue }: MetricCardProps) {
   const spark = history ? sparkline(history) : { path: '', color: 'var(--accent)' }
+  const hasHistory = !!history && history.length > 1
+  // 进度条取值：有历史用最后一个采样；否则用 barValue（系统资源常驻卡用）
+  const barRaw = hasHistory ? history![history!.length - 1] : barValue
+  const barPct = barMax && barMax > 0 && barRaw != null ? Math.min(100, (barRaw / barMax) * 100) : null
   return (
     <div className="metric-card">
       <div className="metric-card-header">
@@ -60,28 +66,29 @@ function MetricCard({ label, value, unit, icon, accentColor, history, barMax }: 
       <div className="metric-value" style={{ color: accentColor }}>
         {value}<span className="metric-unit">{unit}</span>
       </div>
-      {history && history.length > 1 && (
-        <>
-          {barMax && (
-            <div className="metric-bar-wrap">
-              <div className="metric-bar-fill" style={{ width: `${Math.min(100, (history[history.length - 1] / barMax) * 100)}%`, background: accentColor, opacity: 0.6 }} />
-            </div>
-          )}
-          <svg className="metric-sparkline" width="100%" height="32" viewBox="0 0 120 32" preserveAspectRatio="none">
-            <path d={spark.path} stroke={spark.color} />
-          </svg>
-        </>
+      {barPct != null && (
+        <div className="metric-bar-wrap">
+          <div className="metric-bar-fill" style={{ width: `${barPct}%`, background: accentColor, opacity: 0.6 }} />
+        </div>
+      )}
+      {hasHistory && (
+        <svg className="metric-sparkline" width="100%" height="32" viewBox="0 0 120 32" preserveAspectRatio="none">
+          <path d={spark.path} stroke={spark.color} />
+        </svg>
       )}
     </div>
   )
 }
 
 // ── RunningCard ──────────────────────────────────────────────────────────────
-function RunningCard({ card, metrics }: { card: import('../../../shared/types').CardState; metrics: import('../../../shared/types').ModelMetrics | null }) {
-  const { toggleMonitorExpanded, setCardStatus, clearActiveChat } = useStore(s => ({
-    toggleMonitorExpanded: s.toggleMonitorExpanded, setCardStatus: s.setCardStatus, clearActiveChat: s.clearActiveChat
+function RunningCard({ card, metrics: metricsProp }: { card: import('../../../shared/types').CardState; metrics: import('../../../shared/types').ModelMetrics | null }) {
+  const { toggleMonitorExpanded, setCardStatus, clearActiveChat, systemMetrics } = useStore(s => ({
+    toggleMonitorExpanded: s.toggleMonitorExpanded, setCardStatus: s.setCardStatus, clearActiveChat: s.clearActiveChat, systemMetrics: s.systemMetrics
   }), shallow)
   const isRunning = card.status === 'running'
+  // 模型 API 数据只在模型未空闲时有值：模型一停（idle）这些数据即归零，
+  // 而下面的系统数据取自 systemMetrics（常驻广播），不受模型启停影响。
+  const metrics = card.status === 'idle' ? null : metricsProp
   const statusInfo = card.status === 'running'
     ? { label: '运行中', color: 'var(--success)' }
     : card.status === 'error'
@@ -116,7 +123,6 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
     toggleMonitorExpanded(card.template.id)
   }
 
-  const vramTotal = metrics?.vramTotalMb ?? 0
   const slotPredict = metrics?.nPredict
   const templatePredict = card.template.args?.['n_predict']
   const genMaxTokens = (slotPredict && slotPredict > 0) ? slotPredict : (typeof templatePredict === 'number' && templatePredict > 0 ? templatePredict : 0)
@@ -201,33 +207,49 @@ function RunningCard({ card, metrics }: { card: import('../../../shared/types').
               accentColor="var(--success)"
             />
             <MetricCard
-              label="VRAM"
-              value={metrics?.vramUsedMb != null ? fmtMem(metrics?.vramUsedMb) : '—'}
-              unit={metrics?.vramUsedMb != null ? `/ ${fmtMem(vramTotal)}` : ''}
+              label="显存"
+              value={systemMetrics?.vramUsedMb != null ? fmtMem(systemMetrics.vramUsedMb) : '—'}
+              unit={systemMetrics?.vramTotalMb != null ? `/ ${fmtMem(systemMetrics.vramTotalMb)}` : ''}
+              icon={<MemIcon size={13} />}
+              accentColor="#06b6d4"
+              barMax={systemMetrics?.vramTotalMb ?? undefined}
+              barValue={systemMetrics?.vramUsedMb ?? undefined}
+            />
+            <MetricCard
+              label="内存"
+              value={systemMetrics?.ramUsedMb != null ? fmtMem(systemMetrics.ramUsedMb) : '—'}
+              unit={systemMetrics?.ramTotalMb != null ? `/ ${fmtMem(systemMetrics.ramTotalMb)}` : ''}
               icon={<MemIcon size={13} />}
               accentColor="#0891b2"
-              barMax={vramTotal || undefined}
+              barMax={systemMetrics?.ramTotalMb ?? undefined}
+              barValue={systemMetrics?.ramUsedMb ?? undefined}
             />
             <MetricCard
               label="GPU 温度"
-              value={metrics?.gpuTemperature != null ? String(metrics.gpuTemperature) : '—'}
-              unit={metrics?.gpuTemperature != null ? '°C' : ''}
+              value={systemMetrics?.gpuTemperature != null ? String(systemMetrics.gpuTemperature) : '—'}
+              unit={systemMetrics?.gpuTemperature != null ? '°C' : ''}
               icon={<Thermometer size={13} />}
               accentColor="#ef4444"
+              barMax={100}
+              barValue={systemMetrics?.gpuTemperature ?? undefined}
             />
             <MetricCard
               label="GPU 利用率"
-              value={metrics?.gpuUtilization != null ? String(metrics.gpuUtilization) : '—'}
-              unit={metrics?.gpuUtilization != null ? '%' : ''}
+              value={systemMetrics?.gpuUtilization != null ? String(systemMetrics.gpuUtilization) : '—'}
+              unit={systemMetrics?.gpuUtilization != null ? '%' : ''}
               icon={<Gauge size={13} />}
               accentColor="#8b5cf6"
+              barMax={100}
+              barValue={systemMetrics?.gpuUtilization ?? undefined}
             />
             <MetricCard
               label="CPU 利用率"
-              value={metrics?.cpuUsage != null ? String(metrics.cpuUsage) : '—'}
-              unit={metrics?.cpuUsage != null ? '%' : ''}
+              value={systemMetrics?.cpuUsage != null ? fmt(systemMetrics.cpuUsage) : '—'}
+              unit={systemMetrics?.cpuUsage != null ? '%' : ''}
               icon={<Cpu size={13} />}
               accentColor="#f97316"
+              barMax={100}
+              barValue={systemMetrics?.cpuUsage ?? undefined}
             />
             <div className="metric-card" style={{ gridColumn: '1 / -1' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -482,6 +504,20 @@ export default function ModelMonitoringView() {
           </div>
         </div>
 
+        {/* 没有模型运行时，仍然显示同一张卡片：卡片里的系统数据照常更新，模型 API 数据为空 */}
+        {allRelevant.length === 0 && (
+          <div className="monitoring-cards-list">
+            <RunningCard
+              card={{
+                template: { id: '__system__', name: '系统资源', serverPort: 0, backendVersion: '', launchMode: 'api' },
+                status: 'idle',
+                monitorExpanded: true,
+              } as unknown as import('../../../shared/types').CardState}
+              metrics={null}
+            />
+          </div>
+        )}
+
         {allRelevant.length > 0 && allRelevant.every(c => c?.template?.id) ? (
           <div className="monitoring-cards-list">
             {allRelevant.map(card => {
@@ -500,13 +536,7 @@ export default function ModelMonitoringView() {
             <h3>数据加载中</h3>
             <p>模型模板数据尚未加载完成，请稍后重试。</p>
           </div>
-        ) : (
-          <div className="empty-state">
-            <div className="empty-state-icon"><Activity size={28} /></div>
-            <h3>无运行数据</h3>
-            <p>目前没有正在运行或近期运行的模型任务。</p>
-          </div>
-        )}
+        ) : null}
       </div>
     </CardErrorBoundary>
   )

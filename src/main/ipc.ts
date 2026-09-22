@@ -2,13 +2,13 @@ import { ipcMain, dialog, shell, BrowserWindow, net } from 'electron'
 import https from 'https'
 import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
-  unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, watch, promises as fsPromises,
+  unlinkSync, createWriteStream, statSync, rmdirSync, renameSync, rmSync, cpSync, watch, promises as fsPromises,
   createReadStream, copyFileSync, openSync, readSync, closeSync, realpathSync
 } from 'fs'
 import * as readline from 'readline'
 import { join, extname, basename, dirname, resolve, sep, relative, isAbsolute } from 'path'
 import { spawn, execSync, ChildProcess } from 'child_process'
-import { tmpdir } from 'os'
+import { tmpdir, freemem, totalmem, cpus } from 'os'
 import iconv from 'iconv-lite'
 import { rgPath } from '@vscode/ripgrep'
 import extractZip from 'extract-zip'
@@ -24,7 +24,7 @@ import { registerMemoryStoreIpc, deleteMemoryForWorkspace } from './services/mem
 import { readGgufMeta } from './services/ggufReader'
 import { registerKnowledgeIpc } from './services/knowledgeService'
 import { synthesizeEdgeTts, listEdgeVoices } from './services/edgeTts'
-import { initTokenLedger, appendTokenUsage, readTokenUsage, clearTokenUsage } from './tokenLedger'
+import { initTokenLedger, appendTokenUsage, readTokenUsage, clearTokenUsage, sealOldMonths } from './tokenLedger'
 import { diagnoseModelFailure } from './diagnose'
 import { confineRead, validateUrlAsync } from './ipc-helpers/security'
 import { runPool } from './ipc-helpers/pool'
@@ -282,13 +282,100 @@ const MODELS_DIR = join(APP_ROOT, 'models')
 const TEMPLATES_DIR = join(APP_ROOT, 'templates')
 const BACKEND_DIR = join(APP_ROOT, 'backend')
 const CHATS_DIR = join(APP_ROOT, 'chats')
+// chats/ 按「数据性质」分三层，避免三类数据平铺一层、只能靠命名约定（_ 前缀 / .jsonl 后缀）区分：
+//   sessions/  会话实体（每个 <uuid>.json）—— 唯一可枚举的一类数据，listChatSessions 直接全取
+//   assets/    会话产出的二进制/文档产物（images/、pdf_exports/），只被「打开」，不被解析
+//   state/     跨会话的辅助状态，同样每项一个目录（token-usage/、imagegen-history/），删会话不影响
+const CHAT_SESSIONS_DIR = join(CHATS_DIR, 'sessions')
+const CHAT_ASSETS_DIR = join(CHATS_DIR, 'assets')
+const CHAT_STATE_DIR = join(CHATS_DIR, 'state')
+// state/ 下同样「每项一个目录」，避免目录与散文件混在一层：
+//   state/token-usage/       记账簿（按月分片 + _rollup.json）
+//   state/imagegen-history/  图像生成历史（history.json）
+const CHAT_IMAGEGEN_DIR = join(CHAT_STATE_DIR, 'imagegen-history')
 const CHAT_TEMPLATES_DIR = join(APP_ROOT, 'chat-templates')
 const SETTINGS_PATH = join(APP_ROOT, 'settings.json')
-for (const dir of [MODELS_DIR, TEMPLATES_DIR, BACKEND_DIR, CHATS_DIR, CHAT_TEMPLATES_DIR]) {
+// 图表测试页（Mermaid / Recharts / SVG）的预设数据：外置到项目根目录的 chart-presets/ 目录，
+// 一个预设一个「原生格式」文件，内容即最终渲染内容，不需要任何转义或包装：
+//   chart-presets/mermaid/   *.mmd  *.mermaid  *.txt  → Mermaid DSL
+//   chart-presets/recharts/  *.json                   → ChartSpec JSON
+//   chart-presets/svg/       *.svg  *.xml             → SVG 源码
+// 按钮标题 = 文件名（去扩展名；可选的前缀 "01-" / "01_" 只用于排序，不显示）
+const CHART_PRESETS_DIR = join(APP_ROOT, 'chart-presets')
+const CHART_PRESET_GROUPS = ['mermaid', 'recharts', 'svg'] as const
+const CHART_PRESET_EXT: Record<typeof CHART_PRESET_GROUPS[number], readonly string[]> = {
+  mermaid: ['.mmd', '.mermaid', '.txt'],
+  recharts: ['.json'],
+  svg: ['.svg', '.xml'],
+}
+const CHART_PRESET_LABEL: Record<typeof CHART_PRESET_GROUPS[number], string> = {
+  mermaid: 'Mermaid DSL',
+  recharts: 'Recharts ChartSpec',
+  svg: 'SVG',
+}
+/** 单项搬移：目标已存在则不动；rename 失败（跨设备/被占用）回退「复制 + 删除」 */
+function moveInto(from: string, to: string): void {
+  if (!existsSync(from) || existsSync(to)) return
+  mkdirSync(dirname(to), { recursive: true })
+  try { renameSync(from, to); return } catch { /* 落到下面的回退 */ }
+  try { cpSync(from, to, { recursive: true }); rmSync(from, { recursive: true, force: true }) } catch { /* 留给下次启动 */ }
+}
+
+/**
+ * 目录搬移。目标目录已存在时（上次迁移中途失败、目录已被建出）**逐个搬子项**，
+ * 否则旧内容会因「目标已存在」被整体跳过、永远留在原地。
+ */
+function moveDirContents(from: string, to: string): void {
+  if (!existsSync(from)) return
+  if (!existsSync(to)) { moveInto(from, to); return }
+  mkdirSync(to, { recursive: true })
+  for (const child of readdirSync(from)) moveInto(join(from, child), join(to, child))
+  try { if (readdirSync(from).length === 0) rmSync(from, { recursive: true, force: true }) } catch { /* 非空则留着 */ }
+}
+
+/**
+ * 旧版 chats/ 是平铺的：会话 <uuid>.json 与 _token-usage.jsonl、imagegen-history.json、
+ * images/、pdf_exports/ 全混在一层，只能靠命名约定区分类型。这里一次性搬到三层结构。
+ * 幂等：可重复执行；任一步失败都不阻断启动（旧文件留在原地，下次启动重试）。
+ */
+function migrateChatsLayout(): void {
+  // 产物目录：整目录搬（内容可能已经存在，用 moveDirContents 合并）
+  moveDirContents(join(CHATS_DIR, 'images'), join(CHAT_ASSETS_DIR, 'images'))
+  moveDirContents(join(CHATS_DIR, 'pdf_exports'), join(CHAT_ASSETS_DIR, 'pdf_exports'))
+  // 辅助状态文件：单项搬（imagegen 历史最终要落进 state/imagegen-history/）
+  moveInto(join(CHATS_DIR, '_token-usage.jsonl'), join(CHAT_STATE_DIR, 'token-usage.jsonl'))
+  moveInto(join(CHATS_DIR, 'imagegen-history.json'), join(CHAT_IMAGEGEN_DIR, 'history.json'))
+  // 中间态：上一轮重构曾把它放在 state/ 根下（目录与散文件混层），这里继续收进自己的目录
+  moveInto(join(CHAT_STATE_DIR, 'imagegen-history.json'), join(CHAT_IMAGEGEN_DIR, 'history.json'))
+  // 会话文件：chats/ 根下剩下的 *.json 全部搬进 sessions/（辅助 JSON 已在上面搬走）
+  try {
+    if (!existsSync(CHATS_DIR)) return
+    for (const f of readdirSync(CHATS_DIR)) {
+      if (!f.endsWith('.json')) continue
+      const from = join(CHATS_DIR, f)
+      try { if (!statSync(from).isFile()) continue } catch { continue }
+      moveInto(from, join(CHAT_SESSIONS_DIR, f))
+    }
+  } catch { /* 迁移失败不阻断启动 */ }
+}
+// ⚠️ 迁移必须跑在下面的「建目录」之前：否则目标目录会先被创建出来，
+// 旧目录会因「目标已存在」被整体跳过，内容永远迁不过去。
+migrateChatsLayout()
+for (const dir of [
+  MODELS_DIR, TEMPLATES_DIR, BACKEND_DIR, CHATS_DIR, CHAT_TEMPLATES_DIR,
+  // 图表测试页预设目录：内容完全由用户自行添加（不入库），目录不存在时自动建好，方便直接往里丢文件
+  CHART_PRESETS_DIR,
+  ...CHART_PRESET_GROUPS.map(g => join(CHART_PRESETS_DIR, g)),
+  // chats/ 三层子目录：产物子目录也一并建好，保证「打开 /images」「打开 /pdf_exports」始终有目标
+  CHAT_SESSIONS_DIR, CHAT_ASSETS_DIR, CHAT_STATE_DIR, CHAT_IMAGEGEN_DIR,
+  join(CHAT_ASSETS_DIR, 'images'), join(CHAT_ASSETS_DIR, 'pdf_exports'),
+]) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
 // Token 记账簿：独立于聊天记录，删除会话不影响累计
-initTokenLedger(CHATS_DIR)
+initTokenLedger(CHAT_STATE_DIR)
+// 启动时封存超出保留窗口的月份（应用可能隔月才被打开，封存必须在读取之前完成）
+sealOldMonths()
 // 参数集由用户在参数设置里手动切换（paramSet），不自动识别引擎：
 // 'tensorsharp' → commands-tensorsharp.json，'turboquant' → commands-turboquant.json，
 // 'beellama' → commands-beellama.json，'sdcpp' → commands-sdcpp.json，其余 → commands.json
@@ -2288,7 +2375,7 @@ export function registerIpcHandlers(): void {
   // 聊天图片附件存储：原图独立落盘，会话 JSON 仅存引用（chatimg://<文件名>）。
   // 若内嵌数 MB base64，流式期间每 3s 节流落盘的 JSON.stringify + 同步写盘会
   // 阻塞主进程（SSE 转发也在主进程），导致 token 输出周期性卡顿。
-  const CHAT_IMAGES_DIR = join(CHATS_DIR, 'images')
+  const CHAT_IMAGES_DIR = join(CHAT_ASSETS_DIR, 'images')
   const CHATIMG_PREFIX = 'chatimg://'
   const IMG_MIME_EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/bmp': 'bmp', 'image/svg+xml': 'svg' }
   const IMG_EXT_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml' }
@@ -2331,7 +2418,7 @@ export function registerIpcHandlers(): void {
   // ── 图像生成页：自动保存 + 历史持久化 ──
   // 生成图以「带参数的描述性文件名」落到 CHAT_IMAGES_DIR；历史清单存 JSON（仅存文件名与元信息，
   // 不内嵌 base64，避免文件巨大）。图片读取按需从磁盘回读成 dataUrl。
-  const SD_HISTORY_FILE = join(CHATS_DIR, 'imagegen-history.json')
+  const SD_HISTORY_FILE = join(CHAT_IMAGEGEN_DIR, 'history.json')
   // 标准 PNG 文本元数据：把生成参数/提示词写入 PNG 底层的 tEXt 块（看图工具可读，不影响文件名）
   const SD_CRC_TABLE: number[] = (() => {
     const t = new Array(256).fill(0)
@@ -2429,7 +2516,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('save-imagegen-history', (_e, items: unknown[]): boolean => {
     try {
-      if (!existsSync(CHATS_DIR)) mkdirSync(CHATS_DIR, { recursive: true })
+      if (!existsSync(CHAT_IMAGEGEN_DIR)) mkdirSync(CHAT_IMAGEGEN_DIR, { recursive: true })
       writeFileSync(SD_HISTORY_FILE, JSON.stringify(Array.isArray(items) ? items : [], null, 2), 'utf-8')
       return true
     } catch { return false }
@@ -2509,15 +2596,16 @@ export function registerIpcHandlers(): void {
     return ok
   })
   ipcMain.handle('list-chat-sessions', async () => {
-    if (!existsSync(CHATS_DIR)) return []
-    const files = await fsPromises.readdir(CHATS_DIR)
+    // sessions/ 里只有会话文件，直接全取即可 —— 不再需要读全目录再靠 id/messages 猜类型
+    if (!existsSync(CHAT_SESSIONS_DIR)) return []
+    const files = await fsPromises.readdir(CHAT_SESSIONS_DIR)
     const results = await Promise.all(
       files.filter(f => f.endsWith('.json')).map(async (f) => {
         try {
-          const text = await fsPromises.readFile(join(CHATS_DIR, f), 'utf-8')
+          const text = await fsPromises.readFile(join(CHAT_SESSIONS_DIR, f), 'utf-8')
           const data = JSON.parse(text)
-          // 只返回真正的会话数据：排除 imagegen-history.json 等辅助 JSON（无 id/messages）
-          if (!data || typeof data.id !== 'string' || !Array.isArray(data.messages)) return null
+          // 仅做「文件是否损坏/是否本应用的会话」的最低校验（id 是会话的必备字段）
+          if (!data || typeof data.id !== 'string') return null
           return data
         } catch { return null }
       })
@@ -2528,8 +2616,8 @@ export function registerIpcHandlers(): void {
     try {
       const id = (session.id as string) || String(Date.now())
       if (/[\\/]/.test(id) || id.includes('..')) return { success: false, error: '无效的会话 ID' }
-      const fp = join(CHATS_DIR, `${id}.json`)
-      if (!isSafePath(CHATS_DIR, fp)) return { success: false, error: '访问被拒绝' }
+      const fp = join(CHAT_SESSIONS_DIR, `${id}.json`)
+      if (!isSafePath(CHAT_SESSIONS_DIR, fp)) return { success: false, error: '访问被拒绝' }
       // 兼容旧数据：附件内嵌的原图（data:）转独立文件引用，保持会话 JSON 小体积
       const msgs = session.messages
       if (Array.isArray(msgs)) {
@@ -2548,8 +2636,8 @@ export function registerIpcHandlers(): void {
     } catch (err) { return { success: false, error: String(err) } }
   })
   ipcMain.handle('delete-chat-session', (_e, id: string) => {
-    const fp = join(CHATS_DIR, `${id}.json`)
-    if (!isSafePath(CHATS_DIR, fp)) return { success: false, error: '访问被拒绝' }
+    const fp = join(CHAT_SESSIONS_DIR, `${id}.json`)
+    if (!isSafePath(CHAT_SESSIONS_DIR, fp)) return { success: false, error: '访问被拒绝' }
     try { if (existsSync(fp)) unlinkSync(fp) } catch { }
     return { success: true }
   })
@@ -2580,6 +2668,68 @@ export function registerIpcHandlers(): void {
     return { name: basename(r.filePaths[0]), path: r.filePaths[0] }
   })
   ipcMain.handle('get-model-logs', (_e, id: string) => modelLogBuffers.get(String(id)) ?? [])
+  // ── 图表测试页预设（Mermaid / Recharts / SVG）──
+  // 扫描项目根目录 chart-presets/<分组>/ 下的原生文件，内容原样读取（不转义、不包装）。
+  // 文件名即按钮标题：去掉扩展名，并去掉可选的 "01-" / "01_" 排序前缀。
+  ipcMain.handle('get-chart-presets', (): { path: string; groups: Record<'mermaid' | 'recharts' | 'svg', { label: string; code: string }[]>; error?: string } => {
+    const groups: Record<string, { label: string; code: string }[]> = { mermaid: [], recharts: [], svg: [] }
+    let error: string | undefined
+    for (const key of CHART_PRESET_GROUPS) {
+      const dir = join(CHART_PRESETS_DIR, key)
+      try {
+        if (!existsSync(dir)) continue
+        const exts = CHART_PRESET_EXT[key]
+        groups[key] = readdirSync(dir)
+          .filter(f => exts.includes(extname(f).toLowerCase()))
+          .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN', { numeric: true }))
+          .flatMap((f) => {
+            try {
+              const stem = basename(f, extname(f))
+              const label = stem.replace(/^\d+[-_]/, '').trim() || stem
+              const code = readFileSync(join(dir, f), 'utf-8')
+              return code.trim() ? [{ label, code }] : []
+            } catch { return [] }
+          })
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e)
+      }
+    }
+    return {
+      path: CHART_PRESETS_DIR,
+      groups: groups as Record<'mermaid' | 'recharts' | 'svg', { label: string; code: string }[]>,
+      error,
+    }
+  })
+  // 直接挑一个磁盘上的图表文件读取内容渲染（不复制进 chart-presets 目录，只读不写）
+  // 对话框优先落在项目内的 chart-presets/<分组>/ 目录，其次可自由选择任意位置的任意文件。
+  ipcMain.handle('pick-chart-file', async (_e, group: string): Promise<{ canceled: boolean; path?: string; name?: string; code?: string; error?: string }> => {
+    const key = (CHART_PRESET_GROUPS as readonly string[]).includes(group)
+      ? (group as typeof CHART_PRESET_GROUPS[number])
+      : 'mermaid'
+    const groupDir = join(CHART_PRESETS_DIR, key)
+    // 目录可能被用户删掉：逐级回退，保证对话框总能落在项目里的合理位置
+    const defaultPath = existsSync(groupDir)
+      ? groupDir
+      : (existsSync(CHART_PRESETS_DIR) ? CHART_PRESETS_DIR : undefined)
+    const exts = CHART_PRESET_EXT[key].map(x => x.replace(/^\./, ''))
+    const r = await dialog.showOpenDialog({
+      title: `选择${CHART_PRESET_LABEL[key]}文件`,
+      defaultPath,
+      // 第一个过滤器是本分组对应的原生格式（默认选中），第二个放开自由选择
+      filters: [
+        { name: `${CHART_PRESET_LABEL[key]} (${exts.map(e => `.${e}`).join(', ')})`, extensions: exts },
+        { name: '所有文件', extensions: ['*'] },
+      ],
+      properties: ['openFile'],
+    })
+    if (r.canceled || !r.filePaths.length) return { canceled: true }
+    const filePath = r.filePaths[0]
+    try {
+      return { canceled: false, path: filePath, name: basename(filePath), code: readFileSync(filePath, 'utf-8') }
+    } catch (e) {
+      return { canceled: false, path: filePath, name: basename(filePath), error: e instanceof Error ? e.message : String(e) }
+    }
+  })
   ipcMain.handle('run-model', async (_e, opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: EngineKind; kind?: EngineKind }) => {
     let stderrBuf = ''
     const broadcastDiagnosis = (msg: string) => {
@@ -2745,7 +2895,6 @@ export function registerIpcHandlers(): void {
         }
         console.error('[llama-server] spawn error:', msg)
         runningProcesses.delete(opts.id)
-        if (runningProcesses.size === 0) stopMetricsInterval()
         if (!_e.sender.isDestroyed()) _e.sender.send('model-error', { id: opts.id, error: msg })
         const diag = diagnoseModelFailure(null, `${stderrBuf}\n${msg}`, '', opts.id)
         BrowserWindow.getAllWindows().forEach(win => {
@@ -2776,7 +2925,6 @@ export function registerIpcHandlers(): void {
         }
         runningProcesses.delete(opts.id)
         portModelInfos.delete(opts.port)
-        if (runningProcesses.size === 0) stopMetricsInterval()
       })
       if (opts.openBrowser) {
         setTimeout(() => {
@@ -2878,7 +3026,6 @@ export function registerIpcHandlers(): void {
       runningProcesses.delete(id)
       portModelInfos.delete(entry.port)
       lastTtft.delete(id)
-      if (runningProcesses.size === 0) stopMetricsInterval()
       const tasks: Promise<unknown>[] = [killProcessTreeAsync(entry.proc)]
       if (entry.port) { tasks.push(killByPortAsync(entry.port)); hostedModelCache.delete(entry.port) }
       await Promise.all(tasks)
@@ -3982,7 +4129,7 @@ export function registerIpcHandlers(): void {
     if (err) console.error('[open-folder] 无法打开目录:', folderPath, err)
     return err
   })
-  ipcMain.handle('get-paths', () => ({ models: MODELS_DIR, templates: TEMPLATES_DIR, backend: BACKEND_DIR, chats: CHATS_DIR, chatImages: join(CHATS_DIR, 'images'), chatPdfExports: join(CHATS_DIR, 'pdf_exports'), chatTemplates: CHAT_TEMPLATES_DIR }))
+  ipcMain.handle('get-paths', () => ({ models: MODELS_DIR, templates: TEMPLATES_DIR, backend: BACKEND_DIR, chats: CHATS_DIR, chatImages: join(CHAT_ASSETS_DIR, 'images'), chatPdfExports: join(CHAT_ASSETS_DIR, 'pdf_exports'), chatTemplates: CHAT_TEMPLATES_DIR }))
   ipcMain.handle('open-external', (_e, url: string) => {
     try {
       const parsed = new URL(url)
@@ -4141,9 +4288,9 @@ export function registerIpcHandlers(): void {
     return result
   }
 
-  async function refreshGpuData(): Promise<void> {
+  async function refreshGpuData(optTtlMs = GPU_CACHE_TTL): Promise<void> {
     const now = Date.now()
-    if (cachedGpuData && (now - lastGpuFetch) < GPU_CACHE_TTL) return
+    if (cachedGpuData && (now - lastGpuFetch) < optTtlMs) return
     const smiPath = findNvidiaSmi()
     if (!smiPath) {
       if (!gpuLoggedFail) { console.warn('[gpu] nvidia-smi not found in any known path'); gpuLoggedFail = true }
@@ -4284,13 +4431,53 @@ export function registerIpcHandlers(): void {
     return payload
   }
 
+  // ── 系统级资源指标（常驻「模型运行数据」面板）──
+  // GPU（nvidia-smi 缓存）/ CPU（os.cpus 增量）/ 内存（os.totalmem/freemem）与模型
+  // 是否运行无关：每轮 2s 广播一条 system-metrics-update，无模型运行时面板也持续显示。
+  // （模型自身的运行数据 decode/TTFT/生成进度仍只随模型启动后才有值。）
+  let lastCpuSample: { idle: number; total: number } | null = null
+  function getSystemCpuUsage(): number | null {
+    try {
+      const sample = cpus().reduce((acc, c) => {
+        acc.idle += c.times.idle
+        acc.total += c.times.user + c.times.nice + c.times.sys + c.times.idle + c.times.irq
+        return acc
+      }, { idle: 0, total: 0 })
+      const prev = lastCpuSample
+      lastCpuSample = sample
+      if (!prev) return null // 首轮无增量基线，2s 后的下一轮开始出值
+      const dTotal = sample.total - prev.total
+      const dIdle = sample.idle - prev.idle
+      if (dTotal <= 0) return null
+      return Math.min(100, Math.max(0, (1 - dIdle / dTotal) * 100))
+    } catch { return null }
+  }
+
   async function broadcastMetrics(): Promise<void> {
-    if (runningProcesses.size === 0) return
     const gpuReady = refreshGpuData()
+    const sysCpu = getSystemCpuUsage()
+    await gpuReady
+    if (cachedGpuData || sysCpu !== null) {
+      const sysPayload = {
+        gpuTemperature: cachedGpuData?.temperatureGpu ?? null,
+        gpuUtilization: cachedGpuData?.utilizationGpu ?? null,
+        vramUsedMb: cachedGpuData?.memoryUsed ?? null,
+        vramTotalMb: cachedGpuData?.memoryTotal ?? null,
+        gpuName: cachedGpuData?.name ?? '',
+        gpuPowerDraw: cachedGpuData?.powerDraw ?? null,
+        cpuUsage: sysCpu,
+        ramUsedMb: Math.round((totalmem() - freemem()) / (1024 * 1024)),
+        ramTotalMb: Math.round(totalmem() / (1024 * 1024)),
+        lastUpdated: Date.now()
+      }
+      BrowserWindow.getAllWindows().forEach(win => {
+        if (!win.isDestroyed()) win.webContents.send('system-metrics-update', sysPayload)
+      })
+    }
+    if (runningProcesses.size === 0) return
     for (const [id, { proc, port }] of runningProcesses) {
       if (proc.pid === undefined) continue
       try {
-        await gpuReady
         const payload = await collectMetrics(id, port, proc.pid)
         payload.pid = proc.pid
         BrowserWindow.getAllWindows().forEach(win => {
@@ -5852,7 +6039,7 @@ export function registerIpcHandlers(): void {
         printBackground: true,
         preferCSSPageSize: true
       })
-      const chatDir = join(CHATS_DIR, 'pdf_exports')
+      const chatDir = join(CHAT_ASSETS_DIR, 'pdf_exports')
       mkdirSync(chatDir, { recursive: true })
       const filePath = join(chatDir, `chat-${Date.now()}.pdf`)
       writeFileSync(filePath, pdfBuffer)
@@ -5873,7 +6060,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('edge-tts-voices', async () => listEdgeVoices())
 
   ipcMain.handle('save-png', async (_e, dataUrl: string): Promise<string> => {
-    const chatDir = join(CHATS_DIR, 'images')
+    const chatDir = join(CHAT_ASSETS_DIR, 'images')
     mkdirSync(chatDir, { recursive: true })
     const matches = dataUrl.match(/^data:image\/png;base64,(.+)$/)
     if (!matches) throw new Error('无效的 PNG data URL')

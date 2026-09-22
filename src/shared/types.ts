@@ -115,6 +115,20 @@ export interface ModelMetrics {
   nPredict: number              // max tokens to predict from /slots (-1 = unlimited)
   lastUpdated: number           // timestamp of last update ms
 }
+
+/** 系统级资源指标（「模型运行数据」面板常驻区：GPU/CPU/内存/显存，与模型是否运行无关） */
+export interface SystemMetrics {
+  gpuTemperature: number | null // GPU temperature (°C)
+  gpuUtilization: number | null // GPU utilization (%)
+  vramUsedMb: number | null     // GPU 显存已用 (MB)
+  vramTotalMb: number | null    // GPU 显存总量 (MB)
+  gpuName: string               // GPU name (e.g. NVIDIA RTX 4090)
+  gpuPowerDraw: number | null   // GPU power draw (W)
+  cpuUsage: number | null       // 系统整体 CPU 利用率（%，os.cpus 增量）
+  ramUsedMb: number | null      // 系统内存已用 (MB)
+  ramTotalMb: number | null     // 系统内存总量 (MB)
+  lastUpdated: number           // unix timestamp ms
+}
 export type RunningStatus = 'idle' | 'running' | 'error'
 export interface HubResultItem {
   id: string
@@ -194,6 +208,30 @@ export interface TokenUsageEntry {
   promptTokens: number       // 本次请求完整输入（含历史）
   promptDelta?: number       // 新增输入：与同端口上一次请求相比的增长量
   completionTokens: number
+}
+
+/**
+ * Token 记账「聚合结果」：按「本地日期 × 小时 × 模型」预聚合。
+ *
+ * 只覆盖**已封存（归档）的月份**——明细分片只保留最近两个月，更早的月份在月末
+ * 被折算成本结构写进 `_rollup.json`，从而让读取成本与历史总量无关（O(天数×模型数)，
+ * 而不是 O(请求数)）。小时粒度保证「一天中的时段」和全历史时段分布仍能还原。
+ */
+export interface TokenUsageRollupRow {
+  date: string             // 本地日期 YYYY-MM-DD
+  hour: number             // 本地小时 0-23
+  port: number
+  templateId?: string
+  modelPath: string | null
+  requests: number
+  promptTokens: number     // 已按「新增输入（promptDelta）」口径折算
+  completionTokens: number
+}
+
+/** 记账簿读取结果：明细流水（近两个月）+ 聚合结果（已封存月份） */
+export interface TokenUsageLedger {
+  entries: TokenUsageEntry[]
+  rollup: TokenUsageRollupRow[]
 }
 
 // 主进程流式代理推送到渲染层的 chunk

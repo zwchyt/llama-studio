@@ -273,9 +273,10 @@ export function useAgentLoop({
       liveMsg = { ...liveMsg, ...patch }
       useStore.getState().setLiveAgentMsg(liveMsg)
       if (forceSync) {
-        // 终态提交：清掉排队的文本提交（其闭包 liveMsg 无 modelLabel/lastTps 等终态字段，
-        // 延迟执行会覆盖 final commit 刚持久化的数据）
-        if (textCommitTimer) { clearTimeout(textCommitTimer); textCommitTimer = null }
+        // 终态提交：清掉排队的文本提交帧（其闭包 liveMsg 无 modelLabel/lastTps 等终态字段，
+        // 延迟执行会覆盖 final commit 刚持久化的数据；commitText 已同步更新闭包 liveMsg，
+        // 取消排队帧不会丢最后一次增量）
+        if (textCommitFrame !== undefined) { cancelAnimationFrame(textCommitFrame); textCommitFrame = undefined }
         if (projectsSyncTimer) { clearTimeout(projectsSyncTimer); projectsSyncTimer = null }
         lastProjectsSyncAt = performance.now()
         updateSessionInProject(pid, sid, { messages: msgs })
@@ -283,24 +284,23 @@ export function useAgentLoop({
         syncProjects()
       }
     }
-    // 流式正文 commit 节流：文本增量高频到达时合并为每 COMMIT_TEXT_MS 一次 live 切片更新
-    // （显示层另有 40ms 帧对齐节流，50ms 合并不会造成视觉滞后）；
+    // 流式正文 commit 帧对齐：文本增量高频到达时按 rAF 合帧，同一帧内到达的全部增量
+    // 合并为至多一次 live 切片更新。此前 50ms setTimeout 节流与 vsync 周期（~16.7ms）
+    // 无公约数关系：setTimeout 会被 clamp/错过帧起点，两次 commit 可能落进同一帧
+    // （白做一次提交）或恰好错过一帧绘制（该帧显示旧内容、下一帧突进两份）——
+    // 肉眼即「顿一下再跳一下」。rAF 合帧保证每次提交恰好命中一次绘制。
+    // 显示层另有 useSmoothStream 打字机平滑，本层只负责 store 提交节奏。
     // 工具/思考边界等低频事件仍走 commit 即时提交，保证工具卡状态不错过。
-    const COMMIT_TEXT_MS = 50
-    let textCommitTimer: ReturnType<typeof setTimeout> | null = null
-    let lastTextCommitAt = 0
+    let textCommitFrame: number | undefined
     const commitText = (patch: Partial<AgentMessage>): void => {
       msgs = msgs.map(m => m.id === liveId ? { ...m, ...patch } : m)
       liveMsg = { ...liveMsg, ...patch }
-      const apply = (): void => {
-        lastTextCommitAt = performance.now()
+      if (textCommitFrame !== undefined) return // 本帧已有排队提交，最新 liveMsg 会随其一起提交
+      textCommitFrame = requestAnimationFrame(() => {
+        textCommitFrame = undefined
         useStore.getState().setLiveAgentMsg(liveMsg)
         syncProjects()
-      }
-      if (textCommitTimer) return // 已有排队提交，最新 liveMsg 会随其 apply 一起带走
-      const now = performance.now()
-      if (now - lastTextCommitAt >= COMMIT_TEXT_MS) apply()
-      else textCommitTimer = setTimeout(() => { textCommitTimer = null; apply() }, COMMIT_TEXT_MS - (now - lastTextCommitAt))
+      })
     }
     let streamedText = ''
     const toolCalls: NonNullable<AgentMessage['toolCalls']> = []

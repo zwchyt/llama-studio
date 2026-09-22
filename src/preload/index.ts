@@ -153,11 +153,21 @@ const fullApi = {
   getMetrics: () => ipcRenderer.invoke('get-metrics'),
   getRunningProcesses: () => ipcRenderer.invoke('get-running-processes'),
   getModelLogs: (id: string) => ipcRenderer.invoke('get-model-logs', id),
+  // 图表测试页预设：读取项目根目录 chart-presets/<分组>/ 下的原生文件（用户可自行增删）
+  getChartPresets: () => ipcRenderer.invoke('get-chart-presets'),
+  // 直接挑一个磁盘上的图表文件读取内容（返回 { canceled } 或 { path, name, code }）
+  pickChartFile: (group: 'mermaid' | 'recharts' | 'svg') => ipcRenderer.invoke('pick-chart-file', group),
   onMetricsUpdate: (callback: (data: Record<string, unknown>) => void) => {
     ipcRenderer.removeAllListeners('metrics-update')
     ipcRenderer.on('metrics-update', (_event, data) => callback(data))
   },
   removeMetricsUpdateListener: () => ipcRenderer.removeAllListeners('metrics-update'),
+  // 系统级资源指标（GPU/CPU/内存/显存）：常驻广播，与模型是否运行无关
+  onSystemMetricsUpdate: (callback: (data: Record<string, unknown>) => void) => {
+    ipcRenderer.removeAllListeners('system-metrics-update')
+    ipcRenderer.on('system-metrics-update', (_event, data) => callback(data))
+  },
+  removeSystemMetricsListener: () => ipcRenderer.removeAllListeners('system-metrics-update'),
   // 主动查询模型最新 /slots 指标（返回 n_decoded 原值；无运行进程返回 null）：
   // agent 输出结束时刻以此为准快照最终解码数，保证与端点当前值一致（不依赖广播周期）
   queryMetricsNow: (id: string) => ipcRenderer.invoke('query-metrics-now', id),

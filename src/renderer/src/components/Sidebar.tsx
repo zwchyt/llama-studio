@@ -256,17 +256,6 @@ export default function Sidebar() {
         >
           {view === 'audiocpp' && <span className="nav-active-dot" />}
         </NavItem>
-
-        {/* ── 工作台 ── */}
-        <span className="nav-section-label" style={{ marginTop: 12 }}>工作台</span>
-        <NavItem
-          icon={CodeIcon}
-          label="Agent Code"
-          active={view === 'agent-code'}
-          onClick={() => setView('agent-code')}
-        >
-          {view === 'agent-code' && <span className="nav-active-dot" />}
-        </NavItem>
         <NavItem
           icon={GitBranchIcon}
           label="Mermaid 测试"
@@ -290,6 +279,17 @@ export default function Sidebar() {
           onClick={() => setView('svg-test')}
         >
           {view === 'svg-test' && <span className="nav-active-dot" />}
+        </NavItem>
+
+        {/* ── 工作台 ── */}
+        <span className="nav-section-label" style={{ marginTop: 12 }}>工作台</span>
+        <NavItem
+          icon={CodeIcon}
+          label="Agent Code"
+          active={view === 'agent-code'}
+          onClick={() => setView('agent-code')}
+        >
+          {view === 'agent-code' && <span className="nav-active-dot" />}
         </NavItem>
 
         {/* ── 系统 ── */}

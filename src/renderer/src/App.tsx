@@ -46,7 +46,7 @@ import './styles/titlebar.css'
   import { buildDefaultTemplate } from './utils/defaultTemplate'
 import { writeToTerminal } from './utils/terminalRegistry'
 import { useAgentTerminalStore } from './store/terminalStore'
-import type { Template, ModelMetrics, ReleaseInfo } from '../../shared/types'
+import type { Template, ModelMetrics, SystemMetrics, ReleaseInfo } from '../../shared/types'
 
 const searchParams = new URLSearchParams(window.location.search)
 const initChatUrl = searchParams.get('chat_url')
@@ -525,6 +525,23 @@ function AppMain() {
       if (d.nPredict !== undefined) partial.nPredict = d.nPredict as number
 
       if (Object.keys(partial).length > 0) updateModelMetric(mid, partial)
+    })
+    // 系统级资源指标（GPU/CPU/内存/显存）：常驻订阅 —— 与模型是否运行无关，
+    // 「模型运行数据」面板在空载时也持续显示这些数据（模型自身的 decode/TTFT/
+    // 生成进度等运行数据仍只随模型启动后由上面的 metrics-update 提供）
+    window.api.onSystemMetricsUpdate((raw: Record<string, unknown>) => {
+      const d = raw as Record<string, unknown>
+      const partial: Partial<SystemMetrics> = {}
+      if (d.gpuTemperature !== undefined) partial.gpuTemperature = d.gpuTemperature as number | null
+      if (d.gpuUtilization !== undefined) partial.gpuUtilization = d.gpuUtilization as number | null
+      if (d.vramUsedMb !== undefined) partial.vramUsedMb = d.vramUsedMb as number | null
+      if (d.vramTotalMb !== undefined) partial.vramTotalMb = d.vramTotalMb as number | null
+      if (d.gpuName !== undefined) partial.gpuName = String(d.gpuName)
+      if (d.gpuPowerDraw !== undefined) partial.gpuPowerDraw = d.gpuPowerDraw as number | null
+      if (d.cpuUsage !== undefined) partial.cpuUsage = d.cpuUsage as number | null
+      if (d.ramUsedMb !== undefined) partial.ramUsedMb = d.ramUsedMb as number | null
+      if (d.ramTotalMb !== undefined) partial.ramTotalMb = d.ramTotalMb as number | null
+      useStore.getState().setSystemMetrics(partial)
     })
     const initMetrics = async () => {
       try {

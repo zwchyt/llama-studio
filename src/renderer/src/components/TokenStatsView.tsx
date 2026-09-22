@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Activity, Cpu, RefreshCw } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import type { TokenUsageEntry } from '../../../shared/types'
+import type { TokenUsageLedger } from '../../../shared/types'
 import { buildTokenStats, formatNumber } from '../utils/token-stats'
 import type { TokenStats } from '../utils/token-stats'
 import { TokenUsageActivityTab } from './TokenUsageActivityTab'
@@ -11,8 +11,8 @@ import '../styles/token-stats.css'
 // ── Token 使用统计（移植自 local-studio 的 Usage 页） ──────────
 // 页面是「模型」与「活动」两个表格页签的并列：同一个标签页外壳、同一套表格
 // 语言，每个标签页的统计条直接概括正下方的行，而不是漂浮在页面顶部。
-// 数据源是本机记账簿（chats/_token-usage.jsonl），仅本地统计，
-// 不涉及任何云端模型的 token 计数逻辑。
+// 数据源是本机记账簿（chats/state/token-usage/：按月分片的明细 + _rollup.json 聚合），
+// 仅本地统计，不涉及任何云端模型的 token 计数逻辑。
 
 type UsageTab = 'models' | 'activity'
 
@@ -35,7 +35,7 @@ const TAB_HEADINGS: Record<UsageTab, { title: string; description: string }> = {
 export default function TokenStatsView() {
   const cards = useStore(s => s.cards)
   const [tab, setTab] = useState<UsageTab>('models')
-  const [entries, setEntries] = useState<TokenUsageEntry[]>([])
+  const [ledger, setLedger] = useState<TokenUsageLedger>({ entries: [], rollup: [] })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const requestSequence = useRef(0)
@@ -53,9 +53,9 @@ export default function TokenStatsView() {
     try {
       setLoading(true)
       setError(null)
-      const list = await window.api.listTokenUsage()
+      const data = await window.api.listTokenUsage()
       if (requestId !== requestSequence.current) return
-      setEntries(list)
+      setLedger(data ?? { entries: [], rollup: [] })
     } catch (cause) {
       if (requestId === requestSequence.current) {
         setError((cause as Error).message || String(cause))
@@ -70,8 +70,10 @@ export default function TokenStatsView() {
   }, [load])
 
   const stats: TokenStats | null = useMemo(
-    () => (entries.length > 0 ? buildTokenStats(entries, cardOf) : null),
-    [entries, cardOf],
+    () => (ledger.entries.length > 0 || ledger.rollup.length > 0
+      ? buildTokenStats(ledger.entries, ledger.rollup, cardOf)
+      : null),
+    [ledger, cardOf],
   )
 
   const heading = TAB_HEADINGS[tab]
@@ -151,7 +153,7 @@ export default function TokenStatsView() {
         ) : (
           tab === 'models'
             ? <TokenUsageModelsTab stats={stats} />
-            : <TokenUsageActivityTab stats={stats} entries={entries} />
+            : <TokenUsageActivityTab stats={stats} entries={ledger.entries} rollup={ledger.rollup} />
         )}
       </section>
     </div>

@@ -9,7 +9,7 @@ import {
   changeTone, dayLabel, fmtCompactTokens, fmtSignedPct, formatNumber, hourlyForDay, monthLabel,
 } from '../utils/token-stats'
 import type { TokenDayRow, TokenStats } from '../utils/token-stats'
-import type { TokenUsageEntry } from '../../../shared/types'
+import type { TokenUsageEntry, TokenUsageRollupRow } from '../../../shared/types'
 
 type SortKey = 'date' | 'requests' | 'tokens' | 'prompt' | 'completion'
 
@@ -35,7 +35,7 @@ function byMonth(rows: readonly TokenDayRow[]): Array<{ label: string; rows: Tok
   return groups
 }
 
-export function TokenUsageActivityTab({ stats, entries }: { stats: TokenStats; entries: TokenUsageEntry[] }) {
+export function TokenUsageActivityTab({ stats, entries, rollup }: { stats: TokenStats; entries: TokenUsageEntry[]; rollup: TokenUsageRollupRow[] }) {
   // 热力图点击选中的日子：选中后「一天中的时段」联动显示那一天的分布
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const { sorted, head } = useSortedRows<TokenDayRow, SortKey>(stats.daily, sortValue, {
@@ -99,14 +99,14 @@ export function TokenUsageActivityTab({ stats, entries }: { stats: TokenStats; e
   const dayHourly: UsageBar[] | null = useMemo(
     () =>
       selectedDay
-        ? hourlyForDay(entries, selectedDay).map(bucket => ({
+        ? hourlyForDay(entries, rollup, selectedDay).map(bucket => ({
             key: String(bucket.hour),
             label: String(bucket.hour).padStart(2, '0'),
             value: bucket.requests,
             title: `${String(bucket.hour).padStart(2, '0')}:00 — ${formatNumber(bucket.requests)} 次请求 · ${formatNumber(bucket.tokens)} tokens`,
           }))
         : null,
-    [entries, selectedDay],
+    [entries, rollup, selectedDay],
   )
   const hasDayHourly = dayHourly?.some(bar => bar.value > 0) ?? false
   const selectedDayRecord = selectedDay ? stats.daily.find(day => day.date === selectedDay) : undefined

@@ -22,7 +22,10 @@ import { useStore } from '../../../store/useStore'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { GIT_DIFF_TAB } from '../utils/constants'
 import { AgentMarkdown } from '../agent-message'
-import { PdfViewer } from './PdfViewer'
+// PdfViewer 内部静态依赖 pdfjs+worker（≈2MB）：改为 React.lazy —— 只在真正打开
+// PDF 预览标签的那一刻才加载对应 chunk，避免 pdfjs 常驻首屏主 bundle
+// （与 extractText.ts 的按需加载同批优化；Suspense 包裹见下方渲染处）。
+const PdfViewer = React.lazy(() => import('./PdfViewer').then(m => ({ default: m.PdfViewer })))
 import type { useAgentPreviewTabs } from '../hooks/useAgentPreviewTabs'
 import type { AniIconHandle } from '../types'
 import type { AgentProject } from '../../../../../shared/types'
@@ -484,8 +487,13 @@ export function AgentPreviewSlot({
                       )
                         : activeTab.isPdf ? (
                           // 版面渲染：pdf.js 逐页画 canvas（key 绑 path，切标签即销毁旧文档）
+                          // PdfViewer 是 lazy chunk（内含 pdfjs），Suspense 兜首帧加载占位
                           activeTab.pdfData
-                            ? <PdfViewer key={activeTab.path} data={activeTab.pdfData} />
+                            ? (
+                              <Suspense fallback={<div className="file-tree-loading">加载 PDF 渲染器…</div>}>
+                                <PdfViewer key={activeTab.path} data={activeTab.pdfData} />
+                              </Suspense>
+                            )
                             : <div className="agent-code-preview-error">无法预览该 PDF</div>
                         )
                           : isPreviewHtml && htmlViewMode === 'preview' ? (

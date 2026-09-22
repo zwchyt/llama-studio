@@ -50,8 +50,20 @@ backend/*
 templates/*
 !templates/.gitkeep
 
-chats/*
-!chats/.gitkeep
+# 聊天数据：目录和子目录全部入库，只忽略各「叶子目录」里的文件。
+# 注意这里没有 chats/* 或 chats/** —— 那种写法会连目录本身一起匹配掉。
+# 下面每条都只作用在某个目录的「内容」上（dir/* 不会匹配 dir 本身），
+# 再用 !dir/.gitkeep 保留占位文件，空目录才能留在仓库里。
+chats/sessions/*
+!chats/sessions/.gitkeep
+chats/assets/images/*
+!chats/assets/images/.gitkeep
+chats/assets/pdf_exports/*
+!chats/assets/pdf_exports/.gitkeep
+chats/state/token-usage/*
+!chats/state/token-usage/.gitkeep
+chats/state/imagegen-history/*
+!chats/state/imagegen-history/.gitkeep
 
 # 本地知识库数据（用户文档与索引，不入库；保留空文件夹）
 knowledge/*
@@ -60,9 +72,15 @@ knowledge/*
 chat-templates/*
 !chat-templates/.gitkeep
 
-# Agent instructions (not part of source code)
-AGENTS.md
-
+# 图表测试页（Mermaid / Recharts / SVG）预设：
+# chart-presets/ 本身、以及它的三个子目录都入库（靠 .gitkeep 保留空文件夹），
+# 只有用户自己往三个子目录里添加的预设文件不入库。
+chart-presets/mermaid/*
+chart-presets/recharts/*
+chart-presets/svg/*
+!chart-presets/mermaid/.gitkeep
+!chart-presets/recharts/.gitkeep
+!chart-presets/svg/.gitkeep
 # 用户运行时添加的模型 Logo（不入库；保留空文件夹）
 src/renderer/public/logos/*
 !src/renderer/public/logos/.gitkeep
@@ -83,10 +101,9 @@ Thumbs.db
 # Runtime config (user-specific local paths)
 settings.json
 
-# 模型能力检测缓存 / 用户 Logo 映射（每台机器运行时生成，不入库）
+# 模型能力检测缓存（每台机器运行时生成，不入库）
+# 注：用户 Logo 映射与图片的实际路径是 src/renderer/public/logos/，已由上方规则覆盖
 /model-capabilities.json
-/logos.json
-/logos/
 
 # Agent Code 工作台会话记录（用户数据，不入库；保留空文件夹，仅忽略日志文件）
 Agent session/*
@@ -102,9 +119,6 @@ scripts/lucide-stub.cjs
 scripts/test-*-entry.ts
 scripts/.test-*
 
-# Bundled node runtime (build artifact)
-
-
 # Vinv local artifacts (captures, index, reports)
 .vinv/
 
@@ -113,12 +127,6 @@ test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
-
-# ── 内部审计/修复记录文档 ──
-# 描述本项目已修复的安全问题与复现样本，不提交到公共仓库；
-# 如需入库请删除下面两行
-REACT-CODE-REVIEW.md
-REACT-CODE-REVIEW-PART2.md
 tests/
 vitest.config.ts
 playwright.config.ts

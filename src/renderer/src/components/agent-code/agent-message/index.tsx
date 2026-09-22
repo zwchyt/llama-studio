@@ -15,6 +15,7 @@ import { Brain, ChevronUp, AlignLeft, Play, Square, Trash2, Volume2 } from 'luci
 import { ChevronRightIcon, CircleStopIcon, FileTextIcon, RefreshCwIcon, CopyIcon } from '@animateicons/react/lucide'
 import { useStore } from '../../../store/useStore'
 import { useCollapseAnimation, COLLAPSE_DURATION_MS } from '../../../utils/useCollapseAnimation'
+import { useSmoothStream } from '../hooks/useSmoothStream'
 import { ThinkTextContent } from './ThinkTextContent'
 import { AttachmentTextPreview } from './AttachmentTextPreview'
 import { Markdown } from '../../../markdown/markstream'
@@ -825,16 +826,21 @@ function useFrameThrottledValue(value: string, active: boolean | undefined, thro
   return display
 }
 
-// 流式正文 Markdown：直接把落盘的最新内容交给 markstream。
-// 旧实现的两层防御——rAF 帧节流（把重解析频率与 30ms 落盘频率解耦）+ 轻量插件栈
-// （跳过 katex/raw/sanitize）——在 markstream 下都不再需要：
-//   · 解析器对「追加式」输入做节点级复用（只重解析尾部变化），单次更新成本与全文长度弱相关；
-//     实测 50 tok/s 喂入时单次更新 7.1ms（react-markdown 现状 48.0ms），阻塞总时长 176ms vs 5878ms。
-//   · 公式/HTML 的「重」插件不再是独立管线，mid-state 由解析器自己维护。
-// 因此这里去掉节流直传 content，让画面贴住模型真实吐字节奏。
+// 流式正文 Markdown：正文先经打字机平滑层（useSmoothStream），再交给 markstream。
+// 历史沿革：旧 react-markdown 实现叠了「rAF 帧节流 + 轻量插件栈」两层防御，把重解析
+// 频率与落盘频率解耦；markstream 接入后节点级复用让单次更新成本与全文长度弱相关
+// （实测 50 tok/s 喂入时单次更新 7.1ms，react-markdown 现状 48.0ms；阻塞总时长
+// 176ms vs 5878ms），公式/HTML 的 mid-state 也由解析器自维护，两层防御随之移除、
+// 直传 content。但「到达节奏 = 显示节奏」仍在：token 突发时一帧蹦出一坨字、短暂
+// 空窗时画面干等，观感「一顿一顿」。现由平滑层把到达与显示彻底解耦：
+//   · 到达只写缓冲（ref），显示端 rAF 每帧从缓冲匀速取字，速率自适应实测吐字速率；
+//   · 突发被摊到后续帧匀速释放，空窗自然放缓 —— 画面按帧匀速生长；
+//   · 揭示输出仍是 target 的前缀，markstream 的节点级复用完全适用，解析成本不变；
+//   · isStreaming=false（流结束）立即直通冲刷，终态与持久化内容严格一致。
 export const StreamingMarkdown = React.memo(function StreamingMarkdown({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
-  if (!content) return null
-  return <Markdown content={content} final={!isStreaming} variant="agent" />
+  const smooth = useSmoothStream(content, { active: !!isStreaming })
+  if (!smooth) return null
+  return <Markdown content={smooth} final={!isStreaming} variant="agent" />
 })
 
 // 旧消息（无 segments）的内容渲染：与 segments 消息同构的「单容器」方案——

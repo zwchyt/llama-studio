@@ -1,8 +1,8 @@
-import type { TokenUsageEntry } from '../../../shared/types'
+import type { TokenUsageEntry, TokenUsageRollupRow } from '../../../shared/types'
 
 // ── Token 使用统计：本地账本聚合 ─────────────────────────────
 // 移植自 local-studio 的 /usage 聚合口径（InferenceRequestStore.aggregate），
-// 但数据源是本机的 chats/_token-usage.jsonl（每次流式请求结束主进程追加一行），
+// 但数据源是本机的 chats/state/token-usage.jsonl（每次流式请求结束主进程追加一行），
 // 不涉及任何云端模型的 token 计数逻辑。
 // 「输入」一律采用 promptDelta（与同端口上一次请求相比的增长量）口径：
 // 避免工具循环/多轮对话把历史上下文反复计入消耗。
@@ -155,9 +155,12 @@ export function buildModelColors(modelKeys: readonly string[]): Map<string, stri
 // ── 聚合 ────────────────────────────────────────────────────
 export function buildTokenStats(
   entries: TokenUsageEntry[],
+  rollup: TokenUsageRollupRow[],
   cardOf: TokenCardLookup,
   now: number = Date.now(),
 ): TokenStats {
+  // 明细（近两个月逐请求）与聚合（已封存月份的「日期×小时×模型」）来自两个数据源，
+  // 但都往同一组桶里累加，所以下面所有指标的口径与「拿到全部明细」时完全一致。
   const sorted = [...entries].filter(e => typeof e.ts === 'number').sort((a, b) => a.ts - b.ts)
   const EMPTY: TokenStats = {
     totals: { total_requests: 0, total_tokens: 0, prompt_tokens: 0, completion_tokens: 0, models: 0 },
@@ -175,7 +178,7 @@ export function buildTokenStats(
     daily_by_model: [],
     hourly_pattern: Array.from({ length: 24 }, (_, hour) => ({ hour, requests: 0, tokens: 0 })),
   }
-  if (sorted.length === 0) return EMPTY
+  if (sorted.length === 0 && rollup.length === 0) return EMPTY
 
   const modelMap = new Map<string, TokenModelRow>()
   const dayMap = new Map<string, TokenDayRow>()
@@ -187,15 +190,21 @@ export function buildTokenStats(
   let totalPrompt = 0
   let totalCompletion = 0
 
-  const ensureModel = (e: TokenUsageEntry, card: TokenCardInfo | null): TokenModelRow => {
-    const key = e.modelPath || e.templateId || `port:${e.port}`
+  // 模型分组键口径：modelPath || templateId || `port:N`（明细与聚合行共用）
+  const ensureModel = (
+    modelPath: string | null | undefined,
+    templateId: string | undefined,
+    port: number,
+  ): TokenModelRow => {
+    const key = modelPath || templateId || `port:${port}`
     let m = modelMap.get(key)
     if (!m) {
+      const card = templateId ? cardOf(templateId) : null
       m = {
         model: key,
-        name: modelFileOf(e.modelPath) ?? card?.name ?? (e.templateId ? `模板 ${e.templateId.slice(0, 8)}` : `端口 ${e.port}`),
+        name: modelFileOf(modelPath) ?? card?.name ?? (templateId ? `模板 ${templateId.slice(0, 8)}` : `端口 ${port}`),
         templateName: card?.name ?? null,
-        modelPath: e.modelPath ?? null,
+        modelPath: modelPath ?? null,
         requests: 0, total_tokens: 0, prompt_tokens: 0, completion_tokens: 0, avg_tokens: 0,
       }
       modelMap.set(key, m)
@@ -226,43 +235,67 @@ export function buildTokenStats(
     return row
   }
 
-  for (const e of sorted) {
-    const card = e.templateId ? cardOf(e.templateId) : null
-    // 输入取「新增输入」：promptDelta（与同端口上一次请求相比的增长量）优先，
-    // 无该字段（旧记录）或上下文重置时回退完整输入
-    const inN = typeof e.promptDelta === 'number' && e.promptDelta > 0
-      ? e.promptDelta
-      : (typeof e.promptTokens === 'number' ? e.promptTokens : 0)
-    const outN = typeof e.completionTokens === 'number' ? e.completionTokens : 0
+  /** 往同一组桶里累加：明细行 n=1，聚合行 n=requests —— 两条数据源共用同一套口径 */
+  const addToBuckets = (
+    date: string,
+    hour: number,
+    modelPath: string | null | undefined,
+    templateId: string | undefined,
+    port: number,
+    n: number,
+    inN: number,
+    outN: number,
+  ): void => {
     const total = inN + outN
-
-    totalRequests += 1
+    totalRequests += n
     totalTokens += total
     totalPrompt += inN
     totalCompletion += outN
 
-    const m = ensureModel(e, card)
-    m.requests += 1
+    const m = ensureModel(modelPath, templateId, port)
+    m.requests += n
     m.total_tokens += total
     m.prompt_tokens += inN
     m.completion_tokens += outN
     m.avg_tokens = m.requests > 0 ? m.total_tokens / m.requests : 0
 
-    const day = ensureDay(dayKeyOf(e.ts))
-    day.requests += 1
+    const day = ensureDay(date)
+    day.requests += n
     day.total_tokens += total
     day.prompt_tokens += inN
     day.completion_tokens += outN
 
-    const dm = ensureDayModel(day.date, m.model)
-    dm.requests += 1
+    const dm = ensureDayModel(date, m.model)
+    dm.requests += n
     dm.total_tokens += total
     dm.prompt_tokens += inN
     dm.completion_tokens += outN
 
-    const hour = new Date(e.ts).getHours()
-    hourBuckets[hour].requests += 1
-    hourBuckets[hour].tokens += total
+    if (hour >= 0 && hour < 24) {
+      hourBuckets[hour].requests += n
+      hourBuckets[hour].tokens += total
+    }
+  }
+
+  // ① 明细：近两个月的逐请求记录。时间窗口类指标（近 1 小时 / 24 小时 / 环比）只能用这里——
+  //    聚合行只到「小时」精度，没有具体到秒的时间信息。
+  for (const e of sorted) {
+    addToBuckets(
+      dayKeyOf(e.ts), new Date(e.ts).getHours(),
+      e.modelPath, e.templateId, e.port,
+      1,
+      // 输入取「新增输入」：promptDelta（与同端口上一次请求相比的增长量）优先，
+      // 无该字段（旧记录）或上下文重置时回退完整输入
+      typeof e.promptDelta === 'number' && e.promptDelta > 0
+        ? e.promptDelta
+        : (typeof e.promptTokens === 'number' ? e.promptTokens : 0),
+      typeof e.completionTokens === 'number' ? e.completionTokens : 0,
+    )
+  }
+  // ② 聚合：已封存月份（按 日期×小时×模型 预聚合）。补齐 366 天逐日序列、
+  //    全量总计、模型排行与时段分布 —— 这些指标不依赖单次请求的精度。
+  for (const r of rollup) {
+    addToBuckets(r.date, r.hour, r.modelPath, r.templateId, r.port, r.requests, r.promptTokens, r.completionTokens)
   }
 
   // ── 时间窗（全部按本地时钟） ──
@@ -281,16 +314,19 @@ export function buildTokenStats(
   const change_24h_pct = prev24h > 0 ? ((last24h - prev24h) / prev24h) * 100 : null
 
   // ── 周统计：本周（周一 00:00 起）与上周 ──
+  // 走「逐日桶」而不是逐条明细：本周/上周可能跨到已封存的月份，那时明细已不在，
+  // 但逐日聚合仍在，所以口径不受明细保留窗口影响。
   const thisWeekStart = startOfLocalWeek(now)
   const lastWeekStart = thisWeekStart - 7 * DAY_MS
+  const thisWeekStartKey = dayKeyOf(thisWeekStart)
+  const lastWeekStartKey = dayKeyOf(lastWeekStart)
+  const todayKey = dayKeyOf(now)
   let thisWeek: { requests: number; tokens: number } = { requests: 0, tokens: 0 }
   let lastWeek: { requests: number; tokens: number } = { requests: 0, tokens: 0 }
-  for (const e of sorted) {
-    if (e.ts < lastWeekStart) continue
-    const inN = typeof e.promptDelta === 'number' && e.promptDelta > 0 ? e.promptDelta : (typeof e.promptTokens === 'number' ? e.promptTokens : 0)
-    const total = inN + (typeof e.completionTokens === 'number' ? e.completionTokens : 0)
-    if (e.ts >= thisWeekStart) { thisWeek.requests += 1; thisWeek.tokens += total }
-    else { lastWeek.requests += 1; lastWeek.tokens += total }
+  for (const day of dayMap.values()) {
+    if (day.date < lastWeekStartKey || day.date > todayKey) continue
+    if (day.date >= thisWeekStartKey) { thisWeek.requests += day.requests; thisWeek.tokens += day.total_tokens }
+    else { lastWeek.requests += day.requests; lastWeek.tokens += day.total_tokens }
   }
   const weekChange: TokenStats['week_over_week']['change_pct'] = {
     requests: lastWeek.requests > 0 ? ((thisWeek.requests - lastWeek.requests) / lastWeek.requests) * 100 : null,
@@ -298,7 +334,9 @@ export function buildTokenStats(
   }
 
   // ── 逐日序列：首个记账日 → 今天，最多 366 天（含零流量日，表格与热力图共用） ──
-  const firstDay = sorted[0] ? dayKeyOf(sorted[0].ts) : dayKeyOf(now)
+  // 首个记账日取「逐日桶」的最早日期（可能是已封存月份，明细里已经没有了）
+  const allDayKeys = [...dayMap.keys()].sort()
+  const firstDay = allDayKeys[0] ?? dayKeyOf(now)
   const lastDay = dayKeyOf(now)
   const daily: TokenDayRow[] = []
   const cursor = new Date(`${firstDay}T00:00:00`)
@@ -344,8 +382,10 @@ export function buildTokenStats(
 // ── 单日的时段分布 ─────────────────────────────────────────
 // 热力图点击某一天时，把它那一天里 24 个小时各自有多少请求算出来，
 // 交给「一天中的时段」柱状图显示。口径与全局聚合完全一致（输入取增量）。
+// 已封存月份的那一天明细已不在，改从聚合行取（聚合保留了小时粒度，所以结果一样）。
 export function hourlyForDay(
   entries: TokenUsageEntry[],
+  rollup: TokenUsageRollupRow[],
   dayKey: string,
 ): Array<{ hour: number; requests: number; tokens: number }> {
   const buckets = Array.from({ length: 24 }, (_, hour) => ({ hour, requests: 0, tokens: 0 }))
@@ -358,6 +398,11 @@ export function hourlyForDay(
     const hour = new Date(e.ts).getHours()
     buckets[hour].requests += 1
     buckets[hour].tokens += total
+  }
+  for (const r of rollup) {
+    if (r.date !== dayKey || r.hour < 0 || r.hour > 23) continue
+    buckets[r.hour].requests += r.requests
+    buckets[r.hour].tokens += r.promptTokens + r.completionTokens
   }
   return buckets
 }

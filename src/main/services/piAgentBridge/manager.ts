@@ -6,10 +6,10 @@ import type { Message } from '@earendil-works/pi-ai'
 import { createPiAgentBridge, type PiAgentBridge } from './index'
 import { createMainTools, type MainToolExecutors } from './tools/mainTools'
 import { PLAIN_CHAT_TOOL_NAMES as CHAT_TOOL_NAMES } from '../../../shared/types'
-import { appendTokenUsage, type TokenUsageEntry } from '../../tokenLedger'
+import { appendTokenUsage } from '../../tokenLedger'
 import { appendSessionEvent, writeTrajectoryHeader, appendLlmRequest, summarizeLlmRequest, appendUserEntry, appendLlmSystemMessages } from './trajectory'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
-import type { ThinkingLevel } from '../../../shared/types'
+import type { ThinkingLevel, TokenUsageEntry } from '../../../shared/types'
 import { PI_TOOL_GUIDANCE, PI_CHART_ROUTING, PI_MERMAID_DSL_GUIDANCE, PI_CHART_FENCE_GUIDANCE, PI_SVG_GUIDANCE, PI_MERMAID_JSON_GUIDANCE, PLAIN_CHAT_SYSTEM_PROMPT } from '../../../shared/agentGuidance'
 
 /** llama-studio 会话历史消息（pi 模式注入用，与 shared/types 的 AgentMessage 结构对应） */

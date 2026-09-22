@@ -78,10 +78,63 @@ export function resolveApprove(id: number, approved: boolean): void {
   p?.resolve(approved)
 }
 
+/** worker → renderer event push。
+ *
+ * delta 合帧缓冲：text_delta / thinking_delta 是逐 token 事件，高速吐字时（60-100 t/s）
+ * 会以同等频率逐条 webContents.send —— IPC 序列化/反序列化 + renderer 事件分发碎成
+ * 100+ 次/秒，且 Chromium 对 IPC 的合批时机不可控，进一步加剧到达侧的不均匀。
+ * 这里把两类增量按 FLUSH_MS 窗口合并成一条再发：IPC 次数降为 ~1/窗口，批次均匀，
+ * 内容拼接后语义与逐 token 完全等价（renderer 的 piAgentAdapter 只按 delta 文本追加）。
+ *
+ * 时序保证：任何非增量事件（toolcall_start/end、thinking_start/end、turn_* 等）
+ * 发送前必须先同步冲刷两个缓冲 —— 增量与边界事件的到达顺序严格保持原样，
+ * 「参数生成中→完整」「思考闭合补发」等边界语义不受合并影响。
+ */
+const DELTA_FLUSH_MS = 24
+let textDeltaBuf = ''
+let thinkDeltaBuf = ''
+let deltaFlushTimer: ReturnType<typeof setTimeout> | null = null
+let deltaSid = ''
+
+function sendDeltaEvent(sessionId: string, event: unknown): void {
+  if (!currentWindow || currentWindow.isDestroyed()) return
+  currentWindow.webContents.send('pi-agent-event', sessionId, event)
+}
+
+function flushDeltas(): void {
+  deltaFlushTimer = null
+  if (textDeltaBuf) {
+    sendDeltaEvent(deltaSid, { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: textDeltaBuf } })
+    textDeltaBuf = ''
+  }
+  if (thinkDeltaBuf) {
+    sendDeltaEvent(deltaSid, { type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: thinkDeltaBuf } })
+    thinkDeltaBuf = ''
+  }
+}
+
+function queueDelta(sessionId: string, kind: 'text' | 'thinking', delta: string): void {
+  // 跨会话防御：换了会话（旧会话缓冲未冲刷）先冲掉，避免增量串会话
+  if (deltaFlushTimer && sessionId !== deltaSid) flushDeltas()
+  deltaSid = sessionId
+  if (kind === 'text') textDeltaBuf += delta
+  else thinkDeltaBuf += delta
+  if (!deltaFlushTimer) deltaFlushTimer = setTimeout(flushDeltas, DELTA_FLUSH_MS)
+}
+
 /** ? worker ? pi ?????? renderer??????????? piAgentIpc.push ???? */
 function pushEvent(sessionId: string, event: unknown): void {
+  const e = event as { type?: string; assistantMessageEvent?: { type?: string; delta?: unknown; partial?: { content?: Array<{ type?: string; name?: string; id?: string }> } } }
+  // 增量类 message_update 走合帧缓冲（见 DELTA_FLUSH_MS 注释）；其余事件原样直发
+  if (e && e.type === 'message_update' && e.assistantMessageEvent &&
+      (e.assistantMessageEvent.type === 'text_delta' || e.assistantMessageEvent.type === 'thinking_delta') &&
+      typeof e.assistantMessageEvent.delta === 'string') {
+    queueDelta(sessionId, e.assistantMessageEvent.type === 'text_delta' ? 'text' : 'thinking', e.assistantMessageEvent.delta)
+    return
+  }
+  // 非增量事件：先冲刷排队的增量，保持「文本 → 边界事件」的原始到达顺序
+  if (deltaFlushTimer) flushDeltas()
   if (!currentWindow || currentWindow.isDestroyed()) return
-  const e = event as { type?: string; assistantMessageEvent?: { type?: string; partial?: { content?: Array<{ type?: string; name?: string; id?: string }> } } }
   let slim = event
   if (e && e.type === 'message_update') {
     const am = e.assistantMessageEvent

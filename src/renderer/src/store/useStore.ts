@@ -2,7 +2,7 @@ import { createWithEqualityFn } from 'zustand/traditional'
 import type { AgentMessage, AgentProject } from '../../../shared/types'
 import { isChatWorkspace } from '../../../shared/types'
 import { shallow } from 'zustand/shallow'
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, AppUpdateInfo, RunningStatus, ModelMetrics, ModelDownloadPhase, HfDownloadPhase } from '../../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, AppUpdateInfo, RunningStatus, ModelMetrics, SystemMetrics, ModelDownloadPhase, HfDownloadPhase } from '../../../shared/types'
 interface CardState {
   template: Template
   status: RunningStatus
@@ -49,7 +49,9 @@ let logFlushHandle: ReturnType<typeof setTimeout> | null = null
 function flushModelLogs(): void {
   logFlushHandle = null
   if (logWriteBuf.size === 0) return
-  const batch = logWriteBuf
+  // 必须先做快照再清空：logWriteBuf 是 const，只能用 clear() 原地清空，
+  // 若 batch 直接引用它，clear() 之后 batch 也变空，日志会一条都写不进 store。
+  const batch = new Map(logWriteBuf)
   logWriteBuf.clear()
   useStore.setState((s) => {
     const nextLogs = { ...s.modelLogs }
@@ -183,6 +185,9 @@ interface AppStore {
   setModelDiagnosis: (id: string, d: { code: number | null; severity: 'info' | 'warning' | 'critical'; title: string; cause: string; recommendations: string[]; evidence: string; logExcerpt?: { lines: string[]; start: number; errorLine: number } }) => void
   dismissModelDiagnosis: (id: string) => void
   modelMetrics: Record<string, ModelMetrics>
+  /** 系统级资源指标（GPU/CPU/内存/显存）：常驻采集广播，与模型是否运行无关 */
+  systemMetrics: SystemMetrics | null
+  setSystemMetrics: (partial: Partial<SystemMetrics>) => void
   // 模型自定义 Logo（key = template.id；data URL 或 null=无/读取失败）：
   // 「我的模板」卡片与 Agent Code 模型列表共用同一份，设置/移除后立即同步
   modelLogos: Record<string, string | null>
@@ -384,6 +389,10 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
   modelLogs: {},
   modelDiagnostics: {},
   modelMetrics: {},
+  systemMetrics: null,
+  setSystemMetrics: (partial) => set((s) => ({
+    systemMetrics: { ...(s.systemMetrics ?? { gpuTemperature: null, gpuUtilization: null, vramUsedMb: null, vramTotalMb: null, gpuName: '', gpuPowerDraw: null, cpuUsage: null, ramUsedMb: null, ramTotalMb: null }), ...partial, lastUpdated: Date.now() } as SystemMetrics
+  })),
   modelLogos: {},
   modelCapabilities: {},
   // 幂等加载：只补读缺失项的能力检测结果（含持久化文件里没有的），已缓存不重复
