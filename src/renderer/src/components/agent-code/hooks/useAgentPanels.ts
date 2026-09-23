@@ -60,9 +60,22 @@ export function useAgentPanels({ rightPanelMode }: {
     // 同样实测 header 内容自然宽度（含被省略号压缩的部分）作为下限。
     getMin: () => {
       if (rightPanelMode === 'terminal') {
-        const bar = document.querySelector('.agent-terminal-cwd-bar')
-        if (!bar) return RIGHT_MIN
-        const w = Math.ceil(bar.getBoundingClientRect().width)
+        // 终端标题栏布局：标签区（可缩可滚，flex:0 1 auto）+ cwd 输入框（弹性，
+        // 随手柄伸缩）+ 右侧按钮组（绝对定位，不在流内，只由 tabbar 的
+        // padding-right 预留）。手柄下限 = 输入框 CSS min-width + 其左外边距 +
+        // tabbar 的 padding-right（预留区已覆盖按钮组宽度）。不取输入框实时宽度：
+        // 它会被 flex 拉伸到≈当前面板宽度，取实时值会让下限跟着当前宽度走、
+        // 拖拽一开始就被钳死（同下方 diff 分支教训）。
+        const wrap = document.querySelector('.agent-terminal-tabbar > .agent-terminal-auto-input') as HTMLElement | null
+        const tabbar = document.querySelector('.agent-terminal-tabbar') as HTMLElement | null
+        if (!wrap || !tabbar) return RIGHT_MIN
+        const wcs = getComputedStyle(wrap)
+        const bcs = getComputedStyle(tabbar)
+        const w = Math.ceil(
+          (parseFloat(wcs.minWidth) || 0) +
+          (parseFloat(wcs.marginLeft) || 0) +
+          (parseFloat(bcs.paddingRight) || 0),
+        )
         return w > 0 ? w + 6 : RIGHT_MIN
       }
       if (rightPanelMode === 'diff') {

@@ -354,7 +354,7 @@ export function AgentPreviewSlot({
               {terminalMounted && currentView === 'agent-code' && (
                 <div className={`agent-browser-wrap${rightPanelMode === 'terminal' ? '' : ' hidden'}`}>
                   <div className="agent-terminal">
-                    <TerminalView store={useAgentTerminalStore} />
+                    <TerminalView store={useAgentTerminalStore} workspaceDir={plainChat ? '' : activeProject.workspaceDir} />
                   </div>
                 </div>
               )}

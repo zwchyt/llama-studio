@@ -44,7 +44,7 @@ import { resolveSeries } from './parseChartSpec'
  *      的组件，都必须同样走懒加载。
  */
 
-/** 调色板全部走 CSS 变量（定义在 chart.css 的 .rc-chart 上），因此自动跟随主题与配色工作台。 */
+/** 调色板全部走 CSS 变量（定义在 chart.css 的 .rc-chart 上），因此自动跟随浅色 / 暗色主题。 */
 const PALETTE = [
   'var(--rc-c1)',
   'var(--rc-c2)',

@@ -1,10 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { RefreshCw, Loader2, Cpu } from 'lucide-react'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { ENGINE_REPOS } from '../utils/engine'
+import AssetVersionSelect from './AssetVersionSelect'
 
 interface Props {
   /** GitHub 仓库（owner/repo），与 llama.cpp / TensorSharp 共用同一条 check-updates / download-release 通道 */
@@ -38,21 +39,7 @@ export default function EngineDownloadSection({ repo, engineLabel, description, 
   const [checking, setChecking] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [selectedAssetUrl, setSelectedAssetUrl] = useState('')
-  const [showDropdown, setShowDropdown] = useState(false)
-  const [dropdownUp, setDropdownUp] = useState(false)
-  const [hoveredAsset, setHoveredAsset] = useState('')
-  const assetDropdownRef = useRef<HTMLDivElement>(null)
-
-  // 外部点击关闭资产下拉
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (assetDropdownRef.current && !assetDropdownRef.current.contains(e.target as Node)) {
-        setShowDropdown(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [])
+  // 版本下拉的展开/定位/外部点击关闭全部由 AssetVersionSelect 内部托管（portal + fixed 定位）
 
   // 检查到发布后默认选中第一个资产
   useEffect(() => {
@@ -129,48 +116,12 @@ export default function EngineDownloadSection({ repo, engineLabel, description, 
               </div>
               {releaseInfo.isNewer !== false && releaseInfo.assets?.length > 0 && (
                 <div className="ev-asset-row">
-                  <div ref={assetDropdownRef} style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-                    <button
-                      className="cmd-select"
-                      style={{ width: '100%', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
-                      onClick={() => {
-                        if (showDropdown) { setShowDropdown(false); return }
-                        if (assetDropdownRef.current) {
-                          const rect = assetDropdownRef.current.getBoundingClientRect()
-                          setDropdownUp(window.innerHeight - rect.bottom < 260)
-                        }
-                        setShowDropdown(true)
-                      }}
-                      disabled={downloading || !!downloadProgress}
-                    >
-                      {releaseInfo.assets.find(a => a.downloadUrl === selectedAssetUrl)?.name || '选择版本'}
-                    </button>
-                    {showDropdown && (
-                      <div style={{
-                        position: 'absolute' as const, left: 0, right: 0,
-                        background: 'var(--surface)', border: '1.5px solid var(--border)',
-                        borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-md)',
-                        maxHeight: 240, overflowY: 'auto' as const, zIndex: 300,
-                        ...(dropdownUp ? { bottom: 'calc(100% + 2px)' } : { top: 'calc(100% + 2px)' })
-                      }}>
-                        {releaseInfo.assets.map(a => (
-                          <div
-                            key={a.downloadUrl}
-                            style={{
-                              padding: '6px 10px', fontSize: 12, cursor: 'pointer',
-                              background: a.downloadUrl === selectedAssetUrl ? 'var(--bg)' : hoveredAsset === a.downloadUrl ? 'var(--surface-hover)' : 'transparent',
-                              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
-                            }}
-                            onClick={() => { setSelectedAssetUrl(a.downloadUrl); setShowDropdown(false) }}
-                            onMouseEnter={() => setHoveredAsset(a.downloadUrl)}
-                            onMouseLeave={() => setHoveredAsset('')}
-                          >
-                            {a.name} ({Math.round(a.size / 1024 / 1024)} MB)
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  <AssetVersionSelect
+                    assets={releaseInfo.assets}
+                    value={selectedAssetUrl}
+                    onChange={setSelectedAssetUrl}
+                    disabled={downloading || !!downloadProgress}
+                  />
                   {downloading || thisBusy ? (
                     <button className="btn btn-secondary btn-sm" disabled>
                       <Loader2 size={14} className="spin" /> 下载中...

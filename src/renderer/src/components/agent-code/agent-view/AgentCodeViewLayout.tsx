@@ -473,10 +473,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                     onRate={handleStreamRate}
                     modelTemplateId={runningCard?.template.id}
                     plainChat={plainChat}
-                    speakingId={speakingId}
+                    isSpeaking={speakingId === msg.id}
                   />
                 ) : (
-                  <AgentMessageRow msg={msg} isLast={isLast} loading={loading} actionsRef={msgRowActionsRef} streaming={streaming} modelLabel={modelLabelRef.current} modelTemplateId={runningCard?.template.id} plainChat={plainChat} speakingId={speakingId} />
+                  <AgentMessageRow msg={msg} isLast={isLast} loading={loading} actionsRef={msgRowActionsRef} streaming={streaming} modelLabel={modelLabelRef.current} modelTemplateId={runningCard?.template.id} plainChat={plainChat} isSpeaking={speakingId === msg.id} />
                 )}
               </>
             )}
@@ -487,7 +487,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
         </div>
       )
     })
-  }, [activeSession, historyStartIndex, virtual.windowStart, virtual.windowEnd, streaming, loading, thinkDone, editingMsgId, editDraft, confirmEdit, copyMessage, editAt, resendAt, branchAt, msgRowActionsRef, modelLabelRef, streamStartAtRef, handleStreamRate, runningCard, setEditDraft, setEditingMsgId, plainChat])
+  // speakingId 必须在依赖里：朗读态是逐条消息的，漏掉它列表会一直用旧的 null 渲染，
+  // 按钮永远停在「朗读」、再点一次变成重新朗读而不是停止。
+  // 传给行的是布尔（布尔只影响命中那一行），直接传 id 会让窗口内所有行都换 prop 而整屏重渲染。
+  }, [activeSession, historyStartIndex, virtual.windowStart, virtual.windowEnd, streaming, loading, thinkDone, editingMsgId, editDraft, confirmEdit, copyMessage, editAt, resendAt, branchAt, msgRowActionsRef, modelLabelRef, streamStartAtRef, handleStreamRate, runningCard, setEditDraft, setEditingMsgId, plainChat, speakingId])
   return (
     <div className={`agent-code-view ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
       <div className="agent-code-topbar" onDoubleClick={() => { const anyOpen = sidebarOpen || treeOpen; setSidebarOpen(!anyOpen); setTreeOpen(!anyOpen); setContextModalOpen(false) }}>

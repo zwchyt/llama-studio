@@ -512,7 +512,7 @@
   margin: 0 0 10px;
   padding: 4px 14px;
   border-left: 3px solid #b7b4b2;
-  background: #e5e5e5;
+  background: var(--quote-bg);
   border-radius: 0 4px 4px 0;
   color: var(--text-secondary);
 }
@@ -1100,7 +1100,12 @@
   min-width: 0;
 }
 
-/* 「»」/「+」展开的工作区选择界面：上下竖排四个入口，打开一个不影响其它已开的工作区 */
+/* 「»」/「+」展开的工作区选择界面：上下竖排四个入口，打开一个不影响其它已开的工作区。
+   入场两层：面板本体先淡入（0.24s），四张卡片再从右侧错峰滑入（各 0.34s、间隔 60ms），
+   形成依次进场的节奏——原先整块只有一条 0.16s 淡入，卡片瞬间全出现，显得"太快"。
+   卡片用 translate 属性（而非 transform）做位移：hover 抬升用的是 transform，
+   两者互不覆盖；fill-mode 用 backwards——delay 期间停在起始帧、结束后回落基线样式，
+   不会持续压住 hover 的 transform 过渡。 */
 .agent-code-panel-picker {
   flex: 1;
   min-width: 240px;
@@ -1112,7 +1117,17 @@
   padding: 28px 24px;
   background: var(--bg);
   border-left: 1px solid var(--border);
-  animation: think-menu-in 0.16s ease-out;
+  animation: panel-picker-in 0.24s ease-out backwards;
+}
+
+@keyframes panel-picker-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes panel-picker-item-in {
+  from { opacity: 0; translate: 16px 0; }
+  to { opacity: 1; translate: 0 0; }
 }
 
 .agent-code-panel-picker-list {
@@ -1135,7 +1150,14 @@
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.12s ease;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  /* 四张卡片错峰滑入：依次进场，节奏见上方注释 */
+  animation: panel-picker-item-in 0.34s cubic-bezier(0.22, 0.8, 0.36, 1) backwards;
 }
+
+.agent-code-panel-picker-item:nth-child(1) { animation-delay: 0.06s; }
+.agent-code-panel-picker-item:nth-child(2) { animation-delay: 0.12s; }
+.agent-code-panel-picker-item:nth-child(3) { animation-delay: 0.18s; }
+.agent-code-panel-picker-item:nth-child(4) { animation-delay: 0.24s; }
 
 .agent-code-panel-picker-item:hover {
   background: var(--surface-hover);
@@ -1860,6 +1882,37 @@
 
 .agent-code-preview-group.hidden {
   display: none;
+}
+
+/* ── 四视图面板入场动画 ──
+   文件树 / 变更 / 终端 / 浏览器 四个面板各自「弹出」时的入场：
+   0.5s expo-out（快起慢收的优雅缓出）+ 从各自锚点方向滑入 40/32px + 淡入 + 0.985 轻微缩放。
+   · 关键帧只动 transform / opacity —— 走合成线程、零重排，顺滑掩盖 xterm / git diff /
+     文件树列表的首帧挂载成本（卡顿感的来源）。
+   · .hidden 是 display:none：翻回显示的那次 style recalc 会让 animation 自动重放，
+     每次打开面板都播一遍，无需 JS。
+   · fill-mode: backwards —— 首帧锁在起始态（全透明 + 位移），不会在动画生效前
+     先闪现一下完整面板。
+   · 时长刻意取 0.5s：0.28s 这个量级在大面积面板上只剩「唰」的一下，读不出过渡；
+     0.5s 配 expo-out 才有「优雅弹出」的过程感。 */
+@keyframes agent-panel-in {
+  from { opacity: 0; transform: translateX(40px) scale(0.985); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@keyframes agent-tree-in {
+  from { opacity: 0; transform: translateX(-32px) scale(0.985); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+.agent-code-tree:not(.hidden),
+.agent-code-diff-wrap:not(.hidden),
+.agent-code-preview-group:not(.hidden) {
+  animation: agent-panel-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.agent-code-tree:not(.hidden) {
+  animation-name: agent-tree-in;
 }
 
 .agent-code-diff-wrap {
@@ -2715,7 +2768,7 @@
   --hero-pad: 24px;
   --hero-inner: calc(var(--hero-w) - var(--hero-pad) * 2);
   /* 与欢迎页 hero 图标同一个靛蓝，用于聚焦环 */
-  --hero-accent: #6366f1;
+  --hero-accent: #acdfe7;
   justify-content: center;
   gap: 14px;
 }
@@ -6462,9 +6515,9 @@
 .agent-code-view {
   --agent-selection-bg: rgba(129, 147, 230, 0.22);
   --agent-selection-fg: inherit;
-  /* 消息气泡底色：比背景（#e5e5e5）略深一档，靠边框 + 投影勾勒卡片轮廓；
+  /* 消息气泡底色：比背景（浅色主题下 --bg 为纯白）略深一档，靠边框 + 投影勾勒卡片轮廓；
      集中定义便于随主题调整。 */
-  --agent-bubble-bg: #e3e3e3;
+  --agent-bubble-bg: #f7f7f8;
 }
 
 .agent-code-view .agent-code-chat ::selection,
@@ -6751,14 +6804,20 @@
     transition: none;
   }
 
-  /* 面板内四视图选择界面：入场淡入与卡片悬停过渡在减弱动效下关闭 */
+  /* 面板内四视图选择界面：面板淡入、卡片错峰滑入与悬停过渡在减弱动效下关闭 */
   .agent-code-panel-picker {
     animation: none;
   }
 
   .agent-code-panel-picker-item {
+    animation: none;
     transition: none;
   }
+
+  /* 注意：文件树 / 变更 / 终端 / 浏览器 四个面板的入场动画（agent-panel-in /
+     agent-tree-in）**刻意不在本媒体块里关闭**——用户明确要求无论系统是否开启
+     「减少动态效果」都必须有优雅的弹出过渡（Windows 关闭动画效果会命中本查询，
+     表现为面板毫无过渡地直接出现，正是用户反馈的问题）。可访问性取舍由产品决定。 */
 
   .agent-code-panel-tab {
     transition: none;
@@ -7700,26 +7759,31 @@
   color: var(--text);
 }
 
-/* ── /命令 自动补全浮层 ── */
+/* ── /命令 自动补全浮层 ──
+   锚定输入字段本体（.chat-input-field，position:relative）：与输入框同宽、紧贴框顶
+   向上弹出。旧写法挂在 .chat-input-area 上，用 left:54px 魔法数对齐其 padding——
+   hero 空态输入区 padding 是 var(--hero-pad)（≠54px），弹窗会左右错位；且
+   bottom:100% 相对整个输入区（含附件托盘/排队条），托盘一高弹窗就飘离输入框。 */
 .agent-code-view .chat-slash-pop {
   position: absolute;
-  left: 54px;
-  right: auto;
-  width: 280px;
-  max-width: calc(100% - 68px);
-  bottom: 100%;
-  margin-bottom: 6px;
-  max-height: 300px;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  max-height: 320px;
   overflow-y: auto;
+  /* 滚动到底/顶不把滚动链给背后的会话区 */
+  overscroll-behavior: contain;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .3);
-  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  padding: 5px;
   z-index: 50;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  transform-origin: bottom center;
+  animation: think-menu-in 0.16s ease-out;
 }
 
 .agent-code-view .chat-slash-item {
@@ -7728,12 +7792,12 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 7px 10px 7px 12px;
+  padding: 8px 12px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: 12.5px;
   text-align: left;
   cursor: pointer;
   transition: background .12s ease, border-color .12s ease;
@@ -7765,6 +7829,9 @@
 }
 
 .agent-code-view .chat-slash-name {
+  /* 命令名是代码标识符，用等宽（--font-mono 随字体预设联动）与描述文字区分开 */
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
   font-weight: 600;
   color: var(--accent, #6ea8fe);
   flex-shrink: 0;
@@ -8436,7 +8503,7 @@
   color: var(--text);
   outline: none;
   resize: none;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-family: var(--font);
   line-height: 1.5;
   box-sizing: border-box;
 
@@ -9085,10 +9152,12 @@
 
 .agent-git-total-stat .add {
   color: var(--success, #22c55e);
+  font-weight: 700;
 }
 
 .agent-git-total-stat .del {
   color: var(--danger, #ef4444);
+  font-weight: 700;
 }
 
 .agent-git-copy {
@@ -10790,7 +10859,7 @@
      上画一圈会变成嵌套的双框。
 
    只覆盖可交互元素，不用通配符，避免给纯容器加框。 */
-.agent-code-view :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input)) {
+.agent-code-view :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input, .agent-terminal-cwd-input)) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }

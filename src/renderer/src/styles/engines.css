@@ -6,11 +6,9 @@
    目录名省略号、徽标胶囊形状等），本文件只在其上叠加配色与动效。
 
    为什么整页写死令牌、而不是改 global.css 的 :root：
-   本设计要改的正是「配色工作台」（colorStudio）控制的 --bg / --surface /
-   --border / --text / --accent 这批变量。若改 :root 默认值，全 app 的底色、
-   卡片面、强调色都会一起变；若把变量定义在 :root 上再靠本文件覆盖，
-   又会与工作台注入的 <style> 打架。因此这里把整套令牌收在 .engines-view
-   内部，代价是该页面不跟随配色工作台调整 —— 这是明确接受的取舍。
+   本页需要一套自己的 --bg / --surface / --border / --text / --accent 取值。
+   若改 :root 默认值，全 app 的底色、卡片面、强调色都会一起跟着变；
+   把整套令牌收在 .engines-view 内部，改动范围就锁死在这一页。
 
    约定：
      · 语义色（成功 / 警告 / 危险）与引擎识别色写死，不随主题色温变调；
@@ -285,6 +283,18 @@
   border-color: var(--border-strong);
 }
 
+/* hover 的 transform 会新建层叠上下文，把内部绝对定位浮层（如删除确认弹层）的 z-index
+   囚禁在本元素内，从而被后序兄弟元素盖住。这里显式抬升自身层级：
+   卡片 / 行之间都不重叠，抬高没有视觉副作用。
+   focus-within 取更高一级，保证焦点还在里面时即便鼠标移出也不会被相邻元素压住。 */
+.engines-view .settings-section:hover {
+  z-index: var(--z-popover);
+}
+
+.engines-view .settings-section:focus-within {
+  z-index: var(--z-panel);
+}
+
 /* 卡片顶部色带：入场时从左侧探出；hover 时向右铺满整张卡片。
    只有带 ev-card--engine 的卡片才有，容器卡片（已安装的后端）不带。 */
 .engines-view .ev-card--engine::before {
@@ -403,6 +413,16 @@
   background: #fcfdfe;
   box-shadow: var(--shadow-sm);
   transform: translateX(2px);
+}
+
+/* 同上：本行的 hover transform 会建层叠上下文，把行内的删除确认弹层（z-index: 400）
+   困住、被下方行盖住。抬升本行层级即可。 */
+.engines-view .settings-row.backend-row:hover {
+  z-index: var(--z-popover);
+}
+
+.engines-view .settings-row.backend-row:focus-within {
+  z-index: var(--z-panel);
 }
 
 .engines-view .settings-row.backend-row:hover::before {

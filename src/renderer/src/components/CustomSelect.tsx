@@ -16,6 +16,8 @@ interface CustomSelectProps {
   className?: string
   style?: React.CSSProperties
   buttonClass?: string
+  /** 追加在按钮默认样式之后的内联样式，用于覆盖默认的 text-align 等 */
+  buttonStyle?: React.CSSProperties
   panelClass?: string
   itemClass?: string
 }
@@ -30,6 +32,7 @@ export default function CustomSelect({
   className = '',
   style,
   buttonClass = '',
+  buttonStyle,
   panelClass = '',
   itemClass = ''
 }: CustomSelectProps) {
@@ -118,7 +121,8 @@ export default function CustomSelect({
         className={`cmd-select${buttonClass ? ' ' + buttonClass : ''}`}
         style={{
           width: '100%', textAlign: 'left', cursor: disabled ? 'not-allowed' : 'pointer',
-          opacity: disabled ? 0.45 : 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+          opacity: disabled ? 0.45 : 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          ...buttonStyle
         }}
         onClick={openDropdown}
         disabled={disabled}

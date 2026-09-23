@@ -7,10 +7,17 @@
 }
 
 :root {
-  --bg: #e5e5e5;
-  --surface: #ececec;
-  --surface-hover: #e8e8e8;
-  /* 浅色主题下边框必须比页面底色 --bg 深一档才有轮廓（曾为 #e8e8e8，比 #e5e5e5 更浅，
+  /* 浅色主题的底色层：白外框 + 浅灰内容面板。
+       --bg            外框（body 背景）；同时用作卡片内的凹陷面（输入框、选中态），
+                       纯白落在浅灰卡片里呈「白色内嵌块」，对比依旧成立。
+       --surface       内容面板与卡片面：比外框深一档的浅灰，靠色差把面板从外框里托出来。
+       --surface-hover 悬停面：比卡片面再深一档，白外框与灰卡面两种背景下都看得见。
+     改动这三个值时记得同步检查 --code-bg / --quote-bg / --table-head-bg：
+     它们必须**深于** --surface，否则会与卡片面糊在一起。 */
+  --bg: #ffffff;
+  --surface: #f7f7f8;
+  --surface-hover: #f2f2f3;
+  /* 边框必须比它所在的面深一档才有轮廓（曾为 #e8e8e8，比当时的 #e5e5e5 底色更浅，
      导致工具内容块等 1px 边框呈现"白色描边"）；#d8d8d8 与 --border-strong #d0d0d0 成梯度 */
   --border: #d8d8d8;
   --border-strong: #d0d0d0;
@@ -44,8 +51,10 @@
   --z-tooltip: 80;       /* 工具提示 */
   --z-modal: 1000;       /* 模态弹窗（最高优先） */
 
-  --code-bg: #f7f7f8;
-  --code-header-bg: #efeff1;
+  /* 代码块：原来 --code-bg #f7f7f8 与新的 --surface 撞色（卡片面变浅后两者相等），
+     这里整体压到比卡片面再深一档，白外框 / 灰卡面两种背景下都能看出块。 */
+  --code-bg: #eff1f3;
+  --code-header-bg: #e7e9ec;
   --code-border: #e6e6e8;
   --code-text: #24292e;
   --code-comment: #6a737d;
@@ -56,7 +65,7 @@
   --code-deletion: #b31d28;
 
   --table-head-bg: #f1f1f2;
-  --quote-bg: #f4f4f5;
+  --quote-bg: #eff1f3;
 
   /* 模型生成的 SVG（```svg 围栏 → SvgCard）的画布底色。
      这类 SVG 是用字面颜色画的（fill="#333" 这种），默认假定「白底黑字」，
@@ -2016,7 +2025,7 @@ input[type="reset"]:not(:disabled) {
 }
 
 .launch-mode-btn.active {
-  background: #e1e1e1;
+  background: #c9c9c9;
   color: #120101;
   border-color: #d9d9d9;
 }

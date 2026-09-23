@@ -319,27 +319,6 @@ export function AgentInputArea({
           )}
         </div>
       )}
-      {slashQuery !== null && (
-        <div className="chat-slash-pop" ref={slashPopRef}>
-          {slashList.length === 0 ? (
-            <div className="chat-at-empty">无匹配命令</div>
-          ) : (
-            slashList.map((c, i) => (
-              <button
-                className={`chat-slash-item${i === slashIdx ? ' active' : ''}`}
-                key={c.name}
-                ref={i === slashIdx ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
-                onMouseEnter={() => setSlashIdx(i)}
-                onClick={() => onPickSlash(c)}
-                title={c.template}
-              >
-                <span className="chat-slash-name">/{c.name}</span>
-                <span className="chat-slash-desc">{c.description}</span>
-              </button>
-            ))
-          )}
-        </div>
-      )}
 
       {/* 工作区文件选择器：编码专属，通用模式不渲染（触发按钮同样收掉，见底部工具栏） */}
       {!plainChat && filePickerOpen && activeProject.workspaceDir && (
@@ -473,6 +452,31 @@ export function AgentInputArea({
       )}
       <div className="chat-input-row">
         <div className="chat-input-field" onDragOver={handleInputDragOver} onDrop={handleInputDrop}>
+          {/* /命令 补全浮层：锚定输入字段本体（CSS 绝对定位 left/right:0 + bottom:100%），
+              与输入框同宽、紧贴框顶向上弹出——不依赖输入区 padding（hero 空态 padding 不同
+              也不会错位），也不受附件托盘/排队条高度影响。通用模式 detectSlash 不触发，
+              slashQuery 恒为 null，这里自然不渲染。 */}
+          {slashQuery !== null && (
+            <div className="chat-slash-pop" ref={slashPopRef}>
+              {slashList.length === 0 ? (
+                <div className="chat-at-empty">无匹配命令</div>
+              ) : (
+                slashList.map((c, i) => (
+                  <button
+                    className={`chat-slash-item${i === slashIdx ? ' active' : ''}`}
+                    key={c.name}
+                    ref={i === slashIdx ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
+                    onMouseEnter={() => setSlashIdx(i)}
+                    onClick={() => onPickSlash(c)}
+                    title={c.template}
+                  >
+                    <span className="chat-slash-name">/{c.name}</span>
+                    <span className="chat-slash-desc">{c.description}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
           {/* ① 状态栏：并入输入框顶部，无框无底；默认只显示 orb 图标，模型运行时才显示文字 */}
           {(() => {
             let kind: 'running' | 'idle' = 'idle'

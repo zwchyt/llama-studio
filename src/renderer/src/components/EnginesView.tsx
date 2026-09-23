@@ -8,6 +8,7 @@ import { ENGINE_LABELS, ENGINE_REPOS, paramSetOf } from '../utils/engine'
 import type { SdCudartStatus } from '../../../shared/types'
 import CommandsEditor from './CommandsEditor'
 import EngineDownloadSection from './EngineDownloadSection'
+import AssetVersionSelect from './AssetVersionSelect'
 // 本页样式完全自包含：全部规则（含骨架）都在 engines.css 内并作用域在 .engines-view 下，
 // 因此这里**不再**引用 settings.css —— 改这个文件不可能影响到设置页 / 模型文件夹页。
 import '../styles/engines.css'
@@ -34,19 +35,7 @@ export default function EnginesView() {
   const [downloading, setDownloading] = useState(false)
   const [selectedAssetUrl, setSelectedAssetUrl] = useState('')
   const [expandedEditor, setExpandedEditor] = useState<string | null>(null)
-  const [showAssetDropdown, setShowAssetDropdown] = useState(false)
-  const [dropdownUp, setDropdownUp] = useState(false)
-  const [hoveredAsset, setHoveredAsset] = useState('')
-  const assetDropdownRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (assetDropdownRef.current && !assetDropdownRef.current.contains(e.target as Node)) {
-        setShowAssetDropdown(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [])
+  // 版本下拉的展开/定位/外部点击关闭全部由 AssetVersionSelect 内部托管（portal + fixed 定位）
 
   // TensorSharp 引擎发布信息（与 llama.cpp 共用同一条 check-updates / download-release 通道）
   const TS_REPO = ENGINE_REPOS.tensorsharp
@@ -54,19 +43,6 @@ export default function EnginesView() {
   const [tsChecking, setTsChecking] = useState(false)
   const [tsDownloading, setTsDownloading] = useState(false)
   const [tsSelectedAssetUrl, setTsSelectedAssetUrl] = useState('')
-  const [showTsAssetDropdown, setShowTsAssetDropdown] = useState(false)
-  const [tsDropdownUp, setTsDropdownUp] = useState(false)
-  const [tsHoveredAsset, setTsHoveredAsset] = useState('')
-  const tsAssetDropdownRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (tsAssetDropdownRef.current && !tsAssetDropdownRef.current.contains(e.target as Node)) {
-        setShowTsAssetDropdown(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [])
 
   // stable-diffusion.cpp CUDA 运行时下载状态（cudart 包独立通道）
   const [sdCudartBusy, setSdCudartBusy] = useState(false)
@@ -371,48 +347,12 @@ export default function EnginesView() {
               </div>
               {releaseInfo.isNewer !== false && releaseInfo.assets?.length > 0 && (
                 <div className="ev-asset-row">
-                  <div ref={assetDropdownRef} style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-                    <button
-                      className="cmd-select"
-                      style={{ width: '100%', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
-                      onClick={() => {
-                        if (showAssetDropdown) { setShowAssetDropdown(false); return }
-                        if (assetDropdownRef.current) {
-                          const rect = assetDropdownRef.current.getBoundingClientRect()
-                          setDropdownUp(window.innerHeight - rect.bottom < 260)
-                        }
-                        setShowAssetDropdown(true)
-                      }}
-                      disabled={downloading || !!downloadProgress}
-                    >
-                      {releaseInfo.assets.find(a => a.downloadUrl === selectedAssetUrl)?.name || '选择版本'}
-                    </button>
-                    {showAssetDropdown && (
-                      <div style={{
-                        position: 'absolute' as const, left: 0, right: 0,
-                        background: 'var(--surface)', border: '1.5px solid var(--border)',
-                        borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-md)',
-                        maxHeight: 240, overflowY: 'auto' as const, zIndex: 300,
-                        ...(dropdownUp ? { bottom: 'calc(100% + 2px)' } : { top: 'calc(100% + 2px)' })
-                      }}>
-                        {releaseInfo.assets.map(a => (
-                          <div
-                            key={a.downloadUrl}
-                            style={{
-                              padding: '6px 10px', fontSize: 12, cursor: 'pointer',
-                              background: a.downloadUrl === selectedAssetUrl ? 'var(--bg)' : hoveredAsset === a.downloadUrl ? 'var(--surface-hover)' : 'transparent',
-                              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
-                            }}
-                            onClick={() => { setSelectedAssetUrl(a.downloadUrl); setShowAssetDropdown(false) }}
-                            onMouseEnter={() => setHoveredAsset(a.downloadUrl)}
-                            onMouseLeave={() => setHoveredAsset('')}
-                          >
-                            {a.name} ({Math.round(a.size / 1024 / 1024)} MB)
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  <AssetVersionSelect
+                    assets={releaseInfo.assets}
+                    value={selectedAssetUrl}
+                    onChange={setSelectedAssetUrl}
+                    disabled={downloading || !!downloadProgress}
+                  />
                   {downloading || llamaBusy ? (
                     <button className="btn btn-secondary btn-sm" disabled>
                       <Loader2 size={14} className="spin" /> 下载中...
@@ -463,48 +403,12 @@ export default function EnginesView() {
                 </div>
                 {tsReleaseInfo.isNewer !== false && tsReleaseInfo.assets?.length > 0 && (
                   <div className="ev-asset-row">
-                    <div ref={tsAssetDropdownRef} style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-                      <button
-                        className="cmd-select"
-                        style={{ width: '100%', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
-                        onClick={() => {
-                          if (showTsAssetDropdown) { setShowTsAssetDropdown(false); return }
-                          if (tsAssetDropdownRef.current) {
-                            const rect = tsAssetDropdownRef.current.getBoundingClientRect()
-                            setTsDropdownUp(window.innerHeight - rect.bottom < 260)
-                          }
-                          setShowTsAssetDropdown(true)
-                        }}
-                        disabled={tsDownloading || !!downloadProgress}
-                      >
-                        {tsReleaseInfo.assets.find(a => a.downloadUrl === tsSelectedAssetUrl)?.name || '选择版本'}
-                      </button>
-                      {showTsAssetDropdown && (
-                        <div style={{
-                          position: 'absolute' as const, left: 0, right: 0,
-                          background: 'var(--surface)', border: '1.5px solid var(--border)',
-                          borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-md)',
-                          maxHeight: 240, overflowY: 'auto' as const, zIndex: 300,
-                          ...(tsDropdownUp ? { bottom: 'calc(100% + 2px)' } : { top: 'calc(100% + 2px)' })
-                        }}>
-                          {tsReleaseInfo.assets.map(a => (
-                            <div
-                              key={a.downloadUrl}
-                              style={{
-                                padding: '6px 10px', fontSize: 12, cursor: 'pointer',
-                                background: a.downloadUrl === tsSelectedAssetUrl ? 'var(--bg)' : tsHoveredAsset === a.downloadUrl ? 'var(--surface-hover)' : 'transparent',
-                                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
-                              }}
-                              onClick={() => { setTsSelectedAssetUrl(a.downloadUrl); setShowTsAssetDropdown(false) }}
-                              onMouseEnter={() => setTsHoveredAsset(a.downloadUrl)}
-                              onMouseLeave={() => setTsHoveredAsset('')}
-                            >
-                              {a.name} ({Math.round(a.size / 1024 / 1024)} MB)
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                    <AssetVersionSelect
+                      assets={tsReleaseInfo.assets}
+                      value={tsSelectedAssetUrl}
+                      onChange={setTsSelectedAssetUrl}
+                      disabled={tsDownloading || !!downloadProgress}
+                    />
                     {tsDownloading || tsBusy ? (
                       <button className="btn btn-secondary btn-sm" disabled>
                         <Loader2 size={14} className="spin" /> 下载中...

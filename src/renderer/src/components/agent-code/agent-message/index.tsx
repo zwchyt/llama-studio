@@ -371,6 +371,18 @@ const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, duratio
     if (visible && expandedRef.current) collapse()
     else { setExpanded(false); setVisible(false) }
   }, [streaming, active]) // eslint-disable-line react-hooks/exhaustive-deps
+  // 与 ThinkBlock 相同的首展开优化：容器预挂载后，各思考段的 Markdown 内容也在
+  // 浏览器空闲时段预挂载（保持收起、不可见）——否则首次点开容器时每个折叠块
+  // 才现解析 Markdown/KaTeX，多段叠加成一帧的重活，表现为首展开卡顿。
+  useEffect(() => {
+    if (visible) return
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(() => setVisible(true), { timeout: 1500 })
+      return () => window.cancelIdleCallback(id)
+    }
+    const t = setTimeout(() => setVisible(true), 300)
+    return () => clearTimeout(t)
+  }, [visible, setVisible])
   // 程序化展开（容器点开联动 / 流式自动展开）时直接置自适应高度：不走 0→scrollHeight
   // 过渡——容器高度测量早于折叠块展开，若留着 max-height:0 会出现「箭头已展开但内容
   // 被裁剪为空」。手动点击折叠头（userToggled）仍保留展开动画，跳过本 effect。
@@ -465,11 +477,15 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
 }) {
   const bodyRef = useRef<HTMLDivElement>(null)
   const userToggledRef = useRef(false)
+  // 自动折叠单向锁：本次挂载内一旦因「结论正文出现 / 运行结束」自动收起，后续
+  // 思考↔正文交替（thinkDone/bodyAppeared 电平翻转）不再自动重开容器——新一轮
+  // 思考由链内 ThinkSegmentFold 各自承载，容器保持收起直到用户手动点开。
+  const autoCollapsedRef = useRef(false)
   // 标记「本次 expanded=true 是用户手动点击展开」：仅这类展开走 max-height 像素过渡动画，
   // 自动展开（流式 / 容器联动）仍走自适应高度（见下方 useLayoutEffect）。为 true 时表示
   // 「这一次展开」需要动画，由 useLayoutEffect 消费放行，过渡结束（或收起）时复位。
   const manualExpandRef = useRef(false)
-  const { expanded, visible, setExpanded, setVisible, expandedRef, onBodyTransitionEnd: rawBodyTransitionEnd, toggle: handleToggle } =
+  const { expanded, visible, setExpanded, setVisible, expandedRef, collapse: autoCollapse, onBodyTransitionEnd: rawBodyTransitionEnd, toggle: handleToggle } =
     useCollapseAnimation(bodyRef, {
       initialExpanded: isStreaming ?? false,
       beforeToggle: () => {
@@ -510,9 +526,12 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
   const phaseStartRef = useRef<number | null>(null)
   const frozenToolsRef = useRef(0)
   // pending 占位态以 isStreaming=true 挂载（同一「思考中」视觉），phase 自然归入 think，时钟照常走动
+  // 阶段划分只看「运行是否结束」，不看 bodyAppeared（「最后一段是正文」是流式临时态，
+  // 新一轮思考一到就翻回 false）：运行中时钟连续走（streamStartAt 含 TTFT 不回退），
+  // 运行结束才落 idle 定格——头部时间在流式全程连续增长，只在 done 时定格一次。
   const phase: 'think' | 'tools' | 'idle' = isStreaming
     ? 'think'
-    : (msgStreaming && !bodyAppeared)
+    : msgStreaming
       ? (hasLiveTools ? 'tools' : 'think')
       : 'idle'
   const phaseRef = useRef<'think' | 'tools' | 'idle'>('idle')
@@ -554,6 +573,10 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
     if (userToggledRef.current) return
     // pending 占位态：内容尚未到达，不挂载 body
     if (pending) return
+    // 自动折叠是单向的：已收起过的容器不再自动重开（折叠唯一触发 = 下方
+    // 「结论正文出现 / 运行结束」分支，每次运行最多一次）——不再随 thinkDone /
+    // bodyAppeared 的阶段电平往返翻转，消除「收起 → 重开」横跳。
+    if (autoCollapsedRef.current) return
     // 思考流式中，或收纳的工具卡仍在执行：自动展开
     // 同一 commit 置 visible + expanded：只置 visible 会让裁剪层以 max-height:0 先绘一帧
     // （整链闪一下空白），下一帧才由布局 effect 放开高度。同步置位后挂载即自适应高度。
@@ -565,20 +588,37 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
     // 消息仍在流式且最终正文未出现（工具批全部完成 → 下一轮思考开始前的等待窗口）：
     // 运行尚未结束，保持展开不收起——避免工具批间隙整链「收起 → 重开」闪跳
     if (msgStreaming && !bodyAppeared) return
-    // 最终正文已出现（把版面让给结论气泡）或消息已完成：自动收起
-    setExpanded(false)
-    setVisible(false)
-  }, [thinking, hasLiveTools, pending, msgStreaming, bodyAppeared])
+    // 最终正文已出现（把版面让给结论气泡）或消息已完成：自动收起。
+    // 走 collapse() 的像素过渡且保持挂载（不再 setVisible(false) 卸载 DOM）——
+    // 卸载会在下一轮思考/重开时全量重解析 Markdown/KaTeX，表现为内容闪断。
+    autoCollapsedRef.current = true
+    autoCollapse()
+  }, [thinking, hasLiveTools, pending, msgStreaming, bodyAppeared, autoCollapse])
 
-  // closed 变为 true 时的立即收起仅在「运行已结束」（非流式）时生效；
-  // 运行中的收起一律走上面的自动展开 effect（含批间等待窗口的保持展开判断），
-  // 避免工具声明/批完成瞬间 hasLiveTools 短暂未跟上时把整链提前收起。
+  // closed 变为 true 仅发生在「运行已结束」（closed={!streaming}，运行期间恒 false、
+  // 单调翻转一次）。此时若容器仍展开（如停止于思考中、全程无结论正文），补齐收尾收起；
+  // 同样走 collapse() 保持挂载不卸载。expandedRef 守卫避免对从未展开过的
+  // 历史消息（初始即收起）做无谓的收起调用。
   useEffect(() => {
-    if (closed && !thinking && !hasLiveTools && !userToggledRef.current && !(msgStreaming && !bodyAppeared)) {
-      setExpanded(false)
-      setVisible(false)
+    if (closed && !thinking && !hasLiveTools && !userToggledRef.current && expandedRef.current) {
+      autoCollapsedRef.current = true
+      autoCollapse()
     }
-  }, [closed, thinking, hasLiveTools, msgStreaming, bodyAppeared])
+  }, [closed, thinking, hasLiveTools, autoCollapse, expandedRef])
+
+  // 首展开卡顿优化：挂载后在浏览器空闲时段预挂载折叠体（保持收起、max-height 0
+  // 不可见），把 Markdown/KaTeX 的首次解析成本从「首次点击展开」那一帧挪到空闲期；
+  // 之后展开走「已挂载」路径（纯 max-height 过渡，无重挂载）→ 不卡。
+  // 消息列表有虚拟窗口，预挂载规模受窗口限制，长会话不会因此全量解析。
+  useEffect(() => {
+    if (visible || pending) return
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(() => setVisible(true), { timeout: 1500 })
+      return () => window.cancelIdleCallback(id)
+    }
+    const t = setTimeout(() => setVisible(true), 300)
+    return () => clearTimeout(t)
+  }, [visible, pending, setVisible])
 
   const prevThinkingRef = useRef(thinking)
   useEffect(() => {
@@ -607,12 +647,14 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
     el.style.maxHeight = 'none'
   }, [expanded])
 
-  // 头部「思考中」状态判定：消息仍流式 且 最终正文尚未出现（最终正文 = 思考链终结信号；
-  // 过程正文已收纳链内，不影响该判定）时，无论当前在思考、工具执行还是段间间隙，
-  // 统一保持「思考中」+ 时间跳动；不再随 thinkDone（思考段闭合）细粒度切「思考过程」↔
-  // 「思考中」，消除链内状态闪变。
-  const showThinking = !!msgStreaming && !bodyAppeared
-  const wasStopped = !thinking && !closed
+  // 头部「思考中」状态判定：消息仍在流式即「思考中」（思考/工具/正文/段间间隙统一），
+  // 不再看 bodyAppeared（流式临时态，会在两种标题间反复重建）。「思考过程 +
+  // 思考了 X 秒」的定格标题只在运行结束（done）时生成一次。
+  const showThinking = !!msgStreaming
+  // 停止判定必须排除运行中：closed={!streaming} 后运行期间 closed 恒 false，
+  // 若不带 msgStreaming 守卫，正文/工具阶段（thinking=false）会被误判「已中断」
+  // 而给容器加上 stopped 样式。
+  const wasStopped = !msgStreaming && !thinking && !closed
   return (
     <div className={`agent-think ${thinking ? 'thinking' : ''} ${expanded ? 'expanded' : ''} ${wasStopped ? 'stopped' : ''}`}>
       <button className="agent-think-toggle" onClick={handleToggle}>
@@ -1146,9 +1188,11 @@ export function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']
         key="think-chain"
         value={value}
         durationMs={valueDurationMs}
-        // thinkDone（父级 state：思考增量时 false，工具/正文到达时 true）驱动收起与
-        // 「思考中」转圈；恢复思考时自动复位 false，同一容器原地重开。
-        closed={!streaming || o.thinkDone}
+        // closed 只表达「本次运行已结束」：流式期间恒 false、运行结束单调翻转为 true。
+        // 不再并入 thinkDone——它是「思考↔正文/工具」的阶段电平，会随模型输出交替往返
+        // 翻转（思考→正文→思考时 false→true→false），曾导致容器「收起 → 重开」反复横跳。
+        // thinkDone 仅保留在下方 isStreaming 中控制「思考中」转圈。
+        closed={!streaming}
         isStreaming={streaming && !o.thinkDone && !hasTailTools && lastSeg?.kind === 'think'}
         msgStreaming={streaming}
         bodyAppeared={finalTextIdx >= 0}
@@ -1224,7 +1268,7 @@ export const stoppedBadge = (
 // 更新」的性能特性）；finalize 时 live 清空 → 回退到 msg 完成态渲染。流式/完成切换
 // 只变化 props、不卸载重挂，思考块/工具卡/正文容器 DOM 全程连续 → 消除完成瞬间的跳动。
 
-export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loading, actionsRef, streaming, modelLabel, thinkDone, streamStartAt, onRate, modelTemplateId, plainChat, speakingId }: {
+export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast, loading, actionsRef, streaming, modelLabel, thinkDone, streamStartAt, onRate, modelTemplateId, plainChat, isSpeaking }: {
   msg: AgentMessage
   isLast: boolean
   loading: boolean
@@ -1237,8 +1281,9 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
   modelTemplateId?: string  // 模型指标 key（StreamingBadge 订阅 modelMetrics[templateId].nDecoded 取真实解码数）
   /** 纯聊天模式：额外显示朗读 / 继续生成 / 删除（工作台模式不显示这些聊天向操作） */
   plainChat?: boolean
-  /** 正在朗读的消息 id */
-  speakingId?: string | null
+  /** 本条是否正在朗读。传布尔而不是 speakingId：布尔只在命中的那一行变化，
+      传 id 会让窗口内每一行都拿到新 prop，一次朗读开关整屏重渲染。 */
+  isSpeaking?: boolean
 }) {
   // 流式切片订阅：id 不匹配时返回 null（引用恒定 → 该行不随其它 commit 重渲染）。
   // 流式行：live 每次 commit 是新对象 → 只这一行跟随更新。
@@ -1265,10 +1310,10 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
         <>
           <button
             className="chat-msg-action-btn"
-            title={speakingId === msg.id ? '停止朗读' : '朗读'}
-            onClick={() => (speakingId === msg.id ? a.stopSpeak() : a.speakMessage(msg.id, msg.content || ''))}
+            title={isSpeaking ? '停止朗读' : '朗读'}
+            onClick={() => (isSpeaking ? a.stopSpeak() : a.speakMessage(msg.id, msg.content || ''))}
           >
-            {speakingId === msg.id ? <Square size={12} /> : <Volume2 size={13} />}
+            {isSpeaking ? <Square size={12} /> : <Volume2 size={13} />}
           </button>
           {isLast && (
             <button className="chat-msg-action-btn" title="继续生成" onClick={() => a.continueAt(msg.id)} disabled={loading}><Play size={13} /></button>

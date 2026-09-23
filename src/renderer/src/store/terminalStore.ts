@@ -7,6 +7,10 @@ export interface TerminalMeta {
   ownerKey?: string
   title: string
   cwd: string
+  /** 创建该终端时所属的工作区目录（通用模式为空串）：
+      终端会话跨工作区共享，cwd 输入框默认值只认「属于当前工作区」的活动标签，
+      否则切工作区后旧标签的 cwd 会把新工作区的默认值带偏。旧数据无此字段 → 视为未知。 */
+  ws?: string
   exited?: boolean
   fallback?: boolean // 无 PTY 时使用 API 回退模式
   pending?: boolean // PTY 尚未创建，等待 TermScreen mount + fit 后创建
@@ -15,7 +19,8 @@ export interface TerminalMeta {
 interface TerminalStore {
   sessions: TerminalMeta[]
   activeId: string | null
-  open: (cwd?: string) => Promise<void>
+  /** open(cwd, ws)：cwd = 新终端工作目录；ws = 所属工作区目录（供默认值作用域判定） */
+  open: (cwd?: string, ws?: string) => Promise<void>
   close: (id: string) => void
   setActive: (id: string) => void
   markExited: (id: string) => void
@@ -52,7 +57,7 @@ function persistSessions(sessions: TerminalMeta[], storageKey: string): void {
   try {
     const save = sessions
       .filter(s => !s.pending)
-      .map(({ id, ownerKey, title, cwd, fallback }) => ({ id, ownerKey, title, cwd, fallback }))
+      .map(({ id, ownerKey, title, cwd, ws, fallback }) => ({ id, ownerKey, title, cwd, ws, fallback }))
     localStorage.setItem(storageKey, JSON.stringify(save))
   } catch { /* ignore */ }
 }
@@ -67,13 +72,13 @@ function createTerminalStore(idPrefix: string, storageKey: string) {
       sessions: loadPersistedSessions(storageKey),
       activeId: null,
 
-      open: async (cwd?: string) => {
+      open: async (cwd?: string, ws?: string) => {
         const ownerKey = `${idPrefix}:${crypto.randomUUID()}`
         const id = `${idPrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
         const fallback = !window.api.terminalCreate
         set((s) => {
           const title = makeTitle(s.sessions)
-          const meta: TerminalMeta = { id, ownerKey, title, cwd: cwd || '', pending: !fallback, fallback }
+          const meta: TerminalMeta = { id, ownerKey, title, cwd: cwd || '', ws: ws || '', pending: !fallback, fallback }
           const sessions = [...s.sessions, meta]
           persistSessions(sessions, storageKey)
           return { sessions, activeId: id }

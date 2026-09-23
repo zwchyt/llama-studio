@@ -260,6 +260,8 @@ export default function AgentCodeView() {
   hintsDomain = useAgentInputHints({
     input, setInput, insertAtCursor, replaceRange, textareaRef, autoResize,
     workspaceDir: activeProject.workspaceDir,
+    // 通用模式不启用斜杠命令（编码工作台能力），@ 文件补全不受影响
+    plainChat: ui.plainChat,
   })
 
   // ── 输入框键盘处理与 onChange 补全检测（见 agent-code/hooks/useAgentInputKeyboard.ts）──

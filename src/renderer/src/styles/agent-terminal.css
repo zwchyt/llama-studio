@@ -29,23 +29,32 @@
   font-size: 14px;
 }
 
-/* 顶部区域：标签栏 + 目录/字号工具栏 */
+/* 顶部区域：终端标签区（可缩可滚）+ cwd 输入框（弹性，随手柄伸缩）
+   + 右侧按钮组（绝对定位，钉右缘）——与浏览器工具栏同一套「中间弹性、右侧固定」布局 */
 .agent-terminal-tabbar {
   display: flex;
   align-items: stretch;
-  /* cwd 工具栏为绝对定位不占高，标签为空时列表高度为 0，
-     必须给最小高度，否则整条顶栏塌缩、右侧按钮被 overflow:hidden 裁掉 */
+  /* 右侧按钮组是绝对定位（见 .agent-terminal-cwd-bar），这里用 padding-right 预留其
+     宽度，输入框只在这条预留线左侧伸缩——同 .agent-browser-toolbar 的
+     padding-right: 130px 做法。按钮组不在流内，面板再窄也不会被挤压/位移。
+     180px ≈ 按钮组实测（5×22 + 分隔 9 + 字号位 22 + 间距 24 = 165）+ 右缘 8 + 留白。 */
+  padding-right: 180px;
+  /* 标签为空时列表高度为 0，必须给最小高度，否则整条顶栏塌缩 */
   min-height: 30px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   position: relative;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .agent-terminal-tabs-scroll {
   display: flex;
   overflow-x: auto;
-  flex: 1;
+  /* 只占内容宽、空间不足时收缩并横向滚动：自由空间全部让给 cwd 输入框，
+     按钮组钉在右缘不动（对齐浏览器标题栏的「URL 栏弹性、两侧固定」效果） */
+  flex: 0 1 auto;
   min-width: 0;
   scrollbar-width: none;
 }
@@ -111,38 +120,64 @@
   pointer-events: none;
 }
 
+/* cwd 输入框（AutoInput 的 wrapper）：tabbar 内的弹性槽位——随手柄拖动伸缩，
+   flex-basis 由 JS 镜像测量写入（内容定基），min-width 兜底（手柄最小宽度实测见
+   useAgentPanels getMin 的 terminal 分支）。 */
+.agent-terminal-tabbar > .agent-terminal-auto-input {
+  flex: 1 1 auto;
+  min-width: 96px;
+  align-self: center;
+  display: flex;
+  margin-left: 8px;
+  /* 右侧间距由 tabbar 的 padding-right 预留（按钮组绝对定位、不在流内），
+     故这里不再留 margin-right */
+}
+
+/* 右侧按钮组（目录 / 新建 / 字号 ± / 重置）：绝对定位钉在标题栏右缘，
+   不参与 flex 分配——面板缩小时位置与尺寸都不变（同浏览器工具栏的右侧图标组）。 */
 .agent-terminal-cwd-bar {
   position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 8px;
-  border-left: 1px solid var(--border);
-  flex-shrink: 0;
 }
 
-.agent-terminal-cwd-bar .agent-terminal-cwd-input {
-  field-sizing: content;
-  min-width: 160px;
-  max-width: 360px;
+.agent-terminal-auto-input .agent-terminal-cwd-input {
+  /* 填满 wrapper（wrapper 的宽度由 flex 决定）：宽度跟随面板手柄伸缩，
+     内容超长时输入框内部横向滚动 */
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
   padding: 1px 8px;
   font-size: 12px;
   font-family: Consolas, monospace;
-  background: var(--bg);
+  /* 圆角细边框（1px --border，非粗黑）：与标题栏融为一体但仍有输入框的形。
+     ⚠️ 该元素已加入 agent-code.css 全局聚焦环的排除名单——那条规则会给
+     .agent-code-view 内的 input 画 2px 近黑 outline（--accent: #0a0a0a），
+     文本输入框在鼠标点击时也命中 :focus-visible，看起来就是一圈粗黑边框。 */
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 6px;
+  background: transparent;
   color: var(--text);
   outline: none;
+  transition: background .12s ease, border-color .12s ease;
 }
 
-.agent-terminal-cwd-bar .agent-terminal-cwd-input:focus {
-  border-color: var(--border-strong);
+.agent-terminal-auto-input .agent-terminal-cwd-input:hover {
+  background: var(--surface-hover);
 }
 
-.agent-terminal-cwd-bar .agent-terminal-cwd-input::placeholder {
+.agent-terminal-auto-input .agent-terminal-cwd-input:focus {
+  /* 聚焦只把边框提到略深一档 + 底色微亮，不做粗环 */
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: var(--bg);
+}
+
+.agent-terminal-auto-input .agent-terminal-cwd-input::placeholder {
   color: var(--text-muted);
   opacity: 0.6;
   font-family: inherit;

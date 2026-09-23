@@ -683,7 +683,9 @@ export function useAgentLoop({
     // ── /命令 展开：/name args → 提示词模板（参数替换为 $ARGUMENTS）──
     // 在模型未启动的提前返回之前展开：保留展开后的文本在输入框，待启动后可手动发送。
     let resolvedText = text
-    const parsedCmd = parseSlashCommand(text)
+    // 通用模式不启用斜杠命令：/clear、/compact 等是编码工作台能力，输入浮层已在
+    // hints 域被禁用；这里同样跳过分发，用户手敲的 /xxx 作为普通文本发给模型。
+    const parsedCmd = projectMode(activeProject) === 'chat' ? null : parseSlashCommand(text)
     if (parsedCmd) {
       const cmd = findCommand(parsedCmd.name, slashCommands)
       if (!cmd) {

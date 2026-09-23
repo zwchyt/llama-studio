@@ -22,7 +22,7 @@ import {filterCommands} from '../../../agent/slashCommands'
 import type { FlatFileEntry } from '../types'
 
 export function useAgentInputHints({
-  input, setInput, insertAtCursor, replaceRange, textareaRef, autoResize, workspaceDir,
+  input, setInput, insertAtCursor, replaceRange, textareaRef, autoResize, workspaceDir, plainChat,
 }: {
   input: string
   setInput: (v: string) => void
@@ -31,6 +31,8 @@ export function useAgentInputHints({
   textareaRef: React.RefObject<HTMLTextAreaElement | null>
   autoResize: () => void
   workspaceDir: string
+  /** 通用模式（聊天工作区）：不提供 / 命令——斜杠命令是编码工作台的能力 */
+  plainChat: boolean
 }) {
   // 工作区文件缓存（扁平列表），按 workspaceDir 加载一次，过滤纯前端
   // FlatFileEntry 类型已抽至 agent-code/types
@@ -110,7 +112,13 @@ export function useAgentInputHints({
   const slashPopRef = useRef<HTMLDivElement>(null)
 
   // 根据光标位置检测是否处于「/命令触发」状态：/ 前为空白或行首，/ 后无空格
+  // 通用模式不提供斜杠命令（/clear、/compact 等都是编码工作台的能力），直接不触发。
   const detectSlash = useCallback((value: string, caret: number) => {
+    if (plainChat) {
+      slashAnchorRef.current = null
+      setSlashQuery(null)
+      return false
+    }
     const before = value.slice(0, caret)
     const m = /(^|\s)\/([a-zA-Z0-9_\-]*)$/.exec(before)
     if (m) {
@@ -125,7 +133,10 @@ export function useAgentInputHints({
     slashAnchorRef.current = null
     setSlashQuery(null)
     return false
-  }, [slashCommands])
+  }, [slashCommands, plainChat])
+
+  // 切到通用模式时若浮层正开着（切模式前已输入 /xxx），立即关闭
+  useEffect(() => { if (plainChat) setSlashQuery(null) }, [plainChat])
 
   // 选中命令：把 /查询串 替换为 "/name "（留出参数位置），不发送
   const onPickSlash = useCallback((cmd: import('../../../../../shared/types').SlashCommand) => {

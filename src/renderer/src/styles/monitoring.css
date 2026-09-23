@@ -252,19 +252,19 @@
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: #ececec;
+  background: var(--surface);
   color: #000;
   cursor: pointer;
   transition: all .15s;
 }
 
 .api-tab:hover {
-  background: #e0e0e0;
+  background: var(--surface-hover);
   border-color: var(--border-strong);
 }
 
 .api-tab.active {
-  background: #ececec;
+  background: var(--surface);
   color: #000;
   border-color: #888;
 }
@@ -294,7 +294,7 @@
 }
 
 .api-endpoints-body {
-  background: #ececec;
+  background: var(--surface);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   max-height: 260px;

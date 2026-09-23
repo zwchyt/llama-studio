@@ -11,15 +11,20 @@ import '../styles/agent-terminal.css'
 
 const CWD_KEY = 'terminal-last-cwd'
 
-/** 自适应宽度输入框：用隐藏镜像测量文本像素宽度 */
+/** 内容定基 + 弹性伸缩的输入框：隐藏镜像量出文本像素宽，写到 wrapper 的
+    flex-basis 作为「首选宽度」（内容多长就多宽）；最终宽度由父级 flex 按可用
+    空间放大/收缩（CSS min-width 兜底）——右侧面板手柄拖动时跟随伸缩。
+    （旧实现把像素宽度写死到 input.style.width 内联样式，宽度与面板完全无关。） */
 function AutoInput({
   value,
   placeholder,
+  title,
   onKeyDown,
   onChange,
 }: {
   value: string
   placeholder?: string
+  title?: string
   onKeyDown?: (e: React.KeyboardEvent) => void
   onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void
 }): React.JSX.Element {
@@ -32,7 +37,9 @@ function AutoInput({
     if (!mirror || !input) return
     const text = value || placeholder || ''
     mirror.textContent = text || '\u2003' // em-space 保证至少有宽度
-    input.style.width = `${mirror.offsetWidth + 20}px`
+    // 写到 wrapper 的 flex-basis（内容定基），不写死 input 宽度——
+    // input 在 wrapper 内 width:100%，wrapper 在工具栏里随 flex 伸缩
+    input.parentElement?.style.setProperty('flex-basis', `${mirror.offsetWidth + 20}px`)
   }, [value, placeholder])
 
   return (
@@ -42,6 +49,7 @@ function AutoInput({
         ref={inputRef}
         className="agent-terminal-cwd-input"
         type="text"
+        title={title}
         placeholder={placeholder}
         value={value}
         onChange={onChange}
@@ -51,23 +59,50 @@ function AutoInput({
   )
 }
 
-/** 统一标签栏：标签 + 目录输入 + 新建按钮 + 字号控制 */
-function TerminalTabBar({ store }: { store: TerminalStoreHook }): React.JSX.Element {
+/** 统一标签栏：标签 + 目录输入 + 新建按钮 + 字号控制。
+    workspaceDir：当前编码工作区目录（通用模式传空），用于解析 cwd 输入框的默认值。 */
+function TerminalTabBar({ store, workspaceDir = '' }: { store: TerminalStoreHook; workspaceDir?: string }): React.JSX.Element {
   const { sessions, activeId, setActive, close, open } = store()
-  const [cwd, setCwd] = useState(() => localStorage.getItem(CWD_KEY) || '')
+  // 手动值：用户显式输入/浏览选择过的「下次新建终端」目录；null = 未手动指定 → 走下方自动链
+  const [manualCwd, setManualCwd] = useState<string | null>(null)
   const [fontSize, setFontSize] = useState(getTerminalFontSize())
+  const activeSession = sessions.find(s => s.id === activeId) ?? null
+
+  // 每工作区一份记忆：旧实现用全局 key（terminal-last-cwd），在 A 项目填过的路径会泄漏到
+  // B 项目，一键新建终端就落错目录。通用模式没有工作区，退回全局 key。
+  const memKey = workspaceDir ? `${CWD_KEY}:${workspaceDir}` : CWD_KEY
+  const readMem = (k: string): string => { try { return localStorage.getItem(k) || '' } catch { return '' } }
+  const [memCwd, setMemCwd] = useState(() => readMem(memKey))
+
+  // 切换工作区：清掉手动值（上一个项目里填的路径不能带过来），并重读本工作区的记忆
+  useEffect(() => {
+    setManualCwd(null)
+    setMemCwd(readMem(memKey))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memKey])
+
+  // ── 默认值优先级链 ──
+  // 活动终端标签的 cwd（仅当该标签就开在当前工作区里）→ 当前工作区目录 → 本工作区记忆
+  // → 空（留空＝系统默认目录）。终端会话跨工作区共享（单 store），切工作区后旧标签仍在，
+  // 用 meta.ws（创建时所属工作区）判定作用域，避免旧标签把新工作区的默认值带偏；
+  // 旧数据无 ws → 只在通用模式（workspaceDir 为空）下视为同域。
+  const tabCwd = activeSession?.cwd || ''
+  const tabCwdInScope = !!tabCwd && (activeSession?.ws ?? '') === workspaceDir
+  const autoCwd = (tabCwdInScope ? tabCwd : '') || workspaceDir || memCwd
+  const cwd = manualCwd ?? autoCwd
 
   async function handleBrowse(): Promise<void> {
     const result = await safeCall(() => window.api.selectDirectory(), '选择目录失败')
     if (result?.path) {
-      setCwd(result.path)
-      try { localStorage.setItem(CWD_KEY, result.path) } catch { /* quota exceeded */ }
+      setManualCwd(result.path)
+      try { localStorage.setItem(memKey, result.path) } catch { /* quota exceeded */ }
     }
   }
 
   function handleNew(): void {
-    try { localStorage.setItem(CWD_KEY, cwd) } catch { /* quota exceeded */ }
-    open(cwd || undefined)
+    try { localStorage.setItem(memKey, cwd) } catch { /* quota exceeded */ }
+    // 一并把「所属工作区」记进终端 meta：cwd 输入框默认值靠它判定作用域
+    open(cwd.trim() || undefined, workspaceDir)
   }
 
   function handleKeyDown(e: React.KeyboardEvent): void {
@@ -95,13 +130,20 @@ function TerminalTabBar({ store }: { store: TerminalStoreHook }): React.JSX.Elem
           </div>
         ))}
       </div>
+      {/* cwd 输入框是独立 flex 子项：随手柄拖动伸缩（标签区可缩可滚、按钮组固定钉右）。
+          值 = 下一次「+」新建终端的工作目录；默认按优先级链解析（见 TerminalTabBar）。 */}
+      <AutoInput
+        value={cwd}
+        placeholder="工作目录（留空使用默认目录）"
+        title={
+          activeSession
+            ? `新建终端的工作目录（当前终端：${activeSession.cwd || '默认目录'}）`
+            : '新建终端的工作目录（默认取当前工作区目录）'
+        }
+        onChange={(e) => setManualCwd(e.target.value)}
+        onKeyDown={handleKeyDown}
+      />
       <div className="agent-terminal-cwd-bar">
-        <AutoInput
-          value={cwd}
-          placeholder="工作目录（留空使用默认目录）"
-          onChange={(e) => setCwd(e.target.value)}
-          onKeyDown={handleKeyDown}
-        />
         <button className="agent-terminal-tabbar-btn" onClick={handleBrowse}>
           <FolderOpenIcon size={13} />
         </button>
@@ -325,8 +367,9 @@ function FallbackTermScreen({ id: _id, cwd, visible }: { id: string; cwd: string
 
 const MAX_MOUNTED_TERMINALS = 6
 
-/** Agent Code 工作台内嵌终端（项目唯一的终端界面） */
-export default function TerminalView({ store }: { store?: TerminalStoreHook | null }): React.JSX.Element {
+/** Agent Code 工作台内嵌终端（项目唯一的终端界面）。
+    workspaceDir：当前编码工作区目录（通用模式为空）——cwd 输入框默认值取自它。 */
+export default function TerminalView({ store, workspaceDir = '' }: { store?: TerminalStoreHook | null; workspaceDir?: string }): React.JSX.Element {
   const activeStore = store ?? useAgentTerminalStore
   const { sessions, activeId, open } = activeStore()
   const active = sessions.find((s) => s.id === activeId)
@@ -360,7 +403,7 @@ export default function TerminalView({ store }: { store?: TerminalStoreHook | nu
 
   return (
     <div className="agent-terminal-view">
-      <TerminalTabBar store={activeStore} />
+      <TerminalTabBar store={activeStore} workspaceDir={workspaceDir} />
       {sessions.length === 0 ? (
         <div className="agent-terminal-empty">
           <Terminal size={48} strokeWidth={1.5} />
