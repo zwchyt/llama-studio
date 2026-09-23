@@ -1,0 +1,887 @@
+/* ══════════════════════════════════════════════════════════════
+   「后端与引擎」界面专属样式（EnginesView + EngineDownloadSection）
+   ──────────────────────────────────────────────────────────────
+   作用域：全部规则挂在 .engines-view 下（该类由 EnginesView 根节点携带），
+   对其它页面零影响。settings.css 继续提供基础骨架（标题排版、行内分布、
+   目录名省略号、徽标胶囊形状等），本文件只在其上叠加配色与动效。
+
+   为什么整页写死令牌、而不是改 global.css 的 :root：
+   本设计要改的正是「配色工作台」（colorStudio）控制的 --bg / --surface /
+   --border / --text / --accent 这批变量。若改 :root 默认值，全 app 的底色、
+   卡片面、强调色都会一起变；若把变量定义在 :root 上再靠本文件覆盖，
+   又会与工作台注入的 <style> 打架。因此这里把整套令牌收在 .engines-view
+   内部，代价是该页面不跟随配色工作台调整 —— 这是明确接受的取舍。
+
+   约定：
+     · 语义色（成功 / 警告 / 危险）与引擎识别色写死，不随主题色温变调；
+     · 其余中性色与主色全部走本节令牌，暗色主题只需换令牌值（见文末）。
+     · 动画只作用于 opacity / transform / box-shadow / 颜色，不触发重排；
+       入场动画一律 animation-fill-mode: backwards（不保持终态），
+       否则动画结束后会盖住 hover 的 transform。
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── 1. 设计令牌 ── */
+.engines-view {
+  /* 底色层 */
+  --bg: #f4f6f9;                  /* 卡片内的凹陷面 */
+  --surface: #ffffff;             /* 卡片面 */
+  --surface-hover: #f7f9fc;
+  --ev-surface-2: #f4f6f9;        /* 信息条 / 内嵌块 */
+  --ev-surface-3: #eef1f5;        /* 更浅的块（代码、路径底） */
+
+  /* 描边 */
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+
+  /* 文字 */
+  --text: #0f172a;
+  --text-secondary: #55637a;
+  --text-muted: #8a97a8;
+
+  /* 主色：青绿 */
+  --accent: #0d9488;
+  --accent-fg: #ffffff;
+  --ev-accent-hover: #0f766e;
+  --ev-accent-soft: #e6f7f5;
+  --ev-accent-ring: rgba(13, 148, 136, .16);
+  --ev-accent-line: linear-gradient(135deg, #14b8a6 0%, #0891b2 100%);
+  /* 主按钮专用：横向超宽渐变，靠 background-position 位移产生"流动" */
+  --ev-accent-flow: linear-gradient(100deg, #0f766e 0%, #14b8a6 28%, #0891b2 52%, #14b8a6 76%, #0d9488 100%);
+
+  /* 语义色（写死，不随主题色温变调） */
+  --success: #059669;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --ev-success-soft: #e7f8f1;
+  --ev-warning-soft: #fdf3e3;
+  --ev-danger-soft: #fdecec;
+  --ev-success-line: rgba(5, 150, 105, .26);
+  --ev-warning-line: rgba(217, 119, 6, .28);
+  --ev-danger-line: rgba(220, 38, 38, .26);
+  --ev-success-text: #047857;
+  --ev-warning-text: #b45309;
+  --ev-danger-text: #b91c1c;
+
+  /* 圆角 / 阴影 / 动效 */
+  --radius: 16px;
+  --radius-sm: 10px;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, .05);
+  --shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 6px 20px -6px rgba(15, 23, 42, .10);
+  --shadow-md: 0 2px 4px rgba(15, 23, 42, .05), 0 12px 28px -8px rgba(15, 23, 42, .14);
+  --transition: 220ms cubic-bezier(.4, 0, .2, 1);
+  --ev-ease: cubic-bezier(.4, 0, .2, 1);        /* 常规交互 */
+  --ev-ease-out: cubic-bezier(.16, 1, .3, 1);   /* 入场：快起慢收 */
+  --ev-ease-spring: cubic-bezier(.34, 1.56, .64, 1); /* 弹性：图标、弹层 */
+  --ev-t-fast: 120ms;
+  --ev-t-base: 220ms;
+  --ev-t-slow: 420ms;
+
+  /* 引擎识别色：只用于 3px 竖条、卡片顶部色带与软底徽标 */
+  --ev-eng-llamacpp: #0d9488;
+  --ev-eng-tensorsharp: #e11d48;
+  --ev-eng-turboquant: #0891b2;
+  --ev-eng-beellama: #d97706;
+  --ev-eng-sdcpp: #7c3aed;
+  --ev-eng-audiocpp: #2563eb;
+  --ev-eng-other: #94a3b8;
+}
+
+/* ── 2. 引擎识别色挂载点（JSX 用 ev-eng--<kind> 指定） ── */
+.engines-view .ev-eng--llamacpp    { --ev-eng: var(--ev-eng-llamacpp); }
+.engines-view .ev-eng--tensorsharp { --ev-eng: var(--ev-eng-tensorsharp); }
+.engines-view .ev-eng--turboquant  { --ev-eng: var(--ev-eng-turboquant); }
+.engines-view .ev-eng--beellama    { --ev-eng: var(--ev-eng-beellama); }
+.engines-view .ev-eng--sdcpp       { --ev-eng: var(--ev-eng-sdcpp); }
+.engines-view .ev-eng--audiocpp    { --ev-eng: var(--ev-eng-audiocpp); }
+.engines-view .ev-eng--other       { --ev-eng: var(--ev-eng-other); }
+
+/* ── 2. 基础骨架（本页自包含） ──
+   下面这些规则原先由 settings.css 提供。settings.css 其实是「设置」页的样式文件
+   （内含 .cursor-theme-card / .cursor-preview-* 等设置页专属规则），
+   本页与 ModelFoldersView 只是当年从设置页拆分时顺带继承了那个 import。
+
+   为了做到「改这个文件绝不可能影响其它页面」，这里把本页真正依赖的骨架规则
+   搬进来并统一加 .engines-view 前缀；EnginesView 不再引用 settings.css。
+   规则内容与原文件保持一致，只补上作用域，避免外观发生意外变化。 */
+
+/* 区块标题：图标与文字的 flex 排版 */
+.engines-view .settings-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-weight: 700;
+}
+
+/* 行容器：左右两端分布（本页只有后端行在用） */
+.engines-view .settings-row {
+  display: flex;
+  justify-content: space-between;
+}
+
+/* 行内主标签：超长目录名省略号 */
+.engines-view .settings-row-label {
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 行内副标题（exe 路径） */
+.engines-view .settings-row-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* 徽标胶囊形状（配色由第 9 节负责，这里只管几何） */
+.engines-view .version-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border-radius: 99px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* 后端行：允许换行 + 子元素收缩，防止超长目录名把卡片撑破 */
+.engines-view .settings-row.backend-row {
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+
+.engines-view .settings-row.backend-row > div:first-child {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.engines-view .settings-row.backend-row > div:first-child .settings-row-label,
+.engines-view .settings-row.backend-row > div:first-child .settings-row-sub {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.engines-view .settings-row.backend-row > div:last-child {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+/* 展开的参数编辑器面板 */
+.engines-view .ce-panel {
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  margin-top: 8px;
+  background: var(--bg);
+  animation: fadeIn 150ms ease;
+}
+
+/* ── 3. 关键帧（统一 ev- 前缀，避免与既有动画重名） ── */
+/* 卡片入场：淡入 + 上浮 + 极轻微缩放 */
+@keyframes ev-card-in {
+  from { opacity: 0; transform: translateY(16px) scale(.985); }
+  to   { opacity: 1; transform: none; }
+}
+/* 列表行入场：从左侧滑入，与卡片的"上浮"形成方向上的层次 */
+@keyframes ev-row-in {
+  from { opacity: 0; transform: translateX(-10px); }
+  to   { opacity: 1; transform: none; }
+}
+/* 竖条展开：scaleY 从中心生长 */
+@keyframes ev-bar-grow {
+  from { opacity: 0; transform: scaleY(.2); }
+  to   { opacity: .55; transform: scaleY(1); }
+}
+/* 顶部色带滑入：用位移而非宽度，避免重排 */
+@keyframes ev-ribbon-in {
+  from { opacity: 0; transform: translateX(-24px); }
+  to   { opacity: .85; transform: none; }
+}
+/* 图标弹入 */
+@keyframes ev-icon-pop {
+  from { opacity: 0; transform: scale(.72) rotate(-10deg); }
+  to   { opacity: 1; transform: none; }
+}
+/* 标题竖条落下 */
+@keyframes ev-bar-drop {
+  from { opacity: 0; transform: scaleY(0); }
+  to   { opacity: 1; transform: scaleY(1); }
+}
+/* 小元素淡入上浮 */
+@keyframes ev-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+/* 「当前使用」徽标：极慢光晕呼吸，用来指路而非抢注意力 */
+@keyframes ev-halo {
+  0%, 100% { box-shadow: 0 0 0 3px var(--ev-accent-ring), 0 1px 3px rgba(13, 148, 136, .30); }
+  50%      { box-shadow: 0 0 0 6px rgba(13, 148, 136, .05), 0 1px 3px rgba(13, 148, 136, .30); }
+}
+/* 过期状态圆点：向外扩散脉冲，页面里唯一的主动提示 */
+@keyframes ev-dot-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(217, 119, 6, .45); }
+  70%  { box-shadow: 0 0 0 7px rgba(217, 119, 6, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0); }
+}
+/* 弹层入场 */
+@keyframes ev-pop-in {
+  from { opacity: 0; transform: translateY(-8px) scale(.94); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── 4. 页面标题区 ── */
+.engines-view .page-title {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+/* 标题左侧渐变竖条：入场时从上落下，hover 标题时再长高一点 */
+.engines-view .page-title::before {
+  content: '';
+  width: 4px;
+  height: 21px;
+  border-radius: 2px;
+  background: var(--ev-accent-line);
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, .10);
+  transform-origin: top center;
+  transition: height var(--ev-t-slow) var(--ev-ease-out), box-shadow var(--ev-t-slow) var(--ev-ease);
+  animation: ev-bar-drop 520ms var(--ev-ease-out) 60ms backwards;
+}
+
+.engines-view .page-title:hover::before {
+  height: 26px;
+  box-shadow: 0 0 0 5px rgba(13, 148, 136, .13);
+}
+
+.engines-view .page-subtitle {
+  margin-left: 15px;
+  animation: ev-fade-up 520ms var(--ev-ease-out) 160ms backwards;
+}
+
+/* ── 5. 卡片（.settings-section） ── */
+.engines-view .settings-section {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+  transition: box-shadow var(--ev-t-slow) var(--ev-ease),
+              transform var(--ev-t-slow) var(--ev-ease),
+              border-color var(--ev-t-base) var(--ev-ease);
+  animation: ev-card-in 560ms var(--ev-ease-out) backwards;
+}
+
+.engines-view .settings-section:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+}
+
+/* 卡片顶部色带：入场时从左侧探出；hover 时向右铺满整张卡片。
+   只有带 ev-card--engine 的卡片才有，容器卡片（已安装的后端）不带。 */
+.engines-view .ev-card--engine::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 20px;
+  width: 96px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: linear-gradient(90deg, var(--ev-eng), transparent);
+  opacity: .85;
+  transition: width 480ms var(--ev-ease-out), opacity var(--ev-t-base) var(--ev-ease);
+  animation: ev-ribbon-in 620ms var(--ev-ease-out) 120ms backwards;
+}
+
+.engines-view .ev-card--engine:hover::before {
+  width: calc(100% - 40px);
+  opacity: 1;
+}
+
+/* ── 6. 区块标题：图标做成渐变小方块 ──
+   排版骨架（flex / gap / margin-bottom）见第 2 节，这里只做视觉调整。
+   不额外包一层 span：直接给 SVG 加内边距与背景。
+   全局 * { box-sizing: border-box }，所以 26px 含 padding，内容区 15px。 */
+.engines-view .settings-section-title {
+  font-size: 14px;
+  letter-spacing: -.2px;
+}
+
+.engines-view .settings-section-title > svg {
+  display: block;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  padding: 5.5px;
+  border-radius: 8px;
+  background-image: var(--ev-accent-line);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(13, 148, 136, .28);
+  transition: transform 320ms var(--ev-ease-spring), box-shadow var(--ev-t-base) var(--ev-ease);
+  animation: ev-icon-pop 520ms var(--ev-ease-spring) 90ms backwards;
+}
+
+.engines-view .settings-section:hover .settings-section-title > svg {
+  transform: scale(1.08) rotate(-3deg);
+  box-shadow: 0 4px 12px rgba(13, 148, 136, .38);
+}
+
+/* 引擎卡片用各自的识别色 */
+.engines-view .ev-card--engine .settings-section-title > svg {
+  background-image: linear-gradient(135deg, var(--ev-eng), color-mix(in srgb, var(--ev-eng) 62%, #0f172a));
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--ev-eng) 30%, transparent);
+}
+
+.engines-view .ev-card--engine:hover .settings-section-title > svg {
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--ev-eng) 42%, transparent);
+}
+
+/* ── 7. 描述文字 ── */
+.engines-view .ev-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+
+.engines-view .ev-desc code {
+  font-family: var(--mono, 'JetBrains Mono', Consolas, monospace);
+  font-size: 11.5px;
+  background: var(--ev-surface-3);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: #334155;
+}
+
+/* ── 8. 已安装后端列表行（.settings-row.backend-row） ──
+   选择器刻意带上 .settings-row：这样权重是 (0,3,0)，不依赖文件内外的先后顺序。
+   这里声明的 gap: 12px 会覆盖第 2 节骨架里的 row-gap: 10px（同为 (0,3,0)，本条在后）。 */
+.engines-view .settings-row.backend-row {
+  position: relative;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px 12px 17px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--ev-t-base) var(--ev-ease),
+              background var(--ev-t-base) var(--ev-ease),
+              box-shadow var(--ev-t-base) var(--ev-ease),
+              transform var(--ev-t-base) var(--ev-ease);
+  animation: ev-row-in 460ms var(--ev-ease-out) backwards;
+}
+
+/* 左侧 3px 引擎色竖条 */
+.engines-view .settings-row.backend-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--ev-eng, var(--border-strong));
+  opacity: .55;
+  transform-origin: center;
+  transition: opacity var(--ev-t-base) var(--ev-ease),
+              top var(--ev-t-base) var(--ev-ease),
+              bottom var(--ev-t-base) var(--ev-ease);
+  animation: ev-bar-grow 520ms var(--ev-ease-out) 140ms backwards;
+}
+
+.engines-view .settings-row.backend-row:hover {
+  border-color: color-mix(in srgb, var(--ev-eng, var(--accent)) 38%, var(--border));
+  background: #fcfdfe;
+  box-shadow: var(--shadow-sm);
+  transform: translateX(2px);
+}
+
+.engines-view .settings-row.backend-row:hover::before {
+  opacity: 1;
+  top: 6px;
+  bottom: 6px;
+}
+
+/* 当前使用的后端：极淡主色渐变底 + 竖条换主色渐变 + 描边 */
+.engines-view .settings-row.backend-row:has(.active-version) {
+  border-color: rgba(13, 148, 136, .32);
+  background: linear-gradient(90deg, rgba(13, 148, 136, .05), rgba(13, 148, 136, .012) 46%, transparent);
+}
+
+.engines-view .settings-row.backend-row:has(.active-version)::before {
+  background: var(--ev-accent-line);
+  opacity: 1;
+}
+
+/* exe 路径：hover 时由弱文字提到次级文字 */
+.engines-view .settings-row.backend-row .settings-row-sub {
+  font-family: var(--mono, 'JetBrains Mono', Consolas, monospace);
+  transition: color var(--ev-t-base) var(--ev-ease);
+}
+
+.engines-view .settings-row.backend-row:hover .settings-row-sub {
+  color: var(--text-secondary);
+}
+
+/* ── 9. 徽标（.version-badge） ── */
+.engines-view .version-badge {
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  border-width: 1px;
+  background: var(--ev-surface-3);
+  border-color: var(--border);
+  color: var(--text-secondary);
+  transition: transform var(--ev-t-base) var(--ev-ease-spring), box-shadow var(--ev-t-base) var(--ev-ease);
+}
+
+.engines-view .version-badge:hover {
+  transform: translateY(-1px) scale(1.04);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 引擎类型徽标：软底 + 同色文字（由引擎色 color-mix 派生，无需手写六套色值） */
+.engines-view .ev-badge--engine {
+  background: color-mix(in srgb, var(--ev-eng) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--ev-eng) 26%, var(--surface));
+  color: color-mix(in srgb, var(--ev-eng) 82%, var(--text));
+}
+
+/* 「当前使用」：全页最亮的焦点，配极慢光晕呼吸 */
+.engines-view .version-badge.active-version {
+  background: var(--ev-accent-line);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 0 0 3px var(--ev-accent-ring), 0 1px 3px rgba(13, 148, 136, .30);
+  animation: ev-halo 3.2s var(--ev-ease) infinite;
+}
+
+/* ── 10. 按钮 ── */
+.engines-view .btn {
+  transition: background-color var(--ev-t-base) var(--ev-ease),
+              background-position 620ms var(--ev-ease-out),
+              border-color var(--ev-t-base) var(--ev-ease),
+              color var(--ev-t-base) var(--ev-ease),
+              box-shadow var(--ev-t-base) var(--ev-ease),
+              transform var(--ev-t-fast) var(--ev-ease);
+}
+
+.engines-view .btn svg {
+  transition: transform 320ms var(--ev-ease-spring);
+}
+
+/* 按下：轻微下压 + 缩放，给出"触感" */
+.engines-view .btn:active:not(:disabled) {
+  transform: translateY(1px) scale(.975);
+}
+
+.engines-view .btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ev-accent-ring);
+}
+
+/* 主按钮：超宽渐变靠 background-position 位移做"流动"，不产生额外绘制层 */
+.engines-view .btn-primary {
+  background-color: transparent;
+  background-image: var(--ev-accent-flow);
+  background-size: 260% 100%;
+  background-position: 0% 0;
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 1px 2px rgba(13, 148, 136, .30), 0 4px 12px -4px rgba(13, 148, 136, .45);
+}
+
+.engines-view .btn-primary:hover:not(:disabled) {
+  opacity: 1;
+  background-position: 100% 0;
+  transform: translateY(-1.5px);
+  box-shadow: 0 2px 4px rgba(13, 148, 136, .34), 0 10px 24px -6px rgba(13, 148, 136, .58);
+}
+
+/* 下载箭头：hover 时向下轻移，呼应"下载"语义 */
+.engines-view .btn-primary:hover:not(:disabled) svg {
+  transform: translateY(2px);
+}
+
+.engines-view .btn-secondary {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.engines-view .btn-secondary:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  color: var(--ev-accent-hover);
+  background: var(--ev-accent-soft);
+}
+
+/* 刷新图标：hover 转半圈，点击转满一圈 */
+.engines-view .btn-secondary:hover:not(:disabled) svg {
+  transform: rotate(180deg);
+}
+
+.engines-view .btn-secondary:active:not(:disabled) svg {
+  transform: rotate(360deg);
+}
+
+.engines-view .btn-ghost:hover:not(:disabled) {
+  background: var(--ev-surface-3);
+  color: var(--text);
+}
+
+/* 删除图标按钮：hover 时图标旋转放大 */
+.engines-view .btn-ghost.text-danger:hover:not(:disabled) {
+  background: var(--ev-danger-soft);
+}
+
+.engines-view .btn-ghost.text-danger:hover:not(:disabled) svg {
+  transform: rotate(-8deg) scale(1.08);
+}
+
+/* ── 11. 发布信息条 ── */
+.engines-view .ev-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.engines-view .ev-release {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 15px;
+  background: var(--ev-surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ev-eng, var(--accent));
+  border-radius: var(--radius-sm);
+  transition: background var(--ev-t-base) var(--ev-ease), box-shadow var(--ev-t-base) var(--ev-ease);
+}
+
+.engines-view .ev-release:hover {
+  background: #f7f9fc;
+  box-shadow: var(--shadow-sm);
+}
+
+.engines-view .ev-release-name {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.engines-view .ev-release-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+}
+
+.engines-view .ev-release-date {
+  font-family: var(--mono, 'JetBrains Mono', Consolas, monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* 「✓ 已是最新 / ✓ 已安装最新版本」 */
+.engines-view .ev-latest {
+  color: var(--success);
+  font-weight: 600;
+}
+
+/* 资产选择行 */
+.engines-view .ev-asset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+/* 资产选择按钮（.cmd-select 本身无基础样式，这里补全） */
+.engines-view .cmd-select {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 11px;
+  font-family: var(--mono, 'JetBrains Mono', Consolas, monospace);
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color var(--ev-t-base) var(--ev-ease),
+              color var(--ev-t-base) var(--ev-ease),
+              box-shadow var(--ev-t-base) var(--ev-ease),
+              transform var(--ev-t-fast) var(--ev-ease);
+}
+
+.engines-view .cmd-select:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--ev-accent-hover);
+  box-shadow: 0 0 0 3px var(--ev-accent-ring);
+}
+
+.engines-view .cmd-select:active:not(:disabled) {
+  transform: scale(.995);
+}
+
+/* 检查按钮区（与发布信息条之间的分隔） */
+.engines-view .ev-check-block {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  width: 100%;
+}
+
+/* 在 .ev-body 内时父级 gap 已提供间距，这里只留一点余量，避免叠加成双倍空隙 */
+.engines-view .ev-body > .ev-check-block {
+  margin-top: 4px;
+}
+
+/* ── 12. 卡片内嵌区块（stable-diffusion.cpp 的 CUDA 运行时） ── */
+.engines-view .ev-subpanel {
+  width: 100%;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.engines-view .ev-subpanel-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.engines-view .ev-subpanel-title svg {
+  width: 14px;
+  height: 14px;
+  color: var(--ev-eng-sdcpp);
+}
+
+.engines-view .ev-subpanel-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* 状态行：左侧圆点按语义着色 */
+.engines-view .ev-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  line-height: 1.55;
+  border: 1px solid var(--border);
+  background: var(--ev-surface-2);
+  color: var(--text-secondary);
+  transition: transform var(--ev-t-base) var(--ev-ease), box-shadow var(--ev-t-base) var(--ev-ease);
+}
+
+.engines-view .ev-status::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.engines-view .ev-status:hover {
+  transform: translateX(2px);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 已是最新 */
+.engines-view .ev-status--ok {
+  background: var(--ev-success-soft);
+  border-color: var(--ev-success-line);
+  color: var(--ev-success-text);
+}
+
+.engines-view .ev-status--ok::before {
+  background: var(--success);
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, .16);
+}
+
+/* 已过期：琥珀脉冲，页面里唯一的"主动提示" */
+.engines-view .ev-status--warn {
+  background: var(--ev-warning-soft);
+  border-color: var(--ev-warning-line);
+  color: var(--ev-warning-text);
+}
+
+.engines-view .ev-status--warn::before {
+  background: var(--warning);
+  animation: ev-dot-pulse 2.4s var(--ev-ease) infinite;
+}
+
+/* 未安装 / 无法确认 */
+.engines-view .ev-status--muted {
+  background: var(--ev-surface-2);
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+
+/* 按钮行（替代原先的 flex / items-center / gap-2 / flex-wrap 工具类组合：
+   其中 flex-wrap 在项目里并未定义、实际是空类，按钮不会换行，这里补齐并自包含） */
+.engines-view .ev-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 元信息行（安装时间 / 上游版本 / 最近提交） */
+.engines-view .ev-meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.engines-view .ev-meta b {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+/* ── 13. 删除确认弹层 ── */
+.engines-view .delete-popover {
+  border-color: var(--ev-danger-line);
+  transition: box-shadow var(--ev-t-base) var(--ev-ease);
+  animation: ev-pop-in 260ms var(--ev-ease-spring);
+}
+
+.engines-view .delete-popover:hover {
+  box-shadow: 0 4px 8px rgba(15, 23, 42, .06), 0 18px 40px -10px rgba(220, 38, 38, .22);
+}
+
+/* 弹层内的确认删除按钮用实心红 */
+.engines-view .delete-popover .btn-danger {
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+}
+
+.engines-view .delete-popover .btn-danger:hover:not(:disabled) {
+  background: #b91c1c;
+  box-shadow: 0 4px 12px -3px rgba(220, 38, 38, .5);
+}
+
+/* ── 14. 暗色主题：只换令牌值，规则与动画完全复用 ── */
+html.theme-dark .engines-view {
+  --bg: #24272d;
+  --surface: #2b2f36;
+  --surface-hover: #33373f;
+  --ev-surface-2: #272b31;
+  --ev-surface-3: #31353d;
+
+  --border: #383c44;
+  --border-strong: #4b505b;
+
+  --text: #ced2d9;
+  --text-secondary: #9298a2;
+  --text-muted: #71767f;
+
+  /* 深色下主色提亮一档，保证在深底上的对比度 */
+  --accent: #2dd4bf;
+  --accent-fg: #062e29;
+  --ev-accent-hover: #5eead4;
+  --ev-accent-soft: rgba(45, 212, 191, .12);
+  --ev-accent-ring: rgba(45, 212, 191, .22);
+  --ev-accent-line: linear-gradient(135deg, #14b8a6 0%, #0891b2 100%);
+  --ev-accent-flow: linear-gradient(100deg, #0f766e 0%, #14b8a6 28%, #0891b2 52%, #14b8a6 76%, #0d9488 100%);
+
+  --ev-success-soft: rgba(5, 150, 105, .16);
+  --ev-warning-soft: rgba(217, 119, 6, .16);
+  --ev-danger-soft: rgba(220, 38, 38, .16);
+  --ev-success-line: rgba(5, 150, 105, .38);
+  --ev-warning-line: rgba(217, 119, 6, .40);
+  --ev-danger-line: rgba(220, 38, 38, .38);
+  --ev-success-text: #6ee7b7;
+  --ev-warning-text: #fcd34d;
+  --ev-danger-text: #fca5a5;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .30);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .26), 0 6px 20px -6px rgba(0, 0, 0, .40);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, .30), 0 12px 28px -8px rgba(0, 0, 0, .50);
+
+  /* 深色下引擎识别色提亮，避免在深底上发闷 */
+  --ev-eng-llamacpp: #2dd4bf;
+  --ev-eng-tensorsharp: #fb7185;
+  --ev-eng-turboquant: #22d3ee;
+  --ev-eng-beellama: #fbbf24;
+  --ev-eng-sdcpp: #a78bfa;
+  --ev-eng-audiocpp: #60a5fa;
+  --ev-eng-other: #94a3b8;
+}
+
+/* 深色下卡片不再靠"白面"分层，改用更亮的卡面 + 描边 */
+html.theme-dark .engines-view .settings-row.backend-row:hover {
+  background: var(--surface-hover);
+}
+
+html.theme-dark .engines-view .ev-release:hover {
+  background: #2e323a;
+}
+
+html.theme-dark .engines-view .ev-desc code {
+  color: #cbd5e1;
+}
+
+html.theme-dark .engines-view .settings-section-title > svg {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .35);
+}
+
+html.theme-dark .engines-view .ev-card--engine .settings-section-title > svg {
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--ev-eng) 22%, transparent);
+}
+
+html.theme-dark .engines-view .version-badge.active-version {
+  color: var(--accent-fg);
+  box-shadow: 0 0 0 3px var(--ev-accent-ring), 0 1px 3px rgba(0, 0, 0, .35);
+}
+
+html.theme-dark .engines-view .settings-row.backend-row:has(.active-version) {
+  border-color: rgba(45, 212, 191, .34);
+  background: linear-gradient(90deg, rgba(45, 212, 191, .10), rgba(45, 212, 191, .02) 46%, transparent);
+}
+
+/* ── 15. 无障碍：尊重系统"减弱动态效果" ──
+   入场动画都用 backwards（不保持终态），时长归零后元素直接呈现最终状态，
+   不会残留透明或位移。 */
+@media (prefers-reduced-motion: reduce) {
+  .engines-view,
+  .engines-view *,
+  .engines-view *::before,
+  .engines-view *::after {
+    animation-duration: .01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}

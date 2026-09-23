@@ -1,0 +1,152 @@
+/* ══════════════════════════════════════════════════════════════
+   参数编辑器组件专属样式（components/CmdParamsEditor.tsx + components/ParamsModal.tsx）
+   ──────────────────────────────────────────────────────────────
+   命令行参数编辑 UI：分区折叠、参数行、开关、参数控件。
+
+   这两个组件是**同一套参数编辑 UI 的两个入口**（CmdParamsEditor 内联版 / ParamsModal 弹窗版），
+   共用一份样式是刻意的 —— 它们必须长得一样，拆成两份只会让两边逐渐漂移。
+
+   本文件由这两个组件自己引入。历史问题：这些规则原先放在 models.css
+   （「模型」页的样式文件）里，于是「我的模板」页的创建弹窗、设置页的开关等
+   都靠 models.css 才显示正常 —— 一旦 ModelsView 改成懒加载就会集体掉样式。
+   现已迁到本文件并改由组件自己引入。
+
+   规则内容与原 models.css 完全一致（未做视觉改动）。
+   跨页通用的表单控件（.cmd-input / .cmd-select / .cmd-textarea 基础）已归入 global.css，
+   本文件只保留参数编辑器自身的结构与参数专用变体。
+   ══════════════════════════════════════════════════════════════ */
+
+.cmd-section {
+  margin-bottom: 20px;
+}
+
+.cmd-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cmd-section-header svg {
+  width: 13px;
+  height: 13px;
+}
+
+.collapsible-section-header {
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: color var(--transition);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  margin: -4px -6px 12px;
+}
+
+.collapsible-section-header:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.section-chevron {
+  display: inline-flex;
+  transition: transform var(--transition);
+  flex-shrink: 0;
+}
+
+.cmd-grid-wrapper {
+  overflow: visible;
+  transition: max-height 300ms cubic-bezier(.4, 0, .2, 1), opacity 200ms ease;
+  max-height: 2000px;
+  opacity: 1;
+}
+
+.cmd-grid-collapsed {
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.cmd-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.cmd-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--transition);
+  position: relative;
+  grid-column: span 1;
+}
+
+.cmd-row:hover {
+  border-color: var(--border-strong);
+  z-index: 10;
+}
+
+.cmd-row.active-param {
+  border-color: #c9c9c9;
+  background: rgba(0, 0, 0, 0.02);
+  box-shadow: var(--shadow-md);
+}
+
+.cmd-label-group {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cmd-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4f5f4f;
+}
+
+.cmd-arg {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  margin-top: 1px;
+}
+
+.cmd-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+
+
+
+
+
+
+.cmd-select-mmproj {
+  width: 150px;
+  vertical-align: top;
+}
+
+/* stable-diffusion.cpp 的 --vae / --llm 模型下拉：宽度与普通参数控件(.cmd-input 110px)一致，
+   防止长文件名把参数行撑开或显得突兀（CustomSelect 外层是 inline-block，不约束宽度会随内容变宽） */
+.cmd-select-vae,
+.cmd-select-llm {
+  width: 110px;
+  max-width: 100%;
+  vertical-align: top;
+}
+

@@ -1,176 +1,634 @@
-.settings-section-title {
-  font-size: 13px;
-  font-weight: 700;
+/* ══════════════════════════════════════════════════════════════
+   「设置」页专属样式（SettingsView）
+   ──────────────────────────────────────────────────────────────
+   作用域：全部规则挂在 .settings-view 下（该类由 SettingsView 根节点携带），
+   对其它页面零影响 —— 改这个文件不会影响「模型文件夹」或任何其它页面。
+
+   设计语言与 engines.css / model-folders.css 完全一致（同一套令牌与动效曲线）：
+     · 白卡片 + 双层阴影做层次，页面画布保持中性
+     · 主色青绿；分区用识别色（只出现在图标渐变与卡片顶部色带上）
+     · 语义色（成功/警告/危险）与分区识别色写死，不随主题色温变调
+     · 动画只作用于 opacity / transform / box-shadow / 颜色，不触发重排；
+       入场动画一律 animation-fill-mode: backwards（不保持终态），
+       否则动画结束后会盖住 hover 的 transform
+
+   注意：.launch-mode-btn（分段按钮）与 .toggle（开关）是跨页共享基础件，
+   定义在 global.css。本文件只做**页面内的视觉升级**（青绿选中态、hover 反馈），
+   并完整重写 base/hover/active/disabled 四态，避免依赖 CSS 导入顺序。
+
+   本页没有任何功能改动，只有外观与交互反馈。
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── 1. 设计令牌 ── */
+.settings-view {
+  /* 底色层 */
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --surface-hover: #f7f9fc;
+  --st-surface-2: #f4f6f9;
+  --st-surface-3: #eef1f5;
+
+  /* 描边 */
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+
+  /* 文字 */
+  --text: #0f172a;
+  --text-secondary: #55637a;
+  --text-muted: #8a97a8;
+
+  /* 主色：青绿 */
+  --accent: #0d9488;
+  --accent-fg: #ffffff;
+  --st-accent-hover: #0f766e;
+  --st-accent-soft: #e6f7f5;
+  --st-accent-ring: rgba(13, 148, 136, .16);
+  --st-accent-line: linear-gradient(135deg, #14b8a6 0%, #0891b2 100%);
+
+  /* 语义色（写死，不随主题色温变调） */
+  --danger: #dc2626;
+  --st-danger-soft: #fdecec;
+
+  /* 圆角 / 阴影 / 动效 */
+  --radius: 16px;
+  --radius-sm: 10px;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, .05);
+  --shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 6px 20px -6px rgba(15, 23, 42, .10);
+  --shadow-md: 0 2px 4px rgba(15, 23, 42, .05), 0 12px 28px -8px rgba(15, 23, 42, .14);
+  --transition: 220ms cubic-bezier(.4, 0, .2, 1);
+  --st-ease: cubic-bezier(.4, 0, .2, 1);
+  --st-ease-out: cubic-bezier(.16, 1, .3, 1);
+  --st-ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --st-t-fast: 120ms;
+  --st-t-base: 220ms;
+  --st-t-slow: 420ms;
+
+  /* 分区识别色：只用于图标渐变与卡片顶部色带 */
+  --st-c-notify: #0d9488;  /* 更新通知 */
+  --st-c-metrics: #0891b2; /* 模型监控轮询 */
+  --st-c-font: #7c3aed;    /* 字体 */
+  --st-c-memory: #e11d48;  /* Agent 长期记忆 */
+  --st-c-ui: #d97706;      /* 界面 */
+}
+
+.settings-view .st-accent--notify  { --st-eng: var(--st-c-notify); }
+.settings-view .st-accent--metrics { --st-eng: var(--st-c-metrics); }
+.settings-view .st-accent--font    { --st-eng: var(--st-c-font); }
+.settings-view .st-accent--memory  { --st-eng: var(--st-c-memory); }
+.settings-view .st-accent--ui      { --st-eng: var(--st-c-ui); }
+
+/* ── 2. 关键帧（统一 st- 前缀） ── */
+@keyframes st-card-in {
+  from { opacity: 0; transform: translateY(16px) scale(.985); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes st-ribbon-in {
+  from { opacity: 0; transform: translateX(-24px); }
+  to   { opacity: .85; transform: none; }
+}
+@keyframes st-icon-pop {
+  from { opacity: 0; transform: scale(.72) rotate(-10deg); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes st-bar-drop {
+  from { opacity: 0; transform: scaleY(0); }
+  to   { opacity: 1; transform: scaleY(1); }
+}
+@keyframes st-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes st-menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.98); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── 3. 页面标题区 ── */
+.settings-view .page-title {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.settings-view .page-title::before {
+  content: '';
+  width: 4px;
+  height: 21px;
+  border-radius: 2px;
+  background: var(--st-accent-line);
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, .10);
+  transform-origin: top center;
+  transition: height var(--st-t-slow) var(--st-ease-out), box-shadow var(--st-t-slow) var(--st-ease);
+  animation: st-bar-drop 520ms var(--st-ease-out) 60ms backwards;
+}
+
+.settings-view .page-title:hover::before {
+  height: 26px;
+  box-shadow: 0 0 0 5px rgba(13, 148, 136, .13);
+}
+
+.settings-view .page-subtitle {
+  margin-left: 15px;
+  animation: st-fade-up 520ms var(--st-ease-out) 160ms backwards;
+}
+
+/* ── 4. 分区卡片（.settings-section） ── */
+.settings-view .settings-section {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
   margin-bottom: 16px;
+  box-shadow: var(--shadow);
+  transition: box-shadow var(--st-t-slow) var(--st-ease),
+              transform var(--st-t-slow) var(--st-ease),
+              border-color var(--st-t-base) var(--st-ease);
+  animation: st-card-in 560ms var(--st-ease-out) backwards;
+}
+
+.settings-view .settings-section:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+}
+
+/* 逐张错开入场：page-header 是第 1 个子元素，卡片从第 2 个开始 */
+.settings-view > .settings-section:nth-child(2) { animation-delay: 40ms; }
+.settings-view > .settings-section:nth-child(3) { animation-delay: 110ms; }
+.settings-view > .settings-section:nth-child(4) { animation-delay: 180ms; }
+.settings-view > .settings-section:nth-child(5) { animation-delay: 250ms; }
+.settings-view > .settings-section:nth-child(6) { animation-delay: 320ms; }
+
+/* 卡片顶部色带：入场时从左侧探出；hover 时向右铺满整张卡片 */
+.settings-view .settings-section::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 20px;
+  width: 96px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: linear-gradient(90deg, var(--st-eng, var(--accent)), transparent);
+  opacity: .85;
+  transition: width 480ms var(--st-ease-out), opacity var(--st-t-base) var(--st-ease);
+  animation: st-ribbon-in 620ms var(--st-ease-out) 140ms backwards;
+}
+
+.settings-view .settings-section:hover::before {
+  width: calc(100% - 40px);
+  opacity: 1;
+}
+
+/* ── 5. 分区标题：图标做成渐变小方块 ──
+   直接给 SVG 加内边距与背景，不额外包一层元素。
+   全局 * { box-sizing: border-box }，所以 26px 含 padding，内容区 15px。 */
+.settings-view .settings-section-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -.2px;
+  margin-bottom: 16px;
 }
 
-.settings-section-title svg {
-  width: 16px;
-  height: 16px;
+.settings-view .settings-section-title > svg {
+  display: block;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  padding: 5.5px;
+  border-radius: 8px;
+  background-image: linear-gradient(135deg, var(--st-eng, var(--accent)), color-mix(in srgb, var(--st-eng, var(--accent)) 62%, #0f172a));
+  color: #fff;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--st-eng, var(--accent)) 30%, transparent);
+  transition: transform 320ms var(--st-ease-spring), box-shadow var(--st-t-base) var(--st-ease);
+  animation: st-icon-pop 520ms var(--st-ease-spring) 110ms backwards;
 }
 
-.settings-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 0;
-  border-bottom: 1px solid #c7c7c7;
-  gap: 8px;
+.settings-view .settings-section:hover .settings-section-title > svg {
+  transform: scale(1.08) rotate(-3deg);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--st-eng, var(--accent)) 42%, transparent);
 }
 
-.settings-row:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
-.settings-row-label {
+/* 内嵌子标题（如「消息朗读」）：不重复大图标方块，改用左侧短竖线 */
+.settings-view .settings-section-title.st-subtitle {
   font-size: 13px;
-  font-weight: 500;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--text);
+  margin-bottom: 12px;
 }
 
-.settings-row-sub {
-  font-size: 11px;
+.settings-view .settings-section-title.st-subtitle > svg {
+  box-sizing: content-box;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border-radius: 0;
+  background-image: none;
   color: var(--text-muted);
-  margin-top: 2px;
+  box-shadow: none;
+  animation: none;
+  transition: color var(--st-t-base) var(--st-ease);
 }
 
-.version-badge {
+.settings-view .settings-section-title.st-subtitle:hover > svg {
+  color: var(--accent);
+  transform: none;
+  box-shadow: none;
+}
+
+/* ── 6. 内容块与文字 ── */
+.settings-view .st-block {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.settings-view .st-block + .st-block {
+  margin-top: 12px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+
+.settings-view .st-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+
+.settings-view .st-desc--sm {
+  font-size: 12px;
+}
+
+.settings-view .st-desc code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11.5px;
+  background: var(--st-surface-3);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: #334155;
+}
+
+.settings-view .st-note {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+}
+
+.settings-view .st-error {
+  font-size: 12px;
+  color: var(--danger);
+  line-height: 1.6;
+  background: var(--st-danger-soft);
+  border: 1px solid color-mix(in srgb, var(--danger) 26%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 8px 11px;
+}
+
+/* ── 7. 分段按钮组（.launch-mode-btn，页面内视觉升级） ── */
+.settings-view .st-seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings-view .st-seg--fill {
+  width: 100%;
+}
+
+.settings-view .st-row-inline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.settings-view .launch-mode-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
-  background: var(--bg);
-  border: 1.5px solid var(--border);
+  padding: 5px 11px;
   border-radius: 99px;
-  padding: 3px 10px;
-  font-size: 11px;
+  font-family: var(--font);
+  font-size: 11.5px;
   font-weight: 600;
-  flex-shrink: 0;
-  white-space: nowrap;
+  line-height: 1.35;
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--st-t-base) var(--st-ease),
+              border-color var(--st-t-base) var(--st-ease),
+              color var(--st-t-base) var(--st-ease),
+              box-shadow var(--st-t-base) var(--st-ease),
+              transform var(--st-t-fast) var(--st-ease);
 }
 
-.version-badge.active-version {
-  /* 主题强调色派生：半透明底 + 主题色文字/边框，深浅主题下均协调 */
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+.settings-view .launch-mode-btn:not(.active):hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--st-accent-hover);
+  background: var(--st-accent-soft);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
-.ce-panel {
+.settings-view .launch-mode-btn:active:not(:disabled) {
+  transform: translateY(0) scale(.975);
+}
+
+.settings-view .launch-mode-btn.active {
+  background: var(--st-accent-line);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 0 0 3px var(--st-accent-ring), 0 1px 3px rgba(13, 148, 136, .30);
+}
+
+.settings-view .launch-mode-btn.active:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 3px var(--st-accent-ring), 0 4px 12px -3px rgba(13, 148, 136, .50);
+}
+
+.settings-view .launch-mode-btn:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+/* 撑满整行的分段按钮（记忆模式 / 提示音类型等） */
+.settings-view .st-seg-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.settings-view .launch-mode-btn svg {
+  width: 11px;
+  height: 11px;
+  transition: transform 320ms var(--st-ease-spring);
+}
+
+.settings-view .launch-mode-btn.active svg {
+  transform: scale(1.08);
+}
+
+/* ── 8. 开关（.toggle）：只加交互反馈，几何与配色沿用 global.css ── */
+.settings-view .st-toggle {
+  margin-top: 4px;
+  transition: transform var(--st-t-fast) var(--st-ease);
+}
+
+.settings-view .st-toggle:active {
+  transform: scale(.96);
+}
+
+.settings-view .st-toggle .toggle-track {
+  transition: background-color var(--st-t-base) var(--st-ease), box-shadow var(--st-t-base) var(--st-ease);
+}
+
+.settings-view .st-toggle:hover .toggle-track {
+  box-shadow: 0 0 0 3px var(--st-accent-ring);
+}
+
+/* ── 9. 表单控件 ── */
+/* 音色下拉：改用项目统一的自定义下拉组件 CustomSelect（不再用原生 <select>）。
+   组件内部按钮带 .cmd-select 基础样式（global.css），这里做页面内的视觉升级。
+   注意用 background-color 而不是 background —— 箭头是 .cmd-select 的 background-image，
+   用简写会把箭头一起清掉。 */
+.settings-view .st-select-wrap {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.settings-view .st-select-btn {
+  padding: 7px 30px 7px 11px;
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--text);
+  background-color: var(--surface);
   border: 1.5px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 16px;
-  margin-top: 8px;
-  background: var(--bg);
-  animation: fadeIn 150ms ease;
+  transition: border-color var(--st-t-base) var(--st-ease),
+              background-color var(--st-t-base) var(--st-ease),
+              color var(--st-t-base) var(--st-ease),
+              box-shadow var(--st-t-base) var(--st-ease);
 }
 
-/* 已安装的后端列表行：窗口/导航栏缩放时允许换行与收缩，不被挤出卡片 */
-.settings-row.backend-row {
-  flex-wrap: wrap;
-  row-gap: 10px;
+.settings-view .st-select-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--st-accent-hover);
+  background-color: var(--st-accent-soft);
 }
 
-.settings-row.backend-row > div:first-child {
-  flex: 1 1 0;
-  min-width: 0;
+.settings-view .st-select-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--st-accent-ring);
 }
 
-.settings-row.backend-row > div:first-child .settings-row-label,
-.settings-row.backend-row > div:first-child .settings-row-sub {
-  min-width: 0;
-  white-space: normal;
-  overflow-wrap: anywhere;
+.settings-view .st-select-btn:active:not(:disabled) {
+  transform: scale(.995);
 }
 
-.settings-row.backend-row > div:last-child {
-  flex: 0 0 auto;
-  flex-wrap: wrap;
-  row-gap: 6px;
+/* CustomSelect 的下拉面板与菜单项通过 createPortal 渲染到 document.body，
+   不在 .settings-view 子树内 —— 作用域选择器与作用域令牌都够不到它们。
+   做法：在这两个类上就地重新声明面板/菜单项用到的令牌。
+   它们的内联样式本来就是用 var() 取值的，令牌落在自己身上后自然解析成本页的设计值，
+   无需 !important 去覆盖内联样式。这两个类名只在本处使用，不会外泄。 */
+.st-select-panel {
+  --surface: #ffffff;
+  --border: #e2e8f0;
+  --accent: #0d9488;
+  --surface-hover: #f7f9fc;
+  --radius-sm: 10px;
+  --shadow-md: 0 2px 4px rgba(15, 23, 42, .05), 0 12px 28px -8px rgba(15, 23, 42, .14);
+  animation: st-menu-in 180ms cubic-bezier(.16, 1, .3, 1);
 }
 
-.cursor-theme-card {
+html.theme-dark .st-select-panel {
+  --surface: #2b2f36;
+  --border: #4b505b;
+  --accent: #2dd4bf;
+  --surface-hover: #33373f;
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, .30), 0 12px 28px -8px rgba(0, 0, 0, .50);
+}
+
+.st-select-item {
+  font-family: var(--font);
+  transition: background-color 140ms cubic-bezier(.4, 0, .2, 1),
+              color 140ms cubic-bezier(.4, 0, .2, 1);
+}
+
+.settings-view .st-range {
+  width: 100%;
+  height: 18px;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.settings-view .st-range::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 99px;
+  background: var(--st-surface-3);
+  border: 1px solid var(--border);
+}
+
+.settings-view .st-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: var(--st-accent-line);
+  border: 2px solid var(--surface);
+  box-shadow: 0 1px 3px rgba(13, 148, 136, .45);
+  transition: transform var(--st-t-fast) var(--st-ease-spring), box-shadow var(--st-t-base) var(--st-ease);
+}
+
+.settings-view .st-range:hover::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+.settings-view .st-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px var(--st-accent-ring), 0 1px 3px rgba(13, 148, 136, .45);
+}
+
+/* ── 10. 光标样式选择 ── */
+.settings-view .st-cursor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.settings-view .cursor-theme-card {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 10px 8px;
-  min-height: 64px;
+  gap: 7px;
+  padding: 11px 9px;
+  min-height: 68px;
   border: 1.5px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
-  color: var(--text);
+  color: var(--text-secondary);
+  font-family: var(--font);
   font-size: 12px;
   text-align: center;
   line-height: 1.3;
-  transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+  cursor: pointer;
+  transition: border-color var(--st-t-base) var(--st-ease),
+              background-color var(--st-t-base) var(--st-ease),
+              box-shadow var(--st-t-base) var(--st-ease),
+              color var(--st-t-base) var(--st-ease),
+              transform var(--st-t-fast) var(--st-ease);
 }
 
-.cursor-theme-card:hover {
-  border-color: var(--border-strong);
+.settings-view .cursor-theme-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
   background: var(--surface-hover);
+  color: var(--text);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
 }
 
-.cursor-theme-card.selected {
-  border-color: var(--border-strong);
-  box-shadow: 0 0 0 3px rgba(10, 10, 10, .08);
+.settings-view .cursor-theme-card:active {
+  transform: translateY(0) scale(.985);
 }
 
-.cursor-theme-card-name {
+.settings-view .cursor-theme-card:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--st-accent-ring);
+}
+
+.settings-view .cursor-theme-card.selected {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  background: var(--st-accent-soft);
+  color: var(--text);
+  box-shadow: 0 0 0 3px var(--st-accent-ring);
+}
+
+.settings-view .cursor-theme-card-name {
   font-weight: 600;
 }
 
-.cursor-theme-card-check {
+/* 选中标记：右上角渐变圆点 + 白勾 */
+.settings-view .cursor-theme-card-check {
   position: absolute;
-  top: 4px;
-  right: 6px;
-  color: var(--accent);
-  font-size: 11px;
+  top: 6px;
+  right: 7px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--st-accent-line);
+  color: #fff;
+  font-size: 10px;
   font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(13, 148, 136, .45);
+  animation: st-icon-pop 320ms var(--st-ease-spring);
 }
 
-.cursor-theme-card-swatch {
+.settings-view .cursor-theme-card-swatch {
   width: 100%;
-  height: 24px;
+  height: 22px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
+  border-radius: 6px;
+  background: var(--st-surface-2);
+  transition: border-color var(--st-t-base) var(--st-ease);
 }
 
-.cursor-preview-box {
+.settings-view .cursor-theme-card.selected .cursor-theme-card-swatch {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+/* 预览区 */
+.settings-view .cursor-preview-box {
   width: 100%;
   margin-top: 4px;
-  border: 1.5px dashed var(--border);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 12px;
-  background: var(--bg);
+  background: var(--st-surface-2);
+  transition: box-shadow var(--st-t-base) var(--st-ease), border-color var(--st-t-base) var(--st-ease);
 }
 
-.cursor-preview-hint {
-  font-size: 11px;
+.settings-view .cursor-preview-box:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.settings-view .cursor-preview-hint {
+  font-size: 11.5px;
   color: var(--text-muted);
   margin-bottom: 10px;
 }
 
-.cursor-preview-cells {
+.settings-view .cursor-preview-cells {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
-.cursor-preview-cell {
+.settings-view .cursor-preview-cell {
   flex: 1;
   min-width: 84px;
-  height: 64px;
+  height: 60px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -179,16 +637,93 @@
   background: var(--surface);
   color: var(--text-secondary);
   font-size: 12px;
+  transition: border-color var(--st-t-base) var(--st-ease),
+              background-color var(--st-t-base) var(--st-ease),
+              transform var(--st-t-fast) var(--st-ease);
 }
 
-.cursor-preview-cell-label {
+.settings-view .cursor-preview-cell:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: var(--st-accent-soft);
+  transform: translateY(-1px);
+}
+
+.settings-view .cursor-preview-cell-label {
   pointer-events: none;
 }
 
-.settings-section {
-  background: #e3e3e3;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px;
-  margin-bottom: 16px;
+/* ── 11. 暗色主题：只换令牌值，规则与动画完全复用 ── */
+html.theme-dark .settings-view {
+  --bg: #24272d;
+  --surface: #2b2f36;
+  --surface-hover: #33373f;
+  --st-surface-2: #272b31;
+  --st-surface-3: #31353d;
+
+  --border: #383c44;
+  --border-strong: #4b505b;
+
+  --text: #ced2d9;
+  --text-secondary: #9298a2;
+  --text-muted: #71767f;
+
+  --accent: #2dd4bf;
+  --accent-fg: #062e29;
+  --st-accent-hover: #5eead4;
+  --st-accent-soft: rgba(45, 212, 191, .12);
+  --st-accent-ring: rgba(45, 212, 191, .22);
+  --st-accent-line: linear-gradient(135deg, #14b8a6 0%, #0891b2 100%);
+
+  --st-danger-soft: rgba(220, 38, 38, .16);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .30);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .26), 0 6px 20px -6px rgba(0, 0, 0, .40);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, .30), 0 12px 28px -8px rgba(0, 0, 0, .50);
+
+  /* 深色下识别色提亮，避免在深底上发闷 */
+  --st-c-notify: #2dd4bf;
+  --st-c-metrics: #22d3ee;
+  --st-c-font: #a78bfa;
+  --st-c-memory: #fb7185;
+  --st-c-ui: #fbbf24;
+}
+
+html.theme-dark .settings-view .st-desc code {
+  color: #cbd5e1;
+}
+
+html.theme-dark .settings-view .launch-mode-btn {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text-secondary);
+}
+
+html.theme-dark .settings-view .launch-mode-btn.active {
+  background: var(--st-accent-line);
+  border-color: transparent;
+  color: var(--accent-fg);
+}
+
+html.theme-dark .settings-view .cursor-theme-card.selected {
+  background: var(--st-accent-soft);
+  color: var(--text);
+}
+
+html.theme-dark .settings-view .st-range::-webkit-slider-thumb {
+  border-color: var(--surface);
+}
+
+/* ── 12. 无障碍：尊重系统"减弱动态效果" ──
+   入场动画都用 backwards（不保持终态），时长归零后元素直接呈现最终状态，
+   不会残留透明或位移。 */
+@media (prefers-reduced-motion: reduce) {
+  .settings-view,
+  .settings-view *,
+  .settings-view *::before,
+  .settings-view *::after {
+    animation-duration: .01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
 }

@@ -15,10 +15,10 @@
 // 组件体内把域对象二次解构为局部名，使下方 JSX 与拆分前的写法逐字一致。
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Bot, Bug, Database, Copy, Check, ImageDown, FileDown, Wrench } from 'lucide-react'
+import { Bot, Database, Copy, Check, ImageDown, FileDown, Wrench } from 'lucide-react'
 import html2canvas from 'html2canvas'
 import {
-  ActivityIcon, BookOpenIcon, BrainIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon,
+  BookOpenIcon, BrainIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon,
   CodeIcon, EllipsisVerticalIcon, GitBranchIcon, GlobeIcon, LoaderIcon, MessageSquareIcon, PencilIcon,
   QuoteIcon, RouteIcon, SendIcon, SlidersHorizontalIcon, SparklesIcon, Trash2Icon,
   UserIcon, CopyIcon, XIcon,
@@ -26,14 +26,12 @@ import {
 import { notify } from '../../../store/notificationStore'
 import { useStore } from '../../../store/useStore'
 import { useMemoryPendingStore } from '../../../store/memoryPendingStore'
-import { clearAudit } from '../../../utils/auditLog'
-import { clearDebug } from '../../../utils/debugLog'
 import { KEEP_RECENT_TURNS } from '../utils/constants'
 import { buildSessionPdfHtml } from '../utils/exportSessionPdf'
 import { useAgentMessageHeights } from '../hooks/useAgentMessageHeights'
 import { useAgentVirtualMessages } from '../hooks/useAgentVirtualMessages'
 import { AgentPrefillBar, HistorySummaryBubble, TopbarBtn, UserMessageEntry, AgentMessageRow } from '../agent-message'
-import { AuditPanel, DebugPanel, MemoryPanel } from '../agent-panels'
+import { MemoryPanel } from '../agent-panels'
 import AgentContextPanel from '../../AgentContextPanel'
 import AgentMessageSearch from '../../AgentMessageSearch'
 import { AgentTrajectoryPanel } from '../../AgentTrajectoryPanel'
@@ -144,11 +142,11 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     followUpQueueRef, piReadyRef, prevQueueRef,
   } = run
   const {
-    approveWriteEditDraft, auditBtnRef, auditOpen, condenseBtnRef, contextModalOpen,
-    cumTokens, debugBtnRef, debugOpen, editDraft, editingMsgId, kbBtnRef, kbCopiedId,
+    approveWriteEditDraft, condenseBtnRef, contextModalOpen,
+    cumTokens, editDraft, editingMsgId, kbBtnRef, kbCopiedId,
     kbModalOpen, knowledgeBases, memoryBtnRef, memoryDraft, memoryOpen, promptBtnRef,
     promptDraft, promptModalOpen, reqCount, rightPanelMode, setApproveWriteEditDraft,
-    setAuditOpen, setContextModalOpen, setDebugOpen, setEditDraft, setEditingMsgId,
+    setContextModalOpen, setEditDraft, setEditingMsgId,
     setKbCopiedId, setMemoryDraft, setMemoryOpen, setPromptDraft, setPromptModalOpen,
     setRightPanelMode, setRightPanelModeAndOpen, setSidebarOpen, setTrajOpen, setTreeOpen, sidebarOpen,
     openPanels, closePanel, closeOtherPanels, closePanelsRight, closeAllPanels,
@@ -321,9 +319,8 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     }
   }, [])
 
-  // 长期记忆「清空」：放在卡片头部，与审计 / 调试卡片的清空按钮同位（此前只有记忆卡
-  // 没有这个入口）。条目列表由 MemoryPanel 自己持有，清空后靠 key 重挂触发重新拉取 ——
-  // 比为此往上引一条刷新回调穿透 props 更简单。
+  // 长期记忆「清空」：放在卡片头部。条目列表由 MemoryPanel 自己持有，
+  // 清空后靠 key 重挂触发重新拉取 —— 比为此往上引一条刷新回调穿透 props 更简单。
   const [memoryReloadKey, setMemoryReloadKey] = useState(0)
   const clearPendingMemory = useMemoryPendingStore(s => s.clearForDir)
   const handleClearMemory = useCallback(async () => {
@@ -510,7 +507,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
           >
             <AgentPrefillBar />
             {/* ── 顶栏按钮按当前工作区模式动态显示（不需要的直接不渲染，不置灰）──
-                编码模式专属：压缩历史 / 审计 / 轨迹 / 调试 / 记忆
+                编码模式专属：压缩历史 / 轨迹 / 记忆
                 通用模式专属：导出图片 / 导出 PDF / 工具开关
                 两种模式都有：提示词 / 知识库
                 （变更 / 浏览器 / 终端与文件树在右缘「»」按钮的四视图菜单里；通用模式浏览器仍在顶栏） */}
@@ -526,13 +523,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
             <TopbarBtn btnRef={promptBtnRef} active={promptModalOpen} onClick={openPromptModal} icon={SlidersHorizontalIcon}>提示词</TopbarBtn>
             <TopbarBtn btnRef={kbBtnRef} active={kbModalOpen} onClick={openKbModal} icon={Database} title="知识库列表（智能体可检索全部库）">知识库</TopbarBtn>
             {!plainChat && (
-              <TopbarBtn btnRef={auditBtnRef} active={auditOpen} onClick={() => setAuditOpen(v => !v)} icon={ActivityIcon}>审计</TopbarBtn>
-            )}
-            {!plainChat && (
               <TopbarBtn btnRef={trajBtnRef} active={trajOpen} onClick={() => setTrajOpen(v => !v)} icon={RouteIcon}>轨迹</TopbarBtn>
-            )}
-            {!plainChat && (
-              <TopbarBtn btnRef={debugBtnRef} active={debugOpen} onClick={() => setDebugOpen(v => !v)} icon={Bug}>调试</TopbarBtn>
             )}
             {!plainChat && (
               <TopbarBtn
@@ -819,18 +810,6 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               </div>
             </div>
           )}
-          {/* 操作审计卡片（浮动在聊天区右上角）*/}
-          {auditOpen && (
-            <div className="agent-task-card agent-card-audit">
-              <div className="agent-task-card-header">
-                <span>操作审计日志</span>
-                <button className="agent-audit-clear" onClick={() => clearAudit()}><Trash2Icon size={12} /> 清空</button>
-              </div>
-              <div className="agent-task-card-body agent-card-audit-body">
-                <AuditPanel />
-              </div>
-            </div>
-          )}
           {/* 轨迹台账卡片（浮动在聊天区右上角）：pi 会话事件流落盘的只读视图 */}
           {trajOpen && (
             <div className="agent-task-card agent-card-traj">
@@ -842,24 +821,12 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               </div>
             </div>
           )}
-          {/* 调试卡片（浮动在聊天区右上角）*/}
-          {debugOpen && (
-            <div className="agent-task-card agent-card-debug">
-              <div className="agent-task-card-header">
-                <span>调试（逐轮）· 跨会话·最新在前</span>
-                <button className="agent-audit-clear" onClick={() => clearDebug()}><Trash2Icon size={12} /> 清空</button>
-              </div>
-              <div className="agent-task-card-body agent-card-debug-body">
-                <DebugPanel />
-              </div>
-            </div>
-          )}
           {/* 长期记忆卡片（浮动在聊天区右上角）：查看 / 归档智能体自动沉淀的跨会话记忆 */}
           {memoryOpen && (
             <div className="agent-task-card agent-card-memstore">
               <div className="agent-task-card-header">
                 <span>长期记忆 · {activeProject.title}</span>
-                <button className="agent-audit-clear" onClick={handleClearMemory}><Trash2Icon size={12} /> 清空</button>
+                <button className="agent-card-clear" onClick={handleClearMemory}><Trash2Icon size={12} /> 清空</button>
               </div>
               <div className="agent-task-card-body agent-card-memstore-body">
                 <MemoryPanel key={memoryReloadKey} dir={activeProject.workspaceDir} />

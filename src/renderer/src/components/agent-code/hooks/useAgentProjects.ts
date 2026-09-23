@@ -8,11 +8,12 @@
 //   · 编码模式 = 真实项目（有 workspaceDir），下挂编码会话；
 //   · 通用模式 = 唯一一条「伪项目」（CHAT_WORKSPACE_ID，workspaceDir 恒为空），
 //     下挂普通聊天会话。这样复用既有的 project → sessions 结构，不必另起平行数据结构。
-// 因此「切模式」= 切当前模式的可见列表 + 恢复该模式上次的活动指针，
-// **完全不触碰任何会话对象**，通用聊天不会因为切到编码模式就变成编码上下文。
+// 因此「切模式」= 切当前模式的可见列表 + 把会话指针重置到该模式的空白会话
+// （详见下方 switchMode 的注释：切模式回到该模式的初始界面，不自动进入上次的会话），
+// **不改变任何会话对象**，通用聊天不会因为切到编码模式就变成编码上下文。
 //
 // 每模式独立维护的指针：activeIds = { code: {pid,sid}, chat: {pid,sid} }。
-// 切模式只切指针；切回来自然恢复上次选中的工作区与会话。
+// 切模式重置会话指针、保留工作区指针（编码模式有多个项目时不会被重置）。
 //
 // 自持：projects（全量，含两种模式）、mode、activeIds、projectWrapRefs。
 // 外部输入：仅 storedProjects（zustand 里持久化的列表，作为初始值）。
@@ -107,20 +108,36 @@ export function useAgentProjects({ storedProjects }: {
     setActiveIds(prev => ({ ...prev, [m]: { ...prev[m], sid: v } }))
   }, [])
 
-  /** 切换工作区模式：只切可见列表与指针，不改任何会话。
-      若目标模式的活动指针已失效（工作区/会话被删过），在这里顺手纠正到该模式的第一个。 */
+  /** 切换工作区模式。
+      ── 行为约定 ──
+      切模式 = 回到该模式的「初始界面」（欢迎页），**不自动进入上次的会话**。
+      上次的会话仍然留在侧栏里，用户主动点它才进去（见 AgentSessionSidebar 里的
+      setActiveSessionId 调用点）。
+
+      实现方式：把当前指针落到目标工作区里一条**空白会话**上；没有空白会话就新建一条。
+      空白会话 ⇒ activeSession.messages 为空 ⇒ 布局侧 chatEmpty 为真 ⇒ 渲染欢迎页。
+      复用已有的空白会话（而不是每次新建），避免来回切模式堆出一串「新聊天」。
+
+      工作区本身仍沿用该模式上次活动的那个（编码模式有多个项目时不会被重置），
+      只重置会话指针。指针同时也就完成了「悬空纠正」—— 写进去的 pid/sid 必然存在。 */
   const switchMode = useCallback((next: AgentMode) => {
+    // 已经是该模式：什么都不做。
+    // 否则点一下「当前模式」那个按钮，就会把用户正在看的会话顶掉、跳去空白新会话。
+    // （想在同一模式里开新会话，请用侧栏的「新建聊天 / 新建会话」。）
+    if (next === modeRef.current) return
     setMode(next)
-    setActiveIds(prev => {
-      const list = projects.filter(p => projectMode(p) === next)
-      const cur = prev[next]
-      const proj = list.find(p => p.id === cur.pid) ?? list[0]
-      if (!proj) return prev
-      const sid = proj.sessions.some(s => s.id === cur.sid) ? cur.sid : (proj.sessions[0]?.id ?? '')
-      if (proj.id === cur.pid && sid === cur.sid) return prev
-      return { ...prev, [next]: { pid: proj.id, sid } }
-    })
-  }, [projects])
+    const list = projects.filter(p => projectMode(p) === next)
+    const proj = list.find(p => p.id === activeIds[next].pid) ?? list[0]
+    if (!proj) return
+    const blank = proj.sessions.find(s => s.messages.length === 0)
+    if (blank) {
+      setActiveIds(prev => ({ ...prev, [next]: { pid: proj.id, sid: blank.id } }))
+      return
+    }
+    const sess = newSession(next)
+    setProjects(prev => prev.map(p => p.id === proj.id ? { ...p, sessions: [...p.sessions, sess] } : p))
+    setActiveIds(prev => ({ ...prev, [next]: { pid: proj.id, sid: sess.id } }))
+  }, [projects, activeIds])
 
   const updateProject = useCallback((id: string, upd: Partial<AgentProject>) => {
     setProjects(prev => prev.map(p => p.id === id ? { ...p, ...upd } : p))

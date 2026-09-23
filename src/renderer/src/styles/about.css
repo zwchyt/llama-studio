@@ -1,79 +1,515 @@
+/* ══════════════════════════════════════════════════════════════
+   「关于」页专属样式（AboutView）
+   ──────────────────────────────────────────────────────────────
+   作用域：全部规则挂在 .about-container 下（该类由 AboutView 根节点携带），
+   对其它页面零影响 —— 改这个文件不会影响任何其它页面。
+
+   设计语言与 engines.css / model-folders.css / settings.css 完全一致
+   （同一套令牌与动效曲线），四个页面观感统一：
+     · 白卡片 + 双层阴影做层次，页面画布保持中性
+     · 主色青绿；分区用识别色（只出现在图标渐变与卡片顶部色带上）
+     · 语义色（成功/警告/危险）与分区识别色写死，不随主题色温变调
+     · 动画只作用于 opacity / transform / box-shadow / 颜色，不触发重排；
+       入场动画一律 animation-fill-mode: backwards（不保持终态），
+       否则动画结束后会盖住 hover 的 transform
+
+   本页没有任何功能改动，只有外观与交互反馈。
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── 1. 设计令牌 ── */
 .about-container {
   color: var(--text);
+
+  /* 底色层 */
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --surface-hover: #f7f9fc;
+  --ab-surface-2: #f4f6f9;
+  --ab-surface-3: #eef1f5;
+
+  /* 描边 */
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+
+  /* 文字 */
+  --text: #0f172a;
+  --text-secondary: #55637a;
+  --text-muted: #8a97a8;
+
+  /* 主色：青绿 */
+  --accent: #0d9488;
+  --accent-fg: #ffffff;
+  --ab-accent-hover: #0f766e;
+  --ab-accent-soft: #e6f7f5;
+  --ab-accent-ring: rgba(13, 148, 136, .16);
+  --ab-accent-line: linear-gradient(135deg, #14b8a6 0%, #0891b2 100%);
+
+  /* 语义色（写死，不随主题色温变调） */
+  --success: #059669;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --ab-success-soft: #e7f8f1;
+  --ab-warning-soft: #fdf3e3;
+
+  /* 圆角 / 阴影 / 动效 */
+  --radius: 16px;
+  --radius-sm: 10px;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, .05);
+  --shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 6px 20px -6px rgba(15, 23, 42, .10);
+  --shadow-md: 0 2px 4px rgba(15, 23, 42, .05), 0 12px 28px -8px rgba(15, 23, 42, .14);
+  --transition: 220ms cubic-bezier(.4, 0, .2, 1);
+  --ab-ease: cubic-bezier(.4, 0, .2, 1);
+  --ab-ease-out: cubic-bezier(.16, 1, .3, 1);
+  --ab-ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --ab-t-fast: 120ms;
+  --ab-t-base: 220ms;
+  --ab-t-slow: 420ms;
+
+  /* 分区识别色：只用于图标渐变与卡片顶部色带 */
+  --ab-c-version: #0d9488; /* 版本 */
+  --ab-c-thanks: #e11d48;  /* 鸣谢 */
+  --ab-c-dev: #0891b2;     /* 关于开发者 */
+  --ab-c-fork: #7c3aed;    /* 本分支 */
+  --ab-c-terms: #d97706;   /* 使用条款 */
+  --ab-c-privacy: #2563eb; /* 隐私政策 */
 }
 
-.about-container>.page-header {
+.about-container .ab-accent--version { --ab-eng: var(--ab-c-version); }
+.about-container .ab-accent--thanks  { --ab-eng: var(--ab-c-thanks); }
+.about-container .ab-accent--dev     { --ab-eng: var(--ab-c-dev); }
+.about-container .ab-accent--fork    { --ab-eng: var(--ab-c-fork); }
+.about-container .ab-accent--terms   { --ab-eng: var(--ab-c-terms); }
+.about-container .ab-accent--privacy { --ab-eng: var(--ab-c-privacy); }
+
+/* ── 2. 关键帧（统一 ab- 前缀） ── */
+@keyframes ab-card-in {
+  from { opacity: 0; transform: translateY(16px) scale(.985); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes ab-icon-pop {
+  from { opacity: 0; transform: scale(.72) rotate(-10deg); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes ab-ribbon-in {
+  from { opacity: 0; transform: translateX(-24px); }
+  to   { opacity: .85; transform: none; }
+}
+@keyframes ab-bar-drop {
+  from { opacity: 0; transform: scaleY(0); }
+  to   { opacity: 1; transform: scaleY(1); }
+}
+@keyframes ab-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes ab-dot-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(217, 119, 6, .45); }
+  70%  { box-shadow: 0 0 0 6px rgba(217, 119, 6, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0); }
+}
+
+/* ── 3. 页面标题区（标题是 logo 图片） ── */
+.about-container > .page-header {
   margin-bottom: 32px;
 }
 
-.about-section-title {
-  font-size: 16px;
+.about-container .page-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+}
+
+/* 标题左侧渐变竖条：入场时从上落下，hover 时再长高一点 */
+.about-container .page-title::before {
+  content: '';
+  width: 4px;
+  height: 30px;
+  border-radius: 2px;
+  background: var(--ab-accent-line);
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, .10);
+  transform-origin: top center;
+  transition: height var(--ab-t-slow) var(--ab-ease-out), box-shadow var(--ab-t-slow) var(--ab-ease);
+  animation: ab-bar-drop 520ms var(--ab-ease-out) 60ms backwards;
+}
+
+.about-container .page-title:hover::before {
+  height: 36px;
+  box-shadow: 0 0 0 5px rgba(13, 148, 136, .13);
+}
+
+.about-container .about-logo {
+  display: block;
+  height: 34px;
+  image-rendering: crisp-edges;
+  transition: transform 320ms var(--ab-ease-spring);
+  animation: ab-fade-up 520ms var(--ab-ease-out) 120ms backwards;
+}
+
+.about-container .page-title:hover .about-logo {
+  transform: translateY(-1px) scale(1.02);
+}
+
+.about-container .page-subtitle {
+  margin-left: 16px;
+  animation: ab-fade-up 520ms var(--ab-ease-out) 200ms backwards;
+}
+
+/* ── 4. 分区与标题 ── */
+.about-container .about-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.about-container .about-section {
+  position: relative;
+  animation: ab-card-in 560ms var(--ab-ease-out) backwards;
+}
+
+.about-container .about-hero {
+  margin-bottom: 28px;
+}
+
+/* 逐块错开入场 */
+.about-container .about-stack > .about-section:nth-child(1) { animation-delay: 60ms; }
+.about-container .about-stack > .about-section:nth-child(2) { animation-delay: 130ms; }
+.about-container .about-stack > .about-section:nth-child(3) { animation-delay: 200ms; }
+.about-container .about-grid > .about-section:nth-child(1) { animation-delay: 270ms; }
+.about-container .about-grid > .about-section:nth-child(2) { animation-delay: 340ms; }
+
+.about-container .about-section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -.2px;
   margin-bottom: 12px;
 }
 
-.about-card {
-  background: #e3e3e3;
+/* 标题图标：渐变圆角方块（直接给 SVG 加内边距与背景，不额外包元素）
+   全局 * { box-sizing: border-box }，所以 26px 含 padding，内容区 15px。 */
+.about-container .about-section-title > svg {
+  display: block;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  padding: 5.5px;
+  border-radius: 8px;
+  background-image: linear-gradient(135deg, var(--ab-eng, var(--accent)), color-mix(in srgb, var(--ab-eng, var(--accent)) 62%, #0f172a));
+  color: #fff;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--ab-eng, var(--accent)) 30%, transparent);
+  transition: transform 320ms var(--ab-ease-spring), box-shadow var(--ab-t-base) var(--ab-ease);
+  animation: ab-icon-pop 520ms var(--ab-ease-spring) 110ms backwards;
+}
+
+.about-container .about-section:hover .about-section-title > svg {
+  transform: scale(1.08) rotate(-3deg);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--ab-eng, var(--accent)) 42%, transparent);
+}
+
+/* ── 5. 卡片 ── */
+.about-container .about-card {
+  position: relative;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 20px;
+  box-shadow: var(--shadow);
+  transition: box-shadow var(--ab-t-slow) var(--ab-ease),
+              transform var(--ab-t-slow) var(--ab-ease),
+              border-color var(--ab-t-base) var(--ab-ease);
 }
 
-.about-card-version {
+.about-container .about-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+}
+
+/* 卡片顶部色带：入场时从左侧探出；hover 时向右铺满整张卡片 */
+.about-container .about-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 20px;
+  width: 96px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: linear-gradient(90deg, var(--ab-eng, var(--accent)), transparent);
+  opacity: .85;
+  transition: width 480ms var(--ab-ease-out), opacity var(--ab-t-base) var(--ab-ease);
+  animation: ab-ribbon-in 620ms var(--ab-ease-out) 160ms backwards;
+}
+
+.about-container .about-card:hover::before {
+  width: calc(100% - 40px);
+  opacity: 1;
+}
+
+.about-container .about-card p {
+  margin-bottom: 16px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.about-container .about-card p strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ── 6. 版本卡（hero） ── */
+.about-container .about-card-version {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px 20px;
+  padding: 18px 20px;
+  /* 极淡的主色底：与其余卡片区分，作为页面开头的"抬头" */
+  background: linear-gradient(120deg, rgba(13, 148, 136, .05), rgba(13, 148, 136, .012) 46%, transparent), var(--surface);
+  border-color: rgba(13, 148, 136, .22);
 }
 
-.about-card p {
-  margin-bottom: 16px;
-  line-height: 1.6;
+.about-container .about-card-version:hover {
+  border-color: rgba(13, 148, 136, .34);
 }
 
-.about-card-actions {
+.about-container .about-version-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.about-container .about-version-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.about-container .about-version-status::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+/* 有新版本：琥珀软底 + 脉冲圆点，全页唯一的"主动提示" */
+.about-container .about-version-status.available {
+  background: var(--ab-warning-soft);
+  border-color: rgba(217, 119, 6, .28);
+  color: #b45309;
+}
+
+.about-container .about-version-status.available::before {
+  background: var(--warning);
+  animation: ab-dot-pulse 2.4s var(--ab-ease) infinite;
+}
+
+/* 已是最新：成功软底 + 静态圆点 */
+.about-container .about-version-status.latest {
+  background: var(--ab-success-soft);
+  border-color: rgba(5, 150, 105, .26);
+  color: #047857;
+}
+
+.about-container .about-version-status.latest::before {
+  background: var(--success);
+}
+
+/* 检查更新按钮 */
+.about-container .about-check-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 6px 13px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1.5px solid var(--border-strong);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--ab-t-base) var(--ab-ease),
+              background-color var(--ab-t-base) var(--ab-ease),
+              color var(--ab-t-base) var(--ab-ease),
+              box-shadow var(--ab-t-base) var(--ab-ease),
+              transform var(--ab-t-fast) var(--ab-ease);
+}
+
+.about-container .about-check-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  background: var(--ab-accent-soft);
+  color: var(--ab-accent-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow);
+}
+
+.about-container .about-check-btn:active:not(:disabled) {
+  transform: translateY(0) scale(.975);
+}
+
+.about-container .about-check-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ab-accent-ring);
+}
+
+.about-container .about-check-btn svg {
+  transition: transform 320ms var(--ab-ease-spring);
+}
+
+.about-container .about-check-btn:hover:not(:disabled) svg {
+  transform: rotate(180deg);
+}
+
+.about-container .about-check-btn .spin {
+  animation: spin 1s linear infinite;
+}
+
+/* ── 7. 链接（原 .btn-ghost）：改成带描边的胶囊，hover 染分区色 ── */
+.about-container .about-card-actions {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
 }
 
-.about-card-actions.gap-16 {
+.about-container .about-card-actions.gap-16 {
   gap: 16px;
 }
 
-.about-grid {
+.about-container .about-card-actions .btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 99px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-weight: 600;
+  transition: border-color var(--ab-t-base) var(--ab-ease),
+              background-color var(--ab-t-base) var(--ab-ease),
+              color var(--ab-t-base) var(--ab-ease),
+              box-shadow var(--ab-t-base) var(--ab-ease),
+              transform var(--ab-t-fast) var(--ab-ease);
+}
+
+.about-container .about-card-actions .btn-ghost:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ab-eng, var(--accent)) 55%, var(--border));
+  background: color-mix(in srgb, var(--ab-eng, var(--accent)) 8%, var(--surface));
+  color: color-mix(in srgb, var(--ab-eng, var(--accent)) 82%, var(--text));
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.about-container .about-card-actions .btn-ghost:active:not(:disabled) {
+  transform: translateY(0) scale(.975);
+}
+
+.about-container .about-card-actions .btn-ghost:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ab-eng, var(--accent)) 22%, transparent);
+}
+
+.about-container .about-card-actions .btn-ghost svg {
+  transition: transform 320ms var(--ab-ease-spring);
+}
+
+/* 外链图标：hover 时向右上"跳出去"，呼应"打开外部链接" */
+.about-container .about-card-actions .btn-ghost:hover:not(:disabled) svg {
+  transform: translate(2px, -2px);
+}
+
+/* ── 8. 两列条款卡 ── */
+.about-container .about-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 24px;
+  gap: 20px;
 }
 
-.about-version-label {
-  font-size: 13px;
-  color: var(--text-secondary);
-  margin-bottom: 4px;
-}
-
-.about-version-status {
-  font-size: 12px;
-}
-
-.about-version-status.available {
-  color: var(--accent);
-}
-
-.about-version-status.latest {
-  color: var(--text-secondary);
-}
-
-.about-card.tall {
+.about-container .about-card.tall {
   height: 100%;
   font-size: 13px;
   color: var(--text-secondary);
 }
 
-.about-card.tall p {
+.about-container .about-card.tall p {
   margin-bottom: 0;
+}
+
+/* ── 9. 暗色主题：只换令牌值，规则与动画完全复用 ── */
+html.theme-dark .about-container {
+  --bg: #24272d;
+  --surface: #2b2f36;
+  --surface-hover: #33373f;
+  --ab-surface-2: #272b31;
+  --ab-surface-3: #31353d;
+
+  --border: #383c44;
+  --border-strong: #4b505b;
+
+  --text: #ced2d9;
+  --text-secondary: #9298a2;
+  --text-muted: #71767f;
+
+  --accent: #2dd4bf;
+  --accent-fg: #062e29;
+  --ab-accent-hover: #5eead4;
+  --ab-accent-soft: rgba(45, 212, 191, .12);
+  --ab-accent-ring: rgba(45, 212, 191, .22);
+  --ab-accent-line: linear-gradient(135deg, #14b8a6 0%, #0891b2 100%);
+
+  --ab-success-soft: rgba(5, 150, 105, .16);
+  --ab-warning-soft: rgba(217, 119, 6, .16);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .30);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .26), 0 6px 20px -6px rgba(0, 0, 0, .40);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, .30), 0 12px 28px -8px rgba(0, 0, 0, .50);
+
+  /* 深色下识别色提亮，避免在深底上发闷 */
+  --ab-c-version: #2dd4bf;
+  --ab-c-thanks: #fb7185;
+  --ab-c-dev: #22d3ee;
+  --ab-c-fork: #a78bfa;
+  --ab-c-terms: #fbbf24;
+  --ab-c-privacy: #60a5fa;
+}
+
+/* 深色下版本卡的浅底改用主色微光，避免出现浅色块 */
+html.theme-dark .about-container .about-card-version {
+  background: linear-gradient(120deg, rgba(45, 212, 191, .08), rgba(45, 212, 191, .02) 46%, transparent), var(--surface);
+  border-color: rgba(45, 212, 191, .24);
+}
+
+html.theme-dark .about-container .about-version-status.available {
+  color: #fcd34d;
+}
+
+html.theme-dark .about-container .about-version-status.latest {
+  color: #6ee7b7;
+}
+
+html.theme-dark .about-container .about-card-actions .btn-ghost {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+/* ── 10. 无障碍：尊重系统"减弱动态效果" ──
+   入场动画都用 backwards（不保持终态），时长归零后元素直接呈现最终状态，
+   不会残留透明或位移。 */
+@media (prefers-reduced-motion: reduce) {
+  .about-container,
+  .about-container *,
+  .about-container *::before,
+  .about-container *::after {
+    animation-duration: .01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
 }

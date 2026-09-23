@@ -7,6 +7,8 @@ import { dataUrlToBlobUrl } from '../utils/audioUrl'
 import { agentConfig, setAgentConfigOverride } from '../utils/agentConfig'
 
 import FontSelector from './FontSelector'
+// 音色下拉改用项目统一的自定义下拉组件（不再用原生 <select>，避免系统原生弹层样式）
+import CustomSelect from './CustomSelect'
 import { CURSOR_SCHEMES, getCursorSchemeId, applyCursorScheme, CURSOR_STORAGE_KEY, schemeCursorValue, type CursorRole } from '../cursor-theme'
 import '../styles/settings.css'
 
@@ -110,7 +112,7 @@ export default function SettingsView() {
   }
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl settings-view">
       <div className="page-header">
         <div>
           <h1 className="page-title">设置</h1>
@@ -118,13 +120,13 @@ export default function SettingsView() {
         </div>
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section st-accent--notify">
         <div className="settings-section-title"><Bell /> 更新通知</div>
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="st-block">
+          <p className="st-desc">
             选择您希望如何获知 llama.cpp 新版本的通知方式。
           </p>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="st-seg">
             <button
               className={`launch-mode-btn ${notifPref === 'banner' ? 'active' : ''}`}
               onClick={() => handleNotifPref('banner')}
@@ -141,21 +143,21 @@ export default function SettingsView() {
             </button>
           </div>
           {notifPref === 'manual' && (
-            <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            <p className="st-note">
               更新横幅将不会自动显示。可随时在「后端与引擎」页使用"立即检查"。
             </p>
           )}
         </div>
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section st-accent--metrics">
         <div className="settings-section-title"><Activity /> 模型监控轮询</div>
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="st-block">
+          <p className="st-desc">
             每 2 秒向 llama-server 请求 <code>/slots</code> 与 <code>/metrics</code> 接口，获取实时 slot 状态（上下文用量、解码进度等）及 tok/s、KV 缓存占用等监控数据。
             关闭后停止轮询，监控面板将不再刷新。
           </p>
-          <label className="toggle" style={{ marginTop: 4 }}>
+          <label className="toggle st-toggle">
             <input type="checkbox" checked={metricsPolling} onChange={async (e) => { const v = e.target.checked; try { await window.api.setMetricsPolling(v); setMetricsPolling(v) } catch { setMetricsPolling(!v) } }} />
             <span className="toggle-track"></span>
             <span className="toggle-thumb"></span>
@@ -163,36 +165,35 @@ export default function SettingsView() {
         </div>
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section st-accent--font">
         <div className="settings-section-title"><Type /> 字体</div>
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="st-block">
+          <p className="st-desc">
             选择全局字体预设，即时生效并自动保存。均为系统自带字体，无需下载。
           </p>
           <FontSelector />
         </div>
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section st-accent--memory">
         <div className="settings-section-title"><Brain /> Agent 长期记忆</div>
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="st-block">
+          <p className="st-desc">
             智能体在会话中沉淀的结论（用户纠正与偏好、已验证命令、改动热点、决策记录等）
             会按工作区跨会话累积，并在新建会话时注入系统提示词。
           </p>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+          <p className="st-desc">
             沉淀规则是机械的（正则命中与计数阈值），误报不少，所以默认选「写入前确认」：
             候选先进待确认队列，在顶栏「记忆」面板里逐条采纳或忽略，不确认就不落库。
           </p>
-          <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap' }}>
+          <div className="st-seg st-seg--fill">
             {([['off', '关闭'], ['confirm', '写入前确认（推荐）'], ['auto', '自动写入']] as const).map(([id, label]) => {
               const selected = memMode === id
               return (
                 <button
                   key={id}
                   type="button"
-                  className={`launch-mode-btn${selected ? ' active' : ''}`}
-                  style={{ flex: '1 1 auto', minWidth: 0, padding: '5px 8px', fontSize: 12, lineHeight: 1.3, textAlign: 'center' }}
+                  className={`launch-mode-btn st-seg-btn${selected ? ' active' : ''}`}
                   onClick={() => {
                     setMemMode(id)
                     // 两项配置合成一个控件：off 只动总开关，auto/confirm 打开总开关并设置写入方式。
@@ -212,19 +213,19 @@ export default function SettingsView() {
               )
             })}
           </div>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+          <p className="st-note">
             关闭后停止沉淀与注入；已有条目和待确认队列都保留，可在「记忆」面板查看、归档、删除或清空。
           </p>
         </div>
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section st-accent--ui">
         <div className="settings-section-title"><Volume2 /> 界面</div>
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="st-block">
+          <p className="st-desc">
             开启：助手回复完成时播放提示音。关闭：不播放提示音。
           </p>
-          <label className="toggle" style={{ marginTop: 4 }}>
+          <label className="toggle st-toggle">
             <input
               type="checkbox"
               checked={soundEnabled}
@@ -234,19 +235,18 @@ export default function SettingsView() {
             <span className="toggle-thumb"></span>
           </label>
         </div>
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
-          <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="st-block">
+          <p className="st-desc st-desc--sm">
             选择助手回复完成时的提示音类型。点击会自动预览。
           </p>
-          <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap' }}>
+          <div className="st-seg st-seg--fill">
             {SOUND_OPTIONS.map(opt => {
               const selected = notificationSound === opt.id
               return (
                 <button
                   key={opt.id}
                   type="button"
-                  className={`launch-mode-btn${selected ? ' active' : ''}`}
-                  style={{ flex: '1 1 auto', minWidth: 0, padding: '5px 8px', fontSize: 12, lineHeight: 1.3, textAlign: 'center' }}
+                  className={`launch-mode-btn st-seg-btn${selected ? ' active' : ''}`}
                   onClick={() => { setNotificationSound(opt.id); previewSound(opt.id) }}
                   title={opt.description}
                 >
@@ -259,18 +259,17 @@ export default function SettingsView() {
         </div>
 
         {/* ── 消息朗读（TTS）── */}
-        <div className="settings-section-title" style={{ marginTop: 16 }}><Volume2 /> 消息朗读</div>
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-          <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="settings-section-title st-subtitle" style={{ marginTop: 16 }}><Volume2 /> 消息朗读</div>
+        <div className="st-block">
+          <p className="st-desc st-desc--sm">
             消息上的朗读按钮用哪种声音。Edge 是微软的在线神经网络音色，比系统自带的自然很多（约 1.5 秒出音）；断网或接口异常时自动回退到系统语音。
           </p>
-          <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap' }}>
+          <div className="st-seg st-seg--fill">
             {([['edge', 'Edge 在线语音（推荐）'], ['system', '系统内置语音']] as const).map(([id, label]) => (
               <button
                 key={id}
                 type="button"
-                className={`launch-mode-btn${ttsEngine === id ? ' active' : ''}`}
-                style={{ flex: '1 1 auto', minWidth: 0, padding: '5px 8px', fontSize: 12, lineHeight: 1.3, textAlign: 'center' }}
+                className={`launch-mode-btn st-seg-btn${ttsEngine === id ? ' active' : ''}`}
                 onClick={() => setTtsEngine(id)}
               >
                 {ttsEngine === id && <Check size={12} style={{ marginRight: 4, verticalAlign: 'middle' }} />}
@@ -281,41 +280,43 @@ export default function SettingsView() {
         </div>
 
         {ttsEngine === 'edge' && (
-          <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
-            <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+          <div className="st-block">
+            <p className="st-desc st-desc--sm">
               音色（{edgeVoices.length > 0 ? `${edgeVoices.length} 个中文音色` : '加载中…'}）
             </p>
-            <div style={{ display: 'flex', gap: 8, width: '100%', alignItems: 'center', flexWrap: 'wrap' }}>
-              <select
+            <div className="st-row-inline">
+              <CustomSelect
+                className="st-select-wrap"
+                buttonClass="st-select-btn"
+                panelClass="st-select-panel"
+                itemClass="st-select-item"
+                aria-label="音色"
                 value={ttsEdgeVoice}
-                onChange={(e) => setTtsEdgeVoice(e.target.value)}
-                style={{ flex: '1 1 220px', minWidth: 0, padding: '6px 8px', fontSize: 12, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
-              >
-                {/* 列表还没拉回来时也把当前值渲染出来，避免下拉显示空白 */}
-                {(edgeVoices.length > 0
+                onChange={setTtsEdgeVoice}
+                options={(edgeVoices.length > 0
                   ? edgeVoices
                   : [{ name: ttsEdgeVoice, label: ttsEdgeVoice.split('-')[2]?.replace(/Neural$/, '') || ttsEdgeVoice, gender: '', locale: '' }]
-                ).map(v => (
-                  <option key={v.name} value={v.name}>{v.label}{v.gender ? `（${v.gender}）` : ''} · {v.locale}</option>
-                ))}
-              </select>
+                ).map(v => ({
+                  value: v.name,
+                  label: `${v.label}${v.gender ? `（${v.gender}）` : ''} · ${v.locale}`
+                }))}
+              />
               <button
                 type="button"
                 className="launch-mode-btn"
-                style={{ padding: '5px 10px', fontSize: 12 }}
                 onClick={previewVoice}
                 disabled={voicePreviewing}
               >
                 {voicePreviewing ? '合成中…' : '试听'}
               </button>
             </div>
-            {voiceErr && <p style={{ fontSize: 12, color: 'var(--danger, #e24b4a)', lineHeight: 1.6 }}>音色列表获取失败：{voiceErr}</p>}
-            {previewErr && <p style={{ fontSize: 12, color: 'var(--danger, #e24b4a)', lineHeight: 1.6 }}>试听失败：{previewErr}</p>}
+            {voiceErr && <p className="st-error">音色列表获取失败：{voiceErr}</p>}
+            {previewErr && <p className="st-error">试听失败：{previewErr}</p>}
           </div>
         )}
 
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
-          <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="st-block">
+          <p className="st-desc st-desc--sm">
             语速：{ttsRate.toFixed(2)}×（1.00 为原速；原来的固定值是 2.00×，偏快且放大机械感）
           </p>
           <input
@@ -325,15 +326,15 @@ export default function SettingsView() {
             step={0.05}
             value={ttsRate}
             onChange={(e) => setTtsRate(parseFloat(e.target.value))}
-            style={{ width: '100%' }}
+            className="st-range"
           />
         </div>
 
-        <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="st-block">
+          <p className="st-desc">
             开启：启动时播放开屏动画。关闭：直接进入主界面。
           </p>
-          <label className="toggle" style={{ marginTop: 4 }}>
+          <label className="toggle st-toggle">
             <input
               type="checkbox"
               checked={splashEnabled}
@@ -343,11 +344,11 @@ export default function SettingsView() {
             <span className="toggle-thumb"></span>
           </label>
         </div>
-        <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="st-block">
+          <p className="st-desc">
             开启：鼠标悬停在收起的导航栏上时自动展开。关闭：仅通过点击按钮展开。
           </p>
-          <label className="toggle" style={{ marginTop: 4 }}>
+          <label className="toggle st-toggle">
             <input
               type="checkbox"
               checked={hoverExpandEnabled}
@@ -357,11 +358,11 @@ export default function SettingsView() {
             <span className="toggle-thumb"></span>
           </label>
         </div>
-        <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="st-block">
+          <p className="st-desc">
             开启：悬停参数时显示说明提示框。关闭：不显示提示框。
           </p>
-          <label className="toggle" style={{ marginTop: 4 }}>
+          <label className="toggle st-toggle">
             <input
               type="checkbox"
               checked={paramTooltipEnabled}
@@ -371,12 +372,12 @@ export default function SettingsView() {
             <span className="toggle-thumb"></span>
           </label>
         </div>
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12, marginTop: 8 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="st-block">
+          <p className="st-desc">
             选择界面鼠标光标样式。悬停卡片可在下方预览区试用，点击应用并保存。部分样式可能只包含部分状态（如仅忙碌动画），其余状态使用系统默认光标。
           </p>
           <div
-            style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8, width: '100%' }}
+            className="st-cursor-grid"
             onMouseLeave={() => setPreviewId(null)}
           >
             {CURSOR_SCHEMES.map(s => {

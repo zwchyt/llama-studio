@@ -103,10 +103,10 @@ export default function EngineDownloadSection({ repo, engineLabel, description, 
   }
 
   return (
-    <div className="settings-section">
+    <div className={`settings-section ev-card--engine ev-eng--${myEngine}`}>
       <div className="settings-section-title"><Cpu /> {engineLabel} 引擎</div>
-      <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-        <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+      <div className="ev-body">
+        <p className="ev-desc">
           {description}
         </p>
         {checking ? (
@@ -119,16 +119,16 @@ export default function EngineDownloadSection({ repo, engineLabel, description, 
           ) : releaseInfo.noPackage ? (
             <div className="text-sm py-2" style={{ color: 'var(--text-muted)' }}>未检测到适用于当前平台的 {engineLabel} 发布包。</div>
           ) : (
-            <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12, padding: '6px 0' }}>
+            <div className="ev-release">
               <div>
-                <div className="settings-row-label">{releaseInfo.name || releaseInfo.tagName}</div>
-                <div className="settings-row-sub">
-                  发布日期：{new Date(releaseInfo.publishedAt).toLocaleDateString()}
-                  {releaseInfo.isNewer === false && <span style={{ marginLeft: 8, color: 'var(--success)' }}>✓ 已安装最新版本</span>}
+                <div className="ev-release-name">{releaseInfo.name || releaseInfo.tagName}</div>
+                <div className="ev-release-meta">
+                  <span className="ev-release-date">发布日期：{new Date(releaseInfo.publishedAt).toLocaleDateString()}</span>
+                  {releaseInfo.isNewer === false && <span className="ev-latest">✓ 已安装最新版本</span>}
                 </div>
               </div>
               {releaseInfo.isNewer !== false && releaseInfo.assets?.length > 0 && (
-                <div className="flex items-center gap-2 w-full">
+                <div className="ev-asset-row">
                   <div ref={assetDropdownRef} style={{ position: 'relative', flex: 1, minWidth: 0 }}>
                     <button
                       className="cmd-select"
@@ -187,9 +187,11 @@ export default function EngineDownloadSection({ repo, engineLabel, description, 
         ) : (
           <div className="text-sm py-2" style={{ color: 'var(--text-muted)' }}>尚未检查。点击下方按钮查询 {engineLabel} 最新发布。</div>
         )}
-        <button className="btn btn-secondary w-full justify-center" onClick={handleCheck} disabled={checking || downloading}>
-          <RefreshCw size={14} className={checking ? 'spin' : ''} /> {releaseInfo ? '重新检查' : `检查 ${engineLabel} 发布`}
-        </button>
+        <div className="ev-check-block">
+          <button className="btn btn-secondary w-full justify-center" onClick={handleCheck} disabled={checking || downloading}>
+            <RefreshCw size={14} className={checking ? 'spin' : ''} /> {releaseInfo ? '重新检查' : `检查 ${engineLabel} 发布`}
+          </button>
+        </div>
       </div>
       {extra}
     </div>

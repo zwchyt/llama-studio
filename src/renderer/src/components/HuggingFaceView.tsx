@@ -4,7 +4,8 @@ import { shallow } from 'zustand/shallow'
 import { Markdown, setHfImageBase } from '../markdown/markstream'
 import {
   Search, Download, Heart, ChevronDown, ChevronLeft,
-  FolderOpen, CheckCircle, Loader2, X, AlertCircle, Pause, Play, RotateCcw
+  FolderOpen, CheckCircle, Loader2, X, AlertCircle, Pause, Play, RotateCcw,
+  Boxes, Sparkles, Globe2, Layers
 } from 'lucide-react'
 import { formatBytes, formatSpeed } from '../utils/format'
 import { formatDownloadStatus, formatDownloadStripText, formatEta } from '../utils/downloadFormat'
@@ -285,13 +286,56 @@ export default function HuggingFaceView() {
         </button>
       </div>
       {!hubResults.length && !loading && (
-        <div className="hub-tags">
-          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>热门搜索：</span>
-          {popularQueries.map(q => (
-            <button key={q} className="hub-tag-btn" onClick={() => { setInputValue(q); doSearch(q) }}>
-              {q}
-            </button>
-          ))}
+        <div className="hub-empty">
+          <div className="hub-empty-hero">
+            <div className="hub-empty-orb">
+              <Globe2 size={40} className="hub-empty-orb-icon" />
+            </div>
+            <span className="hub-empty-chip hub-empty-chip-1"><Boxes size={12} /> GGUF</span>
+            <span className="hub-empty-chip hub-empty-chip-2"><Sparkles size={12} /> Q4 / Q8</span>
+            <span className="hub-empty-chip hub-empty-chip-3"><Download size={12} /> 一键下载</span>
+          </div>
+          <h2 className="hub-empty-title">发现并下载你的下一个模型</h2>
+          <p className="hub-empty-sub">
+            在 {sourceLabel} 上搜索数千个 GGUF 模型，按量化精度筛选后一键下载到本地 /models 目录。
+          </p>
+          <div className="hub-empty-features">
+            <div className="hub-feature">
+              <span className="hub-feature-ico" style={{ background: 'rgba(14,165,233,.14)', color: '#0ea5e9' }}>
+                <Search size={16} />
+              </span>
+              <div className="hub-feature-text">
+                <strong>全局搜索</strong>
+                <span>按名称或作者检索 GGUF 模型</span>
+              </div>
+            </div>
+            <div className="hub-feature">
+              <span className="hub-feature-ico" style={{ background: 'rgba(139,92,246,.14)', color: '#8b5cf6' }}>
+                <Download size={16} />
+              </span>
+              <div className="hub-feature-text">
+                <strong>一键下载</strong>
+                <span>直接保存到本地 /models 目录</span>
+              </div>
+            </div>
+            <div className="hub-feature">
+              <span className="hub-feature-ico" style={{ background: 'rgba(16,185,129,.14)', color: '#10b981' }}>
+                <Layers size={16} />
+              </span>
+              <div className="hub-feature-text">
+                <strong>量化筛选</strong>
+                <span>按 Q4 / Q8 / F16 等精度选择文件</span>
+              </div>
+            </div>
+          </div>
+          <div className="hub-empty-tags">
+            <span className="hub-empty-tags-label">热门搜索：</span>
+            {popularQueries.map(q => (
+              <button key={q} className="hub-tag-btn" onClick={() => { setInputValue(q); doSearch(q) }}>
+                {q}
+              </button>
+            ))}
+          </div>
         </div>
       )}
       {error && (

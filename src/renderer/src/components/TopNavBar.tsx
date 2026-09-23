@@ -34,7 +34,7 @@ const NAV_GROUPS: NavDef[][] = [
     { key: 'agent-code', label: 'Agent Code', icon: CodeIcon, color: '#10b981' },
   ],
   [
-    { key: 'llama', label: 'llama-server', icon: ServerIcon, color: '#14b8a6', runningSource: 'llama' },
+    { key: 'llama', label: 'Web 界面', icon: ServerIcon, color: '#14b8a6', runningSource: 'llama' },
     // 「聊天」项与 ChatView 界面已移除：原生聊天的功能已并入 Agent Code 的纯聊天模式。
     { key: 'monitoring', label: '模型运行数据', icon: ActivityIcon, color: '#ef4444', runningSource: 'models' },
     { key: 'token-stats', label: 'Token 统计', icon: TrendingUpIcon, color: '#f59e0b', runningSource: 'models' },

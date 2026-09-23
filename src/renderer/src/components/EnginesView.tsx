@@ -5,13 +5,17 @@ import { HardDrive, Download, Trash, RefreshCw, Loader2, ChevronDown, Terminal, 
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { ENGINE_LABELS, ENGINE_REPOS, paramSetOf } from '../utils/engine'
+import type { SdCudartStatus } from '../../../shared/types'
 import CommandsEditor from './CommandsEditor'
 import EngineDownloadSection from './EngineDownloadSection'
-import '../styles/settings.css'
+// 本页样式完全自包含：全部规则（含骨架）都在 engines.css 内并作用域在 .engines-view 下，
+// 因此这里**不再**引用 settings.css —— 改这个文件不可能影响到设置页 / 模型文件夹页。
+import '../styles/engines.css'
 
 /**
  * 后端与引擎视图：管理已安装后端、下载 llama.cpp / TensorSharp / 各分支引擎。
  * 从原「设置」页拆出，减少设置页内容堆叠。
+ * 外观由 ../styles/engines.css 提供（全部作用域在 .engines-view 下，只影响本页）。
  */
 export default function EnginesView() {
   const {
@@ -67,7 +71,7 @@ export default function EnginesView() {
   // stable-diffusion.cpp CUDA 运行时下载状态（cudart 包独立通道）
   const [sdCudartBusy, setSdCudartBusy] = useState(false)
   const [sdCudartPercent, setSdCudartPercent] = useState(0)
-  const [sdCudartInstalled, setSdCudartInstalled] = useState<{ installed: boolean; found?: string[]; missing?: string[] } | null>(null)
+  const [sdCudartInstalled, setSdCudartInstalled] = useState<SdCudartStatus | null>(null)
 
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const deletePopoverRef = useRef<HTMLDivElement>(null)
@@ -97,13 +101,20 @@ export default function EnginesView() {
     return () => window.api.removeSdCudartProgressListener()
   }, [])
 
+  // CUDA 运行时状态检查：主进程会顺带比对 GitHub 上游的最新发布时间 / 资产 sha256，
+  // 据此判断本地副本是否过期（不只是「dll 在不在」）
+  const refreshSdCudart = React.useCallback(async (backendName: string) => {
+    try {
+      const res = await window.api.checkSdCudartInstalled(backendName)
+      setSdCudartInstalled(res ?? null)
+    } catch { setSdCudartInstalled(null) }
+  }, [])
+
   useEffect(() => {
     const sdBackend = backends.find(b => b.kind === 'sdcpp')
     if (!sdBackend) { setSdCudartInstalled(null); return }
-    window.api.checkSdCudartInstalled(sdBackend.name).then(res => {
-      if (res) setSdCudartInstalled({ installed: res.installed, found: res.found, missing: res.missing })
-    }).catch(() => setSdCudartInstalled(null))
-  }, [backends])
+    void refreshSdCudart(sdBackend.name)
+  }, [backends, refreshSdCudart])
 
   useEffect(() => {
     if (releaseInfo?.assets?.length && !selectedAssetUrl) {
@@ -235,15 +246,14 @@ export default function EnginesView() {
       const verified = res.verified ? '验证通过' : '验证失败'
       const dllInfo = res.found?.length ? `（${res.found.join(', ')}）` : ''
       notify(`CUDA 运行时已安装 ${verified}${dllInfo}，重启模板后生效`, 'success')
-      const updated = await safeCall(() => window.api.checkSdCudartInstalled(sdBackend.name))
-      if (updated) setSdCudartInstalled({ installed: updated.installed, found: updated.found, missing: updated.missing })
+      await refreshSdCudart(sdBackend.name)
     } else if (res && !res.success) {
       notify(`安装失败：${res.error}`, 'error')
     }
   }
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl engines-view">
       <div className="page-header">
         <div>
           <h1 className="page-title">后端与引擎</h1>
@@ -261,11 +271,13 @@ export default function EnginesView() {
           <div className="flex flex-col gap-2">
             {backends.map((b) => (
               <div key={b.name}>
-                <div className="settings-row backend-row">
+                <div className={`settings-row backend-row ev-eng--${b.kind ?? 'other'}`}>
                   <div>
                     <div className="settings-row-label flex items-center gap-2">
                       {b.name}
-                      {b.kind && b.kind !== 'other' && <span className="version-badge">{ENGINE_LABELS[b.kind] ?? b.kind}</span>}
+                      {b.kind && b.kind !== 'other' && (
+                        <span className={`version-badge ev-badge--engine ev-eng--${b.kind}`}>{ENGINE_LABELS[b.kind] ?? b.kind}</span>
+                      )}
                       {activeBackend?.name === b.name && <span className="version-badge active-version">当前使用</span>}
                       {!b.hasCommands && <span className="version-badge">回退架构</span>}
                     </div>
@@ -325,9 +337,9 @@ export default function EnginesView() {
         )}
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section ev-card--engine ev-eng--llamacpp">
         <div className="settings-section-title"><Download /> 可用更新</div>
-        <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 12 }}>
+        <p className="ev-desc" style={{ marginBottom: 12 }}>
           llama.cpp 基础引擎：GGML/GGUF 大模型推理后端，支持 CPU 与 CUDA 加速，安装后可在「我的模板」创建文本模型卡。
         </p>
         {checkingUpdate ? (
@@ -349,16 +361,16 @@ export default function EnginesView() {
               )}
             </div>
           ) : (
-            <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
+            <div className="ev-release">
               <div>
-                <div className="settings-row-label">{releaseInfo.name || releaseInfo.tagName}</div>
-                <div className="settings-row-sub">
-                  发布日期：{new Date(releaseInfo.publishedAt).toLocaleDateString()}
-                  {releaseInfo.isNewer === false && <span style={{ marginLeft: 8, color: 'var(--success)' }}>✓ 已是最新</span>}
+                <div className="ev-release-name">{releaseInfo.name || releaseInfo.tagName}</div>
+                <div className="ev-release-meta">
+                  <span className="ev-release-date">发布日期：{new Date(releaseInfo.publishedAt).toLocaleDateString()}</span>
+                  {releaseInfo.isNewer === false && <span className="ev-latest">✓ 已是最新</span>}
                 </div>
               </div>
               {releaseInfo.isNewer !== false && releaseInfo.assets?.length > 0 && (
-                <div className="flex items-center gap-2 w-full">
+                <div className="ev-asset-row">
                   <div ref={assetDropdownRef} style={{ position: 'relative', flex: 1, minWidth: 0 }}>
                     <button
                       className="cmd-select"
@@ -417,17 +429,17 @@ export default function EnginesView() {
         ) : (
           <div className="text-sm py-4" style={{ color: 'var(--text-muted)' }}>点击"立即检查"查询 GitHub。</div>
         )}
-        <div className="mt-4 pt-4 border-t">
+        <div className="ev-check-block">
           <button className="btn btn-secondary w-full justify-center" onClick={handleCheckUpdates} disabled={checkingUpdate || downloading}>
             <RefreshCw size={14} className={checkingUpdate ? 'spin' : ''} /> 立即检查
           </button>
         </div>
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section ev-card--engine ev-eng--tensorsharp">
         <div className="settings-section-title"><Cpu /> TensorSharp 引擎</div>
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="ev-body">
+          <p className="ev-desc">
             TensorSharp.Server（OpenAI / Ollama 兼容推理服务器，支持多模态 / PDF / 视频）。与 llama.cpp 引擎并行安装、互不干扰；
             监听地址固定为 <code>http://0.0.0.0:5000</code>（官方硬编码），请勿同时运行两张 TensorSharp 模型卡或占用 5000 端口的服务。
           </p>
@@ -441,16 +453,16 @@ export default function EnginesView() {
             ) : tsReleaseInfo.noPackage ? (
               <div className="text-sm py-2" style={{ color: 'var(--text-muted)' }}>未检测到适用于当前平台的 TensorSharp 发布包。</div>
             ) : (
-              <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12, padding: '6px 0' }}>
+              <div className="ev-release">
                 <div>
-                  <div className="settings-row-label">{tsReleaseInfo.name || tsReleaseInfo.tagName}</div>
-                  <div className="settings-row-sub">
-                    发布日期：{new Date(tsReleaseInfo.publishedAt).toLocaleDateString()}
-                    {tsReleaseInfo.isNewer === false && <span style={{ marginLeft: 8, color: 'var(--success)' }}>✓ 已安装最新版本</span>}
+                  <div className="ev-release-name">{tsReleaseInfo.name || tsReleaseInfo.tagName}</div>
+                  <div className="ev-release-meta">
+                    <span className="ev-release-date">发布日期：{new Date(tsReleaseInfo.publishedAt).toLocaleDateString()}</span>
+                    {tsReleaseInfo.isNewer === false && <span className="ev-latest">✓ 已安装最新版本</span>}
                   </div>
                 </div>
                 {tsReleaseInfo.isNewer !== false && tsReleaseInfo.assets?.length > 0 && (
-                  <div className="flex items-center gap-2 w-full">
+                  <div className="ev-asset-row">
                     <div ref={tsAssetDropdownRef} style={{ position: 'relative', flex: 1, minWidth: 0 }}>
                       <button
                         className="cmd-select"
@@ -509,9 +521,11 @@ export default function EnginesView() {
           ) : (
             <div className="text-sm py-2" style={{ color: 'var(--text-muted)' }}>尚未检查。点击下方按钮查询 TensorSharp 最新发布。</div>
           )}
-          <button className="btn btn-secondary w-full justify-center" onClick={handleCheckTsUpdates} disabled={tsChecking || tsDownloading}>
-            <RefreshCw size={14} className={tsChecking ? 'spin' : ''} /> {tsReleaseInfo ? '重新检查' : '检查 TensorSharp 发布'}
-          </button>
+          <div className="ev-check-block">
+            <button className="btn btn-secondary w-full justify-center" onClick={handleCheckTsUpdates} disabled={tsChecking || tsDownloading}>
+              <RefreshCw size={14} className={tsChecking ? 'spin' : ''} /> {tsReleaseInfo ? '重新检查' : '检查 TensorSharp 发布'}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -544,46 +558,77 @@ export default function EnginesView() {
         engineLabel="stable-diffusion.cpp"
         description="扩散模型（SD / FLUX / Wan / Qwen-Image 等）推理引擎，提供文生图/图生图接口，安装后可在「图像生成」中使用。"
         extra={
-          <div style={{ borderTop: '1px solid var(--border)', marginTop: 18, paddingTop: 14 }}>
-            <div className="flex flex-col gap-2" style={{ width: '100%' }}>
-              <div className="settings-row-label">CUDA 运行时</div>
-              <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0 }}>
-                缺少运行库时安装即可启用 GPU，重启后生效。
-              </p>
-              {(() => {
-                const sdBackend = backends.find(b => b.kind === 'sdcpp')
-                const releaseInfo = engineReleases['leejet/stable-diffusion.cpp'] ?? null
-                const asset = releaseInfo?.cudartAsset
-                if (!sdBackend) return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>请先安装 stable-diffusion.cpp 引擎。</div>
-                if (!asset) return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未检测到 CUDA 运行时发布包（此包仅 Windows 提供）。</div>
-                const cudartStatus = sdCudartInstalled
-                return (
-                  <div className="flex flex-col gap-2" style={{ width: '100%', marginTop: 2 }}>
-                    <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{asset.name}（约 {(asset.size / 1024 / 1024).toFixed(0)}MB）</span>
-                    {cudartStatus && (
-                      <span className="text-sm" style={{ color: cudartStatus.installed ? 'var(--success)' : 'var(--text-muted)' }}>
-                        {cudartStatus.installed
-                          ? `✓ CUDA 运行时已就绪（${cudartStatus.found?.join(', ')}）`
-                          : `未安装${cudartStatus.missing?.length ? '，缺少 ' + cudartStatus.missing.join(', ') : ''}`}
-                      </span>
-                    )}
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {sdCudartBusy ? (
-                        <button className="btn btn-secondary btn-sm" disabled>
-                          <Loader2 size={14} className="spin" /> 下载安装中... {sdCudartPercent}%
-                        </button>
-                      ) : cudartStatus?.installed ? (
-                        <button className="btn btn-secondary btn-sm" disabled>CUDA 运行时已安装</button>
-                      ) : (
-                        <button className="btn btn-secondary btn-sm" onClick={handleInstallSdCudart}>
-                          <Download size={13} /> 下载并安装 CUDA 运行时
-                        </button>
-                      )}
+          <div className="ev-subpanel">
+            <div className="ev-subpanel-title"><Cpu /> CUDA 运行时</div>
+            <p className="ev-subpanel-hint">
+              缺少运行库时安装即可启用 GPU，重启后生效。是否已过期按 GitHub 上游的最新发布时间与包校验值判断，
+              上游发新版后会提示重新下载。
+            </p>
+            {(() => {
+              const sdBackend = backends.find(b => b.kind === 'sdcpp')
+              const releaseInfo = engineReleases['leejet/stable-diffusion.cpp'] ?? null
+              const asset = releaseInfo?.cudartAsset
+              if (!sdBackend) return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>请先安装 stable-diffusion.cpp 引擎。</div>
+              if (!asset) return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未检测到 CUDA 运行时发布包（此包仅 Windows 提供）。</div>
+              const st = sdCudartInstalled
+              const up = st?.upstream ?? null
+              const upTime = up?.publishedAt ?? up?.updatedAt ?? null
+              const upTimeText = upTime ? new Date(upTime).toLocaleString('zh-CN') : '未知'
+              const localTimeText = st?.local?.installedAt ? new Date(st.local.installedAt).toLocaleString('zh-CN') : '无记录'
+              // 上游查询失败（离线 / API 超限）时不能谎报“已是最新”，只说明无法确认
+              const upstreamUnavailable = !!st && !up
+              // 检查尚未返回（st 为 null）时也允许下载：无法确认新鲜度时不锁死入口
+              const showDownload = !st || st.needsUpdate
+              // 状态行三态：未安装 / 已过期 / 已是最新（上游查询失败时归到「未安装」的弱态）
+              const statusClass = !st ? '' : !st.installed ? 'ev-status--muted' : st.stale ? 'ev-status--warn' : 'ev-status--ok'
+              return (
+                <>
+                  <span className="ev-meta">
+                    <b>{up?.assetName || asset.name}</b>（约 {((up?.size || asset.size) / 1024 / 1024).toFixed(0)}MB）
+                    {' · 上游发布 '}{upTimeText}
+                  </span>
+                  {!st ? (
+                    <div className="ev-status ev-status--muted">正在检查上游版本…</div>
+                  ) : !st.installed ? (
+                    <div className={`ev-status ${statusClass}`}>
+                      未安装{st.missing?.length ? '，缺少 ' + st.missing.join(', ') : ''}
                     </div>
+                  ) : st.stale ? (
+                    <div className={`ev-status ${statusClass}`}>
+                      本地副本已过期（{st.reasons.join('；')}）
+                    </div>
+                  ) : (
+                    <div className={`ev-status ${statusClass}`}>
+                      CUDA 运行时已是最新（{st.found?.join(', ')}）
+                    </div>
+                  )}
+                  {st && (
+                    <span className="ev-meta">
+                      本地安装时间 {localTimeText}
+                      {up?.releaseTag ? ` · 上游版本 ${up.releaseTag}` : ''}
+                      {up?.commitAt ? ` · 最近提交 ${new Date(up.commitAt).toLocaleDateString('zh-CN')}` : ''}
+                      {upstreamUnavailable ? ' · 无法访问 GitHub，暂不判定是否过期' : ''}
+                    </span>
+                  )}
+                  <div className="ev-actions">
+                    {sdCudartBusy ? (
+                      <button className="btn btn-secondary btn-sm" disabled>
+                        <Loader2 size={14} className="spin" /> 下载安装中... {sdCudartPercent}%
+                      </button>
+                    ) : showDownload ? (
+                      <button
+                        className={st?.installed ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
+                        onClick={handleInstallSdCudart}
+                      >
+                        <Download size={13} /> {st?.installed ? '重新下载 CUDA 运行时' : '下载并安装 CUDA 运行时'}
+                      </button>
+                    ) : (
+                      <button className="btn btn-secondary btn-sm" disabled>CUDA 运行时已是最新</button>
+                    )}
                   </div>
-                )
-              })()}
-            </div>
+                </>
+              )
+            })()}
           </div>
         }
       />

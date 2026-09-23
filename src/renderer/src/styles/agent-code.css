@@ -34,6 +34,22 @@
   -webkit-user-select: text;
 }
 
+/* 用户气泡内的代码块间距。这是「气泡语境」的覆盖，属于本页消息组件，
+   不是 CodeBlock 自身的样式（CodeBlock 的外观在 code-block.css）。
+   原先放在 chat.css 里，而 chat.css 只被本页引入 —— 已并入本文件，chat.css 删除。 */
+.chat-msg-bubble-user .chat-code-block {
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.chat-msg-bubble-user .chat-code-block:first-child {
+  margin-top: 0;
+}
+
+.chat-msg-bubble-user .chat-code-block:last-child {
+  margin-bottom: 0;
+}
+
 .chat-msg-placeholder {
   font-size: 13px;
   color: var(--text-muted);
@@ -1632,6 +1648,16 @@
   font-size: 10px;
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+/* 原先被错放在 monitoring.css 里（那是「模型运行数据」页的样式文件），
+   而 .agent-ctx-metric / .agent-ctx-metric-label 一直在这个文件 —— 归位。 */
+.agent-ctx-metric-val {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono, monospace);
 }
 
 .agent-code-tab-switch {
@@ -4996,17 +5022,8 @@
   overflow: hidden;
 }
 
-/* 操作审计卡片：略宽，便于展示参数/结果 */
-.agent-card-audit {
-  width: 420px;
-  max-height: 60vh;
-}
-
-.agent-card-audit-body {
-  overflow-y: auto;
-}
-
-.agent-audit-clear {
+/* 卡片头部的「清空」按钮（长期记忆卡片在用） */
+.agent-card-clear {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -5019,113 +5036,15 @@
   cursor: pointer;
 }
 
-.agent-audit-clear:hover {
+.agent-card-clear:hover {
   color: var(--text);
   border-color: var(--border-strong);
 }
 
-.agent-audit-empty {
+.agent-card-empty {
   padding: 12px;
   font-size: 12px;
   color: var(--text-muted);
-}
-
-.agent-audit-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 4px;
-}
-
-.agent-audit-more {
-  margin: 4px auto;
-  padding: 4px 12px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.agent-audit-more:hover {
-  color: var(--text-normal);
-  border-color: var(--border-strong);
-}
-
-.agent-audit-row {
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  padding: 6px 8px;
-  background: var(--bg);
-}
-
-.agent-audit-row.failed {
-  border-left-color: #e01a4f;
-}
-
-.agent-audit-row.ok {
-  border-left-color: #9bc53d;
-}
-
-.agent-audit-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  flex-wrap: wrap;
-}
-
-.agent-audit-tool {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.agent-audit-tag {
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 4px;
-}
-
-.agent-audit-tag.approved {
-  background: rgba(124, 58, 237, .15);
-  color: #7c3aed;
-}
-
-.agent-audit-tag.done {
-  background: rgba(155, 197, 61, .18);
-  color: #6a8f1f;
-}
-
-.agent-audit-tag.fail {
-  background: rgba(224, 26, 79, .15);
-  color: #e01a4f;
-}
-
-.agent-audit-dur {
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.agent-audit-time {
-  margin-left: auto;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.agent-audit-args,
-.agent-audit-result {
-  margin: 4px 0 0;
-  padding: 4px 6px;
-  font-size: 11px;
-  line-height: 1.4;
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: var(--surface-hover);
-  border-radius: 4px;
-  max-height: 120px;
-  overflow-y: auto;
 }
 
 /* ── 轨迹台账卡片：三段式布局移植 deepseek-harness ui-trajectory ──
@@ -5753,20 +5672,6 @@
   text-align: center;
 }
 
-.agent-audit-result {
-  color: var(--text-secondary);
-}
-
-/* 调试卡片（逐轮）*/
-.agent-card-debug {
-  width: 460px;
-  max-height: 62vh;
-}
-
-.agent-card-debug-body {
-  overflow-y: auto;
-}
-
 /* 长期记忆卡片：查看 / 归档智能体沉淀的跨会话记忆 */
 .agent-card-memstore {
   width: 440px;
@@ -6066,111 +5971,6 @@
 
 .agent-mem-archived-toggle:hover {
   color: var(--text);
-}
-
-.agent-debug-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 4px;
-}
-
-.agent-debug-row {
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius-sm);
-  padding: 6px 8px;
-  background: var(--bg);
-}
-
-.agent-debug-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-}
-
-.agent-debug-turn {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.agent-debug-dur {
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-
-.agent-debug-time {
-  margin-left: auto;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.agent-debug-metrics {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.agent-debug-dropped {
-  color: #e01a4f;
-}
-
-.agent-debug-tools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 6px;
-}
-
-.agent-debug-tool {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--surface-hover);
-  color: var(--text-secondary);
-}
-
-.agent-debug-tool.fail {
-  color: #e01a4f;
-}
-
-.agent-debug-tool.ok {
-  color: #6a8f1f;
-}
-
-.agent-debug-payload-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 6px;
-  padding: 2px 4px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.agent-debug-payload-toggle:hover {
-  color: var(--text);
-}
-
-.agent-debug-payload {
-  margin: 6px 0 0;
-  padding: 6px 8px;
-  font-size: 11px;
-  line-height: 1.4;
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: var(--surface-hover);
-  border-radius: 4px;
-  max-height: 260px;
-  overflow-y: auto;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 }
 
 /* 压缩历史卡片 */
@@ -7206,39 +7006,10 @@
 }
 
 /* 通用长文本行窗口（思考完整文本 / 工具结果共用）：固定高内滚，仅挂载视口附近行 */
-.agent-window {
-  overflow: auto;
-  font: inherit;
-  color: inherit;
-  scrollbar-width: thin;
-}
 
-.agent-window::-webkit-scrollbar {
-  width: 6px;
-}
 
-.agent-window::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-}
 
-.agent-window-row {
-  white-space: pre;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
-.agent-window-num {
-  display: inline-block;
-  width: 38px;
-  padding-right: 8px;
-  margin-right: 8px;
-  text-align: right;
-  color: var(--text-muted);
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  user-select: none;
-  font-variant-numeric: tabular-nums;
-}
 
 /* 思考完整文本窗口：与上方思考体用虚线分隔 */
 .agent-think-window {
@@ -10135,14 +9906,7 @@
 }
 
 
-.agent-tool-chev {
-  transition: transform .15s;
-  transform: translateY(var(--agent-tool-chev-y, 0));
-}
 
-.agent-tool-chev.open {
-  transform: rotate(90deg) translateY(var(--agent-tool-chev-y, 0));
-}
 
 
 .agent-code-preview-md {
@@ -10965,27 +10729,11 @@
 
      WINDOW_ROW_HEIGHT      = 23  → .agent-window（默认，思考完整文本）
      LINED_PRE_ROW_HEIGHT   = 17  → .agent-tool-lined-window（工具结果 / 写入内容）
-     CODE_WINDOW_ROW_HEIGHT = 20  → .chat-code-window（代码块）
+     CODE_WINDOW_ROW_HEIGHT = 20  → .chat-code-window（代码块，定义在 code-block.css）
      DIFF_WINDOW_ROW_HEIGHT = 17  → .agent-tool-diff-window（Diff 行）
 
    改动任一处务必同步另一处，否则窗口滚动时会出现行错位。
    ══════════════════════════════════════════════════════════════════════════════ */
-
-/* 代码块窗口：沿用 .chat-code-pre 的等宽字体与字号（12.5px × 1.6 = 20px 行高）。
-   背景与 .chat-code-pre 保持一致：浅色写死 #dfdfdf，暗色走 --code-bg。 */
-.chat-code-window {
-  flex: 1;
-  min-width: 0;
-  padding: 12px 14px;
-  background: #dfdfdf;
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 12.5px;
-  line-height: 20px;
-}
-
-.theme-dark .chat-code-window {
-  background: var(--code-bg);
-}
 
 /* Diff 窗口：原 .agent-tool-diff-code 是 pre-wrap + overflow-wrap: anywhere，行高随内容
    变化，无法窗口化。窗口态改为单行 nowrap，并把上下内边距归零，使行高稳定等于 17px。 */

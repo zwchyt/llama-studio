@@ -1,23 +1,19 @@
-/* CodeBlock 组件（components/CodeBlock.tsx）的全局样式：代码块外壳 + highlight.js 配色主题。
-   markstream 的 variant="agent"（Agent Code 消息）与 variant="hf"（模型中心 README）都会渲染它，
-   所以这张表留在全局、不带 .agent-code-view 前缀。
-   聊天/输入区/附件条等 Agent Code 专属样式已并入 agent-code.css 顶部。 */
-.chat-code-pre {
-  background: #171c24;
-}
+/* ══════════════════════════════════════════════════════════════
+   CodeBlock 组件专属样式（components/CodeBlock.tsx）
+   ──────────────────────────────────────────────────────────────
+   代码块外壳 + highlight.js 配色主题。
 
-.chat-msg-bubble-user .chat-code-block {
-  margin-top: 8px;
-  margin-bottom: 4px;
-}
+   本文件由 CodeBlock.tsx 自己引入 —— 它是**共享组件**：markstream 的
+   variant="agent"（Agent Code 消息）与 variant="hf"（模型中心 README）都会渲染它，
+   所以样式必须跟着组件走，不能挂在某个页面的 import 上。
 
-.chat-msg-bubble-user .chat-code-block:first-child {
-  margin-top: 0;
-}
+   历史问题：这些规则原先放在 chat.css 里，而 chat.css 是被 AgentCodeView 引入的。
+   于是「模型中心」等页面能正确显示代码块，纯粹是因为 AgentCodeView 是静态引入、
+   chat.css 恰好进了主包 —— 一旦把 AgentCodeView 改成懒加载，代码块就会掉样式。
+   现已迁到本文件并改由组件自己引入，彻底解除这个隐性依赖。
 
-.chat-msg-bubble-user .chat-code-block:last-child {
-  margin-bottom: 0;
-}
+   规则内容与原 chat.css 完全一致（未做视觉改动）。
+   ══════════════════════════════════════════════════════════════ */
 
 .chat-code-block {
   margin: 0 0 10px;
@@ -156,6 +152,26 @@
   font-weight: 400;
   opacity: 0.6;
 }
+
+/* 代码块窗口：沿用 .chat-code-pre 的等宽字体与字号（12.5px × 1.6 = 20px 行高）。
+   背景与 .chat-code-pre 保持一致：浅色写死 #dfdfdf，暗色走 --code-bg。
+   行窗口要求「行高固定 + 行不折行」，CODE_WINDOW_ROW_HEIGHT = 20 必须与
+   agent-code/utils/textRows.ts 里的常量一致，否则滚动时行错位。 */
+.chat-code-window {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  background: #dfdfdf;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12.5px;
+  line-height: 20px;
+}
+
+.theme-dark .chat-code-window {
+  background: var(--code-bg);
+}
+
+/* ── highlight.js 配色主题（随主题变量走） ── */
 
 .hljs {
   color: var(--code-text);

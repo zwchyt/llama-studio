@@ -9,8 +9,6 @@ export interface AgentConfig {
   ctxDefault: number              // 取不到真实 n_ctx 时的兜底上下文大小
   maxOutput: number               // 与 chatStream 实际 max_tokens 一致
   ctxSafety: number               // 预留安全余量（token）
-  // ── Tracing 落盘 ──
-  traceToDisk: boolean            // 是否把每次工具执行的审计条目追加落盘，便于事后复现
   // ── 认知地图（模块一 · 上下文感知引擎）──
   codeMapEnabled: boolean         // 开关：项目打开时后台构建认知地图 + 写工具成功后同步失效
   ctxImportanceEnabled: boolean   // 开关：重要性裁剪——同文件重复 Read 结果只保最新、旧版折叠为占位
@@ -31,7 +29,6 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   ctxDefault: 4096,
   maxOutput: 4096,
   ctxSafety: 256,
-  traceToDisk: true,
   codeMapEnabled: true,
   ctxImportanceEnabled: true,
   condenseFactsEnabled: true,

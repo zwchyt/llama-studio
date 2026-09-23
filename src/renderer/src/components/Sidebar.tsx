@@ -157,7 +157,7 @@ export default function Sidebar() {
         <span className="nav-section-label" style={{ marginTop: 12 }}>服务</span>
         <NavItem
           icon={ServerIcon}
-          label="llama-server"
+          label="Web 界面"
           active={view === 'llama'}
           onClick={() => setView('llama')}
           style={view === 'llama' && activeChatUrl ? { color: 'var(--success)' } : {}}

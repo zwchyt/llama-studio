@@ -3,7 +3,8 @@ import { Mic, Loader2, FolderOpen, X, Copy, Check, TriangleAlert, AudioLines } f
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
 import ModelFileSelect from './ModelFileSelect'
-import '../styles/tts.css'
+// 本页样式自包含：原先引用的是 tts.css（「语音合成」页的样式文件），已拆出独立文件
+import '../styles/stt.css'
 
 // ── 语音转写视图：本地 ASR（llama-mtmd-cli.exe，libmtmd 多模态音频）──
 // 选音频文件 → 本地模型转写 → 显示文本。不需要 whisper.cpp，
@@ -111,7 +112,7 @@ export default function SttView() {
   }
 
   return (
-    <div className="tts-view">
+    <div className="stt-view">
       <div className="page-header">
         <div>
           <h1 className="page-title"><Mic size={22} style={{ verticalAlign: '-4px', marginRight: 8 }} />语音转写</h1>
@@ -121,13 +122,13 @@ export default function SttView() {
         </div>
       </div>
 
-      <div className="tts-body">
+      <div className="stt-body">
         {/* 模型配置 */}
-        <div className="tts-card">
-          <div className="tts-card-title">模型配置</div>
-          <div className="tts-model-row">
-            <div className="tts-model-field">
-              <span className="tts-field-label">语音转写模型</span>
+        <div className="stt-card">
+          <div className="stt-card-title">模型配置</div>
+          <div className="stt-model-row">
+            <div className="stt-model-field">
+              <span className="stt-field-label">语音转写模型</span>
               <ModelFileSelect
                 value={sttModelPath}
                 onChange={setSttModelPath}
@@ -137,8 +138,8 @@ export default function SttView() {
                 ariaLabel="语音转写模型"
               />
             </div>
-            <div className="tts-model-field">
-              <span className="tts-field-label">音频投影（mmproj，必选）</span>
+            <div className="stt-model-field">
+              <span className="stt-field-label">音频投影（mmproj，必选）</span>
               <ModelFileSelect
                 value={sttMmprojPath}
                 onChange={setSttMmprojPath}
@@ -150,13 +151,13 @@ export default function SttView() {
             </div>
           </div>
           {!activeBackend?.path && (
-            <div className="tts-hint warn">
+            <div className="stt-hint warn">
               <TriangleAlert size={13} />
               未检测到激活的后端，请先在后端管理中激活一个 llama.cpp 后端
             </div>
           )}
           {activeBackend?.path && (!sttModelPath || !sttMmprojPath) && (
-            <div className="tts-hint warn">
+            <div className="stt-hint warn">
               <TriangleAlert size={13} />
               请选择转写模型与 mmproj：模型在「设置 → 模型文件夹 → 语音转写模型文件夹」中配置，mmproj 在「图片模型文件夹」中配置。模型中心可搜索 Qwen3-ASR（ggml-org，含主模型与 mmproj 两个 GGUF）或 granite-4.0-1b-speech（ibm-granite）。注意：语音转写需要新版 llama.cpp 后端（2025 年底之后构建，含 llama-mtmd-cli.exe）
             </div>
@@ -164,11 +165,11 @@ export default function SttView() {
         </div>
 
         {/* 音频输入 */}
-        <div className="tts-card">
-          <div className="tts-card-title">音频</div>
-          <div className="tts-speaker-row">
+        <div className="stt-card">
+          <div className="stt-card-title">音频</div>
+          <div className="stt-speaker-row">
             <input
-              className="tts-speaker-input"
+              className="stt-speaker-input"
               type="text"
               value={audioPath}
               readOnly
@@ -185,10 +186,10 @@ export default function SttView() {
             )}
           </div>
 
-          <div className="tts-model-field" style={{ marginTop: 12 }}>
-            <span className="tts-field-label">转写提示词（可自定义）</span>
+          <div className="stt-model-field" style={{ marginTop: 12 }}>
+            <span className="stt-field-label">转写提示词（可自定义）</span>
             <textarea
-              className="tts-textarea"
+              className="stt-textarea"
               value={sttPrompt}
               onChange={e => setSttPrompt(e.target.value.slice(0, 500))}
               placeholder={DEFAULT_PROMPT}
@@ -197,7 +198,7 @@ export default function SttView() {
             />
           </div>
 
-          <div className="tts-actions">
+          <div className="stt-actions">
             <button
               className="btn btn-primary"
               onClick={handleTranscribe}
@@ -211,11 +212,11 @@ export default function SttView() {
               </button>
             )}
             {sttResult && !transcribing && (
-              <span className="tts-meta">耗时 {(elapsed / 1000).toFixed(1)}s</span>
+              <span className="stt-meta">耗时 {(elapsed / 1000).toFixed(1)}s</span>
             )}
           </div>
           {error && (
-            <div className="tts-error">
+            <div className="stt-error">
               <TriangleAlert size={13} />
               <span>转写失败：{error}</span>
             </div>
@@ -224,13 +225,13 @@ export default function SttView() {
 
         {/* 转写结果 */}
         {sttResult && (
-          <div className="tts-card">
-            <div className="tts-card-title">
+          <div className="stt-card">
+            <div className="stt-card-title">
               <AudioLines size={14} style={{ verticalAlign: '-2px', marginRight: 6 }} />
               转写结果
             </div>
             <textarea
-              className="tts-textarea"
+              className="stt-textarea"
               value={sttResult}
               readOnly
               rows={10}

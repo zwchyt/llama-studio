@@ -110,30 +110,7 @@
   transition: border-color var(--transition), box-shadow var(--transition);
 }
 
-.header-count-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 22px;
-  height: 22px;
-  margin-left: 10px;
-  padding: 0 7px;
-  font-size: 12px;
-  font-weight: 700;
-  font-family: var(--font);
-  color: var(--text-secondary);
-  background: var(--bg);
-  border: 1px solid var(--border-strong);
-  border-radius: 99px;
-  vertical-align: middle;
-  cursor: default;
-  transition: color var(--transition), background var(--transition);
-}
 
-.header-count-badge:hover {
-  color: var(--text);
-  background: var(--border);
-}
 
 .template-search-bar:focus-within {
   border-color: #b0b0b0;
@@ -408,32 +385,10 @@
   flex-shrink: 0;
 }
 
-.status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  display: inline-block;
-}
 
-.status-dot.running {
-  background: #df6464;
-  box-shadow: 0 0 0 3px rgb(197 63 99 / 25%);
-  animation: pulse 1.8s ease-in-out infinite;
-}
 
-.status-dot.idle {
-  background: var(--text-muted);
-}
 
-.status-dot.ready {
-  background: var(--success);
-  box-shadow: 0 0 0 3px rgb(22 163 74 / 25%);
-  animation: pulse 1.8s ease-in-out infinite;
-}
 
-.status-dot.error {
-  background: var(--danger);
-}
 
 
 .card-actions {
@@ -675,4 +630,12 @@
 
 .chat-model-logo-menu-item.danger:hover {
   background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent);
+}
+/* 模型卡的「启动方式」按钮组容器。原定义在 models.css（「模型」页的样式文件），
+   但 .card-launch-mode 只被 ModelCard（「我的模板」页）使用，故归位到本页样式。
+   内层 .launch-mode-btn 是跨页分段按钮基础件，见 global.css。 */
+.card-launch-mode {
+  display: flex;
+  gap: 4px;
+  padding: 0 18px 12px;
 }

@@ -230,8 +230,6 @@ const fullApi = {
   saveAgentProjects: (projects: AgentProject[], opts?: { gcScope?: string[] }) => ipcRenderer.invoke('save-agent-projects', projects, opts),
   exportAgentSession: (sessionId: string) => ipcRenderer.invoke('export-agent-session', { sessionId }),
   importAgentSession: (projectId: string) => ipcRenderer.invoke('import-agent-session', { projectId }),
-  // ── Agent Tracing 落盘 ──
-  agentTraceAppend: (sessionId: string, entry: Record<string, unknown>) => ipcRenderer.invoke('agent-trace-append', sessionId, entry),
   deletePath: (targetPath: string, recursive: boolean) => ipcRenderer.invoke('delete-path', targetPath, recursive),
   gitChanges: (dir: string) => ipcRenderer.invoke('git-changes', dir),
   gitStageFile: (dir: string, path: string) => ipcRenderer.invoke('git-stage-file', dir, path),

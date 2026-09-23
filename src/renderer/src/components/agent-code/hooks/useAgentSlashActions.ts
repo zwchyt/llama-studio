@@ -19,8 +19,6 @@ import React, { useCallback } from 'react'
 import { useStore } from '../../../store/useStore'
 import { notify } from '../../../store/notificationStore'
 import { mergeCommands } from '../../../agent/slashCommands'
-import { getAuditEntries } from '../../../utils/auditLog'
-import { getDebugTurns } from '../../../utils/debugLog'
 import { newMsgId, uniqueId } from '../utils/ids'
 import type { AgentMessage, AgentProject, AgentSession, CardState, ThinkingLevel, TodoUpdate } from '../../../../../shared/types'
 import type { useAgentProjects } from './useAgentProjects'
@@ -210,20 +208,6 @@ export function useAgentSlashActions({
         } catch (e: any) {
           appendResult(`读取 Git 变更失败：${e?.message || e}`)
         }
-        return
-      }
-      case 'audit': {
-        const entries = getAuditEntries().slice(-12).reverse()
-        if (!entries.length) { appendResult('暂无操作审计记录。'); return }
-        const lines = entries.map(e => `- [${e.failed ? '失败' : '成功'}] \`${e.tool}\` ${e.durationMs}ms · ${new Date(e.timestamp).toLocaleTimeString('zh-CN')}`)
-        appendResult(`**操作审计（最近 ${entries.length} 条）**\n\n${lines.join('\n')}`)
-        return
-      }
-      case 'debug': {
-        const turns = getDebugTurns().slice(-12).reverse()
-        if (!turns.length) { appendResult('暂无调试记录（发起一次对话后出现）。'); return }
-        const lines = turns.map(t => `- 轮次 ${t.turn}：${t.tools.length} 次工具调用，${t.durationMs}ms`)
-        appendResult(`**调试信息（最近 ${turns.length} 轮）**\n\n${lines.join('\n')}`)
         return
       }
       case 'memory': {

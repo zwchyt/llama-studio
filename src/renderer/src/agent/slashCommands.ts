@@ -20,8 +20,6 @@ export const BUILTIN_ACTION_COMMANDS: SlashCommand[] = [
   { name: 'compact', description: '手动触发历史压缩', kind: 'action', template: '', builtin: true },
   { name: 'files', description: '列出工作区文件', kind: 'action', template: '', builtin: true },
   { name: 'git', description: '查看 Git 变更状态', kind: 'action', template: '', builtin: true },
-  { name: 'audit', description: '查看操作审计日志', kind: 'action', template: '', builtin: true },
-  { name: 'debug', description: '查看调试信息', kind: 'action', template: '', builtin: true },
   { name: 'memory', description: '查看/管理长期记忆', kind: 'action', template: '', builtin: true },
   { name: 'kb', description: '查看知识库列表', kind: 'action', template: '', builtin: true },
   { name: 'branch', description: '创建当前会话分支', kind: 'action', template: '', builtin: true },

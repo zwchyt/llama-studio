@@ -9,6 +9,9 @@ import { ENGINE_LABELS, paramSetOf, ALL_ENGINES } from '../utils/engine'
 import { switchParamSetArgs, syncArgsByParamSet } from '../utils/defaultTemplate'
 import CustomSelect from './CustomSelect'
 import ModelFileSelect from './ModelFileSelect'
+// 参数编辑器样式（.cmd-* / .toggle*），与 CmdParamsEditor 共用同一份（同一套 UI 的两个入口）。
+// 原先寄存在 models.css 里，已迁到自己的文件。
+import '../styles/params-editor.css'
 
 const FEATURED_ARGS = ['--ctx-size', '--gpu-layers', '--threads', '--batch-size', '--flash-attn']
 // stable-diffusion.cpp 参数集的「主要设置」推荐参数（仅保留核心生成参数，其余在各自分类中）
@@ -56,7 +59,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   // 其他引擎（TensorSharp / audio.cpp）直接按各自分类展示，避免出现只有零星参数的“主要设置”
   const isLlamaFamily = paramSet === 'llamacpp' || paramSet === 'turboquant' || paramSet === 'beellama'
   // 预览 exe 跟随参数集：参数集决定命令格式，与实际后端 exe 无关
-  const backendExe = isTensorSharp ? 'TensorSharp.Server' : isSdcpp ? 'sd-server' : isAudiocpp ? 'audiocpp_server.exe' : 'llama-server'
+  const backendExe = isTensorSharp ? 'TensorSharp.Server.Host.exe' : isSdcpp ? 'sd-server' : isAudiocpp ? 'audiocpp_server.exe' : 'llama-server'
   const activeArgs = args
 
   // debounce save: 合并高频写入，400ms 内只触发一次 IPC

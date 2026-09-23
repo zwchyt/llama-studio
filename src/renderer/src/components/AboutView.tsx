@@ -43,15 +43,15 @@ export default function AboutView() {
     <div className="about-container">
       <div className="page-header">
         <div>
-          <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <img src="./full-logo.png" alt="llama-studio" style={{ height: 32, imageRendering: 'crisp-edges' }} draggable={false} />
+          <h1 className="page-title">
+            <img src="./full-logo.png" alt="llama-studio" className="about-logo" draggable={false} />
           </h1>
           <p className="page-subtitle">一个快速、美观的本地 LLM 管理图形界面</p>
         </div>
       </div>
 
-      <section className="about-section" style={{ marginBottom: 16 }}>
-        <div className="about-card about-card-version">
+      <section className="about-section about-hero">
+        <div className="about-card about-card-version ab-accent--version">
           <div>
             <div className="about-version-label">
               llama-studio {currentVersion}
@@ -67,25 +67,24 @@ export default function AboutView() {
             )}
           </div>
           <button
-            className="btn btn-ghost btn-sm"
+            className="btn btn-ghost btn-sm about-check-btn"
             onClick={handleCheckUpdate}
             disabled={checking}
-            style={{ whiteSpace: 'nowrap' }}
           >
             {checking ? (
-              <><RotateCw size={14} className="spin" style={{ marginRight: 4 }} /> 检查中...</>
+              <><RotateCw size={14} className="spin" /> 检查中...</>
             ) : (
-              <><RotateCw size={14} style={{ marginRight: 4 }} /> 检查更新</>
+              <><RotateCw size={14} /> 检查更新</>
             )}
           </button>
         </div>
       </section>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+      <div className="about-stack">
         <section className="about-section">
           <h2 className="about-section-title">
-            <Heart size={16} style={{ color: 'var(--danger)' }} /> 鸣谢
+            <Heart size={16} /> 鸣谢
           </h2>
-          <div className="about-card">
+          <div className="about-card ab-accent--thanks">
             <p>
               本项目之所以存在，完全归功于 <strong>llama.cpp</strong>，由 <strong>Georgi Gerganov</strong> 创建。
               请考虑支持 llama.cpp 社区所做的出色工作。
@@ -104,7 +103,7 @@ export default function AboutView() {
           <h2 className="about-section-title">
             <Info size={16} /> 关于开发者
           </h2>
-          <div className="about-card">
+          <div className="about-card ab-accent--dev">
             <p>
               <strong>Hexllama</strong> 由 <strong>Anderson Nascimento</strong> 开发，他是一位热爱本地 AI 的巴西软件工程师。
             </p>
@@ -128,7 +127,7 @@ export default function AboutView() {
           <h2 className="about-section-title">
             <ExternalLink size={16} /> 本分支
           </h2>
-          <div className="about-card">
+          <div className="about-card ab-accent--fork">
             <p>
               <strong>llama-studio</strong> 是 hexllama 的中文定制分支，由 <strong>zwchyt</strong> 维护。
               在原版基础上增加了 GLM-OCR 图片识别、自定义提示词、外部/图片模型管理等本地化功能。
@@ -145,7 +144,7 @@ export default function AboutView() {
             <h2 className="about-section-title">
               <FileText size={16} /> 使用条款
             </h2>
-            <div className="about-card tall">
+            <div className="about-card tall ab-accent--terms">
               <p>
                 本软件按<strong>"原样"</strong>提供，不提供任何明示或暗示的担保。
                 在任何情况下，作者或版权持有人均不对任何索赔、损害或其他责任负责，
@@ -157,7 +156,7 @@ export default function AboutView() {
             <h2 className="about-section-title">
               <ShieldAlert size={16} /> 隐私政策
             </h2>
-            <div className="about-card tall">
+            <div className="about-card tall ab-accent--privacy">
               <p>
                 <strong>llama-studio 不会收集或传输任何用户数据。</strong> 本应用程序中绝对没有遥测、跟踪或分析功能。
                 <br /><br />

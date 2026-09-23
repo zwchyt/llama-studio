@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import { Wrench, FileSearch, Hash, MemoryStick, Loader2, Copy, Check, ChevronDown, Search, Cpu, TriangleAlert, GitCompare, FileCode2, Play } from 'lucide-react'
+import { Wrench, FileSearch, Hash, MemoryStick, Loader2, Copy, Check, ChevronDown, Search, Cpu, TriangleAlert, GitCompare, Play } from 'lucide-react'
 import CustomSelect from './CustomSelect'
 import type { GgufMetadata, FitParamsResult } from '../../../shared/types'
 
@@ -10,7 +10,7 @@ type KvType = 'f16' | 'q8_0' | 'q4_0'
 const KV_TYPE_LABELS: Record<KvType, string> = { f16: 'F16（默认）', q8_0: 'Q8_0', q4_0: 'Q4_0' }
 import '../styles/model-tools.css'
 
-type ToolTab = 'inspector' | 'tokenizer' | 'fit' | 'compare' | 'template'
+type ToolTab = 'inspector' | 'tokenizer' | 'fit' | 'compare'
 
 // token 色块循环调色板（底色淡、文字同色系深）
 const TOKEN_COLORS = [
@@ -624,179 +624,6 @@ function CompareTab() {
   )
 }
 
-// ── Tab 5：Chat 模板分析（llama-template-analysis.exe）──────────
-// 报告解析：能力表（supports_*）+ 多组 Diff 段 + 推理变量检查
-
-interface TplDiffSection { title: string; left: string; right: string }
-interface TplReport { caps: { key: string; value: boolean }[]; diffs: TplDiffSection[]; reasoning: string }
-
-const TPL_CAP_LABELS: Record<string, string> = {
-  supports_tools: '工具定义注入',
-  supports_tool_calls: '工具调用消息',
-  supports_system_role: 'system 角色',
-  supports_parallel_tool_calls: '并行工具调用',
-  supports_typed_content: '类型化内容',
-  supports_string_content: '字符串内容',
-}
-
-function parseTemplateReport(report: string): TplReport {
-  const caps: { key: string; value: boolean }[] = []
-  const capRe = /^(supports_\w+):\s*(true|false)/gm
-  let m: RegExpExecArray | null
-  while ((m = capRe.exec(report)) !== null) caps.push({ key: m[1], value: m[2] === 'true' })
-  const diffs: TplDiffSection[] = []
-  // 字段值可能跨行，用下一个已知字面量做惰性锚点
-  const secRe = new RegExp(
-    "=== Diff: ([^\\r\\n]+?) ===\\r?\\n" +
-    "Common Prefix: '([\\s\\S]*?)'\\r?\\n" +
-    "Common Suffix: '([\\s\\S]*?)'\\r?\\n" +
-    "Left \\(difference\\): '([\\s\\S]*?)'\\r?\\n" +
-    "Right \\(difference\\): '([\\s\\S]*?)'\\r?\\n",
-    'g'
-  )
-  while ((m = secRe.exec(report)) !== null) diffs.push({ title: m[1].trim(), left: m[4], right: m[5] })
-  const reason = report.match(/=== Checking Reasoning Variables ===\r?\n([\s\S]*?)\r?\n=+/)
-  return { caps, diffs, reasoning: reason ? reason[1].trim() : '' }
-}
-
-function TemplateTab({ modelPath, setModelPath }: { modelPath: string; setModelPath: (p: string) => void }) {
-  const models = useStore(s => s.models)
-  const activeBackend = useStore(s => s.activeBackend)
-  const [mode, setMode] = useState<'model' | 'custom'>('model')
-  const [customTpl, setCustomTpl] = useState('')
-  const { meta, error: metaError, loading: loadingMeta } = useGgufMeta(mode === 'model' ? modelPath : '')
-  const [running, setRunning] = useState(false)
-  const [error, setError] = useState('')
-  const [report, setReport] = useState('')
-  const [rawOpen, setRawOpen] = useState(false)
-  const reqSeq = useRef(0)
-
-  const template = mode === 'model' ? (meta?.chatTemplate || '') : customTpl
-  const canRun = !!template.trim() && !!activeBackend?.path && !running
-
-  async function handleAnalyze(): Promise<void> {
-    if (!canRun || !activeBackend) return
-    const seq = ++reqSeq.current
-    setRunning(true); setError(''); setReport('')
-    const res = await window.api.analyzeTemplate({ backendPath: activeBackend.path, template })
-      .catch(err => ({ success: false, error: String(err), report: undefined }))
-    if (seq !== reqSeq.current) return
-    setRunning(false)
-    if (!res.success || !res.report) setError(res.error || '分析失败')
-    else setReport(res.report)
-  }
-
-  const parsed = useMemo(() => report ? parseTemplateReport(report) : null, [report])
-
-  return (
-    <div className="mtools-tab-body">
-      <div className="mtools-form-row">
-        <label>模板来源</label>
-        <div className="mtools-mode-tabs">
-          <button className={`mtools-mode-tab ${mode === 'model' ? 'active' : ''}`} onClick={() => setMode('model')}>模型内置模板</button>
-          <button className={`mtools-mode-tab ${mode === 'custom' ? 'active' : ''}`} onClick={() => setMode('custom')}>自定义粘贴</button>
-        </div>
-      </div>
-
-      {mode === 'model' ? (
-        <div className="mtools-form-row">
-          <label>模型文件</label>
-          <CustomSelect
-            className="mtools-select-wrapper"
-            value={modelPath}
-            onChange={setModelPath}
-            options={[
-              { value: '', label: '选择 GGUF 模型（读其内置 Chat 模板）' },
-              ...models.map(m => ({ value: m.path, label: `${m.name} (${m.folder})` })),
-            ]}
-            disabled={loadingMeta}
-            aria-label="模型文件"
-          />
-        </div>
-      ) : (
-        <textarea
-          className="mtools-textarea"
-          value={customTpl}
-          onChange={e => setCustomTpl(e.target.value)}
-          placeholder="粘贴 Jinja 格式的 Chat 模板…"
-          rows={6}
-        />
-      )}
-
-      <div className="mtools-token-stats">
-        <button className="btn btn-primary mtools-run-btn" onClick={handleAnalyze} disabled={!canRun}>
-          {running ? <Loader2 size={14} className="mtools-spin" /> : <Play size={14} />}
-          分析模板
-        </button>
-        {mode === 'model' && meta && (
-          <span className="mtools-stat">{meta.chatTemplate ? <><b>{meta.chatTemplate.length.toLocaleString()}</b> 字符</> : '该模型无内置模板'}</span>
-        )}
-        {!activeBackend?.path && <span className="mtools-hint">需先在设置中选择后端版本</span>}
-      </div>
-
-      {loadingMeta && <div className="mtools-loading"><Loader2 size={16} className="mtools-spin" /> 读取模型元数据中…</div>}
-      {metaError && <div className="mtools-error">{metaError}</div>}
-      {error && <div className="mtools-error">{error}</div>}
-
-      {parsed && (
-        <div className="mtools-scroll">
-          {/* 能力表 */}
-          {parsed.caps.length > 0 && (
-            <div className="mtools-card">
-              <div className="mtools-card-title"><FileCode2 size={14} /><span>模板能力</span></div>
-              <div className="mtools-tpl-caps">
-                {parsed.caps.map(c => (
-                  <span key={c.key} className={`mtools-tpl-cap ${c.value ? 'yes' : 'no'}`}>
-                    {c.value ? <Check size={12} /> : <span className="mtools-tpl-cap-x">✕</span>}
-                    {TPL_CAP_LABELS[c.key] || c.key}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 差异段：只展示有实际差异的组 */}
-          {parsed.diffs.some(d => d.left || d.right) && (
-            <div className="mtools-card">
-              <div className="mtools-card-title"><GitCompare size={14} /><span>场景差异（有/无某输入时渲染结果的变化）</span></div>
-              <div className="mtools-tpl-diffs">
-                {parsed.diffs.filter(d => d.left || d.right).map((d, i) => (
-                  <div key={i} className="mtools-tpl-diff">
-                    <div className="mtools-tpl-diff-title">{d.title}</div>
-                    {d.left && <div className="mtools-tpl-diff-row"><span className="tag left">有</span><pre>{d.left}</pre></div>}
-                    {d.right && <div className="mtools-tpl-diff-row"><span className="tag right">无</span><pre>{d.right}</pre></div>}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 推理变量 */}
-          {parsed.reasoning && (
-            <div className="mtools-card">
-              <div className="mtools-card-title"><Cpu size={14} /><span>推理（thinking）变量检查</span></div>
-              <div className="mtools-hint">{parsed.reasoning}</div>
-            </div>
-          )}
-
-          {/* 原始报告折叠区 */}
-          <div className="mtools-card">
-            <div className="mtools-collapse-header">
-              <button className="mtools-collapse-toggle" onClick={() => setRawOpen(o => !o)} aria-expanded={rawOpen}>
-                <ChevronDown size={14} className={`mtools-chevron ${rawOpen ? '' : 'collapsed'}`} />
-                <span>原始分析报告</span>
-                <span className="mtools-collapse-hint">{report.length.toLocaleString()} 字符</span>
-              </button>
-              <CopyButton text={report} label="复制" />
-            </div>
-            {rawOpen && <pre className="mtools-template-pre">{report}</pre>}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── 主视图 ────────────────────────────────────────────────
 export default function ModelToolsView() {
   const { modelToolsTarget, setModelToolsTarget } = useStore(
@@ -820,7 +647,6 @@ export default function ModelToolsView() {
     { key: 'tokenizer', label: 'Token 可视化', icon: <Hash size={14} /> },
     { key: 'fit', label: '显存计算器', icon: <MemoryStick size={14} /> },
     { key: 'compare', label: '模型对比', icon: <GitCompare size={14} /> },
-    { key: 'template', label: '模板分析', icon: <FileCode2 size={14} /> },
   ]
 
   return (
@@ -845,7 +671,6 @@ export default function ModelToolsView() {
       {tab === 'tokenizer' && <TokenizerTab modelPath={modelPath} setModelPath={setModelPath} />}
       {tab === 'fit' && <FitTab modelPath={modelPath} setModelPath={setModelPath} />}
       {tab === 'compare' && <CompareTab />}
-      {tab === 'template' && <TemplateTab modelPath={modelPath} setModelPath={setModelPath} />}
     </div>
   )
 }

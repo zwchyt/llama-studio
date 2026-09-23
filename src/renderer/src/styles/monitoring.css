@@ -317,11 +317,3 @@
   padding: 8px 0;
   text-align: center;
 }
-
-.agent-ctx-metric-val {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-  font-family: var(--font-mono, monospace);
-}

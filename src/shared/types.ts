@@ -9,7 +9,7 @@ export interface BackendVersion {
   path: string
   hasCommands: boolean
   exe: string | null
-  /** 引擎类型（按可执行文件名推断，如 TensorSharp.Server.exe → 'tensorsharp'） */
+  /** 引擎类型（按可执行文件名推断，如 TensorSharp.Server.Host.exe → 'tensorsharp'） */
   kind?: EngineKind
 }
 export interface CommandParam {
@@ -67,6 +67,55 @@ export interface ReleaseInfo {
   noRelease?: boolean
   /** 有发布但不存在匹配当前平台 / 架构的官方包 */
   noPackage?: boolean
+}
+
+/** stable-diffusion.cpp CUDA 运行时（cudart / cublas）包的上游最新状态 */
+export interface SdCudartUpstream {
+  repo: string
+  /** 上游最近的 CUDA 运行时资产名；上游未提供时为 null */
+  assetName: string | null
+  downloadUrl: string | null
+  size: number
+  /** 资产 sha256（GitHub 提供时才有）；内容变了它必然变，是最可靠的过期判据 */
+  digest: string
+  /** 该资产所属 release 的 tag */
+  releaseTag: string | null
+  /** release 发布时间（过期判定的主时间信号，只在真正发新版时变化） */
+  publishedAt: string | null
+  /** release 更新时间（仅供参考，改发布说明也会变，不单独作为过期判据） */
+  updatedAt: string | null
+  /** 仓库默认分支最新提交时间（辅助信号） */
+  commitAt: string | null
+  error?: string
+}
+
+/** 本地 CUDA 运行时的安装记录（写在引擎目录 .cudart-install.json） */
+export interface SdCudartMarker {
+  repo?: string
+  assetName?: string
+  digest?: string
+  installedAt?: number
+  /** 安装时上游 release 的发布时间；无网络时为 null */
+  upstreamPublishedAt?: string | null
+  /** 安装时仓库默认分支最新提交时间；仅作参考 */
+  upstreamCommitAt?: string | null
+}
+
+/** check-sd-cudart-installed 的返回：本地状态 + 上游状态 + 是否需要（重新）下载 */
+export interface SdCudartStatus {
+  /** 关键 dll 是否齐全 */
+  installed: boolean
+  found: string[]
+  missing: string[]
+  /** 本地副本相对上游是否过期（dll 缺失时同样为 true） */
+  stale: boolean
+  /** 是否需要（重新）下载：!installed || stale */
+  needsUpdate: boolean
+  /** 判定为过期的具体原因，用于界面提示 */
+  reasons: string[]
+  local: SdCudartMarker | null
+  /** 上游查询失败时为 null（此时不判定过期，避免误触发重新下载） */
+  upstream: SdCudartUpstream | null
 }
 
 /** 应用自身更新的信息 */

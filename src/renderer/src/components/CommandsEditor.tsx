@@ -7,6 +7,8 @@ import { Plus, Trash, ChevronDown, ChevronRight, Save, RotateCcw, Pencil, Check,
 import type { CommandsSchema, CommandCategory, CommandParam } from '../../../shared/types'
 import { iconComponents, ICON_NAMES } from '../utils/iconMap'
 import { paramSetOf } from '../utils/engine'
+// 本组件的样式（.ce-*）跟着组件走，原先寄存在 models.css 里，已迁到自己的文件
+import '../styles/commands-editor.css'
 
 const PARAM_TYPES = ['boolean', 'number', 'string', 'select', 'text']
 const emptyCmd = (): CommandParam => ({

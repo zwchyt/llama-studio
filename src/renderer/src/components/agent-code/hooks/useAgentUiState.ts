@@ -2,7 +2,7 @@
 // ║ 区域：useAgentUiState —— 界面状态域（面板 / 弹层 / 模型选择器 / 任务卡 / 审批） ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 // 搬移自 AgentCodeView.tsx 的界面状态声明与其配套回调 / effect，逻辑与注释均未改动：
-//   · 顶栏卡片按钮 ref（上下文 / 压缩 / 审计 / 轨迹 / 调试 / 提示词 / 知识库 / 记忆）
+//   · 顶栏卡片按钮 ref（上下文 / 压缩 / 轨迹 / 提示词 / 知识库 / 记忆）
 //   · 模型选择器（打开态、宽度估算、能力徽标、Logo 菜单与设置/移除）
 //   · 联网搜索开关（searchEnabled / searchProvider 与其变更回调 applySearchChange）
 //   · 通用模式派生量（plainChat 由当前工作区模式推导；不再有「把当前会话改成通用」的路径）
@@ -54,9 +54,7 @@ export function useAgentUiState({
 
   const ctxInlineRef = useRef<HTMLButtonElement>(null)
   const condenseBtnRef = useRef<HTMLButtonElement>(null)
-  const auditBtnRef = useRef<HTMLButtonElement>(null)
   const trajBtnRef = useRef<HTMLButtonElement>(null)
-  const debugBtnRef = useRef<HTMLButtonElement>(null)
   const promptBtnRef = useRef<HTMLButtonElement>(null)
   const kbBtnRef = useRef<HTMLButtonElement>(null)
   const memoryBtnRef = useRef<HTMLButtonElement>(null)
@@ -316,9 +314,7 @@ export function useAgentUiState({
   // 不持久化，每次进入工作台都是收起态。
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [contextModalOpen, setContextModalOpen] = useState(false)
-  const [auditOpen, setAuditOpen] = useState(false)  // 操作审计面板开关
   const [trajOpen, setTrajOpen] = useState(false)  // 轨迹台账面板开关
-  const [debugOpen, setDebugOpen] = useState(false)  // 调试面板开关
   const [memoryOpen, setMemoryOpen] = useState(false)  // 长期记忆面板开关
   const treeOpenRef = useRef(treeOpen)
   treeOpenRef.current = treeOpen
@@ -433,7 +429,7 @@ export function useAgentUiState({
 
   return {
     // 顶栏卡片按钮 ref
-    ctxInlineRef, condenseBtnRef, auditBtnRef, trajBtnRef, debugBtnRef,
+    ctxInlineRef, condenseBtnRef, trajBtnRef,
     promptBtnRef, kbBtnRef, memoryBtnRef,
     // 模型选择器 / 联网搜索
     modelPickerOpen, setModelPickerOpen, modelPickerRef,
@@ -451,8 +447,8 @@ export function useAgentUiState({
     terminalMounted, setTerminalMounted,
     // 功能面板开关
     sidebarOpen, setSidebarOpen, contextModalOpen, setContextModalOpen,
-    auditOpen, setAuditOpen, trajOpen, setTrajOpen,
-    debugOpen, setDebugOpen, memoryOpen, setMemoryOpen, treeOpenRef,
+    trajOpen, setTrajOpen,
+    memoryOpen, setMemoryOpen, treeOpenRef,
     // 任务清单卡
     taskModalOpen, setTaskModalOpen, taskCardClosing, setTaskCardClosing,
     currentPlanItems, setCurrentPlanItems, taskDoneCount,

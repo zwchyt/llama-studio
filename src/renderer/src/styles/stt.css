@@ -1,20 +1,17 @@
 /* ══════════════════════════════════════════════════════════════
-   「语音合成」页专属样式（TtsView）
+   「语音转写」页专属样式（SttView）
    ──────────────────────────────────────────────────────────────
-   作用域：除根节点 .tts-view 自身外，其余规则一律挂在 .tts-view 下。
+   作用域：除根节点 .stt-view 自身外，其余规则一律挂在 .stt-view 下。
 
-   本文件历史上被 TtsView / SttView 两个页面共用（都是 tts- 前缀的类名）——
-   「语音转写」页直接借用了这里的样式。现已拆开：
-     · 本文件只服务「语音合成」页
-     · 「语音转写」页 → stt.css（自包含的一份，类名改为 stt- 前缀）
-   因此改这个文件不会影响「语音转写」页。
+   本页原先引用 tts.css（「语音合成」页的样式文件）并直接复用它的 tts- 前缀类名。
+   现已拆出自包含的一份：类名改为 stt- 前缀，本页不再引用 tts.css，
+   改这个文件不会影响「语音合成」页。
 
-   注意：作用域化是拆分的前提 —— CSS 是全局的，若本文件规则不加 .tts-view 前缀，
-   即使 SttView 换了新文件，这里的 .tts-card 等仍会命中 SttView 的元素。
+   规则内容与拆分前 tts.css 中本页用到的部分逐条一致（只换前缀 + 加作用域），
+   所以外观与拆分前完全相同。本页只用到其中一部分，故只保留这些。
    ══════════════════════════════════════════════════════════════ */
 
-/* ── 语音合成视图（tts- 前缀）─────────────────────────── */
-.tts-view {
+.stt-view {
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -22,7 +19,7 @@
   overflow-y: auto;
 }
 
-.tts-view .tts-body {
+.stt-view .stt-body {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -30,86 +27,47 @@
   width: 100%;
 }
 
-.tts-view .tts-card {
+.stt-view .stt-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius, 10px);
   padding: 16px 18px;
 }
 
-.tts-view .tts-card-title {
+.stt-view .stt-card-title {
   font-size: 13px;
   font-weight: 700;
   color: var(--text);
   margin-bottom: 12px;
 }
 
-.tts-view .tts-model-row {
+.stt-view .stt-model-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px;
 }
 
 @media (max-width: 720px) {
-  .tts-view .tts-model-row {
+  .stt-view .stt-model-row {
     grid-template-columns: 1fr;
   }
 }
 
-.tts-view .tts-model-field {
+.stt-view .stt-model-field {
   display: flex;
   flex-direction: column;
   gap: 5px;
   min-width: 0;
 }
 
-.tts-view .tts-mode-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
-}
-
-.tts-view .tts-mode-option {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: var(--radius-sm, 8px);
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: all .15s ease;
-}
-
-.tts-view .tts-mode-option:hover {
-  border-color: var(--border-strong, var(--border));
-  color: var(--text);
-}
-
-.tts-view .tts-mode-option.active {
-  background: var(--primary, #8b5cf6);
-  border-color: var(--primary, #8b5cf6);
-  color: #fff;
-}
-
-.tts-view .tts-mode-tag {
-  font-size: 10px;
-  font-weight: 500;
-  opacity: .75;
-}
-
-.tts-view .tts-speaker-row {
+.stt-view .stt-speaker-row {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-.tts-view .tts-speaker-input {
+.stt-view .stt-speaker-input {
   flex: 1;
   min-width: 160px;
   padding: 7px 10px;
@@ -124,7 +82,7 @@
   text-overflow: ellipsis;
 }
 
-.tts-view .tts-speaker-row .btn {
+.stt-view .stt-speaker-row .btn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -132,13 +90,13 @@
   padding: 6px 10px;
 }
 
-.tts-view .tts-field-label {
+.stt-view .stt-field-label {
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
 }
 
-.tts-view .tts-hint {
+.stt-view .stt-hint {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -148,15 +106,15 @@
   color: var(--text-muted);
 }
 
-.tts-view .tts-hint.warn {
+.stt-view .stt-hint.warn {
   color: #f59e0b;
 }
 
-.tts-view .tts-hint.inline {
+.stt-view .stt-hint.inline {
   margin-top: 0;
 }
 
-.tts-view .tts-textarea {
+.stt-view .stt-textarea {
   width: 100%;
   resize: vertical;
   min-height: 96px;
@@ -170,26 +128,12 @@
   font-family: inherit;
 }
 
-.tts-view .tts-textarea:focus {
+.stt-view .stt-textarea:focus {
   outline: none;
   border-color: var(--border-strong, var(--border));
 }
 
-.tts-view .tts-input-footer {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 6px;
-  min-height: 18px;
-}
-
-.tts-view .tts-char-count {
-  font-size: 11px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.tts-view .tts-actions {
+.stt-view .stt-actions {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -197,23 +141,23 @@
   flex-wrap: wrap;
 }
 
-.tts-view .tts-actions .spin {
-  animation: tts-spin 1s linear infinite;
+.stt-view .stt-actions .spin {
+  animation: stt-spin 1s linear infinite;
 }
 
-@keyframes tts-spin {
+@keyframes stt-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
-.tts-view .tts-meta {
+.stt-view .stt-meta {
   font-size: 12px;
   color: var(--text-muted);
   font-family: var(--font-mono, 'SF Mono', monospace);
 }
 
-.tts-view .tts-error {
+.stt-view .stt-error {
   display: flex;
   align-items: flex-start;
   gap: 6px;
@@ -228,7 +172,7 @@
   word-break: break-all;
 }
 
-.tts-view .tts-error svg {
+.stt-view .stt-error svg {
   flex-shrink: 0;
   margin-top: 2px;
 }

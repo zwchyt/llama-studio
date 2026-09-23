@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import hljs from 'highlight.js/lib/common'
 import { Check, Copy, ChevronDown } from 'lucide-react'
 import { WindowedText } from './agent-code/WindowedText'
+// 本组件是共享组件（Agent Code 消息与模型中心 README 都会渲染），样式跟着组件走，
+// 原先寄存在 chat.css 里、靠 AgentCodeView 的静态引入才生效，已迁到自己的文件
+import '../styles/code-block.css'
 
 /**
  * 代码块组件：用 highlight.js 高亮，带语言标签、复制按钮和折叠/展开。

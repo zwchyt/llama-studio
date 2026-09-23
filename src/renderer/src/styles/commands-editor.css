@@ -1,0 +1,130 @@
+/* ══════════════════════════════════════════════════════════════
+   CommandsEditor 组件专属样式（components/CommandsEditor.tsx）
+   ──────────────────────────────────────────────────────────────
+   参数集编辑器：分类折叠 + 命令行条目 + 参数表单（.ce- 前缀）。
+
+   本文件由 CommandsEditor.tsx 自己引入 —— 它是**共享组件**：被「后端与引擎」页
+   嵌在 .ce-panel 里展开使用，也可能被其它页面复用。样式跟着组件走，
+   不能寄存在某个页面的样式文件里。
+
+   历史问题：这些规则原先放在 models.css（「模型」页的样式文件）里。
+   结果是「后端与引擎」页能正常显示编辑器，纯粹因为 ModelsView 是静态引入、
+   models.css 恰好进了主包 —— 一旦 ModelsView 改成懒加载，编辑器就会掉样式。
+   现已迁到本文件并改由组件自己引入。
+
+   规则内容与原 models.css / global.css 完全一致（未做视觉改动）。
+   ══════════════════════════════════════════════════════════════ */
+
+/* 参数表单两列网格。原先定义在 global.css，但只有本组件在用，一并归位。 */
+.ce-cmd-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.ce-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ce-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  margin-bottom: 4px;
+}
+
+.ce-category {
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.ce-category-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  background: var(--bg);
+  transition: background var(--transition);
+  -webkit-user-select: none;
+  user-select: none;
+  border-radius: calc(var(--radius-sm) - 1.5px) calc(var(--radius-sm) - 1.5px) 0 0;
+}
+
+.ce-category-header:hover {
+  background: var(--border);
+}
+
+.ce-cat-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ce-cat-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+.ce-category-body {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.ce-cmd-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.ce-cmd-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  background: var(--bg);
+  transition: background var(--transition);
+}
+
+.ce-cmd-item-header:hover {
+  background: var(--border);
+}
+
+.ce-cmd-arg {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  min-width: 120px;
+}
+
+.ce-cmd-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.ce-cmd-type-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ce-cmd-form {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}

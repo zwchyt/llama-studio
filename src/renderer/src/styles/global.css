@@ -37,7 +37,7 @@
   --z-float: 5;          /* 浮动元素（滚到底按钮、badge） */
   --z-sticky: 10;        /* 粘性元素（侧边栏、粘性头） */
   --z-dropdown: 20;      /* 下拉/弹出菜单 */
-  --z-popover: 30;       /* 弹出卡片（审计、压缩、提示词） */
+  --z-popover: 30;       /* 弹出卡片（压缩、提示词、长期记忆） */
   --z-panel: 50;         /* 浮动面板（模型选择、地址补全） */
   --z-overlay: 60;       /* 遮罩层（全屏遮罩、审批弹窗） */
   --z-toast: 72;         /* Toast/通知 */
@@ -1665,12 +1665,6 @@ webview {
   }
 }
 
-.ce-cmd-form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
 @keyframes session-streaming-pulse {
 
   0%,
@@ -1922,4 +1916,277 @@ input[type="reset"]:not(:disabled) {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+/* ══════════════════════════════════════════════════════════════
+   跨页通用：命令行参数表单控件 + 分段按钮组
+   ──────────────────────────────────────────────────────────────
+   下面两组是从 models.css 迁来的**跨页基础件**，不是「模型」页的专属样式：
+     · .cmd-input / .cmd-select / .cmd-textarea —— 参数控件基础外观。
+       .cmd-select 还被 CustomSelect 使用，后者被 11 个组件、多个页面引用；
+       audiocpp.css / imagegen.css 也都在用复合选择器扩展它。
+     · .launch-mode-row / .launch-mode-btn —— 分段按钮组，被 ModelCard、ParamsModal、
+       CreateModal、ImageGenView、SettingsView 共 5 个组件跨页使用。
+   放在 global.css 与 .btn / .form-input 同级，属于应用级表单层。
+   规则内容与原 models.css 完全一致（未做视觉改动）。
+   ══════════════════════════════════════════════════════════════ */
+
+.cmd-input,
+.cmd-select,
+.cmd-textarea {
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.cmd-input:focus,
+.cmd-select:focus,
+.cmd-textarea:focus {
+  border-color: var(--border-strong);
+}
+
+.cmd-input {
+  padding: 5px 9px;
+  width: 110px;
+}
+
+.cmd-input[type="number"] {
+  width: 90px;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.cmd-input[type="number"]::-webkit-inner-spin-button,
+.cmd-input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.cmd-select {
+  padding: 5px 24px 5px 9px;
+  appearance: none;
+  cursor: pointer;
+  min-width: 90px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b6b6b'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+.cmd-textarea {
+  padding: 7px 9px;
+  width: 100%;
+  resize: vertical;
+  min-height: 60px;
+  font-size: 11px;
+  margin-top: 6px;
+  display: block;
+}
+.launch-mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+  min-width: 0;
+}
+
+.launch-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font);
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+
+.launch-mode-btn:not(.active):hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.launch-mode-btn.active {
+  background: #e1e1e1;
+  color: #120101;
+  border-color: #d9d9d9;
+}
+
+.launch-mode-btn:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.launch-mode-btn svg {
+  width: 11px;
+  height: 11px;
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   跨页共享的组件件（从各页面样式文件归位至此）
+   ──────────────────────────────────────────────────────────────
+   下面这些类被两个以上页面的组件使用，属于应用级基础件，
+   与 .btn / .cmd-input 同级。原先散落在各页面样式文件里，
+   导致「改 A 页的样式会影响 B 页」：
+     · .toggle / .toggle-track / .toggle-thumb —— 开关控件，
+       被 CmdParamsEditor、ParamsModal、SettingsView 共用
+     · .status-dot 及其状态修饰符 —— 状态圆点，
+       被 ModelCard、AudioCppView 共用
+     · .header-count-badge —— 标题计数徽标，被 CardsView、ModelsView 共用
+     · .agent-window / .agent-tool-chev —— 文本行窗口容器与折叠箭头，
+       被 CodeBlock 与 Agent Code 的多个组件共用（agent- 前缀是历史命名，
+       实际是通用的「定行高可滚动窗口」机制，见 agent-code/utils/textRows.ts）
+   规则内容与原文件完全一致（未做视觉改动）。
+   ══════════════════════════════════════════════════════════════ */
+
+.toggle-wrap {
+  flex-shrink: 0;
+}
+
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  cursor: pointer;
+}
+
+.toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 99px;
+  background: var(--border-strong);
+  transition: background var(--transition);
+}
+
+.toggle input:checked~.toggle-track {
+  background: #93b0b7;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #717a7f;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+  transition: transform var(--transition);
+}
+
+.toggle input:checked~.toggle-thumb {
+  transform: translateX(18px);
+}
+
+.header-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  margin-left: 10px;
+  padding: 0 7px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font);
+  color: var(--text-secondary);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 99px;
+  vertical-align: middle;
+  cursor: default;
+  transition: color var(--transition), background var(--transition);
+}
+
+.header-count-badge:hover {
+  color: var(--text);
+  background: var(--border);
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-dot.running {
+  background: #df6464;
+  box-shadow: 0 0 0 3px rgb(197 63 99 / 25%);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+.status-dot.idle {
+  background: var(--text-muted);
+}
+
+.status-dot.ready {
+  background: var(--success);
+  box-shadow: 0 0 0 3px rgb(22 163 74 / 25%);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+.status-dot.error {
+  background: var(--danger);
+}
+
+.agent-window {
+  overflow: auto;
+  font: inherit;
+  color: inherit;
+  scrollbar-width: thin;
+}
+
+.agent-window::-webkit-scrollbar {
+  width: 6px;
+}
+
+.agent-window::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+}
+
+.agent-window-row {
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-window-num {
+  display: inline-block;
+  width: 38px;
+  padding-right: 8px;
+  margin-right: 8px;
+  text-align: right;
+  color: var(--text-muted);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-tool-chev {
+  transition: transform .15s;
+  transform: translateY(var(--agent-tool-chev-y, 0));
+}
+
+.agent-tool-chev.open {
+  transform: rotate(90deg) translateY(var(--agent-tool-chev-y, 0));
 }

@@ -31,8 +31,6 @@ import { agentConfig } from '../../../utils/agentConfig'
 import { PiAgentClient } from '../../../utils/piAgentClient'
 import { computeContextBudget, splitAgentTurns } from '../../../utils/contextBudget'
 import { noteUserCorrection, probeContradiction } from '../../../utils/memoryWriter'
-import { recordAudit } from '../../../utils/auditLog'
-import { recordDebugTurn, type DebugToolCall } from '../../../utils/debugLog'
 import { parseSlashCommand, findCommand, expandCommandTemplate } from '../../../agent/slashCommands'
 import { newMsgId, uniqueId } from '../utils/ids'
 import { MIN_EXEC_DISPLAY_MS, KEEP_RECENT_TURNS } from '../utils/constants'
@@ -324,8 +322,6 @@ export function useAgentLoop({
     // executing 徽标一闪而过肉眼不可见；结束时若执行时长不足 MIN_EXEC_DISPLAY_MS，
     // 延迟置 done，保证「写入中/编辑中」状态至少可见一瞬（最小展示时长）。
     const execStartMs = new Map<string, number>()
-    // 本轮（单次 prompt 运行）内的工具调用链（调试面板用；turn_end 时快照进 recordDebugTurn）
-    let turnToolTrace: DebugToolCall[] = []
     let thinkOpen = false
     let curToolIds: string[] | null = null
     let textSinceLastTool = false
@@ -507,22 +503,6 @@ export function useAgentLoop({
           backupsRef.current[id] = { path: `pi-undo:${backupId}`, content: '' }
         }
         const elapsed = execStartMs.has(id) ? Date.now() - execStartMs.get(id)! : Number.MAX_SAFE_INTEGER
-        // 操作审计日志：记录每次已执行工具（pi 模式在 renderer 侧无从得知是否经过
-        // main 审批通道，approved 固定 false——审批弹窗的 id 与 toolCallId 无法关联）。
-        try {
-          const tc = toolCalls.find(t => t.id === id)
-          recordAudit({
-            sessionId: piSessionId,
-            tool: name,
-            args: tc?.args ?? '',
-            result: resultText,
-            durationMs: elapsed === Number.MAX_SAFE_INTEGER ? 0 : elapsed,
-            failed: isError,
-            approved: false,
-          })
-        } catch { /* 审计埋点不影响主流程 */ }
-        // 调试面板：本轮工具调用链（有序）
-        turnToolTrace.push({ name, durationMs: elapsed === Number.MAX_SAFE_INTEGER ? 0 : elapsed, failed: isError })
         // ── 矛盾探针（阶段 2.3）：Bash 实测失败 → 对相似的「已验证命令」记忆条目记矛盾标记
         // （置信度腰斩，累计两次自动归档）。此前 probeContradiction 全仓零调用，
         // contradictions 恒为 0，「矛盾 ×N」徽标与矛盾归档整条链路都不可达。
@@ -555,27 +535,7 @@ export function useAgentLoop({
         if (elapsed >= MIN_EXEC_DISPLAY_MS) applyDone()
         else setTimeout(applyDone, MIN_EXEC_DISPLAY_MS - elapsed)
       },
-      onTurnEnd: (info) => {
-        // 调试面板：按轮记录（pi 事件不携带 requestPayload/msgCount/toolCount/dropped/
-        // ttft/tps，这些字段留空；tokens 与耗时来自 turn_start/turn_end 事件）。
-        try {
-          recordDebugTurn({
-            sessionId: piSessionId,
-            turn: info.turnIndex,
-            requestPayload: '',
-            msgCount: 0,
-            toolCount: 0,
-            dropped: 0,
-            promptTokens: info.promptTokens,
-            completionTokens: info.completionTokens,
-            ttftMs: undefined,
-            tps: undefined,
-            durationMs: info.durationMs,
-            tools: turnToolTrace.slice(),
-          })
-        } catch { /* 调试埋点不影响主流程 */ }
-        turnToolTrace = []
-      },
+      onTurnEnd: () => { /* pi 事件不携带需要落地的字段，无需额外处理 */ },
       onEnd: () => { /* prompt 返回即结束，无需额外处理 */ },
       onQueueUpdate: (_s, f) => {
         // 出队（被执行）的条目 = prev 有而当前无的 → 此刻补写进历史，让其出现在对话里

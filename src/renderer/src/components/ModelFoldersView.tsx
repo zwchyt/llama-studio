@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react'
 import { useStore } from '../store/useStore'
 import { FolderPlus, Folder, ImageDown, Volume2, Mic, ScanText, Boxes, Trash } from 'lucide-react'
 import { safeCall } from '../utils/safeCall'
-import '../styles/settings.css'
+// 本页样式自包含：原先引用的是 settings.css（「设置」页的样式文件），已拆出独立文件
+import '../styles/model-folders.css'
 
 /**
  * 模型文件夹视图：统一管理文本 / 图片 / 语音 / OCR / stable-diffusion.cpp 五类模型文件夹。
@@ -114,7 +115,7 @@ export default function ModelFoldersView() {
   }
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl model-folders-view">
       <div className="page-header">
         <div>
           <h1 className="page-title">模型文件夹</h1>
@@ -122,19 +123,19 @@ export default function ModelFoldersView() {
         </div>
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section mf-accent--text">
         <div className="settings-section-title"><Folder /> 文本模型文件夹</div>
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="mf-body">
+          <p className="mf-desc">
             添加应用默认模型目录之外的文件夹。其中的文件（及子目录）将与已下载的模型一起显示在模型页面。文件保留在原位置——不会被复制。
           </p>
           {extFolders.length === 0 ? (
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未配置外部文件夹。</div>
+            <div className="mf-empty">未配置外部文件夹。</div>
           ) : (
-            <div className="flex flex-col gap-2" style={{ width: '100%' }}>
+            <div className="mf-list">
               {extFolders.map(f => (
-                <div key={f} className="settings-row" style={{ borderBottom: 'none', padding: '6px 0' }}>
-                  <div className="settings-row-sub mono" style={{ flex: 1, wordBreak: 'break-all' }}>{f}</div>
+                <div key={f} className="mf-row">
+                  <div className="mf-path">{f}</div>
                   <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleRemoveExtFolder(f)}>
                     <Trash size={14} />
                   </button>
@@ -142,25 +143,25 @@ export default function ModelFoldersView() {
               ))}
             </div>
           )}
-          <button className="btn btn-secondary btn-sm" onClick={handleAddExtFolder}>
+          <button className="btn btn-secondary btn-sm mf-add" onClick={handleAddExtFolder}>
             <FolderPlus size={13} /> 添加文件夹
           </button>
         </div>
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section mf-accent--image">
         <div className="settings-section-title"><ImageDown /> 图片模型文件夹</div>
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="mf-body">
+          <p className="mf-desc">
             添加存放多模态投影仪文件（如 mmproj*.gguf）的文件夹。这些文件将作为图片模型出现在模板的 --mmproj 参数下拉中。
           </p>
           {imgFolders.length === 0 ? (
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未配置图片模型文件夹。</div>
+            <div className="mf-empty">未配置图片模型文件夹。</div>
           ) : (
-            <div className="flex flex-col gap-2" style={{ width: '100%' }}>
+            <div className="mf-list">
               {imgFolders.map(f => (
-                <div key={f} className="settings-row" style={{ borderBottom: 'none', padding: '6px 0' }}>
-                  <div className="settings-row-sub mono" style={{ flex: 1, wordBreak: 'break-all' }}>{f}</div>
+                <div key={f} className="mf-row">
+                  <div className="mf-path">{f}</div>
                   <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleRemoveImgFolder(f)}>
                     <Trash size={14} />
                   </button>
@@ -168,25 +169,25 @@ export default function ModelFoldersView() {
               ))}
             </div>
           )}
-          <button className="btn btn-secondary btn-sm" onClick={handleAddImgFolder}>
+          <button className="btn btn-secondary btn-sm mf-add" onClick={handleAddImgFolder}>
             <FolderPlus size={13} /> 添加文件夹
           </button>
         </div>
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section mf-accent--tts">
         <div className="settings-section-title"><Volume2 /> 语音合成模型文件夹</div>
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="mf-body">
+          <p className="mf-desc">
             添加存放语音合成模型（Qwen3-TTS、OuteTTS 与 WavTokenizer 声码器的 GGUF 文件）的文件夹。其中的模型将出现在语音合成视图的模型下拉中。文件保留在原位置——不会被复制。
           </p>
           {ttsFolders.length === 0 ? (
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未配置语音合成模型文件夹。</div>
+            <div className="mf-empty">未配置语音合成模型文件夹。</div>
           ) : (
-            <div className="flex flex-col gap-2" style={{ width: '100%' }}>
+            <div className="mf-list">
               {ttsFolders.map(f => (
-                <div key={f} className="settings-row" style={{ borderBottom: 'none', padding: '6px 0' }}>
-                  <div className="settings-row-sub mono" style={{ flex: 1, wordBreak: 'break-all' }}>{f}</div>
+                <div key={f} className="mf-row">
+                  <div className="mf-path">{f}</div>
                   <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleRemoveTtsFolder(f)}>
                     <Trash size={14} />
                   </button>
@@ -194,25 +195,25 @@ export default function ModelFoldersView() {
               ))}
             </div>
           )}
-          <button className="btn btn-secondary btn-sm" onClick={handleAddTtsFolder}>
+          <button className="btn btn-secondary btn-sm mf-add" onClick={handleAddTtsFolder}>
             <FolderPlus size={13} /> 添加文件夹
           </button>
         </div>
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section mf-accent--asr">
         <div className="settings-section-title"><Mic /> 语音转写模型文件夹</div>
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="mf-body">
+          <p className="mf-desc">
             添加存放语音转写（ASR）模型主文件（如 Qwen3-ASR、granite-speech 的 GGUF，不含 mmproj）的文件夹。其中的模型将出现在语音转写视图的模型下拉中。mmproj 文件请放在「图片模型文件夹」。文件保留在原位置——不会被复制。
           </p>
           {asrFolders.length === 0 ? (
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未配置语音转写模型文件夹。</div>
+            <div className="mf-empty">未配置语音转写模型文件夹。</div>
           ) : (
-            <div className="flex flex-col gap-2" style={{ width: '100%' }}>
+            <div className="mf-list">
               {asrFolders.map(f => (
-                <div key={f} className="settings-row" style={{ borderBottom: 'none', padding: '6px 0' }}>
-                  <div className="settings-row-sub mono" style={{ flex: 1, wordBreak: 'break-all' }}>{f}</div>
+                <div key={f} className="mf-row">
+                  <div className="mf-path">{f}</div>
                   <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleRemoveAsrFolder(f)}>
                     <Trash size={14} />
                   </button>
@@ -220,25 +221,25 @@ export default function ModelFoldersView() {
               ))}
             </div>
           )}
-          <button className="btn btn-secondary btn-sm" onClick={handleAddAsrFolder}>
+          <button className="btn btn-secondary btn-sm mf-add" onClick={handleAddAsrFolder}>
             <FolderPlus size={13} /> 添加文件夹
           </button>
         </div>
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section mf-accent--ocr">
         <div className="settings-section-title"><ScanText /> OCR 模型文件夹</div>
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="mf-body">
+          <p className="mf-desc">
             添加存放 OCR / 图片理解模型（如 llava、qwen2-vl 等多模态 GGUF）的文件夹。其中的模型将出现在模型页面，并可用于 OCR 文字识别与图片描述。文件保留在原位置——不会被复制。
           </p>
           {ocrFolders.length === 0 ? (
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未配置 OCR 模型文件夹。</div>
+            <div className="mf-empty">未配置 OCR 模型文件夹。</div>
           ) : (
-            <div className="flex flex-col gap-2" style={{ width: '100%' }}>
+            <div className="mf-list">
               {ocrFolders.map(f => (
-                <div key={f} className="settings-row" style={{ borderBottom: 'none', padding: '6px 0' }}>
-                  <div className="settings-row-sub mono" style={{ flex: 1, wordBreak: 'break-all' }}>{f}</div>
+                <div key={f} className="mf-row">
+                  <div className="mf-path">{f}</div>
                   <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleRemoveOcrFolder(f)}>
                     <Trash size={14} />
                   </button>
@@ -246,16 +247,16 @@ export default function ModelFoldersView() {
               ))}
             </div>
           )}
-          <button className="btn btn-secondary btn-sm" onClick={handleAddOcrFolder}>
+          <button className="btn btn-secondary btn-sm mf-add" onClick={handleAddOcrFolder}>
             <FolderPlus size={13} /> 添加文件夹
           </button>
         </div>
       </div>
 
-      <div className="settings-section">
+      <div className="settings-section mf-accent--sd">
         <div className="settings-section-title"><Boxes /> stable-diffusion.cpp 模型文件夹</div>
-        <div className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+        <div className="mf-body">
+          <p className="mf-desc">
             图像生成需要三类组件（如 Z-Image = 扩散模型 + VAE + Qwen3-4B 文本编码器），
             三类文件夹在此统一管理、一起添加。扫描结果会出现在模型页面，扩散模型可直接选为模板模型，
             VAE 与 LLM 文本编码器会在模板高级参数的 <code>--vae</code> / <code>--llm</code> 下拉中列出。
@@ -266,16 +267,16 @@ export default function ModelFoldersView() {
             { kind: 'vae' as const, label: 'VAE', hint: '如 ae.safetensors' },
             { kind: 'llm' as const, label: 'LLM 文本编码器', hint: '如 Qwen3-4B-Instruct-2507-Q4_K_M.gguf' }
           ]).map(({ kind, label, hint }) => (
-            <div key={kind} className="settings-row" style={{ borderBottom: 'none', flexDirection: 'column', alignItems: 'flex-start', gap: 8, width: '100%' }}>
-              <div className="settings-row-label" style={{ fontSize: 13 }}>{label}</div>
-              <div className="text-sm" style={{ color: 'var(--text-muted)', fontSize: 12 }}>{hint}</div>
+            <div key={kind} className="mf-sub">
+              <div className="mf-sub-label">{label}</div>
+              <div className="mf-sub-hint">{hint}</div>
               {sdFolders[kind].length === 0 ? (
-                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>未配置{label}文件夹。</div>
+                <div className="mf-empty">未配置{label}文件夹。</div>
               ) : (
-                <div className="flex flex-col gap-1" style={{ width: '100%' }}>
+                <div className="mf-list">
                   {sdFolders[kind].map(f => (
-                    <div key={f} className="settings-row" style={{ borderBottom: 'none', padding: '4px 0' }}>
-                      <div className="settings-row-sub mono" style={{ flex: 1, wordBreak: 'break-all' }}>{f}</div>
+                    <div key={f} className="mf-row">
+                      <div className="mf-path">{f}</div>
                       <button className="btn btn-ghost btn-icon text-danger" onClick={() => handleRemoveSdFolder(kind, f)}>
                         <Trash size={14} />
                       </button>
@@ -283,7 +284,7 @@ export default function ModelFoldersView() {
                   ))}
                 </div>
               )}
-              <button className="btn btn-secondary btn-sm" onClick={() => handleAddSdFolder(kind)}>
+              <button className="btn btn-secondary btn-sm mf-add" onClick={() => handleAddSdFolder(kind)}>
                 <FolderPlus size={13} /> 添加文件夹
               </button>
             </div>

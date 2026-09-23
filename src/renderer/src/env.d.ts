@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, SystemMetrics, ChatSession, TokenUsageEntry, TokenUsageLedger, ChatStreamChunk, AgentProject, AgentSession, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit, ThinkingLevel } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, SystemMetrics, ChatSession, TokenUsageEntry, TokenUsageLedger, ChatStreamChunk, AgentProject, AgentSession, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit, ThinkingLevel, SdCudartStatus } from '../../shared/types'
 // 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
 interface ImagePromptPresetPayload {
   id: string; tag: string; cn: string; group: string
@@ -74,7 +74,7 @@ interface LlamaCppApi {
   checkUpdates: (repo?: string) => Promise<ReleaseInfo>
   downloadRelease: (opts: { url: string; version: string; assetName: string; digest?: string }) => Promise<{ success: boolean; path?: string; cancelled?: boolean; paused?: boolean; error?: string }>
   installSdCudart: (opts: { url: string; assetName: string; backendName: string; digest?: string }) => Promise<{ success: boolean; installed?: string[]; verified?: boolean; found?: string[]; missing?: string[]; error?: string }>
-  checkSdCudartInstalled: (backendName: string) => Promise<{ installed: boolean; found?: string[]; missing?: string[] }>
+  checkSdCudartInstalled: (backendName: string) => Promise<SdCudartStatus>
   onSdCudartProgress: (cb: (data: { phase: string; percent: number; received?: number; total?: number; speed?: number }) => void) => void
   removeSdCudartProgressListener: () => void
   cancelBackendDownload: () => Promise<{ success: boolean }>
@@ -264,8 +264,6 @@ interface LlamaCppApi {
   saveAgentProjects: (projects: AgentProject[], opts?: { gcScope?: string[] }) => Promise<{ success: boolean; error?: string }>
   exportAgentSession: (sessionId: string) => Promise<{ success: boolean; canceled?: boolean; error?: string }>
   importAgentSession: (projectId: string) => Promise<{ success: boolean; canceled?: boolean; sessionId?: string; session?: AgentSession; error?: string }>
-  // ── Agent Tracing 落盘 ──
-  agentTraceAppend: (sessionId: string, entry: object) => Promise<{ success: boolean; error?: string }>
   // ── Agent Code 文件删除 ──
   deletePath: (targetPath: string, recursive: boolean) => Promise<{ success: boolean; message?: string; error?: string }>
   gitChanges: (dir: string) => Promise<{ isRepo: boolean; staged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>; unstaged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>; error?: string }>

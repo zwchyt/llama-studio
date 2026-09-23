@@ -4,7 +4,9 @@
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 import { useEffect, useMemo, useRef } from 'react'
 import 'katex/dist/katex.min.css'
-import '../styles/monitoring.css'
+// 注：此处原先 import 了 monitoring.css（「模型运行数据」页的样式文件），
+// 但本页一个类都没用到 —— 唯一的 agent-ctx-metric-val 已归位到本页的 agent-code.css。
+// 每个导航页只引用自己的样式文件。
 import {useStore} from '../store/useStore'
 import {paramSetOf} from '../utils/engine'
 import {usePopoverDismiss} from '../utils/usePopoverDismiss'
@@ -34,9 +36,8 @@ import {useAgentModelControl} from './agent-code/hooks/useAgentModelControl'
 import {AgentCodeViewLayout} from './agent-code/agent-view/AgentCodeViewLayout'
 
 import type { AgentMessage, CardState } from '../../../shared/types'
-// chat.css = CodeBlock 组件的全局基础样式（.chat-code-* 与 .hljs* 主题），模型中心的 README 也靠它。
-// 必须早于 agent-code.css 引入：Agent Code 里那张表被同名的作用域规则覆盖，顺序反过来会改变胜出方。
-import '../styles/chat.css'
+// CodeBlock 的样式已迁到 styles/code-block.css，由 CodeBlock.tsx 自己引入（它是共享组件）。
+// 原先靠本页 import chat.css 才生效，属于隐性依赖，已解除；chat.css 随之删除。
 import '../styles/agent-code.css'
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -113,12 +114,12 @@ export default function AgentCodeView() {
   // ── 界面状态域（面板 / 弹层 / 模型选择器 / 任务卡 / 审批，见 agent-code/hooks/useAgentUiState.ts）──
   let ui!: ReturnType<typeof useAgentUiState>
   const {
-    ctxInlineRef, condenseBtnRef, auditBtnRef, trajBtnRef, debugBtnRef, memoryBtnRef,
+    ctxInlineRef, condenseBtnRef, trajBtnRef, memoryBtnRef,
     modelPickerOpen, setModelPickerOpen, modelPickerRef, modelBtnRef,
     treeOpen, setTreeOpen, rightPanelMode, setRightPanelMode,
     contextModalOpen, setContextModalOpen,
-    auditOpen, setAuditOpen, trajOpen, setTrajOpen,
-    debugOpen, setDebugOpen, memoryOpen, setMemoryOpen,
+    trajOpen, setTrajOpen,
+    memoryOpen, setMemoryOpen,
     taskModalOpen, setTaskModalOpen, setTaskCardClosing,
     setCurrentPlanItems, setPlanTitle, setTaskPanelCollapsed,
     editingMsgId, setEditingMsgId, editDraft, setEditDraft,
@@ -144,9 +145,7 @@ export default function AgentCodeView() {
 
   usePopoverDismiss(contextModalOpen, setContextModalOpen, ctxInlineRef, '.agent-card-ctx')
   usePopoverDismiss(condenseOpen, setCondenseOpen, condenseBtnRef, '.agent-card-condense')
-  usePopoverDismiss(auditOpen, setAuditOpen, auditBtnRef, '.agent-card-audit')
   usePopoverDismiss(trajOpen, setTrajOpen, trajBtnRef, '.agent-card-traj')
-  usePopoverDismiss(debugOpen, setDebugOpen, debugBtnRef, '.agent-card-debug')
   usePopoverDismiss(memoryOpen, setMemoryOpen, memoryBtnRef, '.agent-card-memstore')
 
   // ── 跨域共享 ref（各动作域共用的备份 / 撤销 / 回滚状态）──

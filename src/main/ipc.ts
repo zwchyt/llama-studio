@@ -17,7 +17,7 @@ import http from 'http'
 import { app } from 'electron'
 import { randomUUID, createHash } from 'crypto'
 import type * as ptyNs from 'node-pty'
-import type { AgentProject, AgentSession, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus, EngineKind, ReleaseInfo } from '../shared/types'
+import type { AgentProject, AgentSession, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus, EngineKind, ReleaseInfo, SdCudartMarker, SdCudartStatus, SdCudartUpstream } from '../shared/types'
 import { registerCodeMapIpc, disposeCodeMaps, deleteSnapshotForWorkspace } from './services/codeMapService'
 import { registerRetrievalIpc, disposeIndexForWorkspace } from './services/retrievalService'
 import { registerMemoryStoreIpc, deleteMemoryForWorkspace } from './services/memoryStore'
@@ -158,9 +158,19 @@ function findAnyFile(dir: string, names: string[], maxDepth = 4): boolean {
 
 // 后端主程序候选名（先按已知服务名精确匹配，再兜底取首个 .exe）。
 // 提到模块级作用域：注册表构建、后台轻量校验、run-model 兜底三处共用同一套查找策略。
+// TensorSharp 发布包内主程序为 TensorSharp.Server.Host(.exe)（.NET 宿主），
+// 旧命名 TensorSharp.Server 一并保留，避免历史目录无法识别。
+const TENSORSHARP_EXE_NAMES = ['TensorSharp.Server.Host.exe', 'TensorSharp.Server.Host', 'TensorSharp.Server.exe', 'TensorSharp.Server']
 const BACKEND_EXE_NAMES = process.platform === 'win32'
-  ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe', 'sd-server.exe', 'sd-server', 'audiocpp_server.exe', 'audiocpp_server', 'audiocpp_cli.exe', 'audiocpp_cli']
-  : ['llama-server', 'main', 'server', 'TensorSharp.Server', 'sd-server', 'audiocpp_server', 'audiocpp_cli']
+  ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', ...TENSORSHARP_EXE_NAMES, 'sd-server.exe', 'sd-server', 'audiocpp_server.exe', 'audiocpp_server', 'audiocpp_cli.exe', 'audiocpp_cli']
+  : ['llama-server', 'main', 'server', ...TENSORSHARP_EXE_NAMES, 'sd-server', 'audiocpp_server', 'audiocpp_cli']
+// 解压后完整性校验用的候选名（跨平台全集，含扩展名与无扩展名两种写法），
+// 与 BACKEND_EXE_NAMES 共用 TENSORSHARP_EXE_NAMES，防止两处清单再次漂移导致「解压成功却判定包不完整」
+const EXTRACT_CHECK_EXE_NAMES = [
+  'llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe',
+  ...TENSORSHARP_EXE_NAMES,
+  'sd-server.exe', 'sd-server', 'audiocpp_server.exe', 'audiocpp_server', 'audiocpp_cli.exe', 'audiocpp_cli',
+]
 // 在单个后端目录内查找可执行文件（有限深度递归，跳过 createdump.exe）。
 // 返回相对 basePath 的路径；未找到返回 null。
 async function findBackendExecutable(dir: string, depth = 0): Promise<string | null> {
@@ -186,6 +196,38 @@ async function findBackendExecutable(dir: string, depth = 0): Promise<string | n
     if (found) results[idx] = join(sub.name, found)
   }, 2)
   return results.find(r => r) ?? null
+}
+
+// ── stable-diffusion.cpp CUDA 运行时（cudart / cublas）安装记录 ──
+// 主引擎包（sd-master-*-bin-win-cuda12-x64.zip）不含 CUDA 运行库，需把 cudart-*.zip 里的
+// dll 合并进引擎目录。该包与主引擎解耦：上游只在发新版时重新上传，
+// 因此「本地是否过期」必须看上游，不能只看 dll 是否存在 ——
+// 只看存在性的话，一旦装过就永远认为已就绪，上游更新后再也无法触发重新下载。
+const SD_REPO = 'leejet/stable-diffusion.cpp'
+const SD_CUDART_MARKER = '.cudart-install.json'
+// 是否把「仓库默认分支最新提交时间」也当作过期判据。
+// 默认 false：cudart 包只在发版时重新上传，按提交时间判断会导致上游每次提交都提示重新下载
+// （单次约百 MB 流量）。需要更激进的跟随策略时置为 true。
+const SD_CUDART_TRACK_COMMITS = false
+function cudartMarkerPath(dir: string): string {
+  return join(dir, SD_CUDART_MARKER)
+}
+function readCudartMarker(dir: string): SdCudartMarker | null {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(cudartMarkerPath(dir), 'utf-8'))
+    return typeof parsed === 'object' && parsed !== null ? parsed as SdCudartMarker : null
+  } catch { return null }
+}
+function writeCudartMarker(dir: string, marker: SdCudartMarker): void {
+  try { writeFileSync(cudartMarkerPath(dir), JSON.stringify(marker, null, 2), 'utf-8') }
+  catch (e) { console.error('写入 CUDA 运行时安装记录失败', e) }
+}
+// ISO 时间串 → 毫秒；无法解析返回 null。
+// 上游缺字段时必须返回 null 而不是 0/NaN，否则会被误判成「已过期」而触发无谓的重新下载。
+function isoToMs(iso?: string | null): number | null {
+  if (!iso) return null
+  const t = Date.parse(iso)
+  return Number.isFinite(t) ? t : null
 }
 
 interface TerminalSession {
@@ -263,7 +305,7 @@ const SD_CPP_EXE_NAMES = new Set(['sd-server', 'sd-server.exe', 'sd-cli', 'sd-cl
 // audio.cpp 的可执行文件（audiocpp_server = HTTP 服务（自带 WebUI），audiocpp_cli = 命令行推理）
 const AUDIO_CPP_EXE_NAMES = new Set(['audiocpp_server', 'audiocpp_server.exe', 'audiocpp_cli', 'audiocpp_cli.exe'])
 // 按可执行文件名 + 后端目录名推断后端引擎类型：
-// TensorSharp.Server.exe → 'tensorsharp'；llama.cpp 分支（目录名含 turboquant / beellama）→ 对应分支；
+// TensorSharp.Server.Host.exe → 'tensorsharp'；llama.cpp 分支（目录名含 turboquant / beellama）→ 对应分支；
 // sd-server/sd-cli → 'sdcpp'；audiocpp_server/cli 或目录名含 audiocpp → 'audiocpp'；llama.cpp 系列 → 'llamacpp'
 function detectEngineKind(exe: string | null, dirHint = ''): EngineKind {
   const n = basename(exe ?? '').toLowerCase()
@@ -3754,8 +3796,7 @@ export function registerIpcHandlers(): void {
       flattenSingleRoot(stagingDir)
       if (countExtractedFiles(stagingDir) === 0) throw new Error('解压后内容为空')
       // 核心可执行文件必须存在（有限深度查找），防止“解压完成但没有主程序”
-      const exeNames = ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', 'TensorSharp.Server.exe', 'TensorSharp.Server', 'sd-server.exe', 'sd-server', 'audiocpp_server.exe', 'audiocpp_server', 'audiocpp_cli.exe', 'audiocpp_cli']
-      if (!findAnyFile(stagingDir, exeNames)) throw new Error('解压后未找到核心可执行文件，安装包可能不完整')
+      if (!findAnyFile(stagingDir, EXTRACT_CHECK_EXE_NAMES)) throw new Error('解压后未找到核心可执行文件，安装包可能不完整')
       // 校验全部通过后才替换正式版本目录（此前版本安装保持原样）。
       // 原子替换：先把旧目录改名成 .old-* 备份（Windows rename 目标已存在会失败，不能直接覆盖），
       // 再 rename staging 进来；新目录未就位前旧目录始终可回滚，绝不出现“版本目录消失”的中间态
@@ -3842,17 +3883,124 @@ export function registerIpcHandlers(): void {
     }
   }
   ipcMain.handle('download-release', (event, opts: { url: string; version: string; assetName: string; digest?: string }) => downloadBackendRelease(event, opts))
-  // 检查 stable-diffusion.cpp 的 CUDA 运行时是否已安装（通过关键 dll 文件存在性判断）
-  ipcMain.handle('check-sd-cudart-installed', async (_event, backendName: string) => {
-    const targetDir = join(BACKEND_DIR, String(backendName || ''))
-    if (!isSafePath(BACKEND_DIR, targetDir) || !existsSync(targetDir)) return { installed: false }
+  // 拉取 stable-diffusion.cpp 上游 CUDA 运行时包的「当前状态」：
+  // 找到最近一个附带 cudart 资产的 release，取其发布时间与该资产的 sha256；
+  // 另外取仓库默认分支最新提交时间作为兜底信号。结果走 GitHub 缓存（30 分钟 TTL），
+  // 频繁检查不会额外消耗匿名 API 限额；断网/超限时抛错由调用方兜底。
+  async function fetchSdCudartUpstream(): Promise<SdCudartUpstream> {
+    const out: SdCudartUpstream = {
+      repo: SD_REPO,
+      assetName: null,
+      downloadUrl: null,
+      size: 0,
+      digest: '',
+      releaseTag: null,
+      publishedAt: null,
+      updatedAt: null,
+      commitAt: null,
+    }
+    const pickCudartAsset = (r: unknown): any => {
+      const assets = (r as { assets?: unknown[] } | null)?.assets
+      if (!Array.isArray(assets)) return null
+      return assets.find((a) => {
+        const an = String((a as { name?: unknown })?.name || '').toLowerCase()
+        return (an.startsWith('cudart-') || an.includes('cuda-runtime')) && an.endsWith('.zip')
+      }) ?? null
+    }
+    // 仓库最新提交时间：仅作辅助信号（release 元数据缺失时兜底，同时可在界面上展示上游活跃度）
+    try {
+      const commits = await fetchGithubJsonCached(`https://api.github.com/repos/${SD_REPO}/commits?per_page=1`) as any[]
+      const c = Array.isArray(commits) ? commits[0] : null
+      out.commitAt = c?.commit?.committer?.date ?? c?.commit?.author?.date ?? null
+    } catch { /* 拿不到不影响主判据 */ }
+    try {
+      // 先问 latest（一次请求，绝大多数情况命中）；latest 未附带 cudart 资产时再回退扫最近若干 release，
+      // 避免「最新 release 恰好没上传 cudart 包」导致误判成上游无包
+      let release: any = await fetchGithubJsonCached(`https://api.github.com/repos/${SD_REPO}/releases/latest`)
+      let asset = pickCudartAsset(release)
+      if (!asset) {
+        const list = await fetchGithubJsonCached(`https://api.github.com/repos/${SD_REPO}/releases?per_page=10`) as any[]
+        if (Array.isArray(list)) {
+          for (const r of list) {
+            const a = pickCudartAsset(r)
+            if (a) { release = r; asset = a; break }
+          }
+        }
+      }
+      if (release) {
+        out.releaseTag = release.tag_name ?? null
+        out.publishedAt = release.published_at ?? null
+        out.updatedAt = release.updated_at ?? null
+      }
+      if (asset) {
+        out.assetName = asset.name ?? null
+        out.downloadUrl = asset.browser_download_url ?? null
+        out.size = Number(asset.size) || 0
+        out.digest = String(asset.digest || '').replace(/^sha256:/i, '')
+      }
+    } catch (e) {
+      out.error = String(e instanceof Error ? e.message : e)
+    }
+    return out
+  }
+  // 检查 stable-diffusion.cpp 的 CUDA 运行时状态：本地 dll 是否齐全 + 本地副本相对上游是否过期。
+  // 过期判据（按可靠性排序，命中一条即判定过期）：
+  //   a. 资产 sha256 变化 —— 包内容确实变了，最可靠；
+  //   b. 资产文件名变化   —— 上游重新打包 / 换了 CUDA 版本号；
+  //   c. 上游 release 发布时间晚于本地安装时记录的上游时间；
+  //   d. 缺少安装记录     —— 历史安装或手工拷贝，无法确认新鲜度；
+  //   e. 仓库最新提交时间（默认关闭，见 SD_CUDART_TRACK_COMMITS）。
+  // 上游查询失败（离线 / API 超限）时只依据本地 dll 存在性判断，绝不误判过期。
+  ipcMain.handle('check-sd-cudart-installed', async (_event, backendName: string): Promise<SdCudartStatus> => {
     const required = ['cudart64_12.dll', 'cublas64_12.dll', 'cublasLt64_12.dll']
+    const targetDir = join(BACKEND_DIR, String(backendName || ''))
+    if (!isSafePath(BACKEND_DIR, targetDir) || !existsSync(targetDir)) {
+      return { installed: false, found: [], missing: [...required], stale: true, needsUpdate: true, reasons: ['目标后端目录不存在'], local: null, upstream: null }
+    }
     const found: string[] = []
     const missing: string[] = []
     for (const n of required) {
       if (existsSync(join(targetDir, n))) { found.push(n) } else { missing.push(n) }
     }
-    return { installed: found.length === required.length, found, missing }
+    const installed = missing.length === 0
+    const local = readCudartMarker(targetDir)
+    let upstream: SdCudartUpstream | null = null
+    try { upstream = await fetchSdCudartUpstream() } catch { upstream = null }
+    const reasons: string[] = []
+    if (!installed) {
+      reasons.push(`缺少运行库：${missing.join(', ')}`)
+    } else {
+      const upDigest = String(upstream?.digest || '').toLowerCase()
+      const loDigest = String(local?.digest || '').toLowerCase()
+      const upName = String(upstream?.assetName || '')
+      const loName = String(local?.assetName || '')
+      // 主时间信号取 release 发布时间：只在真正发新版时变化。
+      // 不单独用 updatedAt —— 改发布说明也会刷新它，会造成假过期。
+      const upMs = isoToMs(upstream?.publishedAt) ?? isoToMs(upstream?.updatedAt)
+      const loMs = isoToMs(local?.upstreamPublishedAt) ?? local?.installedAt ?? null
+      const commitMs = isoToMs(upstream?.commitAt)
+      if (upDigest && loDigest && upDigest !== loDigest) {
+        reasons.push('上游 CUDA 运行时包内容已变化（sha256 校验值不同）')
+      } else if (upName && loName && upName !== loName) {
+        reasons.push(`上游包名已变化：${loName} → ${upName}`)
+      } else if (upMs !== null && loMs !== null && upMs > loMs) {
+        reasons.push(`上游有新发布：${new Date(upMs).toLocaleString('zh-CN')}`)
+      } else if (!local) {
+        reasons.push('缺少安装记录，无法确认本地副本是否为上游最新版本')
+      } else if (SD_CUDART_TRACK_COMMITS && commitMs !== null && loMs !== null && commitMs > loMs) {
+        reasons.push(`上游有新提交：${new Date(commitMs).toLocaleString('zh-CN')}`)
+      }
+    }
+    return {
+      installed,
+      found,
+      missing,
+      stale: reasons.length > 0,
+      needsUpdate: !installed || reasons.length > 0,
+      reasons,
+      local,
+      upstream,
+    }
   })
 
   // --- install-sd-cudart: 下载 stable-diffusion.cpp 的 CUDA 运行时包（cudart/cublas）并合并进已安装的引擎目录 ---
@@ -3928,6 +4076,22 @@ export function registerIpcHandlers(): void {
       const missing = required.filter(n => !existsSync(join(targetDir, n)))
       try { rmSync(stagingDir, { recursive: true, force: true }) } catch {}
       try { unlinkSync(archivePath) } catch {}
+      // 写入安装记录：记下「装的是上游哪一版」（资产名 / sha256 / 当时的 release 发布时间），
+      // 供下次检查判断本地副本是否过期。仅当关键 dll 齐全时写入，
+      // 避免把不完整的安装标记成已就绪。上游查不到时仍写入（时间留空），
+      // 此时下次检查会因「有记录但无上游时间」而落到 installedAt 兜底，不会误判过期。
+      if (missing.length === 0) {
+        let up: SdCudartUpstream | null = null
+        try { up = await fetchSdCudartUpstream() } catch { up = null }
+        writeCudartMarker(targetDir, {
+          repo: SD_REPO,
+          assetName: opts.assetName,
+          digest: String(opts.digest || up?.digest || ''),
+          installedAt: Date.now(),
+          upstreamPublishedAt: up?.publishedAt ?? up?.updatedAt ?? null,
+          upstreamCommitAt: up?.commitAt ?? null,
+        })
+      }
       sendP('done', 0, 0, 100)
       return { success: true, installed, verified: missing.length === 0, found, missing }
     } catch (err) {
@@ -7257,24 +7421,6 @@ export function registerIpcHandlers(): void {
   registerKnowledgeIpc(APP_ROOT)
 
   // ── Agent Tracing 落盘 ──
-  // 把每次工具执行的审计条目追加到 Agent session/traces/<sessionId>.jsonl，
-  // 供进程重启后复现问题（内存环形缓冲重启即丢）。单文件超过上限做一次轮转（.1），最多占 2×上限。
-  const AGENT_TRACES_DIR = join(APP_ROOT, 'Agent session', 'traces')
-  const TRACE_MAX_BYTES = 4 * 1024 * 1024
-  ipcMain.handle('agent-trace-append', (_e, sessionId: string, entry: unknown): { success: boolean; error?: string } => {
-    try {
-      if (!sessionId || /[\\/]/.test(sessionId) || sessionId.includes('..')) return { success: false, error: '无效的 sessionId' }
-      if (!existsSync(AGENT_TRACES_DIR)) mkdirSync(AGENT_TRACES_DIR, { recursive: true })
-      const file = join(AGENT_TRACES_DIR, `${sessionId}.jsonl`)
-      if (!isSafePath(AGENT_TRACES_DIR, file)) return { success: false, error: '访问被拒绝' }
-      try { if (existsSync(file) && statSync(file).size > TRACE_MAX_BYTES) renameSync(file, file + '.1') } catch { /* 轮转失败则直接追加 */ }
-      writeFileSync(file, JSON.stringify(entry) + '\n', { flag: 'a' })
-      return { success: true }
-    } catch (err) {
-      return { success: false, error: String(err) }
-    }
-  })
-
   // ── Agent Code 工作台：项目（含会话）持久化 ──
   // 每个会话独立存储为一个 JSON 文件，统一放在 `Agent session/` 文件夹下：
   //   Agent session/<sessionId>.json  —— 单个会话的全部消息 + 所属项目信息

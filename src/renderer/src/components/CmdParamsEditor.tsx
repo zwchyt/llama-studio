@@ -8,6 +8,9 @@ import { iconComponents } from '../utils/iconMap'
 import { ENGINE_LABELS, paramSetOf, ALL_ENGINES } from '../utils/engine'
 import CustomSelect from './CustomSelect'
 import ModelFileSelect from './ModelFileSelect'
+// 参数编辑器样式（.cmd-* / .toggle*），与 ParamsModal 共用同一份（同一套 UI 的两个入口）。
+// 原先寄存在 models.css 里，已迁到自己的文件。
+import '../styles/params-editor.css'
 
 const FEATURED_ARGS = ['--ctx-size', '--gpu-layers', '--threads', '--batch-size', '--flash-attn']
 interface Props {
@@ -58,7 +61,7 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
   // 其他引擎（TensorSharp / sd.cpp / audio.cpp）参数体系不同，直接按各自分类全量展示，避免主要设置只剩零星参数
   const isLlamaFamily = effectiveParamSet === 'llamacpp' || effectiveParamSet === 'turboquant' || effectiveParamSet === 'beellama'
   // 预览 exe 跟随参数集：参数集决定命令格式，与实际后端 exe 无关
-  const backendExe = isTensorSharp ? 'TensorSharp.Server' : isSdcpp ? 'sd-server' : isAudiocpp ? 'audiocpp_server.exe' : 'llama-server'
+  const backendExe = isTensorSharp ? 'TensorSharp.Server.Host.exe' : isSdcpp ? 'sd-server' : isAudiocpp ? 'audiocpp_server.exe' : 'llama-server'
   const activeArgs = args
   // 按参数集拉取专属 schema（llama.cpp → commands.json，TensorSharp → commands-tensorsharp.json）
   const [localSchema, setLocalSchema] = useState<CommandsSchema | null>(null)

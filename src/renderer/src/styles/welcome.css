@@ -9,13 +9,74 @@
 .welcome-content {
   text-align: center;
   max-width: 400px;
+  animation: welcomeFadeUp 460ms cubic-bezier(.4, 0, .2, 1) both;
+}
+
+@keyframes welcomeFadeUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.welcome-hero {
+  position: relative;
+  width: 220px;
+  height: 180px;
+  margin: 0 auto 8px;
+}
+
+.welcome-icon-wrap {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 104px;
+  height: 104px;
+  border-radius: 26px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
 }
 
 .welcome-icon {
-  width: 96px;
-  height: 96px;
-  margin-bottom: 20px;
+  width: 88px;
+  height: 88px;
   image-rendering: crisp-edges;
+}
+
+.welcome-chip {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 11px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  box-shadow: var(--shadow);
+  white-space: nowrap;
+  z-index: 2;
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+
+.welcome-chip:hover {
+  transform: translateY(-2px) scale(1.04);
+  box-shadow: var(--shadow-md);
+}
+
+.welcome-chip-1 { left: -6px; top: 20px; animation: welcomeFloat 4.2s ease-in-out infinite; }
+.welcome-chip-2 { right: -10px; top: 70px; animation: welcomeFloat 4.2s ease-in-out infinite .9s; }
+.welcome-chip-3 { left: 30px; bottom: 6px; animation: welcomeFloat 4.2s ease-in-out infinite 1.8s; }
+
+@keyframes welcomeFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
 }
 
 .welcome-title {
@@ -51,4 +112,23 @@
   gap: 8px;
   padding: 12px 24px;
   font-size: 14px;
+  transition: transform var(--transition), box-shadow var(--transition), background var(--transition), filter var(--transition);
+}
+
+.welcome-btn:hover {
+  transform: translateY(-2px);
+}
+
+.welcome-btn:active {
+  transform: translateY(0);
+  filter: brightness(.97);
+}
+
+/* 主按钮（前往启动模型）额外强调 */
+.welcome-actions .btn-primary {
+  box-shadow: 0 6px 18px rgba(99, 102, 241, .3);
+}
+
+.welcome-actions .btn-primary:hover {
+  box-shadow: 0 10px 26px rgba(99, 102, 241, .42);
 }
