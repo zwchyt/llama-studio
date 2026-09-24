@@ -360,7 +360,7 @@ const fullApi = {
   windowClose: () => ipcRenderer.invoke('window-close'),
   // ── pi-agent（pi SDK 驱动的 agent 会话）──
   piAgent: {
-    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; projectSystemPrompt?: string; projectMemoryNotes?: string; memoryInjection?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => ipcRenderer.invoke('pi-agent-create', opts),
+    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; vision?: boolean; projectSystemPrompt?: string; projectMemoryNotes?: string; memoryInjection?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => ipcRenderer.invoke('pi-agent-create', opts),
     warmup: () => ipcRenderer.invoke('pi-agent-warmup'),
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-prompt', sessionId, text, images),
     steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-steer', sessionId, text, images),
@@ -384,6 +384,15 @@ const fullApi = {
       ipcRenderer.on('pi-agent-approve', (_e, id, req) => cb(id, req))
     },
     approveResolve: (id: number, approved: boolean) => ipcRenderer.invoke('pi-agent-approve-resolve', id, approved),
+    // ── 浏览器预览（browser_show 导航指令 / 回执，当前预览页 guest id）──
+    onBrowser: (cb: (id: number, cmd: { kind: 'file' | 'html' | 'url'; url: string; title?: string }) => void) => {
+      ipcRenderer.removeAllListeners('pi-agent-browser')
+      ipcRenderer.on('pi-agent-browser', (_e, id, cmd) => cb(id, cmd))
+    },
+    browserResolve: (id: number, result: Record<string, unknown>) => ipcRenderer.invoke('pi-agent-browser-resolve', id, result),
+    browserSetGuest: (id: number | null) => ipcRenderer.invoke('pi-agent-browser-guest', id),
+    browserShow: (input: { type: 'file' | 'html' | 'url'; path?: string; html?: string; url?: string; title?: string }) => ipcRenderer.invoke('pi-agent-browser-show', input),
+    browserCapture: (opts: { fullPage: boolean }) => ipcRenderer.invoke('pi-agent-browser-capture', opts),
     undo: (sessionId: string, toolCallId: string) => ipcRenderer.invoke('pi-agent-undo', sessionId, toolCallId),
     // ── 轨迹台账（事件流落盘的查询侧；read 支持 fromSeq 增量）──
     trajectoryList: () => ipcRenderer.invoke('pi-agent-trajectory-list') as Promise<{ sessionId: string; bytes: number; mtimeMs: number }[]>,

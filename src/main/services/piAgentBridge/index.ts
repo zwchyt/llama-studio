@@ -36,6 +36,8 @@ export interface PiAgentBridgeOptions {
   agentDir?: string
   /** 要启用的工具名列表（仅列自定义工具，不启用 pi 内置 read/bash/edit/write） */
   toolNames: string[]
+  /** 模型支持图像输入时置 true：pi 依据 input 模态决定是否下发工具结果里的图片 */
+  vision?: boolean
   /** 追加到 system prompt 的工具使用指导（如计划工具说明） */
   appendSystemPrompt?: string[]
   /** 整段替换 pi 的默认 system prompt（不是追加）。纯聊天模式用它，
@@ -105,7 +107,8 @@ export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promis
         id: LLAMA_STUDIO_MODEL_ID,
         name: 'Local Model',
         reasoning: true,
-        input: ['text'],
+        // 工具结果里的图片（browser_screenshot）只有在该模态被声明时才会发给模型
+        input: options.vision ? ['text', 'image'] : ['text'],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow,
         maxTokens: 8192,

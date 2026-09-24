@@ -19,6 +19,7 @@ import { useCollapseAnimation } from '../../../utils/useCollapseAnimation'
 import { fileMeta } from '../../../utils/fileIcon'
 import { TOOL_METAS, WRITE_EDIT_TOOLS, BACKUP_TOOLS } from '../../../utils/tools'
 import WebSearchResults from '../../WebSearchResults'
+import BrowserScreenshotResult from '../../BrowserScreenshotResult'
 import { getEditDiffStat, ToolEditDiff } from '../agent-diff'
 import { LinedPre, LINED_PRE_WINDOW_CHARS } from './LinedPre'
 import { WindowedText } from '../WindowedText'
@@ -71,6 +72,24 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
   const parsed = (() => { try { return JSON.parse(args) } catch { return null } })()
   const filePath = name === 'Read' ? '' : (headFilePath || (parsed && typeof (parsed.file_path ?? parsed.path) === 'string' ? (parsed.file_path ?? parsed.path) as string : ''))
   const isFileEdit = !!parsed && (name === 'Write' || name === 'Edit')
+  // browser_show 的卡片只说明「这一次调用要打开什么」：文件路径 / 网址 / 内联 HTML 的体量。
+  // 参数里的 html 是模型生成的整份文档，不再打印出来——源码看文件，效果看右侧预览区。
+  if (name === 'browser_show' && parsed) {
+    const p = parsed as Record<string, unknown>
+    const html = typeof p.html === 'string' ? p.html : ''
+    const label = p.type === 'file' ? '打开项目文件' : p.type === 'url' ? '打开网址' : '显示 HTML 页面'
+    return (
+      <div className="agent-tool-args">
+        <div className="agent-tool-shot-head">
+          <span>{label}</span>
+          {typeof p.path === 'string' && p.path && <span className="agent-tool-shot-dims" title={p.path}>{p.path}</span>}
+          {typeof p.url === 'string' && p.url && <span className="agent-tool-shot-dims" title={p.url}>{p.url}</span>}
+          {typeof p.title === 'string' && p.title && <span className="agent-tool-shot-dims">{p.title}</span>}
+          {html && <span className="agent-tool-shot-dims">HTML {html.length} 字符</span>}
+        </div>
+      </div>
+    )
+  }
   if (isFileEdit) {
     return (
       <div className="agent-tool-args">
@@ -321,6 +340,7 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
                   loading={executing}
                 />
               )}
+              {tc.name === 'browser_screenshot' && done && <BrowserScreenshotResult result={tc.result} />}
               {done && !hideResult && tc.name !== 'web_search' && tc.name !== 'web_search_bing' && (
                 <ToolResultView result={tc.result!} truncated={tc.truncated} total={tc.resultTotal} lined={tc.name === 'Read'} />
               )}

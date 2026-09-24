@@ -195,6 +195,19 @@ export function useAgentLoop({
           memoryInjection = inj?.text || ''
         } catch { /* 注入失败不阻塞对话（与 memoryWriter 的火忘式提交同一原则） */ }
       }
+      // 「本轮能不能把截图发给模型」以运行中服务端的自述为准：llama-server 真挂了视觉
+      // 投影，/props 才会报 modalities.vision=true。本地能力表是按模型文件名/模板关键词
+      // 推断的，判错还会缓存下来一直用错——把图片发给一个不认图的端点会直接让这轮请求
+      // 报错。所以默认用能力表兜底，只要 /props 给了明确答案就以它为准。
+      const capsVision = (): boolean => {
+        const rc = useStore.getState().cards.find(c => c.status === 'running')
+        return rc ? useStore.getState().modelCapabilities[rc.template.id]?.vision === true : false
+      }
+      let vision = capsVision()
+      try {
+        const props = await window.api.getServerProps(opts.port)
+        if (props?.ok && typeof props.modalities?.vision === 'boolean') vision = props.modalities.vision === true
+      } catch { /* /props 不可用（非 llama.cpp 系端点等）：沿用本地能力表 */ }
       const res = await window.api.piAgent.create({
         sessionId: piSessionId,
         port: opts.port,
@@ -213,6 +226,8 @@ export function useAgentLoop({
           const rc = useStore.getState().cards.find(c => c.status === 'running')
           return rc ? useStore.getState().modelMetrics[rc.template.id]?.nCtx || undefined : undefined
         })(),
+        // 模型支持图像输入时才声明 image 模态，browser_screenshot 的截图才会随工具结果回灌
+        vision,
         history,
       })
       if (!res?.success) throw new Error('pi-agent 会话创建失败')
@@ -571,30 +586,39 @@ export function useAgentLoop({
       if (!abortRef.current.aborted && useStore.getState().soundEnabled) {
         playNotificationSound(useStore.getState().notificationSound)
       }
-      // 输出已结束：此刻主动查询端点最新解码数（与 /slots 的 n_decoded 当前值精确一致）
-      if (tidNow) {
-        try {
-          const v = await window.api.queryMetricsNow(tidNow)
-          if (typeof v === 'number' && v > 0) finalDecoded = v
-        } catch { /* 查询失败回退广播值 */ }
-      }
-      // 先结束流式态：让最终 commit 直接走「完成态交错」渲染分支（streamingMsg=false），
-      // 避免 StreamingContent 把思考/正文再重复渲染一遍（工具卡+思考重复显示的根源之一）。
+      // 输出已结束：立刻停表并把时长定格，再去做任何异步补数。
+      // 顺序很关键：下面的 queryMetricsNow 是 IPC + /slots + /metrics 两个 HTTP，刚停时
+      // llama-server 还在收尾，一等就是几十到几百毫秒。若停表排在它之后，思考链头部时间在
+      // 这段等待里会继续涨，closeOpenThink 定格进 durationMs 的数字也会被同样污染。
       setStreaming(false)
+      closeOpenThink()
+      // 定格本轮总耗时：头部时间在流式期间走的是「发出请求 → 现在」的连续墙钟，
+      // 完成态若改用「各段定格时长之和」会比它小（不计正文输出、段间重新请求与首字等待），
+      // 表现为结束瞬间数字跳变。这里把墙钟定格进消息，完成态显示同一个数。
+      const thinkTotalMs = Math.max(0, Date.now() - (streamStartAtRef.current ?? Date.now()))
       if (!streamedText && toolCalls.length === 0) {
-        commit({ content: '(模型未返回内容)', modelLabel: modelLabelRef.current, decodedTokens: finalDecoded ?? decodedNow() }, true)
+        commit({ content: '(模型未返回内容)', modelLabel: modelLabelRef.current, thinkTotalMs, decodedTokens: decodedNow() }, true)
       } else {
         // 本轮结束：segments 已是实时时间线顺序（buildSegs），流式/完成态一致交错
-        closeOpenThink()
-        // modelLabel/lastTps/decodedTokens 随最终 commit 持久化：刷新后完成态徽标可还原模型名、最后速率与真实解码数
         commit({
           content: streamedText,
           toolCalls: [...toolCalls],
           segments: buildSegs(),
           modelLabel: modelLabelRef.current,
           lastTps: lastRateRef.current ?? undefined,
-          decodedTokens: finalDecoded ?? decodedNow()
+          thinkTotalMs,
+          decodedTokens: decodedNow()
         }, true)
+      }
+      // 端点最新解码数（与 /slots 的 n_decoded 精确一致）只补数字字段，不影响已定格的时间线
+      if (tidNow) {
+        try {
+          const v = await window.api.queryMetricsNow(tidNow)
+          if (typeof v === 'number' && v > 0) {
+            finalDecoded = v
+            commit({ decodedTokens: v }, true)
+          }
+        } catch { /* 查询失败回退广播值 */ }
       }
       return { errored: false, aborted: abortRef.current.aborted }
     } catch (e: any) {

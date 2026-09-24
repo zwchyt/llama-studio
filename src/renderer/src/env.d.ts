@@ -326,7 +326,7 @@ interface LlamaCppApi {
   windowClose: () => Promise<void>
   // ── pi-agent（pi SDK 驱动的 agent 会话）──
   piAgent: {
-    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; projectSystemPrompt?: string; projectMemoryNotes?: string; memoryInjection?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
+    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; vision?: boolean; projectSystemPrompt?: string; projectMemoryNotes?: string; memoryInjection?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
     warmup: () => Promise<{ success: boolean }>
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
     steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
@@ -340,6 +340,11 @@ interface LlamaCppApi {
     askResolve: (id: number, result: string) => Promise<{ success: boolean }>
     onApprove: (cb: (id: number, req: { toolName: string; args: Record<string, unknown> }) => void) => void
     approveResolve: (id: number, approved: boolean) => Promise<{ success: boolean }>
+    onBrowser: (cb: (id: number, cmd: { kind: 'file' | 'html' | 'url'; url: string; title?: string }) => void) => void
+    browserResolve: (id: number, result: { ok: boolean; title?: string; url?: string; error?: string }) => Promise<{ success: boolean }>
+    browserSetGuest: (id: number | null) => Promise<{ ok: boolean; error?: string }>
+    browserShow: (input: { type: 'file' | 'html' | 'url'; path?: string; html?: string; url?: string; title?: string }) => Promise<{ ok: boolean; type: 'file' | 'html' | 'url'; title: string; url?: string; error?: string }>
+    browserCapture: (opts: { fullPage: boolean }) => Promise<{ ok: boolean; imageId?: string; mimeType?: 'image/png'; width?: number; height?: number; fullPage?: boolean; error?: string }>
     undo: (sessionId: string, toolCallId: string) => Promise<{ success: boolean; path?: string; error?: string }>
     setThinkingLevel: (sessionId: string, level: ThinkingLevel) => Promise<{ success: boolean }>
     // ── 轨迹台账（事件流落盘的查询侧；read 支持 fromSeq 增量）──

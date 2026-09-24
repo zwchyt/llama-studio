@@ -3085,6 +3085,15 @@
   --tool-accent: #155e75;
 }
 
+/* 浏览器家族两阶：预览湛蓝（比读取宝蓝偏青、比任务列表天蓝深一档）/ 截图靛蓝（偏紫一档，与两者都拉开） */
+.agent-tool-call.tool-browser_show {
+  --tool-accent: #1565c0;
+}
+
+.agent-tool-call.tool-browser_screenshot {
+  --tool-accent: #3949ab;
+}
+
 /* 失败态整行转红：覆盖工具色变量，头部文字/图标/路径按钮随之变红，扫视时可直接定位出错步骤 */
 .agent-tool-call.failed {
   --tool-accent: var(--danger);
@@ -9483,7 +9492,7 @@
   white-space: nowrap;
   flex-shrink: 0;
   position: relative;
-  top: -1px;
+  top: 1px;
 }
 
 .agent-git-file-dir {
@@ -10862,4 +10871,52 @@
 .agent-code-view :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input, .agent-terminal-cwd-input)) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* ── 浏览器预览工具卡片（browser_show 参数行 / browser_screenshot 截图结果）──
+   截图缩略图与放大层复用 .user-msg-image / .user-msg-lightbox（用户消息附件那套）。 */
+.agent-tool-shot {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.agent-tool-shot.err {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+
+.agent-tool-shot-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.agent-tool-shot-dims {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 10.5px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 7px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-tool-shot-loading {
+  font-size: 11px;
+  color: var(--muted);
 }

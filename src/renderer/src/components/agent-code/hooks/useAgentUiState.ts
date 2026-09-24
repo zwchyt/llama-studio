@@ -27,6 +27,7 @@ import { safeCall } from '../../../utils/safeCall'
 import { detectModelCapabilities } from '../../../utils/modelCapabilities'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { askUserQuestionRegistry } from '../../../utils/askUserQuestionRegistry'
+import { runBrowserNavigate, toBrowserShowResult } from '../utils/browserController'
 import { noteApprovalRejected } from '../../../utils/memoryWriter'
 import type { AgentMode, AgentSession, CardState, KnowledgeBaseMeta, TodoUpdate } from '../../../../../shared/types'
 
@@ -424,6 +425,14 @@ export function useAgentUiState({
         window.api.piAgent.approveResolve(id, approved).catch(() => { })
       }
       setApprovalReq({ id: String(id), name: req.toolName, args: JSON.stringify(req.args) })
+    })
+    // ── 浏览器预览：主进程 browser_show 指令 → 展开浏览器面板并导航，结果回传 ──
+    // 面板不可见时 webview 是卸载的，所以必须先切视图再导航（AgentBrowser 挂载后才会加载）。
+    window.api.piAgent.onBrowser((id, cmd) => {
+      setRightPanelModeAndOpen('browser', true)
+      runBrowserNavigate(cmd)
+        .then((r) => window.api.piAgent.browserResolve(id, toBrowserShowResult(cmd, r)))
+        .catch(() => { window.api.piAgent.browserResolve(id, { ok: false, error: '浏览器面板导航失败' }).catch(() => { }) })
     })
   }, [])
 

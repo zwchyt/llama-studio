@@ -42,6 +42,7 @@ export type RenderSegmentsOpts = {
   canUndoFor: AgentMsgRowActions['canUndoFor']
   onUndo: AgentMsgRowActions['onUndo']
   streamStartAt?: number  // 流开始时刻：思考块实时头部时间据此连续计时（含 TTFT）
+  runTotalMs?: number     // 本轮总耗时（墙钟定格值）：完成态头部时间与流式最后一帧同一个数
   meta?: ReactNode        // 模型名 + token 计数徽标：常驻思考块头部（流式中含 t/s，完成后保留）
 }
 

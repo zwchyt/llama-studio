@@ -56,6 +56,10 @@ export interface IpcInternalHandlers {
   handleSetAgentWorkspace: (dir: string) => { success: boolean }
   /** 查询端口当前加载的模型信息（模板 id + 模型文件路径；Token 记账用） */
   getPortModelInfo: (port: number) => { templateId: string; modelPath: string | null } | undefined
+  /** Agent 浏览器截图落盘（PNG 缓冲区 → chatimg:// 引用），供主进程截图服务调用 */
+  handleSaveBrowserScreenshot: (png: Buffer) => { ref?: string; error?: string }
+  /** 把模型给的路径解析成工作区内的 HTML 文件绝对路径（浏览器预览用；圈死在工作区内） */
+  handleResolvePreviewFile: (raw: string) => { path?: string; error?: string }
   handleWriteFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>
   handleGlob: (opts: { pattern: string; path: string; limit?: number }) => Promise<{
     success: boolean
@@ -2457,6 +2461,44 @@ export function registerIpcHandlers(): void {
       return `data:${mime};base64,${buf.toString('base64')}`
     } catch { return null }
   })
+  // ── Agent 浏览器截图落盘 ──
+  // 与聊天原图同目录（复用 read-chat-image 的读取与校验），但文件名固定 screenshot- 前缀，
+  // 便于只对截图做 TTL 清理 —— 聊天附件要长期可重发，不能被同一策略删掉。
+  const SCREENSHOT_PREFIX = 'screenshot-'
+  const SCREENSHOT_TTL_MS = 24 * 3600 * 1000
+  const SCREENSHOT_KEEP = 40
+  function cleanupBrowserScreenshots(): void {
+    try {
+      const entries: { name: string; mtimeMs: number }[] = []
+      for (const name of readdirSync(CHAT_IMAGES_DIR)) {
+        if (!name.startsWith(SCREENSHOT_PREFIX)) continue
+        try {
+          const st = statSync(join(CHAT_IMAGES_DIR, name))
+          if (st.isFile()) entries.push({ name, mtimeMs: st.mtimeMs })
+        } catch { /* 忽略单个文件 */ }
+      }
+      entries.sort((a, b) => b.mtimeMs - a.mtimeMs)
+      for (const [i, entry] of entries.entries()) {
+        if (i >= SCREENSHOT_KEEP || Date.now() - entry.mtimeMs > SCREENSHOT_TTL_MS) {
+          void fsPromises.unlink(join(CHAT_IMAGES_DIR, entry.name)).catch(() => { /* 已被删除 */ })
+        }
+      }
+    } catch { /* 目录不存在 */ }
+  }
+  ipcInternal.handleSaveBrowserScreenshot = (png: Buffer): { ref?: string; error?: string } => {
+    try {
+      if (!Buffer.isBuffer(png) || png.length === 0 || png.length > 64 * 1024 * 1024) return { error: '无效的截图数据' }
+      if (!existsSync(CHAT_IMAGES_DIR)) mkdirSync(CHAT_IMAGES_DIR, { recursive: true })
+      const name = `${SCREENSHOT_PREFIX}${Date.now()}-${createHash('sha1').update(png).digest('hex').slice(0, 8)}.png`
+      writeFileSync(join(CHAT_IMAGES_DIR, name), png)
+      cleanupBrowserScreenshots()
+      return { ref: CHATIMG_PREFIX + name }
+    } catch (err) {
+      return { error: `保存截图失败：${err instanceof Error ? err.message : String(err)}` }
+    }
+  }
+  cleanupBrowserScreenshots()
+
   // ── 图像生成页：自动保存 + 历史持久化 ──
   // 生成图以「带参数的描述性文件名」落到 CHAT_IMAGES_DIR；历史清单存 JSON（仅存文件名与元信息，
   // 不内嵌 base64，避免文件巨大）。图片读取按需从磁盘回读成 dataUrl。
@@ -7940,6 +7982,19 @@ export function registerIpcHandlers(): void {
       if (alt !== p && existsSync(alt)) return alt
     }
     return p
+  }
+
+  // 浏览器预览（browser_show 的 type:"file"）：把模型给的路径解析成工作区内的 HTML 文件绝对路径。
+  // 只认工作区内的 .html/.htm —— 预览的是模型刚写进项目的那个文件，不能借这个入口读磁盘上其它东西。
+  ipcInternal.handleResolvePreviewFile = (raw: string): { path?: string; error?: string } => {
+    if (!agentWorkspaceRoot) return { error: '尚未确定 agent 工作区目录' }
+    const p = redirectToWorkspaceIfMissing(resolveAgentPath(String(raw ?? '')))
+    if (!p) return { error: 'path 不能为空' }
+    const ext = extname(p).toLowerCase()
+    if (ext !== '.html' && ext !== '.htm') return { error: `只允许打开 .html/.htm 文件，收到「${ext || '无扩展名'}」` }
+    if (!isSafePath(agentWorkspaceRoot, p)) return { error: '路径超出当前工作区范围' }
+    if (!existsSync(p)) return { error: `文件不存在：${basename(p)}（若尚未写出请先用 Write 创建）` }
+    return { path: p }
   }
 
   // 敏感环境变量名过滤（借鉴 Reasonix 的 secrets.ProcessEnv）：执行命令前剔除凭证类

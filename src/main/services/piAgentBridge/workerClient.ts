@@ -7,7 +7,9 @@ import { app, utilityProcess, type BrowserWindow, type UtilityProcess } from 'el
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { createIpcExecutors } from './ipcExecutors'
+import { showBrowserPreview, setBrowserNavigateHandler } from '../agentBrowserService'
 import type { MainToolExecutors, AskUserQuestionInput } from './tools/mainTools'
+import type { BrowserNavigateCommand, BrowserShowResult } from '../../../shared/browserPreview'
 
 interface WorkerInbound { kind: string; id?: number; action?: string; args?: Record<string, unknown>; agentDir?: string; toolNames?: string[]; event?: Record<string, unknown>; ok?: boolean; value?: unknown }
 interface WorkerOutbound { kind: string; id?: number; sessionId?: string; event?: unknown; ok?: boolean; value?: unknown; level?: 'log' | 'warn' | 'error'; args?: unknown[]; name?: string; message?: string }
@@ -24,6 +26,11 @@ let askSeq = 0
 const pendingAsks = new Map<number, { resolve: (v: string) => void }>()
 let approveSeq = 0
 const pendingApproves = new Map<number, { resolve: (v: boolean) => void }>()
+// 浏览器预览指令：main 校验并准备好 URL 后推给渲染进程的浏览器面板执行导航，
+// 等页面加载完成/失败再回包（与 ask/approve 同一类「等渲染进程」的未决表）。
+let browserSeq = 0
+const BROWSER_NAV_TIMEOUT_MS = 30000
+const pendingBrowsers = new Map<number, { resolve: (v: Partial<BrowserShowResult> | null) => void; timer: ReturnType<typeof setTimeout> }>()
 
 /** piWorker.mjs ???????????? resourcesPath?asar ???dev ?? out/main? */
 function resolveWorkerEntry(): string {
@@ -36,7 +43,15 @@ function resolveWorkerEntry(): string {
 
 function getToolExecutors(): MainToolExecutors {
   if (!toolExecutors) {
-    toolExecutors = { ...createIpcExecutors(), askUser: askViaRenderer, approve: approveViaRenderer } as MainToolExecutors
+    setBrowserNavigateHandler(navigateViaRenderer)
+    toolExecutors = {
+      ...createIpcExecutors(),
+      askUser: askViaRenderer,
+      approve: approveViaRenderer,
+      // browser_show 要渲染进程的浏览器面板执行导航，与 ask/approve 同类；
+      // browser_capture 纯主进程（webview guest 由主进程直接截图）。
+      browserShow: showBrowserPreview
+    } as MainToolExecutors
   }
   return toolExecutors as MainToolExecutors
 }
@@ -76,6 +91,42 @@ export function resolveApprove(id: number, approved: boolean): void {
   const p = pendingApproves.get(id)
   pendingApproves.delete(id)
   p?.resolve(approved)
+}
+
+/** browser_show 的渲染进程往返：把已校验的导航指令交给浏览器面板，等加载回执。
+ *  永不悬挂 —— 无窗口立刻回 null，超时回错误，worker 退出时统一兜底。 */
+function navigateViaRenderer(cmd: BrowserNavigateCommand): Promise<Partial<BrowserShowResult> | null> {
+  return new Promise((resolve) => {
+    if (!currentWindow || currentWindow.isDestroyed()) {
+      resolve(null)
+      return
+    }
+    const id = ++browserSeq
+    const timer = setTimeout(() => {
+      const p = pendingBrowsers.get(id)
+      if (!p) return
+      pendingBrowsers.delete(id)
+      p.resolve({ ok: false, error: '页面加载超时' })
+    }, BROWSER_NAV_TIMEOUT_MS)
+    pendingBrowsers.set(id, { resolve, timer })
+    currentWindow.webContents.send('pi-agent-browser', id, cmd)
+  })
+}
+
+export function resolveBrowserCommand(id: number, result: Partial<BrowserShowResult>): void {
+  const p = pendingBrowsers.get(id)
+  if (!p) return
+  pendingBrowsers.delete(id)
+  clearTimeout(p.timer)
+  p.resolve(result)
+}
+
+function failPendingBrowsers(): void {
+  for (const p of pendingBrowsers.values()) {
+    clearTimeout(p.timer)
+    p.resolve({ ok: false, error: '浏览器面板不可用（窗口已关闭或会话已结束）' })
+  }
+  pendingBrowsers.clear()
 }
 
 /** worker → renderer event push。
@@ -246,6 +297,7 @@ export function ensurePiWorker(): Promise<void> {
     pendingAsks.clear()
     for (const p of pendingApproves.values()) p.resolve(false)
     pendingApproves.clear()
+    failPendingBrowsers()
   })
   child.stdout?.on('data', (d) => console.log('[pi-worker:stdout]', String(d).trimEnd()))
   child.stderr?.on('data', (d) => console.error('[pi-worker:stderr]', String(d).trimEnd()))
@@ -283,6 +335,7 @@ export function disposePiWorker(): void {
   pendingApproves.clear()
   for (const p of pendingCmds.values()) p.reject(new Error('????'))
   pendingCmds.clear()
+  failPendingBrowsers()
   try { worker?.kill() } catch { /* ignore */ }
   worker = null
   ready = false

@@ -68,8 +68,13 @@ export interface PlainToolSpec {
   parameters: Record<string, unknown>
   /** 激活该工具时附加到系统提示词的使用规范（pi promptGuidelines 通道） */
   promptGuidelines?: string[]
-  /** 返回文本；或 {text, details} 以便携带附加信息（如撤销备份 id） */
-  execute: (args: Record<string, unknown>, meta: { toolCallId: string }) => Promise<string | { text: string; details?: Record<string, unknown> }>
+  /** 返回文本；或 {text, details, images} 以便携带附加信息（撤销备份 id / 截图图片块） */
+  execute: (args: Record<string, unknown>, meta: { toolCallId: string }) => Promise<string | {
+    text: string
+    details?: Record<string, unknown>
+    /** 随工具结果回灌给模型的图片（仅当会话模型支持图像输入时由 pi 下发） */
+    images?: Array<{ data: string; mimeType: string }>
+  }>
 }
 
 /** 包装成 pi ToolDefinition（Type 由调用方注入，避免模块级动态依赖） */
@@ -89,7 +94,10 @@ export function makePiTool(
         return { content: [{ type: 'text', text: res }], details: {} }
       }
       return {
-        content: [{ type: 'text', text: res.text }],
+        content: [
+          { type: 'text', text: res.text },
+          ...(res.images ?? []).map((img) => ({ type: 'image' as const, data: img.data, mimeType: img.mimeType }))
+        ],
         details: res.details ?? {}
       }
     }

@@ -5,6 +5,7 @@ import { statSync } from 'node:fs'
 import { isAbsolute, resolve, sep } from 'node:path'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import { makePiTool, getTypebox, type PlainToolSpec } from './toolAdapter'
+import type { BrowserCaptureOptions, BrowserCaptureResult, BrowserShowInput, BrowserShowResult } from '../../../../shared/browserPreview'
 import {
   createKnowledgeSearchSpec,
   formatKnowledgeCatalog,
@@ -106,6 +107,10 @@ export interface MainToolExecutors {
   setAgentWorkspace(cwd: string): Promise<void>
   /** 询问用户（跨进程弹窗；由 IPC 层提供实现） */
   askUser(questions: AskUserQuestionInput[]): Promise<string>
+  /** 在应用内浏览器预览区显示 HTML / 打开 URL（需渲染进程面板配合；由 IPC 层提供实现） */
+  browserShow?: (input: BrowserShowInput) => Promise<BrowserShowResult>
+  /** 截取当前预览页（主进程直接对 webview guest 截图） */
+  browserCapture?: (opts: BrowserCaptureOptions) => Promise<BrowserCaptureResult>
   /** 破坏性操作审批（由 IPC 层提供实现；未提供则放行） */
   approve?: (toolName: string, args: Record<string, unknown>) => Promise<boolean>
   /** 记录撤销备份（content=null 表示原文件不存在，撤销时删除文件） */
@@ -444,6 +449,8 @@ export interface CreateMainToolsContext {
   knowledgeBaseId?: string
   /** 本机全部知识库清单：注入工具参数 kb 的 enum（模型从真实列表选择，非提示词） */
   knowledgeBases?: { id: string; name: string }[]
+  /** 当前模型是否支持图像输入：支持时截图才作为图片块回灌进上下文 */
+  vision?: boolean
 }
 
 // ── Read 短期缓存（对齐 renderer FileReadTool 的 readCache；pi 主进程版此前缺失）──
@@ -1281,5 +1288,85 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     }
   })
 
-  return [getDatetime, webSearch, webSearchBing, fetchWebpage, ...(knowledgeSearch && knowledgeRead ? [knowledgeSearch, knowledgeRead] : []), read, bash, write, edit, glob, grep, ripgrep, listDir, deleteTool, todoWrite, taskGet, taskList, askUserQuestion, reflect, codeSearch, analyzeDir]
+  // ── 浏览器预览与截图 ──
+  // 刻意只有「展示 HTML / 打开 URL / 截当前页」三件事：不能点击、输入、读取 DOM、
+  // 执行脚本，因此也就不是浏览器自动化 Agent。
+  const browserShow: ToolDefinition = make({
+    name: 'browser_show',
+    label: '网页预览',
+    description:
+      '在应用内浏览器预览区打开一个页面。' +
+      '最常见的用法：你刚用 Write 把 HTML 写进项目，就用 type:"file" + 那个文件路径直接打开（不要把源码再传一遍）。' +
+      '没有落盘的 HTML 片段用 type:"html"；打开网站用 type:"url"（仅 http/https）。' +
+      '此工具只显示页面，不能点击、填写、读取网页内容或执行网页操作；始终复用同一个预览区，不会开新标签页。',
+    parameters: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', enum: ['file', 'html', 'url'], description: 'file = 打开工作区里已写好的 HTML 文件（推荐）；html = 打开一段内联 HTML；url = 打开 http/https 网址。' },
+        path: {
+          type: 'string',
+          description:
+            'type=file 时的 HTML 文件路径，与 Write 用的路径一致（相对工作区或绝对路径均可），例如 "demo/index.html"。'
+        },
+        html: {
+          type: 'string',
+          description: 'type=html 时的完整 HTML 文档（未落盘的临时片段才用它；单文件、样式脚本内联）。'
+        },
+        url: { type: 'string', description: 'type=url 时的网址，必须以 http:// 或 https:// 开头。' },
+        title: { type: 'string', description: '可选，给预览页显示的名称。' }
+      },
+      required: ['type']
+    },
+    promptGuidelines: [
+      '## 浏览器预览（browser_show / browser_screenshot）',
+      '- 展示网页前先 Write 出 .html 文件，再用 browser_show(type:"file", path: 同一个路径) 打开；不要把整份源码塞进参数重复传。',
+      '- 打开用户给的网址用 type:"url"；只有临时想看一小段 HTML 才用 type:"html"。',
+      '- 需要看渲染结果或核对视觉效果时，再用 browser_screenshot 截图；面板被关掉时该工具会自己重新打开。',
+      '- 这两个工具只能显示与截图，不能操作网页（点击/输入/抓取 DOM），不要规划网页交互步骤。',
+    ],
+    execute: async (args) => {
+      if (!exec.browserShow) return JSON.stringify({ ok: false, error: '浏览器预览未启用' })
+      const titleArg = typeof args.title === 'string' ? { title: args.title } : {}
+      const input: BrowserShowInput | null =
+        args.type === 'file'
+          ? { type: 'file', path: String(args.path ?? ''), ...titleArg }
+          : args.type === 'html'
+            ? { type: 'html', html: String(args.html ?? ''), ...titleArg }
+            : args.type === 'url'
+              ? { type: 'url', url: String(args.url ?? ''), ...titleArg }
+              : null
+      if (!input) return JSON.stringify({ ok: false, error: 'type 只能是 "file"、"html" 或 "url"' })
+      const res: BrowserShowResult = await exec.browserShow(input)
+      // 不把 HTML 正文回灌给模型（它本来就来自模型），只给状态与标题
+      return JSON.stringify(res)
+    }
+  })
+
+  const browserScreenshot: ToolDefinition = make({
+    name: 'browser_screenshot',
+    label: '页面截图',
+    description:
+      '截取当前正在预览的页面，截图会作为图片出现在聊天里。默认只截当前可视区域；' +
+      '需要整页长图时传 fullPage:true。若当前没有预览页面，不要调用该工具。',
+    parameters: {
+      type: 'object',
+      properties: {
+        fullPage: { type: 'boolean', description: 'true = 截取完整可滚动页面；默认 false（仅当前可视区域）。' }
+      }
+    },
+    execute: async (args) => {
+      if (!exec.browserCapture) return JSON.stringify({ ok: false, error: '页面截图未启用' })
+      const fullPage = args.fullPage === true
+      const res: BrowserCaptureResult = await exec.browserCapture({ fullPage, withImage: ctx?.vision === true })
+      const { imageBase64, ...meta } = res
+      // 结果文本只含元数据与图片引用，不含 base64
+      if (!meta.ok) return JSON.stringify(meta)
+      return {
+        text: JSON.stringify({ ...meta, note: '截图已作为图片附件显示在聊天中' }),
+        ...(imageBase64 ? { images: [{ data: imageBase64, mimeType: 'image/png' }] } : {})
+      }
+    }
+  })
+
+  return [getDatetime, webSearch, webSearchBing, fetchWebpage, ...(knowledgeSearch && knowledgeRead ? [knowledgeSearch, knowledgeRead] : []), read, bash, write, edit, glob, grep, ripgrep, listDir, deleteTool, todoWrite, taskGet, taskList, askUserQuestion, reflect, codeSearch, analyzeDir, browserShow, browserScreenshot]
 }

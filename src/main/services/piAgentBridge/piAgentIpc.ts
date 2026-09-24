@@ -6,7 +6,9 @@ import { ipcMain, app, type BrowserWindow } from 'electron'
 import { join } from 'path'
 import type { PiAgentSessionOptions } from './manager'
 import { setTrajectoryRoot, listTrajectories, readTrajectory, clearTrajectory } from './trajectory'
-import { piWorker, setPiWorkerWindow, resolveAsk, resolveApprove, disposePiWorker } from './workerClient'
+import { piWorker, setPiWorkerWindow, resolveAsk, resolveApprove, resolveBrowserCommand, disposePiWorker } from './workerClient'
+import { setActiveBrowserGuest, showBrowserPreview, captureBrowser } from '../agentBrowserService'
+import type { BrowserCaptureOptions, BrowserShowInput } from '../../../shared/browserPreview'
 import type { ThinkingLevel } from '../../../shared/types'
 
 /** 注册 pi-agent IPC 通道。win 用于把会话事件/询问/审批推给 renderer。 */
@@ -93,6 +95,26 @@ export function registerPiAgentIpc(win: BrowserWindow): void {
     resolveApprove(id, approved === true)
     return { success: true }
   })
+
+  // ── 浏览器预览（browser_show 导航回执 / 当前预览页 guest id 上报）──
+  // 渲染进程回包只取白名单字段：main 不信任它给出的结构。
+  ipcMain.handle('pi-agent-browser-resolve', (_e, id: number, result: unknown) => {
+    const r = (result ?? {}) as Record<string, unknown>
+    resolveBrowserCommand(Number(id), {
+      ok: r.ok === true,
+      ...(typeof r.title === 'string' ? { title: r.title.slice(0, 200) } : {}),
+      ...(typeof r.url === 'string' ? { url: r.url.slice(0, 2000) } : {}),
+      ...(typeof r.error === 'string' ? { error: r.error.slice(0, 500) } : {})
+    })
+    return { success: true }
+  })
+  // guest id 由主进程的 webview 注册表校验（不是本应用创建的预览页一律拒绝），
+  // 因此渲染进程无法用任意 webContents id 去截主窗口等其它页面。
+  ipcMain.handle('pi-agent-browser-guest', (_e, id: number | null) => setActiveBrowserGuest(id))
+  // 渲染层工具目录（src/renderer/src/tools/Browser*Tool）走的调用口：与 worker 走的
+  // 执行器是同一份主进程实现，参数照样在主进程二次校验。
+  ipcMain.handle('pi-agent-browser-show', (_e, input: BrowserShowInput) => showBrowserPreview(input))
+  ipcMain.handle('pi-agent-browser-capture', (_e, opts: BrowserCaptureOptions) => captureBrowser({ ...opts, withImage: false }))
 }
 
 export function disposePiAgentIpc(): void {

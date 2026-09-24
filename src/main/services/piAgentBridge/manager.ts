@@ -40,6 +40,8 @@ export interface PiAgentSessionOptions {
   knowledgeBaseId?: string
   /** 网络搜索开关（默认开启）。关闭后两个搜索工具都不激活。 */
   searchEnabled?: boolean
+  /** 当前模型支持图像输入：声明给 pi 的 input 模态，截图工具才会把 PNG 回灌进上下文 */
+  vision?: boolean
   /** 纯聊天模式：不注册任何工具，也不注入任何编码 agent 的提示词，只保留对话本身。
       缺省 = 原来的 agent 模式。要关的提示词有三处，缺一处模型就会以为自己能调工具：
         ① appendSystemPrompt —— 本文件注入的工具 / 图表指引（约 4.5k tokens）
@@ -98,6 +100,8 @@ export class PiAgentManager {
       'get_datetime', 'Read', 'Bash', 'Write', 'Edit', 'Glob', 'Grep', 'Ripgrep', 'ListDir', 'Delete',
       'TodoWrite', 'TaskGet', 'TaskList',
       'AskUserQuestion', 'Reflect', 'CodeSearch', 'AnalyzeDir', 'web_search', 'fetch_webpage',
+      // 浏览器预览：只显示页面与截图，不做网页操作
+      'browser_show', 'browser_screenshot',
       // 知识库两工具：pi 的 tools 参数是「激活名单」——customTools 只进定义池，
       // 名字不在名单里的自定义工具不会出现在发给模型的请求里（实测 llm_request 验证）
       'knowledge_search', 'knowledge_read'
@@ -185,7 +189,8 @@ export class PiAgentManager {
       approveWriteEdit: opts.approveWriteEdit,
       workspaceDir: opts.cwd,
       knowledgeBaseId: opts.knowledgeBaseId,
-      knowledgeBases: await this.executors.listKb()
+      knowledgeBases: await this.executors.listKb(),
+      vision: opts.vision === true
     })
     // 追加进 system prompt 的两批内容分开算：
     //   codingGuidance —— 静态的编码 agent 指引，纯聊天模式必须清掉（见 plainChat 说明）
@@ -205,6 +210,7 @@ export class PiAgentManager {
       noContextFiles: plainChat,
       appendSystemPrompt: [...codingGuidance, ...userPromptSections],
       toolNames: effectiveToolNames,
+      vision: opts.vision === true,
       customTools: [...mainTools, ...(opts.customTools ?? [])]
     })
     // 注入已有会话历史（llama-studio AgentMessage → pi Message）
@@ -467,6 +473,9 @@ export function createWorkerExecutors(
     listKb: () => c('listKb', []),
     getPortModelInfo: (port) => c('getPortModelInfo', [port]),
     setAgentWorkspace: (cwd) => c('setAgentWorkspace', [cwd]),
+    // 浏览器预览与截图：真正执行在主进程（面板导航 / webview guest 截图）
+    browserShow: (input) => c('browserShow', [input]),
+    browserCapture: (opts) => c('browserCapture', [opts]),
     // ask/approve 走独立通道：需要主进程弹窗等用户输入，可能长时间挂起
     askUser: (questions) => callToolEvent<string>({ type: 'ask', questions }),
     approve: (toolName, args) => callToolEvent<boolean>({ type: 'approve', toolName, args }),

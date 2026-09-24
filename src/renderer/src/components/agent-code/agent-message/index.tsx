@@ -456,7 +456,7 @@ const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, duratio
   )
 })
 
-export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, msgStreaming, bodyAppeared, durationMs, items, onPreviewFile, canUndoFor, onUndo, pending, streamStartAt, meta }: {
+export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, msgStreaming, bodyAppeared, durationMs, items, onPreviewFile, canUndoFor, onUndo, pending, streamStartAt, runTotalMs, meta }: {
   value: string; closed: boolean; isStreaming?: boolean; msgStreaming?: boolean; bodyAppeared?: boolean; durationMs?: number
   // pending：首 token 前占位态（同一思考卡头部：「思考中」+ 流开始连续计时，不挂载内容），
   // 首个思考段到达后由同组件原地接管——不再「ThinkingLoader → ThinkBlock」两元素切换，
@@ -464,6 +464,9 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
   pending?: boolean
   // streamStartAt：流开始时刻（ms）——实时头部时间据此连续计时（含 TTFT），不回退
   streamStartAt?: number
+  // runTotalMs：本轮总耗时的定格值（整段墙钟）。有值时完成态头部直接用它，
+  // 避免「分段时长之和」（不计正文输出与段间重新请求等待）与流式墙钟两套口径不一致导致跳变。
+  runTotalMs?: number
   // meta：模型名 + token 计数徽标（调用方按流式/完成态构造），常驻头部「思考过程/思考已中断」
   // 两分支、完成后不消失——取代原「正文底部流式徽标、完成后消失」的展示位置。
   meta?: React.ReactNode
@@ -555,11 +558,10 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
     const timer = setInterval(() => setElapsedMs(Date.now() - (phaseStartRef.current ?? Date.now())), 100)
     return () => clearInterval(timer)
   }, [phase])
-  // 头部展示的总时长：idle 时定格（思考段累计 + 固化工具时长），think/tools 时实时跳动。
-  // 实时跳动优先用「流开始连续时钟」（streamStartAt，含 TTFT、跨 pending/思考/工具全程不回退），
-  // 无 streamStartAt（如旧消息回放）时回退到链累计 + 阶段实时读秒的旧逻辑。
+  // 头部展示的总时长：idle 时优先用本轮墙钟定格值（与流式最后一帧同一个数）；
+  // 旧消息无该字段时回退到「思考段累计 + 固化工具时长」；think/tools 时实时跳动。
   const headMs = phase === 'idle'
-    ? chainTotalMs + frozenToolsRef.current
+    ? runTotalMs ?? chainTotalMs + frozenToolsRef.current
     : streamStartAt != null
       ? Date.now() - streamStartAt
       : chainTotalMs + frozenToolsRef.current + elapsedMs
@@ -573,38 +575,35 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
     if (userToggledRef.current) return
     // pending 占位态：内容尚未到达，不挂载 body
     if (pending) return
-    // 自动折叠是单向的：已收起过的容器不再自动重开（折叠唯一触发 = 下方
-    // 「结论正文出现 / 运行结束」分支，每次运行最多一次）——不再随 thinkDone /
-    // bodyAppeared 的阶段电平往返翻转，消除「收起 → 重开」横跳。
-    if (autoCollapsedRef.current) return
-    // 思考流式中，或收纳的工具卡仍在执行：自动展开
-    // 同一 commit 置 visible + expanded：只置 visible 会让裁剪层以 max-height:0 先绘一帧
-    // （整链闪一下空白），下一帧才由布局 effect 放开高度。同步置位后挂载即自适应高度。
+    // 运行中出现新的活动（思考恢复 / 还有未完成的工具）→ 展开，并解除上一次因「正文出现」
+    // 做的收起：说明刚才那段正文不是最终结论而是过程文字（模型常在调用工具前先说一句说明）。
+    // 不做这一步就会出现「一开始写文件整条思考链缩掉、后面再也不回来」。
     if (thinking || hasLiveTools) {
       setVisible(true)
       setExpanded(true)
+      if (msgStreaming) autoCollapsedRef.current = false
       return
     }
-    // 消息仍在流式且最终正文未出现（工具批全部完成 → 下一轮思考开始前的等待窗口）：
-    // 运行尚未结束，保持展开不收起——避免工具批间隙整链「收起 → 重开」闪跳
+    // 运行中且还在思考 / 等工具结果：保持展开。
     if (msgStreaming && !bodyAppeared) return
-    // 最终正文已出现（把版面让给结论气泡）或消息已完成：自动收起。
+    // 收起时机：最终正文一开始输出（bodyAppeared，把版面让给结论气泡），或整轮已结束。
+    // 已收起过就不再重复调用；运行结束后的收起是终态，不再自动重开。
+    if (autoCollapsedRef.current) return
+    autoCollapsedRef.current = true
     // 走 collapse() 的像素过渡且保持挂载（不再 setVisible(false) 卸载 DOM）——
     // 卸载会在下一轮思考/重开时全量重解析 Markdown/KaTeX，表现为内容闪断。
-    autoCollapsedRef.current = true
     autoCollapse()
   }, [thinking, hasLiveTools, pending, msgStreaming, bodyAppeared, autoCollapse])
 
-  // closed 变为 true 仅发生在「运行已结束」（closed={!streaming}，运行期间恒 false、
-  // 单调翻转一次）。此时若容器仍展开（如停止于思考中、全程无结论正文），补齐收尾收起；
-  // 同样走 collapse() 保持挂载不卸载。expandedRef 守卫避免对从未展开过的
-  // 历史消息（初始即收起）做无谓的收起调用。
+  // closed 在「segments 渲染点」等于「本次运行已结束」（closed={!streaming}，单调翻转一次）；
+  // 但另一个调用点传的是 `lastClosed || thinkDone`——思考段一闭合、或一进入工具/正文阶段就为真，
+  // 运行中途也为真。所以这里必须再加 msgStreaming 守卫：运行期间不收起，只有整轮结束才补齐收尾。
   useEffect(() => {
-    if (closed && !thinking && !hasLiveTools && !userToggledRef.current && expandedRef.current) {
+    if (closed && !msgStreaming && !thinking && !hasLiveTools && !userToggledRef.current && expandedRef.current) {
       autoCollapsedRef.current = true
       autoCollapse()
     }
-  }, [closed, thinking, hasLiveTools, autoCollapse, expandedRef])
+  }, [closed, msgStreaming, thinking, hasLiveTools, autoCollapse, expandedRef])
 
   // 首展开卡顿优化：挂载后在浏览器空闲时段预挂载折叠体（保持收起、max-height 0
   // 不可见），把 Markdown/KaTeX 的首次解析成本从「首次点击展开」那一帧挪到空闲期；
@@ -891,8 +890,9 @@ export const StreamingMarkdown = React.memo(function StreamingMarkdown({ content
 // 下方独立成泡；流式期间「最后一段是正文」只是临时最终态，思考恢复后声明式地
 // 自动收纳回容器。legacy 工具卡无时间线信息，沿用旧规则收纳进容器尾部；
 // 无思考段时保持传统布局（工具卡独立成组、正文按序成泡）。
-export const StreamingContent = React.memo(function StreamingContent({ content, streaming, thinkDone, toolCalls, onPreviewFile, canUndoFor, onUndo }: {
+export const StreamingContent = React.memo(function StreamingContent({ content, streaming, thinkDone, toolCalls, runTotalMs, onPreviewFile, canUndoFor, onUndo }: {
   content: string; streaming?: boolean; thinkDone?: boolean;
+  runTotalMs?: number
   toolCalls?: NonNullable<AgentMessage['toolCalls']>;
   onPreviewFile?: (p: string, line?: number) => void;
   canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean;
@@ -1012,6 +1012,7 @@ export const StreamingContent = React.memo(function StreamingContent({ content, 
         isStreaming={!!streaming && !lastClosed && !thinkDone}
         msgStreaming={!!streaming}
         bodyAppeared={finalText != null}
+        runTotalMs={runTotalMs}
         onPreviewFile={onPreviewFile}
         canUndoFor={canUndoFor}
         onUndo={onUndo}
@@ -1197,6 +1198,7 @@ export function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']
         msgStreaming={streaming}
         bodyAppeared={finalTextIdx >= 0}
         streamStartAt={o.streamStartAt}
+        runTotalMs={o.runTotalMs}
         meta={o.meta}
         items={items}
         onPreviewFile={o.onPreviewFile}
@@ -1355,6 +1357,7 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
           thinkDone: isStreaming ? !!thinkDone : true,
           onPreviewFile: a.onPreviewFile, canUndoFor: a.canUndoFor, onUndo: a.onUndo,
           streamStartAt: isStreaming ? streamStartAt : undefined,
+          runTotalMs: src.thinkTotalMs,
           meta
         })}
 
@@ -1371,7 +1374,7 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
       {pendingFirstToken && (
         <ThinkBlock pending value="" closed={false} isStreaming msgStreaming bodyAppeared={false} streamStartAt={streamStartAt} />
       )}
-      <StreamingContent content={src.content} streaming={isStreaming} toolCalls={src.toolCalls || undefined} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(msg.id, tc)} />
+      <StreamingContent content={src.content} streaming={isStreaming} toolCalls={src.toolCalls || undefined} runTotalMs={src.thinkTotalMs} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(msg.id, tc)} />
 
       {!isStreaming && hasToolCalls && fileSummary}
       {!isStreaming && !hasToolCalls && actions}

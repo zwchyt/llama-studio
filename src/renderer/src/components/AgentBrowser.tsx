@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { ArrowLeftIcon, ArrowRightIcon, RefreshCwIcon, GlobeIcon, XIcon, ExternalLinkIcon, MessageSquarePlusIcon, Trash2Icon, SendIcon, HouseIcon, PlusIcon, MinusIcon } from '@animateicons/react/lucide'
 import '../styles/agent-browser.css'
+import { registerBrowserNavigator } from './agent-code/utils/browserController'
 // 注释工具脚本（?raw 打包为字符串）：webview dom-ready 后 executeJavaScript 注入。
 // 不走 webview preload 属性——preload 仅接受 file: 协议，dev 模式（http 页面）无法加载。
 import AGENT_ANNOTATE_SCRIPT from '../utils/agentAnnotateScript.js?raw'
@@ -16,8 +17,10 @@ interface WebviewElement extends HTMLElement {
   reload(): void
   stop(): void
   getURL(): string
+  readonly isLoading: boolean
   focus(): void
   setAudioMuted(muted: boolean): void
+  getWebContentsId(): number
   executeJavaScript(code: string): Promise<any>
 }
 
@@ -95,6 +98,58 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
   const webviewRef = useRef<WebviewElement | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // ── Agent browser_show：受控导航 ──
+  // 主进程已校验/落盘出最终 URL，这里只负责让预览区加载它，并把加载结果回传主进程。
+  // 回执由 did-stop-loading / did-fail-load 触发，本侧再兜一层超时避免工具永久挂起。
+  const pendingNavRef = useRef<{ resolve: (r: { ok: boolean; title?: string; url?: string; error?: string }) => void; timer: ReturnType<typeof setTimeout>; url: string } | null>(null)
+  // 导航回执里要带页面标题，但 navigator 只注册一次（闭包会固定），故用 ref 镜像 title
+  const titleRef = useRef('')
+  const settleNav = useCallback((r: { ok: boolean; title?: string; url?: string; error?: string }) => {
+    const p = pendingNavRef.current
+    if (!p) return
+    pendingNavRef.current = null
+    clearTimeout(p.timer)
+    p.resolve(r)
+  }, [])
+
+  useEffect(() => {
+    return registerBrowserNavigator(async (cmd) => {
+      setInputUrl(cmd.url)
+      setError(null)
+      setCrashed(false)
+      setUnresponsive(false)
+      const wv = webviewRef.current
+      const outcome = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        const timer = setTimeout(() => resolve({ ok: false, error: '页面加载超时' }), 25000)
+        pendingNavRef.current = { resolve, timer, url: cmd.url }
+      })
+      // webview 已挂载时改 src 不会重新导航，必须显式 loadURL；未挂载（首次/面板刚隐藏过）
+      // 则由 setInitialUrl 挂载并带上 src。loadURL 的 Promise 在页面加载完成时 resolve，
+      // 与 did-stop-loading 双通道互补（settleNav 幂等，先到的那个生效）。
+      if (wv) {
+        wv.loadURL(cmd.url)
+          .then(() => settleNav({ ok: true }))
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : ''
+            // 重定向会让 loadURL 以 ERR_ABORTED 拒绝，但页面仍在继续加载，
+            // 此时不能报失败，交给 did-stop-loading / did-fail-load / 超时收尾
+            if (/abort/i.test(msg)) return
+            settleNav({ ok: false, error: msg || '页面加载失败' })
+          })
+      } else {
+        setInitialUrl(cmd.url)
+      }
+      const r = await outcome
+      const loadedUrl = (() => { try { return webviewRef.current?.getURL() || cmd.url } catch { return cmd.url } })()
+      return {
+        ok: r.ok,
+        url: loadedUrl,
+        title: r.ok ? (titleRef.current || cmd.title || '') : undefined,
+        ...(r.error ? { error: r.error } : {})
+      }
+    })
+  }, [])
+
   // 注释模式开关：通知 webview 内的注释工具（preload 会回传状态）
   const toggleAnnotate = useCallback(() => {
     const wv = webviewRef.current
@@ -157,6 +212,8 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
     if (!wv) return
 
     const onDomReady = () => {
+      // 上报 guest id：主进程 browser_screenshot 据此定位当前预览页（id 由主进程注册表校验）
+      try { window.api.piAgent.browserSetGuest(wv.getWebContentsId()) } catch { /* 早期 webview 可能取不到 */ }
       // 设置缩放（从 ref 读取最新值，避免将 zoom 加入 effect 依赖导致所有监听重绑）
       try { wv.setZoomFactor(zoomRef.current) } catch {}
       // 注入注释工具脚本（页面每次加载后重新注入；脚本自带防重复保护）
@@ -169,6 +226,8 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
         setCanGoBack(wv.canGoBack())
         setCanGoForward(wv.canGoForward())
       } catch {}
+      // browser_show 回执：加载完成
+      settleNav({ ok: true })
     }
     const onNavigate = (e: any) => {
       setInputUrl(e.url)
@@ -181,12 +240,15 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
     }
     const onTitleUpdate = (e: any) => {
       setTitle(e.title || '')
+      titleRef.current = e.title || ''
     }
     const onFailLoad = (e: any) => {
       // 忽略 aborted（用户取消）和子框架错误
       if (e.errorCode === -3 || e.isMainFrame === false) return
       setError(`加载失败: ${e.errorDescription || e.errorCode}`)
       setLoading(false)
+      // browser_show 回执：加载失败（不伪装成功）
+      settleNav({ ok: false, error: e.errorDescription ? `页面加载失败：${e.errorDescription}` : `页面加载失败（错误码 ${e.errorCode}）` })
     }
     // 拦截新窗口：在当前 webview 中打开
     const onNewWindow = (e: any) => {
@@ -221,7 +283,16 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
     wv.addEventListener('responsive', onResponsive)
     wv.addEventListener('render-process-gone', onProcessGone)
 
+    // 事件可能在页面已加载完之后才绑上（本地预览文件秒开），这时不会再有
+    // did-stop-loading：URL 已停在目标页且不在加载中就补一次回执。
+    try {
+      const pending = pendingNavRef.current
+      if (pending && !wv.isLoading && wv.getURL() === pending.url) settleNav({ ok: true })
+    } catch { /* getURL 在个别时机不可用，交给超时兜底 */ }
+
     return () => {
+      // webview 即将卸载：清掉主进程记录的活跃 guest，避免截到已销毁页面
+      window.api.piAgent.browserSetGuest(null).catch(() => {})
       wv.removeEventListener('dom-ready', onDomReady)
       wv.removeEventListener('did-start-loading', onStartLoad)
       wv.removeEventListener('did-stop-loading', onStopLoad)
@@ -236,7 +307,7 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
       wv.removeEventListener('render-process-gone', onProcessGone)
     }
   // 隐藏时卸载 webview（销毁 guest 渲染进程），可见时重新挂载 → 事件需随 visible 重绑
-  }, [initialUrl, visible])
+  }, [initialUrl, visible, settleNav])
 
   // 隐藏时暂停 webview 后台活动，可见时恢复
   useEffect(() => {
