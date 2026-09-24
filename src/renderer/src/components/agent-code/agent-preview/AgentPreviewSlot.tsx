@@ -38,6 +38,8 @@ type RightPanelMode = 'files' | 'browser' | 'terminal' | 'diff' | 'menu'
 /** 可常驻标签条的四个工作区（menu 是选择界面，不算工作区） */
 type PanelView = 'files' | 'diff' | 'terminal' | 'browser'
 const PANEL_LABEL: Record<PanelView, string> = { files: '文件树', diff: '变更', terminal: '终端', browser: '浏览器' }
+// 与 AgentCodeViewLayout.tsx 里 binds 的按键一一对应，改了那边要改这里
+const PANEL_SHORTCUT: Record<PanelView, string> = { files: 'F1', diff: 'F2', terminal: 'F3', browser: 'F4' }
 type GitChanges = Parameters<typeof AgentGitDiff>[0]['data']
 
 export type AgentPreviewSlotProps = {
@@ -50,11 +52,8 @@ export type AgentPreviewSlotProps = {
       预览 / 浏览器 / 终端保留（顶栏仍能进入），所以只收树，不整块收掉右侧面板。 */
   plainChat: boolean
   rightResizing: boolean
-  previewResizing: boolean
   startRightResize: (e: React.PointerEvent) => void
-  startPreviewResize: (e: React.PointerEvent) => void
   previewHandleIconRef: React.RefObject<{ startAnimation: () => void; stopAnimation: () => void } | null>
-  previewPanelHandleIconRef: React.RefObject<{ startAnimation: () => void; stopAnimation: () => void } | null>
   terminalMounted: boolean
   handlePreviewMouseDown: (e: React.MouseEvent) => void
   handlePreviewMouseUp: (e: React.MouseEvent) => void
@@ -91,8 +90,8 @@ export type AgentPreviewSlotProps = {
 }
 
 export function AgentPreviewSlot({
-  preview, activeProject, rightPanelMode, treeOpen, plainChat, rightResizing, previewResizing,
-  startRightResize, startPreviewResize, previewHandleIconRef, previewPanelHandleIconRef,
+  preview, activeProject, rightPanelMode, treeOpen, plainChat, rightResizing,
+  startRightResize, previewHandleIconRef,
   terminalMounted, handlePreviewMouseDown, handlePreviewMouseUp,
   openFileAtLine, addCodeSnippet, insertAtCursor, showRightTab, openPanels, closePanel,
   closeOtherPanels, closePanelsRight, closeAllPanels,
@@ -120,8 +119,8 @@ export function AgentPreviewSlot({
   // 此时整槽收起，否则会剩一条约 19px 的边框空条挂在右缘（树是 display:none，
   // 但 collapser 自身的 border + margin 仍在）。
   const slotEmpty = plainChat && rightPanelMode === 'files' && openTabs.length === 0
-  // 宽度分档：只开着「文件树」这一个工作区时按树的内容宽（不参与拖宽）；一旦并开了
-  // 终端 / 浏览器 / 变更，面板走 --agent-right-width 那一档（这些视图需要横向空间）。
+  // treeOnly 只决定面板挂不挂 panel-resizable 类（那条规则改的是预览组的伸缩方式，
+  // 见 agent-code.css）；两种情况面板宽度都由 --agent-right-width 定，左缘手柄通用。
   const treeOnly = openPanels.every(v => v === 'files')
 
   // ── 收起动画对齐左栏：两层修正 ——
@@ -135,29 +134,48 @@ export function AgentPreviewSlot({
   //    直接写 CSS 变量不走 setState——拖拽改宽每帧触发，重渲染这个重组件会拖卡顿。
   //    注意：收起态（含过渡途中）跳过测量，原因见 measure 内注释。
   const collapserRef = useRef<HTMLDivElement>(null)
+  // 拖宽期间不测量：测得的宽度每帧都变，写回面板根就等于每帧一次整树样式重算（拖拽时
+  // 发虚的来源之一）。松手后由下面那个 effect 补测一次，收起位移仍等于终宽。
+  const draggingRef = useRef(false)
+  draggingRef.current = rightResizing
+  const measureRef = useRef<(() => void) | null>(null)
   useEffect(() => {
     const el = collapserRef.current
     if (!el) return
     const leftEl = document.querySelector('.agent-code-sidebar-collapser') as HTMLElement | null
     const measure = () => {
+      if (draggingRef.current) return
       // 收起态（含收起过渡途中）不测量：panel-resizable 的 max-width: calc(100% - 16px)
       // 以槽宽为基准，槽随 margin 收缩时面板会被挤压变窄——把挤出来的小宽度写进变量，
       // margin 就收不干净（右侧残留空档）。collapsed 类在过渡开始即加上，跳过即可。
       if (el.classList.contains('collapsed')) return
       const w = el.offsetWidth
       if (w <= 0) return
-      el.style.setProperty('--agent-right-collapse-offset', `${w}px`)
+      // 值没变就不写：这两个是「继承型」自定义属性，写在面板根上会让整棵子树重算样式，
+      // 而 ResizeObserver 在展开/收起动画里是逐帧回调的（变更视图条目最多，逐帧重算
+      // 就是肉眼可见的卡顿）。max-width 封顶延后后面板滑动途中宽度恒定，也就恒定不写。
+      const write = (name: string, value: string) => {
+        if (el.style.getPropertyValue(name) !== value) el.style.setProperty(name, value)
+      }
+      write('--agent-right-collapse-offset', `${w}px`)
       // 左栏位移 = collapser 宽度（width 已含 16px 外边距，见 agent-code.css），margin 滑出不改 offsetWidth
       const lw = leftEl && leftEl.offsetWidth > 0 ? leftEl.offsetWidth : 216
       const dur = Math.min(0.6, Math.max(0.15, 0.25 * (w + 16) / lw))
-      el.style.setProperty('--agent-right-collapse-dur', `${dur.toFixed(3)}s`)
+      write('--agent-right-collapse-dur', `${dur.toFixed(3)}s`)
     }
+    measureRef.current = measure
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     if (leftEl) ro.observe(leftEl)
-    return () => ro.disconnect()
+    return () => {
+      ro.disconnect()
+      measureRef.current = null
+    }
   }, [])
+  useEffect(() => {
+    if (!rightResizing) measureRef.current?.()
+  }, [rightResizing])
 
   // 工作区标签条的右键菜单（与文件标签的右键菜单同款：fixed 定位于光标处 + 点外/Esc 关闭）。
   // 只存视图级交互状态（屏幕坐标 + 被右键的标签），动作仍由上层 ui 域的三个回调承担。
@@ -213,27 +231,16 @@ export function AgentPreviewSlot({
 
   return (
     <div className={`agent-code-right-slot${!treeOnly || slotEmpty ? ' panel-resizable' : ''}`}>
+      {/* 面板左缘调宽手柄：四个视图共用这一根，拖它改整块面板宽度（--agent-right-width）。
+          原先「只开文件树」时这里换的是另一根调 --agent-preview-width 的手柄，但面板已是
+          定宽、预览组又 flex-grow:1 填满剩余，那根手柄拖动不产生任何位移，故合并掉。 */}
       <div
-        className={`agent-code-right-edge-handle${rightResizing ? ' agent-code-resize-handle--active' : ''}${treeOnly || !treeOpen ? ' hidden' : ''}`}
+        className={`agent-code-right-edge-handle${rightResizing ? ' agent-code-resize-handle--active' : ''}${treeOpen ? '' : ' hidden'}`}
         onPointerDown={startRightResize}
         onMouseEnter={() => previewHandleIconRef.current?.startAnimation()}
         onMouseLeave={() => previewHandleIconRef.current?.stopAnimation()}
       >
         <EllipsisVerticalIcon ref={previewHandleIconRef} size={16} className="nav-animate-icon agent-resize-handle-icon" />
-      </div>
-      {/* 预览宽度手柄：仅在「只开文件树」时显示——此时面板按内容宽，拖它调整
-          --agent-preview-width 会带动整面板滑动。并开其它工作区时必须隐藏：
-          它与上面的面板手柄同锚在面板左缘（.agent-code-right-edge-handle 都是
-          left:0 + translateX(-50%)），同时可见时它压在上面吃掉拖拽，面板手柄
-          就「滑不动」了；此时整面板调宽由面板手柄（--agent-right-width）承担，
-          预览组 flex 填满剩余、预览内容 100% 跟组（见 agent-code.css）。 */}
-      <div
-        className={`agent-code-right-edge-handle${previewResizing ? ' agent-code-resize-handle--active' : ''}${(!treeOnly || openTabs.length === 0 || rightPanelMode !== 'files' || !treeOpen) ? ' hidden' : ''}`}
-        onPointerDown={startPreviewResize}
-        onMouseEnter={() => previewPanelHandleIconRef.current?.startAnimation()}
-        onMouseLeave={() => previewPanelHandleIconRef.current?.stopAnimation()}
-      >
-        <EllipsisVerticalIcon ref={previewPanelHandleIconRef} size={16} className="nav-animate-icon agent-resize-handle-icon" />
       </div>
       <div ref={collapserRef} className={`agent-code-right-collapser ${!treeOnly ? 'panel-resizable' : ''} ${treeOpen && !slotEmpty ? '' : 'collapsed'}`}>
         {/* 面板顶部：已打开工作区的标签条（可并存、点标签切换、× 单独关闭）+「+」开选择界面。
@@ -580,6 +587,8 @@ export function AgentPreviewSlot({
                       <Icon ref={el => { pickerIconRefs.current[v] = el as AniIconHandle | null }} size={18} className="nav-animate-icon" />
                       <span className="agent-code-panel-picker-name">{PANEL_LABEL[v]}</span>
                       {openPanels.includes(v) && <span className="agent-code-panel-picker-tag">已打开</span>}
+                      <span className="agent-code-panel-picker-key">{PANEL_SHORTCUT[v]}</span>
+                      <ChevronRightIcon size={14} className="agent-code-panel-picker-arrow" />
                     </button>
                   )
                 })}

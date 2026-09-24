@@ -26,7 +26,7 @@
 import React, { useCallback, useRef } from 'react'
 import { useStore } from '../../../store/useStore'
 import { notify } from '../../../store/notificationStore'
-import { playNotificationSound, warmUpAudio } from '../../../utils/sound'
+import { playEvent, warmUpAudio } from '../../../utils/sound'
 import { agentConfig } from '../../../utils/agentConfig'
 import { PiAgentClient } from '../../../utils/piAgentClient'
 import { computeContextBudget, splitAgentTurns } from '../../../utils/contextBudget'
@@ -583,9 +583,8 @@ export function useAgentLoop({
       // queryMetricsNow 是 IPC + 两次 HTTP（/slots 与 /metrics），刚生成完时 llama-server
       // 还在收尾，这一等就是几十到几百毫秒，提示音会明显滞后于输出结束（实测的延迟就是这么来的）。
       // 用户手动停止（aborted）或出错（走 catch）时不播放。
-      if (!abortRef.current.aborted && useStore.getState().soundEnabled) {
-        playNotificationSound(useStore.getState().notificationSound)
-      }
+      // 提示音总开关由 playEvent 内部读设置，这里只管「什么时候该响」。
+      if (!abortRef.current.aborted) playEvent('complete')
       // 输出已结束：立刻停表并把时长定格，再去做任何异步补数。
       // 顺序很关键：下面的 queryMetricsNow 是 IPC + /slots + /metrics 两个 HTTP，刚停时
       // llama-server 还在收尾，一等就是几十到几百毫秒。若停表排在它之后，思考链头部时间在

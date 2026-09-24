@@ -14,6 +14,7 @@ import { useCallback } from 'react'
 import { useStore } from '../../../store/useStore'
 import { notify } from '../../../store/notificationStore'
 import { safeCall } from '../../../utils/safeCall'
+import { playEvent } from '../../../utils/sound'
 import type { CardState } from '../../../../../shared/types'
 
 export function useAgentModelControl() {
@@ -78,6 +79,7 @@ export function useAgentModelControl() {
       setTimeout(() => {
         if (!useStore.getState().modelDiagnostics[card.template.id]) {
           notify(`运行失败：${res.error}`, 'error')
+          playEvent('error')
         }
       }, 400)
     }

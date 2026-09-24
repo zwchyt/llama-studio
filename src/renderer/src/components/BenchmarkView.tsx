@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { Terminal, Gauge, Loader2, Cpu, Zap, HardDrive, BarChart3, Play, Square, ChevronDown, History, Trash2, Trophy } from 'lucide-react'
 import CustomSelect from './CustomSelect'
+import { playEvent } from '../utils/sound'
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, LabelList } from 'recharts'
 import '../styles/benchmark.css'
 
@@ -298,6 +299,8 @@ export default function BenchmarkView() {
     window.api.onBenchmarkDone((data) => {
       if (data.id !== benchIdRef.current) return
       setRunning(false)
+      // 一轮基准测试动辄几分钟，跑完时人多半在别的事情上
+      playEvent('complete')
       const fullLog = logsRef.current.map(l => l.text).join('\n')
       if (mode === 'ppl') {
         const r = parsePplOutput(fullLog)
@@ -386,6 +389,7 @@ export default function BenchmarkView() {
     window.api.onBenchmarkError((data) => {
       if (data.id !== benchIdRef.current) return
       setRunning(false)
+      playEvent('error')
       const entry = { stream: 'stderr', text: `错误: ${data.error}` }
       logsRef.current = [...logsRef.current, entry]
       setLogs(prev => [...prev, entry])

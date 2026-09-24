@@ -612,7 +612,7 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
     window.api?.setUiSetting('soundEnabled', v)
   },
   notificationSound: (() => {
-    try { return localStorage.getItem('notificationSound') || 'chime' } catch { return 'chime' }
+    try { return localStorage.getItem('notificationSound') || 'minimal' } catch { return 'minimal' }
   })(),
   setNotificationSound: (v: string) => {
     set({ notificationSound: v })

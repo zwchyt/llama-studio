@@ -177,10 +177,9 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   const { listening, micTranscribing, toggleListen } = mic
   const { handleSend } = loop
   const {
-    sidebarHandleIconRef, previewHandleIconRef, previewPanelHandleIconRef,
+    sidebarHandleIconRef, previewHandleIconRef,
   } = panels
   const { resizing: sidebarResizing, startResize: startSidebarResize } = panels.sidebarResize
-  const { resizing: previewResizing, startResize: startPreviewResize } = panels.previewResize
   const { resizing: rightResizing, startResize: startRightResize } = panels.rightResize
   const {
     openPromptModal, saveSystemPrompt, openKbModal,
@@ -405,6 +404,32 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     setRightPanelMode(tab)
     setTreeOpen(true)
   }, [treeOpen, rightPanelMode, toggleGitDiff, setRightPanelMode, setTreeOpen])
+
+  // 四个工作区的快捷键 F1~F4；卡片上显示的提示文案在 AgentPreviewSlot.tsx 的 PANEL_SHORTCUT
+  // 再按同一个键关闭它自己：走 closePanel（与标签条上的 × 同一条路径），还并开着别的
+  // 工作区时切到剩下的那个，全关完才收起整块面板。
+  useEffect(() => {
+    const binds = [
+      { tab: 'files' as const, code: 'F1' },
+      { tab: 'diff' as const, code: 'F2' },
+      { tab: 'terminal' as const, code: 'F3' },
+      { tab: 'browser' as const, code: 'F4' },
+    ]
+    const onKey = (e: KeyboardEvent) => {
+      // 按住不放会连发，一次连发能把面板开关来回抖动十几次
+      if (e.repeat) return
+      const hit = binds.find(b => b.code === e.code)
+      if (!hit || (plainChat && hit.tab !== 'browser')) return
+      // 终端和代码编辑器自己处理键盘，不抢它们的按键（vim 等程序占用 F1~F4）
+      const t = e.target as HTMLElement | null
+      if (t?.closest('.xterm, .monaco-editor')) return
+      e.preventDefault()
+      if (treeOpen && rightPanelMode === hit.tab) closePanel(hit.tab)
+      else showRightTab(hit.tab)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [showRightTab, closePanel, treeOpen, rightPanelMode, plainChat])
 
   // 消息列表元素缓存（useMemo）：目录高亮 / rail 波浪 / 贴底按钮等纯滚动状态变化
   // 不再重建整棵消息树；仅消息数据、流式状态、编辑态或相关回调变化时重建。
@@ -979,11 +1004,8 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
           treeOpen={treeOpen}
           plainChat={plainChat}
           rightResizing={rightResizing}
-          previewResizing={previewResizing}
           startRightResize={startRightResize}
-          startPreviewResize={startPreviewResize}
           previewHandleIconRef={previewHandleIconRef}
-          previewPanelHandleIconRef={previewPanelHandleIconRef}
           terminalMounted={terminalMounted}
           handlePreviewMouseDown={handlePreviewMouseDown}
           handlePreviewMouseUp={handlePreviewMouseUp}

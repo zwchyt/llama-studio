@@ -38,19 +38,31 @@ export function useAgentGit({ workspaceDir, rightPanelMode, treeOpen, setRightPa
 
 
   // ── Git 变更（只读）：拉取工作区改动，供预览区的 Git 变更标签渲染 ──
+  // 内容与上次完全一致时不 setState：展开面板会顺带静默刷新（toggleGitDiff / openGitDiff），
+  // `git diff HEAD` 的 IPC 回来几乎必然落在展开动画中途，换了对象身份就让每个 GitFileBlock
+  // 重跑 parseUnifiedDiff + computeInlineHighlights（逐行 LCS，文件折叠着也照跑）——主线程
+  // 一顿，就是变更视图特有的"滑一半卡一下"。其余三个视图没有这份重活，所以只有它抖。
+  const lastPayloadRef = useRef<string | null>(null)
+  const commitChanges = useCallback((next: GitChangesData) => {
+    const sig = JSON.stringify(next)
+    if (sig === lastPayloadRef.current) return
+    lastPayloadRef.current = sig
+    setGitChanges(next)
+  }, [])
+
   const refreshGitChanges = useCallback(async (silent = false) => {
     const dir = workspaceDir
-    if (!dir) { setGitChanges({ isRepo: false, staged: [], unstaged: [] }); return }
+    if (!dir) { commitChanges({ isRepo: false, staged: [], unstaged: [] }); return }
     if (!silent) setGitLoading(true)
     try {
       const r = await window.api.gitChanges(dir)
-      setGitChanges(r as GitChangesData)
+      commitChanges(r as GitChangesData)
     } catch (e: any) {
-      setGitChanges({ isRepo: false, staged: [], unstaged: [], error: e?.message || String(e) })
+      commitChanges({ isRepo: false, staged: [], unstaged: [], error: e?.message || String(e) })
     } finally {
       if (!silent) setGitLoading(false)
     }
-  }, [workspaceDir])
+  }, [workspaceDir, commitChanges])
 
   // 打开 Git 变更面板：切换到 diff 模式并刷新
   const openGitDiff = useCallback(() => {

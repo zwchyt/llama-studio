@@ -16,6 +16,7 @@
 import React, { useCallback, useRef, useState } from 'react'
 import { useStore } from '../../../store/useStore'
 import { notify } from '../../../store/notificationStore'
+import { playEvent } from '../../../utils/sound'
 import { agentConfig } from '../../../utils/agentConfig'
 import {
   computeContextBudget, splitAgentTurns, estimateApiMsgTokens, estimateTextTokens,
@@ -171,11 +172,12 @@ export function useAgentCondense({
     condenseErrorRef.current = ''
     const next = await condenseSessionMemory(activeProjectId, activeSessionId, msgs, activeSession.memory, ctxBudget, runningCard.template.serverPort, true)
     const nextCovered = next?.coveredMsgIds?.length || 0
-    if (nextCovered > prevCovered) { setCondenseMsg(`✅ 已压缩 ${nextCovered - prevCovered} 条早期消息。`); notify(`已压缩 ${nextCovered - prevCovered} 条早期消息`, 'success') }
+    if (nextCovered > prevCovered) { setCondenseMsg(`✅ 已压缩 ${nextCovered - prevCovered} 条早期消息。`); notify(`已压缩 ${nextCovered - prevCovered} 条早期消息`, 'success'); playEvent('success') }
     else {
       const reason = condenseErrorRef.current ? `：${condenseErrorRef.current}` : '（模型无响应或返回为空）'
       setCondenseMsg(`压缩未完成${reason}`)
       notify('压缩未完成' + reason, 'error')
+      playEvent('error')
     }
   }, [loading, condensing, runningCard, apiBaseUrl, activeSession, activeProjectId, activeSessionId, condenseSessionMemory])
 

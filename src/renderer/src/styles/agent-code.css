@@ -175,7 +175,7 @@
   flex-shrink: 0;
 }
 
-.chat-input-context > * {
+.chat-input-context>* {
   min-width: 0;
 }
 
@@ -617,7 +617,9 @@
   border-color: var(--border-strong);
   color: var(--text);
   background: var(--surface);
-}.agent-stream-meta {
+}
+
+.agent-stream-meta {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1121,13 +1123,25 @@
 }
 
 @keyframes panel-picker-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes panel-picker-item-in {
-  from { opacity: 0; translate: 16px 0; }
-  to { opacity: 1; translate: 0 0; }
+  from {
+    opacity: 0;
+    translate: 16px 0;
+  }
+
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
 }
 
 .agent-code-panel-picker-list {
@@ -1154,10 +1168,21 @@
   animation: panel-picker-item-in 0.34s cubic-bezier(0.22, 0.8, 0.36, 1) backwards;
 }
 
-.agent-code-panel-picker-item:nth-child(1) { animation-delay: 0.06s; }
-.agent-code-panel-picker-item:nth-child(2) { animation-delay: 0.12s; }
-.agent-code-panel-picker-item:nth-child(3) { animation-delay: 0.18s; }
-.agent-code-panel-picker-item:nth-child(4) { animation-delay: 0.24s; }
+.agent-code-panel-picker-item:nth-child(1) {
+  animation-delay: 0.06s;
+}
+
+.agent-code-panel-picker-item:nth-child(2) {
+  animation-delay: 0.12s;
+}
+
+.agent-code-panel-picker-item:nth-child(3) {
+  animation-delay: 0.18s;
+}
+
+.agent-code-panel-picker-item:nth-child(4) {
+  animation-delay: 0.24s;
+}
 
 .agent-code-panel-picker-item:hover {
   background: var(--surface-hover);
@@ -1173,17 +1198,62 @@
   background: var(--surface-hover);
 }
 
-.picker-files { border-left: 3px solid #b08d57; }
-.picker-files svg { color: #b08d57; }
-.picker-diff { border-left: 3px solid #5a9e6f; }
-.picker-diff svg { color: #5a9e6f; }
-.picker-terminal { border-left: 3px solid #5b8a8a; }
-.picker-terminal svg { color: #5b8a8a; }
-.picker-browser { border-left: 3px solid #6a7fa8; }
-.picker-browser svg { color: #6a7fa8; }
+.picker-files {
+  border-left: 3px solid #b08d57;
+}
+
+.picker-files svg {
+  color: #b08d57;
+}
+
+.picker-diff {
+  border-left: 3px solid #5a9e6f;
+}
+
+.picker-diff svg {
+  color: #5a9e6f;
+}
+
+.picker-terminal {
+  border-left: 3px solid #5b8a8a;
+}
+
+.picker-terminal svg {
+  color: #5b8a8a;
+}
+
+.picker-browser {
+  border-left: 3px solid #6a7fa8;
+}
+
+.picker-browser svg {
+  color: #6a7fa8;
+}
 
 .agent-code-panel-picker-name {
+  flex: 1;
+}
+
+/* 右侧的快捷键提示与箭头 */
+.agent-code-panel-picker-key {
   flex: none;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--surface-hover);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 2px 7px;
+}
+
+.agent-code-panel-picker-arrow {
+  flex: none;
+  color: var(--text-secondary);
+  transition: transform 0.18s ease;
+}
+
+.agent-code-panel-picker-item:hover .agent-code-panel-picker-arrow {
+  transform: translateX(3px);
 }
 
 .agent-code-panel-picker-tag {
@@ -1364,12 +1434,26 @@
   display: none;
 }
 
+/* 拖拽调宽期间禁掉面板的宽度过渡：同一条 width 过渡本是给收起/展开用的（时长按位移
+   等比换算，480px 面板约 0.57s），拖拽时每帧改 --agent-right-width 都重启一次缓动，
+   面板永远在追上一帧的目标 → 手柄跟手、面板不跟手。左栏无 width 过渡所以不卡。
+   手柄与面板同为槽的直接子节点，用 ~ 命中，无需再加一份 JS 状态。 */
+.agent-code-right-edge-handle.agent-code-resize-handle--active ~ .agent-code-right-collapser {
+  transition: none;
+}
+
 /* 浏览器 / 终端模式下右侧面板整体宽度由 --agent-right-width 控制（文件树模式保持原布局）；
    max-width 以槽为上限（100% = 槽内容宽，16 = 自身左右 margin，全局 border-box）：
    侧栏打开/窗口较窄导致剩余空间不足 900px 时面板自动封顶，不再让 flex 行溢出 */
 .agent-code-right-collapser.panel-resizable {
   width: var(--agent-right-width, 480px);
   max-width: calc(100% - 16px);
+}
+
+/* 文件树视图与另外三个视图同宽。原本由内容撑开（auto），auto 不参与过渡，切视图时一帧
+   变宽就是「咚的一下」；给确定宽度才有过渡。要改宽度只改这一个数。 */
+.agent-code-right-collapser:not(.panel-resizable) {
+  width: var(--agent-right-width, 480px);
 }
 
 .agent-code-chat {
@@ -1432,8 +1516,12 @@
      不再溢出被 body 右缘切断（panel-resizable 另有同名规则，等价冗余保留） */
   max-width: calc(100% - 16px);
   /* 时长走变量：JS 按「时长 ∝ 位移」换算（--agent-right-collapse-dur），
-     让宽面板的滑动 px/s 与左栏一致，而不是固定 0.25s 导致宽面板显得飞快 */
-  transition: margin-right var(--agent-right-collapse-dur, 0.25s) ease, opacity 0.2s ease;
+     让宽面板的滑动 px/s 与左栏一致，而不是固定 0.25s 导致宽面板显得飞快。
+     max-width 那一项是「延迟到滑动结束才生效」：封顶以槽宽为基准，而槽宽正被收起的
+     负 margin 一路拉到 0，展开途中每帧重算就会把面板从 ~0px 挤压到终宽——头部那些
+     flex-shrink:0 的 +N −M 与状态徽章因此逐帧被挤出去再弹回（就是展开时的抖动）。
+     收起方向由 .collapsed 自己把这一项的延迟归零，仍是首帧解除封顶。 */
+  transition: margin-right var(--agent-right-collapse-dur, 0.25s) ease, width var(--agent-right-collapse-dur, 0.25s) ease, opacity 0.2s ease, max-width 0s linear var(--agent-right-collapse-dur, 0.25s);
   margin: 8px;
   border-radius: var(--radius, 10px);
   border: 1.5px solid var(--border-strong);
@@ -1466,6 +1554,9 @@
      基准，槽随 margin 收缩时会把面板横向挤压变窄；解除后面板以真实宽度整体滑出。
      （JS 侧的 ResizeObserver 在收起态也会跳过测量，见 AgentPreviewSlot.tsx。） */
   max-width: none;
+  /* 目的地状态自己声明 transition：基础规则里 max-width 带一整段延迟（为展开服务），
+     收起必须在首帧就解除封顶，否则等于把同一个抖动搬到收起方向。 */
+  transition: margin-right var(--agent-right-collapse-dur, 0.25s) ease, width var(--agent-right-collapse-dur, 0.25s) ease, opacity 0.2s ease, max-width 0s linear 0s;
   opacity: 0;
   pointer-events: none;
 }
@@ -1884,35 +1975,31 @@
   display: none;
 }
 
-/* ── 四视图面板入场动画 ──
-   文件树 / 变更 / 终端 / 浏览器 四个面板各自「弹出」时的入场：
-   0.5s expo-out（快起慢收的优雅缓出）+ 从各自锚点方向滑入 40/32px + 淡入 + 0.985 轻微缩放。
-   · 关键帧只动 transform / opacity —— 走合成线程、零重排，顺滑掩盖 xterm / git diff /
-     文件树列表的首帧挂载成本（卡顿感的来源）。
-   · .hidden 是 display:none：翻回显示的那次 style recalc 会让 animation 自动重放，
-     每次打开面板都播一遍，无需 JS。
-   · fill-mode: backwards —— 首帧锁在起始态（全透明 + 位移），不会在动画生效前
-     先闪现一下完整面板。
-   · 时长刻意取 0.5s：0.28s 这个量级在大面积面板上只剩「唰」的一下，读不出过渡；
-     0.5s 配 expo-out 才有「优雅弹出」的过程感。 */
+/* 四视图入场动画：位移必须与外层 collapser 的滑入同向，反向会抵消成抖动 */
+/* 入场只做「横向滑入 + 淡入」，不带 scale：缩放会让整棵子树逐帧重新栅格化，
+   变更视图里 1px 边框和 16px 状态徽章（10px 字）就是这么闪边的；1.5% 的缩放量
+   肉眼几乎看不出，换来的是重栅格开销，不值。 */
 @keyframes agent-panel-in {
-  from { opacity: 0; transform: translateX(40px) scale(0.985); }
-  to { opacity: 1; transform: translateX(0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
-@keyframes agent-tree-in {
-  from { opacity: 0; transform: translateX(-32px) scale(0.985); }
-  to { opacity: 1; transform: translateX(0) scale(1); }
-}
-
+/* 四视图内容入场。时长与曲线必须和面板自己的滑入是**同一份**（同一个
+   --agent-right-collapse-dur + 同为 ease）：这两段位移走在同一条轴上，曲线不一致时
+   速度比就不是恒定的（expo-out 抢在前、面板的 ease 落在后面），贴在面板右缘裁剪切线上
+   的那些 flex-shrink:0 元素（变更头部的 +N −M、状态徽章、右侧按钮）会被两套不同步的
+   运动来回拉扯 —— 就是「展开时右边图标抖进来」。同曲线时两者合成仍是单调的一条滑入。 */
 .agent-code-tree:not(.hidden),
 .agent-code-diff-wrap:not(.hidden),
 .agent-code-preview-group:not(.hidden) {
-  animation: agent-panel-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) backwards;
-}
-
-.agent-code-tree:not(.hidden) {
-  animation-name: agent-tree-in;
+  animation: agent-panel-in var(--agent-right-collapse-dur, 0.5s) ease backwards;
 }
 
 .agent-code-diff-wrap {
@@ -4206,29 +4293,21 @@
   max-width: none;
 }
 
-/* 文件树视图（树可见）的预览组：默认占 --agent-preview-width（与 .agent-code-preview 同源，
-   预览拖宽手柄对两者同步生效）——没打开文件时即显示「选择文件以预览」空态占位。
-   原来 flex-basis:0：只开文件树时预览组塌成 0 宽（看不到默认预览界面）；
-   并开变更等工作区时面板按 --agent-right-width 定宽，树吃满 fit-content（最宽 380px）
-   又把预览组挤成窄条，空态被 overflow 裁成一块「空白截断」区域。 */
-.agent-code-right-body:not(.tree-collapsed) .agent-code-preview-group:not(.collapsed) {
-  flex: 1 1 var(--agent-preview-width, 480px);
-}
-
 /* 文件目录树宽度固定（基础规则 flex-shrink:0 + fit-content，160~380px 封顶）：
-   拖手柄只改预览区域大小——预览组 flex 伸缩吸收全部宽度变化，树本身不缩不伸；
+   拖左缘手柄改的是整块面板宽度，树不缩不伸，全部增减由预览组吸收；
    面板右锚定，宽度变化时树随面板左缘整体移动，与预览在视觉上联动。
    （窗口极端收窄时预览组 min-width:0 先缩到尽，仍不够才裁面板右缘，不动树。） */
 
-/* 并开其它工作区（panel-resizable：面板按 --agent-right-width 定宽）时的文件树视图：
-   树按内容宽、预览组填满剩余，预览内容 100% 跟组——拖面板左缘手柄（整面板调宽）时
-   预览随之扩大/收窄，不会出现「预览比组窄」的空白缝或「预览比组宽」的裁断。 */
-.agent-code-right-collapser.panel-resizable .agent-code-right-body:not(.tree-collapsed) .agent-code-preview-group:not(.collapsed) {
+/* 文件树视图：树按内容宽、预览组填满剩余，预览内容 100% 跟组——拖面板左缘手柄
+   （整面板调宽）时预览随之扩大/收窄，不会出现「预览比组窄」的空白缝或「预览比组宽」
+   的裁断。两种面板宽度档位（panel-resizable / 只开文件树）都按组撑满，
+   --agent-preview-width 不再参与宽度（原先那根调预览列宽的手柄已合并进面板手柄）。 */
+.agent-code-right-body:not(.tree-collapsed) .agent-code-preview-group:not(.collapsed) {
   flex: 1 1 auto;
   width: auto;
 }
 
-.agent-code-right-collapser.panel-resizable .agent-code-right-body:not(.tree-collapsed) .agent-code-preview {
+.agent-code-right-body:not(.tree-collapsed) .agent-code-preview {
   width: 100%;
 }
 
@@ -6823,8 +6902,8 @@
     transition: none;
   }
 
-  /* 注意：文件树 / 变更 / 终端 / 浏览器 四个面板的入场动画（agent-panel-in /
-     agent-tree-in）**刻意不在本媒体块里关闭**——用户明确要求无论系统是否开启
+  /* 注意：文件树 / 变更 / 终端 / 浏览器 四个面板的入场动画（agent-panel-in）
+     **刻意不在本媒体块里关闭**——用户明确要求无论系统是否开启
      「减少动态效果」都必须有优雅的弹出过渡（Windows 关闭动画效果会命中本查询，
      表现为面板毫无过渡地直接出现，正是用户反馈的问题）。可访问性取舍由产品决定。 */
 
@@ -6883,8 +6962,13 @@
 /* 内容层入场淡入。用 @keyframes 而不是 transition：内容层是随展开才挂载的，
    挂载时就已经是终态，transition 找不到「起始态」，只有入场动画能在挂载时自动播放。 */
 @keyframes agentThinkReveal {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .agent-think-anim {
@@ -7443,7 +7527,8 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 5px 6px;
-  position: relative; /* 折叠胶囊（.chat-input-fold）的定位锚点 */
+  position: relative;
+  /* 折叠胶囊（.chat-input-fold）的定位锚点 */
 }
 
 /* ③ 底部按钮行：文件目录 + 模型列表（左）… 发送（右） */
@@ -9249,7 +9334,7 @@
   transition: background .12s ease, color .12s ease;
 }
 
-.agent-git-viewswitch button + button {
+.agent-git-viewswitch button+button {
   border-left: 1px solid var(--border);
 }
 

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { BookOpen, Plus, Trash2, FileText, Loader2, Search, Upload, X, AlertTriangle, Download, FileUp, Pencil, Check, ChevronUp, ChevronDown, Copy, Eye, Settings2 } from 'lucide-react'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
+import { playEvent } from '../utils/sound'
 import CustomSelect from './CustomSelect'
 import { extractTextFromFile } from '../utils/extractText'
 import type { KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit } from '../../../shared/types'
@@ -363,6 +364,7 @@ export default function KnowledgeView() {
     await loadDocs(activeId)
     await refreshBases()
     notify(`已添加 ${ok} 个文档${skip > 0 ? `，跳过 ${skip} 个（无法解析或为空）` : ''}`, ok > 0 ? 'success' : 'error')
+    playEvent(ok > 0 ? 'success' : 'error')
   }, [activeId, loadDocs, refreshBases, chunkMode, chunkSize, chunkDelim])
 
   // 手动分块确认：按用户点击的行号区间入库
@@ -379,6 +381,7 @@ export default function KnowledgeView() {
     setManualRanges([])
     if (res.success) notify(`已按 ${res.chunkCount ?? manualRanges.length} 块导入「${manualEditor.name}」`, 'success')
     else notify('导入失败：' + (res.error || '未知错误'), 'error')
+    playEvent(res.success ? 'success' : 'error')
     await loadDocs(activeId)
     await refreshBases()
   }, [activeId, manualEditor, manualRanges, loadDocs, refreshBases])

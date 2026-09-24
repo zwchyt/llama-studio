@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { useSidebarStore } from '../store/sidebarStore'
 import { Bell, BellOff, Activity, Type, Volume2, Check, Brain } from 'lucide-react'
-import { SOUND_OPTIONS, previewSound } from '../utils/sound'
+import { PACK_OPTIONS, previewSound } from '../utils/sound'
 import { dataUrlToBlobUrl } from '../utils/audioUrl'
 import { agentConfig, setAgentConfigOverride } from '../utils/agentConfig'
 
@@ -223,7 +223,7 @@ export default function SettingsView() {
         <div className="settings-section-title"><Volume2 /> 界面</div>
         <div className="st-block">
           <p className="st-desc">
-            开启：助手回复完成时播放提示音。关闭：不播放提示音。
+            开启：助手回复完成、模型服务就绪、图像与语音生成结束等事件播放提示音。关闭：全部不播放。
           </p>
           <label className="toggle st-toggle">
             <input
@@ -237,10 +237,10 @@ export default function SettingsView() {
         </div>
         <div className="st-block">
           <p className="st-desc st-desc--sm">
-            选择助手回复完成时的提示音类型。点击会自动预览。
+            选择提示音的音色风格（同一事件在不同风格下听感不同）。点击会自动试听。
           </p>
           <div className="st-seg st-seg--fill">
-            {SOUND_OPTIONS.map(opt => {
+            {PACK_OPTIONS.map(opt => {
               const selected = notificationSound === opt.id
               return (
                 <button

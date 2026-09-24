@@ -604,7 +604,7 @@ function parseSettingsData(data: Record<string, unknown>): AppSettings {
     metricsPolling: data.metricsPolling !== undefined ? !!data.metricsPolling : true,
     splashEnabled: data.splashEnabled !== undefined ? !!data.splashEnabled : true,
     soundEnabled: data.soundEnabled !== undefined ? !!data.soundEnabled : true,
-    notificationSound: typeof data.notificationSound === 'string' ? data.notificationSound : 'chime',
+    notificationSound: typeof data.notificationSound === 'string' ? data.notificationSound : 'minimal',
     chatSidebarCollapsed: data.chatSidebarCollapsed !== undefined ? !!data.chatSidebarCollapsed : false,
     ttsEngine: typeof data.ttsEngine === 'string' ? data.ttsEngine : 'system',
     ttsModelPath: typeof data.ttsModelPath === 'string' ? data.ttsModelPath : '',
@@ -614,7 +614,7 @@ function parseSettingsData(data: Record<string, unknown>): AppSettings {
     engineReleasesCheckedAt: typeof data.engineReleasesCheckedAt === 'number' ? data.engineReleasesCheckedAt as number : undefined
   } as AppSettings
 }
-const DEFAULT_SETTINGS: AppSettings = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'chime', chatSidebarCollapsed: false }
+const DEFAULT_SETTINGS: AppSettings = { externalModelFolders: [], imageModelFolders: [], ttsModelFolders: [], asrModelFolders: [], ocrModelFolders: [], sdModelFolders: [], sdVaeFolders: [], sdLlmFolders: [], metricsPolling: true, splashEnabled: true, soundEnabled: true, notificationSound: 'minimal', chatSidebarCollapsed: false }
 type SettingsReadResult = { ok: true; settings: AppSettings } | { ok: false; missing: boolean }
 async function readSettingsFile(path: string): Promise<SettingsReadResult> {
   try {
@@ -4733,7 +4733,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('get-ui-settings', async () => {
     const s = await loadSettings()
-    return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, notificationSound: s.notificationSound ?? 'chime', chatSidebarCollapsed: s.chatSidebarCollapsed ?? false, ttsEngine: s.ttsEngine ?? 'system', ttsModelPath: s.ttsModelPath ?? '', ttsVocoderPath: s.ttsVocoderPath ?? '', slashCommands: s.slashCommands ?? [] }
+    return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, notificationSound: s.notificationSound ?? 'minimal', chatSidebarCollapsed: s.chatSidebarCollapsed ?? false, ttsEngine: s.ttsEngine ?? 'system', ttsModelPath: s.ttsModelPath ?? '', ttsVocoderPath: s.ttsVocoderPath ?? '', slashCommands: s.slashCommands ?? [] }
   })
   ipcMain.handle('set-ui-setting', async (_e, key: string, value: boolean | string) => {
     if (!UI_KEYS.has(key)) return { success: true }

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { AudioLines, Play, Square, Loader2, Download, Volume2, TriangleAlert, FolderOpen, X } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
+import { playEvent } from '../utils/sound'
 import ModelFileSelect from './ModelFileSelect'
 import CustomSelect from './CustomSelect'
 import '../styles/tts.css'
@@ -161,6 +162,7 @@ export default function TtsView() {
     setGenerating(false)
     if (!res.success || !('wavBase64' in res) || !res.wavBase64) {
       setError(res.error || '未知错误')
+      playEvent('error')
       return
     }
     const bytes = Uint8Array.from(atob(res.wavBase64), c => c.charCodeAt(0))
@@ -168,6 +170,7 @@ export default function TtsView() {
     setTtsGenMs(Math.round(performance.now() - t0))
     setTtsWavDataUrl(`data:audio/wav;base64,${res.wavBase64}`)
     // 新生成 → 自动试听（由 data URL → blob URL 的 effect 统一构建后播放）
+    // 这里刻意不播成功音：合成完立刻就会放出语音，再叠一个提示音只会盖住开头
     autoPlayRef.current = true
   }
 

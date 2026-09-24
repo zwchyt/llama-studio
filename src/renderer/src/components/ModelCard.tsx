@@ -4,6 +4,7 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
+import { playEvent } from '../utils/sound'
 import { usePopoverDismiss } from '../utils/usePopoverDismiss'
 import { ENGINE_LABELS, paramSetOf } from '../utils/engine'
 import { PlayIcon, CircleStopIcon, SettingsIcon, EllipsisVerticalIcon, CopyIcon, TrashIcon, DownloadIcon, GlobeIcon, ServerIcon, TerminalIcon, CheckIcon, MessageSquareIcon, ImageIcon, ScanIcon, RefreshCwIcon, AudioLines } from '@animateicons/react/lucide'
@@ -196,6 +197,7 @@ export default function ModelCard({ card, style }: Props) {
       })
       if (conflict) {
         notify(`TensorSharp 固定监听 5000 端口，与正在运行的「${conflict.template.name}」冲突`, 'error')
+        playEvent('error')
         return
       }
     } else if (card.template.serverPort) {
@@ -231,6 +233,7 @@ export default function ModelCard({ card, style }: Props) {
       setTimeout(() => {
         if (!useStore.getState().modelDiagnostics[card.template.id]) {
           notify(`运行失败：${res.error}`, 'error')
+          playEvent('error')
         }
       }, 400)
     }

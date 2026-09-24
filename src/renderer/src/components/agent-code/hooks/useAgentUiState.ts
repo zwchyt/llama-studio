@@ -311,9 +311,9 @@ export function useAgentUiState({
   useEffect(() => {
     if (rightPanelMode === 'terminal') setTerminalMounted(true)
   }, [rightPanelMode])
-  // 会话侧栏默认收起：首屏只留对话区，点顶栏左上角的开关（或双击顶栏）再展开。
-  // 不持久化，每次进入工作台都是收起态。
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  // 会话侧栏默认展开：进来就能看到工作区和会话列表。
+  // 不持久化，每次进入工作台都是展开态（点顶栏左上角的开关或双击顶栏可收起）。
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [contextModalOpen, setContextModalOpen] = useState(false)
   const [trajOpen, setTrajOpen] = useState(false)  // 轨迹台账面板开关
   const [memoryOpen, setMemoryOpen] = useState(false)  // 长期记忆面板开关

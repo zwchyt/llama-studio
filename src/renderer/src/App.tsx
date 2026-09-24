@@ -17,6 +17,7 @@ import SplashScreen from './components/SplashScreen'
 import UpdateBannerGroup from './components/UpdateBannerGroup'
 import BackendDownloadBanner from './components/BackendDownloadBanner'
 import { paramSetOf, ENGINE_REPOS } from './utils/engine'
+import { playEvent, playNavSound, warmUpAudio } from './utils/sound'
 import ChatWindow from './components/ChatWindow'
 import LlamaChatView from './components/LlamaChatView'
 import ModelToolsView from './components/ModelToolsView'
@@ -287,9 +288,11 @@ function AppMain() {
 
   useEffect(() => {
     window.api.onTerminalData(({ id, data }) => writeToTerminal(id, data))
-    window.api.onTerminalExited(({ id }) => {
+    window.api.onTerminalExited(({ id, exitCode }) => {
       const { markExited, sessions, activeId } = useAgentTerminalStore.getState()
       markExited(id)
+      // 只在命令失败时给错误音：正常退出、主动关终端不该打扰
+      if (exitCode !== 0) playEvent('error')
       if (id === activeId && sessions.length > 1) {
         const remaining = sessions.filter(s => s.id !== id)
         if (remaining.length > 0) useAgentTerminalStore.getState().setActive(remaining[remaining.length - 1].id)
@@ -338,6 +341,8 @@ function AppMain() {
           if (res.success) add({ ...template, id: res.id })
 
           setHfDownload({ repoId: '', filename: data.filename, percent: 100, phase: 'done' })
+          // 模型文件动辄几 GB，下载要几分钟到几十分钟，人早就不在窗口前了
+          playEvent('complete')
           const hfTimeout = setTimeout(() => removeHfDownload(data.filename), 2500)
           timeoutsRef.current.push(hfTimeout)
         } else {
@@ -384,6 +389,7 @@ function AppMain() {
         )
         const res = await window.api.saveTemplate(template)
         if (res.success) add({ ...template, id: res.id })
+        playEvent('complete')
         const dlTimeout = setTimeout(() => removeModelDownload(data.id), 4000)
         timeoutsRef.current.push(dlTimeout)
       }
@@ -417,9 +423,30 @@ function AppMain() {
       // 不同 IPC 管道、顺序不保证，必须在此兜底清空，否则最后一条 extracting
       // 进度可能晚到并把横幅卡在「解压后端中...」
       useStore.getState().setDownloadProgress(data.phase === 'done' ? null : data)
+      if (data.phase === 'done') playEvent('complete')
     })
     return () => window.api.removeDownloadListener()
   }, [])
+
+  // 音频解锁：Chromium 只认「用户手势内」的 AudioContext 恢复，而下面这些事件音（服务就绪、
+  // 下载完成、生成结束）全部来自异步回调或 IPC 推送，不在手势里。所以在第一次点击时解锁一次，
+  // 之后所有事件音都能出声。只挂一次，出声后立即摘掉监听。
+  useEffect(() => {
+    const unlockOnce = (): void => { warmUpAudio(); window.removeEventListener('pointerdown', unlockOnce) }
+    window.addEventListener('pointerdown', unlockOnce)
+    return () => window.removeEventListener('pointerdown', unlockOnce)
+  }, [])
+
+  // 导航切换音：每一屏一个不同音效，对照表在 utils/sound.ts 的 NAV_CUES。
+  // 挂在这里而不是各导航组件里，因为侧栏、顶栏、欢迎页按钮、卡片跳转最终都汇到 view 变更，一处全覆盖。
+  // 首帧不响：启动时恢复上次页面不该一进应用就出声。
+  const prevViewRef = React.useRef<string | null>(null)
+  useEffect(() => {
+    const prev = prevViewRef.current
+    prevViewRef.current = view
+    if (prev === null || prev === view) return
+    playNavSound(view)
+  }, [view])
 
   useEffect(() => {
     window.api.onModelLog((data) => {
@@ -429,6 +456,8 @@ function AppMain() {
     })
     window.api.onModelReady((data) => {
       useStore.getState().setCardReady(data.id, true)
+      // 大模型加载动辄几十秒，人往往已经切走窗口 —— 成功音告知服务已可用
+      playEvent('success')
     })
     return () => {
       window.api.removeModelLogListener()

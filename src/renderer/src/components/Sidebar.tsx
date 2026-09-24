@@ -10,6 +10,7 @@ import {
   BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon,
   GitBranchIcon
 } from '@animateicons/react/lucide'
+import { playEvent } from '../utils/sound'
 import '../styles/sidebar.css'
 
 interface NavItemProps {
@@ -71,7 +72,11 @@ function BackendNavItem({ b, isActive, onSwitch }: { b: { name: string; path?: s
   return (
     <button
       className="nav-item"
-      onClick={onSwitch}
+      onClick={() => {
+        // 后端切换不切视图，所以不走 App.tsx 的导航音对照表，单独给一个「勾上」音
+        if (!isActive) playEvent('check')
+        onSwitch()
+      }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >

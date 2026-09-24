@@ -142,9 +142,12 @@ export function useAgentMessageHeights({ sessionId, viewportRef, messages, volat
         const box = e.borderBoxSize?.[0]
         if (box) knownHeights.set(t, box.blockSize)
       }
-      // 容器本身变宽/变高（侧栏拖拽、面板开合）会让所有消息重排 → 全量重测
-      if (viewportResized) measure()
-      else if (resized.length > 0 && measureNodes(resized, knownHeights)) scheduleCommit()
+      // 容器变宽/变高（侧栏拖拽、面板开合）会让消息重排，但已挂载的每条消息自己的框也变了，
+      // RO 已把新高度随 entry 带回来 → 优先用这些。只有没有任何节点上报时才退回全量测：
+      // measure() 里每条都要读一次 offsetHeight（强制布局），拖拽中逐帧跑就是发虚/卡顿。
+      if (resized.length > 0) {
+        if (measureNodes(resized, knownHeights)) scheduleCommit()
+      } else if (viewportResized) measure()
     })
     ro.observe(viewport)
     observeAll()

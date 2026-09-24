@@ -8,6 +8,10 @@ files:
   - out/renderer/**/*
   # 用户运行时添加的模型 Logo 不进打包产物（dev 目录 src/renderer/public/logos）
   - '!out/renderer/logos/**'
+  # uisfx 运行时是纯合成（dist/index.js 不含任何音频文件引用），已被 Vite 打进 out/renderer。
+  # 它 npm 包里的 13MB sounds/ 是给 Unity、Swift、Kotlin 等平台导出的素材，本项目一个都不加载，
+  # 不排除会被 electron-builder 整份塞进 app.asar。
+  - '!**/node_modules/uisfx/**'
 nodeGypRebuild: false
 npmRebuild: false
 extraResources:

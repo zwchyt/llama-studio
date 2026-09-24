@@ -4,6 +4,7 @@ import { useStore } from '../store/useStore'
 import { useImageStore, type ImageGenItem } from '../store/imageStore'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
+import { playEvent } from '../utils/sound'
 import { paramSetOf } from '../utils/engine'
 import CustomSelect from './CustomSelect'
 import PromptPresetPicker from './PromptPresetPicker'
@@ -316,6 +317,7 @@ export default function ImageGenView() {
           : `请求失败（${res.status ?? 'unknown'}）`
         setImgError(String(msg))
         notify(`图像生成失败：${String(msg).slice(0, 200)}`, 'error')
+        playEvent('error')
         return
       }
       const data = res.data as any
@@ -368,9 +370,11 @@ export default function ImageGenView() {
       setHistory(prev => [...items, ...prev].slice(0, 60))
       // 服务端回填的实际参数（seed 等），便于复现同一张图
       useImageStore.getState().setLastGen({ seed: actualSeed, elapsedSec: Math.round((Date.now() - t0) / 1000) })
+      playEvent('success')
     } catch (e) {
       setImgError(String(e))
       notify(`图像生成失败：${e}`, 'error')
+      playEvent('error')
     } finally {
       clearInterval(progressTimer)
       stopInProgress()

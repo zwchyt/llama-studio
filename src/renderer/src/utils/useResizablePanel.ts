@@ -41,7 +41,11 @@ export function useResizablePanel(opts: ResizablePanelOptions) {
   // 当前拖拽的监听器引用，供卸载安全网移除
   const activeRef = useRef<{ move: (e: PointerEvent) => void; up: (e: PointerEvent) => void } | null>(null)
 
-  const clamp = useCallback((w: number) => Math.max(min, Math.min(max, w)), [min, max])
+  // 宽度吸附到设备像素栅格：拖拽中 dx 取自 clientX，是个小数值，落在半根设备像素上的
+  // 面板边缘会让整块内容每帧重新排字 —— 看上去就是发虚（Windows 125%/150% 缩放最明显）。
+  const snap = (w: number) => { const d = window.devicePixelRatio || 1; return Math.round(w * d) / d }
+
+  const clamp = useCallback((w: number) => snap(Math.max(min, Math.min(max, w))), [min, max])
 
   const applyWidth = useCallback((w: number) => {
     const clamped = clamp(w)
@@ -66,7 +70,7 @@ export function useResizablePanel(opts: ResizablePanelOptions) {
     const finish = (commit: boolean) => {
       const d = dragRef.current
       if (commit && d) {
-        const finalW = Math.max(minW, Math.min(max, d.startW + direction * (lastClientXRef.current - d.startX)))
+        const finalW = snap(Math.max(minW, Math.min(max, d.startW + direction * (lastClientXRef.current - d.startX))))
         setWidth(finalW)
         onCommit?.(finalW)
       }
@@ -90,7 +94,7 @@ export function useResizablePanel(opts: ResizablePanelOptions) {
       const dx = e.clientX - d.startX
       const next = direction === 1 ? d.startW + dx : d.startW - dx
       // 动态下限在拖拽过程中同样生效（applyWidth 内的静态 clamp 不感知 minW）
-      const clamped = Math.max(minW, Math.min(max, next))
+      const clamped = snap(Math.max(minW, Math.min(max, next)))
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
       rafRef.current = requestAnimationFrame(() => applyWidth(clamped))
     }

@@ -12,12 +12,11 @@
   display: none;
 }
 
-/* 浏览器 / 终端面板入场（与 agent-code.css 的 agent-panel-in 同一套：
-   .hidden 是 display:none，翻回显示时 animation 自动重放；0.5s expo-out 从右侧
-   滑入 40px + 淡入 + 轻微缩放，transform/opacity 只走合成线程，
-   掩盖 xterm/webview 首帧挂载的卡顿） */
+/* 浏览器 / 终端面板入场（keyframe 在 agent-code.css）：.hidden 是 display:none，
+   翻回显示时 animation 自动重放，从右侧滑入 40px + 淡入，transform/opacity 只走合成线程，
+   掩盖 xterm/webview 首帧挂载的卡顿。时长与曲线取面板滑入同一份变量，理由见那边注释。 */
 .agent-browser-wrap:not(.hidden) {
-  animation: agent-panel-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  animation: agent-panel-in var(--agent-right-collapse-dur, 0.5s) ease backwards;
 }
 
 .agent-terminal {

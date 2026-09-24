@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { Mic, Loader2, FolderOpen, X, Copy, Check, TriangleAlert, AudioLines } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
+import { playEvent } from '../utils/sound'
 import ModelFileSelect from './ModelFileSelect'
 // 本页样式自包含：原先引用的是 tts.css（「语音合成」页的样式文件），已拆出独立文件
 import '../styles/stt.css'
@@ -91,9 +92,12 @@ export default function SttView() {
     setElapsed(Math.round(performance.now() - t0))
     if (!res.success || !res.text) {
       setError(res.error || '未知错误')
+      playEvent('error')
       return
     }
     setSttResult(res.text)
+    // 长音频转写要等几十秒，成功音告知文字已经出来
+    playEvent('success')
   }
 
   const handleCopy = async () => {

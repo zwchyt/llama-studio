@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import UpdateBanner, { useBackendUpdateVisible } from './UpdateBanner'
 import AppUpdateBanner, { useAppUpdateVisible } from './AppUpdateBanner'
+import { playEvent } from '../utils/sound'
 
 /**
  * 更新横幅统一调度：
@@ -21,6 +22,15 @@ export default function UpdateBannerGroup() {
   }, [active, backendVisible, appVisible])
 
   const toggle = () => setActive(a => (a === 'backend' ? 'app' : 'backend'))
+
+  // 第一次发现有更新时响一次：横幅是静默出现的，不看界面就永远发现不了。
+  // 只响一次，关掉再查出别的更新不重复打扰。
+  const announcedRef = useRef(false)
+  useEffect(() => {
+    if (announcedRef.current || (!backendVisible && !appVisible)) return
+    announcedRef.current = true
+    playEvent('notification')
+  }, [backendVisible, appVisible])
   const switcher = both ? (
     <span className="ub-switcher">
       <button className="dismiss" onClick={toggle}><ChevronLeft size={13} /></button>

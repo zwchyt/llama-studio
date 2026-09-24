@@ -1,4 +1,5 @@
 import type { Question } from '../tools/AskUserQuestionTool/types'
+import { playEvent } from './sound'
 
 interface PendingQuestions {
   questions: Question[]
@@ -42,6 +43,9 @@ export const askUserQuestionRegistry = {
     return new Promise((resolve, reject) => {
       pending = { questions, resolve, reject }
       notify()
+      // 提问出现时界面是静止的，人往往不知道 Agent 卡在等自己 —— 用「在叫你」的音效，
+      // 和「做完了」的完成音区分开
+      playEvent('mention')
     })
   },
 
