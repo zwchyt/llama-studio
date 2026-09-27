@@ -69,31 +69,39 @@ const EDIT_STAT_CACHE_MAX = 256
 const editStatCache = new Map<string, { args: string; stat: EditDiffStat | null }>()
 
 // 兼容两代参数：自研旧式 old_string/new_string；pi 原生 path + edits[]（逐条累加）。
+// Write 也走这里：它只能新建文件，没有旧内容可 diff，按写入行数计为纯新增
+// —— 算法与 FileChangeSummary 的 Write 分支一致，避免卡片头部与底部汇总对不上。
 export function getEditDiffStat(tc: NonNullable<AgentMessage['toolCalls']>[number]): EditDiffStat | null {
-  if (tc.name !== 'Edit') return null
+  if (tc.name !== 'Edit' && tc.name !== 'Write') return null
   const args = tc.args || ''
   const cached = tc.id ? editStatCache.get(tc.id) : undefined
   if (cached && cached.args === args) return cached.stat
 
   let stat: EditDiffStat | null = null
-  let parsed: { old_string?: unknown; new_string?: unknown; edits?: unknown } | null = null
+  let parsed: { old_string?: unknown; new_string?: unknown; edits?: unknown; content?: unknown } | null = null
   try { parsed = JSON.parse(args || '{}') } catch { parsed = null }
   if (parsed && typeof parsed === 'object') {
-    let added = 0
-    let removed = 0
-    const acc = (o: string, n: string): void => {
-      const s = countDiffStats(o, n)
-      added += s.added
-      removed += s.removed
-    }
-    if (typeof parsed.old_string === 'string' && typeof parsed.new_string === 'string') {
-      acc(parsed.old_string, parsed.new_string)
-    } else if (Array.isArray(parsed.edits)) {
-      for (const e of parsed.edits as Array<{ oldText?: unknown; newText?: unknown }>) {
-        if (e && typeof e.oldText === 'string' && typeof e.newText === 'string') acc(e.oldText, e.newText)
+    if (tc.name === 'Write') {
+      if (typeof parsed.content === 'string') {
+        stat = { added: parsed.content.split('\n').length, removed: 0 }
       }
+    } else {
+      let added = 0
+      let removed = 0
+      const acc = (o: string, n: string): void => {
+        const s = countDiffStats(o, n)
+        added += s.added
+        removed += s.removed
+      }
+      if (typeof parsed.old_string === 'string' && typeof parsed.new_string === 'string') {
+        acc(parsed.old_string, parsed.new_string)
+      } else if (Array.isArray(parsed.edits)) {
+        for (const e of parsed.edits as Array<{ oldText?: unknown; newText?: unknown }>) {
+          if (e && typeof e.oldText === 'string' && typeof e.newText === 'string') acc(e.oldText, e.newText)
+        }
+      }
+      if (added !== 0 || removed !== 0) stat = { added, removed }
     }
-    if (added !== 0 || removed !== 0) stat = { added, removed }
   }
 
   if (tc.id) {

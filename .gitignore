@@ -133,3 +133,4 @@ playwright.config.ts
 scripts/audit-secrets.mjs
 .gitleaks.toml
 settings.json.bak
+toolcall-ui-demo.html

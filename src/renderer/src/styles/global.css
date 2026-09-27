@@ -14,7 +14,7 @@
        --surface-hover 悬停面：比卡片面再深一档，白外框与灰卡面两种背景下都看得见。
      改动这三个值时记得同步检查 --code-bg / --quote-bg / --table-head-bg：
      它们必须**深于** --surface，否则会与卡片面糊在一起。 */
-  --bg: #ffffff;
+  --bg: #f5f6f8;
   --surface: #f7f7f8;
   --surface-hover: #f2f2f3;
   /* 边框必须比它所在的面深一档才有轮廓（曾为 #e8e8e8，比当时的 #e5e5e5 底色更浅，

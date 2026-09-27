@@ -3593,9 +3593,9 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
-  margin-left: 6px;
-  border-left: 2px solid var(--border-strong);
-  padding: 4px 10px 6px 12px;
+  /* 与 demo 一致：平坦铺开，不再给 body 加左缩进 + 竖线。
+     原来的 border-left 会在文件行左侧多出一条导轨，与头部的层级表达重复 */
+  padding: 3px 6px;
 }
 
 /* 单行容器：文件行（可点跳 diff）+ 行尾审查按钮 */
@@ -4191,12 +4191,14 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
+/* 结果标签与分区标题共用同一套字号/颜色（都用 400 字重）：
+   卡片头部 .agent-tool-call-name 已经是粗体，副标题再上 600 会出现两级粗体、层级反而变糊 */
 .agent-tool-result-label {
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--text-secondary);
 }
 
 /* 失败态结果块：红色左边框 + 淡红底，展开后快速定位错误输出（覆盖普通 pre 与带行号两种形态） */
@@ -11004,4 +11006,574 @@
 .agent-tool-shot-loading {
   font-size: 11px;
   color: var(--muted);
+}
+
+/* ╔══════════════════════════════════════════════════════════════════════════════╗
+   ║ 区域：工具卡片补充 —— 参数区 / 代码视图 / 说明框 / 命中列表 / 终端块          ║
+   ╚══════════════════════════════════════════════════════════════════════════════╝
+   来源：toolcall-ui-demo.html。四条约定：
+   1) 层级用「色阶」而非透明度 —— opacity 让颜色与背景混合、对比度不可计算；
+      需要压低的文字一律用实色，取值都算过对比度（注释标注）。
+   2) 内容块（代码 / 终端输出）用「填充面」，参数区用「描边面」，两类语言不混用。
+   3) 代码 gutter 的行号与锚点列 sticky 固定；sticky 列必须带不透明背景，
+      否则内容横向滚动时会从它下面透出来。
+   4) 深色主题走 html.theme-dark（与项目既有机制一致），不新开主题开关。
+   命名：通用名（io-label / cl / dl …）在项目里统一加 agent-tool- 前缀，避免与全局样式撞名。 */
+
+/* ── gutter 配色 + 补一个缺失令牌 ──
+   行号取 --text-secondary（浅 4.71:1 / 深 5.02:1）；
+   锚点取它与 --code-bg 的 78% 混合（浅 3.13:1 / 深 3.66:1），两主题共用一条派生式。
+   --text-dim 此前被本文件 11 处引用却从未定义 —— 无 fallback 的 var() 会让整条声明在
+   计算值阶段失效，那些 color 实际落回继承值。这里补上定义，语义＝比 --text-secondary
+   再弱一档的说明文字（浅 #7c7c7c 4.17:1 / 深 #7d838e 4.18:1，两种底上都在 3.7:1 以上）。 */
+:root {
+  --code-gutter: var(--text-secondary);
+  --code-gutter-dim: color-mix(in srgb, var(--text-secondary) 78%, var(--code-bg));
+  --text-dim: #7c7c7c;
+  /* 终端提示行：命令块在两种主题下都保持深色（与 .agent-tool-bash-cmd 的硬编码一致，
+     是「这是一次终端执行」的身份标记），只有下方输出块跟随主题 */
+  --bash-bg: #16161e;
+  --bash-fg: #e2e8f0;
+  --bash-prompt: #fb923c;
+}
+
+html.theme-dark {
+  --text-dim: #7d838e;
+}
+
+/* 折叠箭头：展开时从「指向右」转成「指向下」。
+   此前 .agent-tool-chev 没有任何定义，箭头点了不会转 —— 展开/收起缺少反馈 */
+.agent-tool-chev {
+  transition: transform var(--transition);
+}
+
+.agent-tool-chev.open {
+  transform: rotate(90deg);
+}
+
+/* ── 卡片内的分区（执行参数 / 匹配结果）：标题行（可带动作按钮）+ 内容块 ── */
+.agent-tool-section {
+  margin-bottom: 12px;
+}
+
+.agent-tool-section:last-child {
+  margin-bottom: 0;
+}
+
+.agent-tool-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.agent-tool-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* ── 通用小按钮：复制参数 / 折叠详情 / 展开收起 ── */
+.agent-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 10.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+
+.agent-tool-btn:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+/* 展开态箭头翻转：向下=可展开，向上=可收起 */
+.agent-tool-subchev {
+  transition: transform var(--transition);
+}
+
+.agent-tool-subchev.open {
+  transform: rotate(180deg);
+}
+
+/* ── 参数标记徽标（如「区分大小写」这类开关的当前状态）── */
+.agent-tool-flag {
+  display: inline-block;
+  padding: 0 4px;
+  margin-right: 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* ── 参数区：描边圆角框 + 三列栅格（标签 / 值 / 说明）──
+   栅格挂在框上、每行 display:contents 摊平，列宽才能跨行共享；
+   否则每行各自算 auto 宽度，「说明」列在每行会从不同的 x 开始，看起来参差 */
+.agent-tool-io-group {
+  display: grid;
+  grid-template-columns: 52px auto 1fr;
+  gap: 5px 12px;
+  align-items: baseline;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+
+.agent-tool-io {
+  display: contents;
+}
+
+.agent-tool-io-label {
+  color: var(--text-dim);
+  font-size: 10.5px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.agent-tool-io-value {
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.agent-tool-io-note {
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 10.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+/* 参数键值对：键弱化、值加强；两对之间用发丝线分隔，比 `·` 更能表达「这是两个独立参数」 */
+.agent-tool-io-kv {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+}
+
+.agent-tool-io-kv i {
+  font-style: normal;
+  color: var(--text-dim);
+}
+
+.agent-tool-io-kv b {
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-tool-io-kv + .agent-tool-io-kv {
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+/* 参数区已用边框划界，紧跟其后的结果区不再重复画顶部分隔线 */
+.agent-tool-io-group + .agent-tool-result {
+  padding-top: 0;
+  border-top: none;
+}
+
+/* ── 结果头右侧：列说明 + 展开开关 ── */
+.agent-tool-result-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+
+/* 列说明：解释代码块 gutter 各列是什么，悬停给完整解释 */
+.agent-tool-result-legend {
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 10.5px;
+  cursor: help;
+}
+
+/* 结果头右侧的量化指标（内容大小 / 行数等） */
+.agent-tool-result-meta {
+  color: var(--text-dim);
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 结果头右侧的运行中指示（Bash 流式输出） */
+.agent-tool-result-running {
+  color: var(--tool-accent, var(--accent));
+  font-family: var(--font);
+  font-size: 10.5px;
+}
+
+/* ── 代码视图（Read 的读取内容 / Write 的写入内容 / Grep 的命中行）──
+   不设 max-height：超长内容走「折叠前 12 行 + 展开」，不在卡片里再造一层滚动区 */
+.agent-tool-code {
+  counter-reset: ln;
+  padding: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.7;
+  overflow: auto;
+}
+
+.agent-tool-code .agent-tool-code-row {
+  display: flex;
+  padding: 0 10px 0 0;
+}
+
+/* 行号：sticky 让长行横向滚动时仍固定可见；sticky 列必须带不透明背景 */
+.agent-tool-code .agent-tool-code-num {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  box-sizing: border-box;
+  width: 44px;
+  padding-right: 10px;
+  background: var(--code-bg);
+  color: var(--code-gutter);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+
+/* 行锚点：Edit 靠它定位行。同样 sticky 固定，并用实色保证可读 */
+.agent-tool-code .agent-tool-code-hash {
+  position: sticky;
+  left: 44px;
+  z-index: 1;
+  flex: none;
+  box-sizing: border-box;
+  width: 54px;
+  padding-right: 10px;
+  border-right: 1px solid var(--border);
+  background: var(--code-bg);
+  color: var(--code-gutter-dim);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  user-select: none;
+}
+
+.agent-tool-code .agent-tool-code-text {
+  flex: 1 1 auto;
+  padding-left: 10px;
+  white-space: pre;
+}
+
+/* 无锚点列（Write / Grep 命中行）：gutter 只留行号，发丝线紧跟其后 */
+.agent-tool-code.no-hash .agent-tool-code-num {
+  border-right: 1px solid var(--border);
+}
+
+.agent-tool-code.no-hash .agent-tool-code-text {
+  padding-left: 10px;
+}
+
+/* 非连续行号（Grep 命中行）：行号由数据直接给出，不用计数器 */
+.agent-tool-code.no-counter .agent-tool-code-num::after {
+  content: none;
+}
+
+.agent-tool-code:not(.no-counter) .agent-tool-code-num::after {
+  content: counter(ln);
+}
+
+.agent-tool-code .agent-tool-code-row {
+  counter-increment: ln;
+}
+
+/* 超过 12 行默认只展开前 12 行（与真实实现的折叠阈值一致） */
+.agent-tool-code.is-clipped .agent-tool-code-row:nth-child(n + 13) {
+  display: none;
+}
+
+.agent-tool-code.is-clipped.expanded .agent-tool-code-row:nth-child(n + 13) {
+  display: flex;
+}
+
+/* 内容被截断时的说明：实线发丝框，比虚线更克制 */
+.agent-tool-code-more {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 10.5px;
+  text-align: center;
+}
+
+/* ── 结果补充说明框 ──
+   默认中性：像「没有匹配到内容」是正常结论、不是错误；
+   只有真正的失败（如超出 token 预算）才加 .is-error 走 danger 着色 */
+.agent-tool-note {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.agent-tool-note b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.agent-tool-note code {
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+}
+
+.agent-tool-note.is-error {
+  background: color-mix(in srgb, var(--danger) 5%, var(--code-bg));
+  border-color: color-mix(in srgb, var(--danger) 22%, var(--border));
+}
+
+.agent-tool-note.is-error b {
+  color: var(--danger);
+}
+
+/* 错误里直接给出的下一步动作（真实实现：FileTooLarge → suggestedCommand） */
+.agent-tool-note-next {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.agent-tool-note.is-error .agent-tool-note-next {
+  border-top-color: color-mix(in srgb, var(--danger) 20%, var(--border));
+}
+
+/* ── Grep 命中文件列表：三行递进 文件名 → 完整路径 → 操作提示 ── */
+.agent-tool-paths {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+}
+
+.agent-tool-paths.collapsed {
+  display: none;
+}
+
+.agent-tool-paths-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.agent-tool-paths-row:hover {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.agent-tool-paths-name {
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.agent-tool-paths-full {
+  color: var(--text-dim);
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+
+.agent-tool-paths-hint {
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 10px;
+}
+
+/* 多个命中文件分组之间留出间距 */
+.agent-tool-paths + .agent-tool-paths,
+.agent-tool-paths + .agent-tool-code-more {
+  margin-top: 8px;
+}
+
+/* 命中列表内的代码块：外框已由 .agent-tool-paths 提供，去掉重复的边框与内边距 */
+.agent-tool-paths .agent-tool-code {
+  padding: 0 0 2px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* ── Bash：命令与输出合成一个「终端会话块」──
+   提示行（工作目录 + $ + 命令）与输出同处深色底，读起来就是一次终端会话。
+   注意：命令块在两种主题下都保持深色（与 .agent-tool-bash-cmd 的硬编码一致，
+   是「这是一次终端执行」的身份标记），只有输出块跟随主题。 */
+.agent-tool-term {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.agent-tool-term-cmd {
+  padding: 7px 10px 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--bash-fg, #e2e8f0) 10%, transparent);
+  background: var(--bash-bg, #16161e);
+  color: var(--bash-fg, #e2e8f0);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-tool-term-cmd .cwd {
+  color: color-mix(in srgb, var(--bash-fg, #e2e8f0) 50%, transparent);
+}
+
+.agent-tool-term-cmd .ps {
+  color: var(--bash-prompt, #fb923c);
+  font-weight: 700;
+  user-select: none;
+}
+
+.agent-tool-term-out {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--code-bg);
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 流式输出光标：比静态的「（实时）」更能说明还在出 */
+.agent-tool-live-cursor {
+  display: inline-block;
+  width: 6px;
+  height: 11px;
+  vertical-align: -1px;
+  background: var(--tool-accent, var(--accent));
+  animation: agentToolCaretBlink 1s steps(1, end) infinite;
+}
+
+@keyframes agentToolCaretBlink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* ── 头部路径三段式：目录弱化、文件名加强、行段独立成 chip ──
+   折叠态下也要一眼看清「读了哪个文件的哪一段」 */
+.agent-tool-call-pathlabel {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-tool-call-pathname {
+  font-weight: 600;
+}
+
+.agent-tool-call-pathdir {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+/* 行段：中性描边 chip，不占色相。圆角取小值而非全圆，读起来更像精确的行号区间 */
+.agent-tool-call-linerange {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── diff 行号列：与代码视图同一套 gutter 语言 ──
+   行号取新文件行号（改动落地后的位置）；被删除的行在新文件里没有对应位置，由数据侧记 — */
+.agent-tool-diff .agent-tool-diff-row {
+  padding-left: 0;
+}
+
+.agent-tool-diff .agent-tool-diff-num {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  box-sizing: border-box;
+  width: 46px;
+  padding-right: 10px;
+  background: var(--code-bg);
+  color: var(--code-gutter);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+
+/* 增删行的 sticky 列要跟着行底色，否则横向滚动时会露出一条不同色的色带 */
+.agent-tool-diff .dl.add .agent-tool-diff-num,
+.agent-tool-diff .dl.add .sign {
+  background: color-mix(in srgb, var(--success) 7%, var(--code-bg));
+}
+
+.agent-tool-diff .dl.del .agent-tool-diff-num,
+.agent-tool-diff .dl.del .sign {
+  background: color-mix(in srgb, var(--danger) 6%, var(--code-bg));
+}
+
+/* 尊重系统「减少动态效果」设置 */
+@media (prefers-reduced-motion: reduce) {
+  .agent-tool-call.executing .agent-tool-call-name {
+    animation: none;
+    color: var(--tool-accent);
+  }
+
+  .agent-tool-live-cursor {
+    animation: none;
+    opacity: 1;
+  }
 }
