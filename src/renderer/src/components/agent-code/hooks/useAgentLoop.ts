@@ -34,7 +34,7 @@ import { noteUserCorrection, probeContradiction } from '../../../utils/memoryWri
 import { parseSlashCommand, findCommand, expandCommandTemplate } from '../../../agent/slashCommands'
 import { newMsgId, uniqueId } from '../utils/ids'
 import { MIN_EXEC_DISPLAY_MS, KEEP_RECENT_TURNS } from '../utils/constants'
-import type { AgentMessage, AgentSession, Attachment, CardState, ThinkingLevel, TodoUpdate } from '../../../../../shared/types'
+import type { AgentMessage, AgentSession, AgentTask, Attachment, CardState, ThinkingLevel, TodoUpdate } from '../../../../../shared/types'
 import { projectMode } from '../../../../../shared/types'
 import type { useAgentInput } from './useAgentInput'
 import type { useAgentProjects } from './useAgentProjects'
@@ -69,7 +69,7 @@ export function useAgentLoop({
   inputDomain,
   loading, setLoading, setStreaming, setStreamKind, setThinkDone, setCurToolName, setQueueInfo,
   apiBaseUrl, runningCard, condensing, slashCommands,
-  setTaskModalOpen, setTaskPanelCollapsed, setTaskCardClosing, setPlanTitle, setCurrentPlanItems,
+  setTaskModalOpen, setPlanTitle, setPlanItems, planItemsRef,
   abortRef, sendingRef, piReadyRef, followUpQueueRef, prevQueueRef,
   appendLiveUserMsgRef, streamingSessionRef, streamStartAtRef, lastRateRef,
   modelLabelRef, backupsRef, thinkingLevelRef,
@@ -92,10 +92,11 @@ export function useAgentLoop({
   condensing: boolean
   slashCommands: ReturnType<typeof useStore.getState>['slashCommands']
   setTaskModalOpen: React.Dispatch<React.SetStateAction<boolean>>
-  setTaskPanelCollapsed: React.Dispatch<React.SetStateAction<boolean>>
-  setTaskCardClosing: React.Dispatch<React.SetStateAction<boolean>>
   setPlanTitle: React.Dispatch<React.SetStateAction<string>>
-  setCurrentPlanItems: React.Dispatch<React.SetStateAction<TodoUpdate[]>>
+  /** 写计划项的唯一入口（同步维护 planItemsRef 镜像） */
+  setPlanItems: (next: React.SetStateAction<TodoUpdate[]>) => void
+  /** 计划项的渲染期镜像（判「本轮结束时清单是否已收束」用，避开异步闭包读到过期值） */
+  planItemsRef: React.RefObject<TodoUpdate[]>
   /** ── 与其它域共用的 ref（仍由主组件持有）── */
   abortRef: React.RefObject<{ aborted: boolean; resolve: (() => void) | null }>
   sendingRef: React.RefObject<boolean>
@@ -149,6 +150,16 @@ export function useAgentLoop({
     opts: Parameters<RunPiTurn>[3]
   ): Promise<{ errored: boolean; aborted: boolean }> => {
     const piSessionId = `pi-${sid}`
+    // 一轮一份清单：本轮开始前先把上一轮遗留的清单清掉（后端任务表 + 卡片状态）。
+    // 后端任务表是按会话存的，merge 分支遇到没见过的 id 只会追加，上一轮没执行完的
+    // 条目会和本轮新建的清单前后怼在一起；而上一轮的清单本轮不会执行，留着只是噪音。
+    // 放在 runPiTurn 开头：直接发送、队列补发、followUp 三条起轮路径都经过这里。
+    setPlanTitle('')
+    setPlanItems([])
+    setTaskModalOpen(false)
+    try {
+      await window.api.agentTodoWrite(sid, { merge: false, todos: [] })
+    } catch { /* 清不掉不阻塞本轮：本轮首次 TodoWrite 仍会按空表重建 */ }
     // 发消息/重跑是明确的用户意图，这里无条件恢复「贴底跟随」并立刻滚到底。
     // 不这么做的话：用户读长回答时往上滚过一次，pauseFollow 就把 followingRef 置了 false，
     // 之后再发消息，新增的这条只会在下方生成而不被滚进视野，得手动往下滑才看得到。
@@ -408,6 +419,46 @@ export function useAgentLoop({
       }
       closeThinking()
     }
+    // 把一次 TodoWrite 的参数应用到右上角待办卡片。
+    // fromStream=true：参数还在逐 token 生成，拿到的是半截 JSON 的尽力解析快照。此时
+    // 只认「已经带上 id 的项」并且一律增量合并——不给缺 id 的半截条目补下标（真 id 到了
+    // 会变成两条重复项），也不按 replace 清空（快照本身是不完整的清单，清空＝误删）。
+    // fromStream=false：toolcall_end 的完整参数，按 merge 语义正常处理。
+    const applyTodoWriteArgs = (rawArgs: string, fromStream: boolean): void => {
+      let args: { title?: string; merge?: boolean; todos?: Array<{ id?: string; [k: string]: unknown }> }
+      try {
+        args = JSON.parse(rawArgs)
+      } catch (e) {
+        // 流式快照本来就常残缺，不值得刷日志；完整参数随后由 toolcall_end 给出
+        if (!fromStream) console.warn('[AgentCode] pi TodoWrite args parse failed:', e, rawArgs.slice(0, 200))
+        return
+      }
+      const all = args.todos ?? []
+      if (!all.length) return
+      if (typeof args.title === 'string' && args.title.trim()) {
+        setPlanTitle(args.title.trim())
+      } else if (!fromStream && args.merge === false) {
+        setPlanTitle('')
+      }
+      const todos = (fromStream
+        ? all.filter(t => typeof t.id === 'string' && t.id)
+        : all) as TodoUpdate[]
+      if (!todos.length) return
+      const merge = fromStream || args.merge !== false
+      if (merge) {
+        setPlanItems(prev => {
+          const map = new Map<string, TodoUpdate>()
+          prev.forEach((t, idx) => { map.set(t.id || String(idx + 1), t) })
+          todos.forEach((t, idx) => {
+            const key = t.id || String(idx + 1)
+            map.set(key, { ...(map.get(key) || {}), ...t, id: t.id || key } as TodoUpdate)
+          })
+          return Array.from(map.values())
+        })
+      } else {
+        setPlanItems(todos.map((t, idx) => ({ ...t, id: t.id || String(idx + 1) })) as TodoUpdate[])
+      }
+    }
     const client = new PiAgentClient({
       onTextDelta: (delta) => {
         appendTextDelta(delta)
@@ -462,40 +513,27 @@ export function useAgentLoop({
           liveSegs.push({ kind: 'tools', ids: curToolIds, startMs: Date.now() })
         }
         textSinceLastTool = false
-        // 计划面板同步（与 legacy 一致）：TodoWrite 调用后更新右侧任务清单
+        // 计划面板同步（与 legacy 一致）：TodoWrite 调用后更新待办清单
         if (tc.name === 'TodoWrite') {
-          // 弹出右侧「待办」卡片（taskModalOpen 是卡片渲染条件；pi 模式在
-          // 此显式打开）
+          // 打开右上角「待办」卡片（taskModalOpen 是渲染条件；本轮结束在 finally 里关掉）
           setTaskModalOpen(true)
-          setTaskPanelCollapsed(false)
-          setTaskCardClosing(false)
-          try {
-            const args = JSON.parse(tc.args) as { title?: string; merge?: boolean; todos?: Array<{ id?: string;[k: string]: unknown }> }
-            if (args.todos?.length) {
-              if (typeof args.title === 'string' && args.title.trim()) {
-                setPlanTitle(args.title.trim())
-              } else if (args.merge === false) {
-                setPlanTitle('')
-              }
-              const merge = args.merge !== false
-              if (merge) {
-                setCurrentPlanItems(prev => {
-                  const map = new Map<string, TodoUpdate>()
-                  prev.forEach((t, idx) => { map.set(t.id || String(idx + 1), t) })
-                  args.todos!.forEach((t, idx) => {
-                    const key = t.id || String(idx + 1)
-                    map.set(key, { ...(map.get(key) || {}), ...t, id: t.id || key } as TodoUpdate)
-                  })
-                  return Array.from(map.values())
-                })
-              } else {
-                setCurrentPlanItems(args.todos.map((t, idx) => ({ ...t, id: t.id || String(idx + 1) })) as TodoUpdate[])
-              }
-            }
-          } catch (e) {
-            console.warn('[AgentCode] pi TodoWrite args parse failed:', e, tc.args.slice(0, 200))
-          }
+          if (tc.args) applyTodoWriteArgs(tc.args, false)
         }
+        commit({ toolCalls: [...toolCalls], segments: buildSegs() })
+      },
+      // 参数流式快照：让待办条目「生成完一条就上屏一条」，而不是干等整段 JSON 生成完。
+      // 只处理 TodoWrite（其它工具的参数要么不需要预览、要么体量太大，主进程已按量丢弃）。
+      onToolCallArgs: (tc) => {
+        if (tc.name !== 'TodoWrite' || !tc.args) return
+        setTaskModalOpen(true)
+        applyTodoWriteArgs(tc.args, true)
+      },
+      // Write/Edit 参数生成中的行数统计（主进程数的换行数）挂到工具卡，让 +N -M 从头就在。
+      // 参数流完后渲染层用 LCS 精确值覆盖（getEditDiffStat 只认完整 args）。
+      onToolCallStat: (id, stat) => {
+        const i = toolCalls.findIndex(t => t.id === id)
+        if (i < 0) return
+        toolCalls[i] = { ...toolCalls[i]!, streamStat: stat }
         commit({ toolCalls: [...toolCalls], segments: buildSegs() })
       },
       onToolExecutionStart: (id, name) => {
@@ -509,7 +547,25 @@ export function useAgentLoop({
           commit({ toolCalls: [...toolCalls], segments: buildSegs() })
         }
       },
-      onToolExecutionEnd: (id, name, resultText, isError, backupId) => {
+      onToolExecutionEnd: (id, name, resultText, isError, backupId, tasks) => {
+        // 待办工具执行完，后端权威清单随 details.tasks 回来 → 直接以它为准回写卡片。
+        // 修正两件事：流式快照里缺 id 而被跳过的项、以及模型参数与后端 id 不一致导致的
+        // 重复项。执行失败不覆盖（保留模型声明的那份，用户至少看得见计划）。
+        if (name === 'TodoWrite' && !isError && Array.isArray(tasks)) {
+          const list = tasks as AgentTask[]
+          setPlanItems(list
+            .filter(t => t.status !== 'deleted')
+            .map((t): TodoUpdate => ({
+              id: t.id,
+              content: t.subject,
+              description: t.description,
+              status: t.status as TodoUpdate['status'],
+              priority: t.priority,
+              activeForm: t.activeForm,
+              notes: t.notes
+            })))
+          setTaskModalOpen(true)
+        }
         // pi 模式撤销契约（R2）：撤销按钮是否可用完全由 backupId 是否存在决定。
         // main 仅在写操作成功并真实记录备份后才回传 backupId；只读工具、执行失败、
         // 或备份记录失败时 backupId 为 undefined → 不写入备份引用 → canUndoFor 返回 false
@@ -631,6 +687,16 @@ export function useAgentLoop({
       setStreamKind('idle')
       setCurToolName('')
       setThinkDone(true)
+      // 待办卡片的收起条件＝「本轮结束 且 清单已全部收束（completed/cancelled）」。
+      // 不能只看本轮结束：模型常在「建好计划」这一轮就停下（等下一轮再执行），
+      // 那时清单还是 0/N 待办，卡片必须留着，否则计划刚建好就消失。
+      // 空清单不收（卡片本来就不该显示，交给切会话那条路径清）。
+      {
+        const plan = planItemsRef.current
+        if (plan.length > 0 && plan.every(t => t.status === 'completed' || t.status === 'cancelled')) {
+          setTaskModalOpen(false)
+        }
+      }
       // 停止/失败兜底：未完成工具（待执行/执行中）标记为已完成（失败），
       // 避免卡片永远停在「待执行/写入中」——参考项目同款：中止时工具卡收敛为终态
       closeOpenThink()

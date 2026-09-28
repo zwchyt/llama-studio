@@ -6,7 +6,6 @@ import type { Message } from '@earendil-works/pi-ai'
 import { createPiAgentBridge, type PiAgentBridge } from './index'
 import { createMainTools, type MainToolExecutors } from './tools/mainTools'
 import { PLAIN_CHAT_TOOL_NAMES as CHAT_TOOL_NAMES } from '../../../shared/types'
-import { appendTokenUsage } from '../../tokenLedger'
 import { appendSessionEvent, writeTrajectoryHeader, appendLlmRequest, summarizeLlmRequest, appendUserEntry, appendLlmSystemMessages } from './trajectory'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { ThinkingLevel, TokenUsageEntry } from '../../../shared/types'
@@ -279,7 +278,9 @@ export class PiAgentManager {
     // 用户切换模型/进程残留/端口复用时依然准确），失败回退启动参数登记值。
     // 异步入账，不阻塞事件流。
     void fetchModelPathFromProps(port).then((p) => {
-      appendTokenUsage(p ? { ...base, modelPath: p } : base)
+      // 入账动作本身回主进程做：tokenLedger 的目录注入与 promptDelta 累计表只在主进程有，
+      // worker 内 ledgerDir 为空，本地 append 会被直接丢弃（曾导致 pi 模式 token 统计全丢）。
+      void this.executors.appendTokenUsage(p ? { ...base, modelPath: p } : base).catch(() => { /* 入账失败不阻断请求 */ })
     })
   }
 
@@ -472,6 +473,7 @@ export function createWorkerExecutors(
     describeKb: (kbId) => c('describeKb', [kbId]),
     listKb: () => c('listKb', []),
     getPortModelInfo: (port) => c('getPortModelInfo', [port]),
+    appendTokenUsage: (entry) => c('appendTokenUsage', [entry]),
     setAgentWorkspace: (cwd) => c('setAgentWorkspace', [cwd]),
     // 浏览器预览与截图：真正执行在主进程（面板导航 / webview guest 截图）
     browserShow: (input) => c('browserShow', [input]),

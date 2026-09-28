@@ -36,6 +36,12 @@ function sessionLastActive(s: AgentSession): number | null {
   return null
 }
 
+/** 列表排序：按最后活跃倒序（最新的在最上面）。时间解析不出来的（外部导入的 id 格式）
+ *  按最旧处理，落到列表底部，不与真实活跃时间抢位置。 */
+function byLastActiveDesc(a: AgentSession, b: AgentSession): number {
+  return (sessionLastActive(b) ?? -Infinity) - (sessionLastActive(a) ?? -Infinity)
+}
+
 /** 相对时间文案（紧凑式）：分 / 时 / 天，一周以上退化为 M-D。
     刻意压到 3 个字符内——侧栏最窄 160px 时行右侧还要放 3~4 个操作按钮，
     文案长一点就会把整簇挤出容器；完整时间放在 title tooltip 里。 */
@@ -136,21 +142,69 @@ export function AgentSessionSidebar({
   sessRenamingId, setSessRenamingId, sessRenameText, setSessRenameText, sessRenameInputRef,
   startSessRename, confirmSessRename,
 }: AgentSessionSidebarProps) {
-  /** 会话行右侧的操作按钮组（导出 / 重命名 / 删除） */
-  const sessionActions = (projId: string, s: AgentSession, compact = false) => (
-    <span className="ac-icon-btn">
-      <button className="agent-code-session-export" title="导出会话" onClick={e => { e.stopPropagation(); exportSession(s.id) }}><DownloadIcon size={compact ? 11 : 12} /></button>
-      <button className="agent-code-session-rename" title="重命名" onClick={e => { e.stopPropagation(); startSessRename(s.id, s.title) }}><PencilIcon size={compact ? 11 : 12} /></button>
-      <button className="agent-code-session-del" title="删除会话" onClick={e => { e.stopPropagation(); deleteSession(projId, s.id) }}><TrashIcon size={compact ? 11 : 12} /></button>
-    </span>
-  )
-
   // ── 视图本地状态：过滤词与行「⋯」菜单开合 ──
   // 只影响"渲染哪些行 / 菜单是否展开"，不触碰任何会话数据，故留在本组件，不上引到 hooks。
   // rowMenuId 存项目 id 或会话 id（全局唯一，两种行共用一套开合逻辑与同一个外点判定 ref）。
   const [filter, setFilter] = useState('')
   const [rowMenuId, setRowMenuId] = useState<string | null>(null)
   const rowMenuWrapRef = useRef<HTMLSpanElement | null>(null)
+  // 两种模式的列表容器共用一个 ref（同一时刻只渲染其中一个），供下面「把活动会话滚进视野」用
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const revealRow = (sid: string): void => {
+    const rows = Array.from(listRef.current?.querySelectorAll<HTMLElement>('[data-sess-id]') ?? [])
+    rows.find(el => el.getAttribute('data-sess-id') === sid)?.scrollIntoView({ block: 'nearest' })
+  }
+  // 冷启动 / 切模式 / 切换会话后把活动会话露出来一次：编码模式下它藏在收起的项目里就展开那个项目，
+  // 再把行滚到视野内。按会话 id 记账只处理一次，之后用户自己收起或滚动都不再干预。
+  const revealedRef = useRef<string | null>(null)
+  useEffect(() => {
+    const sid = activeSessionId
+    if (!sid || revealedRef.current === sid) return
+    if (mode === 'code') {
+      const proj = codeProjects.find(p => p.sessions.some(s => s.id === sid))
+      // 只处理当前活动项目：给别的项目改展开态会写进持久化，属于越权
+      if (!proj || proj.id !== activeProjectId) return
+      revealedRef.current = sid
+      if (!proj.expanded) {
+        toggleProjectExpanded(proj)
+        // 展开是 .26s 的高度过渡，过渡中容器还没把行铺开，滚了也算不准 —— 等它结束再滚
+        const wrap = projectWrapRefs.current.get(proj.id)
+        if (wrap) wrap.addEventListener('transitionend', () => revealRow(sid), { once: true })
+        else revealRow(sid)
+        return
+      }
+    }
+    revealedRef.current = sid
+    requestAnimationFrame(() => revealRow(sid))
+  }, [mode, activeSessionId, activeProjectId, codeProjects, projectWrapRefs, toggleProjectExpanded])
+  /** 会话行右侧操作：与项目行/聊天行同款的「⋯」菜单（原先三个图标常驻一行，窄侧栏里挤，
+   *  且删除与日常操作没有隔离）。删除收进菜单底部危险区，上方加分隔线。 */
+  const sessionActions = (projId: string, s: AgentSession) => (
+    <span className={`agent-code-proj-menu-wrap${rowMenuId === s.id ? ' open' : ''}`} ref={rowMenuId === s.id ? el => { rowMenuWrapRef.current = el } : undefined}>
+      <button
+        type="button"
+        className="agent-code-proj-menu-btn"
+        title="会话操作"
+        aria-haspopup="menu"
+        aria-expanded={rowMenuId === s.id}
+        onClick={e => { e.stopPropagation(); setRowMenuId(v => v === s.id ? null : s.id) }}
+      ><EllipsisIcon size={13} /></button>
+      {rowMenuId === s.id && (
+        <ul className="agent-code-proj-menu" role="menu" onClick={e => e.stopPropagation()}>
+          <li role="menuitem" className="agent-code-proj-menu-item" onClick={() => { setRowMenuId(null); exportSession(s.id) }}>
+            <DownloadIcon size={12} />导出会话
+          </li>
+          <li role="menuitem" className="agent-code-proj-menu-item" onClick={() => { setRowMenuId(null); startSessRename(s.id, s.title) }}>
+            <PencilIcon size={12} />重命名
+          </li>
+          <li role="separator" className="agent-code-proj-menu-sep" />
+          <li role="menuitem" className="agent-code-proj-menu-item danger" onClick={() => { setRowMenuId(null); deleteSession(projId, s.id) }}>
+            <TrashIcon size={12} />删除会话
+          </li>
+        </ul>
+      )}
+    </span>
+  )
   // 切模式时清空过滤：两种列表的内容毫无关系，带着旧词切过去只会看到一片"无匹配"。
   useEffect(() => { setFilter('') }, [mode])
   // 菜单的外点 / Esc 关闭：触发按钮与菜单同在 .agent-code-proj-menu-wrap 内，点包内不自动收，
@@ -175,16 +229,19 @@ export function AgentSessionSidebar({
 
   const q = filter.trim().toLowerCase()
   const filteredChats = useMemo(
-    () => (q ? chatSessions.filter(s => s.title.toLowerCase().includes(q)) : chatSessions),
+    () => [...(q ? chatSessions.filter(s => s.title.toLowerCase().includes(q)) : chatSessions)].sort(byLastActiveDesc),
     [chatSessions, q],
   )
-  // 项目命中 → 整项目原样保留；项目名不中但旗下会话命中 → 只列命中的会话。
+  // 项目命中 → 整项目全列；项目名不中但旗下会话命中 → 只列命中的会话。
   // 过滤期间项目一律展开（收起态下过滤结果不可见，等于白滤）。
   const filteredProjects = useMemo(() => {
-    if (!q) return codeProjects
+    const hit = (p: AgentProject) => p.title.toLowerCase().includes(q)
     return codeProjects
-      .map(p => (p.title.toLowerCase().includes(q) ? p : { ...p, sessions: p.sessions.filter(s => s.title.toLowerCase().includes(q)) }))
-      .filter(p => p.title.toLowerCase().includes(q) || p.sessions.length > 0)
+      .map(p => {
+        const list = !q || hit(p) ? p.sessions : p.sessions.filter(s => s.title.toLowerCase().includes(q))
+        return { ...p, sessions: [...list].sort(byLastActiveDesc) }
+      })
+      .filter(p => !q || hit(p) || p.sessions.length > 0)
   }, [codeProjects, q])
 
   return (
@@ -223,13 +280,14 @@ export function AgentSessionSidebar({
               <span>聊天记录</span>
               <span className="agent-code-sidebar-count">{q ? `${filteredChats.length}/${chatSessions.length}` : chatSessions.length}</span>
             </div>
-            <div className="agent-code-session-list agent-code-chat-list" role="listbox" aria-label="聊天记录">
+            <div className="agent-code-session-list agent-code-chat-list" role="listbox" aria-label="聊天记录" ref={listRef}>
               {filteredChats.map(s => {
                 const ts = sessionLastActive(s)
                 return (
                 <div
                   key={s.id}
                   data-row
+                  data-sess-id={s.id}
                   role="option"
                   aria-selected={s.id === activeSessionId}
                   tabIndex={0}
@@ -299,7 +357,7 @@ export function AgentSessionSidebar({
             <TopbarBtn baseClass="agent-code-session-new-btn" icon={FolderOpenIcon} size={14} onClick={createProject}>新建项目</TopbarBtn>
             <SidebarFilter value={filter} onChange={setFilter} placeholder="搜索项目与会话…" />
             <div className="agent-code-sidebar-header"><span>项目</span></div>
-            <div className="agent-code-session-list" role="listbox" aria-label="项目会话">
+            <div className="agent-code-session-list" role="listbox" aria-label="项目会话" ref={listRef}>
               {filteredProjects.map(p => {
                 // 过滤态强制展开：命中的会话若藏在收起的项目下，过滤等于没发生
                 const open = p.expanded || !!q
@@ -368,7 +426,9 @@ export function AgentSessionSidebar({
                       )}
                     </span>
                   </div>
-                  <div className={`agent-code-child-wrap ${open ? 'open' : ''}`} ref={el => { projectWrapRefs.current.set(p.id, el) }}>
+                  {/* menu-open：会话行的「⋯」弹窗在这个折叠容器里，容器的 overflow:hidden 会把它裁掉，
+                      所以菜单开着的时候临时解除裁剪（只对本已展开的项目生效，收起状态下解除会让隐形行漏出来接点击） */}
+                  <div className={`agent-code-child-wrap ${open ? 'open' : ''}${open && rowMenuId ? ' menu-open' : ''}`} ref={el => { projectWrapRefs.current.set(p.id, el) }}>
                     <div className="agent-code-child-sessions">
                       {p.sessions.map(s => {
                         const ts = sessionLastActive(s)
@@ -376,6 +436,7 @@ export function AgentSessionSidebar({
                         <div
                           key={s.id}
                           data-row
+                          data-sess-id={s.id}
                           role="option"
                           aria-selected={s.id === activeSessionId && p.id === activeProjectId}
                           tabIndex={0}

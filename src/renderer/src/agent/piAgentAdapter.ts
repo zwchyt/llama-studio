@@ -95,15 +95,27 @@ export class PiEventAdapter {
       sink.emit({ type: 'tool_exec_start', id: String(ev.toolCallId ?? ''), name: String(ev.toolName ?? '') })
       return
     }
+    case 'toolcall_args': {
+      // 主进程合帧后自定义的事件形状（非 pi 原生）：参数流式生成中的最新快照
+      sink.emit({ type: 'tool_call_args', id: String(ev.id ?? ''), name: String(ev.name ?? ''), args: String(ev.args ?? '') })
+      return
+    }
+    case 'toolcall_stat': {
+      // 主进程合帧后自定义的事件形状（非 pi 原生）：Write/Edit 参数生成中的改动统计，只传数字
+      sink.emit({ type: 'tool_call_stat', id: String(ev.id ?? ''), name: String(ev.name ?? ''), added: Number(ev.added ?? 0), removed: Number(ev.removed ?? 0) })
+      return
+    }
     case 'tool_execution_end': {
-      const r = ev.result as { details?: { backupId?: string } } | undefined
+      const r = ev.result as { details?: { backupId?: string; tasks?: unknown[] } } | undefined
       sink.emit({
         type: 'tool_exec_end',
         id: String(ev.toolCallId ?? ''),
         name: String(ev.toolName ?? ''),
         resultText: extractPiResultText(ev.result),
         isError: ev.isError === true,
-        ...(typeof r?.details?.backupId === 'string' ? { backupId: r.details.backupId } : {})
+        ...(typeof r?.details?.backupId === 'string' ? { backupId: r.details.backupId } : {}),
+        // 待办工具回传后端权威清单，渲染端据此校准卡片（不依赖模型参数里的 id 是否稳定）
+        ...(Array.isArray(r?.details?.tasks) ? { tasks: r.details!.tasks! } : {})
       })
       return
     }

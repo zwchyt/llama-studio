@@ -684,6 +684,8 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
   // 依赖仍按 [tc.name, parsed] 而非 [tc]：parsed 由 tc.args 派生，仅在参数真正变化时
   // 变化；以 tc 为依赖会因状态流转换对象而每次重算（缓存能挡住，但白付一次查表）。
   const editDiffStat = useMemo(() => getEditDiffStat(tc), [tc.name, parsed])
+  // 参数还在逐 token 生成时（parsed 出不来）用主进程数出来的行数兜一下，头部不至于空着
+  const shownDiffStat = editDiffStat ?? tc.streamStat
   const bashCmd = (() => {
     if (tc.name !== 'Bash') return null
     const c = parsed && typeof parsed.command === 'string' ? parsed.command : null
@@ -775,11 +777,11 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
           )}
           {total > 1 && <span className="agent-tool-call-step">步骤 {index + 1}/{total}</span>}
           <span className="agent-tool-call-meta">
-            {editDiffStat && (
+            {shownDiffStat && (
               <span className="agent-tool-diffstat">
                 {/* 分项条件渲染：Write 只能新增，只出 +N；Edit 有删有增才出 -M */}
-                {editDiffStat.added > 0 && <span className="diff-add">+{editDiffStat.added}</span>}
-                {editDiffStat.removed > 0 && <span className="diff-del">-{editDiffStat.removed}</span>}
+                {shownDiffStat.added > 0 && <span className="diff-add">+{shownDiffStat.added}</span>}
+                {shownDiffStat.removed > 0 && <span className="diff-del">-{shownDiffStat.removed}</span>}
               </span>
             )}
             {executing ? (

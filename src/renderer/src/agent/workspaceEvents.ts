@@ -7,9 +7,13 @@ export type WorkspaceEvent =
   | { type: 'thinking_delta'; delta: string }
   | { type: 'thinking_end' }
   | { type: 'tool_call_start'; id: string; name: string }
+  /** 参数流式生成中的最新快照（pi 已尽力解析半截 JSON；只保证「够用」，完整参数仍以 tool_call_end 为准） */
+  | { type: 'tool_call_args'; id: string; name: string; args: string }
+  // Write/Edit 参数生成期间的改动统计（主进程只数换行回传，精确值由渲染层在参数完整后覆盖）
+  | { type: 'tool_call_stat'; id: string; name: string; added: number; removed: number }
   | { type: 'tool_call_end'; id: string; name: string; args: string }
   | { type: 'tool_exec_start'; id: string; name: string }
-  | { type: 'tool_exec_end'; id: string; name: string; resultText: string; isError: boolean; backupId?: string }
+  | { type: 'tool_exec_end'; id: string; name: string; resultText: string; isError: boolean; backupId?: string; tasks?: unknown[] }
   | { type: 'turn_start'; turnIndex: number }
   | { type: 'turn_end'; turnIndex: number; promptTokens: number; completionTokens: number }
   | { type: 'run_end' }

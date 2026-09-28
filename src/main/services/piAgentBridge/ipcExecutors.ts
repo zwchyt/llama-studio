@@ -3,6 +3,7 @@
 // 只允许在主进程侧使用（workerClient.ts）。utility process 侧的 manager.ts
 // 绝不能 import 本文件，否则会把 electron 拖进 worker bundle。
 import { ipcInternal } from '../../ipc'
+import { appendTokenUsage } from '../../tokenLedger'
 import { captureBrowser } from '../agentBrowserService'
 import { handleCodeSearchQuery } from '../retrievalService'
 import { queryKnowledgeBase, readKnowledgeChunks, listKnowledgeBases, describeKnowledgeBase } from '../knowledgeService'
@@ -71,6 +72,8 @@ export function createIpcExecutors(): MainToolExecutors {
     describeKb: (kbId) => describeKnowledgeBase(kbId),
     listKb: async () => listKnowledgeBases(),
     getPortModelInfo: async (port) => ipcInternal.getPortModelInfo?.(port),
+    // Token 账本只在主进程有状态（init / lastPromptByPort / 月度封存），worker 的入账经此落盘
+    appendTokenUsage: async (entry) => { appendTokenUsage(entry) },
     setAgentWorkspace: async (cwd) => { ipcInternal.handleSetAgentWorkspace?.(cwd) },
     // 截图纯主进程即可完成（webview guest 由主进程持有）；browser_show 要渲染进程的
     // 浏览器面板配合导航，由 workerClient 覆写该执行器（与 askUser/approve 同一模式）。

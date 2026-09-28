@@ -46,8 +46,8 @@ export function useAgentSessionEffects({
   } = projectsDomain
   const { piReadyRef } = run
   const {
-    currentPlanItems, setCurrentPlanItems, planTitle,
-    setReqCount, setCumTokens, setPlanTitle,
+    currentPlanItems, setPlanItems, planTitle,
+    setReqCount, setCumTokens, setPlanTitle, setTaskModalOpen,
   } = ui
   const { resetFollow } = scroll
 
@@ -98,14 +98,14 @@ export function useAgentSessionEffects({
   }, [activeSessionId])
 
   const refreshTasks = useCallback(async () => {
-    if (!activeSessionId) { setCurrentPlanItems([]); return }
+    if (!activeSessionId) { setPlanItems([]); return }
     try {
       const res = await window.api.agentTaskList(activeSessionId)
       if (res.success) {
         // 修复①：后端持久化状态为权威来源，回写 currentPlanItems，
         // 使卡片渲染真实状态，而非仅依赖流式解析的临时快照。
         planItemsSidRef.current = activeSessionId // 记录这批计划项的归属会话（里程碑沉淀防串写用）
-        setCurrentPlanItems(res.tasks
+        setPlanItems(res.tasks
           .filter(t => t.status !== 'deleted')
           .map((t): TodoUpdate => ({
             id: t.id,
@@ -128,9 +128,10 @@ export function useAgentSessionEffects({
     setReqCount(0)
     setCumTokens(0)
     setPlanTitle('')
-    // 修复②：切换会话时清空计划项，避免上一个会话的待办残留显示在新会话
+    // 切换会话时清空计划项，避免上一个会话的待办残留显示在新会话；卡片一并收起
+    setTaskModalOpen(false)
     planItemsSidRef.current = '' // 计划项已清空，无归属会话；待 refreshTasks 回写后重新登记
-    setCurrentPlanItems([])
+    setPlanItems([])
     resetFollow()
   }, [activeSessionId, resetFollow])
 

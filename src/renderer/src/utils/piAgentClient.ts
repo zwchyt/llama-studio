@@ -26,10 +26,14 @@ export interface PiAgentCallbacks {
   onThinkingEnd?: () => void
   /** 模型完成一次工具调用声明（参数已完整） */
   onToolCall: (tc: PiToolCallUI) => void
+  /** 参数流式生成中的最新快照（半截 JSON 的尽力解析结果，可能缺字段；可选实现） */
+  onToolCallArgs?: (tc: PiToolCallUI) => void
+  /** Write/Edit 参数生成期间的改动统计（主进程按换行数算，只传数字） */
+  onToolCallStat?: (id: string, stat: { added: number; removed: number }) => void
   /** 工具开始执行 */
   onToolExecutionStart: (id: string, name: string) => void
-  /** 工具执行结束（resultText 为 pi 的工具结果，翻译成文本；backupId 供撤销按钮用） */
-  onToolExecutionEnd: (id: string, name: string, resultText: string, isError: boolean, backupId?: string) => void
+  /** 工具执行结束（resultText 为 pi 的工具结果，翻译成文本；backupId 供撤销按钮用；tasks 为待办工具回传的权威清单） */
+  onToolExecutionEnd: (id: string, name: string, resultText: string, isError: boolean, backupId?: string, tasks?: unknown[]) => void
   /** 一轮 LLM turn 结束（usage：input/output tokens；durationMs 从 turn_start 计时） */
   onTurnEnd?: (info: { turnIndex: number; promptTokens: number; completionTokens: number; durationMs: number }) => void
   /** 一轮 agent 运行结束（agent_end / agent_settled） */
@@ -67,6 +71,12 @@ class ClientSink implements WorkspaceEventSink {
         // 与旧实现一致：toolcall_start 即发出空参工具卡（显示「参数生成中」）
         this.cb.onToolCall({ id: e.id, name: e.name, args: '' })
         return
+      case 'tool_call_args':
+        this.cb.onToolCallArgs?.({ id: e.id, name: e.name, args: e.args })
+        return
+      case 'tool_call_stat':
+        this.cb.onToolCallStat?.(e.id, { added: e.added, removed: e.removed })
+        return
       case 'tool_call_end':
         this.cb.onToolCall({ id: e.id, name: e.name, args: e.args })
         return
@@ -74,7 +84,7 @@ class ClientSink implements WorkspaceEventSink {
         this.cb.onToolExecutionStart(e.id, e.name)
         return
       case 'tool_exec_end':
-        this.cb.onToolExecutionEnd(e.id, e.name, e.resultText, e.isError, e.backupId)
+        this.cb.onToolExecutionEnd(e.id, e.name, e.resultText, e.isError, e.backupId, e.tasks)
         return
       case 'turn_start':
         this.setTurnStartAt(Date.now())

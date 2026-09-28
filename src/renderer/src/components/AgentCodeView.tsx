@@ -120,8 +120,8 @@ export default function AgentCodeView() {
     contextModalOpen, setContextModalOpen,
     trajOpen, setTrajOpen,
     memoryOpen, setMemoryOpen,
-    taskModalOpen, setTaskModalOpen, setTaskCardClosing,
-    setCurrentPlanItems, setPlanTitle, setTaskPanelCollapsed,
+    setTaskModalOpen, planItemsRef,
+    setPlanItems, setPlanTitle,
     editingMsgId, setEditingMsgId, editDraft, setEditDraft,
   } = (ui = useAgentUiState({
     agentCards, loading, piReadyRef,
@@ -156,15 +156,14 @@ export default function AgentCodeView() {
   // 撤销状态只停留在「当前正在执行的修改」上（旧消息的撤销按钮随之置灰）。
   const regenRollbackRef = useRef<{ sid: string; messages: AgentMessage[] } | null>(null)
 
-  // ── DOM ref（消息末锚点 / 输入区 / 任务卡）──
+  // ── DOM ref（消息末锚点 / 输入区）──
   const msgEndRef = useRef<HTMLDivElement>(null)
   const chatInputAreaRef = useRef<HTMLDivElement>(null)
-  const taskCardRef = useRef<HTMLDivElement>(null)
 
   // ── 聊天区滚动跟随 + 目录 rail（自持 ref / state / 回调，见 agent-code/hooks/useAgentScroll.ts）──
   let scroll!: ReturnType<typeof useAgentScroll>
   scroll = useAgentScroll({
-    activeSession, streaming, setSelectionPopover, taskCardRef, taskModalOpen,
+    activeSession, streaming, setSelectionPopover,
     scrollScope: projectsDomain.mode,
   })
 
@@ -222,7 +221,7 @@ export default function AgentCodeView() {
     inputDomain,
     loading, setLoading, setStreaming, setStreamKind, setThinkDone, setCurToolName, setQueueInfo,
     apiBaseUrl, runningCard, condensing, slashCommands,
-    setTaskModalOpen, setTaskPanelCollapsed, setTaskCardClosing, setPlanTitle, setCurrentPlanItems,
+    setTaskModalOpen, setPlanTitle, setPlanItems, planItemsRef,
     abortRef, sendingRef, piReadyRef, followUpQueueRef, prevQueueRef,
     appendLiveUserMsgRef, streamingSessionRef, streamStartAtRef, lastRateRef,
     modelLabelRef, backupsRef, thinkingLevelRef,
@@ -305,7 +304,6 @@ export default function AgentCodeView() {
         msgEndRef,
         msgRowActionsRef,
         chatInputAreaRef,
-        taskCardRef,
         handleKeyDown,
         handleInputChange,
       }}

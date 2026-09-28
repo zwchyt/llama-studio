@@ -1438,7 +1438,7 @@
    等比换算，480px 面板约 0.57s），拖拽时每帧改 --agent-right-width 都重启一次缓动，
    面板永远在追上一帧的目标 → 手柄跟手、面板不跟手。左栏无 width 过渡所以不卡。
    手柄与面板同为槽的直接子节点，用 ~ 命中，无需再加一份 JS 状态。 */
-.agent-code-right-edge-handle.agent-code-resize-handle--active ~ .agent-code-right-collapser {
+.agent-code-right-edge-handle.agent-code-resize-handle--active~.agent-code-right-collapser {
   transition: none;
 }
 
@@ -2295,6 +2295,11 @@
   opacity: 1;
 }
 
+/* 行内「⋯」菜单展开时临时解除裁剪：弹窗在会话行里、被本容器的 overflow:hidden 切掉 */
+.agent-code-child-wrap.menu-open {
+  overflow: visible;
+}
+
 .agent-code-child-sessions {
   display: flex;
   flex-direction: column;
@@ -2457,13 +2462,19 @@
   gap: 6px;
   margin: 2px 8px 0;
   padding: 5px 8px;
-  border: 1px solid var(--border);
+  /* 不用常驻 border 界定输入区：--border / --border-strong 在暗色主题里就是一条硬边暗框，
+     再加上更深的 --bg 底色，整块看成"黑长方形"。改成浅一档底色浮出面板 + 仅聚焦时给描边。 */
+  border: none;
   border-radius: var(--radius-sm);
-  background: var(--bg);
+  background: var(--surface-hover);
 }
 
 .agent-code-sidebar-filter:focus-within {
-  border-color: var(--border-strong);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.agent-code-sidebar-filter:focus-within .agent-code-sidebar-filter-icon {
+  color: var(--text);
 }
 
 .agent-code-sidebar-filter-icon {
@@ -2555,6 +2566,9 @@
 .agent-code-project-item:focus-within .agent-code-proj-menu-btn,
 .agent-code-chat-item:hover .agent-code-proj-menu-btn,
 .agent-code-chat-item:focus-within .agent-code-proj-menu-btn,
+/* 编码模式项目下的会话行也走同一套（三个常驻图标已收进这里），不加这两条会一直是 opacity:0 */
+.agent-code-session-item:hover .agent-code-proj-menu-btn,
+.agent-code-session-item:focus-within .agent-code-proj-menu-btn,
 .agent-code-proj-menu-wrap.open .agent-code-proj-menu-btn {
   opacity: 1;
 }
@@ -6180,39 +6194,6 @@
   color: var(--text-muted);
 }
 
-.agent-task-card-inline {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 100%;
-  top: auto;
-  width: auto;
-  max-height: 40vh;
-  background: var(--bg);
-  border: 1px solid var(--border-strong);
-  border-bottom: none;
-  border-radius: var(--radius) var(--radius) 0 0;
-  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.06);
-  z-index: var(--z-popover);
-  /* 关闭/收起时平滑过渡高度与透明度；真实像素高度由 ResizeObserver 同步到 --task-card-h，
-     故消息区底部预留空间会跟随卡片实际高度平滑变化，关闭后严丝合缝贴回输入框。 */
-  transition: max-height .2s ease, opacity .2s ease, transform .2s ease;
-}
-
-.agent-task-card-inline.collapsed {
-  /* 用数值 max-height 以便能向关闭态（max-height:0）平滑过渡；仅头部可见，body 未渲染 */
-  max-height: 120px;
-  padding-bottom: 6px;
-}
-
-/* 关闭过渡态：卡片向上收起并淡出，高度过渡至 0，消息区随之跟降 */
-.agent-task-card-inline.closing {
-  max-height: 0 !important;
-  opacity: 0;
-  transform: translateY(8px);
-  pointer-events: none;
-}
-
 .agent-task-card-head {
   display: flex;
   align-items: center;
@@ -6235,28 +6216,6 @@
   background: var(--bg);
   color: var(--text-secondary);
   border: 1px solid var(--border);
-}
-
-.agent-task-card-head-actions {
-  margin-left: auto;
-  display: flex;
-  gap: 4px;
-}
-
-.agent-task-card-head-btn {
-  font-size: 11px;
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background .15s ease, color .15s ease;
-}
-
-.agent-task-card-head-btn:hover {
-  background: var(--bg);
-  color: var(--text);
 }
 
 /* 计划总标题（plan 级别，区别于每条带状态的待办）：显示在头部与待办列表之间，不带状态徽标 */
@@ -6381,14 +6340,6 @@
   flex-direction: column;
   gap: 12px;
   overflow-anchor: auto;
-}
-
-/* 计划卡片（agent-task-card-inline）为 absolute 浮层、脱离文档流，展开时向上遮挡消息。
-    用其高度（--task-card-h）在消息列表底部预留等高的空间，使消息区上移、不被遮挡。
-    变量为 0 时（卡片关闭/收起）无额外预留。
-    保底间隙 16px：流式输出贴底时与底部输入区留有清晰间距，避免末行文字被输入区“压住”。 */
-.agent-code-view .chat-messages {
-  padding-bottom: calc(16px + var(--task-card-h, 0px));
 }
 
 /* ── Message Rail Navigation ── */
@@ -6884,11 +6835,10 @@
     animation: none;
   }
 
-  .agent-task-card-item,
+  .agent-task-card-item.enter,
+  .agent-task-card-item.active::after,
   .agent-task-roll-inner,
   .agent-task-todo-icon,
-  .agent-task-card-text,
-  .agent-task-card-text::before,
   .agent-task-head-pie-fill {
     animation: none;
     transition: none;
@@ -10733,8 +10683,9 @@
   transform: translateY(-1em);
 }
 
-/* 任务项：级联入场 */
-.agent-task-card-item {
+/* 任务项入场：只对「本次新增的项」播放（.enter 由组件按 id 是否首次出现来加）。
+   刷新已有项的状态不再重放，否则一次更新会把整列闪一遍。 */
+.agent-task-card-item.enter {
   animation: agentTaskItemIn 360ms ease backwards;
   animation-delay: calc(var(--i, 0) * 50ms);
 }
@@ -10779,48 +10730,36 @@
   color: var(--text);
 }
 
-/* 进行中任务：文字流光（attr(data-label) 复制层 + 渐变 clip） */
-.agent-task-card-text {
+/* 进行中任务：行内扫过高光。用合成层的 transform 做，不碰文字栅格化。
+   旧实现是 attr(data-label) 复制层 + background-clip:text：切 active 那一行时本体
+   文字瞬间 transparent、复制层还要 360ms 才淡入（闪烁），反向失活时两层文字短暂
+   叠加（发虚/抖动），且无限动画逐帧重栅格化文本，流式期间跟着布局重渲染就是卡顿。 */
+.agent-task-card-item.active {
   position: relative;
+  overflow: hidden;
 }
 
-.agent-task-card-text::before {
-  content: attr(data-label);
+.agent-task-card-item.active::after {
+  content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, var(--text) 0%, var(--text) 30%,
-      color-mix(in srgb, var(--text) 45%, transparent) 45%,
-      color-mix(in srgb, var(--text) 45%, transparent) 55%,
-      var(--text) 70%, var(--text) 100%);
-  background-size: 300% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-  opacity: 0;
-  transition: opacity 360ms ease;
   pointer-events: none;
+  background: linear-gradient(90deg, transparent,
+      color-mix(in srgb, var(--text) 9%, transparent), transparent);
+  transform: translateX(-100%);
+  animation: agentTaskScan 2.2s cubic-bezier(.25, .1, .25, 1) infinite;
 }
 
-.agent-task-card-item.active .agent-task-card-text {
-  color: transparent;
-}
-
-.agent-task-card-item.active .agent-task-card-text::before {
-  opacity: 1;
-  animation: agentTaskShine 2.2s cubic-bezier(.25, .1, .25, 1) infinite;
-}
-
-@keyframes agentTaskShine {
+@keyframes agentTaskScan {
 
   0%,
   18% {
-    background-position: 100% 0;
+    transform: translateX(-100%);
   }
 
   82%,
   100% {
-    background-position: 0% 0;
+    transform: translateX(100%);
   }
 }
 
@@ -10945,17 +10884,19 @@
      其它按组件写的样式；
    · 放在文件末尾，同特异性时按顺序胜出，正好盖住上面那 12 处裸 outline: none
      （它们是 (0,1,0) 或 (0,2,0)，:focus 写法与本规则同为 (0,2,0)）；
-   · 排除三个「已有自己的焦点环」的控件，否则会叠成双重环。排除项也包在 :where() 里，
+   · 排除这些「已有自己的焦点环 / 自己的聚焦态」的控件，否则会叠成双重环。排除项也包在 :where() 里，
      避免 :not() 把它们的特异性算进来（否则整条规则会膨胀到 (0,6,0)）：
        .agent-ctx-inline              顶栏上下文胶囊，用 box-shadow 环（722 行）
        .agent-msg-edit-area           消息内联编辑框，用 3px accent 环（3247 行）
        .agent-ask-question-other-input 提问面板的自定义输入，用 2px accent 环（9310 行）
+       .agent-terminal-cwd-input      终端 cwd 输入框，自带 1px 边框 + 聚焦提色
+       .agent-code-sidebar-filter-input 侧栏过滤框，focus-within 已给整块 1px 内描边
      .chat-input 单独排除：它自己不带环，但父级 .chat-input-field:focus-within
      已经给了整块 composer 一个 3px accent 环（7947 行），再在里面的 textarea
      上画一圈会变成嵌套的双框。
 
    只覆盖可交互元素，不用通配符，避免给纯容器加框。 */
-.agent-code-view :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input, .agent-terminal-cwd-input)) {
+.agent-code-view :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input, .agent-terminal-cwd-input, .agent-code-sidebar-filter-input)) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -11181,14 +11122,14 @@ html.theme-dark {
   font-variant-numeric: tabular-nums;
 }
 
-.agent-tool-io-kv + .agent-tool-io-kv {
+.agent-tool-io-kv+.agent-tool-io-kv {
   margin-left: 10px;
   padding-left: 10px;
   border-left: 1px solid var(--border);
 }
 
 /* 参数区已用边框划界，紧跟其后的结果区不再重复画顶部分隔线 */
-.agent-tool-io-group + .agent-tool-result {
+.agent-tool-io-group+.agent-tool-result {
   padding-top: 0;
   border-top: none;
 }
@@ -11422,8 +11363,8 @@ html.theme-dark {
 }
 
 /* 多个命中文件分组之间留出间距 */
-.agent-tool-paths + .agent-tool-paths,
-.agent-tool-paths + .agent-tool-code-more {
+.agent-tool-paths+.agent-tool-paths,
+.agent-tool-paths+.agent-tool-code-more {
   margin-top: 8px;
 }
 
@@ -11490,6 +11431,7 @@ html.theme-dark {
 }
 
 @keyframes agentToolCaretBlink {
+
   0%,
   50% {
     opacity: 1;

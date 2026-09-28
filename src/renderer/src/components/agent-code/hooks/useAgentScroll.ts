@@ -14,12 +14,10 @@ import { getMessagePreview } from '../utils/text'
 import { useAgentHistoryWindow } from './useAgentHistoryWindow'
 import type { AgentSession } from '../../../../../shared/types'
 
-export function useAgentScroll({ activeSession, streaming, setSelectionPopover, taskCardRef, taskModalOpen, scrollScope = 'default' }: {
+export function useAgentScroll({ activeSession, streaming, setSelectionPopover, scrollScope = 'default' }: {
   activeSession: AgentSession | null
   streaming: boolean
   setSelectionPopover: (v: { text: string; x: number; y: number } | null) => void
-  taskCardRef: React.RefObject<HTMLDivElement | null>
-  taskModalOpen: boolean
   /** 滚动位置的作用域（当前传入工作区模式）：切作用域时保存 / 恢复滚动偏移 */
   scrollScope?: string
 }) {
@@ -560,23 +558,6 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
   useEffect(() => () => {
     if (railScrollIdleTimerRef.current) window.clearTimeout(railScrollIdleTimerRef.current)
   }, [])
-
-  useEffect(() => {
-    const root = chatScrollRef.current?.closest('.agent-code-chat') as HTMLElement | null
-    if (!root) return
-    const apply = () => {
-      const h = taskCardRef.current && taskModalOpen ? taskCardRef.current.offsetHeight : 0
-      root.style.setProperty('--task-card-h', `${h}px`)
-      const el = chatScrollRef.current
-      // 实时计算贴底（不依赖缓存的 atBottomRef，避免 padding 变化引发的 scroll 误判）；
-      // 只在本来就跟随时才续贴：用户已上滚暂停跟随时，任务卡/计划项刷新不得把人拽回底部。
-      if (el && followingRef.current && el.scrollHeight - el.scrollTop - el.clientHeight < 80) scrollToBottom()
-    }
-    apply()
-    const ro = new ResizeObserver(apply)
-    if (taskCardRef.current) ro.observe(taskCardRef.current)
-    return () => ro.disconnect()
-  }, [taskModalOpen, scrollToBottom])
 
   // 会话切换时把跟随态复位（原内联在 activeSessionId 变更 effect 中）
   const resetFollow = useCallback(() => {

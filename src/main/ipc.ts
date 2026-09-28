@@ -2859,6 +2859,9 @@ export function registerIpcHandlers(): void {
       const proc = spawn(exePath, safeArgs, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: false })
       modelLogBuffers.delete(opts.id) // 新一轮启动：丢弃上一轮的日志缓存
       let prefillResetTimer: ReturnType<typeof setTimeout> | null = null
+      // 就绪事件每次启动只播一次：stderr 按累积缓冲整段重解析，「listening on」那行会随
+      // 后续每一块日志被重复命中，不锁的话渲染层每次都当成「刚加载完成」再报一次。
+      let readyAnnounced = false
       const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
 
       // llama-server 终端日志美化：仅作用于 console 输出，绝不改动原始 text / IPC / 解析逻辑
@@ -2936,7 +2939,8 @@ export function registerIpcHandlers(): void {
           }
           // 监听就绪：llama_server: listening on http://127.0.0.1:8080 / ASP.NET: Now listening on: http://127.0.0.1:5000
           const readyMatch = line.match(/listening on:?\s+(https?:\/\/\S+)/i)
-          if (readyMatch) {
+          if (readyMatch && !readyAnnounced) {
+            readyAnnounced = true
             BrowserWindow.getAllWindows().forEach(win => {
               if (!win.isDestroyed()) win.webContents.send('model-ready', { id: opts.id, url: readyMatch[1] })
             })
@@ -2955,7 +2959,8 @@ export function registerIpcHandlers(): void {
           if (!line) continue
           // 监听就绪：llama_server: listening on http://127.0.0.1:8080 / ASP.NET: Now listening on: http://127.0.0.1:5000
           const readyMatch = line.match(/listening on:?\s+(https?:\/\/\S+)/i)
-          if (readyMatch) {
+          if (readyMatch && !readyAnnounced) {
+            readyAnnounced = true
             BrowserWindow.getAllWindows().forEach(win => {
               if (!win.isDestroyed()) win.webContents.send('model-ready', { id: opts.id, url: readyMatch[1] })
             })

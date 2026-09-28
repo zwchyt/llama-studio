@@ -27,11 +27,10 @@ import AgentFilePicker from '../../AgentFilePicker'
 import AskUserQuestionInline from '../../AskUserQuestionInline'
 import { AgentTopBarCtx, AniIconButton } from '../agent-message'
 import { AttachmentTextPreview, type PreviewableAttachment } from '../agent-message/AttachmentTextPreview'
-import { TaskArrowIcon, TaskCheckIcon, TaskDashedIcon, TaskFilledCheckIcon, TaskPieIcon, TaskRollingCount, TaskXIcon } from '../agent-task'
 import { TOOL_META, formatToolArgs } from '../agent-tools'
 import { TOOL_METAS } from '../../../utils/tools'
 import { THINKING_LEVELS } from '../../../../../shared/types'
-import type { Attachment, CardState, ThinkingLevel, TodoUpdate } from '../../../../../shared/types'
+import type { Attachment, CardState, ThinkingLevel } from '../../../../../shared/types'
 import { useStore } from '../../../store/useStore'
 import { useThemeStore } from '../../../store/themeStore'
 import type { useAgentGit } from '../hooks/useAgentGit'
@@ -102,18 +101,6 @@ export type AgentInputAreaProps = {
     streaming: boolean
     thinkDone: boolean
   }
-  task: {
-    currentPlanItems: TodoUpdate[]
-    planTitle: string
-    setTaskCardClosing: React.Dispatch<React.SetStateAction<boolean>>
-    setTaskModalOpen: React.Dispatch<React.SetStateAction<boolean>>
-    setTaskPanelCollapsed: React.Dispatch<React.SetStateAction<boolean>>
-    taskCardClosing: boolean
-    taskCardRef: React.RefObject<HTMLDivElement | null>
-    taskDoneCount: number
-    taskModalOpen: boolean
-    taskPanelCollapsed: boolean
-  }
   approval: {
     allowBtnRef: React.RefObject<HTMLButtonElement | null>
     approvalReq: { id: string; name: string; args: string } | null
@@ -154,7 +141,7 @@ export type AgentInputAreaProps = {
 
 
 export function AgentInputArea({
-  inputDomain, hintsDomain, mic, models, search, chatMode, run, task, approval, shell, handleKeyDown, handleInputChange,
+  inputDomain, hintsDomain, mic, models, search, chatMode, run, approval, shell, handleKeyDown, handleInputChange,
 }: AgentInputAreaProps) {
   // ── 域解构：把分组 props 摊平回局部名字，组件体内沿用原 JSX 的标识符 ──
 
@@ -176,9 +163,8 @@ export function AgentInputArea({
   const { searchEnabled, searchProvider, searchMenuOpen, searchMenuRef, setSearchMenuOpen, applySearchChange } = search
   const { plainChat } = chatMode
   const { apiBaseUrl, curToolName, followUpQueueRef, handleSend, handleStop, loading, piReadyRef, prevQueueRef, queueInfo, setQueueInfo, runningCard, streamKind, streaming, thinkDone } = run
-  const { currentPlanItems, planTitle, setTaskCardClosing, setTaskModalOpen, setTaskPanelCollapsed, taskCardClosing, taskCardRef, taskDoneCount, taskModalOpen, taskPanelCollapsed } = task
   const { allowBtnRef, approvalReq, autoApproveBtnRef, autoApproveRef, rejectBtnRef, resolveApproval } = approval
-  const { activeProject, activeProjectId, activeSessionId, attachBtnRef, branchBtnRef, branchMenuOpen, branchMenuRef, branches, cards, chatInputAreaRef, checkoutBranch, contextModalOpen, ctxInlineRef, currentBranch, projects, scrollToBottom, setActiveProjectId, setActiveSessionId, setBranchMenuOpen, setContextModalOpen, setWorkspaceMenuOpen, workspaceBtnRef, workspaceMenuOpen, workspaceMenuRef } = shell
+  const { activeProject, activeProjectId, activeSessionId, attachBtnRef, branchBtnRef, branchMenuOpen, branchMenuRef, branches, cards, chatInputAreaRef, checkoutBranch, contextModalOpen, ctxInlineRef, currentBranch, projects, setActiveProjectId, setActiveSessionId, setBranchMenuOpen, setContextModalOpen, setWorkspaceMenuOpen, workspaceBtnRef, workspaceMenuOpen, workspaceMenuRef } = shell
   // 附件 chip 点开看抽取文本（PDF / DOCX / 文本文件），与消息气泡里的文件卡片同一个预览层
   const [attPreview, setAttPreview] = useState<PreviewableAttachment | null>(null)
   // 通用模式收掉「选择文件」（工作区文件选择器）：若切换时它正开着，先关掉再收按钮，
@@ -216,91 +202,6 @@ export function AgentInputArea({
             <button ref={autoApproveBtnRef} className="agent-prompt-btn agent-prompt-btn-ghost" onClick={() => { autoApproveRef.current = true; resolveApproval(true) }}>本次全部允许</button>
             <button ref={allowBtnRef} className="agent-prompt-btn agent-prompt-btn-primary" onClick={() => resolveApproval(true)}>允许</button>
           </div>
-        </div>
-      )}
-      {taskModalOpen && (
-        <div
-          ref={taskCardRef}
-          className={`agent-task-card agent-task-card-inline${taskPanelCollapsed ? ' collapsed' : ''}${taskCardClosing ? ' closing' : ''}`}
-          onTransitionEnd={(e) => {
-            // 仅当收起动画结束（max-height 过渡完成）且确实处于关闭过渡态时，才真正卸载卡片
-            if (e.propertyName === 'max-height' && taskCardClosing) {
-              setTaskModalOpen(false)
-              setTaskPanelCollapsed(false)
-              setTaskCardClosing(false)
-            }
-          }}
-        >
-          <div className="agent-task-card-head">
-            <span className="agent-task-card-head-icon">
-              {currentPlanItems.length > 0 && taskDoneCount === currentPlanItems.length ? (
-                <TaskFilledCheckIcon />
-              ) : currentPlanItems.length > 0 ? (
-                <TaskPieIcon pct={Math.round((taskDoneCount / currentPlanItems.length) * 100)} />
-              ) : (
-                <TaskDashedIcon on />
-              )}
-            </span>
-            <span className="agent-task-card-title">待办</span>
-            <span className="agent-task-card-count"><TaskRollingCount value={`${taskDoneCount}/${currentPlanItems.length}`} /></span>
-            <div className="agent-task-card-head-actions">
-              <button className="agent-task-card-head-btn" onClick={() => {
-                setTaskPanelCollapsed(p => !p)
-                // 用户主动展开/收起：双 rAF 等布局稳定（含 --task-card-h 写入）后滚到底，
-                // 让消息区底部贴合卡片上边框。展开方向 scrollHeight 增大，必须无条件滚，
-                // 不能依赖 atBottom 判断（否则会被误判为离底而不顶上去）。
-                requestAnimationFrame(() => requestAnimationFrame(() => scrollToBottom()))
-              }}>{taskPanelCollapsed ? '展开' : '收起'}</button>
-              <button className="agent-task-card-head-btn" onClick={() => {
-                setTaskCardClosing(true)
-                // 关闭动画期间高度持续收缩，双 rAF 触发一次滚到底，后续由 RO 实时跟降
-                requestAnimationFrame(() => requestAnimationFrame(() => scrollToBottom()))
-              }}>关闭</button>
-            </div>
-          </div>
-          {!taskPanelCollapsed && (
-            planTitle && (
-              <div className="agent-task-card-plan-title">{planTitle}</div>
-            )
-          )}
-          {!taskPanelCollapsed && (
-            <div className="agent-task-card-body">
-              {currentPlanItems.length === 0 ? (
-                <div className="agent-task-card-empty">暂无计划</div>
-              ) : (
-                currentPlanItems.map((item, i) => {
-                  // 修复③：显式覆盖全部状态枚举，避免 cancelled 被 fallback 成「待完成」
-                  const raw = item.status || 'pending'
-                  const isDone = raw === 'completed'
-                  const isActive = raw === 'in_progress'
-                  const isCancelled = raw === 'cancelled'
-                  // 仿 Reasonix：每条只显示一行。进行中且有备注(notes)时，备注作为 activeForm 显示；
-                  // 否则显示 content。notes 不再作为独立第二行渲染。
-                  const text = raw === 'in_progress' && item.notes
-                    ? item.notes
-                    : (item.content || item.description || '')
-                  // 修复④：用稳定 id 作为 key（无 id 时回退下标），减少 merge 导致顺序变化时 DOM 复用错乱
-                  return (
-                    <div
-                      key={item.id ?? i}
-                      className={`agent-task-card-item${isDone ? ' done' : ''}${isActive ? ' active' : ''}`}
-                      style={{ ['--i' as string]: i }}
-                    >
-                      <span className="agent-task-iconwrap">
-                        <TaskDashedIcon on={!isDone && !isActive && !isCancelled} />
-                        <TaskArrowIcon on={isActive} />
-                        <TaskCheckIcon on={isDone} />
-                        <TaskXIcon on={isCancelled} />
-                      </span>
-                      <div className="agent-task-card-content">
-                        <div className="agent-task-card-text" data-label={text}>{text}</div>
-                      </div>
-                    </div>
-                  )
-                })
-              )}
-            </div>
-          )}
         </div>
       )}
       <AskUserQuestionInline />

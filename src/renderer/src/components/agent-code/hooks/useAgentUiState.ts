@@ -319,33 +319,26 @@ export function useAgentUiState({
   const [memoryOpen, setMemoryOpen] = useState(false)  // 长期记忆面板开关
   const treeOpenRef = useRef(treeOpen)
   treeOpenRef.current = treeOpen
-  // 任务清单（Todo / Task 工具的可视化面板）
+  // 任务清单卡片（Todo / Task 工具的可视化）：浮在会话区右上角。
+  // 模型调用 TodoWrite 时打开；关闭条件是「本轮结束且清单已全部收束」，由 useAgentLoop 判定
+  // ——没有手动收起/关闭入口。
   const [taskModalOpen, setTaskModalOpen] = useState(false)
-  // 卡片关闭过渡态：关闭时先播放收起/淡出动画，动画结束再真正卸载（taskModalOpen=false）。
-  // 过渡期间卡片真实高度仍由 ResizeObserver 写入 --task-card-h，消息区平滑跟降，无突跳/留缝。
-  const [taskCardClosing, setTaskCardClosing] = useState(false)
   // 当前 TodoWrite 计划项（每次新调用替换，不累加）
   const [currentPlanItems, setCurrentPlanItems] = useState<TodoUpdate[]>([])
+  // 计划项的最新值镜像：runPiTurn 的 finally 排在多层 await 之后，直接读 state 会拿到过期
+  // 闭包值，判「本轮结束时清单是否已收束」必须靠它。所有写入一律走下面的 setPlanItems。
+  const planItemsRef = useRef<TodoUpdate[]>([])
+  const setPlanItems = useCallback((next: React.SetStateAction<TodoUpdate[]>): void => {
+    setCurrentPlanItems(prev => {
+      const resolved = typeof next === 'function' ? (next as (p: TodoUpdate[]) => TodoUpdate[])(prev) : next
+      planItemsRef.current = resolved
+      return resolved
+    })
+  }, [])
   // 待办卡片派生计数（头部饼图/滚动计数用）
   const taskDoneCount = currentPlanItems.filter(i => i.status === 'completed').length
-  // 计划总标题（plan 级别，区别于每条待办 content）：仅用于内联卡片展示，不持久化
+  // 计划总标题（plan 级别，区别于每条待办 content）：仅用于卡片展示，不持久化
   const [planTitle, setPlanTitle] = useState('')
-
-  const [taskPanelCollapsed, setTaskPanelCollapsed] = useState(false)
-
-  // 点击任务卡片外部 / Escape 关闭：进入过渡态（播放收起动画），而非立即卸载
-  useEffect(() => {
-    if (!taskModalOpen || taskCardClosing) return
-    const close = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setTaskCardClosing(true)
-      }
-    }
-    document.addEventListener('keydown', close)
-    return () => {
-      document.removeEventListener('keydown', close)
-    }
-  }, [taskModalOpen, taskCardClosing])
 
   const [reqCount, setReqCount] = useState(0)
   const [cumTokens, setCumTokens] = useState(0)
@@ -459,9 +452,9 @@ export function useAgentUiState({
     trajOpen, setTrajOpen,
     memoryOpen, setMemoryOpen, treeOpenRef,
     // 任务清单卡
-    taskModalOpen, setTaskModalOpen, taskCardClosing, setTaskCardClosing,
-    currentPlanItems, setCurrentPlanItems, taskDoneCount,
-    planTitle, setPlanTitle, taskPanelCollapsed, setTaskPanelCollapsed,
+    taskModalOpen, setTaskModalOpen,
+    currentPlanItems, setPlanItems, planItemsRef, taskDoneCount,
+    planTitle, setPlanTitle,
     // 请求计数 / 破坏性审批
     reqCount, setReqCount, cumTokens, setCumTokens,
     approvalReq, setApprovalReq, approvalResolveRef, autoApproveRef,

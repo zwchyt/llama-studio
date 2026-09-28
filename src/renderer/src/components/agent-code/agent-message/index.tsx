@@ -308,10 +308,15 @@ const ThinkGrid = React.memo(function ThinkGrid() {
 // 链内全部思考文本、工具卡与过程正文按时间线交错合并，不再按「思考→工具→正文」
 // 切分多个独立思考块；仅最终正文段留在容器下方独立成泡。
 // streaming：该思考续段正在流式生长（恢复思考场景，位于 items 而非 value）。
+// segKey：链内元素的稳定身份，只随「是哪一段」变，不随它在 items 里的位置变。
+// 用源段序号（liveSegs 只追加不插入，下标即身份）；工具组用首个工具 id，这样尾部实时
+// 工具卡转成正式工具段时 key 不变、不重挂。少了这层身份，items 只能用数组下标当 key，
+// 一段正文被追认为过程正文插进中间位置时，它后面所有折叠块会整批卸载重挂（闪的来源）。
 type ThinkChainItem =
-  | { kind: 'think'; content: string; durationMs?: number; streaming?: boolean }
-  | { kind: 'tools'; toolCalls: NonNullable<AgentMessage['toolCalls']>; durationMs?: number }
-  | { kind: 'text'; content: string }
+  | { kind: 'think'; segKey: string; content: string; durationMs?: number; streaming?: boolean }
+  | { kind: 'tools'; segKey: string; toolCalls: NonNullable<AgentMessage['toolCalls']>; durationMs?: number }
+  // live：该正文段仍在流式生长（时间线最后一段），用轻量流式管线渲染
+  | { kind: 'text'; segKey: string; content: string; live?: boolean }
 
 // 思考文本渲染（流式预览 / 完整纯文本窗口 / 短段 Markdown）已抽至
 // ThinkTextContent.tsx；行窗口用共享组件 WindowedText.tsx：默认只挂载有界预览
@@ -480,9 +485,8 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
 }) {
   const bodyRef = useRef<HTMLDivElement>(null)
   const userToggledRef = useRef(false)
-  // 自动折叠单向锁：本次挂载内一旦因「结论正文出现 / 运行结束」自动收起，后续
-  // 思考↔正文交替（thinkDone/bodyAppeared 电平翻转）不再自动重开容器——新一轮
-  // 思考由链内 ThinkSegmentFold 各自承载，容器保持收起直到用户手动点开。
+  // 自动折叠单向锁：避免同一时机反复调 collapse()。运行中的收起（正文出现）会被
+  // 「又起思考 / 还有未完成工具」那支解锁并重开；整轮结束后的收起是终态，不再自动重开。
   const autoCollapsedRef = useRef(false)
   // 标记「本次 expanded=true 是用户手动点击展开」：仅这类展开走 max-height 像素过渡动画，
   // 自动展开（流式 / 容器联动）仍走自适应高度（见下方 useLayoutEffect）。为 true 时表示
@@ -529,7 +533,7 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
   const phaseStartRef = useRef<number | null>(null)
   const frozenToolsRef = useRef(0)
   // pending 占位态以 isStreaming=true 挂载（同一「思考中」视觉），phase 自然归入 think，时钟照常走动
-  // 阶段划分只看「运行是否结束」，不看 bodyAppeared（「最后一段是正文」是流式临时态，
+  // 阶段划分只看「运行是否结束」，不看「最后一段是不是正文」（那是流式临时态，
   // 新一轮思考一到就翻回 false）：运行中时钟连续走（streamStartAt 含 TTFT 不回退），
   // 运行结束才落 idle 定格——头部时间在流式全程连续增长，只在 done 时定格一次。
   const phase: 'think' | 'tools' | 'idle' = isStreaming
@@ -587,7 +591,7 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
     // 运行中且还在思考 / 等工具结果：保持展开。
     if (msgStreaming && !bodyAppeared) return
     // 收起时机：最终正文一开始输出（bodyAppeared，把版面让给结论气泡），或整轮已结束。
-    // 已收起过就不再重复调用；运行结束后的收起是终态，不再自动重开。
+    // 交替场景下正文之后又起思考时，上面第一个分支会重新展开（segKey 稳定，不再连带整链重挂）。
     if (autoCollapsedRef.current) return
     autoCollapsedRef.current = true
     // 走 collapse() 的像素过渡且保持挂载（不再 setVisible(false) 卸载 DOM）——
@@ -647,7 +651,7 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
   }, [expanded])
 
   // 头部「思考中」状态判定：消息仍在流式即「思考中」（思考/工具/正文/段间间隙统一），
-  // 不再看 bodyAppeared（流式临时态，会在两种标题间反复重建）。「思考过程 +
+  // 不看「本轮是否已出现正文」（流式临时态，会在两种标题间反复重建）。「思考过程 +
   // 思考了 X 秒」的定格标题只在运行结束（done）时生成一次。
   const showThinking = !!msgStreaming
   // 停止判定必须排除运行中：closed={!streaming} 后运行期间 closed 恒 false，
@@ -711,8 +715,8 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
             {/* 链内元素（思考续段 / 工具卡组 / 过程正文段）按模型时间线交错排列在首段下方，
                 思考续段同样为独立折叠块；工具卡与过程正文不折叠、保持常显；
                 调用窗口由调用方保证有 items 时必传渲染回调 */}
-            {items && items.length > 0 && items.map((it, idx) => (
-              <div key={idx} className={`agent-think-item${it.kind === 'text' ? ' agent-think-prose' : ''}`}>
+            {items && items.length > 0 && items.map((it) => (
+              <div key={it.segKey} className={`agent-think-item${it.kind === 'text' ? ' agent-think-prose' : ''}`}>
                 {it.kind === 'think'
                   ? (
                     <ThinkSegmentFold
@@ -732,9 +736,12 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
                       />
                     )
                     : (
-                      // 过程正文段：阶段性输出按时间线收纳链内（最终结论在容器下方独立成泡）；
-                      // 文字用主文字色（agent-think-prose），比弱化的思考文本更黑更明显，区分主次
-                      <AgentMarkdown content={it.content} />
+                      // 链内正文段（阶段性说明与流式中的答案都在此）：文字用主文字色
+                      // （agent-think-prose），比弱化的思考文本更黑更明显，区分主次；
+                      // 仍在生长的那一段走流式管线，完成后换完整 Markdown 栈。
+                      it.live
+                        ? <StreamingMarkdown content={it.content} isStreaming />
+                        : <AgentMarkdown content={it.content} />
                     )}
               </div>
             ))}
@@ -923,17 +930,17 @@ export const StreamingContent = React.memo(function StreamingContent({ content, 
         // 生长中的思考段（未闭合且是最后一条）且不是主文本时，标记 streaming 走逐行流式渲染
         const isLive = !!streaming && !e.closed && i === entries.length - 1
         if (!valueAssigned) { value = e.content; valueAssigned = true; return }
-        items.push(isLive ? { kind: 'think', content: e.content, streaming: true } : { kind: 'think', content: e.content })
+        items.push(isLive ? { kind: 'think', segKey: `e${i}`, content: e.content, streaming: true } : { kind: 'think', segKey: `e${i}`, content: e.content })
         return
       }
       // 最后一个正文段 = 最终结论：留容器下方独立成泡；其余为过程正文收进容器
       if (i === entries.length - 1) { finalText = e.content; return }
-      items.push({ kind: 'text', content: e.content })
+      items.push({ kind: 'text', segKey: `e${i}`, content: e.content })
     })
     const hasThink = entries.some(e => e.kind === 'think')
     // legacy 工具卡无时间线信息，沿用旧规则收纳进容器尾部（仅在有思考段时进容器，
     // 无思考段保持独立成组的传统布局）
-    if (hasThink && toolCalls?.length) items.push({ kind: 'tools', toolCalls })
+    if (hasThink && toolCalls?.length) items.push({ kind: 'tools', segKey: `t${toolCalls[0]!.id ?? 'tools'}`, toolCalls })
     return { value, items, finalText, lastClosed, hasThink }
   }, [content, streaming, toolCalls])
 
@@ -1136,16 +1143,14 @@ export const AniIconButton = React.forwardRef<HTMLButtonElement, {
 // （原为 AgentCodeView 内部闭包，抽到模块级供 AgentMessageRow 复用，避免两处拷贝漂移）。
 //
 // 单容器时间线：整条消息只有一个思考链容器（一个 ThinkBlock）——思考段、工具卡组、
-// 过程正文段按 segments 原序交错收纳进同一容器；仅最后一个正文段（最终结论）留在
-// 容器下方独立成泡。流式期间「最后一段是正文」只是临时最终态：后续思考/工具段一旦
-// 到达，该正文段声明式地自动收纳回容器，容器重开「思考中」并继续计时（streamStartAt
-// 连续时钟跨思考/工具/正文阶段不回退），无需任何段落迁移逻辑。工具卡一律收进容器
-// （正文不承载工具卡）。附带保证（沿用原平铺修复）：任意顺序的段都按位渲染，不丢内容。
+// 过程正文段按 segments 原序交错收纳进容器；最后一个正文段视为最终结论，流式期间就在
+// 容器下方独立成泡。容器只在整轮结束时收起一次（中途收起再重开就是跳转的观感）。
+// 工具卡一律收进容器（正文不承载工具卡）。附带保证（沿用原平铺修复）：任意顺序的段都按位渲染，不丢内容。
 export function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']>, msgId: string, streaming: boolean, tailToolCalls: NonNullable<AgentMessage['toolCalls']> | undefined, o: RenderSegmentsOpts): React.ReactNode[] {
   // 流式尾部实时工具卡（尚未切分进 segments）：视为排在时间线最后——它的存在说明
   // 模型在「最终正文」之后又发起了调用，最后正文段随之降级为过程正文收进容器
   const hasTailTools = !!tailToolCalls && tailToolCalls.length > 0
-  // 最终正文段：仅当最后一个段是非空 text（且无尾部工具卡）时成立
+  // 最终正文段：最后一个段是非空 text（且无尾部工具卡）时独立成泡，流式期间也在泡里输出。
   const lastSeg = segments[segments.length - 1]
   let finalText: string | null = null
   let finalTextIdx = -1
@@ -1169,18 +1174,24 @@ export function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']
         if (seg.durationMs != null) valueDurationMs = seg.durationMs
         return
       }
-      items.push({ kind: 'think', content: seg.content, ...(seg.durationMs != null ? { durationMs: seg.durationMs } : {}), ...(isLive ? { streaming: true } : {}) })
+      items.push({ kind: 'think', segKey: `s${i}`, content: seg.content, ...(seg.durationMs != null ? { durationMs: seg.durationMs } : {}), ...(isLive ? { streaming: true } : {}) })
       return
     }
     if (seg.kind === 'tools') {
-      if (seg.toolCalls.length > 0) items.push({ kind: 'tools', toolCalls: seg.toolCalls, ...(seg.durationMs != null ? { durationMs: seg.durationMs } : {}) })
+      if (seg.toolCalls.length > 0) items.push({ kind: 'tools', segKey: `t${seg.toolCalls[0]!.id}`, toolCalls: seg.toolCalls, ...(seg.durationMs != null ? { durationMs: seg.durationMs } : {}) })
       return
     }
-    // 过程正文段（最终正文段除外）按时间线收纳进容器；空正文段跳过
+    // 正文段按时间线收纳进容器；空正文段跳过
     if (i === finalTextIdx || seg.content.trim() === '') return
-    items.push({ kind: 'text', content: seg.content })
+    items.push({
+      kind: 'text',
+      segKey: `s${i}`,
+      content: seg.content,
+      // 链内生长中的末段：用轻量流式管线，避免整段 Markdown 每帧重解析
+      ...(streaming && i === segments.length - 1 ? { live: true } : {})
+    })
   })
-  if (hasTailTools) items.push({ kind: 'tools', toolCalls: tailToolCalls! })
+  if (hasTailTools) items.push({ kind: 'tools', segKey: `t${tailToolCalls![0]!.id}`, toolCalls: tailToolCalls! })
 
   const out: React.ReactNode[] = []
   if (sawThink || items.length > 0) {
@@ -1372,7 +1383,7 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
     <>
       {src.stopped && stoppedBadge}
       {pendingFirstToken && (
-        <ThinkBlock pending value="" closed={false} isStreaming msgStreaming bodyAppeared={false} streamStartAt={streamStartAt} />
+        <ThinkBlock pending value="" closed={false} isStreaming msgStreaming streamStartAt={streamStartAt} />
       )}
       <StreamingContent content={src.content} streaming={isStreaming} toolCalls={src.toolCalls || undefined} runTotalMs={src.thinkTotalMs} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(msg.id, tc)} />
 

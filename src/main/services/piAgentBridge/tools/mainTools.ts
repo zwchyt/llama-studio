@@ -6,6 +6,7 @@ import { isAbsolute, resolve, sep } from 'node:path'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import { makePiTool, getTypebox, type PlainToolSpec } from './toolAdapter'
 import type { BrowserCaptureOptions, BrowserCaptureResult, BrowserShowInput, BrowserShowResult } from '../../../../shared/browserPreview'
+import type { TokenUsageEntry } from '../../../../shared/types'
 import {
   createKnowledgeSearchSpec,
   formatKnowledgeCatalog,
@@ -103,6 +104,8 @@ export interface MainToolExecutors {
   listKb(): Promise<{ id: string; name: string }[]>
   /** 模型端口登记信息（token 记账用；未登记返回 null） */
   getPortModelInfo(port: number): Promise<{ templateId: string; modelPath: string | null } | null | undefined>
+  /** Token 入账：必须回主进程落盘（tokenLedger 的目录注入、promptDelta 累计表、月度封存都是主进程状态，worker 内直接 append 会被静默丢弃） */
+  appendTokenUsage(entry: TokenUsageEntry): Promise<void>
   /** 同步 agent 工作区根到主进程（Read/Bash 等文件工具的相对路径解析基准） */
   setAgentWorkspace(cwd: string): Promise<void>
   /** 询问用户（跨进程弹窗；由 IPC 层提供实现） */
@@ -1068,11 +1071,11 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     name: 'TodoWrite',
     label: '任务清单',
     description:
-      'Update the task list (todos) for the current session. Use merge:true to add/update individual tasks by id (existing tasks keep their state), or merge:false to replace the whole list. Tasks track progress across turns — keep it up to date as work proceeds. Get the current list with TaskList.',
+      'Update the task list (todos) for the current session. merge:true (the default) updates items by id, so send ONLY the items that changed — to flip a status send just {id, status} with no other field. merge:false replaces the whole list; use it when you build or restructure the plan. Keep ids stable across updates. Get the current list with TaskList.',
     parameters: {
       type: 'object',
       properties: {
-        merge: { type: 'boolean', description: 'Merge updates into existing tasks (true) or replace the whole list (false). Default false.' },
+        merge: { type: 'boolean', description: 'Merge updates into existing tasks by id (default true), or replace the whole list (false). Omit for a normal status update.' },
         todos: {
           type: 'array',
           description: 'Task updates. In merge mode, provide id (keep stable) + fields to change. In replace mode, provide the full new list.',
@@ -1091,23 +1094,27 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
           }
         }
       },
-      required: ['merge', 'todos']
+      required: ['todos']
     },
     execute: async (args) => {
       const sessionId = ctx?.sessionId ?? ''
       if (!sessionId) return '❌ TodoWrite 不可用：缺少会话上下文'
-      const merge = args.merge === true
+      // 与渲染端保持一致：省略 merge 一律按「增量合并」处理（旧的 === true 会让
+      // 主进程整体替换、渲染端增量合并，两边对不上，卡片就出现错位/整列重挂载）
+      const merge = args.merge !== false
       const todos = Array.isArray(args.todos) ? (args.todos as TodoUpdateInput[]) : []
       if (todos.length === 0) return '❌ 请提供至少一个 todo 更新项'
       const res = await exec.todoWrite(sessionId, { merge, todos })
       if (!res.success) return `❌ 更新任务清单失败：${res.error}`
       const tasks = res.tasks ?? []
-      if (tasks.length === 0) return '✅ 任务清单已清空'
+      // details.tasks＝后端权威全量清单，透传到渲染端直接回写待办卡片：
+      // 卡片不再依赖模型流式参数里的 id 是否稳定，执行完以这份为准。
+      if (tasks.length === 0) return { text: '✅ 任务清单已清空', details: { tasks } }
       const lines = tasks.map((t) => {
         const mark = t.status === 'completed' ? '✅' : t.status === 'in_progress' ? '🔄' : '⬜'
         return `- [${t.id}] ${mark} ${t.subject}${t.status && t.status !== 'pending' ? ` (${t.status})` : ''}`
       })
-      return `✅ 任务清单已更新（共 ${tasks.length} 项）：\n${lines.join('\n')}`
+      return { text: `✅ 任务清单已更新（共 ${tasks.length} 项）：\n${lines.join('\n')}`, details: { tasks } }
     }
   })
 

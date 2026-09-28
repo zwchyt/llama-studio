@@ -144,6 +144,34 @@ function failPendingBrowsers(): void {
 const DELTA_FLUSH_MS = 24
 let textDeltaBuf = ''
 let thinkDeltaBuf = ''
+/** toolcall_delta 的参数快照（只留最新一帧）。pi 在流式期间已经把半截 JSON 尽力解析成
+ *  arguments 对象放进 partial，这里截成 {id,name,args} 合帧转发，让待办卡片能在参数生成
+ *  过程中逐条上屏，而不是干等 toolcall_end（整段参数可能有几百 token）。 */
+let toolArgsBuf: { id: string; name: string; args: string } | null = null
+/** 参数快照体积上限：Write/Edit 的整文件内容远超此量，逐 token 转发没有意义，直接跳过 */
+const TOOL_ARGS_MAX_CHARS = 8000
+/** Write/Edit 的流式改动统计：主进程只数换行，每帧只回传两个数（整份内容过 IPC 会拖渲染层），
+ *  精确的 +N -M 仍由渲染层在 toolcall_end 拿到完整参数后用 LCS 覆盖。 */
+let toolStatBuf: { id: string; name: string; added: number; removed: number } | null = null
+const lineCountOf = (s: unknown): number => (typeof s === 'string' && s.length > 0 ? s.split('\n').length : 0)
+
+function editStreamStat(name: string, args: Record<string, unknown>): { added: number; removed: number } | null {
+  if (name === 'Write') {
+    const added = lineCountOf(args.content)
+    return added > 0 ? { added, removed: 0 } : null
+  }
+  if (name !== 'Edit') return null
+  let added = 0
+  let removed = 0
+  const acc = (o: unknown, n: unknown): void => { removed += lineCountOf(o); added += lineCountOf(n) }
+  if (typeof args.old_string === 'string' || typeof args.new_string === 'string') acc(args.old_string, args.new_string)
+  else if (Array.isArray(args.edits)) {
+    for (const e of args.edits as Array<{ oldText?: unknown; newText?: unknown }>) {
+      if (e) acc(e.oldText, e.newText)
+    }
+  }
+  return added > 0 || removed > 0 ? { added, removed } : null
+}
 let deltaFlushTimer: ReturnType<typeof setTimeout> | null = null
 let deltaSid = ''
 
@@ -162,6 +190,14 @@ function flushDeltas(): void {
     sendDeltaEvent(deltaSid, { type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: thinkDeltaBuf } })
     thinkDeltaBuf = ''
   }
+  if (toolArgsBuf) {
+    sendDeltaEvent(deltaSid, { type: 'toolcall_args', ...toolArgsBuf })
+    toolArgsBuf = null
+  }
+  if (toolStatBuf) {
+    sendDeltaEvent(deltaSid, { type: 'toolcall_stat', ...toolStatBuf })
+    toolStatBuf = null
+  }
 }
 
 function queueDelta(sessionId: string, kind: 'text' | 'thinking', delta: string): void {
@@ -173,14 +209,59 @@ function queueDelta(sessionId: string, kind: 'text' | 'thinking', delta: string)
   if (!deltaFlushTimer) deltaFlushTimer = setTimeout(flushDeltas, DELTA_FLUSH_MS)
 }
 
+/** 参数快照同窗合帧：只保留最新一帧（半截 JSON 的旧快照没有回放价值） */
+function queueToolArgs(sessionId: string, snap: { id: string; name: string; args: string }): void {
+  if (deltaFlushTimer && sessionId !== deltaSid) flushDeltas()
+  deltaSid = sessionId
+  toolArgsBuf = snap
+  if (!deltaFlushTimer) deltaFlushTimer = setTimeout(flushDeltas, DELTA_FLUSH_MS)
+}
+
+/** 改动统计同窗合帧：只留最新一帧，且调用方已保证只在数值变化时才入队 */
+function queueToolStat(sessionId: string, snap: { id: string; name: string; added: number; removed: number }): void {
+  if (deltaFlushTimer && sessionId !== deltaSid) flushDeltas()
+  deltaSid = sessionId
+  toolStatBuf = snap
+  if (!deltaFlushTimer) deltaFlushTimer = setTimeout(flushDeltas, DELTA_FLUSH_MS)
+}
+
 /** ? worker ? pi ?????? renderer??????????? piAgentIpc.push ???? */
 function pushEvent(sessionId: string, event: unknown): void {
-  const e = event as { type?: string; assistantMessageEvent?: { type?: string; delta?: unknown; partial?: { content?: Array<{ type?: string; name?: string; id?: string }> } } }
+  const e = event as {
+    type?: string
+    assistantMessageEvent?: {
+      type?: string
+      delta?: unknown
+      contentIndex?: number
+      partial?: { content?: Array<{ type?: string; name?: string; id?: string; arguments?: unknown }> }
+    }
+  }
   // 增量类 message_update 走合帧缓冲（见 DELTA_FLUSH_MS 注释）；其余事件原样直发
   if (e && e.type === 'message_update' && e.assistantMessageEvent &&
       (e.assistantMessageEvent.type === 'text_delta' || e.assistantMessageEvent.type === 'thinking_delta') &&
       typeof e.assistantMessageEvent.delta === 'string') {
     queueDelta(sessionId, e.assistantMessageEvent.type === 'text_delta' ? 'text' : 'thinking', e.assistantMessageEvent.delta)
+    return
+  }
+  // 工具参数流式生成中：pi 已把半截 JSON 尽力解析成 arguments 对象，截当前块的最新快照
+  // 走同一合帧窗口。完整参数仍由后面的 toolcall_end 给出（它先冲刷本缓冲，顺序不乱）。
+  if (e && e.type === 'message_update' && e.assistantMessageEvent?.type === 'toolcall_delta') {
+    const am = e.assistantMessageEvent
+    const block = am.partial?.content?.[am.contentIndex ?? -1]
+    if (block && block.type === 'toolCall' && block.name) {
+      if (block.name === 'Write' || block.name === 'Edit') {
+        // 文件改动工具：只回传统计数字，别把整份内容搬过 IPC；数值没变就不入队
+        const stat = editStreamStat(block.name, (block.arguments ?? {}) as Record<string, unknown>)
+        if (stat && (!toolStatBuf || toolStatBuf.added !== stat.added || toolStatBuf.removed !== stat.removed)) {
+          queueToolStat(sessionId, { id: block.id || '', name: block.name, ...stat })
+        }
+      } else {
+        try {
+          const args = JSON.stringify(block.arguments ?? {})
+          if (args.length <= TOOL_ARGS_MAX_CHARS) queueToolArgs(sessionId, { id: block.id || '', name: block.name, args })
+        } catch { /* 含不可序列化值：跳过快照，等 toolcall_end */ }
+      }
+    }
     return
   }
   // 非增量事件：先冲刷排队的增量，保持「文本 → 边界事件」的原始到达顺序

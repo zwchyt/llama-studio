@@ -37,6 +37,7 @@ import AgentMessageSearch from '../../AgentMessageSearch'
 import { AgentTrajectoryPanel } from '../../AgentTrajectoryPanel'
 import { AgentSessionSidebar } from '../agent-session/AgentSessionSidebar'
 import { AgentInputArea } from '../agent-input/AgentInputArea'
+import { TaskPlanCard } from '../agent-task'
 import { AgentPreviewSlot } from '../agent-preview/AgentPreviewSlot'
 import type { AgentMsgRowActions } from '../types'
 import { PLAIN_CHAT_TOOL_NAMES } from '../../../../../shared/types'
@@ -100,7 +101,6 @@ export interface AgentCodeViewLayoutProps {
   msgEndRef: React.RefObject<HTMLDivElement | null>
   msgRowActionsRef: React.RefObject<AgentMsgRowActions>
   chatInputAreaRef: React.RefObject<HTMLDivElement | null>
-  taskCardRef: React.RefObject<HTMLDivElement | null>
 
   /** ── 散装值：输入区键盘处理 ── */
   handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
@@ -113,7 +113,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     run, ui, condense, messageActions, scroll, git, mic, loop, panels, modals, sessionActions,
     cards, agentCards, runningCard, apiBaseUrl, modelLabel, handleModelAction, handleStop,
     speakingId,
-    msgEndRef, msgRowActionsRef, chatInputAreaRef, taskCardRef,
+    msgEndRef, msgRowActionsRef, chatInputAreaRef,
     handleKeyDown, handleInputChange,
   } = view
 
@@ -158,8 +158,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     searchMenuOpen, searchMenuRef, searchProvider, setModelPickerOpen, setSearchMenuOpen,
     plainChat,
     chatTools, chatToolsMenuOpen, setChatToolsMenuOpen, chatToolsMenuRef, toggleChatTool,
-    setTaskCardClosing, setTaskModalOpen, setTaskPanelCollapsed, taskCardClosing,
-    taskDoneCount, taskModalOpen, taskPanelCollapsed, toggleLogoMenu, applySearchChange,
+    taskDoneCount, taskModalOpen, toggleLogoMenu, applySearchChange,
   } = ui
   const { condensing, condenseMsg, setCondenseMsg, handleManualCondense } = condense
   const { copyMessage, editAt, resendAt, branchAt, confirmEdit, deleteMessage } = messageActions
@@ -919,6 +918,11 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               </div>
             </div>
           )}
+          {/* 待办清单卡片：会话区右上角浮层，和上面六张卡同一角落（DOM 靠后，叠在它们之上）。
+              模型调用 TodoWrite 时出现，本轮执行结束自动消失；无展开/收起、无关闭按钮。 */}
+          {taskModalOpen && (
+            <TaskPlanCard items={currentPlanItems} planTitle={planTitle} doneCount={taskDoneCount} />
+          )}
           {/* 会话内消息搜索（Ctrl/Cmd+F 唤出，浮在对话区右上）。
               传完整 messages：索引要与消息节点的 data-message-index 对齐（该属性是会话内原始下标，
               不是已加载区间的相对下标），这样屏外未加载的消息也能被搜到。*/}
@@ -954,11 +958,6 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               apiBaseUrl, curToolName, followUpQueueRef, handleSend, handleStop,
               loading, piReadyRef, prevQueueRef, queueInfo, setQueueInfo,
               runningCard, streamKind, streaming, thinkDone,
-            }}
-            task={{
-              currentPlanItems, planTitle, setTaskCardClosing, setTaskModalOpen,
-              setTaskPanelCollapsed, taskCardClosing, taskCardRef, taskDoneCount,
-              taskModalOpen, taskPanelCollapsed,
             }}
             approval={{
               allowBtnRef, approvalReq, autoApproveBtnRef, autoApproveRef,

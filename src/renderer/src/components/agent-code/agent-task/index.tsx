@@ -5,9 +5,10 @@
 // TodoList 演示设计）」，逻辑与注释均未改动，仅补齐 import。
 //
 // 对外导出：RollDigit、TaskRollingCount、taskIconCls、TaskCheckIcon、TaskArrowIcon、
-//           TaskDashedIcon、TaskXIcon、TaskFilledCheckIcon、TaskPieIcon
+//           TaskDashedIcon、TaskXIcon、TaskFilledCheckIcon、TaskPieIcon、TaskPlanCard
 
 import React, { useEffect, useRef, useState } from 'react'
+import type { TodoUpdate } from '../../../../../shared/types'
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║ 区域：待办卡片视觉组件（滚动数字 + 三态图标，对齐 TodoList 演示设计）        ║
@@ -92,4 +93,75 @@ export const TaskPieIcon = ({ pct }: { pct: number }) => {
     </svg>
   )
 }
+
+// 待办清单卡片（会话区右上角浮层）。单独成组件并 memo：卡片数据只在 TodoWrite 更新时才变，
+// 而布局组件在流式期间每个 token 都重渲染，不 memo 的话整棵卡片子树跟着逐帧重画。
+export const TaskPlanCard = React.memo(function TaskPlanCard({ items, planTitle, doneCount }: {
+  items: TodoUpdate[]
+  planTitle: string
+  doneCount: number
+}) {
+  // 已出现过的项 id：只有新 id 才挂 .enter 播级联入场，刷新已有项状态不重放动画
+  const seenRef = useRef<Set<string>>(new Set())
+  const allDone = items.length > 0 && doneCount === items.length
+  return (
+    <div className="agent-task-card">
+      <div className="agent-task-card-head">
+        <span className="agent-task-card-head-icon">
+          {allDone ? (
+            <TaskFilledCheckIcon />
+          ) : items.length > 0 ? (
+            <TaskPieIcon pct={Math.round((doneCount / items.length) * 100)} />
+          ) : (
+            <TaskDashedIcon on />
+          )}
+        </span>
+        <span className="agent-task-card-title">待办</span>
+        <span className="agent-task-card-count"><TaskRollingCount value={`${doneCount}/${items.length}`} /></span>
+      </div>
+      {planTitle && (
+        <div className="agent-task-card-plan-title">{planTitle}</div>
+      )}
+      <div className="agent-task-card-body">
+        {items.length === 0 ? (
+          <div className="agent-task-card-empty">暂无计划</div>
+        ) : (
+          items.map((item, i) => {
+            // 显式覆盖全部状态枚举，避免 cancelled 被 fallback 成「待完成」
+            const raw = item.status || 'pending'
+            const isDone = raw === 'completed'
+            const isActive = raw === 'in_progress'
+            const isCancelled = raw === 'cancelled'
+            // 每条只显示一行：进行中且有备注(notes)时，备注作为 activeForm 显示；
+            // 否则显示 content。notes 不作为独立第二行渲染。
+            const text = raw === 'in_progress' && item.notes
+              ? item.notes
+              : (item.content || item.description || '')
+            // 用稳定 id 作为 key（无 id 时回退下标），减少 merge 导致顺序变化时 DOM 复用错乱
+            const key = item.id ?? String(i + 1)
+            const enter = !seenRef.current.has(key)
+            seenRef.current.add(key)
+            return (
+              <div
+                key={key}
+                className={`agent-task-card-item${isDone ? ' done' : ''}${isActive ? ' active' : ''}${enter ? ' enter' : ''}`}
+                style={{ ['--i' as string]: i }}
+              >
+                <span className="agent-task-iconwrap">
+                  <TaskDashedIcon on={!isDone && !isActive && !isCancelled} />
+                  <TaskArrowIcon on={isActive} />
+                  <TaskCheckIcon on={isDone} />
+                  <TaskXIcon on={isCancelled} />
+                </span>
+                <div className="agent-task-card-content">
+                  <div className="agent-task-card-text">{text}</div>
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
+    </div>
+  )
+})
 
