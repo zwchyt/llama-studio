@@ -13,7 +13,7 @@
 //   · 提示词卡与知识库卡的草稿态
 //   · 用户消息内联编辑态（editingMsgId / editDraft）
 //
-// 外部输入：agentCards（模型下拉列表）、loading 与 piReadyRef（联网搜索变更需作废 pi 会话）、
+// 外部输入：modelGroups（模型下拉的分组列表，只为估算面板宽度）、loading 与 piReadyRef（联网搜索变更需作废 pi 会话）、
 //           mode（当前工作区模式）。
 // 对外输出：上述全部 state（值 + setter）与 ref、以及若干派生值 / 回调。
 //
@@ -30,6 +30,7 @@ import { askUserQuestionRegistry } from '../../../utils/askUserQuestionRegistry'
 import { runBrowserNavigate, toBrowserShowResult } from '../utils/browserController'
 import { noteApprovalRejected } from '../../../utils/memoryWriter'
 import type { AgentMode, AgentSession, CardState, KnowledgeBaseMeta, TodoUpdate } from '../../../../../shared/types'
+import type { ModelPickerGroup } from '../../../utils/endpoint'
 
 /** 右侧面板模式：files=文件树+预览 / browser=内嵌浏览器 / terminal=内嵌终端 / diff=Git变更 / menu=顶栏「»」展开的工作区选择界面 */
 export type RightPanelMode = 'files' | 'browser' | 'terminal' | 'diff' | 'menu'
@@ -39,10 +40,10 @@ export type PanelView = 'files' | 'diff' | 'terminal' | 'browser'
 type ModePanelState = { treeOpen: boolean; rightPanelMode: RightPanelMode; openPanels: PanelView[] }
 
 export function useAgentUiState({
-  agentCards, loading, piReadyRef, mode,
+  modelGroups, loading, piReadyRef, mode,
   activeProjectId, activeSessionId, activeSession, updateSessionInProject,
 }: {
-  agentCards: CardState[]
+  modelGroups: ModelPickerGroup[]
   loading: boolean
   piReadyRef: React.RefObject<{ sid: string | null; ready: boolean }>
   /** 当前工作区模式：通用模式（'chat'）下顶栏与输入区收掉编码专属控件 */
@@ -117,23 +118,25 @@ export function useAgentUiState({
   // 全局 store 共享 + model-capabilities.json 持久化，检测结果不重复读盘
   const modelCaps = useStore(s => s.modelCapabilities)
   const loadModelCapabilities = useStore(s => s.loadModelCapabilities)
-  // 下拉面板宽度：按列表中最长模型名 + 行内元素估算，保证名称完整显示不省略
-  // （不依赖打开状态：收起时宽度保持同一值，避免关闭动画期间重排抖动）
+  // 下拉面板宽度：按列表中最长文字 + 行内元素估算，保证名称完整显示不省略
   const modelPickerWidth = useMemo(() => {
-    if (agentCards.length === 0) return 300
+    // 下拉里要量的文字：分组标题 + 每一行的模型名（含端点上还没建卡的那几行）
+    const texts = [...modelGroups.map(g => g.title), ...modelGroups.flatMap(g => g.rows.map(r => r.name))]
+    if (texts.length === 0) return 200
     const ctx = document.createElement('canvas').getContext('2d')
-    if (!ctx) return 300
-    ctx.font = '600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-    // 行内固定余量：logo 26 + 间距 8×3 + 按钮 28 + 面板/条目内边距 24
-    let maxW = 0
-    for (const card of agentCards) {
-      const caps = modelCaps[card.template.id]
+    if (!ctx) return 200
+    ctx.font = '500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    // 能力徽标只挂在卡片行上：按最宽的那一行预留（单个徽标 14 + 间距 3）
+    let maxCapsW = 0
+    for (const card of modelGroups.flatMap(g => g.rows.map(r => r.card))) {
+      const caps = card && modelCaps[card.template.id]
       const capsCount = caps ? Number(!!caps.thinking) + Number(!!caps.tools) + Number(!!caps.vision) : 0
-      const capsW = capsCount > 0 ? capsCount * 20 + 4 : 0
-      maxW = Math.max(maxW, ctx.measureText(card.template.name).width + 26 + 8 * 3 + 28 + 24 + 24 + capsW)
+      if (capsCount > 0) maxCapsW = Math.max(maxCapsW, capsCount * 17 + 6)
     }
-    return Math.min(Math.max(maxW, 300), 560)
-  }, [agentCards, modelCaps])
+    // 行内固定余量：logo 18 + 三处间距 6×3 + 行尾 22 + 行内边距 8×2 + 面板内边距 4×2
+    const widest = Math.max(...texts.map(t => ctx.measureText(t).width))
+    return Math.min(Math.max(widest + maxCapsW + 18 + 6 * 3 + 22 + 16 + 8, 200), 560)
+  }, [modelGroups, modelCaps])
   // 各模型的自定义 Logo（key = template.id；data URL 或 null=无）：全局 store 共享，
   // 与「我的模板」卡片同一份数据，任一处设置/移除后两处立即同步
   const modelLogos = useStore(s => s.modelLogos)
@@ -198,6 +201,10 @@ export function useAgentUiState({
   }, [modelPickerOpen])
   const modelBtnRef = useRef<HTMLButtonElement>(null)
   const attachBtnRef = useRef<HTMLButtonElement>(null)
+  // 模型下拉的关闭逻辑与搜索菜单同款：点面板外或 Esc 关闭，点触发按钮交给按钮自己 toggle。
+  // 行内 Logo 的「更换/移除」浮层挂在面板之外，点它不能算点外部，故一并列为内部区域
+  const closeModelPicker = useCallback(() => setModelPickerOpen(false), [setModelPickerOpen])
+  usePopoverDismiss(modelPickerOpen, closeModelPicker, modelBtnRef, '.chat-model-logo-menu', modelPickerRef)
   // ── 右侧面板状态按模式分槽 ──
   // 要求：切模式恢复该模式上次的面板布局，且不污染另一个模式的会话状态。
   // 两种模式的文件树都默认收起：首屏把横向空间全留给对话区，需要看文件时由顶栏

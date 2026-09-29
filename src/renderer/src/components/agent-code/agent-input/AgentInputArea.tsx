@@ -21,7 +21,7 @@
 
 import React, { useEffect, useState } from 'react'
 import { AlertCircle, AlignLeft, Brain, Eye, Globe, Image as ImageIcon, Search, SearchX, Wrench } from 'lucide-react'
-import { CheckIcon, ChevronDownIcon, CircleStopIcon, CodeIcon, FileTextIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, MicIcon, PlayIcon, PlusIcon, QuoteIcon, RefreshCwIcon, SendIcon, TrashIcon, XIcon } from '@animateicons/react/lucide'
+import { CheckIcon, ChevronDownIcon, CircleStopIcon, CodeIcon, FileTextIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, MicIcon, PlayIcon, PlusIcon, QuoteIcon, RefreshCwIcon, SendIcon, ServerIcon, TrashIcon, XIcon } from '@animateicons/react/lucide'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import AgentFilePicker from '../../AgentFilePicker'
 import AskUserQuestionInline from '../../AskUserQuestionInline'
@@ -30,8 +30,9 @@ import { AttachmentTextPreview, type PreviewableAttachment } from '../agent-mess
 import { TOOL_META, formatToolArgs } from '../agent-tools'
 import { TOOL_METAS } from '../../../utils/tools'
 import { THINKING_LEVELS } from '../../../../../shared/types'
-import type { Attachment, CardState, ThinkingLevel } from '../../../../../shared/types'
+import type { Attachment, CardState, ModelEndpoint, ThinkingLevel } from '../../../../../shared/types'
 import { useStore } from '../../../store/useStore'
+import { endpointOfCard, type ModelPickerGroup } from '../../../utils/endpoint'
 import { useThemeStore } from '../../../store/themeStore'
 import type { useAgentGit } from '../hooks/useAgentGit'
 import type { useAgentInput } from '../hooks/useAgentInput'
@@ -51,7 +52,7 @@ export type AgentInputAreaProps = {
     toggleListen: () => void
   }
   models: {
-    agentCards: CardState[]
+    modelGroups: ModelPickerGroup[]
     modelBtnRef: React.RefObject<HTMLButtonElement | null>
     modelCaps: ReturnType<typeof useStore.getState>['modelCapabilities']
     modelLabel: string
@@ -60,6 +61,8 @@ export type AgentInputAreaProps = {
     modelPickerRef: React.RefObject<HTMLDivElement | null>
     modelPickerWidth: number
     handleModelAction: (card: CardState) => Promise<void>
+    /** 端点上还没建卡的模型名：点这一行就地建卡并启用 */
+    pickEndpointModel: (ep: ModelEndpoint, modelId: string) => Promise<void>
     logoMenu: { id: string; x: number; y: number } | null
     logoMenuRef: React.RefObject<HTMLDivElement | null>
     toggleLogoMenu: (e: React.MouseEvent, card: CardState) => void
@@ -159,7 +162,7 @@ export function AgentInputArea({
     setSlashIdx, slashPopRef, onPickAtFile, onPickSlash,
   } = hintsDomain
   const { listening, micTranscribing, toggleListen } = mic
-  const { agentCards, modelBtnRef, modelCaps, modelLabel, modelLogos, modelPickerOpen, modelPickerRef, modelPickerWidth, handleModelAction, logoMenu, logoMenuRef, toggleLogoMenu, pickModelLogo, removeModelLogo, setModelPickerOpen, thinkLevelMenuRef, thinkLevelOpen, setThinkLevelOpen, thinkingLevel, setThinkingLevel } = models
+  const { modelGroups, modelBtnRef, modelCaps, modelLabel, modelLogos, modelPickerOpen, modelPickerRef, modelPickerWidth, handleModelAction, pickEndpointModel, logoMenu, logoMenuRef, toggleLogoMenu, pickModelLogo, removeModelLogo, setModelPickerOpen, thinkLevelMenuRef, thinkLevelOpen, setThinkLevelOpen, thinkingLevel, setThinkingLevel } = models
   const { searchEnabled, searchProvider, searchMenuOpen, searchMenuRef, setSearchMenuOpen, applySearchChange } = search
   const { plainChat } = chatMode
   const { apiBaseUrl, curToolName, followUpQueueRef, handleSend, handleStop, loading, piReadyRef, prevQueueRef, queueInfo, setQueueInfo, runningCard, streamKind, streaming, thinkDone } = run
@@ -167,6 +170,10 @@ export function AgentInputArea({
   const { activeProject, activeProjectId, activeSessionId, attachBtnRef, branchBtnRef, branchMenuOpen, branchMenuRef, branches, cards, chatInputAreaRef, checkoutBranch, contextModalOpen, ctxInlineRef, currentBranch, projects, setActiveProjectId, setActiveSessionId, setBranchMenuOpen, setContextModalOpen, setWorkspaceMenuOpen, workspaceBtnRef, workspaceMenuOpen, workspaceMenuRef } = shell
   // 附件 chip 点开看抽取文本（PDF / DOCX / 文本文件），与消息气泡里的文件卡片同一个预览层
   const [attPreview, setAttPreview] = useState<PreviewableAttachment | null>(null)
+  // 外部端点：卡片只存 endpointId，这里查表是为了区分「本机端口 / 远程」的角标与提示文案；
+  // 端点本身在「外部端点」页管理，下拉里只留一个跳转入口。
+  const modelEndpoints = useStore(s => s.modelEndpoints)
+  const setView = useStore(s => s.setView)
   // 通用模式收掉「选择文件」（工作区文件选择器）：若切换时它正开着，先关掉再收按钮，
   // 否则切回编码模式会看到上次遗留的弹层自己冒出来。
   useEffect(() => {
@@ -530,30 +537,60 @@ export function AgentInputArea({
                 )}
                 <span className="chat-model-dropdown-name">{runningCard ? modelLabel : '选择模型'}</span>
               </button>
-              <div ref={modelPickerRef} className={`chat-model-picker${modelPickerOpen ? ' open' : ''}`} style={{ width: modelPickerWidth }}>
-                {agentCards.map(card => (
-                  <div key={card.template.id} className={`chat-model-item ${card.status}`} onClick={() => handleModelAction(card)}>
-                    <div className="chat-model-logo" onClick={e => { e.stopPropagation(); toggleLogoMenu(e, card) }}>
-                      {modelLogos[card.template.id]
-                        ? <img src={modelLogos[card.template.id]!} alt={card.template.name} className="chat-model-logo-img" />
-                        : <ImageIcon size={12} />}
-                    </div>
-                    <div className="chat-model-item-info">
-                      <div className="chat-model-item-name">{card.template.name}</div>
-                      {modelCaps[card.template.id] && (
-                        <span className="chat-model-caps">
-                          {modelCaps[card.template.id]?.thinking && <span className="chat-model-cap cap-thinking"><Brain size={13} /></span>}
-                          {modelCaps[card.template.id]?.tools && <span className="chat-model-cap cap-tools"><Wrench size={13} /></span>}
-                          {modelCaps[card.template.id]?.vision && <span className="chat-model-cap cap-vision"><Eye size={13} /></span>}
-                        </span>
-                      )}
-                      <button className="chat-model-item-action" onClick={e => { e.stopPropagation(); handleModelAction(card) }}>
-                        {card.status === 'running' ? <CircleStopIcon size={12} /> : <PlayIcon size={12} />}
-                      </button>
-                    </div>
+              {/* 与搜索/思考等级菜单同一套弹出逻辑：打开才挂载，点外部或 Esc 关闭 */}
+              {modelPickerOpen && (
+              <div ref={modelPickerRef} className="chat-model-picker" style={{ width: modelPickerWidth }}>
+                {modelGroups.map(group => (
+                  <div key={group.title} className="chat-model-group">
+                    <div className="chat-model-group-title">{group.title}</div>
+                    {group.rows.map(row => {
+                      const card = row.card
+                      // 端点记录：卡片行按 endpointId 查，端点行（还没建卡）就是它自己
+                      const ep = card ? endpointOfCard(card, modelEndpoints) : row.endpoint
+                      const running = card?.status === 'running'
+                      const pick = () => { if (card) void handleModelAction(card); else if (row.endpoint) void pickEndpointModel(row.endpoint, row.modelId ?? '') }
+                      return (
+                        <div key={row.key} className={`chat-model-item ${card ? card.status : 'idle'}${card ? '' : ' pending'}`} title={row.name} onClick={pick}>
+                          <div className="chat-model-logo" onClick={e => { if (!card) return; e.stopPropagation(); toggleLogoMenu(e, card) }}>
+                            {card && modelLogos[card.template.id]
+                              ? <img src={modelLogos[card.template.id]!} alt={row.name} className="chat-model-logo-img" />
+                              : ep ? <ServerIcon size={11} /> : <ImageIcon size={11} />}
+                          </div>
+                          <div className="chat-model-item-info">
+                            <div className="chat-model-item-name">{row.name}</div>
+                            {card && modelCaps[card.template.id] && (
+                              <span className="chat-model-caps">
+                                {modelCaps[card.template.id]?.thinking && <span className="chat-model-cap cap-thinking"><Brain size={11} /></span>}
+                                {modelCaps[card.template.id]?.tools && <span className="chat-model-cap cap-tools"><Wrench size={11} /></span>}
+                                {modelCaps[card.template.id]?.vision && <span className="chat-model-cap cap-vision"><Eye size={11} /></span>}
+                              </span>
+                            )}
+                            <div className="chat-model-item-tail">
+                              {running && <CheckIcon size={12} className="chat-model-item-check" />}
+                              <button
+                                className="chat-model-item-action"
+                                title={ep
+                                  ? (ep.kind === 'remote'
+                                    ? running ? '停用该端点（不会碰那边的服务）' : '探测并启用该端点'
+                                    : running ? '断开接管（不会关掉那边的服务）' : '接管该端口上的服务')
+                                  : undefined}
+                                onClick={e => { e.stopPropagation(); pick() }}
+                              >
+                                {running ? <CircleStopIcon size={12} /> : ep ? <ServerIcon size={12} /> : <PlayIcon size={12} />}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 ))}
+                <div className="chat-model-attach-sep" />
+                <button className="chat-model-attach-entry" onClick={() => { setModelPickerOpen(false); setView('endpoints') }}>
+                  <ServerIcon size={13} /> 管理外部端点…
+                </button>
               </div>
+              )}
             </div>
             {!plainChat && (
               <div

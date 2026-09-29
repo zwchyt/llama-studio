@@ -1,6 +1,6 @@
 {
   "name": "llama-studio",
-  "version": "1.0.228",
+  "version": "1.0.229",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",
   "main": "out/main/index.js",
@@ -14,7 +14,6 @@
     "build": "node scripts/build-filtered.js",
     "preview": "electron-vite preview --logLevel silent",
     "package": "electron-vite build && electron-builder --publish never",
-    "postinstall": "electron-rebuild -w node-pty",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
   },
   "trustedDependencies": [
@@ -25,9 +24,9 @@
   },
   "dependencies": {
     "@animateicons/react": "^0.4.3",
-    "@earendil-works/pi-agent-core": "^0.87.1",
-    "@earendil-works/pi-ai": "^0.87.1",
-    "@earendil-works/pi-coding-agent": "^0.87.1",
+    "@earendil-works/pi-agent-core": "^0.99.1",
+    "@earendil-works/pi-ai": "^0.99.1",
+    "@earendil-works/pi-coding-agent": "^0.99.1",
     "@vscode/ripgrep": "^1.18.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",

@@ -4,6 +4,7 @@ import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
 import { Activity, Database, HardDrive, Square, HardDrive as MemIcon, Zap, Clock, Gauge, Play, MessageSquare, Thermometer, Cpu, RefreshCw, ExternalLink, Copy, Check, ChevronDown, Timer } from 'lucide-react'
 import '../styles/monitoring.css'
+import { addressOfEndpoint, endpointOfCard } from '../utils/endpoint'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function fmt(n: unknown, digits = 1): string {
@@ -86,6 +87,8 @@ function RunningCard({ card, metrics: metricsProp }: { card: import('../../../sh
     toggleMonitorExpanded: s.toggleMonitorExpanded, setCardStatus: s.setCardStatus, clearActiveChat: s.clearActiveChat, systemMetrics: s.systemMetrics
   }), shallow)
   const isRunning = card.status === 'running'
+  // 外部端点卡：地址/协议/模型名都在端点表上，这里查出来只为展示
+  const endpoint = endpointOfCard(card, useStore.getState().modelEndpoints)
   // 模型 API 数据只在模型未空闲时有值：模型一停（idle）这些数据即归零，
   // 而下面的系统数据取自 systemMetrics（常驻广播），不受模型启停影响。
   const metrics = card.status === 'idle' ? null : metricsProp
@@ -135,14 +138,14 @@ function RunningCard({ card, metrics: metricsProp }: { card: import('../../../sh
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="monitoring-card-name" style={isRunning ? { color: 'var(--success)' } : {}}>{card.template.name}</div>
-        <div className="monitoring-card-meta">Port {card.template.serverPort} · {card.template.backendVersion || '默认后端'}</div>
+        <div className="monitoring-card-meta">{endpoint ? `端点 ${addressOfEndpoint(endpoint)}` : `Port ${card.template.serverPort}`} · {card.template.backendVersion || '默认后端'}</div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span className="monitoring-status-dot" style={{ background: statusInfo.color }} />
         <span className="monitoring-status-text" style={{ color: statusInfo.color }}>{statusInfo.label}</span>
         {card.pid && <span className="monitoring-pid">PID {card.pid}</span>}
         {isRunning && (
-          <button className="btn btn-ghost btn-icon btn-stop-model" onClick={(e) => { e.stopPropagation(); handleStop() }} title="停止">
+          <button className="btn btn-ghost btn-icon btn-stop-model" onClick={(e) => { e.stopPropagation(); handleStop() }} title={card.template.external ? '断开（只取消本应用的登记，不关那边的服务）' : '停止'}>
             <Square size={13} />
           </button>
         )}
@@ -152,7 +155,25 @@ function RunningCard({ card, metrics: metricsProp }: { card: import('../../../sh
     {card.monitorExpanded && (
       <div className="monitoring-card-details">
         {/* Static info */}
-        <div className="monitoring-detail-row"><span>端口</span><span>{card.template.serverPort}</span></div>
+        {endpoint ? (
+          <>
+            <div className="monitoring-detail-row"><span>端点</span><span>{addressOfEndpoint(endpoint)}</span></div>
+            <div className="monitoring-detail-row"><span>类型</span><span>{endpoint.kind === 'local-port' ? '本机端口（别处启动）' : '远程 URL'}</span></div>
+            {endpoint.kind === 'remote' && (
+              <div className="monitoring-detail-row"><span>协议</span><span>{endpoint.api}</span></div>
+            )}
+            <div className="monitoring-detail-row"><span>模型名</span><span>{card.template.endpointModelId || endpoint.modelIds[0] || '未填'}</span></div>
+            {/* 远程端点没有 /props 与 /slots：上下文只能取端点表上手填的值，本机端口型仍按实时上报 */}
+            {endpoint.kind === 'remote' && (
+              <>
+                <div className="monitoring-detail-row"><span>上下文</span><span>{endpoint.contextWindow || 128000}（手填）</span></div>
+                <div className="monitoring-detail-row"><span>图像输入</span><span>{endpoint.vision ? '已勾选支持' : '未勾选（按不支持）'}</span></div>
+              </>
+            )}
+          </>
+        ) : (
+          <div className="monitoring-detail-row"><span>端口</span><span>{card.template.serverPort}</span></div>
+        )}
         <div className="monitoring-detail-row"><span>后端</span><span>{card.template.backendVersion || '默认'}</span></div>
         <div className="monitoring-detail-row"><span>启动模式</span><span>{card.template.launchMode === 'api' ? '仅 API' : 'Chat UI'}</span></div>
         {card.template.modelPath && (

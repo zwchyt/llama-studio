@@ -8,7 +8,7 @@ import { createMainTools, type MainToolExecutors } from './tools/mainTools'
 import { PLAIN_CHAT_TOOL_NAMES as CHAT_TOOL_NAMES } from '../../../shared/types'
 import { appendSessionEvent, writeTrajectoryHeader, appendLlmRequest, summarizeLlmRequest, appendUserEntry, appendLlmSystemMessages } from './trajectory'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
-import type { ThinkingLevel, TokenUsageEntry } from '../../../shared/types'
+import type { ThinkingLevel, TokenUsageEntry, RemoteEndpoint } from '../../../shared/types'
 import { PI_TOOL_GUIDANCE, PI_CHART_ROUTING, PI_MERMAID_DSL_GUIDANCE, PI_CHART_FENCE_GUIDANCE, PI_SVG_GUIDANCE, PI_MERMAID_JSON_GUIDANCE, PLAIN_CHAT_SYSTEM_PROMPT } from '../../../shared/agentGuidance'
 
 /** llama-studio 会话历史消息（pi 模式注入用，与 shared/types 的 AgentMessage 结构对应） */
@@ -21,8 +21,10 @@ export interface PiHistoryMessage {
 
 export interface PiAgentSessionOptions {
   sessionId: string
-  /** 模型端口（llama-server 监听端口；IPC 不能传函数，会话创建时固定） */
+  /** 模型端口（llama-server 监听端口；IPC 不能传函数，会话创建时固定）。远程端点卡传 0 */
   port: number
+  /** 远程端点：填了就取代 port（见 piAgentBridge/index.ts 的 provider 注册） */
+  endpoint?: RemoteEndpoint
   /** agent 工作目录（会同步给 ipc.ts 的 agentWorkspaceRoot，供 Read/Bash 相对路径解析） */
   cwd: string
   /** 模型上下文窗口 token 数（供 pi 的 auto-compaction 阈值计算；默认 128000） */
@@ -90,6 +92,8 @@ export class PiAgentManager {
   private readonly undoStore = new Map<string, { path: string; content: string | null }>()
   /** 会话 → 模型端口（Token 记账用） */
   private readonly ports = new Map<string, number>()
+  /** 会话 → 远程端点：没有本机端口可依据时，记账按 baseUrl + 模型名归属 */
+  private readonly endpoints = new Map<string, RemoteEndpoint>()
   /** 工具白名单（pi 只激活这些工具） */
   private readonly toolNames: string[]
 
@@ -153,6 +157,8 @@ export class PiAgentManager {
   async createSession(opts: PiAgentSessionOptions): Promise<void> {
     if (this.bridges.has(opts.sessionId)) this.disposeSession(opts.sessionId)
     this.ports.set(opts.sessionId, opts.port)
+    if (opts.endpoint) this.endpoints.set(opts.sessionId, opts.endpoint)
+    else this.endpoints.delete(opts.sessionId)
     // 纯聊天：默认工具与提示词一起关（见 PiAgentSessionOptions.plainChat 的说明）。
     // chatTools 允许按需开启原生聊天那四个工具，但默认是空 = 纯对话。
     // 关掉工具时 web_search 那套互斥白名单、知识库工具、自定义工具都不会被激活，
@@ -202,6 +208,7 @@ export class PiAgentManager {
     const userPromptSections = buildUserPromptSections(opts)
     const bridge = await createPiAgentBridge({
       getPort: () => opts.port,
+      endpoint: opts.endpoint,
       getContextWindow: () => opts.contextWindow ?? 128000,
       cwd: opts.cwd,
       agentDir: opts.agentDir,
@@ -264,20 +271,27 @@ export class PiAgentManager {
     if (!usage || typeof usage.input !== 'number' || typeof usage.output !== 'number') return
     if (usage.input < 0 || usage.output < 0) return
     const port = this.ports.get(sessionId)
-    if (!port) return
-    const info = await this.executors.getPortModelInfo(port)
+    const ep = this.endpoints.get(sessionId)
+    // 远程端点没有端口可依据，但账必须记（归属用 baseUrl + 模型名）。在这里早退一次，
+    // 就是静默断账 —— 与当初 pi 搬进 utilityProcess 那次同症状。
+    if (!port && !ep) return
+    const info = port ? await this.executors.getPortModelInfo(port) : undefined
     const base: TokenUsageEntry = {
       ts: Date.now(),
-      port,
+      port: port ?? 0,
       templateId: info?.templateId,
-      modelPath: info?.modelPath ?? null,
+      modelPath: ep ? `${ep.baseUrl}${ep.modelId ? ` · ${ep.modelId}` : ''}` : (info?.modelPath ?? null),
       promptTokens: usage.input,
       completionTokens: usage.output
+    }
+    if (ep) {
+      void this.executors.appendTokenUsage(base).catch(() => { /* 入账失败不阻断请求 */ })
+      return
     }
     // 模型名优先从 llama.cpp 的 /props 接口实时获取（返回实际加载的 model_path，
     // 用户切换模型/进程残留/端口复用时依然准确），失败回退启动参数登记值。
     // 异步入账，不阻塞事件流。
-    void fetchModelPathFromProps(port).then((p) => {
+    void fetchModelPathFromProps(port as number).then((p) => {
       // 入账动作本身回主进程做：tokenLedger 的目录注入与 promptDelta 累计表只在主进程有，
       // worker 内 ledgerDir 为空，本地 append 会被直接丢弃（曾导致 pi 模式 token 统计全丢）。
       void this.executors.appendTokenUsage(p ? { ...base, modelPath: p } : base).catch(() => { /* 入账失败不阻断请求 */ })
@@ -329,6 +343,7 @@ export class PiAgentManager {
     bridge.dispose()
     this.bridges.delete(sessionId)
     this.ports.delete(sessionId)
+    this.endpoints.delete(sessionId)
   }
 
   disposeAll(): void {

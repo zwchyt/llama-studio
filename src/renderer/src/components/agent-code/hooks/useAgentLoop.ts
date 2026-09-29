@@ -34,8 +34,9 @@ import { noteUserCorrection, probeContradiction } from '../../../utils/memoryWri
 import { parseSlashCommand, findCommand, expandCommandTemplate } from '../../../agent/slashCommands'
 import { newMsgId, uniqueId } from '../utils/ids'
 import { MIN_EXEC_DISPLAY_MS, KEEP_RECENT_TURNS } from '../utils/constants'
-import type { AgentMessage, AgentSession, AgentTask, Attachment, CardState, ThinkingLevel, TodoUpdate } from '../../../../../shared/types'
+import type { AgentMessage, AgentSession, AgentTask, Attachment, CardState, RemoteEndpoint, ThinkingLevel, TodoUpdate } from '../../../../../shared/types'
 import { projectMode } from '../../../../../shared/types'
+import { remoteOfCard } from '../../../utils/endpoint'
 import type { useAgentInput } from './useAgentInput'
 import type { useAgentProjects } from './useAgentProjects'
 
@@ -113,7 +114,8 @@ export function useAgentLoop({
   /** ── 主组件内的 useCallback（作为依赖注入，避免本域反向依赖其声明）── */
   condenseSessionMemory: (
     pid: string, sid: string, messages: AgentMessage[],
-    memory: AgentSession['memory'], budget: number, port: number, force?: boolean
+    memory: AgentSession['memory'], budget: number, port: number, force?: boolean,
+    endpoint?: RemoteEndpoint
   ) => Promise<AgentSession['memory']>
   appendQueuedUserMsg: (text: string) => void
   queueRemoved: (prev: string[], next: string[]) => string[]
@@ -210,18 +212,22 @@ export function useAgentLoop({
       // 投影，/props 才会报 modalities.vision=true。本地能力表是按模型文件名/模板关键词
       // 推断的，判错还会缓存下来一直用错——把图片发给一个不认图的端点会直接让这轮请求
       // 报错。所以默认用能力表兜底，只要 /props 给了明确答案就以它为准。
-      const capsVision = (): boolean => {
-        const rc = useStore.getState().cards.find(c => c.status === 'running')
-        return rc ? useStore.getState().modelCapabilities[rc.template.id]?.vision === true : false
+      // 远程端点没有 /props，那边只有面板上手勾的那一项可信（未勾就是不支持，不猜）。
+      const curCard = useStore.getState().cards.find(c => c.status === 'running')
+      const endpoint = remoteOfCard(curCard, useStore.getState().modelEndpoints)
+      const capsVision = (): boolean => (curCard ? useStore.getState().modelCapabilities[curCard.template.id]?.vision === true : false)
+      let vision = endpoint ? endpoint.vision === true : capsVision()
+      if (!endpoint) {
+        try {
+          const props = await window.api.getServerProps(opts.port)
+          if (props?.ok && typeof props.modalities?.vision === 'boolean') vision = props.modalities.vision === true
+        } catch { /* /props 不可用（非 llama.cpp 系端点等）：沿用本地能力表 */ }
       }
-      let vision = capsVision()
-      try {
-        const props = await window.api.getServerProps(opts.port)
-        if (props?.ok && typeof props.modalities?.vision === 'boolean') vision = props.modalities.vision === true
-      } catch { /* /props 不可用（非 llama.cpp 系端点等）：沿用本地能力表 */ }
       const res = await window.api.piAgent.create({
         sessionId: piSessionId,
         port: opts.port,
+        // 远程端点整包下发：pi 的 provider 直接按这个 baseUrl / 协议 / key 注册
+        ...(endpoint ? { endpoint } : {}),
         cwd: opts.workspaceDir || '.',
         approveWriteEdit: opts.approveWriteEdit === true,
         knowledgeBaseId: opts.knowledgeBaseId || undefined,
@@ -233,10 +239,8 @@ export function useAgentLoop({
         projectSystemPrompt: opts.projectSystemPrompt,
         projectMemoryNotes: opts.projectMemoryNotes,
         memoryInjection: memoryInjection || undefined,
-        contextWindow: (() => {
-          const rc = useStore.getState().cards.find(c => c.status === 'running')
-          return rc ? useStore.getState().modelMetrics[rc.template.id]?.nCtx || undefined : undefined
-        })(),
+        contextWindow: endpoint?.contextWindow
+          ?? (curCard ? useStore.getState().modelMetrics[curCard.template.id]?.nCtx || undefined : undefined),
         // 模型支持图像输入时才声明 image 模态，browser_screenshot 的截图才会随工具结果回灌
         vision,
         history,
@@ -893,9 +897,11 @@ export function useAgentLoop({
         while (coveredPrefix < activeSession.messages.length && coveredSet.has(activeSession.messages[coveredPrefix]!.id)) coveredPrefix++
         const turns = splitAgentTurns(activeSession.messages.slice(coveredPrefix))
         if (turns.length > KEEP_RECENT_TURNS) {
-          const ctxN = useStore.getState().modelMetrics[runningCard.template.id]?.nCtx || 0
+          const epForCtx = remoteOfCard(runningCard, useStore.getState().modelEndpoints)
+          const ctxN = epForCtx?.contextWindow
+            ?? (useStore.getState().modelMetrics[runningCard.template.id]?.nCtx || 0)
           const ctxBudget = computeContextBudget(ctxN)
-          memoryForTurn = await condenseSessionMemory(activeProjectId, activeSessionId, activeSession.messages, activeSession.memory, ctxBudget, runningCard.template.serverPort, false)
+          memoryForTurn = await condenseSessionMemory(activeProjectId, activeSessionId, activeSession.messages, activeSession.memory, ctxBudget, runningCard.template.serverPort, false, epForCtx)
         }
       }
       await runPiTurn(pid, sid, displayMsgs, {

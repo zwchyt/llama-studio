@@ -41,7 +41,8 @@ import { TaskPlanCard } from '../agent-task'
 import { AgentPreviewSlot } from '../agent-preview/AgentPreviewSlot'
 import type { AgentMsgRowActions } from '../types'
 import { PLAIN_CHAT_TOOL_NAMES } from '../../../../../shared/types'
-import type { CardState } from '../../../../../shared/types'
+import type { CardState, ModelEndpoint } from '../../../../../shared/types'
+import type { ModelPickerGroup } from '../../../utils/endpoint'
 import type { useAgentProjects } from '../hooks/useAgentProjects'
 import type { useAgentInput } from '../hooks/useAgentInput'
 import type { useAgentPreviewTabs } from '../hooks/useAgentPreviewTabs'
@@ -88,11 +89,13 @@ export interface AgentCodeViewLayoutProps {
   // cards 直接取自 store；其 CardState 是 useStore 内的私有接口（monitorExpanded 为必填），
   // 与 shared/types 的同名接口在 exactOptionalPropertyTypes 下不可互换，故按 store 的推导类型标注。
   cards: ReturnType<typeof useStore.getState>['cards']
-  agentCards: CardState[]
+  modelGroups: ModelPickerGroup[]
   runningCard: CardState | undefined
   apiBaseUrl: string | null
   modelLabel: string
   handleModelAction: (card: CardState) => Promise<void>
+  /** 下拉里点「端点上还没建卡的模型名」：就地建卡并启用 */
+  pickEndpointModel: (ep: ModelEndpoint, modelId: string) => Promise<void>
   handleStop: () => void
   /** 正在朗读的消息 id（通用模式用；非该模式恒为 null） */
   speakingId: string | null
@@ -111,7 +114,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   const {
     projects: projectsDomain, inputDomain, preview: previewDomain, hints: hintsDomain,
     run, ui, condense, messageActions, scroll, git, mic, loop, panels, modals, sessionActions,
-    cards, agentCards, runningCard, apiBaseUrl, modelLabel, handleModelAction, handleStop,
+    cards, modelGroups, runningCard, apiBaseUrl, modelLabel, handleModelAction, pickEndpointModel, handleStop,
     speakingId,
     msgEndRef, msgRowActionsRef, chatInputAreaRef,
     handleKeyDown, handleInputChange,
@@ -941,8 +944,8 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               listening, micTranscribing, toggleListen,
             }}
             models={{
-              agentCards, modelBtnRef, modelCaps, modelLabel, modelLogos,
-              modelPickerOpen, modelPickerRef, modelPickerWidth, handleModelAction,
+              modelGroups, modelBtnRef, modelCaps, modelLabel, modelLogos,
+              modelPickerOpen, modelPickerRef, modelPickerWidth, handleModelAction, pickEndpointModel,
               logoMenu, logoMenuRef, toggleLogoMenu, pickModelLogo, removeModelLogo,
               setModelPickerOpen, thinkLevelMenuRef, thinkLevelOpen,
               setThinkLevelOpen, thinkingLevel, setThinkingLevel,

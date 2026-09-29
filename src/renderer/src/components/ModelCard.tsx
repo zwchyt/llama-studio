@@ -7,6 +7,7 @@ import { safeCall } from '../utils/safeCall'
 import { playEvent } from '../utils/sound'
 import { usePopoverDismiss } from '../utils/usePopoverDismiss'
 import { ENGINE_LABELS, paramSetOf } from '../utils/engine'
+import { endpointOfCard, probeTargetOf, remoteOfCard } from '../utils/endpoint'
 import { PlayIcon, CircleStopIcon, SettingsIcon, EllipsisVerticalIcon, CopyIcon, TrashIcon, DownloadIcon, GlobeIcon, ServerIcon, TerminalIcon, CheckIcon, MessageSquareIcon, ImageIcon, ScanIcon, RefreshCwIcon, AudioLines } from '@animateicons/react/lucide'
 import type { CardState } from '../../../shared/types'
 import ParamsModal from './ParamsModal'
@@ -130,6 +131,35 @@ export default function ModelCard({ card, style }: Props) {
     }
   }, [])
   async function handleRunToggle() {
+    // 外部端点卡：服务/端点不由本应用启动，这里只切「启用 / 停用」两面，既不 spawn 也不杀进程
+    if (card.template.external) {
+      const st = useStore.getState()
+      const ep = endpointOfCard(card, st.modelEndpoints)
+      const remote = remoteOfCard(card, st.modelEndpoints)
+      if (isRunning) {
+        setCardStatus(card.template.id, 'idle')
+        clearModelMetrics(card.template.id)
+        if (ep?.kind === 'local-port') void window.api.detachEndpoint(card.template.id).catch(() => {})
+        notify(!ep ? '已停用（这张卡没有关联端点了，请到「外部端点」页重新添加）'
+          : remote ? `已停用 ${ep.name}` : `已断开 :${ep.port}（那边的服务没有被关掉）`)
+      } else if (!ep) {
+        notify(`「${card.template.name}」没有关联的端点记录了，请到「外部端点」页重新添加`, 'error')
+        playEvent('error')
+      } else if (remote) {
+        const p = await safeCall(() => window.api.probeEndpoint(probeTargetOf(ep)), '端点探测失败')
+        if (!p?.ok) { notify(`端点不可用：${p?.error ?? '探测失败'}`, 'error'); playEvent('error'); return }
+        setCardStatus(card.template.id, 'running')
+        st.setCardReady(card.template.id, true)
+        notify(`已启用端点 ${ep.name}`)
+      } else {
+        const res = await safeCall(() => window.api.attachEndpoint(card.template.id, ep.port ?? card.template.serverPort), '接管失败')
+        if (!res?.success) { notify(`接管失败：${res?.error ?? '未探测到服务'}`, 'error'); playEvent('error'); return }
+        setCardStatus(card.template.id, 'running')
+        st.setCardReady(card.template.id, true)
+        notify(`已接管 :${ep.port} 上的服务`)
+      }
+      return
+    }
     if (isRunning) {
       // optimistic update: update UI immediately for zero-latency
       setCardStatus(card.template.id, 'idle')

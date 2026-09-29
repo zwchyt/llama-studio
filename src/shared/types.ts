@@ -49,6 +49,14 @@ export interface Template {
   paramSet?: EngineKind
   /** 各引擎/参数集独立保存的启动参数（切换引擎时保留各自的自定义值）；args 始终等于当前 paramSet 的那一套 */
   argsByParamSet?: Partial<Record<Exclude<EngineKind, 'other'>, TemplateArgs>>
+  /** 接管卡：服务/端点不由本应用启动（不在本应用进程表里），运行态由探测驱动而非 spawn。
+   *  带这个标记的卡永远不走 run-model / stop-model 的杀进程路径。 */
+  external?: boolean
+  /** 指向「外部端点」表（APP_ROOT/endpoints.json）里的一条：地址、协议、API key、上下文窗口
+   *  都存在那张表上，卡片只带引用。同一个端点的多个模型 = 多张卡共用一个 endpointId。 */
+  endpointId?: string
+  /** 这张卡用该端点的哪个模型名（远程服务通常严格校验；端点只有一个模型时可省） */
+  endpointModelId?: string
   createdAt: string
   updatedAt: string
   _file?: string
@@ -196,6 +204,85 @@ export interface CardState {
   expanded: boolean
   monitorExpanded?: boolean
   ready?: boolean // 已监听到 llama_server 监听日志（服务就绪可对外提供服务）
+}
+
+/** pi 认的三种「自建/第三方端点」协议（KnownApi 的子集，界面下拉只给这几个） */
+export type EndpointApi = 'openai-completions' | 'openai-responses' | 'anthropic-messages'
+
+/** 远程模型端点：把 Agent 指到任意 OpenAI/Anthropic 兼容服务上。
+ *  baseUrl 按 pi 的习惯填到版本路径为止，例如 http://127.0.0.1:8080/v1 或 https://api.x.com/v1。
+ *  这是「解析后的运行态形状」（渲染层从 ModelEndpoint 表 + 卡片选定的模型名拼出来），
+ *  持久化的是下面的 ModelEndpoint。 */
+export interface RemoteEndpoint {
+  baseUrl: string
+  api: EndpointApi
+  /** 明文存在 endpoints.json 里（本机应用，无系统密钥链）；界面要如实标出来 */
+  apiKey?: string
+  /** 远程服务通常严格校验模型名，本机 llama-server 可留空 */
+  modelId?: string
+  /** 端点没有 /props，上下文窗口只能手填；缺省 128000 */
+  contextWindow?: number
+  /** 同样只能手勾：勾了截图工具才会把 PNG 回灌给模型 */
+  vision?: boolean
+}
+
+/** 「外部端点」表里的一条记录（APP_ROOT/endpoints.json）。
+ *  一个端点可以挂多个模型名（modelIds），每个模型名对应一张模型卡片。 */
+export interface ModelEndpoint {
+  id: string
+  /** 用户起的名字，如「本机 8080」「公司网关」 */
+  name: string
+  /** local-port = 本机某端口上已被别处启动的服务；remote = 任意 base URL */
+  kind: 'local-port' | 'remote'
+  /** kind=local-port：llama-server 监听端口 */
+  port?: number
+  /** kind=remote：填到版本路径为止（…/v1） */
+  baseUrl?: string
+  /** kind=remote：请求协议 */
+  api?: EndpointApi
+  apiKey?: string
+  /** 该端点可用的模型名；探测到列表后可直接选一个建卡 */
+  modelIds: string[]
+  contextWindow?: number
+  vision?: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+/** 探测目标：本机端口 或 远程 URL（二选一，port 优先） */
+export interface ProbeTarget {
+  port?: number
+  baseUrl?: string
+  api?: EndpointApi
+  apiKey?: string
+}
+
+/** 探测结果（本机＝/props + /v1/models 合并；远程＝models 列表） */
+export interface EndpointProbe {
+  ok: boolean
+  port?: number
+  baseUrl?: string
+  /** llamacpp = /props 有应答（llama.cpp 及各 fork）；other = 只有 models 列表应答的兼容端点；null = 没有服务 */
+  engine: 'llamacpp' | 'other' | null
+  /** /v1/models 的 data[0].id，llama-server 那里就是实际加载的模型路径 */
+  modelId?: string
+  /** 端点上报的全部模型名，面板据此让用户挑 */
+  modelIds?: string[]
+  modelAlias?: string
+  nCtx?: number
+  modalities?: { vision?: boolean; audio?: boolean }
+  error?: string
+}
+
+/** attach-endpoint 的返回：登记成功时带回探测结果供界面回显 */
+export interface EndpointAttachResult {
+  success: boolean
+  error?: string
+  engine?: EndpointProbe['engine']
+  modelId?: string
+  modelAlias?: string
+  nCtx?: number
+  modalities?: { vision?: boolean; audio?: boolean }
 }
 
 // ── 原生聊天 ───────────────────────────────────────────────

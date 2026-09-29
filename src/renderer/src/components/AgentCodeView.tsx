@@ -8,7 +8,9 @@ import 'katex/dist/katex.min.css'
 // 但本页一个类都没用到 —— 唯一的 agent-ctx-metric-val 已归位到本页的 agent-code.css。
 // 每个导航页只引用自己的样式文件。
 import {useStore} from '../store/useStore'
-import {paramSetOf} from '../utils/engine'
+import {paramSetOf, ENGINE_LABELS} from '../utils/engine'
+import { addressOfEndpoint, endpointModelEntries, endpointOfCard, isExternalCardListable, pickerNameOf } from '../utils/endpoint'
+import type { ModelPickerGroup, ModelPickerRow } from '../utils/endpoint'
 import {usePopoverDismiss} from '../utils/usePopoverDismiss'
 import {useTts} from '../utils/useTts'
 // ── agent-code 拆分模块（批次 4：hooks）──
@@ -60,6 +62,7 @@ export default function AgentCodeView() {
   // ── store 订阅与派生量 ──
   const cards = useStore(s => s.cards)
   const backends = useStore(s => s.backends)
+  const modelEndpoints = useStore(s => s.modelEndpoints)
   const runningCard = cards.find(c => c.status === 'running')
   // 模型下拉只列可对话/代理的模型：排除生图模型（stable-diffusion.cpp 引擎）与 OCR 模型；
   // 已运行中的除外（保留停止入口）
@@ -67,11 +70,48 @@ export default function AgentCodeView() {
     const kind = paramSetOf(card.template.paramSet ?? backends.find(b => b.name === card.template.backendVersion)?.kind)
     return kind === 'sdcpp' || kind === 'audiocpp' || /ocr/i.test(card.template.name)
   }
-  const agentCards = useMemo(() => cards.filter(c => !isExcludedModel(c) || c.status === 'running'), [cards, backends])
+  const agentCards = useMemo(
+    () => cards.filter(c => (!isExcludedModel(c) || c.status === 'running')
+      // 外部卡以端点表为准：端点删了或那个模型名被撤下来就不再列（运行中的留停止入口）
+      && (isExternalCardListable(c, modelEndpoints) || c.status === 'running')),
+    [cards, backends, modelEndpoints]
+  )
+  // 模型下拉按来源分组（外部行按端点名，本地卡按引擎名），并把端点上还没建卡的模型名补进行里
+  const modelGroups = useMemo<ModelPickerGroup[]>(() => {
+    const flat: Array<ModelPickerRow & { group: string }> = [
+      ...agentCards.map(c => ({
+        key: c.template.id,
+        name: pickerNameOf(c, modelEndpoints),
+        card: c,
+        group: c.template.external
+          ? (endpointOfCard(c, modelEndpoints)?.name ?? '外部端点')
+          : ENGINE_LABELS[paramSetOf(c.template.paramSet ?? backends.find(b => b.name === c.template.backendVersion)?.kind)]
+      })),
+      ...endpointModelEntries(modelEndpoints, agentCards).map(e => ({
+        key: `${e.endpoint.id}|${e.modelId}`,
+        name: e.modelId,
+        endpoint: e.endpoint,
+        modelId: e.modelId,
+        group: e.endpoint.name
+      }))
+    ]
+    // Map 的插入顺序＝分组首次出现的顺序；同组不连续也不会裂成两个标题
+    const byTitle = new Map<string, ModelPickerRow[]>()
+    for (const { group, ...row } of flat) {
+      const bucket = byTitle.get(group)
+      if (bucket) bucket.push(row)
+      else byTitle.set(group, [row])
+    }
+    return [...byTitle].map(([title, rows]) => ({ title, rows }))
+  }, [agentCards, modelEndpoints, backends])
 
   // 顶栏 prefill 进度与内联上下文指示器已抽为自订阅小组件（AgentPrefillBar / AgentTopBarCtx），
   // 此处不再订阅 modelMetrics，避免主进程每 2s 广播指标时触发整个工作台全量重渲染。
-  const apiBaseUrl = runningCard ? `http://127.0.0.1:${runningCard.template.serverPort}` : null
+  // 外部端点卡显示它自己的地址（本机端口型给 127.0.0.1:端口，远程给 base URL）；
+  // 这里同时也是「有没有可用模型」的判据
+  const apiBaseUrl = runningCard
+    ? (addressOfEndpoint(endpointOfCard(runningCard, modelEndpoints)) || `http://127.0.0.1:${runningCard.template.serverPort}`)
+    : null
   const modelLabel = runningCard?.template.modelPath?.split(/[\\/]/).pop() || runningCard?.template.name || '模型'
   const storedProjects = useStore(s => s.agentProjects)
   const setAgentProjects = useStore(s => s.setAgentProjects)
@@ -124,7 +164,7 @@ export default function AgentCodeView() {
     setPlanItems, setPlanTitle,
     editingMsgId, setEditingMsgId, editDraft, setEditDraft,
   } = (ui = useAgentUiState({
-    agentCards, loading, piReadyRef,
+    modelGroups, loading, piReadyRef,
     // 模式由所属工作区决定（不再挂在会话上），所以这里传的是 projects 域的模式
     mode: projectsDomain.mode,
     activeProjectId, activeSessionId, activeSession, updateSessionInProject,
@@ -292,11 +332,12 @@ export default function AgentCodeView() {
         sessionActions,
         // ── 散装值：模型卡片与其派生量 ──
         cards,
-        agentCards,
+        modelGroups,
         runningCard,
         apiBaseUrl,
         modelLabel,
         handleModelAction: modelControl.handleModelAction,
+        pickEndpointModel: modelControl.pickEndpointModel,
         handleStop: sessionActions.handleStop,
         // 正在朗读的消息 id（纯聊天模式用；plainChat 本身由 ui 域提供，不重复传）
         speakingId,

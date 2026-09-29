@@ -105,6 +105,9 @@ settings.json
 # 注：用户 Logo 映射与图片的实际路径是 src/renderer/public/logos/，已由上方规则覆盖
 /model-capabilities.json
 
+# 外部端点表（本机运行时数据，里面有 API Key 明文，绝不入库）
+/endpoints.json
+
 # Agent Code 工作台会话记录（用户数据，不入库；保留空文件夹，仅忽略日志文件）
 Agent session/*
 !Agent session/.gitkeep

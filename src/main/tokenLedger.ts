@@ -17,12 +17,15 @@ import type { TokenUsageEntry, TokenUsageRollupRow, TokenUsageLedger } from '../
 
 const SHARD_RE = /^(\d{4})-(\d{2})\.jsonl$/
 const ROLLUP_FILE = '_rollup.json'
-const TAIL_BYTES = 1024 * 1024 // 恢复 lastPromptByPort 时只读最新分片尾部，避免全量解析
+const TAIL_BYTES = 1024 * 1024 // 恢复 lastPromptByKey 时只读最新分片尾部，避免全量解析
 
 let ledgerDir = ''
 let currentMonth = ''
-// 同端口上一次请求的完整输入 token（用于计算新增输入增量）
-const lastPromptByPort = new Map<number, number>()
+// 上一次请求的完整输入 token（用于计算新增输入增量）。
+// 键是「端口 + 模型身份」：远程端点没有端口（记 0），只按端口分会把多条远程卡串成一条，
+// 增量算错就变成负数 → 每次请求都按全量记账，成本被高报。
+const lastPromptByKey = new Map<string, number>()
+const promptKeyOf = (e: Pick<TokenUsageEntry, 'port' | 'modelPath'>): string => `${e.port}|${e.modelPath ?? ''}`
 
 const pad2 = (n: number): string => String(n).padStart(2, '0')
 const monthKeyOf = (ts: number): string => {
@@ -100,7 +103,7 @@ function migrateLegacySingleFile(): void {
   } catch { /* 迁移失败则保留原文件，下次启动重试 */ }
 }
 
-/** 启动恢复：只读最新分片尾部，重建 lastPromptByPort（避免重启后首个请求记成全量） */
+/** 启动恢复：只读最新分片尾部，重建 lastPromptByKey（避免重启后首个请求记成全量） */
 function restoreLastPrompt(): void {
   try {
     const months = listShardMonths()
@@ -118,10 +121,10 @@ function restoreLastPrompt(): void {
     for (const e of parseLines<TokenUsageEntry>(lines.join('\n'), (v) => {
       const p = v as Partial<TokenUsageEntry>
       return typeof p?.port === 'number' && typeof p?.promptTokens === 'number'
-        ? { ts: p.ts as number, port: p.port, promptTokens: p.promptTokens, completionTokens: p.completionTokens ?? 0 }
+        ? { ts: p.ts as number, port: p.port, modelPath: p.modelPath ?? null, promptTokens: p.promptTokens, completionTokens: p.completionTokens ?? 0 }
         : null
     })) {
-      lastPromptByPort.set(e.port, e.promptTokens)
+      lastPromptByKey.set(promptKeyOf(e), e.promptTokens)
     }
   } catch { /* 启动恢复失败不阻断 */ }
 }
@@ -226,15 +229,16 @@ export function sealOldMonths(now: number = Date.now()): void {
 export function appendTokenUsage(entry: TokenUsageEntry): void {
   if (!ledgerDir) return
   try {
-    // 新增输入 = 本次完整输入 - 同端口上一次完整输入；
+    // 新增输入 = 本次完整输入 - 上一次完整输入（同端口同模型才算一条序列）；
     // 首次请求或上下文已重置（差值为负，如切换会话/模型）时按完整输入记
-    const prev = lastPromptByPort.get(entry.port)
+    const key = promptKeyOf(entry)
+    const prev = lastPromptByKey.get(key)
     const delta = prev === undefined ? entry.promptTokens : entry.promptTokens - prev
     const finalEntry: TokenUsageEntry = {
       ...entry,
       promptDelta: delta > 0 ? delta : entry.promptTokens,
     }
-    lastPromptByPort.set(entry.port, entry.promptTokens)
+    lastPromptByKey.set(key, entry.promptTokens)
 
     // 跨月时先封存（只在月份变化那一次触发，不是每请求都做）
     const mk = monthKeyOf(entry.ts)
@@ -287,6 +291,6 @@ export function clearTokenUsage(): void {
         try { rmSync(join(ledgerDir, f), { recursive: true, force: true }) } catch { /* 单个失败继续 */ }
       }
     }
-    lastPromptByPort.clear()
+    lastPromptByKey.clear()
   } catch { /* ignore */ }
 }

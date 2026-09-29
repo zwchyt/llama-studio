@@ -5,6 +5,7 @@ import Sidebar from './components/Sidebar'
 import CardsView from './components/CardsView'
 import SettingsView from './components/SettingsView'
 import EnginesView from './components/EnginesView'
+import ModelEndpointsView from './components/ModelEndpointsView'
 import ModelFoldersView from './components/ModelFoldersView'
 import HuggingFaceView from './components/HuggingFaceView'
 import ModelsView from './components/ModelsView'
@@ -17,6 +18,8 @@ import SplashScreen from './components/SplashScreen'
 import UpdateBannerGroup from './components/UpdateBannerGroup'
 import BackendDownloadBanner from './components/BackendDownloadBanner'
 import { paramSetOf, ENGINE_REPOS } from './utils/engine'
+import { endpointOfCard, probeTargetOf } from './utils/endpoint'
+import { notify } from './store/notificationStore'
 import { playEvent, playNavSound, warmUpAudio } from './utils/sound'
 import ChatWindow from './components/ChatWindow'
 import LlamaChatView from './components/LlamaChatView'
@@ -137,6 +140,14 @@ function AppMain() {
     // Stage 1: First-paint critical — 模板（模型卡片）独立尽早加载：
     // 不等待 listBackends（后端目录递归扫描可能较慢），进入界面后卡片尽快出现；
     // 加载完成前 CardsView 显示骨架占位（templatesReady=false），不闪"还没有模板"空态。
+    // 外部端点表：必须在 list-templates 之后读 —— 老卡片是在那次调用里被迁移成端点记录的，
+    // 先读会拿到迁移前的空表，卡片就找不到自己的端点了。放 finally 是为了模板读取失败时
+    // 「外部端点」页仍有数据可列。
+    const loadModelEndpoints = (): void => {
+      window.api.listModelEndpoints()
+        .then((list) => useStore.getState().setModelEndpoints(Array.isArray(list) ? list : []))
+        .catch(() => {})
+    }
     window.api.listTemplates()
       .then((templates) => {
         const st = useStore.getState()
@@ -152,8 +163,9 @@ function AppMain() {
       })
       .catch((e) => {
         console.error('[listTemplates]', e)
-        useStore.getState().setTemplatesReady(true) // 失败也结束加载态，避免一直占位
+        useStore.getState().setTemplatesReady(true)
       })
+      .finally(loadModelEndpoints)
 
     ;(async () => {
       try {
@@ -265,6 +277,37 @@ function AppMain() {
       window.api.removeModelDiagnosisListener()
       window.api.removeBackendsUpdatedListener()
     }
+  }, [])
+
+  // 外部端点卡的掉线检测：服务/端点不由本应用启动，主进程收不到 exit 事件，只能定期探。
+  // 只管「已启用且在运行 → 探测不通就停用」，不做自动重连：服务重启后由用户点一下卡片。
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const st0 = useStore.getState()
+      const attached = st0.cards.filter(c => c.template.external && c.status === 'running')
+      if (attached.length === 0) return
+      for (const card of attached) {
+        const ep = endpointOfCard(card, st0.modelEndpoints)
+        const stop = (why: string): void => {
+          const st = useStore.getState()
+          if (st.cards.find(c => c.template.id === card.template.id)?.status !== 'running') return
+          st.setCardStatus(card.template.id, 'idle')
+          st.clearModelMetrics(card.template.id)
+          if (ep?.kind === 'local-port') void window.api.detachEndpoint(card.template.id).catch(() => {})
+          notify(why, 'error')
+        }
+        if (!ep) { stop(`「${card.template.name}」没有关联的端点记录了，请到「外部端点」页重新添加`); continue }
+        window.api.probeEndpoint(probeTargetOf(ep))
+          .then((p) => {
+            if (p.ok) return
+            stop(ep.kind === 'local-port'
+              ? `:${ep.port} 上的服务已停止，已自动断开接管`
+              : `端点 ${ep.baseUrl} 探测不通，已停用：${p.error ?? ''}`)
+          })
+          .catch(() => { /* 探测通道本身异常（主进程忙）不动状态 */ })
+      }
+    }, 20000)
+    return () => window.clearInterval(timer)
   }, [])
 
   // 引擎发布信息变化时自动写回缓存（手动检查或下载后复查触发）
@@ -632,6 +675,7 @@ function AppMain() {
       case 'hub': return <HuggingFaceView />
       case 'settings': return <SettingsView />
       case 'engines': return <EnginesView />
+      case 'endpoints': return <ModelEndpointsView />
       case 'folders': return <ModelFoldersView />
       case 'models': return <ModelsView />
       case 'monitoring': return <ModelMonitoringView />

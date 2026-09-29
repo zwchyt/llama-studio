@@ -154,9 +154,11 @@
 
 .chat-input-area {
   flex-shrink: 0;
-  border-top: 1.5px solid var(--border-strong);
 
-  padding: 10px 54px;
+  /* 与对话同宽：消息行是 max-width:860px 居中（见 .chat-msg），输入区原来固定 54px 内缩，
+     会话栏一宽过 860px 输入框就比对话宽出一截；让内缩跟着居中留白一起长，窄栏时退化成 54px 原样 */
+  --chat-input-inset: calc(54px + max(0px, (100% - 860px) / 2));
+  padding: 10px var(--chat-input-inset);
   display: flex;
   flex-direction: column;
   position: relative;
@@ -189,8 +191,8 @@
 
 .chat-at-file-pop {
   position: absolute;
-  left: 54px;
-  right: 54px;
+  left: var(--chat-input-inset, 54px);
+  right: var(--chat-input-inset, 54px);
   bottom: 100%;
   margin-bottom: 6px;
   max-height: 260px;
@@ -522,13 +524,20 @@
   text-decoration: underline;
 }
 
+/* 表格：markstream 已把 <table> 包在 .table-node-wrapper 里做横向滚动（scrollbar-gutter:stable）。
+   这里绝不能再写 display:block + overflow-x —— 那是 react-markdown 时代的写法：一旦把 <table> 变成块，
+   内层匿名表按内容收缩，流式每来一个字列宽就重算、表内滚动条忽现忽隐，整张表上下左右抖。 */
 .chat-msg-markdown table {
   border-collapse: collapse;
   margin: 0 0 10px;
   font-size: 13px;
   width: 100%;
-  display: block;
-  overflow-x: auto;
+}
+
+/* 输出期间锁住列宽：fixed 只按第一行（表头）定宽，正文再长也不回头改列宽；
+   输出结束（--streaming 撤掉）恢复 auto，最终版式仍按内容自适应 */
+.chat-msg-bubble--streaming .table-node {
+  table-layout: fixed;
 }
 
 .chat-msg-markdown th,
@@ -2887,14 +2896,13 @@
   padding-bottom: 0;
 }
 
-/* 输入区脱掉「底栏」外观：去掉顶部隔断线、收窄到 hero 宽度并居中 */
+/* 输入区收窄到 hero 宽度并居中（底栏隔断线已整体去掉，这里不再单独关） */
 .agent-code-chat.hero-input .chat-input-area {
   flex-shrink: 0;
   align-self: center;
   width: 100%;
   max-width: var(--hero-w);
   padding: 0 var(--hero-pad) 4px;
-  border-top: none;
   background: transparent;
 }
 
@@ -4814,10 +4822,10 @@
 
 .agent-file-picker {
   position: absolute;
-  left: 54px;
+  left: var(--chat-input-inset, 54px);
   right: auto;
   width: 560px;
-  max-width: calc(100% - 108px);
+  max-width: calc(100% - var(--chat-input-inset, 54px) * 2);
   bottom: calc(100% + 8px);
   top: auto;
   z-index: var(--z-toast);
@@ -7029,6 +7037,7 @@
    正文内容比思考更接近结论，视觉上优先 */
 .agent-think-prose {
   color: var(--text);
+  font-weight: 600;
 }
 
 /* 思考块 pending 占位（首 token 未到 / 模型加载上下文中）：三点跳动 + 等待文案 */
@@ -8887,62 +8896,80 @@
   cursor: not-allowed;
 }
 
-/* 模型按钮的相对定位锚点：选择面板改为贴在该按钮正上方弹出
-   （与思考等级 / 搜索菜单同款做法），不再挂在输入区右下角算坐标 */
+/* 模型按钮的相对定位锚点：面板贴在该按钮上方弹出 */
 .chat-model-anchor {
   position: relative;
   display: inline-flex;
 }
 
+/* 模型下拉：面板与行的外观完全对齐搜索菜单（.chat-search-menu / .chat-search-item） */
 .chat-model-picker {
   position: absolute;
-  right: 0;
-  bottom: calc(100% + 6px);
-  width: 300px;
-  max-width: calc(100vw - 64px);
+  left: 0;
+  bottom: calc(100% + 4px);
+  width: 200px;
+  max-width: calc(100vw - 72px);
   max-height: 320px;
   overflow-y: auto;
   padding: 4px;
-  background: var(--surface);
-  border: none;
-  border-radius: var(--radius, 10px);
-  box-shadow: none;
+  background: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
   z-index: var(--z-toast);
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(8px);
-  pointer-events: none;
-  transition: opacity .15s ease, transform .15s ease, visibility .15s ease;
-}
-
-.chat-model-picker.open {
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0);
-  pointer-events: auto;
+  /* 打开才挂载 + 同一条 think-menu-in 进场关键帧（面板左对齐按钮，变换原点在左下） */
+  transform-origin: bottom left;
+  animation: think-menu-in 0.16s ease-out;
 }
 
 .chat-model-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 5px;
   cursor: pointer;
-  transition: background .12s ease;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  transition: background .12s ease, color .12s ease;
   flex-wrap: nowrap;
+}
+
+/* 分组小标题：外部行按端点名分组，本地卡按引擎名分组 */
+.chat-model-group-title {
+  padding: 6px 8px 3px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* 行尾那一列：勾与启停键叠在同一个 22px 位里（悬停时互相让位），整体钉在右侧 */
+.chat-model-item-tail {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.chat-model-item-check {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  color: inherit;
+  transition: opacity .12s ease;
 }
 
 /* 模型自定义 Logo：无图时灰底占位图标，有图时整体显示所选图片
    （图片为运行时用户数据，存 APP_ROOT/logos/，由用户点击添加，不参与打包） */
 .chat-model-logo {
-  width: 26px;
-  height: 26px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: 4px;
   overflow: hidden;
   background: color-mix(in srgb, var(--text-muted) 10%, transparent);
   color: var(--text-muted);
@@ -9001,16 +9028,20 @@
   background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent);
 }
 
-.chat-model-item:hover {
-  background: var(--bg);
+.chat-model-item:hover:not(.running) {
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
+/* 当前启用的那一项：与搜索菜单选中项同款的实心药丸 */
 .chat-model-item.running {
-  background: color-mix(in srgb, var(--success, #22c55e) 8%, transparent);
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
 .chat-model-item.error {
-  background: color-mix(in srgb, var(--danger, #ef4444) 8%, transparent);
+  background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent);
+  color: var(--danger, #ef4444);
 }
 
 .chat-model-item-avatar {
@@ -9041,7 +9072,7 @@
 .chat-model-item-info {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex: 1;
   min-width: 0;
 }
@@ -9051,19 +9082,24 @@
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
-  color: #878787;
+  font-size: 11px;
+  font-weight: 500;
+  color: inherit;
+}
+
+/* 端点上还没建卡的模型名：整行偏淡，建卡后就并入普通卡片行 */
+.chat-model-item.pending .chat-model-item-name {
+  color: var(--text-muted);
 }
 
 /* 模型能力徽标（思考 / 工具调用 / 看图）：跟随模型名一行，未读取到时整组不渲染 */
 .chat-model-caps {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   flex-shrink: 0;
-  padding: 2px 4px;
-  border-radius: 6px;
+  padding: 1px 3px;
+  border-radius: 5px;
   background: color-mix(in srgb, var(--text-muted) 8%, transparent);
 }
 
@@ -9071,9 +9107,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
   color: var(--text-muted);
   transition: background .12s ease, color .12s ease;
 }
@@ -9107,33 +9143,63 @@
   background: color-mix(in srgb, #34d399 15%, transparent);
 }
 
-.chat-model-item.running .chat-model-item-name {
-  color: var(--success, #22c55e);
-}
-
-.chat-model-item.error .chat-model-item-name {
-  color: var(--danger, #ef4444);
-}
-
 .chat-model-item-action {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: var(--text-muted);
+  color: inherit;
   cursor: pointer;
   flex-shrink: 0;
-  margin-left: auto;
-  transition: background .12s ease, color .12s ease;
+  /* 启停键平时收着，悬停该行才出现（见下方 .chat-model-item:hover） */
+  opacity: 0;
+  transition: opacity .12s ease, background .12s ease, color .12s ease;
+}
+
+.chat-model-item:hover .chat-model-item-action {
+  opacity: 1;
+}
+
+/* 勾与停止键同占行尾一个位置：悬停露出按钮时把勾让开 */
+.chat-model-item:hover .chat-model-item-check {
+  opacity: 0;
 }
 
 .chat-model-item-action:hover {
   background: var(--bg);
   color: var(--text-secondary);
+}
+
+/* ── 模型下拉底部的「管理外部端点」入口 ─────────────────── */
+.chat-model-attach-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+.chat-model-attach-entry {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background .12s ease;
+}
+
+.chat-model-attach-entry:hover {
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 /* ── Git 变更面板（预览区特殊标签）─────────────── */

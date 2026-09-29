@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, SystemMetrics, ChatSession, TokenUsageEntry, TokenUsageLedger, ChatStreamChunk, AgentProject, AgentSession, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit, ThinkingLevel, SdCudartStatus } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, SystemMetrics, ChatSession, TokenUsageEntry, TokenUsageLedger, ChatStreamChunk, AgentProject, AgentSession, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit, ThinkingLevel, SdCudartStatus, EndpointProbe, EndpointAttachResult, ProbeTarget, RemoteEndpoint, ModelEndpoint } from '../../shared/types'
 // 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
 interface ImagePromptPresetPayload {
   id: string; tag: string; cn: string; group: string
@@ -56,6 +56,9 @@ interface LlamaCppApi {
   getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp') => Promise<CommandsSchema | null>
   saveBackendCommands: (backendName: string, schema: object, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp') => Promise<{ success: boolean; error?: string }>
   listTemplates: () => Promise<Template[]>
+  listModelEndpoints: () => Promise<ModelEndpoint[]>
+  saveModelEndpoint: (endpoint: ModelEndpoint) => Promise<{ success: boolean; id?: string; error?: string }>
+  deleteModelEndpoint: (id: string) => Promise<{ success: boolean; error?: string }>
   saveTemplate: (template: object) => Promise<{ success: boolean; id: string }>
   deleteTemplate: (id: string) => Promise<{ success: boolean }>
   importTemplate: () => Promise<Template | null>
@@ -66,7 +69,10 @@ interface LlamaCppApi {
   selectFiles: () => Promise<{ paths: string[] }>
   listDrives: () => Promise<{ drives: string[] }>
   runModel: (opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp'; kind?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' }) => Promise<{ success: boolean; pid?: number; error?: string }>
-  stopModel: (id: string) => Promise<{ success: boolean; error?: string }>
+  stopModel: (id: string) => Promise<{ success: boolean; detached?: boolean; error?: string }>
+  probeEndpoint: (target: ProbeTarget) => Promise<EndpointProbe>
+  attachEndpoint: (id: string, port: number) => Promise<EndpointAttachResult>
+  detachEndpoint: (id: string) => Promise<{ success: boolean }>
   onModelError: (cb: (data: { id: string; error: string }) => void) => void
   removeModelErrorListener: () => void
   onModelDiagnosis: (cb: (data: { id: string; code: number | null; severity: 'info' | 'warning' | 'critical'; title: string; cause: string; recommendations: string[]; evidence: string; logExcerpt?: { lines: string[]; start: number; errorLine: number } }) => void) => void
@@ -172,7 +178,7 @@ interface LlamaCppApi {
   listTokenUsage: () => Promise<TokenUsageLedger>
   clearTokenUsage: () => Promise<{ success: boolean }>
   chatStream: (opts: { streamId: string; port: number; body: object }) => Promise<{ success: boolean; error?: string }>
-  chatCompletion: (opts: { port: number; body: object }) => Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }>
+  chatCompletion: (opts: { port: number; endpoint?: RemoteEndpoint; body: object }) => Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }>
   getServerProps: (port: number) => Promise<{ ok: boolean; modalities?: { vision?: boolean; audio?: boolean }; error?: string }>
   saveChatImage: (dataUrl: string) => Promise<{ ok: boolean; ref?: string; error?: string }>
   readChatImage: (ref: string) => Promise<string | null>
@@ -326,7 +332,7 @@ interface LlamaCppApi {
   windowClose: () => Promise<void>
   // ── pi-agent（pi SDK 驱动的 agent 会话）──
   piAgent: {
-    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; vision?: boolean; projectSystemPrompt?: string; projectMemoryNotes?: string; memoryInjection?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
+    create: (opts: { sessionId: string; port: number; endpoint?: RemoteEndpoint; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; vision?: boolean; projectSystemPrompt?: string; projectMemoryNotes?: string; memoryInjection?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
     warmup: () => Promise<{ success: boolean }>
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
     steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>

@@ -8,7 +8,7 @@ import {
   HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
   InfoIcon, FileTextIcon, CodeIcon, ChevronDownIcon,
   SettingsIcon, BookOpenIcon, AudioLinesIcon, ImageIcon, MicIcon,
-  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon,
+  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon, PlugZapIcon,
   GitBranchIcon
 } from '@animateicons/react/lucide'
 import '../styles/topnav.css'
@@ -53,6 +53,7 @@ const NAV_GROUPS: NavDef[][] = [
   [
     { key: 'agents', label: 'AI Agent', icon: BrainIcon, color: '#d946ef' },
     { key: 'engines', label: '后端与引擎', icon: CpuIcon, color: '#6b7280' },
+    { key: 'endpoints', label: '外部端点', icon: PlugZapIcon, color: '#6b7280' },
     { key: 'folders', label: '模型文件夹', icon: FolderOpenIcon, color: '#6b7280' },
     { key: 'settings', label: '设置', icon: SettingsIcon, color: '#6b7280' },
     { key: 'about', label: '关于', icon: InfoIcon, color: '#6366f1' },

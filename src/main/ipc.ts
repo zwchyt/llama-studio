@@ -17,7 +17,7 @@ import http from 'http'
 import { app } from 'electron'
 import { randomUUID, createHash } from 'crypto'
 import type * as ptyNs from 'node-pty'
-import type { AgentProject, AgentSession, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus, EngineKind, ReleaseInfo, SdCudartMarker, SdCudartStatus, SdCudartUpstream } from '../shared/types'
+import type { AgentProject, AgentSession, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus, EngineKind, ReleaseInfo, SdCudartMarker, SdCudartStatus, SdCudartUpstream, EndpointProbe, EndpointAttachResult, ProbeTarget, RemoteEndpoint, ModelEndpoint, EndpointApi } from '../shared/types'
 import { registerCodeMapIpc, disposeCodeMaps, deleteSnapshotForWorkspace } from './services/codeMapService'
 import { registerRetrievalIpc, disposeIndexForWorkspace } from './services/retrievalService'
 import { registerMemoryStoreIpc, deleteMemoryForWorkspace } from './services/memoryStore'
@@ -716,7 +716,8 @@ function loadSettingsSync(): AppSettings {
   settingsQuarantined = !main.missing
   return settingsCache
 }
-interface RunningProcess { proc: ChildProcess; port: number; kind: EngineKind }
+/** proc = null 表示「接管项」：服务由别处启动，本应用不拥有它的进程，任何路径都不得杀它 */
+interface RunningProcess { proc: ChildProcess | null; port: number; kind: EngineKind }
 const runningProcesses = new Map<string, RunningProcess>()
 // 端口 → 当时加载的模型文件（Token 记账簿用：流结束时按 port 回查模型身份）
 const portModelInfos = new Map<number, { templateId: string; modelPath: string | null }>()
@@ -1493,8 +1494,9 @@ const MAX_MODELS_FILES = 5000
 export function cleanupRunningProcesses(): void {
   if (metricsInterval) { clearInterval(metricsInterval); metricsInterval = null }
   disposeCodeMaps()
+  // 接管项（proc = null）只是从表里遗忘，绝不能杀：那是用户在别处自己起的服务
   for (const [, { proc }] of runningProcesses) {
-    killProcessTreeAsync(proc)
+    if (proc) killProcessTreeAsync(proc)
   }
   runningProcesses.clear()
   portModelInfos.clear()
@@ -2347,7 +2349,9 @@ export function registerIpcHandlers(): void {
         } catch { return null }
       })
     )
-    return results.filter(Boolean)
+    const items = results.filter(Boolean) as Array<Record<string, unknown>>
+    await migrateLegacyExternalTemplates(items)
+    return items
   })
   // ── 模板文件以模型卡片名称为文件名（重名自动加序号；重命名时同步改文件名）──
   // 模板内容里的 id 仍是唯一主键，文件名只用于直观展示/管理
@@ -2396,6 +2400,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('delete-template', (_e, id: string) => {
     const sid = String(id)
     const fileName = templateFileForId(sid)
+    // 顺带摘掉这张卡的接管登记，避免界面删了卡、主进程还在按端口采集那个外部服务
+    const attached = runningProcesses.get(sid)
+    if (attached && !attached.proc) {
+      runningProcesses.delete(sid)
+      portModelInfos.delete(attached.port)
+      hostedModelCache.delete(attached.port)
+      lastTtft.delete(sid)
+    }
     if (fileName) {
       const fp = join(TEMPLATES_DIR, fileName)
       if (!isSafePath(TEMPLATES_DIR, fp)) return { success: false, error: '访问被拒绝' }
@@ -2417,6 +2429,129 @@ export function registerIpcHandlers(): void {
     } catch { /* 缓存/资源清理失败不影响模板删除主流程 */ }
     return { success: true }
   })
+
+  // ── 外部端点表（APP_ROOT/endpoints.json）──────────────────────────────
+  // 与 templates 分开存：地址、协议、API key 只有一份，多张模型卡片引用同一个端点
+  // （一个端点挂多个模型名时，每个模型名一张卡）。
+  const MODEL_ENDPOINTS_FILE = join(APP_ROOT, 'endpoints.json')
+  function readModelEndpoints(): ModelEndpoint[] {
+    try {
+      if (!existsSync(MODEL_ENDPOINTS_FILE)) return []
+      const parsed = JSON.parse(readFileSync(MODEL_ENDPOINTS_FILE, 'utf-8'))
+      return Array.isArray(parsed) ? parsed.filter((e: ModelEndpoint) => typeof e?.id === 'string') : []
+    } catch { return [] }
+  }
+  ipcMain.handle('list-model-endpoints', () => readModelEndpoints())
+  ipcMain.handle('save-model-endpoint', async (_e, endpoint: ModelEndpoint) => {
+    try {
+      const id = String(endpoint?.id || randomUUID())
+      const now = new Date().toISOString()
+      const list = readModelEndpoints()
+      const i = list.findIndex((e) => e.id === id)
+      const next: ModelEndpoint = { ...endpoint, id, updatedAt: now }
+      if (i >= 0) next.createdAt = list[i]!.createdAt || now
+      else next.createdAt = endpoint?.createdAt || now
+      if (i >= 0) list[i] = next
+      else list.push(next)
+      await writeJsonAtomic(MODEL_ENDPOINTS_FILE, list)
+      return { success: true, id }
+    } catch (err) { return { success: false, error: String(err) } }
+  })
+  ipcMain.handle('delete-model-endpoint', async (_e, id: string) => {
+    const sid = String(id)
+    const list = readModelEndpoints()
+    const next = list.filter((e) => e.id !== sid)
+    if (next.length === list.length) return { success: true }
+    try {
+      await writeJsonAtomic(MODEL_ENDPOINTS_FILE, next)
+      return { success: true }
+    } catch (err) { return { success: false, error: String(err) } }
+  })
+
+  /** 旧卡片就地迁移（list-templates 时跑）。
+   *  前两版把端点信息写在卡片自己身上：第一版只有 external + serverPort（本机端口接管），
+   *  第二版多了内嵌的 endpoint 对象（远程 URL/key/模型名）。现在这些都归 endpoints.json，
+   *  卡片只留 endpointId + endpointModelId。不迁移的话，渲染层会把这些老卡片报成
+   *  「没有关联的端点记录了」——那是数据搬家，不是用户做错了什么。 */
+  type LegacyInlineEndpoint = {
+    baseUrl?: string; api?: EndpointApi; apiKey?: string; modelId?: string; contextWindow?: number; vision?: boolean
+  }
+  /** 从老接管卡的「外部 :端口 · <模型文件路径>」里抽模型文件名；认不出这个格式（用户自己改过名）就返回空 */
+  function legacyModelNameOf(t: Record<string, unknown>): string {
+    if (typeof t.endpointModelId === 'string' && t.endpointModelId) return t.endpointModelId
+    const tail = (typeof t.name === 'string' ? t.name : '').split(' · ')[1]
+    if (!tail) return ''
+    const base = tail.split(/[\\/]/).pop() ?? ''
+    return /\.gguf$/i.test(base) ? base : ''
+  }
+  async function migrateLegacyExternalTemplates(items: Array<Record<string, unknown>>): Promise<void> {
+    const legacy = items.filter(t => t.external === true && typeof t.endpointId !== 'string')
+    if (legacy.length === 0) return
+    const endpoints = readModelEndpoints()
+    const now = new Date().toISOString()
+    let endpointsChanged = false
+    for (const t of legacy) {
+      const inline = t.endpoint as LegacyInlineEndpoint | undefined
+      const port = Number(t.serverPort) || 0
+      let ep: ModelEndpoint | undefined
+      if (inline?.baseUrl) {
+        const baseUrl = String(inline.baseUrl).replace(/\/+$/, '')
+        const host = baseUrl.replace(/^https?:\/\//i, '').split('/')[0]
+        ep = endpoints.find(e => e.kind === 'remote' && e.baseUrl === baseUrl)
+        if (!ep) {
+          ep = {
+            id: randomUUID(), name: `端点 ${host}`, kind: 'remote', baseUrl,
+            api: inline.api ?? 'openai-completions',
+            ...(inline.apiKey ? { apiKey: String(inline.apiKey) } : {}),
+            modelIds: inline.modelId ? [String(inline.modelId)] : [],
+            ...(inline.contextWindow ? { contextWindow: Number(inline.contextWindow) } : {}),
+            ...(inline.vision === true ? { vision: true } : {}),
+            createdAt: now, updatedAt: now
+          }
+          endpoints.push(ep)
+          endpointsChanged = true
+        } else if (inline.modelId && !ep.modelIds.includes(String(inline.modelId))) {
+          ep.modelIds = [...ep.modelIds, String(inline.modelId)]
+          endpointsChanged = true
+        }
+        t.endpointId = ep.id
+        if (inline.modelId) t.endpointModelId = String(inline.modelId)
+      } else if (port > 0) {
+        // 老接管卡的名字是主进程按 /props 拼的「外部 :端口 · <模型文件绝对路径>」，
+        // 把里面的模型文件名抽出来当端点的模型名，下拉里就能按「模型名 + 端点名」显示
+        const displayName = legacyModelNameOf(t)
+        ep = endpoints.find(e => e.kind === 'local-port' && e.port === port)
+        if (!ep) {
+          ep = {
+            id: randomUUID(), name: `本机 :${port}`, kind: 'local-port', port,
+            modelIds: displayName ? [displayName] : [], createdAt: now, updatedAt: now
+          }
+          endpoints.push(ep)
+          endpointsChanged = true
+        } else if (displayName && !ep.modelIds.includes(displayName)) {
+          ep.modelIds = [...ep.modelIds, displayName]
+          endpointsChanged = true
+        }
+        t.endpointId = ep.id
+        if (displayName) t.endpointModelId = displayName
+      } else {
+        // 既没有内嵌端点也没有端口：无从推断，留给用户手动处理（不静默改坏数据）
+        continue
+      }
+      delete t.endpoint
+      // 卡片文件回写：_file 只是运行时字段，不写进磁盘
+      const file = typeof t._file === 'string' ? t._file : ''
+      const fp = file ? join(TEMPLATES_DIR, file) : ''
+      if (!fp || !isSafePath(TEMPLATES_DIR, fp)) continue
+      try {
+        const { _file, ...persist } = t
+        await fsPromises.writeFile(fp, JSON.stringify(persist, null, 2), 'utf-8')
+      } catch { /* 回写失败：本次会话内仍是迁移后的形态，下次启动重试 */ }
+    }
+    if (endpointsChanged) {
+      try { await writeJsonAtomic(MODEL_ENDPOINTS_FILE, endpoints) } catch { /* 写失败不阻断列表返回 */ }
+    }
+  }
   // ── 原生聊天会话 CRUD（与 templates 同模式） ──
   // 聊天图片附件存储：原图独立落盘，会话 JSON 仅存引用（chatimg://<文件名>）。
   // 若内嵌数 MB base64，流式期间每 3s 节流落盘的 JSON.stringify + 同步写盘会
@@ -2834,6 +2969,13 @@ export function registerIpcHandlers(): void {
     }
     // 兜底扫描的 await 间隙内可能已有同 ID 启动（快速双击）：置位前复查一次封死 TOCTOU
     if (runningProcesses.has(opts.id)) return { success: false, error: '已在运行中' }
+    // 端口上已有服务应答 = 你在别处起过一个（或接管卡正指向它）。这里就说清楚，别让
+    // llama-server 因端口冲突静默退出后只剩一句 exit code
+    if (opts.port && (await probeLocalPort(opts.port)).ok) {
+      const msg = `端口 ${opts.port} 上已有服务在响应（很可能你在别处启动过它）。想在 Agent 里直接用它就去「外部端点」页按这个端口建端点；要另起一个服务就给这张卡换一个端口。`
+      broadcastDiagnosis(msg)
+      return { success: false, error: msg }
+    }
     if (!isSafePath(BACKEND_DIR, exePath) || !existsSync(exePath)) {
       broadcastDiagnosis(`可执行文件未找到: ${exePath}`)
       return { success: false, error: `可执行文件未找到: ${exePath}` }
@@ -3115,22 +3257,35 @@ export function registerIpcHandlers(): void {
       runningProcesses.delete(id)
       portModelInfos.delete(entry.port)
       lastTtft.delete(id)
+      // 接管项（proc = null）：断开＝只清登记。既不走 killProcessTreeAsync，也不能落到下面
+      // 那条 netstat+taskkill 兜底 —— 那会杀掉端口上的任意占用者，正是外部服务被误杀的路径
+      if (!entry.proc) {
+        hostedModelCache.delete(entry.port)
+        return { success: true, detached: true }
+      }
       const tasks: Promise<unknown>[] = [killProcessTreeAsync(entry.proc)]
       if (entry.port) { tasks.push(killByPortAsync(entry.port)); hostedModelCache.delete(entry.port) }
       await Promise.all(tasks)
       return { success: true }
     }
     let port = 0
+    let externalCard = false
     const templatesDir = join(APP_ROOT, 'templates')
     if (existsSync(templatesDir)) {
       for (const f of readdirSync(templatesDir)) {
         if (!f.endsWith('.json')) continue
         try {
           const t = JSON.parse(readFileSync(join(templatesDir, f), 'utf-8'))
-          if (t.id === id && t.serverPort) { port = t.serverPort; break }
+          if (t.id === id) {
+            // 接管卡（external）即便不在运行表里，也绝不能走下面的 killByPort：那条路是按端口
+            // taskkill 占用者，而占用者正是用户自己在别处起的服务
+            if (t.external === true) { externalCard = true; break }
+            if (t.serverPort) { port = t.serverPort; break }
+          }
         } catch { }
       }
     }
+    if (externalCard) return { success: true, detached: true }
     const killed = port ? await killByPortAsync(port) : false
     if (port) hostedModelCache.delete(port)
     return { success: killed || !port, error: killed || !port ? undefined : '未在运行' }
@@ -4687,10 +4842,11 @@ export function registerIpcHandlers(): void {
     }
     if (runningProcesses.size === 0) return
     for (const [id, { proc, port }] of runningProcesses) {
-      if (proc.pid === undefined) continue
+      // 接管项 proc = null：/slots 与 /metrics 是 HTTP 端点照样能采，只是没有进程级 CPU/pid
+      if (proc && proc.pid === undefined) continue
       try {
-        const payload = await collectMetrics(id, port, proc.pid)
-        payload.pid = proc.pid
+        const payload = await collectMetrics(id, port, proc?.pid)
+        if (proc?.pid !== undefined) payload.pid = proc.pid
         BrowserWindow.getAllWindows().forEach(win => {
           if (!win.isDestroyed()) win.webContents.send('metrics-update', payload)
         })
@@ -4709,9 +4865,11 @@ export function registerIpcHandlers(): void {
   // 与端点当前值精确一致（不依赖广播周期，广播间隔内 finalize 也能拿到最新值）。
   ipcMain.handle('query-metrics-now', async (_e, id: string) => {
     const entry = runningProcesses.get(id)
-    if (!entry || entry.proc.pid === undefined) return null
+    // 接管项没有 pid，但 n_decoded 快照照样能取 —— 这里放过它，否则外部服务的
+    // 轮末 token 快照会静默变 null（记账断链与当初 worker 进程那次同款症状）
+    if (!entry || (entry.proc && entry.proc.pid === undefined)) return null
     try {
-      const payload = await collectMetrics(id, entry.port, entry.proc.pid)
+      const payload = await collectMetrics(id, entry.port, entry.proc?.pid)
       const v = payload.nDecoded
       return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null
     } catch {
@@ -4764,10 +4922,10 @@ export function registerIpcHandlers(): void {
     const result: Record<string, unknown> = {}
     await refreshGpuData()
     for (const [id, { proc, port }] of runningProcesses) {
-      if (proc.pid === undefined) continue
+      if (proc && proc.pid === undefined) continue
       try {
-        const entry = await collectMetrics(id, port, proc.pid)
-        entry.pid = proc.pid
+        const entry = await collectMetrics(id, port, proc?.pid)
+        if (proc?.pid !== undefined) entry.pid = proc.pid
         result[id] = entry
       } catch { }
     }
@@ -4868,6 +5026,137 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  // ── 接管本机已运行的服务 / 连接远程端点 ────────────────────────────────
+  // 探测是只读的：本机打 /props + /v1/models，远程只打 models 列表。
+  // 绝不发补全请求探路 —— 那会真花钱、真占上下文。
+  /** 一次 GET，返回状态码与正文（4xx/5xx 也算成功返回，交由调用方判状态码） */
+  function httpFetchText(url: string, headers?: Record<string, string>, timeoutMs = 4000): Promise<{ status: number; body: string }> {
+    return new Promise((resolveP, rejectP) => {
+      let u: URL
+      try {
+        u = new URL(url)
+      } catch {
+        rejectP(new Error('URL 非法'))
+        return
+      }
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+        rejectP(new Error('只支持 http/https'))
+        return
+      }
+      const mod = u.protocol === 'https:' ? https : http
+      const req = mod.get(url, { headers: headers ?? {}, timeout: timeoutMs }, (res) => {
+        let body = ''
+        res.on('data', (c) => { body += c.toString(); if (body.length > 1e6) req.destroy() })
+        res.on('end', () => resolveP({ status: res.statusCode ?? 0, body }))
+      })
+      req.on('error', rejectP)
+      req.on('timeout', () => { req.destroy(); rejectP(new Error('请求超时')) })
+    })
+  }
+
+  /** models 列表响应 → 模型名数组（OpenAI 与 Anthropic 都是 { data: [{ id }] }） */
+  function parseModelIds(body: string): string[] {
+    const parsed = tryParseJson(body) as { data?: Array<{ id?: unknown }> } | null
+    const ids = (parsed?.data ?? []).map((m) => (typeof m?.id === 'string' ? m.id.trim() : '')).filter(Boolean)
+    return [...new Set(ids)].slice(0, 60)
+  }
+
+  async function probeLocalPort(port: number): Promise<EndpointProbe> {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return { ok: false, port, engine: null, error: '端口非法' }
+    const base = `http://127.0.0.1:${port}`
+    const props = await httpGetText(`${base}/props`)
+      .then((t) => tryParseJson(t) as Record<string, unknown> | null).catch(() => null)
+    const ids = await httpGetText(`${base}/v1/models`)
+      .then((t) => parseModelIds(t)).catch(() => [] as string[])
+    if (!props && ids.length === 0) return { ok: false, port, engine: null, error: `端口 ${port} 上没有探测到可用服务` }
+    const out: EndpointProbe = { ok: true, port, engine: props ? 'llamacpp' : 'other', modelIds: ids }
+    if (ids[0]) out.modelId = ids[0]
+    if (props) {
+      if (typeof props.model_alias === 'string' && props.model_alias.trim()) out.modelAlias = props.model_alias.trim()
+      if (typeof props.n_ctx === 'number' && props.n_ctx > 0) out.nCtx = props.n_ctx
+      const m = props.modalities
+      if (m && typeof m === 'object') out.modalities = m as { vision?: boolean; audio?: boolean }
+    }
+    return out
+  }
+
+  async function probeRemoteEndpoint(t: ProbeTarget): Promise<EndpointProbe> {
+    const base = String(t.baseUrl ?? '').trim().replace(/\/+$/, '')
+    if (!base) return { ok: false, engine: null, error: 'base URL 不能为空' }
+    if (!/^https?:\/\//i.test(base)) return { ok: false, engine: null, baseUrl: base, error: 'base URL 必须以 http:// 或 https:// 开头' }
+    const api = t.api ?? 'openai-completions'
+    const key = String(t.apiKey ?? '').trim()
+    const headers: Record<string, string> = api === 'anthropic-messages'
+      ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
+      : (key ? { Authorization: `Bearer ${key}` } : {})
+    // OpenAI 兼容的 base 习惯已含版本段（…/v1）→ /models 直接命中；Anthropic 的 base
+    // 可能是裸域名（要补 /v1）也可能已含 /v1，两种各试一次，谁给列表用谁。
+    const paths = ['/models', '/v1/models']
+    let lastError = `端点没有可读的 models 列表`
+    for (const p of paths) {
+      try {
+        const res = await httpFetchText(`${base}${p}`, headers)
+        if (res.status >= 200 && res.status < 300) {
+          const ids = parseModelIds(res.body)
+          if (ids.length > 0) return { ok: true, baseUrl: base, engine: 'other', modelIds: ids, modelId: ids[0] }
+          lastError = 'models 列表是空的（可能该端点不支持列模型）'
+          continue
+        }
+        if (res.status === 401 || res.status === 403) {
+          return { ok: false, baseUrl: base, engine: null, error: `鉴权被拒（HTTP ${res.status}）：API key 不对或没有该端点权限` }
+        }
+        lastError = `HTTP ${res.status}`
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : String(e)
+      }
+    }
+    return { ok: false, baseUrl: base, engine: null, error: `探测 ${base} 失败：${lastError}` }
+  }
+
+  async function probeEndpointTarget(t: ProbeTarget): Promise<EndpointProbe> {
+    if (typeof t?.port === 'number' && t.port > 0) return probeLocalPort(t.port)
+    return probeRemoteEndpoint(t)
+  }
+
+  ipcMain.handle('probe-endpoint', (_e, target: ProbeTarget): Promise<EndpointProbe> => probeEndpointTarget(target ?? {}))
+
+  // 接管＝在运行表里挂一条 proc=null 的登记，让指标采集 / 端口反查 / Token 记账都把这个端口
+  // 当作本应用在用的服务看待，但登记本身不带任何杀进程的权限（见 stop-model 与 cleanup）。
+  ipcMain.handle('attach-endpoint', async (_e, id: string, port: number): Promise<EndpointAttachResult> => {
+    const sid = String(id)
+    const num = Number(port)
+    const owned = runningProcesses.get(sid)
+    if (owned?.proc) return { success: false, error: '该卡片正由本应用运行，无需接管' }
+    const conflict = [...runningProcesses].find(([otherId, other]) => otherId !== sid && other.port === num)
+    if (conflict) return { success: false, error: `端口 ${num} 已被另一张卡片使用` }
+    const probed = await probeLocalPort(num)
+    if (!probed.ok) return { success: false, error: probed.error ?? '探测失败' }
+    runningProcesses.set(sid, { proc: null, port: num, kind: probed.engine === 'llamacpp' ? 'llamacpp' : 'other' })
+    // Token 记账簿按端口回查模型身份：/v1/models 的 data[0].id 就是服务端实际加载的模型
+    portModelInfos.set(num, { templateId: sid, modelPath: probed.modelId ?? null })
+    return {
+      success: true,
+      engine: probed.engine,
+      ...(probed.modelId ? { modelId: probed.modelId } : {}),
+      ...(probed.modelAlias ? { modelAlias: probed.modelAlias } : {}),
+      ...(probed.nCtx ? { nCtx: probed.nCtx } : {}),
+      ...(probed.modalities ? { modalities: probed.modalities } : {})
+    }
+  })
+
+  ipcMain.handle('detach-endpoint', (_e, id: string) => {
+    const sid = String(id)
+    const entry = runningProcesses.get(sid)
+    // 只摘接管项：本应用 spawn 出来的卡不该由这条通道动
+    if (entry && !entry.proc) {
+      runningProcesses.delete(sid)
+      portModelInfos.delete(entry.port)
+      hostedModelCache.delete(entry.port)
+      lastTtft.delete(sid)
+    }
+    return { success: true }
+  })
+
 	  // 按端口反查运行中模型的引擎类型（runModel 时登记），供聊天代理按引擎调整请求体
   function engineKindByPort(port: number): EngineKind | null {
     for (const entry of runningProcesses.values()) {
@@ -4899,8 +5188,63 @@ export function registerIpcHandlers(): void {
   }
 
   // --- chat-completion (非流式聊天代理：POST /v1/chat/completions，返回解析后的 JSON) ---
-  ipcMain.handle('chat-completion', async (_e, opts: { port: number; body: Record<string, unknown> }): Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }> => {
+  /** POST 一段 JSON 并解析 JSON 响应（远程端点用；返回结构与本地聊天代理一致） */
+  function httpPostJson(url: string, body: Record<string, unknown>, headers: Record<string, string>, timeoutMs = 120000): Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }> {
+    return new Promise((resolve) => {
+      let u: URL
+      try {
+        u = new URL(url)
+      } catch {
+        resolve({ ok: false, error: 'URL 非法' })
+        return
+      }
+      const mod = u.protocol === 'https:' ? https : http
+      const bodyStr = JSON.stringify(body)
+      const req = mod.request(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(bodyStr)), ...headers },
+        timeout: timeoutMs
+      }, (res) => {
+        let respBody = ''
+        res.on('data', (c: Buffer) => { respBody += c.toString() })
+        res.on('end', () => {
+          if (res.statusCode && res.statusCode >= 400) {
+            resolve({ ok: false, status: res.statusCode, error: `HTTP 错误 ${res.statusCode}: ${respBody.slice(0, 500)}` })
+            return
+          }
+          try {
+            resolve({ ok: true, status: res.statusCode, data: JSON.parse(respBody) })
+          } catch (e: unknown) {
+            resolve({ ok: false, error: `解析失败: ${e instanceof Error ? e.message : String(e)}` })
+          }
+        })
+      })
+      req.on('error', (e) => resolve({ ok: false, error: e.message }))
+      req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: '请求超时' }) })
+      req.write(bodyStr)
+      req.end()
+    })
+  }
+
+  /** 远程端点的鉴权头（OpenAI 用 Bearer，Anthropic 用 x-api-key + 版本头） */
+  function endpointAuthHeaders(ep: RemoteEndpoint): Record<string, string> {
+    const key = String(ep.apiKey ?? '').trim()
+    if (ep.api === 'anthropic-messages') return { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
+    return key ? { Authorization: `Bearer ${key}` } : {}
+  }
+
+  ipcMain.handle('chat-completion', async (_e, opts: { port: number; endpoint?: RemoteEndpoint; body: Record<string, unknown> }): Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }> => {
     const { port, body } = opts
+    // 远程端点：OpenAI 兼容那两种协议能直接复用同一套请求体。Anthropic 的 messages
+    // 请求体不一样（system 是独立字段、max_tokens 必填），在这里硬凑一份映射不值当，
+    // 明确报错让界面如实提示，也比静默失败好。
+    const ep = opts.endpoint
+    if (ep) {
+      if (ep.api === 'anthropic-messages') return { ok: false, error: 'Anthropic 协议端点暂不支持压缩请求' }
+      const base = String(ep.baseUrl ?? '').replace(/\/+$/, '')
+      if (!base) return { ok: false, error: '端点缺少 baseUrl' }
+      return httpPostJson(`${base}/chat/completions`, { ...body, ...(ep.modelId ? { model: ep.modelId } : {}) }, endpointAuthHeaders(ep))
+    }
     const model = await resolveChatModel(port, body.model)
     const finalBody = model ? { ...body, model } : body
     // max_tokens 兜底：llama.cpp 用 -1 表示沿用服务端默认，TensorSharp 对负数/0 会抛

@@ -2,7 +2,7 @@ import { createWithEqualityFn } from 'zustand/traditional'
 import type { AgentMessage, AgentProject } from '../../../shared/types'
 import { isChatWorkspace } from '../../../shared/types'
 import { shallow } from 'zustand/shallow'
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, AppUpdateInfo, RunningStatus, ModelMetrics, SystemMetrics, ModelDownloadPhase, HfDownloadPhase } from '../../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, AppUpdateInfo, RunningStatus, ModelMetrics, SystemMetrics, ModelDownloadPhase, HfDownloadPhase, ModelEndpoint } from '../../../shared/types'
 interface CardState {
   template: Template
   status: RunningStatus
@@ -150,6 +150,8 @@ export type BackendListStatus = 'loading' | 'ready' | 'error'
 
 interface AppStore {
   cards: CardState[]
+  /** 外部端点表（APP_ROOT/endpoints.json）：模型卡片按 endpointId 引用 */
+  modelEndpoints: ModelEndpoint[]
   backends: BackendVersion[]
   backendsStatus: BackendListStatus
   backendsReady: boolean
@@ -162,7 +164,7 @@ interface AppStore {
   /** 四引擎自动检测结果：repo → ReleaseInfo（启动 10s 后并行检测写入） */
   engineReleases: Record<string, ReleaseInfo | null>
   paths: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string; chatTemplates: string } | null
-  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'ocr' | 'benchmark' | 'agent-code' | 'model-tools' | 'knowledge' | 'tts' | 'stt' | 'imagegen' | 'engines' | 'folders' | 'token-stats' | 'audiocpp' | 'mermaid-test' | 'recharts-test' | 'svg-test'
+  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'ocr' | 'benchmark' | 'agent-code' | 'model-tools' | 'knowledge' | 'tts' | 'stt' | 'imagegen' | 'engines' | 'endpoints' | 'folders' | 'token-stats' | 'audiocpp' | 'mermaid-test' | 'recharts-test' | 'svg-test'
   showCreateModal: boolean
   editingTemplate: Template | null
   updateDismissed: boolean
@@ -213,6 +215,7 @@ interface AppStore {
   setImageModels: (m: ModelFileInfo[]) => void
   setChatTemplates: (m: ModelFileInfo[]) => void
   setCards: (c: CardState[]) => void
+  setModelEndpoints: (e: ModelEndpoint[]) => void
   setReleaseInfo: (r: ReleaseInfo | null) => void
   setEngineRelease: (repo: string, info: ReleaseInfo | null) => void
   setPaths: (p: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string; chatTemplates: string }) => void
@@ -377,7 +380,7 @@ interface AppStore {
 // createWithEqualityFn + shallow 作为默认相等函数：消除 useStore(selector, shallow) 的弃用警告，
 // 且所有现有 useStore(s => ({...}), shallow) 调用处无需改动。
 export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
-  cards: [], backends: [], backendsStatus: 'loading' as BackendListStatus, backendsReady: false, models: [], imageModels: [], chatTemplates: [], activeBackend: null,
+  cards: [], modelEndpoints: [] as ModelEndpoint[], backends: [], backendsStatus: 'loading' as BackendListStatus, backendsReady: false, models: [], imageModels: [], chatTemplates: [], activeBackend: null,
   commandsSchema: null, releaseInfo: null, engineReleases: {}, paths: null,
   view: 'cards', showCreateModal: false, editingTemplate: null,
   updateDismissed: false, checkingUpdate: false, downloadProgress: null,
@@ -449,6 +452,7 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
   setImageModels: (m) => set({ imageModels: m }),
   setChatTemplates: (m) => set({ chatTemplates: m }),
   setCards: (c) => set({ cards: c }),
+  setModelEndpoints: (e) => set({ modelEndpoints: e }),
   setReleaseInfo: (r) => set({ releaseInfo: r }),
   setEngineRelease: (repo, info) => set(s => ({ engineReleases: { ...s.engineReleases, [repo]: info } })),
   setPaths: (p) => set({ paths: p }),

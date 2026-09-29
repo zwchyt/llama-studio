@@ -10,6 +10,7 @@
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import type { AgentSession, ModelRuntime, ToolDefinition } from '@earendil-works/pi-coding-agent'
+import type { RemoteEndpoint } from '../../../shared/types'
 
 type PiModule = typeof import('@earendil-works/pi-coding-agent')
 
@@ -26,6 +27,8 @@ export const LLAMA_STUDIO_MODEL_ID = 'local-model'
 export interface PiAgentBridgeOptions {
   /** 返回当前会话绑定的本地模型端口（llama-server 监听端口）；undefined = 无可用模型 */
   getPort: () => number | undefined
+  /** 远程端点：填了就取代本机端口，pi 直接按这个 base URL / 协议 / key 发请求 */
+  endpoint?: RemoteEndpoint
   /** 会话级采样参数（temperature/top_p 等，作为 model.samplingParams） */
   getExtraBody?: () => Record<string, unknown>
   /** 模型上下文窗口 token 数（供 pi 的 auto-compaction 阈值计算） */
@@ -90,37 +93,46 @@ export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promis
   const pi = await getPi()
   const agentDir = options.agentDir ?? pi.getAgentDir()
   const port = options.getPort()
-  if (!port) throw new Error('未选择可用模型（无运行中的本地模型端口）')
-  const contextWindow = options.getContextWindow?.() ?? 128000
+  // 远程端点（自定义 base URL + 协议 + key）：给了它就不再看本机端口
+  const ep = options.endpoint
+  if (!port && !ep) throw new Error('未选择可用模型（既没有运行中的服务，也没有填写端点）')
+  const contextWindow = ep?.contextWindow ?? options.getContextWindow?.() ?? 128000
+  const modelId = ep?.modelId?.trim() || LLAMA_STUDIO_MODEL_ID
 
   const modelRuntime = await getModelRuntime(agentDir)
   // H-11 防御性加固：provider id 带 port 后缀，杜绝未来多会话/多端口时同名覆盖 baseUrl
-  // （当前渲染端单活跃会话实际不可达；条目按端口数有界，dispose 不注销可接受）
-  const providerId = `${LLAMA_STUDIO_PROVIDER_ID}-${port}`
+  // （当前渲染端单活跃会话实际不可达；条目按端口数有界，dispose 不注销可接受）。
+  // 远程端点按 base URL 生成后缀，同样只含 [a-z0-9-]，多条远程卡互不覆盖。
+  const providerId = ep
+    ? `${LLAMA_STUDIO_PROVIDER_ID}-remote-${ep.baseUrl.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase().slice(-48)}`
+    : `${LLAMA_STUDIO_PROVIDER_ID}-${port}`
+  // supportsUsageInStreaming 是为 llama.cpp / OpenAI 兼容端点特调的（显式发
+  // stream_options.include_usage，否则 usage 缺失 → Token 记账失败）。
+  // Anthropic 协议的 usage 本来就在 message_start / message_delta 里带回来，不该塞这个开关。
+  const openAiStyle = !ep || ep.api !== 'anthropic-messages'
   modelRuntime.registerProvider(providerId, {
-    name: 'Llama Studio (Local)',
-    baseUrl: `http://127.0.0.1:${port}/v1`,
-    api: 'openai-completions',
-    apiKey: 'local', // 占位：本地无鉴权；pi 据此认为该 provider 已配置
+    name: ep ? ep.baseUrl : 'Llama Studio (Local)',
+    baseUrl: ep ? ep.baseUrl : `http://127.0.0.1:${port}/v1`,
+    api: ep ? ep.api : 'openai-completions',
+    // 本机无鉴权时 'local' 只是让 pi 认为该 provider 已配置
+    apiKey: ep?.apiKey?.trim() || 'local',
     models: [
       {
-        id: LLAMA_STUDIO_MODEL_ID,
-        name: 'Local Model',
+        id: modelId,
+        name: ep ? modelId : 'Local Model',
         reasoning: true,
         // 工具结果里的图片（browser_screenshot）只有在该模态被声明时才会发给模型
-        input: options.vision ? ['text', 'image'] : ['text'],
+        input: (ep ? ep.vision === true : options.vision) ? ['text', 'image'] : ['text'],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow,
         maxTokens: 8192,
-        // 本地端点支持 stream_options.include_usage（llama.cpp 系），
-        // 显式开启以免对本地 URL 的自动检测误判为不支持 → usage 缺失 → Token 记账失败
-        compat: { supportsUsageInStreaming: true },
+        ...(openAiStyle ? { compat: { supportsUsageInStreaming: true } } : {}),
         ...(options.getExtraBody ? { samplingParams: options.getExtraBody() } : {})
       }
     ]
   })
-  const model = modelRuntime.getModel(providerId, LLAMA_STUDIO_MODEL_ID)
-  if (!model) throw new Error('本地模型注册失败（ModelRuntime.getModel 未找到）')
+  const model = modelRuntime.getModel(providerId, modelId)
+  if (!model) throw new Error(`模型注册失败（ModelRuntime 里没有 ${modelId}）`)
 
   const { DefaultResourceLoader, SessionManager, SettingsManager, createAgentSession } = pi
   const resourceLoader = new DefaultResourceLoader({

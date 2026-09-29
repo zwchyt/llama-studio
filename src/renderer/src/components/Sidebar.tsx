@@ -7,7 +7,7 @@ import {
   HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
   InfoIcon, FileTextIcon, CodeIcon,
   SettingsIcon, BookOpenIcon, AudioLinesIcon, ImageIcon, MicIcon,
-  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon,
+  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon, PlugZapIcon,
   GitBranchIcon
 } from '@animateicons/react/lucide'
 import { playEvent } from '../utils/sound'
@@ -314,6 +314,14 @@ export default function Sidebar() {
           onClick={() => setView('engines')}
         >
           {view === 'engines' && <span className="nav-active-dot" />}
+        </NavItem>
+        <NavItem
+          icon={PlugZapIcon}
+          label="外部端点"
+          active={view === 'endpoints'}
+          onClick={() => setView('endpoints')}
+        >
+          {view === 'endpoints' && <span className="nav-active-dot" />}
         </NavItem>
         <NavItem
           icon={FolderOpenIcon}

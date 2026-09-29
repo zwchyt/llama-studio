@@ -19,6 +19,7 @@ import React, { useCallback } from 'react'
 import { useStore } from '../../../store/useStore'
 import { notify } from '../../../store/notificationStore'
 import { mergeCommands } from '../../../agent/slashCommands'
+import { addressOfEndpoint, endpointOfCard } from '../../../utils/endpoint'
 import { newMsgId, uniqueId } from '../utils/ids'
 import type { AgentMessage, AgentProject, AgentSession, CardState, ThinkingLevel, TodoUpdate } from '../../../../../shared/types'
 import type { useAgentProjects } from './useAgentProjects'
@@ -122,7 +123,12 @@ export function useAgentSlashActions({
       case 'model': {
         const cur = runningCard ? modelLabel : '（未启动）'
         const running = cards.filter(c => c.status === 'running')
-        const others = running.filter(c => c !== runningCard).map(c => `- ${c.template.name}（端口 ${c.template.serverPort}）`)
+        // 外部端点卡没有本机端口，括号里写它的地址
+        const endpoints = useStore.getState().modelEndpoints
+        const others = running.filter(c => c !== runningCard).map(c => {
+          const addr = addressOfEndpoint(endpointOfCard(c, endpoints))
+          return `- ${c.template.name}（${addr || `端口 ${c.template.serverPort}`}）`
+        })
         appendResult([
           '**当前模型**',
           `- ${cur}`,

@@ -24,12 +24,13 @@ import {
 } from '../../../utils/contextBudget'
 import { noteCondenseFacts } from '../../../utils/memoryWriter'
 import { getWorkspaceRootForSession } from '../../../tools/workspaceRoot'
+import { remoteOfCard } from '../../../utils/endpoint'
 import { KEEP_RECENT_TURNS } from '../utils/constants'
 import {
   CONDENSE_TRIGGER_RATIO, SUMMARY_PROMPT, SUMMARY_TEMPERATURE,
   buildApiMessagesFull, serializeMessagesForSummary,
 } from '../utils/condensePrompt'
-import type { AgentMessage, AgentSession, CardState } from '../../../../../shared/types'
+import type { AgentMessage, AgentSession, CardState, RemoteEndpoint } from '../../../../../shared/types'
 import type { useAgentProjects } from './useAgentProjects'
 
 export function useAgentCondense({
@@ -58,7 +59,8 @@ export function useAgentCondense({
   // 失败/超时/空返回一律吞掉异常、返回原 memory（引用不变，供调用方判断是否成功）。
   const condenseSessionMemory = useCallback(async (
     pid: string, sid: string, messages: AgentMessage[],
-    memory: AgentSession['memory'], budget: number, port: number, force = false
+    memory: AgentSession['memory'], budget: number, port: number, force = false,
+    endpoint?: RemoteEndpoint
   ): Promise<AgentSession['memory']> => {
     try {
       // 注：此处不做 abortRef.aborted 短路——该标志在用户点「停止」后残留 true，
@@ -92,7 +94,7 @@ export function useAgentCondense({
       }
       setCondensing(true)
       const res = await window.api.chatCompletion({
-        port, body: {
+        port, ...(endpoint ? { endpoint } : {}), body: {
           model: modelLabel,
           messages: [{ role: 'system', content: SUMMARY_PROMPT }, { role: 'user', content: userContent }],
           temperature: SUMMARY_TEMPERATURE, max_tokens: summaryMaxTok, stream: false,
@@ -165,12 +167,15 @@ export function useAgentCondense({
       setCondenseMsg(`暂无可压缩的更早历史：最近 ${KEEP_RECENT_TURNS} 轮会逐字保留，需超过 ${KEEP_RECENT_TURNS} 轮对话才会压缩。`)
       return
     }
-    const ctxN = useStore.getState().modelMetrics[runningCard.template.id]?.nCtx || 0
+    // 远程端点没有 /slots 上报 n_ctx，上下文预算只能取端点表上手填的那个值
+    const remote = remoteOfCard(runningCard, useStore.getState().modelEndpoints)
+    const ctxN = remote?.contextWindow
+      ?? (useStore.getState().modelMetrics[runningCard.template.id]?.nCtx || 0)
     const ctxBudget = computeContextBudget(ctxN)
     const prevCovered = activeSession.memory?.coveredMsgIds?.length || 0
     setCondenseMsg('')
     condenseErrorRef.current = ''
-    const next = await condenseSessionMemory(activeProjectId, activeSessionId, msgs, activeSession.memory, ctxBudget, runningCard.template.serverPort, true)
+    const next = await condenseSessionMemory(activeProjectId, activeSessionId, msgs, activeSession.memory, ctxBudget, runningCard.template.serverPort, true, remote)
     const nextCovered = next?.coveredMsgIds?.length || 0
     if (nextCovered > prevCovered) { setCondenseMsg(`✅ 已压缩 ${nextCovered - prevCovered} 条早期消息。`); notify(`已压缩 ${nextCovered - prevCovered} 条早期消息`, 'success'); playEvent('success') }
     else {

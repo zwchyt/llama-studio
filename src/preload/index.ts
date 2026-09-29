@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { ThinkingLevel, ReleaseInfo, AgentProject, AgentMemoryCandidate, ChatSession, CommandsSchema, Template, TodoUpdate } from '../shared/types'
+import type { ThinkingLevel, ReleaseInfo, AgentProject, AgentMemoryCandidate, ChatSession, CommandsSchema, Template, TodoUpdate, ProbeTarget, RemoteEndpoint, ModelEndpoint } from '../shared/types'
 
 // ⚠️ 单监听通道契约：下方 fullApi 中所有 on* 方法均为 removeAllListeners(channel) + on(...)
 // 的「单监听替换」语义——同通道重复注册会顶掉前一个监听者，而非累积（这也是 detach 后
@@ -37,6 +37,10 @@ const fullApi = {
   getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => ipcRenderer.invoke('get-commands', backendName, paramSet),
   saveBackendCommands: (backendName: string, schema: CommandsSchema, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => ipcRenderer.invoke('save-backend-commands', backendName, schema, paramSet),
   listTemplates: () => ipcRenderer.invoke('list-templates'),
+  // ── 外部端点表（endpoints.json）：地址/协议/key/模型名集中一处，卡片只引用 ──
+  listModelEndpoints: () => ipcRenderer.invoke('list-model-endpoints'),
+  saveModelEndpoint: (endpoint: ModelEndpoint) => ipcRenderer.invoke('save-model-endpoint', endpoint),
+  deleteModelEndpoint: (id: string) => ipcRenderer.invoke('delete-model-endpoint', id),
   saveTemplate: (template: Template) => ipcRenderer.invoke('save-template', template),
   deleteTemplate: (id: string) => ipcRenderer.invoke('delete-template', id),
   importTemplate: () => ipcRenderer.invoke('import-template'),
@@ -45,6 +49,12 @@ const fullApi = {
   pickModelFile: () => ipcRenderer.invoke('pick-model-file'),
   runModel: (opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp'; kind?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' }) => ipcRenderer.invoke('run-model', opts),
   stopModel: (id: string) => ipcRenderer.invoke('stop-model', id),
+  // ── 接管本机已运行的服务 / 连接远程端点 ──
+  // probe 只读（本机端口或远程 URL 二选一）；attach 只对本机端口有意义（把端口登记进
+  // 主进程运行表，指标采集与 Token 记账才不断链），远程卡不 attach。
+  probeEndpoint: (target: ProbeTarget) => ipcRenderer.invoke('probe-endpoint', target),
+  attachEndpoint: (id: string, port: number) => ipcRenderer.invoke('attach-endpoint', id, port),
+  detachEndpoint: (id: string) => ipcRenderer.invoke('detach-endpoint', id),
   onModelError: (cb: (data: { id: string; error: string }) => void) => {
     ipcRenderer.removeAllListeners('model-error')
     ipcRenderer.on('model-error', (_e, data) => cb(data))
@@ -183,7 +193,7 @@ const fullApi = {
   listTokenUsage: () => ipcRenderer.invoke('list-token-usage'),
   clearTokenUsage: () => ipcRenderer.invoke('clear-token-usage'),
   chatStream: (opts: { streamId: string; port: number; body: Record<string, unknown> }) => ipcRenderer.invoke('chat-completion-stream', opts),
-  chatCompletion: (opts: { port: number; body: Record<string, unknown> }) => ipcRenderer.invoke('chat-completion', opts),
+  chatCompletion: (opts: { port: number; endpoint?: RemoteEndpoint; body: Record<string, unknown> }) => ipcRenderer.invoke('chat-completion', opts),
   getServerProps: (port: number) => ipcRenderer.invoke('server-props', port),
   saveChatImage: (dataUrl: string) => ipcRenderer.invoke('save-chat-image', dataUrl),
   readChatImage: (ref: string) => ipcRenderer.invoke('read-chat-image', ref),
@@ -360,7 +370,7 @@ const fullApi = {
   windowClose: () => ipcRenderer.invoke('window-close'),
   // ── pi-agent（pi SDK 驱动的 agent 会话）──
   piAgent: {
-    create: (opts: { sessionId: string; port: number; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; vision?: boolean; projectSystemPrompt?: string; projectMemoryNotes?: string; memoryInjection?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => ipcRenderer.invoke('pi-agent-create', opts),
+    create: (opts: { sessionId: string; port: number; endpoint?: RemoteEndpoint; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; vision?: boolean; projectSystemPrompt?: string; projectMemoryNotes?: string; memoryInjection?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => ipcRenderer.invoke('pi-agent-create', opts),
     warmup: () => ipcRenderer.invoke('pi-agent-warmup'),
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-prompt', sessionId, text, images),
     steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-steer', sessionId, text, images),

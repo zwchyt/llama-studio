@@ -15,10 +15,56 @@ import { useStore } from '../../../store/useStore'
 import { notify } from '../../../store/notificationStore'
 import { safeCall } from '../../../utils/safeCall'
 import { playEvent } from '../../../utils/sound'
-import type { CardState } from '../../../../../shared/types'
+import { endpointOfCard, probeTargetOf, remoteOfCard } from '../../../utils/endpoint'
+import type { CardState, ModelEndpoint, Template } from '../../../../../shared/types'
 
 export function useAgentModelControl() {
   const handleModelAction = useCallback(async (card: CardState) => {
+    // 外部端点卡（服务/端点不由本应用启动）：点它＝探测并启用，再点＝停用/断开。
+    // 既没有后端可 spawn，也没有进程可杀。地址与 key 都按 endpointId 从端点表取。
+    if (card.template.external) {
+      const st = useStore.getState()
+      const ep = endpointOfCard(card, st.modelEndpoints)
+      const remote = remoteOfCard(card, st.modelEndpoints)
+      if (card.status === 'running') {
+        st.setCardStatus(card.template.id, 'idle')
+        st.clearModelMetrics(card.template.id)
+        if (st.activeChatPort === card.template.serverPort) st.clearActiveChat()
+        // 远程端点从不登记主进程运行表，自然也没有登记要摘
+        if (ep?.kind === 'local-port') void window.api.detachEndpoint(card.template.id).catch(() => {})
+        notify(!ep ? '已停用（这张卡没有关联端点了，请到「外部端点」页重新添加）'
+          : remote ? `已停用 ${ep.name}` : `已断开 :${ep.port}（那边的服务没有被关掉）`)
+        return
+      }
+      if (!ep) {
+        notify(`「${card.template.name}」没有关联的端点记录了，请到「外部端点」页重新添加`, 'error')
+        playEvent('error')
+        return
+      }
+      if (remote) {
+        const p = await safeCall(() => window.api.probeEndpoint(probeTargetOf(ep)), '端点探测失败')
+        if (!p?.ok) {
+          notify(`端点不可用：${p?.error ?? '探测失败'}`, 'error')
+          playEvent('error')
+          return
+        }
+        st.setCardStatus(card.template.id, 'running')
+        st.setCardReady(card.template.id, true)
+        notify(`已启用端点 ${ep.name}`)
+        return
+      }
+      // 本机端口型以端点记录里的端口为准（在端点页改过端口后，卡片上的字段可能还是旧值）
+      const res = await safeCall(() => window.api.attachEndpoint(card.template.id, ep.port ?? card.template.serverPort), '接管失败')
+      if (!res?.success) {
+        notify(`接管失败：${res?.error ?? '未探测到服务'}`, 'error')
+        playEvent('error')
+        return
+      }
+      st.setCardStatus(card.template.id, 'running')
+      st.setCardReady(card.template.id, true)
+      notify(`已接管 :${card.template.serverPort} 上的服务`)
+      return
+    }
     if (card.status === 'running') {
       const { setCardStatus, clearModelMetrics, activeChatPort, clearActiveChat } = useStore.getState()
       setCardStatus(card.template.id, 'idle')
@@ -85,5 +131,36 @@ export function useAgentModelControl() {
     }
   }, [])
 
-  return { handleModelAction }
+  // 端点上有模型名还没建卡时的入口：点下拉里那条 = 就地建一张引用该端点的卡，再按外部卡语义启用。
+  // 卡片名字用「端点名 · 模型名」，端点页那边按模型名建卡用的是同一套写法。
+  const pickEndpointModel = useCallback(async (ep: ModelEndpoint, modelId: string) => {
+    const st = useStore.getState()
+    const existing = st.cards.find(c => c.template.external && c.template.endpointId === ep.id && c.template.endpointModelId === modelId)
+    if (existing) return handleModelAction(existing)
+    const now = new Date().toISOString()
+    const tpl: Template = {
+      id: crypto.randomUUID(),
+      name: `${ep.name} · ${modelId}`,
+      // 本机端口型留端口（接管登记与 /slots 指标都按端口走）；远程型没有端口
+      serverPort: ep.kind === 'local-port' ? (ep.port ?? 0) : 0,
+      args: {},
+      ...(ep.kind === 'local-port' ? { paramSet: 'llamacpp' as const } : {}),
+      external: true,
+      endpointId: ep.id,
+      endpointModelId: modelId,
+      createdAt: now,
+      updatedAt: now
+    }
+    st.addCard(tpl)
+    await safeCall(() => window.api.saveTemplate(tpl), '保存模型卡片失败')
+    const card = useStore.getState().cards.find(c => c.template.id === tpl.id)
+    if (!card) {
+      notify(`「${tpl.name}」卡片没能建出来，请到「外部端点」页重试`, 'error')
+      playEvent('error')
+      return
+    }
+    await handleModelAction(card)
+  }, [handleModelAction])
+
+  return { handleModelAction, pickEndpointModel }
 }

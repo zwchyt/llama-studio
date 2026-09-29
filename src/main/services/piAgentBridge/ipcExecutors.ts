@@ -72,7 +72,7 @@ export function createIpcExecutors(): MainToolExecutors {
     describeKb: (kbId) => describeKnowledgeBase(kbId),
     listKb: async () => listKnowledgeBases(),
     getPortModelInfo: async (port) => ipcInternal.getPortModelInfo?.(port),
-    // Token 账本只在主进程有状态（init / lastPromptByPort / 月度封存），worker 的入账经此落盘
+    // Token 账本只在主进程有状态（init / lastPromptByKey / 月度封存），worker 的入账经此落盘
     appendTokenUsage: async (entry) => { appendTokenUsage(entry) },
     setAgentWorkspace: async (cwd) => { ipcInternal.handleSetAgentWorkspace?.(cwd) },
     // 截图纯主进程即可完成（webview guest 由主进程持有）；browser_show 要渲染进程的
