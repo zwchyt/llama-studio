@@ -66,6 +66,12 @@ export interface PlainToolSpec {
   description: string
   /** OpenAI 格式 JSON Schema 参数定义 */
   parameters: Record<string, unknown>
+  /**
+   * 一行式说明，进系统提示词的 `Available tools:` 列表（pi 的 promptSnippet 通道）。
+   * 不给的话该工具就不会出现在那份列表里 —— 全都不给时列表会显示成 `(none)`，
+   * 而提示词正文又说「你可能还有其它自定义工具」，自相矛盾。
+   */
+  promptSnippet?: string
   /** 激活该工具时附加到系统提示词的使用规范（pi promptGuidelines 通道） */
   promptGuidelines?: string[]
   /** 返回文本；或 {text, details, images} 以便携带附加信息（撤销备份 id / 截图图片块） */
@@ -86,6 +92,7 @@ export function makePiTool(
     name: spec.name,
     label: spec.label ?? spec.name,
     description: spec.description,
+    ...(spec.promptSnippet ? { promptSnippet: spec.promptSnippet } : {}),
     ...(spec.promptGuidelines?.length ? { promptGuidelines: spec.promptGuidelines } : {}),
     parameters: jsonSchemaToTypeBox(spec.parameters, Type),
     execute: async (toolCallId, params, _signal, _onUpdate) => {

@@ -360,7 +360,7 @@ export default function EnginesView() {
                   ) : dlActive ? (
                     <button className="btn btn-secondary btn-sm" disabled>其他引擎下载中</button>
                   ) : (
-                    <button className="btn btn-primary btn-sm" onClick={handleDownload}>下载</button>
+                    <button className="btn btn-primary btn-sm" onClick={handleDownload}>下载并安装</button>
                   )}
                 </div>
               )}

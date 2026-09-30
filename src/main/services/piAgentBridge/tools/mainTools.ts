@@ -321,10 +321,22 @@ async function createPiEditTool(exec: MainToolExecutors, ctx?: CreateMainToolsCo
           onUpdate,
           pctx
         )
-        // 5) 追加 backupId 供 renderer 撤销（与自研 Write/Edit 的 details 契约一致）。
+        // 5) 写盘成功：立刻让该文件的读取缓存失效（旧内容不能再被"命中缓存"喂回去）。
+        // 注意 mtime 校验本也能在下次 Read 时发现，但那依赖"mtime+size 一定变化"；
+        // 同毫秒内改回同样大小的编辑可能漏检，所以这里显式失效一次。
+        invalidateReadCache(abs)
+        // 6) 把「改动后的行区间」补进模型可见的 content（见 buildChangedRegionText 的说明）
+        const changedRegion = await buildChangedRegionText(exec, abs, input, res)
+        // 7) 追加 backupId 供 renderer 撤销（与自研 Write/Edit 的 details 契约一致）。
         // 这是撤销契约的「真相源」：backupId 仅在本分支（写操作成功、备份已记录）回传；
         // 失败/只读路径不回传 → renderer 端不显示撤销按钮（R2，杜绝空撤销）。
-        return { ...res, details: { ...((res.details ?? {}) as unknown as Record<string, unknown>), backupId: toolCallId } }
+        return {
+          ...res,
+          ...(changedRegion
+            ? { content: [...(Array.isArray(res.content) ? res.content : []), { type: 'text', text: changedRegion }] }
+            : {}),
+          details: { ...((res.details ?? {}) as unknown as Record<string, unknown>), backupId: toolCallId }
+        }
       } catch (err) {
         // 执行失败：编辑未生效，清掉刚记录的撤销备份，避免撤销列表残留无效条目
         exec.removeUndo?.(toolCallId)
@@ -456,23 +468,167 @@ export interface CreateMainToolsContext {
   vision?: boolean
 }
 
-// ── Read 短期缓存（对齐 renderer FileReadTool 的 readCache；pi 主进程版此前缺失）──
-// 模型探索时常对同一文件重复 Read（尤其上下文被裁剪后），按「路径|offset|limit」缓存
-// 格式化结果。与 renderer 版「写入后前缀失效」不同，这里改用 mtime+size 命中校验：
-// pi Bash / pi Edit 直接改盘不经本文件执行器，前缀失效覆盖不到，mtime 校验对全部修改路径成立。
-const readCache = new Map<string, { result: string; mtimeMs: number; size: number }>()
-const READ_CACHE_MAX = 200
-function readCacheKey(filePath: string, offset?: number, limit?: number): string {
-  return `${filePath.replace(/\\/g, '/').toLowerCase()}|${offset ?? ''}|${limit ?? ''}`
+// ── Read 短期缓存（按文件分桶 + LRU）──
+// 旧实现按「路径|offset|limit」做扁平 key，有两个实际代价：
+//   ① 换个开窗就是新 key —— 同一文件的多窗口互不共享；而且编辑后该文件条目全部失效，
+//      模型想确认改动只能重读（配合「Edit 结果不含改动内容」就成了纯浪费）；
+//   ② 条目满时 `readCache.clear()` 整表清空 —— 长会话里会把仍有用的条目一起丢掉。
+// 现在改为按文件分桶：一个文件一条版本信息（mtime+size）+ 多个窗口的格式化结果。
+//   · 版本变了只清该文件的窗口（其余文件不受影响）
+//   · 条目满时按 LRU 淘汰最久未用的桶，而不是清空整表
+//   · 额外记录「本会话是否已完整读过该文件」，让重复读取能被明确挡回去
+interface ReadCacheBucket {
+  mtimeMs: number
+  size: number
+  /** 该文件是否已被完整读过（用于提示"无需重读"） */
+  fullyRead: boolean
+  /** 完整读过之后又被写盘工具改过：此时"已读内容"不再等于盘上内容，提示要据此改写 */
+  editedSinceRead: boolean
+  /** 完整读过时的总行数（0 = 未知） */
+  totalLines: number
+  /** 窗口 key（`offset|limit`）→ 格式化结果 */
+  windows: Map<string, string>
 }
-/** 缓存命中后校验文件未变（mtime+size）；stat 失败（被删除/路径重定向）视为失效 */
-function readCacheFresh(entry: { mtimeMs: number; size: number }, absPath: string): boolean {
+const readCache = new Map<string, ReadCacheBucket>()
+const READ_CACHE_MAX_FILES = 60
+const READ_CACHE_MAX_WINDOWS_PER_FILE = 6
+
+function readCacheFileKey(absPath: string): string {
+  return absPath.replace(/\\/g, '/').toLowerCase()
+}
+function readCacheWindowKey(offset?: number, limit?: number): string {
+  return `${offset ?? ''}|${limit ?? ''}`
+}
+
+/** 取桶并按需做版本校验；命中后置到队尾（LRU）。盘上文件已变 → 只清该文件的窗口 */
+function readCacheTouch(absPath: string): ReadCacheBucket | null {
+  const key = readCacheFileKey(absPath)
+  const bucket = readCache.get(key)
+  if (!bucket) return null
   try {
     const st = statSync(absPath)
-    return st.mtimeMs === entry.mtimeMs && st.size === entry.size
+    if (st.mtimeMs !== bucket.mtimeMs || st.size !== bucket.size) {
+      bucket.windows.clear()
+      // 盘上内容变了（可能是本工具集的 Edit/Write/Delete，也可能是 Bash 直接改盘）：
+      // 保留"曾完整读过"的事实，但打上"已改过"标记，提示里就不能再声称模型手上是最新内容。
+      if (bucket.fullyRead) bucket.editedSinceRead = true
+      bucket.mtimeMs = st.mtimeMs
+      bucket.size = st.size
+    }
   } catch {
-    return false
+    readCache.delete(key)
+    return null
   }
+  readCache.delete(key)
+  readCache.set(key, bucket)
+  return bucket
+}
+
+/** 读缓存命中查询：命中返回格式化结果，否则 null（内部已做版本校验与 LRU 置新） */
+function readCacheLookup(absPath: string, offset?: number, limit?: number): string | null {
+  return readCacheTouch(absPath)?.windows.get(readCacheWindowKey(offset, limit)) ?? null
+}
+
+/** 读盘成功后写入缓存（含「已完整读过」标记与 LRU 淘汰） */
+function readCacheStore(
+  absPath: string,
+  offset: number | undefined,
+  limit: number | undefined,
+  result: string,
+  endLine: number,
+  totalLines: number
+): void {
+  const key = readCacheFileKey(absPath)
+  const bucket = readCache.get(key) ?? {
+    mtimeMs: 0, size: 0, fullyRead: false, editedSinceRead: false, totalLines: 0, windows: new Map<string, string>()
+  }
+  bucket.windows.set(readCacheWindowKey(offset, limit), result)
+  while (bucket.windows.size > READ_CACHE_MAX_WINDOWS_PER_FILE) {
+    const oldest = bucket.windows.keys().next().value
+    if (oldest === undefined) break
+    bucket.windows.delete(oldest)
+  }
+  if (endLine >= totalLines) {
+    bucket.fullyRead = true
+    bucket.editedSinceRead = false
+    bucket.totalLines = totalLines
+  }
+  try {
+    const st = statSync(absPath)
+    bucket.mtimeMs = st.mtimeMs
+    bucket.size = st.size
+  } catch {
+    // 路径被重定向到工作区根等场景 stat 不到原路径：不缓存（每次都新鲜读取）
+    return
+  }
+  readCache.delete(key)
+  readCache.set(key, bucket)
+  if (readCache.size > READ_CACHE_MAX_FILES) {
+    const oldest = readCache.keys().next().value
+    if (oldest !== undefined) readCache.delete(oldest)
+  }
+}
+
+/** 写盘类工具（Edit / Write / Delete）成功后调用：让该文件的窗口缓存立即失效 */
+function invalidateReadCache(absPath: string): void {
+  const key = readCacheFileKey(absPath)
+  const bucket = readCache.get(key)
+  if (!bucket) return
+  bucket.windows.clear()
+  // 保留「曾完整读过」的事实（下次 Read 据此给出"改动已在上次 Edit 结果里、不必重读"的提示），
+  // 但打上"已改过"标记 —— 内容变了，不能再声称"你手上就是最新内容"。
+  if (bucket.fullyRead) bucket.editedSinceRead = true
+  try {
+    const st = statSync(absPath)
+    bucket.mtimeMs = st.mtimeMs
+    bucket.size = st.size
+  } catch {
+    readCache.delete(key)
+  }
+}
+
+/** 该文件本会话是否已完整读过；返回总行数与「读完之后是否又被改过」，未完整读过返回 null */
+function readCacheFullyRead(absPath: string): { totalLines: number; editedSinceRead: boolean } | null {
+  const bucket = readCacheTouch(absPath)
+  if (!bucket || !bucket.fullyRead) return null
+  return { totalLines: bucket.totalLines, editedSinceRead: bucket.editedSinceRead }
+}
+
+// ── Edit 之后回给模型的「改动后行区间」──
+// 为什么需要：pi 原生 Edit 只在 content 里回一句 `Successfully replaced N block(s) in <path>.`，
+// 改动内容全在 details.diff / details.patch / details.firstChangedLine 里 —— 而 details
+// 只用于 UI 事件，不进模型上下文（pi 侧是 `content: result.content`）。于是模型想确认
+// 「现在改成什么样了」就只剩一条路：重新 Read 整个文件。这正是「edit 改几行、随后整文件重读」
+// 的直接成因，也是纯浪费上下文的那一类。
+// 做法：用 details.firstChangedLine + 本次 edits 的新文本行数算出改动区间，只回该区间
+// （带行号 + 少量上下文），让「确认改动」不再需要重读。
+const EDIT_CONTEXT_LINES = 4
+
+async function buildChangedRegionText(
+  exec: MainToolExecutors,
+  absPath: string,
+  input: Record<string, unknown>,
+  res: unknown
+): Promise<string> {
+  const details = ((res as { details?: unknown } | null)?.details ?? {}) as { firstChangedLine?: unknown }
+  const first = typeof details.firstChangedLine === 'number' ? details.firstChangedLine : 0
+  if (!(first > 0)) return ''
+  // 改动区间长度：本次 edits 的新文本行数之和（pi 的 edits[] 已由 prepareArguments 归一）
+  const edits = Array.isArray(input.edits) ? (input.edits as Array<{ newText?: unknown }>) : []
+  let span = 0
+  for (const e of edits) span += typeof e.newText === 'string' ? Math.max(1, e.newText.split('\n').length) : 1
+  const from = Math.max(1, first - EDIT_CONTEXT_LINES)
+  const to = first + Math.max(1, span) - 1 + EDIT_CONTEXT_LINES
+  const r = await exec.readFile(absPath, { offset: from, limit: to - from + 1, raw: true })
+  if (!r.success || typeof r.content !== 'string') return ''
+  const lines = r.content.split('\n')
+  const end = from + lines.length - 1
+  const total = r.totalLines ?? end
+  const numbered = lines.map((line, i) => `${from + i} ${line}`).join('\n')
+  return (
+    `改动后的内容（第 ${from}-${end} 行 / 共 ${total} 行，含 ${EDIT_CONTEXT_LINES} 行上下文）：\n\n${numbered}\n\n` +
+    '(改动已在上方，确认这次编辑不需要重新读取该文件；若确需更大范围，用 Read 的 offset/limit 只读目标区间)'
+  )
 }
 
 function formatSize(bytes?: number): string {
@@ -483,6 +639,29 @@ function formatSize(bytes?: number): string {
   let i = 0
   while (val >= 1024 && i < units.length - 1) { val /= 1024; i++ }
   return `${val.toFixed(val < 10 ? 1 : 0)} ${units[i]}`
+}
+
+// ── 行数估算（只给 ListDir 用）──
+// 模型在 Read 之前需要「这文件值不值得整读」的信号，而目录列表原先只有字节数：
+// 3KB 与 300KB 在模型眼里都是"一个文件名"，只能先读了才知道 —— 这正是「小文件也整读、
+// 大文件也整读」的成因之一。这里按「字节 / 每行典型字节数」估一个量级并标注为"约"，
+// 让模型能据此决定整读还是先 Ripgrep/Grep 定位。不追求精确，也绝不对二进制猜。
+const TEXT_LIKE_EXT = new Set([
+  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'py', 'rs', 'go', 'java', 'c', 'h', 'cpp', 'hpp', 'cc',
+  'cs', 'rb', 'php', 'swift', 'kt', 'kts', 'scala', 'sh', 'bash', 'zsh', 'ps1', 'bat', 'cmd',
+  'sql', 'html', 'htm', 'css', 'scss', 'sass', 'less', 'vue', 'svelte', 'lua', 'r', 'dart',
+  'json', 'jsonc', 'json5', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'properties', 'env',
+  'md', 'markdown', 'txt', 'rst', 'tex', 'gradle', 'xml', 'plist', 'cmake', 'proto', 'graphql',
+])
+const AVG_BYTES_PER_LINE = 38
+
+/** 文本类文件的行数估算（返回 '' 表示不给估算：二进制或大小未知） */
+function estimateLineCount(fileName: string, size?: number): string {
+  if (size == null || size <= 0) return ''
+  const dot = fileName.lastIndexOf('.')
+  const ext = (dot > 0 ? fileName.slice(dot + 1) : fileName).toLowerCase()
+  if (!TEXT_LIKE_EXT.has(ext)) return ''
+  return `约 ${Math.max(1, Math.round(size / AVG_BYTES_PER_LINE))} 行`
 }
 
 /** 注册 pi 版主要工具（名称/描述/参数与 renderer 版本一致，执行在 main） */
@@ -711,7 +890,16 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     name: 'Read',
     label: '读取文件',
     description:
-      'Read file content with automatic encoding detection (UTF-8/UTF-16). Returns each line prefixed with its line number; the line content after the number can be used directly as Edit edits[].oldText. Supports offset/limit. Token budget ~25000; larger content suggests using Grep. Prefer over Bash type/cat.',
+      'Read file content with automatic encoding detection (UTF-8/UTF-16). Returns each line prefixed with its line number; the line content after the number can be used directly as Edit edits[].oldText. Supports offset/limit — WITHOUT limit it reads up to 2000 lines, so a small file is returned in full; when you only need a specific range, pass offset/limit explicitly (that also costs far fewer tokens). Token budget ~25000; larger content suggests using Grep. Prefer over Bash type/cat.',
+    promptSnippet:
+      'Read a file, or just a line range via offset/limit. Returns line-numbered content usable directly as Edit edits[].oldText.',
+    // 读取策略里最关键的三条同时放进 pi 的 Guidelines 段（提示词靠前、注意力更高）；
+    // 完整版在 appendSystemPrompt 的「读取策略」一节（见 shared/agentGuidance.ts）。
+    promptGuidelines: [
+      '- 读文件前先定位：用 Ripgrep/Grep（output_mode: content 带行号）取答案；需要上下文再用 Read 的 offset/limit 只读目标区间。',
+      '- 不要整读：不传 limit 会读到 2000 行（小文件等于整读）；只有「整体理解 / 重构 / 审阅」才允许整读。',
+      '- 不要重复读：刚 Edit/Write 过的文件不要整读确认（改动区间已在 Edit 结果里给出）；同一文件同一区间已读过的不要重读。',
+    ],
     parameters: {
       type: 'object',
       properties: {
@@ -723,7 +911,11 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
           type: 'number',
           description: 'Starting line number (1-indexed). Negative counts from end (e.g. -20 = last 20 lines). Default: 1.'
         },
-        limit: { type: 'number', description: 'Maximum number of lines to read. Default: 2000.' }
+        limit: {
+          type: 'number',
+          description:
+            'Maximum number of lines to read. Default: 2000 — i.e. omitting it reads up to 2000 lines, which returns a small file in full. Pass a small limit (with offset) to read only the range you need.'
+        }
       },
       required: ['file_path']
     },
@@ -736,11 +928,12 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
       const baseDir = ctx?.workspaceDir ?? '.'
       const absForCache = isAbsolute(file_path) ? file_path : resolve(baseDir, file_path)
       const absForDisplay = isAbsolute(file_path) ? file_path : resolve(baseDir, file_path)
-      const key = readCacheKey(absForCache, offset, limit)
-      const hit = readCache.get(key)
-      if (hit && readCacheFresh(hit, absForCache)) {
-        return `${hit.result}\n\n(命中读取缓存，未重复读盘；该文件内容已在上方，请直接基于已有内容分析，不要再次读取同一文件)`
+      const hit = readCacheLookup(absForCache, offset, limit)
+      if (hit) {
+        return `${hit}\n\n(命中读取缓存，未重复读盘；该文件内容已在上方，请直接基于已有内容分析，不要再次读取同一文件)`
       }
+      // 本会话是否已完整读过该文件：用于挡掉「为了确认再读一遍」这类纯浪费
+      const priorFullRead = readCacheFullyRead(absForCache)
       const res = await exec.readFile(file_path, { offset, limit, raw: true })
       if (!res.success) {
         let msg = `Error: ${res.error}`
@@ -757,17 +950,21 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
       const numberedContent = allLines
         .map((line, i) => `${startLine + i} ${line}`)
         .join('\n')
-      // 未显式指定 limit 且文件还有剩余行：尾部附加显式截断提示。头部 “of N” 是隐式信号，
-      // 模型（尤其弱模型）易忽略而退化成一页页顺序通读；显式给出下一步 offset 与 Grep 开窗建议。
-      const truncHint = limit === undefined && endLine < totalLines
-        ? `\n\n(已截断：第 ${startLine}-${endLine} 行 / 共 ${totalLines} 行。继续读用 offset=${endLine + 1}；定位目标代码更推荐 Grep（output_mode: content 带行号）后按行号以 offset/limit 开窗读取，避免逐页通读)`
+      // 行数结论：无论是否截断都明确交代一句。
+      // 旧实现只在「未显式传 limit 且还有剩余行」时才附加提示，于是「文件很小、已读全」
+      // 这件事模型完全看不出来（头部 "of N" 是隐式信号，弱模型易忽略），只能靠再读一遍确认。
+      const restLines = totalLines - endLine
+      const summary = restLines > 0
+        ? `(本次读了第 ${startLine}-${endLine} 行 / 共 ${totalLines} 行，还剩 ${restLines} 行未读。继续读用 offset=${endLine + 1}；定位目标代码更推荐先 Ripgrep/Grep（output_mode: content 带行号）再按行号开窗，避免逐页通读)`
+        : `(已读到文件末尾：第 ${startLine}-${endLine} 行 / 共 ${totalLines} 行 —— 该文件内容已全部在上方，无需再读)`
+      // 本会话已完整读过：明确挡回「再确认一次」；刚被编辑过的给出更具体的替代做法
+      const priorHint = priorFullRead
+        ? priorFullRead.editedSinceRead
+          ? `\n\n(该文件本会话已完整读过（${priorFullRead.totalLines || totalLines} 行），之后被你编辑过；改动区间已在 Edit 的结果里给出 —— 不需要整读确认，确需更大范围请用 offset/limit 只读目标区间)`
+          : `\n\n(该文件本会话已完整读过（${priorFullRead.totalLines || totalLines} 行）；如果你只是要确认某处，请用 offset/limit 只读目标区间，不要整读)`
         : ''
-      const result = `File: ${absForDisplay}\nLines: ${startLine}-${endLine} of ${totalLines}\n\n${numberedContent}${truncHint}`
-      if (readCache.size >= READ_CACHE_MAX) readCache.clear()
-      try {
-        const st = statSync(absForCache)
-        readCache.set(key, { result, mtimeMs: st.mtimeMs, size: st.size })
-      } catch { /* 路径被重定向到工作区根等场景 stat 不到原路径，放弃缓存（每次都会新鲜读取） */ }
+      const result = `File: ${absForDisplay}\nLines: ${startLine}-${endLine} of ${totalLines}\n\n${numberedContent}\n\n${summary}${priorHint}`
+      readCacheStore(absForCache, offset, limit, result, endLine, totalLines)
       return result
     }
   })
@@ -811,6 +1008,9 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
       await recordBackup(exec, meta.toolCallId, file_path)
       const res = await exec.writeFile(file_path, content)
       if (!res.success) return `❌ 写入失败：${res.error}`
+      // 写盘成功：让该文件的读取缓存失效。路径可能是相对的，按与 Read 相同的基准解析成绝对路径
+      // （Read 侧缓存 key 用的是解析后的绝对路径，两边基准不一致会失效不到）。
+      invalidateReadCache(isAbsolute(file_path) ? file_path : resolve(ctx?.workspaceDir ?? '.', file_path))
       // 轻量回读校验
       let note = ''
       try {
@@ -833,6 +1033,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     label: '查找文件',
     description:
       'Find files (not directories) by name using glob patterns (e.g. "*.ts", "src/**/*.tsx"). Returns absolute paths. Does NOT match directories. Avoid bare "*" or "**" patterns. For directory listing / project structure overview, use the ListDir tool, NOT Bash.',
+    promptSnippet: 'Find files by glob pattern (e.g. "src/**/*.ts"). Use to narrow paths before searching or reading.',
     parameters: {
       type: 'object',
       properties: {
@@ -857,6 +1058,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     label: '搜索内容',
     description:
       'Search file contents by regex. Supports content/files_with_matches/count output modes, glob filter, type filter (py/js/ts/rs/go/java/…), context lines, case-insensitive mode. Long lines are truncated at 1000 chars. 20s timeout returns partial results. Default search root = project directory. Returns absolute paths. Prefer over Bash findstr.',
+    promptSnippet: 'Regex content search returning line numbers — LOCATE code with this first, then Read only the matched range.',
     parameters: {
       type: 'object',
       properties: {
@@ -909,6 +1111,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     label: '极速搜索',
     description:
       'Fast content search powered by the bundled ripgrep engine. Multithreaded, automatically respects .gitignore, auto-detects file encodings (UTF-8/GBK/Latin1). Same parameters and output modes as Grep. PREFER THIS over Grep for large repos or first-pass global searches; Grep stays fine for small scoped lookups.',
+    promptSnippet: 'Fastest regex content search (ripgrep). Prefer this for locating code, instead of reading whole files.',
     parameters: {
       type: 'object',
       properties: {
@@ -957,6 +1160,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     label: '列出目录',
     description:
       'List files and directories of a SINGLE directory level (non-recursive) at the given path. Use it only to confirm/inspect one directory\'s immediate contents (e.g. check whether a file exists, verify a path before Read/Write). For a full project overview / analyzing what a directory does, use the AnalyzeDir tool instead — do NOT enumerate subdirs one-by-one with ListDir. Prefer this over Bash `dir`/`ls`. To see only directories, set dirsOnly.',
+    promptSnippet: 'List one directory level; files are shown with sizes — use it to gauge size before deciding to read a file.',
     parameters: {
       type: 'object',
       properties: {
@@ -1009,8 +1213,10 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
       const files = entries.filter((e) => !e.isDir)
       const renderDirs = () => dirs.map((e) => `  - ${e.name}/`).join('\n')
       const renderFiles = () => files.map((e) => {
-        const sz = formatSize(e.size)
-        return sz ? `  - ${e.name}  (${sz})` : `  - ${e.name}`
+        // 大小 + 行数估算（估算只对文本类给，见 estimateLineCount）——
+        // 模型据此判断"这文件要不要整读"，不用先读了才知道。
+        const meta = [formatSize(e.size), estimateLineCount(e.name, e.size)].filter(Boolean).join(' · ')
+        return meta ? `  - ${e.name}  (${meta})` : `  - ${e.name}`
       }).join('\n')
       let output = path && path !== '.' ? `- ${path}/\n` : ''
       const headerLen = output.length
@@ -1058,7 +1264,12 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
       if (!path) return '❌ 删除失败：缺少路径参数 path'
       await recordBackup(exec, meta.toolCallId, path)
       const res = await exec.deletePath(path, recursive)
-      if (res.success) return { text: res.message || '✅ 删除成功。', details: { backupId: meta.toolCallId } }
+      if (res.success) {
+        // 删除成功：该文件已不存在，读取缓存立即失效（避免后续 Read 命中已删除内容的缓存）。
+        // 路径可能是相对的，按与 Read 相同的基准解析成绝对路径。
+        invalidateReadCache(isAbsolute(path) ? path : resolve(ctx?.workspaceDir ?? '.', path))
+        return { text: res.message || '✅ 删除成功。', details: { backupId: meta.toolCallId } }
+      }
       const err = res.error || ''
       if (/ENOENT|no such|does not exist/.test(err)) return `❌ 删除失败：路径不存在\n${err}`
       if (/EACCES|EPERM|permission/.test(err)) return `🔒 删除失败：权限不足\n${err}`
@@ -1225,6 +1436,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     label: '代码搜索',
     description:
       'Semantic code search over the project symbol index (natural language query → relevant symbols/files with scores). Use when you need to LOCATE code by concept/behavior without knowing exact identifiers (e.g. "where is the login validation handled"). For exact text/regex matches use Grep instead. Returns file paths and matching symbols.',
+    promptSnippet: 'Semantic search: locate code by concept when you do not know the identifiers. Then Read only the matched symbols.',
     parameters: {
       type: 'object',
       properties: {

@@ -7271,13 +7271,27 @@
   text-decoration: underline;
 }
 
+/* 表格：与 .chat-msg-markdown table 同源（见上方 527 行的说明），这里同样不能写
+   display:block + overflow-x。markstream 已把 <table> 包在 .table-node-wrapper
+   （overflow-x:auto + scrollbar-gutter:stable）里承担横向滚动；一旦把 <table> 本身变成块，
+   内层匿名表按内容收缩，流式每来一个字列宽就重算、表内滚动条忽现忽隐（滚动条出现/消失还会
+   改变块的高度），整张表上下左右抖。
+   思考块——包括链内折叠段、过程正文段、历史摘要气泡——正是「可收起/展开」的那批，
+   表格渲染在其中最容易命中这个问题。 */
 .agent-think-body table {
   border-collapse: collapse;
   margin: 0 0 8px;
   font-size: 12.5px;
   width: 100%;
-  display: block;
-  overflow-x: auto;
+}
+
+/* 输出期间锁住列宽：与 .chat-msg-bubble--streaming .table-node 同一手法——fixed 只按第一行
+   （表头）定宽，正文再长也不回头改列宽；消息输出结束（--streaming 撤掉）恢复 auto，
+   最终版式仍按内容自适应。
+   用消息级流式态而不是单个折叠段的 streaming：表格可能落在折叠段 / 过程正文段等不同层级，
+   消息级一处覆盖全部，且结束时只发生一次重排。 */
+.agent-think--streaming .table-node {
+  table-layout: fixed;
 }
 
 .agent-think-body th,
@@ -8123,10 +8137,15 @@
   }
 }
 
+/* 思考程度菜单：右缘对齐按钮、向左展开。
+   这三个按钮（模型 / 思考程度 / 搜索）都在输入框底部行的右侧组，面板宽度又大于按钮，
+   左缘对齐会直接顶出输入框右边；改成右缘对齐后向左展开，弹窗始终落在会话区内。
+   （AgentInputArea 里「CSS 负责 bottom:100% + 右缘对齐」那句注释说的就是这个。） */
 .agent-code-view .chat-input-tools .chat-think-level-menu {
   position: absolute;
   bottom: calc(100% + 4px);
-  left: 0;
+  right: 0;
+  left: auto;
   z-index: 40;
   min-width: 92px;
   margin: 0;
@@ -8136,7 +8155,7 @@
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   box-shadow: var(--shadow-lg);
-  transform-origin: bottom left;
+  transform-origin: bottom right;
   animation: think-menu-in 0.16s ease-out;
 }
 
@@ -8430,10 +8449,12 @@
   letter-spacing: 0.2px;
 }
 
+/* 搜索菜单：与思考程度菜单同一套定位（右缘对齐、向左展开），理由见上。 */
 .agent-code-view .chat-input-tools .chat-search-menu {
   position: absolute;
   bottom: calc(100% + 4px);
-  left: 0;
+  right: 0;
+  left: auto;
   z-index: 40;
   min-width: 132px;
   margin: 0;
@@ -8443,7 +8464,7 @@
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   box-shadow: var(--shadow-lg);
-  transform-origin: bottom left;
+  transform-origin: bottom right;
   animation: think-menu-in 0.16s ease-out;
 }
 
@@ -8902,10 +8923,13 @@
   display: inline-flex;
 }
 
-/* 模型下拉：面板与行的外观完全对齐搜索菜单（.chat-search-menu / .chat-search-item） */
+/* 模型下拉：面板与行的外观完全对齐搜索菜单（.chat-search-menu / .chat-search-item）。
+   定位也与它们一致：右缘对齐按钮、向左展开（模型按钮在底部行右侧组，
+   200px 的面板若左缘对齐会顶出输入框右边）。 */
 .chat-model-picker {
   position: absolute;
-  left: 0;
+  right: 0;
+  left: auto;
   bottom: calc(100% + 4px);
   width: 200px;
   max-width: calc(100vw - 72px);
@@ -8917,8 +8941,8 @@
   border-radius: 8px;
   box-shadow: var(--shadow-lg);
   z-index: var(--z-toast);
-  /* 打开才挂载 + 同一条 think-menu-in 进场关键帧（面板左对齐按钮，变换原点在左下） */
-  transform-origin: bottom left;
+  /* 打开才挂载 + 同一条 think-menu-in 进场关键帧（面板右缘对齐按钮，变换原点在右下） */
+  transform-origin: bottom right;
   animation: think-menu-in 0.16s ease-out;
 }
 

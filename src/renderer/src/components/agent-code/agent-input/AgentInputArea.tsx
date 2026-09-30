@@ -627,43 +627,50 @@ export function AgentInputArea({
                 )}
               </div>
             )}
-            {/* 模式切换（编码 / 通用）在左侧会话栏顶部；通用模式的工具开关已移到界面顶栏。 */}
-            <div
-              ref={searchMenuRef}
-              className={`chat-search-switch${searchMenuOpen ? ' open' : ''}`}
-            >
-              <button
-                type="button"
-                className="chat-search-trigger"
-                disabled={loading}
-                onClick={() => setSearchMenuOpen(v => !v)}
+            {/* 网络搜索开关：只在编码模式出现。
+                通用模式的工具开关（含网络搜索）已经统一在界面顶栏那个「工具」按钮里
+                （见 AgentCodeViewLayout 的 chat-tools 菜单），这里再放一个就是同一份
+                状态的第二个入口 —— 去掉，避免重复与语义混淆。
+                编码模式没有那个顶栏菜单，搜索开关只能靠这里，必须保留。
+                模式切换（编码 / 通用）在左侧会话栏顶部。 */}
+            {!plainChat && (
+              <div
+                ref={searchMenuRef}
+                className={`chat-search-switch${searchMenuOpen ? ' open' : ''}`}
               >
-                {!searchEnabled ? (
-                  <SearchX size={14} />
-                ) : searchProvider === 'bing' ? (
-                  <Globe size={14} />
-                ) : (
-                  <Search size={14} />
+                <button
+                  type="button"
+                  className="chat-search-trigger"
+                  disabled={loading}
+                  onClick={() => setSearchMenuOpen(v => !v)}
+                >
+                  {!searchEnabled ? (
+                    <SearchX size={14} />
+                  ) : searchProvider === 'bing' ? (
+                    <Globe size={14} />
+                  ) : (
+                    <Search size={14} />
+                  )}
+                  <span className="chat-search-label">{!searchEnabled ? '搜索关' : searchProvider === 'bing' ? '必应' : 'DDG'}</span>
+                </button>
+                {searchMenuOpen && (
+                  <ul className="chat-search-menu">
+                    <li
+                      className={`chat-search-item${!searchEnabled ? ' active' : ''}`}
+                      onClick={() => applySearchChange(false, searchProvider)}
+                    ><SearchX size={12} />关闭网络搜索</li>
+                    <li
+                      className={`chat-search-item${searchEnabled && searchProvider === 'bing' ? ' active' : ''}`}
+                      onClick={() => applySearchChange(true, 'bing')}
+                    ><Globe size={12} />必应 Bing（国内）</li>
+                    <li
+                      className={`chat-search-item${searchEnabled && searchProvider === 'ddg' ? ' active' : ''}`}
+                      onClick={() => applySearchChange(true, 'ddg')}
+                    ><Search size={12} />DuckDuckGo（国际）</li>
+                  </ul>
                 )}
-                <span className="chat-search-label">{!searchEnabled ? '搜索关' : searchProvider === 'bing' ? '必应' : 'DDG'}</span>
-              </button>
-              {searchMenuOpen && (
-                <ul className="chat-search-menu">
-                  <li
-                    className={`chat-search-item${!searchEnabled ? ' active' : ''}`}
-                    onClick={() => applySearchChange(false, searchProvider)}
-                  ><SearchX size={12} />关闭网络搜索</li>
-                  <li
-                    className={`chat-search-item${searchEnabled && searchProvider === 'bing' ? ' active' : ''}`}
-                    onClick={() => applySearchChange(true, 'bing')}
-                  ><Globe size={12} />必应 Bing（国内）</li>
-                  <li
-                    className={`chat-search-item${searchEnabled && searchProvider === 'ddg' ? ' active' : ''}`}
-                    onClick={() => applySearchChange(true, 'ddg')}
-                  ><Search size={12} />DuckDuckGo（国际）</li>
-                </ul>
-              )}
-            </div>
+              </div>
+            )}
             {loading ? (
               <AniIconButton className="btn btn-ghost chat-stop-btn" icon={CircleStopIcon} size={16} onClick={handleStop} title="停止" />
             ) : (

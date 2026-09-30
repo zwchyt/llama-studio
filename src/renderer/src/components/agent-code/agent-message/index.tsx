@@ -659,7 +659,7 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
   // 而给容器加上 stopped 样式。
   const wasStopped = !msgStreaming && !thinking && !closed
   return (
-    <div className={`agent-think ${thinking ? 'thinking' : ''} ${expanded ? 'expanded' : ''} ${wasStopped ? 'stopped' : ''}`}>
+    <div className={`agent-think ${thinking ? 'thinking' : ''} ${expanded ? 'expanded' : ''} ${wasStopped ? 'stopped' : ''} ${msgStreaming ? 'agent-think--streaming' : ''}`}>
       <button className="agent-think-toggle" onClick={handleToggle}>
         {showThinking ? (
           <span className="agent-think-status">

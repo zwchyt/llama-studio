@@ -5,13 +5,13 @@ import { getWorkspaceRootForSession } from '../workspaceRoot'
 
 export const definition: Omit<ToolDefinition['function'], 'type'> = {
   name: FILE_READ_TOOL_NAME,
-  description: 'Read file content with automatic encoding detection (UTF-8/UTF-16). Returns each line as "行号 哈希|内容" (Hashline format with content fingerprint for precise Edit targeting). Supports offset/limit. Token budget ~25000; larger content suggests using Grep. Prefer over Bash type/cat.',
+  description: 'Read file content with automatic encoding detection (UTF-8/UTF-16). Returns each line as "行号 哈希|内容" (Hashline format with content fingerprint for precise Edit targeting). Supports offset/limit — WITHOUT limit it reads up to 2000 lines, so a small file is returned in full; pass offset/limit explicitly when you only need a range (that also costs far fewer tokens). Token budget ~25000; larger content suggests using Grep. Prefer over Bash type/cat.',
   parameters: {
     type: 'object',
     properties: {
       file_path: { type: 'string', description: 'Path to the file, relative to the project directory (e.g. "subdir/file.py") or absolute.' },
       offset: { type: 'number', description: 'Starting line number (1-indexed). Negative counts from end (e.g. -20 = last 20 lines). Default: 1.' },
-      limit: { type: 'number', description: 'Maximum number of lines to read. Default: 2000.' }
+      limit: { type: 'number', description: 'Maximum number of lines to read. Default: 2000 — i.e. omitting it reads up to 2000 lines, which returns a small file in full. Pass a small limit (with offset) to read only the range you need.' }
     },
     required: ['file_path']
   }

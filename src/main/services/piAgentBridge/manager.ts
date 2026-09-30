@@ -9,7 +9,7 @@ import { PLAIN_CHAT_TOOL_NAMES as CHAT_TOOL_NAMES } from '../../../shared/types'
 import { appendSessionEvent, writeTrajectoryHeader, appendLlmRequest, summarizeLlmRequest, appendUserEntry, appendLlmSystemMessages } from './trajectory'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { ThinkingLevel, TokenUsageEntry, RemoteEndpoint } from '../../../shared/types'
-import { PI_TOOL_GUIDANCE, PI_CHART_ROUTING, PI_MERMAID_DSL_GUIDANCE, PI_CHART_FENCE_GUIDANCE, PI_SVG_GUIDANCE, PI_MERMAID_JSON_GUIDANCE, PLAIN_CHAT_SYSTEM_PROMPT } from '../../../shared/agentGuidance'
+import { PI_TOOL_GUIDANCE, PI_CHART_ROUTING, PLAIN_CHAT_SYSTEM_PROMPT } from '../../../shared/agentGuidance'
 
 /** llama-studio 会话历史消息（pi 模式注入用，与 shared/types 的 AgentMessage 结构对应） */
 export interface PiHistoryMessage {
@@ -184,7 +184,15 @@ export class PiAgentManager {
         // knowledge_search 的返回里会指引模型用 knowledge_read 取其它条目正文，
         // 所以启用检索时把读取工具一起带上，否则模型只能看目录、读不到内容。
         if (want.has('knowledge_search')) out.push('knowledge_read')
-        if (want.has('web_search') && searchEnabled) out.push(searchProvider === 'bing' ? 'web_search_bing' : 'web_search')
+        // 搜索工具只看全局搜索开关（searchEnabled），**不**看 chatTools。
+        // 原因：界面上「联网搜索」那一项的开关状态与点击行为都接在全局 searchEnabled 上
+        // （见 useAgentUiState.toggleChatTool 的 web_search 分支：它只翻转全局开关，
+        // 从不写进 chatTools）。所以 chatTools 里永远不会有 'web_search' —— 一旦这里
+        // 要求 want.has('web_search')，通用模式下的搜索工具就永远激活不了，而顶栏
+        // 「工具」菜单却显示它是「已开启」，属于 UI 与行为不一致。
+        // 打开/关闭搜索时 toggleChatTool 会 dispose 当前 pi 会话，下一轮按新的
+        // searchEnabled 重建，所以这里读实时值即可、不需要额外的重建信号。
+        if (searchEnabled) out.push(searchProvider === 'bing' ? 'web_search_bing' : 'web_search')
         return out
       })()
       : [...baseToolNames, ...searchToolNames]
@@ -204,7 +212,7 @@ export class PiAgentManager {
     //     写的东西；此前这三段全都没有送达模型，用户在界面上编辑保存后毫无效果。
     const codingGuidance = plainChat
       ? []
-      : [...PI_TOOL_GUIDANCE, ...PI_CHART_ROUTING, ...PI_MERMAID_DSL_GUIDANCE, ...PI_CHART_FENCE_GUIDANCE, ...PI_SVG_GUIDANCE, ...PI_MERMAID_JSON_GUIDANCE]
+      : [...PI_TOOL_GUIDANCE, ...PI_CHART_ROUTING]
     const userPromptSections = buildUserPromptSections(opts)
     const bridge = await createPiAgentBridge({
       getPort: () => opts.port,

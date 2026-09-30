@@ -1,18 +1,7 @@
-import React, { useEffect, useMemo, lazy, Suspense } from 'react'
+import React, { useEffect, useMemo } from 'react'
 import { useStore } from './store/useStore'
 import { useImageStore } from './store/imageStore'
 import Sidebar from './components/Sidebar'
-import CardsView from './components/CardsView'
-import SettingsView from './components/SettingsView'
-import EnginesView from './components/EnginesView'
-import ModelEndpointsView from './components/ModelEndpointsView'
-import ModelFoldersView from './components/ModelFoldersView'
-import HuggingFaceView from './components/HuggingFaceView'
-import ModelsView from './components/ModelsView'
-import ModelMonitoringView from './components/ModelMonitoringView'
-import AboutView from './components/AboutView'
-import AgentsView from './components/AgentsView'
-import WelcomeView from './components/WelcomeView'
 import CreateModal from './components/CreateModal'
 import SplashScreen from './components/SplashScreen'
 import UpdateBannerGroup from './components/UpdateBannerGroup'
@@ -23,26 +12,12 @@ import { notify } from './store/notificationStore'
 import { playEvent, playNavSound, warmUpAudio } from './utils/sound'
 import ChatWindow from './components/ChatWindow'
 import LlamaChatView from './components/LlamaChatView'
-import ModelToolsView from './components/ModelToolsView'
-import KnowledgeView from './components/KnowledgeView'
-import TtsView from './components/TtsView'
-import SttView from './components/SttView'
-import OcrView from './components/OcrView'
-// BenchmarkView 静态引入了 recharts（约 1.3MB）。如果这里也用静态 import，
-// Rollup 必须把 recharts 提到主包——因为 recharts/ChartCard 里的懒加载 chunk
-// 与它共享同一份依赖，只要有一个 eager 引入者，整条依赖链就回不到懒 chunk。
-// 隔一层 lazy 之后，recharts 变成两者共享的按需 chunk，首屏不再背这 1.3MB。
-const BenchmarkView = lazy(() => import('./components/BenchmarkView'))
-import ImageGenView from './components/ImageGenView'
 import AgentCodeView from './components/AgentCodeView'
-import MermaidTestView from './components/MermaidTestView'
-import RechartsTestView from './components/RechartsTestView'
-import SvgTestView from './components/SvgTestView'
-import TokenStatsView from './components/TokenStatsView'
-
-import AudioCppView from './components/AudioCppView'
+import ToolsHub from './components/ToolsHub'
 import TitleBar from './components/TitleBar'
 import TopNavBar from './components/TopNavBar'
+import { GROUPED_VIEWS } from './utils/navConfig'
+import { renderViewComponent } from './views/viewRegistry'
 import LayoutModeToggle from './components/LayoutModeToggle'
 import ThemeToggle from './components/ThemeToggle'
 import { useLayoutStore } from './store/layoutStore'
@@ -670,38 +645,12 @@ function AppMain() {
     }
   }
 
+  // 收进「工具箱」的界面统一由 ToolsHub 接管：它内部用二级导航切换具体界面，
+  // 于是导航栏只需保留高频入口，低频界面照样能在页内直接切换。
+  // 其余界面走 viewRegistry 的同一套映射（与 ToolsHub 共用，避免两处 switch）。
   const currentView = useMemo(() => {
-    switch (view) {
-      case 'hub': return <HuggingFaceView />
-      case 'settings': return <SettingsView />
-      case 'engines': return <EnginesView />
-      case 'endpoints': return <ModelEndpointsView />
-      case 'folders': return <ModelFoldersView />
-      case 'models': return <ModelsView />
-      case 'monitoring': return <ModelMonitoringView />
-      case 'token-stats': return <TokenStatsView />
-      case 'about': return <AboutView />
-      case 'agents': return <AgentsView />
-      case 'welcome': return <WelcomeView />
-      case 'llama': return <LlamaChatView />
-      case 'ocr': return <OcrView />
-      case 'benchmark': return (
-        <Suspense fallback={<div style={{ padding: 24, color: 'var(--text-secondary)' }}>加载基准测试…</div>}>
-          <BenchmarkView />
-        </Suspense>
-      )
-      case 'model-tools': return <ModelToolsView />
-      case 'knowledge': return <KnowledgeView />
-      case 'tts': return <TtsView />
-      case 'stt': return <SttView />
-      case 'imagegen': return <ImageGenView />
-      case 'audiocpp': return <AudioCppView />
-      case 'mermaid-test': return <MermaidTestView />
-      case 'recharts-test': return <RechartsTestView />
-      case 'svg-test': return <SvgTestView />
-      case 'agent-code': return null
-      default: return <CardsView />
-    }
+    if (GROUPED_VIEWS.has(view)) return <ToolsHub />
+    return renderViewComponent(view)
   }, [view])
 
   return (

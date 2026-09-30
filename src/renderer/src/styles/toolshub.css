@@ -1,0 +1,226 @@
+/* ══════════════════════════════════════════════════════════
+   工具箱：低频界面聚合页（左侧二级导航 + 右侧内容）
+   仅在本页生效，不覆盖其他界面样式。
+   ══════════════════════════════════════════════════════════ */
+
+/* 抵消 global.css 中 `.view-transition > :not(...)` 给直接子节点套上的卡片样式：
+   本页的两块卡片分别由左侧导航与右侧内容承担，外层容器只负责横向布局。
+   选择器提到 (0,4,0) 以稳定压过 global.css 的 (0,3,0)，不依赖文件加载顺序。 */
+.app .content .view-transition > .toolhub {
+  padding: 0;
+  overflow: hidden;
+  background: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  margin: 0;
+}
+
+.toolhub {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+  gap: 8px;
+}
+
+/* ── 左侧二级导航 ── */
+.toolhub-rail {
+  flex-shrink: 0;
+  width: 184px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.toolhub-rail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 9px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.toolhub-rail-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .7px;
+  color: var(--text);
+  text-transform: uppercase;
+}
+
+.toolhub-rail-count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.toolhub-rail-nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 8px 12px;
+}
+
+.toolhub-group+.toolhub-group {
+  margin-top: 10px;
+}
+
+.toolhub-group-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  padding: 6px 8px 4px;
+}
+
+.toolhub-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 4px 8px 4px 5px;
+  border: none;
+  background: none;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 500;
+  font-family: var(--font);
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition), color var(--transition);
+}
+
+.toolhub-item:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.toolhub-item.active {
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.toolhub-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.toolhub-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 彩色图标胶囊：沿用顶栏导航的语言，激活时实心点亮 */
+.toolhub-ico {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background var(--transition), color var(--transition), box-shadow var(--transition), transform var(--transition);
+}
+
+.toolhub-item:hover .toolhub-ico {
+  transform: translateY(-1px);
+}
+
+.toolhub-item.active .toolhub-ico {
+  transform: none;
+}
+
+.toolhub-run-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+}
+
+.toolhub-active-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: fadeIn 150ms ease, navPulse 1.6s ease-in-out infinite;
+}
+
+/* ── 右侧内容区 ── */
+.toolhub-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.toolhub-crumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 8px;
+  flex-shrink: 0;
+}
+
+.toolhub-crumb-ico {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.toolhub-crumb-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.toolhub-crumb-path {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.toolhub-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 内层界面沿用原 `.view-transition > *` 的卡片样式与弹性尺寸：
+   界面组件本身没改，只是从 .view-transition 的直接子节点挪到了这里。
+   flex 用 `1 1 auto`（与 ocr.css / hub.css 对 global 规则的覆盖一致），
+   以兼容根节点带 height:100% 的界面。 */
+.toolhub-body>*:not(.chat-layout):not(.agent-code-view) {
+  padding: 24px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}

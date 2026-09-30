@@ -2,16 +2,20 @@ import React, { useCallback, useRef, forwardRef } from 'react'
 import { useStore } from '../store/useStore'
 import { useSidebarStore } from '../store/sidebarStore'
 import { shallow } from 'zustand/shallow'
-import {
-  LayoutDashboardIcon,
-  HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
-  InfoIcon, FileTextIcon, CodeIcon,
-  SettingsIcon, BookOpenIcon, AudioLinesIcon, ImageIcon, MicIcon,
-  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon, PlugZapIcon,
-  GitBranchIcon
-} from '@animateicons/react/lucide'
+import { HardDriveIcon, FolderOpenIcon } from '@animateicons/react/lucide'
 import { playEvent } from '../utils/sound'
+import {
+  NAV_SECTIONS,
+  TOOLS_ENTRY,
+  GROUPED_VIEWS,
+  groupedHasRunning,
+  resolveToolsEntryView
+} from '../utils/navConfig'
+import type { NavDef } from '../utils/navConfig'
 import '../styles/sidebar.css'
+
+// 导航清单已统一收敛到 utils/navConfig.ts：NAV_SECTIONS 是常驻项，
+// 收进「工具箱」页的低频界面在 TOOL_GROUPS 里。本组件只负责渲染。
 
 interface NavItemProps {
   icon: React.ElementType
@@ -115,6 +119,16 @@ export default function Sidebar() {
   const isCollapsed = collapsed && !hoverExpanded
   const isHoverExpanded = hoverExpanded
 
+  // 与顶栏同一套点亮语义：常驻项只要运行就变绿，其余项仅当前选中页变绿
+  const isRunning = (item: NavDef) =>
+    (item.runningSource === 'models' && hasRunningModels) ||
+    (item.runningSource === 'llama' && !!activeChatUrl)
+  const shouldHighlight = (item: NavDef) => isRunning(item) && (item.persistent || view === item.key)
+
+  // 「工具箱」入口：落在任一被收纳的界面里即算激活；其中有运行中的界面时点一颗绿点
+  const toolsActive = GROUPED_VIEWS.has(view)
+  const toolsRunning = groupedHasRunning(hasRunningModels, activeChatUrl)
+
   function switchBackend(name: string) {
     const b = backends.find((x) => x.name === name)
     if (!b) return
@@ -129,224 +143,39 @@ export default function Sidebar() {
       onMouseLeave={handleMouseLeave}
     >
       <nav className="sidebar">
-        {/* ── 导航 ── */}
-        <span className="nav-section-label">导航</span>
+        {/* ── 常驻导航项（清单见 utils/navConfig.ts） ── */}
+        {NAV_SECTIONS.map((section, si) => (
+          <React.Fragment key={section.label}>
+            <span className="nav-section-label" style={{ marginTop: si === 0 ? 0 : 12 }}>{section.label}</span>
+            {section.items.map((item) => (
+              <NavItem
+                key={item.key}
+                icon={item.icon}
+                label={item.label}
+                active={view === item.key}
+                onClick={() => setView(item.key)}
+                style={shouldHighlight(item) ? { color: 'var(--success)' } : {}}
+              >
+                {view === item.key && <span className="nav-active-dot" />}
+                {shouldHighlight(item) && <span className="nav-dot" />}
+              </NavItem>
+            ))}
+          </React.Fragment>
+        ))}
+
+        {/* ── 工具箱：低频界面统一收进这一页，页内用二级导航切换 ── */}
+        <span className="nav-section-label" style={{ marginTop: 12 }}>更多</span>
         <NavItem
-          icon={LayoutDashboardIcon}
-          label="我的模板"
-          active={view === 'cards'}
-          onClick={() => setView('cards')}
-          style={hasRunningModels ? { color: 'var(--success)' } : {}}
+          icon={TOOLS_ENTRY.icon}
+          label={TOOLS_ENTRY.label}
+          active={toolsActive}
+          onClick={() => setView(resolveToolsEntryView())}
+          style={toolsRunning ? { color: 'var(--success)' } : {}}
         >
-          {view === 'cards' && <span className="nav-active-dot" />}
-          {hasRunningModels && <span className="nav-dot" />}
-        </NavItem>
-        <NavItem
-          icon={BoxesIcon}
-          label="模型"
-          active={view === 'models'}
-          onClick={() => setView('models')}
-        >
-          {view === 'models' && <span className="nav-active-dot" />}
-        </NavItem>
-        <NavItem
-          icon={SearchIcon}
-          label="模型中心"
-          active={view === 'hub'}
-          onClick={() => setView('hub')}
-        >
-          {view === 'hub' && <span className="nav-active-dot" />}
+          {toolsActive && <span className="nav-active-dot" />}
+          {toolsRunning && <span className="nav-dot" />}
         </NavItem>
 
-        {/* ── 服务 ── */}
-        <span className="nav-section-label" style={{ marginTop: 12 }}>服务</span>
-        <NavItem
-          icon={ServerIcon}
-          label="Web 界面"
-          active={view === 'llama'}
-          onClick={() => setView('llama')}
-          style={view === 'llama' && activeChatUrl ? { color: 'var(--success)' } : {}}
-        >
-          {view === 'llama' && <span className="nav-active-dot" />}
-          {view === 'llama' && activeChatUrl && <span className="nav-dot" />}
-        </NavItem>
-        {/* 「聊天」导航项与 ChatView 界面已移除：原生聊天的功能已并入 Agent Code
-            的纯聊天模式（输入区工具栏的「纯聊天」开关）。 */}
-        <NavItem
-          icon={ActivityIcon}
-          label="模型运行数据"
-          active={view === 'monitoring'}
-          onClick={() => setView('monitoring')}
-          style={view === 'monitoring' && hasRunningModels ? { color: 'var(--success)' } : {}}
-        >
-          {view === 'monitoring' && <span className="nav-active-dot" />}
-          {view === 'monitoring' && hasRunningModels && <span className="nav-dot" />}
-        </NavItem>
-        <NavItem
-          icon={ChartBarIcon}
-          label="性能测试"
-          active={view === 'benchmark'}
-          onClick={() => setView('benchmark')}
-        >
-          {view === 'benchmark' && <span className="nav-active-dot" />}
-        </NavItem>
-        <NavItem
-          icon={TrendingUpIcon}
-          label="Token 统计"
-          active={view === 'token-stats'}
-          onClick={() => setView('token-stats')}
-          style={view === 'token-stats' && hasRunningModels ? { color: 'var(--success)' } : {}}
-        >
-          {view === 'token-stats' && <span className="nav-active-dot" />}
-          {view === 'token-stats' && hasRunningModels && <span className="nav-dot" />}
-        </NavItem>
-
-        <NavItem
-          icon={FileTextIcon}
-          label="OCR"
-          active={view === 'ocr'}
-          onClick={() => setView('ocr')}
-          style={view === 'ocr' && hasRunningModels ? { color: 'var(--success)' } : {}}
-        >
-          {view === 'ocr' && <span className="nav-active-dot" />}
-          {view === 'ocr' && hasRunningModels && <span className="nav-dot" />}
-        </NavItem>
-        <NavItem
-          icon={SlidersHorizontalIcon}
-          label="模型工具"
-          active={view === 'model-tools'}
-          onClick={() => setView('model-tools')}
-        >
-          {view === 'model-tools' && <span className="nav-active-dot" />}
-        </NavItem>
-        <NavItem
-          icon={BookOpenIcon}
-          label="知识库"
-          active={view === 'knowledge'}
-          onClick={() => setView('knowledge')}
-        >
-          {view === 'knowledge' && <span className="nav-active-dot" />}
-        </NavItem>
-        <NavItem
-          icon={AudioLinesIcon}
-          label="语音合成"
-          active={view === 'tts'}
-          onClick={() => setView('tts')}
-        >
-          {view === 'tts' && <span className="nav-active-dot" />}
-        </NavItem>
-        <NavItem
-          icon={MicIcon}
-          label="语音转写"
-          active={view === 'stt'}
-          onClick={() => setView('stt')}
-        >
-          {view === 'stt' && <span className="nav-active-dot" />}
-        </NavItem>
-        <NavItem
-          icon={ImageIcon}
-          label="图像生成"
-          active={view === 'imagegen'}
-          onClick={() => setView('imagegen')}
-          style={view === 'imagegen' && hasRunningModels ? { color: 'var(--success)' } : {}}
-        >
-          {view === 'imagegen' && <span className="nav-active-dot" />}
-          {view === 'imagegen' && hasRunningModels && <span className="nav-dot" />}
-        </NavItem>
-        <NavItem
-          icon={AudioLinesIcon}
-          label="音频工作室"
-          active={view === 'audiocpp'}
-          onClick={() => setView('audiocpp')}
-        >
-          {view === 'audiocpp' && <span className="nav-active-dot" />}
-        </NavItem>
-        <NavItem
-          icon={GitBranchIcon}
-          label="Mermaid 测试"
-          active={view === 'mermaid-test'}
-          onClick={() => setView('mermaid-test')}
-        >
-          {view === 'mermaid-test' && <span className="nav-active-dot" />}
-        </NavItem>
-        <NavItem
-          icon={ChartBarIcon}
-          label="Recharts 测试"
-          active={view === 'recharts-test'}
-          onClick={() => setView('recharts-test')}
-        >
-          {view === 'recharts-test' && <span className="nav-active-dot" />}
-        </NavItem>
-        <NavItem
-          icon={ImageIcon}
-          label="SVG 测试"
-          active={view === 'svg-test'}
-          onClick={() => setView('svg-test')}
-        >
-          {view === 'svg-test' && <span className="nav-active-dot" />}
-        </NavItem>
-
-        {/* ── 工作台 ── */}
-        <span className="nav-section-label" style={{ marginTop: 12 }}>工作台</span>
-        <NavItem
-          icon={CodeIcon}
-          label="Agent Code"
-          active={view === 'agent-code'}
-          onClick={() => setView('agent-code')}
-        >
-          {view === 'agent-code' && <span className="nav-active-dot" />}
-        </NavItem>
-
-        {/* ── 系统 ── */}
-        <span className="nav-section-label" style={{ marginTop: 12 }}>系统</span>
-        <NavItem
-          icon={BrainIcon}
-          label="AI Agent"
-          active={view === 'agents'}
-          onClick={() => setView('agents')}
-        >
-          {view === 'agents' && <span className="nav-active-dot" />}
-        </NavItem>
-        <NavItem
-          icon={CpuIcon}
-          label="后端与引擎"
-          active={view === 'engines'}
-          onClick={() => setView('engines')}
-        >
-          {view === 'engines' && <span className="nav-active-dot" />}
-        </NavItem>
-        <NavItem
-          icon={PlugZapIcon}
-          label="外部端点"
-          active={view === 'endpoints'}
-          onClick={() => setView('endpoints')}
-        >
-          {view === 'endpoints' && <span className="nav-active-dot" />}
-        </NavItem>
-        <NavItem
-          icon={FolderOpenIcon}
-          label="模型文件夹"
-          active={view === 'folders'}
-          onClick={() => setView('folders')}
-        >
-          {view === 'folders' && <span className="nav-active-dot" />}
-        </NavItem>
-        <NavItem
-          icon={SettingsIcon}
-          label="设置"
-          active={view === 'settings'}
-          onClick={() => setView('settings')}
-        >
-          {view === 'settings' && <span className="nav-active-dot" />}
-        </NavItem>
-        <NavItem
-          icon={InfoIcon}
-          label="关于"
-          active={view === 'about'}
-          onClick={() => setView('about')}
-        >
-          {view === 'about' && <span className="nav-active-dot" />}
-        </NavItem>
         {backends.length > 0 && (
           <>
             <span className="nav-section-label" style={{ marginTop: 12 }}>后端</span>

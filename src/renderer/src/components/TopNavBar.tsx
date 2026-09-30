@@ -3,62 +3,20 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { safeCall } from '../utils/safeCall'
 import { paramSetOf } from '../utils/engine'
+import { HardDriveIcon, ChevronDownIcon, FolderOpenIcon } from '@animateicons/react/lucide'
 import {
-  LayoutDashboardIcon,
-  HardDriveIcon, SearchIcon, ActivityIcon, ServerIcon,
-  InfoIcon, FileTextIcon, CodeIcon, ChevronDownIcon,
-  SettingsIcon, BookOpenIcon, AudioLinesIcon, ImageIcon, MicIcon,
-  BrainIcon, ChartBarIcon, TrendingUpIcon, SlidersHorizontalIcon, FolderOpenIcon, BoxesIcon, CpuIcon, PlugZapIcon,
-  GitBranchIcon
-} from '@animateicons/react/lucide'
+  NAV_SECTIONS,
+  TOOLS_ENTRY,
+  GROUPED_VIEWS,
+  groupedHasRunning,
+  resolveToolsEntryView
+} from '../utils/navConfig'
+import type { NavDef } from '../utils/navConfig'
 import '../styles/topnav.css'
 
-type ViewKey = ReturnType<typeof useStore.getState>['view']
-
-interface NavDef {
-  key: ViewKey
-  label: string
-  icon: React.ElementType
-  color: string
-  runningSource?: 'models' | 'llama'
-  persistent?: boolean
-}
-
-const NAV_GROUPS: NavDef[][] = [
-  [
-    { key: 'cards', label: '我的模板', icon: LayoutDashboardIcon, color: '#8b5cf6', runningSource: 'models', persistent: true },
-    { key: 'models', label: '模型', icon: BoxesIcon, color: '#3b82f6' },
-    { key: 'hub', label: '模型中心', icon: SearchIcon, color: '#0ea5e9' },
-  ],
-  [
-    { key: 'agent-code', label: 'Agent Code', icon: CodeIcon, color: '#10b981' },
-  ],
-  [
-    { key: 'llama', label: 'Web 界面', icon: ServerIcon, color: '#14b8a6', runningSource: 'llama' },
-    // 「聊天」项与 ChatView 界面已移除：原生聊天的功能已并入 Agent Code 的纯聊天模式。
-    { key: 'monitoring', label: '模型运行数据', icon: ActivityIcon, color: '#ef4444', runningSource: 'models' },
-    { key: 'token-stats', label: 'Token 统计', icon: TrendingUpIcon, color: '#f59e0b', runningSource: 'models' },
-    { key: 'benchmark', label: '性能测试', icon: ChartBarIcon, color: '#f59e0b' },
-    { key: 'ocr', label: 'OCR', icon: FileTextIcon, color: '#a855f7', runningSource: 'models' },
-    { key: 'model-tools', label: '模型工具', icon: SlidersHorizontalIcon, color: '#06b6d4' },
-    { key: 'knowledge', label: '知识库', icon: BookOpenIcon, color: '#0d9488' },
-    { key: 'tts', label: '语音合成', icon: AudioLinesIcon, color: '#f43f5e' },
-    { key: 'stt', label: '语音转写', icon: MicIcon, color: '#f43f5e' },
-    { key: 'imagegen', label: '图像生成', icon: ImageIcon, color: '#8b5cf6', runningSource: 'models' },
-    { key: 'audiocpp', label: '音频工作室', icon: AudioLinesIcon, color: '#0ea5e9' },
-    { key: 'mermaid-test', label: 'Mermaid 测试', icon: GitBranchIcon, color: '#f59e0b' },
-    { key: 'recharts-test', label: 'Recharts 测试', icon: ChartBarIcon, color: '#3b82f6' },
-    { key: 'svg-test', label: 'SVG 测试', icon: ImageIcon, color: '#8b5cf6' },
-  ],
-  [
-    { key: 'agents', label: 'AI Agent', icon: BrainIcon, color: '#d946ef' },
-    { key: 'engines', label: '后端与引擎', icon: CpuIcon, color: '#6b7280' },
-    { key: 'endpoints', label: '外部端点', icon: PlugZapIcon, color: '#6b7280' },
-    { key: 'folders', label: '模型文件夹', icon: FolderOpenIcon, color: '#6b7280' },
-    { key: 'settings', label: '设置', icon: SettingsIcon, color: '#6b7280' },
-    { key: 'about', label: '关于', icon: InfoIcon, color: '#6366f1' },
-  ],
-]
+// 导航清单已统一收敛到 utils/navConfig.ts：
+// NAV_SECTIONS 是常驻项，TOOL_GROUPS 里的是收进「工具箱」页的低频界面。
+// 此处只负责渲染，不再自己维护清单。
 
 /** @animateicons 图标实例：ref 上暴露的动画控制方法（库未导出该类型，断言收敛到各 ref 回调处） */
 type NavIconInstance = { startAnimation: () => void; stopAnimation: () => void }
@@ -200,6 +158,12 @@ export default function TopNavBar() {
   // 常驻项只要运行就点亮；非常驻项仅在当前选中页点亮，避免多个导航同时变绿
   const shouldHighlight = (item: NavDef) => isRunning(item) && (item.persistent || view === item.key)
 
+  // 「工具箱」入口：当前落在任一被收纳的界面里就算激活；
+  // 收纳项里有正在运行的界面时，同样在入口上点一颗绿点，避免运行状态被藏起来。
+  const ToolsIcon = TOOLS_ENTRY.icon
+  const toolsActive = GROUPED_VIEWS.has(view)
+  const toolsRunning = groupedHasRunning(hasRunningModels, activeChatUrl)
+
   const folders: { label: string; path: string }[] = paths ? [
     { label: '/backend', path: paths.backend },
     { label: '/models', path: paths.models },
@@ -211,10 +175,10 @@ export default function TopNavBar() {
   return (
     <div className="topnav">
       <div className="topnav-scroll" ref={scrollRef}>
-        {NAV_GROUPS.map((group, gi) => (
-          <React.Fragment key={gi}>
+        {NAV_SECTIONS.map((section, gi) => (
+          <React.Fragment key={section.label}>
             {gi > 0 && <span className="topnav-divider" />}
-            {group.map((item) => {
+            {section.items.map((item) => {
               const iconRefKey = `nav-${item.key}`
               const IconComp = item.icon
               return (
@@ -253,6 +217,39 @@ export default function TopNavBar() {
             })}
           </React.Fragment>
         ))}
+
+        {/* 「工具箱」：低频界面统一收进这一页，页内用二级导航切换 */}
+        <span className="topnav-divider" />
+        <button
+          className={`topnav-item ${toolsActive ? 'active' : ''}`}
+          onClick={() => setView(resolveToolsEntryView())}
+          style={toolsRunning ? { color: 'var(--success)' } : {}}
+          onMouseEnter={() => handleIconEnter('tools')}
+          onMouseLeave={() => handleIconLeave('tools')}
+        >
+          <span
+            className="topnav-ico"
+            style={toolsActive
+              ? { background: TOOLS_ENTRY.color, color: '#fff', boxShadow: `0 2px 8px ${TOOLS_ENTRY.color}55` }
+              : { background: `${TOOLS_ENTRY.color}1c`, color: TOOLS_ENTRY.color }}
+          >
+            <ToolsIcon
+              ref={(el) => { iconRefs.current['tools'] = el ? (el as unknown as NavIconInstance) : null }}
+              className="nav-animate-icon"
+              size={14}
+            />
+          </span>
+          <span>
+            {TOOLS_ENTRY.label}
+          </span>
+          {toolsActive && (
+            <span
+              className="topnav-active-dot"
+              style={{ background: TOOLS_ENTRY.color, boxShadow: `0 0 0 3px ${TOOLS_ENTRY.color}38` }}
+            />
+          )}
+          {toolsRunning && <span className="topnav-run-dot" />}
+        </button>
       </div>
 
       {/* 右侧：后端切换 + 目录快捷入口（下拉，避免横向占位） */}

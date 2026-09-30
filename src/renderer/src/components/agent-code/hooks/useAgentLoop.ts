@@ -52,10 +52,9 @@ export type RunPiTurn = (
     approveWriteEdit?: boolean
     knowledgeBaseId?: string
     memory?: AgentSession['memory']
-    /** 通用模式：不注册工具、不注入工具/图表指引。由所属工作区模式推导（见 projectMode） */
-    plainChat?: boolean
-    /** 通用模式下启用的工具（只认原生聊天那四个） */
-    chatTools?: string[]
+    // 注：模式（通用 / 编码）与通用模式下的工具集**不在这里传** —— 它们由本轮所属
+    // 工作区 / 会话推导，统一在 runPiTurn 内部算一次（见那里的注释）。原先作为可选项
+    // 由各调用点分别传，结果 3 个入口漏传导致通用模式工具全开，故从类型上移除。
     /** 项目自定义系统提示词（「提示词」卡片保存的内容）。由调用方从 activeProject 取，
         不经 runPiTurn 自己的闭包 —— 它的依赖数组只有 updateSessionInProject，
         直接读 activeProject 会拿到过期值。 */
@@ -66,7 +65,7 @@ export type RunPiTurn = (
 ) => Promise<{ errored: boolean; aborted: boolean }>
 
 export function useAgentLoop({
-  projects: { setProjects, setActiveSessionId, activeProjectId, activeSessionId, activeProject, activeSession, updateSessionInProject },
+  projects: { projects: projectList, setProjects, setActiveSessionId, activeProjectId, activeSessionId, activeProject, activeSession, updateSessionInProject },
   inputDomain,
   loading, setLoading, setStreaming, setStreamKind, setThinkDone, setCurToolName, setQueueInfo,
   apiBaseUrl, runningCard, condensing, slashCommands,
@@ -168,8 +167,21 @@ export function useAgentLoop({
     // force=true：即便此刻有轨道补间动画在跑也要抢占（scrollToBottom 的早退分支在
     // 重置 followingRef 之前，不加 force 会被直接忽略）。
     scrollToBottom(false, true)
-    const plain = opts.plainChat === true
-    const chatTools = plain ? [...(opts.chatTools ?? [])].sort() : []
+    // 模式与聊天工具集都由「本轮所属工作区 / 会话」决定，集中在这里推导一次。
+    //
+    // 原先这两个值由每个起轮点各自传（RunPiTurn 的 opts 字段），5 个入口里 3 个
+    // —— 重新生成 / 编辑重发 / 运行中追加消息的队列补发 —— 漏传了 plainChat，
+    // 于是通用模式走那几条路径时 `plain` 恒为 false：modeSig 从 `plain:...` 翻成
+    // 'agent'，pi 会话被重建，主进程按编码模式激活全量工具白名单，Write / Edit /
+    // Bash / Delete 全部可用（现象：通用模式里点「重新生成」就能写文件）。
+    //
+    // 这类「漏传」不该靠人记：判断只保留这一处，RunPiTurn 的 opts 里已不再暴露
+    // 这两个字段，调用点想传也传不了。按 pid 取项目而不是直接用 activeProject，
+    // 是为了兼容队列补发（setTimeout 期间用户可能已切走项目）这条路径。
+    const projectForTurn = projectList.find(p => p.id === pid) ?? activeProject
+    const sessionForTurn = projectForTurn?.sessions.find(s => s.id === sid) ?? activeSession
+    const plain = projectMode(projectForTurn) === 'chat'
+    const chatTools = plain ? [...(sessionForTurn?.chatTools ?? [])].sort() : []
     const modeSig = plain ? `plain:${chatTools.join(',')}` : 'agent'
     // 首次进入该会话（或会话切换/重建）、以及模式或聊天工具集变化时：创建 pi session 并注入历史
     if (piReadyRef.current.sid !== sid || !piReadyRef.current.ready || piPlainRef.current !== modeSig) {
@@ -911,10 +923,8 @@ export function useAgentLoop({
         approveWriteEdit: !!activeProject.approveWriteEdit,
         knowledgeBaseId: activeProject.knowledgeBaseId,
         memory: memoryForTurn,
-        // 模式由所属工作区决定（不是会话字段）：切工作区即换模式，同一会话不会被改造成另一种模式。
-        // 工具集是会话级字段，这里实时读；变化后由 runPiTurn 的 modeSig 守卫重建 pi 会话。
-        plainChat: projectMode(activeProject) === 'chat',
-        chatTools: activeSession?.chatTools,
+        // 模式与通用模式的工具集不在这里传：由 runPiTurn 按本轮工作区 / 会话统一推导
+        // （见那里的注释），避免各起轮点漏传。
         // 项目级提示词：从 activeProject 实时取（本回调的依赖数组里有 activeProject）
         projectSystemPrompt: activeProject.systemPrompt,
         projectMemoryNotes: activeProject.memory?.notes,

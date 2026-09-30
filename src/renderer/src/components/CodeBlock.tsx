@@ -36,7 +36,6 @@ const CODE_WINDOW_ROW_HEIGHT = 20
 const CODE_WINDOW_VIEW_HEIGHT = 420
 
 export default function CodeBlock({ language, value, showLineNumbers, isStreaming }: CodeBlockProps) {
-  const codeRef = useRef<HTMLElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const [copied, setCopied] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
@@ -50,6 +49,16 @@ export default function CodeBlock({ language, value, showLineNumbers, isStreamin
   // 长块降级判定必须放在下面两个 effect 之前：依赖数组在 render 期间求值，晚声明会触发 TDZ。
   const lines = useMemo(() => value.split('\n'), [value])
   const lineCount = lines.length
+  // 流式分支与收尾分支的行盒数必须一致，否则任何一次「分支/实例切换」都会让代码块整体跳一行。
+  // 实测（styles 全量生效下）：
+  //   收尾分支走 hljs 的 innerHTML —— 末尾的 \n 在 <pre> 里不产生行盒 → 2 行 = 64px；
+  //   流式分支把 split('\n') 的末尾空串渲染成 \u00A0 —— 多出一个 20px 行盒 → 3 行 = 84px。
+  // 差值正好一行 20px，与「代码块底边每帧跳 20px」的现象完全吻合。
+  // 这里让流式分支丢掉末尾空行，与收尾分支对齐（实测两者都变成 64px）。
+  const codeLines = useMemo(
+    () => (isStreaming && lines.length > 1 && lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines),
+    [lines, isStreaming]
+  )
   // 长块降级：整块 hljs 高亮是「一个 HTML 字符串塞进一个 <code>」，无法按行窗口化；逐行 hljs
   // 又会因跨行字符串 / 注释 / 模板串错色。所以超阈值的完成态块改为纯文本行窗口，头部标注已
   // 省略高亮，复制仍用完整原文。阈值以下完全走原路径（含语法高亮与折行）。
@@ -76,29 +85,38 @@ export default function CodeBlock({ language, value, showLineNumbers, isStreamin
     return () => io.disconnect()
   }, [isStreaming, windowed])
 
-  // 完成态：单次 hljs 高亮（值已稳定，无需防抖）。流式态 / 长块窗口态：跳过。
-  useEffect(() => {
-    if (isStreaming || windowed || !inView) return
-    const el = codeRef.current
-    if (!el) return
-    const t0 = performance.now()
+  // 完成态代码内容：能高亮就高亮，否则退回纯文本（转义后作为 HTML 注入）。
+  //
+  // 为什么不用「<code ref> + useEffect 里写 innerHTML」：effect 在**绘制之后**才执行，
+  // 于是「流式结束 → 切到完成态」那一帧 <code> 还是空的，代码块先塌成一行（只剩 padding）
+  // 再长回来 —— 实测到 pre 高度从 344px 掉到 24px 的单帧塌陷，肉眼就是一次明显闪动。
+  // 改成渲染期算出 HTML：首次绘制就带着完整内容，不存在空帧；
+  // 同时非视口内的块按上方注释的原意显示**纯文本**（旧实现其实渲染成了空块）。
+  //
+  // 未指定语言时不回退 highlightAuto：它会逐个尝试全部内置语法，实测比指定语言慢
+  // 10~20 倍（683 字符 4.04ms vs 0.41ms），对 5KB 以上的块更甚；而它给 mermaid /
+  // svg / 图表降级内容（这些块的语言标记本就是空串或非 hljs 语言）猜出来的结果也不准确。
+  const codeHtml = useMemo(() => {
+    if (isStreaming || windowed || !inView) return null
     try {
       if (language && hljs.getLanguage(language)) {
-        el.innerHTML = hljs.highlight(value, { language }).value
-      } else {
-        // 未知语言不再回退 highlightAuto：它会逐个尝试全部内置语法，实测比指定语言慢
-        // 10~20 倍（683 字符 4.04ms vs 0.41ms），对 5KB 以上的块更甚；而它给 mermaid /
-        // svg / 图表降级内容（这些块的语言标记本就是空串或非 hljs 语言）猜出来的结果
-        // 也不准确。直接纯文本，省掉这次全语言试探。
-        el.textContent = value
+        const t0 = performance.now()
+        const html = hljs.highlight(value, { language }).value
+        const dt = performance.now() - t0
+        if (dt > 10) console.debug(`[stream-diag] hljs ${dt.toFixed(1)}ms lang=${language} chars=${value.length}`)
+        return html
       }
     } catch {
-      /* 高亮失败保持纯文本 */
-      el.textContent = value
+      /* 高亮失败退回纯文本 */
     }
-    const dt = performance.now() - t0
-    if (dt > 10) console.debug(`[stream-diag] hljs ${dt.toFixed(1)}ms lang=${language || 'auto'} chars=${value.length}`)
-  }, [value, language, isStreaming, inView, windowed])
+    return null
+  }, [value, language, isStreaming, windowed, inView])
+
+  // 纯文本回退：手工转义，避免把代码里的尖括号当成 HTML 注入
+  const plainHtml = useMemo(
+    () => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+    [value]
+  )
 
   const handleCopy = () => {
     navigator.clipboard.writeText(value)
@@ -148,7 +166,7 @@ export default function CodeBlock({ language, value, showLineNumbers, isStreamin
           <>
             {showLineNumbers && (
               <pre className="chat-code-line-nums" aria-hidden="true">
-                {lines.map((_, i) => (
+                {codeLines.map((_, i) => (
                   <span key={i}>{i + 1}</span>
                 ))}
               </pre>
@@ -156,12 +174,15 @@ export default function CodeBlock({ language, value, showLineNumbers, isStreamin
             <pre className="chat-code-pre">
               {isStreaming ? (
                 <code className={`code-streaming language-${langLabel}`}>
-                  {lines.map((ln, i) => (
+                  {codeLines.map((ln, i) => (
                     <span key={i}>{ln || '\u00A0'}</span>
                   ))}
                 </code>
               ) : (
-                <code ref={codeRef} className={`hljs language-${langLabel}`} />
+                <code
+                  className={`hljs language-${langLabel}`}
+                  dangerouslySetInnerHTML={{ __html: codeHtml ?? plainHtml }}
+                />
               )}
             </pre>
           </>
