@@ -94,6 +94,37 @@ function replaceVars(value: string, lookup: (name: string) => string): string {
 }
 
 /**
+ * 从容器里挑出「要导出的那张图」。
+ *
+ * ⚠️ 不能写 `querySelector('svg')` 取第一个 —— recharts v3 的**图例图标本身就是一个
+ * `<svg class="recharts-surface" aria-label="xxx legend icon">`**，而且它在 DOM 里排在
+ * 图表本体**之前**。按「第一个」取，放大层和「下载 .svg」拿到的一直是那个 14×14 的
+ * 图例色块（`<path d="M0,4h32v24h-32z" fill="#16a34a">`）：
+ *   · 放大层把它按 `width: min(92vw,1400px)` 拉成整屏一块纯色（实测 886×725 的绿色矩形），
+ *     看起来就像「一张显示不正确的默认图」；
+ *   · 下载得到的 .svg 里只有一个小方块，没有图表。
+ *
+ * 判据用**渲染面积**：图表本体的面积必然比图例色块大好几个量级，而且这条规则不依赖
+ * recharts 的类名，换任何图表库都成立。
+ */
+function pickFigureSvg(root: Element): SVGSVGElement | null {
+  if (root.tagName?.toLowerCase() === 'svg') return root as SVGSVGElement
+  const all = Array.from(root.querySelectorAll('svg'))
+  if (!all.length) return null
+  let best: Element = all[0]!
+  let bestArea = -1
+  for (const s of all) {
+    const r = s.getBoundingClientRect()
+    const area = r.width * r.height
+    if (area > bestArea) {
+      bestArea = area
+      best = s
+    }
+  }
+  return best as SVGSVGElement
+}
+
+/**
  * 把页面里活着的 `<svg>` 序列化成可独立保存的源码。
  *
  * 两件必须做的事，否则导出的文件是坏的：
@@ -105,10 +136,7 @@ function replaceVars(value: string, lookup: (name: string) => string): string {
  */
 export function serializeSvg(root: Element | null | undefined): string | null {
   if (!root) return null
-  const live =
-    root.tagName?.toLowerCase() === 'svg'
-      ? (root as SVGSVGElement)
-      : root.querySelector('svg')
+  const live = pickFigureSvg(root)
   if (!live) return null
 
   const clone = live.cloneNode(true) as SVGElement

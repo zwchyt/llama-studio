@@ -36,6 +36,42 @@ import type { AgentMode, AgentProject, AgentSession } from '../../../../../share
 /** 每模式的活动指针（工作区 id + 会话 id） */
 type ModePointers = Record<AgentMode, { pid: string; sid: string }>
 
+/** 会话的「最后活跃」时间：与侧栏的派生逻辑同一套（agent-session/AgentSessionSidebar.tsx:26
+    sessionLastActive）——消息 id 内嵌十进制 Date.now()，取不到再退回会话 id 的 base36 时间戳。
+    两边算法要改一起改；这里不抽公共文件，是为了各自在本文件里一眼可读。 */
+function lastActiveOf(s: AgentSession): number {
+  for (let i = s.messages.length - 1; i >= 0; i--) {
+    const m = /^msg-(\d+)-/.exec(s.messages[i]!.id)
+    if (m) return Number(m[1])
+  }
+  const sess = /^sess-([0-9a-z]+)-/.exec(s.id)
+  if (sess) {
+    const ms = parseInt(sess[1]!, 36)
+    if (Number.isFinite(ms) && ms > 0) return ms
+  }
+  return 0
+}
+
+/** 装载/兜底时该打开哪条会话：按最后活跃时间取最新的一条。
+    不能再用 sessions[0]：主进程是按 createdAt 升序装载的（ipc.ts:7981），
+    sessions[0] 恰好是**最旧**的那条，于是首次进入界面停在老会话上。 */
+function newestSession(sessions: AgentSession[]): AgentSession | undefined {
+  return sessions.reduce<AgentSession | undefined>((best, s) => (!best || lastActiveOf(s) > lastActiveOf(best) ? s : best), undefined)
+}
+
+/** 空白会话收敛：一个工作区里「没有消息」的会话最多留一条（保留最新的那条），有消息的不动。
+    切模式（switchMode）和删会话/删项目的兜底都会造空白会话，而回写是把整份列表一起推给 store
+    （useAgentSessionEffects.ts:70 只要有任何真实内容就推），空白会话因此跟着落盘；
+    重启后再装载回来，侧栏就攒出一串用户从没新建过的「新聊天」。 */
+function pruneBlankSessions(list: AgentProject[]): AgentProject[] {
+  return list.map(p => {
+    const blanks = p.sessions.filter(s => s.messages.length === 0)
+    if (blanks.length < 2) return p
+    const keep = blanks.reduce((a, b) => (lastActiveOf(b) > lastActiveOf(a) ? b : a)).id
+    return { ...p, sessions: p.sessions.filter(s => s.messages.length > 0 || s.id === keep) }
+  })
+}
+
 export function useAgentProjects({ storedProjects }: {
   storedProjects: AgentProject[]
 }) {
@@ -62,10 +98,11 @@ export function useAgentProjects({ storedProjects }: {
     next[idx] = { ...p, sessions: [newSession('chat')] }
     return next
   }
-  /** 初始列表：有真实存档就用迁移后的存档，否则给「编码占位项目 + 通用工作区」 */
+  /** 初始列表：有真实存档就用迁移后的存档，否则给「编码占位项目 + 通用工作区」；
+      两种来源都要先收敛空白会话（历史落盘的空会话在这里被清到每区一条） */
   function initialProjects(stored: AgentProject[]): AgentProject[] {
     const hasReal = stored.some(p => p.sessions.length > 0 || p.workspaceDir)
-    return ensureChatWorkspace(hasReal ? normalizeProjects(stored) : [freshProject('新项目')])
+    return pruneBlankSessions(ensureChatWorkspace(hasReal ? normalizeProjects(stored) : [freshProject('新项目')]))
   }
 
   const [projects, setProjects] = useState<AgentProject[]>(() => initialProjects(storedProjects))
@@ -75,7 +112,8 @@ export function useAgentProjects({ storedProjects }: {
   const [activeIds, setActiveIds] = useState<ModePointers>(() => {
     const pick = (m: AgentMode) => {
       const p = projects.find(x => projectMode(x) === m)
-      return { pid: p?.id ?? '', sid: p?.sessions[0]?.id ?? '' }
+      // 首次进入落在「最后活跃最新」的那条会话上，而不是数组第一条（那条最旧）
+      return { pid: p?.id ?? '', sid: newestSession(p?.sessions ?? [])?.id ?? '' }
     }
     return { code: pick('code'), chat: pick('chat') }
   })
@@ -87,10 +125,10 @@ export function useAgentProjects({ storedProjects }: {
     return list.length > 0 ? list : [mode === 'chat' ? freshChatWorkspace() : freshProject('新项目')]
   }, [projects, mode])
 
-  // 指针解析：一律回落到该模式列表的第一个，避免出现「指针指向已删除对象」的悬空组合
+  // 指针解析：一律回落到该模式「最后活跃最新」的一条，避免出现「指针指向已删除对象」的悬空组合
   // （旧实现直接透传 state，悬空时 handleSend 会把消息写进虚空）。
   const activeProject = visibleProjects.find(p => p.id === activeIds[mode].pid) ?? visibleProjects[0]!
-  const activeSession = activeProject.sessions.find(s => s.id === activeIds[mode].sid) ?? activeProject.sessions[0] ?? null
+  const activeSession = activeProject.sessions.find(s => s.id === activeIds[mode].sid) ?? newestSession(activeProject.sessions) ?? activeProject.sessions[0]
   const activeProjectId = activeProject.id
   const activeSessionId = activeSession?.id ?? ''
 
@@ -199,7 +237,7 @@ export function useAgentProjects({ storedProjects }: {
     // 删掉的是该模式的活动工作区时，指针落到该模式的第一个工作区
     if (activeIds[targetMode].pid === id) {
       const fallback = next.find(p => projectMode(p) === targetMode)!
-      setActiveIds(prev => ({ ...prev, [targetMode]: { pid: fallback.id, sid: fallback.sessions[0]?.id ?? '' } }))
+      setActiveIds(prev => ({ ...prev, [targetMode]: { pid: fallback.id, sid: newestSession(fallback.sessions)?.id ?? '' } }))
     }
   }, [projects, activeIds])
 
@@ -316,15 +354,15 @@ export function useAgentProjects({ storedProjects }: {
     return { pid, sid: sess.id }
   }, [projects])
 
-  /** 用磁盘存档替换内存列表（仅启动播种时调用一次）：归一化后**按模式重建两个活动指针**。
+  /** 用磁盘存档替换内存列表（仅启动播种时调用一次）：归一化、收敛空白会话，再**按模式重建两个活动指针**。
       不能沿用 setProjects + setActiveProjectId 那套：那两个 setter 只写「当前模式」的槽，
       启动时当前模式固定是 code，通用模式的指针就播不进去。 */
   const hydrateProjects = useCallback((stored: AgentProject[]) => {
-    const next = ensureChatWorkspace(normalizeProjects(stored))
+    const next = pruneBlankSessions(ensureChatWorkspace(normalizeProjects(stored)))
     setProjects(next)
     const pick = (m: AgentMode) => {
       const p = next.find(x => projectMode(x) === m)
-      return { pid: p?.id ?? '', sid: p?.sessions[0]?.id ?? '' }
+      return { pid: p?.id ?? '', sid: newestSession(p?.sessions ?? [])?.id ?? '' }
     }
     setActiveIds({ code: pick('code'), chat: pick('chat') })
   }, [])

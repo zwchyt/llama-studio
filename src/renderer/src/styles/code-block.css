@@ -12,24 +12,81 @@
    chat.css 恰好进了主包 —— 一旦把 AgentCodeView 改成懒加载，代码块就会掉样式。
    现已迁到本文件并改由组件自己引入，彻底解除这个隐性依赖。
 
-   规则内容与原 chat.css 完全一致（未做视觉改动）。
-   ══════════════════════════════════════════════════════════════ */
+   视觉：代码面板比会话底色（--bg #f5f6f8）只亮一点点，不投影——它是要贴在正文里读的，
+   不是浮在消息层上的一张卡片；层次只靠「比面板深一档的描边 + 头部一条发丝分隔线」撑。
+   配色是本文件内部的一组局部变量（--cd-* 面板 / --tk-* token），不复用全局 --code-*：
+   那两个变量工具卡、figure、mermaid 都在引用，代码块改配色不能拖着它们一起变。
+
+   字号与行高保持 12.5px × 1.6 = 20px：这是 CODE_WINDOW_ROW_HEIGHT 固定行高契约的一部分
+   （见末尾「长内容行窗口」一节），要动必须同步 CodeBlock.tsx 与 textRows.ts 的常量。 */
 
 .chat-code-block {
+  /* 浅色面板（默认） */
+  --cd-panel: #f7f8fa;
+  --cd-head: #e9ebee;
+  --cd-edge: #e8eaee;
+  --cd-hair: rgba(16, 24, 40, .07);
+  --cd-text: #383a42;
+  --cd-lang: #24292f;
+  --cd-muted: #8a93a2;
+  --cd-gutter: #b3bbc6;
+  --cd-hover: rgba(16, 24, 40, .05);
+  --cd-select: rgba(64, 120, 242, .18);
+  --cd-shadow: none;
+  --cd-mono: 'Cascadia Code', 'JetBrains Mono', 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  --cd-scroll: rgba(16, 24, 40, .16);
+  --cd-scroll-hi: rgba(16, 24, 40, .28);
+  --tk-comment: #a0a1a7;
+  --tk-keyword: #a626a6;
+  --tk-string: #50a14f;
+  --tk-number: #986801;
+  --tk-function: #4078f2;
+  --tk-type: #c77701;
+  --tk-property: #e45649;
+  --tk-meta: #0184bc;
+
   margin: 0 0 10px;
-  border: 1px solid var(--code-border);
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--cd-edge);
+  border-radius: 12px;
   overflow: hidden;
-  background: var(--code-bg);
+  background: var(--cd-panel);
+  box-shadow: var(--cd-shadow);
+}
+
+/* 暗色主题：整组变量换掉，其余规则一律不用重复写。
+   取值沿用 theme-dark.css 里原来的 --code-bg / --code-header-bg / --code-border（同色），
+   所以那两条针对 .chat-code-pre / .chat-code-header 的旧暗色补丁已删除，不在这里重复打一遍 */
+html.theme-dark .chat-code-block {
+  --cd-panel: #26292f;
+  --cd-head: #26292f;
+  --cd-edge: #333840;
+  --cd-hair: rgba(255, 255, 255, .07);
+  --cd-text: #ccd2da;
+  --cd-lang: #e6ebf2;
+  --cd-muted: #8b94a3;
+  --cd-gutter: #6a7688;
+  --cd-hover: rgba(255, 255, 255, .06);
+  --cd-select: rgba(120, 170, 255, .26);
+  --cd-shadow: none;
+  --cd-scroll: rgba(255, 255, 255, .16);
+  --cd-scroll-hi: rgba(255, 255, 255, .28);
+  --tk-comment: #7c8698;
+  --tk-keyword: #c882dd;
+  --tk-string: #9dc57c;
+  --tk-number: #d1a06a;
+  --tk-function: #61afef;
+  --tk-type: #e5c07b;
+  --tk-property: #e06c75;
+  --tk-meta: #56b6c2;
 }
 
 .chat-code-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 10px;
-  background: #cfcfd3;
-  border-bottom: 1px solid var(--code-border);
+  padding: 6px 10px;
+  background: var(--cd-head);
+  border-bottom: 1px solid var(--cd-hair);
   font-size: 11px;
 }
 
@@ -44,17 +101,27 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 22px;
+  height: 22px;
   border: none;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--cd-muted);
   cursor: pointer;
   padding: 0;
-  border-radius: 4px;
-  transition: color var(--transition);
+  border-radius: 6px;
+  transition: color var(--transition), background var(--transition), transform .1s ease;
 }
 
 .chat-code-toggle:hover {
-  color: var(--text);
+  color: var(--cd-lang);
+  background: var(--cd-hover);
+}
+
+.chat-code-toggle:active { transform: scale(.94); }
+
+.chat-code-toggle:focus-visible {
+  outline: 2px solid var(--cd-select);
+  outline-offset: 1px;
 }
 
 .chat-code-block.collapsed .chat-code-header {
@@ -62,11 +129,12 @@
 }
 
 .chat-code-lang {
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-family: var(--cd-mono);
+  font-size: 11.5px;
   font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: .5px;
+  color: var(--cd-lang);
+  letter-spacing: .3px;
+  white-space: nowrap;
 }
 
 .chat-code-copy {
@@ -75,40 +143,63 @@
   gap: 4px;
   border: none;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--cd-muted);
   cursor: pointer;
   font-size: 11px;
   font-family: var(--font);
-  padding: 2px 6px;
-  border-radius: 4px;
-  transition: all var(--transition);
+  padding: 3px 8px;
+  border-radius: 6px;
+  transition: color var(--transition), background var(--transition), transform .1s ease;
 }
 
 .chat-code-copy:hover {
-  background: var(--border);
-  color: var(--text);
+  background: var(--cd-hover);
+  color: var(--cd-lang);
 }
 
+.chat-code-copy:active { transform: scale(.96); }
+
+.chat-code-copy:focus-visible {
+  outline: 2px solid var(--cd-select);
+  outline-offset: 1px;
+}
+
+/* 正文：多层背景 = 左右边缘渐隐提示（local 层跟内容滚走，scroll 层钉在可视边上），不需要 JS */
 .chat-code-pre {
   margin: 0;
-  padding: 12px 14px;
+  padding: 10px 14px 12px;
   overflow-x: auto;
   flex: 1;
   min-width: 0;
-  background: #dfdfdf;
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--cd-text);
+  font-family: var(--cd-mono);
   font-size: 12.5px;
   line-height: 1.6;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cd-scroll) transparent;
+  background:
+    linear-gradient(to right, var(--cd-panel) 32%, transparent) left / 26px 100% no-repeat local,
+    linear-gradient(to left, var(--cd-panel) 32%, transparent) right / 26px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, var(--cd-scroll), transparent) left / 10px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, var(--cd-scroll), transparent) right / 10px 100% no-repeat scroll;
 }
+
+.chat-code-pre::-webkit-scrollbar { height: 8px; }
+.chat-code-pre::-webkit-scrollbar-track { background: transparent; }
+.chat-code-pre::-webkit-scrollbar-thumb { background: var(--cd-scroll); border-radius: 8px; }
+.chat-code-pre::-webkit-scrollbar-thumb:hover { background: var(--cd-scroll-hi); }
 
 .chat-code-pre code {
   background: transparent;
   padding: 0;
 }
 
+.chat-code-pre ::selection { background: var(--cd-select); }
+
 .chat-code-body {
   display: flex;
   overflow: hidden;
+  background: var(--cd-panel);
 }
 
 .chat-code-body.with-lines {
@@ -122,21 +213,22 @@
   padding-left: 0;
 }
 
+/* 行号槽：字号比正文小一档，行高写死 20px 与代码行盒对齐（12.5px × 1.6） */
 .chat-code-line-nums {
   display: flex;
   flex-direction: column;
   gap: 0;
   margin: 0;
-  padding: 12px 0 12px 10px;
-  min-width: 36px;
+  padding: 10px 10px 12px 13px;
+  min-width: 30px;
   text-align: right;
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--text-muted);
-  opacity: 0.5;
+  font-family: var(--cd-mono);
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--cd-gutter);
+  font-variant-numeric: tabular-nums;
   user-select: none;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--cd-hair);
   flex-shrink: 0;
   overflow: hidden;
 }
@@ -146,84 +238,58 @@
 }
 
 .chat-code-line-count {
-  color: var(--text-muted);
+  color: var(--cd-muted);
   font-size: 11px;
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-family: var(--cd-mono);
   font-weight: 400;
-  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
 }
 
-/* 代码块窗口：沿用 .chat-code-pre 的等宽字体与字号（12.5px × 1.6 = 20px 行高）。
-   背景与 .chat-code-pre 保持一致：浅色写死 #dfdfdf，暗色走 --code-bg。
+/* 代码块窗口：面板色由 .chat-code-body 铺，这里只保证等宽与固定行高。
    行窗口要求「行高固定 + 行不折行」，CODE_WINDOW_ROW_HEIGHT = 20 必须与
    agent-code/utils/textRows.ts 里的常量一致，否则滚动时行错位。 */
 .chat-code-window {
   flex: 1;
   min-width: 0;
-  padding: 12px 14px;
-  background: #dfdfdf;
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  padding: 10px 14px 12px;
+  background: transparent;
+  color: var(--cd-text);
+  font-family: var(--cd-mono);
   font-size: 12.5px;
   line-height: 20px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cd-scroll) transparent;
 }
 
-.theme-dark .chat-code-window {
-  background: var(--code-bg);
+.chat-code-window::-webkit-scrollbar { width: 8px; height: 8px; }
+.chat-code-window::-webkit-scrollbar-thumb { background: var(--cd-scroll); border-radius: 8px; }
+.chat-code-window::-webkit-scrollbar-thumb:hover { background: var(--cd-scroll-hi); }
+
+/* 行号钉在左边缘：横着滚的时候不再跟着代码一起跑掉（只作用在代码卡里，
+   .agent-window-num 是思考窗口/工具窗口共用的类，不动 global.css） */
+.chat-code-window .agent-window-num {
+  position: sticky;
+  left: 0;
+  background: var(--cd-panel);
+  color: var(--cd-gutter);
+  border-right-color: var(--cd-hair);
 }
 
-/* ── highlight.js 配色主题（随主题变量走） ── */
+.chat-code-window .agent-window-row:hover { background: var(--cd-hover); }
+.chat-code-window .agent-window-row:hover .agent-window-num { color: var(--cd-lang); }
 
-.hljs {
-  color: var(--code-text);
-  background: transparent;
-}
-
-.hljs-comment,
-.hljs-quote {
-  color: var(--code-comment);
-  font-style: italic;
-}
-
-.hljs-keyword,
-.hljs-selector-tag,
-.hljs-built_in,
-.hljs-name,
-.hljs-tag {
-  color: var(--code-keyword);
-}
-
-.hljs-string,
-.hljs-title,
-.hljs-section,
-.hljs-attribute,
-.hljs-literal,
-.hljs-template-tag,
-.hljs-template-variable,
-.hljs-type,
-.hljs-addition {
-  color: var(--code-string);
-}
-
-.hljs-number,
-.hljs-symbol,
-.hljs-bullet,
-.hljs-link,
-.hljs-meta,
-.hljs-selector-id,
-.hljs-selector-class {
-  color: var(--code-number);
-}
-
-.hljs-string .hljs-attr {
-  color: var(--code-string);
-}
-
-.hljs-attr,
-.hljs-variable,
-.hljs-property {
-  color: var(--code-attr);
-}
-
-.hljs-deletion {
-  color: var(--code-deletion);
-}
+/* ── highlight.js 配色主题（--tk-* 随面板深浅整组切换，见文件开头）── */
+.hljs { color: var(--cd-text); background: transparent; }
+.hljs-comment, .hljs-quote { color: var(--tk-comment); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-name, .hljs-tag, .hljs-section { color: var(--tk-keyword); }
+.hljs-built_in, .hljs-type, .hljs-title.class_ { color: var(--tk-type); }
+.hljs-title, .hljs-title.function_ { color: var(--tk-function); }
+.hljs-string, .hljs-template-tag, .hljs-template-variable, .hljs-regexp, .hljs-addition { color: var(--tk-string); }
+.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet { color: var(--tk-number); }
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-selector-id, .hljs-selector-class { color: var(--tk-property); }
+.hljs-meta, .hljs-meta-string, .hljs-meta-keyword { color: var(--tk-meta); }
+.hljs-link { color: var(--tk-function); text-decoration: underline; }
+.hljs-deletion { color: var(--tk-property); }
+.hljs-string .hljs-attr { color: var(--tk-string); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }

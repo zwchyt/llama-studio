@@ -27,6 +27,7 @@ import { notify } from '../../../store/notificationStore'
 import { useStore } from '../../../store/useStore'
 import { useMemoryPendingStore } from '../../../store/memoryPendingStore'
 import { KEEP_RECENT_TURNS } from '../utils/constants'
+import { markPanelAnimating } from '../../../utils/useResizablePanel'
 import { buildSessionPdfHtml } from '../utils/exportSessionPdf'
 import { useAgentMessageHeights } from '../hooks/useAgentMessageHeights'
 import { useAgentVirtualMessages } from '../hooks/useAgentVirtualMessages'
@@ -432,6 +433,24 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [showRightTab, closePanel, treeOpen, rightPanelMode, plainChat])
+
+  /**
+   * 右侧面板的展开/收起是 CSS 过渡动画（宽度逐帧变化）—— 和手动拖拽是同一类问题：
+   * 动画期间聊天区宽度每帧在变，里面的图表（recharts / Mermaid / SVG）跟着每帧重排。
+   * 按 F1~F4 或点顶栏按钮走的就是这条路，不是拖拽，所以拖拽那套挂起逻辑覆盖不到。
+   *
+   * 这里复用同一个「面板动画中」标记：图形在动画期间按容器等比缩放、recharts 挂起，
+   * 动画结束后一次性精确重排。CSS 与 ChartView 那边不需要任何改动。
+   * 跳过首次执行：挂载时那次没有动画，白挂 700ms。
+   */
+  const panelAnimSkippedFirst = useRef(false)
+  useEffect(() => {
+    if (!panelAnimSkippedFirst.current) {
+      panelAnimSkippedFirst.current = true
+      return
+    }
+    markPanelAnimating()
+  }, [treeOpen])
 
   // 消息列表元素缓存（useMemo）：目录高亮 / rail 波浪 / 贴底按钮等纯滚动状态变化
   // 不再重建整棵消息树；仅消息数据、流式状态、编辑态或相关回调变化时重建。

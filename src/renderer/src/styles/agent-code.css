@@ -526,12 +526,66 @@
 
 /* 表格：markstream 已把 <table> 包在 .table-node-wrapper 里做横向滚动（scrollbar-gutter:stable）。
    这里绝不能再写 display:block + overflow-x —— 那是 react-markdown 时代的写法：一旦把 <table> 变成块，
-   内层匿名表按内容收缩，流式每来一个字列宽就重算、表内滚动条忽现忽隐，整张表上下左右抖。 */
-.chat-msg-markdown table {
-  border-collapse: collapse;
+   内层匿名表按内容收缩，流式每来一个字列宽就重算、表内滚动条忽现忽隐，整张表上下左右抖。
+
+   圆角做在 wrapper 上（它 overflow-x:auto，滚动视口本身就是圆角裁切的），表格本体只负责格线。
+   注意 border-collapse 必须由 collapse 改成 separate + border-spacing:0：
+   collapse 模式下表格的 border-radius 不生效，单元格的边框与表头底色会盖过圆角。
+
+   ⚠️ 选择器一律要带 .table-node-wrapper 这一层，不能写 `.chat-msg-markdown table`：
+   markstream 自带样式表给表格元素挂了 Tailwind 工具类——
+   .markstream-react .my-8（margin-top/bottom:2rem）、.text-sm、.p-[calc(4/7*1em)]（th/td 的 padding）——
+   特指度都是 0,2,0；而 .chat-msg-markdown table / th / td 只有 0,1,1，会被整体压过去。
+   于是 margin:0 根本不生效：表格在卡片里顶着 2rem 上外边距，卡片白底就在表头带上方露出 32px 白条
+   （下边同样多一条）。加一层 wrapper 把特指度提到 0,2,1 才压得住。 */
+.chat-msg-markdown .table-node-wrapper {
+  /* 卡片自己的局部配色（暗色在下方 .theme-dark 里整组换掉）
+     内容区不再是纯白：正文底比会话底色（--bg #f5f6f8）只亮 2 阶，卡片不再是一块刺眼的白，
+     表头比正文深 14 阶，层次靠表头这条带子拉，不靠内容区发白 */
+  --tb-bg: #f7f8fa;
+  --tb-head: #e9ebee;
+  --tb-edge: #e2e5e9;
+  /* 两条分隔线的亮度差是硬要求：1px 的线要跟它所在的面差到 ~30 阶才真看得见。
+     行间线历次取值 #f0f1f4 → #eceef2 → #e2e6ec 都偏浅（跟 --tb-bg 只差 8~21 阶），
+     渲染出来确实有像素，但屏幕上抓不到，整张表看着像「无线」。这里按「差 30 阶以上」取。 */
+  --tb-line: #d7dce3;
+  --tb-head-line: #cbd2dc;
+  /* 列间竖线单独一个变量：它要同时压在内容底（--tb-bg）和表头带（--tb-head）两种面上，
+     取两者中间偏深的档，两边都看得清 */
+  --tb-col: #d2d8e0;
+  --tb-text: var(--text);
+  --tb-muted: #5c6673;
+  --tb-radius: 10px;
+
   margin: 0 0 10px;
+  border: 1px solid var(--tb-edge);
+  border-radius: var(--tb-radius);
+  /* 底色铺「表头色」而不是内容白：表头带就是这层底透出来的（th 自己不再铺色），
+     内容单元格再压一层白上去。于是内容区首行两个上圆角被切掉的那两块，
+     露出来的正是表头色 —— 表头等于直接「填」进了圆角缺口，形成内凹的填角。 */
+  background: var(--tb-head);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04);
+  /* markstream 给的是 scrollbar-gutter:stable —— 那是给纵向滚动条预留槽位，
+     这个容器只横着滚，留着会在圆角卡片里空出一条右侧白带 */
+  scrollbar-gutter: auto;
+}
+
+.chat-msg-markdown .table-node-wrapper > table {
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 0;
   font-size: 13px;
   width: 100%;
+  background: transparent;
+}
+
+/* markstream 在 <thead> / <tr> 上还挂了 .border-b + .border-[var(--table-border)]（同为 0,2,0），
+   显式清掉：表头带和行上不该再多一层默认边框色（separate 模式下多数浏览器本就忽略 tr 的边框，
+   但别指望它，且这两条会把 --table-border 的颜色透出来） */
+.chat-msg-markdown .table-node-wrapper thead,
+.chat-msg-markdown .table-node-wrapper tbody,
+.chat-msg-markdown .table-node-wrapper tr {
+  border: none;
 }
 
 /* 输出期间锁住列宽：fixed 只按第一行（表头）定宽，正文再长也不回头改列宽；
@@ -540,16 +594,104 @@
   table-layout: fixed;
 }
 
-.chat-msg-markdown th,
-.chat-msg-markdown td {
-  border: 1px solid #cfcfcf;
+/* 拖拽面板宽度期间也切成 fixed。
+   auto 布局每帧都要按**全部单元格**重新算一遍列宽（宽表、多行尤其明显），
+   fixed 只看第一行，拖拽中列宽不再反复抖动，松手后恢复 auto 按内容自适应。
+   与上面流式输出那条同一手法，理由也一样：宁可短暂牺牲列宽精度，也不要每帧重算。 */
+html.is-panel-resizing .chat-msg-markdown .table-node,
+html.is-panel-resizing .agent-think-body .table-node {
+  table-layout: fixed;
+}
+
+/* 格线：横线 + 列间竖线，但**不画外框** —— 外框由卡片自己的 border 承担，
+   单元格再画一圈就会和卡片边线贴成 2px 双线。
+   var 仍带回退值：万一有裸 <table> 没拿到 wrapper 上的变量，也不至于取不到色 */
+.chat-msg-markdown .table-node-wrapper th,
+.chat-msg-markdown .table-node-wrapper td {
+  border: none;
+  padding: 9px 14px;
+  text-align: left;
+  vertical-align: top;
+  color: var(--tb-text, var(--text));
+}
+
+/* 表头自己**不铺色**，让 wrapper 的灰底透出来。
+   这样表头带和「填进内容区圆角缺口」的是同一块底色，中间不会出现第二条边；
+   表头带的上两角也不需要自己收 —— wrapper 的圆角已经把整层底色裁好了。 */
+.chat-msg-markdown .table-node-wrapper th {
+  background: transparent;
+  font-weight: 600;
+  color: var(--tb-muted, var(--text-secondary));
+  white-space: nowrap;
+}
+
+.chat-msg-markdown .table-node-wrapper td {
+  background: var(--tb-bg);
+  border-top: 1px solid var(--tb-line, var(--border));
+}
+
+/* 列间竖线：只画右边线，且最后一列不画（画了会和卡片右边线贴成双线）。
+   表头行同一套 —— th 虽然是透明的，右边线照样压在表头带上。
+   注意别用 `border-right: none` 去清最后一列：下面首行/末行的圆角规则只动 border-radius，
+   两者不冲突。 */
+.chat-msg-markdown .table-node-wrapper th:not(:last-child),
+.chat-msg-markdown .table-node-wrapper td:not(:last-child) {
+  border-right: 1px solid var(--tb-col, var(--tb-line));
+}
+
+/* 内容区首行：上边两角收圆角，缺口由表头色填（见 wrapper 的 background 说明）。
+   这两个角是**独立**的 —— 想更弯就只调下面两个 18px，跟卡片圆角没关系（它是内凹填角，
+   不需要和任何外弧同心），只要不超过首行高度就不会被浏览器压缩。
+   末行：下边两角收 9px —— 这个值和卡片圆角是绑死的（外 10px 减 1px 边框）：
+   必须严格等于 wrapper 的内裁切弧，否则底部两角会漏出表头色。
+   分隔线取 --tb-head-line（比行间线 --tb-line 深一档）：它是表头与正文的分界，本来就该重一档。 */
+.chat-msg-markdown .table-node-wrapper tbody:first-of-type tr:first-child td {
+  border-top-color: var(--tb-head-line, var(--border));
+}
+
+.chat-msg-markdown .table-node-wrapper tbody:first-of-type tr:first-child td:first-child {
+  border-top-left-radius: 18px;
+}
+
+.chat-msg-markdown .table-node-wrapper tbody:first-of-type tr:first-child td:last-child {
+  border-top-right-radius: 18px;
+}
+
+.chat-msg-markdown .table-node-wrapper tbody:last-of-type tr:last-child td:first-child {
+  border-bottom-left-radius: 9px;
+}
+
+.chat-msg-markdown .table-node-wrapper tbody:last-of-type tr:last-child td:last-child {
+  border-bottom-right-radius: 9px;
+}
+
+/* 兜底：正文里若出现没被 markstream 包 wrapper 的裸 <table>（手写 HTML 表格），
+   上面那套卡片变量/圆角拿不到，退回最朴素的框线样式 */
+.chat-msg-markdown table:not(.table-node) {
+  border-collapse: collapse;
+  margin: 0 0 10px;
+  font-size: 13px;
+  width: 100%;
+}
+
+.chat-msg-markdown table:not(.table-node) th,
+.chat-msg-markdown table:not(.table-node) td {
+  border: 1px solid var(--border);
   padding: 6px 10px;
   text-align: left;
 }
 
-.chat-msg-markdown th {
-  background: #d5d5d5;
-  font-weight: 600;
+/* 暗色主题：只换这一组局部变量 */
+.theme-dark .chat-msg-markdown .table-node-wrapper {
+  --tb-bg: #22252b;
+  --tb-head: #2e333c;
+  --tb-edge: #3a4048;
+  --tb-line: #3d434e;
+  --tb-head-line: #4d5561;
+  --tb-col: #454d5a;
+  --tb-text: var(--text);
+  --tb-muted: #a7b0bd;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .3);
 }
 
 .chat-msg-markdown hr {
@@ -7277,12 +7419,23 @@
    内层匿名表按内容收缩，流式每来一个字列宽就重算、表内滚动条忽现忽隐（滚动条出现/消失还会
    改变块的高度），整张表上下左右抖。
    思考块——包括链内折叠段、过程正文段、历史摘要气泡——正是「可收起/展开」的那批，
-   表格渲染在其中最容易命中这个问题。 */
-.agent-think-body table {
+   表格渲染在其中最容易命中这个问题。
+
+   选择器同样要带 .table-node-wrapper 这一层（原因见 527 行）：markstream 挂在 <table>/<th>/<td> 上的
+   .my-8 / .text-sm / .p-[calc(4/7*1em)] 是 0,2,0，裸写 .agent-think-body table 只有 0,1,1 压不过去，
+   margin-top 会被顶成 2rem。 */
+.agent-think-body .table-node-wrapper > table {
   border-collapse: collapse;
   margin: 0 0 8px;
   font-size: 12.5px;
   width: 100%;
+}
+
+/* 同 527 行：清掉 markstream 挂在 thead/tr 上的默认边框色 */
+.agent-think-body .table-node-wrapper thead,
+.agent-think-body .table-node-wrapper tbody,
+.agent-think-body .table-node-wrapper tr {
+  border: none;
 }
 
 /* 输出期间锁住列宽：与 .chat-msg-bubble--streaming .table-node 同一手法——fixed 只按第一行
@@ -7294,14 +7447,14 @@
   table-layout: fixed;
 }
 
-.agent-think-body th,
-.agent-think-body td {
+.agent-think-body .table-node-wrapper th,
+.agent-think-body .table-node-wrapper td {
   border: 1px solid var(--border);
   padding: 5px 8px;
   text-align: left;
 }
 
-.agent-think-body th {
+.agent-think-body .table-node-wrapper th {
   font-weight: 600;
   background: rgba(128, 128, 128, 0.08);
 }

@@ -395,17 +395,26 @@
   padding: 2px 12px;
   color: var(--text-muted);
 }
-.hub-detail-readme table {
+/* 表格：README 也走 markstream，<table> 外面套着 .table-node-wrapper（横向滚动容器）。
+   选择器必须带上这一层——markstream 自带样式在 <table> 上挂了 Tailwind 工具类
+   （.markstream-react .my-8 等，特指度 0,2,0），裸写 .hub-detail-readme table 只有 0,1,1，
+   margin:0 0 12px 会被顶成上下各 2rem，表格上方多出一条空白。 */
+.hub-detail-readme .table-node-wrapper > table {
   border-collapse: collapse;
   width: 100%;
   margin: 0 0 12px;
   font-size: 12px;
 }
-.hub-detail-readme th,
-.hub-detail-readme td {
+.hub-detail-readme .table-node-wrapper th,
+.hub-detail-readme .table-node-wrapper td {
   border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
   padding: 6px 8px;
   text-align: left;
+}
+.hub-detail-readme .table-node-wrapper thead,
+.hub-detail-readme .table-node-wrapper tbody,
+.hub-detail-readme .table-node-wrapper tr {
+  border: none;
 }
 .hub-detail-readme img { max-width: 100%; height: auto; border-radius: 6px; margin: 10px 0; }
 .hub-detail-readme hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }

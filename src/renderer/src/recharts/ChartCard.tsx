@@ -105,9 +105,14 @@ export function ChartCard(input: ChartCardProps) {
    * 所以 svg 上带的是数值 width/height 加 viewBox，脱离文档也能正常打开。
    *
    * ⚠️ 已知限制：Recharts 的 Legend 渲染的是 HTML（<ul class="recharts-default-legend">），
-   * 不在 <svg> 里，所以导出的 .svg **不含图例**。要在导出件里也保留图例，
+   * 不在图表本体的 <svg> 里，所以导出的 .svg **不含图例**。要在导出件里也保留图例，
    * 得另外用 spec 里的 series/颜色合成一段 SVG 图例拼进去 —— 那是独立一件事，
    * 没有顺手做，免得把「序列化」这个纯函数搞成半懂业务的东西。
+   *
+   * ⚠️ 但 v3 的**图例图标**（每个系列一个小色块）本身是 `<svg class="recharts-surface">`，
+   * 就挂在这个容器里、而且排在图表本体前面 —— 所以 serializeSvg 内部是按「渲染面积最大的
+   * 那张」来挑的，绝不能退回 querySelector('svg') 取第一个（见 serializeSvg.pickFigureSvg）。
+   * 取错了的后果：放大层被拉成整屏一块纯色、下载的 .svg 里只有一个小方块。
    *
    * 引用必须稳定：FigureFrame 拿它当依赖。序列化会遍历上千个节点，
    * 每次渲染换新函数等于把这份开销挂在无谓的重渲染上。
@@ -132,6 +137,27 @@ export function ChartCard(input: ChartCardProps) {
   const title = spec.title ?? (typeof input.title === 'string' ? input.title : null)
   const height = spec.height ?? 240
 
+  /**
+   * 放大层里那份图表：**必须是独立实例**，不能复用卡片里那份 children。
+   *
+   * 卡片那份挂着 hostRef（「下载 .svg」要靠它序列化活的 DOM）；同一个 ref 对象
+   * 挂在两棵树上时，放大层卸载会把 ref 置成 null，回到卡片后 hostRef 就指向空气了。
+   * 这里重新渲染一份，引用互不干扰。
+   *
+   * 尺寸不用给：FigureFrame 会按卡片里的原始尺寸设定 stage 的宽高，这里只写死高度，
+   * 宽度由 .rc-chart 的 width:100% 接住 —— 于是放大层里的版式与卡片里逐像素一致，
+   * 再被整体放大。图例（HTML，不在 <svg> 里）也因此能跟着出现在放大件里。
+   */
+  const zoomFigure = (
+    <div className="rc-chart" style={{ height }}>
+      <ChartBoundary fallback={null}>
+        <Suspense fallback={null}>
+          <ChartView spec={spec} />
+        </Suspense>
+      </ChartBoundary>
+    </div>
+  )
+
   return (
     <FigureFrame
       title={title}
@@ -139,6 +165,7 @@ export function ChartCard(input: ChartCardProps) {
       getSourceText={getSourceText}
       fileName={title || 'chart'}
       zoomable={input.zoomable}
+      zoomFigure={zoomFigure}
     >
       {/* 外层写死高度：图表 chunk 是异步加载的，占位若不留足高度，
           加载完成的瞬间容器会从几十 px 猛增到 240px+ → 聊天区 scrollHeight 突变

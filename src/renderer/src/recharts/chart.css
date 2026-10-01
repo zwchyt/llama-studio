@@ -8,6 +8,42 @@
    本文件现在只负责「图表本体」：调色板、加载/失败占位、坐标轴文字。
    ══════════════════════════════════════════════════════════ */
 
+/* ── 拖拽面板宽度期间：让图表 SVG 直接按容器**等比缩放**，而不是等 recharts 重排 ──
+
+   背景：面板宽度每帧在变 → 图表容器每帧在变 → recharts 的 ResizeObserver 每帧触发，
+   整棵图表树重渲染 + 重新布局，拖拽手柄就一卡一卡。
+
+   这里换个思路：拖拽期间把 SVG 的 width/height 强制成 100%，浏览器就按 viewBox +
+   preserveAspectRatio 把整张图等比缩放 —— **图形立刻跟着容器变**，而且完全不触发
+   recharts 的 JS（纯合成层操作）。松手后规则撤掉，recharts 用最终尺寸重排一次，
+   回到精确版式。ChartView 那边的 debounce 是第二道防线，管窗口缩放等非拖拽场景。
+
+   为什么 !important 一定压得住：svg 的 width/height 是**表现属性**（presentation
+   attribute），优先级低于任何样式表规则，不需要跟内联 style 打架。
+
+   为什么选择器必须是 .recharts-wrapper > svg：recharts v3 的**图例图标**也是
+   <svg class="recharts-surface">，但它嵌在 .recharts-legend-wrapper 里。实测
+   `.recharts-wrapper > svg` 命中数 = 1（只有图表本体），用 .recharts-surface 会连
+   图例图标一起缩，把图例撑坏。
+
+   为什么还要一起放开中间那几层：recharts 会把「量到的尺寸」以**内联像素宽高**写在
+   .recharts-wrapper 上（实测 582px），而 .recharts-responsive-container 与
+   .recharts-wrapper 之间还有一层**无 class 的 div**（实测它是 0 宽）。
+   只改 svg 那一条：容器收到 400px 时 svg 盒子纹丝不动，仍是 582；
+   改到 container + wrapper：wrapper 的 100% 相对那层 0 宽的 div 解析 → 塌成 0×0。
+   三层一起放到 100%，整条链才真正跟着 .rc-chart 走。 */
+html.is-panel-resizing .recharts-responsive-container,
+html.is-panel-resizing .recharts-responsive-container > div,
+html.is-panel-resizing .recharts-wrapper {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+html.is-panel-resizing .recharts-wrapper > svg {
+  width: 100% !important;
+  height: 100% !important;
+}
+
 /* 调色板：前四色直接用语义色，后四色用 color-mix 把它们往正文色调和，
    拉开相邻扇区/线条的区分度，同时仍然完全跟随主题（没有写死的 hex）。
    想换配色只改这里，spec 里的 colors 字段也可以逐图覆盖。

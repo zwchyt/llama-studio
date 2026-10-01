@@ -166,7 +166,15 @@ html.theme-dark .fig-invertible > * {
 
 /* ── 放大层 ──
    用 portal 挂到 body：聊天容器里存在多层 stacking context 与
-   overflow 裁剪，留在原地会盖不住侧边栏，也会被消息气泡裁掉。 */
+   overflow 裁剪，留在原地会盖不住侧边栏，也会被消息气泡裁掉。
+
+   遮罩用「浅色玻璃」而不是纯黑：纯黑会把背后的会话整块吞掉，放大层像跳到了另一个页面。
+   换成半透明浅底 + 背景模糊之后，背后的消息还认得出来，层次是叠出来的三层 ——
+   模糊的底 / 图形自己的投影 / 清晰的图形。
+   手法与项目里 .modal-overlay 同一套路（半透明底 + backdrop-filter），只是更实一点：
+   放大层是要盯着看一会儿的，底太透会和图形抢注意力。
+   底色取 --surface（浅色主题下就是近白，深色主题下是石墨灰），所以这一条规则
+   两个主题都对，不需要再写 html.theme-dark 覆盖。 */
 .fig-zoom {
   position: fixed;
   inset: 0;
@@ -175,7 +183,9 @@ html.theme-dark .fig-invertible > * {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: rgba(0, 0, 0, 0.72);
+  background: color-mix(in srgb, var(--surface) 74%, transparent);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
+  backdrop-filter: blur(10px) saturate(1.15);
   cursor: zoom-out;
 }
 
@@ -187,6 +197,9 @@ html.theme-dark .fig-invertible > * {
   position: relative;
   border-radius: 6px;
   overflow: hidden;
+  /* 浅色遮罩下图形与底容易糊成一片，补一圈 1px 描边把轮廓勾出来；
+     层次感交给 --shadow-lg（两个主题各自有值）。 */
+  border: 1px solid var(--border);
   box-shadow: var(--shadow-lg);
   cursor: grab;
   user-select: none;
@@ -200,39 +213,95 @@ html.theme-dark .fig-invertible > * {
   cursor: grabbing;
 }
 
-/* 放大层的图片必须给**确定宽度**，只写 max-* 会塌成 0×0。
-   原因：模型写的 SVG 常常只有 viewBox、没有 width/height（本项目里很常见），
-   这种 <img> 没有内在尺寸，于是 width: auto 会反过来去问包含块要宽度 ——
-   而包含块 .fig-zoom-stage 的宽度又是按内容算的，两边互相依赖，
-   Chrome 直接把两者都解析成 0。
-   实测（Chrome，窗口 1280×800，图片 naturalWidth=300）：
-     旧写法 img box 0×0 / stage 0×0 —— 放大层只剩一层黑底，图完全看不见。
-     给确定 width 后 img box 1163×578 / stage 1163×578，图形正常铺满。
-   取 min(92vw, 1400px)：跟着窗口走，又不会在超宽屏上把图拉成巨幅。
-   object-fit: contain 兜住极端宽高比（比如又高又窄的图）：
-   那种情况下 max-height 会压住高度，contain 让图形居中留白，而不是被拉变形。 */
-.fig-zoom-img {
-  display: block;
-  width: min(92vw, 1400px);
-  height: auto;
-  max-height: 82vh;
-  object-fit: contain;
+/* 面板：标题 / 可视区 / 工具条三行，和 Mermaid 的全屏放大同一结构。
+   overflow: hidden 让三行都吃面板的圆角。
+
+   高度必须是**确定值**（88vh），不能只写 max-height：面板高度一旦由内容（图形原始尺寸）
+   撑成定值，可视区就没有任何富余空间，初始「铺满」算出来的倍率会小于 1 ——
+   点「放大查看」反而把图缩小了。给了确定高度，可视区才有空间把图放大。 */
+.fig-zoom-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(94vw, 1500px);
+  height: 88vh;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  cursor: default;
+}
+
+/* 标题跟着进来：放大后只看一张图，不给标题就不知道这是哪张图 */
+.fig-zoom-head {
+  flex: 0 0 auto;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 可视区：裁剪 + 居中。stage 按原始尺寸布局后整体缩放，超出部分由这里裁掉，
+   拖拽即平移它。overflow: hidden 是必须的 —— 否则放大后的图形会溢出面板。 */
+.fig-zoom-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+
+.fig-zoom-view:active {
+  cursor: grabbing;
+}
+
+/* stage 只负责「底色 + 位移 + 缩放」，尺寸由调用方内联的原始尺寸决定。
+   flex: 0 0 auto 阻止 flex 把它压扁 —— 压扁了图形会按错的宽度重新布局，
+   那就成了「另一张图」而不是「放大」。
+   不给 border：面板本身已有描边，图形底色与面板同为 --surface（和卡片里一样），
+   再加一圈反而会多出一条线。 */
+.fig-zoom-stage {
+  position: relative;
+  flex: 0 0 auto;
+  /* 与 .fig-canvas 一样居中：SVG 卡片里那张图是 max-width:100% 的，
+     在定宽容器里若不管对齐会贴左边，与卡片里的观感对不上。 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  overflow: hidden;
+  transform-origin: center center;
+  will-change: transform;
+}
+
+/* 工具条 + 提示：作为面板的第三行，不再绝对定位压在图形上。
+   原来工具条在 top:16px，正好盖住图形顶部（标题、最高那根柱子都在那儿）。 */
+.fig-zoom-foot {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
 }
 
 .fig-zoom-bar {
-  position: absolute;
-  top: 16px;
-  left: 50%;
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 4px 6px;
-  transform: translateX(-50%);
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--surface);
   box-shadow: var(--shadow-md);
-  cursor: default;
 }
 
 .fig-zoom-pct {
@@ -243,12 +312,9 @@ html.theme-dark .fig-invertible > * {
   color: var(--text);
 }
 
+/* 颜色必须走主题变量：遮罩是浅色玻璃，写死的白字在白底上等于隐形 */
 .fig-zoom-hint {
-  position: absolute;
-  bottom: 18px;
-  left: 50%;
-  transform: translateX(-50%);
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--text-secondary);
   pointer-events: none;
 }

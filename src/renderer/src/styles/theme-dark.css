@@ -273,18 +273,12 @@ html.theme-dark body {
   background: var(--surface);
 }
 
-/* ── 聊天视图：代码块、引用、表格头、预览 ── */
-.theme-dark .chat-code-pre {
-  background: var(--code-bg);
-}
-
+/* ── 聊天视图：引用、预览 ──
+   代码块（.chat-code-*）与会话表格（.table-node-wrapper）的暗色值已各自收进本组件的变量组，
+   这里不再打补丁（原先的 .theme-dark .chat-msg-markdown th 会盖掉表格卡片自己的表头色） */
 .theme-dark .chat-msg-markdown blockquote {
   background: var(--quote-bg);
   border-left-color: var(--border-strong);
-}
-
-.theme-dark .chat-msg-markdown th {
-  background: var(--table-head-bg);
 }
 
 .theme-dark .chat-file-preview-markdown blockquote {
@@ -321,14 +315,10 @@ html.theme-dark body {
   background: var(--surface-hover);
 }
 
-/* ── 聊天视图：预览激活态按钮、代码块头部、文件标签选中态 ── */
+/* ── 聊天视图：预览激活态按钮、文件标签选中态 ── */
 .theme-dark .chat-settings-btn.preview-active {
   background: var(--border-strong);
   color: var(--text);
-}
-
-.theme-dark .chat-code-header {
-  background: var(--code-header-bg);
 }
 
 .theme-dark .chat-file-tab.active {

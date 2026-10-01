@@ -194,12 +194,32 @@ function isErrorSvg(svg: string): boolean {
   )
 }
 
+/**
+ * 给根 <svg> 补上 height:auto，**但绝不覆盖 mermaid 自己算的 max-width**。
+ *
+ * mermaid 输出的根标签自带 `width="100%"` + `style="max-width: <自然宽度>px"`，
+ * 这对组合的含义是「跟着容器缩，但不放大超过自然宽度」。
+ * 原来的写法把整个 style 换成 `max-width:100%;height:auto`，等于把自然宽度上限删了 ——
+ * 小图（比如三节点流程图）会被拉满整个卡片，文字跟着放大得很难看。
+ *
+ * 补 height:auto 是另一件事：mermaid 的 svg 常常只有 width/viewBox、没有 height，
+ * 不定高的话纵向比例会与 viewBox 对不上。
+ */
+function ensureSvgSizing(tag: string): string {
+  const m = /\sstyle\s*=\s*(["'])([\s\S]*?)\1/i.exec(tag)
+  if (!m) return tag.replace(/^<svg\b/i, '<svg style="height:auto"')
+  if (/\bheight\s*:/i.test(m[2]!)) return tag
+  const merged = `${m[2]!.trim().replace(/;\s*$/, '')};height:auto`
+  return tag.replace(m[0], () => ` style="${merged}"`)
+}
+
 function sanitizeSvg(svg: string): string {
   return svg
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/\bon\w+\s*=/gi, 'data-blocked=')
     .replace(/javascript:/gi, 'blocked:')
-    .replace(/<svg\b/, '<svg style="max-width:100%;height:auto"')
+    // 只动开头这个标签：mermaid 的 style 出现在标签前半段，用 [^>]* 截到第一个 > 足够
+    .replace(/<svg\b[^>]*/i, (tag) => ensureSvgSizing(tag))
 }
 
 async function getMermaid(): Promise<MermaidInstance> {
@@ -606,6 +626,7 @@ export function MermaidCard(renderProps: MermaidCardProps) {
       ) : svg ? (
         <div
           ref={isFullscreen ? undefined : svgContainerRef}
+          className="mmd-viewport"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -623,6 +644,17 @@ export function MermaidCard(renderProps: MermaidCardProps) {
         >
           <div
             style={{
+              // 必须给确定宽度：mermaid 的 svg 是 width="100%" + style="max-width:<自然宽>px"，
+              // 百分比要有一个确定的包含块才解析得出来。不给的话包含块宽度反过来由 svg 决定
+              // （循环依赖），浏览器退回 <svg> 的默认尺寸 300×150 —— 图形只画 300px 宽，
+              // 在整宽的卡片里居中，左右各空出一大块，就是「图表左边有空白」的来源。
+              width: '100%',
+              // 上一步把宽度放开到 100% 之后，svg 会被 max-width 卡在自然宽度上，
+              // 这时要靠 flex 把它居中；alignItems 必须写 center，
+              // 否则默认的 stretch 会去拉长 svg 的高度。
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,
               transformOrigin: 'center center',
               transition: dragRef.current ? 'none' : 'transform 0.15s ease',
@@ -736,7 +768,12 @@ export function MermaidCard(renderProps: MermaidCardProps) {
       style={{
         position: 'fixed', inset: 0, zIndex: 10000,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)',
+        // 浅色玻璃遮罩，与图形卡片的放大层（figure/figure.css 的 .fig-zoom）保持一致：
+        // 纯黑会把背后的会话整块吞掉，全屏像跳到了另一个页面。
+        // 底色取 --surface，两个主题都自动对（浅色近白 / 深色石墨灰）。
+        background: 'color-mix(in srgb, var(--surface) 74%, transparent)',
+        backdropFilter: 'blur(10px) saturate(1.15)',
+        WebkitBackdropFilter: 'blur(10px) saturate(1.15)',
       }}
       onClick={(e) => { if (e.target === e.currentTarget) setIsFullscreen(false) }}
     >

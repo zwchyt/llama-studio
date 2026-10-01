@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { looksLikeSvg } from './parseSvg'
+import { fitSvgViewBox, looksLikeSvg, sanitizeLiveSvg } from './parseSvg'
 import { FigureFrame } from '../figure/FigureFrame'
 import { toSvgDataUri } from '../figure/serializeSvg'
 import './svg.css'
@@ -42,12 +42,7 @@ export type SvgCardProps = {
   streaming?: boolean
 }
 
-/** 流式预览的轻量净化：剥 <script> 与内联事件处理器（innerHTML 注入的 SVG 不会跑 <script>，但事件属性会活）。 */
-function sanitizeLiveSvg(svg: string): string {
-  return svg
-    .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
-    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-}
+/** 流式预览的轻量净化：见 parseSvg 的 sanitizeLiveSvg（此处只是保持调用点简短）。 */
 
 function pickCode(p: SvgCardProps): string {
   for (const c of [p.code, p.props?.code, p.state?.code]) {
@@ -73,6 +68,18 @@ export function SvgCard(input: SvgCardProps) {
    */
   const getSvgSource = useCallback(() => (code ? code : null), [code])
   const fileName = typeof input.title === 'string' && input.title ? input.title : 'svg'
+
+  /**
+   * 真正喂给 <img> 的源码：在模型原文基础上把 viewBox 撑到内容范围
+   * （见 parseSvg.fitSvgViewBox —— 模型手算的 viewBox 偏小会把越界的图例文字裁掉）。
+   *
+   * 用 useMemo 在渲染期算而不是 effect 里：算完再渲染 <img>，不会先闪一帧被裁的图。
+   * 该函数只做「建离屏容器 → 量 → 拆」，没有外部状态，重复执行安全。
+   *
+   * 只影响显示。下载 / 复制 / 源码面板走的仍是 getSvgSource（模型原文），
+   * 用户拿到的还是他写的那份代码。
+   */
+  const renderCode = useMemo(() => (code ? fitSvgViewBox(code) : ''), [code])
 
   /**
    * 流式实时预览：不经过 <img>（截断的 data URI 是一张破图），直接把半截 SVG
@@ -128,8 +135,13 @@ export function SvgCard(input: SvgCardProps) {
     >
       <img
         className="svg-card-img"
-        src={toSvgDataUri(code)}
+        src={toSvgDataUri(renderCode)}
         alt={alt}
+        // 必须关掉原生拖拽：放大层（FigureFrame）里是靠 pointermove 做平移的，
+        // <img> 默认 draggable，一按下去浏览器就开始「拖图」，指针事件被接管、
+        // pointermove 中途断掉，图就平移不动 —— 放大后被裁到视野外的部分再也拉不回来。
+        // 图表卡片的放大内容是 <div>，没有这个原生行为，所以只有 SVG 卡片会出问题。
+        draggable={false}
         // 加载失败（SVG 语法错误、编码异常）时退回代码块，让用户还能看到原文
         onError={() => setBroken(true)}
       />

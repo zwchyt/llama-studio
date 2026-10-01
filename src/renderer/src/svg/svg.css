@@ -8,8 +8,24 @@
 
 .svg-card-img {
   display: block;
-  max-width: 100%;
+  /* 必须给**确定宽度**，不能只写 max-width:100%。
+     两种 SVG 在这个容器里的表现本来是不一致的：
+       · 只有 viewBox、没有 width/height 的 —— 没有内在尺寸，浏览器按可用宽度算 → 铺满；
+       · 写了 width="300" height="200" 的 —— 有内在尺寸，就按 300px 渲染，在整宽的卡片里
+         居中，左右各空一大块（实测卡片内容区 582px 时左右各空 141px）。
+     同一张卡片对两种 SVG 给出两套版式，用户看到的就是「图表左边有空白」。
+
+     更直接的证据在下面 .svg-card-live：流式预览那条规则本来就是 width:100%，
+     于是流式结束、换成这张 <img> 的瞬间，图会从铺满宽度突然缩回原始尺寸。
+     这里对齐成 width:100%，两条路径才一致（矢量图放大不会糊）。
+     实测：300x200 的 SVG → 582x388，左右留白归零。 */
+  width: 100%;
   height: auto;
+  /* 与组件上的 draggable={false} 双保险：放大层靠 pointermove 做平移，
+     浏览器对 <img> 的原生拖拽会接管指针、让平移失效。
+     draggable 属性在现代浏览器已够用，这条是给「属性被别处覆盖」兜底。 */
+  -webkit-user-drag: none;
+  user-select: none;
   /* 画布底色刻意不在这里写死：它由主题变量 --svg-canvas 决定，
      两个主题都取 var(--surface)（与卡片同色，不留内框），
      深色下图形能不能看清交给 figure.css 的反相规则（卡片传了 invertible）。

@@ -1,3 +1,10 @@
+/* 拖拽面板宽度期间钉住 SVG 容器宽度（useResizablePanel 给 <html> 挂 is-panel-resizing，
+   并把当前宽度写进 --pin-w）。!important 是必须的：本容器的 width:100% 是 React 写在
+   内联 style 上的，普通规则压不过它。见 utils/useResizablePanel 的 pinFigures。 */
+html.is-panel-resizing .mmd-viewport {
+  width: var(--pin-w, auto) !important;
+}
+
 .jui-mermaid-body {
   margin-top: 8px;
   overflow-x: auto;
