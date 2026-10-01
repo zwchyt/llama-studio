@@ -1,6 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { CheckIcon, ChevronRightIcon, ChevronsUpIcon, ChevronsDownIcon, CopyIcon, GitBranchIcon, MinusIcon, PlusIcon, RefreshCwIcon, HistoryIcon, AlignJustifyIcon, FolderIcon, FolderOpenIcon } from '@animateicons/react/lucide'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { AlignJustifyIcon, ArrowUpDownIcon, CheckIcon, ChevronRightIcon, ChevronsDownIcon, ChevronsUpIcon, ChevronsLeftRightIcon, CopyIcon, DiffIcon, FileCheckIcon, FilePenIcon, FileSearchIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, GitCommitHorizontalIcon, GitCompareIcon, HistoryIcon, MinusIcon, PlusIcon, RefreshCwIcon, SearchIcon, WrapTextIcon, XIcon } from '@animateicons/react/lucide'
 import { fileMeta } from '../utils/fileIcon'
+import { usePopoverDismiss } from '../utils/usePopoverDismiss'
+import type { AniIconHandle } from './agent-code/types'
+import type { ElementType } from 'react'
 
 // Git 变更（只读 diff 查看）：解析 `git diff HEAD` 的 unified 输出并按行渲染。
 // 解析算法参考 DeepSeek-Reasonix 的 diffRowsFromUnifiedDiff（保留真实行号）。
@@ -73,6 +77,74 @@ const baseName = (p: string) => p.split('/').pop() || p
 const dirName = (p: string) => { const i = p.lastIndexOf('/'); return i >= 0 ? p.slice(0, i) : '' }
 
 const STATUS_LABEL: Record<string, string> = { M: '修改', A: '新增', D: '删除', R: '重命名', C: '复制', U: '冲突', '?': '未跟踪' }
+
+// ── 顶部第 1 区：作用域（默认未提交，选择持久化）──
+type GitScope = 'uncommitted' | 'unstaged' | 'staged' | 'committed' | 'branch'
+const SCOPE_ORDER: GitScope[] = ['uncommitted', 'unstaged', 'staged', 'committed', 'branch']
+const SCOPE_LABEL: Record<GitScope, string> = {
+  uncommitted: '未提交', unstaged: '未暂存', staged: '已暂存', committed: '已提交', branch: '分支',
+}
+// 作用域菜单项图标（与文件树那套一样：整行 hover 驱动图标动画）
+const SCOPE_ICON: Record<GitScope, ElementType> = {
+  uncommitted: GitCompareIcon, unstaged: FilePenIcon, staged: FileCheckIcon, committed: HistoryIcon, branch: GitBranchIcon,
+}
+const readScope = (): GitScope => {
+  const v = localStorage.getItem('agent-git-scope')
+  return SCOPE_ORDER.includes(v as GitScope) ? (v as GitScope) : 'uncommitted'
+}
+
+// ── 顶部第 3 区：diff 排版。堆叠＝现有上下结构；拆分＝左旧右新；自动换行与前两者可叠加 ──
+type DiffMode = 'stacked' | 'split'
+
+// 提交历史的一条（git log 输出，主进程按 \x1f 切字段）
+type GitCommitItem = { hash: string; shortHash: string; author: string; time: number; subject: string }
+
+// 拆分视图的一行：左右两栏各自的源行；上下文行两侧同现，纯增/纯删则另一侧留空
+type SplitPair = { left?: DiffRow; right?: DiffRow }
+
+// 把堆叠行序列折叠成左右配对：连续 del 段与紧随的 add 段按序配对，多出来的单边成行
+function toSplitPairs(rows: DiffRow[]): SplitPair[] {
+  const out: SplitPair[] = []
+  let i = 0
+  while (i < rows.length) {
+    const r = rows[i]!
+    if (r.type === 'ctx') { out.push({ left: r, right: r }); i++; continue }
+    const dels: DiffRow[] = []
+    while (i < rows.length && rows[i]!.type === 'del') { dels.push(rows[i]!); i++ }
+    const adds: DiffRow[] = []
+    while (i < rows.length && rows[i]!.type === 'add') { adds.push(rows[i]!); i++ }
+    const n = Math.max(dels.length, adds.length)
+    for (let k = 0; k < n; k++) out.push({ left: dels[k], right: adds[k] })
+  }
+  return out
+}
+
+// 顶部按钮的浮层：.agent-git-header 带 overflow:hidden，浮层挂进 header 必被裁掉，
+// 故统一 portal 到 body，按触发按钮的屏幕矩形定位；下方放不下就朝上翻。
+function GitHeaderPopover({ open, btnRef, menuRef, panelClass, children }: {
+  open: boolean
+  btnRef: React.RefObject<HTMLElement | null>
+  menuRef: React.RefObject<HTMLDivElement | null>
+  panelClass: string
+  children: React.ReactNode
+}) {
+  const [style, setStyle] = useState<React.CSSProperties>({ visibility: 'hidden' })
+  useLayoutEffect(() => {
+    if (!open) return
+    const el = menuRef.current
+    const anchor = btnRef.current
+    if (!el || !anchor) return
+    const r = anchor.getBoundingClientRect()
+    const w = el.offsetWidth
+    const h = el.offsetHeight
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8))
+    const below = r.bottom + 4
+    const top = below + h > window.innerHeight ? Math.max(8, r.top - h - 4) : below
+    setStyle({ left, top, visibility: 'visible' })
+  }, [open, btnRef, menuRef])
+  if (!open) return null
+  return createPortal(<div ref={menuRef} className={panelClass} style={style}>{children}</div>, document.body)
+}
 
 // ── 行内单词级差异高亮 ──
 // 按单词/空白/标点拆分为 token
@@ -173,7 +245,7 @@ function renderCodeWithHighlights(text: string, highlights?: { start: number; en
   return parts.length > 0 ? parts : ' '
 }
 
-const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceCollapsed, onStage, onUnstage, onDiscard, focused, hideDir }: { file: GitFileChange; onOpen: (relPath: string, line?: number) => void; forceCollapsed: boolean; onStage?: (path: string) => void; onUnstage?: (path: string) => void; onDiscard?: (path: string) => void; focused?: boolean; hideDir?: boolean }) {
+const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceCollapsed, onStage, onUnstage, onDiscard, focused, hideDir, mode, wrap }: { file: GitFileChange; onOpen: (relPath: string, line?: number) => void; forceCollapsed: boolean; onStage?: (path: string) => void; onUnstage?: (path: string) => void; onDiscard?: (path: string) => void; focused?: boolean; hideDir?: boolean; mode: DiffMode; wrap: boolean }) {
   const parsed = useMemo(() => {
     if (file.untracked) {
       const r = contentToRows(file.content || '')
@@ -300,9 +372,27 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
         ) : rows.length === 0 ? (
           <div className="agent-git-note">无文本差异（可能仅为模式/重命名变更）。</div>
         ) : (
-          <div className="agent-git-diff-body">
+          <div className={`agent-git-diff-body${mode === 'split' ? ' split-view' : ''}${wrap ? ' wrap-view' : ''}`}>
             {blocks.map((b, bi) => {
               if (b.kind === 'hunk') {
+                // 拆分：连续 del/add 配成左右两栏，行号与词级高亮沿用同一批 rows，只是换网格
+                if (mode === 'split') {
+                  return toSplitPairs(b.rows).map((p, i) => (
+                    <div
+                      className="agent-git-row split"
+                      key={`h-${bi}-${i}`}
+                      title="跳转到源文件此行"
+                      onClick={() => onOpen(file.path, p.right?.newLine ?? p.left?.oldLine)}
+                    >
+                      <span className={`agent-git-ln${p.left?.type === 'del' ? ' del' : ''}`}>{p.left?.oldLine ?? ''}</span>
+                      <span className="agent-git-sign">{p.left?.type === 'del' ? '−' : ' '}</span>
+                      <span className={`agent-git-code ${p.left ? p.left.type : 'pad'}`}>{p.left ? renderCodeWithHighlights(p.left.text, p.left.highlights) : ' '}</span>
+                      <span className={`agent-git-ln${p.right?.type === 'add' ? ' add' : ''}`}>{p.right?.newLine ?? ''}</span>
+                      <span className="agent-git-sign">{p.right?.type === 'add' ? '+' : ' '}</span>
+                      <span className={`agent-git-code ${p.right ? p.right.type : 'pad'}`}>{p.right ? renderCodeWithHighlights(p.right.text, p.right.highlights) : ' '}</span>
+                    </div>
+                  ))
+                }
                 return b.rows.map((r, i) => (
                   <div
                     className={`agent-git-row ${r.type}`}
@@ -332,11 +422,23 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
               return (
                 <React.Fragment key={`g-${bi}`}>
                   {gapContent[bi] ? gapContent[bi]!.map((line, li) => (
-                    <div className="agent-git-row" key={`gl-${bi}-${li}`}>
+                    <div className={`agent-git-row${mode === 'split' ? ' split' : ''}`} key={`gl-${bi}-${li}`}>
                       <span className="agent-git-ln">{b.startLine + li}</span>
-                      <span className="agent-git-ln" />
-                      <span className="agent-git-sign"> </span>
-                      <span className="agent-git-code">{line}</span>
+                      {mode === 'split' ? (
+                        <>
+                          <span className="agent-git-sign"> </span>
+                          <span className="agent-git-code ctx">{line}</span>
+                          <span className="agent-git-ln">{b.startLine + li}</span>
+                          <span className="agent-git-sign"> </span>
+                          <span className="agent-git-code ctx">{line}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="agent-git-ln" />
+                          <span className="agent-git-sign"> </span>
+                          <span className="agent-git-code">{line}</span>
+                        </>
+                      )}
                     </div>
                   )) : <div className="agent-git-note">加载中…</div>}
                   <button className="agent-git-more" onClick={() => setExpandedGaps(s => ({ ...s, [bi]: false }))}>收起</button>
@@ -413,7 +515,7 @@ function GitTreeDir({ node, depth, collapsedDirs, toggleDir, renderFile }: {
   )
 }
 
-export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, workspaceDir, focusPath, onFocusHandled }: {
+export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, workspaceDir, focusPath, onFocusHandled, currentBranch, branches, checkoutBranch }: {
   data: GitChangesData | null
   loading: boolean
   onRefresh: () => void
@@ -422,6 +524,11 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
   // 定位目标（绝对路径）：打开面板后自动展开并滚到该文件的 diff；处理完毕后回调清除
   focusPath?: string | null
   onFocusHandled?: () => void
+  // 「分支」作用域用：分支清单与当前分支来自 useAgentGit（与输入区那个分支选择器同一份状态），
+  // checkout 也走它的回调，这样切换后输入区的分支名会一起更新
+  currentBranch?: string | null
+  branches?: string[]
+  checkoutBranch?: (branch: string) => void | Promise<void>
 }) {
   const [allExpanded, setAllExpanded] = useState(false)  // 默认全部折叠（单文件级）
   // 分区级折叠：整段「已暂存的更改 / 更改」可各自收起
@@ -432,6 +539,83 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
     setView(v)
     try { localStorage.setItem('agent-git-view', v) } catch { /* 存储不可用 */ }
   }, [])
+  // ── 顶部五区所需状态 ──
+  // 第 1 区：作用域（未提交/未暂存/已暂存/已提交/分支），选择持久化
+  const [scope, setScope] = useState<GitScope>(readScope)
+  const switchScope = useCallback((s: GitScope) => {
+    setScope(s)
+    try { localStorage.setItem('agent-git-scope', s) } catch { /* 存储不可用 */ }
+  }, [])
+  // 第 3 区：diff 排版。堆叠/拆分互斥，自动换行是可与两者叠加的独立勾选项
+  const [mode, setMode] = useState<DiffMode>(() => (localStorage.getItem('agent-git-diff-mode') === 'split' ? 'split' : 'stacked'))
+  const [wrap, setWrap] = useState(() => localStorage.getItem('agent-git-diff-wrap') === '1')
+  const pickMode = useCallback((m: DiffMode) => {
+    setMode(m)
+    try { localStorage.setItem('agent-git-diff-mode', m) } catch { /* 存储不可用 */ }
+  }, [])
+  const toggleWrap = useCallback(() => {
+    const next = !wrap
+    setWrap(next)
+    try { localStorage.setItem('agent-git-diff-wrap', next ? '1' : '0') } catch { /* 存储不可用 */ }
+  }, [wrap])
+  // 三个顶部浮层（作用域 / 显示模式 / 跳转文件）：一律 portal 到 body，点外与 Esc 交给同一个 hook 收
+  const [scopeOpen, setScopeOpen] = useState(false)
+  const [modeOpen, setModeOpen] = useState(false)
+  const [jumpOpen, setJumpOpen] = useState(false)
+  const [jumpQuery, setJumpQuery] = useState('')
+  const scopeBtnRef = useRef<HTMLButtonElement>(null)
+  const scopeMenuRef = useRef<HTMLDivElement>(null)
+  const modeBtnRef = useRef<HTMLButtonElement>(null)
+  const modeMenuRef = useRef<HTMLDivElement>(null)
+  const jumpBtnRef = useRef<HTMLButtonElement>(null)
+  const jumpMenuRef = useRef<HTMLDivElement>(null)
+  usePopoverDismiss(scopeOpen, setScopeOpen, scopeBtnRef, undefined, scopeMenuRef)
+  usePopoverDismiss(modeOpen, setModeOpen, modeBtnRef, undefined, modeMenuRef)
+  usePopoverDismiss(jumpOpen, setJumpOpen, jumpBtnRef, undefined, jumpMenuRef)
+  // 菜单项图标动画：鼠标落在整行都要转，所以按 key 存句柄手动 start/stop
+  // （图标不传 ref 时它只监听自身 hover，指针停在文字上是不会动的）
+  const menuIconRefs = useRef(new Map<string, AniIconHandle>())
+  const bindMenuIcon = (key: string) => (el: AniIconHandle | null) => {
+    if (el) menuIconRefs.current.set(key, el)
+    else menuIconRefs.current.delete(key)
+  }
+  const menuIconHover = (key: string) => ({
+    onMouseEnter: () => menuIconRefs.current.get(key)?.startAnimation(),
+    onMouseLeave: () => menuIconRefs.current.get(key)?.stopAnimation(),
+  })
+  // 第 1 区「已提交」：历史列表 + 就地展开某一次提交的 diff（首次点开才取数）
+  const [commits, setCommits] = useState<GitCommitItem[] | null>(null)
+  const [commitsError, setCommitsError] = useState<string | null>(null)
+  const [openCommit, setOpenCommit] = useState<string | null>(null)
+  const [commitFiles, setCommitFiles] = useState<Record<string, GitFileChange[]>>({})
+  const [commitDiffError, setCommitDiffError] = useState<string | null>(null)
+  useEffect(() => {
+    if (scope !== 'committed' || !workspaceDir) return
+    let alive = true
+    setCommits(null); setCommitsError(null); setOpenCommit(null); setCommitDiffError(null)
+    void window.api.gitLog(workspaceDir)
+      .then(r => { if (!alive) return; if (r.error) setCommitsError(r.error); setCommits(r.commits) })
+      .catch(e => { if (alive) setCommitsError(e instanceof Error ? e.message : String(e)) })
+    return () => { alive = false }
+  }, [scope, workspaceDir])
+  const toggleCommit = useCallback(async (hash: string) => {
+    if (openCommit === hash) { setOpenCommit(null); return }
+    setOpenCommit(hash)
+    setCommitDiffError(null)
+    if (commitFiles[hash]) return
+    try {
+      const r = await window.api.gitCommitDiff(workspaceDir, hash)
+      if (r.error) setCommitDiffError(r.error)
+      setCommitFiles(prev => ({ ...prev, [hash]: r.files }))
+    } catch (e) {
+      setCommitDiffError(e instanceof Error ? e.message : String(e))
+    }
+  }, [openCommit, commitFiles, workspaceDir])
+  // 分支切换走上层 useAgentGit 的回调（它会同步刷新输入区那个分支名），切完再取一次变更清单
+  const handleCheckout = useCallback(async (branch: string) => {
+    await checkoutBranch?.(branch)
+    onRefresh()
+  }, [checkoutBranch, onRefresh])
   // 打开文件回调固定引用：内联函数会击穿 GitFileBlock 的 memo，任意父层重渲染都会重渲染全部文件块
   const openFile = useCallback((relPath: string, line?: number) => {
     const root = workspaceDir.replace(/[\\/]+$/, '')
@@ -465,7 +649,14 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
   const staged = data?.staged ?? []
   const unstaged = data?.unstaged ?? []
   const total = staged.length + unstaged.length
-  const hasFiles = !!data?.isRepo && total > 0
+  // 当前作用域下的变更文件清单：第 2 区统计与第 4 区跳转列表都从它取；已提交/分支作用域没有工作区清单
+  const scopeFiles = useMemo<GitFileChange[]>(() => {
+    if (scope === 'staged') return staged
+    if (scope === 'unstaged') return unstaged
+    if (scope === 'uncommitted') return [...staged, ...unstaged]
+    return []
+  }, [scope, staged, unstaged])
+  const isFileScope = scope === 'uncommitted' || scope === 'unstaged' || scope === 'staged'
   // 数形视图：两个分区各自的目录树（staged/unstaged 语义独立，树也各自构建）
   const stagedTree = useMemo(() => buildGitTree(staged), [staged])
   const unstagedTree = useMemo(() => buildGitTree(unstaged), [unstaged])
@@ -485,15 +676,26 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
     const t = setTimeout(() => onFocusHandled?.(), 100)
     return () => clearTimeout(t)
   }, [focusPath, loading, data, onFocusHandled])
-  // 顶部总览：汇总所有文件的新增/删除行数
-  const totals = useMemo(() => {
+  // 顶部统计（第 2 区）与跳转列表（第 4 区）共用这一份逐文件增删行数，避免把 diff 再解析一遍
+  const stats = useMemo(() => {
+    const byPath = new Map<string, { added: number; removed: number }>()
     let added = 0, removed = 0
-    for (const f of [...staged, ...unstaged]) {
+    for (const f of scopeFiles) {
       const rows = f.untracked ? contentToRows(f.content || '') : parseUnifiedDiff(f.diff).rows
-      for (const r of rows) { if (r.type === 'add') added++; else if (r.type === 'del') removed++ }
+      let a = 0, d = 0
+      for (const r of rows) { if (r.type === 'add') a++; else if (r.type === 'del') d++ }
+      if (!byPath.has(f.path)) byPath.set(f.path, { added: a, removed: d })
+      added += a; removed += d
     }
-    return { added, removed }
-  }, [staged, unstaged])
+    return { byPath, added, removed }
+  }, [scopeFiles])
+  // 跳转列表按路径去重（同一文件可同时出现在已暂存与未暂存两组里）
+  const jumpFiles = useMemo(() => Array.from(new Map(scopeFiles.map(f => [f.path, f])).values()), [scopeFiles])
+  const jumpList = useMemo(() => {
+    const q = jumpQuery.trim().toLowerCase()
+    const list = q ? jumpFiles.filter(f => f.path.toLowerCase().includes(q)) : jumpFiles
+    return list.slice(0, 200)
+  }, [jumpFiles, jumpQuery])
   const renderGroup = (title: string, list: GitFileChange[], key: 'staged' | 'unstaged', tree: GitTreeNode[], actions?: React.ReactNode) => {
     if (list.length === 0) return null
     const collapsed = sectionCollapsed[key]
@@ -510,7 +712,7 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
               n.kind === 'dir'
                 ? <GitTreeDir key={`d-${n.path}`} node={n} depth={0} collapsedDirs={collapsedDirs} toggleDir={toggleDir} renderFile={renderTreeFile} />
                 : <React.Fragment key={`f-${n.path}`}>{renderTreeFile(n.file, 0)}</React.Fragment>)
-          : list.map(f => <GitFileBlock key={`${key}-${f.path}`} file={f} onOpen={openFile} forceCollapsed={!allExpanded} onStage={handleStage} onUnstage={handleUnstage} onDiscard={handleDiscard} focused={focusRel === f.path} />))}
+          : list.map(f => <GitFileBlock key={`${key}-${f.path}`} file={f} onOpen={openFile} forceCollapsed={!allExpanded} onStage={handleStage} onUnstage={handleUnstage} onDiscard={handleDiscard} focused={focusRel === f.path || jumpTarget === f.path} mode={mode} wrap={wrap} />))}
       </div>
     )
   }
@@ -524,39 +726,89 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
       return next
     })
   }, [])
+  // 第 4 区「跳转到文件」：复用外部定位那套（自动展开＋滚动＋短暂高亮），
+  // 消费后立刻清除标记，这样连着点同一个文件还能再滚一次
+  const [jumpTarget, setJumpTarget] = useState<string | null>(null)
+  const jumpToFile = useCallback((path: string) => {
+    setJumpOpen(false)
+    setSectionCollapsed({ staged: false, unstaged: false })
+    setJumpTarget(path)
+  }, [])
+  useEffect(() => {
+    if (!jumpTarget) return
+    const t = setTimeout(() => setJumpTarget(null), 150)
+    return () => clearTimeout(t)
+  }, [jumpTarget])
   const renderTreeFile = useCallback((f: GitFileChange, depth: number) => (
     <div key={`tf-${f.path}`} style={{ paddingLeft: depth * 12 }}>
-      <GitFileBlock file={f} onOpen={openFile} forceCollapsed={!allExpanded} onStage={handleStage} onUnstage={handleUnstage} onDiscard={handleDiscard} focused={focusRel === f.path} hideDir />
+      <GitFileBlock file={f} onOpen={openFile} forceCollapsed={!allExpanded} onStage={handleStage} onUnstage={handleUnstage} onDiscard={handleDiscard} focused={focusRel === f.path || jumpTarget === f.path} hideDir mode={mode} wrap={wrap} />
     </div>
-  ), [openFile, allExpanded, handleStage, handleUnstage, handleDiscard, focusRel])
+  ), [openFile, allExpanded, handleStage, handleUnstage, handleDiscard, focusRel, jumpTarget, mode, wrap])
+  const branchListData = branches ?? []
+  // 收起/展开按钮的可用性：文件作用域看当前清单，已提交作用域看有没有展开出文件块
+  const canCollapse = scopeFiles.length > 0 || Object.keys(commitFiles).length > 0
   return (
     <div className="agent-git">
       <div className="agent-git-header">
+        {/* ── 第 1 区：作用域菜单（未提交/未暂存/已暂存/已提交/分支），名称右侧上下箭头 ── */}
+        <button
+          ref={scopeBtnRef}
+          className={`agent-git-menu-btn${scopeOpen ? ' on' : ''}`}
+          onClick={() => setScopeOpen(v => !v)}
+          title="切换变更范围"
+        >
+          <span className="agent-git-menu-text">{SCOPE_LABEL[scope]}</span>
+          <ArrowUpDownIcon size={11} className="agent-git-menu-caret" />
+        </button>
+        {/* ── 第 2 区：修改统计（跟随当前作用域）── */}
+        {data?.isRepo && (
+          <span className="agent-git-summary">
+            {isFileScope ? `${scopeFiles.length} 个文件` : scope === 'committed' ? `${commits === null ? '…' : commits.length} 条提交` : `${branchListData.length} 个分支`}
+            {isFileScope && scopeFiles.length > 0 && <span className="agent-git-total-stat"><span className="add">+{stats.added}</span><span className="del">−{stats.removed}</span></span>}
+          </span>
+        )}
+        <span className="agent-git-spacer" />
+        {/* ── 第 3 区：Diff 显示模式（堆叠/拆分互斥，自动换行可叠加）── */}
+        <button
+          ref={modeBtnRef}
+          className={`agent-git-menu-btn${modeOpen ? ' on' : ''}`}
+          onClick={() => setModeOpen(v => !v)}
+          title={mode === 'split' ? 'Diff 显示模式：拆分' : 'Diff 显示模式：堆叠'}
+        >
+          <DiffIcon size={12} />
+          {wrap && <WrapTextIcon size={11} className="agent-git-menu-tag" />}
+        </button>
+        {/* ── 第 4 区：跳转到文件（带搜索，只在有变更文件清单的作用域出现）── */}
+        {isFileScope && scopeFiles.length > 0 && (
+          <button
+            ref={jumpBtnRef}
+            className={`agent-git-menu-btn${jumpOpen ? ' on' : ''}`}
+            onClick={() => setJumpOpen(v => !v)}
+            title="跳转到文件"
+          >
+            <FileSearchIcon size={12} />
+          </button>
+        )}
+        {/* ── 第 5 区：全部收起 / 展开 ── */}
         <button
           className="agent-git-collapse-all"
           onClick={() => setAllExpanded(v => !v)}
           title={allExpanded ? '全部收起' : '全部展开'}
-          disabled={!hasFiles}
+          disabled={!canCollapse}
         >
           {allExpanded ? <ChevronsUpIcon size={14} /> : <ChevronsDownIcon size={14} />}
         </button>
-        <span className="agent-git-title"><GitBranchIcon size={13} /> Git 变更</span>
-        {data?.isRepo && (
-          <span className="agent-git-summary">
-            {total} 个文件
-            {total > 0 && <span className="agent-git-total-stat"><span className="add">+{totals.added}</span><span className="del">−{totals.removed}</span></span>}
-          </span>
+        {/* 保留在最右：视图切换（数形/列表，仅文件作用域）＋刷新 */}
+        {isFileScope && (
+          <div className="agent-git-viewswitch">
+            <button className={view === 'tree' ? 'on' : ''} title="以数形方式查看（目录树）" onClick={() => switchView('tree')}>
+              <FolderIcon size={12} />
+            </button>
+            <button className={view === 'list' ? 'on' : ''} title="以列表方式查看" onClick={() => switchView('list')}>
+              <AlignJustifyIcon size={12} />
+            </button>
+          </div>
         )}
-        <span className="agent-git-spacer" />
-        {/* 视图切换：数形（目录树）/ 列表（平铺），选择持久化 */}
-        <div className="agent-git-viewswitch">
-          <button className={view === 'tree' ? 'on' : ''} title="以数形方式查看（目录树）" onClick={() => switchView('tree')}>
-            <FolderIcon size={12} />
-          </button>
-          <button className={view === 'list' ? 'on' : ''} title="以列表方式查看" onClick={() => switchView('list')}>
-            <AlignJustifyIcon size={12} />
-          </button>
-        </div>
         <button className="agent-git-refresh" onClick={() => onRefresh()}>
           <RefreshCwIcon size={12} className={loading ? 'spin' : ''} />
         </button>
@@ -570,16 +822,70 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
           <div className="agent-git-empty">读取失败：{data.error}</div>
         ) : !data.isRepo ? (
           <div className="agent-git-empty">当前工作区不是 Git 仓库（未检测到 .git）。</div>
+        ) : scope === 'committed' ? (
+          /* ── 已提交：历史列表，点一条就地展开该次提交的 diff ── */
+          <div className="agent-git-commits">
+            {commits === null ? (
+              <div className="agent-git-empty">正在读取提交历史…</div>
+            ) : commitsError ? (
+              <div className="agent-git-empty">{commitsError}</div>
+            ) : commits.length === 0 ? (
+              <div className="agent-git-empty">这个仓库还没有提交。</div>
+            ) : commits.map(c => (
+              <div className="agent-git-commit" key={c.hash}>
+                <div className="agent-git-commit-head" onClick={() => void toggleCommit(c.hash)}>
+                  <ChevronRightIcon size={12} className={`agent-git-chev ${openCommit === c.hash ? 'open' : ''}`} />
+                  <GitCommitHorizontalIcon size={12} className="agent-git-commit-dot" />
+                  <span className="agent-git-commit-subject" title={c.subject}>{c.subject}</span>
+                  <span className="agent-git-commit-meta">
+                    <span className="agent-git-commit-hash">{c.shortHash}</span>
+                    <span className="agent-git-commit-author">{c.author}</span>
+                    <span className="agent-git-commit-time" title={new Date(c.time).toLocaleString('zh-CN')}>{new Date(c.time).toLocaleDateString('zh-CN')}</span>
+                  </span>
+                </div>
+                {openCommit === c.hash && (
+                  <div className="agent-git-commit-body">
+                    {commitDiffError && <div className="agent-git-note">{commitDiffError}</div>}
+                    {!commitFiles[c.hash] ? (
+                      <div className="agent-git-note">正在读取该提交的差异…</div>
+                    ) : commitFiles[c.hash]!.length === 0 ? (
+                      <div className="agent-git-note">该提交没有文本差异。</div>
+                    ) : (
+                      commitFiles[c.hash]!.map(f => <GitFileBlock key={`${c.hash}-${f.path}`} file={f} onOpen={openFile} forceCollapsed={!allExpanded} mode={mode} wrap={wrap} />)
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : scope === 'branch' ? (
+          /* ── 分支：本地分支清单，当前分支打勾，点一条即切换 ── */
+          <div className="agent-git-branches">
+            {branchListData.length === 0 ? (
+              <div className="agent-git-empty">没有本地分支。</div>
+            ) : branchListData.map(b => (
+              <button
+                className={`agent-git-branch${b === currentBranch ? ' on' : ''}`}
+                key={b}
+                disabled={b === currentBranch}
+                onClick={() => void handleCheckout(b)}
+              >
+                <GitBranchIcon size={12} className="agent-git-branch-icon" />
+                <span className="agent-git-branch-name">{b}</span>
+                {b === currentBranch && <CheckIcon size={12} className="agent-git-branch-check" />}
+              </button>
+            ))}
+          </div>
         ) : total === 0 ? (
           <div className="agent-git-empty">工作区没有未提交的改动。</div>
         ) : (
           <>
-            {renderGroup('已暂存的更改', staged, 'staged', stagedTree, (
+            {(scope === 'uncommitted' || scope === 'staged') && renderGroup('已暂存的更改', staged, 'staged', stagedTree, (
               <button className="agent-git-copy agent-git-stage-remove" title="取消所有暂存" onClick={handleUnstageAll}>
                 <MinusIcon size={12} />
               </button>
             ))}
-            {renderGroup('更改', unstaged, 'unstaged', unstagedTree, (
+            {(scope === 'uncommitted' || scope === 'unstaged') && renderGroup('更改', unstaged, 'unstaged', unstagedTree, (
               <>
                 <button className="agent-git-copy agent-git-discard" title="取消所有更改" onClick={handleDiscardAll}>
                   <HistoryIcon size={12} />
@@ -592,6 +898,70 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
           </>
         )}
       </div>
+      {/* ── 三个顶部浮层：一律 portal 到 body（header 的 overflow:hidden 会裁掉内部绝对定位元素）── */}
+      <GitHeaderPopover open={scopeOpen} btnRef={scopeBtnRef} menuRef={scopeMenuRef} panelClass="file-tree-ctx-menu">
+        {SCOPE_ORDER.map(s => {
+          const key = `scope-${s}`
+          const Icon = SCOPE_ICON[s]
+          return (
+            <button key={s} className="file-tree-ctx-item" onClick={() => { switchScope(s); setScopeOpen(false) }} {...menuIconHover(key)}>
+              <Icon ref={bindMenuIcon(key)} size={13} />
+              <span>{SCOPE_LABEL[s]}</span>
+              {s === scope && <CheckIcon size={13} className="agent-git-menu-check" />}
+            </button>
+          )
+        })}
+      </GitHeaderPopover>
+      <GitHeaderPopover open={modeOpen} btnRef={modeBtnRef} menuRef={modeMenuRef} panelClass="file-tree-ctx-menu">
+        <button className="file-tree-ctx-item" onClick={() => { pickMode('stacked'); setModeOpen(false) }} {...menuIconHover('mode-stacked')}>
+          <AlignJustifyIcon ref={bindMenuIcon('mode-stacked')} size={13} />
+          <span>堆叠</span>
+          {mode === 'stacked' && <CheckIcon size={13} className="agent-git-menu-check" />}
+        </button>
+        <button className="file-tree-ctx-item" onClick={() => { pickMode('split'); setModeOpen(false) }} {...menuIconHover('mode-split')}>
+          <ChevronsLeftRightIcon ref={bindMenuIcon('mode-split')} size={13} />
+          <span>拆分</span>
+          {mode === 'split' && <CheckIcon size={13} className="agent-git-menu-check" />}
+        </button>
+        <button className="file-tree-ctx-item" onClick={() => { toggleWrap(); setModeOpen(false) }} {...menuIconHover('mode-wrap')}>
+          <WrapTextIcon ref={bindMenuIcon('mode-wrap')} size={13} />
+          <span>自动换行</span>
+          {wrap && <CheckIcon size={13} className="agent-git-menu-check" />}
+        </button>
+      </GitHeaderPopover>
+      <GitHeaderPopover open={jumpOpen} btnRef={jumpBtnRef} menuRef={jumpMenuRef} panelClass="agent-git-jump">
+        <div className="agent-git-jump-search">
+          <SearchIcon size={11} className="agent-git-jump-search-icon" />
+          <input
+            className="agent-git-jump-input"
+            value={jumpQuery}
+            onChange={e => setJumpQuery(e.target.value)}
+            placeholder="搜索变更文件…"
+            spellCheck={false}
+            autoFocus
+          />
+          {jumpQuery && <button className="agent-git-jump-clear" onClick={() => setJumpQuery('')}><XIcon size={11} /></button>}
+        </div>
+        <div className="agent-git-jump-list">
+          {jumpList.length === 0 ? (
+            <div className="agent-git-empty">无匹配文件</div>
+          ) : jumpList.map(f => {
+            const st = stats.byPath.get(f.path)
+            const { Icon: FIcon, color: fColor } = fileMeta(f.path)
+            return (
+              <button className="agent-git-jump-item" key={f.path} title={f.path} onClick={() => jumpToFile(f.path)}>
+                <FIcon size={11} style={{ color: fColor }} />
+                <span className="agent-git-jump-name">{baseName(f.path)}</span>
+                <span className="agent-git-jump-dir">{dirName(f.path)}</span>
+                <span className="agent-git-stat">
+                  <span className="add">+{st?.added ?? 0}</span>
+                  <span className="del">−{st?.removed ?? 0}</span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </GitHeaderPopover>
     </div>
   )
 }

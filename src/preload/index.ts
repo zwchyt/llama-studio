@@ -241,6 +241,7 @@ const fullApi = {
   exportAgentSession: (sessionId: string) => ipcRenderer.invoke('export-agent-session', { sessionId }),
   importAgentSession: (projectId: string) => ipcRenderer.invoke('import-agent-session', { projectId }),
   deletePath: (targetPath: string, recursive: boolean) => ipcRenderer.invoke('delete-path', targetPath, recursive),
+  renamePath: (fromPath: string, newName: string) => ipcRenderer.invoke('rename-path', fromPath, newName),
   gitChanges: (dir: string) => ipcRenderer.invoke('git-changes', dir),
   gitStageFile: (dir: string, path: string) => ipcRenderer.invoke('git-stage-file', dir, path),
   gitUnstageFile: (dir: string, path: string) => ipcRenderer.invoke('git-unstage-file', dir, path),
@@ -250,6 +251,8 @@ const fullApi = {
   gitDiscardAll: (dir: string) => ipcRenderer.invoke('git-discard-all', dir),
   gitListBranches: (dir: string) => ipcRenderer.invoke('git-list-branches', dir),
   gitCheckoutBranch: (dir: string, branch: string) => ipcRenderer.invoke('git-checkout-branch', dir, branch),
+  gitLog: (dir: string, limit?: number) => ipcRenderer.invoke('git-log', dir, limit),
+  gitCommitDiff: (dir: string, hash: string) => ipcRenderer.invoke('git-commit-diff', dir, hash),
   setAgentWorkspace: (dir: string) => ipcRenderer.invoke('set-agent-workspace', dir),
 
   // ── 认知地图（codeMapService）──

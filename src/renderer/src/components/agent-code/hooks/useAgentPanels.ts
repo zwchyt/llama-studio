@@ -94,7 +94,9 @@ export function useAgentPanels({ rightPanelMode }: {
           natural += w
           if (i < kids.length - 1) natural += gap
         })
-        const w = Math.ceil(natural)
+        // 顶栏五区（作用域/统计/显示模式/跳转/收起）实测能到 ~410px，不设上限就再也拖不到原来的窄度；
+        // 作用域名与统计文字都带省略号可压缩，所以这里按 360 封顶。
+        const w = Math.min(Math.ceil(natural), 360)
         return w > 0 ? w + 4 : RIGHT_MIN
       }
       if (rightPanelMode === 'browser') {

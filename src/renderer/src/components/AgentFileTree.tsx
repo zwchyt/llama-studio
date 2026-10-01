@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, memo } from 'react'
 import { AlertCircle } from 'lucide-react'
 import {
-  ChevronRightIcon, ChevronDownIcon, FolderIcon, FolderOpenIcon, LoaderIcon, CornerDownLeftIcon, CopyIcon, SearchIcon, XIcon, ChevronsUpIcon, ChevronsDownIcon
+  ChevronRightIcon, ChevronDownIcon, FolderIcon, FolderOpenIcon, LoaderIcon, CornerDownLeftIcon, CopyIcon, SearchIcon, XIcon, ChevronsUpIcon, ChevronsDownIcon, PencilIcon, Trash2Icon
 } from '@animateicons/react/lucide'
 import { fileMeta } from '../utils/fileIcon'
 import { notify } from '../store/notificationStore'
@@ -13,6 +13,21 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+// 绝对路径的父目录（树节点 path 由主进程 join 生成，分隔符跟随平台）
+function parentDir(p: string): string {
+  const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  return i > 0 ? p.slice(0, i) : p
+}
+
+// 相对工作区根的路径：统一正斜杠，越出工作区时原样返回
+function relativeTo(p: string, root: string): string {
+  const norm = (s: string) => s.replace(/[\\/]+/g, '/')
+  const base = norm(root).replace(/\/+$/, '')
+  const full = norm(p)
+  if (!base) return full
+  return full.toLowerCase().startsWith(base.toLowerCase() + '/') ? full.slice(base.length + 1) : full
 }
 
 interface FileNode {
@@ -44,8 +59,15 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
   // 多文件选中（Ctrl+Click），用于拖拽多文件一次性拖入输入框
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
   // 右键菜单：文件与文件夹节点均可触发，{ x, y } 为屏幕坐标，name/path 为当前节点
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; name: string; path: string } | null>(null)
+  // confirmDel=true 时菜单切换为删除二次确认（文件不可恢复，必须点两下）
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; name: string; path: string; isDir: boolean; confirmDel?: boolean } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  // 内联重命名：path=目标节点绝对路径，name=其原名称（用于判断是否真改过），text=输入框内容
+  const [renaming, setRenaming] = useState<{ path: string; name: string; text: string } | null>(null)
+  const renameInputRef = useRef<HTMLInputElement>(null)
+  // 同一次「路径+文本」只结算一次：Enter 提交后紧跟的 blur 会带同一份快照再触发一遍，
+  // 而此时原路径已改名成功，第二次调用只会弹出「原文件不存在」的假错误。
+  const renameSettledRef = useRef<string | null>(null)
   // 图片悬停缩略图
   const [imgTooltip, setImgTooltip] = useState<{ x: number; y: number; dataUrl: string } | null>(null)
   const imgHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -203,14 +225,14 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
     return () => window.removeEventListener('agent-file-drop-done', clear)
   }, [])
 
-  // 复制文件完整路径到剪贴板（优先 navigator.clipboard，失败回退 execCommand）
-  const copyPath = useCallback(async (path: string) => {
+  // 复制到剪贴板（优先 navigator.clipboard，失败回退 execCommand）
+  const copyText = useCallback(async (text: string, okMsg: string) => {
     try {
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(path)
+        await navigator.clipboard.writeText(text)
       } else {
         const ta = document.createElement('textarea')
-        ta.value = path
+        ta.value = text
         ta.style.position = 'fixed'
         ta.style.opacity = '0'
         document.body.appendChild(ta)
@@ -218,11 +240,35 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
         document.execCommand('copy')
         document.body.removeChild(ta)
       }
-      notify('已复制文件路径', 'success')
+      notify(okMsg, 'success')
     } catch {
       notify('复制失败', 'error')
     }
   }, [])
+
+  // 删除文件（仅文件节点提供；目录递归删除风险过高，主进程同样拒收非空目录）
+  const deleteFile = useCallback(async (path: string) => {
+    const res = await window.api.deletePath(path, false)
+    if (!res.success) { notify(res.error || '删除失败', 'error'); return }
+    notify('已删除文件', 'success')
+    void refreshDir(parentDir(path))
+  }, [refreshDir])
+
+  // 提交内联重命名：空值或原名不改盘，失败把主进程原因原样抛出
+  const commitRename = useCallback(async () => {
+    const cur = renaming
+    if (!cur) return
+    const key = `${cur.path}\u0000${cur.text}`
+    if (renameSettledRef.current === key) return
+    renameSettledRef.current = key
+    setRenaming(null)
+    const name = cur.text.trim()
+    if (!name || name === cur.name) return
+    const res = await window.api.renamePath(cur.path, name)
+    if (!res.success) { notify(res.error || '重命名失败', 'error'); return }
+    notify('已重命名', 'success')
+    void refreshDir(parentDir(cur.path))
+  }, [renaming, refreshDir])
 
   // 点击空白 / 右键别处 / 按下 Esc 时关闭右键菜单
   useEffect(() => {
@@ -244,20 +290,31 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
     }
   }, [ctxMenu])
 
+  // 进入重命名时聚焦输入框，并只选中主文件名（不含扩展名）——整串选中极易连带改掉扩展名
+  useEffect(() => {
+    if (!renaming) return
+    const el = renameInputRef.current
+    if (!el) return
+    el.focus()
+    const dot = el.value.lastIndexOf('.')
+    el.setSelectionRange(dot > 0 ? dot : 0, el.value.length)
+  }, [renaming?.path])
+
   const renderNode = (node: FileNode, level: number) => {
     const isExpanded = expanded.has(node.path)
     const isLoading = loadingSet.has(node.path)
     const isError = errorSet.has(node.path)
+    // 该节点正在内联改名：名称位换成输入框，同时关掉行拖拽（否则框内选字会被整行拖走）
+    const renamingHere = renaming && renaming.path === node.path ? renaming : null
     // 图片文件检测（用于悬停缩略图）
     const ext = (!node.isDir ? (/\.([a-z0-9]+)$/i.exec(node.name)?.[1] || '').toLowerCase() : '')
     const isImage = IMG_EXT.has(ext)
-    // 仅文件节点右键弹出自定义菜单（发送到输入框/复制路径）；
-    // 目录节点不提供右键交互，只屏蔽默认菜单，避免误把目录名发进输入框。
+    // 文件与目录节点都弹出自定义菜单（重命名/复制路径/复制相对路径）；
+    // 「发送到输入框」「删除」只对文件开放——目录名发进输入框无意义，递归删目录不可恢复。
     const onNodeContextMenu = (e: React.MouseEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      if (node.isDir) return
-      setCtxMenu({ x: e.clientX, y: e.clientY, name: node.name, path: node.path })
+      setCtxMenu({ x: e.clientX, y: e.clientY, name: node.name, path: node.path, isDir: node.isDir })
     }
     const onNodeMouseEnter = (e: React.MouseEvent) => {
       // 节点行任意位置（名称/留白）hover → 触发类型图标动画；图片节点兼做悬停缩略图
@@ -290,14 +347,14 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
           style={{ paddingLeft: level * 16 }}
           onClick={(e) => toggleExpand(node, e)}
           onContextMenu={onNodeContextMenu}
-          onMouseDown={!node.isDir ? (e) => {
+          onMouseDown={!node.isDir && !renamingHere ? (e) => {
             // 仅按下时启用 draggable，避免悬停时浏览器强制显示拓拽光标
             const el = e.currentTarget
             el.setAttribute('draggable', 'true')
             const cleanup = () => { el.removeAttribute('draggable'); document.removeEventListener('mouseup', cleanup) }
             document.addEventListener('mouseup', cleanup)
           } : undefined}
-          onDragStart={!node.isDir ? (e) => {
+          onDragStart={!node.isDir && !renamingHere ? (e) => {
             // 多文件拖拽：若当前文件在多选中，拖动所有选中文件；否则只拖当前一个
             const paths = selectedFiles.has(node.path) && selectedFiles.size > 1
               ? Array.from(selectedFiles)
@@ -328,7 +385,24 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
                   : <FolderIcon ref={el => { if (el) nodeIconRefs.current.set(node.path, el); else nodeIconRefs.current.delete(node.path) }} size={14} />)
               : (() => { const { Icon, color } = fileMeta(node.name); return <Icon ref={el => { if (el) nodeIconRefs.current.set(node.path, el); else nodeIconRefs.current.delete(node.path) }} size={14} style={{ color }} /> })()}
           </span>
-          <span className="file-tree-name">{node.name}</span>
+          {renamingHere ? (
+            <input
+              ref={renameInputRef}
+              className="file-tree-rename-input"
+              value={renamingHere.text}
+              spellCheck={false}
+              onChange={e => setRenaming({ ...renamingHere, text: e.target.value })}
+              onClick={e => e.stopPropagation()}
+              onBlur={commitRename}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { commitRename() }
+                // Esc 取消：把当前「路径+文本」记为已结算，避免紧随其后的 blur 又把它提交
+                if (e.key === 'Escape') { renameSettledRef.current = `${renamingHere.path}\u0000${renamingHere.text}`; setRenaming(null) }
+              }}
+            />
+          ) : (
+            <span className="file-tree-name">{node.name}</span>
+          )}
           {!node.isDir && node.size != null && <span className="file-tree-size">{formatFileSize(node.size)}</span>}
           {isError && <AlertCircle size={12} className="file-tree-error-icon" />}
         </div>
@@ -467,7 +541,9 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
       </div>
       {ctxMenu && (() => {
         // 视口边界修正：菜单超出右/下边界时向左/上翻转，避免溢出被裁切
-        const MENU_W = 168, MENU_H = 76
+        const MENU_W = 168
+        // 每项约 30px（6px 上下内边距 + 12px 字号 + 2px 间距）；删除二次确认态只有提示 + 两个按钮
+        const MENU_H = ctxMenu.confirmDel ? 80 : (ctxMenu.isDir ? 3 : 5) * 30 + 8
         const x = Math.min(ctxMenu.x, window.innerWidth - MENU_W - 8)
         const y = Math.min(ctxMenu.y, window.innerHeight - MENU_H - 8)
         return (
@@ -477,20 +553,69 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
             style={{ left: Math.max(8, x), top: Math.max(8, y) }}
             onContextMenu={(e) => e.preventDefault()}
           >
-            <button
-              className="file-tree-ctx-item"
-              onClick={() => { onSendFileName?.(ctxMenu.name); setCtxMenu(null) }}
-            >
-              <CornerDownLeftIcon size={13} />
-              发送到输入框
-            </button>
-            <button
-              className="file-tree-ctx-item"
-              onClick={() => { copyPath(ctxMenu.path); setCtxMenu(null) }}
-            >
-              <CopyIcon size={13} />
-              复制路径
-            </button>
+            {ctxMenu.confirmDel ? (
+              <>
+                <div className="file-tree-ctx-hint">删除「{ctxMenu.name}」？该操作不可恢复</div>
+                <div className="file-tree-ctx-row">
+                  <button className="file-tree-ctx-item file-tree-ctx-item--danger" onClick={() => { deleteFile(ctxMenu.path); setCtxMenu(null) }}>
+                    <Trash2Icon size={13} /> 删除
+                  </button>
+                  <button className="file-tree-ctx-item" onClick={() => setCtxMenu({ ...ctxMenu, confirmDel: false })}>
+                    <XIcon size={13} /> 取消
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* 目录节点不提供「发送到输入框/删除」：前者会把目录名发进输入框，后者不可恢复 */}
+                {!ctxMenu.isDir && (
+                  <button
+                    className="file-tree-ctx-item"
+                    onClick={() => { onSendFileName?.(ctxMenu.name); setCtxMenu(null) }}
+                  >
+                    <CornerDownLeftIcon size={13} />
+                    发送到输入框
+                  </button>
+                )}
+                <button
+                  className="file-tree-ctx-item"
+                  onClick={() => {
+                    // 新的一次改名会话：清掉上次的结算标记
+                    renameSettledRef.current = null
+                    setRenaming({ path: ctxMenu.path, name: ctxMenu.name, text: ctxMenu.name })
+                    setCtxMenu(null)
+                  }}
+                >
+                  <PencilIcon size={13} />
+                  {ctxMenu.isDir ? '重命名' : '重命名文件'}
+                </button>
+                {/* 两项都不给磁盘绝对路径：「复制路径」从工作目录的上一级起算（带项目文件夹名），
+                    「复制相对路径」从工作目录本身起算 */}
+                <button
+                  className="file-tree-ctx-item"
+                  onClick={() => { copyText(relativeTo(ctxMenu.path, parentDir(workspaceDir)), '已复制路径'); setCtxMenu(null) }}
+                >
+                  <CopyIcon size={13} />
+                  复制路径
+                </button>
+                <button
+                  className="file-tree-ctx-item"
+                  onClick={() => { copyText(relativeTo(ctxMenu.path, workspaceDir), '已复制相对路径'); setCtxMenu(null) }}
+                >
+                  <CopyIcon size={13} />
+                  复制文件名
+                </button>
+                {!ctxMenu.isDir && (
+                  <button
+                    className="file-tree-ctx-item file-tree-ctx-item--danger"
+                    onClick={() => setCtxMenu({ ...ctxMenu, confirmDel: true })}
+                  >
+                    <Trash2Icon size={13} />
+                    删除文件
+                  </button>
+                )}
+              </>
+            )}
           </div>
         )
       })()}

@@ -8405,6 +8405,32 @@ export function registerIpcHandlers(): void {
   ipcInternal.handleDeletePath = handleDeletePath
   ipcMain.handle('delete-path', (_e, targetPath, recursive) => handleDeletePath(targetPath, recursive))
 
+  // ── Agent Code 文件重命名（限同一目录内改名，安全校验与删除一致）────
+  const ILLEGAL_NAME_CHARS = /[<>:"/\\|?*\x00-\x1F]/
+  const handleRenamePath = async (fromPath: string, newName: string): Promise<{ success: boolean; newPath?: string; message?: string; error?: string }> => {
+    try {
+      const name = sanitizeAgentPathArg(newName)
+      if (!name) return { success: false, error: '名称不能为空' }
+      if (name === '.' || name === '..') return { success: false, error: '名称不合法' }
+      if (ILLEGAL_NAME_CHARS.test(name)) return { success: false, error: '名称含非法字符：\\ / : * ? " < > |' }
+      const from = resolve(resolveAgentPath(String(fromPath ?? '')))
+      if (!existsSync(from)) return { success: false, error: '原文件不存在' }
+      if (!isAgentPathInScope(from)) return { success: false, error: '访问被拒绝：路径不在安全范围内' }
+      // 同 handleDeletePath：符号链接/junction 解析真实落点后二次校验
+      const real = realpathSync(from)
+      if (!isAgentPathInScope(real)) return { success: false, error: '访问被拒绝：路径不在安全范围内' }
+      const to = resolve(dirname(from), name)
+      // Windows/macOS 默认文件系统不区分大小写，仅改大小写视作未变化
+      if (to.toLowerCase() === from.toLowerCase()) return { success: false, error: '名称未发生变化' }
+      if (existsSync(to)) return { success: false, error: `同名项已存在：${name}` }
+      renameSync(from, to)
+      return { success: true, newPath: to, message: `✅ 已重命名为：${to}` }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  }
+  ipcMain.handle('rename-path', (_e, fromPath, newName) => handleRenamePath(fromPath, newName))
+
   // ── Agent Code：Git 变更（只读 diff 查看）────────────────
   // 在工作区跑 git，返回改动文件清单 + 相对 HEAD 的 unified diff（含未跟踪文件内容）。
   // 严格只读：不做 add/commit/checkout 等写操作。
@@ -8633,6 +8659,68 @@ export function registerIpcHandlers(): void {
       return { success: r.ok, error: r.ok ? undefined : r.stderr }
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  // ── Git 提交历史 / 单次提交 diff（变更面板「已提交」作用域，严格只读）──
+  // 字段用 \x1f、记录用 \x1e 分隔：提交标题是单行文本，不含这两个控制字符，比按空格或换行
+  // 切分安全（已实测 git log --pretty=format:%H%x1f…%x1e 原样输出，中文标题不被转义）。
+  ipcMain.handle('git-log', async (_e, dir: string, limit = 60): Promise<{
+    isRepo: boolean
+    commits: Array<{ hash: string; shortHash: string; author: string; time: number; subject: string }>
+    error?: string
+  }> => {
+    try {
+      const cwd = resolveAgentPath(dir || '')
+      if (!cwd || !existsSync(cwd)) return { isRepo: false, commits: [] }
+      const base = ['-c', 'core.quotepath=false', '--no-optional-locks']
+      const n = Math.max(1, Math.min(Math.floor(Number(limit)) || 60, 500))
+      const r = await runGit([...base, 'log', '--pretty=format:%H%x1f%h%x1f%an%x1f%at%x1f%s%x1e', '-n', String(n)], cwd)
+      if (!r.ok) {
+        const msg = r.stderr.trim()
+        // 还没有任何提交的空仓库按「无历史」返回，前端只给提示不报错
+        if (/not a git repository|does not have any commits|unknown revision/i.test(msg)) return { isRepo: true, commits: [] }
+        return { isRepo: false, commits: [], error: msg || 'git log 失败' }
+      }
+      const commits = r.stdout.split('\x1e')
+        .map(s => s.replace(/^\n+/, ''))
+        .filter(Boolean)
+        .map(seg => {
+          const [hash = '', shortHash = '', author = '', at = '', subject = ''] = seg.split('\x1f')
+          return { hash, shortHash, author, time: Number(at) * 1000, subject }
+        })
+      return { isRepo: true, commits }
+    } catch (e) {
+      return { isRepo: false, commits: [], error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  // `git show --format=` 只输出 diff 体（根提交同样可用，不需要特判父提交）。
+  ipcMain.handle('git-commit-diff', async (_e, dir: string, hash: string): Promise<{
+    files: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string }>
+    error?: string
+  }> => {
+    try {
+      const cwd = resolveAgentPath(dir || '')
+      if (!cwd || !existsSync(cwd)) return { files: [], error: '目录不存在' }
+      // hash 直接进 argv（不经 shell），仍限死 ref 合法字符并挡掉 `..`，避免把怪异字符串交给 git
+      if (!/^[\w][\w.@-]{2,127}$/.test(hash) || hash.includes('..')) return { files: [], error: '提交号不合法' }
+      const base = ['-c', 'core.quotepath=false', '--no-optional-locks']
+      const r = await runGit([...base, 'show', '--no-color', '--format=', '--find-renames', hash], cwd)
+      if (!r.ok) return { files: [], error: r.stderr.trim() || '读取提交失败' }
+      const files = Object.entries(splitGitDiff(r.stdout)).map(([path, diff]) => ({
+        path,
+        // 状态从块头判定，省一次 --name-status 调用
+        status: /^new file mode/m.test(diff) ? 'A' : /^deleted file mode/m.test(diff) ? 'D' : /^rename from /m.test(diff) ? 'R' : 'M',
+        staged: false,
+        untracked: false,
+        binary: isBinaryDiff(diff),
+        diff,
+      }))
+      files.sort((a, b) => a.path.localeCompare(b.path))
+      return { files }
+    } catch (e) {
+      return { files: [], error: e instanceof Error ? e.message : String(e) }
     }
   })
 }

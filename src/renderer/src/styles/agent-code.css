@@ -9511,19 +9511,58 @@ html.is-panel-resizing .agent-think-body .table-node {
   overflow: hidden;
 }
 
-.agent-git-title {
+/* 顶部下拉触发按钮（作用域 / 显示模式 / 跳转文件）：胶囊描边，展开态只提底色不上实心 accent */
+.agent-git-menu-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 0;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
   color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
   min-width: 0;
   flex-shrink: 1;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+
+.agent-git-menu-btn:hover {
+  background: var(--bg);
+}
+
+.agent-git-menu-btn.on {
+  background: var(--surface-hover, rgba(128, 128, 128, 0.15));
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+/* 作用域名：面板拖窄时省略号收掉，不把整条 header 顶出去 */
+.agent-git-menu-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 600;
+}
+
+.agent-git-menu-caret {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* 换行开启时挂在触发按钮上的小标记 */
+.agent-git-menu-tag {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* 菜单项当前项的勾选：顶到行尾，与输入区那个分支菜单（.chat-branch-check）同一写法 */
+.agent-git-menu-check {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--accent);
 }
 
 .agent-git-summary {
@@ -9714,6 +9753,223 @@ html.is-panel-resizing .agent-think-body .table-node {
 .agent-git-collapse-all:disabled {
   opacity: .4;
   cursor: default;
+}
+
+/* ── 已提交：历史列表 + 就地展开该次提交的 diff ── */
+.agent-git-commits {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-git-commit {
+  border-radius: 6px;
+}
+
+.agent-git-commit-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  transition: background .12s ease;
+}
+
+.agent-git-commit-head:hover {
+  background: var(--surface);
+}
+
+.agent-git-commit-dot {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.agent-git-commit-subject {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-git-commit-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.agent-git-commit-hash {
+  font-family: var(--font-mono, ui-monospace, Consolas, monospace);
+}
+
+.agent-git-commit-body {
+  /* 缩进一级并加条竖线，把提交内的文件块挂在提交行之下 */
+  margin: 0 0 4px 12px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+}
+
+/* ── 分支：本地分支清单，当前分支打勾 ── */
+.agent-git-branches {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-git-branch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background .12s ease;
+}
+
+.agent-git-branch:hover:not(:disabled) {
+  background: var(--surface);
+}
+
+.agent-git-branch.on {
+  background: var(--surface-hover, rgba(128, 128, 128, 0.15));
+  cursor: default;
+}
+
+.agent-git-branch-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.agent-git-branch-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-git-branch-check {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* ── 跳转到文件：搜索 + 「名称 / 相对路径 / +N −M」的列表 ── */
+.agent-git-jump {
+  position: fixed;
+  z-index: 1000;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .28);
+}
+
+.agent-git-jump-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 2px 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.agent-git-jump-search-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.agent-git-jump-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.agent-git-jump-input::placeholder {
+  color: var(--text-muted);
+}
+
+.agent-git-jump-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.agent-git-jump-clear:hover {
+  color: var(--text);
+}
+
+.agent-git-jump-list {
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.agent-git-jump-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-git-jump-item:hover {
+  background: var(--surface-hover, rgba(128, 128, 128, 0.15));
+}
+
+.agent-git-jump-name {
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 目录段（工作目录起算的路径去掉文件名那截），占满剩余宽度后尾部省略 */
+.agent-git-jump-dir {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-git-body {
@@ -10084,6 +10340,79 @@ html.is-panel-resizing .agent-think-body .table-node {
 .agent-git-hidden-hint:hover {
   color: var(--accent);
   background: var(--surface);
+}
+
+/* ── 拆分视图：左旧右新，六列（行号/符号/代码 ×2），两栏等宽 ──
+   堆叠那条 82px 竖线（.agent-git-diff-body::before）在这里停用：它是按堆叠列宽硬编的，
+   拆分下会落在左栏中间。分栏线改挂在左栏代码单元格的右侧邻格左边框上，跟着网格走。 */
+.agent-git-diff-body.split-view::before {
+  display: none;
+}
+
+.agent-git-row.split {
+  grid-template-columns: 32px 16px minmax(0, 1fr) 32px 16px minmax(0, 1fr);
+  min-width: 0;
+}
+
+/* 不换行时长行在栏内截断（这正是「自动换行」要解决的问题，一键可切） */
+.agent-git-row.split .agent-git-code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-git-row.split .agent-git-code.add {
+  background: color-mix(in srgb, var(--success, #22c55e) 12%, transparent);
+}
+
+.agent-git-row.split .agent-git-code.del {
+  background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent);
+}
+
+/* 对侧留空的那半栏（纯增/纯删行）：给个底色表示「这边没有内容」 */
+.agent-git-row.split .agent-git-code.pad {
+  background: var(--surface);
+}
+
+.agent-git-row.split .agent-git-ln.add {
+  color: var(--success, #22c55e);
+  opacity: 1;
+}
+
+.agent-git-row.split .agent-git-ln.del {
+  color: var(--danger, #ef4444);
+  opacity: 1;
+}
+
+.agent-git-row.split .agent-git-code+.agent-git-ln {
+  border-left: 0.5px solid #a3bf9d;
+}
+
+.agent-git-diff-body.split-view .agent-git-hidden-hint {
+  grid-template-columns: 32px 16px minmax(0, 1fr) 32px 16px minmax(0, 1fr);
+}
+
+.agent-git-diff-body.split-view .agent-git-hint-text {
+  grid-column: 1 / 3;
+}
+
+.agent-git-diff-body.split-view .agent-git-hidden-hint .agent-git-code {
+  grid-column: 3 / 7;
+}
+
+/* ── 自动换行：可与堆叠或拆分叠加；取消横向滚动，长行在栏内折行 ── */
+.agent-git-diff-body.wrap-view {
+  overflow-x: hidden;
+}
+
+.agent-git-diff-body.wrap-view .agent-git-row {
+  white-space: pre-wrap;
+  word-break: break-all;
+  min-width: 0;
+}
+
+.agent-git-diff-body.wrap-view .agent-git-code {
+  overflow: visible;
+  text-overflow: clip;
 }
 
 /* 点击 diff 行跳转后，源文件对应行的短暂高亮 */
@@ -10703,6 +11032,56 @@ html.is-panel-resizing .agent-think-body .table-node {
   background: var(--surface-hover);
 }
 
+/* 危险项（删除文件）：文字与图标同色，避免只靠文案表达风险 */
+.file-tree-ctx-item--danger,
+.file-tree-ctx-item--danger svg {
+  color: var(--danger);
+}
+
+/* 删除二次确认：上方一行说明 + 下方并排的「删除 / 取消」 */
+.file-tree-ctx-hint {
+  max-width: 240px;
+  padding: 5px 10px 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.file-tree-ctx-row {
+  display: flex;
+  gap: 2px;
+}
+
+.file-tree-ctx-row .file-tree-ctx-item {
+  flex: 1;
+  justify-content: center;
+}
+
+/* 内联重命名输入框：1px --border 细描边（与上方搜索框同一档），节点行是 user-select:none，框内要改回 text。
+   ⚠️ 该类已加入本文件末尾全局聚焦环的排除名单，否则 .agent-code-view 里的 input 被画 2px var(--accent)（浅色主题近黑）粗框。 */
+.file-tree-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 5px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+  transition: background .12s ease, border-color .12s ease;
+}
+
+.file-tree-rename-input:focus {
+  /* 聚焦只把边框提到略深一档 + 底色微亮，不做粗环（同终端 cwd 输入框的处理） */
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: var(--bg);
+}
+
 /* 图片文件悬停缩略图：显示在文件节点正上方 */
 .file-tree-img-tooltip {
   position: fixed;
@@ -11242,12 +11621,13 @@ html.is-panel-resizing .agent-think-body .table-node {
        .agent-ask-question-other-input 提问面板的自定义输入，用 2px accent 环（9310 行）
        .agent-terminal-cwd-input      终端 cwd 输入框，自带 1px 边框 + 聚焦提色
        .agent-code-sidebar-filter-input 侧栏过滤框，focus-within 已给整块 1px 内描边
+       .file-tree-rename-input        文件树内联改名框，自带 1px --border + 聚焦提色
      .chat-input 单独排除：它自己不带环，但父级 .chat-input-field:focus-within
      已经给了整块 composer 一个 3px accent 环（7947 行），再在里面的 textarea
      上画一圈会变成嵌套的双框。
 
    只覆盖可交互元素，不用通配符，避免给纯容器加框。 */
-.agent-code-view :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input, .agent-terminal-cwd-input, .agent-code-sidebar-filter-input)) {
+.agent-code-view :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input, .agent-terminal-cwd-input, .agent-code-sidebar-filter-input, .file-tree-rename-input)) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }

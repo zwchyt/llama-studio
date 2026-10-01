@@ -1060,6 +1060,9 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
           gitFocusPath={gitFocusPath}
           onGitFocusHandled={onGitFocusHandled}
           refreshGitChanges={refreshGitChanges}
+          currentBranch={currentBranch}
+          branches={branches}
+          checkoutBranch={checkoutBranch}
           onWorkspaceFilesChanged={onWorkspaceFilesChanged}
         />
       </div>

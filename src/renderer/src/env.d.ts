@@ -272,6 +272,7 @@ interface LlamaCppApi {
   importAgentSession: (projectId: string) => Promise<{ success: boolean; canceled?: boolean; sessionId?: string; session?: AgentSession; error?: string }>
   // ── Agent Code 文件删除 ──
   deletePath: (targetPath: string, recursive: boolean) => Promise<{ success: boolean; message?: string; error?: string }>
+  renamePath: (fromPath: string, newName: string) => Promise<{ success: boolean; newPath?: string; message?: string; error?: string }>
   gitChanges: (dir: string) => Promise<{ isRepo: boolean; staged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>; unstaged: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string; content?: string }>; error?: string }>
   gitStageFile: (dir: string, path: string) => Promise<{ success: boolean; error?: string }>
   gitUnstageFile: (dir: string, path: string) => Promise<{ success: boolean; error?: string }>
@@ -281,6 +282,8 @@ interface LlamaCppApi {
   gitDiscardAll: (dir: string) => Promise<{ success: boolean; error?: string }>
   gitListBranches: (dir: string) => Promise<{ branches: Array<{ name: string; current: boolean }>; error?: string }>
   gitCheckoutBranch: (dir: string, branch: string) => Promise<{ success: boolean; error?: string }>
+  gitLog: (dir: string, limit?: number) => Promise<{ isRepo: boolean; commits: Array<{ hash: string; shortHash: string; author: string; time: number; subject: string }>; error?: string }>
+  gitCommitDiff: (dir: string, hash: string) => Promise<{ files: Array<{ path: string; status: string; staged: boolean; untracked: boolean; binary: boolean; diff: string }>; error?: string }>
   setAgentWorkspace: (dir: string) => Promise<{ success: boolean }>
   // ── 认知地图（codeMapService）──
   codemapBuild: (dir: string) => Promise<CodeMapStatus | { error: string }>

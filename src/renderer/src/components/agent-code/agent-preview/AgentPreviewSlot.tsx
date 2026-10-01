@@ -89,6 +89,10 @@ export type AgentPreviewSlotProps = {
   gitFocusPath: string | null
   onGitFocusHandled: () => void
   refreshGitChanges: (silent?: boolean) => void
+  // 变更面板「分支」作用域：与输入区分支选择器共用 useAgentGit 的那一份状态
+  currentBranch: string | null
+  branches: string[]
+  checkoutBranch: (branch: string) => Promise<void>
   onWorkspaceFilesChanged: () => void
 }
 
@@ -101,6 +105,7 @@ export function AgentPreviewSlot({
   htmlAnnotateActive, htmlAnnotations, injectHtmlAnnotate, toggleHtmlAnnotate,
   clearHtmlAnnotations, removeHtmlAnnotation, sendHtmlAnnotations, sendAnnotationsToAgent,
   gitChanges, gitLoading, gitFocusPath, onGitFocusHandled, refreshGitChanges, onWorkspaceFilesChanged,
+  currentBranch, branches, checkoutBranch,
 }: AgentPreviewSlotProps) {
   // 顶层视图名（App 级）直接从 store 读，避免为此再透传一层 props
   const currentView = useStore(s => s.view)
@@ -369,7 +374,7 @@ export function AgentPreviewSlot({
                 </div>
               )}
               <div className={`agent-code-diff-wrap${rightPanelMode === 'diff' ? '' : ' hidden'}`}>
-                <AgentGitDiff data={gitChanges} loading={gitLoading} onRefresh={refreshGitChanges} onOpenFile={openFileAtLine} workspaceDir={activeProject.workspaceDir} focusPath={gitFocusPath} onFocusHandled={onGitFocusHandled} />
+                <AgentGitDiff data={gitChanges} loading={gitLoading} onRefresh={refreshGitChanges} onOpenFile={openFileAtLine} workspaceDir={activeProject.workspaceDir} focusPath={gitFocusPath} onFocusHandled={onGitFocusHandled} currentBranch={currentBranch} branches={branches} checkoutBranch={checkoutBranch} />
               </div>
               {/* 预览列：文件树模式下与树并排；独立的「预览」工作区里它独占整列（此时树不出现）。
                   没标签时收起——但 preview 模式要留着空态提示，否则点开附件只见一条空槽。 */}
