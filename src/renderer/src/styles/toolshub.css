@@ -86,6 +86,15 @@
   padding: 6px 8px 4px;
 }
 
+/* 「后端」还没扫出东西时替换整组行，位置与原左侧导航栏的那条提示等价 */
+.toolhub-rail-empty {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
 .toolhub-item {
   display: flex;
   align-items: center;

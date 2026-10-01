@@ -15,11 +15,12 @@
 // 组件体内把域对象二次解构为局部名，使下方 JSX 与拆分前的写法逐字一致。
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Bot, Database, Copy, Check, ImageDown, FileDown, Wrench } from 'lucide-react'
 import html2canvas from 'html2canvas'
 import {
   BookOpenIcon, BrainIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon,
-  CodeIcon, EllipsisVerticalIcon, GitBranchIcon, GlobeIcon, LoaderIcon, MessageSquareIcon, PencilIcon,
+  CodeIcon, GitBranchIcon, GlobeIcon, LoaderIcon, MessageSquareIcon, PencilIcon,
   QuoteIcon, RouteIcon, SendIcon, SlidersHorizontalIcon, SparklesIcon, Trash2Icon,
   UserIcon, CopyIcon, XIcon,
 } from '@animateicons/react/lucide'
@@ -36,7 +37,7 @@ import { MemoryPanel } from '../agent-panels'
 import AgentContextPanel from '../../AgentContextPanel'
 import AgentMessageSearch from '../../AgentMessageSearch'
 import { AgentTrajectoryPanel } from '../../AgentTrajectoryPanel'
-import { AgentSessionSidebar } from '../agent-session/AgentSessionSidebar'
+import { AgentSessionSidebar, AGENT_SESSION_SLOT_ID } from '../agent-session/AgentSessionSidebar'
 import { AgentInputArea } from '../agent-input/AgentInputArea'
 import { TaskPlanCard } from '../agent-task'
 import { AgentPreviewSlot } from '../agent-preview/AgentPreviewSlot'
@@ -180,9 +181,8 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   const { listening, micTranscribing, toggleListen } = mic
   const { handleSend } = loop
   const {
-    sidebarHandleIconRef, previewHandleIconRef,
+    previewHandleIconRef,
   } = panels
-  const { resizing: sidebarResizing, startResize: startSidebarResize } = panels.sidebarResize
   const { resizing: rightResizing, startResize: startRightResize } = panels.rightResize
   const {
     openPromptModal, saveSystemPrompt, openKbModal,
@@ -194,6 +194,16 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     setProjRenamingId, projRenameText, setProjRenameText, projRenameInputRef,
     confirmProjRename, startSessRename, confirmSessRename,
   } = sessionActions
+  // ── 项目 / 会话列表画在哪：应用左侧导航栏底部那个槽（槽本体由 Sidebar.tsx 渲染）──
+  // 列表的状态与回调仍在本视图（useAgentProjects / useAgentSessionActions），只把 DOM 挂过去。
+  // 导航栏在同一个 commit 里先于本组件提交，所以 effect 运行时一定取得到那个节点。
+  const [sessionSlot, setSessionSlot] = useState<HTMLElement | null>(null)
+  useEffect(() => { setSessionSlot(document.getElementById(AGENT_SESSION_SLOT_ID)) }, [])
+  // 列表挂在导航栏上，任何页面都点得到：点它先回到工作台，否则点了会话人还停在知识库页。
+  const backToWorkspace = useCallback(() => {
+    const s = useStore.getState()
+    if (s.view !== 'agent-code') s.setView('agent-code')
+  }, [])
   // 通用模式已启用的工具数（网络搜索沿用全局 searchEnabled，与输入区左侧的搜索开关是同一份状态）
   const chatToolOnCount = PLAIN_CHAT_TOOL_NAMES.filter(
     n => (n === 'web_search' ? searchEnabled : chatTools.includes(n))
@@ -545,7 +555,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   // 传给行的是布尔（布尔只影响命中那一行），直接传 id 会让窗口内所有行都换 prop 而整屏重渲染。
   }, [activeSession, historyStartIndex, virtual.windowStart, virtual.windowEnd, streaming, loading, thinkDone, editingMsgId, editDraft, confirmEdit, copyMessage, editAt, resendAt, branchAt, msgRowActionsRef, modelLabelRef, streamStartAtRef, handleStreamRate, runningCard, setEditDraft, setEditingMsgId, plainChat, speakingId])
   return (
-    <div className={`agent-code-view ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
+    <div className="agent-code-view">
       <div className="agent-code-topbar" onDoubleClick={() => { const anyOpen = sidebarOpen || treeOpen; setSidebarOpen(!anyOpen); setTreeOpen(!anyOpen); setContextModalOpen(false) }}>
         <div className="agent-code-topbar-left">
           <button className="chat-collapse-btn" onClick={() => setSidebarOpen(v => !v)} style={{ marginTop: 0, width: 28, height: 28 }}>
@@ -651,46 +661,47 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
         </div>
       </div>
 
-      <div className={`agent-code-body ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
-        <div className="agent-code-sidebar-collapser">
-        <AgentSessionSidebar
-          mode={mode}
-          switchMode={switchMode}
-          chatSessions={chatWorkspace?.sessions ?? []}
-          codeProjects={codeProjects}
-          activeProjectId={activeProjectId}
-          activeSessionId={activeSessionId}
-          setActiveProjectId={setActiveProjectId}
-          setActiveSessionId={setActiveSessionId}
-          createSessionInCurrentMode={createSessionInCurrentMode}
-          forkChatToCode={forkChatToCode}
-          projectWrapRefs={projectWrapRefs}
-          createProject={createProject}
-          toggleProjectExpanded={toggleProjectExpanded}
-          changeProjectDir={changeProjectDir}
-          deleteProject={deleteProject}
-          importSessionToProject={importSessionToProject}
-          addSessionToProject={addSessionToProject}
-          exportSession={exportSession}
-          deleteSession={deleteSession}
-          projRenamingId={projRenamingId}
-          setProjRenamingId={setProjRenamingId}
-          projRenameText={projRenameText}
-          setProjRenameText={setProjRenameText}
-          projRenameInputRef={projRenameInputRef}
-          confirmProjRename={confirmProjRename}
-          sessRenamingId={sessRenamingId}
-          setSessRenamingId={setSessRenamingId}
-          sessRenameText={sessRenameText}
-          setSessRenameText={setSessRenameText}
-          sessRenameInputRef={sessRenameInputRef}
-          startSessRename={startSessRename}
-          confirmSessRename={confirmSessRename}
-        />
-        </div>
-        <div className={`agent-code-sidebar-resize-handle${sidebarResizing ? ' agent-code-resize-handle--active' : ''}`} onPointerDown={startSidebarResize} onMouseEnter={() => sidebarHandleIconRef.current?.startAnimation()} onMouseLeave={() => sidebarHandleIconRef.current?.stopAnimation()}>
-          <EllipsisVerticalIcon ref={sidebarHandleIconRef} size={16} className="nav-animate-icon agent-resize-handle-icon" />
-        </div>
+      <div className="agent-code-body">
+        {/* 列表 portal 到导航栏底部的槽里；sidebarOpen 关掉时干脆不挂，槽一空 CSS 的 :empty 就把分隔线收掉。
+            onClickCapture 兜住列表内一切点击（新建 / 重命名 / ⋯ 菜单…），先回工作台再走原逻辑。 */}
+        {sidebarOpen && sessionSlot && createPortal(
+          <div className="agent-code-sidebar-slot" onClickCapture={backToWorkspace}>
+            <AgentSessionSidebar
+              mode={mode}
+              chatSessions={chatWorkspace?.sessions ?? []}
+              codeProjects={codeProjects}
+              activeProjectId={activeProjectId}
+              activeSessionId={activeSessionId}
+              setActiveProjectId={setActiveProjectId}
+              setActiveSessionId={setActiveSessionId}
+              createSessionInCurrentMode={createSessionInCurrentMode}
+              forkChatToCode={forkChatToCode}
+              projectWrapRefs={projectWrapRefs}
+              createProject={createProject}
+              toggleProjectExpanded={toggleProjectExpanded}
+              changeProjectDir={changeProjectDir}
+              deleteProject={deleteProject}
+              importSessionToProject={importSessionToProject}
+              addSessionToProject={addSessionToProject}
+              exportSession={exportSession}
+              deleteSession={deleteSession}
+              projRenamingId={projRenamingId}
+              setProjRenamingId={setProjRenamingId}
+              projRenameText={projRenameText}
+              setProjRenameText={setProjRenameText}
+              projRenameInputRef={projRenameInputRef}
+              confirmProjRename={confirmProjRename}
+              sessRenamingId={sessRenamingId}
+              setSessRenamingId={setSessRenamingId}
+              sessRenameText={sessRenameText}
+              setSessRenameText={setSessRenameText}
+              sessRenameInputRef={sessRenameInputRef}
+              startSessRename={startSessRename}
+              confirmSessRename={confirmSessRename}
+            />
+          </div>,
+          sessionSlot
+        )}
 
         <div className={`agent-code-chat${chatEmpty ? ' hero-input' : ''}`}>
           <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll} onWheel={onChatWheel} onTouchMove={pauseFollow} onMouseUp={handleMessagesMouseUp}>

@@ -15,7 +15,7 @@
 // 每模式独立维护的指针：activeIds = { code: {pid,sid}, chat: {pid,sid} }。
 // 切模式重置会话指针、保留工作区指针（编码模式有多个项目时不会被重置）。
 //
-// 自持：projects（全量，含两种模式）、mode、activeIds、projectWrapRefs。
+// 自持：projects（全量，含两种模式）、activeIds、projectWrapRefs；mode 读自全局 store。
 // 外部输入：仅 storedProjects（zustand 里持久化的列表，作为初始值）。
 // 对外输出：projects / visibleProjects（当前模式可见）/ mode / switchMode、
 //           活动工作区与会话指针及其派生对象、以及各增删改回调。
@@ -23,8 +23,9 @@
 // 注意：projects 的「持久化到 store」与「从 store 水合」两个 effect 仍留在
 // useAgentSessionEffects，通过本 hook 返回的 projects / setProjects 工作。
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { notify } from '../../../store/notificationStore'
+import { useStore } from '../../../store/useStore'
 import { safeCall } from '../../../utils/safeCall'
 import { uniqueId } from '../utils/ids'
 import { dirName } from '../utils/paths'
@@ -108,7 +109,9 @@ export function useAgentProjects({ storedProjects }: {
   const [projects, setProjects] = useState<AgentProject[]>(() => initialProjects(storedProjects))
 
   // ── 当前模式 + 每模式独立的活动指针 ──
-  const [mode, setMode] = useState<AgentMode>('code')
+  // 模式放在全局 store：侧栏的「对话 / 工作台」两个导航项在本组件之外，既读它点亮，也写它切换。
+  const mode = useStore(s => s.agentMode)
+  const setMode = useStore(s => s.setAgentMode)
   const [activeIds, setActiveIds] = useState<ModePointers>(() => {
     const pick = (m: AgentMode) => {
       const p = projects.find(x => projectMode(x) === m)
@@ -146,36 +149,37 @@ export function useAgentProjects({ storedProjects }: {
     setActiveIds(prev => ({ ...prev, [m]: { ...prev[m], sid: v } }))
   }, [])
 
-  /** 切换工作区模式。
-      ── 行为约定 ──
-      切模式 = 回到该模式的「初始界面」（欢迎页），**不自动进入上次的会话**。
-      上次的会话仍然留在侧栏里，用户主动点它才进去（见 AgentSessionSidebar 里的
-      setActiveSessionId 调用点）。
-
-      实现方式：把当前指针落到目标工作区里一条**空白会话**上；没有空白会话就新建一条。
-      空白会话 ⇒ activeSession.messages 为空 ⇒ 布局侧 chatEmpty 为真 ⇒ 渲染欢迎页。
-      复用已有的空白会话（而不是每次新建），避免来回切模式堆出一串「新聊天」。
-
-      工作区本身仍沿用该模式上次活动的那个（编码模式有多个项目时不会被重置），
-      只重置会话指针。指针同时也就完成了「悬空纠正」—— 写进去的 pid/sid 必然存在。 */
+  /** 切换工作区模式。行为约定不变：切模式 = 回到该模式的初始界面（欢迎页），
+      **不自动进入上次的会话**，那条会话仍留在侧栏里等用户点它。
+      入口只有写 store 这一条（欢迎页卡片经本函数，侧栏「对话 / 工作台」直接 setAgentMode），
+      指针重置统一在下面按模式变化执行，两条入口因此落到同一路径。 */
   const switchMode = useCallback((next: AgentMode) => {
-    // 已经是该模式：什么都不做。
-    // 否则点一下「当前模式」那个按钮，就会把用户正在看的会话顶掉、跳去空白新会话。
-    // （想在同一模式里开新会话，请用侧栏的「新建聊天 / 新建会话」。）
+    // 已经是该模式：什么都不做。否则点一下「当前模式」那个按钮，就会把用户正在看的
+    // 会话顶掉、跳去空白新会话。（想在同一模式里开新会话，用侧栏的「新建聊天 / 新建会话」。）
     if (next === modeRef.current) return
     setMode(next)
-    const list = projects.filter(p => projectMode(p) === next)
-    const proj = list.find(p => p.id === activeIds[next].pid) ?? list[0]
+  }, [setMode])
+
+  // 指针重置：落到该模式工作区里一条空白会话（没有就新建）。空白 ⇒ chatEmpty ⇒ 欢迎页；
+  // 复用已有空白会话，免得来回切模式堆出一串「新聊天」。工作区指针保留，只动会话指针，
+  // 顺带完成悬空纠正——写进去的 pid/sid 必然存在。
+  // 自己先把指针摆好的两处（openNewChatSession / forkChatToCode）会预先登记这一格，effect 就不去动它。
+  const appliedModeRef = useRef(mode)
+  useEffect(() => {
+    if (appliedModeRef.current === mode) return
+    appliedModeRef.current = mode
+    const list = projects.filter(p => projectMode(p) === mode)
+    const proj = list.find(p => p.id === activeIds[mode].pid) ?? list[0]
     if (!proj) return
     const blank = proj.sessions.find(s => s.messages.length === 0)
     if (blank) {
-      setActiveIds(prev => ({ ...prev, [next]: { pid: proj.id, sid: blank.id } }))
+      setActiveIds(prev => ({ ...prev, [mode]: { pid: proj.id, sid: blank.id } }))
       return
     }
-    const sess = newSession(next)
+    const sess = newSession(mode)
     setProjects(prev => prev.map(p => p.id === proj.id ? { ...p, sessions: [...p.sessions, sess] } : p))
-    setActiveIds(prev => ({ ...prev, [next]: { pid: proj.id, sid: sess.id } }))
-  }, [projects, activeIds])
+    setActiveIds(prev => ({ ...prev, [mode]: { pid: proj.id, sid: sess.id } }))
+  }, [mode, projects, activeIds])
 
   const updateProject = useCallback((id: string, upd: Partial<AgentProject>) => {
     setProjects(prev => prev.map(p => p.id === id ? { ...p, ...upd } : p))
@@ -291,6 +295,7 @@ export function useAgentProjects({ storedProjects }: {
       return next
     })
     setActiveIds(prev => ({ ...prev, chat: { pid: CHAT_WORKSPACE_ID, sid: sess.id } }))
+    appliedModeRef.current = 'chat'
     setMode('chat')
     return sess.id
   }, [])
@@ -349,6 +354,7 @@ export function useAgentProjects({ storedProjects }: {
       setProjects(prev => [...prev.filter(p => !isPlaceholderProject(p)), proj])
     }
     setActiveIds(prev => ({ ...prev, code: { pid, sid: sess.id } }))
+    appliedModeRef.current = 'code'
     setMode('code')
     notify(`已基于该聊天新建编码会话（${copied.length} 条上下文已复制）`, 'success')
     return { pid, sid: sess.id }

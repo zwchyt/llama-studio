@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo } from 'react'
 import { useStore } from './store/useStore'
 import { useImageStore } from './store/imageStore'
+import { useThemeStore } from './store/themeStore'
 import Sidebar from './components/Sidebar'
 import CreateModal from './components/CreateModal'
 import SplashScreen from './components/SplashScreen'
@@ -15,13 +16,11 @@ import LlamaChatView from './components/LlamaChatView'
 import AgentCodeView from './components/AgentCodeView'
 import ToolsHub from './components/ToolsHub'
 import TitleBar from './components/TitleBar'
-import TopNavBar from './components/TopNavBar'
 import { GROUPED_VIEWS } from './utils/navConfig'
 import { renderViewComponent } from './views/viewRegistry'
-import LayoutModeToggle from './components/LayoutModeToggle'
 import ThemeToggle from './components/ThemeToggle'
-import { useLayoutStore } from './store/layoutStore'
 import './styles/titlebar.css'
+import './styles/app-background.css'
   import { buildDefaultTemplate } from './utils/defaultTemplate'
 import { writeToTerminal } from './utils/terminalRegistry'
 import { useAgentTerminalStore } from './store/terminalStore'
@@ -51,7 +50,9 @@ function AppMain() {
   const timeoutsRef = React.useRef<ReturnType<typeof setTimeout>[]>([])
 
   const view = useStore(s => s.view)
-  const layoutMode = useLayoutStore(s => s.mode)
+  // 背景图：有图才给根节点加类与变量（无图时一切照旧，不给全局样式加任何负担）
+  const backgroundUrl = useStore(s => s.backgroundUrl)
+  const backgroundStrength = useStore(s => s.backgroundStrength)
   const showCreateModal = useStore(s => s.showCreateModal)
   const activeBackend = useStore(s => s.activeBackend)
   const activeChatUrl = useStore(s => s.activeChatUrl)
@@ -84,6 +85,9 @@ function AppMain() {
       // initUiSettings 从后端同步了正确值，校正开屏状态（首次启动时 localStorage 可能为空/陈旧）
       setSplashExited(!useStore.getState().splashEnabled)
     })
+
+    // 背景图：localStorage 里只存文件名，字节要找主进程回读成 data URL
+    void useStore.getState().loadBackgroundImage()
 
     // Agent Code 工作台：启动时从磁盘恢复项目（含会话）历史
     window.api.loadAgentProjects()
@@ -653,17 +657,33 @@ function AppMain() {
     return renderViewComponent(view)
   }, [view])
 
+  // 强度换成两个值交给 CSS：面板实心度与压在图上的薄纱透明度（强度越低纱越厚）。
+  // 明暗各走一条曲线：浅色底下要「够亮」才压得住深字，暗色底下要「够暗」才压得住
+  // 浅字（#ced2d9）。共用一条曲线时，暗色拉到 90+ 就等于把浅色 UI 的透法直接搬到亮图上，
+  // 照片亮部穿过面板把文字吃掉。暗色因此少透 25 个点、纱加厚到最多 0.72。
+  const darkTheme = useThemeStore(s => s.theme === 'dark')
+  const bgVars = backgroundUrl ? ({
+    '--app-bg-fill': `${100 - Math.round(backgroundStrength * (darkTheme ? 0.65 : 0.9))}%`,
+    '--app-bg-veil-o': `${(((100 - backgroundStrength) / 100) * (darkTheme ? 0.72 : 0.5)).toFixed(3)}`
+  } as React.CSSProperties) : undefined
+
   return (
     <>
-    <div className={layoutMode === 'topnav' ? 'app layout-topnav' : 'app'}>
+    <div className={`app${backgroundUrl ? ' has-bg' : ''}`} style={bgVars}>
+      {/* 背景图是整窗最底一层：图用 img 铺（几 MB 的 data URL 塞进 style 属性不现实），
+          薄纱压在图上，界面所有面板浮在两者之上、靠半透明底色透出。 */}
+      {backgroundUrl && (
+        <div className="app-bg" aria-hidden="true">
+          <img className="app-bg-img" src={backgroundUrl} alt="" />
+          <div className="app-bg-veil" />
+        </div>
+      )}
       <TitleBar />
-      <LayoutModeToggle />
       <ThemeToggle />
       <UpdateBannerGroup />
       <BackendDownloadBanner />
-      {layoutMode === 'topnav' && <TopNavBar />}
       <div className="main-layout">
-        {layoutMode === 'sidebar' && <Sidebar />}
+        <Sidebar />
         <main className="content" style={view === 'llama' ? { display: 'none' } : {}}>
           <div
             className="view-transition"

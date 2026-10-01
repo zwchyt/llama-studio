@@ -17,6 +17,11 @@
   --bg: #f5f6f8;
   --surface: #f7f7f8;
   --surface-hover: #f2f2f3;
+  /* 底色实心快照：换背景图时要把 --bg/--surface 调透，透的基准必须是这两份原值
+     （在 .app 上重写 --bg 时若直接 var(--bg) 引用自己会成环）。深色主题在 html 上换值，
+     这里跟着解析，不用另写一份。 */
+  --bg-solid: var(--bg);
+  --surface-solid: var(--surface);
   /* 边框必须比它所在的面深一档才有轮廓（曾为 #e8e8e8，比当时的 #e5e5e5 底色更浅，
      导致工具内容块等 1px 边框呈现"白色描边"）；#d8d8d8 与 --border-strong #d0d0d0 成梯度 */
   --border: #d8d8d8;

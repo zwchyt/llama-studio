@@ -1499,45 +1499,6 @@ html.is-panel-resizing .agent-think-body .table-node {
   color: var(--accent);
 }
 
-.agent-code-sidebar-resize-handle {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: calc(var(--agent-sidebar-width, 200px) + 16px);
-  transform: translateX(-50%);
-
-  width: 20px;
-  cursor: col-resize;
-  background: transparent;
-  touch-action: none;
-  transition: background .15s, opacity .2s ease;
-  z-index: calc(var(--z-above) + 1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  opacity: 1;
-}
-
-.agent-code-sidebar-resize-handle::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -4px;
-  right: -4px;
-}
-
-.agent-code-sidebar-resize-handle::before {
-  display: none;
-}
-
-.agent-code-sidebar-resize-handle:hover .agent-resize-handle-icon,
-.agent-code-sidebar-resize-handle.agent-code-resize-handle--active .agent-resize-handle-icon {
-  opacity: 1;
-  color: var(--accent);
-}
-
 /* 浏览器 / 终端模式：右侧面板左边缘的可拖拽调宽手柄（聊天区 ↔ 右侧面板）。
    手柄与面板同包在 .agent-code-right-slot 内，left:0 + translateX(-50%) 锚定面板真实
    左缘（槽左缘 = 面板 border-box 左缘 − 8px margin，手柄中心与旧 right: var+16px 推算
@@ -1633,37 +1594,24 @@ html.is-panel-resizing .agent-think-body .table-node {
   border: 1.5px solid var(--border-strong);
 }
 
-/* ── 会话侧栏 / 文件树面板：默认收起 ──
-   两个侧栏的首屏默认态都是收起（状态在 useAgentUiState 里，默认值 sidebarOpen=false、
-   treeOpen=false），这里负责收起态的收尾：滑出视野后必须同时失去命中能力，
-   否则会留下一条能点、能 Tab 聚焦的隐形面板（收起是默认态，这条路径是常态而非边角）。
-   展开/收起仍走 margin-left 过渡，所以只在收起时禁用指针，展开态不受影响。 */
-.agent-code-sidebar-collapser {
+/* ── 项目 / 会话列表 ──
+   列表本体现在经 portal 挂在应用左侧导航栏底部的槽里（见 sidebar.css 的 .sidebar-agent-slot、
+   AgentCodeViewLayout.tsx），所以下面两项：宿主层只是包一层，列表自身平铺、不再自带卡片外壳
+   ——原先的边框/圆角/底色由导航栏那个面板提供。
+   收起（导航栏顶栏那个折叠键）时 JSX 干脆不挂 portal，槽变空，分隔线由 :empty 收掉。 */
+.agent-code-sidebar-slot {
   display: flex;
-  width: calc(var(--agent-sidebar-width, 200px) + 16px);
-  flex-shrink: 0;
-  overflow: hidden;
-
-  transition: margin-left 0.25s ease, opacity 0.2s ease;
-}
-
-.sidebar-collapsed .agent-code-sidebar-collapser {
-  margin-left: calc(-1 * (var(--agent-sidebar-width, 200px) + 16px));
-  opacity: 0;
-  pointer-events: none;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .agent-code-sidebar {
-  width: var(--agent-sidebar-width, 200px);
+  width: 100%;
   flex-shrink: 0;
-  margin: 8px;
-  border-radius: var(--radius, 10px);
-  border: 1.5px solid var(--border-strong);
   display: flex;
   flex-direction: column;
-  background: var(--surface);
   overflow: hidden;
-  /* 容器查询上下文：行内时间标签按侧栏自身宽度收放（见 @container ac-side） */
+  /* 容器查询上下文：行内时间标签按列表自身宽度收放（见 @container ac-side） */
   container-type: inline-size;
   container-name: ac-side;
 }
@@ -2217,71 +2165,6 @@ html.is-panel-resizing .agent-think-body .table-node {
   background: var(--surface-hover);
   color: var(--text);
   box-shadow: var(--shadow);
-}
-
-/* ── 侧栏顶部：工作区切换（通用 / 编码）──
-   它切的是「工作区」，不是「当前会话的类型」：只换下方列表与右侧面板，不碰任何会话。
-   观感上刻意做成带说明的分段选择器，而不是一个全局开关。
-   选中态不用 --accent 实心：亮色主题下 --accent = #0a0a0a，会变成一个纯黑块；
-   改成与下方会话项同一套「浅一档灰 + 主文本色 + 描边」。 */
-.agent-code-workspace-switch {
-  display: flex;
-  gap: 4px;
-  margin: 8px 12px 0;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  flex-shrink: 0;
-}
-
-.agent-code-workspace-btn {
-  display: inline-flex;
-  flex: 1 1 0;
-  min-width: 0;
-  overflow: hidden;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 7px 2px;
-  border: 1px solid transparent;
-  border-radius: calc(var(--radius-sm) - 2px);
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background .15s ease, color .15s ease, border-color .15s ease;
-}
-
-/* 图标不参与压缩：侧栏拖到最窄（160px）时由文字承担溢出，按钮边缘已 overflow:hidden */
-.agent-code-workspace-btn svg {
-  flex: none;
-}
-
-.agent-code-workspace-btn:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
-
-.agent-code-workspace-btn.active,
-.agent-code-workspace-btn.active:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-  border-color: var(--border-strong);
-  font-weight: 700;
-}
-
-/* 切换器下方的说明：点明「这里换的是工作区，不是当前会话」 */
-.agent-code-workspace-hint {
-  margin: 6px 14px 0;
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--text-muted);
-  flex-shrink: 0;
 }
 
 /* ── 通用模式：扁平的聊天历史列表（没有项目层级，视觉更轻）── */
@@ -10622,11 +10505,6 @@ html.is-panel-resizing .agent-think-body .table-node {
   outline-offset: 2px;
 }
 
-.sidebar-collapsed .agent-code-sidebar-resize-handle {
-  opacity: 0;
-  pointer-events: none;
-}
-
 .agent-code-scroll-bottom-btn {
   position: absolute;
   left: 50%;
@@ -11627,7 +11505,8 @@ html.is-panel-resizing .agent-think-body .table-node {
      上画一圈会变成嵌套的双框。
 
    只覆盖可交互元素，不用通配符，避免给纯容器加框。 */
-.agent-code-view :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input, .agent-terminal-cwd-input, .agent-code-sidebar-filter-input, .file-tree-rename-input)) {
+/* 侧栏列表已 portal 到导航栏里（.sidebar-agent-slot），所以两个容器都要覆盖，否则键盘焦点环丢失 */
+:is(.agent-code-view, .sidebar-agent-slot) :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input, .agent-terminal-cwd-input, .agent-code-sidebar-filter-input, .file-tree-rename-input)) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }

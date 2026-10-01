@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { useSidebarStore } from '../store/sidebarStore'
-import { Bell, BellOff, Activity, Type, Volume2, Check, Brain } from 'lucide-react'
+import { shallow } from 'zustand/shallow'
+import { Bell, BellOff, Activity, Type, Volume2, Check, Brain, Image as ImageIcon } from 'lucide-react'
 import { PACK_OPTIONS, previewSound } from '../utils/sound'
 import { dataUrlToBlobUrl } from '../utils/audioUrl'
 import { agentConfig, setAgentConfigOverride } from '../utils/agentConfig'
@@ -20,6 +21,20 @@ function getNotifPref(): 'banner' | 'manual' {
     if (val === 'banner' || val === 'manual') return val
   } catch (e) { console.error('读取通知偏好失败', e) }
   return 'banner'
+}
+
+/** 背景库的一张缩略图：组件挂载时才找主进程要 240px 小图。
+ *  刻意不回读原图——整库原图一次走 IPC 是几十 MB，设置页会白卡一下。 */
+function BgThumb({ name }: { name: string }) {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    window.api.getBackgroundThumb(name)
+      .then(r => { if (alive && r.success && r.dataUrl) setUrl(r.dataUrl) })
+      .catch(() => { /* 单张解码失败就留空格，不连累整列 */ })
+    return () => { alive = false }
+  }, [name])
+  return url ? <img className="st-bg-img" src={url} alt="" /> : <span className="st-bg-img st-bg-img--empty" />
 }
 
 export default function SettingsView() {
@@ -44,6 +59,61 @@ export default function SettingsView() {
   const previewBlobRef = useRef<string | null>(null)
   const [notifPref, setNotifPref] = useState<'banner' | 'manual'>(getNotifPref())
   const [metricsPolling, setMetricsPolling] = useState(true)
+  // ── 界面背景 ──
+  // 图库＝背景目录里的图片文件；背景状态存在全局 store（根节点铺图要用，不只是本页）。
+  const { backgroundImage, backgroundStrength, setBackgroundImage, setBackgroundStrength } = useStore(
+    s => ({ backgroundImage: s.backgroundImage, backgroundStrength: s.backgroundStrength, setBackgroundImage: s.setBackgroundImage, setBackgroundStrength: s.setBackgroundStrength }),
+    shallow
+  )
+  const [bgImages, setBgImages] = useState<string[]>([])
+  const [bgDir, setBgDir] = useState('')
+  const [bgErr, setBgErr] = useState('')
+  const refreshBgLibrary = () => {
+    window.api.listBackgrounds().then(list => {
+      setBgImages(list)
+      // 正在用的那张被从文件管理器里删掉了：立刻摘下来回纯色，否则界面还在铺一张
+      // 已经不存在的图，而且要等切走再切回本页重挂载才反应过来。
+      const cur = useStore.getState().backgroundImage
+      if (cur && !list.includes(cur)) setBackgroundImage(null)
+    }).catch((e) => console.error('[listBackgrounds]', e))
+  }
+  useEffect(() => {
+    refreshBgLibrary()
+    // 目录真实位置 dev 在项目里、打包后在 userData 下，所以显示回来而不是写死在文案里
+    window.api.getBackgroundsDir().then(setBgDir).catch((e) => console.error('[getBackgroundsDir]', e))
+    // 在资源管理器里删图/丢图，本页不会自己知道：窗口一回前台就重读目录
+    const onWinFocus = () => refreshBgLibrary()
+    window.addEventListener('focus', onWinFocus)
+    return () => window.removeEventListener('focus', onWinFocus)
+  }, [])
+  async function pickBackgroundImage() {
+    setBgErr('')
+    try {
+      const r = await window.api.importBackground()
+      if (!r.success) {
+        // 用户按取消不算错误，什么都不提示
+        if (r.error && r.error !== '已取消') setBgErr(`导入失败：${r.error}`)
+        return
+      }
+      refreshBgLibrary()
+      // 导入即应用，省掉「先导入、再回来点缩略图」那一下
+      if (r.fileName) setBackgroundImage(r.fileName)
+    } catch (e) {
+      setBgErr(`导入失败：${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+  async function removeBackground(name: string) {
+    setBgErr('')
+    try {
+      const r = await window.api.deleteBackground(name)
+      if (!r.success) { setBgErr(`删除失败：${r.error ?? '未知错误'}`); return }
+      // 删的正是当前用的那张：先摘下来，不然界面还铺着一张已经不存在的图
+      if (name === backgroundImage) setBackgroundImage(null)
+      refreshBgLibrary()
+    } catch (e) {
+      setBgErr(`删除失败：${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
   const [cursorScheme, setCursorScheme] = useState<string>(getCursorSchemeId())
   const [previewId, setPreviewId] = useState<string | null>(null)
   // 长期记忆：三态合成一个控件（关闭 / 自动写入 / 写入前确认）。
@@ -420,6 +490,97 @@ export default function SettingsView() {
               })}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ── 界面背景 ── */}
+      <div className="settings-section st-accent--ui">
+        <div className="settings-section-title"><ImageIcon /> 界面背景</div>
+        <div className="st-block">
+          <p className="st-desc">
+            选一张图铺在整个界面背后：导航栏、对话区、各视图面板这几层改成半透明磨砂把图透出来，
+            气泡与代码块保持实心，免得字压在花上。点缩略图立即切换，选「无背景」回到纯色。
+          </p>
+          <p className="st-desc st-desc--sm">
+            图片库就是这个目录：<code>{bgDir || 'src/renderer/public/backgrounds'}</code>
+            。往里面丢图就会出现在下方列表；目录本身入库，图片被 .gitignore 排除，不会上传仓库。
+            鼠标移到缩略图左上角出现「×」，点一下即删掉这张图（进系统回收站，误删还能捞回）；在文件管理器里增删过，窗口重新获得焦点就会重读列表。
+          </p>
+          <div className="st-bg-grid">
+            <div className="st-bg-card">
+              <button
+                type="button"
+                className={`st-bg-pick${!backgroundImage ? ' selected' : ''}`}
+                onClick={() => setBackgroundImage(null)}
+                aria-pressed={!backgroundImage}
+              >
+                <span className="st-bg-frame st-bg-frame--none" />
+                <span className="st-bg-card-name">无背景</span>
+              </button>
+              {!backgroundImage && <span className="st-bg-card-check">✓</span>}
+            </div>
+            {bgImages.map(name => {
+              const selected = name === backgroundImage
+              return (
+                <div className="st-bg-card" key={name}>
+                  <button
+                    type="button"
+                    className={`st-bg-pick${selected ? ' selected' : ''}`}
+                    onClick={() => setBackgroundImage(name)}
+                    title={name}
+                    aria-pressed={selected}
+                  >
+                    <span className="st-bg-frame"><BgThumb name={name} /></span>
+                    <span className="st-bg-card-name">{name}</span>
+                  </button>
+                  {/* 指针进到这张卡才浮出来（见 settings.css 的 :hover/:focus-within） */}
+                  <button
+                    type="button"
+                    className="st-bg-del"
+                    onClick={() => { void removeBackground(name) }}
+                    title={`从背景目录删除 ${name}`}
+                    aria-label={`删除 ${name}`}
+                  >
+                    ×
+                  </button>
+                  {selected && <span className="st-bg-card-check">✓</span>}
+                </div>
+              )
+            })}
+          </div>
+          {bgImages.length === 0 && (
+            <p className="st-note">目录里还没有图片：可以点「导入图片…」选一张，或直接把文件放进上面那个目录。</p>
+          )}
+          <div className="st-row-inline">
+            <button type="button" className="launch-mode-btn" onClick={pickBackgroundImage}>导入图片…</button>
+            <button
+              type="button"
+              className="launch-mode-btn"
+              onClick={() => {
+                setBgErr('')
+                window.api.openBackgroundsDir()
+                  .then(r => { if (!r.success) setBgErr(`打开失败：${r.error ?? '未知错误'}`) })
+                  .catch((e) => setBgErr(`打开失败：${String(e)}`))
+              }}
+            >
+              打开背景目录
+            </button>
+          </div>
+          {bgErr && <p className="st-error">{bgErr}</p>}
+        </div>
+        <div className="st-block">
+          <p className="st-desc st-desc--sm">
+            背景强度：{backgroundStrength}（面板透出程度。0 = 面板实心、几乎看不出有图；100 = 面板最透、图最明显。黑暗主题下同一数值会更压图——浅字要底下够暗才读得清。拖动立即生效）
+          </p>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={backgroundStrength}
+            onChange={(e) => setBackgroundStrength(parseFloat(e.target.value))}
+            className="st-range"
+          />
         </div>
       </div>
     </div>

@@ -652,6 +652,162 @@ html.theme-dark .st-select-panel {
   pointer-events: none;
 }
 
+/* ── 界面背景：图库缩略图网格（交互与上面的光标主题卡同款）── */
+.settings-view .st-bg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+/* 外壳只负责定位（「×」和 ✓ 浮在它上面），卡面的视觉全在里面那颗 .st-bg-pick 上。
+   两层都要 min-width:0：文件名单元是 nowrap，它的 min-content 宽度＝整条文件名，
+   不给 0 的话按钮撑破格子、卡片互相叠在一起。 */
+.settings-view .st-bg-card {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.settings-view .st-bg-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 8px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 12px;
+  line-height: 1.3;
+  cursor: pointer;
+  transition: border-color var(--st-t-base) var(--st-ease),
+              background-color var(--st-t-base) var(--st-ease),
+              box-shadow var(--st-t-base) var(--st-ease),
+              color var(--st-t-base) var(--st-ease),
+              transform var(--st-t-fast) var(--st-ease);
+}
+
+.settings-view .st-bg-pick:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--surface-hover);
+  color: var(--text);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
+}
+
+.settings-view .st-bg-pick:active {
+  transform: translateY(0) scale(.985);
+}
+
+.settings-view .st-bg-pick:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--st-accent-ring);
+}
+
+.settings-view .st-bg-pick.selected {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  background: var(--st-accent-soft);
+  color: var(--text);
+  box-shadow: 0 0 0 3px var(--st-accent-ring);
+}
+
+/* 删除这张图：平时不占视觉，指针落到这张卡（或键盘走到卡里的按钮）才浮出来。
+   放在左上角，跟右上角的选中 ✓ 错开。 */
+.settings-view .st-bg-del {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  z-index: 1;
+  display: none;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: color var(--st-t-fast) var(--st-ease),
+              background-color var(--st-t-fast) var(--st-ease),
+              border-color var(--st-t-fast) var(--st-ease);
+}
+
+.settings-view .st-bg-card:hover .st-bg-del,
+.settings-view .st-bg-card:focus-within .st-bg-del {
+  display: flex;
+}
+
+.settings-view .st-bg-del:hover {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #fff;
+}
+
+/* 缩略图外框：定比例裁切，图用 cover 铺满，长图不会把格子撑高 */
+.settings-view .st-bg-frame {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--st-surface-2);
+}
+
+/* 「无背景」那一格：斜纹示意「这里没有图」 */
+.settings-view .st-bg-frame--none {
+  background: repeating-linear-gradient(135deg,
+    var(--st-surface-2) 0 6px, var(--surface-hover) 6px 12px);
+}
+
+.settings-view .st-bg-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 缩略图还没回来（或这张解码失败）时的空位 */
+.settings-view .st-bg-img--empty {
+  background: var(--st-surface-2);
+}
+
+.settings-view .st-bg-card-name {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.settings-view .st-bg-card-check {
+  position: absolute;
+  top: 6px;
+  right: 7px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--st-accent-line);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(13, 148, 136, .45);
+  animation: st-icon-pop 320ms var(--st-ease-spring);
+}
+
 /* ── 11. 暗色主题：只换令牌值，规则与动画完全复用 ── */
 html.theme-dark .settings-view {
   --bg: #24272d;

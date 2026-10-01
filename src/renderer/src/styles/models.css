@@ -9,8 +9,9 @@
 }
 
 /* 覆盖 global.css 中 .view-transition>:not(...):not(...) 的高特异性规则，
-   避免 .models-view 自身成为滚动容器（否则 sticky 顶部栏失效） */
-.view-transition>:not(.chat-layout):not(.agent-code-view).models-view {
+   避免 .models-view 自身成为滚动容器（否则 sticky 顶部栏失效）。
+   本页已收进「工具箱」，渲染时是 .toolhub-body 的直接子节点，两个容器都要盖到。 */
+:is(.view-transition, .toolhub-body)>:not(.chat-layout):not(.agent-code-view).models-view {
   padding: var(--content-pad);
   overflow: hidden;
   flex: 1 1 auto;

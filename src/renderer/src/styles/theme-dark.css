@@ -309,12 +309,6 @@ html.theme-dark body {
   --agent-selection-bg: rgba(129, 147, 230, 0.32);
 }
 
-/* ── 顶部导航布局（新布局同步适配） ── */
-.theme-dark .topnav-item.active,
-.theme-dark .topnav-item:hover {
-  background: var(--surface-hover);
-}
-
 /* ── 聊天视图：预览激活态按钮、文件标签选中态 ── */
 .theme-dark .chat-settings-btn.preview-active {
   background: var(--border-strong);
@@ -376,12 +370,12 @@ html.theme-dark body {
 }
 
 /* ══════════════════════════════════════════════════════════
-   主题切换按钮：悬浮于标题栏右侧（布局切换按钮左边）
+   主题切换按钮：悬浮于标题栏右侧（窗口控制按钮左边）
    ══════════════════════════════════════════════════════════ */
 .app-theme-toggle {
   position: fixed;
   top: 3px;
-  right: 182px;
+  right: 146px;
   width: 32px;
   height: 26px;
   display: flex;

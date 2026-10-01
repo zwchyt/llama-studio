@@ -1,22 +1,27 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║ 区域：AgentSessionSidebar —— 左侧「工作区（通用 / 编码）/ 会话」列表          ║
+// ║ 区域：AgentSessionSidebar —— 「对话 / 工作台」的项目目录与会话列表            ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
-// 本轮重构：模式不再是「改造当前会话的开关」，而是**工作区切换**。
-//   · 顶部：通用 | 编码 分段切换（只切下方列表与右侧面板，不碰任何会话）；
-//   · 通用模式：一条扁平的聊天历史列表（无项目、无目录、无展开箭头）；
-//   · 编码模式：项目 → 会话树（含新建项目 / 导入会话 / 目录切换）。
-// 两种模式各自维护自己的列表与选中项（指针在 useAgentProjects 里按模式分槽），
-// 切回来自然恢复上次选中的会话与面板状态。
+// 渲染位置：经 portal 挂进应用左侧导航栏底部的槽位（AGENT_SESSION_SLOT_ID），
+// 状态与回调仍由 AgentCodeView 持有，本组件依旧是受控视图。
 //
-// 说明：本组件是「受控视图」——所有数据状态与回调仍由上层持有，组件只负责渲染与派发。
-// 这样做是为了在拆分文件的同时不改变任何状态归属与更新时序。
-// 例外：过滤词与项目「⋯」菜单开合是纯视图本地的交互状态（只决定渲染哪些行），留在本组件。
+// 模式（通用 / 编码）归属**工作区**，不归属会话：
+//   · 编码模式 = 真实项目（有 workspaceDir），下挂编码会话；
+//   · 通用模式 = 唯一一条「伪项目」（CHAT_WORKSPACE_ID，workspaceDir 恒为空），
+//     下挂普通聊天会话。这样复用既有的 project → sessions 结构，不必另起平行数据结构。
+// 切换入口已升到导航栏的「对话 / 工作台」两项（原来的分段控件删除），本组件只按 mode
+// 决定下方渲染哪一份列表。
+//
+// 说明：过滤词与项目「⋯」菜单开合是纯视图本地的交互状态（只决定渲染哪些行），留在本组件。
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { FolderOpenIcon, FolderIcon, TrashIcon, UploadIcon, PlusIcon, DownloadIcon, PencilIcon, CodeIcon, EllipsisIcon, MessageSquareIcon, MessageSquarePlusIcon, SearchIcon, XIcon } from '@animateicons/react/lucide'
 import { TopbarBtn } from '../agent-message'
 import { CHAT_WORKSPACE_ID } from '../../../../../shared/types'
 import type { AgentMode, AgentProject, AgentSession } from '../../../../../shared/types'
+
+/** 应用左侧导航栏底部那个槽的 DOM id：AgentCodeViewLayout 把本组件 portal 到这里，
+ *  Sidebar.tsx 负责渲染这个空槽。 */
+export const AGENT_SESSION_SLOT_ID = 'sidebar-agent-slot'
 
 /** ── 视图级辅助（纯展示派生，不触碰上层状态）── */
 
@@ -88,10 +93,8 @@ function SidebarFilter({ value, onChange, placeholder }: { value: string; onChan
 }
 
 export type AgentSessionSidebarProps = {
-  /** 当前工作区模式 */
+  /** 当前工作区模式：决定下方渲染聊天列表还是项目树（切换入口在导航栏） */
   mode: AgentMode
-  /** 切换工作区模式：只切列表与面板，不改任何会话 */
-  switchMode: (m: AgentMode) => void
   /** 通用模式的聊天列表（来自通用工作区的 sessions） */
   chatSessions: AgentSession[]
   /** 编码模式的项目列表（真实工作区） */
@@ -133,7 +136,7 @@ export type AgentSessionSidebarProps = {
 }
 
 export function AgentSessionSidebar({
-  mode, switchMode, chatSessions, codeProjects,
+  mode, chatSessions, codeProjects,
   activeProjectId, activeSessionId, setActiveProjectId, setActiveSessionId,
   createSessionInCurrentMode, forkChatToCode,
   projectWrapRefs, createProject, toggleProjectExpanded, changeProjectDir, deleteProject,
@@ -246,31 +249,6 @@ export function AgentSessionSidebar({
 
   return (
       <div className="agent-code-sidebar">
-        {/* ── 工作区切换（通用 / 编码）──
-            刻意不做成「全局开关」的观感：它是一个带说明的分段选择器，只决定下方列表的内容；
-            任何已有会话都不会因为这里的选择而被改变类型。 */}
-        <div className="agent-code-workspace-switch" role="tablist" aria-label="工作区模式">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'chat'}
-            className={`agent-code-workspace-btn${mode === 'chat' ? ' active' : ''}`}
-            onClick={() => switchMode('chat')}
-            title="通用：普通聊天，没有项目与工作区"
-          ><MessageSquareIcon size={13} />通用</button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'code'}
-            className={`agent-code-workspace-btn${mode === 'code' ? ' active' : ''}`}
-            onClick={() => switchMode('code')}
-            title="编码：项目工作区，带文件树与终端"
-          ><CodeIcon size={13} />编码</button>
-        </div>
-        <div className="agent-code-workspace-hint">
-          {mode === 'chat' ? '普通聊天 · 无工作区' : '项目工作区 · 文件与终端'}
-        </div>
-
         {mode === 'chat' ? (
           /* ── 通用模式：轻量聊天历史，没有项目层级 ── */
           <>

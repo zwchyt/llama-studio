@@ -1,0 +1,57 @@
+/* ══════════════════════════════════════════════════════════
+   界面背景图
+
+   图铺在整窗最底一层（App.tsx 里的 .app-bg），界面上每一层面板浮在它上面、
+   靠半透明底色把图透出来。透的做法是重写 --bg / --surface 两个底色令牌，不是
+   挨个容器点名：全界面的外框与卡面都吃这两个令牌，一处改就都跟着透，以后新增
+   界面也不用回来补选择器。气泡、代码块、表格用 --agent-bubble-bg / --code-bg
+   这类独立令牌，保持实心负责可读性。
+
+   开关在「设置 › 界面背景」。没图时根节点不带 .has-bg，本文件一条都不生效。
+   ══════════════════════════════════════════════════════════ */
+
+.app.has-bg {
+  position: relative;
+  /* 独立层叠上下文：让下面 z-index:-1 的图层只沉到 .app 自身背景之下、所有内容之上，
+     不会穿到 body 底色后面去（那样图就白铺了）。 */
+  isolation: isolate;
+  --bg: color-mix(in srgb, var(--bg-solid) var(--app-bg-fill), transparent);
+  --surface: color-mix(in srgb, var(--surface-solid) var(--app-bg-fill), transparent);
+}
+
+/* ── 最底一层：铺图 + 压纱 ── */
+.app-bg {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+}
+
+.app-bg-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+/* 薄纱＝主题底色盖在图上：强度越低压得越厚，过花的图不至于直接顶在文字底下 */
+.app-bg-veil {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-solid);
+  opacity: var(--app-bg-veil-o, 0.3);
+}
+
+/* ── 几个自带一套硬编码底色的页面 ──
+   这几页不吃全局 --bg/--surface（各自在页面根上写死了色值），全局调透透不到它们；
+   不一起改的话，只有这几页保持实心，切过去就像背景没生效。 */
+.app.has-bg :is(.settings-view, .about-container, .engines-view, .model-folders-view, .model-endpoints-view) {
+  --bg: color-mix(in srgb, #f4f6f9 var(--app-bg-fill), transparent);
+  --surface: color-mix(in srgb, #ffffff var(--app-bg-fill), transparent);
+}
+
+html.theme-dark .app.has-bg :is(.settings-view, .about-container, .engines-view, .model-folders-view, .model-endpoints-view) {
+  --bg: color-mix(in srgb, #24272d var(--app-bg-fill), transparent);
+  --surface: color-mix(in srgb, #2b2f36 var(--app-bg-fill), transparent);
+}

@@ -1,5 +1,5 @@
 import { createWithEqualityFn } from 'zustand/traditional'
-import type { AgentMessage, AgentProject } from '../../../shared/types'
+import type { AgentMessage, AgentMode, AgentProject } from '../../../shared/types'
 import { isChatWorkspace } from '../../../shared/types'
 import { shallow } from 'zustand/shallow'
 import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, AppUpdateInfo, RunningStatus, ModelMetrics, SystemMetrics, ModelDownloadPhase, HfDownloadPhase, ModelEndpoint } from '../../../shared/types'
@@ -293,6 +293,19 @@ interface AppStore {
   // ── 参数弹窗悬停提示框 ──
   paramTooltipEnabled: boolean
   setParamTooltipEnabled: (v: boolean) => void
+  // ── 界面背景图 ──
+  // 图库就是项目里的 src/renderer/public/backgrounds 目录（目录入库、图片 .gitignore 排除），
+  // 所以这里只存文件名；原图字节按需找主进程回读成 data URL。
+  /** 当前背景图文件名；null = 不用图，界面回到纯色 */
+  backgroundImage: string | null
+  /** 该文件的原图 data URL（只在内存，不持久化），铺在 .app 根节点上 */
+  backgroundUrl: string | null
+  /** 面板透出程度 0–100：0 = 面板实心（等于看不出背景），100 = 面板最透 */
+  backgroundStrength: number
+  setBackgroundImage: (name: string | null) => void
+  setBackgroundStrength: (v: number) => void
+  /** 按当前文件名拉原图；文件不在或读失败都清掉 backgroundUrl，让界面回落纯色 */
+  loadBackgroundImage: () => Promise<void>
   initUiSettings: () => Promise<void>
   setChatSidebarCurrentCollapsed: (v: boolean) => void
   // ── 基准测试持久结果 ──
@@ -360,6 +373,10 @@ interface AppStore {
       之后再写 agentProjects 也传不进组件，必须让组件自己建会话。 */
   pendingPlainChat: { title: string } | null
   setPendingPlainChat: (v: { title: string } | null) => void
+  /** Agent Code 的工作区模式（侧栏「对话 / 工作台」两项）。放在全局是因为导航栏在
+      AgentCodeView 之外，既要点亮当前项，也要能直接切过去。 */
+  agentMode: AgentMode
+  setAgentMode: (m: AgentMode) => void
   // ── Agent Code 工具执行阶段（pi-web 风格状态机，驱动前端状态栏）──
   agentPhase: { kind: 'running_tools'; tools: { name: string; verb: string }[] } | { kind: 'waiting_model' } | null
   setAgentPhase: (phase: AppStore['agentPhase']) => void
@@ -729,6 +746,8 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
   },
   pendingPlainChat: null,
   setPendingPlainChat: (v) => set({ pendingPlainChat: v }),
+  agentMode: 'code',
+  setAgentMode: (m) => set({ agentMode: m }),
   agentPhase: null,
   setAgentPhase: (phase) => {
     const prev = useStore.getState().agentPhase
@@ -776,6 +795,41 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
     set({ paramTooltipEnabled: v })
     try { localStorage.setItem('paramTooltipEnabled', String(v)) } catch { /* ignore */ }
     window.api?.setUiSetting('paramTooltipEnabled', v)
+  },
+  // ── 界面背景图（localStorage 持久化，与 ttsRate / ttsEdgeVoice 同一套）──
+  backgroundImage: (() => {
+    try { return localStorage.getItem('backgroundImage') || null } catch { return null }
+  })(),
+  backgroundUrl: null,
+  // 默认 45：面板透出约七成实、图看得见又不压字（0 = 面板全实心，等于没开）
+  backgroundStrength: (() => {
+    try { const v = parseFloat(localStorage.getItem('backgroundStrength') || ''); return Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 45 } catch { return 45 }
+  })(),
+  setBackgroundImage: (name) => {
+    // 同一张图重复点不再回读：原图是整张 data URL，白跑一次是几 MB 的 IPC
+    if (name === get().backgroundImage) return
+    set({ backgroundImage: name })
+    try {
+      if (name) localStorage.setItem('backgroundImage', name)
+      else localStorage.removeItem('backgroundImage')
+    } catch { /* ignore */ }
+    void get().loadBackgroundImage()
+  },
+  setBackgroundStrength: (v) => {
+    const n = Math.min(100, Math.max(0, Math.round(v)))
+    set({ backgroundStrength: n })
+    try { localStorage.setItem('backgroundStrength', String(n)) } catch { /* ignore */ }
+  },
+  loadBackgroundImage: async () => {
+    const name = get().backgroundImage
+    if (!name) { set({ backgroundUrl: null }); return }
+    try {
+      const r = await window.api?.getBackgroundImage(name)
+      set({ backgroundUrl: r?.success && r.dataUrl ? r.dataUrl : null })
+    } catch {
+      // IPC 失败留纯色：原来这里 void 掉一个没 catch 的 async，读图一断就静默什么都不发生
+      set({ backgroundUrl: null })
+    }
   },
   // ── 从主进程同步 UI 设置（覆盖 localStorage 的陈旧值）──
   initUiSettings: async () => {

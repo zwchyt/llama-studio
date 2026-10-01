@@ -9,7 +9,9 @@
  */
 import React, { useEffect, useMemo, useRef } from 'react'
 import type { ElementType } from 'react'
+import { HardDriveIcon, FolderOpenIcon } from '@animateicons/react/lucide'
 import { useStore } from '../store/useStore'
+import { playEvent } from '../utils/sound'
 import { shallow } from 'zustand/shallow'
 import {
   GROUPED_VIEWS,
@@ -64,16 +66,72 @@ function ToolNavItem({ def, active, running, onSelect }: {
   )
 }
 
+/** 后端 / 本地目录的行：不切视图、只执行一个动作，但外观与悬停动画对齐 ToolNavItem */
+function ToolActionItem({ icon: Icon, label, color, active, title, onClick }: {
+  icon: ElementType
+  label: string
+  color: string
+  active?: boolean
+  title?: string
+  onClick: () => void
+}) {
+  const iconRef = useRef<AnimHandle | null>(null)
+  return (
+    <button
+      type="button"
+      className={`toolhub-item${active ? ' active' : ''}`}
+      title={title}
+      onClick={onClick}
+      onMouseEnter={() => iconRef.current?.startAnimation()}
+      onMouseLeave={() => iconRef.current?.stopAnimation()}
+    >
+      <span
+        className="toolhub-ico"
+        style={active
+          ? { background: color, color: '#fff', boxShadow: `0 2px 8px ${color}55` }
+          : { background: `${color}1c`, color }}
+      >
+        <Icon
+          ref={(el) => { iconRef.current = el ? (el as unknown as AnimHandle) : null }}
+          className="nav-animate-icon"
+          size={14}
+        />
+      </span>
+      <span className="toolhub-item-label">{label}</span>
+      {active && (
+        <span
+          className="toolhub-active-dot"
+          style={{ background: color, boxShadow: `0 0 0 3px ${color}38` }}
+        />
+      )}
+    </button>
+  )
+}
+
 export default function ToolsHub() {
-  const { view, setView, hasRunningModels, activeChatUrl } = useStore(
+  const { view, setView, hasRunningModels, activeChatUrl, backends, backendsStatus, activeBackend, setActiveBackend, paths } = useStore(
     (s) => ({
       view: s.view,
       setView: s.setView,
       hasRunningModels: s.cards.some((c) => c.status === 'running'),
-      activeChatUrl: s.activeChatUrl
+      activeChatUrl: s.activeChatUrl,
+      backends: s.backends,
+      backendsStatus: s.backendsStatus,
+      activeBackend: s.activeBackend,
+      setActiveBackend: s.setActiveBackend,
+      paths: s.paths
     }),
     shallow
   )
+
+  // 侧栏那份「本地目录」原样搬过来，顺序与名称保持一致
+  const folders: { label: string; path: string }[] = paths ? [
+    { label: '/backend', path: paths.backend },
+    { label: '/models', path: paths.models },
+    { label: '/images', path: paths.chatImages },
+    { label: '/pdf_exports', path: paths.chatPdfExports },
+    { label: '/chat-templates', path: paths.chatTemplates },
+  ] : []
 
   // ToolsHub 只在 view ∈ GROUPED_VIEWS 时渲染，兜底分支仅防御异常值
   const active: ViewKey = GROUPED_VIEWS.has(view) ? view : TOOLS_FALLBACK_VIEW
@@ -113,6 +171,51 @@ export default function ToolsHub() {
               ))}
             </div>
           ))}
+
+          {/* ── 后端 / 本地目录 ──
+              原先挂在左侧导航栏里；导航栏收成纯导航后搬到这里，和「后端与引擎」「模型文件夹」
+              这些同域的界面挨在一起。两组都不切视图，点了只执行动作。 */}
+          <div className="toolhub-group">
+            <span className="toolhub-group-label">后端</span>
+            {backends.length > 0 ? (
+              backends.map((b) => (
+                <ToolActionItem
+                  key={b.name}
+                  icon={HardDriveIcon}
+                  color="#3b82f6"
+                  label={b.name}
+                  active={activeBackend?.name === b.name}
+                  title={activeBackend?.name === b.name ? '当前后端' : '设为当前后端'}
+                  onClick={() => {
+                    if (activeBackend?.name === b.name) return
+                    // 切后端不切视图，所以不走导航音对照表，单独给一个「勾上」音
+                    playEvent('check')
+                    setActiveBackend(b)
+                    // 参数集 schema 由 App 的 activeBackend watcher 统一拉取，这里不重复请求，
+                    // 免得快速切换时新旧响应乱序覆盖
+                  }}
+                />
+              ))
+            ) : (
+              <p className="toolhub-rail-empty">
+                {backendsStatus === 'loading' ? '扫描后端中…' : <>未找到后端。<br />可在「后端与引擎」里下载。</>}
+              </p>
+            )}
+          </div>
+          {paths && (
+            <div className="toolhub-group">
+              <span className="toolhub-group-label">本地目录</span>
+              {folders.map((f) => (
+                <ToolActionItem
+                  key={f.label}
+                  icon={FolderOpenIcon}
+                  color="#f59e0b"
+                  label={`打开 ${f.label}`}
+                  onClick={() => window.api.openFolder(f.path)}
+                />
+              ))}
+            </div>
+          )}
         </nav>
       </aside>
 

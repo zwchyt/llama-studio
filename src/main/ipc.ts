@@ -1,4 +1,4 @@
-import { ipcMain, dialog, shell, BrowserWindow, net } from 'electron'
+import { ipcMain, dialog, shell, BrowserWindow, net, nativeImage } from 'electron'
 import https from 'https'
 import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
@@ -7051,6 +7051,112 @@ export function registerIpcHandlers(): void {
       return Promise.resolve({ success: true })
     } catch (err) { return Promise.resolve({ success: false, error: err instanceof Error ? err.message : String(err) }) }
   })
+  // ── 界面背景图（整窗背景）────────────────────────────────────────
+  // 与上面 logos 同一套路：目录定点在 APP_ROOT 下的 src/renderer/public/backgrounds
+  // （目录本身入库、图片由 .gitignore 排除），打包后 APP_ROOT 是 userData，图片又被
+  // electron-builder 排除出产物，所以渲染端一律按「文件名」请主进程回读字节。
+  // 目录就是图库：用户可以攒多张，在「设置 › 界面背景」里点选切换。
+  const BACKGROUNDS_DIR = join(APP_ROOT, 'src/renderer/public', 'backgrounds')
+  const BG_EXT_RE = /^\.(png|jpe?g|webp|gif|avif)$/i
+  // 库里挑一张的公共校验：只认目录内的纯文件名，路径穿越挡掉
+  function bgPathOf(fileName: string): string | null {
+    const fp = join(BACKGROUNDS_DIR, basename(String(fileName ?? '')))
+    return isSafePath(BACKGROUNDS_DIR, fp) && existsSync(fp) ? fp : null
+  }
+
+  // 目录真实位置：dev 在项目里，打包后在 userData 下，设置页要显示这个路径
+  ipcMain.handle('get-backgrounds-dir', (): string => {
+    try { mkdirSync(BACKGROUNDS_DIR, { recursive: true }) } catch { /* 打不开目录也让界面照常显示路径 */ }
+    return BACKGROUNDS_DIR
+  })
+
+  // 「打开背景目录」走这条，不走通用的 open-folder：那条带目录白名单
+  // （只放行模型/后端/会话等），背景目录不在名单里会被静默 return。
+  // 路径由主进程自己拼，渲染端不传参，也就没有越权面。
+  ipcMain.handle('open-backgrounds-dir', async (): Promise<{ success: boolean; error?: string }> => {
+    try {
+      mkdirSync(BACKGROUNDS_DIR, { recursive: true })
+      const err = await shell.openPath(BACKGROUNDS_DIR)
+      return err ? { success: false, error: err } : { success: true }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  // 删掉库里的一张图（设置页缩略图上的 ×，点一下就走，不弹确认）。
+  // 只认背景目录内的纯文件名，跟回读那条共用 bgPathOf，越界与不存在都直接拒。
+  // 先丢回收站：没有确认框兜底，误点还能捞回来；系统不支持回收站才真删。
+  ipcMain.handle('delete-background', async (_e, fileName: string): Promise<{ success: boolean; error?: string }> => {
+    const fp = bgPathOf(fileName)
+    if (!fp) return { success: false, error: '背景图不存在' }
+    try {
+      await shell.trashItem(fp)
+      return { success: true }
+    } catch {
+      // 回收站不是哪里都有（网络盘、U 盘），那时退回真删
+      try { unlinkSync(fp); return { success: true } }
+      catch (e2) { return { success: false, error: e2 instanceof Error ? e2.message : String(e2) } }
+    }
+  })
+
+  ipcMain.handle('list-backgrounds', (): string[] => {
+    try {
+      mkdirSync(BACKGROUNDS_DIR, { recursive: true })
+      return readdirSync(BACKGROUNDS_DIR)
+        .filter(f => BG_EXT_RE.test(extname(f)))
+        .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+    } catch { return [] }
+  })
+
+  // 选图 → 不在背景目录内就复制进去（同名自动加序号，不顶掉库里已有的图）→ 返回文件名
+  ipcMain.handle('import-background', async (): Promise<{ success: boolean; fileName?: string; error?: string }> => {
+    try {
+      mkdirSync(BACKGROUNDS_DIR, { recursive: true })
+      const r = await dialog.showOpenDialog({
+        title: '选择背景图片',
+        defaultPath: BACKGROUNDS_DIR,
+        filters: [{ name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif'] }],
+        properties: ['openFile']
+      })
+      if (r.canceled || r.filePaths.length === 0) return { success: false, error: '已取消' }
+      const src = r.filePaths[0]!
+      const ext = extname(src).toLowerCase()
+      if (!BG_EXT_RE.test(ext)) return { success: false, error: '仅支持 png/jpg/jpeg/webp/gif/avif 图片' }
+      if (resolve(dirname(src)) === resolve(BACKGROUNDS_DIR)) return { success: true, fileName: basename(src) }
+      const stem = basename(src, extname(src)).replace(/[\\/:*?"<>|\r\n\t]+/g, '_').trim() || 'background'
+      let fileName = `${stem}${ext}`
+      let n = 2
+      while (existsSync(join(BACKGROUNDS_DIR, fileName))) fileName = `${stem}-${n++}${ext}`
+      const dst = join(BACKGROUNDS_DIR, fileName)
+      if (!isSafePath(BACKGROUNDS_DIR, dst)) return { success: false, error: '背景目录路径非法' }
+      writeFileSync(dst, readFileSync(src))
+      return { success: true, fileName }
+    } catch (err) { return { success: false, error: err instanceof Error ? err.message : String(err) } }
+  })
+
+  // 原图 → data URL（铺整窗背景用；CSP 的 img-src 已放行 data:）
+  ipcMain.handle('get-background-image', (_e, fileName: string): Promise<{ success: boolean; dataUrl?: string; error?: string }> => {
+    try {
+      const fp = bgPathOf(fileName)
+      if (!fp) return Promise.resolve({ success: false, error: '背景图不存在' })
+      const ext = /\.([a-z0-9]+)$/i.exec(fp)
+      const mime = ext ? (MIME_BY_EXT[ext[1]!.toLowerCase()] ?? 'application/octet-stream') : 'application/octet-stream'
+      return Promise.resolve({ success: true, dataUrl: `data:${mime};base64,${readFileSync(fp).toString('base64')}` })
+    } catch (err) { return Promise.resolve({ success: false, error: err instanceof Error ? err.message : String(err) }) }
+  })
+
+  // 缩略图：设置页一次列出整库，直接回读原图会几十 MB 走 IPC，用 nativeImage 压到 240 宽
+  ipcMain.handle('get-background-thumb', async (_e, fileName: string): Promise<{ success: boolean; dataUrl?: string; error?: string }> => {
+    try {
+      const fp = bgPathOf(fileName)
+      if (!fp) return { success: false, error: '背景图不存在' }
+      const img = nativeImage.createFromPath(fp)
+      if (img.isEmpty()) return { success: false, error: '图片无法解码（格式可能不受支持）' }
+      const size = img.getSize()
+      return { success: true, dataUrl: (size.width > 240 ? img.resize({ width: 240 }) : img).toDataURL() }
+    } catch (err) { return { success: false, error: err instanceof Error ? err.message : String(err) } }
+  })
+
   // 全量能力检测缓存（渲染端启动/打开列表时拉取）
   ipcMain.handle('get-model-capabilities', (): Record<string, { thinking: boolean; tools: boolean; vision: boolean }> => readModelCaps())
   // 单条写入能力检测缓存（检测成功后合并落盘）

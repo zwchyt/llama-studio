@@ -85,6 +85,10 @@ chart-presets/svg/*
 src/renderer/public/logos/*
 !src/renderer/public/logos/.gitkeep
 
+# 用户自行放入的界面背景图（不入库；保留空文件夹，目录本身入库）
+src/renderer/public/backgrounds/*
+!src/renderer/public/backgrounds/.gitkeep
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

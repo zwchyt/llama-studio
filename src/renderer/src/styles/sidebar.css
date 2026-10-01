@@ -39,17 +39,9 @@
   display: none;
 }
 
-.sidebar-wrapper.collapsed .sidebar-backend-name {
+/* 收起态只剩图标：会话列表整块让位，等悬浮展开时再回来 */
+.sidebar-wrapper.collapsed .sidebar-agent-slot {
   display: none;
-}
-
-.sidebar-wrapper.collapsed .sidebar-no-backend-hint {
-  display: none;
-}
-
-.sidebar-wrapper.collapsed .sidebar-bottom-section {
-  margin-top: auto;
-  padding-top: 4px;
 }
 
 .sidebar-wrapper.hover-expanded .sidebar {
@@ -63,25 +55,19 @@
   animation: sidebar-flyout-in 0.2s cubic-bezier(.4, 0, .2, 1) both;
 }
 
-.sidebar-backend-name {
-  flex: 1;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* ── Agent Code 项目 / 会话列表的槽位（内容由 AgentCodeView 经 portal 注入）──
+   :empty 让它在 portal 还没挂上时不露出这根分隔线。 */
+.sidebar-agent-slot {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
-.sidebar-backend-name:hover {
-  text-overflow: clip;
-}
-
-.sidebar-backend-name-text {
-  display: inline-block;
-  white-space: nowrap;
-}
-
-.sidebar-backend-name:hover .sidebar-backend-name-text {
-  animation: sidebar-name-slide 3.5s ease-in-out infinite alternate;
+.sidebar-agent-slot:empty {
+  display: none;
 }
 
 .sidebar-toggle {

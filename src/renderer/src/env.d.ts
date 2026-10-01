@@ -233,6 +233,14 @@ interface LlamaCppApi {
   getModelLogos: () => Promise<Record<string, string>>
   getModelLogoImage: (fileName: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>
   removeModelLogo: (templateId: string) => Promise<{ success: boolean; error?: string }>
+  // ── 界面背景图（整窗背景；图片存 src/renderer/public/backgrounds，目录入库、图片不入库）──
+  getBackgroundsDir: () => Promise<string>
+  openBackgroundsDir: () => Promise<{ success: boolean; error?: string }>
+  deleteBackground: (fileName: string) => Promise<{ success: boolean; error?: string }>
+  listBackgrounds: () => Promise<string[]>
+  importBackground: () => Promise<{ success: boolean; fileName?: string; error?: string }>
+  getBackgroundImage: (fileName: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>
+  getBackgroundThumb: (fileName: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>
   getModelCapabilities: () => Promise<Record<string, { thinking: boolean; tools: boolean; vision: boolean }>>
   saveModelCapabilities: (templateId: string, caps: { thinking: boolean; tools: boolean; vision: boolean }) => Promise<void>
   tokenizeText: (opts: { port?: number; backendPath?: string; modelPath?: string; text: string }) => Promise<TokenizeResult>
