@@ -28,18 +28,21 @@ import { AgentMarkdown } from '../agent-message'
 const PdfViewer = React.lazy(() => import('./PdfViewer').then(m => ({ default: m.PdfViewer })))
 import type { useAgentPreviewTabs } from '../hooks/useAgentPreviewTabs'
 import type { AniIconHandle } from '../types'
+import type { PanelView, RightPanelMode } from '../hooks/useAgentUiState'
 import type { AgentProject } from '../../../../../shared/types'
 
 const MonacoEditor = React.lazy(() => import('../../MonacoEditor'))
 
 type PreviewDomain = ReturnType<typeof useAgentPreviewTabs>
 
-type RightPanelMode = 'files' | 'browser' | 'terminal' | 'diff' | 'menu'
-/** 可常驻标签条的四个工作区（menu 是选择界面，不算工作区） */
-type PanelView = 'files' | 'diff' | 'terminal' | 'browser'
-const PANEL_LABEL: Record<PanelView, string> = { files: '文件树', diff: '变更', terminal: '终端', browser: '浏览器' }
+// 工作区的展示顺序，与 PANEL_SHORTCUT 的 F1~F5 一一对应（标签条、「+」菜单、选择界面共用）
+const PANEL_ORDER: PanelView[] = ['files', 'diff', 'terminal', 'browser', 'preview']
+const PANEL_LABEL: Record<PanelView, string> = { files: '文件树', preview: '预览', diff: '变更', terminal: '终端', browser: '浏览器' }
+const PANEL_ICON: Record<PanelView, typeof FolderIcon> = {
+  files: FolderIcon, preview: EyeIcon, diff: GitBranchIcon, terminal: TerminalIcon, browser: GlobeIcon,
+}
 // 与 AgentCodeViewLayout.tsx 里 binds 的按键一一对应，改了那边要改这里
-const PANEL_SHORTCUT: Record<PanelView, string> = { files: 'F1', diff: 'F2', terminal: 'F3', browser: 'F4' }
+const PANEL_SHORTCUT: Record<PanelView, string> = { files: 'F1', diff: 'F2', terminal: 'F3', browser: 'F4', preview: 'F5' }
 type GitChanges = Parameters<typeof AgentGitDiff>[0]['data']
 
 export type AgentPreviewSlotProps = {
@@ -249,7 +252,7 @@ export function AgentPreviewSlot({
           <div className="agent-code-panel-head">
             <div className="agent-code-panel-tabs">
               {openPanels.map(v => {
-                const Icon = v === 'files' ? FolderIcon : v === 'diff' ? GitBranchIcon : v === 'terminal' ? TerminalIcon : GlobeIcon
+                const Icon = PANEL_ICON[v]
                 const active = rightPanelMode === v
                 return (
                   <div
@@ -307,8 +310,8 @@ export function AgentPreviewSlot({
             {/* 下拉菜单渲染在 .agent-code-panel-tabs 外部，避免被 overflow-x: auto 裁剪 */}
             {addMenuOpen && addMenuPos && (
               <div ref={addMenuRef} className="agent-code-add-workspace-menu" style={{ left: addMenuPos.left }}>
-                {(['files', 'diff', 'terminal', 'browser'] as PanelView[]).filter(v => !openPanels.includes(v)).map(v => {
-                  const Icon = v === 'files' ? FolderIcon : v === 'diff' ? GitBranchIcon : v === 'terminal' ? TerminalIcon : GlobeIcon
+                {PANEL_ORDER.filter(v => !openPanels.includes(v)).map(v => {
+                  const Icon = PANEL_ICON[v]
                   return (
                     <button
                       key={v}
@@ -368,7 +371,9 @@ export function AgentPreviewSlot({
               <div className={`agent-code-diff-wrap${rightPanelMode === 'diff' ? '' : ' hidden'}`}>
                 <AgentGitDiff data={gitChanges} loading={gitLoading} onRefresh={refreshGitChanges} onOpenFile={openFileAtLine} workspaceDir={activeProject.workspaceDir} focusPath={gitFocusPath} onFocusHandled={onGitFocusHandled} />
               </div>
-              <div className={`agent-code-preview-group ${openTabs.length === 0 && rightPanelMode !== 'files' ? 'collapsed' : ''} ${rightPanelMode === 'browser' || rightPanelMode === 'terminal' || rightPanelMode === 'diff' ? 'hidden' : ''}`}>
+              {/* 预览列：文件树模式下与树并排；独立的「预览」工作区里它独占整列（此时树不出现）。
+                  没标签时收起——但 preview 模式要留着空态提示，否则点开附件只见一条空槽。 */}
+              <div className={`agent-code-preview-group ${openTabs.length === 0 && rightPanelMode !== 'files' && rightPanelMode !== 'preview' ? 'collapsed' : ''} ${rightPanelMode === 'browser' || rightPanelMode === 'terminal' || rightPanelMode === 'diff' ? 'hidden' : ''}`}>
             <div className={`agent-code-preview${openTabs.length === 0 ? ' agent-code-preview--empty' : ''}`}>
               <div className="agent-code-preview-header">
                 <div className="agent-code-preview-tabs">
@@ -482,7 +487,7 @@ export function AgentPreviewSlot({
                   <div className="agent-code-preview-empty">
                     <FolderOpenIcon size={36} className="agent-code-preview-empty-icon" />
                     <span className="agent-code-preview-empty-title">选择文件以预览</span>
-                    <span className="agent-code-preview-empty-desc">从左侧文件树中点击文件，在此处查看内容</span>
+                    <span className="agent-code-preview-empty-desc">{rightPanelMode === 'preview' ? '点击输入框里的附件，在此查看原文件' : '从左侧文件树中点击文件，在此处查看内容'}</span>
                   </div>
                 )
                   : activeTab.loading ? <div className="file-tree-loading">读取中…</div>
@@ -570,12 +575,12 @@ export function AgentPreviewSlot({
           </div>
             </>
           )}
-          {/* 「»」展开的工作区选择界面：上下竖排四个入口，点一个是「打开并切过去」 */}
+          {/* 「»」展开的工作区选择界面：上下竖排五个入口，点一个是「打开并切过去」 */}
           {rightPanelMode === 'menu' && (
             <div className="agent-code-panel-picker">
               <div className="agent-code-panel-picker-list">
-                {(['files', 'diff', 'terminal', 'browser'] as PanelView[]).map(v => {
-                  const Icon = v === 'files' ? FolderIcon : v === 'diff' ? GitBranchIcon : v === 'terminal' ? TerminalIcon : GlobeIcon
+                {PANEL_ORDER.map(v => {
+                  const Icon = PANEL_ICON[v]
                   return (
                     <button
                       key={v}

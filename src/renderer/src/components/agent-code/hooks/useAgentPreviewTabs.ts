@@ -31,9 +31,12 @@ import { dirName, pathDir } from '../utils/paths'
 import { extractTextFromBuffer, isBinaryDoc } from '../../../utils/extractText'
 import type { PreviewTab } from '../types'
 import type { UiAnnotation } from '../../AgentBrowser'
+import type { PanelView, RightPanelMode } from './useAgentUiState'
+
+const LEGACY_DOC_ERROR = '旧版 .doc 无法解析：请在 Word 里另存为 .docx 再预览'
 
 export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
-  setRightPanelMode: React.Dispatch<React.SetStateAction<'files' | 'browser' | 'terminal' | 'diff' | 'menu'>>
+  setRightPanelMode: React.Dispatch<React.SetStateAction<RightPanelMode>>
   /** 打开文件时把右侧面板展开（通用模式默认收起，否则预览不可见） */
   setTreeOpen: React.Dispatch<React.SetStateAction<boolean>>
 }) {
@@ -178,7 +181,7 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
     return out
   }, [])
 
-  const openPreview = useCallback(async (path: string) => {
+  const openPreview = useCallback(async (path: string, panelMode: PanelView = 'files') => {
     const name = dirName(path)
     const ext = (/\.([a-z0-9]+)$/i.exec(path)?.[1] || '').toLowerCase()
     const isImage = IMG_EXT.has(ext)
@@ -187,16 +190,20 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
     // 那是给 agent 工具看的建议语，对预览毫无意义（src/main/ipc.ts 的 MAX_READ_TOKENS）。
     const isPdf = !isImage && /\.pdf$/i.test(name)
     const binaryDoc = !isImage && !isPdf && isBinaryDoc(name)
-    // 切回文件预览模式（若当前是浏览器），并把右侧面板展开——
-    // 通用模式的右槽默认收起（没有文件树），不主动展开的话「打开文件」看起来毫无反应。
-    setRightPanelMode('files')
+    // .doc（2003 的老二进制格式）全仓没有解析器（mammoth 只认 .docx），当文本读只会得到
+    // 一屏乱码。判定并进建标签这一次 setState：否则先亮一帧「读取中…」再跳错误。
+    const legacyDoc = !isImage && !isPdf && !binaryDoc && ext === 'doc'
+    // 切到该文件所属的面板工作区（默认文件树那列；输入框附件走独立预览列），并把右侧
+    // 面板展开——通用模式的右槽默认收起（没有文件树），不主动展开的话「打开文件」看起来毫无反应。
+    setRightPanelMode(panelMode)
     setTreeOpen(true)
     // 已打开则仅切换到该标签，不重复读取
     setOpenTabs(prev => {
       if (prev.some(t => t.path === path)) return prev
-      return [...prev, { path, name, content: null, lines: null, truncated: false, loading: true, error: null, isImage, imageDataUrl: null, isBinaryDoc: isPdf || binaryDoc, isPdf, pdfData: null }]
+      return [...prev, { path, name, content: null, lines: null, truncated: false, loading: !legacyDoc, error: legacyDoc ? LEGACY_DOC_ERROR : null, isImage, imageDataUrl: null, isBinaryDoc: isPdf || binaryDoc, isPdf, pdfData: null }]
     })
     setActiveTabPath(path)
+    if (legacyDoc) return
     // 图片：读为 data URL 直接渲染 <img>，不当文本读（二进制会被拒）
     if (isImage) {
       const r = await window.api.readFileBase64(path)

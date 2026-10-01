@@ -11,13 +11,14 @@
 //           stoppedBadge、AgentMessageRow
 
 import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
-import { Brain, ChevronUp, AlignLeft, Play, Square, Trash2, Volume2 } from 'lucide-react'
+import { Brain, Play, Square, Trash2, Volume2 } from 'lucide-react'
 import { ChevronRightIcon, CircleStopIcon, FileTextIcon, RefreshCwIcon, CopyIcon } from '@animateicons/react/lucide'
 import { useStore } from '../../../store/useStore'
 import { useCollapseAnimation, COLLAPSE_DURATION_MS } from '../../../utils/useCollapseAnimation'
 import { useSmoothStream } from '../hooks/useSmoothStream'
 import { ThinkTextContent } from './ThinkTextContent'
 import { AttachmentTextPreview } from './AttachmentTextPreview'
+import { UserMessageFullText } from './UserMessageFullText'
 import { Markdown } from '../../../markdown/markstream'
 import { MermaidCard, parseContentToBlocks } from '../../../mermaid'
 import { ChartCard } from '../../../recharts'
@@ -92,23 +93,19 @@ export const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { co
   return <Markdown content={content} final variant="agent" />
 })
 
-// ── 用户消息气泡：纯文本渲染 + 超长折叠成胶囊 ────────────────────────────
+// ── 用户消息气泡：纯文本渲染 + 超长限高淡出 ──────────────────────────────
 // 用户输入一律按普通字符串显示：不走 Markdown（rehype-raw/sanitize 管线会把
 // <LineChart> 这类自定义标签剥成空白）、不渲染 HTML/SVG/图表组件、不套代码块
 // 框、不做语法高亮。{text} 文本插值天然转义，`<`、```、反引号都原样可见，
 // 任何内容都不会「显示成空白」。pre-wrap + 等宽字体保留换行/空格/缩进，代码
 // 结构不乱；超长行自动换行不撑破气泡。
-// 超长消息折叠：超过阈值（行数/字符数双阈值）后整条消息收进一枚胶囊——单行
-// 预览 + 行数 + 箭头，长文不塞进气泡；点击展开成完整气泡，底部「收起」退回。
-// 复制按钮始终复制完整原文，发送给模型的内容不变。
-const USER_FOLD_LINES = 10
-const USER_FOLD_CHARS = 1000
+// 超长消息显示限制：露前 5 行（行数改 styles/agent-code.css 的 --user-msg-lines），最后一行
+// 由实到虚平滑淡出，不写任何提示文字；被截到的那条可点 → 正中弹窗看全文（.msg-full）。
+// 复制按钮与发给模型的内容始终是完整原文。
 
-// INPUT_FOLD_CAP 已抽至 agent-code/utils/constants.ts（输入区与消息区共用）
-
-export const UserMessageEntry = React.memo(function UserMessageEntry({ content, packedText, attachments }: { content: string; packedText?: string; attachments?: Attachment[] }) {
-  const [expanded, setExpanded] = useState(false)
-  const [packedOpen, setPackedOpen] = useState(false)
+export const UserMessageEntry = React.memo(function UserMessageEntry({ content, attachments }: { content: string; attachments?: Attachment[] }) {
+  // 全文弹窗：只有被截断的长消息才打得开
+  const [fullOpen, setFullOpen] = useState(false)
   // 图片附件放大预览（点击缩略图 → 全屏）
   const [zoom, setZoom] = useState<string | null>(null)
   // 文件附件（PDF / DOCX / txt / 代码…）点开看抽取文本——即模型真正读到的那段
@@ -166,79 +163,41 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
     </>
   ) : null
   const text = typeof content === 'string' ? content : String(content ?? '')
-  // 打包段是 outgoing 组装时的第一个 part（已 trim），content 一定以它开头；
-  // 余下部分（用户后输入的文字 + 引用块）就是气泡正文
-  const packed = packedText ?? ''
-  const rest = packed && content.startsWith(packed)
-    ? content.slice(packed.length).replace(/^\n+/, '')
-    : content
-  const lineCount = useMemo(() => text.split('\n').length, [text])
-  const foldable = useMemo(
-    () => lineCount > USER_FOLD_LINES || text.length > USER_FOLD_CHARS,
-    [lineCount, text]
-  )
-
-  // 含打包段：chip 显示打包内容（点击可展开/收起该段）+ 用户输入的文字照常显示
-  if (packed) {
-    return (
-      <>
-        <div
-          className="chat-input-fold-chip user-msg-fold-chip"
-          title={packedOpen ? '点击收起打包内容' : '点击显示打包内容'}
-          onClick={() => setPackedOpen(v => !v)}
-        >
-          {packedOpen
-            ? <ChevronUp size={12} className="chat-input-fold-chip-icon" />
-            : <AlignLeft size={12} className="chat-input-fold-chip-icon" />}
-          <span className="chat-input-fold-chip-label">已折叠 {packed.split('\n').length} 行</span>
-        </div>
-        {packedOpen ? (
-          <div className="chat-msg-bubble chat-msg-markdown">
-            <div className="user-plain-text">{packed}</div>
-          </div>
-        ) : null}
-        {rest.trim() ? (
-          <div className="chat-msg-bubble chat-msg-markdown">
-            <div className="user-plain-text">{rest}</div>
-          </div>
-        ) : null}
-        {attachmentNode}
-      </>
-    )
+  // 正文始终照常排完整段，只被 CSS 的 max-height 裁掉一截；量高判断「确实被裁到了」
+  // 才追加淡出并可点（短消息既不淡出也点不开）
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const [clamped, setClamped] = useState(false)
+  useLayoutEffect(() => {
+    const el = bodyRef.current
+    if (!el) return
+    const measure = () => setClamped(el.scrollHeight - el.clientHeight > 1)
+    measure()
+    // 会话栏拖宽、窗口缩放都会让正文重新折行、改变总高：重量一次，
+    // 否则会出现「文字被裁掉却点不开」的消息
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [text])
+  // 选正文不算点开：拖出选区后浏览器仍会在 mouseup 之后补发一次 click，那次放过
+  const openFull = (e: React.MouseEvent) => {
+    if (window.getSelection()?.isCollapsed === false) return
+    e.stopPropagation()
+    setFullOpen(true)
   }
-
-  // 折叠态：与输入框打包 chip 完全同款的小胶囊（图标 + 已折叠 N 行 + 悬停全文
-  // 预览），点击展开完整气泡；右对齐由 .chat-msg-user .chat-msg-body 的 flex-end 保证
-  if (foldable && !expanded) {
-    return (
-      <>
-        <div
-          className="chat-input-fold-chip user-msg-fold-chip"
-          title="点击展开完整内容"
-          onClick={() => setExpanded(true)}
-        >
-          <AlignLeft size={12} className="chat-input-fold-chip-icon" />
-          <span className="chat-input-fold-chip-label">已折叠 {lineCount} 行</span>
-        </div>
-        {attachmentNode}
-      </>
-    )
-  }
-
   return (
     <>
     {/* 只发附件没写文字时正文为空：不渲染空气泡，只留下面的附件区 */}
     {text.trim() ? (
-    <div className="chat-msg-bubble chat-msg-markdown">
-      <div className="user-plain-text">{text}</div>
-      {foldable ? (
-        <button type="button" className="user-plain-toggle" onClick={() => setExpanded(false)}>
-          <ChevronUp size={12} />收起
-        </button>
-      ) : null}
-    </div>
+      <div
+        className={`chat-msg-bubble chat-msg-markdown${clamped ? ' user-msg-clamped' : ''}`}
+        onClick={clamped ? openFull : undefined}
+        title={clamped ? '点击查看完整内容' : undefined}
+      >
+        <div ref={bodyRef} className="user-plain-text">{text}</div>
+      </div>
     ) : null}
     {attachmentNode}
+    {fullOpen && <UserMessageFullText text={text} onClose={() => setFullOpen(false)} />}
     </>
   )
 })

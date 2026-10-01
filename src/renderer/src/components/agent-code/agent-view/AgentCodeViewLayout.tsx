@@ -49,7 +49,7 @@ import type { useAgentInput } from '../hooks/useAgentInput'
 import type { useAgentPreviewTabs } from '../hooks/useAgentPreviewTabs'
 import type { useAgentInputHints } from '../hooks/useAgentInputHints'
 import type { useAgentRunState } from '../hooks/useAgentRunState'
-import type { useAgentUiState } from '../hooks/useAgentUiState'
+import type { PanelView, useAgentUiState } from '../hooks/useAgentUiState'
 import type { useAgentCondense } from '../hooks/useAgentCondense'
 import type { useAgentMessageActions } from '../hooks/useAgentMessageActions'
 import type { useAgentScroll } from '../hooks/useAgentScroll'
@@ -136,7 +136,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   } = inputDomain
   const {
     htmlAnnotateActive, htmlAnnotations, injectHtmlAnnotate, toggleHtmlAnnotate,
-    clearHtmlAnnotations, removeHtmlAnnotation, openFileAtLine, openTabs,
+    clearHtmlAnnotations, removeHtmlAnnotation, openFileAtLine, openPreview, openTabs,
   } = previewDomain
   const {
     loading, streaming, thinkDone, condenseOpen, setCondenseOpen,
@@ -369,7 +369,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     }
   }, [treeOpen, rightPanelMode, setRightPanelMode, setTreeOpen])
 
-  // ── 顶栏「»」展开按钮：点开不是下拉菜单，而是把右侧面板展开成一个四视图
+  // ── 顶栏「»」展开按钮：点开不是下拉菜单，而是把右侧面板展开成一个五视图
   // 选择界面（rightPanelMode='menu'，界面本体在 AgentPreviewSlot 里），点哪张
   // 卡片面板就切到哪个视图。菜单态下再点 » 或卡片 X（closeRightMenu）收起面板。 ──
   const openRightMenu = useCallback(() => {
@@ -381,7 +381,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   // » 按钮：面板已展开时再点=收起整块面板；面板收起时点开——
   //   · 有已打开的工作区（openPanels 在收起时原样保留）：恢复它们，并显示收起前
   //     正在显示的那个（mode 停在 menu 的遗留情况退到最后打开的那个）；
-  //   · 从未打开过任何工作区：才进入四视图选择界面（rightPanelMode='menu'）。
+  //   · 从未打开过任何工作区：才进入五视图选择界面（rightPanelMode='menu'）。
   // （要在已展开的状态下换工作区，用标签条上的「+」。）
   const toggleRightEntry = useCallback(() => {
     if (treeOpen) { closeRightMenu(); return }
@@ -398,7 +398,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   }, [treeOpen, rightPanelMode, openPanels, closeRightMenu, openRightMenu, toggleGitDiff, setRightPanelModeAndOpen])
   // 选择界面 / 标签条点某个工作区：只负责「展开并显示」它，不承载收起语义
   // （关掉用标签条上的 ×，收起整块面板用 »）。
-  const showRightTab = useCallback((tab: 'files' | 'diff' | 'browser' | 'terminal') => {
+  const showRightTab = useCallback((tab: PanelView) => {
     if (tab === 'diff') {
       // toggleGitDiff 自带「切到 diff + 展开 + 拉取变更」，仅在尚未处于 diff 时调用
       if (!(treeOpen && rightPanelMode === 'diff')) toggleGitDiff()
@@ -408,7 +408,11 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     setTreeOpen(true)
   }, [treeOpen, rightPanelMode, toggleGitDiff, setRightPanelMode, setTreeOpen])
 
-  // 四个工作区的快捷键 F1~F4；卡片上显示的提示文案在 AgentPreviewSlot.tsx 的 PANEL_SHORTCUT
+  // 输入框附件 chip 点击 → 独立的「预览」工作区：附件不属于当前项目文件树，
+  // 走 files 模式会在预览列旁边再亮出一棵树，占掉本来就不宽的预览位。
+  const previewAttachment = useCallback((path: string) => { void openPreview(path, 'preview') }, [openPreview])
+
+  // 五个工作区的快捷键 F1~F5；卡片上显示的提示文案在 AgentPreviewSlot.tsx 的 PANEL_SHORTCUT
   // 再按同一个键关闭它自己：走 closePanel（与标签条上的 × 同一条路径），还并开着别的
   // 工作区时切到剩下的那个，全关完才收起整块面板。
   useEffect(() => {
@@ -417,13 +421,15 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
       { tab: 'diff' as const, code: 'F2' },
       { tab: 'terminal' as const, code: 'F3' },
       { tab: 'browser' as const, code: 'F4' },
+      { tab: 'preview' as const, code: 'F5' },
     ]
     const onKey = (e: KeyboardEvent) => {
       // 按住不放会连发，一次连发能把面板开关来回抖动十几次
       if (e.repeat) return
       const hit = binds.find(b => b.code === e.code)
-      if (!hit || (plainChat && hit.tab !== 'browser')) return
-      // 终端和代码编辑器自己处理键盘，不抢它们的按键（vim 等程序占用 F1~F4）
+      // 通用模式没有文件树/变更/终端那套工作区，只留浏览器与预览（附件预览两档模式都要能用）
+      if (!hit || (plainChat && hit.tab !== 'browser' && hit.tab !== 'preview')) return
+      // 终端和代码编辑器自己处理键盘，不抢它们的按键（vim 等程序占用 F1~F5）
       const t = e.target as HTMLElement | null
       if (t?.closest('.xterm, .monaco-editor')) return
       e.preventDefault()
@@ -488,8 +494,9 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               ) : msg.content || msg.attachments?.length ? (
                 <>
                   {/* 附件两种模式都渲染（图片缩略图 + 文件卡片点击看抽取文本）；
-                      只发附件不发文字时也要有这条消息的气泡，否则附件整块消失 */}
-                  <UserMessageEntry content={msg.content} packedText={msg.packedText} attachments={msg.attachments} />
+                      只发附件不发文字时也要有这条消息的气泡，否则附件整块消失。
+                      超长正文在气泡里只显示前几行，点气泡正中弹窗看全文。 */}
+                  <UserMessageEntry content={msg.content} attachments={msg.attachments} />
                   <div className="chat-msg-actions">
                     <button className="chat-msg-action-btn" title="复制" onClick={() => copyMessage(msg.content)}><CopyIcon size={13} /></button>
                     <button className="chat-msg-action-btn" title="编辑" onClick={() => editAt(msg.id)} disabled={loading}><PencilIcon size={13} /></button>
@@ -999,6 +1006,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
             }}
             handleKeyDown={handleKeyDown}
             handleInputChange={handleInputChange}
+            onPreviewAttachment={previewAttachment}
           />
           {/* 建议项放在输入区**之后**：空会话时输入框被抬到中间（.hero-input），
               这样整块的顺序就是「标题 → 模式卡片 → 输入框 → 快捷建议」——

@@ -140,11 +140,14 @@ export type AgentInputAreaProps = {
   }
   handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
   handleInputChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
+  /** 点击附件 chip：按磁盘路径把原文件送到右侧「预览」工作区（PDF 版面 / DOCX / 图片 / HTML / 代码） */
+  onPreviewAttachment: (path: string) => void
 }
 
 
 export function AgentInputArea({
   inputDomain, hintsDomain, mic, models, search, chatMode, run, approval, shell, handleKeyDown, handleInputChange,
+  onPreviewAttachment,
 }: AgentInputAreaProps) {
   // ── 域解构：把分组 props 摊平回局部名字，组件体内沿用原 JSX 的标识符 ──
 
@@ -168,7 +171,7 @@ export function AgentInputArea({
   const { apiBaseUrl, curToolName, followUpQueueRef, handleSend, handleStop, loading, piReadyRef, prevQueueRef, queueInfo, setQueueInfo, runningCard, streamKind, streaming, thinkDone } = run
   const { allowBtnRef, approvalReq, autoApproveBtnRef, autoApproveRef, rejectBtnRef, resolveApproval } = approval
   const { activeProject, activeProjectId, activeSessionId, attachBtnRef, branchBtnRef, branchMenuOpen, branchMenuRef, branches, cards, chatInputAreaRef, checkoutBranch, contextModalOpen, ctxInlineRef, currentBranch, projects, setActiveProjectId, setActiveSessionId, setBranchMenuOpen, setContextModalOpen, setWorkspaceMenuOpen, workspaceBtnRef, workspaceMenuOpen, workspaceMenuRef } = shell
-  // 附件 chip 点开看抽取文本（PDF / DOCX / 文本文件），与消息气泡里的文件卡片同一个预览层
+  // 没有磁盘路径的附件（读取时拿不到真实文件）退化成浮层看抽取文本，与消息气泡里的文件卡片同一层
   const [attPreview, setAttPreview] = useState<PreviewableAttachment | null>(null)
   // 外部端点：卡片只存 endpointId，这里查表是为了区分「本机端口 / 远程」的角标与提示文案；
   // 端点本身在「外部端点」页管理，下拉里只留一个跳转入口。
@@ -243,14 +246,18 @@ export function AgentInputArea({
       {attachedFiles.length > 0 && (
         <div className="chat-attach-tray">
           {attachedFiles.map(att => {
-            // 文件附件带抽取文本 → 整个 chip 可点开预览；图片 chip 维持不可点（缩略图已说明内容）
-            const previewable = !att.isImage && !!att.content
+            // 有磁盘路径 → 点开右侧「预览」工作区看原文件（PDF 版面 / DOCX / 图片 / HTML / 代码）。
+            // 只有拿不到路径的附件（如内存里构造的图片）才退回浮层，看模型实际读到的那段文本。
+            const path = att.path
+            const open = path
+              ? () => onPreviewAttachment(path)
+              : att.content ? () => setAttPreview({ name: att.name, content: att.content }) : undefined
             return (
               <div
-                className={`chat-attach-chip${previewable ? ' previewable' : ''}`}
+                className={`chat-attach-chip${open ? ' previewable' : ''}`}
                 key={att.id}
-                onClick={previewable ? () => setAttPreview({ name: att.name, content: att.content }) : undefined}
-                title={previewable ? `${att.name}（点击预览抽取到的文本）` : att.name}
+                onClick={open}
+                title={open ? `${path ?? att.name}（点击${path ? '在右侧预览' : '预览抽取到的文本'}）` : att.name}
               >
                 {att.isImage && att.dataUrl
                   ? <img src={att.dataUrl} className="chat-attach-thumb" alt={att.name} />

@@ -32,10 +32,10 @@ import { noteApprovalRejected } from '../../../utils/memoryWriter'
 import type { AgentMode, AgentSession, CardState, KnowledgeBaseMeta, TodoUpdate } from '../../../../../shared/types'
 import type { ModelPickerGroup } from '../../../utils/endpoint'
 
-/** 右侧面板模式：files=文件树+预览 / browser=内嵌浏览器 / terminal=内嵌终端 / diff=Git变更 / menu=顶栏「»」展开的工作区选择界面 */
-export type RightPanelMode = 'files' | 'browser' | 'terminal' | 'diff' | 'menu'
-/** 可常驻在标签条上的四个工作区（menu 只是选择界面，不进标签条） */
-export type PanelView = 'files' | 'diff' | 'terminal' | 'browser'
+/** 右侧面板模式：files=文件树+预览 / preview=独立预览列 / browser=内嵌浏览器 / terminal=内嵌终端 / diff=Git变更 / menu=顶栏「»」展开的工作区选择界面 */
+export type RightPanelMode = 'files' | 'preview' | 'browser' | 'terminal' | 'diff' | 'menu'
+/** 可常驻在标签条上的五个工作区（menu 只是选择界面，不进标签条） */
+export type PanelView = 'files' | 'preview' | 'diff' | 'terminal' | 'browser'
 /** 按模式分槽的面板状态（切模式时各恢复各的）；openPanels=已打开的工作区标签，rightPanelMode=当前显示的那个 */
 type ModePanelState = { treeOpen: boolean; rightPanelMode: RightPanelMode; openPanels: PanelView[] }
 

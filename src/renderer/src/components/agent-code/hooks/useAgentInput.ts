@@ -144,7 +144,7 @@ export function useAgentInput({ draftScope = 'default' }: { draftScope?: string 
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const [attachedFiles, setAttachedFiles] = useState<Array<{ id: string; name: string; isImage: boolean; dataUrl?: string; content?: string }>>([])
+  const [attachedFiles, setAttachedFiles] = useState<Array<{ id: string; name: string; isImage: boolean; dataUrl?: string; content?: string; path?: string }>>([])
   // 「引用」引用块：以胶囊（图标 + 缩写）形式内嵌在输入框内，
   // 发送时作为引用块（> …）拼入正文。
   const [refChips, setRefChips] = useState<Array<{ id: string; text: string }>>([])
@@ -290,6 +290,12 @@ export function useAgentInput({ draftScope = 'default' }: { draftScope?: string 
 
 
   // ── 附件 / 图片 ──
+  // 附件记下磁盘绝对路径：右侧「预览」工作区要按路径读原始字节（PDF 版面、DOCX、图片原图）。
+  // webUtils.getPathForFile 对内存构造的 File 会抛，取不到就当无路径（点附件回退旧的文本浮层）。
+  function attachmentPath(file: File): string | undefined {
+    try { return window.api.getFilePath(file) || undefined } catch { return undefined }
+  }
+
   async function readAttachmentFile(file: File): Promise<{ isImage: boolean; dataUrl?: string; text: string }> {
     const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name)
     if (isImage) {
@@ -321,6 +327,7 @@ export function useAgentInput({ draftScope = 'default' }: { draftScope?: string 
     const next = files.map((f, i) => ({
       id: uniqueId('att'),
       name: f.name,
+      path: attachmentPath(f),
       isImage: read[i]!.isImage,
       dataUrl: read[i]!.dataUrl,
       content: read[i]!.text,
@@ -338,10 +345,13 @@ export function useAgentInput({ draftScope = 'default' }: { draftScope?: string 
       if (prev.some(a => a.path === entry.path)) return prev
       return [...prev, { id: uniqueId('fp-att'), path: entry.path, name: entry.name, isDir: false }]
     })
+    // 读取失败也保留这颗附件：它在托盘里是「引用」，右侧预览按路径仍能打开原文件。
+    // 原先只在文本抽取成功时才建 chip，于是从工作区选的图片、.doc、超大的文本文件
+    // 一律静默消失（托盘里看不见，也点不出预览）。
+    let text: string | null = null
     try {
       // 工作区里的 PDF/docx：主进程 readFile 只做文本读取，二进制会返回乱码，
       // 所以走 base64 + 浏览器侧解析这条路（与附件选择器同一个抽取函数）。
-      let text: string | null = null
       if (isBinaryDoc(entry.name)) {
         const b64 = await window.api.readFileBase64(entry.path)
         const base64 = b64.dataUrl?.split(',')[1] ?? ''
@@ -353,13 +363,11 @@ export function useAgentInput({ draftScope = 'default' }: { draftScope?: string 
         const res = await window.api.readFile(entry.path, { maxBytes: 128 * 1024 })
         if (res.success && typeof res.content === 'string') text = res.content
       }
-      if (text !== null) {
-        setAttachedFiles(prev => {
-          if (prev.some(a => a.name === entry.name)) return prev
-          return [...prev, { id: uniqueId('fp-read'), name: entry.name, isImage: false, content: text }]
-        })
-      }
-    } catch { /* 读取失败，静默跳过 */ }
+    } catch { /* 抽取失败：附件仍进托盘，按路径预览 */ }
+    setAttachedFiles(prev => {
+      if (prev.some(a => a.name === entry.name)) return prev
+      return [...prev, { id: uniqueId('fp-read'), name: entry.name, isImage: false, path: entry.path, content: text ?? '' }]
+    })
   }, [])
 
   // 拖拽文件到输入框：支持内部文件树拖拽与系统资源管理器拖入，均作为附件添加

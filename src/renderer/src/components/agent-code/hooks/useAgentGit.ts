@@ -12,12 +12,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { notify } from '../../../store/notificationStore'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import type { GitChangesData } from '../../AgentGitDiff'
+import type { RightPanelMode } from './useAgentUiState'
 
 export function useAgentGit({ workspaceDir, rightPanelMode, treeOpen, setRightPanelMode, setTreeOpen, setContextModalOpen }: {
   workspaceDir: string | undefined
-  rightPanelMode: 'files' | 'browser' | 'terminal' | 'diff' | 'menu'
+  rightPanelMode: RightPanelMode
   treeOpen: boolean
-  setRightPanelMode: (v: 'files' | 'browser' | 'terminal' | 'diff' | 'menu') => void
+  setRightPanelMode: (v: RightPanelMode) => void
   setTreeOpen: (v: boolean) => void
   setContextModalOpen: (v: boolean) => void
 }) {

@@ -1315,7 +1315,7 @@ html.is-panel-resizing .agent-think-body .table-node {
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.12s ease;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-  /* 四张卡片错峰滑入：依次进场，节奏见上方注释 */
+  /* 五张卡片错峰滑入：依次进场，节奏见上方注释 */
   animation: panel-picker-item-in 0.34s cubic-bezier(0.22, 0.8, 0.36, 1) backwards;
 }
 
@@ -1333,6 +1333,10 @@ html.is-panel-resizing .agent-think-body .table-node {
 
 .agent-code-panel-picker-item:nth-child(4) {
   animation-delay: 0.24s;
+}
+
+.agent-code-panel-picker-item:nth-child(5) {
+  animation-delay: 0.30s;
 }
 
 .agent-code-panel-picker-item:hover {
@@ -1379,6 +1383,15 @@ html.is-panel-resizing .agent-think-body .table-node {
 
 .picker-browser svg {
   color: #6a7fa8;
+}
+
+/* 预览行的发丝线用紫灰：与浏览器蓝、终端青、变更绿都不撞 */
+.picker-preview {
+  border-left: 3px solid #9a6b86;
+}
+
+.picker-preview svg {
+  color: #9a6b86;
 }
 
 .agent-code-panel-picker-name {
@@ -6708,7 +6721,7 @@ html.is-panel-resizing .agent-think-body .table-node {
   --agent-selection-fg: inherit;
   /* 消息气泡底色：比背景（浅色主题下 --bg 为纯白）略深一档，靠边框 + 投影勾勒卡片轮廓；
      集中定义便于随主题调整。 */
-  --agent-bubble-bg: #f7f7f8;
+  --agent-bubble-bg: #e0e0e0;
 }
 
 .agent-code-view .agent-code-chat ::selection,
@@ -7496,34 +7509,129 @@ html.is-panel-resizing .agent-think-body .table-node {
   overflow-wrap: anywhere;
   user-select: text;
   -webkit-user-select: text;
+  /* 长消息按行截：露前 5 行（--user-msg-lines 可改），最后一行参与渐隐 */
+  max-height: calc(var(--user-msg-lines, 5) * 1lh);
+  overflow: hidden;
 }
 
-/* 用户长消息折叠 chip：与输入框打包 chip（.chat-input-fold-chip）完全同款，
-   唯一差异是可点击展开完整气泡 */
-.agent-code-view .chat-messages .user-msg-fold-chip {
+/* 量高确认「真被截到」才挂这个类：可点，点开正中弹 .msg-full 看全文。
+   没被截到的短消息既不淡出也不响应点击。 */
+.agent-code-view .chat-messages .user-msg-clamped {
   cursor: pointer;
 }
 
-/* 气泡内底部的「展开/收起」：轻量文本按钮 */
-.agent-code-view .chat-messages .user-plain-toggle {
+/* 渐变只挂在文字块上：气泡底色/边框/圆角挂 mask 会把下边框一起淡没。
+   负 margin 把淡出收尾压到贴着卡片内底，不在半空中收一条横线（那条线看着像内套了一个框）；
+   不用 padding-bottom：全局 border-box，padding 会挤进 max-height 少露半行字。
+   淡出带上沿取 1.8lh（> 一行）：整条最后一行都在渐隐里，行顶就已虚到约一半；
+   若只取 1lh，行顶是实心的，看着就像最后一行没被遮。想更糊把 --user-msg-fade 调大。 */
+.agent-code-view .chat-messages .user-msg-clamped .user-plain-text {
+  margin-bottom: -12px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--user-msg-fade, 1.8lh)), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--user-msg-fade, 1.8lh)), transparent);
+}
+
+/* ── 用户长消息全文弹窗（照用户给的参考图）──
+   遮罩＝半透明 + 背景模糊，底下文字糊成一片只留轮廓；
+   卡片＝大圆角、无边框、柔和落地阴影，正文用界面常规字体而不是等宽小字。 */
+.msg-full-mask {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  /* 遮罩＝主题底色本身摊薄一档 + 强模糊：靠「糊掉」挡住背景，不靠压黑。
+     浅色会话呈浅灰白、深色会话呈深灰，跟着主题设置走。 */
+  background: color-mix(in srgb, #a7d39f 10%, transparent);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+  cursor: zoom-out;
+}
+
+.msg-full {
+  display: flex;
+  flex-direction: column;
+  width: min(880px, calc(100vw - 96px));
+  max-height: calc(100vh - 96px);
+  /* 卡片与遮罩同档亮度（都取主题色），所以靠一条细描边把边界分出来，不靠提白 */
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.22), 0 4px 14px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  cursor: default;
+}
+
+.msg-full-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 26px 32px 10px;
+}
+
+.msg-full-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.msg-full-close {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin-top: 8px;
-  padding: 2px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface-hover, rgba(128, 128, 128, 0.08));
-  color: var(--text-muted);
-  font-family: inherit;
-  font-size: 12px;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  margin: -4px -6px 0 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
   cursor: pointer;
-  transition: background var(--transition), color var(--transition), border-color var(--transition);
+  opacity: 0.7;
+  transition: opacity var(--transition), background var(--transition);
 }
 
-.agent-code-view .chat-messages .user-plain-toggle:hover {
-  background: var(--hover-bg, rgba(128, 128, 128, 0.12));
+.msg-full-close:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+.msg-full-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 6px 32px 30px;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.85;
   color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* 弹窗是 createPortal 挂到 body 的，落在 .agent-code-view 作用域之外，
+   会话那套选区色（6719 起）够不到它，拖选会掉回系统默认蓝 —— 这里就地补一份，
+   值与会话面板一致：浅色 rgba(129,147,230,.22)、深色 .32（theme-dark.css:309）。 */
+.msg-full {
+  --agent-selection-bg: rgba(129, 147, 230, 0.22);
+}
+
+.theme-dark .msg-full {
+  --agent-selection-bg: rgba(129, 147, 230, 0.32);
+}
+
+.msg-full ::selection {
+  background: var(--agent-selection-bg);
 }
 
 /* ═══ 输入框超长折叠 chip ═══
