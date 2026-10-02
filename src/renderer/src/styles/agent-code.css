@@ -570,7 +570,7 @@
   scrollbar-gutter: auto;
 }
 
-.chat-msg-markdown .table-node-wrapper > table {
+.chat-msg-markdown .table-node-wrapper>table {
   border-collapse: separate;
   border-spacing: 0;
   margin: 0;
@@ -2626,10 +2626,11 @@ html.is-panel-resizing .agent-think-body .table-node {
 }
 
 .agent-code-proj-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: var(--z-panel);
+  /* fixed + portal 到 body（见 AgentSessionSidebar 的 RowMenu）：会话列表这条链上全是裁剪
+     容器，absolute 往下探会被裁掉；坐标由 JS 实测后写成内联 top/left。挂到 body 后也不再
+     受 .sidebar-wrapper 那层 z-index:10 的封顶 */
+  position: fixed;
+  z-index: var(--z-modal);
   min-width: 132px;
   margin: 0;
   padding: 4px;
@@ -2735,13 +2736,18 @@ html.is-panel-resizing .agent-think-body .table-node {
 
 .agent-welcome {
   /* ── 欢迎页配色 ──
-     全站是灰阶语言（--accent 本身就是纯黑），欢迎页是唯一「上色」的地方：
-     它是空状态的门面，用两套模式色区分通用 / 编码，比纯灰更容易一眼分辨。
-     颜色只落在图标、描边与极浅底纹上，正文仍走 --text 系列，可读性不受影响。
-     通用 = 蓝，编码 = 紫，hero 图标取两者之间的靛蓝做呼应。 */
-  --wc-chat: #2563eb;
-  --wc-code: #7c3aed;
+     全站是灰阶语言，欢迎页也收敛到同一套：hero 图标保留一点靛蓝做视觉落点，
+     下面的模式选择则完全走中性色——它已收成一颗分段控件，选中态由「更亮的浅色面板」
+     而非模式色来表达，原先那两套区分通用 / 编码的彩色（--wc-chat / --wc-code）
+     随之退场。 */
   --wc-hero: #6366f1;
+  /* 分段控件的轨道：由正文色掺进底色派生——浅色主题里压深一档、深色主题里提亮一档，
+     两种主题下都能从 --bg 上分辨出来，不必各写一份。 */
+  --wc-track: color-mix(in srgb, var(--text) 8%, var(--bg));
+  /* 选中胶囊：不用任何深色实心——它取「界面底色朝白提亮一档」（浅色下约 #f7f7f9，≈ --surface），
+     选中项于是像一块从轨道里浮起来的浅色面板，跟整页的浅灰面同属一套；
+     深色主题下同样比轨道更亮一档，「选中 = 更亮」的关系在两边保持一致。 */
+  --wc-pill: color-mix(in srgb, var(--bg) 84%, #ffffff);
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -2777,117 +2783,60 @@ html.is-panel-resizing .agent-think-body .table-node {
   color: var(--text-secondary);
 }
 
-/* ── 欢迎页的工作区选择：两张大卡片 ──
+/* ── 欢迎页的工作区选择：分段控件 ──
    这是模式的主要入口（会话栏顶部的分段控件用于「对话过程中随时切」，这里用于「开始前先选」）。
-   两套模式色经 --mode-accent 下发，图标 / 描边 / 选中底纹 / 勾选 / 标题色全部由它派生，
-   换色只需改 .agent-welcome 上那两个变量。
-   选中态不用 --accent 实心：亮色主题下 --accent = #0a0a0a，实心会变成一块纯黑。 */
+   整块收成一颗贴合内容的胶囊：外圈是略深的轨道，选中项被一块更亮的浅色面板托起（配 --shadow 微微浮起），
+   文字同步加深——全程只用界面的中性色，不出现深色实心块。 */
 .agent-welcome-modes {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  width: 100%;
-  /* 与输入框内侧同宽（见 .agent-code-chat.hero-input 里的 --hero-inner） */
-  max-width: var(--hero-inner, 520px);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--wc-track);
   margin-top: 4px;
 }
 
 .agent-mode-card {
-  --mode-accent: var(--text-muted);
-  --mode-tint: var(--surface-hover);
-  position: relative;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 34px 14px 16px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius, 10px);
-  background: var(--surface);
-  color: var(--text);
+  gap: 7px;
+  padding: 5px 13px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
   font-family: inherit;
-  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
   cursor: pointer;
-  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease, transform .08s ease;
-}
-
-.agent-mode-card.mode-chat {
-  --mode-accent: var(--wc-chat);
-  --mode-tint: color-mix(in srgb, var(--wc-chat) 12%, var(--surface));
-}
-
-.agent-mode-card.mode-code {
-  --mode-accent: var(--wc-code);
-  --mode-tint: color-mix(in srgb, var(--wc-code) 12%, var(--surface));
+  transition: background .15s ease, color .15s ease, transform .08s ease;
 }
 
 .agent-mode-card:hover {
-  background: var(--mode-tint);
-  border-color: color-mix(in srgb, var(--mode-accent) 40%, var(--border-strong));
-  box-shadow: var(--shadow);
+  color: var(--text);
 }
 
 .agent-mode-card:active {
   transform: translateY(1px);
 }
 
+/* 选中项：浅色面板 + 深字。文字从次级灰加深到 --text，靠这层对比而不是深色块来指示「当前模式」 */
 .agent-mode-card.active,
 .agent-mode-card.active:hover {
-  background: var(--mode-tint);
-  border-color: color-mix(in srgb, var(--mode-accent) 65%, transparent);
+  background: var(--wc-pill);
+  color: var(--text);
+  box-shadow: var(--shadow);
 }
 
+/* 图标跟着文字走：未选中是次级灰，选中随按钮加深成 --text，不再单独着色 */
 .agent-mode-card-icon {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid color-mix(in srgb, var(--mode-accent) 25%, transparent);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--mode-accent) 18%, var(--surface));
-  color: var(--mode-accent);
-}
-
-.agent-mode-card.active .agent-mode-card-icon {
-  border-color: color-mix(in srgb, var(--mode-accent) 45%, transparent);
-  background: color-mix(in srgb, var(--mode-accent) 26%, var(--surface));
-}
-
-.agent-mode-card-body {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.agent-mode-card-name {
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.2;
-  color: var(--text);
-}
-
-/* 选中的那个模式，名字直接取自己的模式色：一眼看出「现在是哪一个」 */
-.agent-mode-card.active .agent-mode-card-name {
-  color: var(--mode-accent);
-}
-
-.agent-mode-card-desc {
-  font-size: 11px;
-  line-height: 1.3;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* 选中标记钉在右上角；卡片已预留 padding-right 34px，不会压到文字 */
-.agent-mode-card-check {
-  position: absolute;
-  top: 11px;
-  right: 11px;
-  color: var(--mode-accent);
 }
 
 .agent-welcome-suggestions {
@@ -7320,7 +7269,7 @@ html.is-panel-resizing .agent-think-body .table-node {
    选择器同样要带 .table-node-wrapper 这一层（原因见 527 行）：markstream 挂在 <table>/<th>/<td> 上的
    .my-8 / .text-sm / .p-[calc(4/7*1em)] 是 0,2,0，裸写 .agent-think-body table 只有 0,1,1 压不过去，
    margin-top 会被顶成 2rem。 */
-.agent-think-body .table-node-wrapper > table {
+.agent-think-body .table-node-wrapper>table {
   border-collapse: collapse;
   margin: 0 0 8px;
   font-size: 12.5px;

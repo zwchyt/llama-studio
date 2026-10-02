@@ -17,7 +17,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Bot, Database, Copy, Check, ImageDown, FileDown, Wrench } from 'lucide-react'
-import html2canvas from 'html2canvas'
 import {
   BookOpenIcon, BrainIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon,
   CodeIcon, GitBranchIcon, GlobeIcon, LoaderIcon, MessageSquareIcon, PencilIcon,
@@ -271,6 +270,9 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     if (!el || exporting) return
     setExporting(true)
     try {
+      // 按需加载：html2canvas 只在「导出为图片」这一个动作里用得到，静态 import 会把它整包
+      // 算进工作台主 chunk（首次进入要下的那 7.3MB 的一部分）。
+      const { default: html2canvas } = await import('html2canvas')
       const canvas = await html2canvas(el, { useCORS: true, backgroundColor: '#fff' })
       const filePath = await window.api.savePng(canvas.toDataURL('image/png'))
       notify(`PNG 已保存: ${filePath}`, 'success')
@@ -550,9 +552,9 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
         </div>
       )
     })
-  // speakingId 必须在依赖里：朗读态是逐条消息的，漏掉它列表会一直用旧的 null 渲染，
-  // 按钮永远停在「朗读」、再点一次变成重新朗读而不是停止。
-  // 传给行的是布尔（布尔只影响命中那一行），直接传 id 会让窗口内所有行都换 prop 而整屏重渲染。
+    // speakingId 必须在依赖里：朗读态是逐条消息的，漏掉它列表会一直用旧的 null 渲染，
+    // 按钮永远停在「朗读」、再点一次变成重新朗读而不是停止。
+    // 传给行的是布尔（布尔只影响命中那一行），直接传 id 会让窗口内所有行都换 prop 而整屏重渲染。
   }, [activeSession, historyStartIndex, virtual.windowStart, virtual.windowEnd, streaming, loading, thinkDone, editingMsgId, editDraft, confirmEdit, copyMessage, editAt, resendAt, branchAt, msgRowActionsRef, modelLabelRef, streamStartAtRef, handleStreamRate, runningCard, setEditDraft, setEditingMsgId, plainChat, speakingId])
   return (
     <div className="agent-code-view">
@@ -730,34 +732,30 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                 </div>
 
                 {/* ── 工作区选择（欢迎页是模式的主要入口）──
-                    两张大卡片：点一下即切换工作区与列表。会话栏顶部那个分段控件
-                    仍然保留——它的用途是「对话过程中随时切」，这里则是「开始前先选」。 */}
+                    紧凑的分段控件：点一下即切换工作区与列表。会话栏顶部那个分段控件
+                    仍然保留——它的用途是「对话过程中随时切」，这里则是「开始前先选」。
+                    两段各自的一句话说明（无工作区 · 知识库 · 网页 / 文件树 · 终端 · 变更）
+                    在单行胶囊里放不下，改挂到 title 上，悬停仍能看到。 */}
                 <div className="agent-welcome-modes">
                   <button
                     type="button"
                     className={`agent-mode-card mode-chat${plainChat ? ' active' : ''}`}
                     aria-pressed={plainChat}
+                    title="无工作区 · 知识库 · 网页"
                     onClick={() => switchMode('chat')}
                   >
-                    <span className="agent-mode-card-icon"><MessageSquareIcon size={16} /></span>
-                    <span className="agent-mode-card-body">
-                      <span className="agent-mode-card-name">通用模式</span>
-                      <span className="agent-mode-card-desc">无工作区 · 知识库 · 网页</span>
-                    </span>
-                    {plainChat && <CheckIcon size={13} className="agent-mode-card-check" />}
+                    <span className="agent-mode-card-icon"><MessageSquareIcon size={15} /></span>
+                    聊天模式
                   </button>
                   <button
                     type="button"
                     className={`agent-mode-card mode-code${plainChat ? '' : ' active'}`}
                     aria-pressed={!plainChat}
+                    title="文件树 · 终端 · 变更"
                     onClick={() => switchMode('code')}
                   >
-                    <span className="agent-mode-card-icon"><CodeIcon size={16} /></span>
-                    <span className="agent-mode-card-body">
-                      <span className="agent-mode-card-name">编码模式</span>
-                      <span className="agent-mode-card-desc">文件树 · 终端 · 变更</span>
-                    </span>
-                    {!plainChat && <CheckIcon size={13} className="agent-mode-card-check" />}
+                    <span className="agent-mode-card-icon"><CodeIcon size={15} /></span>
+                    编码模式
                   </button>
                 </div>
               </div>

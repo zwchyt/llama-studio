@@ -441,7 +441,7 @@ export function useAgentLoop({
     // 会变成两条重复项），也不按 replace 清空（快照本身是不完整的清单，清空＝误删）。
     // fromStream=false：toolcall_end 的完整参数，按 merge 语义正常处理。
     const applyTodoWriteArgs = (rawArgs: string, fromStream: boolean): void => {
-      let args: { title?: string; merge?: boolean; todos?: Array<{ id?: string; [k: string]: unknown }> }
+      let args: { title?: string; merge?: boolean; todos?: Array<{ id?: string;[k: string]: unknown }> }
       try {
         args = JSON.parse(rawArgs)
       } catch (e) {

@@ -505,8 +505,8 @@ export function createWorkerExecutors(
     askUser: (questions) => callToolEvent<string>({ type: 'ask', questions }),
     approve: (toolName, args) => callToolEvent<boolean>({ type: 'approve', toolName, args }),
     // recordUndo/removeUndo/undo 由 PiAgentManager 构造时在 worker 内包装（撤销备份存 worker 本地即可）
-    recordUndo: () => {},
-    removeUndo: () => {},
+    recordUndo: () => { },
+    removeUndo: () => { },
     undo: async () => ({ success: false, error: '撤销未启用' })
   }
 }

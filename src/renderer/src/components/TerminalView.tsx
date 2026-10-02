@@ -183,7 +183,7 @@ function TermScreen({ id, visible, store }: { id: string; visible: boolean; stor
     const term = createTerminal(id, el)
     const onResize = term.onResize(({ cols, rows }) => {
       if (!ptyReady) return
-      window.api.terminalResize(id, cols, rows).catch(() => {})
+      window.api.terminalResize(id, cols, rows).catch(() => { })
     })
     attach(id, el)
 
@@ -216,7 +216,7 @@ function TermScreen({ id, visible, store }: { id: string; visible: boolean; stor
       ptyReady = true
     }
 
-    const onData = term.onData((d) => { window.api.terminalInput(id, d).catch(() => {}) })
+    const onData = term.onData((d) => { window.api.terminalInput(id, d).catch(() => { }) })
 
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown') return true
@@ -241,7 +241,7 @@ function TermScreen({ id, visible, store }: { id: string; visible: boolean; stor
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
     const onThemeChange = () => updateTerminalTheme(id)
     mq.addEventListener('change', onThemeChange)
-    const unsubKeybinds = subscribeTerminalStore(() => {})
+    const unsubKeybinds = subscribeTerminalStore(() => { })
     return () => {
       unsubKeybinds()
       mq.removeEventListener('change', onThemeChange)

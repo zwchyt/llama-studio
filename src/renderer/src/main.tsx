@@ -1,3 +1,6 @@
+// 必须排在 react-dom 之前：ReactDOM 在模块求值阶段就读 __REACT_DEVTOOLS_GLOBAL_HOOK__，
+// 晚一步就拦不住「Download the React DevTools」提示（见该文件内的说明）。
+import './devtools-silence'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import ToastContainer from './components/ToastContainer'

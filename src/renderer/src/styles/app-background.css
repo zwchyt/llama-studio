@@ -55,3 +55,16 @@ html.theme-dark .app.has-bg :is(.settings-view, .about-container, .engines-view,
   --bg: color-mix(in srgb, #24272d var(--app-bg-fill), transparent);
   --surface: color-mix(in srgb, #2b2f36 var(--app-bg-fill), transparent);
 }
+
+/* ── 浮动弹窗 / 菜单：把 --surface 钉回实心 ──
+   它们浮在内容之上、临时出现，跟着 --surface 变透会把底下的正文和背景图一起透上来，读不清。
+   做法与上面那几页同源（在这些根上重写 --surface），只是方向相反：指回不吃 .has-bg 重写的
+   实心快照 --surface-solid（:root 里定义，主题切换时在 html 上跟着解析）。弹窗自己的
+   background: var(--surface) 因此自动变实心，不必逐个改选择器，也不跟各弹窗的权重打架。 */
+.app.has-bg :is(
+  .chat-at-file-pop, .chat-slash-pop, .chat-workspace-menu, .chat-branch-menu,
+  .chat-model-logo-menu, .chat-model-picker, .chat-think-level-menu, .chat-search-menu,
+  .agent-code-tools-menu, .agent-code-proj-menu, .agent-task-card
+) {
+  --surface: var(--surface-solid);
+}

@@ -73,6 +73,34 @@ function pruneBlankSessions(list: AgentProject[]): AgentProject[] {
   })
 }
 
+/** 编码模式的展开态收敛：只展开传入的那个工作区，其余收起。
+    （展开态原先各项目各自持久化，新建时一律 true，于是每次启动所有项目都摊开。） */
+function focusProject(list: AgentProject[], pid: string): AgentProject[] {
+  return list.map(p => {
+    if (isChatWorkspace(p)) return p
+    const want = p.id === pid
+    return p.expanded === want ? p : { ...p, expanded: want }
+  })
+}
+
+/** 活动工作区指针的持久化键：刷新 / 重启后回到上次选的工作目录，而不是列表第一个。
+    纯界面偏好，走 localStorage（与 sidebarStore 的 sidebarHoverExpand 一致）。 */
+const ACTIVE_PID_KEY = 'agentActiveProjectId'
+
+function readActivePids(): Partial<Record<AgentMode, string>> {
+  try {
+    const raw = localStorage.getItem(ACTIVE_PID_KEY)
+    const obj: unknown = raw ? JSON.parse(raw) : null
+    return obj && typeof obj === 'object' ? (obj as Partial<Record<AgentMode, string>>) : {}
+  } catch { return {} }
+}
+
+function writeActivePid(m: AgentMode, pid: string): void {
+  try {
+    localStorage.setItem(ACTIVE_PID_KEY, JSON.stringify({ ...readActivePids(), [m]: pid }))
+  } catch { /* 存储不可用（隐私模式等）就静默降级：只是记不住上次的工作目录 */ }
+}
+
 export function useAgentProjects({ storedProjects }: {
   storedProjects: AgentProject[]
 }) {
@@ -106,20 +134,46 @@ export function useAgentProjects({ storedProjects }: {
     return pruneBlankSessions(ensureChatWorkspace(hasReal ? normalizeProjects(stored) : [freshProject('新项目')]))
   }
 
-  const [projects, setProjects] = useState<AgentProject[]>(() => initialProjects(storedProjects))
+  /** 该模式的初始活动指针：优先回到上次选中的工作目录，它已不存在才退回列表第一条 */
+  const pickActive = useCallback((list: AgentProject[], m: AgentMode): { pid: string; sid: string } => {
+    const stored = readActivePids()[m]
+    const p = list.find(x => projectMode(x) === m && x.id === stored) ?? list.find(x => projectMode(x) === m)
+    return { pid: p?.id ?? '', sid: newestSession(p?.sessions ?? [])?.id ?? '' }
+  }, [])
+
+  const [projects, setProjects] = useState<AgentProject[]>(() => {
+    const base = initialProjects(storedProjects)
+    // 展开态收敛：编码模式只展开「当前工作目录」那一组（存档里多为全 true，见 focusProject）
+    return focusProject(base, pickActive(base, 'code').pid)
+  })
 
   // ── 当前模式 + 每模式独立的活动指针 ──
   // 模式放在全局 store：侧栏的「对话 / 工作台」两个导航项在本组件之外，既读它点亮，也写它切换。
   const mode = useStore(s => s.agentMode)
   const setMode = useStore(s => s.setAgentMode)
-  const [activeIds, setActiveIds] = useState<ModePointers>(() => {
-    const pick = (m: AgentMode) => {
-      const p = projects.find(x => projectMode(x) === m)
-      // 首次进入落在「最后活跃最新」的那条会话上，而不是数组第一条（那条最旧）
-      return { pid: p?.id ?? '', sid: newestSession(p?.sessions ?? [])?.id ?? '' }
-    }
-    return { code: pick('code'), chat: pick('chat') }
-  })
+  const [activeIds, setActiveIds] = useState<ModePointers>(() => ({
+    code: pickActive(projects, 'code'),
+    chat: pickActive(projects, 'chat'),
+  }))
+
+  // 活动指针落盘，下次启动由 pickActive 取回。
+  // 跳过占位项目：它是本地合成的空壳，存档还没加载完时写进去会覆盖存档里真实的项目 id。
+  useEffect(() => {
+    const pid = activeIds[mode].pid
+    if (!pid || pid === DEFAULT_PROJECT_ID) return
+    writeActivePid(mode, pid)
+  }, [activeIds, mode])
+
+  // 展开态跟随活动工作区：只展开当前目录那一组。
+  // 集中在此收敛——改活动工作区的入口不止侧栏，新建 / 删除项目、输入区目录菜单、会话导入都会改它。
+  useEffect(() => {
+    if (mode !== 'code') return
+    const pid = activeIds.code.pid
+    setProjects(prev => {
+      const next = focusProject(prev, pid)
+      return next.some((p, i) => p !== prev[i]) ? next : prev
+    })
+  }, [mode, activeIds.code.pid])
 
   /** 当前模式的可见工作区列表（通用模式只有那条伪项目；编码模式只有真实项目） */
   const visibleProjects = useMemo(() => {
@@ -365,13 +419,11 @@ export function useAgentProjects({ storedProjects }: {
       启动时当前模式固定是 code，通用模式的指针就播不进去。 */
   const hydrateProjects = useCallback((stored: AgentProject[]) => {
     const next = pruneBlankSessions(ensureChatWorkspace(normalizeProjects(stored)))
-    setProjects(next)
-    const pick = (m: AgentMode) => {
-      const p = next.find(x => projectMode(x) === m)
-      return { pid: p?.id ?? '', sid: newestSession(p?.sessions ?? [])?.id ?? '' }
-    }
-    setActiveIds({ code: pick('code'), chat: pick('chat') })
-  }, [])
+    const code = pickActive(next, 'code')
+    // 水合时一并收敛展开态：否则启动瞬间所有项目都是摊开的（存档里 expanded 多为 true）
+    setProjects(focusProject(next, code.pid))
+    setActiveIds({ code, chat: pickActive(next, 'chat') })
+  }, [pickActive])
 
   /** 通用工作区（伪项目）；不存在时返回 null（状态层有 ensure，正常必有） */
   const chatWorkspace = useMemo(() => projects.find(isChatWorkspace) ?? null, [projects])

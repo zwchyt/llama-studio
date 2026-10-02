@@ -49,24 +49,6 @@ monaco.languages.setMonarchTokensProvider('json', {
   },
 })
 
-const EXT_LANG: Record<string, string> = {
-  js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
-  ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
-  py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
-  c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', hpp: 'cpp', cs: 'csharp',
-  html: 'html', htm: 'html', css: 'css', scss: 'scss', less: 'less',
-  json: 'json', jsonc: 'json', md: 'markdown', markdown: 'markdown',
-  sh: 'shell', bash: 'shell', zsh: 'shell', ps1: 'powershell',
-  sql: 'sql', yml: 'yaml', yaml: 'yaml', toml: 'ini', ini: 'ini',
-  xml: 'xml', svg: 'xml', vue: 'html', php: 'php', lua: 'lua',
-  kt: 'kotlin', swift: 'swift', dart: 'dart', r: 'r',
-}
-
-export function extToMonacoLang(path: string): string | undefined {
-  const ext = (/\.([a-z0-9]+)$/i.exec(path)?.[1] || '').toLowerCase()
-  return EXT_LANG[ext]
-}
-
 interface MonacoEditorProps {
   value: string
   language?: string

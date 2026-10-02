@@ -649,6 +649,23 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
   const staged = data?.staged ?? []
   const unstaged = data?.unstaged ?? []
   const total = staged.length + unstaged.length
+  // 复制所有更改：把「更改」组里每个文件按与单文件复制同一套行格式（+/-/空格 前缀）拼成一段文本。
+  // 行文本取自 parseUnifiedDiff（它剥掉了 diff/--- /+++ 头部），所以每个文件自己补一行 `# 路径`
+  // 当分隔；未跟踪文件没有 diff，按其内容当作「全部新增」（取数方式与 stats 一致）。
+  const [allCopied, setAllCopied] = useState(false)
+  const handleCopyAll = useCallback(async () => {
+    const text = unstaged.map(f => {
+      const rows = f.untracked ? contentToRows(f.content || '') : parseUnifiedDiff(f.diff).rows
+      const body = rows.map(r => (r.type === 'add' ? '+' : r.type === 'del' ? '-' : ' ') + r.text).join('\n')
+      return body ? `# ${f.path}\n${body}` : ''
+    }).filter(Boolean).join('\n\n')
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+      setAllCopied(true)
+      setTimeout(() => setAllCopied(false), 1200)
+    } catch { /* 剪贴板不可用 */ }
+  }, [unstaged])
   // 当前作用域下的变更文件清单：第 2 区统计与第 4 区跳转列表都从它取；已提交/分支作用域没有工作区清单
   const scopeFiles = useMemo<GitFileChange[]>(() => {
     if (scope === 'staged') return staged
@@ -887,6 +904,9 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
             ))}
             {(scope === 'uncommitted' || scope === 'unstaged') && renderGroup('更改', unstaged, 'unstaged', unstagedTree, (
               <>
+                <button className="agent-git-copy" title="复制所有更改" onClick={handleCopyAll}>
+                  {allCopied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+                </button>
                 <button className="agent-git-copy agent-git-discard" title="取消所有更改" onClick={handleDiscardAll}>
                   <HistoryIcon size={12} />
                 </button>

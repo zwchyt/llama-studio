@@ -1,6 +1,6 @@
 import { createWithEqualityFn } from 'zustand/traditional'
 import { shallow } from 'zustand/shallow'
-import { disposeTerminal } from '../utils/terminalRegistry'
+import { disposeTerminal } from '../utils/terminalSink'
 
 export interface TerminalMeta {
   id: string

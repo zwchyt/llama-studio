@@ -151,6 +151,24 @@
   const newId = () => 'ann-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
 
   // ── 数据同步 ──
+  // postMessage 合并：sync() 挂在 scroll / mousemove / resize 这些高频道上（见文件末尾的绑定），
+  // 逐次推送会让宿主每条消息都跑一遍 message handler。这里合并到「每帧至多一条」；
+  // 宿主侧本来就按内容去重，少发不会丢状态。
+  let postRaf = 0
+  const postToHost = () => {
+    if (postRaf) return
+    postRaf = requestAnimationFrame(() => {
+      postRaf = 0
+      try {
+        // iframe 嵌入（HTML 预览同源）：事件驱动 postMessage 推送给宿主，免轮询开销；
+        // webview 顶层页面（window.parent === window）不推送，宿主走轮询
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({ source: 'agent-annotate', data: { active, annotations: annotations.slice() } }, '*')
+        }
+      } catch {}
+    })
+  }
+
   const sync = () => {
     try {
       window.__agentAnnotateData = { active, annotations: annotations.slice() }
@@ -158,11 +176,7 @@
       const key = STORAGE_KEY + ':' + location.host + location.pathname
       if (annotations.length) localStorage.setItem(key, JSON.stringify({ ts: Date.now(), annotations }))
       else localStorage.removeItem(key)
-      // iframe 嵌入（HTML 预览同源）：事件驱动 postMessage 推送给宿主，免轮询开销；
-      // webview 顶层页面（window.parent === window）不推送，宿主走轮询
-      if (window.parent && window.parent !== window) {
-        window.parent.postMessage({ source: 'agent-annotate', data: { active, annotations: annotations.slice() } }, '*')
-      }
+      postToHost()
     } catch {}
   }
 

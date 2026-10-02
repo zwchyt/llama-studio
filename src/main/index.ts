@@ -1,9 +1,9 @@
-import { app, shell, BrowserWindow, Menu, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, Menu, ipcMain, session, protocol, net } from 'electron'
 import { join, resolve } from 'path'
-import { fileURLToPath } from 'url'
+import { fileURLToPath, pathToFileURL } from 'url'
 import { tmpdir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { registerIpcHandlers, cleanupRunningProcesses } from './ipc'
+import { registerIpcHandlers, cleanupRunningProcesses, ipcInternal } from './ipc'
 import { registerPiAgentIpc, disposePiAgentIpc } from './services/piAgentBridge/piAgentIpc'
 import { initAgentBrowserPreview } from './services/agentBrowserService'
 import { appendFileSync } from 'fs'
@@ -128,8 +128,46 @@ function createWindow(): BrowserWindow {
   }
   return mainWindow
 }
+
+/** 预览资源自定义协议：预览 iframe 走 about:srcdoc，Chromium 不允许它加载 file:// 本地资源
+ *  （控制台报 Not allowed to load local resource）。改由主进程用 app:// 提供工作区内的文件。
+ *  必须在 app ready 之前声明为特权 scheme：standard 让相对路径能解析（预览页注入了
+ *  <base href="app://local/<dir>/">），secure 让它不被当成不安全来源，supportFetchAPI
+ *  让 fetch / 字体 / 样式都走得通。 */
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
+])
+
+/** 渲染进程的 CSP（与 src/renderer/index.html 的 <meta> 一致，且**不含 'unsafe-eval'**）。
+ *  meta 版只在文档里生效，而 Electron 的开发者安全检查看的是响应头，没头就报「no CSP set」；
+ *  同时 unsafe-eval 是那条警告单独列出的第二种情况，带上它等于没修。
+ *  app: 是上面那个预览资源协议，预览 iframe 继承这份策略，不放行它 css/js 全加载不到。 */
+const RENDERER_CSP = [
+  "default-src 'self' app: http://localhost:*",
+  "connect-src 'self' app: http://* https://*",
+  "frame-src * http://localhost:*",
+  "script-src 'self' 'unsafe-inline' app:",
+  "style-src 'self' 'unsafe-inline' https: app:",
+  "font-src 'self' data: https: app:",
+  "img-src 'self' data: blob: https://* app:",
+  "media-src 'self' blob: app:",
+].join('; ')
+
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.llama-studio')
+  // ── CSP 响应头 ──（dev 走 localhost 开发服务器，打包走 file://，统一补上）
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [RENDERER_CSP] },
+    })
+  })
+  // ── 预览资源：app://local/<绝对路径> → 工作区内的真实文件 ──
+  // 越界 / 不存在一律 404（范围判定在 ipc.ts 的 resolvePreviewAsset，锁死在工作区内）。
+  protocol.handle('app', (request) => {
+    const filePath = ipcInternal.resolvePreviewAsset?.(new URL(request.url).pathname)
+    if (!filePath) return new Response('Not found', { status: 404 })
+    return net.fetch(pathToFileURL(filePath).toString())
+  })
   // ── 窗口控制 IPC ──
   ipcMain.handle('window-minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize())
   ipcMain.handle('window-maximize', (e) => {

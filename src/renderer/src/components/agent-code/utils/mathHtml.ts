@@ -9,6 +9,9 @@ import katex from 'katex'
 // 支持分隔符：$$...$$、$...$、\[...\]、\(...\)
 // 跳过 <script>/<style>/<code>/<pre> 块内的内容。
 export function renderMathInHtml(html: string): string {
+  // 没有任何公式分隔符就原样返回：下面几条正则都要扫全文，大文件上这一趟并不便宜，
+  // 而绝大多数预览页根本没有公式（且本函数在预览构建里是热点路径）。
+  if (!html.includes('$') && !html.includes('\\(') && !html.includes('\\[')) return html
   const SKIP_RE = /<(script|style|code|pre|textarea)[\s\S]*?<\/\1>/gi
   const protected_: string[] = []
   let work = html.replace(SKIP_RE, (m) => { protected_.push(m); return `\x00SKIP${protected_.length - 1}\x00` })

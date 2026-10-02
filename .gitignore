@@ -129,6 +129,9 @@ scripts/.test-*
 # Vinv local artifacts (captures, index, reports)
 .vinv/
 
+# Vite 加载 TS 配置时的临时转译产物（异常退出时会残留）
+electron.vite.config.*.mjs
+
 # ── 测试基础设施产物（本地生成，不入库）──
 test-results/
 playwright-report/

@@ -546,57 +546,57 @@ export function AgentInputArea({
               </button>
               {/* 与搜索/思考等级菜单同一套弹出逻辑：打开才挂载，点外部或 Esc 关闭 */}
               {modelPickerOpen && (
-              <div ref={modelPickerRef} className="chat-model-picker" style={{ width: modelPickerWidth }}>
-                {modelGroups.map(group => (
-                  <div key={group.title} className="chat-model-group">
-                    <div className="chat-model-group-title">{group.title}</div>
-                    {group.rows.map(row => {
-                      const card = row.card
-                      // 端点记录：卡片行按 endpointId 查，端点行（还没建卡）就是它自己
-                      const ep = card ? endpointOfCard(card, modelEndpoints) : row.endpoint
-                      const running = card?.status === 'running'
-                      const pick = () => { if (card) void handleModelAction(card); else if (row.endpoint) void pickEndpointModel(row.endpoint, row.modelId ?? '') }
-                      return (
-                        <div key={row.key} className={`chat-model-item ${card ? card.status : 'idle'}${card ? '' : ' pending'}`} title={row.name} onClick={pick}>
-                          <div className="chat-model-logo" onClick={e => { if (!card) return; e.stopPropagation(); toggleLogoMenu(e, card) }}>
-                            {card && modelLogos[card.template.id]
-                              ? <img src={modelLogos[card.template.id]!} alt={row.name} className="chat-model-logo-img" />
-                              : ep ? <ServerIcon size={11} /> : <ImageIcon size={11} />}
-                          </div>
-                          <div className="chat-model-item-info">
-                            <div className="chat-model-item-name">{row.name}</div>
-                            {card && modelCaps[card.template.id] && (
-                              <span className="chat-model-caps">
-                                {modelCaps[card.template.id]?.thinking && <span className="chat-model-cap cap-thinking"><Brain size={11} /></span>}
-                                {modelCaps[card.template.id]?.tools && <span className="chat-model-cap cap-tools"><Wrench size={11} /></span>}
-                                {modelCaps[card.template.id]?.vision && <span className="chat-model-cap cap-vision"><Eye size={11} /></span>}
-                              </span>
-                            )}
-                            <div className="chat-model-item-tail">
-                              {running && <CheckIcon size={12} className="chat-model-item-check" />}
-                              <button
-                                className="chat-model-item-action"
-                                title={ep
-                                  ? (ep.kind === 'remote'
-                                    ? running ? '停用该端点（不会碰那边的服务）' : '探测并启用该端点'
-                                    : running ? '断开接管（不会关掉那边的服务）' : '接管该端口上的服务')
-                                  : undefined}
-                                onClick={e => { e.stopPropagation(); pick() }}
-                              >
-                                {running ? <CircleStopIcon size={12} /> : ep ? <ServerIcon size={12} /> : <PlayIcon size={12} />}
-                              </button>
+                <div ref={modelPickerRef} className="chat-model-picker" style={{ width: modelPickerWidth }}>
+                  {modelGroups.map(group => (
+                    <div key={group.title} className="chat-model-group">
+                      <div className="chat-model-group-title">{group.title}</div>
+                      {group.rows.map(row => {
+                        const card = row.card
+                        // 端点记录：卡片行按 endpointId 查，端点行（还没建卡）就是它自己
+                        const ep = card ? endpointOfCard(card, modelEndpoints) : row.endpoint
+                        const running = card?.status === 'running'
+                        const pick = () => { if (card) void handleModelAction(card); else if (row.endpoint) void pickEndpointModel(row.endpoint, row.modelId ?? '') }
+                        return (
+                          <div key={row.key} className={`chat-model-item ${card ? card.status : 'idle'}${card ? '' : ' pending'}`} title={row.name} onClick={pick}>
+                            <div className="chat-model-logo" onClick={e => { if (!card) return; e.stopPropagation(); toggleLogoMenu(e, card) }}>
+                              {card && modelLogos[card.template.id]
+                                ? <img src={modelLogos[card.template.id]!} alt={row.name} className="chat-model-logo-img" />
+                                : ep ? <ServerIcon size={11} /> : <ImageIcon size={11} />}
+                            </div>
+                            <div className="chat-model-item-info">
+                              <div className="chat-model-item-name">{row.name}</div>
+                              {card && modelCaps[card.template.id] && (
+                                <span className="chat-model-caps">
+                                  {modelCaps[card.template.id]?.thinking && <span className="chat-model-cap cap-thinking"><Brain size={11} /></span>}
+                                  {modelCaps[card.template.id]?.tools && <span className="chat-model-cap cap-tools"><Wrench size={11} /></span>}
+                                  {modelCaps[card.template.id]?.vision && <span className="chat-model-cap cap-vision"><Eye size={11} /></span>}
+                                </span>
+                              )}
+                              <div className="chat-model-item-tail">
+                                {running && <CheckIcon size={12} className="chat-model-item-check" />}
+                                <button
+                                  className="chat-model-item-action"
+                                  title={ep
+                                    ? (ep.kind === 'remote'
+                                      ? running ? '停用该端点（不会碰那边的服务）' : '探测并启用该端点'
+                                      : running ? '断开接管（不会关掉那边的服务）' : '接管该端口上的服务')
+                                    : undefined}
+                                  onClick={e => { e.stopPropagation(); pick() }}
+                                >
+                                  {running ? <CircleStopIcon size={12} /> : ep ? <ServerIcon size={12} /> : <PlayIcon size={12} />}
+                                </button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                ))}
-                <div className="chat-model-attach-sep" />
-                <button className="chat-model-attach-entry" onClick={() => { setModelPickerOpen(false); setView('endpoints') }}>
-                  <ServerIcon size={13} /> 管理外部端点…
-                </button>
-              </div>
+                        )
+                      })}
+                    </div>
+                  ))}
+                  <div className="chat-model-attach-sep" />
+                  <button className="chat-model-attach-entry" onClick={() => { setModelPickerOpen(false); setView('endpoints') }}>
+                    <ServerIcon size={13} /> 管理外部端点…
+                  </button>
+                </div>
               )}
             </div>
             {!plainChat && (

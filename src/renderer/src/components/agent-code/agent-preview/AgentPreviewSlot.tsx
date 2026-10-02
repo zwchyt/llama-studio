@@ -10,13 +10,14 @@
 //    该 hook 的返回值，props 数量可降到个位数。先拆视图是为了让 useAgentPreviewTabs
 //    的接口边界有据可依，而不是凭空设计。
 
-import React, { Suspense, useRef, useState, useEffect, useCallback } from 'react'
+import React, { Suspense, useDeferredValue, useRef, useState, useEffect, useCallback } from 'react'
 import { EllipsisVerticalIcon, ChevronRightIcon, EyeIcon, CodeIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, GlobeIcon, PencilIcon, PlusIcon, SaveIcon, SendIcon, MessageSquarePlusIcon, TerminalIcon, Trash2Icon, XIcon, CopyIcon } from '@animateicons/react/lucide'
 import AgentFileTree from '../../AgentFileTree'
 import AgentBrowser, { ANNOTATION_KIND_LABEL, type UiAnnotation } from '../../AgentBrowser'
 import AgentGitDiff from '../../AgentGitDiff'
-import TerminalView from '../../TerminalView'
-import { extToMonacoLang } from '../../MonacoEditor'
+// 从独立模块引（不是从 ../../MonacoEditor）：那句静态具名导入会把 monaco 整条依赖链拉进本 chunk，
+// 让下面的 React.lazy(MonacoEditor) 彻底失效。见 utils/monacoLang.ts 的说明。
+import { extToMonacoLang } from '../../../utils/monacoLang'
 import { useAgentTerminalStore } from '../../../store/terminalStore'
 import { useStore } from '../../../store/useStore'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
@@ -32,6 +33,9 @@ import type { PanelView, RightPanelMode } from '../hooks/useAgentUiState'
 import type { AgentProject } from '../../../../../shared/types'
 
 const MonacoEditor = React.lazy(() => import('../../MonacoEditor'))
+// 终端同理：它拖着整个 @xterm/*（含样式表），而只有用户切到「终端」面板时才需要。
+// 静态 import 会把它算进工作台主 chunk（首次进入要下的那 7.3MB）。
+const TerminalView = React.lazy(() => import('../../TerminalView'))
 
 type PreviewDomain = ReturnType<typeof useAgentPreviewTabs>
 
@@ -115,9 +119,16 @@ export function AgentPreviewSlot({
     htmlViewMode, setHtmlViewMode, mdViewMode, setMdViewMode,
     htmlPreviewRef, tabMenu, setTabMenu, tabMenuRef,
     previewHighlightLine, previewEditing, setPreviewEditing, previewDraft, setPreviewDraft,
-    isPreviewHtml, isPreviewMarkdown, buildHtmlSrcDoc,
+    isPreviewHtml, isPreviewMarkdown, htmlPreviewSrcDoc,
     openPreview, savePreviewFile, closeTab, closeOtherTabs, closeAllTabs,
   } = preview
+  // Markdown 预览：markstream 会把整篇文档同步解析 + 逐个块挂载，长文档一次上千毫秒。
+  // 直接读 activeTab.content 会让这份开销落进「点开文件」那次 click 处理器的同步渲染里，
+  // DevTools 就报 'click' handler took 1209ms。useDeferredValue 把这次渲染降到低优先级：
+  // 点击处理器立刻返回，解析与挂载挪到之后那次低优先级渲染（与 HTML 预览的 srcDoc 同一套处理）。
+  const deferredMdContent = useDeferredValue(
+    isPreviewMarkdown && mdViewMode === 'preview' ? (activeTab?.content ?? '') : '',
+  )
   // 文件树列在「非 files 视图」与通用模式下都不出现，两种情况都算「树已收起」。
   // 再加一条 !treeOpen：顶栏关闭 浏览器/终端/变更 时会把 mode 复位成 'files' 并同时
   // 收起面板，两个 state 在同一次渲染生效——若只看 mode，整块面板会在 200ms 的收起
@@ -369,7 +380,9 @@ export function AgentPreviewSlot({
               {terminalMounted && currentView === 'agent-code' && (
                 <div className={`agent-browser-wrap${rightPanelMode === 'terminal' ? '' : ' hidden'}`}>
                   <div className="agent-terminal">
-                    <TerminalView store={useAgentTerminalStore} workspaceDir={plainChat ? '' : activeProject.workspaceDir} />
+                    <Suspense fallback={<div className="file-tree-loading">加载终端…</div>}>
+                      <TerminalView store={useAgentTerminalStore} workspaceDir={plainChat ? '' : activeProject.workspaceDir} />
+                    </Suspense>
                   </div>
                 </div>
               )}
@@ -379,205 +392,205 @@ export function AgentPreviewSlot({
               {/* 预览列：文件树模式下与树并排；独立的「预览」工作区里它独占整列（此时树不出现）。
                   没标签时收起——但 preview 模式要留着空态提示，否则点开附件只见一条空槽。 */}
               <div className={`agent-code-preview-group ${openTabs.length === 0 && rightPanelMode !== 'files' && rightPanelMode !== 'preview' ? 'collapsed' : ''} ${rightPanelMode === 'browser' || rightPanelMode === 'terminal' || rightPanelMode === 'diff' ? 'hidden' : ''}`}>
-            <div className={`agent-code-preview${openTabs.length === 0 ? ' agent-code-preview--empty' : ''}`}>
-              <div className="agent-code-preview-header">
-                <div className="agent-code-preview-tabs">
-                  {openTabs.map((t, tabIdx) => (
-                    <div
-                      key={t.path}
-                      className={`agent-code-preview-tab ac-icon-btn ${t.path === activeTabPath ? 'active' : ''}`}
-                      onClick={() => setActiveTabPath(t.path)}
-                      onContextMenu={(e) => { e.preventDefault(); setTabMenu({ x: e.clientX, y: e.clientY, path: t.path }) }}
-                      onMouseDown={(e) => {
-                        const el = e.currentTarget
-                        el.setAttribute('draggable', 'true')
-                        const cleanup = () => { el.removeAttribute('draggable'); document.removeEventListener('mouseup', cleanup) }
-                        document.addEventListener('mouseup', cleanup)
-                      }}
-                      onDragStart={(e) => { e.dataTransfer.setData('text/x-tab-idx', String(tabIdx)); e.dataTransfer.effectAllowed = 'move' }}
-                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
-                      onDrop={(e) => {
-                        e.preventDefault()
-                        const fromIdx = Number(e.dataTransfer.getData('text/x-tab-idx'))
-                        if (isNaN(fromIdx) || fromIdx === tabIdx) return
-                        setOpenTabs(prev => {
-                          const next = [...prev]
-                          const [moved] = next.splice(fromIdx, 1)
-                          next.splice(tabIdx, 0, moved)
-                          return next
-                        })
-                      }}
-                      onDragEnd={(e) => { (e.currentTarget as HTMLElement).removeAttribute('draggable') }}
-                    >
-                      <span className="agent-code-preview-tab-name">{t.name}</span>
-                      <button
-                        className="agent-code-preview-tab-close"
-                        onClick={(e) => { e.stopPropagation(); closeTab(t.path) }}
-                      >
-                        <XIcon size={10} />
-                      </button>
+                <div className={`agent-code-preview${openTabs.length === 0 ? ' agent-code-preview--empty' : ''}`}>
+                  <div className="agent-code-preview-header">
+                    <div className="agent-code-preview-tabs">
+                      {openTabs.map((t, tabIdx) => (
+                        <div
+                          key={t.path}
+                          className={`agent-code-preview-tab ac-icon-btn ${t.path === activeTabPath ? 'active' : ''}`}
+                          onClick={() => setActiveTabPath(t.path)}
+                          onContextMenu={(e) => { e.preventDefault(); setTabMenu({ x: e.clientX, y: e.clientY, path: t.path }) }}
+                          onMouseDown={(e) => {
+                            const el = e.currentTarget
+                            el.setAttribute('draggable', 'true')
+                            const cleanup = () => { el.removeAttribute('draggable'); document.removeEventListener('mouseup', cleanup) }
+                            document.addEventListener('mouseup', cleanup)
+                          }}
+                          onDragStart={(e) => { e.dataTransfer.setData('text/x-tab-idx', String(tabIdx)); e.dataTransfer.effectAllowed = 'move' }}
+                          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
+                          onDrop={(e) => {
+                            e.preventDefault()
+                            const fromIdx = Number(e.dataTransfer.getData('text/x-tab-idx'))
+                            if (isNaN(fromIdx) || fromIdx === tabIdx) return
+                            setOpenTabs(prev => {
+                              const next = [...prev]
+                              const [moved] = next.splice(fromIdx, 1)
+                              next.splice(tabIdx, 0, moved)
+                              return next
+                            })
+                          }}
+                          onDragEnd={(e) => { (e.currentTarget as HTMLElement).removeAttribute('draggable') }}
+                        >
+                          <span className="agent-code-preview-tab-name">{t.name}</span>
+                          <button
+                            className="agent-code-preview-tab-close"
+                            onClick={(e) => { e.stopPropagation(); closeTab(t.path) }}
+                          >
+                            <XIcon size={10} />
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-                <span className="agent-code-preview-actions">
-                  {isPreviewHtml && (
-                    <button
-                      className="btn btn-xs ac-icon-btn agent-code-preview-htmltoggle"
-                      onClick={() => setHtmlViewMode(m => m === 'preview' ? 'source' : 'preview')}
-                      title={htmlViewMode === 'preview' ? '查看源码' : '渲染预览'}
-                    >
-                      {htmlViewMode === 'preview' ? <CodeIcon size={12} /> : <EyeIcon size={12} />}
-                    </button>
-                  )}
-                  {isPreviewMarkdown && (
-                    <button
-                      className="btn btn-xs ac-icon-btn agent-code-preview-mdtoggle"
-                      onClick={() => setMdViewMode(m => m === 'preview' ? 'source' : 'preview')}
-                      title={mdViewMode === 'preview' ? '查看源码' : '渲染预览'}
-                    >
-                      {mdViewMode === 'preview' ? <CodeIcon size={12} /> : <EyeIcon size={12} />}
-                    </button>
-                  )}
-                  {/* HTML 预览的 UI 注释：点击预览元素添加注释（发送给 Agent 自动定位修改） */}
-                  {isPreviewHtml && htmlViewMode === 'preview' && (
-                    <button
-                      className={`btn btn-xs ac-icon-btn agent-code-preview-annotate${htmlAnnotateActive ? ' active' : ''}`}
-                      onClick={toggleHtmlAnnotate}
-                    >
-                      <MessageSquarePlusIcon size={12} />
-                      {htmlAnnotations.length > 0 && <span className="agent-code-preview-annotate-count">{htmlAnnotations.length}</span>}
-                    </button>
-                  )}
-                  {/* 源码预览编辑：进入/退出编辑态；保存写回文件。
+                    <span className="agent-code-preview-actions">
+                      {isPreviewHtml && (
+                        <button
+                          className="btn btn-xs ac-icon-btn agent-code-preview-htmltoggle"
+                          onClick={() => setHtmlViewMode(m => m === 'preview' ? 'source' : 'preview')}
+                          title={htmlViewMode === 'preview' ? '查看源码' : '渲染预览'}
+                        >
+                          {htmlViewMode === 'preview' ? <CodeIcon size={12} /> : <EyeIcon size={12} />}
+                        </button>
+                      )}
+                      {isPreviewMarkdown && (
+                        <button
+                          className="btn btn-xs ac-icon-btn agent-code-preview-mdtoggle"
+                          onClick={() => setMdViewMode(m => m === 'preview' ? 'source' : 'preview')}
+                          title={mdViewMode === 'preview' ? '查看源码' : '渲染预览'}
+                        >
+                          {mdViewMode === 'preview' ? <CodeIcon size={12} /> : <EyeIcon size={12} />}
+                        </button>
+                      )}
+                      {/* HTML 预览的 UI 注释：点击预览元素添加注释（发送给 Agent 自动定位修改） */}
+                      {isPreviewHtml && htmlViewMode === 'preview' && (
+                        <button
+                          className={`btn btn-xs ac-icon-btn agent-code-preview-annotate${htmlAnnotateActive ? ' active' : ''}`}
+                          onClick={toggleHtmlAnnotate}
+                        >
+                          <MessageSquarePlusIcon size={12} />
+                          {htmlAnnotations.length > 0 && <span className="agent-code-preview-annotate-count">{htmlAnnotations.length}</span>}
+                        </button>
+                      )}
+                      {/* 源码预览编辑：进入/退出编辑态；保存写回文件。
                     Markdown 在「源码」模式下同样允许编辑（渲染态不可直接编辑）。
                     PDF / DOCX 不给编辑：预览的是抽取文本，写回会毁掉原文件（保存处另有兜底）。 */}
-                  {!isPreviewHtml && (!isPreviewMarkdown || mdViewMode === 'source') && activeTab && !activeTab.isBinaryDoc && activeTabPath !== GIT_DIFF_TAB && (
-                    previewEditing ? (
-                      <>
-                        <button className="btn btn-xs ac-icon-btn agent-code-preview-save" onClick={() => { if (previewDraft !== null) savePreviewFile(previewDraft) }} disabled={previewDraft === null || previewDraft === activeTab.content}>
-                          <SaveIcon size={12} /> 保存
-                        </button>
-                        <button className="btn btn-xs ac-icon-btn" onClick={() => { setPreviewDraft(null); setPreviewEditing(false) }}>
-                          <XIcon size={12} /> 取消
-                        </button>
-                      </>
-                    ) : (
-                      <button className="btn btn-xs ac-icon-btn" onClick={() => setPreviewEditing(true)} title="编辑此文件">
-                        <PencilIcon size={12} />
-                      </button>
-                    )
-                  )}
-                  <button className="btn btn-xs agent-code-preview-close ac-icon-btn" onClick={() => activeTab && closeTab(activeTab.path)} disabled={!activeTab}>
-                    <XIcon size={12} />
-                  </button>
-                </span>
-              </div>
-              {tabMenu && (() => {
-                const MENU_W = 160, MENU_H = 140
-                const x = Math.min(tabMenu.x, window.innerWidth - MENU_W - 8)
-                const y = Math.min(tabMenu.y, window.innerHeight - MENU_H - 8)
-                return (
-                  <div ref={tabMenuRef} className="file-tree-ctx-menu" style={{ left: Math.max(8, x), top: Math.max(8, y) }} onContextMenu={(e) => e.preventDefault()}>
-                    <button className="file-tree-ctx-item" onClick={() => { closeTab(tabMenu.path); setTabMenu(null) }}><XIcon size={13} /> 关闭</button>
-                    <button className="file-tree-ctx-item" onClick={() => { closeOtherTabs(tabMenu.path); setTabMenu(null) }}><XIcon size={13} /> 关闭其他</button>
-                    <button className="file-tree-ctx-item" onClick={() => { closeAllTabs(); setTabMenu(null) }}><Trash2Icon size={13} /> 关闭全部</button>
-                    {tabMenu.path !== GIT_DIFF_TAB && (
-                      <button className="file-tree-ctx-item" onClick={() => { navigator.clipboard.writeText(tabMenu.path).catch(() => { }); setTabMenu(null) }}><CopyIcon size={13} /> 复制路径</button>
-                    )}
-                  </div>
-                )
-              })()}
-              <div className="agent-code-preview-body">
-                {!activeTab ? (
-                  <div className="agent-code-preview-empty">
-                    <FolderOpenIcon size={36} className="agent-code-preview-empty-icon" />
-                    <span className="agent-code-preview-empty-title">选择文件以预览</span>
-                    <span className="agent-code-preview-empty-desc">{rightPanelMode === 'preview' ? '点击输入框里的附件，在此查看原文件' : '从左侧文件树中点击文件，在此处查看内容'}</span>
-                  </div>
-                )
-                  : activeTab.loading ? <div className="file-tree-loading">读取中…</div>
-                    : activeTab.error ? <div className="agent-code-preview-error">{activeTab.error}</div>
-                      : activeTab.isImage ? (
-                        activeTab.imageDataUrl
-                          ? <div className="agent-code-preview-image"><img src={activeTab.imageDataUrl} alt={activeTab.name} /></div>
-                          : <div className="agent-code-preview-error">无法预览该图片</div>
-                      )
-                        : activeTab.isPdf ? (
-                          // 版面渲染：pdf.js 逐页画 canvas（key 绑 path，切标签即销毁旧文档）
-                          // PdfViewer 是 lazy chunk（内含 pdfjs），Suspense 兜首帧加载占位
-                          activeTab.pdfData
-                            ? (
-                              <Suspense fallback={<div className="file-tree-loading">加载 PDF 渲染器…</div>}>
-                                <PdfViewer key={activeTab.path} data={activeTab.pdfData} />
-                              </Suspense>
-                            )
-                            : <div className="agent-code-preview-error">无法预览该 PDF</div>
+                      {!isPreviewHtml && (!isPreviewMarkdown || mdViewMode === 'source') && activeTab && !activeTab.isBinaryDoc && activeTabPath !== GIT_DIFF_TAB && (
+                        previewEditing ? (
+                          <>
+                            <button className="btn btn-xs ac-icon-btn agent-code-preview-save" onClick={() => { if (previewDraft !== null) savePreviewFile(previewDraft) }} disabled={previewDraft === null || previewDraft === activeTab.content}>
+                              <SaveIcon size={12} /> 保存
+                            </button>
+                            <button className="btn btn-xs ac-icon-btn" onClick={() => { setPreviewDraft(null); setPreviewEditing(false) }}>
+                              <XIcon size={12} /> 取消
+                            </button>
+                          </>
+                        ) : (
+                          <button className="btn btn-xs ac-icon-btn" onClick={() => setPreviewEditing(true)} title="编辑此文件">
+                            <PencilIcon size={12} />
+                          </button>
                         )
-                          : isPreviewHtml && htmlViewMode === 'preview' ? (
-                            <>
-                              <iframe
-                                ref={htmlPreviewRef}
-                                className="agent-code-preview-html"
-                                title={activeTab.name}
-                                // 不设 sandbox：预览页常需 localStorage/字体等同源能力，
-                                // 而 allow-scripts+allow-same-origin 的沙箱可被逃逸（Chromium
-                                // 每次挂载都告警），安全上等价于无沙箱。预览内容为用户
-                                // 本地生成的文件，直接同源运行，避免假沙箱告警与功能破坏。
-                                srcDoc={buildHtmlSrcDoc(activeTab.content ?? '', activeTab.path)}
-                                onLoad={injectHtmlAnnotate}
-                              />
-                              {/* UI 注释面板（复用浏览器注释面板样式） */}
-                              {htmlAnnotations.length > 0 && (
-                                <div className="agent-browser-annotations">
-                                  <div className="agent-browser-annotations-head">
-                                    <span>UI 注释（{htmlAnnotations.length}）</span>
-                                    <button className="agent-browser-annotations-clear" onClick={clearHtmlAnnotations}><Trash2Icon size={11} /> 清空</button>
-                                  </div>
-                                  <div className="agent-browser-annotations-list">
-                                    {htmlAnnotations.map(a => (
-                                      <div className="agent-browser-annotations-item" key={a.id}>
-                                        <div className="agent-browser-annotations-note">
-                                          <span className={`agent-ann-kind kind-${a.kind}`}>{ANNOTATION_KIND_LABEL[a.kind]}</span>{a.note}
-                                        </div>
-                                        {a.kind === 'area' && a.rect
-                                          ? <div className="agent-browser-annotations-sel" title={`${Math.round(a.rect.w)}×${Math.round(a.rect.h)} @ (${Math.round(a.rect.x)}, ${Math.round(a.rect.y)})`}>区域 {Math.round(a.rect.w)}×{Math.round(a.rect.h)} @ ({Math.round(a.rect.x)},{Math.round(a.rect.y)}) · 覆盖 {a.elements.length} 元素</div>
-                                          : a.kind === 'text'
-                                            ? <div className="agent-browser-annotations-sel" title={a.text}>"{a.text}"</div>
-                                            : <div className="agent-browser-annotations-sel" title={a.elements.map(e => e.selector).join('\n')}>{a.elements.length > 1 ? `多选 ${a.elements.length} 个元素` : (a.elements[0]?.selector || '')}</div>}
-                                        {a.component && <div className="agent-browser-annotations-comp" title={a.component}>{a.component}</div>}
-                                        <button className="agent-browser-annotations-del" onClick={() => removeHtmlAnnotation(a.id)}><XIcon size={11} /></button>
-                                      </div>
-                                    ))}
-                                  </div>
-                                  <button className="agent-browser-annotations-send" onClick={sendHtmlAnnotations}>
-                                    <SendIcon size={12} /> 发送给 Agent
-                                  </button>
-                                </div>
-                              )}
-                            </>
+                      )}
+                      <button className="btn btn-xs agent-code-preview-close ac-icon-btn" onClick={() => activeTab && closeTab(activeTab.path)} disabled={!activeTab}>
+                        <XIcon size={12} />
+                      </button>
+                    </span>
+                  </div>
+                  {tabMenu && (() => {
+                    const MENU_W = 160, MENU_H = 140
+                    const x = Math.min(tabMenu.x, window.innerWidth - MENU_W - 8)
+                    const y = Math.min(tabMenu.y, window.innerHeight - MENU_H - 8)
+                    return (
+                      <div ref={tabMenuRef} className="file-tree-ctx-menu" style={{ left: Math.max(8, x), top: Math.max(8, y) }} onContextMenu={(e) => e.preventDefault()}>
+                        <button className="file-tree-ctx-item" onClick={() => { closeTab(tabMenu.path); setTabMenu(null) }}><XIcon size={13} /> 关闭</button>
+                        <button className="file-tree-ctx-item" onClick={() => { closeOtherTabs(tabMenu.path); setTabMenu(null) }}><XIcon size={13} /> 关闭其他</button>
+                        <button className="file-tree-ctx-item" onClick={() => { closeAllTabs(); setTabMenu(null) }}><Trash2Icon size={13} /> 关闭全部</button>
+                        {tabMenu.path !== GIT_DIFF_TAB && (
+                          <button className="file-tree-ctx-item" onClick={() => { navigator.clipboard.writeText(tabMenu.path).catch(() => { }); setTabMenu(null) }}><CopyIcon size={13} /> 复制路径</button>
+                        )}
+                      </div>
+                    )
+                  })()}
+                  <div className="agent-code-preview-body">
+                    {!activeTab ? (
+                      <div className="agent-code-preview-empty">
+                        <FolderOpenIcon size={36} className="agent-code-preview-empty-icon" />
+                        <span className="agent-code-preview-empty-title">选择文件以预览</span>
+                        <span className="agent-code-preview-empty-desc">{rightPanelMode === 'preview' ? '点击输入框里的附件，在此查看原文件' : '从左侧文件树中点击文件，在此处查看内容'}</span>
+                      </div>
+                    )
+                      : activeTab.loading ? <div className="file-tree-loading">读取中…</div>
+                        : activeTab.error ? <div className="agent-code-preview-error">{activeTab.error}</div>
+                          : activeTab.isImage ? (
+                            activeTab.imageDataUrl
+                              ? <div className="agent-code-preview-image"><img src={activeTab.imageDataUrl} alt={activeTab.name} /></div>
+                              : <div className="agent-code-preview-error">无法预览该图片</div>
                           )
-                            : isPreviewMarkdown && mdViewMode === 'preview' ? (
-                              <div className="agent-code-preview-md chat-msg-markdown">
-                                <AgentMarkdown content={activeTab.content ?? ''} />
-                              </div>
-                            ) : (
-                              <div className="agent-code-preview-editor" onMouseDown={previewEditing ? undefined : handlePreviewMouseDown} onMouseUp={previewEditing ? undefined : handlePreviewMouseUp}>
-                                <Suspense fallback={<div className="file-tree-loading">加载编辑器…</div>}>
-                                  <MonacoEditor
-                                    value={previewEditing && previewDraft !== null ? previewDraft : activeTab?.content ?? ''}
-                                    language={extToMonacoLang(activeTabPath || '')}
-                                    readOnly={!previewEditing}
-                                    highlightLine={previewEditing ? null : previewHighlightLine}
-                                    onChange={v => { if (previewEditing) setPreviewDraft(v) }}
-                                    onSave={v => savePreviewFile(v)}
-                                    onSelectionAction={previewEditing ? undefined : (text, startLine, endLine) => addCodeSnippet(startLine, endLine, text)}
+                            : activeTab.isPdf ? (
+                              // 版面渲染：pdf.js 逐页画 canvas（key 绑 path，切标签即销毁旧文档）
+                              // PdfViewer 是 lazy chunk（内含 pdfjs），Suspense 兜首帧加载占位
+                              activeTab.pdfData
+                                ? (
+                                  <Suspense fallback={<div className="file-tree-loading">加载 PDF 渲染器…</div>}>
+                                    <PdfViewer key={activeTab.path} data={activeTab.pdfData} />
+                                  </Suspense>
+                                )
+                                : <div className="agent-code-preview-error">无法预览该 PDF</div>
+                            )
+                              : isPreviewHtml && htmlViewMode === 'preview' ? (
+                                <>
+                                  <iframe
+                                    ref={htmlPreviewRef}
+                                    className="agent-code-preview-html"
+                                    title={activeTab.name}
+                                    // 不设 sandbox：预览页常需 localStorage/字体等同源能力，
+                                    // 而 allow-scripts+allow-same-origin 的沙箱可被逃逸（Chromium
+                                    // 每次挂载都告警），安全上等价于无沙箱。预览内容为用户
+                                    // 本地生成的文件，直接同源运行，避免假沙箱告警与功能破坏。
+                                    srcDoc={htmlPreviewSrcDoc}
+                                    onLoad={injectHtmlAnnotate}
                                   />
-                                </Suspense>
-                              </div>
-                            )}
+                                  {/* UI 注释面板（复用浏览器注释面板样式） */}
+                                  {htmlAnnotations.length > 0 && (
+                                    <div className="agent-browser-annotations">
+                                      <div className="agent-browser-annotations-head">
+                                        <span>UI 注释（{htmlAnnotations.length}）</span>
+                                        <button className="agent-browser-annotations-clear" onClick={clearHtmlAnnotations}><Trash2Icon size={11} /> 清空</button>
+                                      </div>
+                                      <div className="agent-browser-annotations-list">
+                                        {htmlAnnotations.map(a => (
+                                          <div className="agent-browser-annotations-item" key={a.id}>
+                                            <div className="agent-browser-annotations-note">
+                                              <span className={`agent-ann-kind kind-${a.kind}`}>{ANNOTATION_KIND_LABEL[a.kind]}</span>{a.note}
+                                            </div>
+                                            {a.kind === 'area' && a.rect
+                                              ? <div className="agent-browser-annotations-sel" title={`${Math.round(a.rect.w)}×${Math.round(a.rect.h)} @ (${Math.round(a.rect.x)}, ${Math.round(a.rect.y)})`}>区域 {Math.round(a.rect.w)}×{Math.round(a.rect.h)} @ ({Math.round(a.rect.x)},{Math.round(a.rect.y)}) · 覆盖 {a.elements.length} 元素</div>
+                                              : a.kind === 'text'
+                                                ? <div className="agent-browser-annotations-sel" title={a.text}>"{a.text}"</div>
+                                                : <div className="agent-browser-annotations-sel" title={a.elements.map(e => e.selector).join('\n')}>{a.elements.length > 1 ? `多选 ${a.elements.length} 个元素` : (a.elements[0]?.selector || '')}</div>}
+                                            {a.component && <div className="agent-browser-annotations-comp" title={a.component}>{a.component}</div>}
+                                            <button className="agent-browser-annotations-del" onClick={() => removeHtmlAnnotation(a.id)}><XIcon size={11} /></button>
+                                          </div>
+                                        ))}
+                                      </div>
+                                      <button className="agent-browser-annotations-send" onClick={sendHtmlAnnotations}>
+                                        <SendIcon size={12} /> 发送给 Agent
+                                      </button>
+                                    </div>
+                                  )}
+                                </>
+                              )
+                                : isPreviewMarkdown && mdViewMode === 'preview' ? (
+                                  <div className="agent-code-preview-md chat-msg-markdown">
+                                    <AgentMarkdown content={deferredMdContent} />
+                                  </div>
+                                ) : (
+                                  <div className="agent-code-preview-editor" onMouseDown={previewEditing ? undefined : handlePreviewMouseDown} onMouseUp={previewEditing ? undefined : handlePreviewMouseUp}>
+                                    <Suspense fallback={<div className="file-tree-loading">加载编辑器…</div>}>
+                                      <MonacoEditor
+                                        value={previewEditing && previewDraft !== null ? previewDraft : activeTab?.content ?? ''}
+                                        language={extToMonacoLang(activeTabPath || '')}
+                                        readOnly={!previewEditing}
+                                        highlightLine={previewEditing ? null : previewHighlightLine}
+                                        onChange={v => { if (previewEditing) setPreviewDraft(v) }}
+                                        onSave={v => savePreviewFile(v)}
+                                        onSelectionAction={previewEditing ? undefined : (text, startLine, endLine) => addCodeSnippet(startLine, endLine, text)}
+                                      />
+                                    </Suspense>
+                                  </div>
+                                )}
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
             </>
           )}
           {/* 「»」展开的工作区选择界面：上下竖排五个入口，点一个是「打开并切过去」 */}

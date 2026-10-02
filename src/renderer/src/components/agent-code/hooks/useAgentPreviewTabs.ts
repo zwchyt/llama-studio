@@ -19,7 +19,7 @@
 // sendHtmlAnnotations 两个「发消息」动作——它们依赖 handleSend，调用点必须在
 // handleSend 之后。
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import AGENT_ANNOTATE_SCRIPT from '../../../utils/agentAnnotateScript.js?raw'
 import katexCssInline from 'katex/dist/katex.min.css?inline'
 import katexJsInline from 'katex/dist/katex.min.js?raw'
@@ -34,6 +34,21 @@ import type { UiAnnotation } from '../../AgentBrowser'
 import type { PanelView, RightPanelMode } from './useAgentUiState'
 
 const LEGACY_DOC_ERROR = '旧版 .doc 无法解析：请在 Word 里另存为 .docx 再预览'
+
+/** base64 → 字节。优先用原生 Uint8Array.fromBase64（一次调用，解码在实现内部完成）；
+ *  环境不支持或输入非法时，退回 atob + 逐字符 charCodeAt 循环（旧行为）。
+ *  后者对 48MB 的 PDF 要跑 6400 万次，同步卡住主线程几百毫秒——而且这段在 await 之后的
+ *  微任务里执行，仍会被算进触发它的那次 click 任务。 */
+function decodeBase64Bytes(b64: string): Uint8Array {
+  const native = (Uint8Array as unknown as { fromBase64?: (s: string) => Uint8Array }).fromBase64
+  if (typeof native === 'function') {
+    try { return native(b64) } catch { /* 非法输入，落到下面 */ }
+  }
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return bytes
+}
 
 export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
   setRightPanelMode: React.Dispatch<React.SetStateAction<RightPanelMode>>
@@ -111,19 +126,21 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
 
   // 源码预览逐行高亮 HTML（整文高亮一次后拆行，随内容/路径变化重算）。
   // 源码预览行高亮由 MonacoEditor 的 deltaDecorations 完成（highlightLine prop）  // 供 HTML 预览 iframe 注入的 KaTeX CSS：把字体 url() 改写为基于应用自身源的
-  // 绝对 URL（iframe 与应用同源，直接加载无 CORS 问题）。若原样内联，
-  // 字体根路径（开发期如 /@fs/…）会被 iframe 内的 file:// base 解析成
-  // 不存在的本地路径，触发 Not allowed to load local resource。
+  // 绝对 URL（iframe 与应用同源，直接加载无 CORS 问题）。若原样内联，字体根路径
+  // （开发期如 /@fs/…）会被 iframe 里的 <base> 解析成相对预览目录的路径，加载不到。
   const katexCssForIframe = useMemo(() => katexCssInline.replace(/url\((['"]?)([^'")]+)\1\)/g, (m: string, _q: string, u: string) => {
     if (/^(data:|https?:|file:)/i.test(u)) return m
     try { return `url("${new URL(u, window.location.href).href}")` } catch { return m }
   }), [])
 
   // 构造 iframe 的 srcDoc：注入 <base> 使相对路径（css/js/图片）能相对文件所在目录解析。
+  // base 走自定义协议 app://（主进程 protocol.handle 提供），不用 file://——about:srcdoc 的
+  // iframe 加载 file:// 会被 Chromium 直接拦掉（Not allowed to load local resource）。
   const buildHtmlSrcDoc = (content: string, filePath: string): string => {
     const dir = filePath.replace(/[\\/][^\\/]*$/, '').replace(/\\/g, '/')
-    const baseHref = 'file:///' + dir.replace(/^\/+/, '') + '/'
-    const baseTag = `<base href="${baseHref}">`
+    // 逐段编码（空格 / 中文等），但把 Windows 盘符的冒号还原：E: 不能变成 E%3A
+    const encodedDir = dir.replace(/^\/+/, '').split('/').map(s => encodeURIComponent(s)).join('/').replace(/%3A/g, ':')
+    const baseTag = `<base href="app://local/${encodedDir}/">`
     // 注入本地 KaTeX CSS + JS，避免依赖 CDN。同时预渲染 $/$$ 公式。
     const katexInject = `<style>${katexCssForIframe}</style><script>${katexJsInline}<\/script>`
     // 剥离预览 HTML 自带的 KaTeX CDN 引用（样式/脚本）：本地 KaTeX 已注入，
@@ -135,6 +152,22 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
     if (/<html[^>]*>/i.test(rendered)) return rendered.replace(/<html([^>]*)>/i, `<html$1><head>${baseTag}${katexInject}</head>`)
     return `<head>${baseTag}${katexInject}</head>` + rendered
   }
+
+  // 预览 iframe 的 srcDoc：里面要内联整套 KaTeX（CSS + JS 约 300KB），还要逐条渲染公式，
+  // 构建一次并不便宜。此前是在 JSX 里直接调用 buildHtmlSrcDoc，于是**任何一次重渲染**
+  // （切标签、开注释面板、父级任何 state 变化）都会重跑一遍，点击处理器里同步跑出上千毫秒。
+  // 两层处理：
+  //   ① useMemo 按「内容 + 路径」记忆化——重渲染不再重算；
+  //   ② useDeferredValue 把首次构建挪到低优先级渲染——点击处理器立刻返回，不再触发长任务告警。
+  const srcDocInput = useMemo(
+    () => ({ content: activeTab?.content ?? '', path: activeTabPath ?? '' }),
+    [activeTab?.content, activeTabPath],
+  )
+  const deferredSrcDocInput = useDeferredValue(srcDocInput)
+  const htmlPreviewSrcDoc = useMemo(
+    () => (isPreviewHtml ? buildHtmlSrcDoc(deferredSrcDocInput.content, deferredSrcDocInput.path) : ''),
+    [isPreviewHtml, deferredSrcDocInput],
+  )
 
   const inlineLocalImages = useCallback(async (markdown: string, baseFilePath: string): Promise<string> => {
     const dir = pathDir(baseFilePath)
@@ -227,9 +260,7 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
         setOpenTabs(prev => prev.map(t => t.path === path ? { ...t, loading: false, error: '文件过大（超过约 48MB），预览里不解码' } : t))
         return
       }
-      const bin = atob(base64)
-      const bytes = new Uint8Array(bin.length)
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+      const bytes = decodeBase64Bytes(base64)
       // PDF：字节交给 PdfViewer 逐页画 canvas（它自己会复制一份再交给 pdf.js）
       if (isPdf) {
         setOpenTabs(prev => prev.map(t => t.path === path ? { ...t, loading: false, pdfData: bytes } : t))
@@ -294,7 +325,15 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
     if (!HTML_ANNOTATE_ENABLED) return
     const win = htmlPreviewRef.current?.contentWindow as (Window & { __agentAnnotate?: any }) | null
     if (!win) return
-    try { (win as any).eval(AGENT_ANNOTATE_SCRIPT) } catch { }
+    // 注入 <script> 而不是 win.eval：CSP 的 script-src 已不含 'unsafe-eval'（见 renderer/index.html），
+    // eval 会被拦掉；内联脚本则由 'unsafe-inline' 放行，效果一致（脚本自带防重复注入保护）。
+    try {
+      const doc = win.document
+      const s = doc.createElement('script')
+      s.textContent = AGENT_ANNOTATE_SCRIPT
+      const parent = doc.head || doc.documentElement
+      parent.appendChild(s)
+    } catch { }
   }, [])
 
   const toggleHtmlAnnotate = useCallback(() => {
@@ -323,11 +362,17 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
       if (!e.data || e.data.source !== 'agent-annotate') return
       const snap = e.data.data
       if (!snap) return
-      setHtmlAnnotateActive(prev => prev === !!snap.active ? prev : !!snap.active)
-      setHtmlAnnotations(prev => {
-        const next = snap.annotations || []
-        if (prev.length === next.length && prev.every((a, i) => a.id === next[i].id && a.note === next[i].note && a.kind === next[i].kind)) return prev
-        return next
+      // 这两次 setState 会让 AgentCodeView 整棵工作台重渲染，而 React 18 的自动批处理在
+      // 微任务里刷新 —— 仍算在这个 message 任务头上，就是「'message' handler took 178ms」的来源。
+      // 放进 startTransition：渲染变成可中断的低优先级任务，handler 立刻返回；注释是辅助信息，
+      // 晚一帧显示没有影响（拖拽预览宽度、开关注释面板都不受影响）。
+      startTransition(() => {
+        setHtmlAnnotateActive(prev => prev === !!snap.active ? prev : !!snap.active)
+        setHtmlAnnotations(prev => {
+          const next = snap.annotations || []
+          if (prev.length === next.length && prev.every((a, i) => a.id === next[i].id && a.note === next[i].note && a.kind === next[i].kind)) return prev
+          return next
+        })
       })
     }
     window.addEventListener('message', onMsg)
@@ -358,7 +403,7 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
     htmlPreviewRef, tabMenu, setTabMenu, tabMenuRef, previewJumpRef,
     previewHighlightLine, setPreviewHighlightLine,
     previewEditing, setPreviewEditing, previewDraft, setPreviewDraft,
-    isPreviewHtml, isPreviewMarkdown, buildHtmlSrcDoc, inlineLocalImages,
+    isPreviewHtml, isPreviewMarkdown, htmlPreviewSrcDoc, inlineLocalImages,
     openPreview, openPreviewAtLine, openFileAtLine,
     savePreviewFile, closeTab, closeOtherTabs, closeAllTabs, closeTabMenu,
   }

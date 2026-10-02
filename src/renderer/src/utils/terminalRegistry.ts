@@ -1,4 +1,5 @@
 import { Terminal } from '@xterm/xterm'
+import { attachTerminalSink } from './terminalSink'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 
@@ -261,3 +262,7 @@ export function writeToTerminal(id: string, data: string): void {
     }, 50)
   }
 }
+
+// 模块加载即接管终端的数据写入与实例释放（原因见 utils/terminalSink.ts）。
+// 必须放在文件末尾：上面的 registry / pendingWrites 等都是 const，提前调用会踩 TDZ。
+attachTerminalSink({ write: writeToTerminal, dispose: disposeTerminal })

@@ -16,9 +16,9 @@
 // 之后才有代码引用本域符号，移动不影响既有行为。
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import {useStore} from '../../../store/useStore'
-import {usePopoverDismiss} from '../../../utils/usePopoverDismiss'
-import {filterCommands} from '../../../agent/slashCommands'
+import { useStore } from '../../../store/useStore'
+import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
+import { filterCommands } from '../../../agent/slashCommands'
 import type { FlatFileEntry } from '../types'
 
 export function useAgentInputHints({

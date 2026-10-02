@@ -37,8 +37,10 @@ export interface NavDef {
   persistent?: boolean
 }
 
-/** 导航项的唯一键：带 mode 的项光靠 view key 分不开 */
-export const navKeyOf = (item: NavDef): string => item.mode ? `${item.key}:${item.mode}` : item.key
+/** 导航项的唯一键：带 mode 的项光靠 view key 分不开。
+    参数只取 key / mode，方便调用方直接用 view + mode 拼键。 */
+export const navKeyOf = (item: Pick<NavDef, 'key' | 'mode'>): string =>
+  item.mode ? `${item.key}:${item.mode}` : item.key
 
 export interface NavSection {
   label: string

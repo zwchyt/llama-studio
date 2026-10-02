@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, forwardRef } from 'react'
+import React, { useCallback, useEffect, useRef, forwardRef } from 'react'
 import { useStore } from '../store/useStore'
 import { useSidebarStore } from '../store/sidebarStore'
 import { shallow } from 'zustand/shallow'
@@ -11,7 +11,9 @@ import {
   resolveToolsEntryView
 } from '../utils/navConfig'
 import type { NavDef } from '../utils/navConfig'
-import { AGENT_SESSION_SLOT_ID } from './agent-code/agent-session/AgentSessionSidebar'
+import { playNavSound } from '../utils/sound'
+import { AGENT_SESSION_SLOT_ID } from './agent-code/agent-session/slotId'
+import { preloadViewOnHover } from '../views/viewRegistry'
 import '../styles/sidebar.css'
 
 // 导航清单已统一收敛到 utils/navConfig.ts：NAV_ITEMS 是常驻项（平铺 8 行），
@@ -22,13 +24,15 @@ interface NavItemProps {
   label: string
   active?: boolean
   onClick?: () => void
+  /** 鼠标移入时触发：用于提前拉取该视图的 chunk（见 views/viewRegistry 的 preloadViewOnHover） */
+  onHover?: () => void
   style?: React.CSSProperties
   children?: React.ReactNode
   className?: string
 }
 
 const NavItem = forwardRef<{ startAnimation: () => void; stopAnimation: () => void }, NavItemProps>(
-  ({ icon: Icon, label, active, onClick, style, children, className = '' }, ref) => {
+  ({ icon: Icon, label, active, onClick, onHover, style, children, className = '' }, ref) => {
     const innerRef = useRef<{ startAnimation: () => void; stopAnimation: () => void } | null>(null)
 
     React.useImperativeHandle(ref, () => ({
@@ -38,7 +42,8 @@ const NavItem = forwardRef<{ startAnimation: () => void; stopAnimation: () => vo
 
     const handleMouseEnter = useCallback(() => {
       innerRef.current?.startAnimation()
-    }, [])
+      onHover?.()
+    }, [onHover])
 
     const handleMouseLeave = useCallback(() => {
       innerRef.current?.stopAnimation()
@@ -65,25 +70,47 @@ NavItem.displayName = 'NavItem'
 export default function Sidebar() {
   const { collapsed, collapsing, hoverExpanded, hoverExpandEnabled, setHoverExpanded } = useSidebarStore()
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const wrapperRef = useRef<HTMLDivElement | null>(null)
 
   const { view, setView, agentMode, setAgentMode, activeChatUrl, hasRunningModels } = useStore(
     s => ({ view: s.view, setView: s.setView, agentMode: s.agentMode, setAgentMode: s.setAgentMode, activeChatUrl: s.activeChatUrl, hasRunningModels: s.cards.some(c => c.status === 'running') }),
     shallow
   )
 
-  // 鼠标进入收起的侧边栏 → 延迟后展开
-  const handleMouseEnter = useCallback(() => {
-    if (!collapsed || !hoverExpandEnabled) return
-    if (hoverTimer.current) clearTimeout(hoverTimer.current)
-    hoverTimer.current = setTimeout(() => setHoverExpanded(true), 120)
-  }, [collapsed, hoverExpandEnabled, setHoverExpanded])
+  // ── 悬浮展开 / 收起：必须走原生 mouseenter / mouseleave，不能用 React 合成事件 ──
+  // 会话列表是经 portal 挂进 .sidebar-agent-slot 的（见 AgentCodeViewLayout 的 createPortal）：
+  // DOM 上它是 .sidebar-wrapper 的后代，React 树里却属于另一棵子树。合成 mouseleave 沿
+  // fiber 树判定归属，于是「从导航项滑到列表」会被误判成离开整个侧栏——列表还没点就先收起；
+  // 反过来「从列表直接滑出侧栏」时，列表不在 React 祖先链上，事件又根本不来。
+  // 原生事件按 DOM 子树判定，两个方向都正确：整个侧栏（含 portal 进来的列表）算一个整体，
+  // 只有指针真正离开它的 DOM 子树才收起。
+  useEffect(() => {
+    const el = wrapperRef.current
+    if (!el) return
+    // 进入收起的侧栏 → 延迟后展开
+    const onEnter = () => {
+      if (!collapsed || !hoverExpandEnabled) return
+      if (hoverTimer.current) clearTimeout(hoverTimer.current)
+      hoverTimer.current = setTimeout(() => setHoverExpanded(true), 120)
+    }
+    // 真正离开 → 立即收起（仅收起状态下的悬浮展开）
+    const onLeave = () => {
+      if (!collapsed) return
+      if (hoverTimer.current) { clearTimeout(hoverTimer.current); hoverTimer.current = null }
+      if (hoverExpanded) setHoverExpanded(false)
+    }
+    el.addEventListener('mouseenter', onEnter)
+    el.addEventListener('mouseleave', onLeave)
+    return () => {
+      el.removeEventListener('mouseenter', onEnter)
+      el.removeEventListener('mouseleave', onLeave)
+    }
+  }, [collapsed, hoverExpandEnabled, hoverExpanded, setHoverExpanded])
 
-  // 鼠标离开 → 立即收起（仅收起状态下的悬浮展开）
-  const handleMouseLeave = useCallback(() => {
-    if (!collapsed) return
-    if (hoverTimer.current) { clearTimeout(hoverTimer.current); hoverTimer.current = null }
-    if (hoverExpanded) setHoverExpanded(false)
-  }, [collapsed, hoverExpanded, setHoverExpanded])
+  // 卸载时清掉待触发的展开定时器，别让它落到已经卸掉的侧栏上
+  useEffect(() => () => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+  }, [])
 
   const isCollapsed = collapsed && !hoverExpanded
   const isHoverExpanded = hoverExpanded
@@ -97,7 +124,12 @@ export default function Sidebar() {
   const shouldHighlight = (item: NavDef) => isRunning(item) && (item.persistent || isActiveItem(item))
   const openItem = (item: NavDef) => {
     // 模式相同就别写 store：写了会白刷一轮订阅者，而切换本身是空操作
-    if (item.mode && item.mode !== agentMode) setAgentMode(item.mode)
+    if (item.mode && item.mode !== agentMode) {
+      // 「对话 / 工作台」共用 agent-code：互切时 view 不变，App 那层收不到信号，这里补一声
+      // （view 真变了就交给 App 播，免得同一次点击响两次）
+      if (view === item.key) playNavSound(navKeyOf(item))
+      setAgentMode(item.mode)
+    }
     setView(item.key)
   }
 
@@ -106,9 +138,8 @@ export default function Sidebar() {
   const toolsRunning = groupedHasRunning(hasRunningModels, activeChatUrl)
   return (
     <div
+      ref={wrapperRef}
       className={`sidebar-wrapper${isCollapsed ? ' collapsed' : ''}${collapsing ? ' collapsing' : ''}${isHoverExpanded ? ' hover-expanded' : ''}`}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
     >
       <nav className="sidebar">
         {/* ── 常驻导航项：清单与顺序见 utils/navConfig.ts 的 NAV_ITEMS，平铺不分节、没有小标题 ── */}
@@ -119,6 +150,7 @@ export default function Sidebar() {
             label={item.label}
             active={isActiveItem(item)}
             onClick={() => openItem(item)}
+            onHover={() => preloadViewOnHover(item.key)}
             style={shouldHighlight(item) ? { color: 'var(--success)' } : {}}
           >
             {isActiveItem(item) && <span className="nav-active-dot" />}

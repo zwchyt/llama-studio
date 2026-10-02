@@ -52,8 +52,8 @@ export function warmUpAudio(): void {
 
 /**
  * 导航切换音：每一屏给一个不同的音效，闭眼听得出切到了哪一页。
- * 键是 store 里的 view 名，值用 uisfx 的语义音效（音色仍跟随设置里选的音色包）。
- * 表外的视图（新增页面等）回落到 press。
+ * 键是导航项的唯一键（navKeyOf）——绝大多数就是 view 名，只有「对话 / 工作台」
+ * 共用 agent-code，得带上 mode 才分得开。表外的视图回落到 press。
  */
 const NAV_CUES: Record<string, CueName> = {
   welcome: 'wake',                  // 启动页
@@ -77,7 +77,11 @@ const NAV_CUES: Record<string, CueName> = {
   'mermaid-test': 'double-click',
   'recharts-test': 'volume-change',
   'svg-test': 'seek',
-  'agent-code': 'start',            // Agent Code 工作台
+  // 「对话 / 工作台」= 同一个 view 的两种模式，各给一个音效。
+  // 挑音效时两个坑：① 只能挑 one-shot（loading / processing / recording / connecting /
+  // scanning / streaming 是循环音，会一直响）；② 音高别太低（drop 只有 196Hz，小喇叭放不出来）。
+  'agent-code:chat': 'send',
+  'agent-code:code': 'check',
   agents: 'notification',           // AI Agent
   engines: 'toggle-on',             // 后端与引擎
   folders: 'unlock',                // 模型文件夹
@@ -86,12 +90,12 @@ const NAV_CUES: Record<string, CueName> = {
 }
 
 /**
- * 切换视图时的音效，按页面各给一种。
- * 统一按 0.2 响度播：库里各音效的默认音量差很大（0.065~0.22），照默认值播会出现
- * 「切到某些页面几乎听不见」的情况，导航音要响度一致、只靠音色区分页面。
+ * 切换导航项时的音效，按导航项各给一种。
+ * 参数是 navKeyOf 拼出的唯一键（不是裸 view，「对话 / 工作台」共用 agent-code）。
+ * 统一按 0.2 响度播：库里各音效默认音量差很大（0.065~0.22），照默认值会出现「某些页面几乎听不见」。
  */
-export function playNavSound(view: string): void {
-  playEvent(NAV_CUES[view] ?? 'press', 0.2)
+export function playNavSound(navKey: string): void {
+  playEvent(NAV_CUES[navKey] ?? 'press', 0.2)
 }
 
 /**

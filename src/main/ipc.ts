@@ -60,6 +60,10 @@ export interface IpcInternalHandlers {
   handleSaveBrowserScreenshot: (png: Buffer) => { ref?: string; error?: string }
   /** 把模型给的路径解析成工作区内的 HTML 文件绝对路径（浏览器预览用；圈死在工作区内） */
   handleResolvePreviewFile: (raw: string) => { path?: string; error?: string }
+  /** 把预览自定义协议（app://）里的路径解析成工作区内的真实文件绝对路径。
+   *  预览 iframe 走 about:srcdoc，file:// 会被 Chromium 拦，资源改由主进程经该协议提供；
+   *  越界 / 不存在 / 非文件一律返回 null，范围与 Read/Write 工具同一套判定。 */
+  resolvePreviewAsset: (urlPath: string) => string | null
   handleWriteFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>
   handleGlob: (opts: { pattern: string; path: string; limit?: number }) => Promise<{
     success: boolean
@@ -138,7 +142,7 @@ function flattenSingleRoot(dir: string): void {
     for (const e of readdirSync(only)) {
       try { renameSync(join(only, e), join(dir, e)) } catch { movedAll = false }
     }
-    try { rmdirSync(only) } catch {}
+    try { rmdirSync(only) } catch { }
     if (!movedAll) return
   }
 }
@@ -270,7 +274,7 @@ function flushTerminalData(id: string): void {
     terminalSend('terminal:data', { id, data: chunk })
   }
   if (s.paused) {
-    try { s.pty.resume() } catch {}
+    try { s.pty.resume() } catch { }
     s.paused = false
   }
 }
@@ -664,7 +668,7 @@ function writeSettingsAtomically(s: AppSettings): Promise<void> {
     try { await fsPromises.copyFile(SETTINGS_PATH, SETTINGS_PATH + '.bak') } catch { /* 首次写时主文件尚不存在 */ }
     await fsPromises.rename(tmpPath, SETTINGS_PATH)
   })
-  settingsWriteChain = write.then(() => {}, () => {})
+  settingsWriteChain = write.then(() => { }, () => { })
   return write
 }
 // ── 一切设置修改的唯一入口 ──
@@ -1066,7 +1070,7 @@ function startParallelDownload(
     // 服务器不支持 Range 时不续传：先清掉残缺文件再整包重下，
     // 避免把完整内容追加到半截文件后面导致压缩包损坏
     if (startByte > 0) {
-      try { fsPromises.truncate(destPath, 0) } catch {}
+      try { fsPromises.truncate(destPath, 0) } catch { }
       startByte = 0
     }
     fallbackCancel = startDownload(url, destPath, startByte, onProgress, onDone, onError)
@@ -1076,9 +1080,9 @@ function startParallelDownload(
     try { return readFileSync(ETAG_FILE, 'utf8').trim() } catch { return '' }
   }
   const writeEtag = (etag: string) => {
-    try { if (etag) writeFileSync(ETAG_FILE, etag) } catch {}
+    try { if (etag) writeFileSync(ETAG_FILE, etag) } catch { }
   }
-  const clearEtag = () => { try { unlinkSync(ETAG_FILE) } catch {} }
+  const clearEtag = () => { try { unlinkSync(ETAG_FILE) } catch { } }
 
   // 探测结果统一出口：etag 续传校验 → 能力判定 → 分片或回退
   const handleProbeInfo = (acceptRanges: string, contentLength: string, etag: string) => {
@@ -1089,7 +1093,7 @@ function startParallelDownload(
       const oldEtag = readEtag()
       if (oldEtag && etag && oldEtag !== etag) {
         note('远端文件已更新，重新开始下载')
-        try { unlinkSync(destPath) } catch {}
+        try { unlinkSync(destPath) } catch { }
         clearEtag()
         startByte = 0
       }
@@ -1115,14 +1119,14 @@ function startParallelDownload(
       if (destroyed || cancelled) { (res as any).destroy(); return }
       const headers = res.headers
       if (res.statusCode === 405 || res.statusCode === 501 || !headers['content-length']) {
-        ;(res as any).destroy()
+        ; (res as any).destroy()
         probeGet()
         return
       }
       if (res.statusCode !== 200) { (res as any).destroy(); return fallback() }
       const etag = typeof headers.etag === 'string' ? headers.etag : ''
       handleProbeInfo(String(headers['accept-ranges'] || '').toLowerCase(), String(headers['content-length'] || '0'), etag)
-      ;(res as any).destroy()
+        ; (res as any).destroy()
     })
     req.on('error', () => { clearTimeout(timeout); if (!destroyed && !cancelled) probeGet() })
     req.end()
@@ -1138,7 +1142,7 @@ function startParallelDownload(
       if (destroyed || cancelled) { (res as any).destroy(); return }
       const etag = typeof res.headers.etag === 'string' ? res.headers.etag : ''
       handleProbeInfo(String(res.headers['accept-ranges'] || '').toLowerCase(), String(res.headers['content-length'] || '0'), etag)
-      ;(res as any).destroy()
+        ; (res as any).destroy()
     })
     req.on('error', () => { clearTimeout(timeout); if (!destroyed && !cancelled) fallback() })
     req.end()
@@ -1210,7 +1214,7 @@ function startParallelDownload(
       const onChunkError = (err: Error) => {
         if (finished || destroyed || cancelled) return
         finished = true
-        for (const c of activeCancel) { try { c() } catch {} }
+        for (const c of activeCancel) { try { c() } catch { } }
         onError(err)
       }
       // 续传边界：临时文件已完整（上次下载完成但解压/替换中断），无需再合并分片，直接结束
@@ -1231,7 +1235,7 @@ function startParallelDownload(
         activeCancel.push(() => {
           cancelledOne = true
           if (retryTimer) clearTimeout(retryTimer)
-          try { wsRef?.destroy() } catch {}
+          try { wsRef?.destroy() } catch { }
         })
         const attempt = (retries: number) => {
           if (destroyed || cancelled || cancelledOne) return
@@ -1261,8 +1265,8 @@ function startParallelDownload(
               if (finished || destroyed || cancelled) { (res as any).destroy(); return }
               finished = true
               if (stall) clearInterval(stall)
-              try { (res as any).destroy() } catch {}
-              for (const c of activeCancel) { try { c() } catch {} }
+              try { (res as any).destroy() } catch { }
+              for (const c of activeCancel) { try { c() } catch { } }
               fallback()
               return
             }
@@ -1276,8 +1280,8 @@ function startParallelDownload(
               if (destroyed || cancelled || cancelledOne) { if (stall) clearInterval(stall); return }
               if (Date.now() - lastDataTime > 120000) {
                 if (stall) clearInterval(stall)
-                try { ws.destroy() } catch {}
-                try { reqRef?.abort() } catch {}
+                try { ws.destroy() } catch { }
+                try { reqRef?.abort() } catch { }
                 fail(new Error('下载停滞'))
               }
             }, 5000)
@@ -1295,7 +1299,7 @@ function startParallelDownload(
               if (destroyed || cancelled || cancelledOne) return
               if (chunkReceived < expectedBytes) {
                 // 服务器提前关闭连接，分片数据不完整（会在文件中留下空洞导致压缩包损坏），重试该分片
-                try { ws.destroy() } catch {}
+                try { ws.destroy() } catch { }
                 fail(new Error('分片下载不完整'))
                 return
               }
@@ -1326,9 +1330,9 @@ function startParallelDownload(
     if (destroyed) return
     destroyed = true
     cancelled = true
-    try { probeReq?.abort() } catch {}
+    try { probeReq?.abort() } catch { }
     if (fallbackCancel) fallbackCancel()
-    for (const c of activeCancel) { try { c() } catch {} }
+    for (const c of activeCancel) { try { c() } catch { } }
   }
 }
 
@@ -1380,7 +1384,7 @@ function discoverCpuCounterName(): Promise<string | null> {
         resolve(null)
       }
     })
-    setTimeout(() => { try { proc.kill() } catch {} resolve(null) }, 3000)
+    setTimeout(() => { try { proc.kill() } catch { } resolve(null) }, 3000)
   })
 }
 
@@ -1405,7 +1409,7 @@ function typeperfQuery(counterName: string): Promise<number | null> {
     proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
     proc.on('error', () => resolve(null))
     proc.on('close', () => resolve(parseTypeperfOutput(stdout)))
-    setTimeout(() => { try { proc.kill() } catch {} resolve(null) }, 5000)
+    setTimeout(() => { try { proc.kill() } catch { } resolve(null) }, 5000)
   })
 }
 
@@ -1423,7 +1427,7 @@ function wmiFallback(): Promise<number | null> {
       const v = parseFloat(stdout.trim())
       resolve(isNaN(v) ? null : Math.round(v))
     })
-    setTimeout(() => { try { proc.kill() } catch {} resolve(null) }, 4000)
+    setTimeout(() => { try { proc.kill() } catch { } resolve(null) }, 4000)
   })
 }
 
@@ -1507,7 +1511,7 @@ export function cleanupRunningProcesses(): void {
   activeChatStreams.clear()
   for (const [, s] of sessions) {
     if (s.flushTimer) { clearTimeout(s.flushTimer); s.flushTimer = null }
-    try { s.pty.kill() } catch {}
+    try { s.pty.kill() } catch { }
   }
   sessions.clear()
   sessionsByOwner.clear()
@@ -2772,19 +2776,19 @@ export function registerIpcHandlers(): void {
         const parsed: unknown = JSON.parse(readFileSync(p, 'utf-8'))
         if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { groups?: unknown }).groups)) continue
         const items: ImagePresetItem[] = []
-        ;(parsed as { groups: ImagePresetGroupJson[] }).groups.forEach((g, gi) => {
-          const group = typeof g?.name === 'string' && g.name ? g.name : '其他'
-          if (!Array.isArray(g?.presets)) return
-          g.presets.forEach((pr, pi) => {
-            const o = (pr && typeof pr === 'object' ? pr : {}) as Record<string, unknown>
-            items.push({
-              id: `preset-${gi}-${pi}`,
-              tag: String(o.tag ?? o.prompt ?? ''),
-              cn: String(o.cn ?? ''),
-              group
+          ; (parsed as { groups: ImagePresetGroupJson[] }).groups.forEach((g, gi) => {
+            const group = typeof g?.name === 'string' && g.name ? g.name : '其他'
+            if (!Array.isArray(g?.presets)) return
+            g.presets.forEach((pr, pi) => {
+              const o = (pr && typeof pr === 'object' ? pr : {}) as Record<string, unknown>
+              items.push({
+                id: `preset-${gi}-${pi}`,
+                tag: String(o.tag ?? o.prompt ?? ''),
+                cn: String(o.cn ?? ''),
+                group
+              })
             })
           })
-        })
         if (items.length > 0) return items
       } catch { /* 继续尝试下一个候选路径 */ }
     }
@@ -2797,7 +2801,7 @@ export function registerIpcHandlers(): void {
       const map: Record<string, { tag: string; cn: string }[]> = {}
       items.forEach(it => {
         const group = it.group && it.group.trim() ? it.group : '其他'
-        ;(map[group] ??= []).push({ tag: it.tag, cn: it.cn })
+          ; (map[group] ??= []).push({ tag: it.tag, cn: it.cn })
       })
       const groups = Object.keys(map).map(g => ({ name: g, presets: map[g] }))
       writeFileSync(target, JSON.stringify({ groups }, null, 2), 'utf-8')
@@ -3751,10 +3755,10 @@ export function registerIpcHandlers(): void {
     const repoLower = repo.toLowerCase()
     const repoKind = repoLower.includes('tensorsharp') ? 'tensorsharp'
       : repoLower.includes('turboquant') ? 'turboquant'
-      : repoLower.includes('beellama') ? 'beellama'
-      : repoLower.includes('stable-diffusion.cpp') ? 'sdcpp'
-      : repoLower.includes('audio.cpp') ? 'audiocpp'
-      : 'llamacpp'
+        : repoLower.includes('beellama') ? 'beellama'
+          : repoLower.includes('stable-diffusion.cpp') ? 'sdcpp'
+            : repoLower.includes('audio.cpp') ? 'audiocpp'
+              : 'llamacpp'
     const latestVer = parseVersion(String(release.tag_name))
     let isNewer = true
     if (existsSync(BACKEND_DIR)) {
@@ -3762,12 +3766,12 @@ export function registerIpcHandlers(): void {
         const dn = d.name.toLowerCase()
         const dirKind = dn.includes('tensorsharp') ? 'tensorsharp'
           : dn.includes('turboquant') ? 'turboquant'
-          : dn.includes('beellama') ? 'beellama'
-          // sd 版本目录形如 master-813-bfbef5b-sd-master-bfbef5b-bin-win-cpu-x64
-          : dn.includes('sd-master') || dn.includes('stable-diffusion') ? 'sdcpp'
-          // audio.cpp 版本目录形如 audiocpp-windows-cuda-portable-<hash> 或 audio-v0.7.1-bin-windows-x64-cuda13.3
-          : dn.includes('audiocpp') || dn.includes('audio-') ? 'audiocpp'
-          : 'llamacpp'
+            : dn.includes('beellama') ? 'beellama'
+              // sd 版本目录形如 master-813-bfbef5b-sd-master-bfbef5b-bin-win-cpu-x64
+              : dn.includes('sd-master') || dn.includes('stable-diffusion') ? 'sdcpp'
+                // audio.cpp 版本目录形如 audiocpp-windows-cuda-portable-<hash> 或 audio-v0.7.1-bin-windows-x64-cuda13.3
+                : dn.includes('audiocpp') || dn.includes('audio-') ? 'audiocpp'
+                  : 'llamacpp'
         if (dirKind !== repoKind) continue
         // 兜底：目录名包含完整 tagName（历史命名差异 / 无法解析版本号的旧目录）
         if (d.name.includes(release.tag_name)) { isNewer = false; break }
@@ -3780,9 +3784,9 @@ export function registerIpcHandlers(): void {
     // 主引擎包不含 CUDA 运行时 DLL，需单独下载合并进引擎目录（仅 Windows；macOS/Linux 包自带运行时）
     const cudartAsset = (isSdcpp || isAudioCpp) && process.platform === 'win32'
       ? (release.assets.find((a: any) => {
-          const an = a.name.toLowerCase()
-          return (an.startsWith('cudart-') || an.includes('cuda-runtime')) && an.endsWith('.zip')
-        }) ?? null)
+        const an = a.name.toLowerCase()
+        return (an.startsWith('cudart-') || an.includes('cuda-runtime')) && an.endsWith('.zip')
+      }) ?? null)
       : null
     return {
       tagName: release.tag_name, name: release.name, url: release.html_url, publishedAt: release.published_at,
@@ -3820,9 +3824,9 @@ export function registerIpcHandlers(): void {
     // 注意：文件被预分配为完整大小，不能按 statSync 大小推断进度；暂停续传优先使用暂停时记录的真实字节数
     let startByte = 0
     if (opts.startByte && opts.startByte > 0) {
-      try { const st = statSync(archivePath); if (st.size > 0) startByte = Math.min(opts.startByte, st.size) } catch {}
+      try { const st = statSync(archivePath); if (st.size > 0) startByte = Math.min(opts.startByte, st.size) } catch { }
     } else {
-      try { const st = statSync(archivePath); if (st.size > 0) startByte = st.size } catch {}
+      try { const st = statSync(archivePath); if (st.size > 0) startByte = st.size } catch { }
     }
     let dlReject: ((err: Error) => void) | null = null
     // 用户取消标志 + 内部取消函数（看门狗停滞中止复用内部函数，避免误标为“用户取消”）
@@ -3843,16 +3847,16 @@ export function registerIpcHandlers(): void {
     const assetLower = opts.assetName.toLowerCase()
     const dlLabel = assetLower.startsWith('sd-') || assetLower.includes('stable-diffusion') ? 'stable-diffusion.cpp'
       : assetLower.includes('tensorsharp') ? 'TensorSharp'
-      : assetLower.includes('turboquant') ? 'TurboQuant'
-      : assetLower.includes('beellama') ? 'BeeLlama'
-      : assetLower.includes('audiocpp') || assetLower.includes('audio.cpp') ? 'audio.cpp'
-      : 'llama.cpp'
+        : assetLower.includes('turboquant') ? 'TurboQuant'
+          : assetLower.includes('beellama') ? 'BeeLlama'
+            : assetLower.includes('audiocpp') || assetLower.includes('audio.cpp') ? 'audio.cpp'
+              : 'llama.cpp'
     const dlEngine = dlLabel === 'stable-diffusion.cpp' ? 'sdcpp'
       : dlLabel === 'TensorSharp' ? 'tensorsharp'
-      : dlLabel === 'TurboQuant' ? 'turboquant'
-      : dlLabel === 'BeeLlama' ? 'beellama'
-      : dlLabel === 'audio.cpp' ? 'audiocpp'
-      : 'llamacpp'
+        : dlLabel === 'TurboQuant' ? 'turboquant'
+          : dlLabel === 'BeeLlama' ? 'beellama'
+            : dlLabel === 'audio.cpp' ? 'audiocpp'
+              : 'llamacpp'
     const progressPayload = (phase: string, received: number, total: number, percent: number, speed?: number, note?: string, chunks?: Array<'idle' | 'active' | 'done'>) => ({ percent, phase, received, total, engine: dlEngine, name: opts.assetName, speed, note, chunks })
     // 最近一次进度快照：onStatus（如回退提示）需要用它补全 payload
     let lastR = 0, lastT = 0, lastSpeed = 0
@@ -3893,13 +3897,13 @@ export function registerIpcHandlers(): void {
         const got = await sha256OfFile(archivePath)
         console.log('[dl] sha256 校验:', got, '期望:', want, got === want ? '通过' : '不通过')
         if (got !== want) {
-          try { unlinkSync(archivePath) } catch {}
-          try { unlinkSync(archivePath + '.etag') } catch {}
+          try { unlinkSync(archivePath) } catch { }
+          try { unlinkSync(archivePath + '.etag') } catch { }
           throw new Error('校验和失败：文件内容与官方发布不一致（sha256）')
         }
       }
       // 校验通过/无 digest：清理 etag 旁路文件，避免残留陈旧 etag
-      try { unlinkSync(archivePath + '.etag') } catch {}
+      try { unlinkSync(archivePath + '.etag') } catch { }
       console.log('[dl] 开始解压:', archivePath, '->', stagingDir)
       event.sender.send('download-progress', progressPayload('extracting', 0, 0, 100))
       const archiveSize = statSync(archivePath).size
@@ -3909,10 +3913,10 @@ export function registerIpcHandlers(): void {
         const base = dirname(BACKEND_DIR)
         for (const n of readdirSync(base)) {
           if (n.startsWith('.staging-') || n.startsWith('.old-')) {
-            try { rmSync(join(base, n), { recursive: true, force: true }) } catch {}
+            try { rmSync(join(base, n), { recursive: true, force: true }) } catch { }
           }
         }
-      } catch {}
+      } catch { }
       rmSync(stagingDir, { recursive: true, force: true })
       mkdirSync(stagingDir, { recursive: true })
       if (isTarGz) {
@@ -3935,7 +3939,7 @@ export function registerIpcHandlers(): void {
             clearTimeout(t)
             if (code === 0) resolve(count)
             else {
-              try { unlinkSync(archivePath) } catch {}
+              try { unlinkSync(archivePath) } catch { }
               reject(new Error('下载不完整，压缩包损坏'))
             }
           })
@@ -3960,20 +3964,20 @@ export function registerIpcHandlers(): void {
       } else {
         // ZIP 一律用 extract-zip（纯 JS / yauzl）解压：逐条目落地、破坏包立即抛错，
         // 不依赖外部 PowerShell Expand-Archive / unzip（大包会静默截断、部分解压或超时）
-      // 先读取中央目录统计总条目数（只读包尾目录，秒级），用于上报解压进度；
-      // 中央目录损坏（下载不完整）时提前失败并清理临时文件，避免把坏包留在 temp 里被续传复用
-      const totalEntries = await new Promise<number>((resolve, reject) => {
-        yauzl.open(archivePath, { lazyEntries: true }, (err, zip) => {
-          if (err) {
-            try { unlinkSync(archivePath) } catch {}
-            reject(new Error('下载不完整，压缩包损坏'))
-            return
-          }
-          const n = zip.entryCount
-          zip.close()
-          resolve(n)
+        // 先读取中央目录统计总条目数（只读包尾目录，秒级），用于上报解压进度；
+        // 中央目录损坏（下载不完整）时提前失败并清理临时文件，避免把坏包留在 temp 里被续传复用
+        const totalEntries = await new Promise<number>((resolve, reject) => {
+          yauzl.open(archivePath, { lazyEntries: true }, (err, zip) => {
+            if (err) {
+              try { unlinkSync(archivePath) } catch { }
+              reject(new Error('下载不完整，压缩包损坏'))
+              return
+            }
+            const n = zip.entryCount
+            zip.close()
+            resolve(n)
+          })
         })
-      })
         if (totalEntries === 0) throw new Error('解压后内容为空')
         let doneEntries = 0
         await new Promise<void>((resolve, reject) => {
@@ -4005,7 +4009,7 @@ export function registerIpcHandlers(): void {
       let oldBackup: string | null = null
       if (existsSync(extractPath)) {
         oldBackup = join(dirname(BACKEND_DIR), `.old-${basename(extractPath)}`)
-        try { rmSync(oldBackup, { recursive: true, force: true }) } catch {}
+        try { rmSync(oldBackup, { recursive: true, force: true }) } catch { }
         try {
           renameSync(extractPath, oldBackup)
         } catch {
@@ -4017,10 +4021,10 @@ export function registerIpcHandlers(): void {
         renameSync(stagingDir, extractPath)
       } catch (e) {
         // 新目录改名失败：回滚旧目录，保证已安装版本不丢失
-        if (oldBackup) { try { renameSync(oldBackup, extractPath) } catch {} }
+        if (oldBackup) { try { renameSync(oldBackup, extractPath) } catch { } }
         throw e
       }
-      if (oldBackup) { try { rmSync(oldBackup, { recursive: true, force: true }) } catch {} }
+      if (oldBackup) { try { rmSync(oldBackup, { recursive: true, force: true }) } catch { } }
       try { unlinkSync(archivePath) } catch (e) { console.error('清理临时文件失败', e) }
       lastBackendDlOpts = null
       // 全流程成功收尾事件：send 管道 FIFO 保证它排在所有进度事件之后，
@@ -4050,7 +4054,7 @@ export function registerIpcHandlers(): void {
       // 记录真实已下载字节数（与文件实际落盘大小取较小值，避免超前后续拼接出空洞）
       if (dlPaused) {
         let savedStart = 0
-        try { savedStart = Math.min(lastR, statSync(archivePath).size) } catch {}
+        try { savedStart = Math.min(lastR, statSync(archivePath).size) } catch { }
         if (lastBackendDlOpts) lastBackendDlOpts.startByte = savedStart
         event.sender.send('download-progress', progressPayload('paused', lastR, lastT, lastT > 0 ? Math.round(lastR / lastT * 100) : 0, lastSpeed, '已暂停，可随时继续'))
         return { success: false, paused: true, cancelled: false, error: '已暂停' }
@@ -4059,10 +4063,10 @@ export function registerIpcHandlers(): void {
       // 临时 zip 必须删除：否则残留的“完整大小但内容损坏”文件会被下次断点续传复用（续传只覆盖尾部），
       // 导致解压持续失败（Z_DATA_ERROR: invalid block type）
       if (existsSync(stagingDir)) {
-        try { rmSync(stagingDir, { recursive: true, force: true }) } catch {}
+        try { rmSync(stagingDir, { recursive: true, force: true }) } catch { }
       }
-      try { unlinkSync(archivePath) } catch {}
-      try { unlinkSync(archivePath + '.etag') } catch {}
+      try { unlinkSync(archivePath) } catch { }
+      try { unlinkSync(archivePath + '.etag') } catch { }
       lastBackendDlOpts = null
       const msg = String(err)
       let cnMsg = msg
@@ -4211,7 +4215,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('install-sd-cudart', async (event, opts: { url: string; assetName: string; backendName: string; digest?: string }): Promise<{ success: boolean; installed?: string[]; verified?: boolean; found?: string[]; missing?: string[]; error?: string }> => {
     const targetDir = join(BACKEND_DIR, String(opts?.backendName || ''))
     if (!opts?.url || !opts?.assetName || !isSafePath(BACKEND_DIR, targetDir) || !existsSync(targetDir) ||
-        !findAnyFile(targetDir, ['sd-server.exe', 'sd-server', 'sd-cli.exe', 'sd-cli'])) {
+      !findAnyFile(targetDir, ['sd-server.exe', 'sd-server', 'sd-cli.exe', 'sd-cli'])) {
       return { success: false, error: '目标后端目录不存在或不是 stable-diffusion.cpp 引擎' }
     }
     if (opts.assetName.includes('..') || opts.assetName.includes('/') || opts.assetName.includes('\\')) {
@@ -4229,7 +4233,7 @@ export function registerIpcHandlers(): void {
           (r, t, speed) => sendP('downloading', r, t, t > 0 ? Math.round(r / t * 100) : 0, speed),
           () => resolve(),
           (err) => reject(err),
-          () => {})
+          () => { })
       })
       if (opts.digest) {
         sendP('verifying', 0, 0, 100)
@@ -4238,7 +4242,7 @@ export function registerIpcHandlers(): void {
       }
       const totalEntries = await new Promise<number>((resolve, reject) => {
         yauzl.open(archivePath, { lazyEntries: true }, (err, zip) => {
-          if (err) { try { unlinkSync(archivePath) } catch {}; reject(new Error('下载不完整，压缩包损坏')); return }
+          if (err) { try { unlinkSync(archivePath) } catch { }; reject(new Error('下载不完整，压缩包损坏')); return }
           const n = zip.entryCount
           zip.close(); resolve(n)
         })
@@ -4276,8 +4280,8 @@ export function registerIpcHandlers(): void {
       const required = ['cudart64_12.dll', 'cublas64_12.dll', 'cublasLt64_12.dll']
       const found = required.filter(n => existsSync(join(targetDir, n)))
       const missing = required.filter(n => !existsSync(join(targetDir, n)))
-      try { rmSync(stagingDir, { recursive: true, force: true }) } catch {}
-      try { unlinkSync(archivePath) } catch {}
+      try { rmSync(stagingDir, { recursive: true, force: true }) } catch { }
+      try { unlinkSync(archivePath) } catch { }
       // 写入安装记录：记下「装的是上游哪一版」（资产名 / sha256 / 当时的 release 发布时间），
       // 供下次检查判断本地副本是否过期。仅当关键 dll 齐全时写入，
       // 避免把不完整的安装标记成已就绪。上游查不到时仍写入（时间留空），
@@ -4297,8 +4301,8 @@ export function registerIpcHandlers(): void {
       sendP('done', 0, 0, 100)
       return { success: true, installed, verified: missing.length === 0, found, missing }
     } catch (err) {
-      try { rmSync(stagingDir, { recursive: true, force: true }) } catch {}
-      try { unlinkSync(archivePath) } catch {}
+      try { rmSync(stagingDir, { recursive: true, force: true }) } catch { }
+      try { unlinkSync(archivePath) } catch { }
       return { success: false, error: String(err instanceof Error ? err.message : err) }
     }
   })
@@ -4310,8 +4314,8 @@ export function registerIpcHandlers(): void {
     } else if (lastBackendDlOpts) {
       // 暂停后无活动请求：清除暂停残留的临时文件（及 etag 旁路），防止被续传复用
       const tmp = join(app.getPath('temp'), lastBackendDlOpts.assetName)
-      try { unlinkSync(tmp) } catch {}
-      try { unlinkSync(tmp + '.etag') } catch {}
+      try { unlinkSync(tmp) } catch { }
+      try { unlinkSync(tmp + '.etag') } catch { }
       lastBackendDlOpts = null
     }
     return { success: true }
@@ -4403,7 +4407,7 @@ export function registerIpcHandlers(): void {
     // 完整性由 startParallelDownload 的 ETag 校验兜底：远端文件已更新（ETag 变化）
     // 时它会自动删档重下；ETag 相同则用 Range 分片从断点继续，避免大包中断后重头下。
     let startByte = 0
-    try { const st = statSync(archivePath); if (st.size > 0) startByte = st.size } catch {}
+    try { const st = statSync(archivePath); if (st.size > 0) startByte = st.size } catch { }
 
     try {
       event.sender.send('app-download-progress', { percent: 0, phase: 'downloading' })
@@ -4434,13 +4438,13 @@ export function registerIpcHandlers(): void {
         const got = await sha256OfFile(archivePath)
         console.log('[app-dl] sha256 校验:', got, '期望:', want, got === want ? '通过' : '不通过')
         if (got !== want) {
-          try { unlinkSync(archivePath) } catch {}
-          try { unlinkSync(archivePath + '.etag') } catch {}
+          try { unlinkSync(archivePath) } catch { }
+          try { unlinkSync(archivePath + '.etag') } catch { }
           return { success: false, error: '校验和失败：安装包内容与官方发布不一致（sha256）' }
         }
       }
       // 校验通过/无 digest：清理 etag 旁路文件，避免残留陈旧 etag
-      try { unlinkSync(archivePath + '.etag') } catch {}
+      try { unlinkSync(archivePath + '.etag') } catch { }
       return { success: true, path: archivePath }
     } catch (err) {
       cancelAppDl = null
@@ -5014,7 +5018,7 @@ export function registerIpcHandlers(): void {
     })
   })
 
-	  // --- server-props (查询 llama-server /props：多模态能力检测) ---
+  // --- server-props (查询 llama-server /props：多模态能力检测) ---
   ipcMain.handle('server-props', async (_e, port: number): Promise<{ ok: boolean; modalities?: { vision?: boolean; audio?: boolean }; error?: string }> => {
     try {
       const raw = await httpGetText(`http://127.0.0.1:${port}/props`)
@@ -5157,7 +5161,7 @@ export function registerIpcHandlers(): void {
     return { success: true }
   })
 
-	  // 按端口反查运行中模型的引擎类型（runModel 时登记），供聊天代理按引擎调整请求体
+  // 按端口反查运行中模型的引擎类型（runModel 时登记），供聊天代理按引擎调整请求体
   function engineKindByPort(port: number): EngineKind | null {
     for (const entry of runningProcesses.values()) {
       if (entry.port === port) return entry.kind ?? 'llamacpp'
@@ -5301,32 +5305,32 @@ export function registerIpcHandlers(): void {
       finalBody.think = true
     }
     // 节流：累积多个 token 后再发送，减少 IPC 频率（约 20fps）
-	    const streamThrottleTimers = new Map<string, ReturnType<typeof setTimeout>>()
-	    const streamPendingDeltas = new Map<string, string>()
-	    const STREAM_THROTTLE_MS = 5
-	    function flushStreamDelta(streamId: string): void {
-	      const delta = streamPendingDeltas.get(streamId)
-	      if (delta) {
-	        streamPendingDeltas.delete(streamId)
-	        e.sender.send(channel, { streamId, delta, done: false })
-	      }
-	    }
-	    function queueStreamDelta(streamId: string, delta: string): void {
-	      const existing = streamPendingDeltas.get(streamId) || ''
-	      streamPendingDeltas.set(streamId, existing + delta)
-	      if (!streamThrottleTimers.has(streamId)) {
-	        streamThrottleTimers.set(streamId, setTimeout(() => {
-	          streamThrottleTimers.delete(streamId)
-	          flushStreamDelta(streamId)
-	        }, STREAM_THROTTLE_MS))
-	      }
-	    }
-	    function flushStreamNow(streamId: string): void {
-	      const t = streamThrottleTimers.get(streamId)
-	      if (t) { clearTimeout(t); streamThrottleTimers.delete(streamId) }
-	      flushStreamDelta(streamId)
-	    }
-	    return new Promise((resolve) => {
+    const streamThrottleTimers = new Map<string, ReturnType<typeof setTimeout>>()
+    const streamPendingDeltas = new Map<string, string>()
+    const STREAM_THROTTLE_MS = 5
+    function flushStreamDelta(streamId: string): void {
+      const delta = streamPendingDeltas.get(streamId)
+      if (delta) {
+        streamPendingDeltas.delete(streamId)
+        e.sender.send(channel, { streamId, delta, done: false })
+      }
+    }
+    function queueStreamDelta(streamId: string, delta: string): void {
+      const existing = streamPendingDeltas.get(streamId) || ''
+      streamPendingDeltas.set(streamId, existing + delta)
+      if (!streamThrottleTimers.has(streamId)) {
+        streamThrottleTimers.set(streamId, setTimeout(() => {
+          streamThrottleTimers.delete(streamId)
+          flushStreamDelta(streamId)
+        }, STREAM_THROTTLE_MS))
+      }
+    }
+    function flushStreamNow(streamId: string): void {
+      const t = streamThrottleTimers.get(streamId)
+      if (t) { clearTimeout(t); streamThrottleTimers.delete(streamId) }
+      flushStreamDelta(streamId)
+    }
+    return new Promise((resolve) => {
       // stream_options.include_usage 让 llama-server 在流结束前发送 usage 统计
       const bodyStr = JSON.stringify({ ...finalBody, stream: true, stream_options: { include_usage: true } })
       const streamStartTime = Date.now()
@@ -5363,21 +5367,21 @@ export function registerIpcHandlers(): void {
         agent: httpAgent
       }, (res) => {
         if (res.statusCode && res.statusCode >= 400) {
-	          let errBody = ''
-	          res.on('data', (c: Buffer) => { errBody += c.toString() })
-	          res.on('end', () => {
-	            activeChatStreams.delete(streamId)
-	            flushStreamNow(streamId)
-	            e.sender.send(channel, { streamId, done: true, error: `HTTP 错误 ${res.statusCode}: ${errBody.slice(0, 500)}` })
-	            resolve({ success: false, error: `HTTP 错误 ${res.statusCode}` })
-	          })
-	          return
-	        }
-	        let buf = ''
-	        // SSE 事件解析：处理 buf 中以 \n\n 分隔的事件
-	        function processBuf() {
-	          let idx: number
-	          while ((idx = buf.indexOf('\n\n')) >= 0) {
+          let errBody = ''
+          res.on('data', (c: Buffer) => { errBody += c.toString() })
+          res.on('end', () => {
+            activeChatStreams.delete(streamId)
+            flushStreamNow(streamId)
+            e.sender.send(channel, { streamId, done: true, error: `HTTP 错误 ${res.statusCode}: ${errBody.slice(0, 500)}` })
+            resolve({ success: false, error: `HTTP 错误 ${res.statusCode}` })
+          })
+          return
+        }
+        let buf = ''
+        // SSE 事件解析：处理 buf 中以 \n\n 分隔的事件
+        function processBuf() {
+          let idx: number
+          while ((idx = buf.indexOf('\n\n')) >= 0) {
             const raw = buf.slice(0, idx)
             buf = buf.slice(idx + 2)
             const line = raw.split('\n').find(l => l.startsWith('data: '))
@@ -5402,7 +5406,7 @@ export function registerIpcHandlers(): void {
                       return {
                         decodeTokS: prom['llamacpp:predicted_tokens_seconds'],
                         completionTokens: lastUsage?.completionTokens
-}
+                      }
 
                     })
                     .catch(() => ({ completionTokens: lastUsage?.completionTokens }))
@@ -5418,17 +5422,17 @@ export function registerIpcHandlers(): void {
                 firstTokenTime = Date.now() - streamStartTime
               }
 
-	              // reasoning_content → 包裹在 <think> 标签中，以便前端折叠显示
-	              if (reasoning) {
-	                const delta = (inReasoning ? '' : '<think>') + reasoning
-	                queueStreamDelta(streamId, delta)
-	                chatStreamInReasoning.set(streamId, true)
-	              }
-	              if (content) {
-	                const prefix = inReasoning || (chatStreamInReasoning.get(streamId) ?? false) ? '</think>\n' : ''
-	                if (prefix) chatStreamInReasoning.set(streamId, false)
-	                queueStreamDelta(streamId, prefix + content)
-	              }
+              // reasoning_content → 包裹在 <think> 标签中，以便前端折叠显示
+              if (reasoning) {
+                const delta = (inReasoning ? '' : '<think>') + reasoning
+                queueStreamDelta(streamId, delta)
+                chatStreamInReasoning.set(streamId, true)
+              }
+              if (content) {
+                const prefix = inReasoning || (chatStreamInReasoning.get(streamId) ?? false) ? '</think>\n' : ''
+                if (prefix) chatStreamInReasoning.set(streamId, false)
+                queueStreamDelta(streamId, prefix + content)
+              }
 
               // 累积 tool_calls 增量片段（delta.tool_calls 按 index 分片到达）
               const deltaToolCalls = choice?.delta?.tool_calls
@@ -5546,33 +5550,33 @@ export function registerIpcHandlers(): void {
           if (endMetricsPromise) {
             endMetricsPromise
               .then(m => { e.sender.send(channel, { streamId, metrics: m }) })
-              .catch(() => {})
+              .catch(() => { })
           }
         })
       })
       req.on('error', (err) => {
         clearIdleTimer()
         chatStreamInReasoning.delete(streamId)
-	        chatStreamToolCalls.delete(streamId)
-	        chatStreamToolProgress.delete(streamId)
-	        // 主动中止的流不发 error 事件，避免前端误显示
-	        if (!abortedChatStreams.has(streamId)) {
-	          flushStreamNow(streamId)
-	          e.sender.send(channel, { streamId, done: true, error: err.message })
-	        }
-	        abortedChatStreams.delete(streamId)
-	        activeChatStreams.delete(streamId)
-	        resolve({ success: false, error: err.message })
-	      })
+        chatStreamToolCalls.delete(streamId)
+        chatStreamToolProgress.delete(streamId)
+        // 主动中止的流不发 error 事件，避免前端误显示
+        if (!abortedChatStreams.has(streamId)) {
+          flushStreamNow(streamId)
+          e.sender.send(channel, { streamId, done: true, error: err.message })
+        }
+        abortedChatStreams.delete(streamId)
+        activeChatStreams.delete(streamId)
+        resolve({ success: false, error: err.message })
+      })
       // 流式生成可能很久，给一个较长的超时（5 分钟），超时则中止
       req.setTimeout(300000, () => {
         clearIdleTimer()
         req.destroy()
-	        chatStreamInReasoning.delete(streamId)
-	        chatStreamToolCalls.delete(streamId)
-	        chatStreamToolProgress.delete(streamId)
-	        flushStreamNow(streamId)
-	        e.sender.send(channel, { streamId, done: true, error: '超时' })
+        chatStreamInReasoning.delete(streamId)
+        chatStreamToolCalls.delete(streamId)
+        chatStreamToolProgress.delete(streamId)
+        flushStreamNow(streamId)
+        e.sender.send(channel, { streamId, done: true, error: '超时' })
         activeChatStreams.delete(streamId)
         resolve({ success: false, error: '超时' })
       })
@@ -5813,7 +5817,7 @@ export function registerIpcHandlers(): void {
           })
         } catch { return resolve(null) }
         req.on('error', () => resolve(null))
-        req.on('timeout', () => { try { req.destroy() } catch {} resolve(null) })
+        req.on('timeout', () => { try { req.destroy() } catch { } resolve(null) })
       }
       tryOnce(url, 0)
     })
@@ -5936,30 +5940,30 @@ export function registerIpcHandlers(): void {
 
   // --- AI Agent detection ---
   const KNOWN_AGENTS: { name: string; pkg: string; cmd: string; nonNpm?: boolean; logo?: string; website?: string }[] = [
-    { name: 'OpenCode',          pkg: 'opencode-ai',                     cmd: 'opencode',    logo: './agent-logos/OpenCode.png',      website: 'https://opencode.ai' },
-    { name: 'Codex',             pkg: '@openai/codex',                   cmd: 'codex',       logo: './agent-logos/Codex.png',         website: 'https://developers.openai.com/codex/cli' },
-    { name: 'Qwen Code',         pkg: '@qwen-code/qwen-code',            cmd: 'qwen',        logo: './agent-logos/QwenCode.png',      website: 'https://qwen.ai/qwencode' },
-    { name: 'Droid',             pkg: 'droid',                           cmd: 'droid',       logo: './agent-logos/Droid.png',         website: 'https://factory.ai/' },
-    { name: 'Pi Coding Agent',   pkg: '@earendil-works/pi-coding-agent', cmd: 'pi',          logo: './agent-logos/Pi.png',            website: 'https://pi.dev/' },
-    { name: 'GitHub Copilot',    pkg: '@github/copilot',                 cmd: 'copilot',     logo: './agent-logos/Copilot.png',       website: 'https://github.com/features/copilot/cli' },
-    { name: 'KiloCode',          pkg: '@kilocode/cli',                   cmd: 'kilo',        logo: './agent-logos/KiloCode.png',      website: 'https://kilo.ai/cli' },
-    { name: 'Mimo AI',           pkg: '@mimo-ai/cli',                    cmd: 'mimo',        logo: './agent-logos/MiMoCode .png',     website: 'https://mimo.xiaomi.com/mimocode/install' },
-    { name: 'Command Code',      pkg: 'command-code',                    cmd: 'command-code',logo: './agent-logos/Command Code.png',  website: 'https://commandcode.ai/'},
-    { name: 'OpenClaude',        pkg: '@gitlawb/openclaude',             cmd: 'openclaude',  logo: './agent-logos/OpenClaude.png',    website: 'https://openclaude.gitlawb.com/' },
-    { name: 'Crush',             pkg: '@charmland/crush',                cmd: 'crush',       logo: './agent-logos/Cursh.png',         website: 'https://github.com/charmbracelet/crush' },
-    { name: 'CodeWhale',         pkg: 'codewhale',                       cmd: 'codewhale',   logo: './agent-logos/CodeWhale.jpg',     website: 'https://github.com/Hmbown/CodeWhale' },
-    { name: 'Kimi',              pkg: '@moonshot-ai/kimi-code',          cmd: 'kimi',        logo: './agent-logos/KimiCode.jpg',      website: 'https://www.kimi.com/code' },
-    { name: 'Cline',             pkg: 'cline',                           cmd: 'cline',       logo: './agent-logos/Cline.png',         website: 'https://cline.bot/' },
-    { name: 'Augment Code',      pkg: '@augmentcode/auggie',             cmd: 'auggie',      logo: './agent-logos/Augment Code.png',  website: 'https://www.augmentcode.com/product/cli' },
-    { name: 'Gemini CLI',        pkg: '@google/gemini-cli',              cmd: 'gemini',      logo: './agent-logos/Gemini.jpg',        website: 'https://geminicli.com/' },
-    { name: 'Claude Code',       pkg: '@anthropic/claude-code',          cmd: 'claude',      nonNpm: true, logo: './agent-logos/Claude code.png', website: 'https://claude.com/product/claude-code' },
-    { name: 'Zero',              pkg: '@gitlawb/zero',                   cmd: 'zero',        logo: './agent-logos/OpenClaude.png',    website: 'https://zero.gitlawb.com/' },
-    { name: 'Grok',              pkg: 'grok',                            cmd: 'grok',        nonNpm: true, logo: './agent-logos/Grok.png',        website: 'https://x.ai/cli' },
-    { name: 'Claurst',           pkg: 'claurst',                         cmd: 'claurst',     logo: './agent-logos/Caurst.png',        website: 'https://claurst.kuber.studio/' },
-    { name: 'Codeep',            pkg: 'codeep',                          cmd: 'codeep',      logo: './agent-logos/Codeep.png',        website: 'https://codeep.dev/' },
-    { name: 'DeepSeek Code',     pkg: '@vegamo/deepcode-cli',            cmd: 'deepcode',    logo: './agent-logos/DeepSeek Code.png', website: 'https://deepcode.vegamo.cn/' },
-    { name: 'Langcli',           pkg: 'langcli-com',                     cmd: 'langcli',     logo: './agent-logos/Langcli.webp',      website: 'https://langcli.com/' },
-    { name: 'Reasonix',          pkg: 'reasonix',                        cmd: 'reasonix',    logo: './agent-logos/reasonix.png',      website: 'https://reasonix.io/' },
+    { name: 'OpenCode', pkg: 'opencode-ai', cmd: 'opencode', logo: './agent-logos/OpenCode.png', website: 'https://opencode.ai' },
+    { name: 'Codex', pkg: '@openai/codex', cmd: 'codex', logo: './agent-logos/Codex.png', website: 'https://developers.openai.com/codex/cli' },
+    { name: 'Qwen Code', pkg: '@qwen-code/qwen-code', cmd: 'qwen', logo: './agent-logos/QwenCode.png', website: 'https://qwen.ai/qwencode' },
+    { name: 'Droid', pkg: 'droid', cmd: 'droid', logo: './agent-logos/Droid.png', website: 'https://factory.ai/' },
+    { name: 'Pi Coding Agent', pkg: '@earendil-works/pi-coding-agent', cmd: 'pi', logo: './agent-logos/Pi.png', website: 'https://pi.dev/' },
+    { name: 'GitHub Copilot', pkg: '@github/copilot', cmd: 'copilot', logo: './agent-logos/Copilot.png', website: 'https://github.com/features/copilot/cli' },
+    { name: 'KiloCode', pkg: '@kilocode/cli', cmd: 'kilo', logo: './agent-logos/KiloCode.png', website: 'https://kilo.ai/cli' },
+    { name: 'Mimo AI', pkg: '@mimo-ai/cli', cmd: 'mimo', logo: './agent-logos/MiMoCode .png', website: 'https://mimo.xiaomi.com/mimocode/install' },
+    { name: 'Command Code', pkg: 'command-code', cmd: 'command-code', logo: './agent-logos/Command Code.png', website: 'https://commandcode.ai/' },
+    { name: 'OpenClaude', pkg: '@gitlawb/openclaude', cmd: 'openclaude', logo: './agent-logos/OpenClaude.png', website: 'https://openclaude.gitlawb.com/' },
+    { name: 'Crush', pkg: '@charmland/crush', cmd: 'crush', logo: './agent-logos/Cursh.png', website: 'https://github.com/charmbracelet/crush' },
+    { name: 'CodeWhale', pkg: 'codewhale', cmd: 'codewhale', logo: './agent-logos/CodeWhale.jpg', website: 'https://github.com/Hmbown/CodeWhale' },
+    { name: 'Kimi', pkg: '@moonshot-ai/kimi-code', cmd: 'kimi', logo: './agent-logos/KimiCode.jpg', website: 'https://www.kimi.com/code' },
+    { name: 'Cline', pkg: 'cline', cmd: 'cline', logo: './agent-logos/Cline.png', website: 'https://cline.bot/' },
+    { name: 'Augment Code', pkg: '@augmentcode/auggie', cmd: 'auggie', logo: './agent-logos/Augment Code.png', website: 'https://www.augmentcode.com/product/cli' },
+    { name: 'Gemini CLI', pkg: '@google/gemini-cli', cmd: 'gemini', logo: './agent-logos/Gemini.jpg', website: 'https://geminicli.com/' },
+    { name: 'Claude Code', pkg: '@anthropic/claude-code', cmd: 'claude', nonNpm: true, logo: './agent-logos/Claude code.png', website: 'https://claude.com/product/claude-code' },
+    { name: 'Zero', pkg: '@gitlawb/zero', cmd: 'zero', logo: './agent-logos/OpenClaude.png', website: 'https://zero.gitlawb.com/' },
+    { name: 'Grok', pkg: 'grok', cmd: 'grok', nonNpm: true, logo: './agent-logos/Grok.png', website: 'https://x.ai/cli' },
+    { name: 'Claurst', pkg: 'claurst', cmd: 'claurst', logo: './agent-logos/Caurst.png', website: 'https://claurst.kuber.studio/' },
+    { name: 'Codeep', pkg: 'codeep', cmd: 'codeep', logo: './agent-logos/Codeep.png', website: 'https://codeep.dev/' },
+    { name: 'DeepSeek Code', pkg: '@vegamo/deepcode-cli', cmd: 'deepcode', logo: './agent-logos/DeepSeek Code.png', website: 'https://deepcode.vegamo.cn/' },
+    { name: 'Langcli', pkg: 'langcli-com', cmd: 'langcli', logo: './agent-logos/Langcli.webp', website: 'https://langcli.com/' },
+    { name: 'Reasonix', pkg: 'reasonix', cmd: 'reasonix', logo: './agent-logos/reasonix.png', website: 'https://reasonix.io/' },
   ]
   // Special update commands — agents not updated via npm install -g
   const AGENT_UPDATE_OVERRIDES: Record<string, { exe: string; args: string[] }> = {
@@ -6003,7 +6007,7 @@ export function registerIpcHandlers(): void {
           const vp = spawn(isWin ? `"${agent.cmd}" --version` : agent.cmd, isWin ? [] : ['--version'], { windowsHide: true, shell: isWin })
           let out = ''
           vp.stdout?.on('data', (d: Buffer) => { out += d.toString() })
-          const t = setTimeout(() => { try { vp.kill() } catch {} resolve(null) }, 5000)
+          const t = setTimeout(() => { try { vp.kill() } catch { } resolve(null) }, 5000)
           vp.on('close', () => {
             clearTimeout(t)
             const v = out.trim().match(/(\d+\.\d+\.\d+)/)
@@ -6035,7 +6039,7 @@ export function registerIpcHandlers(): void {
             p.stdout?.on('data', (d: Buffer) => { buf += d.toString() })
             p.on('error', reject)
             p.on('close', (code) => code === 0 ? resolve(buf) : reject(new Error(`where npm.cmd 退出码 ${code}`)))
-            const t = setTimeout(() => { try { p.kill() } catch {} reject(new Error('where npm.cmd 超时')) }, 5000)
+            const t = setTimeout(() => { try { p.kill() } catch { } reject(new Error('where npm.cmd 超时')) }, 5000)
             p.on('close', () => clearTimeout(t))
           })
           const cwd = process.cwd().toLowerCase()
@@ -6043,7 +6047,7 @@ export function registerIpcHandlers(): void {
             const found = line.trim()
             if (found && !found.toLowerCase().startsWith(cwd)) return found
           }
-        } catch {}
+        } catch { }
       }
       return 'npm'
     })()
@@ -6091,7 +6095,7 @@ export function registerIpcHandlers(): void {
       proc.stdout?.on('data', (d: Buffer) => { stdout += d.toString() })
       proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
       const timeout = setTimeout(() => {
-        try { proc.kill() } catch {}
+        try { proc.kill() } catch { }
         console.warn('[npm list] timed out after 15s, stderr:', stderr.slice(0, 300))
         const fallback = KNOWN_AGENTS.map(a => ({ ...a, installed: false, version: null }))
         resolve(fallback)
@@ -6168,7 +6172,7 @@ export function registerIpcHandlers(): void {
           const p = spawn(isWin ? `"${cliCheck.exe}" ${cliCheck.args.join(' ')}` : cliCheck.exe, isWin ? [] : cliCheck.args, { windowsHide: true, shell: isWin })
           let out = ''
           p.stdout?.on('data', (d: Buffer) => { out += d.toString() })
-          const t = setTimeout(() => { try { p.kill() } catch {} resolve(null) }, 10000)
+          const t = setTimeout(() => { try { p.kill() } catch { } resolve(null) }, 10000)
           p.on('close', () => {
             clearTimeout(t)
             if (cliCheck.json) {
@@ -6377,7 +6381,7 @@ export function registerIpcHandlers(): void {
         if (existing.cols !== cols || existing.rows !== rows) {
           existing.cols = cols
           existing.rows = rows
-          try { existing.pty.resize(cols, rows) } catch {}
+          try { existing.pty.resize(cols, rows) } catch { }
         }
         return { success: true, id: existing.id, replay: existing.replay, reused: true, shell: existing.shell }
       }
@@ -6422,7 +6426,7 @@ export function registerIpcHandlers(): void {
         s.oscBuf = lastEsc >= 0 ? s.oscBuf.slice(lastEsc).slice(0, 256) : ''
         const totalBytes = s.pendingData.reduce((sum, d) => sum + Buffer.byteLength(d, 'utf-8'), 0)
         if (totalBytes > 1024 * 1024 && !s.paused) {
-          try { s.pty.pause() } catch {}
+          try { s.pty.pause() } catch { }
           s.paused = true
         }
         if (!s.flushTimer) {
@@ -6453,11 +6457,11 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('terminal:resize', (_e, { id, cols, rows }: { id: string; cols: number; rows: number }) => {
-    try { sessions.get(id)?.pty.resize(clampPty(cols, 80, 1000), clampPty(rows, 24, 300)) } catch {}
+    try { sessions.get(id)?.pty.resize(clampPty(cols, 80, 1000), clampPty(rows, 24, 300)) } catch { }
   })
 
   ipcMain.handle('terminal:kill', (_e, { id }: { id: string }) => {
-    try { sessions.get(id)?.pty.kill() } catch {}
+    try { sessions.get(id)?.pty.kill() } catch { }
     const s = sessions.get(id)
     if (s?.ownerKey) sessionsByOwner.delete(s.ownerKey)
     sessions.delete(id)
@@ -6672,9 +6676,9 @@ export function registerIpcHandlers(): void {
     return { binary: false, encoding: 'utf8' }
   }
 
-// confineRead（含敏感目录/UNC 判定）已抽至 ipc-helpers/security.ts
+  // confineRead（含敏感目录/UNC 判定）已抽至 ipc-helpers/security.ts
 
-// 流式读取指定行范围（仅收集 offset..offset+limit-1 行，不整文件载入），
+  // 流式读取指定行范围（仅收集 offset..offset+limit-1 行，不整文件载入），
   // 同时统计总行数（继续读到文件末尾计数，但不保留多余行内容）。
   function readFileLinesStream(filePath: string, encoding: 'utf16le' | 'utf8', offset: number, limit: number): Promise<{ lines: string[]; totalLines: number }> {
     const out: string[] = []
@@ -7213,17 +7217,17 @@ export function registerIpcHandlers(): void {
       return { success: false, error: `写入临时文件失败：${e instanceof Error ? e.message : String(e)}` }
     }
   })
-  // 启动清理：删除专用临时目录中超过 24h 的遗留文件（历史版本/崩溃残留均无清理路径）
-  ;(async () => {
-    try {
-      for (const f of readdirSync(TEMP_AUDIO_DIR)) {
-        const fp = join(TEMP_AUDIO_DIR, f)
-        try {
-          if (Date.now() - statSync(fp).mtimeMs > 24 * 3600 * 1000) void fsPromises.unlink(fp)
-        } catch { /* 忽略单个文件 */ }
-      }
-    } catch { /* 目录不存在则忽略 */ }
-  })()
+    // 启动清理：删除专用临时目录中超过 24h 的遗留文件（历史版本/崩溃残留均无清理路径）
+    ; (async () => {
+      try {
+        for (const f of readdirSync(TEMP_AUDIO_DIR)) {
+          const fp = join(TEMP_AUDIO_DIR, f)
+          try {
+            if (Date.now() - statSync(fp).mtimeMs > 24 * 3600 * 1000) void fsPromises.unlink(fp)
+          } catch { /* 忽略单个文件 */ }
+        }
+      } catch { /* 目录不存在则忽略 */ }
+    })()
 
   // 文件元信息（mtime/size，无内容读取）：供 renderer Read 工具缓存做新鲜度校验
   ipcMain.handle('stat-file', (_e, filePath: string) => {
@@ -7723,7 +7727,7 @@ export function registerIpcHandlers(): void {
         child.stdout.setEncoding('utf-8')
         child.stdout.on('data', (chunk: string) => {
           buf += chunk
-          for (;;) {
+          for (; ;) {
             const nl = buf.indexOf('\n')
             if (nl < 0) break
             const raw = buf.slice(0, nl)
@@ -8450,6 +8454,26 @@ export function registerIpcHandlers(): void {
     if (!isSafePath(agentWorkspaceRoot, p)) return { error: '路径超出当前工作区范围' }
     if (!existsSync(p)) return { error: `文件不存在：${basename(p)}（若尚未写出请先用 Write 创建）` }
     return { path: p }
+  }
+
+  // 预览 iframe 的资源（css / js / 图片 / 字体…）经自定义协议 app:// 回主进程取。
+  // 范围锁死在工作区内：被预览的 HTML 里写 ../../../Windows/... 也出不去，不把整盘暴露出去。
+  ipcInternal.resolvePreviewAsset = (urlPath: string): string | null => {
+    if (!agentWorkspaceRoot) return null
+    let p: string
+    try { p = decodeURIComponent(urlPath) } catch { return null }
+    // app://local/E:/proj/a.css 的 pathname 是 "/E:/proj/a.css"：Windows 去掉盘符前那个斜杠，
+    // POSIX 的 "/home/..." 原样保留
+    if (/^\/[a-zA-Z]:/.test(p)) p = p.slice(1)
+    if (!p || !isAbsolute(p)) return null
+    const abs = resolve(p)
+    if (!isSafePath(agentWorkspaceRoot, abs)) return null
+    try {
+      if (!statSync(abs).isFile()) return null
+      // 与 handleDeletePath 同样做一次 realpath 二次校验，防止工作区内的软链指到外面
+      if (!isSafePath(agentWorkspaceRoot, realpathSync(abs))) return null
+    } catch { return null }
+    return abs
   }
 
   // 敏感环境变量名过滤（借鉴 Reasonix 的 secrets.ProcessEnv）：执行命令前剔除凭证类

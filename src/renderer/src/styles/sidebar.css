@@ -70,6 +70,25 @@
   display: none;
 }
 
+/* 槽位内容（会话侧栏）是在首屏空闲时才挂载进来的：之前它没有任何过渡，是直接"跳"出来的。
+   父级从 display:none 变 flex 没法用 transition 补（display 不参与过渡），
+   但动画在元素**创建时**就会跑，正好补上这个入场。
+   从上方 8px 滑下来 + 淡入，方向与槽位顶部那条分隔线一致。 */
+.sidebar-agent-slot > * {
+  animation: sidebar-slot-in 0.3s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@keyframes sidebar-slot-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .sidebar-toggle {
   align-self: flex-start;
   flex-shrink: 0;

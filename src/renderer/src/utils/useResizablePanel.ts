@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
 
 /**
  * 拖拽面板宽度期间要「钉住」的元素。
@@ -170,16 +170,13 @@ export function useResizablePanel(opts: ResizablePanelOptions) {
 
     const finish = (commit: boolean) => {
       const d = dragRef.current
-      if (commit && d) {
-        const finalW = snap(Math.max(minW, Math.min(max, d.startW + direction * (lastClientXRef.current - d.startX))))
-        setWidth(finalW)
-        onCommit?.(finalW)
-      }
+      const finalW = commit && d
+        ? snap(Math.max(minW, Math.min(max, d.startW + direction * (lastClientXRef.current - d.startX))))
+        : null
       dragRef.current = null
       // 正常松手：延迟撤（等 recharts 重排完）；异常结束（指针丢了）立刻撤
       if (commit) releasePinsLater()
       else releasePins()
-      setResizing(false)
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
@@ -187,6 +184,16 @@ export function useResizablePanel(opts: ResizablePanelOptions) {
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', up)
       activeRef.current = null
+      // 收尾的两次 setState 放进 startTransition：pointerup 是 discrete event，React 默认走
+      // 同步渲染（performSyncWorkOnRoot，不可中断），会把整个工作台同步重渲一遍 —— 右侧面板里的
+      // 文件树 / 变更 / markstream 子树全在其中，实测这一下 166ms。
+      // 宽度在拖拽过程中已经通过 CSS 变量落到 DOM 上了，这里只是把终值同步回 React state、
+      // 并解除测量门控，属于收尾记账，晚一帧没有可见差异。
+      startTransition(() => {
+        if (finalW !== null) setWidth(finalW)
+        setResizing(false)
+      })
+      if (finalW !== null) onCommit?.(finalW)
     }
 
     const move = (e: PointerEvent) => {
