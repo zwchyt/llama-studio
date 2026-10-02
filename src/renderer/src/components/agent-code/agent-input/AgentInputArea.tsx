@@ -19,7 +19,7 @@
 // 注：组内成员类型尽量用 ReturnType<typeof 对应 hook> 表达，hook 增删成员时
 // 类型会自动跟随，不需要同步改这里。
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { AlertCircle, AlignLeft, Brain, Eye, Globe, Image as ImageIcon, Search, SearchX, Wrench } from 'lucide-react'
 import { CheckIcon, ChevronDownIcon, CircleStopIcon, CodeIcon, FileTextIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, MicIcon, PlayIcon, PlusIcon, QuoteIcon, RefreshCwIcon, SendIcon, ServerIcon, TrashIcon, XIcon } from '@animateicons/react/lucide'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
@@ -29,6 +29,8 @@ import { AgentTopBarCtx, AniIconButton } from '../agent-message'
 import { AttachmentTextPreview, type PreviewableAttachment } from '../agent-message/AttachmentTextPreview'
 import { TOOL_META, formatToolArgs } from '../agent-tools'
 import { TOOL_METAS } from '../../../utils/tools'
+// 预览卡片直接复用会话那套 Markdown 渲染（含 KaTeX 公式覆写），不再自己拼 HTML
+import { Markdown } from '../../../markdown/markstream'
 import { THINKING_LEVELS } from '../../../../../shared/types'
 import type { Attachment, CardState, ModelEndpoint, ThinkingLevel } from '../../../../../shared/types'
 import { useStore } from '../../../store/useStore'
@@ -154,9 +156,9 @@ export function AgentInputArea({
   const {
     input, textareaRef, packedInput, setPackedInput, fileInputRef,
     attachedFiles, setAttachedFiles, filePickerAttached,
-    setFilePickerAttached, filePickerOpen, setFilePickerOpen,
+    filePickerOpen, setFilePickerOpen,
     handleAttachmentSelect, removeAttachment, handleFilePickerAttach,
-    handleInputDragOver, handleInputDrop, handleBrowseSystemFiles,
+    handleInputDragOver, handleInputDrop,
     handleFilePickerRemove, toggleFilePicker, refChips, codeSnippets,
     removeRefChip, removeCodeSnippet,
   } = inputDomain
@@ -173,6 +175,21 @@ export function AgentInputArea({
   const { activeProject, activeProjectId, activeSessionId, attachBtnRef, branchBtnRef, branchMenuOpen, branchMenuRef, branches, cards, chatInputAreaRef, checkoutBranch, contextModalOpen, ctxInlineRef, currentBranch, projects, setActiveProjectId, setActiveSessionId, setBranchMenuOpen, setContextModalOpen, setWorkspaceMenuOpen, workspaceBtnRef, workspaceMenuOpen, workspaceMenuRef } = shell
   // 没有磁盘路径的附件（读取时拿不到真实文件）退化成浮层看抽取文本，与消息气泡里的文件卡片同一层
   const [attPreview, setAttPreview] = useState<PreviewableAttachment | null>(null)
+  // 胶囊的悬停预览卡片：显示/隐藏交给状态，不靠纯 :hover——卡片的 pointer-events 可用性
+  // 反过来依赖 :hover，指针移向卡片那一小段缝里会两头落空、卡片先收。
+  // 事件挂在胶囊上，而卡片是胶囊的子节点，所以 mouseleave 的判定范围就是「胶囊 + 卡片」整体。
+  const [tipKey, setTipKey] = useState<string | null>(null)
+  const tipTimer = useRef<number | null>(null)
+  const openTip = (key: string) => {
+    if (tipTimer.current) window.clearTimeout(tipTimer.current)
+    tipTimer.current = null
+    setTipKey(key)
+  }
+  // 延后一拍再收：指针快速掠过缝隙时不至于把卡片直接收掉
+  const closeTip = () => {
+    if (tipTimer.current) window.clearTimeout(tipTimer.current)
+    tipTimer.current = window.setTimeout(() => setTipKey(null), 120)
+  }
   // 外部端点：卡片只存 endpointId，这里查表是为了区分「本机端口 / 远程」的角标与提示文案；
   // 端点本身在「外部端点」页管理，下拉里只留一个跳转入口。
   const modelEndpoints = useStore(s => s.modelEndpoints)
@@ -190,6 +207,39 @@ export function AgentInputArea({
   const sendTitle = !apiBaseUrl ? '请先启动一个模型' : !hasPayload ? '输入内容后发送' : '发送'
   // 动画小球的配色随应用亮/暗主题走：此前写死 light，暗底下对比度全靠运气。
   const orbTheme = useThemeStore(s => s.theme)
+  // 附件胶囊：编码模式并进上方「工作区 + 分支」那一行（见 .chat-input-context），
+  // 通用模式没有那一行，单独贴在输入框上方。两处共用一份 JSX，只渲染其一。
+  const attachTray = attachedFiles.length > 0 && (
+    <div className="chat-attach-tray">
+      {attachedFiles.map(att => {
+        // 有磁盘路径 → 点开右侧「预览」工作区看原文件（PDF 版面 / DOCX / 图片 / HTML / 代码）。
+        // 只有拿不到路径的附件（如内存构造的图片）才退回浮层，看模型实际读到的那段文本。
+        const path = att.path
+        const open = path
+          ? () => onPreviewAttachment(path)
+          : att.content ? () => setAttPreview({ name: att.name, content: att.content }) : undefined
+        return (
+          <div
+            className={`chat-attach-chip${open ? ' previewable' : ''}`}
+            key={att.id}
+            onClick={open}
+            title={open ? `${path ?? att.name}（点击${path ? '在右侧预览' : '预览抽取到的文本'}）` : att.name}
+          >
+            {att.isImage && att.dataUrl
+              ? <img src={att.dataUrl} className="chat-attach-thumb" alt={att.name} />
+              : <FileTextIcon size={14} className="chat-attach-fileicon" />}
+            <span className="chat-attach-name" title={att.name}>{att.name}</span>
+            <button className="chat-attach-remove" onClick={e => { e.stopPropagation(); removeAttachment(att.id) }} disabled={loading}><XIcon size={11} /></button>
+          </div>
+        )
+      })}
+      {attachedFiles.length > 1 && (
+        <button className="chat-attach-clear-all" onClick={() => setAttachedFiles([])} disabled={loading}>
+          <XIcon size={12} />全部清除
+        </button>
+      )}
+    </div>
+  )
   return (
     <div className="chat-input-area" ref={chatInputAreaRef}>
       {/* 破坏性工具审批面板：内联显示在输入框内（与提问工具 AskUserQuestionInline 同款位置/风格），不弹窗 */}
@@ -230,50 +280,6 @@ export function AgentInputArea({
           )}
         </div>
       )}
-
-      {/* 工作区文件选择器：编码专属，通用模式不渲染（触发按钮同样收掉，见底部工具栏） */}
-      {!plainChat && filePickerOpen && activeProject.workspaceDir && (
-        <AgentFilePicker
-          workspaceDir={activeProject.workspaceDir}
-          attached={filePickerAttached}
-          onAttach={handleFilePickerAttach}
-          onRemove={handleFilePickerRemove}
-          onClose={() => setFilePickerOpen(false)}
-          triggerRef={attachBtnRef}
-          onBrowseSystem={handleBrowseSystemFiles}
-        />
-      )}
-      {attachedFiles.length > 0 && (
-        <div className="chat-attach-tray">
-          {attachedFiles.map(att => {
-            // 有磁盘路径 → 点开右侧「预览」工作区看原文件（PDF 版面 / DOCX / 图片 / HTML / 代码）。
-            // 只有拿不到路径的附件（如内存里构造的图片）才退回浮层，看模型实际读到的那段文本。
-            const path = att.path
-            const open = path
-              ? () => onPreviewAttachment(path)
-              : att.content ? () => setAttPreview({ name: att.name, content: att.content }) : undefined
-            return (
-              <div
-                className={`chat-attach-chip${open ? ' previewable' : ''}`}
-                key={att.id}
-                onClick={open}
-                title={open ? `${path ?? att.name}（点击${path ? '在右侧预览' : '预览抽取到的文本'}）` : att.name}
-              >
-                {att.isImage && att.dataUrl
-                  ? <img src={att.dataUrl} className="chat-attach-thumb" alt={att.name} />
-                  : <FileTextIcon size={14} className="chat-attach-fileicon" />}
-                <span className="chat-attach-name" title={att.name}>{att.name}</span>
-                <button className="chat-attach-remove" onClick={e => { e.stopPropagation(); removeAttachment(att.id) }} disabled={loading}><XIcon size={11} /></button>
-              </div>
-            )
-          })}
-          {attachedFiles.length > 1 && (
-            <button className="chat-attach-clear-all" onClick={() => { setAttachedFiles([]); setFilePickerAttached([]) }} disabled={loading}>
-              <XIcon size={12} />全部清除
-            </button>
-          )}
-        </div>
-      )}
       {logoMenu && (() => {
         const menuCard = cards.find(c => c.template.id === logoMenu.id)
         if (!menuCard) return null
@@ -290,11 +296,12 @@ export function AgentInputArea({
         )
       })()}
       {/* ── 输入框上方的上下文行（仅编码模式）──
-          当前工作区目录 + git 分支。这两项描述的是「这段对话跑在哪个工作区里」，
-          属于**上下文**而不是操作按钮，所以从底部工具行里提出来单独占一行。
+          当前工作区目录 + git 分支 + 待发送附件胶囊。前两项描述的是「这段对话跑在哪个
+          工作区里」，属于**上下文**而不是操作按钮，所以从底部工具行里提出来单独占一行。
           两个下拉都是 bottom:100% 向上弹出，放在这里反而比原来更不容易被容器裁掉。
-          通用模式没有工作区概念，整行不渲染。 */}
-      {!plainChat && (activeProject.workspaceDir || currentBranch) && (
+          附件胶囊跟着这一行走（不再单独占一行压在项目名上方）；只有这一行的成员之一
+          存在时才渲染。通用模式没有工作区概念，整行不渲染，胶囊改单独贴在输入框上方。 */}
+      {!plainChat && (activeProject.workspaceDir || currentBranch || attachedFiles.length > 0) && (
         <div className="chat-input-context">
           {activeProject.workspaceDir && (
             <div className="chat-workspace-badge-wrap">
@@ -363,8 +370,11 @@ export function AgentInputArea({
               </div>
             </div>
           )}
+          {attachTray}
         </div>
       )}
+      {/* 通用模式没有上下文行，附件胶囊单独占一行贴在输入框上方 */}
+      {plainChat && attachTray}
       <div className="chat-input-row">
         <div className="chat-input-field" onDragOver={handleInputDragOver} onDrop={handleInputDrop}>
           {/* /命令 补全浮层：锚定输入字段本体（CSS 绝对定位 left/right:0 + bottom:100%），
@@ -435,14 +445,18 @@ export function AgentInputArea({
           {/* ② 输入区（中间）：引用胶囊 + 文本 */}
           <div className="chat-input-mid">
             <div className="chat-input-textwrap">
-              {refChips.map(chip => (
-                <div className="agent-ref-chip" key={chip.id}>
+              {refChips.map(chip => {
+                const tipId = `ref-${chip.id}`
+                return (
+                <div className={`agent-ref-chip${tipKey === tipId ? ' tip-open' : ''}`} key={chip.id}
+                  onMouseEnter={() => openTip(tipId)} onMouseLeave={closeTip}>
                   <QuoteIcon size={12} className="agent-ref-chip-icon" />
                   <span className="agent-ref-chip-label">引用</span>
                   <button className="agent-ref-chip-remove" onClick={() => removeRefChip(chip.id)} disabled={loading}><XIcon size={10} /></button>
-                  <span className="agent-ref-chip-tip">{chip.text}</span>
+                  <div className="agent-ref-chip-tip chat-msg-markdown"><Markdown content={chip.text} final variant="agent" /></div>
                 </div>
-              ))}
+                )
+              })}
               {codeSnippets.map(snip => (
                 <div className="code-snippet-chip" key={snip.id}>
                   <CodeIcon size={12} className="code-snippet-chip-icon" />
@@ -454,13 +468,14 @@ export function AgentInputArea({
                 /* 超长打包 chip：完全按「引用」胶囊样式与功能——图标 + 标签 +
                    × 移除按钮 + 悬停全文预览；输入框为空时 Backspace/Delete
                    也能删掉它。chip 里的正文发送时拼回正文 */
-                <div className="chat-input-fold-chip">
+                <div className={`chat-input-fold-chip${tipKey === 'fold' ? ' tip-open' : ''}`}
+                  onMouseEnter={() => openTip('fold')} onMouseLeave={closeTip}>
                   <AlignLeft size={12} className="chat-input-fold-chip-icon" />
                   <span className="chat-input-fold-chip-label">已折叠 {packedInput.split('\n').length} 行</span>
                   <button className="agent-ref-chip-remove" title="移除" onClick={() => setPackedInput(null)}>
                     <XIcon size={10} />
                   </button>
-                  <span className="chat-input-fold-chip-tip">{packedInput}</span>
+                  <div className="chat-input-fold-chip-tip chat-msg-markdown"><Markdown content={packedInput} final variant="agent" /></div>
                 </div>
               ) : null}
               <textarea
@@ -515,9 +530,23 @@ export function AgentInputArea({
           <div className="chat-input-tools">
             <AniIconButton className="chat-upload-btn" icon={PlusIcon} size={14} onClick={() => fileInputRef.current?.click()} title="添加附件" />
             {/* 「选择文件」浏览的是工作区目录（AgentFilePicker），编码专属：通用模式收掉。
-                「添加附件」走系统文件选择，聊天同样用得上，两模式都保留。 */}
+                「添加附件」走系统文件选择，聊天同样用得上，两模式都保留。
+                按钮与面板包进相对定位锚点，面板贴按钮正上方弹出、打开才挂载——
+                与「选择模型」/「思考程度」同一套逻辑（CSS 负责 bottom:100% + 左缘对齐）。 */}
             {!plainChat && (
-              <AniIconButton ref={attachBtnRef} className={`chat-attach-btn${filePickerOpen ? ' active' : ''}`} icon={FolderOpenIcon} size={14} onClick={toggleFilePicker} title="选择文件" />
+              <div className="chat-attach-anchor">
+                <AniIconButton ref={attachBtnRef} className={`chat-attach-btn${filePickerOpen ? ' active' : ''}`} icon={FolderOpenIcon} size={14} onClick={toggleFilePicker} title="选择文件" />
+                {filePickerOpen && activeProject.workspaceDir && (
+                  <AgentFilePicker
+                    workspaceDir={activeProject.workspaceDir}
+                    attached={filePickerAttached}
+                    onAttach={handleFilePickerAttach}
+                    onRemove={handleFilePickerRemove}
+                    onClose={() => setFilePickerOpen(false)}
+                    triggerRef={attachBtnRef}
+                  />
+                )}
+              </div>
             )}
             <AniIconButton className={`chat-mic-btn${listening || micTranscribing ? ' listening' : ''}`} icon={MicIcon} size={14} onClick={toggleListen} disabled={micTranscribing} title={micTranscribing ? '识别中…' : listening ? '停止录音' : '语音输入'} />
             {/* 工作区目录与 git 分支已上移到输入框上方那一行（.chat-input-context），

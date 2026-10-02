@@ -4,6 +4,8 @@
 import React, { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { XIcon } from '@animateicons/react/lucide'
+// 复用会话那套 Markdown 渲染（含 KaTeX 公式覆写）；不经 agent-message/index，避免和它互相 import
+import { Markdown } from '../../../markdown/markstream'
 
 export function UserMessageFullText({ text, onClose }: {
   text: string
@@ -28,7 +30,8 @@ export function UserMessageFullText({ text, onClose }: {
           <span className="msg-full-title">完整消息</span>
           <button type="button" className="msg-full-close" onClick={onClose} title="关闭（Esc）"><XIcon size={16} /></button>
         </div>
-        <pre className="msg-full-body">{text}</pre>
+        {/* 正文走会话同一套 Markdown + 公式渲染（.chat-msg-markdown 提供排版样式） */}
+        <div className="msg-full-body chat-msg-markdown"><Markdown content={text} final variant="agent" /></div>
       </div>
     </div>,
     document.body

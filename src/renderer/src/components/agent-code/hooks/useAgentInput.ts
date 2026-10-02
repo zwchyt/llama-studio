@@ -6,14 +6,15 @@
 // 自持：
 //   · 输入核心：input / packedInput 两个 state，textareaRef / inputOverflowRef /
 //     inputHistoryRef / historyIdxRef 四个 ref；
-//   · 附件与文件选择器：attachedFiles / filePickerAttached / filePickerOpen 三个 state，
-//     fileInputRef；含 readAttachmentFile / handleAttachmentSelect / removeAttachment /
-//     handleFilePickerAttach / handleInputDragOver / handleInputDrop /
-//     handleBrowseSystemFiles / handleFilePickerRemove / toggleFilePicker；
+//   · 附件与文件选择器：attachedFiles / filePickerOpen 两个 state（弹窗左侧「已选」列表由
+//     attachedFiles 派生，不另存一份），fileInputRef；含 readAttachmentFile / handleAttachmentSelect /
+//     removeAttachment / handleFilePickerAttach / handleInputDragOver / handleInputDrop /
+//     handleFilePickerRemove / toggleFilePicker；
 //   · 引用胶囊与代码片段：refChips / codeSnippets 两个 state；
 //   · 选区浮层：selectionPopover / previewSelPopover 两个 state，previewSelRef /
 //     selectionPopoverRef / previewDragStartLineRef 三个 ref。
-// 外部输入：无——本 hook 的所有回调只依赖上面这些自持值。
+// 外部输入：draftScope（输入草稿的隔离作用域）与 attachScope（附件的隔离作用域，
+// 传当前项目 id）——其余回调只依赖上面这些自持值。
 //
 // 注意：addCodeSnippet 未搬入本 hook（它依赖预览域的 activeTab / activeTabPath，
 // 而预览域的 useAgentPreviewTabs 在本 hook 之后调用）。它留在 AgentCodeView 中，
@@ -27,12 +28,11 @@
 // 附件与文件选择器一段）。已验证各段在「本 hook 调用点 ~ 原声明处」区间内均无引用，
 // 因此可整体前移到调用点一次性收口。
 
-import React, { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { notify } from '../../../store/notificationStore'
-import { safeCall } from '../../../utils/safeCall'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { INPUT_FOLD_CAP } from '../utils/constants'
-import { previewLineNoFromTarget } from '../utils/dom'
+import { previewLineNoFromTarget, selectionMarkdown, selectionTextWithMath } from '../utils/dom'
 import { uniqueId } from '../utils/ids'
 import { binaryDocLabel, extractTextFromBuffer, extractTextFromFile, isBinaryDoc } from '../../../utils/extractText'
 import type { CodeSnippet } from '../types'
@@ -43,7 +43,10 @@ function wrapBinaryDocText(name: string, text: string): string {
   return text ? `[${label}: ${name}]\n${text}` : `[${label}: ${name}]（文本提取失败）`
 }
 
-export function useAgentInput({ draftScope = 'default' }: { draftScope?: string } = {}) {
+// 输入托盘里的一颗待发送附件
+type DraftAttachment = { id: string; name: string; isImage: boolean; dataUrl?: string; content?: string; path?: string }
+
+export function useAgentInput({ draftScope = 'default', attachScope = 'default' }: { draftScope?: string; attachScope?: string } = {}) {
 
   const [input, setInput] = useState('')
 
@@ -144,20 +147,42 @@ export function useAgentInput({ draftScope = 'default' }: { draftScope?: string 
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const [attachedFiles, setAttachedFiles] = useState<Array<{ id: string; name: string; isImage: boolean; dataUrl?: string; content?: string; path?: string }>>([])
+  const [attachedFiles, setAttachedFiles] = useState<DraftAttachment[]>([])
   // 「引用」引用块：以胶囊（图标 + 缩写）形式内嵌在输入框内，
   // 发送时作为引用块（> …）拼入正文。
   const [refChips, setRefChips] = useState<Array<{ id: string; text: string }>>([])
   // 代码片段胶囊：从源码预览中选中代码后引用，发送时以 fenced code block 注入正文。
   // CodeSnippet 类型已抽至 agent-code/types
   const [codeSnippets, setCodeSnippets] = useState<CodeSnippet[]>([])
-  const [filePickerAttached, setFilePickerAttached] = useState<Array<{ id: string; path: string; name: string; isDir: boolean }>>([])
-
   const [filePickerOpen, setFilePickerOpen] = useState(false)
 
+  // ── 附件按项目隔离 ──
+  // 与输入草稿同一套做法：切作用域时把当前附件存回原项目，再恢复该项目的草稿附件，
+  // 不沿用上一个项目选的文件。用 layout effect，与项目切换同帧完成，不会先画出旧胶囊。
+  const attachDraftsRef = useRef<Record<string, DraftAttachment[]>>({})
+  const attachScopeRef = useRef(attachScope)
+  useLayoutEffect(() => {
+    const prev = attachScopeRef.current
+    if (prev === attachScope) return
+    attachScopeRef.current = attachScope
+    attachDraftsRef.current[prev] = attachedFiles
+    setAttachedFiles(attachDraftsRef.current[attachScope] ?? [])
+    // 面板浏览的是上一个项目的目录，切项目后不该继续开着
+    setFilePickerOpen(false)
+  }, [attachScope, attachedFiles])
+
+  // 弹窗左侧「已选」列表由附件派生：另存一份会与托盘走偏（取消胶囊后列表仍留着）
+  const filePickerAttached = useMemo(
+    () => attachedFiles
+      .filter((a): a is DraftAttachment & { path: string } => !!a.path)
+      .map(a => ({ id: a.id, path: a.path, name: a.name, isDir: false })),
+    [attachedFiles]
+  )
+
   // 选中「模型输出」文字后浮现的操作条（引用 / 复制 / 追问）。
-  // text=选中的纯文本，x/y=选区外接矩形的视口坐标（用 position:fixed 定位）。
-  const [selectionPopover, setSelectionPopover] = useState<{ text: string; x: number; y: number } | null>(null)
+  // text=选中的排版文本（复制用），md=同一选区还原出的 Markdown 源（引用用），
+  // x/y=选区外接矩形的视口坐标（用 position:fixed 定位）。
+  const [selectionPopover, setSelectionPopover] = useState<{ text: string; md: string; x: number; y: number } | null>(null)
   // 源码预览选区浮动按钮：选中代码后弹出「引用代码」按钮。
   const [previewSelPopover, setPreviewSelPopover] = useState<{ x: number; y: number; startLine: number; endLine: number; text: string } | null>(null)
   const previewSelRef = useRef<HTMLDivElement>(null)
@@ -268,7 +293,7 @@ export function useAgentInput({ draftScope = 'default' }: { draftScope?: string 
     requestAnimationFrame(() => {
       const sel = window.getSelection()
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) { setSelectionPopover(null); return }
-      const text = sel.toString().trim()
+      const text = selectionTextWithMath(sel).trim()
       if (!text) { setSelectionPopover(null); return }
       const anchor = sel.anchorNode
       const anchorEl = anchor instanceof Element ? anchor : anchor?.parentElement
@@ -277,7 +302,9 @@ export function useAgentInput({ draftScope = 'default' }: { draftScope?: string 
       if (!bubble) { setSelectionPopover(null); return }
       const rect = sel.getRangeAt(0).getBoundingClientRect()
       if (!rect || (rect.width === 0 && rect.height === 0)) { setSelectionPopover(null); return }
-      setSelectionPopover({ text, x: rect.left + rect.width / 2, y: rect.top })
+      // 引用走 Markdown 源：排版文本不含标题/列表/围栏标记，多行还会挤成一段，
+      // 引用出来的卡片于是排版与公式顺序都走形。
+      setSelectionPopover({ text, md: selectionMarkdown(sel).trim(), x: rect.left + rect.width / 2, y: rect.top })
     })
   }, [])
 
@@ -341,13 +368,15 @@ export function useAgentInput({ draftScope = 'default' }: { draftScope?: string 
 
   const handleFilePickerAttach = useCallback(async (entry: { name: string; path: string; isDir: boolean }) => {
     if (entry.isDir) return
-    setFilePickerAttached(prev => {
-      if (prev.some(a => a.path === entry.path)) return prev
-      return [...prev, { id: uniqueId('fp-att'), path: entry.path, name: entry.name, isDir: false }]
-    })
-    // 读取失败也保留这颗附件：它在托盘里是「引用」，右侧预览按路径仍能打开原文件。
+    // 按路径去重：同名但不同目录的两个文件都该能各自加入（原先按名字去重会静默丢一个）
+    const id = uniqueId('fp-att')
+    // 先入库，弹窗里的勾选与托盘胶囊同帧出现。读取失败也保留这颗附件：
+    // 它在托盘里是「引用」，右侧预览按路径仍能打开原文件。
     // 原先只在文本抽取成功时才建 chip，于是从工作区选的图片、.doc、超大的文本文件
     // 一律静默消失（托盘里看不见，也点不出预览）。
+    setAttachedFiles(prev => prev.some(a => a.path === entry.path)
+      ? prev
+      : [...prev, { id, name: entry.name, isImage: false, path: entry.path, content: '' }])
     let text: string | null = null
     try {
       // 工作区里的 PDF/docx：主进程 readFile 只做文本读取，二进制会返回乱码，
@@ -364,10 +393,8 @@ export function useAgentInput({ draftScope = 'default' }: { draftScope?: string 
         if (res.success && typeof res.content === 'string') text = res.content
       }
     } catch { /* 抽取失败：附件仍进托盘，按路径预览 */ }
-    setAttachedFiles(prev => {
-      if (prev.some(a => a.name === entry.name)) return prev
-      return [...prev, { id: uniqueId('fp-read'), name: entry.name, isImage: false, path: entry.path, content: text ?? '' }]
-    })
+    // 回填正文按 id 命中：去重时未入库的那个 id 自然落空，不会覆盖已有附件
+    setAttachedFiles(prev => prev.map(a => a.id === id ? { ...a, content: text ?? '' } : a))
   }, [])
 
   // 拖拽文件到输入框：支持内部文件树拖拽与系统资源管理器拖入，均作为附件添加
@@ -411,20 +438,9 @@ export function useAgentInput({ draftScope = 'default' }: { draftScope?: string 
     }
   }, [handleFilePickerAttach])
 
-  // 浏览系统文件：原生对话框选取任意磁盘文件（多选），逐个作为附件加入
-  const handleBrowseSystemFiles = useCallback(async () => {
-    const res = await safeCall<{ paths: string[] }>(() => window.api.selectFiles(), '选择文件')
-    if (!res?.paths?.length) return
-    for (const p of res.paths) {
-      const name = p.replace(/\\/g, '/').split('/').pop() || p
-      void handleFilePickerAttach({ name, path: p, isDir: false })
-    }
-  }, [handleFilePickerAttach])
-
   const handleFilePickerRemove = useCallback((path: string) => {
-    setFilePickerAttached(prev => prev.filter(a => a.path !== path))
-    const name = path.replace(/\\/g, '/').split('/').pop() || path
-    setAttachedFiles(prev => prev.filter(a => a.name !== name))
+    // 附件是唯一的真相源（弹窗左侧「已选」由它派生），按路径摘掉即可两边同步
+    setAttachedFiles(prev => prev.filter(a => a.path !== path))
   }, [])
 
   const toggleFilePicker = useCallback(() => {
@@ -436,10 +452,10 @@ export function useAgentInput({ draftScope = 'default' }: { draftScope?: string 
     input, setInput, textareaRef, packedInput, setPackedInput, inputOverflowRef,
     autoResize, insertAtCursor, replaceRange, recallHistory, inputHistoryRef, historyIdxRef,
     // 附件与文件选择器
-    fileInputRef, attachedFiles, setAttachedFiles, filePickerAttached, setFilePickerAttached,
+    fileInputRef, attachedFiles, setAttachedFiles, filePickerAttached,
     filePickerOpen, setFilePickerOpen,
     readAttachmentFile, handleAttachmentSelect, removeAttachment, handleFilePickerAttach,
-    handleInputDragOver, handleInputDrop, handleBrowseSystemFiles, handleFilePickerRemove, toggleFilePicker,
+    handleInputDragOver, handleInputDrop, handleFilePickerRemove, toggleFilePicker,
     // 引用胶囊 / 代码片段
     refChips, setRefChips, codeSnippets, setCodeSnippets,
     addRefChip, removeRefChip, removeCodeSnippet,

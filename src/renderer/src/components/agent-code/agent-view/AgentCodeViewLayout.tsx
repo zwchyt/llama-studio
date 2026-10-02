@@ -261,7 +261,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     return () => registerVirtualApi(null)
   }, [registerVirtualApi, virtual.ensureMounted])
 
-  // 导出为图片（仅通用模式）：html2canvas 截取消息区 → PNG 落盘。
+  // 导出为图片（仅通用模式）：主进程原生截取消息区 → PNG 落盘。
   // 注意消息区是虚拟滚动的（屏外消息被卸载、用等高占位顶住），所以导出的是
   // 「当前这一屏」而不是整段对话——按钮 title 里写明，免得以为导出了全部。
   const [exporting, setExporting] = useState(false)
@@ -270,14 +270,15 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     if (!el || exporting) return
     setExporting(true)
     try {
-      // 按需加载：html2canvas 只在「导出为图片」这一个动作里用得到，静态 import 会把它整包
-      // 算进工作台主 chunk（首次进入要下的那 7.3MB 的一部分）。
-      const { default: html2canvas } = await import('html2canvas')
-      const canvas = await html2canvas(el, { useCORS: true, backgroundColor: '#fff' })
-      const filePath = await window.api.savePng(canvas.toDataURL('image/png'))
+      // 视口坐标即截屏坐标（未开页面缩放，CSS 像素 = DIP），交给主进程 capturePage
+      const r = el.getBoundingClientRect()
+      const dataUrl = await window.api.captureRegion({
+        x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height),
+      })
+      const filePath = await window.api.savePng(dataUrl)
       notify(`PNG 已保存: ${filePath}`, 'success')
-    } catch {
-      notify('导出图片失败', 'error')
+    } catch (e) {
+      notify(`导出图片失败：${e instanceof Error ? e.message : String(e)}`, 'error')
     } finally {
       setExporting(false)
     }
@@ -804,7 +805,8 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               style={{ left: selectionPopover.x, top: selectionPopover.y }}
               onMouseDown={e => e.preventDefault()}
             >
-              <button className="agent-sel-btn" onClick={() => quoteSelection(selectionPopover.text)}>
+              {/* 引用取 Markdown 源（保留原有排版与顺序），复制取排版文本 */}
+              <button className="agent-sel-btn" onClick={() => quoteSelection(selectionPopover.md)}>
                 <QuoteIcon size={13} /> 引用
               </button>
               <button className="agent-sel-btn" onClick={() => copySelection(selectionPopover.text)}>

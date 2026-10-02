@@ -316,6 +316,14 @@
   width: 6px;
 }
 
+/* 编码模式下胶囊并入「工作区 + 分支」那一行：随剩余宽度伸缩，行距由该行自己管 */
+.chat-input-context .chat-attach-tray {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
 .chat-attach-tray::-webkit-scrollbar-thumb {
   background: var(--border-strong);
   border-radius: 3px;
@@ -849,7 +857,8 @@ html.is-panel-resizing .agent-think-body .table-node {
   align-items: center;
   gap: 8px;
   padding: 0 8px;
-  margin: 0 8px;
+  /* 顶部同样留 8px（与左右一致）：不留的话圆角上边框会顶在标题栏下沿 */
+  margin: 8px 8px 0;
   height: 40px;
   flex-shrink: 0;
   border: 1.5px solid var(--border-strong);
@@ -4807,23 +4816,28 @@ html.is-panel-resizing .agent-think-body .table-node {
   border-color: var(--border-strong);
 }
 
+/* 工作区文件选择器：贴「选择文件」按钮上方弹出，定位与 .chat-model-picker 同一套
+   （锚点 .chat-attach-anchor，面板左缘对齐按钮、宽度按视口收口） */
 .agent-file-picker {
   position: absolute;
-  left: var(--chat-input-inset, 54px);
+  left: 0;
   right: auto;
-  width: 560px;
-  max-width: calc(100% - var(--chat-input-inset, 54px) * 2);
-  bottom: calc(100% + 8px);
+  bottom: calc(100% + 4px);
   top: auto;
+  width: 560px;
+  max-width: calc(100vw - 72px);
   z-index: var(--z-toast);
-  height: min(378px, calc(100vh - 12rem));
-  min-height: 220px;
+  /* 高度随内容自适应，仅封顶以保持少量文件时不出现底部留白 */
+  height: auto;
+  max-height: min(378px, calc(100vh - 12rem));
+  transform-origin: bottom left;
   display: flex;
   flex-direction: column;
+  /* 浮层三件套与「选择模型 / 思考程度」一致：实心底（见 app-background.css 的钉实名单）+ 描边 + 投影 */
   background: var(--surface);
-  border: none;
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  box-shadow: none;
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
   animation: agentFilePickerIn 0.12s ease-out;
 }
@@ -4923,27 +4937,9 @@ html.is-panel-resizing .agent-think-body .table-node {
   flex-shrink: 0;
 }
 
+/* 头部右侧的搜索框：贴右排布，宽度由搜索框自己定，不参与收缩 */
 .agent-file-picker-search-area {
   flex-shrink: 0;
-}
-
-.agent-file-picker-search-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background .15s, color .15s;
-}
-
-.agent-file-picker-search-btn:hover {
-  background: var(--surface-hover);
-  color: var(--text);
 }
 
 .agent-file-picker-search-wrap {
@@ -4962,19 +4958,26 @@ html.is-panel-resizing .agent-think-body .table-node {
 }
 
 .agent-file-picker-search {
+  /* 宽度封顶：面板在窄窗口下会收宽，固定 160px 会把面包屑挤出头部 */
   width: 160px;
+  max-width: 42vw;
   height: 26px;
   padding: 0 8px 0 26px;
-  border: 1px solid var(--border);
+  /* 不描边：只靠底色把字段分出来。1px 边框在深色主题下会成一条重色环，
+     聚焦再加深就更明显 */
+  border: none;
   border-radius: 999px;
-  background: var(--bg);
+  /* 面板已钉成实底（app-background.css），输入框不能再吃半透明的 --bg，
+     否则背景图会从字段里透出来，与面板底对不上 */
+  background: var(--bg-solid);
   color: var(--text);
   font-size: 11px;
   outline: none;
 }
 
 .agent-file-picker-search:focus {
-  border-color: var(--border-strong);
+  /* 聚焦改为主题色细环，不再靠加粗边框表达 */
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .agent-file-picker-body {
@@ -5077,6 +5080,8 @@ html.is-panel-resizing .agent-think-body .table-node {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  /* 面板高度自适应后，加载/空目录需要一个最小可视高度 */
+  min-height: 120px;
   height: 100%;
   font-size: 12px;
   color: var(--text-muted);
@@ -5086,6 +5091,7 @@ html.is-panel-resizing .agent-think-body .table-node {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-height: 120px;
   height: 100%;
   font-size: 12px;
   color: var(--text-muted);
@@ -7444,7 +7450,10 @@ html.is-panel-resizing .agent-think-body .table-node {
   font-size: 15px;
   line-height: 1.85;
   color: var(--text);
-  white-space: pre-wrap;
+  /* 正文交给 Markdown 渲染：换行由段落结构决定，不再按原文 pre-wrap；
+     .chat-msg-markdown 是气泡样式、带 85% 宽度上限，这里放开 */
+  white-space: normal;
+  max-width: none;
   word-break: break-word;
   overflow-wrap: anywhere;
   user-select: text;
@@ -7468,30 +7477,40 @@ html.is-panel-resizing .agent-think-body .table-node {
 
 /* ═══ 输入框超长折叠 chip ═══
    内容高度超过折叠上限（INPUT_FOLD_CAP ≈ 3 行）后，chips 行出现一枚「已折叠 N 行」
-   小胶囊，样式与「引用」胶囊一致：图标 + 标签 + 悬停浮出内容预览；纯展示、
-   不可点击，chip 里的内容发送时拼回正文。 */
+   小胶囊，样式与「引用」胶囊一致（同一套中性 tint，随主题走）：图标 + 标签 +
+   × 移除 + 悬停浮出内容预览；chip 里的内容发送时拼回正文。 */
 .agent-code-view .chat-input-fold-chip {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
-  border: 1px solid #cecdcd;
-  border-radius: 6px;
-  background: #d1d0d0;
+  gap: 5px;
+  padding: 2px 3px 2px 7px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
   max-width: 100%;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+
+.agent-code-view .chat-input-fold-chip:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
 }
 
 .agent-code-view .chat-input-fold-chip-icon {
   flex-shrink: 0;
-  color: #807a7a;
+  color: var(--text-muted);
 }
 
 .agent-code-view .chat-input-fold-chip-label {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  color: #000000;
+  color: var(--text);
 }
 
 /* 悬停预览：与 .agent-ref-chip-tip 同款，展示折叠内容的原文（等宽、限 10 行） */
@@ -7501,7 +7520,8 @@ html.is-panel-resizing .agent-think-body .table-node {
   bottom: calc(100% + 8px);
   z-index: var(--z-tooltip);
   width: max-content;
-  max-width: 340px;
+  /* 与「引用」卡片同宽策略：窄卡片会把行内公式挤成单独一行（见 .agent-ref-chip-tip） */
+  max-width: min(680px, calc(100vw - 40px));
   max-height: 200px;
   padding: 7px 10px;
   background: var(--surface);
@@ -7509,25 +7529,34 @@ html.is-panel-resizing .agent-think-body .table-node {
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   box-shadow: var(--shadow-lg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font);
   font-size: 12px;
   line-height: 1.5;
-  white-space: pre-wrap;
+  white-space: normal;
   word-break: break-word;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 10;
-  line-clamp: 10;
-  -webkit-box-orient: vertical;
+  /* 同「引用」卡片：超出 max-height 滚轮翻看；字体吃 --font，跟随「设置 › 界面字体」 */
+  overflow-y: auto;
+  overscroll-behavior: contain;
   opacity: 0;
   pointer-events: none;
   transform: translateY(4px);
   transition: opacity .12s ease, transform .12s ease;
 }
 
-.agent-code-view .chat-input-fold-chip:hover .chat-input-fold-chip-tip {
+.agent-code-view .chat-input-fold-chip-tip::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 8px;
+}
+
+.agent-code-view .chat-input-fold-chip:hover .chat-input-fold-chip-tip,
+.agent-code-view .chat-input-fold-chip.tip-open .chat-input-fold-chip-tip {
   opacity: 1;
   transform: translateY(0);
+  pointer-events: auto;
 }
 
 /* 消息操作按钮禁用态（流式生成中）：置灰 + 禁止光标，屏蔽 hover 高亮，
@@ -7614,8 +7643,10 @@ html.is-panel-resizing .agent-think-body .table-node {
   flex-shrink: 1;
 }
 
-/* 图标按钮内是固定尺寸的 SVG，按钮框收缩只会让图标溢出、与相邻组件重叠——禁止收缩 */
+/* 图标按钮内是固定尺寸的 SVG，按钮框收缩只会让图标溢出、与相邻组件重叠——禁止收缩
+   （.chat-attach-anchor 是包着图标按钮的弹层锚点，同样不许收缩） */
 .agent-code-view .chat-input-tools .chat-upload-btn,
+.agent-code-view .chat-input-tools .chat-attach-anchor,
 .agent-code-view .chat-input-tools .chat-attach-btn,
 .agent-code-view .chat-input-tools .chat-mic-btn,
 .agent-code-view .chat-input-tools .chat-stop-btn,
@@ -8688,31 +8719,43 @@ html.is-panel-resizing .agent-think-body .table-node {
 
 /* ============================================================
    引用 / 追问 引用块胶囊（与文本同处输入字段内，行内排列）
-   背景 #cfcfcf；内容（图标/文字/删除）用比背景更淡的同色 #e0e0e0。
+   与「代码片段」胶囊同一套中性 tint：吃 --accent / --bg / --border 令牌，
+   深浅主题都成立（原来写死 #d1d0d0 底 + 纯黑字，深色主题下是一块亮斑）。
    悬停弹出自定义提示框（非浏览器原生 title）。
    ============================================================ */
 .agent-ref-chip {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 4px 2px 7px;
-  border: 1px solid #cecdcd;
-  border-radius: 6px;
-  background: #d1d0d0;
+  gap: 5px;
   max-width: 100%;
+  padding: 2px 3px 2px 7px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+
+/* 悬停即提示「这一枚可以操作 / 会浮出全文」 */
+.agent-ref-chip:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
 }
 
 .agent-ref-chip-icon {
   flex-shrink: 0;
-  color: #807a7a;
+  color: var(--text-muted);
 }
 
 .agent-ref-chip-label {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  color: #000000;
+  color: var(--text);
 }
 
 .agent-ref-chip-remove {
@@ -8723,15 +8766,15 @@ html.is-panel-resizing .agent-think-body .table-node {
   width: 16px;
   height: 16px;
   border: none;
-  border-radius: 4px;
+  border-radius: 5px;
   background: transparent;
-  color: #050303;
+  color: var(--text-muted);
   cursor: pointer;
   transition: background var(--transition), color var(--transition);
 }
 
 .agent-ref-chip-remove:hover:not(:disabled) {
-  background: rgba(0, 0, 0, .08);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
   color: var(--danger);
 }
 
@@ -8747,7 +8790,10 @@ html.is-panel-resizing .agent-think-body .table-node {
   bottom: calc(100% + 8px);
   z-index: var(--z-tooltip);
   width: max-content;
-  max-width: 340px;
+  /* 卡片要和气泡同量级宽：KaTeX 公式是 min-content + nowrap 的不可断整体，
+     卡片太窄时整块公式跳占一行，把后续文字挤到公式下方（原本与文字同行）。
+     宽度给足，行内「文字 + 公式」才能按原排版留在同一行 */
+  max-width: min(680px, calc(100vw - 40px));
   max-height: 200px;
   padding: 7px 10px;
   background: var(--surface);
@@ -8759,21 +8805,36 @@ html.is-panel-resizing .agent-think-body .table-node {
   font-size: 12px;
   font-weight: 400;
   line-height: 1.5;
-  white-space: pre-wrap;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 10;
-  line-clamp: 10;
-  -webkit-box-orient: vertical;
+  /* 卡片里放的是 Markdown 渲染结果，换行由段落/标题自己管，不能按原文 pre-wrap */
+  white-space: normal;
+  word-break: break-word;
+  /* 超出 max-height 用滚轮翻看（原来是 line-clamp 截断，看不到全文）；
+     contain 免得滚到底把底下的会话列表一起滚走 */
+  overflow-y: auto;
+  overscroll-behavior: contain;
   opacity: 0;
   pointer-events: none;
   transform: translateY(4px);
   transition: opacity .12s ease, transform .12s ease;
 }
 
-.agent-ref-chip:hover .agent-ref-chip-tip {
+/* 卡片与胶囊之间那 8px 缝补一层透明桥：鼠标从胶囊移进卡片不会穿过 hover 空洞把卡片弄丢 */
+.agent-ref-chip-tip::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 8px;
+}
+
+/* 卡片是胶囊的子节点，悬停卡片仍算悬停胶囊；.tip-open 是 JS 锁住的显示态
+   （见 AgentInputArea 的 tipKey），保证指针移过来这段时间卡片不会先收掉 */
+.agent-ref-chip:hover .agent-ref-chip-tip,
+.agent-ref-chip.tip-open .agent-ref-chip-tip {
   opacity: 1;
   transform: translateY(0);
+  pointer-events: auto;
 }
 
 /* ── 代码片段胶囊（源码预览引用） ── */
@@ -9010,8 +9071,9 @@ html.is-panel-resizing .agent-think-body .table-node {
   cursor: not-allowed;
 }
 
-/* 模型按钮的相对定位锚点：面板贴在该按钮上方弹出 */
-.chat-model-anchor {
+/* 弹出面板的相对定位锚点：面板贴在触发按钮上方弹出（模型选择 / 选择文件同一套做法） */
+.chat-model-anchor,
+.chat-attach-anchor {
   position: relative;
   display: inline-flex;
 }
@@ -11449,13 +11511,16 @@ html.is-panel-resizing .agent-think-body .table-node {
        .agent-terminal-cwd-input      终端 cwd 输入框，自带 1px 边框 + 聚焦提色
        .agent-code-sidebar-filter-input 侧栏过滤框，focus-within 已给整块 1px 内描边
        .file-tree-rename-input        文件树内联改名框，自带 1px --border + 聚焦提色
+       .agent-file-picker-search      文件选择面板的搜索框，用 1px accent 细环（4990 行）；
+                                      它打开面板就自动聚焦，文本框的 :focus-visible 恒成立，
+                                      不排掉就会一直顶着这条 2px 近黑 outline。
      .chat-input 单独排除：它自己不带环，但父级 .chat-input-field:focus-within
      已经给了整块 composer 一个 3px accent 环（7947 行），再在里面的 textarea
      上画一圈会变成嵌套的双框。
 
    只覆盖可交互元素，不用通配符，避免给纯容器加框。 */
 /* 侧栏列表已 portal 到导航栏里（.sidebar-agent-slot），所以两个容器都要覆盖，否则键盘焦点环丢失 */
-:is(.agent-code-view, .sidebar-agent-slot) :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input, .agent-terminal-cwd-input, .agent-code-sidebar-filter-input, .file-tree-rename-input)) {
+:is(.agent-code-view, .sidebar-agent-slot) :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input, .agent-terminal-cwd-input, .agent-code-sidebar-filter-input, .file-tree-rename-input, .agent-file-picker-search)) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }

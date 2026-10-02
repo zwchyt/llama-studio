@@ -131,11 +131,12 @@ export default function AgentCodeView() {
 
   // ── 整个输入域（自持 state / ref / 回调，见 agent-code/hooks/useAgentInput.ts）──
   // 整个域对象同时透传给 AgentInputArea，避免在调用处铺开 20 余个 props。
+  // 输入草稿按模式（通用 / 编码）隔离，待发送附件按项目隔离。
   let inputDomain!: ReturnType<typeof useAgentInput>
   const {
     input, setInput, textareaRef,
     autoResize, insertAtCursor, replaceRange, setSelectionPopover,
-  } = (inputDomain = useAgentInput({ draftScope: projectsDomain.mode }))
+  } = (inputDomain = useAgentInput({ draftScope: projectsDomain.mode, attachScope: activeProjectId }))
 
   // ── 流式运行态与跨域共享 ref（见 agent-code/hooks/useAgentRunState.ts）──
   let run!: ReturnType<typeof useAgentRunState>

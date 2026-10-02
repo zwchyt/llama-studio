@@ -9,6 +9,7 @@ import type { ThinkingLevel, ReleaseInfo, AgentProject, AgentMemoryCandidate, Ch
 const fullApi = {
   printToPDF: (html: string) => ipcRenderer.invoke('print-to-pdf', html),
   savePng: (dataUrl: string) => ipcRenderer.invoke('save-png', dataUrl),
+  captureRegion: (rect: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke('capture-region', rect),
   // ── Edge TTS（聊天朗读）：合成返回 audio data URL，音色列表用于设置界面下拉 ──
   edgeTtsSynthesize: (opts: { text: string; voice: string; rate?: number; pitch?: number }) => ipcRenderer.invoke('edge-tts-synthesize', opts),
   edgeTtsVoices: () => ipcRenderer.invoke('edge-tts-voices'),

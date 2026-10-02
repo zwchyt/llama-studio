@@ -6629,6 +6629,18 @@ export function registerIpcHandlers(): void {
     return filePath
   })
 
+  // 截窗口内一块区域（视口坐标，CSS 像素）→ PNG data URL，供「导出图片」落盘。
+  // 不用 html2canvas：它要把整篇文档克隆进 iframe（document.write）再自行光栅化
+  // CSS / 内联 SVG，遇到本项目大量 color-mix() 与 SVG 图表就失败，控制台还一直刷日志。
+  // 原生截屏拿到的就是屏幕上那一块，颜色与主题完全一致，也不会解析失败。
+  ipcMain.handle('capture-region', async (event, rect: { x: number; y: number; width: number; height: number }): Promise<string> => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) throw new Error('窗口已关闭')
+    if (!rect || rect.width < 1 || rect.height < 1) throw new Error('要截取的区域不可见')
+    const img = await win.webContents.capturePage(rect)
+    return img.toDataURL()
+  })
+
   // ── Agent Code 工作台 文件操作 ──
   const MAX_FILE_SIZE = 1024 * 1024 * 1024 // 1 GiB
   const MAX_READ_TOKENS = 25_000

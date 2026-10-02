@@ -44,17 +44,28 @@
   --font: 'Inter', system-ui, sans-serif;
 
   /* z-index 层级体系：按角色分层，避免散落的魔法数字 */
-  --z-base: 1;           /* 内容层普通堆叠 */
-  --z-above: 2;          /* 略高于内容（行号、拖拽手柄） */
-  --z-float: 5;          /* 浮动元素（滚到底按钮、badge） */
-  --z-sticky: 10;        /* 粘性元素（侧边栏、粘性头） */
-  --z-dropdown: 20;      /* 下拉/弹出菜单 */
-  --z-popover: 30;       /* 弹出卡片（压缩、提示词、长期记忆） */
-  --z-panel: 50;         /* 浮动面板（模型选择、地址补全） */
-  --z-overlay: 60;       /* 遮罩层（全屏遮罩、审批弹窗） */
-  --z-toast: 72;         /* Toast/通知 */
-  --z-tooltip: 80;       /* 工具提示 */
-  --z-modal: 1000;       /* 模态弹窗（最高优先） */
+  --z-base: 1;
+  /* 内容层普通堆叠 */
+  --z-above: 2;
+  /* 略高于内容（行号、拖拽手柄） */
+  --z-float: 5;
+  /* 浮动元素（滚到底按钮、badge） */
+  --z-sticky: 10;
+  /* 粘性元素（侧边栏、粘性头） */
+  --z-dropdown: 20;
+  /* 下拉/弹出菜单 */
+  --z-popover: 30;
+  /* 弹出卡片（压缩、提示词、长期记忆） */
+  --z-panel: 50;
+  /* 浮动面板（模型选择、地址补全） */
+  --z-overlay: 60;
+  /* 遮罩层（全屏遮罩、审批弹窗） */
+  --z-toast: 72;
+  /* Toast/通知 */
+  --z-tooltip: 80;
+  /* 工具提示 */
+  --z-modal: 1000;
+  /* 模态弹窗（最高优先） */
 
   /* 代码块：原来 --code-bg #f7f7f8 与新的 --surface 撞色（卡片面变浅后两者相等），
      这里整体压到比卡片面再深一档，白外框 / 灰卡面两种背景下都能看出块。 */
@@ -161,6 +172,16 @@ select {
   -webkit-user-select: text;
   -webkit-app-region: no-drag;
   pointer-events: auto;
+}
+
+/* 表单控件不吃页面字体：Chromium 给 button / input / select / textarea 各自一套 UA 字体，
+   于是导航名称、顶栏按钮、输入框这些永远不跟随「设置 › 界面字体」（--font）。统一继承一次。
+   需要等宽或专用字体的控件自己声明即可——类选择器权重更高，盖得住这条元素规则。 */
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
 }
 
 ::-webkit-scrollbar {
@@ -874,7 +895,7 @@ select {
 }
 
 /* 多条横幅堆叠时紧凑间距 */
-.update-banner + .update-banner {
+.update-banner+.update-banner {
   margin-top: 0;
 }
 
@@ -1931,6 +1952,7 @@ input[type="reset"]:not(:disabled) {
     transform: translateY(0) scale(1);
   }
 }
+
 /* ══════════════════════════════════════════════════════════════
    跨页通用：命令行参数表单控件 + 分段按钮组
    ──────────────────────────────────────────────────────────────
@@ -1999,6 +2021,7 @@ input[type="reset"]:not(:disabled) {
   margin-top: 6px;
   display: block;
 }
+
 .launch-mode-row {
   display: flex;
   flex-wrap: wrap;

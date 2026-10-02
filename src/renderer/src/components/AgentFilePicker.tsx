@@ -21,8 +21,6 @@ interface AgentFilePickerProps {
   onRemove: (path: string) => void
   onClose: () => void
   triggerRef?: React.RefObject<HTMLElement | null>
-  // 浏览系统文件：调原生对话框选取任意磁盘文件（面板导航只能到当前盘符根）
-  onBrowseSystem?: () => void
 }
 
 function dirName(p: string) {
@@ -41,7 +39,7 @@ function parentDir(p: string) {
   return /^[A-Za-z]:$/.test(parent) ? parent + '/' : parent
 }
 
-export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRemove, onClose, triggerRef, onBrowseSystem }: AgentFilePickerProps) {
+export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRemove, onClose, triggerRef }: AgentFilePickerProps) {
   const [currentPath, setCurrentPath] = useState(workspaceDir)
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(false)
@@ -49,14 +47,12 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
   const [breadcrumbs, setBreadcrumbs] = useState<string[]>([])
   const panelRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
-  const [searchExpanded, setSearchExpanded] = useState(false)
 
   const attachedByPath = useMemo(() => new Set(attached.map(a => a.path)), [attached])
 
   const loadDir = useCallback(async (dir: string) => {
     setLoading(true)
     setSearchQuery('')
-    setSearchExpanded(false)
     try {
       if (dir === DRIVES_VIEW) {
         // 「此电脑」视图：列出所有可用磁盘
@@ -91,9 +87,10 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
     if (currentPath) loadDir(currentPath)
   }, [currentPath, loadDir])
 
+  // 搜索框常驻展开：面板一打开就能直接输入
   useEffect(() => {
-    if (searchExpanded) searchInputRef.current?.focus()
-  }, [searchExpanded])
+    searchInputRef.current?.focus()
+  }, [])
 
   const filteredEntries = useMemo(() => {
     if (!searchQuery.trim()) return entries
@@ -197,30 +194,19 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
             ))
           )}
         </div>
+        {/* 头部右侧：搜索框常驻展开，打开面板即可直接输入 */}
         <div className="agent-file-picker-search-area">
-          {onBrowseSystem && (
-            <button className="agent-file-picker-search-btn" onClick={onBrowseSystem}>
-              <HardDrive size={13} />
-            </button>
-          )}
-          {searchExpanded || searchQuery ? (
-            <div className="agent-file-picker-search-wrap">
-              <Search size={11} className="agent-file-picker-search-icon" />
-              <input
-                ref={searchInputRef}
-                className="agent-file-picker-search"
-                type="text"
-                placeholder="搜索文件…"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                onBlur={() => { if (!searchQuery) setSearchExpanded(false) }}
-              />
-            </div>
-          ) : (
-            <button className="agent-file-picker-search-btn" onClick={() => setSearchExpanded(true)}>
-              <Search size={13} />
-            </button>
-          )}
+          <div className="agent-file-picker-search-wrap">
+            <Search size={11} className="agent-file-picker-search-icon" />
+            <input
+              ref={searchInputRef}
+              className="agent-file-picker-search"
+              type="text"
+              placeholder="搜索文件…"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+            />
+          </div>
         </div>
       </div>
 

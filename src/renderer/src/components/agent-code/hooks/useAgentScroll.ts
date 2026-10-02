@@ -17,7 +17,8 @@ import type { AgentSession } from '../../../../../shared/types'
 export function useAgentScroll({ activeSession, streaming, setSelectionPopover, scrollScope = 'default' }: {
   activeSession: AgentSession | null
   streaming: boolean
-  setSelectionPopover: (v: { text: string; x: number; y: number } | null) => void
+  // 滚动时收起选区操作条：只用来清空，故收窄成 null（免得跟着选区状态字段一起改）
+  setSelectionPopover: (v: null) => void
   /** 滚动位置的作用域（当前传入工作区模式）：切作用域时保存 / 恢复滚动偏移 */
   scrollScope?: string
 }) {

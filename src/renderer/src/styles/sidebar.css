@@ -46,7 +46,7 @@
 
 .sidebar-wrapper.hover-expanded .sidebar {
   position: absolute;
-  top: 0;
+  top: 8px;
   bottom: 0;
   left: 0;
   width: 220px;
@@ -74,7 +74,7 @@
    父级从 display:none 变 flex 没法用 transition 补（display 不参与过渡），
    但动画在元素**创建时**就会跑，正好补上这个入场。
    从上方 8px 滑下来 + 淡入，方向与槽位顶部那条分隔线一致。 */
-.sidebar-agent-slot > * {
+.sidebar-agent-slot>* {
   animation: sidebar-slot-in 0.3s cubic-bezier(0.22, 0.61, 0.36, 1) both;
 }
 
@@ -83,6 +83,7 @@
     opacity: 0;
     transform: translateY(-8px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -115,10 +116,11 @@
 
 .sidebar {
   width: 100%;
-  height: calc(100% - 8px);
+  /* 四边都留 8px（含顶部）：上边不留的话卡片上边框会直接顶在标题栏下沿 */
+  height: calc(100% - 16px);
   flex-shrink: 0;
   background: var(--surface);
-  margin: 0 8px 8px 8px;
+  margin: 8px;
   border-radius: var(--radius, 14px);
   border: 1.5px solid var(--border-strong);
   display: flex;

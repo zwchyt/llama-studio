@@ -209,6 +209,7 @@ interface LlamaCppApi {
   // ── PDF 导出 ──
   printToPDF: (html: string) => Promise<string>
   savePng: (dataUrl: string) => Promise<string>
+  captureRegion: (rect: { x: number; y: number; width: number; height: number }) => Promise<string>
   // ── Edge TTS（聊天朗读）──
   edgeTtsSynthesize: (opts: { text: string; voice: string; rate?: number; pitch?: number }) => Promise<string>
   edgeTtsVoices: () => Promise<Array<{ name: string; label: string; gender: string; locale: string }>>

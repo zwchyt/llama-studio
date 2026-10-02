@@ -1,5 +1,5 @@
 // 通用模式的「导出 PDF」：整段会话重新排版成打印 HTML，交主进程 printToPDF 落盘。
-// 与「导出图片」互补而非重复：消息区是虚拟滚动的，html2canvas 只能截到当前一屏；
+// 与「导出图片」互补而非重复：消息区是虚拟滚动的，截屏只能截到当前一屏；
 // 这里遍历会话的全部消息，长对话也能一次导完。
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
