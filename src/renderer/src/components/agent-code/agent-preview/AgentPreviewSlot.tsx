@@ -21,7 +21,7 @@ import { extToMonacoLang } from '../../../utils/monacoLang'
 import { useAgentTerminalStore } from '../../../store/terminalStore'
 import { useStore } from '../../../store/useStore'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
-import { GIT_DIFF_TAB } from '../utils/constants'
+import { GIT_DIFF_TAB, MEM_IMG_PREFIX } from '../utils/constants'
 import { AgentMarkdown } from '../agent-message'
 // PdfViewer 内部静态依赖 pdfjs+worker（≈2MB）：改为 React.lazy —— 只在真正打开
 // PDF 预览标签的那一刻才加载对应 chunk，避免 pdfjs 常驻首屏主 bundle
@@ -494,7 +494,8 @@ export function AgentPreviewSlot({
                         <button className="file-tree-ctx-item" onClick={() => { closeTab(tabMenu.path); setTabMenu(null) }}><XIcon size={13} /> 关闭</button>
                         <button className="file-tree-ctx-item" onClick={() => { closeOtherTabs(tabMenu.path); setTabMenu(null) }}><XIcon size={13} /> 关闭其他</button>
                         <button className="file-tree-ctx-item" onClick={() => { closeAllTabs(); setTabMenu(null) }}><Trash2Icon size={13} /> 关闭全部</button>
-                        {tabMenu.path !== GIT_DIFF_TAB && (
+                        {/* 哨兵标签（Git 变更面板 / 内存图片）没有磁盘路径可复制 */}
+                        {tabMenu.path !== GIT_DIFF_TAB && !tabMenu.path.startsWith(MEM_IMG_PREFIX) && (
                           <button className="file-tree-ctx-item" onClick={() => { navigator.clipboard.writeText(tabMenu.path).catch(() => { }); setTabMenu(null) }}><CopyIcon size={13} /> 复制路径</button>
                         )}
                       </div>

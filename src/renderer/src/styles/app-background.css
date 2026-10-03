@@ -56,15 +56,40 @@ html.theme-dark .app.has-bg :is(.settings-view, .about-container, .engines-view,
   --surface: color-mix(in srgb, #2b2f36 var(--app-bg-fill), transparent);
 }
 
-/* ── 浮动弹窗 / 菜单：把 --surface 钉回实心 ──
+/* ── 浮动弹窗 / 菜单 / 气泡：把 --surface 钉回实心 ──
    它们浮在内容之上、临时出现，跟着 --surface 变透会把底下的正文和背景图一起透上来，读不清。
    做法与上面那几页同源（在这些根上重写 --surface），只是方向相反：指回不吃 .has-bg 重写的
    实心快照 --surface-solid（:root 里定义，主题切换时在 html 上跟着解析）。弹窗自己的
-   background: var(--surface) 因此自动变实心，不必逐个改选择器，也不跟各弹窗的权重打架。 */
-.app.has-bg :is(.chat-at-file-pop, .chat-slash-pop, .chat-workspace-menu, .chat-branch-menu,
+   background: var(--surface) 因此自动变实心，不必逐个改选择器，也不跟各弹窗的权重打架。
+
+   这份清单要跟着新增的浮层一起补：凡是「浮在内容之上、背景吃 var(--surface)」的都要点名。
+   判断口径＝position: fixed/absolute，**或**挂在固定遮罩里的对话框（后者自身没有 position，
+   按"浮动"去扫会漏掉——.modal / .msg-full / .att-preview 就是这类）。
+   页面内的装饰性块（.welcome-chip / .hub-empty-chip / .welcome-icon-wrap …）**不要**加：
+   它们属于页面面的一部分，本来就该跟着一起透。
+   漏一个的后果不是"背景图被挡住"，而是反过来——那层变半透明、图从它里面透出来，
+   看着像图层错位（.agent-code-scroll-bottom-btn 就这么漏过一次）。
+   自检办法：扫一遍全 CSS 里「position: fixed/absolute + background: var(--surface)」的规则，
+   逐条对照本名单。伪元素（如 .delete-popover::before）不用单列——--surface 从宿主继承。 */
+.app.has-bg :is(
+
+  /* 对话输入区的各类弹层 */
+  .chat-at-file-pop, .chat-slash-pop, .chat-workspace-menu, .chat-branch-menu,
   .chat-model-logo-menu, .chat-model-picker, .chat-think-level-menu, .chat-search-menu,
+  .agent-code-view .chat-cmd-manager,
+  /* Agent Code 的菜单 / 浮层 / 气泡 / 悬浮按钮 */
   .agent-code-tools-menu, .agent-code-proj-menu, .agent-task-card, .agent-file-picker,
-  .agent-code-add-workspace-menu, .agent-sel-popover,
-  .agent-ref-chip-tip, .chat-input-fold-chip-tip) {
+  .agent-code-add-workspace-menu, .agent-sel-popover, .agent-msg-search,
+  .agent-chat-rail-preview, .agent-git-jump,
+  .agent-code-scroll-bottom-btn,
+  .agent-ref-chip-tip, .chat-input-fold-chip-tip,
+  /* 图片胶囊的悬停预览卡 */
+  .agent-img-pill-preview,
+  /* 对话框：挂在固定遮罩里，自身没有 position */
+  .modal, .msg-full, .att-preview,
+  /* 下拉菜单 / 右键菜单 / 确认气泡 / 提示气泡 */
+  .dropdown-menu, .chat-msg-context-menu, .file-tree-ctx-menu,
+  .delete-popover, .update-banner .ub-menu, .kb-del-pop, .settings-view .st-bg-del,
+  .ac-tip, .file-tree-img-tooltip) {
   --surface: var(--surface-solid);
 }

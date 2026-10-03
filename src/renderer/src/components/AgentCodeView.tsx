@@ -4,7 +4,7 @@
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 import { useEffect, useMemo, useRef } from 'react'
 import 'katex/dist/katex.min.css'
-// 注：此处原先 import 了 monitoring.css（「模型运行数据」页的样式文件），
+// 注：此处原先 import 了 monitoring.css（「运行状态」页的样式文件），
 // 但本页一个类都没用到 —— 唯一的 agent-ctx-metric-val 已归位到本页的 agent-code.css。
 // 每个导航页只引用自己的样式文件。
 import { useStore } from '../store/useStore'
@@ -157,7 +157,7 @@ export default function AgentCodeView() {
   const {
     ctxInlineRef, condenseBtnRef, trajBtnRef, memoryBtnRef,
     modelPickerOpen, setModelPickerOpen, modelPickerRef, modelBtnRef,
-    treeOpen, setTreeOpen, rightPanelMode, setRightPanelMode,
+    treeOpen, setTreeOpen, rightPanelMode, setRightPanelMode, closePanel,
     contextModalOpen, setContextModalOpen,
     trajOpen, setTrajOpen,
     memoryOpen, setMemoryOpen,
@@ -177,7 +177,7 @@ export default function AgentCodeView() {
   // ── 预览标签页与内容读取（自持 state 与回调，见 agent-code/hooks/useAgentPreviewTabs.ts）──
   // 整个域对象同时透传给 AgentPreviewSlot，避免在调用处铺开 30 余个 props。
   let previewDomain!: ReturnType<typeof useAgentPreviewTabs>
-  previewDomain = useAgentPreviewTabs({ setRightPanelMode, setTreeOpen })
+  previewDomain = useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel })
 
   // 通用弹窗关闭：点击弹窗/触发按钮外部 或 Escape 键时关闭。
   // 实现见 utils/usePopoverDismiss（支持 btnRef / popRef / popSelector 三种判定，

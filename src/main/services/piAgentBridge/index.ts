@@ -166,8 +166,15 @@ export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promis
     resourceLoader,
     sessionManager,
     // 禁用 pi 的 auto-compaction：llama-studio 自己管理历史（持久化 + 手动 condense +
-    // 每次重建会话注入完整历史），pi 的压缩只会多发一轮摘要请求且结果不落盘
-    settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }),
+    // 每次重建会话注入完整历史），pi 的压缩只会多发一轮摘要请求且结果不落盘。
+    // 同时关掉图片自动缩放：它由 photon（WASM）实现，而 photon_rs_bg.wasm 没随
+    // piWorker.mjs 一起打包，loadPhoton 找不到 wasm 只会返回 null，于是 processImage
+    // 对任何图片都判 ok:false —— 用户发的图在拼请求体之前就被整体丢弃，模型只看得到
+    // 一句「Image omitted」提示。原样透传即可（llama.cpp 官方 webui 也直接发原始字节）。
+    settingsManager: SettingsManager.inMemory({
+      compaction: { enabled: false },
+      images: { autoResize: false }
+    }),
     customTools,
     // 工具白名单：只含 llama-studio 的自研工具名，pi 内置工具
     // （小写 read/bash/edit/write/grep/find/ls）因此不会注册/激活。

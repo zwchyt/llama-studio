@@ -43,8 +43,15 @@ function wrapBinaryDocText(name: string, text: string): string {
   return text ? `[${label}: ${name}]\n${text}` : `[${label}: ${name}]（文本提取失败）`
 }
 
-// 输入托盘里的一颗待发送附件
-type DraftAttachment = { id: string; name: string; isImage: boolean; dataUrl?: string; content?: string; path?: string }
+// 只看文件名判图片：拖拽与工作区选择只拿得到路径/名字，没有 File.type 可用
+const IMAGE_NAME_RE = /\.(png|jpe?g|webp|gif|bmp|svg)$/i
+function isImageName(name: string): boolean { return IMAGE_NAME_RE.test(name) }
+
+// 输入托盘里的一颗待发送附件。
+// 图片不再带「正文行内记号」：图片胶囊自成一整行排在正文上方，正文里不留任何占位文字。
+type DraftAttachment = {
+  id: string; name: string; isImage: boolean; dataUrl?: string; content?: string; path?: string
+}
 
 export function useAgentInput({ draftScope = 'default', attachScope = 'default' }: { draftScope?: string; attachScope?: string } = {}) {
 
@@ -148,6 +155,9 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [attachedFiles, setAttachedFiles] = useState<DraftAttachment[]>([])
+  // removeAttachment 要按 id 找回它的行内标记，而回调闭包里读不到最新 state
+  const attachedFilesRef = useRef<DraftAttachment[]>([])
+  attachedFilesRef.current = attachedFiles
   // 「引用」引用块：以胶囊（图标 + 缩写）形式内嵌在输入框内，
   // 发送时作为引用块（> …）拼入正文。
   const [refChips, setRefChips] = useState<Array<{ id: string; text: string }>>([])
@@ -324,7 +334,7 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
   }
 
   async function readAttachmentFile(file: File): Promise<{ isImage: boolean; dataUrl?: string; text: string }> {
-    const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name)
+    const isImage = file.type.startsWith('image/') || isImageName(file.name)
     if (isImage) {
       const dataUrl = await new Promise<string>((res, rej) => {
         const r = new FileReader()
@@ -346,9 +356,10 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
     return { isImage: false, text }
   }
 
-  const handleAttachmentSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || [])
-    if (e.target) e.target.value = ''  // 允许重复选同名文件
+  // 从 File 列表挂附件：图片读成 data URL 挂成图片胶囊，其余抽正文。
+  // 附件选择器与「拖入但取不到磁盘路径」两处共用（后者拿不到 path，只能按 File 读）。
+  // 图片只进胶囊行，正文一个字都不动——用户正在打的字不会被附件插进来打断。
+  const attachFromFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return
     const read = await Promise.all(files.map(readAttachmentFile))
     const next = files.map((f, i) => ({
@@ -362,14 +373,40 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
     setAttachedFiles(prev => [...prev, ...next])
   }, [])
 
+  const handleAttachmentSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (e.target) e.target.value = ''  // 允许重复选同名文件
+    await attachFromFiles(files)
+  }, [attachFromFiles])
+
   const removeAttachment = useCallback((id: string) => {
     setAttachedFiles(prev => prev.filter(a => a.id !== id))
+  }, [])
+
+  // 「全部清除」：清空全部待发送附件（正文里不再有与附件绑定的占位文字，无需同步）
+  const clearAttachments = useCallback(() => {
+    setAttachedFiles([])
   }, [])
 
   const handleFilePickerAttach = useCallback(async (entry: { name: string; path: string; isDir: boolean }) => {
     if (entry.isDir) return
     // 按路径去重：同名但不同目录的两个文件都该能各自加入（原先按名字去重会静默丢一个）
+    if (attachedFilesRef.current.some(a => a.path === entry.path)) return
     const id = uniqueId('fp-att')
+    // 图片：与「附件选择器」同一条路——读成 data URL 挂成图片胶囊（自成一整行，正文不受影响）。
+    // 内部文件树拖入、系统资源管理器拖入、工作区文件选择器都汇到这个函数，所以三处一起就对了。
+    // 早先它们走的是文本附件那条路：图片被当成文件挂在正文上方的托盘里，还常被 readFile 读成乱码。
+    if (isImageName(entry.name)) {
+      try {
+        const b64 = await window.api.readFileBase64(entry.path)
+        if (b64.success && b64.dataUrl) {
+          setAttachedFiles(prev => [...prev, {
+            id, name: entry.name, path: entry.path, isImage: true, dataUrl: b64.dataUrl, content: '',
+          }])
+          return
+        }
+      } catch { /* 读不出来则退回下面的普通附件路径，至少按路径还能预览 */ }
+    }
     // 先入库，弹窗里的勾选与托盘胶囊同帧出现。读取失败也保留这颗附件：
     // 它在托盘里是「引用」，右侧预览按路径仍能打开原文件。
     // 原先只在文本抽取成功时才建 chip，于是从工作区选的图片、.doc、超大的文本文件
@@ -397,7 +434,8 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
     setAttachedFiles(prev => prev.map(a => a.id === id ? { ...a, content: text ?? '' } : a))
   }, [])
 
-  // 拖拽文件到输入框：支持内部文件树拖拽与系统资源管理器拖入，均作为附件添加
+  // 拖拽文件到输入框：内部文件树拖拽与系统资源管理器拖入都走 handleFilePickerAttach
+  // （图片在那里读成 data URL 挂成图片胶囊，其余按路径挂成附件）
   const handleInputDragOver = useCallback((e: React.DragEvent) => {
     if (e.dataTransfer.types.includes('application/x-agent-file-path') || e.dataTransfer.types.includes('Files')) {
       e.preventDefault()
@@ -426,17 +464,20 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
       window.dispatchEvent(new CustomEvent('agent-file-drop-done'))
       return
     }
-    // 系统资源管理器拖入：经 webUtils 取真实路径后逐个作为附件（目录/取路径失败跳过）
+    // 系统资源管理器拖入：能取到真实路径的按路径挂（右侧预览打得开原文件）；
+    // 取不到路径的（从看图软件 / 浏览器里拖出来的图）按 File 直接读，别静默丢掉
     if (e.dataTransfer.files.length > 0) {
       e.preventDefault()
+      const pathless: File[] = []
       for (const f of Array.from(e.dataTransfer.files)) {
-        try {
-          const p = window.api.getFilePath(f)
-          if (p) void handleFilePickerAttach({ name: f.name, path: p, isDir: false })
-        } catch { /* 取路径失败，跳过该项 */ }
+        let p = ''
+        try { p = window.api.getFilePath(f) } catch { /* 内存构造的 File 取不到路径 */ }
+        if (p) void handleFilePickerAttach({ name: f.name, path: p, isDir: false })
+        else pathless.push(f)
       }
+      if (pathless.length > 0) void attachFromFiles(pathless)
     }
-  }, [handleFilePickerAttach])
+  }, [handleFilePickerAttach, attachFromFiles])
 
   const handleFilePickerRemove = useCallback((path: string) => {
     // 附件是唯一的真相源（弹窗左侧「已选」由它派生），按路径摘掉即可两边同步
@@ -454,7 +495,7 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
     // 附件与文件选择器
     fileInputRef, attachedFiles, setAttachedFiles, filePickerAttached,
     filePickerOpen, setFilePickerOpen,
-    readAttachmentFile, handleAttachmentSelect, removeAttachment, handleFilePickerAttach,
+    readAttachmentFile, handleAttachmentSelect, removeAttachment, clearAttachments, handleFilePickerAttach,
     handleInputDragOver, handleInputDrop, handleFilePickerRemove, toggleFilePicker,
     // 引用胶囊 / 代码片段
     refChips, setRefChips, codeSnippets, setCodeSnippets,

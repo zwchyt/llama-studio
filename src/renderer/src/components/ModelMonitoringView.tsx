@@ -298,7 +298,7 @@ function RunningCard({ card, metrics: metricsProp }: { card: import('../../../sh
                   </span>
                 </div>
                 <div className="metric-bar-wrap" style={{ marginTop: 4 }}>
-                    <div className="metric-bar-fill" style={{ width: `${Math.min(100, ((metrics?.nPromptTokens ?? 0) / (metrics?.nCtx ?? 1)) * 100)}%`, background: '#f59e0b', opacity: 0.6 }} />
+                  <div className="metric-bar-fill" style={{ width: `${Math.min(100, ((metrics?.nPromptTokens ?? 0) / (metrics?.nCtx ?? 1)) * 100)}%`, background: '#f59e0b', opacity: 0.6 }} />
                 </div>
               </div>
             )}
@@ -504,7 +504,7 @@ export default function ModelMonitoringView() {
       <div>
         <div className="page-header">
           <div>
-            <h1 className="page-title">模型运行数据</h1>
+            <h1 className="page-title">运行状态</h1>
             <p className="page-subtitle">
               {allRelevant.length > 0
                 ? `${allRelevant.filter(c => c.status === 'running').length} 个模型正在运行`

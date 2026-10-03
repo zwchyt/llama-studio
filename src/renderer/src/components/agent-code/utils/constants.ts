@@ -18,3 +18,10 @@ export const KEEP_RECENT_TURNS = 3
 
 // Git 变更面板以「特殊预览标签」形式复用预览区；此哨兵路径标识该标签。
 export const GIT_DIFF_TAB = '__agent_git_changes__'
+
+// 内存图片在预览区里的哨兵标签键前缀。没有磁盘路径的图片（剪贴板粘贴、从浏览器或
+// 看图软件拖入——webUtils.getPathForFile 对这类内存 File 取不到路径）走不了
+// 「按路径读原文件」那条路，但图片数据本来就在 dataUrl 里，直接用它在预览区建一个
+// 装好图的标签即可。与 GIT_DIFF_TAB 同一套做法：这个键只当标签的 key 与显示名，
+// 绝不参与磁盘读写。前缀带 :// 是为了与真实路径不可能撞车（Windows 路径不会长这样）。
+export const MEM_IMG_PREFIX = 'memimg://'

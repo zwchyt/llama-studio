@@ -1,6 +1,5 @@
 import { createWithEqualityFn } from 'zustand/traditional'
 import type { AgentMessage, AgentMode, AgentProject } from '../../../shared/types'
-import { isChatWorkspace } from '../../../shared/types'
 import { shallow } from 'zustand/shallow'
 import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, AppUpdateInfo, RunningStatus, ModelMetrics, SystemMetrics, ModelDownloadPhase, HfDownloadPhase, ModelEndpoint } from '../../../shared/types'
 interface CardState {
@@ -96,7 +95,7 @@ const dirtyProjectIds = new Set<string>()
 function projectChanged(prev: AgentProject | undefined, cur: AgentProject): boolean {
   if (!prev) return true
   if (prev.title !== cur.title || prev.systemPrompt !== cur.systemPrompt ||
-      prev.knowledgeBaseId !== cur.knowledgeBaseId || prev.workspaceDir !== cur.workspaceDir) return true
+    prev.knowledgeBaseId !== cur.knowledgeBaseId || prev.workspaceDir !== cur.workspaceDir) return true
   if (prev.sessions.length !== cur.sessions.length) return true
   const prevSess = new Map(prev.sessions.map(s => [s.id, s]))
   for (const s of cur.sessions) {
@@ -115,13 +114,12 @@ function markDirty(projects: AgentProject[]): void {
 }
 function scheduleSaveAgentProjects(p: AgentProject[]): void {
   if (saveAgentProjectsTimer) clearTimeout(saveAgentProjectsTimer)
-  // 空占位项目（无会话、无工作目录）不落盘，但空数组需要落盘以触发 GC 清理已删除项目的残留文件。
+  // 空壳项目（无工作目录、会话里没有任何消息）不落盘，但空数组需要落盘以触发 GC 清理已删除项目的残留文件。
   // 通用工作区是本地合成的容器（可能只带一条自动创建的空会话），同样不算「有内容」——
   // 否则全新安装时会在磁盘存档尚未加载完成前就把占位数据写盘，把用户的真实项目覆盖掉。
+  // 判据看「有无消息」而不是会话条数：占位项目被补一条空白会话后若落盘，读档就还原出个无路径的残留项目。
   const isEmptyShell = (proj: AgentProject): boolean =>
-    isChatWorkspace(proj)
-      ? proj.sessions.every(s => s.messages.length === 0)
-      : (proj.sessions.length === 0 && !proj.workspaceDir)
+    !proj.workspaceDir && proj.sessions.every(s => s.messages.length === 0)
   if (p.length > 0 && p.every(isEmptyShell)) return
   if (useStore.getState().agentPhase != null) {
     // 生成中：只记最新 pending，不写盘（等流式结束统一补存）
@@ -131,7 +129,9 @@ function scheduleSaveAgentProjects(p: AgentProject[]): void {
   pendingProjects = null
   markDirty(p)
   saveAgentProjectsTimer = setTimeout(() => {
-    const toSave = dirtyProjectIds.size ? p.filter(proj => dirtyProjectIds.has(proj.id)) : p
+    const candidates = dirtyProjectIds.size ? p.filter(proj => dirtyProjectIds.has(proj.id)) : p
+    // 与真实项目混在一起时也要剔掉空壳项目，否则整列表全量落盘会把占位项目写进去
+    const toSave = candidates.filter(proj => !isEmptyShell(proj))
     const gcScope = [...dirtyProjectIds]
     dirtyProjectIds.clear()
     lastSavedProjects = p
@@ -191,7 +191,7 @@ interface AppStore {
   systemMetrics: SystemMetrics | null
   setSystemMetrics: (partial: Partial<SystemMetrics>) => void
   // 模型自定义 Logo（key = template.id；data URL 或 null=无/读取失败）：
-  // 「我的模板」卡片与 Agent Code 模型列表共用同一份，设置/移除后立即同步
+  // 「模型管理 」卡片与 Agent Code 模型列表共用同一份，设置/移除后立即同步
   modelLogos: Record<string, string | null>
   loadModelLogos: () => Promise<void>
   setModelLogoEntry: (id: string, url: string | null) => void

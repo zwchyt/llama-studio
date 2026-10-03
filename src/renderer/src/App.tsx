@@ -147,7 +147,6 @@ function AppMain() {
   const backgroundStrength = useStore(s => s.backgroundStrength)
   const showCreateModal = useStore(s => s.showCreateModal)
   const activeBackend = useStore(s => s.activeBackend)
-  const activeChatUrl = useStore(s => s.activeChatUrl)
   const setBackends = useStore(s => s.setBackends)
   const setBackendsReady = useStore(s => s.setBackendsReady)
   const setModels = useStore(s => s.setModels)
@@ -164,7 +163,6 @@ function AppMain() {
   const removeHfDownload = useStore(s => s.removeHfDownload)
   const upsertModelDownload = useStore(s => s.upsertModelDownload)
   const removeModelDownload = useStore(s => s.removeModelDownload)
-  const setView = useStore(s => s.setView)
 
   useEffect(() => {
     // 防御性检查：如果 window.api 未定义（preload 未正确注入），跳过所有 IPC 调用并告警
@@ -527,9 +525,10 @@ function AppMain() {
     })
   }, [activeBackend, setCommandsSchema])
 
-  useEffect(() => {
-    if (!activeChatUrl && view === 'llama') setView('welcome')
-  }, [activeChatUrl, view, setView])
+  // 注：这里原有一条「没有 activeChatUrl 且 view==='llama' 就弹回 welcome」的 effect，已删除。
+  // 它让「Web 界面」这一项永远无法成为当前页（点它会被立刻弹走），于是侧栏上它既没有
+  // 「当前页」竖条，也站不住；同时把 LlamaChatView 自带的「暂无活跃的聊天会话 / 前往启动模型」
+  // 空状态变成了永远显示不出来的死代码。现在没服务器时也能停在 Web 界面看那段空状态。
 
   useEffect(() => {
     window.api.onDownloadProgress((data) => {
@@ -673,7 +672,7 @@ function AppMain() {
       if (Object.keys(partial).length > 0) updateModelMetric(mid, partial)
     })
     // 系统级资源指标（GPU/CPU/内存/显存）：常驻订阅 —— 与模型是否运行无关，
-    // 「模型运行数据」面板在空载时也持续显示这些数据（模型自身的 decode/TTFT/
+    // 「运行状态」面板在空载时也持续显示这些数据（模型自身的 decode/TTFT/
     // 生成进度等运行数据仍只随模型启动后由上面的 metrics-update 提供）
     window.api.onSystemMetricsUpdate((raw: Record<string, unknown>) => {
       const d = raw as Record<string, unknown>

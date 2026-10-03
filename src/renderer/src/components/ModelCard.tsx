@@ -336,7 +336,7 @@ export default function ModelCard({ card, style }: Props) {
     <div className={`model-card ${isRunning ? 'running' : ''}`} style={style}>
       <div className="card-header">
         <div
-          className={`card-icon${isRunning ? ' running' : ''}`}
+          className="card-icon"
           style={logos[card.template.id] ? undefined : { background: avatar.bg, color: avatar.fg }}
           title={logos[card.template.id] ? '模型 Logo（点击更换/移除）' : '设置模型 Logo'}
           onClick={e => { e.stopPropagation(); toggleLogoMenu(e) }}
@@ -344,7 +344,8 @@ export default function ModelCard({ card, style }: Props) {
           {logos[card.template.id]
             ? <img src={logos[card.template.id]!} alt={card.template.name} className="card-icon-img" />
             : <span className="card-icon-letter">{avatar.letter}</span>}
-          {isRunning && <span className="card-icon-spin" />}
+          {/* 这里原先在运行中叠一圈转动的圆环（.card-icon-spin），已去掉：
+              卡片本身已经有足够的状态表达——图标描边、名称变绿、页脚状态点 +「启动中」文案 */}
         </div>
         <div className="card-info">
           <h3

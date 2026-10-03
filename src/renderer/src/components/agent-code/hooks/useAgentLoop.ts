@@ -28,6 +28,7 @@ import { useStore } from '../../../store/useStore'
 import { notify } from '../../../store/notificationStore'
 import { playEvent, warmUpAudio } from '../../../utils/sound'
 import { agentConfig } from '../../../utils/agentConfig'
+import { hasVisionProjector } from '../../../utils/modelCapabilities'
 import { PiAgentClient } from '../../../utils/piAgentClient'
 import { computeContextBudget, splitAgentTurns } from '../../../utils/contextBudget'
 import { noteUserCorrection, probeContradiction } from '../../../utils/memoryWriter'
@@ -220,15 +221,17 @@ export function useAgentLoop({
           memoryInjection = inj?.text || ''
         } catch { /* 注入失败不阻塞对话（与 memoryWriter 的火忘式提交同一原则） */ }
       }
-      // 「本轮能不能把截图发给模型」以运行中服务端的自述为准：llama-server 真挂了视觉
-      // 投影，/props 才会报 modalities.vision=true。本地能力表是按模型文件名/模板关键词
-      // 推断的，判错还会缓存下来一直用错——把图片发给一个不认图的端点会直接让这轮请求
-      // 报错。所以默认用能力表兜底，只要 /props 给了明确答案就以它为准。
+      // 「本轮能不能把图发给模型」三层判据，从可信到不可信：
+      //   ① 运行中服务端的自述：llama-server 真挂了视觉投影，/props 才会报 modalities.vision=true；
+      //   ② 启动参数带了 --mmproj（视觉投影 / 俗称「图片模型」）：主模型 GGUF 常是纯文本架构，
+      //      看图能力全在这个投影里，元数据推不出来，只看能力表就会误判成不支持；
+      //   ③ 本地能力表：按模型文件名 / chat template 关键词推断，判错还会缓存下来一直用错。
+      // 把图片发给一个不认图的端点会直接让这轮请求报错，所以 /props 给了明确答案就以它为准。
       // 远程端点没有 /props，那边只有面板上手勾的那一项可信（未勾就是不支持，不猜）。
       const curCard = useStore.getState().cards.find(c => c.status === 'running')
       const endpoint = remoteOfCard(curCard, useStore.getState().modelEndpoints)
       const capsVision = (): boolean => (curCard ? useStore.getState().modelCapabilities[curCard.template.id]?.vision === true : false)
-      let vision = endpoint ? endpoint.vision === true : capsVision()
+      let vision = endpoint ? endpoint.vision === true : (capsVision() || hasVisionProjector(curCard?.template.args))
       if (!endpoint) {
         try {
           const props = await window.api.getServerProps(opts.port)
@@ -763,6 +766,8 @@ export function useAgentLoop({
       type: a.isImage ? 'image' : 'file',
       dataUrl: a.isImage ? a.dataUrl : undefined,
       content: a.isImage ? undefined : a.content,
+      // 带得上磁盘路径：气泡里的胶囊点一下就能在右侧预览打开原文件
+      ...(a.path ? { path: a.path } : {}),
     }))
     // 引用胶囊：仅在非 override（非重新生成/重发）时拼入正文，作为引用块；最后接用户自己输入的正文。
     // 超长打包 chip 的内容是用户正文的前段，排在最前。
@@ -846,6 +851,13 @@ export function useAgentLoop({
     }
     if (!resolvedText && !hasAttach) return
 
+    // 编码模式把项目删光了：会话没有归属的工作区，照常发送会把消息写进虚空（就地建会话也无处插），
+    // 所以在这里拦下并保留输入框内容，让用户先去新建项目。
+    if (!activeProjectId) {
+      notify('还没有项目，请先在左侧「新建项目」中选择工作目录', 'error')
+      return
+    }
+
     // 同步互斥门闩：从这里到本轮 agent 结束前，后到的 handleSend 一律走排队分支
     sendingRef.current = true
     try {
@@ -854,7 +866,7 @@ export function useAgentLoop({
       if (textareaRef.current) textareaRef.current.style.height = 'auto'
 
       const pid = activeProjectId
-      // 确保存在活动会话：默认项目可能尚无会话（sessions:[]），首次发送时就地创建，避免「按两次才发送」
+      // 确保存在活动会话：项目可能尚无会话（sessions:[]），首次发送时就地创建，避免「按两次才发送」
       let sid = activeSessionId
       let baseMessages: AgentMessage[] = activeSession ? activeSession.messages : []
       if (!activeSession) {

@@ -4,11 +4,14 @@
  * 同一份导航清单此前分散在多处各自维护（useStore 的 view 联合类型、两套导航栏
  * 各自的分组、App 的 currentView switch、sound.ts 的 NAV_CUES），增删一个界面要改
  * 好几个文件，极易漏。现在只在这里定义：
- *   - NAV_ITEMS     左侧导航栏常驻项（平铺，不分节）
+ *   - MODE_ITEMS    「对话 / 工作台」两项（Agent Code 的两种模式）
+ *   - NAV_ITEMS     导航栏常驻项中，「工具箱」入口**之前**的那一段（平铺，不分节）
+ *   - NAV_TAIL_ITEMS 导航栏常驻项中，「工具箱」入口**之后**的那一段（目前只有「设置」）
  *   - TOOL_GROUPS   「工具箱」页内的分组项（分节，节名是工具箱左栏的小标题）
  *   - TOOLS_ENTRY   导航栏上的「工具箱」入口（不是 view，点击进入聚合页）
  *
  * 「对话 / 工作台」共用 agent-code 这一个 view，靠 mode 字段区分，见 navKeyOf。
+ * 它们不排在常驻列表里，而是渲染在导航栏底部 Agent Code 会话槽内（见 Sidebar.tsx）。
  * 视图与组件的映射仍在 views/viewRegistry.tsx；音效仍在 utils/sound.ts
  * （按 view key 查表，与导航位置无关，因此不需要跟着搬）。
  */
@@ -33,7 +36,12 @@ export interface NavDef {
   label: string
   icon: ElementType
   color: string
+  /** 该界面靠哪个服务「活着」：'models' = 有模型在跑，'llama' = 聊天服务在跑。
+   *  **当前没有任何消费方**——导航栏已改成只表达「当前在哪一页」，不再有「运行中就点亮」的
+   *  跟随逻辑（那会让好几项一起变色，盖过唯一该看的信息）。字段留着描述界面与服务的归属关系，
+   *  将来若要做运行指示灯，判据直接取这里。 */
   runningSource?: 'models' | 'llama'
+  /** 同上，暂无消费方：原先表示「常驻项只要运行就变绿」。 */
   persistent?: boolean
 }
 
@@ -47,17 +55,32 @@ export interface NavSection {
   items: NavDef[]
 }
 
-/** 导航栏常驻项：就这 8 个高频界面，从上到下按这个顺序排，不再分节。
- *  其余界面全部收进下面的 TOOL_GROUPS（工具箱页二级导航）。 */
-export const NAV_ITEMS: NavDef[] = [
+/** 「对话 / 工作台」两项：Agent Code 这一个界面的两种模式。
+ *  它们不排进导航栏常驻列表，而是渲染在导航栏底部 Agent Code 会话槽里、
+ *  「新建聊天 / 新添项目」之上（见 Sidebar.tsx）——模式切换、新建、会话列表本就是
+ *  同一件事的三个动作，从上到下连成一条；分在导航栏一头一尾反而要来回找。
+ *  顺序 / 图标 / 配色仍由这里唯一定义。 */
+export const MODE_ITEMS: NavDef[] = [
   // 「对话」就是 Agent Code 的通用模式（原生聊天界面已并入这里）；「工作台」是同一界面的编码模式。
-  { key: 'agent-code', mode: 'chat', label: '对话', icon: MessageSquareIcon, color: '#8b5cf6' },
-  { key: 'agent-code', mode: 'code', label: '工作台', icon: CodeIcon, color: '#10b981' },
+  { key: 'agent-code', mode: 'chat', label: '聊天', icon: MessageSquareIcon, color: '#8b5cf6' },
+  { key: 'agent-code', mode: 'code', label: '编码', icon: CodeIcon, color: '#10b981' }
+]
+
+/** 导航栏常驻项（「工具箱」入口**之前**的那一段）：从上到下按这个顺序排，不再分节。
+ *  顺序：模型管理 → 知识库 → Web 界面 → 运行状态 → Token 统计。
+ *  「设置」不在这里，见下面的 NAV_TAIL_ITEMS。 */
+export const NAV_ITEMS: NavDef[] = [
+  { key: 'cards', label: '模型管理', icon: LayoutDashboardIcon, color: '#8b5cf6', runningSource: 'models', persistent: true },
   { key: 'knowledge', label: '知识库', icon: BookOpenIcon, color: '#0d9488' },
-  { key: 'token-stats', label: 'Token 统计', icon: TrendingUpIcon, color: '#f59e0b', runningSource: 'models' },
-  { key: 'monitoring', label: '模型运行数据', icon: ActivityIcon, color: '#ef4444', runningSource: 'models' },
-  { key: 'cards', label: '我的模板', icon: LayoutDashboardIcon, color: '#8b5cf6', runningSource: 'models', persistent: true },
   { key: 'llama', label: 'Web 界面', icon: ServerIcon, color: '#14b8a6', runningSource: 'llama' },
+  { key: 'monitoring', label: '运行状态', icon: ActivityIcon, color: '#ef4444', runningSource: 'models' },
+  { key: 'token-stats', label: 'Token 统计', icon: TrendingUpIcon, color: '#f59e0b', runningSource: 'models' }
+]
+
+/** 导航栏常驻项（「工具箱」入口**之后**的那一段）。
+ *  单独拆一段的原因：「工具箱」不对应任何 view、由 Sidebar 直接渲染，而它要排在「设置」之前。
+ *  顺序仍必须只在本文件里定义，所以按「工具箱之前 / 之后」切成两段，由 Sidebar 夹着渲染。 */
+export const NAV_TAIL_ITEMS: NavDef[] = [
   { key: 'settings', label: '设置', icon: SettingsIcon, color: '#6b7280' }
 ]
 
@@ -122,9 +145,10 @@ export const GROUPED_VIEWS: ReadonlySet<ViewKey> = new Set(
 )
 
 /** 全量索引：ToolsHub 取标题/配色，导航组件查定义。
- *  按 navKeyOf 建键（不带 mode 的项 key 就是 view），所以 ToolsHub 仍能用 view 直接查。 */
+ *  按 navKeyOf 建键（不带 mode 的项 key 就是 view），所以 ToolsHub 仍能用 view 直接查。
+ *  MODE_ITEMS 也要并进来：它们虽不在常驻列表里，仍是两个合法导航项。 */
 export const NAV_DEF_BY_KEY: Record<string, NavDef> = Object.fromEntries(
-  [...NAV_ITEMS, ...TOOL_GROUPS.flatMap((g) => g.items)]
+  [...MODE_ITEMS, ...NAV_ITEMS, ...NAV_TAIL_ITEMS, ...TOOL_GROUPS.flatMap((g) => g.items)]
     .map((d) => [navKeyOf(d), d])
 )
 
@@ -141,12 +165,4 @@ export function resolveToolsEntryView(): ViewKey {
     if (last && GROUPED_VIEWS.has(last as ViewKey)) return last as ViewKey
   } catch { /* ignore */ }
   return TOOLS_FALLBACK_VIEW
-}
-
-/** 工具箱内是否存在「正在运行」的界面（用于导航栏上的运行指示灯） */
-export function groupedHasRunning(hasRunningModels: boolean, activeChatUrl: string | null): boolean {
-  return TOOL_GROUPS.some((g) => g.items.some((i) =>
-    (i.runningSource === 'models' && hasRunningModels) ||
-    (i.runningSource === 'llama' && !!activeChatUrl)
-  ))
 }

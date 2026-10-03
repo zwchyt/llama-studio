@@ -19,6 +19,8 @@ import { useSmoothStream } from '../hooks/useSmoothStream'
 import { ThinkTextContent } from './ThinkTextContent'
 import { AttachmentTextPreview } from './AttachmentTextPreview'
 import { UserMessageFullText } from './UserMessageFullText'
+import { ImagePill } from '../utils/ImagePill'
+import { splitByImageMarkers } from '../utils/imageMarker'
 import { Markdown } from '../../../markdown/markstream'
 import { MermaidCard, parseContentToBlocks } from '../../../mermaid'
 import { ChartCard } from '../../../recharts'
@@ -97,17 +99,23 @@ export const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { co
 // 用户输入一律按普通字符串显示：不走 Markdown（rehype-raw/sanitize 管线会把
 // <LineChart> 这类自定义标签剥成空白）、不渲染 HTML/SVG/图表组件、不套代码块
 // 框、不做语法高亮。{text} 文本插值天然转义，`<`、```、反引号都原样可见，
-// 任何内容都不会「显示成空白」。pre-wrap + 等宽字体保留换行/空格/缩进，代码
-// 结构不乱；超长行自动换行不撑破气泡。
+// 任何内容都不会「显示成空白」。pre-wrap 保留换行/空格/缩进，代码结构不乱；
+// 字体吃 --font，跟随「设置 › 界面字体」预设，与输入框、模型正文同一套；
+// 超长行自动换行不撑破气泡。
+// 图片胶囊排在正文之前、与文字同处一行：`[图] 文字`。
 // 超长消息显示限制：露前 5 行（行数改 styles/agent-code.css 的 --user-msg-lines），最后一行
 // 由实到虚平滑淡出，不写任何提示文字；被截到的那条可点 → 正中弹窗看全文（.msg-full）。
 // 复制按钮与发给模型的内容始终是完整原文。
 
-export const UserMessageEntry = React.memo(function UserMessageEntry({ content, attachments }: { content: string; attachments?: Attachment[] }) {
+export const UserMessageEntry = React.memo(function UserMessageEntry({ content, attachments, onOpenImage }: {
+  content: string
+  attachments?: Attachment[]
+  /** 点图片胶囊开右侧预览：有磁盘路径的读原文件，只有内存图的用 dataUrl 建标签。
+   *  走哪条路由外层判定（见 AgentCodeViewLayout 的 previewImageAttachment）。 */
+  onOpenImage?: (a: Attachment) => void
+}) {
   // 全文弹窗：只有被截断的长消息才打得开
   const [fullOpen, setFullOpen] = useState(false)
-  // 图片附件放大预览（点击缩略图 → 全屏）
-  const [zoom, setZoom] = useState<string | null>(null)
   // 文件附件（PDF / DOCX / txt / 代码…）点开看抽取文本——即模型真正读到的那段
   const [previewAtt, setPreviewAtt] = useState<Attachment | null>(null)
   const images = useMemo(
@@ -118,25 +126,41 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
     () => (attachments ?? []).filter(a => a.type === 'file'),
     [attachments]
   )
-  const imageNode = images.length > 0 ? (
-    <div className="user-msg-images">
-      {images.map((a, i) => (
-        <img
-          key={`${a.name}-${i}`}
-          className="user-msg-image"
-          src={a.dataUrl || a.fullDataUrl}
-          alt={a.name}
-          title={`${a.name}（点击放大）`}
-          onClick={() => setZoom(a.fullDataUrl || a.dataUrl || null)}
-        />
+  const srcOf = (a: Attachment) => a.dataUrl || a.fullDataUrl || ''
+  // 点胶囊开右侧预览。此前这里要求 a.path 存在才挂 onClick——于是从剪贴板粘贴、
+  // 或从浏览器 / 看图软件拖进来的图（取不到磁盘路径）只能悬停看小图，点它毫无反应。
+  // 现在只要外层给了回调就挂上：有路径读原文件，没路径用内存里的 dataUrl 建预览标签。
+  const openOf = (a: Attachment) => (onOpenImage ? () => onOpenImage(a) : undefined)
+  const text = typeof content === 'string' ? content : String(content ?? '')
+  // 正文与图片分开：旧消息的正文里带着行内记号（`图片:名`），这里把记号摘掉、对应图片认领出来；
+  // 没有对应附件的记号原样留作文字，不吞字。同名多张按出现顺序一一对应（命中即消费）。
+  // 认领到的图片与没被认领的图片合并成一行，排在正文之前——与输入框「胶囊在上、文字在下」同一顺序。
+  const { bodyText, bodyImages } = useMemo(() => {
+    const pool = [...images]
+    const taken: Attachment[] = []
+    let out = ''
+    for (const s of splitByImageMarkers(text)) {
+      if (s.kind === 'text') { out += s.text; continue }
+      const at = pool.findIndex(a => (a.marker ? a.marker === s.raw : a.name === s.name))
+      if (at < 0) { out += s.raw; continue }
+      taken.push(pool.splice(at, 1)[0]!)
+    }
+    return { bodyText: out, bodyImages: [...taken, ...pool] }
+  }, [text, images])
+  // 图片胶囊与正文排在同一行，胶囊在文字之前：`[图] 文字`。
+  // 胶囊本身是 inline-flex 的 span（.agent-img-pill 的 vertical-align 就是按行内基线调过的），
+  // 直接作为 .user-plain-text 的行内子节点排进去即可——绝不能再套一层 div/flex 容器：
+  // 一旦成了块级盒子，它就会把文字挤到下一行，变成上下两行。
+  // 胶囊与文字之间补一个空格（正文里本来就以空格分词），文字换行时后续行自然从左边起排。
+  const bodyInner = (
+    <>
+      {bodyImages.map((a, i) => (
+        <ImagePill key={`img-${a.name}-${i}`} name={a.name} src={srcOf(a)} onClick={openOf(a)} clickHint="点击在右侧预览" />
       ))}
-    </div>
-  ) : null
-  const lightboxNode = zoom ? (
-    <div className="user-msg-lightbox" onClick={() => setZoom(null)} title="点击任意处关闭">
-      <img src={zoom} alt="" />
-    </div>
-  ) : null
+      {bodyImages.length > 0 && bodyText ? ' ' : null}
+      {bodyText}
+    </>
+  )
   const fileNode = files.length > 0 ? (
     <div className="user-msg-files">
       {files.map((a, i) => (
@@ -153,16 +177,15 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
       ))}
     </div>
   ) : null
-  // 附件区统一出口：图片缩略图 + 文件卡片 + 两个浮层（图片全屏 / 附件文本预览）
-  const attachmentNode = images.length > 0 || files.length > 0 ? (
+  // 附件区统一出口：文件卡片 + 附件文本浮层。
+  // 图片已并进气泡正文（正文之前独占一行），所以这里不再有图片块；
+  // 图片胶囊悬停看预览卡，带磁盘路径的还能点开右侧「预览」工作区看原图。
+  const attachmentNode = files.length > 0 || previewAtt ? (
     <>
-      {imageNode}
       {fileNode}
-      {lightboxNode}
       {previewAtt && <AttachmentTextPreview att={previewAtt} onClose={() => setPreviewAtt(null)} />}
     </>
   ) : null
-  const text = typeof content === 'string' ? content : String(content ?? '')
   // 正文始终照常排完整段，只被 CSS 的 max-height 裁掉一截；量高判断「确实被裁到了」
   // 才追加淡出并可点（短消息既不淡出也点不开）
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -177,7 +200,7 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [text])
+  }, [bodyText])
   // 选正文不算点开：拖出选区后浏览器仍会在 mouseup 之后补发一次 click，那次放过
   const openFull = (e: React.MouseEvent) => {
     if (window.getSelection()?.isCollapsed === false) return
@@ -186,18 +209,18 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
   }
   return (
     <>
-    {/* 只发附件没写文字时正文为空：不渲染空气泡，只留下面的附件区 */}
-    {text.trim() ? (
+    {/* 既没文字也没图片时不渲染空气泡；只有图片（正文被摘空）时照常成泡 */}
+    {bodyText.trim() || bodyImages.length > 0 ? (
       <div
         className={`chat-msg-bubble chat-msg-markdown${clamped ? ' user-msg-clamped' : ''}`}
         onClick={clamped ? openFull : undefined}
         title={clamped ? '点击查看完整内容' : undefined}
       >
-        <div ref={bodyRef} className="user-plain-text">{text}</div>
+        <div ref={bodyRef} className="user-plain-text">{bodyInner}</div>
       </div>
     ) : null}
     {attachmentNode}
-    {fullOpen && <UserMessageFullText text={text} onClose={() => setFullOpen(false)} />}
+    {fullOpen && <UserMessageFullText text={bodyText} onClose={() => setFullOpen(false)} />}
     </>
   )
 })

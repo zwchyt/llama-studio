@@ -4801,7 +4801,7 @@ export function registerIpcHandlers(): void {
     return payload
   }
 
-  // ── 系统级资源指标（常驻「模型运行数据」面板）──
+  // ── 系统级资源指标（常驻「运行状态」面板）──
   // GPU（nvidia-smi 缓存）/ CPU（os.cpus 增量）/ 内存（os.totalmem/freemem）与模型
   // 是否运行无关：每轮 2s 广播一条 system-metrics-update，无模型运行时面板也持续显示。
   // （模型自身的运行数据 decode/TTFT/生成进度仍只随模型启动后才有值。）

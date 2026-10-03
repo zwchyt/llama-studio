@@ -136,7 +136,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   } = inputDomain
   const {
     htmlAnnotateActive, htmlAnnotations, injectHtmlAnnotate, toggleHtmlAnnotate,
-    clearHtmlAnnotations, removeHtmlAnnotation, openFileAtLine, openPreview, openTabs,
+    clearHtmlAnnotations, removeHtmlAnnotation, openFileAtLine, openPreview, openMemoryImage, openTabs,
   } = previewDomain
   const {
     loading, streaming, thinkDone, condenseOpen, setCondenseOpen,
@@ -152,7 +152,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     promptDraft, promptModalOpen, reqCount, rightPanelMode, setApproveWriteEditDraft,
     setContextModalOpen, setEditDraft, setEditingMsgId,
     setKbCopiedId, setMemoryDraft, setMemoryOpen, setPromptDraft, setPromptModalOpen,
-    setRightPanelMode, setRightPanelModeAndOpen, setSidebarOpen, setTrajOpen, setTreeOpen, sidebarOpen,
+    setRightPanelMode, setRightPanelModeAndOpen, setTrajOpen, setTreeOpen,
     openPanels, closePanel, closeOtherPanels, closePanelsRight, closeAllPanels,
     terminalMounted, trajBtnRef, trajOpen, treeOpen,
     allowBtnRef, approvalReq, autoApproveBtnRef, autoApproveRef, attachBtnRef,
@@ -425,6 +425,15 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   // 走 files 模式会在预览列旁边再亮出一棵树，占掉本来就不宽的预览位。
   const previewAttachment = useCallback((path: string) => { void openPreview(path, 'preview') }, [openPreview])
 
+  // 点图片胶囊：有磁盘路径的按路径打开原文件（预览区读原始字节）；
+  // 没有路径的（剪贴板粘贴、从浏览器 / 看图软件拖入——webUtils.getPathForFile 取不到）
+  // 用内存里的 dataUrl 直接开一个预览标签。两种图点击都有反应，不再只有「悬停能看」。
+  const previewImageAttachment = useCallback((a: { name: string; path?: string; dataUrl?: string; fullDataUrl?: string }) => {
+    if (a.path) { void openPreview(a.path, 'preview'); return }
+    const src = a.dataUrl || a.fullDataUrl
+    if (src) openMemoryImage(a.name, src, 'preview')
+  }, [openPreview, openMemoryImage])
+
   // 五个工作区的快捷键 F1~F5；卡片上显示的提示文案在 AgentPreviewSlot.tsx 的 PANEL_SHORTCUT
   // 再按同一个键关闭它自己：走 closePanel（与标签条上的 × 同一条路径），还并开着别的
   // 工作区时切到剩下的那个，全关完才收起整块面板。
@@ -506,10 +515,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                 </div>
               ) : msg.content || msg.attachments?.length ? (
                 <>
-                  {/* 附件两种模式都渲染（图片缩略图 + 文件卡片点击看抽取文本）；
+                  {/* 附件两种模式都渲染（图片＝正文内联胶囊，文件卡片点击看抽取文本）；
                       只发附件不发文字时也要有这条消息的气泡，否则附件整块消失。
                       超长正文在气泡里只显示前几行，点气泡正中弹窗看全文。 */}
-                  <UserMessageEntry content={msg.content} attachments={msg.attachments} />
+                  <UserMessageEntry content={msg.content} attachments={msg.attachments} onOpenImage={previewImageAttachment} />
                   <div className="chat-msg-actions">
                     <button className="chat-msg-action-btn" title="复制" onClick={() => copyMessage(msg.content)}><CopyIcon size={13} /></button>
                     <button className="chat-msg-action-btn" title="编辑" onClick={() => editAt(msg.id)} disabled={loading}><PencilIcon size={13} /></button>
@@ -559,16 +568,18 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   }, [activeSession, historyStartIndex, virtual.windowStart, virtual.windowEnd, streaming, loading, thinkDone, editingMsgId, editDraft, confirmEdit, copyMessage, editAt, resendAt, branchAt, msgRowActionsRef, modelLabelRef, streamStartAtRef, handleStreamRate, runningCard, setEditDraft, setEditingMsgId, plainChat, speakingId])
   return (
     <div className="agent-code-view">
-      <div className="agent-code-topbar" onDoubleClick={() => { const anyOpen = sidebarOpen || treeOpen; setSidebarOpen(!anyOpen); setTreeOpen(!anyOpen); setContextModalOpen(false) }}>
+      {/* 双击顶栏 = 开合右侧面板。原来它还一并开合左侧的会话列表，已去掉：
+          会话列表的显隐只由侧栏自己的收起/展开决定，顶栏不再另管一套。 */}
+      <div className="agent-code-topbar" onDoubleClick={() => { setTreeOpen(v => !v); setContextModalOpen(false) }}>
         <div className="agent-code-topbar-left">
-          <button className="chat-collapse-btn" onClick={() => setSidebarOpen(v => !v)} style={{ marginTop: 0, width: 28, height: 28 }}>
-            {sidebarOpen ? <ChevronLeftIcon size={14} /> : <ChevronRightIcon size={14} />}
-          </button>
+          {/* 这里原有「收起 / 展开会话列表」按钮（toggle sidebarOpen），已删除：
+              它和侧栏自己的收起按钮管的是两回事，点下去看不出反应。
+              会话列表现在常驻挂载（见下面 portal 的条件）。 */}
           <span className="agent-code-topbar-title">{activeSession?.title || '新会话'}</span>
         </div>
 
         <div className="agent-code-topbar-right">
-          {/* Prefill 进度条：复用「模型运行数据」面板的同一数据源（modelMetrics[].prefillProgress），
+          {/* Prefill 进度条：复用「运行状态」面板的同一数据源（modelMetrics[].prefillProgress），
               自订阅指标，仅在 prefill 进行中（pp < 1）显示，完成后自动消失。 */}
           <div
             ref={topbarScrollRef}
@@ -665,9 +676,9 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
       </div>
 
       <div className="agent-code-body">
-        {/* 列表 portal 到导航栏底部的槽里；sidebarOpen 关掉时干脆不挂，槽一空 CSS 的 :empty 就把分隔线收掉。
+        {/* 列表 portal 到导航栏底部的槽里，**常驻挂载**（不再有开关）。
             onClickCapture 兜住列表内一切点击（新建 / 重命名 / ⋯ 菜单…），先回工作台再走原逻辑。 */}
-        {sidebarOpen && sessionSlot && createPortal(
+        {sessionSlot && createPortal(
           <div className="agent-code-sidebar-slot" onClickCapture={backToWorkspace}>
             <AgentSessionSidebar
               mode={mode}
@@ -729,7 +740,9 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                   一个LLM本地智能体
                 </div>
                 <div className="agent-welcome-desc">
-                  {plainChat ? '随便问点什么，我会直接回答。' : '描述任务，我来改代码。'}
+                  {plainChat ? '随便问点什么，我会直接回答。'
+                    : codeProjects.length === 0 ? '还没有项目，点左侧「新建项目」选择工作目录后再开始。'
+                      : '描述任务，我来改代码。'}
                 </div>
 
                 {/* ── 工作区选择（欢迎页是模式的主要入口）──
@@ -1018,6 +1031,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
             handleKeyDown={handleKeyDown}
             handleInputChange={handleInputChange}
             onPreviewAttachment={previewAttachment}
+            onPreviewImage={previewImageAttachment}
           />
           {/* 建议项放在输入区**之后**：空会话时输入框被抬到中间（.hero-input），
               这样整块的顺序就是「标题 → 模式卡片 → 输入框 → 快捷建议」——

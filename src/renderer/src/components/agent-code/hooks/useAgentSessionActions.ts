@@ -122,7 +122,7 @@ export function useAgentSessionActions({
     setLoading(false)
   }, [])
 
-  // 为已有/默认项目选择或切换工作目录（默认项目 sessions:[] 且 workspaceDir:'' 时也可使用）
+  // 为已有项目选择或切换工作目录
   const changeProjectDir = useCallback(async (projId: string) => {
     const res = await safeCall<{ path: string | null }>(() => window.api.selectDirectory(), '选择目录')
     if (!res?.path) return

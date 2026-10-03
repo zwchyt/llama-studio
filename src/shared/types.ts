@@ -173,7 +173,7 @@ export interface ModelMetrics {
   lastUpdated: number           // timestamp of last update ms
 }
 
-/** 系统级资源指标（「模型运行数据」面板常驻区：GPU/CPU/内存/显存，与模型是否运行无关） */
+/** 系统级资源指标（「运行状态」面板常驻区：GPU/CPU/内存/显存，与模型是否运行无关） */
 export interface SystemMetrics {
   gpuTemperature: number | null // GPU temperature (°C)
   gpuUtilization: number | null // GPU utilization (%)
@@ -292,6 +292,12 @@ export interface Attachment {
   content?: string   // 文本内容（用于提示注入，图片时为 undefined）
   dataUrl?: string   // 图片缩略图 base64（仅图片类型，用于气泡展示）
   fullDataUrl?: string // 图片原图 base64（仅图片类型，持久化后用于多轮重发/重新生成）
+  /** 图片在正文里的行内标记（见 agent-code/utils/imageMarker）：只有旧会话还会带，
+      气泡据此把胶囊排回用户当初插入的位置。新消息不再产生标记——输入框里图片胶囊
+      自成一整行、正文里没有占位文字，气泡把未认领的图片接着正文排成胶囊。 */
+  marker?: string
+  /** 原文件在磁盘上的位置（拖入 / 工作区选择而来）；点胶囊据此在右侧预览打开原图 */
+  path?: string
 }
 export interface ToolCallInfo {
   id: string

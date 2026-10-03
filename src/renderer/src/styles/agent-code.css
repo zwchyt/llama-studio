@@ -253,14 +253,6 @@
   padding-left: 10px;
 }
 
-.chat-attach-thumb {
-  width: 28px;
-  height: 28px;
-  object-fit: cover;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
 .chat-attach-fileicon {
   color: var(--text-dim);
   flex-shrink: 0;
@@ -316,11 +308,9 @@
   width: 6px;
 }
 
-/* 编码模式下胶囊并入「工作区 + 分支」那一行：随剩余宽度伸缩，行距由该行自己管 */
-.chat-input-context .chat-attach-tray {
-  flex: 1;
-  width: auto;
-  min-width: 0;
+/* 附件托盘现在排在输入框内（.chat-input-textwrap 是一排 flex-wrap 容器），
+   行距由那里的 gap 管，不再自己加下边距 */
+.chat-input-textwrap .chat-attach-tray {
   margin-bottom: 0;
 }
 
@@ -843,7 +833,7 @@ html.is-panel-resizing .agent-think-body .table-node {
 
 }
 
-/* 提示词 Prefill 进度条：作为顶部栏行内条目显示，直接复用模型运行数据面板的
+/* 提示词 Prefill 进度条：作为顶部栏行内条目显示，直接复用运行状态面板的
    .metric-bar-wrap / .metric-bar-fill 样式（已在 monitoring.css 中定义）。
    这里只补一个固定宽度，使其作为顶部栏里的一个离散条目（而非撑满整行）。 */
 .agent-prompt-build-bar {
@@ -1884,7 +1874,7 @@ html.is-panel-resizing .agent-think-body .table-node {
   white-space: nowrap;
 }
 
-/* 原先被错放在 monitoring.css 里（那是「模型运行数据」页的样式文件），
+/* 原先被错放在 monitoring.css 里（那是「运行状态」页的样式文件），
    而 .agent-ctx-metric / .agent-ctx-metric-label 一直在这个文件 —— 归位。 */
 .agent-ctx-metric-val {
   font-size: 13px;
@@ -2146,6 +2136,8 @@ html.is-panel-resizing .agent-think-body .table-node {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: .8px;
+  /* 同 .agent-code-session-new-btn：宽度过渡期间不折行，免得逐帧重排 */
+  white-space: nowrap;
   flex-shrink: 0;
 }
 
@@ -2163,6 +2155,8 @@ html.is-panel-resizing .agent-think-body .table-node {
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 600;
+  /* 侧栏收起/展开时宽度逐帧变化，文字折行会跟着逐帧重排（=抖动）；不折行则只是被裁掉 */
+  white-space: nowrap;
   cursor: pointer;
   transition: all .15s ease;
   flex-shrink: 0;
@@ -6559,7 +6553,7 @@ html.is-panel-resizing .agent-think-body .table-node {
   --agent-selection-fg: inherit;
   /* 消息气泡底色：比背景（浅色主题下 --bg 为纯白）略深一档，靠边框 + 投影勾勒卡片轮廓；
      集中定义便于随主题调整。 */
-  --agent-bubble-bg: #e0e0e0;
+  --agent-bubble-bg: #f2f2f2;
 }
 
 .agent-code-view .agent-code-chat ::selection,
@@ -7337,11 +7331,13 @@ html.is-panel-resizing .agent-think-body .table-node {
   box-shadow: none;
 }
 
-/* 用户消息纯文本渲染：等宽字体 + pre-wrap，输入什么显示什么（不解析
-   Markdown/HTML，<Tag>、``` 围栏等一律原样可见）；超长行自动换行不撑破气泡。 */
+/* 用户消息纯文本渲染：pre-wrap 原样保留换行/空格/缩进（不解析
+   Markdown/HTML，<Tag>、``` 围栏等一律原样可见）；超长行自动换行不撑破气泡。
+   字体吃 --font，跟随「设置 › 界面字体」预设——此前写死等宽字体，切了预设这里纹丝不动，
+   和输入框、模型正文两套字形并排看着像串了行。 */
 .agent-code-view .chat-messages .user-plain-text {
   position: relative;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -7543,12 +7539,15 @@ html.is-panel-resizing .agent-think-body .table-node {
   transition: opacity .12s ease, transform .12s ease;
 }
 
-.agent-code-view .chat-input-fold-chip-tip::before {
+/* 悬停桥（同 .agent-ref-chip::after）：挂在胶囊上而不是卡片上——
+   卡片是 overflow-y:auto 的滚动容器，桥放卡片里会构成 8px 纵向可滚动溢出，
+   于是内容只有一行也一直显示滚动条。 */
+.agent-code-view .chat-input-fold-chip::after {
   content: '';
   position: absolute;
   left: 0;
   right: 0;
-  top: 100%;
+  bottom: 100%;
   height: 8px;
 }
 
@@ -8383,16 +8382,7 @@ html.is-panel-resizing .agent-think-body .table-node {
   cursor: not-allowed;
 }
 
-/* ── 用户消息里的图片附件（编码 / 通用两个模式都渲染）──
-   缩略图按最大边长约束，避免竖长图把气泡撑得过高；点击开全屏预览。 */
-.user-msg-images {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
-  justify-content: flex-end;
-}
-
+/* 图片缩略图（browser_screenshot 工具卡仍在用；用户消息里的图片已改成行内胶囊） */
 .user-msg-image {
   max-width: 180px;
   max-height: 140px;
@@ -8401,6 +8391,137 @@ html.is-panel-resizing .agent-think-body .table-node {
   cursor: zoom-in;
   object-fit: cover;
   display: block;
+}
+
+/* 图片胶囊（utils/ImagePill.tsx）：尺寸贴着文字，默认图标 + 文件名。
+   悬停预览卡 portal 到 body + fixed，所以这里不受气泡 max-height 裁剪。 */
+.agent-img-pill {
+  /* 图标识别色：沿用项目里「图片＝紫」的既有约定（见 model-folders.css 的 --mf-c-image，
+     那里注明只用于图标渐变与色带）。此前图标跟着文字一起取 --text-dim，整颗胶囊灰成一团；
+     它是这条消息里图片内容的入口，一眼认得出比融进正文更要紧。
+     定义在胶囊上而不是全局 :root —— 它只服务这一处。 */
+  --img-pill-accent: #7c3aed;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 190px;
+  padding: 1px 6px;
+  margin: 0 1px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  vertical-align: -1px;
+  /* 默认不可点（只看悬停预览卡）；带路径的加 .clickable */
+  cursor: default;
+}
+
+/* 深色底上 #7c3aed 偏暗（对比不足），提亮一档 */
+html.theme-dark .agent-img-pill {
+  --img-pill-accent: #a78bfa;
+}
+
+.agent-img-pill:hover {
+  background: var(--surface-hover);
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
+.agent-img-pill.clickable {
+  cursor: pointer;
+}
+
+/* 图标恒吃识别色，不随 .agent-img-pill:hover 变白——悬停时它是唯一还带颜色的部分，
+   跟着变白就失去了「这是一张图」的辨识。 */
+.agent-img-pill-icon {
+  flex-shrink: 0;
+  color: var(--img-pill-accent);
+}
+
+.agent-img-pill-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-img-pill-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.agent-img-pill-remove:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* 生成中禁用删除：与项目既定的禁用反馈一致（opacity .35 / not-allowed） */
+.agent-img-pill-remove:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
+
+/* 预览卡：尺寸由 JS 按原图宽高比现算（见 utils/ImagePill.tsx），卡片贴着图片本身——
+   不再用「固定框 + contain」，那样竖长图/宽图四周会留一大片底色。
+   这里只管外观：底色 / 边框 / 圆角 / 投影，以及那 6px 的框
+   （JS 里的 PREVIEW_CHROME = 6×2 padding + 1×2 border，改这里要同步改它）。 */
+.agent-img-pill-preview {
+  position: fixed;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+}
+
+/* contain 只是兜底：卡片按图片宽高比定尺寸后它本就不该起作用，
+   但万一量图失败退回上限框，这里保证图片仍然完整不裁切。 */
+.agent-img-pill-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* ── 输入框里的图片胶囊行（agent-input/AgentInputArea.tsx）──
+   胶囊自成一整行排在正文上方，与「引用」「代码片段」「文件附件」同一套流式排列：
+   上面是图片胶囊，胶囊下面才是输入的文字。
+   此前它是盖在 textarea 的记号坐标上的（隐形镜像逐字量算 + 跟随 textarea 滚动同步），
+   量偏一点胶囊就错位；拆成独立一行后这些都不需要了。
+   胶囊本体仍是消息气泡那副 .agent-img-pill（悬停预览卡 + 带路径可点开右侧预览）。 */
+.chat-input-imgrow {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 6px;
+  /* 图片过多时限高滚动，避免把输入框挤到视口外（与 .chat-attach-tray 同一取舍） */
+  max-height: 92px;
+  overflow-y: auto;
+}
+
+/* textarea 的盒子：胶囊行搬出去后，这里只剩正文本身 */
+.chat-input-tabox {
+  position: relative;
+  flex: 1 1 140px;
+  min-width: 140px;
+  display: flex;
 }
 
 /* 全屏预览层：fixed 定位，点任意处关闭（Esc 由消息行的键盘处理兜底不了，故只做点击关闭） */
@@ -8818,13 +8939,17 @@ html.is-panel-resizing .agent-think-body .table-node {
   transition: opacity .12s ease, transform .12s ease;
 }
 
-/* 卡片与胶囊之间那 8px 缝补一层透明桥：鼠标从胶囊移进卡片不会穿过 hover 空洞把卡片弄丢 */
-.agent-ref-chip-tip::before {
+/* 卡片与胶囊之间那 8px 缝补一层透明桥：鼠标从胶囊移进卡片不会穿过 hover 空洞把卡片弄丢。
+   桥挂在**胶囊**上，不能挂在卡片上：卡片是 overflow-y:auto 的滚动容器，而绝对定位的后代
+   只要伸出 padding 盒就会计入**可滚动溢出**——桥原先写在 .agent-ref-chip-tip::before
+   （top:100%），于是不管内容几行，卡片下沿永远多出 8px 可滚区域，一直挂着一根滚动条。
+   挪到胶囊上就没了这个副作用：指针是从胶囊往卡片走的，起点必在胶囊上，桥取胶囊宽足够。 */
+.agent-ref-chip::after {
   content: '';
   position: absolute;
   left: 0;
   right: 0;
-  top: 100%;
+  bottom: 100%;
   height: 8px;
 }
 

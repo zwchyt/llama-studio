@@ -26,10 +26,9 @@ import '../styles/toolshub.css'
 
 type AnimHandle = { startAnimation: () => void; stopAnimation: () => void }
 
-function ToolNavItem({ def, active, running, onSelect }: {
+function ToolNavItem({ def, active, onSelect }: {
   def: NavDef
   active: boolean
-  running: boolean
   onSelect: () => void
 }) {
   const iconRef = useRef<AnimHandle | null>(null)
@@ -55,7 +54,7 @@ function ToolNavItem({ def, active, running, onSelect }: {
         />
       </span>
       <span className="toolhub-item-label">{def.label}</span>
-      {running && <span className="toolhub-run-dot" />}
+      {/* 这里同样只表达「当前在哪一项」，不再挂「有服务在跑」的跟随提示 */}
       {active && (
         <span
           className="toolhub-active-dot"
@@ -109,12 +108,10 @@ function ToolActionItem({ icon: Icon, label, color, active, title, onClick }: {
 }
 
 export default function ToolsHub() {
-  const { view, setView, hasRunningModels, activeChatUrl, backends, backendsStatus, activeBackend, setActiveBackend, paths } = useStore(
+  const { view, setView, backends, backendsStatus, activeBackend, setActiveBackend, paths } = useStore(
     (s) => ({
       view: s.view,
       setView: s.setView,
-      hasRunningModels: s.cards.some((c) => c.status === 'running'),
-      activeChatUrl: s.activeChatUrl,
       backends: s.backends,
       backendsStatus: s.backendsStatus,
       activeBackend: s.activeBackend,
@@ -162,10 +159,6 @@ export default function ToolsHub() {
                   key={def.key}
                   def={def}
                   active={def.key === active}
-                  running={
-                    (def.runningSource === 'models' && hasRunningModels) ||
-                    (def.runningSource === 'llama' && !!activeChatUrl)
-                  }
                   onSelect={() => setView(def.key)}
                 />
               ))}

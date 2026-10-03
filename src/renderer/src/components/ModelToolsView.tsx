@@ -281,7 +281,7 @@ function TokenizerTab({ modelPath, setModelPath }: { modelPath: string; setModel
               aria-label="运行实例"
             />
           ) : (
-            <span className="mtools-hint">当前没有运行中的模型，请先在「我的模板」中启动，或切换到文件模式</span>
+            <span className="mtools-hint">当前没有运行中的模型，请先在「模型管理 」中启动，或切换到文件模式</span>
           )}
         </div>
       ) : (

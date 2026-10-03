@@ -215,17 +215,9 @@ textarea {
   overflow: hidden;
 }
 
-@keyframes sidebar-flyout-in {
-  from {
-    opacity: 0;
-    transform: translateX(-8px);
-  }
-
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
+/* 注：这里原有 @keyframes sidebar-flyout-in（收起态侧栏浮层的入场动画），已删除。
+   现在进出都走 sidebar.css 里 .sidebar 的 width transition，animation 只能播入场、
+   移开时会瞬间跳回，两个方向不对称。 */
 
 @keyframes sidebar-name-slide {
   from {

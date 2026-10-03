@@ -218,7 +218,7 @@ export default function OcrView() {
       {!port && (
         <div className="ocr-notice">
           <AlertCircle size={16} />
-          没有运行中的模型。请先在「我的模板」中启动一个支持多模态的模型。
+          没有运行中的模型。请先在「模型管理 」中启动一个支持多模态的模型。
         </div>
       )}
 

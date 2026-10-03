@@ -26,6 +26,7 @@ import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import AgentFilePicker from '../../AgentFilePicker'
 import AskUserQuestionInline from '../../AskUserQuestionInline'
 import { AgentTopBarCtx, AniIconButton } from '../agent-message'
+import { ImagePill } from '../utils/ImagePill'
 import { AttachmentTextPreview, type PreviewableAttachment } from '../agent-message/AttachmentTextPreview'
 import { TOOL_META, formatToolArgs } from '../agent-tools'
 import { TOOL_METAS } from '../../../utils/tools'
@@ -144,18 +145,20 @@ export type AgentInputAreaProps = {
   handleInputChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
   /** 点击附件 chip：按磁盘路径把原文件送到右侧「预览」工作区（PDF 版面 / DOCX / 图片 / HTML / 代码） */
   onPreviewAttachment: (path: string) => void
+  /** 点图片胶囊：有磁盘路径的读原文件，只有内存图的（剪贴板粘贴 / 浏览器拖入）用 dataUrl 建预览标签 */
+  onPreviewImage: (a: { name: string; path?: string; dataUrl?: string }) => void
 }
 
 
 export function AgentInputArea({
   inputDomain, hintsDomain, mic, models, search, chatMode, run, approval, shell, handleKeyDown, handleInputChange,
-  onPreviewAttachment,
+  onPreviewAttachment, onPreviewImage,
 }: AgentInputAreaProps) {
   // ── 域解构：把分组 props 摊平回局部名字，组件体内沿用原 JSX 的标识符 ──
 
   const {
     input, textareaRef, packedInput, setPackedInput, fileInputRef,
-    attachedFiles, setAttachedFiles, filePickerAttached,
+    attachedFiles, clearAttachments, filePickerAttached,
     filePickerOpen, setFilePickerOpen,
     handleAttachmentSelect, removeAttachment, handleFilePickerAttach,
     handleInputDragOver, handleInputDrop,
@@ -207,13 +210,16 @@ export function AgentInputArea({
   const sendTitle = !apiBaseUrl ? '请先启动一个模型' : !hasPayload ? '输入内容后发送' : '发送'
   // 动画小球的配色随应用亮/暗主题走：此前写死 light，暗底下对比度全靠运气。
   const orbTheme = useThemeStore(s => s.theme)
-  // 附件胶囊：编码模式并进上方「工作区 + 分支」那一行（见 .chat-input-context），
-  // 通用模式没有那一行，单独贴在输入框上方。两处共用一份 JSX，只渲染其一。
-  const attachTray = attachedFiles.length > 0 && (
+  // 文件类附件的胶囊：排在输入框内部（正文上方一整行，与「引用」胶囊同一容器）。
+  // 图片同样排在这里，但自成一整行（.chat-input-imgrow）——与正文彻底分开：
+  // 上面是图片胶囊，胶囊下面才是输入的文字。不再往正文里插行内记号、也不再按记号位置盖胶囊。
+  const fileChips = attachedFiles.filter(a => !a.isImage)
+  const imageAtts = attachedFiles.filter(a => a.isImage)
+  const attachTray = fileChips.length > 0 && (
     <div className="chat-attach-tray">
-      {attachedFiles.map(att => {
-        // 有磁盘路径 → 点开右侧「预览」工作区看原文件（PDF 版面 / DOCX / 图片 / HTML / 代码）。
-        // 只有拿不到路径的附件（如内存构造的图片）才退回浮层，看模型实际读到的那段文本。
+      {fileChips.map(att => {
+        // 有磁盘路径 → 点开右侧「预览」工作区看原文件（PDF 版面 / DOCX / HTML / 代码）；
+        // 拿不到路径的才退回浮层，看模型实际读到的那段文本。
         const path = att.path
         const open = path
           ? () => onPreviewAttachment(path)
@@ -225,16 +231,14 @@ export function AgentInputArea({
             onClick={open}
             title={open ? `${path ?? att.name}（点击${path ? '在右侧预览' : '预览抽取到的文本'}）` : att.name}
           >
-            {att.isImage && att.dataUrl
-              ? <img src={att.dataUrl} className="chat-attach-thumb" alt={att.name} />
-              : <FileTextIcon size={14} className="chat-attach-fileicon" />}
+            <FileTextIcon size={14} className="chat-attach-fileicon" />
             <span className="chat-attach-name" title={att.name}>{att.name}</span>
             <button className="chat-attach-remove" onClick={e => { e.stopPropagation(); removeAttachment(att.id) }} disabled={loading}><XIcon size={11} /></button>
           </div>
         )
       })}
       {attachedFiles.length > 1 && (
-        <button className="chat-attach-clear-all" onClick={() => setAttachedFiles([])} disabled={loading}>
+        <button className="chat-attach-clear-all" onClick={clearAttachments} disabled={loading}>
           <XIcon size={12} />全部清除
         </button>
       )}
@@ -370,11 +374,8 @@ export function AgentInputArea({
               </div>
             </div>
           )}
-          {attachTray}
         </div>
       )}
-      {/* 通用模式没有上下文行，附件胶囊单独占一行贴在输入框上方 */}
-      {plainChat && attachTray}
       <div className="chat-input-row">
         <div className="chat-input-field" onDragOver={handleInputDragOver} onDrop={handleInputDrop}>
           {/* /命令 补全浮层：锚定输入字段本体（CSS 绝对定位 left/right:0 + bottom:100%），
@@ -478,12 +479,36 @@ export function AgentInputArea({
                   <div className="chat-input-fold-chip-tip chat-msg-markdown"><Markdown content={packedInput} final variant="agent" /></div>
                 </div>
               ) : null}
-              <textarea
-                ref={textareaRef}
-                className="chat-input"
-                placeholder="" rows={1} value={input}
-                onChange={handleInputChange} onKeyDown={handleKeyDown}
-              />
+              {/* 附件胶囊排在正文上方（同一容器内 width:100% 自成一整行） */}
+              {attachTray}
+              {/* 图片胶囊：自成一整行排在正文上方——胶囊在上、文字在下，两者彻底分开。
+                  此前是「正文里插行内记号 + 按量出的记号坐标盖胶囊」，需要隐形镜像逐字量算、
+                  还要跟 textarea 的滚动同步，量偏一点胶囊就错位；改成独立一行后这套全都不需要了。
+                  胶囊本体仍是消息气泡那副 .agent-img-pill（悬停预览卡 + 点开右侧预览）。 */}
+              {imageAtts.length > 0 && (
+                <div className="chat-input-imgrow">
+                  {imageAtts.map(att => (
+                    <ImagePill key={att.id} name={att.name} src={att.dataUrl}
+                      onRemove={() => removeAttachment(att.id)} removeDisabled={loading}
+                      onClick={() => onPreviewImage(att)}
+                      clickHint="点击在右侧预览" />
+                  ))}
+                  {/* 「全部清除」在文件托盘里已有一颗；只有这里才渲染时补上，免得并排出现两颗 */}
+                  {attachedFiles.length > 1 && fileChips.length === 0 && (
+                    <button className="chat-attach-clear-all" onClick={clearAttachments} disabled={loading}>
+                      <XIcon size={12} />全部清除
+                    </button>
+                  )}
+                </div>
+              )}
+              <div className="chat-input-tabox">
+                <textarea
+                  ref={textareaRef}
+                  className="chat-input"
+                  placeholder="" rows={1} value={input}
+                  onChange={handleInputChange} onKeyDown={handleKeyDown}
+                />
+              </div>
             </div>
             {loading && runningCard && (() => {
               // 判据复用顶部 hasPayload：此前这里把同一长表达式又抄了一遍，

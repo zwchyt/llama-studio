@@ -64,3 +64,14 @@ export function detectModelCapabilities(meta: { architecture?: string; chatTempl
     thinking: THINKING_TEMPLATE_RE.test(tpl),
   }
 }
+
+/** 模板启动参数里是否挂了视觉投影（--mmproj，即「图片模型」文件夹里那些 GGUF）。
+    上面那套是按**主模型** GGUF 的元数据推断的：编码类模型常是纯文本架构，
+    看图能力全在投影文件里，元数据推不出来 → 判「这个服务能不能收图」必须再看这一项。
+    'none' 是显式禁用投影。 */
+export function hasVisionProjector(args?: Record<string, string | number | boolean | null>): boolean {
+  const v = args?.['--mmproj']
+  if (typeof v !== 'string') return false
+  const s = v.trim()
+  return s !== '' && s.toLowerCase() !== 'none'
+}

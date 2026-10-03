@@ -1,4 +1,26 @@
+/* ══════════════════════════════════════════════════════════════════
+   侧栏视觉（重做）
+   卡面 / 边框 / 阴影 / 交互三态换一套更轻的语言。**几何值两态共用**——
+   收起态与展开态用的是同一批类（.sidebar / .nav-item / .sidebar-toggle），
+   任何几何改动都会同时作用于两态，这正是「收起 / 展开不跳动」的前提：
+   不要出现只写在 .icon-only 里的尺寸（唯一例外是居中，见文件后段）。
+   主题值挂在 .sidebar-wrapper 上而不是 :root：它们只服务这一处。
+   ══════════════════════════════════════════════════════════════════ */
 .sidebar-wrapper {
+  /* 卡面：极轻的纵向渐变（顶部略亮）+ 发丝边框 + 内高光 + 极轻投影 */
+  --sidebar-bg: linear-gradient(180deg, rgba(255, 255, 255, .82) 0%, rgba(248, 249, 251, .96) 100%);
+  --sidebar-border: rgba(0, 0, 0, .085);
+  --sidebar-inner-highlight: inset 0 1px 0 rgba(255, 255, 255, .92);
+  --sidebar-shadow: 0 1px 2px rgba(0, 0, 0, .035), 0 8px 24px rgba(31, 35, 48, .045);
+  /* 导航项三态：悬停 / 当前页 / 当前页描边 */
+  --nav-hover: rgba(10, 10, 10, .045);
+  --nav-active: rgba(10, 10, 10, .07);
+  --nav-active-border: rgba(10, 10, 10, .055);
+  /* 图标底部那层柔光 */
+  --icon-hover-bg: rgba(255, 255, 255, .86);
+  /* 分隔线（导航顶部 / 底部设置上方 / 会话槽上方） */
+  --separator: rgba(0, 0, 0, .065);
+
   position: relative;
   flex-shrink: 0;
   width: 220px;
@@ -7,67 +29,141 @@
   will-change: width;
 }
 
+html.theme-dark .sidebar-wrapper {
+  --sidebar-bg: linear-gradient(180deg, rgba(46, 49, 56, .97) 0%, rgba(40, 43, 49, .98) 100%);
+  --sidebar-border: rgba(255, 255, 255, .075);
+  --sidebar-inner-highlight: inset 0 1px 0 rgba(255, 255, 255, .045);
+  --sidebar-shadow: 0 1px 2px rgba(0, 0, 0, .2), 0 10px 30px rgba(0, 0, 0, .16);
+  --nav-hover: rgba(255, 255, 255, .055);
+  --nav-active: rgba(255, 255, 255, .085);
+  --nav-active-border: rgba(255, 255, 255, .06);
+  --icon-hover-bg: rgba(255, 255, 255, .045);
+  --separator: rgba(255, 255, 255, .065);
+}
+
+/* ── 收起态的两个类，含义必须分清 ──
+   .collapsed   = **用户选择了收起**（直接取 store 的 collapsed，悬浮展开期间也一直带着）。
+                  它只负责一件事：wrapper 的窄宽。
+                  宽度必须挂在这个状态上——挂到下面那个上，悬浮展开时 wrapper 就会跟着变宽、
+                  把主界面整块往右挤。
+   .icon-only   = collapsed && !hoverExpanded，即"真的只剩图标在显示"。
+                  它**只做两件事**：隐藏导航项文字、让会话槽淡出。
+                  刻意不碰任何几何（内边距、对齐都沿用展开态）——见下面收起宽度的说明。
+   两者在"收起且没悬浮"时同时成立；悬浮展开时只有 .collapsed 成立。 */
+/* 收起宽度取 60px（不是 50）：**为了让两态的几何完全一致**。
+   图标横向位置只由一条"内边距链"决定，两态共用：
+     8(卡片外边距) + 1(卡片边框) + 10(卡片内边距) + 10(导航项内边距) = 29px。
+   展开态内容盒 198px、收起态内容盒 38px，但这个 29px 只依赖上面四个值、与内容盒宽度无关，
+   所以导航项**两态都保持左对齐**（这里不做任何居中），图标一步都不动。
+   38px 的内容盒里图标占 29→46px，卡片右缘在 68px，不会被 .sidebar 的 overflow-x 裁到；
+   顺带图标中心 37.5px 几乎正好落在卡片中心 38px 上——收起后看着是"居中"的，
+   但那是算出来的巧合，不是靠居中属性实现的。
+   50px 不行：内容盒只剩 28px，图标虽仍能放下，但右缘只剩 2px、视觉上明显偏右。 */
 .sidebar-wrapper.collapsed {
-  width: 50px;
+  width: 60px;
 }
 
-.sidebar-wrapper.collapsed .sidebar {
-  overflow: hidden;
-  align-items: center;
-  padding: 8px 6px;
-}
+/* 收起态只剩图标。**除了「隐藏标签 / 隐藏会话槽」，这里刻意不再改动任何几何**——
+   卡片内边距、导航项内边距与对齐方式全部沿用展开态：
+   两态几何一致，布局在动画的哪一帧切换都看不出来，也就不需要靠定时器去「等动画走完」。
+   （原来这里改了内边距并让导航项居中，切换瞬间图标会横跳 6.5px，
+   叠起来就是「收完了停一下再啪地变过去」。）
+   下面这条 .nav-item>*:not(:first-child) 是收起态唯一的"内容"改动：把 <span> 标签藏掉。
+   注意它按**子节点位置**判定，所以「图标必须是第一个子节点」是硬约束——
+   模式切换那两个按钮（纯文字、无图标）不能用这条规则，它们靠父级 .sidebar-agent-slot
+   整块淡出来处理，见下。 */
 
-.sidebar-wrapper.collapsed .sidebar-toggle {
-  align-self: center;
-}
-
-.sidebar-wrapper.collapsed .nav-item {
-  justify-content: center;
-  padding: 6px 0;
-  height: 32px;
-}
-
-.sidebar-wrapper.collapsed .nav-item>*:not(:first-child) {
+.sidebar-wrapper.icon-only .nav-item>*:not(:first-child) {
   display: none;
 }
 
-.sidebar-wrapper.collapsed .nav-section-label {
+.sidebar-wrapper.icon-only .nav-section-label {
   display: none;
 }
 
-.sidebar-wrapper.collapsed .nav-dot {
+/* 会话槽（模式切换 + 会话列表）：收起时**随宽度一起淡出**，而不是最后一帧整块消失
+   （那会看着像「停一下再啪地变过去」）。opacity 的过渡放在基础规则上，
+   真正不占位要等宽度动画走完——.slot-gone 由 Sidebar.tsx 在 250ms 后挂上，
+   那时它已经淡到 0，所以那一下 display:none 不产生可见变化。 */
+.sidebar-wrapper.icon-only .sidebar-agent-slot {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sidebar-wrapper.slot-gone .sidebar-agent-slot {
   display: none;
 }
 
-/* 收起态只剩图标：会话列表整块让位，等悬浮展开时再回来 */
-.sidebar-wrapper.collapsed .sidebar-agent-slot {
-  display: none;
-}
-
-.sidebar-wrapper.hover-expanded .sidebar {
-  position: absolute;
-  top: 8px;
-  bottom: 0;
-  left: 0;
+/* ── 悬浮展开：与「点按钮展开」走**同一条路径** —— wrapper 变宽，把主界面推开 ──
+   原来这里是把侧栏做成 absolute 浮层盖在内容之上（主界面不动），于是同一个
+   「展开」有两套行为：悬浮展开是浮层、点按钮展开是推挤。现在统一成推挤：
+   wrapper 从 60px 过渡到 220px（transition 在 .sidebar-wrapper 上），
+   .sidebar 始终留在文档流里 width:100%，跟着一起变宽。
+   判据是 .collapsed：只有收起态才谈得上悬浮展开；点按钮展开时 collapsed 已经是
+   false（wrapper 本来就该是 220px），这条命不命中都不影响。 */
+.sidebar-wrapper.collapsed.hover-expanded {
   width: 220px;
-  z-index: var(--z-panel);
-  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.08);
-  animation: sidebar-flyout-in 0.2s cubic-bezier(.4, 0, .2, 1) both;
 }
 
-/* ── Agent Code 项目 / 会话列表的槽位（内容由 AgentCodeView 经 portal 注入）──
-   :empty 让它在 portal 还没挂上时不露出这根分隔线。 */
+/* ── Agent Code 区：模式切换 + 新建 + 会话列表 ──
+   槽位本身由 Sidebar.tsx 渲染，模式切换（对话 / 工作台）是它的首个子节点；
+   会话列表经 portal 追加在后面（见 AgentCodeViewLayout）。
+   顶部这条分隔线取 --separator，与 .nav-divider、.sidebar-bottom::before 同一档——
+   三处都是"分组线"而不是"结构边框"，色重必须一致，否则并排看会有一处发脏。 */
 .sidebar-agent-slot {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--separator);
   display: flex;
   flex-direction: column;
+  /* flex-shrink: 0 是**必需的**，不能沿用默认的 1：
+     槽里装的是会话列表，高度随会话数增长。默认允许收缩的话，侧栏一旦纵向吃紧，
+     flex 会把槽的盒子压扁，而槽里的列表（.agent-code-sidebar 是 flex-shrink: 0）
+     保持原高、从槽里溢出来——溢出的部分正好盖在下面新加的底部固定区（「设置」）上。
+     槽不收缩，超出就交给 .sidebar 自己滚（它本来就是 overflow-y: auto），
+     这样列表、空档、「设置」三者永远按顺序排，不会互相压。 */
+  flex-shrink: 0;
   min-height: 0;
+  /* 收起时随宽度一起淡出（见上面的 .icon-only / .slot-gone） */
+  transition: opacity .18s ease;
 }
 
-.sidebar-agent-slot:empty {
-  display: none;
+/* ── 「对话 / 工作台」模式切换 ──
+   两项与下方的会话列表同属 Agent Code 这一块，所以从常驻导航列表搬进槽里、
+   排在「新建聊天 / 新添项目」之上。做成两列分段控件而不是再堆两行导航项：
+   一眼看出是同一个界面的两种模式，省一半高度，也把「选模式 → 新建 → 挑会话」
+   这条自上而下的动作串成一条。
+   左右内缩 12px 与下方 .agent-code-session-new-btn 的 margin 对齐。 */
+.sidebar-mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 0 12px 8px;
+}
+
+/* 复用 .nav-item 的激活语义（填充 + 左侧竖条），只把「整行导航项」压成半个分段按钮。
+   纯文字、不带图标：这两个模式的图标没有信息增量，而在收起/展开的宽度动画里，
+   图标是唯一会被逐帧重新栅格化的东西——去掉它，这块就没有会抖的元素了。
+   选中态用实心 + 描边双重标记：只换底色的话，两个按钮在浅色主题下几乎分不出谁亮着。 */
+.sidebar-mode-switch .nav-item {
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.sidebar-mode-switch .nav-item:hover {
+  border-color: var(--border-strong);
+}
+
+.sidebar-mode-switch .nav-item.active {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+  box-shadow: var(--shadow);
 }
 
 /* 槽位内容（会话侧栏）是在首屏空闲时才挂载进来的：之前它没有任何过渡，是直接"跳"出来的。
@@ -91,45 +187,105 @@
 }
 
 .sidebar-toggle {
+  position: relative;
   align-self: flex-start;
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  margin: 0 0 8px 0;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  /* 34px：命中区域比原来的 28px 大一圈，轨道里也更"压得住"。
+     纵向 1 + 34 + 7 = 42px，与改动前（0 + 28 + 8 = 36）不同——
+     但两态共用，所以只是整列下移 6px，不产生跳动。 */
+  width: 34px;
+  height: 34px;
+  margin: 1px 0 7px;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
   color: var(--text-muted);
-  transition: all 0.15s ease;
-  padding: 0;
+  cursor: pointer;
+  transition:
+    color .16s ease,
+    background .16s ease,
+    border-color .16s ease,
+    box-shadow .16s ease;
+}
+
+.sidebar-toggle svg {
+  width: 15px;
+  height: 15px;
+  transition: transform .18s cubic-bezier(.2, .8, .2, 1);
 }
 
 .sidebar-toggle:hover {
   color: var(--text);
-  background: var(--bg);
-  border-color: var(--text-muted);
+  background: var(--nav-hover);
+  border-color: var(--sidebar-border);
+}
+
+/* 悬停时箭头往外挪 1.5px：指向"要展开的那一侧" */
+.sidebar-toggle:hover svg {
+  transform: translateX(1.5px);
+}
+
+.sidebar-toggle:active {
+  transform: scale(.95);
+}
+
+.sidebar-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--text) 16%, transparent);
+  outline-offset: 1px;
 }
 
 .sidebar {
+  position: relative;
   width: 100%;
   /* 四边都留 8px（含顶部）：上边不留的话卡片上边框会直接顶在标题栏下沿 */
   height: calc(100% - 16px);
   flex-shrink: 0;
-  background: var(--surface);
   margin: 8px;
-  border-radius: var(--radius, 14px);
-  border: 1.5px solid var(--border-strong);
+  /* 内边距 10px 是个**定点值**，不是随手取的：
+     展开态图标 x = 8(外边距) + 1(边框) + P + 10(导航项左内边距)；
+     收起态图标在内容盒里居中，x = 8 + 1 + P + (内容盒宽 - 图标宽)/2。
+     两者在 P = 10 时相等（都落在 29.5px）——图标在收起/展开时一步不动。
+     改成别的值会引入 (P - 10) 像素的横向跳动。 */
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  padding: 12px 12px;
-  gap: 0px;
+  gap: 0;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--sidebar-border);
+  border-radius: 15px;
+  box-shadow:
+    var(--sidebar-inner-highlight),
+    var(--sidebar-shadow);
   overflow-x: hidden;
   overflow-y: auto;
-  position: relative;
+  /* 滚动条隐掉但保留滚动能力：轨道只有 60px，一条滚动条会吃掉 8px 内容宽度 */
+  scrollbar-width: none;
+}
+
+.sidebar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* 顶部一道极细光泽：只提升精致度，不参与布局 */
+.sidebar::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 12px;
+  right: 12px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .72), transparent);
+  opacity: .65;
+  pointer-events: none;
+}
+
+html.theme-dark .sidebar::before {
+  opacity: .1;
 }
 
 .nav-section-label {
@@ -142,34 +298,102 @@
 }
 
 .nav-item {
+  /* 当前页的左侧指示条（.nav-item.active::before）与柔光层（::after）都以本项为锚点 */
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
+  /* 导航项是固定高度的常驻行，不参与纵向收缩：底部加了弹性空档之后，侧栏一旦吃紧，
+     默认的 flex-shrink: 1 会先按比例把这七行压扁（height: 36px 拦不住——它只是
+     flex-basis，收缩本来就是允许的）。压扁比滚动难看得多，所以直接退出收缩。 */
+  flex-shrink: 0;
+  /* 36px + 上下各 1px margin：命中区域比原来的 32px 宽松，行距也更透气 */
+  height: 36px;
+  margin: 1px 0;
   padding: 8px 10px;
-  height: 32px;
-  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: none;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
-  cursor: pointer;
-  transition: background var(--transition), color var(--transition);
-  border: none;
-  background: none;
-  width: 100%;
   text-align: left;
+  cursor: pointer;
+  /* 柔光层是 z-index: -1 的伪元素，靠它把自己关进本项的层叠上下文里，
+     否则会掉到侧栏卡面后面去（看不见）。 */
+  isolation: isolate;
+  transition:
+    color .15s ease,
+    background .15s ease,
+    border-color .15s ease,
+    box-shadow .15s ease,
+    transform .15s ease;
 }
 
+/* 图标底部那层柔光：默认全透明，悬停时透出。
+   用 radial-gradient 而不是实心圆，边缘自然淡出，不会看出一个"圆片"。 */
+.nav-item::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  z-index: -1;
+  border-radius: 7px;
+  background: radial-gradient(circle at 50% 40%, var(--icon-hover-bg), transparent 75%);
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+
+/* 悬停：淡填充 + 极淡描边。比原来的 --bg 实心块更轻，不与「当前页」抢。 */
 .nav-item:hover {
-  background: var(--bg);
   color: var(--text);
+  background: var(--nav-hover);
+  border-color: color-mix(in srgb, var(--text) 5%, transparent);
 }
 
+.nav-item:hover::after {
+  opacity: .7;
+}
+
+.nav-item:active {
+  transform: scale(.95);
+}
+
+/* 当前页：比悬停更实一档的填充 + 描边 + 内高光。
+   填充必须比悬停重（.07 vs .045），否则两个状态并排时分不出哪个是选中的。 */
 .nav-item.active {
-  background: none;
   color: var(--text);
+  background: var(--nav-active);
+  border-color: var(--nav-active-border);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 55%, transparent),
+    0 1px 2px rgba(0, 0, 0, .025);
 }
 
-.nav-item>*:first-child {
+html.theme-dark .nav-item.active {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .045),
+    0 1px 2px rgba(0, 0, 0, .12);
+}
+
+/* 当前页指示条：短、细、圆头，**悬在项目左缘外侧**（原来贴在左缘内的直角黑条）。
+   左缘外侧那 4px 落在侧栏内边距里，而 .sidebar 的 overflow-x: hidden 裁的是 padding box，
+   所以它不会被切掉。 */
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: 50%;
+  width: 2px;
+  height: 16px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+/* 只作用于图标，不能写成 `>*:first-child`：模式切换是**纯文字**按钮，
+   它的第一个子节点就是标签——按 first-child 命中会把 font-size 归零，文字直接消失。 */
+.nav-item>.nav-animate-icon {
   align-self: center;
   flex-shrink: 0;
   line-height: 0;
@@ -177,45 +401,186 @@
 }
 
 .nav-item svg {
-  width: 16px;
-  height: 16px;
+  width: 17px;
+  height: 17px;
   flex-shrink: 0;
+  /* 自己一个合成层：收起/展开时 wrapper 的宽度逐帧变化，会带着整棵子树逐帧重绘，
+     正在播放动画的图标被反复重新栅格化就会「抖」（文字不会，因为文字只是被裁切）。
+     单独成层后图标只栅格化一次，之后只做合成，不再受父级布局动画影响。
+     下面的 hover 缩放也因此走合成、不触发重排。 */
+  will-change: transform;
+  transition: transform .16s cubic-bezier(.2, .8, .2, 1);
 }
 
-/* 微调导航名称上下位置：改 translateY 的正负值即可，正数向下、负数向上 */
-.nav-item>span:not(.nav-dot):not(.nav-active-dot) {
+.nav-item:hover svg {
+  transform: scale(1.06);
+}
+
+.nav-item.active svg {
+  transform: scale(1.02);
+}
+
+/* 微调导航名称上下位置：改 translateY 的正负值即可，正数向下、负数向上。
+   nowrap 是必需的：侧栏宽度在收起/展开时会逐帧变化，标签一旦允许折行，就会
+   跟着逐帧重排（折行还会把行撑高、让 .sidebar 冒出纵向滚动条）——那就是「抖动」。
+   不折行则文字只是被 .sidebar 的 overflow-x: hidden 裁掉，布局全程不动。 */
+.nav-item>span {
   transform: translateY(-1.5px);
+  white-space: nowrap;
 }
 
-.nav-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--success);
-  flex-shrink: 0;
-  margin-left: auto;
+/* 模式切换的按钮复用 .nav-item，但它自带描边与三态：把导航项那两件附加装饰关掉，
+   否则柔光层会盖住它的底色、指示条会跑到相邻按钮上。 */
+.sidebar-mode-switch .nav-item::after,
+.sidebar-mode-switch .nav-item::before {
+  display: none;
 }
 
-.nav-active-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #6ab785;
-  box-shadow: 0 0 0 3px rgb(1 65 24 / 22%);
-  flex-shrink: 0;
-  margin-left: 2px;
-  animation: fadeIn 150ms ease, navPulse 1.6s ease-in-out infinite;
+/* 模式切换是纯文字按钮，没有图标要跟标签对齐，取消那条 -1.5px 的微调 */
+.sidebar-mode-switch .nav-item>span {
+  transform: none;
 }
 
-.sidebar-wrapper.collapsed .nav-item.active {
-  background: rgba(74, 222, 128, .16);
-}
+/* 收起态（只剩图标）：填充与竖条照旧生效——竖条是伪元素，不受
+   `.sidebar-wrapper.icon-only .nav-item>*:not(:first-child) { display: none }` 影响。
+   此前这里单独补了一块绿色底：那是因为「当前页」的提示点也是子元素、被同一条规则
+   一起藏掉了，得另找替代品。现在标记不再依赖子元素，这块补丁撤掉，
+   展开 / 收起两种状态共用同一套表达。 */
 
 /* 键盘焦点：本文件此前没有任何 :focus / :outline 规则，导航项是纯 <button>，
-   Tab 走查时焦点位置不可见。导航项已是 32px 高、圆角 6px 的实心块，直接给一圈
-   outline 即可，不需要额外补偿。offset 取 -2px 让焦点环贴在按钮内侧，
-   避免与相邻导航项（gap 为 0）的环互相重叠。 */
+   Tab 走查时焦点位置不可见。导航项是 36px 高、圆角 10px 的实心块，直接给一圈
+   outline 即可，不需要额外补偿。offset 取 -2px 让焦点环贴在按钮内侧：
+   相邻导航项之间只有 2px（上下各 1px margin），offset 取正则两环会互相压上。 */
 .nav-item:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   以下三块（分隔线 / 底部固定区 / 收起态标签气泡）都只服务**纵向排布与补充信息**，
+   刻意不含任何会影响图标位置的几何：横向只改宽度、纵向占位两态一致。
+   收起 / 展开的「零跳动」前提见文件顶部说明，这里不再重复。
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── 导航分隔线 ──
+   卡片顶端的一道发丝线。折叠按钮不在侧栏里（它在标题栏的 .titlebar-btn-sidebar），
+   但位置正好落在卡片正上方，所以这条线读起来就是「标题栏 / 导航区」的分界，
+   和底部「设置」上方那条线一上一下把导航列表夹住。
+   展开态铺满内容宽度（220px 轨道里一条通栏发丝线），收起态缩到 22px 居中——
+   只有横向变化，纵向占位（1 + 1 + 8 = 10px）两态完全相同，所以收起 / 展开时
+   它只是变宽变窄，不会带动任何图标上下动。
+   居中用 auto 外边距而不是 align-self: center：宽度变化时浏览器直接按剩余空间
+   重新分配左右外边距，不需要额外重算，动画期间也不会闪。 */
+.nav-divider {
+  width: 100%;
+  height: 1px;
+  margin: 1px auto 8px;
+  flex-shrink: 0;
+  background: linear-gradient(90deg, transparent, var(--separator), transparent);
+  transition: width .25s cubic-bezier(.25, .1, .25, 1);
+}
+
+.sidebar-wrapper.icon-only .nav-divider {
+  width: 22px;
+}
+
+/* ── 底部固定区（设置）──
+   「设置」是全局项，不该混在页面导航里跟着一起滚。做法是在导航项与它之间插一个
+   flex: 1 的弹性空档：
+     · 内容不足一屏 → 空档吸掉全部剩余空间，「设置」被压到侧栏最底；
+     · 内容超一屏 → 空档收到 min-height（14px）让位，整体照旧滚动。
+   两种情形都不改动上方的布局，所以不引入任何跳动。
+   min-height 而不是 0：会话列表短的时候也要和上方留出一点呼吸，不然「设置」
+   会贴着最后一行导航项。 */
+.sidebar-spacer {
+  flex: 1 1 auto;
+  min-height: 14px;
+}
+
+.sidebar-bottom {
+  position: relative;
+  /* 常驻项，不允许被会话列表挤扁 */
+  flex-shrink: 0;
+  padding-top: 8px;
+}
+
+/* 上方那条分隔线用伪元素而不是 border-top：border 会算进盒子高度，
+   而伪元素绝对定位、完全不占位——纵向占位就只剩 padding-top: 8px 这一处，
+   两态一致，切换时不会因为多出 1px 而抖。
+   左右各缩进 7px：线不顶到卡片内壁，和上面的通栏分隔线形成层级差。 */
+.sidebar-bottom::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 7px;
+  right: 7px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--separator), transparent);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   收起态标签气泡
+   ══════════════════════════════════════════════════════════════════
+   收起后文字被 .icon-only 那条规则裁掉，导航项只剩图标——气泡把标签补回来。
+   挂在 body 上（Sidebar.tsx 用 createPortal）而不是侧栏内部，有两个硬理由：
+     · .sidebar 是 overflow: hidden，挂在里面会被裁掉；
+     · 收起时轨道只有 60px，气泡根本放不下。
+   定位由 JS 写入（left = 导航项右缘 + 9px，top = 导航项垂直中心），
+   这里只管外观与入场：从左侧 4px 处滑进来。
+   注意 top 已由 JS 设在中心点，所以纵向平移固定是 -50%（居中），
+   不要改成别的比例，否则气泡会偏离图标。 */
+.nav-tip {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  padding: 7px 10px;
+  border-radius: 8px;
+  /* 用 --surface-solid（不透明快照）而不是 --surface：后者在开启背景图时会被调透，
+     气泡浮在图片上会糊成一团。气泡不在 .app 里（portal 到 body），拿到的本来就是
+     不透明值，这里显式写 solid 是为了不依赖那条规则。 */
+  background: color-mix(in srgb, var(--surface-solid) 94%, transparent);
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 86%, transparent);
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, .11),
+    0 2px 8px rgba(0, 0, 0, .06);
+  backdrop-filter: blur(12px);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  /* 标签是一行短语，不折行：折行会让宽度在入场动画期间跳变 */
+  white-space: nowrap;
+  /* 终态写在基础规则上，入场交给 animation：气泡是每次悬停新建的，
+     动画在元素创建时必然跑一次，不需要再靠 class 切换去「先渲染一帧」。 */
+  opacity: 1;
+  transform: translate(0, -50%);
+  animation: nav-tip-in .13s ease both;
+  pointer-events: none;
+}
+
+html.theme-dark .nav-tip {
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, .32),
+    0 2px 8px rgba(0, 0, 0, .2);
+}
+
+@keyframes nav-tip-in {
+  from {
+    opacity: 0;
+    transform: translate(-4px, -50%);
+  }
+}
+
+/* 小箭头：旋转 45° 的方块，只保留左边和下边的描边，正好拼出一个指向左侧的尖角。
+   background: inherit 让它和气泡同色（含上面那层 94% 透明度），不必再写一遍 color-mix。 */
+.nav-tip::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  transform: translateY(-50%) rotate(45deg);
+  background: inherit;
+  border-left: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
 }

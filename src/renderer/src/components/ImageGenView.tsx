@@ -12,7 +12,7 @@ import '../styles/imagegen.css'
 
 // ── 图像生成视图：调用运行中的 stable-diffusion.cpp sd-server ────
 // sd-server 提供 stable-diffusion-webui 兼容的 /sdapi/v1/txt2img 与 /sdapi/v1/img2img 接口。
-// 使用前提：在「我的模板」中创建 stable-diffusion.cpp 引擎的模板并启动（卡片变绿）。
+// 使用前提：在「模型管理 」中创建 stable-diffusion.cpp 引擎的模板并启动（卡片变绿）。
 type HistoryItem = ImageGenItem
 
 const toImageDataUrl = (b64: string): string =>
@@ -217,7 +217,7 @@ export default function ImageGenView() {
       .filter(h => h.file)
       .map(h => ({ file: h.file, prompt: h.prompt, createdAt: h.createdAt, meta: h.meta }))
     if (persistable.length === 0 && history.length === 0) return
-    window.api.saveImagegenHistory(persistable).catch(() => {})
+    window.api.saveImagegenHistory(persistable).catch(() => { })
   }, [history])
 
   // 首次进入：从磁盘回读历史，按文件名回读图片后重建条目
@@ -245,7 +245,7 @@ export default function ImageGenView() {
         const seen = new Set(prev.map(h => h.file))
         return [...prev, ...fresh.filter(h => h.file && !seen.has(h.file))].slice(0, 60)
       })
-    }).catch(() => {})
+    }).catch(() => { })
     return () => { cancelled = true }
   }, [])
 
@@ -288,7 +288,7 @@ export default function ImageGenView() {
   }, [prompt, negativePrompt, steps, cfgScale, width, height, seed, batchSize, samplerName, scheduler, mode, initImage, denoisingStrength])
 
   const handleGenerate = async () => {
-    if (!selectedCard) { notify('请先在「我的模板」创建一个 stable-diffusion.cpp 模板', 'error'); return }
+    if (!selectedCard) { notify('请先在「模型管理 」创建一个 stable-diffusion.cpp 模板', 'error'); return }
     if (!isRunning) { notify('该服务尚未运行，请先启动后再生成', 'error'); return }
     if (generating) return
     if (mode === 'img2img' && !initImage) { notify('图生图需要先上传一张图片', 'error'); return }
@@ -400,7 +400,7 @@ export default function ImageGenView() {
   const handleDeleteHistory = (item: HistoryItem) => {
     setHistory(prev => prev.filter(h => h.id !== item.id))
     setResults(useImageStore.getState().results.filter(r => r.id !== item.id))
-    if (item.file) window.api.deleteImagegenImages([item.file]).catch(() => {})
+    if (item.file) window.api.deleteImagegenImages([item.file]).catch(() => { })
   }
 
   const openImagesDir = () => {
@@ -419,12 +419,12 @@ export default function ImageGenView() {
         <Image size={48} style={{ opacity: 0.35 }} />
         <h3>还没有 stable-diffusion.cpp 模板</h3>
         <p>
-          先在「我的模板」中创建一个 <b>stable-diffusion.cpp</b> 引擎的模板
+          先在「模型管理 」中创建一个 <b>stable-diffusion.cpp</b> 引擎的模板
           （需要先在「设置 → stable-diffusion.cpp 引擎」下载后端，以及一个扩散模型
           <code>.safetensors</code> 权重）。创建后回到本页面即可在此查看参数面板并启动生成。
         </p>
         <div style={{ display: 'flex', gap: 10 }}>
-          <button className="btn btn-primary" onClick={() => setView('cards')}>前往我的模板</button>
+          <button className="btn btn-primary" onClick={() => setView('cards')}>前往模型管理 </button>
           <button className="btn btn-secondary" onClick={() => setView('settings')}>前往设置</button>
         </div>
       </div>
@@ -486,7 +486,7 @@ export default function ImageGenView() {
             <code>Qwen3-4B-Instruct-2507-UD-Q4_K_XL.gguf</code>
             <span>文本编码器</span>
           </div>
-          <p className="imagegen-reco-note">将以上权重放入对应的模型文件夹，并在「我的模板」中指定后即可使用。</p>
+          <p className="imagegen-reco-note">将以上权重放入对应的模型文件夹，并在「模型管理 」中指定后即可使用。</p>
         </div>
       )}
 
@@ -541,101 +541,101 @@ export default function ImageGenView() {
         {/* ── 左侧：参数面板 ── */}
         <div className="imagegen-panel">
           <div className="imagegen-panel-scroll">
-          <div className="imagegen-panel-head">
-            <div className="launch-mode-row">
-              <button type="button" className={`launch-mode-btn ${mode === 'txt2img' ? 'active' : ''}`} onClick={() => setMode('txt2img')}>
-                文生图
-              </button>
-              <button type="button" className={`launch-mode-btn ${mode === 'img2img' ? 'active' : ''}`} onClick={() => setMode('img2img')}>
-                图生图
-              </button>
+            <div className="imagegen-panel-head">
+              <div className="launch-mode-row">
+                <button type="button" className={`launch-mode-btn ${mode === 'txt2img' ? 'active' : ''}`} onClick={() => setMode('txt2img')}>
+                  文生图
+                </button>
+                <button type="button" className={`launch-mode-btn ${mode === 'img2img' ? 'active' : ''}`} onClick={() => setMode('img2img')}>
+                  图生图
+                </button>
+              </div>
+              <span className="imagegen-panel-mode">{mode === 'txt2img' ? 'Text → Image' : 'Image → Image'}</span>
             </div>
-            <span className="imagegen-panel-mode">{mode === 'txt2img' ? 'Text → Image' : 'Image → Image'}</span>
-          </div>
 
-          {mode === 'img2img' && (
-            <div className="imagegen-section">
-              <h3 className="imagegen-section-title">初始图片</h3>
-              <div className="imagegen-initimg">
-                {initPreview ? (
-                  <img src={initPreview} alt="init" className="imagegen-initimg-preview" />
-                ) : (
-                  <div className="imagegen-initimg-placeholder" onClick={() => fileRef.current?.click()}>
-                    <Upload size={20} /> 点击上传图片
-                  </div>
-                )}
-                {initPreview && (
-                  <div className="imagegen-initimg-actions">
-                    <button className="btn btn-secondary btn-sm" onClick={() => fileRef.current?.click()}>更换</button>
-                    <button className="btn btn-secondary btn-sm" onClick={() => { setInitImage(''); setInitPreview('') }}>清除</button>
-                  </div>
-                )}
-                <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleFileChange} />
-              </div>
-            </div>
-          )}
-
-          <div className="imagegen-section">
-            <h3 className="imagegen-section-title">生成参数</h3>
-            <div className="imagegen-grid">
-              <div className="imagegen-field">
-                <label className="form-label">步数</label>
-                <input type="number" className="cmd-input num" value={steps} min={1} max={150} onChange={e => setSteps(Number(e.target.value) || 20)} />
-              </div>
-              <div className="imagegen-field">
-                <label className="form-label">CFG</label>
-                <input type="number" className="cmd-input num" value={cfgScale} min={1} max={30} step={0.5} onChange={e => setCfgScale(Number(e.target.value) || 7)} />
-              </div>
-              <div className="imagegen-field">
-                <label className="form-label">宽</label>
-                <input type="number" className="cmd-input num" value={width} min={64} max={2048} step={64} onChange={e => setWidth(Number(e.target.value) || 512)} />
-              </div>
-              <div className="imagegen-field">
-                <label className="form-label">高</label>
-                <input type="number" className="cmd-input num" value={height} min={64} max={2048} step={64} onChange={e => setHeight(Number(e.target.value) || 512)} />
-              </div>
-              <div className="imagegen-field">
-                <label className="form-label">种子</label>
-                <input type="number" className="cmd-input num" value={seed} onChange={e => setSeed(Number(e.target.value) || -1)}/>
-              </div>
-              <div className="imagegen-field">
-                <label className="form-label">数量</label>
-                <input type="number" className="cmd-input num" value={batchSize} min={1} max={8} onChange={e => setBatchSize(Math.max(1, Number(e.target.value) || 1))} />
-              </div>
-              <div className="imagegen-field">
-                <label className="form-label">采样器</label>
-                <CustomSelect
-                  className="imagegen-select-wrap"
-                  buttonClass="imagegen-select"
-                  panelClass="imagegen-dropdown-panel"
-                  itemClass="imagegen-dropdown-item"
-                  value={samplerName}
-                  onChange={setSamplerName}
-                  options={samplers.length === 0 ? [{ value: '', label: '默认' }, ...FALLBACK_SAMPLERS.map(s => ({ value: s, label: s }))] : samplers.map(s => ({ value: s, label: s }))}
-                  placeholder="默认"
-                />
-              </div>
-              <div className="imagegen-field">
-                <label className="form-label">调度器</label>
-                <CustomSelect
-                  className="imagegen-select-wrap"
-                  buttonClass="imagegen-select"
-                  panelClass="imagegen-dropdown-panel"
-                  itemClass="imagegen-dropdown-item"
-                  value={scheduler}
-                  onChange={setScheduler}
-                  options={schedulers.length === 0 ? [{ value: '', label: '默认' }, ...FALLBACK_SCHEDULERS.map(s => ({ value: s, label: s }))] : schedulers.map(s => ({ value: s, label: s }))}
-                  placeholder="默认"
-                />
-              </div>
-              {mode === 'img2img' && (
-                <div className="imagegen-field">
-                  <label className="form-label">重绘强度</label>
-                  <input type="number" className="cmd-input num" value={denoisingStrength} min={0} max={1} step={0.05} onChange={e => setDenoisingStrength(Number(e.target.value) || 0.75)} />
+            {mode === 'img2img' && (
+              <div className="imagegen-section">
+                <h3 className="imagegen-section-title">初始图片</h3>
+                <div className="imagegen-initimg">
+                  {initPreview ? (
+                    <img src={initPreview} alt="init" className="imagegen-initimg-preview" />
+                  ) : (
+                    <div className="imagegen-initimg-placeholder" onClick={() => fileRef.current?.click()}>
+                      <Upload size={20} /> 点击上传图片
+                    </div>
+                  )}
+                  {initPreview && (
+                    <div className="imagegen-initimg-actions">
+                      <button className="btn btn-secondary btn-sm" onClick={() => fileRef.current?.click()}>更换</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => { setInitImage(''); setInitPreview('') }}>清除</button>
+                    </div>
+                  )}
+                  <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleFileChange} />
                 </div>
-              )}
+              </div>
+            )}
+
+            <div className="imagegen-section">
+              <h3 className="imagegen-section-title">生成参数</h3>
+              <div className="imagegen-grid">
+                <div className="imagegen-field">
+                  <label className="form-label">步数</label>
+                  <input type="number" className="cmd-input num" value={steps} min={1} max={150} onChange={e => setSteps(Number(e.target.value) || 20)} />
+                </div>
+                <div className="imagegen-field">
+                  <label className="form-label">CFG</label>
+                  <input type="number" className="cmd-input num" value={cfgScale} min={1} max={30} step={0.5} onChange={e => setCfgScale(Number(e.target.value) || 7)} />
+                </div>
+                <div className="imagegen-field">
+                  <label className="form-label">宽</label>
+                  <input type="number" className="cmd-input num" value={width} min={64} max={2048} step={64} onChange={e => setWidth(Number(e.target.value) || 512)} />
+                </div>
+                <div className="imagegen-field">
+                  <label className="form-label">高</label>
+                  <input type="number" className="cmd-input num" value={height} min={64} max={2048} step={64} onChange={e => setHeight(Number(e.target.value) || 512)} />
+                </div>
+                <div className="imagegen-field">
+                  <label className="form-label">种子</label>
+                  <input type="number" className="cmd-input num" value={seed} onChange={e => setSeed(Number(e.target.value) || -1)} />
+                </div>
+                <div className="imagegen-field">
+                  <label className="form-label">数量</label>
+                  <input type="number" className="cmd-input num" value={batchSize} min={1} max={8} onChange={e => setBatchSize(Math.max(1, Number(e.target.value) || 1))} />
+                </div>
+                <div className="imagegen-field">
+                  <label className="form-label">采样器</label>
+                  <CustomSelect
+                    className="imagegen-select-wrap"
+                    buttonClass="imagegen-select"
+                    panelClass="imagegen-dropdown-panel"
+                    itemClass="imagegen-dropdown-item"
+                    value={samplerName}
+                    onChange={setSamplerName}
+                    options={samplers.length === 0 ? [{ value: '', label: '默认' }, ...FALLBACK_SAMPLERS.map(s => ({ value: s, label: s }))] : samplers.map(s => ({ value: s, label: s }))}
+                    placeholder="默认"
+                  />
+                </div>
+                <div className="imagegen-field">
+                  <label className="form-label">调度器</label>
+                  <CustomSelect
+                    className="imagegen-select-wrap"
+                    buttonClass="imagegen-select"
+                    panelClass="imagegen-dropdown-panel"
+                    itemClass="imagegen-dropdown-item"
+                    value={scheduler}
+                    onChange={setScheduler}
+                    options={schedulers.length === 0 ? [{ value: '', label: '默认' }, ...FALLBACK_SCHEDULERS.map(s => ({ value: s, label: s }))] : schedulers.map(s => ({ value: s, label: s }))}
+                    placeholder="默认"
+                  />
+                </div>
+                {mode === 'img2img' && (
+                  <div className="imagegen-field">
+                    <label className="form-label">重绘强度</label>
+                    <input type="number" className="cmd-input num" value={denoisingStrength} min={0} max={1} step={0.05} onChange={e => setDenoisingStrength(Number(e.target.value) || 0.75)} />
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
 
           </div>
 
@@ -715,45 +715,45 @@ export default function ImageGenView() {
           ) : results.length > 0 ? (
             <div className="imagegen-grid-results">
               <div className="imagegen-grid-inner">
-              {results.map(item => {
-                const m = item.meta
-                const chips = [
-                  m?.mode === 'img2img' ? 'img2img' : 'txt2img',
-                  m?.steps !== undefined ? `${m.steps} 步` : '',
-                  m?.cfg !== undefined ? `CFG ${m.cfg}` : '',
-                  m?.width && m?.height ? `${m.width}×${m.height}` : '',
-                  m?.seed !== undefined ? `seed ${m.seed}` : '',
-                  m?.sampler || '',
-                  m?.scheduler || ''
-                ].filter(Boolean)
-                return (
-                  <div key={item.id} className="imagegen-result-card">
-                    <div className="imagegen-result-img">
-                      <img src={item.dataUrl} alt={item.prompt} onClick={() => setLightbox(item.dataUrl)} />
-                    </div>
-                    <div className="imagegen-result-body">
-                      <p className="imagegen-result-prompt" title={item.prompt}>{item.prompt}</p>
-                      {chips.length > 0 && (
-                        <div className="imagegen-result-chips">
-                          {chips.map(c => <span key={c} className="imagegen-chip">{c}</span>)}
+                {results.map(item => {
+                  const m = item.meta
+                  const chips = [
+                    m?.mode === 'img2img' ? 'img2img' : 'txt2img',
+                    m?.steps !== undefined ? `${m.steps} 步` : '',
+                    m?.cfg !== undefined ? `CFG ${m.cfg}` : '',
+                    m?.width && m?.height ? `${m.width}×${m.height}` : '',
+                    m?.seed !== undefined ? `seed ${m.seed}` : '',
+                    m?.sampler || '',
+                    m?.scheduler || ''
+                  ].filter(Boolean)
+                  return (
+                    <div key={item.id} className="imagegen-result-card">
+                      <div className="imagegen-result-img">
+                        <img src={item.dataUrl} alt={item.prompt} onClick={() => setLightbox(item.dataUrl)} />
+                      </div>
+                      <div className="imagegen-result-body">
+                        <p className="imagegen-result-prompt" title={item.prompt}>{item.prompt}</p>
+                        {chips.length > 0 && (
+                          <div className="imagegen-result-chips">
+                            {chips.map(c => <span key={c} className="imagegen-chip">{c}</span>)}
+                          </div>
+                        )}
+                        {item.file && (
+                          <p className="imagegen-result-file" title={item.file}>{item.file}</p>
+                        )}
+                        <div className="imagegen-result-actions">
+                          {(item.file || item.savedPath) ? (
+                            <span className="text-success" title={item.file || item.savedPath}>已保存</span>
+                          ) : (
+                            <button className="btn btn-primary btn-sm" onClick={() => handleSave(item)}>
+                              <Save size={13} /> 保存
+                            </button>
+                          )}
                         </div>
-                      )}
-                      {item.file && (
-                        <p className="imagegen-result-file" title={item.file}>{item.file}</p>
-                      )}
-<div className="imagegen-result-actions">
-  {(item.file || item.savedPath) ? (
-    <span className="text-success" title={item.file || item.savedPath}>已保存</span>
-  ) : (
-    <button className="btn btn-primary btn-sm" onClick={() => handleSave(item)}>
-      <Save size={13} /> 保存
-    </button>
-  )}
-</div>
+                      </div>
                     </div>
-                  </div>
-                )
-              })}
+                  )
+                })}
               </div>
             </div>
           ) : (

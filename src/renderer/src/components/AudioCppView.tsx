@@ -63,7 +63,7 @@ export default function AudioCppView() {
         <div className="audiocpp-empty">
           <LayoutGrid size={42} className="audiocpp-empty-icon" />
           <h3>还没有 audio.cpp 引擎</h3>
-          <p>在「后端与引擎」中下载 audio.cpp（0xShug0/audio.cpp），或在「我的模板」中创建一个 audio.cpp 模板并启动它。</p>
+          <p>在「后端与引擎」中下载 audio.cpp（0xShug0/audio.cpp），或在「模型管理 」中创建一个 audio.cpp 模板并启动它。</p>
           <button className="btn btn-primary" onClick={() => setView('engines')}>前往后端与引擎</button>
         </div>
       </div>
@@ -119,8 +119,8 @@ export default function AudioCppView() {
         <div className="audiocpp-empty">
           <TriangleAlert size={36} className="audiocpp-empty-warn" />
           <h3>服务未运行</h3>
-          <p>当前没有正在运行的 audio.cpp 服务。在「我的模板」中启动一个 audio.cpp 模板，即可在下方使用完整的音频工作台（模型加载、TTS、语音转写、音乐生成等）。</p>
-          <button className="btn btn-primary" onClick={() => setView('cards')}>前往「我的模板」启动</button>
+          <p>当前没有正在运行的 audio.cpp 服务。在「模型管理 」中启动一个 audio.cpp 模板，即可在下方使用完整的音频工作台（模型加载、TTS、语音转写、音乐生成等）。</p>
+          <button className="btn btn-primary" onClick={() => setView('cards')}>前往「模型管理 」启动</button>
         </div>
       )}
     </div>

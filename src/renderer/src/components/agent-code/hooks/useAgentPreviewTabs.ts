@@ -26,6 +26,7 @@ import katexJsInline from 'katex/dist/katex.min.js?raw'
 import { notify } from '../../../store/notificationStore'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { CODE_EXT, MD_EXT, IMG_EXT } from '../utils/fileExt'
+import { MEM_IMG_PREFIX } from '../utils/constants'
 import { renderMathInHtml } from '../utils/mathHtml'
 import { dirName, pathDir } from '../utils/paths'
 import { extractTextFromBuffer, isBinaryDoc } from '../../../utils/extractText'
@@ -50,10 +51,12 @@ function decodeBase64Bytes(b64: string): Uint8Array {
   return bytes
 }
 
-export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
+export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel }: {
   setRightPanelMode: React.Dispatch<React.SetStateAction<RightPanelMode>>
   /** 打开文件时把右侧面板展开（通用模式默认收起，否则预览不可见） */
   setTreeOpen: React.Dispatch<React.SetStateAction<boolean>>
+  /** 关掉最后一个文件标签时，「预览」那列工作区跟着关掉（最后一列则整块面板收起） */
+  closePanel: (view: PanelView) => void
 }) {
   const PREVIEW_MAX_BYTES = 128 * 1024
   // PDF / DOCX 要在渲染进程整体解码，给原始体积留个上限（base64 约 4/3 倍 → 约 48MB 文件）
@@ -88,7 +91,10 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
   // 保存源码预览：写回文件并同步 openTabs 内容，退出编辑态
   const savePreviewFile = useCallback(async (content: string) => {
     const tab = openTabsRef.current.find(t => t.path === activeTabPath) || null
-    if (!tab || tab.path.startsWith('pi-undo:')) { notify('当前标签不支持保存', 'error'); return }
+    // 哨兵标签（Git 变更面板 / 内存图片）背后没有文件可写
+    if (!tab || tab.path.startsWith('pi-undo:') || tab.path.startsWith(MEM_IMG_PREFIX)) {
+      notify('当前标签不支持保存', 'error'); return
+    }
     // 二进制文档的 content 是抽取出的文本而非文件本体，写回等于用一段文本盖掉整个 PDF/DOCX。
     // 编辑按钮已按 isBinaryDoc 隐藏，这里兜住 Monaco 的 Ctrl+S 那条路。
     if (tab.isBinaryDoc) { notify('PDF / DOCX 预览的是抽取文本，不能写回原文件', 'error'); return }
@@ -294,6 +300,29 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
     } : t))
   }, [inlineLocalImages])
 
+  // 内存图片：没有磁盘路径的图（剪贴板粘贴、从浏览器 / 看图软件拖入）也走右侧预览面板。
+  // 图片数据本来就在 dataUrl 里，直接建一个装好图的标签，不需要任何磁盘读取。
+  // 标签键用 MEM_IMG_PREFIX + 文件名（真实路径不可能长这样，不会撞车）；同名再点不新开标签——
+  // 同一张就不动，换了一张（同名不同图）就把图刷新掉，免得开出一排同名标签。
+  const openMemoryImage = useCallback((name: string, dataUrl: string, panelMode: PanelView = 'preview') => {
+    const key = MEM_IMG_PREFIX + name
+    setRightPanelMode(panelMode)
+    setTreeOpen(true)
+    setOpenTabs(prev => {
+      const hit = prev.find(t => t.path === key)
+      if (hit) {
+        return hit.imageDataUrl === dataUrl ? prev
+          : prev.map(t => t.path === key ? { ...t, imageDataUrl: dataUrl, loading: false, error: null } : t)
+      }
+      return [...prev, {
+        path: key, name, content: null, lines: null, truncated: false,
+        loading: false, error: null, isImage: true, imageDataUrl: dataUrl,
+        isBinaryDoc: false, isPdf: false, pdfData: null,
+      }]
+    })
+    setActiveTabPath(key)
+  }, [])
+
   const closeTab = useCallback((path: string) => {
     const next = openTabsRef.current.filter(t => t.path !== path)
     setOpenTabs(next)
@@ -301,7 +330,10 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
       if (cur !== path) return cur
       return next.length ? next[next.length - 1].path : null
     })
-  }, [])
+    // 最后一个标签关了，「预览」这一列就没内容可看了：跟着收掉，
+    // 留着一块空面板既占宽又要点两次才关干净
+    if (next.length === 0) closePanel('preview')
+  }, [closePanel])
 
   // 关闭其他 / 关闭全部标签（右键菜单用）
   const closeOtherTabs = useCallback((path: string) => {
@@ -311,7 +343,8 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
   const closeAllTabs = useCallback(() => {
     setOpenTabs([])
     setActiveTabPath(null)
-  }, [])
+    closePanel('preview')
+  }, [closePanel])
   // 右键菜单：点菜单外 / Esc 关闭
   const closeTabMenu = useCallback(() => setTabMenu(null), [setTabMenu])
   usePopoverDismiss(!!tabMenu, closeTabMenu, undefined, undefined, tabMenuRef)
@@ -404,7 +437,7 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen }: {
     previewHighlightLine, setPreviewHighlightLine,
     previewEditing, setPreviewEditing, previewDraft, setPreviewDraft,
     isPreviewHtml, isPreviewMarkdown, htmlPreviewSrcDoc, inlineLocalImages,
-    openPreview, openPreviewAtLine, openFileAtLine,
+    openPreview, openPreviewAtLine, openFileAtLine, openMemoryImage,
     savePreviewFile, closeTab, closeOtherTabs, closeAllTabs, closeTabMenu,
   }
 }

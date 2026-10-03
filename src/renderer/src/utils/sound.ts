@@ -47,7 +47,7 @@ export function previewSound(packId: string): void {
  * 而事件音发生在 await 之后，必须先在手势内激活，否则永不发声
  */
 export function warmUpAudio(): void {
-  try { void player.unlock().catch(() => {}) } catch { /* 音频不可用时忽略 */ }
+  try { void player.unlock().catch(() => { }) } catch { /* 音频不可用时忽略 */ }
 }
 
 /**
@@ -57,11 +57,11 @@ export function warmUpAudio(): void {
  */
 const NAV_CUES: Record<string, CueName> = {
   welcome: 'wake',                  // 启动页
-  cards: 'select',                  // 我的模板
+  cards: 'select',                  // 模型管理 
   models: 'open',                   // 模型
   hub: 'expand',                    // 模型中心
   llama: 'connect',                 // Web 界面
-  monitoring: 'progress-step',      // 模型运行数据
+  monitoring: 'progress-step',      // 运行状态
   benchmark: 'checkpoint',          // 性能测试
   'token-stats': 'streak',          // Token 统计
   ocr: 'snap',                      // OCR

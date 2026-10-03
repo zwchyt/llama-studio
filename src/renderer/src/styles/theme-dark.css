@@ -48,8 +48,14 @@ html.theme-switching *::-webkit-scrollbar-thumb {
   animation: none;
   mix-blend-mode: normal;
 }
-::view-transition-old(root) { z-index: 0; }
-::view-transition-new(root) { z-index: 1; }
+
+::view-transition-old(root) {
+  z-index: 0;
+}
+
+::view-transition-new(root) {
+  z-index: 1;
+}
 
 /* 圆形揭示本体。
    为什么是 CSS @keyframes 而不是 JS 的 element.animate()：
@@ -68,8 +74,13 @@ html.theme-reveal::view-transition-new(root) {
 }
 
 @keyframes vt-circle-reveal {
-  from { clip-path: circle(0px at var(--vt-x, 50%) var(--vt-y, 50%)); }
-  to   { clip-path: circle(var(--vt-r, 150%) at var(--vt-x, 50%) var(--vt-y, 50%)); }
+  from {
+    clip-path: circle(0px at var(--vt-x, 50%) var(--vt-y, 50%));
+  }
+
+  to {
+    clip-path: circle(var(--vt-r, 150%) at var(--vt-x, 50%) var(--vt-y, 50%));
+  }
 }
 
 /* 覆盖层容器本身永远不许成为滚动容器：即便快照尺寸和视口差出不到 1px，
@@ -179,7 +190,7 @@ html.theme-dark body {
   color: var(--text);
 }
 
-/* ── 我的模板：搜索框与头部按钮 ── */
+/* ── 模型管理 ：搜索框与头部按钮 ── */
 .theme-dark .template-search-bar,
 .theme-dark .header-input-btn {
   background: var(--surface-hover);

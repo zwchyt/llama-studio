@@ -6,7 +6,7 @@
 /* 抵消 global.css 中 `.view-transition > :not(...)` 给直接子节点套上的卡片样式：
    本页的两块卡片分别由左侧导航与右侧内容承担，外层容器只负责横向布局。
    选择器提到 (0,4,0) 以稳定压过 global.css 的 (0,3,0)，不依赖文件加载顺序。 */
-.app .content .view-transition > .toolhub {
+.app .content .view-transition>.toolhub {
   padding: 0;
   overflow: hidden;
   background: none;
@@ -155,14 +155,6 @@
 
 .toolhub-item.active .toolhub-ico {
   transform: none;
-}
-
-.toolhub-run-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--success);
-  flex-shrink: 0;
 }
 
 .toolhub-active-dot {

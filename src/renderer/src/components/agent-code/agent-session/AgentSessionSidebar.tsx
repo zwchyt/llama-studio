@@ -312,14 +312,20 @@ export function AgentSessionSidebar({
   )
   // 项目命中 → 整项目全列；项目名不中但旗下会话命中 → 只列命中的会话。
   // 过滤期间项目一律展开（收起态下过滤结果不可见，等于白滤）。
+  // 项目**之间**也按「它最近一次会话」倒序：此前只排了项目内的会话，项目本身还留在
+  // 存档的创建顺序上，于是整个工作台列表读不出时间线（最近用的项目可能沉在底下）。
+  // 项目内会话已由 sortByLastActive 排好，取第一条即该项目的最新时间；
+  // 一条会话都没有的项目落到最后（-Infinity），不与真实活跃时间抢位置。
   const filteredProjects = useMemo(() => {
     const hit = (p: AgentProject) => p.title.toLowerCase().includes(q)
+    const at = (p: AgentProject) => (p.sessions[0] ? lastActiveById.get(p.sessions[0].id) ?? null : null)
     return codeProjects
       .map(p => {
         const list = !q || hit(p) ? p.sessions : p.sessions.filter(s => s.title.toLowerCase().includes(q))
         return { ...p, sessions: sortByLastActive(list, lastActiveById) }
       })
       .filter(p => !q || hit(p) || p.sessions.length > 0)
+      .sort((a, b) => (at(b) ?? -Infinity) - (at(a) ?? -Infinity))
   }, [codeProjects, q, lastActiveById])
 
   return (
@@ -407,7 +413,7 @@ export function AgentSessionSidebar({
       ) : (
         /* ── 编码模式：项目 → 会话树 ── */
         <>
-          <TopbarBtn baseClass="agent-code-session-new-btn" icon={FolderOpenIcon} size={14} onClick={createProject}>新建项目</TopbarBtn>
+          <TopbarBtn baseClass="agent-code-session-new-btn" icon={FolderOpenIcon} size={14} onClick={createProject}>新添项目</TopbarBtn>
           <SidebarFilter value={filter} onChange={setFilter} placeholder="搜索项目与会话…" />
           <div className="agent-code-sidebar-header"><span>项目</span></div>
           <div className="agent-code-session-list" role="listbox" aria-label="项目会话" ref={listRef}>

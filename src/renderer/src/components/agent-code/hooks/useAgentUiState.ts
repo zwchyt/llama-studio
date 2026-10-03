@@ -138,7 +138,7 @@ export function useAgentUiState({
     return Math.min(Math.max(widest + maxCapsW + 18 + 6 * 3 + 22 + 16 + 8, 200), 560)
   }, [modelGroups, modelCaps])
   // 各模型的自定义 Logo（key = template.id；data URL 或 null=无）：全局 store 共享，
-  // 与「我的模板」卡片同一份数据，任一处设置/移除后两处立即同步
+  // 与「模型管理 」卡片同一份数据，任一处设置/移除后两处立即同步
   const modelLogos = useStore(s => s.modelLogos)
   const setModelLogoEntry = useStore(s => s.setModelLogoEntry)
   const loadModelLogos = useStore(s => s.loadModelLogos)
@@ -318,9 +318,9 @@ export function useAgentUiState({
   useEffect(() => {
     if (rightPanelMode === 'terminal') setTerminalMounted(true)
   }, [rightPanelMode])
-  // 会话侧栏默认展开：进来就能看到工作区和会话列表。
-  // 不持久化，每次进入工作台都是展开态（点顶栏左上角的开关或双击顶栏可收起）。
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  // 会话列表（portal 到导航栏底部那个槽）**常驻挂载**，不再有开关。
+  // 顶栏左上角原来有一颗「收起会话列表」按钮，已删除：侧栏内容的显隐只该由侧栏自己的
+  // 收起/展开决定，不该让顶栏另管一套（两处状态并存时，点顶栏那颗按钮看着就像没反应）。
   const [contextModalOpen, setContextModalOpen] = useState(false)
   const [trajOpen, setTrajOpen] = useState(false)  // 轨迹台账面板开关
   const [memoryOpen, setMemoryOpen] = useState(false)  // 长期记忆面板开关
@@ -455,7 +455,7 @@ export function useAgentUiState({
     openPanels, closePanel, closeOtherPanels, closePanelsRight, closeAllPanels,
     terminalMounted, setTerminalMounted,
     // 功能面板开关
-    sidebarOpen, setSidebarOpen, contextModalOpen, setContextModalOpen,
+    contextModalOpen, setContextModalOpen,
     trajOpen, setTrajOpen,
     memoryOpen, setMemoryOpen, treeOpenRef,
     // 任务清单卡

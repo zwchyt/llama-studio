@@ -316,7 +316,7 @@ export default function EnginesView() {
       <div className="settings-section ev-card--engine ev-eng--llamacpp">
         <div className="settings-section-title"><Download /> 可用更新</div>
         <p className="ev-desc" style={{ marginBottom: 12 }}>
-          llama.cpp 基础引擎：GGML/GGUF 大模型推理后端，支持 CPU 与 CUDA 加速，安装后可在「我的模板」创建文本模型卡。
+          llama.cpp 基础引擎：GGML/GGUF 大模型推理后端，支持 CPU 与 CUDA 加速，安装后可在「模型管理 」创建文本模型卡。
         </p>
         {checkingUpdate ? (
           <div className="flex items-center gap-2 text-sm py-4" style={{ color: 'var(--text-muted)' }}>
