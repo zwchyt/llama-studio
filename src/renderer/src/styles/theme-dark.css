@@ -103,16 +103,27 @@ html.theme-dark {
   --bg: #202227;
   --surface: #2a2d33;
   --surface-hover: #33363d;
-  --border: #383c44;
+  /* 深色下描边是「比面亮一档」，原来 #383c44 只比卡面亮约 7 个 L*，而浅色 #d8d8d8 比卡面暗 11 个
+     ——容器边界在深色里天生弱一半。提到 #41454e（约 +10 L*），与 --border-strong 仍成梯度。 */
+  --border: #41454e;
   --border-strong: #4b505b;
   --text: #ced2d9;
   --text-secondary: #9298a2;
   --text-muted: #71767f;
   --accent: #c6cad2;
   --accent-fg: #24262b;
-  --shadow: 0 1px 3px rgba(0, 0, 0, .25), 0 1px 2px rgba(0, 0, 0, .18);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, .3), 0 2px 4px rgba(0, 0, 0, .2);
-  --shadow-lg: 0 10px 32px rgba(0, 0, 0, .38), 0 4px 8px rgba(0, 0, 0, .24);
+  /* 黑色外投影落在 L*13~18 的深底上几乎不可见，浅色那条「浮起来」的线索在深色里失效，
+     所以三档投影各补一条斜角（bevel）：上缘内高光 + 下缘内暗线，靠边缘亮度差而不是投影表层级。
+     原有的外投影保留，它在深色里只是弱、不是错。 */
+  --shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .055), inset 0 -1px 0 rgba(0, 0, 0, .28),
+    0 1px 3px rgba(0, 0, 0, .25), 0 1px 2px rgba(0, 0, 0, .18);
+  --shadow-md:
+    inset 0 1px 0 rgba(255, 255, 255, .055), inset 0 -1px 0 rgba(0, 0, 0, .28),
+    0 4px 12px rgba(0, 0, 0, .3), 0 2px 4px rgba(0, 0, 0, .2);
+  --shadow-lg:
+    inset 0 1px 0 rgba(255, 255, 255, .06), inset 0 -1px 0 rgba(0, 0, 0, .3),
+    0 10px 32px rgba(0, 0, 0, .38), 0 4px 8px rgba(0, 0, 0, .24);
 
   /* 代码块深色配色（随整体提亮一档，文字降亮防刺眼） */
   --code-bg: #26292f;

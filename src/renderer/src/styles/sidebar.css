@@ -7,7 +7,8 @@
    主题值挂在 .sidebar-wrapper 上而不是 :root：它们只服务这一处。
    ══════════════════════════════════════════════════════════════════ */
 .sidebar-wrapper {
-  /* 卡面：极轻的纵向渐变（顶部略亮）+ 发丝边框 + 内高光 + 极轻投影 */
+  /* 卡面：极轻的纵向渐变（顶部略亮）+ 发丝边框 + 内高光 + 极轻投影
+     开启界面背景图时 --sidebar-bg 由 app-background.css 按 --app-bg-fill 重写，与会话面板同透 */
   --sidebar-bg: linear-gradient(180deg, rgba(255, 255, 255, .82) 0%, rgba(248, 249, 251, .96) 100%);
   --sidebar-border: rgba(0, 0, 0, .085);
   --sidebar-inner-highlight: inset 0 1px 0 rgba(255, 255, 255, .92);
@@ -116,6 +117,14 @@ html.theme-dark .sidebar-wrapper {
   border-top: 1px solid var(--separator);
   display: flex;
   flex-direction: column;
+  /* 宽度钉死在展开态的内容盒，不跟着 wrapper 的 60→220 动画一起变窄。
+     会话行是 nowrap + ellipsis：容器逐帧变窄时省略号边界每帧重算，可见文字被一个字符
+     一个字符地吞掉再吐出来；右侧时间标签还有一条 @container ac-side (max-width:190px)
+     的显隐档，动画中途正好跨过它，会再啪地跳一次。两者合起来就是「文字在抖」。
+     定宽之后这些都不重排，多出来的部分由 .sidebar 的 overflow-x 裁掉 —— 展开只是把
+     列表揭开，不是把它重新排一遍。
+     198 = wrapper 展开宽 220 − 卡片左右边框 1×2 − 卡片左右内边距 10×2（见上面收起宽度 60px 那条说明）*/
+  width: 198px;
   /* flex-shrink: 0 是**必需的**，不能沿用默认的 1：
      槽里装的是会话列表，高度随会话数增长。默认允许收缩的话，侧栏一旦纵向吃紧，
      flex 会把槽的盒子压扁，而槽里的列表（.agent-code-sidebar 是 flex-shrink: 0）
@@ -172,6 +181,14 @@ html.theme-dark .sidebar-wrapper {
    从上方 8px 滑下来 + 淡入，方向与槽位顶部那条分隔线一致。 */
 .sidebar-agent-slot>* {
   animation: sidebar-slot-in 0.3s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+/* 上面那个入场动画只该播一次（首屏空闲时 portal 挂进来那一下）。
+   display:none→flex 会重新创建盒子、动画随之重跑，于是每次展开侧栏，列表都在宽度动画
+   的同时自己滑一次 + 淡入一次——文字看着就是抖。槽第二次显示起把它关掉，
+   展开只由宽度动画去揭示（静态样式与动画终态一致，切过去没有视觉差）。 */
+.sidebar-wrapper.slot-entered .sidebar-agent-slot>* {
+  animation: none;
 }
 
 @keyframes sidebar-slot-in {

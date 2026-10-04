@@ -41,6 +41,23 @@ function xmlEscape(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
+/** 单次请求送多少字：过长会被服务端静默截断，所以按句切段、逐段合成再拼接 */
+const MAX_CHARS_PER_REQUEST = 800
+/** 停顿长度：渲染层清洗后仍保留的换行 = 段落 / 硬换行 */
+const PARA_BREAK = "<break time='480ms'/>"
+const LINE_BREAK = "<break time='240ms'/>"
+
+/** 换行翻成 SSML 停顿标记；文本逐段转义，不会被注入标签 */
+function ssmlText(text: string): string {
+  return text
+    .split(/(\n{2,}|\n)/)
+    .map(part => {
+      if (!part) return ''
+      return part.startsWith('\n') ? (part.length >= 2 ? PARA_BREAK : LINE_BREAK) : xmlEscape(part)
+    })
+    .join('')
+}
+
 export interface EdgeTtsOptions {
   text: string
   voice: string
@@ -54,7 +71,28 @@ export interface EdgeTtsOptions {
 }
 
 /** 合成一段文本，返回 mp3 字节。 */
-export function synthesizeEdgeTts(opts: EdgeTtsOptions): Promise<Buffer> {
+export async function synthesizeEdgeTts(opts: EdgeTtsOptions): Promise<Buffer> {
+  const chunks: string[] = []
+  let buf = ''
+  // 只在下述边界后切，句子不会被腰斩；换行留在段内，交给 <break> 当停顿
+  for (const sent of (opts.text ?? '').split(/(?<=[。！？!?；;\n])/)) {
+    if (buf && buf.length + sent.length > MAX_CHARS_PER_REQUEST) {
+      chunks.push(buf)
+      buf = ''
+    }
+    buf += sent
+  }
+  if (buf.trim()) chunks.push(buf)
+  if (chunks.length === 0) throw new Error('朗读文本为空')
+
+  // 顺序合成：并发打同一个在线服务容易被限流
+  const audio: Buffer[] = []
+  for (const chunk of chunks) audio.push(await synthesizeEdgeTtsOnce({ ...opts, text: chunk }))
+  return Buffer.concat(audio)
+}
+
+/** 一段文本走一次 WebSocket 往返 */
+function synthesizeEdgeTtsOnce(opts: EdgeTtsOptions): Promise<Buffer> {
   const { text, voice, rate = 1, pitch = 0, volume = 0, timeoutMs = 30000 } = opts
   return new Promise<Buffer>((resolve, reject) => {
     const url = 'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1'
@@ -87,7 +125,7 @@ export function synthesizeEdgeTts(opts: EdgeTtsOptions): Promise<Buffer> {
       const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='zh-CN'>`
         + `<voice name='${voice}'>`
         + `<prosody pitch='${pitch >= 0 ? '+' : ''}${pitch}Hz' rate='${pct((rate - 1) * 100)}' volume='${pct(volume)}'>`
-        + xmlEscape(text)
+        + ssmlText(text)
         + '</prosody></voice></speak>'
       ws.send(
         `X-RequestId:${randomUUID().replace(/-/g, '')}\r\n`

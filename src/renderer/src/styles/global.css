@@ -17,11 +17,12 @@
   --bg: #f5f6f8;
   --surface: #f7f7f8;
   --surface-hover: #f2f2f3;
-  /* 底色实心快照：换背景图时要把 --bg/--surface 调透，透的基准必须是这两份原值
+  /* 底色实心快照：换背景图时要把 --bg/--surface/--surface-hover 调透，透的基准必须是这几份原值
      （在 .app 上重写 --bg 时若直接 var(--bg) 引用自己会成环）。深色主题在 html 上换值，
      这里跟着解析，不用另写一份。 */
   --bg-solid: var(--bg);
   --surface-solid: var(--surface);
+  --surface-hover-solid: var(--surface-hover);
   /* 边框必须比它所在的面深一档才有轮廓（曾为 #e8e8e8，比当时的 #e5e5e5 底色更浅，
      导致工具内容块等 1px 边框呈现"白色描边"）；#d8d8d8 与 --border-strong #d0d0d0 成梯度 */
   --border: #d8d8d8;
@@ -254,8 +255,11 @@ textarea {
 }
 
 
+/* 主界面外层留白：上下取 8px，与导航栏卡片（sidebar.css 的 .sidebar { margin: 8px }）
+   以及 Agent Code 列（agent-code.css 的 topbar / chat 各 8px）同口径——三类容器的顶边、
+   底边因此落在同一线上。左右仍留 24px，那是主界面与侧栏之间的水平间距，不在这次范围内。 */
 .content>*:not(.chat-layout):not(.agent-code-view) {
-  padding: 24px;
+  padding: 8px 24px;
   overflow-y: auto;
   flex: 1;
   min-height: 0;
@@ -270,7 +274,8 @@ textarea {
   border: 1.5px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
-  margin: 0 8px 8px 0;
+  /* 上下留白已由上一层给到 8，这里再写 margin-bottom 会叠成 16、把底边推歪 */
+  margin: 0 8px 0 0;
 }
 
 @keyframes view-fade-in {
@@ -295,15 +300,16 @@ textarea {
   }
 }
 
+/* 入场只做淡入，不做位移：位移后的盒子会算进祖先的可滚动溢出区，而 .view-transition 与页面卡片
+   两层都是 overflow-y: auto（见上面两条规则）——动画头几帧凭空多出 12px 底部溢出，滚动条一闪，
+   内容宽度少 5px（::-webkit-scrollbar），切页面就成了「左右弹一下」。 */
 @keyframes view-content-in {
   from {
     opacity: 0;
-    transform: translateY(12px);
   }
 
   to {
     opacity: 1;
-    transform: none;
   }
 }
 

@@ -6552,7 +6552,7 @@ html.is-panel-resizing .agent-think-body .table-node {
   --agent-selection-bg: rgba(129, 147, 230, 0.22);
   --agent-selection-fg: inherit;
   /* 消息气泡底色：比背景（浅色主题下 --bg 为纯白）略深一档，靠边框 + 投影勾勒卡片轮廓；
-     集中定义便于随主题调整。 */
+     集中定义便于随主题调整。开启界面背景图时由 app-background.css 按 --app-bg-fill 重写为同透。 */
   --agent-bubble-bg: #f2f2f2;
 }
 

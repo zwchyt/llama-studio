@@ -100,7 +100,7 @@ function AppMain() {
   const view = useStore(s => s.view)
   // 视图切换的「延迟值」：懒加载的视图在 chunk 到位前会挂起，若直接渲染新 view，
   // React 会先把旧视图换成 Suspense 占位、chunk 到了再换成真视图 —— 中间多出一次视觉状态，
-  // 而真视图还带 `view-content-in` 的 12px 位移动画，连起来就是肉眼可见的抖动。
+  // 真视图随后还要播一次 `view-content-in` 淡入，连起来就是肉眼可见的两次跳动。
   // 用 useDeferredValue 后，React 在低优先级渲染里**继续显示旧视图**，等新视图能渲染了才切换：
   // 全程只有一次视觉状态变化、一次入场动画。导航高亮仍用实时的 view，点下去立刻响应。
   const deferredView = useDeferredValue(view)

@@ -4,8 +4,9 @@
    图铺在整窗最底一层（App.tsx 里的 .app-bg），界面上每一层面板浮在它上面、
    靠半透明底色把图透出来。透的做法是重写 --bg / --surface 两个底色令牌，不是
    挨个容器点名：全界面的外框与卡面都吃这两个令牌，一处改就都跟着透，以后新增
-   界面也不用回来补选择器。气泡、代码块、表格用 --agent-bubble-bg / --code-bg
-   这类独立令牌，保持实心负责可读性。
+   界面也不用回来补选择器。另有一批卡面走独立令牌（导航栏 --sidebar-bg、消息气泡
+   --agent-bubble-bg），不吃那两个变量，按同一条 --app-bg-fill 单独点名一起透；
+   代码块、表格（--code-bg 等）保持实心负责可读性，浮层弹窗钉回实心。
 
    开关在「设置 › 界面背景」。没图时根节点不带 .has-bg，本文件一条都不生效。
    ══════════════════════════════════════════════════════════ */
@@ -54,6 +55,47 @@
 html.theme-dark .app.has-bg :is(.settings-view, .about-container, .engines-view, .model-folders-view, .model-endpoints-view) {
   --bg: color-mix(in srgb, #24272d var(--app-bg-fill), transparent);
   --surface: color-mix(in srgb, #2b2f36 var(--app-bg-fill), transparent);
+}
+
+/* ── 导航栏卡面 / 我的消息气泡：同一族写死色值的令牌 ──
+   两者各带一套自己的不透明底色（--sidebar-bg 是自带 alpha 的渐变、--agent-bubble-bg 是实色），
+   不吃 --bg/--surface，所以本文件的透法到不了它们：强度拉满侧栏依旧实心、气泡永远全不透明，
+   与会话面板 .agent-code-chat（吃 --bg）并排就是一深一浅。
+   这里按同一条 --app-bg-fill 重算它们的 alpha：色相各留各的，透实程度与会话面板对齐。 */
+.app.has-bg .sidebar-wrapper {
+  --sidebar-bg: linear-gradient(180deg,
+      color-mix(in srgb, #ffffff var(--app-bg-fill), transparent) 0%,
+      color-mix(in srgb, #f8f9fb var(--app-bg-fill), transparent) 100%);
+}
+
+html.theme-dark .app.has-bg .sidebar-wrapper {
+  --sidebar-bg: linear-gradient(180deg,
+      color-mix(in srgb, #2e3138 var(--app-bg-fill), transparent) 0%,
+      color-mix(in srgb, #282b31 var(--app-bg-fill), transparent) 100%);
+}
+
+.app.has-bg .agent-code-view {
+  --agent-bubble-bg: color-mix(in srgb, #f2f2f2 var(--app-bg-fill), transparent);
+}
+
+/* 深色下气泡取的是实心的 --surface-hover（不受 .has-bg 重写），直接引用它就不必再抄一遍色值 */
+html.theme-dark .app.has-bg .agent-code-view {
+  --agent-bubble-bg: color-mix(in srgb, var(--surface-hover) var(--app-bg-fill), transparent);
+}
+
+/* ── 吃 --surface-hover 的卡面与控件：模式切换 / 列表行（聊天、项目、会话）/ 过滤框 / 新建按钮 / 消息头像 ──
+   这些都取 --surface-hover，而它不在本文件的透写名单里 → 常态跟着透、一选中或 hover 就变实心。
+   不能整体调透：--surface-hover 还兼作浮层菜单的悬停高亮，那些弹窗是刻意钉回实心的，所以按容器点名。
+   基准取 :root 那份实心快照（这几处不在自定 --surface-hover 的那几页里）。 */
+.app.has-bg :is(.sidebar-mode-switch,
+  .agent-code-chat-item,
+  .agent-code-project-item,
+  .agent-code-session-item,
+  .agent-code-add-sess-btn,
+  .agent-code-sidebar-filter,
+  .agent-code-session-new-btn,
+  .chat-msg-avatar) {
+  --surface-hover: color-mix(in srgb, var(--surface-hover-solid) var(--app-bg-fill), transparent);
 }
 
 /* ── 浮动弹窗 / 菜单 / 气泡：把 --surface 钉回实心 ──

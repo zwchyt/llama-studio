@@ -23,6 +23,10 @@ import '../styles/sidebar.css'
 // 「对话 / 工作台」两项在 MODE_ITEMS 里、渲染进底部 Agent Code 槽（见下方）；
 // 收进「工具箱」页的低频界面在 TOOL_GROUPS 里。本组件只负责渲染。
 
+// 导航栏那个 Agent Code 入口的名字：固定叫「智能体」（README 对这组界面的统称），
+// 不跟着模式叫「聊天 / 编码」——紧挨着下面就是那两个切换按钮，同名会让人以为有两组入口。
+const AGENT_ENTRY_LABEL = '智能体'
+
 interface NavItemProps {
   /** 图标。可省略——省略时只渲染文字（「聊天 / 编码」模式切换就是纯文字按钮：
    *  它们的图标在侧栏里没有信息增量，反而是收起/展开时最容易看出抖动的地方）。 */
@@ -157,6 +161,22 @@ export default function Sidebar() {
   const slotSettled = isCollapsed && !collapsing && !hoverLeaving
   const isHoverExpanded = hoverExpanded
 
+  // 会话槽的入场动画（.sidebar-agent-slot>* 的 sidebar-slot-in）是给「首屏空闲时才 portal
+  // 挂进来」补的过渡。但收起用的是 display:none，再展开就是重新创建盒子 → 动画每次重跑，
+  // 列表在宽度动画的同时又自己滑一次，看着就是抖。这里只放行第一次显示，之后挂 .slot-entered
+  // 把它关掉，展开过程只留给宽度动画去揭示。
+  const slotVisible = !slotSettled
+  const slotRevealsRef = useRef(0)
+  const prevSlotVisibleRef = useRef(false)
+  const [slotEntered, setSlotEntered] = useState(false)
+  useEffect(() => {
+    if (slotVisible && !prevSlotVisibleRef.current) {
+      slotRevealsRef.current++
+      if (slotRevealsRef.current > 1) setSlotEntered(true)
+    }
+    prevSlotVisibleRef.current = slotVisible
+  }, [slotVisible])
+
   // ── 收起态标签气泡 ──
   // 两个条件缺一不可：
   //  · !hoverExpandEnabled —— 悬浮展开还开着的话，悬停 120ms 后侧栏自己就摊开、文字直接出来，
@@ -220,6 +240,10 @@ export default function Sidebar() {
     />
   )
 
+  // Agent Code 在导航栏上的入口：图标跟着当前模式换（聊天 / 编码），
+  // hover 动画走 animateicons，与其余导航项同一套。
+  const modeItem = MODE_ITEMS.find(i => i.mode === agentMode) ?? MODE_ITEMS[0]
+
   // 两个「收起」类分工不同，别合并（见 sidebar.css 顶部的说明）：
   //   collapsed = 用户选择了收起（宽度窄）。取 store 的 collapsed 原值，悬浮展开期间也带着，
   //               所以悬浮展开不会把 wrapper 撑宽、把主界面往右挤。
@@ -228,7 +252,7 @@ export default function Sidebar() {
   return (
     <div
       ref={wrapperRef}
-      className={`sidebar-wrapper${collapsed ? ' collapsed' : ''}${isCollapsed ? ' icon-only' : ''}${slotSettled ? ' slot-gone' : ''}${isHoverExpanded ? ' hover-expanded' : ''}`}
+      className={`sidebar-wrapper${collapsed ? ' collapsed' : ''}${isCollapsed ? ' icon-only' : ''}${slotSettled ? ' slot-gone' : ''}${slotEntered ? ' slot-entered' : ''}${isHoverExpanded ? ' hover-expanded' : ''}`}
     >
       <nav className="sidebar">
         {/* ── 导航分隔线 ──
@@ -247,6 +271,22 @@ export default function Sidebar() {
           active={toolsActive}
           onClick={() => setView(resolveToolsEntryView())}
           onTip={makeTipHandler(TOOLS_ENTRY.label)}
+        />
+
+        {/* ── Agent Code 入口：名字固定「智能体」，图标跟随当前模式（聊天 / 编码）──
+            紧贴下面那个会话槽放，让「入口 → 模式切换 → 会话列表」在视觉上连成一件事。
+            更要紧的是：收起态会话槽整块淡出（见 .icon-only .sidebar-agent-slot），
+            没有这一项就没法从导航栏进 Agent Code 了。
+            激活判据用 isActiveItem（view 是 agent-code 且模式对得上）——modeItem 就是按
+            当前模式挑的，所以它恒等于「正停在 Agent Code」。 */}
+        <NavItem
+          key={navKeyOf(modeItem)}
+          icon={modeItem.icon}
+          label={AGENT_ENTRY_LABEL}
+          active={isActiveItem(modeItem)}
+          onClick={() => openItem(modeItem)}
+          onHover={() => preloadViewOnHover(modeItem.key)}
+          onTip={makeTipHandler(AGENT_ENTRY_LABEL)}
         />
 
         {/* ── Agent Code 区：模式切换 + 新建 + 会话列表 ──
