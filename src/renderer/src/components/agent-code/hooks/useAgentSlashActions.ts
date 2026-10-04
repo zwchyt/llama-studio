@@ -216,20 +216,6 @@ export function useAgentSlashActions({
         }
         return
       }
-      case 'memory': {
-        const dir = activeProject.workspaceDir
-        if (!dir) { appendResult('未设置工作区目录，无法读取长期记忆。'); return }
-        try {
-          const list = await window.api.memstoreList(dir)
-          const active = list.filter(e => !e.archived)
-          if (!active.length) { appendResult('暂无长期记忆条目。'); return }
-          const lines = active.slice(0, 15).map(e => `- [${e.category}] ${e.content}`)
-          appendResult(`**长期记忆（${active.length} 条活跃）**\n\n${lines.join('\n')}`)
-        } catch (e: any) {
-          appendResult(`读取长期记忆失败：${e?.message || e}`)
-        }
-        return
-      }
       case 'kb': {
         try {
           const list = await window.api.knowledgeList()

@@ -52,6 +52,10 @@ export function registerPiAgentIpc(win: BrowserWindow): void {
     return { success: true }
   })
 
+  ipcMain.handle('pi-agent-compact', async (_e, sessionId: string, customInstructions?: string) => {
+    return await piWorker.compact(sessionId, customInstructions)
+  })
+
   ipcMain.handle('pi-agent-clear-queue', async (_e, sessionId: string) => {
     await piWorker.clearQueue(sessionId)
     return { success: true }

@@ -99,11 +99,9 @@ export function useAgentMessageActions({
       port: runningCard.template.serverPort,
       text: lastUser?.content ?? '',
       workspaceDir: activeProject.workspaceDir,
-      approveWriteEdit: !!activeProject.approveWriteEdit,
       knowledgeBaseId: activeProject.knowledgeBaseId,
       // 项目级提示词同样要带上：重新生成 / 重发会重建 pi 会话，漏传等于把项目指令丢掉
       projectSystemPrompt: activeProject.systemPrompt,
-      projectMemoryNotes: activeProject.memory?.notes,
     })
     rollbackIfFailed(r)
   }, [loading, runningCard, activeSession, activeProject, activeProjectId, activeSessionId, updateSessionInProject, runPiTurn])
@@ -123,11 +121,9 @@ export function useAgentMessageActions({
       port: runningCard.template.serverPort,
       text: msgs[idx]!.content,
       workspaceDir: activeProject.workspaceDir,
-      approveWriteEdit: !!activeProject.approveWriteEdit,
       knowledgeBaseId: activeProject.knowledgeBaseId,
       // 项目级提示词同样要带上：重新生成 / 重发会重建 pi 会话，漏传等于把项目指令丢掉
       projectSystemPrompt: activeProject.systemPrompt,
-      projectMemoryNotes: activeProject.memory?.notes,
     })
     rollbackIfFailed(r)
   }, [loading, runningCard, activeSession, activeProject, activeProjectId, activeSessionId, updateSessionInProject, runPiTurn])
@@ -155,11 +151,9 @@ export function useAgentMessageActions({
       port: runningCard.template.serverPort,
       text: prompt,
       workspaceDir: activeProject.workspaceDir,
-      approveWriteEdit: !!activeProject.approveWriteEdit,
       knowledgeBaseId: activeProject.knowledgeBaseId,
       // 模式由所属工作区决定（不是会话字段）：由 runPiTurn 统一推导，这里不再传
       projectSystemPrompt: activeProject.systemPrompt,
-      projectMemoryNotes: activeProject.memory?.notes,
     })
     rollbackIfFailed(r)
   }, [loading, runningCard, activeSession, activeProject, activeProjectId, activeSessionId, updateSessionInProject, runPiTurn])

@@ -30,12 +30,11 @@ import { playEvent, warmUpAudio } from '../../../utils/sound'
 import { agentConfig } from '../../../utils/agentConfig'
 import { hasVisionProjector } from '../../../utils/modelCapabilities'
 import { PiAgentClient } from '../../../utils/piAgentClient'
-import { computeContextBudget, splitAgentTurns } from '../../../utils/contextBudget'
-import { noteUserCorrection, probeContradiction } from '../../../utils/memoryWriter'
+import { computeContextBudget, coveredPrefixCount } from '../../../utils/contextBudget'
 import { parseSlashCommand, findCommand, expandCommandTemplate } from '../../../agent/slashCommands'
 import { newMsgId, uniqueId } from '../utils/ids'
-import { MIN_EXEC_DISPLAY_MS, KEEP_RECENT_TURNS } from '../utils/constants'
-import type { AgentMessage, AgentSession, AgentTask, Attachment, CardState, RemoteEndpoint, ThinkingLevel, TodoUpdate } from '../../../../../shared/types'
+import { MIN_EXEC_DISPLAY_MS } from '../utils/constants'
+import type { AgentMessage, AgentSession, AgentTask, Attachment, CardState, ThinkingLevel, TodoUpdate } from '../../../../../shared/types'
 import { projectMode } from '../../../../../shared/types'
 import { remoteOfCard } from '../../../utils/endpoint'
 import type { useAgentInput } from './useAgentInput'
@@ -50,7 +49,6 @@ export type RunPiTurn = (
     port: number
     text: string
     workspaceDir: string
-    approveWriteEdit?: boolean
     knowledgeBaseId?: string
     memory?: AgentSession['memory']
     // 注：模式（通用 / 编码）与通用模式下的工具集**不在这里传** —— 它们由本轮所属
@@ -60,8 +58,6 @@ export type RunPiTurn = (
         不经 runPiTurn 自己的闭包 —— 它的依赖数组只有 updateSessionInProject，
         直接读 activeProject 会拿到过期值。 */
     projectSystemPrompt?: string
-    /** 项目记忆：跨会话长期携带的结论 / 约定（「提示词」卡片保存的内容） */
-    projectMemoryNotes?: string
   }
 ) => Promise<{ errored: boolean; aborted: boolean }>
 
@@ -69,12 +65,12 @@ export function useAgentLoop({
   projects: { projects: projectList, setProjects, setActiveSessionId, activeProjectId, activeSessionId, activeProject, activeSession, updateSessionInProject },
   inputDomain,
   loading, setLoading, setStreaming, setStreamKind, setThinkDone, setCurToolName, setQueueInfo,
-  apiBaseUrl, runningCard, condensing, slashCommands,
+  apiBaseUrl, runningCard, slashCommands,
   setTaskModalOpen, setPlanTitle, setPlanItems, planItemsRef,
   abortRef, sendingRef, piReadyRef, followUpQueueRef, prevQueueRef,
   appendLiveUserMsgRef, streamingSessionRef, streamStartAtRef, lastRateRef,
   modelLabelRef, backupsRef, thinkingLevelRef,
-  condenseSessionMemory, appendQueuedUserMsg, queueRemoved, runSlashAction,
+  appendQueuedUserMsg, queueRemoved, runSlashAction,
   scrollToBottom,
 }: {
   /** 项目 / 会话域：useAgentProjects 的完整返回值（本域只消费其中 7 项） */
@@ -90,7 +86,6 @@ export function useAgentLoop({
   setQueueInfo: React.Dispatch<React.SetStateAction<{ followUp: string[] }>>
   apiBaseUrl: string | null
   runningCard: CardState | undefined
-  condensing: boolean
   slashCommands: ReturnType<typeof useStore.getState>['slashCommands']
   setTaskModalOpen: React.Dispatch<React.SetStateAction<boolean>>
   setPlanTitle: React.Dispatch<React.SetStateAction<string>>
@@ -112,11 +107,6 @@ export function useAgentLoop({
   backupsRef: React.RefObject<Record<string, { path: string; content: string }>>
   thinkingLevelRef: React.RefObject<ThinkingLevel>
   /** ── 主组件内的 useCallback（作为依赖注入，避免本域反向依赖其声明）── */
-  condenseSessionMemory: (
-    pid: string, sid: string, messages: AgentMessage[],
-    memory: AgentSession['memory'], budget: number, port: number, force?: boolean,
-    endpoint?: RemoteEndpoint
-  ) => Promise<AgentSession['memory']>
   appendQueuedUserMsg: (text: string) => void
   queueRemoved: (prev: string[], next: string[]) => string[]
   runSlashAction: (name: string, args: string) => Promise<void>
@@ -139,6 +129,13 @@ export function useAgentLoop({
   // 必须检测到签名变了重建一次。重建会重新注入历史（与切换会话走的是同一条路径），
   // 所以不会丢对话。签名把工具集也带上，开关某个聊天工具同样能触发重建。
   const piPlainRef = useRef<string | null>(null)
+  // runPiTurn 的依赖数组刻意只有 updateSessionInProject（回调身份要稳定，队列补发 /
+  // followUp 都直接引用它），所以它闭包里的 projectList / activeProject / activeSession
+  // 全是首次渲染那一份旧快照：通用模式顶栏刚勾选的聊天工具读不到，会话重建时
+  // chatTools 恒为空，模型侧收到的工具数一直是 0（现象：四个工具怎么开都没用）。
+  // 每次渲染同步一份最新值，起轮时按 pid/sid 从 ref 取。
+  const turnScopeRef = useRef({ projectList, activeProject, activeSession })
+  turnScopeRef.current = { projectList, activeProject, activeSession }
 
 
   // ── pi-agent 模式：pi SDK 驱动的单轮 agent 运行 ──
@@ -179,8 +176,10 @@ export function useAgentLoop({
     // 这类「漏传」不该靠人记：判断只保留这一处，RunPiTurn 的 opts 里已不再暴露
     // 这两个字段，调用点想传也传不了。按 pid 取项目而不是直接用 activeProject，
     // 是为了兼容队列补发（setTimeout 期间用户可能已切走项目）这条路径。
-    const projectForTurn = projectList.find(p => p.id === pid) ?? activeProject
-    const sessionForTurn = projectForTurn?.sessions.find(s => s.id === sid) ?? activeSession
+    // 读的是 ref 里的最新快照，不是闭包中首次渲染那份旧值（见 turnScopeRef 的说明）。
+    const turnScope = turnScopeRef.current
+    const projectForTurn = turnScope.projectList.find(p => p.id === pid) ?? turnScope.activeProject
+    const sessionForTurn = projectForTurn?.sessions.find(s => s.id === sid) ?? turnScope.activeSession
     const plain = projectMode(projectForTurn) === 'chat'
     const chatTools = plain ? [...(sessionForTurn?.chatTools ?? [])].sort() : []
     const modeSig = plain ? `plain:${chatTools.join(',')}` : 'agent'
@@ -188,12 +187,10 @@ export function useAgentLoop({
     if (piReadyRef.current.sid !== sid || !piReadyRef.current.ready || piPlainRef.current !== modeSig) {
       // 新 pi 会话：清空上一会话的撤销备份引用
       backupsRef.current = {}
-      // 压缩记忆：被 coveredMsgIds 覆盖的最早连续前缀用摘要替代注入，使压缩真正
-      // 减小模型上下文（否则重建仍全量注入历史，压缩只改 UI 不生效）。
+      // 压缩记忆：被覆盖的最早前缀（长度由 memory.coveredCount 给出）用摘要替代注入，
+      // 使压缩真正减小模型上下文（否则重建仍全量注入历史，压缩只改 UI 不生效）。
       const prior = displayMsgs.slice(0, -1)
-      const coveredSet = new Set(opts.memory?.coveredMsgIds || [])
-      let coveredPrefix = 0
-      while (coveredPrefix < prior.length && coveredSet.has(prior[coveredPrefix]!.id)) coveredPrefix++
+      const coveredPrefix = coveredPrefixCount(opts.memory, prior)
       const history: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: AgentMessage['toolCalls']; attachments?: AgentMessage['attachments'] }> = []
       if (coveredPrefix > 0) {
         const summary = (opts.memory?.summary || '').trim()
@@ -209,17 +206,6 @@ export function useAgentLoop({
       }
       for (const m of prior.slice(coveredPrefix)) {
         history.push({ role: m.role, content: m.content, toolCalls: m.toolCalls, attachments: m.attachments })
-      }
-      // ── 长期记忆注入文本（阶段 2.3 的读取侧，此前从未接线）──
-      // 只能在这里取一次：pi 的 system prompt 建会话后固定，改字段不生效，所以注入时机
-      // 就是会话创建时刻；会话重建（切会话 / 压缩 / 模式切换）会重新取一次。
-      // 走 memstore-inject IPC 而非直接读存储：本函数在渲染进程，memoryStore 在主进程。
-      let memoryInjection = ''
-      if (opts.workspaceDir) {
-        try {
-          const inj = await window.api.memstoreInject(opts.workspaceDir, agentConfig.memoryInjectChars)
-          memoryInjection = inj?.text || ''
-        } catch { /* 注入失败不阻塞对话（与 memoryWriter 的火忘式提交同一原则） */ }
       }
       // 「本轮能不能把图发给模型」三层判据，从可信到不可信：
       //   ① 运行中服务端的自述：llama-server 真挂了视觉投影，/props 才会报 modalities.vision=true；
@@ -238,24 +224,40 @@ export function useAgentLoop({
           if (props?.ok && typeof props.modalities?.vision === 'boolean') vision = props.modalities.vision === true
         } catch { /* /props 不可用（非 llama.cpp 系端点等）：沿用本地能力表 */ }
       }
+      // 本地 n_ctx 拿不到时用 ctxDefault 兜底：预算绝不能是 0 —— 0 会被 worker 端理解成
+      // 「不启用兜底裁剪」，恰好把最贫瘠的上下文场景变成没有防线。
+      const ctxN = endpoint?.contextWindow
+        ?? (curCard ? useStore.getState().modelMetrics[curCard.template.id]?.nCtx || 0 : 0)
+      const ctxEff = ctxN > 0 ? ctxN : agentConfig.ctxDefault
+      const contextBudget = computeContextBudget(ctxN)
+      // pi 原生压缩的两个阈值，与上面同一口径：
+      //   reserveTokens 决定触发线（contextTokens > ctxEff - reserveTokens），取「窗口 - 预算」
+      //     就等于沿用原先那条预算水位线。它同时是摘要请求的输出上限基数（pi 取 0.8×），
+      //     所以封顶到 maxOutput：llama.cpp 会按 max_tokens 预留输出槽，放太大会把摘要请求
+      //     自己的 prompt 空间挤没。
+      //   keepRecentTokens = 压缩后逐字保留的量，取预算四成，其余交给摘要。
+      const compactionReserveTokens = Math.max(512, Math.min(agentConfig.maxOutput, ctxEff - contextBudget))
+      const compactionKeepRecentTokens = Math.max(600, Math.floor(contextBudget * 0.4))
       const res = await window.api.piAgent.create({
         sessionId: piSessionId,
         port: opts.port,
         // 远程端点整包下发：pi 的 provider 直接按这个 baseUrl / 协议 / key 注册
         ...(endpoint ? { endpoint } : {}),
         cwd: opts.workspaceDir || '.',
-        approveWriteEdit: opts.approveWriteEdit === true,
         knowledgeBaseId: opts.knowledgeBaseId || undefined,
         plainChat: plain,
         chatTools,
         searchEnabled: useStore.getState().searchEnabled,
         searchProvider: useStore.getState().searchProvider,
-        // 用户可编辑的三段提示词：此前只写进了 project 对象，从未送达模型
+        // 用户可编辑的两段提示词：此前只写进了 project 对象，从未送达模型
         projectSystemPrompt: opts.projectSystemPrompt,
-        projectMemoryNotes: opts.projectMemoryNotes,
-        memoryInjection: memoryInjection || undefined,
-        contextWindow: endpoint?.contextWindow
-          ?? (curCard ? useStore.getState().modelMetrics[curCard.template.id]?.nCtx || undefined : undefined),
+        contextWindow: ctxN || undefined,
+        // 兜底裁剪的预算与开关：worker 端每次请求都会按这个预算机械裁剪历史
+        // （shared/contextGuard.ts，挂在 pi 的 transformContext 上）。
+        contextBudget,
+        contextImportanceFold: agentConfig.ctxImportanceEnabled,
+        compactionReserveTokens,
+        compactionKeepRecentTokens,
         // 模型支持图像输入时才声明 image 模态，browser_screenshot 的截图才会随工具结果回灌
         vision,
         history,
@@ -593,17 +595,6 @@ export function useAgentLoop({
           backupsRef.current[id] = { path: `pi-undo:${backupId}`, content: '' }
         }
         const elapsed = execStartMs.has(id) ? Date.now() - execStartMs.get(id)! : Number.MAX_SAFE_INTEGER
-        // ── 矛盾探针（阶段 2.3）：Bash 实测失败 → 对相似的「已验证命令」记忆条目记矛盾标记
-        // （置信度腰斩，累计两次自动归档）。此前 probeContradiction 全仓零调用，
-        // contradictions 恒为 0，「矛盾 ×N」徽标与矛盾归档整条链路都不可达。
-        // 只探 Bash：探针文本就是失败的命令行，是唯一能机械拿到「实测打脸」证据的工具。
-        if (isError && name === 'Bash' && opts.workspaceDir) {
-          try {
-            const rawArgs = toolCalls.find(t => t.id === id)?.args || ''
-            const cmd = (JSON.parse(rawArgs || '{}') as { command?: unknown }).command
-            if (typeof cmd === 'string' && cmd.trim()) probeContradiction(opts.workspaceDir, cmd)
-          } catch { /* 探针失败不影响主流程 */ }
-        }
         // 最小展示时长：执行太快（本地 IO 不足一帧）时延迟置 done，让「写入中」徽标可见
         const applyDone = (): void => {
           // 与 start 同样的兜底：按工具名找正在执行的同类工具
@@ -633,6 +624,14 @@ export function useAgentLoop({
         prevQueueRef.current = { followUp: f }
         setQueueInfo({ followUp: f })
         for (const t of removedFollow) appendQueuedUserMsg(t)
+      },
+      onCompaction: (info) => {
+        // pi 压缩被中止或没出正文：不动存档，保留上一次的摘要与边界
+        if (info.aborted || !info.summary) return
+        // 边界只允许单调前进：pi 在自己会话里是滚动压缩的，回退会让「已被摘要替代」的
+        // 消息在下次重建时重新按原文注入，等于压缩白做。
+        const coveredCount = Math.max(opts.memory?.coveredCount ?? 0, info.coveredCount)
+        updateSessionInProject(pid, sid, { memory: { summary: info.summary, coveredCount, updatedAt: Date.now() } })
       },
     })
     piClientRef.current = client
@@ -750,7 +749,7 @@ export function useAgentLoop({
         const fuMsgs = [...msgs, fuUserMsg]
         updateSessionInProject(pid, sid, { messages: fuMsgs })
         setQueueInfo(prev => ({ ...prev, followUp: prev.followUp.slice(1) }))
-        const fuOpts = { port: opts.port, text: nextFU.text, workspaceDir: opts.workspaceDir, approveWriteEdit: opts.approveWriteEdit, knowledgeBaseId: opts.knowledgeBaseId, memory: opts.memory }
+        const fuOpts = { port: opts.port, text: nextFU.text, workspaceDir: opts.workspaceDir, knowledgeBaseId: opts.knowledgeBaseId, memory: opts.memory }
         setTimeout(() => { const rt = runPiTurnRef.current; if (rt) rt(pid, sid, fuMsgs, fuOpts) }, 0)
       }
     }
@@ -903,43 +902,23 @@ export function useAgentLoop({
         ...(shouldAutoTitle ? { title: (resolvedText || '附件对话').slice(0, 40) } : {})
       })
 
-      // ── 即时沉淀（阶段 2.3）：启发式识别用户纠正 / 约束语气，原话逐字写入长期记忆
-      // （仅当会话已有助手回复时才可能是「纠正」，首条消息不触发）──
-      if (agentConfig.longTermMemoryEnabled && resolvedText && activeProject.workspaceDir && baseMessages.some(m => m.role === 'assistant')) {
-        noteUserCorrection(activeProject.workspaceDir, sid, resolvedText)
-      }
-
       // ── pi SDK 驱动 agent 循环 ──
-      // 自动压缩：历史超过保留轮数时先压缩（condenseSessionMemory 内部按 token 水位
-      // 判断，未超预算直接跳过；压缩成功会使 pi session 失效并在下方重建），
-      // 避免长对话模型上下文无限增长。用返回值取最新 memory（压缩可能更新了
-      // coveredMsgIds/summary，而 activeSession 是旧闭包）。
-      let memoryForTurn = activeSession?.memory
-      if (activeSession && !condensing && runningCard) {
-        const coveredSet = new Set(activeSession.memory?.coveredMsgIds || [])
-        let coveredPrefix = 0
-        while (coveredPrefix < activeSession.messages.length && coveredSet.has(activeSession.messages[coveredPrefix]!.id)) coveredPrefix++
-        const turns = splitAgentTurns(activeSession.messages.slice(coveredPrefix))
-        if (turns.length > KEEP_RECENT_TURNS) {
-          const epForCtx = remoteOfCard(runningCard, useStore.getState().modelEndpoints)
-          const ctxN = epForCtx?.contextWindow
-            ?? (useStore.getState().modelMetrics[runningCard.template.id]?.nCtx || 0)
-          const ctxBudget = computeContextBudget(ctxN)
-          memoryForTurn = await condenseSessionMemory(activeProjectId, activeSessionId, activeSession.messages, activeSession.memory, ctxBudget, runningCard.template.serverPort, false, epForCtx)
-        }
-      }
+      // 自动压缩已交回 pi：触发依据是上一条回复的真实 usage（不再是字符估算），
+      // 轮末与发 prompt 前各查一次，溢出时还会「省略失败回复 → 压缩 → 重跑该轮」。
+      // 阈值按 n_ctx 在会话创建时下发（见上面 compactionReserveTokens / keepRecentTokens），
+      // 压缩产出由 manager.ts 的 compaction_end 订阅镜像回 session.memory。
+      // 这里只把当前 memory 交给本轮用于重建注入。
+      const memoryForTurn = activeSession?.memory
       await runPiTurn(pid, sid, displayMsgs, {
         port: runningCard.template.serverPort,
         text: resolvedText,
         workspaceDir: activeProject.workspaceDir,
-        approveWriteEdit: !!activeProject.approveWriteEdit,
         knowledgeBaseId: activeProject.knowledgeBaseId,
         memory: memoryForTurn,
         // 模式与通用模式的工具集不在这里传：由 runPiTurn 按本轮工作区 / 会话统一推导
         // （见那里的注释），避免各起轮点漏传。
         // 项目级提示词：从 activeProject 实时取（本回调的依赖数组里有 activeProject）
         projectSystemPrompt: activeProject.systemPrompt,
-        projectMemoryNotes: activeProject.memory?.notes,
       })
     } catch (e) {
       // 准备阶段（系统提示词构建/历史压缩）异常：本轮 agent 未启动，其收尾逻辑
@@ -956,7 +935,7 @@ export function useAgentLoop({
     } finally {
       sendingRef.current = false
     }
-  }, [input, attachedFiles, packedInput, refChips, codeSnippets, loading, apiBaseUrl, runningCard, activeProjectId, activeSessionId, activeSession, activeProject, updateSessionInProject, condenseSessionMemory])
+  }, [input, attachedFiles, packedInput, refChips, codeSnippets, loading, apiBaseUrl, runningCard, activeProjectId, activeSessionId, activeSession, activeProject, updateSessionInProject])
 
   // 始终持有最新的 handleSend，供排队回调使用，避免过期闭包
   handleSendRef.current = handleSend

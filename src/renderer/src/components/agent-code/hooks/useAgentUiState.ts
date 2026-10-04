@@ -2,7 +2,7 @@
 // ║ 区域：useAgentUiState —— 界面状态域（面板 / 弹层 / 模型选择器 / 任务卡 / 审批） ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 // 搬移自 AgentCodeView.tsx 的界面状态声明与其配套回调 / effect，逻辑与注释均未改动：
-//   · 顶栏卡片按钮 ref（上下文 / 压缩 / 轨迹 / 提示词 / 知识库 / 记忆）
+//   · 顶栏卡片按钮 ref（上下文 / 压缩 / 轨迹 / 提示词 / 知识库）
 //   · 模型选择器（打开态、宽度估算、能力徽标、Logo 菜单与设置/移除）
 //   · 联网搜索开关（searchEnabled / searchProvider 与其变更回调 applySearchChange）
 //   · 通用模式派生量（plainChat 由当前工作区模式推导；不再有「把当前会话改成通用」的路径）
@@ -28,7 +28,6 @@ import { detectModelCapabilities } from '../../../utils/modelCapabilities'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { askUserQuestionRegistry } from '../../../utils/askUserQuestionRegistry'
 import { runBrowserNavigate, toBrowserShowResult } from '../utils/browserController'
-import { noteApprovalRejected } from '../../../utils/memoryWriter'
 import type { AgentMode, AgentSession, CardState, KnowledgeBaseMeta, TodoUpdate } from '../../../../../shared/types'
 import type { ModelPickerGroup } from '../../../utils/endpoint'
 
@@ -59,7 +58,6 @@ export function useAgentUiState({
   const trajBtnRef = useRef<HTMLButtonElement>(null)
   const promptBtnRef = useRef<HTMLButtonElement>(null)
   const kbBtnRef = useRef<HTMLButtonElement>(null)
-  const memoryBtnRef = useRef<HTMLButtonElement>(null)
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const modelPickerRef = useRef<HTMLDivElement>(null)
   const searchEnabled = useStore(s => s.searchEnabled)
@@ -323,7 +321,6 @@ export function useAgentUiState({
   // 收起/展开决定，不该让顶栏另管一套（两处状态并存时，点顶栏那颗按钮看着就像没反应）。
   const [contextModalOpen, setContextModalOpen] = useState(false)
   const [trajOpen, setTrajOpen] = useState(false)  // 轨迹台账面板开关
-  const [memoryOpen, setMemoryOpen] = useState(false)  // 长期记忆面板开关
   const treeOpenRef = useRef(treeOpen)
   treeOpenRef.current = treeOpen
   // 任务清单卡片（Todo / Task 工具的可视化）：浮在会话区右上角。
@@ -362,8 +359,6 @@ export function useAgentUiState({
   const allowBtnRef = useRef<HTMLButtonElement>(null)
   const [promptModalOpen, setPromptModalOpen] = useState(false)
   const [promptDraft, setPromptDraft] = useState('')
-  const [approveWriteEditDraft, setApproveWriteEditDraft] = useState(false)
-  const [memoryDraft, setMemoryDraft] = useState('')  // 提示词卡片内的项目记忆草稿
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseMeta[]>([])
   const [kbModalOpen, setKbModalOpen] = useState(false)
   const [kbCopiedId, setKbCopiedId] = useState<string | null>(null)
@@ -377,15 +372,7 @@ export function useAgentUiState({
   const resolveApproval = useCallback((approved: boolean) => {
     const r = approvalResolveRef.current
     approvalResolveRef.current = null
-    const req = approvalReqRef.current
     setApprovalReq(null)
-    // 一次拒绝 = 一条最有价值的偏好信号（比关键词匹配的 noteUserCorrection 可靠得多）：
-    // 沉淀「用户拒绝过哪类操作」，供下个会话提前说明意图与影响。
-    // 此前 noteApprovalRejected 全仓零调用，这条信号从未进过记忆库。
-    if (!approved && req) {
-      const dir = useStore.getState().agentProjects.find(p => p.id === activeProjectId)?.workspaceDir
-      if (dir) noteApprovalRejected(dir, activeSessionId, req.name, req.args)
-    }
     if (r) r(approved)
   }, [activeProjectId, activeSessionId])
   // 审批面板键盘导航：方向键切换按钮，Enter 确认允许，Escape 拒绝
@@ -439,7 +426,7 @@ export function useAgentUiState({
   return {
     // 顶栏卡片按钮 ref
     ctxInlineRef, condenseBtnRef, trajBtnRef,
-    promptBtnRef, kbBtnRef, memoryBtnRef,
+    promptBtnRef, kbBtnRef,
     // 模型选择器 / 联网搜索
     modelPickerOpen, setModelPickerOpen, modelPickerRef,
     searchEnabled, searchProvider, searchMenuOpen, setSearchMenuOpen, searchMenuRef,
@@ -457,7 +444,7 @@ export function useAgentUiState({
     // 功能面板开关
     contextModalOpen, setContextModalOpen,
     trajOpen, setTrajOpen,
-    memoryOpen, setMemoryOpen, treeOpenRef,
+    treeOpenRef,
     // 任务清单卡
     taskModalOpen, setTaskModalOpen,
     currentPlanItems, setPlanItems, planItemsRef, taskDoneCount,
@@ -468,7 +455,6 @@ export function useAgentUiState({
     rejectBtnRef, autoApproveBtnRef, allowBtnRef, resolveApproval,
     // 提示词卡 / 知识库卡
     promptModalOpen, setPromptModalOpen, promptDraft, setPromptDraft,
-    approveWriteEditDraft, setApproveWriteEditDraft, memoryDraft, setMemoryDraft,
     knowledgeBases, setKnowledgeBases, kbModalOpen, setKbModalOpen, kbCopiedId, setKbCopiedId,
     // 用户消息内联编辑
     editingMsgId, setEditingMsgId, editDraft, setEditDraft,

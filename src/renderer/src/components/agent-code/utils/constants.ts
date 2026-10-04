@@ -12,10 +12,6 @@ export const MIN_EXEC_DISPLAY_MS = 400
 // 失焦后整个输入框收成「已折叠 N 行」胶囊，点击展开到 55vh 编辑
 export const INPUT_FOLD_CAP = 63
 
-// 上下文压缩：最近若干轮永远逐字保留（不参与摘要压缩）。搬移自 AgentCodeView.tsx，
-// 由「压缩逻辑」与「Agent 循环域（自动压缩触发判定）」两侧同时引用。
-export const KEEP_RECENT_TURNS = 3
-
 // Git 变更面板以「特殊预览标签」形式复用预览区；此哨兵路径标识该标签。
 export const GIT_DIFF_TAB = '__agent_git_changes__'
 

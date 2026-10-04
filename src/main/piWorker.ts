@@ -78,6 +78,8 @@ async function handleCmd(action: string, args: Record<string, unknown>): Promise
     case 'abort':
       await m.abort(String(args.sessionId))
       return { success: true }
+    case 'compact':
+      return await m.compactSession(String(args.sessionId), args.customInstructions as string | undefined)
     case 'dispose':
       m.disposeSession(String(args.sessionId))
       return { success: true }

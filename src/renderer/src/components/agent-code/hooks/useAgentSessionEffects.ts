@@ -1,5 +1,5 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║ 区域：useAgentSessionEffects —— 会话生命周期、工作区同步与记忆沉淀             ║
+// ║ 区域：useAgentSessionEffects —— 会话生命周期与工作区同步                     ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 // 搬移自 AgentCodeView.tsx 的九段 effect 与 refreshTasks（逻辑与注释未变）：
 //   1. 项目列表持久化（跳过纯占位项目，防止干扰播种逻辑）
@@ -13,7 +13,7 @@
 //   9. pi SDK 运行时预热（与启动拥堵窗口错峰）
 //
 // 自持私有 ref：seededRef / lastWorkspaceSetRef / lastCodeMapBuiltRef /
-// planItemsSidRef / milestoneNotedRef / prevSessionRef / refreshTasksRef。
+// planItemsSidRef / refreshTasksRef。
 //
 // 依赖注入采用「整域透传」：projects / run / ui / scroll 直接传各 hook 的返回值，
 // 成员增删时本文件无需改动。注意 resetFollow 来自 scroll 域，故本 hook 须在
@@ -21,7 +21,6 @@
 
 import { useCallback, useEffect, useRef } from 'react'
 import { agentConfig } from '../../../utils/agentConfig'
-import { noteMilestone, noteSessionEnd } from '../../../utils/memoryWriter'
 import { setWorkspaceRootForSession } from '../../../tools/workspaceRoot'
 import { setAgentSessionId } from '../../../tools/agentSession'
 import type { AgentProject, TodoUpdate } from '../../../../../shared/types'
@@ -42,11 +41,11 @@ export function useAgentSessionEffects({
 }) {
   const {
     projects, hydrateProjects,
-    activeProject, activeProjectId, activeSessionId,
+    activeProject, activeSessionId,
   } = projectsDomain
   const { piReadyRef } = run
   const {
-    currentPlanItems, setPlanItems, planTitle,
+    setPlanItems,
     setReqCount, setCumTokens, setPlanTitle, setTaskModalOpen,
   } = ui
   const { resetFollow } = scroll
@@ -55,11 +54,8 @@ export function useAgentSessionEffects({
   const seededRef = useRef(false)
   const lastWorkspaceSetRef = useRef<string>('')
   const lastCodeMapBuiltRef = useRef<string>('')
-  // 记录这批计划项的归属会话（里程碑沉淀防串写用）
+  // 记录这批计划项的归属会话（计划项回写与串会话校验用）
   const planItemsSidRef = useRef('')
-  // 已沉淀过的收束状态指纹（同一份状态只沉淀一次）
-  const milestoneNotedRef = useRef('')
-  const prevSessionRef = useRef<{ pid: string; sid: string; dir: string } | null>(null)
 
   // Persist to store on every change（跳过纯占位项目与通用工作区里的空会话，防止干扰 seededRef 逻辑）
   useEffect(() => {
@@ -155,38 +151,6 @@ export function useAgentSessionEffects({
       }
     }
   }, [activeProject.workspaceDir, activeSessionId])
-
-  // ── 里程碑写（阶段 2.3）：Todo 计划全部收束（completed/cancelled 且至少一项完成）
-  // 时沉淀一条决策记录。两层防护：
-  //  · 归属校验：切换会话的瞬时渲染里 currentPlanItems 还是旧会话的（清空 setState
-  //    下一轮才生效），若不校验会把旧计划写进新项目的记忆库；
-  //  · 指纹防重：refreshTasks 每次回写新数组引用都会重触发 effect，存储侧合并虽
-  //    不重复建条但每次 +0.05 置信度，反复触发会把 agent 条目虚推到 1.0，
-  //    同一份收束状态（会话+条目+状态指纹）只沉淀一次。
-  useEffect(() => {
-    if (!agentConfig.longTermMemoryEnabled || currentPlanItems.length === 0) return
-    if (planItemsSidRef.current !== activeSessionId) return // 计划项尚属另一会话的陈旧渲染，不沉淀
-    const allSettled = currentPlanItems.every(t => t.status === 'completed' || t.status === 'cancelled')
-    const anyDone = currentPlanItems.some(t => t.status === 'completed')
-    if (allSettled && anyDone && activeProject.workspaceDir) {
-      const fp = `${activeSessionId}|${currentPlanItems.map(t => `${t.id}:${t.status}`).join(',')}`
-      if (milestoneNotedRef.current === fp) return
-      milestoneNotedRef.current = fp
-      noteMilestone(activeProject.workspaceDir, activeSessionId, planTitle, currentPlanItems)
-    }
-  }, [currentPlanItems, planTitle, activeProject.workspaceDir, activeSessionId])
-
-  // ── 会话终局写（阶段 2.3）：切换会话 / 项目时对旧会话做机械提炼沉淀。
-  // projects 在依赖中仅为取最新快照；未切换时（pid/sid 未变）直接早退，不重复沉淀。
-  useEffect(() => {
-    const prev = prevSessionRef.current
-    prevSessionRef.current = { pid: activeProjectId, sid: activeSessionId, dir: activeProject.workspaceDir || '' }
-    if (!agentConfig.longTermMemoryEnabled || !prev?.dir) return
-    if (prev.pid === activeProjectId && prev.sid === activeSessionId) return
-    const oldProj = projects.find(p => p.id === prev.pid)
-    const oldSess = oldProj?.sessions.find(s => s.id === prev.sid)
-    if (oldSess) noteSessionEnd(prev.dir, prev.sid, oldSess.title, oldSess.messages)
-  }, [activeProjectId, activeSessionId, activeProject.workspaceDir, projects])
 
   useEffect(() => {
     setAgentSessionId(activeSessionId)

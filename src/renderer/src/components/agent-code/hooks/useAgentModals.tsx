@@ -2,7 +2,7 @@
 // ║ 区域：useAgentModals —— 提示词 / 知识库弹层、欢迎页建议与注释发送              ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 // 搬移自 AgentCodeView.tsx 的一组弹层与「发送」动作（逻辑与注释未变）：
-//   · openPromptModal / saveSystemPrompt —— 系统提示词编辑器（含审批开关与项目记忆草稿）
+//   · openPromptModal / saveSystemPrompt —— 系统提示词编辑器（含审批开关）
 //   · openKbModal                        —— 知识库列表弹层（只读展示本机全部知识库）
 //   · SUGGESTIONS / sendSuggestion      —— 欢迎页建议（按工作区模式各一套；模型未启动则填入输入框）
 //   · sendAnnotationsToAgent             —— 浏览器 UI 注释发送
@@ -38,7 +38,6 @@ export function useAgentModals({
   const { activeProject, activeProjectId, updateProject } = projectsDomain
   const {
     promptModalOpen, setPromptModalOpen, promptDraft, setPromptDraft,
-    approveWriteEditDraft, setApproveWriteEditDraft, memoryDraft, setMemoryDraft,
     setKnowledgeBases, kbModalOpen, setKbModalOpen,
   } = ui
   const { htmlAnnotations, setHtmlAnnotations, htmlPreviewRef } = previewDomain
@@ -50,8 +49,6 @@ export function useAgentModals({
     setPromptModalOpen(next)
     if (next) {
       setPromptDraft(activeProject.systemPrompt ?? '')
-      setApproveWriteEditDraft(!!activeProject.approveWriteEdit)
-      setMemoryDraft(activeProject.memory?.notes ?? '')
       window.api.knowledgeList().then(setKnowledgeBases).catch(() => { })
     }
   }, [activeProject, promptModalOpen])
@@ -59,12 +56,10 @@ export function useAgentModals({
   const saveSystemPrompt = useCallback(() => {
     updateProject(activeProjectId, {
       systemPrompt: promptDraft,
-      approveWriteEdit: approveWriteEditDraft,
-      memory: { notes: memoryDraft.trim(), updatedAt: Date.now() },
     })
     setPromptModalOpen(false)
     notify('已保存系统提示词', 'success')
-  }, [activeProjectId, promptDraft, approveWriteEditDraft, memoryDraft, updateProject])
+  }, [activeProjectId, promptDraft, updateProject])
 
   // 知识库弹层（独立按钮；只读展示本机全部知识库——工具常驻，模型按名称自行检索任意库）
   const openKbModal = useCallback(() => {

@@ -17,7 +17,6 @@
 | `WindowedText.tsx` | 共享长内容行窗口：`useRowWindow`（滚动与可视范围计算）+ `WindowedRows`（只挂载视口附近行，供文本 / 栅格行复用）+ `WindowedText`（纯文本封装，含可选行号与贴底跟随）。思考完整文本 / 工具结果 / Diff / 代码块共用 |
 | `agent-tools/` | 工具卡：`TOOL_META` / `ToolCallCard` / `ToolResultView` / `FileChangeSummary` / `LinedPre`（长结果与写入内容行窗口） |
 | `agent-diff/` | Diff：`computeSplitDiff` / `getEditDiffStat` / `ToolEditDiff`（行数超 `DIFF_WINDOW_ROWS` 走行窗口） |
-| `agent-panels/` | 面板：`AuditPanel` / `MemoryPanel` / `DebugPanel` |
 | `agent-task/` | 待办视觉：`RollDigit` / `TaskCheckIcon` / `TaskPieIcon` |
 | `agent-session/` | 会话视图：`AgentSessionSidebar`（工作区切换 通用/编码 + 聊天列表 / 项目会话树） |
 | `agent-preview/` | 预览视图：`AgentPreviewSlot`（文件树 / 浏览器 / 终端 / 变更 / 预览） |
@@ -30,10 +29,10 @@
 | `types/index.ts` | 跨模块共享类型（`PreviewTab` / `CodeSnippet` / `FlatFileEntry` / `AgentMsgRowActions` …） |
 | `utils/ids` `paths` `format` `text` | ID、路径、格式化、文本处理 |
 | `utils/mathHtml` `audio` `fileExt` `dom` | KaTeX 公式、音频编码、扩展名集合、DOM 辅助 |
-| `utils/constants` | 共享常量（含 `GIT_DIFF_TAB` / `KEEP_RECENT_TURNS`） |
+| `utils/constants` | 共享常量（含 `GIT_DIFF_TAB`） |
 | `utils/thinkText` | 思考文本显示层：预览截断（`THINK_PREVIEW_LINES` / `THINK_PREVIEW_CHARS`）与行窗口（`buildTextRows` / `getTextRowWindow` / `TEXT_ROW_CHARS`） |
 | `utils/textRows` | 长文本分行与可视行范围纯函数（`TEXT_ROW_CHARS` / `buildTextRows` / `getTextRowWindow`）：思考文本与工具结果共用；`utils/thinkText` 转发其导出 |
-| `utils/condensePrompt` | 上下文压缩提示词与消息序列化（`SUMMARY_PROMPT` / `buildApiMessagesFull` / `wrapUntrustedFileContent` …） |
+| `utils/text` | 思考链剥离（`stripThinkForApi` / `stripThinkContent`）与附件「不可信数据」围栏（`wrapUntrustedFileContent`） |
 
 ## 功能域 hook
 
@@ -54,7 +53,7 @@
 | `hooks/useAgentSessionEffects` | 会话生命周期：持久化 / 播种 / 工作区同步 / 任务刷新 / 里程碑 / 会话终局 / pi 预热 |
 | `hooks/useAgentViewEffects` | 视图副作用：侧栏可见性 / 跳行高亮 / 输入区测高 |
 | `hooks/useAgentSessionActions` | 会话动作：队列补写 / 片段引用 / 停止生成 / 切换目录 / 重命名交互 |
-| `hooks/useAgentCondense` | 上下文摘要压缩：自动触发 + 手动触发 |
+| `hooks/useAgentCondense` | 手动压缩入口（压缩本身在 pi SDK 的原生 compaction 里） |
 | `hooks/useAgentSlashActions` | 动作型 `/命令` 分发 |
 | `hooks/useAgentLoop` | Agent 循环域：`runPiTurn`（单轮运行）+ `handleSend`（发送编排） |
 | `hooks/useAgentMessageActions` | 消息级操作：复制 / 重新生成 / 重发 / 分支 / 编辑 / 撤销 / 消息行动作 ref |

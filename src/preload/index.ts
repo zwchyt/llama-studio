@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { ThinkingLevel, ReleaseInfo, AgentProject, AgentMemoryCandidate, ChatSession, CommandsSchema, Template, TodoUpdate, ProbeTarget, RemoteEndpoint, ModelEndpoint } from '../shared/types'
+import type { ThinkingLevel, ReleaseInfo, AgentProject, ChatSession, CommandsSchema, Template, TodoUpdate, ProbeTarget, RemoteEndpoint, ModelEndpoint } from '../shared/types'
 
 // ⚠️ 单监听通道契约：下方 fullApi 中所有 on* 方法均为 removeAllListeners(channel) + on(...)
 // 的「单监听替换」语义——同通道重复注册会顶掉前一个监听者，而非累积（这也是 detach 后
@@ -265,15 +265,6 @@ const fullApi = {
   codemapInvalidate: (dir: string, absPaths: string[]) => ipcRenderer.invoke('codemap-invalidate', dir, absPaths),
   // ── 代码混合检索（retrievalService）──
   codesearchQuery: (dir: string, query: string, limit?: number) => ipcRenderer.invoke('codesearch-query', dir, query, limit),
-  // ── 长期记忆（memoryStore）──
-  memstoreUpsert: (dir: string, candidates: AgentMemoryCandidate[]) => ipcRenderer.invoke('memstore-upsert', dir, candidates),
-  memstoreInject: (dir: string, capChars: number) => ipcRenderer.invoke('memstore-inject', dir, capChars),
-  memstoreContradict: (dir: string, probeText: string) => ipcRenderer.invoke('memstore-contradict', dir, probeText),
-  memstoreList: (dir: string) => ipcRenderer.invoke('memstore-list', dir),
-  memstoreArchive: (dir: string, id: string) => ipcRenderer.invoke('memstore-archive', dir, id),
-  memstoreUnarchive: (dir: string, id: string) => ipcRenderer.invoke('memstore-unarchive', dir, id),
-  memstoreDelete: (dir: string, id: string) => ipcRenderer.invoke('memstore-delete', dir, id),
-  memstoreClear: (dir: string) => ipcRenderer.invoke('memstore-clear', dir),
   // ── 本地知识库 RAG（knowledgeService）──
   knowledgeList: () => ipcRenderer.invoke('knowledge-list'),
   knowledgeCreate: (name: string) => ipcRenderer.invoke('knowledge-create', name),
@@ -382,12 +373,14 @@ const fullApi = {
   windowClose: () => ipcRenderer.invoke('window-close'),
   // ── pi-agent（pi SDK 驱动的 agent 会话）──
   piAgent: {
-    create: (opts: { sessionId: string; port: number; endpoint?: RemoteEndpoint; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; vision?: boolean; projectSystemPrompt?: string; projectMemoryNotes?: string; memoryInjection?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => ipcRenderer.invoke('pi-agent-create', opts),
+    create: (opts: { sessionId: string; port: number; endpoint?: RemoteEndpoint; cwd: string; contextWindow?: number; contextBudget?: number; contextImportanceFold?: boolean; compactionReserveTokens?: number; compactionKeepRecentTokens?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; vision?: boolean; projectSystemPrompt?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => ipcRenderer.invoke('pi-agent-create', opts),
     warmup: () => ipcRenderer.invoke('pi-agent-warmup'),
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-prompt', sessionId, text, images),
     steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-steer', sessionId, text, images),
     followUp: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-follow-up', sessionId, text, images),
     clearQueue: (sessionId: string) => ipcRenderer.invoke('pi-agent-clear-queue', sessionId),
+    compact: (sessionId: string, customInstructions?: string) =>
+      ipcRenderer.invoke('pi-agent-compact', sessionId, customInstructions) as Promise<{ success: boolean; summary?: string; error?: string }>,
     abort: (sessionId: string) => ipcRenderer.invoke('pi-agent-abort', sessionId),
     dispose: (sessionId: string) => ipcRenderer.invoke('pi-agent-dispose', sessionId),
     setThinkingLevel: (sessionId: string, level: ThinkingLevel) => ipcRenderer.invoke('pi-agent-set-thinking-level', sessionId, level),

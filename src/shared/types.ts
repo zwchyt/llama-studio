@@ -489,23 +489,38 @@ function stripPlainChat(s: AgentSession): AgentSession {
   return next
 }
 
+/** 旧存档的 memory.coveredMsgIds（消息 id 列表）→ coveredCount（前缀长度），并清除旧字段。
+    幂等：没有 coveredMsgIds 的会话原样返回。折算按「最早的连续前缀」原语义进行，
+    与旧代码的前缀扫描结果一致，因此迁移本身不会改变任何一次发送的历史内容。 */
+function migrateMemoryCursor(s: AgentSession): AgentSession {
+  const mem = s.memory
+  if (!mem?.coveredMsgIds) return s
+  const covered = new Set(mem.coveredMsgIds)
+  let n = 0
+  while (n < s.messages.length && covered.has(s.messages[n]!.id)) n++
+  const { coveredMsgIds: _legacy, ...rest } = mem
+  return { ...s, memory: { ...rest, coveredCount: n } }
+}
+
 /** ── 旧存档迁移（幂等）──
     1. 为每个项目补 mode：带 workspaceDir 的真实项目 → 'code'；
     2. 把编码项目里 plainChat === true 的会话摘出来，统一迁进通用工作区；
-    3. 通用工作区里的会话清掉 plainChat 残留。
+    3. 通用工作区里的会话清掉 plainChat 残留；
+    4. 压缩记忆的 coveredMsgIds 折算成 coveredCount 边界。
     迁移后「模式」只有工作区一个来源，会话层面不再有模式字段。 */
 export function normalizeProjects(list: AgentProject[]): AgentProject[] {
   const out: AgentProject[] = []
   const moved: AgentSession[] = []
+  const fix = (s: AgentSession): AgentSession => migrateMemoryCursor(stripPlainChat(s))
   for (const p of list) {
     if (isChatWorkspace(p)) {
-      out.push({ ...p, mode: 'chat', workspaceDir: '', sessions: p.sessions.map(stripPlainChat) })
+      out.push({ ...p, mode: 'chat', workspaceDir: '', sessions: p.sessions.map(fix) })
       continue
     }
     const keep: AgentSession[] = []
     for (const s of p.sessions) {
-      if (s.plainChat === true) moved.push(stripPlainChat(s))
-      else keep.push(stripPlainChat(s))
+      if (s.plainChat === true) moved.push(fix(s))
+      else keep.push(fix(s))
     }
     out.push({ ...p, mode: 'code', sessions: keep })
   }
@@ -528,16 +543,25 @@ export interface AgentSession {
       fetch_webpage / knowledge_search）。缺省 = 一个都不启用，即纯对话。
       注意这只影响通用模式；编码模式仍走主进程写死的那套工具白名单，两者互不干扰。 */
   chatTools?: string[]
-  // 上下文摘要/压缩记忆：超过预算高水位时，最早若干轮对话被模型压缩为摘要。
-  // 发送时以摘要替代被覆盖的最早连续前缀消息，无此字段的旧会话不受影响。
-  memory?: {
-    summary: string          // 累积的历史摘要文本
-    coveredMsgIds: string[]  // 已被摘要覆盖、发送时省略的消息 id（会话最早的连续前缀）
-    updatedAt: number
-    // 结构化事实附录：压缩时机械提取的「不可转写」事实（文件操作清单 + 用户原话），
-    // 逐字保留、不经 LLM 精炼；无此字段的旧会话不受影响。
-    facts?: string
-  }
+  /** 上下文摘要/压缩记忆：超过预算高水位时，最早若干轮对话被模型压缩为摘要。
+      发送时以摘要替代被覆盖的最早连续前缀消息，无此字段的旧会话不受影响。 */
+  memory?: AgentSessionMemory
+}
+
+export interface AgentSessionMemory {
+  summary: string          // 累积的历史摘要文本
+  /** 压缩边界：会话开头有多少条消息已被摘要替代（发送时省略）。
+      早期版本用的是消息 id 列表（见下方 coveredMsgIds），那条不变量很脆——只要在
+      中间插删一次（「重新生成」就会），前缀扫描断在半路，断裂点之后的旧消息就永久
+      留在模型上下文里，而压缩看起来仍在正常工作。单个计数不受 id 变化影响。 */
+  coveredCount: number
+  updatedAt: number
+  // 结构化事实附录：压缩时机械提取的「不可转写」事实（文件操作清单 + 用户原话），
+  // 逐字保留、不经 LLM 精炼；无此字段的旧会话不受影响。
+  facts?: string
+  /** @deprecated 旧存档字段，仅 normalizeProjects 读取（折算成 coveredCount 后清除）。
+      新代码一律写 coveredCount，不要再读它。 */
+  coveredMsgIds?: string[]
 }
 
 export interface AgentProject {
@@ -550,61 +574,7 @@ export interface AgentProject {
       通用工作区（CHAT_WORKSPACE_ID）恒为 'chat'。经 normalizeProjects 后一定被写死。 */
   mode?: AgentMode
   systemPrompt?: string      // 自定义系统提示词（按项目）；为空则用默认工具指引
-  approveWriteEdit?: boolean  // 是否对 Write / Edit 也要求人工确认（Delete / Bash 始终要求）
   knowledgeBaseId?: string   // 项目绑定的知识库（Agent 获得 knowledge_search 工具检索库内文档）
-  // 跨会话项目记忆：用户沉淀的关键结论/约定，发送时注入系统提示，对该项目所有会话生效。
-  memory?: {
-    notes: string      // 跨会话项目记忆（用户可编辑的关键结论/约定）
-    updatedAt: number
-  }
-}
-
-// ── 长期记忆（模块二 · 阶段 2.3）──
-// 跨会话分类记忆条目：由主进程 memoryStore 按工作区持久化。
-export type AgentMemoryCategory =
-  | 'correction'   // 用户纠正 / 审批拒绝归纳的偏好
-  | 'convention'   // 项目约定（命名 / 格式 / 架构规则）
-  | 'command'      // 已验证命令（构建 / 运行 / 测试）
-  | 'error_fix'    // 错误指纹 → 已验证解法
-  | 'decision'     // 决策记录（选定方案与理由）
-  | 'file_role'    // 文件角色标注（生成物勿改 / 入口 / 热点）
-
-export interface AgentMemoryEntry {
-  id: string
-  category: AgentMemoryCategory
-  content: string          // 条目正文（单条精炼结论，非转储）
-  confidence: number       // 置信度 0~1（矛盾降半，合并上调）
-  source: 'user' | 'agent' // user=源自用户明确陈述（冲突时须用户裁决，不自动淘汰）
-  origin: string           // 出处（触发点 + 会话 id）
-  createdAt: number
-  updatedAt: number
-  lastUsedAt: number       // 注入即视为使用（LRU 淘汰依据）
-  hits: number             // 被沉淀 / 确认次数（相似合并时 +1）
-  contradictions: number   // 矛盾标记次数，累计达阈值自动归档
-  archived?: boolean       // 软删除（留审计）
-  anchorPath?: string      // 校验锚点：工作区相对路径（文件还在吗）
-  anchorSymbol?: string    // 校验锚点：锚点文件内应存在的符号 / 子串
-}
-
-// 渲染层沉淀写入时的候选条目（id / 时间戳等由存储侧补全）
-export interface AgentMemoryCandidate {
-  category: AgentMemoryCategory
-  content: string
-  source: 'user' | 'agent'
-  origin: string
-  confidence?: number
-  anchorPath?: string
-  anchorSymbol?: string
-}
-
-export interface AgentMemoryUpsertResult { added: number; merged: number; evicted: number; total: number }
-
-// 注入结果：已完成锚点校验与预算裁剪的分类条目文本
-export interface AgentMemoryInjection {
-  text: string
-  entries: number       // 实际注入条目数
-  stale: number         // 带「需验证」标签（锚点失效）的条目数
-  userConflicts: number // 其中源自用户陈述、需向用户呈现冲突的条目数
 }
 
 // ── Agent Code 任务清单（Todo / Task 工具）──

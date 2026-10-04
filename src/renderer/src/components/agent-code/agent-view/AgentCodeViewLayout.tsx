@@ -18,21 +18,18 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Bot, Database, Copy, Check, ImageDown, FileDown, Wrench } from 'lucide-react'
 import {
-  BookOpenIcon, BrainIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon,
+  BrainIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon,
   CodeIcon, GitBranchIcon, GlobeIcon, LoaderIcon, MessageSquareIcon, PencilIcon,
   QuoteIcon, RouteIcon, SendIcon, SlidersHorizontalIcon, SparklesIcon, Trash2Icon,
   UserIcon, CopyIcon, XIcon,
 } from '@animateicons/react/lucide'
 import { notify } from '../../../store/notificationStore'
 import { useStore } from '../../../store/useStore'
-import { useMemoryPendingStore } from '../../../store/memoryPendingStore'
-import { KEEP_RECENT_TURNS } from '../utils/constants'
 import { markPanelAnimating } from '../../../utils/useResizablePanel'
 import { buildSessionPdfHtml } from '../utils/exportSessionPdf'
 import { useAgentMessageHeights } from '../hooks/useAgentMessageHeights'
 import { useAgentVirtualMessages } from '../hooks/useAgentVirtualMessages'
 import { AgentPrefillBar, HistorySummaryBubble, TopbarBtn, UserMessageEntry, AgentMessageRow } from '../agent-message'
-import { MemoryPanel } from '../agent-panels'
 import AgentContextPanel from '../../AgentContextPanel'
 import AgentMessageSearch from '../../AgentMessageSearch'
 import { AgentTrajectoryPanel } from '../../AgentTrajectoryPanel'
@@ -123,7 +120,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
 
   const {
     activeProject, activeProjectId, activeSession, activeSessionId,
-    setActiveProjectId, setActiveSessionId, updateProject, createProject, deleteProject,
+    setActiveProjectId, setActiveSessionId, createProject, deleteProject,
     exportSession, importSessionToProject, addSessionToProject, deleteSession,
     projectWrapRefs, toggleProjectExpanded,
     // ── 工作区模式（通用 / 编码）──
@@ -146,12 +143,12 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     followUpQueueRef, piReadyRef, prevQueueRef,
   } = run
   const {
-    approveWriteEditDraft, condenseBtnRef, contextModalOpen,
+    condenseBtnRef, contextModalOpen,
     cumTokens, editDraft, editingMsgId, kbBtnRef, kbCopiedId,
-    kbModalOpen, knowledgeBases, memoryBtnRef, memoryDraft, memoryOpen, promptBtnRef,
-    promptDraft, promptModalOpen, reqCount, rightPanelMode, setApproveWriteEditDraft,
+    kbModalOpen, knowledgeBases, promptBtnRef,
+    promptDraft, promptModalOpen, reqCount, rightPanelMode,
     setContextModalOpen, setEditDraft, setEditingMsgId,
-    setKbCopiedId, setMemoryDraft, setMemoryOpen, setPromptDraft, setPromptModalOpen,
+    setKbCopiedId, setPromptDraft, setPromptModalOpen,
     setRightPanelMode, setRightPanelModeAndOpen, setTrajOpen, setTreeOpen,
     openPanels, closePanel, closeOtherPanels, closePanelsRight, closeAllPanels,
     terminalMounted, trajBtnRef, trajOpen, treeOpen,
@@ -164,7 +161,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     chatTools, chatToolsMenuOpen, setChatToolsMenuOpen, chatToolsMenuRef, toggleChatTool,
     taskDoneCount, taskModalOpen, toggleLogoMenu, applySearchChange,
   } = ui
-  const { condensing, condenseMsg, setCondenseMsg, handleManualCondense } = condense
+  const { condensing, condenseMsg, handleManualCondense } = condense
   const { copyMessage, editAt, resendAt, branchAt, confirmEdit, deleteMessage } = messageActions
   const {
     activeRailId, atBottom, chatScrollRef, onChatScroll, onChatWheel, pauseFollow,
@@ -333,35 +330,6 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
       mo.disconnect()
     }
   }, [])
-
-  // 长期记忆「清空」：放在卡片头部。条目列表由 MemoryPanel 自己持有，
-  // 清空后靠 key 重挂触发重新拉取 —— 比为此往上引一条刷新回调穿透 props 更简单。
-  const [memoryReloadKey, setMemoryReloadKey] = useState(0)
-  const clearPendingMemory = useMemoryPendingStore(s => s.clearForDir)
-  const handleClearMemory = useCallback(async () => {
-    const dir = activeProject.workspaceDir
-    if (!dir) return
-    // 待确认队列一并清掉：用户点「清空」的意图是「这个工作区的记忆清干净」，
-    // 留下未裁决的候选会让人以为没生效。数量写进提示里，不做静默丢弃。
-    const pendingBefore = useMemoryPendingStore.getState().items.filter(i => i.dir === dir).length
-    clearPendingMemory(dir)
-    try {
-      const r = await window.api.memstoreClear(dir)
-      setMemoryReloadKey(k => k + 1)
-      notify(
-        pendingBefore > 0
-          ? `已清空长期记忆（${r?.removed ?? 0} 条，含 ${pendingBefore} 条待确认）`
-          : `已清空长期记忆（${r?.removed ?? 0} 条）`,
-        'success'
-      )
-    } catch {
-      notify('清空长期记忆失败', 'error')
-    }
-  }, [activeProject.workspaceDir, clearPendingMemory])
-
-  // 顶栏「记忆」角标：待确认候选数。队列是「写入前确认」模式下的唯一可见入口，
-  // 没有角标的话沉淀出来的候选会一直躺着没人裁决。
-  const pendingMemoryCount = useMemoryPendingStore(s => s.items.length)
 
   // ── 顶栏「浏览器 / 终端」开关 ──
   // 两个坑一起修：
@@ -587,7 +555,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
           >
             <AgentPrefillBar />
             {/* ── 顶栏按钮按当前工作区模式动态显示（不需要的直接不渲染，不置灰）──
-                编码模式专属：压缩历史 / 轨迹 / 记忆
+                编码模式专属：压缩历史 / 轨迹
                 通用模式专属：导出图片 / 导出 PDF / 工具开关
                 两种模式都有：提示词 / 知识库
                 （变更 / 浏览器 / 终端与文件树在右缘「»」按钮的四视图菜单里；通用模式浏览器仍在顶栏） */}
@@ -604,17 +572,6 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
             <TopbarBtn btnRef={kbBtnRef} active={kbModalOpen} onClick={openKbModal} icon={Database} title="知识库列表（智能体可检索全部库）">知识库</TopbarBtn>
             {!plainChat && (
               <TopbarBtn btnRef={trajBtnRef} active={trajOpen} onClick={() => setTrajOpen(v => !v)} icon={RouteIcon}>轨迹</TopbarBtn>
-            )}
-            {!plainChat && (
-              <TopbarBtn
-                btnRef={memoryBtnRef}
-                active={memoryOpen}
-                onClick={() => setMemoryOpen(v => !v)}
-                icon={BookOpenIcon}
-                title={pendingMemoryCount > 0 ? `${pendingMemoryCount} 条记忆待你确认` : undefined}
-              >
-                记忆{pendingMemoryCount > 0 && <span className="agent-code-topbar-badge">{pendingMemoryCount}</span>}
-              </TopbarBtn>
             )}
             {/* 变更 / 浏览器 / 终端与文件树已整合到顶栏右缘「»」展开按钮的四视图菜单 */}
             {/* 导出只在通用模式出现（编码模式的消息带工具卡与文件改动，截图意义不大） */}
@@ -723,7 +680,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               <div className="agent-condensing"><LoaderIcon size={13} className="spin" /> 正在压缩历史…</div>
             )}
             {activeSession?.memory?.summary && (
-              <HistorySummaryBubble summary={activeSession.memory.summary} count={activeSession.memory.coveredMsgIds.length} />
+              <HistorySummaryBubble summary={activeSession.memory.summary} count={activeSession.memory.coveredCount} />
             )}
             {historyStartIndex > 0 && (
               <div style={{ padding: '8px 16px', textAlign: 'center' }}>
@@ -852,10 +809,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                 <span>压缩会话历史</span>
               </div>
               <div className="agent-task-card-body agent-card-condense-body">
-                <p className="agent-condense-hint">把较早的对话轮次交给本地模型压缩为摘要，节省上下文（最近 {KEEP_RECENT_TURNS} 轮始终逐字保留）。</p>
+                <p className="agent-condense-hint">把较早的对话交给本地模型压缩为结构化摘要（由 pi SDK 执行：按真实 token 用量自动触发，这里可手动提前压）。本会话尚未聊过时没有可压缩的内容。</p>
                 <div className="agent-condense-status">
                   {activeSession?.memory?.summary
-                    ? `当前已压缩 ${activeSession.memory.coveredMsgIds.length} 条早期消息。`
+                    ? `当前已压缩 ${activeSession.memory.coveredCount} 条早期消息。`
                     : '当前会话尚无压缩摘要。'}
                 </div>
                 {activeSession?.memory?.summary && (
@@ -870,21 +827,6 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                   >
                     {condensing ? <><LoaderIcon size={12} className="spin" /> 正在压缩…</> : '立即压缩历史'}
                   </button>
-                  {activeSession?.memory?.summary && (
-                    <button
-                      className="agent-prompt-btn agent-prompt-btn-ghost"
-                      onClick={() => {
-                        const prev = activeProject.memory?.notes || ''
-                        const stamp = new Date().toLocaleString('zh-CN')
-                        const appended = (prev ? prev + '\n\n' : '') + `【来自会话「${activeSession!.title}」· ${stamp}】\n` + activeSession!.memory!.summary
-                        updateProject(activeProjectId, { memory: { notes: appended, updatedAt: Date.now() } })
-                        setCondenseMsg('✅ 已将本会话摘要追加到项目记忆。')
-                        notify('已追加到项目记忆', 'success')
-                      }}
-                    >
-                      追加到项目记忆
-                    </button>
-                  )}
                 </div>
                 {!runningCard && <div className="agent-condense-note">需先启动模型才能压缩。</div>}
               </div>
@@ -901,18 +843,6 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               </div>
             </div>
           )}
-          {/* 长期记忆卡片（浮动在聊天区右上角）：查看 / 归档智能体自动沉淀的跨会话记忆 */}
-          {memoryOpen && (
-            <div className="agent-task-card agent-card-memstore">
-              <div className="agent-task-card-header">
-                <span>长期记忆 · {activeProject.title}</span>
-                <button className="agent-card-clear" onClick={handleClearMemory}><Trash2Icon size={12} /> 清空</button>
-              </div>
-              <div className="agent-task-card-body agent-card-memstore-body">
-                <MemoryPanel key={memoryReloadKey} dir={activeProject.workspaceDir} />
-              </div>
-            </div>
-          )}
           {/* 提示词卡片（浮动在聊天区右上角） */}
           {promptModalOpen && (
             <div className="agent-task-card agent-card-prompt">
@@ -922,16 +852,9 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               <div className="agent-task-card-body agent-card-prompt-body">
                 <p className="agent-prompt-hint">为该项目的智能体追加自定义指令（如「只用中文回复」「优先最小改动」）。留空则使用默认工具指引。</p>
                 <textarea className="agent-prompt-textarea" value={promptDraft} onChange={e => setPromptDraft(e.target.value)} placeholder="例如：你只允许使用中文；修改文件时优先给出最小改动；不要随意运行删除命令。" />
-                <div className="agent-prompt-memory-label">项目记忆（跨会话）</div>
-                <p className="agent-prompt-hint">此处记录希望在本项目所有会话中长期携带的结论/约定（可从「压缩历史」弹层一键追加会话摘要）。留空则不注入。</p>
-                <textarea className="agent-prompt-textarea" value={memoryDraft} onChange={e => setMemoryDraft(e.target.value)} placeholder="例如：本项目后端入口为 src/main/index.ts；构建用 npm run build；已确定不使用 xxx 方案。" />
-                <label className="agent-prompt-check">
-                  <input type="checkbox" className="agent-prompt-checkbox" checked={approveWriteEditDraft} onChange={e => setApproveWriteEditDraft(e.target.checked)} />
-                  对写入 / 编辑（Write / Edit）也要求人工确认
-                </label>
               </div>
               <div className="agent-card-prompt-footer">
-                <button className="agent-prompt-btn agent-prompt-btn-ghost" onClick={() => { setPromptDraft(''); setApproveWriteEditDraft(false) }}>重置默认</button>
+                <button className="agent-prompt-btn agent-prompt-btn-ghost" onClick={() => setPromptDraft('')}>重置默认</button>
                 <button className="agent-prompt-btn agent-prompt-btn-ghost" onClick={() => setPromptModalOpen(false)}>取消</button>
                 <button className="agent-prompt-btn agent-prompt-btn-primary" onClick={saveSystemPrompt}>保存</button>
               </div>

@@ -31,8 +31,6 @@ export interface PiAgentSessionOptions {
   contextWindow?: number
   /** 额外自定义工具（pi ToolDefinition 格式） */
   customTools?: ToolDefinition[]
-  /** 项目开关：Write/Edit 额外要求人工确认 */
-  approveWriteEdit?: boolean
   /** pi 配置目录（默认 <userData>/pi-agent，避免污染用户 ~/.pi） */
   agentDir?: string
   /** 已有会话历史（首次创建时注入 pi session，避免历史丢失） */
@@ -58,30 +56,30 @@ export interface PiAgentSessionOptions {
   searchProvider?: 'ddg' | 'bing'
   /** 项目自定义系统提示词（渲染层「提示词」卡片保存的内容，用户手写） */
   projectSystemPrompt?: string
-  /** 项目记忆：跨会话长期携带的结论 / 约定（渲染层「项目记忆」文本域，用户手写） */
-  projectMemoryNotes?: string
-  /** 长期记忆注入文本。由渲染层调 memstore-inject 生成后传下来 —— 不能在这里直接
-      调 memoryStore：本 manager 跑在 utilityProcess 里，而 memoryStore 依赖 ipcMain /
-      app 等主进程 API，且它在主进程侧才有注册好的 memoryDir。 */
-  memoryInjection?: string
+  /** 本次请求可用的 prompt token 预算（渲染层按 n_ctx 扣掉输出预留与安全余量后算好）。
+      >0 时启用发请求前的机械兜底裁剪，见 shared/contextGuard.ts；缺省/<=0 = 不裁剪。
+      渲染层来算而不是这里推：n_ctx 的来源（llama-server /props、远程端点手填值）只有
+      渲染层拿得全，主进程这边只有创建会话时传下来的那一份。 */
+  contextBudget?: number
+  /** 兜底裁剪是否折叠「同文件重复读取」的旧结果（渲染层的 ctxImportanceEnabled） */
+  contextImportanceFold?: boolean
+  /** pi 原生压缩阈值（渲染层按真实 n_ctx 算好；见 piAgentBridge/index.ts 的 settingsManager） */
+  compactionReserveTokens?: number
+  compactionKeepRecentTokens?: number
   /** 会话事件回调（由 IPC 层转推 renderer） */
   onEvent: (sessionId: string, event: AgentSessionEvent) => void
 }
 
 /**
  * 把「用户可编辑的项目级提示词」拼成 appendSystemPrompt 的尾部段落。
- * 这三段都来自渲染层，主进程只做拼装。与 PI_TOOL_GUIDANCE 那批静态常量分开，
+ * 内容来自渲染层，主进程只做拼装。与 PI_TOOL_GUIDANCE 那批静态常量分开，
  * 是因为纯聊天模式要清掉编码 agent 指引、但不该连用户自己写的指令一起清掉 ——
- * 用户手写的提示词被静默忽略，正是这次要修的问题之一。
+ * 用户手写的提示词被静默忽略，正是当初要修的问题之一。
  */
 function buildUserPromptSections(opts: PiAgentSessionOptions): string[] {
   const out: string[] = []
   const sys = (opts.projectSystemPrompt || '').trim()
   if (sys) out.push(`## 项目自定义指令\n${sys}`)
-  const mem = (opts.projectMemoryNotes || '').trim()
-  if (mem) out.push(`## 项目记忆（跨会话，人工维护）\n${mem}`)
-  const inj = (opts.memoryInjection || '').trim()
-  if (inj) out.push(`## 跨会话长期记忆\n${inj}`)
   return out
 }
 
@@ -94,6 +92,10 @@ export class PiAgentManager {
   private readonly ports = new Map<string, number>()
   /** 会话 → 远程端点：没有本机端口可依据时，记账按 baseUrl + 模型名归属 */
   private readonly endpoints = new Map<string, RemoteEndpoint>()
+  /** 会话 → 注入历史的条目映射：pi 条目 id ⇒ 它来自第几条 llama-studio 历史消息（+ 注入总条数）。
+      pi 的压缩边界 firstKeptEntryId 是条目 id，只有经这张表才能换算成渲染层认得的
+      coveredCount（渲染层的消息数组没有 pi 条目概念）。 */
+  private readonly seeds = new Map<string, { byEntryId: Map<string, number>; total: number }>()
   /** 工具白名单（pi 只激活这些工具） */
   private readonly toolNames: string[]
 
@@ -199,7 +201,6 @@ export class PiAgentManager {
 
     const mainTools = await createMainTools(this.executors, {
       sessionId: opts.sessionId.replace(/^pi-/, ''),
-      approveWriteEdit: opts.approveWriteEdit,
       workspaceDir: opts.cwd,
       knowledgeBaseId: opts.knowledgeBaseId,
       knowledgeBases: await this.executors.listKb(),
@@ -207,9 +208,9 @@ export class PiAgentManager {
     })
     // 追加进 system prompt 的两批内容分开算：
     //   codingGuidance —— 静态的编码 agent 指引，纯聊天模式必须清掉（见 plainChat 说明）
-    //   userPromptSections —— 用户可编辑的三段（项目指令 / 项目记忆 / 长期记忆注入），
-    //     两种模式都追加。它们不是「编码 agent 指引」，纯聊天模式没有理由吞掉用户自己
-    //     写的东西；此前这三段全都没有送达模型，用户在界面上编辑保存后毫无效果。
+    //   userPromptSections —— 用户可编辑的项目指令，两种模式都追加。它不是「编码 agent
+    //     指引」，纯聊天模式没有理由吞掉用户自己写的东西；此前这段没有送达模型，
+    //     用户在界面上编辑保存后毫无效果。
     const codingGuidance = plainChat
       ? []
       : [...PI_TOOL_GUIDANCE, ...PI_CHART_ROUTING]
@@ -218,6 +219,12 @@ export class PiAgentManager {
       getPort: () => opts.port,
       endpoint: opts.endpoint,
       getContextWindow: () => opts.contextWindow ?? 128000,
+      getContextBudget: () => opts.contextBudget ?? 0,
+      contextImportanceFold: opts.contextImportanceFold,
+      getCompactionTokens: () => ({
+        reserveTokens: opts.compactionReserveTokens ?? 1024,
+        keepRecentTokens: opts.compactionKeepRecentTokens ?? 1500
+      }),
       cwd: opts.cwd,
       agentDir: opts.agentDir,
       systemPrompt: plainChat ? PLAIN_CHAT_SYSTEM_PROMPT : undefined,
@@ -228,8 +235,22 @@ export class PiAgentManager {
       customTools: [...mainTools, ...(opts.customTools ?? [])]
     })
     // 注入已有会话历史（llama-studio AgentMessage → pi Message）
+    // 必须走 SessionManager 追加条目，不能直接赋 agent.state.messages：pi 在构造会话时
+    // 无条件装了 prepareRequest 包装（agent-session.js:193 → 427-433），每次请求都用
+    // SessionManager 的投影覆盖 request.context.messages —— 只写进 state 的历史压根发不出去，
+    // 且 _refreshFinalizedContext()（:564）会在压缩 / 边界提交等多个时机把 state 重置回投影。
+    // 同一份条目分支还是压缩的唯一数据源（prepareCompaction 只读 getBranch()，:2434），
+    // 所以这里改的既是「切回旧会话失忆」的修复，也是启用 pi 原生压缩的前提。
+    // appendMessage 不发 message_start/end 事件，不会惊动 UI；顺序即 parent 链，
+    // id / timestamp 由 SessionManager 生成，inMemory 会话也不需要 header。
     if (opts.history && opts.history.length > 0) {
-      bridge.session.agent.state.messages = convertHistory(opts.history)
+      const sm = bridge.session.sessionManager
+      const byEntryId = new Map<string, number>()
+      for (const { message, index } of convertHistory(opts.history)) byEntryId.set(sm.appendMessage(message), index)
+      this.seeds.set(opts.sessionId, { byEntryId, total: opts.history.length })
+      bridge.session.refreshContext()
+    } else {
+      this.seeds.delete(opts.sessionId)
     }
     bridge.session.subscribe((event) => {
       // 轨迹台账：全量事件流落盘（旁路观测，失败静默，不影响主流程）
@@ -239,6 +260,18 @@ export class PiAgentManager {
       // 必须在此补记，否则导航栏 Token 统计永远只有旧模型（legacy/ChatView）的记录。
       if (event.type === 'turn_end' && event.message?.role === 'assistant') {
         void this.recordUsage(opts.sessionId, event.message.usage)
+      }
+      // pi 压缩结果镜像：把 firstKeptEntryId 换算成渲染层的 coveredCount 一并转发下去。
+      // 为什么非要镜像：pi 侧用的是 SessionManager.inMemory（不落盘），而渲染层在切会话、
+      // 重新生成、续写这些流程里都会重建 pi 会话并重放历史；没有这份镜像，每次重建都得
+      // 从头把整段历史重新压一遍，压缩成果等于永远只在单个会话生命周期内有效。
+      if (event.type === 'compaction_end') {
+        const rec = this.seeds.get(opts.sessionId)
+        const firstKept = (event as { result?: { firstKeptEntryId?: string } }).result?.firstKeptEntryId
+        // 边界落在注入历史之外（= 本轮新产生的条目）⇒ 注入的那些全被压进摘要了
+        const lsCoveredCount = rec ? (firstKept ? rec.byEntryId.get(firstKept) ?? rec.total : rec.total) : 0
+        opts.onEvent(opts.sessionId, { ...event, lsCoveredCount } as unknown as AgentSessionEvent)
+        return
       }
       opts.onEvent(opts.sessionId, event)
     })
@@ -345,6 +378,20 @@ export class PiAgentManager {
     bridge.session.setThinkingLevel(level)
   }
 
+  /** 手动压缩：直连 pi 的 session.compact()。
+      它在没有可压缩内容时会抛错（"Already compacted" / "Nothing to compact (session too small)"），
+      这里转成 { success:false, error } 回给渲染层，别让它变成未捕获拒绝。
+      压缩成功时 pi 会照常发 compaction_end，上面的订阅会把边界换算成 lsCoveredCount 一并带下去，
+      所以渲染层的 session.memory 由那条事件更新，不依赖本方法的返回值。 */
+  async compactSession(sessionId: string, customInstructions?: string): Promise<{ success: boolean; summary?: string; error?: string }> {
+    try {
+      const res = await this.getBridge(sessionId).session.compact(customInstructions)
+      return { success: true, summary: res.summary }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  }
+
   disposeSession(sessionId: string): void {
     const bridge = this.bridges.get(sessionId)
     if (!bridge) return
@@ -352,6 +399,7 @@ export class PiAgentManager {
     this.bridges.delete(sessionId)
     this.ports.delete(sessionId)
     this.endpoints.delete(sessionId)
+    this.seeds.delete(sessionId)
   }
 
   disposeAll(): void {
@@ -374,13 +422,17 @@ const ZERO_USAGE = {
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
 }
 
-function convertHistory(history: PiHistoryMessage[]): Message[] {
-  const out: Message[] = []
+/** 转换后的历史消息 + 它来自第几条 llama-studio 消息（下标用于把 pi 的压缩边界换算回渲染层） */
+interface SeededMessage { message: Message; index: number }
+
+function convertHistory(history: PiHistoryMessage[]): SeededMessage[] {
+  const out: SeededMessage[] = []
   // 历史回流前剥离思考链：持久化的 content 含 <think>…</think> 原文（UI 渲染依赖），
   // 但回注给模型会让它重复看到自己旧的思考过程，污染上下文（与 legacy stripThinkForApi 一致）。
   const stripThink = (s: string): string =>
     s.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/, '').trim()
-  for (const m of history) {
+  for (let hi = 0; hi < history.length; hi++) {
+    const m = history[hi]!
     const ts = Date.now()
     if (m.role === 'user') {
       const images = (m.attachments ?? [])
@@ -391,10 +443,13 @@ function convertHistory(history: PiHistoryMessage[]): Message[] {
           return { type: 'image' as const, data: base64, mimeType: mime }
         })
       out.push({
-        role: 'user',
-        content: images.length > 0 ? [{ type: 'text', text: m.content }, ...images] : m.content,
-        timestamp: ts
-      } as Message)
+        index: hi,
+        message: {
+          role: 'user',
+          content: images.length > 0 ? [{ type: 'text', text: m.content }, ...images] : m.content,
+          timestamp: ts
+        } as Message
+      })
     } else {
       const toolCalls = (m.toolCalls ?? []).map((tc) => ({
         type: 'toolCall' as const,
@@ -403,25 +458,38 @@ function convertHistory(history: PiHistoryMessage[]): Message[] {
         arguments: safeParseArgs(tc.args)
       }))
       out.push({
-        role: 'assistant',
-        content: [...(m.content ? [{ type: 'text' as const, text: stripThink(m.content) }] : []), ...toolCalls],
-        api: 'openai-completions',
-        provider: LLAMA_STUDIO_PROVIDER_ID,
-        model: LLAMA_STUDIO_MODEL_ID,
-        usage: ZERO_USAGE,
-        stopReason: toolCalls.length > 0 ? 'toolUse' : 'stop',
-        timestamp: ts
-      } as Message)
+        index: hi,
+        message: {
+          role: 'assistant',
+          content: [...(m.content ? [{ type: 'text' as const, text: stripThink(m.content) }] : []), ...toolCalls],
+          api: 'openai-completions',
+          provider: LLAMA_STUDIO_PROVIDER_ID,
+          model: LLAMA_STUDIO_MODEL_ID,
+          usage: ZERO_USAGE,
+          stopReason: toolCalls.length > 0 ? 'toolUse' : 'stop',
+          timestamp: ts
+        } as Message
+      })
       for (const tc of m.toolCalls ?? []) {
-        if (tc.result == null) continue
+        // 没有结果的调用也必须补一条 toolResult：带 toolCall 的 assistant 后面缺配对结果，
+        // OpenAI 兼容端点会直接 400。空串同样不行——对模型零信息量，会被读成「成功但无输出」。
+        const missing = tc.result == null
         out.push({
-          role: 'toolResult',
-          toolCallId: tc.id,
-          toolName: tc.name,
-          content: [{ type: 'text', text: tc.result }],
-          isError: false,
-          timestamp: Date.now()
-        } as Message)
+          index: hi,
+          message: {
+            role: 'toolResult',
+            toolCallId: tc.id,
+            toolName: tc.name,
+            content: [{
+              type: 'text',
+              text: missing
+                ? JSON.stringify({ error: '该工具调用未实际执行（生成被中止或熔断），无结果。' })
+                : tc.result
+            }],
+            isError: missing,
+            timestamp: Date.now()
+          } as Message
+        })
       }
     }
   }

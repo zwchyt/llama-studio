@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, SystemMetrics, ChatSession, TokenUsageEntry, TokenUsageLedger, ChatStreamChunk, AgentProject, AgentSession, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, AgentMemoryEntry, AgentMemoryCandidate, AgentMemoryUpsertResult, AgentMemoryInjection, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit, ThinkingLevel, SdCudartStatus, EndpointProbe, EndpointAttachResult, ProbeTarget, RemoteEndpoint, ModelEndpoint } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, SystemMetrics, ChatSession, TokenUsageEntry, TokenUsageLedger, ChatStreamChunk, AgentProject, AgentSession, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit, ThinkingLevel, SdCudartStatus, EndpointProbe, EndpointAttachResult, ProbeTarget, RemoteEndpoint, ModelEndpoint } from '../../shared/types'
 // 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
 interface ImagePromptPresetPayload {
   id: string; tag: string; cn: string; group: string
@@ -303,15 +303,6 @@ interface LlamaCppApi {
   codemapInvalidate: (dir: string, absPaths: string[]) => Promise<{ success: boolean }>
   // ── 代码混合检索（retrievalService）──
   codesearchQuery: (dir: string, query: string, limit?: number) => Promise<CodeSearchResponse>
-  // ── 长期记忆（memoryStore）──
-  memstoreUpsert: (dir: string, candidates: AgentMemoryCandidate[]) => Promise<AgentMemoryUpsertResult>
-  memstoreInject: (dir: string, capChars: number) => Promise<AgentMemoryInjection>
-  memstoreContradict: (dir: string, probeText: string) => Promise<{ marked: number; archived: number }>
-  memstoreList: (dir: string) => Promise<AgentMemoryEntry[]>
-  memstoreArchive: (dir: string, id: string) => Promise<{ success: boolean }>
-  memstoreUnarchive: (dir: string, id: string) => Promise<{ success: boolean }>
-  memstoreDelete: (dir: string, id: string) => Promise<{ success: boolean }>
-  memstoreClear: (dir: string) => Promise<{ success: boolean; removed: number }>
   // ── 本地知识库 RAG（knowledgeService）──
   knowledgeList: () => Promise<KnowledgeBaseMeta[]>
   knowledgeCreate: (name: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
@@ -344,12 +335,13 @@ interface LlamaCppApi {
   windowClose: () => Promise<void>
   // ── pi-agent（pi SDK 驱动的 agent 会话）──
   piAgent: {
-    create: (opts: { sessionId: string; port: number; endpoint?: RemoteEndpoint; cwd: string; approveWriteEdit?: boolean; contextWindow?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; vision?: boolean; projectSystemPrompt?: string; projectMemoryNotes?: string; memoryInjection?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
+    create: (opts: { sessionId: string; port: number; endpoint?: RemoteEndpoint; cwd: string; contextWindow?: number; contextBudget?: number; contextImportanceFold?: boolean; compactionReserveTokens?: number; compactionKeepRecentTokens?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; vision?: boolean; projectSystemPrompt?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
     warmup: () => Promise<{ success: boolean }>
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
     steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
     followUp: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
     clearQueue: (sessionId: string) => Promise<{ success: boolean }>
+    compact: (sessionId: string, customInstructions?: string) => Promise<{ success: boolean; summary?: string; error?: string }>
     abort: (sessionId: string) => Promise<{ success: boolean }>
     dispose: (sessionId: string) => Promise<{ success: boolean }>
     list: () => Promise<{ sessionIds: string[] }>

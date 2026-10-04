@@ -2,9 +2,9 @@
 // 运行时只给出「已用 / 窗口」总数（modelMetrics.nPromptTokens），并无分项，
 // 因此这里按会话消息 + 系统提示 + 记忆摘要本地估算，再用「其他」项做差额对齐，
 // 保证分段之和 = 真实总量（估计误差 / 知识库 / 内置指引 / 模板开销都归到「其他」）。
-import { estimateTextTokens } from './contextBudget'
+import { estimateTextTokens, coveredPrefixCount } from './contextBudget'
 import { AGENT_SYSTEM_GUIDANCE } from '../../../shared/agentGuidance'
-import type { AgentMessage, AgentProject, AgentSession } from '../../../shared/types'
+import type { AgentProject, AgentSession } from '../../../shared/types'
 
 export interface CtxCategory {
   key: string
@@ -19,33 +19,29 @@ export interface MeasuredBreakdown {
   total: number // 以上四项之和
 }
 
-// 被记忆摘要覆盖（发送时省略）的消息不计入历史/工具，因为它们已由 summary 替代。
-function isCovered(m: AgentMessage, covered: Set<string>): boolean {
-  return covered.has(m.id)
-}
-
 export function estimateContextMeasured(
   session: AgentSession | undefined,
   project: AgentProject | undefined,
 ): MeasuredBreakdown {
-  const covered = new Set(session?.memory?.coveredMsgIds ?? [])
+  // 被记忆摘要覆盖（发送时省略）的消息不计入历史/工具，因为它们已由 summary 替代。
+  const coveredCount = coveredPrefixCount(session?.memory, session?.messages ?? [])
 
-  // 系统提示 / 模型信息：内置工具指引（主进程注入系统提示）+ 项目自定义系统提示 + 跨会话项目记忆。
+  // 系统提示 / 模型信息：内置工具指引（主进程注入系统提示）+ 项目自定义系统提示。
   // 通用模式（工作区 mode === 'chat'）主进程不注入内置指引（也不注册任何工具），这里必须跟着归零——
   // 否则面板会显示一份实际没发出去的系统提示占用，数字对不上。
   // 注意模式读的是 project.mode 而不是 session.plainChat：模式归属工作区，会话层已无该字段。
   let systemTok = project?.mode === 'chat' ? 0 : estimateTextTokens(AGENT_SYSTEM_GUIDANCE.join('\n\n'))
   if (project) {
     systemTok += estimateTextTokens(project.systemPrompt ?? '')
-    systemTok += estimateTextTokens(project.memory?.notes ?? '')
   }
 
   // 对话历史 + 工具调用（仅未被摘要覆盖的消息）
   let historyTok = 0
   let toolTok = 0
   const toolByName: Record<string, number> = {}
-  for (const m of session?.messages ?? []) {
-    if (isCovered(m, covered)) continue
+  const msgs = session?.messages ?? []
+  for (let mi = coveredCount; mi < msgs.length; mi++) {
+    const m = msgs[mi]!
     historyTok += estimateTextTokens(m.content || '')
     for (const tc of m.toolCalls ?? []) {
       const t = estimateTextTokens(tc.args ?? '') + estimateTextTokens(tc.result ?? '')

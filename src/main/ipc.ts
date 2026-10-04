@@ -20,7 +20,6 @@ import type * as ptyNs from 'node-pty'
 import type { AgentProject, AgentSession, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus, EngineKind, ReleaseInfo, SdCudartMarker, SdCudartStatus, SdCudartUpstream, EndpointProbe, EndpointAttachResult, ProbeTarget, RemoteEndpoint, ModelEndpoint, EndpointApi } from '../shared/types'
 import { registerCodeMapIpc, disposeCodeMaps, deleteSnapshotForWorkspace } from './services/codeMapService'
 import { registerRetrievalIpc, disposeIndexForWorkspace } from './services/retrievalService'
-import { registerMemoryStoreIpc, deleteMemoryForWorkspace } from './services/memoryStore'
 import { readGgufMeta } from './services/ggufReader'
 import { registerKnowledgeIpc } from './services/knowledgeService'
 import { synthesizeEdgeTts, listEdgeVoices } from './services/edgeTts'
@@ -7928,8 +7927,6 @@ export function registerIpcHandlers(): void {
   registerCodeMapIpc(APP_ROOT)
   // ── 代码混合检索服务（retrievalService）：codesearch-* 通道 ──
   registerRetrievalIpc()
-  // 长期记忆存储（模块二 · 阶段 2.3）：分类条目沉淀 / 注入 / 矛盾仲裁
-  registerMemoryStoreIpc(APP_ROOT)
   // 本地知识库 RAG（knowledgeService）：knowledge-* 通道（BM25 检索 + 落盘）
   registerKnowledgeIpc(APP_ROOT)
 
@@ -7948,7 +7945,7 @@ export function registerIpcHandlers(): void {
   const AGENT_TRAJECTORY_DIR = join(AGENT_PROJECTS_DIR, 'trajectory')
   const AGENT_TRACE_DIR = join(AGENT_PROJECTS_DIR, 'traces')
 
-  // 删除某会话的轨迹 / 审计文件（含 .1 轮转副本）；记忆与 codemap 按工作区哈希存储，
+  // 删除某会话的轨迹 / 审计文件（含 .1 轮转副本）；codemap 按工作区哈希存储，
   // 是项目级共享数据，不随单会话删除
   function deleteSessionArtifacts(sessionId: string): void {
     for (const dir of [AGENT_TRAJECTORY_DIR, AGENT_TRACE_DIR]) {
@@ -7973,13 +7970,13 @@ export function registerIpcHandlers(): void {
     }
   }
 
-  // 启动加载时清理无引用的工作区级数据：memory/codemap 文件按 sha1(工作区路径) 命名，
+  // 启动加载时清理无引用的工作区级数据：codemap 快照按 sha1(工作区路径) 命名，
   // 不在现存会话工作区集合内的即为孤儿（项目已删除或历史遗留）
   function sweepOrphanWorkspaceArtifacts(liveWorkspaceDirs: string[]): void {
     const live = new Set(liveWorkspaceDirs.filter(Boolean).map(d => {
       try { return createHash('sha1').update(resolve(d).toLowerCase()).digest('hex') } catch { return '' }
     }))
-    for (const dir of [join(AGENT_PROJECTS_DIR, 'memory'), join(AGENT_PROJECTS_DIR, 'codemap')]) {
+    for (const dir of [join(AGENT_PROJECTS_DIR, 'codemap')]) {
       let names: string[] = []
       try { names = readdirSync(dir) } catch { continue }
       for (const name of names) {
@@ -7991,7 +7988,7 @@ export function registerIpcHandlers(): void {
     }
   }
 
-  // 删除已无任何现存会话引用的工作区级数据（memory / codemap）。
+  // 删除已无任何现存会话引用的工作区级数据（codemap 快照 + 分块索引）。
   // 只处理传入的候选工作区（来自被删除的会话文件），避免误伤未落盘的新会话。
   function deleteWorkspaceArtifactsIfUnreferenced(workspaceDirs: string[]): void {
     const candidates = [...new Set(workspaceDirs.filter(Boolean).map(d => { try { return resolve(d) } catch { return '' } }))]
@@ -8010,7 +8007,6 @@ export function registerIpcHandlers(): void {
       if (live.has(ws.toLowerCase())) continue
       deleteSnapshotForWorkspace(ws)
       disposeIndexForWorkspace(ws) // M13：同步清理 retrievalService 的内存分块索引
-      deleteMemoryForWorkspace(ws)
     }
   }
 

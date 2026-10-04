@@ -193,17 +193,13 @@ export function isDestructiveBashCommand(command: string): boolean {
 /** 破坏性工具审批检查（与 renderer runAgentTurn 语义一致）；返回 true = 放行 */
 async function checkApproval(
   exec: MainToolExecutors,
-  ctx: CreateMainToolsContext | undefined,
   toolName: string,
   args: Record<string, unknown>
 ): Promise<{ ok: boolean; reason?: string }> {
   if (!exec.approve) return { ok: true } // 未接审批通道（如测试环境）直接放行
   const bashCmd = toolName === 'Bash' && typeof args.command === 'string' ? args.command : ''
   const bashNeedsApproval = toolName === 'Bash' && isDestructiveBashCommand(bashCmd)
-  const needsApproval =
-    (toolName === 'Delete') ||
-    bashNeedsApproval ||
-    (ctx?.approveWriteEdit && (toolName === 'Write' || toolName === 'Edit'))
+  const needsApproval = (toolName === 'Delete') || bashNeedsApproval
   if (!needsApproval) return { ok: true }
   const approved = await exec.approve(toolName, args)
   if (!approved) return { ok: false, reason: '用户已拒绝该工具调用（需要人工确认的操作）' }
@@ -235,7 +231,7 @@ function isPathInWorkspace(absPath: string, baseDir: string): boolean {
 // pi 的 createEditToolDefinition 提供自研缺失的能力：edits[] 一次调用多处编辑、
 // 模糊匹配（NFKC/智能引号/Unicode 破折号/特殊空白归一）、BOM/行尾还原、unified patch
 // 输出（details.diff/patch/firstChangedLine）、同文件变更互斥队列。
-// 但默认直接操作本地 fs，绕过 llama-studio 的路径沙箱 / approveWriteEdit 审批 / 撤销备份，
+// 但默认直接操作本地 fs，绕过 llama-studio 的路径沙箱 / 撤销备份，
 // 这里用 wrapper 补回。注意：跨批冲突检测（ipc.ts fileSnapshots hash 比对）pi 原生无此
 // 机制，替换后不再生效——换取 pi 更稳的匹配与多编辑能力，属预期取舍。
 async function createPiEditTool(exec: MainToolExecutors, ctx?: CreateMainToolsContext): Promise<ToolDefinition> {
@@ -272,12 +268,7 @@ async function createPiEditTool(exec: MainToolExecutors, ctx?: CreateMainToolsCo
     execute: async (toolCallId, params, signal, onUpdate, pctx) => {
       const input = (params ?? {}) as Record<string, unknown>
       const rawPath = String(input.path ?? input.file_path ?? '')
-      // 1) 审批：approveWriteEdit 开启时要求人工确认
-      const approval = await checkApproval(exec, ctx, 'Edit', { path: rawPath })
-      if (!approval.ok) {
-        return { content: [{ type: 'text', text: JSON.stringify({ error: approval.reason }) }], details: {} }
-      }
-      // 2) 路径沙箱：解析到绝对路径并校验在工作区内（pi 原生不检查，防止越界写盘）
+      // 1) 路径沙箱：解析到绝对路径并校验在工作区内（pi 原生不检查，防止越界写盘）
       if (!rawPath) {
         return { content: [{ type: 'text', text: '❌ 编辑失败：缺少路径参数 path' }], details: {} }
       }
@@ -285,7 +276,7 @@ async function createPiEditTool(exec: MainToolExecutors, ctx?: CreateMainToolsCo
       if (!isPathInWorkspace(abs, baseDir)) {
         return { content: [{ type: 'text', text: `❌ 编辑被拒绝：目标路径不在工作区/应用范围内：${rawPath}` }], details: {} }
       }
-      // 2.5) replace_all 兼容提示：pi 原生要求每个 oldText 唯一，无法表达"全部替换"；
+      // 2) replace_all 兼容提示：pi 原生要求每个 oldText 唯一，无法表达"全部替换"；
       // 若原请求 replace_all=true 且文件中存在多处匹配，直接给出明确错误（而非让 pi 报
       // 一句令人困惑的"必须唯一"，或让模型误以为替换已全部生效）
       if (
@@ -409,7 +400,7 @@ async function createPiBashTool(exec: MainToolExecutors, ctx?: CreateMainToolsCo
     execute: async (toolCallId, params, signal, onUpdate, pctx) => {
       const args = (params ?? {}) as Record<string, unknown>
       // 1) 审批：破坏性命令（del/rm/rmdir/git push 等）要求人工确认
-      const approval = await checkApproval(exec, ctx, 'Bash', args)
+      const approval = await checkApproval(exec, 'Bash', args)
       if (!approval.ok) {
         return { content: [{ type: 'text', text: JSON.stringify({ error: approval.reason }) }], details: {} }
       }
@@ -456,8 +447,6 @@ async function createPiBashTool(exec: MainToolExecutors, ctx?: CreateMainToolsCo
 export interface CreateMainToolsContext {
   /** llama-studio 会话 id（Todo/Task 工具定位任务清单用） */
   sessionId?: string
-  /** 项目开关：Write/Edit 额外要求人工确认 */
-  approveWriteEdit?: boolean
   /** 工作区目录（CodeSearch/AnalyzeDir 的相对路径基准） */
   workspaceDir?: string
   /** 项目绑定的知识库 id（提供时注册 knowledge_search 工具） */
@@ -988,8 +977,6 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
       required: ['file_path', 'content']
     },
     execute: async (args, meta) => {
-      const approval = await checkApproval(exec, ctx, 'Write', args as Record<string, unknown>)
-      if (!approval.ok) return JSON.stringify({ error: approval.reason })
       const file_path = String(args.file_path ?? '')
       const content = String(args.content ?? '')
       // 系统级强制：Write 仅用于新建文件（与 renderer 版本一致）
@@ -1257,7 +1244,7 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
       required: ['path']
     },
     execute: async (args, meta) => {
-      const approval = await checkApproval(exec, ctx, 'Delete', args as Record<string, unknown>)
+      const approval = await checkApproval(exec, 'Delete', args as Record<string, unknown>)
       if (!approval.ok) return JSON.stringify({ error: approval.reason })
       const path = String(args.path ?? '')
       const recursive = args.recursive === true

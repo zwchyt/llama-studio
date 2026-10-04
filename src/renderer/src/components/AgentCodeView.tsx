@@ -45,9 +45,9 @@ import '../styles/agent-code.css'
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║ 区域：模块级常量与工具函数（已全部下沉，本文件不再保留模块级实现）             ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
-// 上下文压缩的常量 / 摘要提示词 / 纯函数（CONDENSE_TRIGGER_RATIO、SUMMARY_PROMPT、
-// serializeMessagesForSummary、buildApiMessagesFull、wrapUntrustedFileContent …）
-// 已抽至 agent-code/utils/condensePrompt.ts。
+// 上下文压缩已由 pi SDK 的原生 compaction 接管（见 piAgentBridge/index.ts 的 settingsManager
+// 与 manager.ts 的 compaction_end 订阅），本文件不再有压缩用的常量与提示词。
+// 附件「不可信数据」围栏（wrapUntrustedFileContent）住在 agent-code/utils/text.ts。
 // 其余纯函数与常量（ID / 路径 / 格式化 / 文本 / KaTeX 公式 / 音频编码 / 扩展名集合 /
 // DOM 辅助 / 共享常量 / Token 估算与上下文裁剪 / Diff 计算 / Markdown 渲染）此前已分别
 // 下沉，完整对照表见 agent-code/README.md「模块索引」。
@@ -155,12 +155,11 @@ export default function AgentCodeView() {
   // ── 界面状态域（面板 / 弹层 / 模型选择器 / 任务卡 / 审批，见 agent-code/hooks/useAgentUiState.ts）──
   let ui!: ReturnType<typeof useAgentUiState>
   const {
-    ctxInlineRef, condenseBtnRef, trajBtnRef, memoryBtnRef,
+    ctxInlineRef, condenseBtnRef, trajBtnRef,
     modelPickerOpen, setModelPickerOpen, modelPickerRef, modelBtnRef,
     treeOpen, setTreeOpen, rightPanelMode, setRightPanelMode, closePanel,
     contextModalOpen, setContextModalOpen,
     trajOpen, setTrajOpen,
-    memoryOpen, setMemoryOpen,
     setTaskModalOpen, planItemsRef,
     setPlanItems, setPlanTitle,
     editingMsgId, setEditingMsgId, editDraft, setEditDraft,
@@ -187,7 +186,6 @@ export default function AgentCodeView() {
   usePopoverDismiss(contextModalOpen, setContextModalOpen, ctxInlineRef, '.agent-card-ctx')
   usePopoverDismiss(condenseOpen, setCondenseOpen, condenseBtnRef, '.agent-card-condense')
   usePopoverDismiss(trajOpen, setTrajOpen, trajBtnRef, '.agent-card-traj')
-  usePopoverDismiss(memoryOpen, setMemoryOpen, memoryBtnRef, '.agent-card-memstore')
 
   // ── 跨域共享 ref（各动作域共用的备份 / 撤销 / 回滚状态）──
   const backupsRef = useRef<Record<string, { path: string; content: string }>>({})
@@ -215,7 +213,7 @@ export default function AgentCodeView() {
     setRightPanelMode, setTreeOpen, setContextModalOpen,
   })
 
-  // ── 会话生命周期 / 工作区同步 / 记忆沉淀（见 agent-code/hooks/useAgentSessionEffects.ts）──
+  // ── 会话生命周期 / 工作区同步（见 agent-code/hooks/useAgentSessionEffects.ts）──
   useAgentSessionEffects({ storedProjects, setAgentProjects, projects: projectsDomain, run, ui, scroll })
 
   // ── 消费「开一个纯聊天会话」的外部请求（模型卡片的「纯聊天」按钮投递）──
@@ -239,11 +237,10 @@ export default function AgentCodeView() {
   // ── 会话动作：队列补写 / 片段引用 / 停止 / 目录 / 重命名（见 agent-code/hooks/useAgentSessionActions.ts）──
   const sessionActions = useAgentSessionActions({ projects: projectsDomain, run, ui, preview: previewDomain, inputDomain })
 
-  // ── 上下文摘要压缩域（自动触发 + 手动触发，见 agent-code/hooks/useAgentCondense.ts）──
+  // ── 手动压缩入口（压缩本身在 pi SDK 里，见 agent-code/hooks/useAgentCondense.ts）──
   let condense!: ReturnType<typeof useAgentCondense>
-  const { condensing, condenseSessionMemory, handleManualCondense } = (condense = useAgentCondense({
-    activeProjectId, activeSessionId, activeSession, updateSessionInProject,
-    loading, apiBaseUrl, runningCard, modelLabel, piReadyRef,
+  const { handleManualCondense } = (condense = useAgentCondense({
+    activeSessionId, activeSession, loading,
   }))
 
   // ── 动作型 /命令 分发域（renderer 侧直接处理，见 agent-code/hooks/useAgentSlashActions.ts）──
@@ -261,12 +258,11 @@ export default function AgentCodeView() {
     projects: projectsDomain,
     inputDomain,
     loading, setLoading, setStreaming, setStreamKind, setThinkDone, setCurToolName, setQueueInfo,
-    apiBaseUrl, runningCard, condensing, slashCommands,
+    apiBaseUrl, runningCard, slashCommands,
     setTaskModalOpen, setPlanTitle, setPlanItems, planItemsRef,
     abortRef, sendingRef, piReadyRef, followUpQueueRef, prevQueueRef,
     appendLiveUserMsgRef, streamingSessionRef, streamStartAtRef, lastRateRef,
     modelLabelRef, backupsRef, thinkingLevelRef,
-    condenseSessionMemory,
     appendQueuedUserMsg: sessionActions.appendQueuedUserMsg,
     queueRemoved: sessionActions.queueRemoved,
     runSlashAction,

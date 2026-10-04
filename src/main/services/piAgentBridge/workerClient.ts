@@ -434,6 +434,8 @@ export const piWorker = {
   abort: (sessionId: string) => sendCmd('abort', { sessionId }),
   dispose: (sessionId: string) => sendCmd('dispose', { sessionId }),
   setThinkingLevel: (sessionId: string, level: unknown) => sendCmd('setThinkingLevel', { sessionId, level }),
+  compact: (sessionId: string, customInstructions?: string) =>
+    sendCmd<{ success: boolean; summary?: string; error?: string }>('compact', { sessionId, customInstructions }),
   undo: (toolCallId: string) => sendCmd<{ success: boolean; path?: string; error?: string }>('undo', { toolCallId }),
   list: () => sendCmd<{ sessionIds: string[] }>('list', {})
 }

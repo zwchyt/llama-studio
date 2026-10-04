@@ -55,7 +55,7 @@ function dropPlaceholders(list: AgentProject[]): AgentProject[] {
 }
 
 /** 编码模式下没有任何项目时的活动工作区：只读哨兵，不进 projects 列表。
-    下游（输入区 / 预览 / 记忆面板等）直接取 activeProject.workspaceDir，故不能给它 undefined。 */
+    下游（输入区 / 预览等）直接取 activeProject.workspaceDir，故不能给它 undefined。 */
 const NO_PROJECT: AgentProject = { id: '', title: '未选择项目', workspaceDir: '', expanded: false, sessions: [], mode: 'code' }
 
 /** 会话的「最后活跃」时间：与侧栏的派生逻辑同一套（agent-session/AgentSessionSidebar.tsx:26
@@ -423,7 +423,7 @@ export function useAgentProjects({ storedProjects }: {
       id: uniqueId('sess'),
       title: `${src.title}（编码）`,
       messages: copied,
-      ...(src.memory ? { memory: { ...src.memory, coveredMsgIds: [...src.memory.coveredMsgIds] } } : {}),
+      ...(src.memory ? { memory: { ...src.memory } } : {}),
     }
     const existing = projects.find(p => !isChatWorkspace(p) && p.workspaceDir === dir)
     let pid: string

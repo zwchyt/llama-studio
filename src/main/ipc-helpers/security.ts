@@ -1,9 +1,9 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║ 安全校验纯函数层（零 electron 依赖，可被单元测试直接导入）                     ║
-// ║ 从 ipc.ts / memoryStore.ts 抽出；修改时必须保持行为等价，                     ║
+// ║ 从 ipc.ts 抽出；修改时必须保持行为等价，                                     ║
 // ║ 回归锁定：tests/audit/security.path.test.ts、security.url.test.ts            ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
-import { join, resolve, relative, isAbsolute } from 'path'
+import { join, resolve } from 'path'
 import { homedir } from 'os'
 import { promises as dnsPromises } from 'dns'
 
@@ -79,19 +79,4 @@ export async function validateUrlAsync(url: string): Promise<void> {
   }
 }
 
-// ── 锚点路径收敛（memoryStore 用）：anchorPath 由模型生成（可被提示注入诱导），
-// 拒绝越出工作区的路径（../、绝对路径、盘符切换）
-export function anchorAbsWithin(dir: string, anchorPath: string): string | null {
-  const abs = resolve(dir, anchorPath)
-  const rel = relative(dir, abs)
-  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null
-  return abs
-}
 
-// 写入侧收敛：越界 anchorPath 直接丢弃（不落库），盘内路径规范化为 / 分隔
-export function sanitizeAnchorPath(dir: string, anchorPath?: string): string | undefined {
-  if (!anchorPath) return undefined
-  const abs = anchorAbsWithin(dir, anchorPath)
-  if (!abs) return undefined
-  return relative(dir, abs).replace(/\\/g, '/')
-}

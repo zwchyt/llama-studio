@@ -140,6 +140,21 @@ export class PiEventAdapter {
       sink.emit({ type: 'run_end' })
       return
     }
+    case 'compaction_end': {
+      // pi 原生压缩完成。lsCoveredCount 是主进程换算出来的「渲染层前缀被摘要替代多少条」
+      // （pi 只认条目 id，而渲染层的消息数组没有条目概念），这里原样透传。
+      const r = ev.result as { summary?: unknown } | undefined
+      const extra = raw as Record<string, unknown>
+      const summary = typeof r?.summary === 'string' ? r.summary : ''
+      sink.emit({
+        type: 'compaction',
+        summary,
+        coveredCount: Number(extra.lsCoveredCount ?? 0),
+        aborted: ev.aborted === true,
+        ...(typeof extra.errorMessage === 'string' ? { errorMessage: extra.errorMessage } : {})
+      })
+      return
+    }
     default:
       return
   }

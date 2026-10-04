@@ -40,6 +40,8 @@ export interface PiAgentCallbacks {
   onEnd?: () => void
   /** 队列变化（steer/followUp）：可用于在 UI 显示待执行指令计数 */
   onQueueUpdate?: (steering: string[], followUp: string[]) => void
+  /** pi 原生压缩完成：摘要正文 + 被替代的渲染层前缀条数（供写回 session.memory） */
+  onCompaction?: (info: { summary: string; coveredCount: number; aborted: boolean; errorMessage?: string }) => void
 }
 
 /**
@@ -102,6 +104,14 @@ class ClientSink implements WorkspaceEventSink {
       }
       case 'run_end':
         this.cb.onEnd?.()
+        return
+      case 'compaction':
+        this.cb.onCompaction?.({
+          summary: e.summary,
+          coveredCount: e.coveredCount,
+          aborted: e.aborted,
+          ...(typeof e.errorMessage === 'string' ? { errorMessage: e.errorMessage } : {})
+        })
         return
       case 'error':
         return

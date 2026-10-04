@@ -17,6 +17,10 @@ export type WorkspaceEvent =
   | { type: 'turn_start'; turnIndex: number }
   | { type: 'turn_end'; turnIndex: number; promptTokens: number; completionTokens: number }
   | { type: 'run_end' }
+  /** pi 原生压缩完成（compaction_end）。summary 是 pi 生成的结构化摘要；
+      coveredCount 由主进程把 pi 的 firstKeptEntryId 换算成渲染层消息数组的下标
+      （渲染层没有 pi 条目概念）；aborted/errorMessage 表示这次压缩没成功。 */
+  | { type: 'compaction'; summary: string; coveredCount: number; aborted: boolean; errorMessage?: string }
   | { type: 'error'; message: string }
 
 export interface WorkspaceEventSink {

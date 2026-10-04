@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import type { AgentSession, ModelRuntime, ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { RemoteEndpoint } from '../../../shared/types'
+import { guardContext } from '../../../shared/contextGuard'
 
 type PiModule = typeof import('@earendil-works/pi-coding-agent')
 
@@ -33,6 +34,16 @@ export interface PiAgentBridgeOptions {
   getExtraBody?: () => Record<string, unknown>
   /** 模型上下文窗口 token 数（供 pi 的 auto-compaction 阈值计算） */
   getContextWindow?: () => number
+  /** 本次请求可用的 prompt token 预算（渲染进程按 n_ctx 扣除输出预留与安全余量后算好）。
+      <=0 或未提供 = 不启用上下文兜底裁剪。见 shared/contextGuard.ts。 */
+  getContextBudget?: () => number
+  /** 是否折叠「同文件重复读取」的旧结果（对应渲染层的 ctxImportanceEnabled 开关） */
+  contextImportanceFold?: boolean
+  /** pi 原生压缩的两个阈值（渲染层按真实 n_ctx 算好传下来）：
+      reserveTokens 决定触发线（contextTokens > contextWindow - reserveTokens 时压缩），
+      同时是摘要请求的输出上限基数（pi 取 0.8×reserveTokens，再与 model.maxTokens 取小）；
+      keepRecentTokens 决定压缩后逐字保留多少。见 shared/types 的 AgentSessionMemory。 */
+  getCompactionTokens?: () => { reserveTokens: number; keepRecentTokens: number }
   /** agent 工作目录 */
   cwd: string
   /** pi 配置目录（放 auth.json/models.json；llama-studio 传自己的目录避免污染用户 ~/.pi） */
@@ -154,6 +165,13 @@ export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promis
   })
   await resourceLoader.reload()
   const sessionManager = SessionManager.inMemory(cwd)
+  // pi 原生压缩的两个阈值：默认 16384/20000 是按云端大窗口模型定的，本机 GGUF 常见只有
+  // 4k-24k 上下文，照默认值要么永不触发、要么一上来把整段历史压成一坨，所以必须按真实
+  // n_ctx 显式覆盖（渲染层算好传下来，与 contextGuard 用的预算同一口径）。
+  // 取值必须是 ≥0 的整数：SettingsManager 读到非法值会直接抛（settings-manager.js:611/620）。
+  const compTokens = options.getCompactionTokens?.()
+  const reserveTokens = Math.max(512, Math.floor(compTokens?.reserveTokens ?? 1024))
+  const keepRecentTokens = Math.max(600, Math.floor(compTokens?.keepRecentTokens ?? 1500))
 
   const { session } = await createAgentSession({
     cwd,
@@ -165,14 +183,17 @@ export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promis
     thinkingLevel: 'off',
     resourceLoader,
     sessionManager,
-    // 禁用 pi 的 auto-compaction：llama-studio 自己管理历史（持久化 + 手动 condense +
-    // 每次重建会话注入完整历史），pi 的压缩只会多发一轮摘要请求且结果不落盘。
-    // 同时关掉图片自动缩放：它由 photon（WASM）实现，而 photon_rs_bg.wasm 没随
+    // 打开 pi 的原生 auto-compaction：触发用真实 usage（不是字符估算）、轮末与发 prompt 前
+    // 各查一次、溢出还能「省略失败回复 → 压缩 → 重跑该轮」，这些是自研那套没有的。
+    // 前提：历史必须走 SessionManager 条目注入（见 manager.ts 的 appendMessage），否则
+    // prepareCompaction 只读 getBranch()，对注入的历史完全看不见。
+    // 摘要正文与边界由 manager.ts 的 compaction_end 订阅镜像回会话存档（pi 侧是 inMemory，不落盘）。
+    // 图片自动缩放仍然是关的：它由 photon（WASM）实现，而 photon_rs_bg.wasm 没随
     // piWorker.mjs 一起打包，loadPhoton 找不到 wasm 只会返回 null，于是 processImage
     // 对任何图片都判 ok:false —— 用户发的图在拼请求体之前就被整体丢弃，模型只看得到
     // 一句「Image omitted」提示。原样透传即可（llama.cpp 官方 webui 也直接发原始字节）。
     settingsManager: SettingsManager.inMemory({
-      compaction: { enabled: false },
+      compaction: { enabled: true, reserveTokens, keepRecentTokens },
       images: { autoResize: false }
     }),
     customTools,
@@ -180,6 +201,22 @@ export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promis
     // （小写 read/bash/edit/write/grep/find/ls）因此不会注册/激活。
     tools: toolNames
   })
+
+  // ── 上下文兜底裁剪（机械、不经 LLM）────────────────────────────────────────
+  // 挂 pi 的 transformContext：每次请求都会调，且排在 pi 自己的投影（隐藏声明 /
+  // 强制 system prompt）之后、convertToLlm 之前 —— 是「请求体成形前的最后一道门」，
+  // 因此这里的判断和实际发出去的字节最接近。
+  // 为什么必须在这里而不在渲染进程：一轮 agent 内部可能连打几十个工具结果，那段增长
+  // 活在 pi 的会话状态里，渲染进程的历史压缩（condense 只压最近 N 轮之外）够不着；
+  // 少了这道门，唯一结局就是 llama-server 400 且本轮丢失。
+  const budget = options.getContextBudget?.() ?? 0
+  if (budget > 0) {
+    const prevTransform = session.agent.transformContext
+    session.agent.transformContext = async (messages, signal) => {
+      const projected = prevTransform ? await prevTransform(messages, signal) : messages
+      return guardContext(projected, budget, options.contextImportanceFold !== false)
+    }
+  }
 
   options.onReady?.(session)
 
