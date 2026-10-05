@@ -114,6 +114,14 @@ export interface MainToolExecutors {
   browserShow?: (input: BrowserShowInput) => Promise<BrowserShowResult>
   /** 截取当前预览页（主进程直接对 webview guest 截图） */
   browserCapture?: (opts: BrowserCaptureOptions) => Promise<BrowserCaptureResult>
+  /** 读工作区里的一张图片（view_image 工具）：校验 + 边界 + 大小上限都在主进程实现里。
+      刻意**非可选且异步**：两个实现方（ipcExecutors 的生产实现、manager 的 worker RPC 存根）
+      都必须提供；worker 侧存根经 RPC 返回 Promise，声明成同步会让它拿到 Promise 当结果对象用
+      （res.ok 恒为 undefined → 静默退化成「图片读取未启用」）。原先「可选 + 同步」两个标记
+      同时藏住了漏接线与形态不一致，编译器一声没吭。 */
+  readImage(filePath: string): Promise<
+    { ok: true; base64: string; mimeType: string; bytes: number; path: string } | { ok: false; error: string }
+  >
   /** 破坏性操作审批（由 IPC 层提供实现；未提供则放行） */
   approve?: (toolName: string, args: Record<string, unknown>) => Promise<boolean>
   /** 记录撤销备份（content=null 表示原文件不存在，撤销时删除文件） */
@@ -1574,5 +1582,47 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     }
   })
 
-  return [getDatetime, webSearch, webSearchBing, fetchWebpage, ...(knowledgeSearch && knowledgeRead ? [knowledgeSearch, knowledgeRead] : []), read, bash, write, edit, glob, grep, ripgrep, listDir, deleteTool, todoWrite, taskGet, taskList, askUserQuestion, reflect, codeSearch, analyzeDir, browserShow, browserScreenshot]
+  // ── view_image：把工作区里的一张图片读进上下文 ──
+  // 与 browser_screenshot 走同一条图片回灌通道（images: [{ data, mimeType }]），
+  // 区别只是取图来源：截图来自 webview guest，本工具来自磁盘文件。
+  const viewImage: ToolDefinition = make({
+    name: 'view_image',
+    label: '查看图片',
+    description:
+      '读取工作区里的一张图片文件（png / jpg / jpeg / gif / webp / bmp），图片会作为图片附件出现在聊天里，你可以直接看到画面内容。' +
+      '只用于工作区磁盘上的图片；用户直接在消息里附加的图片已经内联可见，不要用本工具去读。' +
+      '用于查看设计稿、已有截图、图片/图表/SVG 的导出结果。看 HTML 页面渲染效果请用 browser_screenshot；读文本文件请用 Read。',
+    parameters: {
+      type: 'object',
+      properties: {
+        file_path: { type: 'string', description: '图片文件路径，相对工作区（如 "assets/logo.png"）或绝对路径。' }
+      },
+      required: ['file_path']
+    },
+    promptGuidelines: [
+      '## 查看图片（view_image）',
+      '- 用户在本轮消息里**直接附加 / 粘贴 / 拖入**的图片已经内联在你眼前，直接看即可，**不要**再调 view_image 去读它——它不在工作区里，读必然失败。',
+      '- 要看一张已经存在于工作区的图片（设计稿 / 截图 / 导出的图），才用 view_image(file_path) 读进上下文。',
+      '- 本工具被限制在工作区内：工作区外的路径会直接失败（「路径超出当前工作区范围」）。遇到这个错误就换工作区内的图，不要反复重试或猜路径。',
+      '- 看 HTML 页面渲染出来的效果用 browser_screenshot；读文本文件用 Read。三者不要混用。',
+      '- 只传路径，不要把图片转成 base64 塞进参数。',
+    ],
+    execute: async (args) => {
+      // readImage 在 worker 侧是 RPC 存根（异步），必须 await —— 直接当同步结果用会拿到 Promise，
+      // res.ok 恒为 undefined，工具静默失败（这正是之前漏接线时的表现）。
+      const res = await exec.readImage(String(args.file_path ?? ''))
+      if (!res.ok) return JSON.stringify({ ok: false, error: res.error })
+      // 与 browser_screenshot 一致：文本只给元数据，图片走 images 块；
+      // 模型不支持图像输入时不带 images（塞进去也看不见，只会白占字节）。
+      return {
+        text: JSON.stringify({
+          ok: true, path: res.path, mimeType: res.mimeType, bytes: res.bytes,
+          note: '图片已作为附件显示在聊天中'
+        }),
+        ...(ctx?.vision === true ? { images: [{ data: res.base64, mimeType: res.mimeType }] } : {})
+      }
+    }
+  })
+
+  return [getDatetime, webSearch, webSearchBing, fetchWebpage, ...(knowledgeSearch && knowledgeRead ? [knowledgeSearch, knowledgeRead] : []), read, bash, write, edit, glob, grep, ripgrep, listDir, deleteTool, todoWrite, taskGet, taskList, askUserQuestion, reflect, codeSearch, analyzeDir, browserShow, browserScreenshot, viewImage]
 }

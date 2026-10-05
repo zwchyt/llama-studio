@@ -78,6 +78,11 @@ export function createIpcExecutors(): MainToolExecutors {
     // 截图纯主进程即可完成（webview guest 由主进程持有）；browser_show 要渲染进程的
     // 浏览器面板配合导航，由 workerClient 覆写该执行器（与 askUser/approve 同一模式）。
     browserCapture: (opts) => captureBrowser(opts),
+    // view_image：读工作区图片 → base64（校验/边界/大小上限都在 ipc.ts 的实现里）
+    readImage: async (filePath) => {
+      if (!ipcInternal.handleReadImage) return { ok: false, error: '图片读取未就绪' }
+      return ipcInternal.handleReadImage(filePath)
+    },
     // 默认实现：无窗口通道时由 piAgentIpc 覆写为跨进程弹窗
     askUser: async (questions) =>
       JSON.stringify({

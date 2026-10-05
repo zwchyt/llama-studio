@@ -25,6 +25,9 @@ function getPi(): Promise<PiModule> {
 export const LLAMA_STUDIO_PROVIDER_ID = 'llama-studio'
 export const LLAMA_STUDIO_MODEL_ID = 'local-model'
 
+/** 模型输出上限的兜底值（渲染层未下发时用）。与渲染层 agentConfig.maxOutput 的默认值一致 */
+const DEFAULT_MAX_OUTPUT_TOKENS = 4096
+
 export interface PiAgentBridgeOptions {
   /** 返回当前会话绑定的本地模型端口（llama-server 监听端口）；undefined = 无可用模型 */
   getPort: () => number | undefined
@@ -44,6 +47,10 @@ export interface PiAgentBridgeOptions {
       同时是摘要请求的输出上限基数（pi 取 0.8×reserveTokens，再与 model.maxTokens 取小）；
       keepRecentTokens 决定压缩后逐字保留多少。见 shared/types 的 AgentSessionMemory。 */
   getCompactionTokens?: () => { reserveTokens: number; keepRecentTokens: number }
+  /** 模型的输出上限（token）。必须与「实际发出的 max_tokens」同口径 —— pi 用它判断
+      「回复是不是被上下文挤断了」（isRecoverableLength: output < model.maxTokens），
+      命中就压缩 + 重跑该轮。渲染层传项目的 maxOutput（与兜底预算 / chatStream 同一口径）。 */
+  getMaxOutputTokens?: () => number
   /** agent 工作目录 */
   cwd: string
   /** pi 配置目录（放 auth.json/models.json；llama-studio 传自己的目录避免污染用户 ~/.pi） */
@@ -108,6 +115,13 @@ export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promis
   const ep = options.endpoint
   if (!port && !ep) throw new Error('未选择可用模型（既没有运行中的服务，也没有填写端点）')
   const contextWindow = ep?.contextWindow ?? options.getContextWindow?.() ?? 128000
+  // 模型输出上限：必须与「实际发出的 max_tokens」同口径。pi 用它判断「回复是不是被
+  // 上下文挤断了」—— isRecoverableLength 的条件是 stopReason='length' 且 output 小于
+  // model.maxTokens，命中就「压缩 + 重跑该轮」。原先这里硬编码 8192，而实际发出的
+  // max_tokens 会被 clampMaxTokensToContext 夹到 ≤8192，于是上下文一过 8192，
+  // 任何一次撞上限的回复都被误判成「被上下文挤断」→ 白烧一次摘要请求 + 白跑一轮重试。
+  // 与渲染层 maxOutput 对齐后，恢复压缩只在真被夹到时（16k 下 >12288）才触发。
+  const maxOutputTokens = Math.max(1, Math.floor(options.getMaxOutputTokens?.() ?? DEFAULT_MAX_OUTPUT_TOKENS))
   const modelId = ep?.modelId?.trim() || LLAMA_STUDIO_MODEL_ID
 
   const modelRuntime = await getModelRuntime(agentDir)
@@ -136,7 +150,7 @@ export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promis
         input: (ep ? ep.vision === true : options.vision) ? ['text', 'image'] : ['text'],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow,
-        maxTokens: 8192,
+        maxTokens: maxOutputTokens,
         ...(openAiStyle ? { compat: { supportsUsageInStreaming: true } } : {}),
         ...(options.getExtraBody ? { samplingParams: options.getExtraBody() } : {})
       }

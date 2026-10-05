@@ -197,6 +197,8 @@ export function AgentInputArea({
   // 端点本身在「外部端点」页管理，下拉里只留一个跳转入口。
   const modelEndpoints = useStore(s => s.modelEndpoints)
   const setView = useStore(s => s.setView)
+  // 历史压缩中（pi 原生压缩，手动 / 自动都置位）：驱动输入框上方的提示条
+  const compacting = useStore(s => s.compacting)
   // 通用模式收掉「选择文件」（工作区文件选择器）：若切换时它正开着，先关掉再收按钮，
   // 否则切回编码模式会看到上次遗留的弹层自己冒出来。
   useEffect(() => {
@@ -435,11 +437,16 @@ export function AgentInputArea({
             } else if (loading) {
               kind = 'running'; text = '准备中…'; orbState = 'connecting'
             }
+            // 压缩历史期间让出文字位：pi 的轮间自动压缩发生在工具批次结束之后、下一轮开始之前，
+            // 而 streamKind 只在整轮结束才归 idle —— 不抑制的话这里会停在上一阶段的
+            // 「工具调用中」，与上方的「正在压缩历史」并列显示，看起来自相矛盾。
+            // 审批态例外：它是阻塞性的，必须照常显示。
+            const suppressText = compacting && !approvalReq
             return (
               <div className={`agent-status-bar agent-status-bar--${kind}`}>
                 <ThinkingOrb state={orbState} size={20} theme={orbTheme} paused={false} className="agent-status-orb" aria-label={text} />
-                {kind === 'running' && name && <span className="agent-status-bar-name">{name}</span>}
-                {kind === 'running' && <span className="agent-status-bar-text">{text}</span>}
+                {!suppressText && kind === 'running' && name && <span className="agent-status-bar-name">{name}</span>}
+                {!suppressText && kind === 'running' && <span className="agent-status-bar-text">{text}</span>}
               </div>
             )
           })()}

@@ -373,7 +373,7 @@ const fullApi = {
   windowClose: () => ipcRenderer.invoke('window-close'),
   // ── pi-agent（pi SDK 驱动的 agent 会话）──
   piAgent: {
-    create: (opts: { sessionId: string; port: number; endpoint?: RemoteEndpoint; cwd: string; contextWindow?: number; contextBudget?: number; contextImportanceFold?: boolean; compactionReserveTokens?: number; compactionKeepRecentTokens?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; vision?: boolean; projectSystemPrompt?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => ipcRenderer.invoke('pi-agent-create', opts),
+    create: (opts: { sessionId: string; port: number; endpoint?: RemoteEndpoint; cwd: string; contextWindow?: number; contextBudget?: number; contextImportanceFold?: boolean; compactionReserveTokens?: number; compactionKeepRecentTokens?: number; maxOutputTokens?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; vision?: boolean; projectSystemPrompt?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => ipcRenderer.invoke('pi-agent-create', opts),
     warmup: () => ipcRenderer.invoke('pi-agent-warmup'),
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-prompt', sessionId, text, images),
     steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => ipcRenderer.invoke('pi-agent-steer', sessionId, text, images),
@@ -383,6 +383,11 @@ const fullApi = {
       ipcRenderer.invoke('pi-agent-compact', sessionId, customInstructions) as Promise<{ success: boolean; summary?: string; error?: string }>,
     abort: (sessionId: string) => ipcRenderer.invoke('pi-agent-abort', sessionId),
     dispose: (sessionId: string) => ipcRenderer.invoke('pi-agent-dispose', sessionId),
+    // view_image 工具用：把工作区里的一张图片读成 base64（校验/边界/大小上限都在主进程）
+    readImage: (filePath: string) =>
+      ipcRenderer.invoke('read-image', filePath) as Promise<
+        { ok: true; base64: string; mimeType: string; bytes: number; path: string } | { ok: false; error: string }
+      >,
     setThinkingLevel: (sessionId: string, level: ThinkingLevel) => ipcRenderer.invoke('pi-agent-set-thinking-level', sessionId, level),
     list: () => ipcRenderer.invoke('pi-agent-list'),
     onEvent: (cb: (sessionId: string, event: unknown) => void) => {

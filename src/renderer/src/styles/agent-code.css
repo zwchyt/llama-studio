@@ -154,10 +154,6 @@
 
 .chat-input-area {
   flex-shrink: 0;
-
-  /* 与对话同宽：消息行是 max-width:860px 居中（见 .chat-msg），输入区原来固定 54px 内缩，
-     会话栏一宽过 860px 输入框就比对话宽出一截；让内缩跟着居中留白一起长，窄栏时退化成 54px 原样 */
-  --chat-input-inset: calc(54px + max(0px, (100% - 860px) / 2));
   padding: 10px var(--chat-input-inset);
   display: flex;
   flex-direction: column;
@@ -1591,6 +1587,10 @@ html.is-panel-resizing .agent-think-body .table-node {
   margin: 8px;
   border-radius: var(--radius, 10px);
   border: 1.5px solid var(--border-strong);
+  /* 与对话同宽：消息行是 max-width:860px 居中（见 .chat-msg），输入区原来固定 54px 内缩，
+     会话栏一宽过 860px 输入框就比对话宽出一截；让内缩跟着居中留白一起长，窄栏时退化成 54px 原样。
+     定义在本层（而不是 .chat-input-area 上）是为了让同为直接子元素的压缩提示条也能对齐输入框。 */
+  --chat-input-inset: calc(54px + max(0px, (100% - 860px) / 2));
 }
 
 /* ── 项目 / 会话列表 ──
@@ -3173,6 +3173,15 @@ html.is-panel-resizing .agent-think-body .table-node {
   --tool-accent: #3949ab;
 }
 
+/* 查看图片：直接取文件树里图片文件的图标色（utils/fileIcon.ts 的 #a074c4）——
+   「图片文件什么色，读它的工具就什么色」，语义一眼对上；
+   该色目前没有任何工具在用，也不会跟紫罗兰系（view_tool #9333ea / TodoWrite #a855f7）混淆：
+   它是低饱和的藕紫，和那两个高饱和紫不是一个调。
+   注意：工具卡的类名是 `tool-${名字.toLowerCase()}`，下划线原样保留，所以这里是 tool-view_image。 */
+.agent-tool-call.tool-view_image {
+  --tool-accent: #a074c4;
+}
+
 /* 失败态整行转红：覆盖工具色变量，头部文字/图标/路径按钮随之变红，扫视时可直接定位出错步骤 */
 .agent-tool-call.failed {
   --tool-accent: var(--danger);
@@ -3378,6 +3387,19 @@ html.is-panel-resizing .agent-think-body .table-node {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+/* 工具执行时长（elapsed）：并入卡头 meta 区、紧邻状态徽标。原来是卡片上方独立一行，
+   现改为内联，让工具卡折叠态严格是一行；配色/字体沿用思考段折叠头与批头的
+   橙色等宽标签约定（11px mono / #d97c00 / tabular-nums），三处时长形态一致。 */
+.agent-tool-call-dur {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
+  color: #d97c00;
+  user-select: none;
 }
 
 .agent-tool-call-status {
@@ -3876,17 +3898,6 @@ html.is-panel-resizing .agent-think-body .table-node {
 }
 
 /* 工具卡独立时间标签：卡片上方，实色 #d97c00（橙）为最高层级 */
-.agent-tool-time {
-  margin-bottom: 4px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  font-family: var(--font-mono, monospace);
-  font-variant-numeric: tabular-nums;
-  color: #d97c00;
-  user-select: none;
-}
-
 .agent-tool-diffstat {
   display: inline-flex;
   align-items: center;
@@ -4177,6 +4188,7 @@ html.is-panel-resizing .agent-think-body .table-node {
 
 /* 失败态结果块：红色左边框 + 淡红底，展开后快速定位错误输出（覆盖普通 pre 与带行号两种形态） */
 .agent-tool-call.failed .agent-tool-result-pre,
+.agent-tool-call.failed .agent-tool-term-out,
 .agent-tool-call.failed .agent-tool-result .agent-tool-lined {
   border-left: 3px solid var(--danger);
   background: color-mix(in srgb, var(--danger) 5%, var(--bg));
@@ -5754,6 +5766,76 @@ html.is-panel-resizing .agent-think-body .table-node {
   overflow-y: auto;
 }
 
+/* ── 压缩记录列表（弹窗下半部分）──
+   每次压缩一行：序号 / 时间 / 触发来源 / 覆盖条数与 token 前后 / 成败。
+   只放元数据，不放摘要全文 —— pi 是滚动压缩，每份摘要都包含它之前的全部内容，
+   逐次列出只会是一堆层层重复的长文。真正的价值是「压了几次、什么触发、哪次失败了」。 */
+.agent-condense-log {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agent-condense-log-title {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.agent-condense-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+}
+
+.agent-condense-log-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* 失败行：整行走 danger 着色，扫一眼就能定位到出问题的那次 */
+.agent-condense-log-row.is-error {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+  border-radius: 3px;
+}
+
+/* 序号与时间用等宽 + tabular-nums：多行之间数字列能对齐 */
+.agent-condense-log-idx,
+.agent-condense-log-time {
+  flex: none;
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.agent-condense-log-reason {
+  flex: none;
+}
+
+/* 数值行占满剩余宽度；失败原因过长时省略，完整内容在 title 悬停里 */
+.agent-condense-log-num,
+.agent-condense-log-err {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-condense-log-err {
+  font-family: var(--font);
+}
+
 .agent-condense-result {
   font-size: 12px;
   color: var(--text);
@@ -6069,19 +6151,45 @@ html.is-panel-resizing .agent-think-body .table-node {
      该优化对高度均匀的列表有效，对本场景（高度方差极大）本质不适用，故整体关闭。 */
 }
 
-/* 历史压缩中的顶部轻量提示 */
-.agent-code-view .chat-messages .agent-condensing {
+/* ── 历史压缩提示条（输入框上方）──
+   压缩开始时出现、结束自动消失；手动与自动共用同一条信号（pi 的 compaction_start/end）。
+   形态：一条发丝线，中间被「小圆点 + 文字」打断 —— 左右两条线由 ::before/::after 撑开。
+   脉冲复用状态栏的 agent-statusline-pulse（1.6s），不引入新节奏。 */
+.agent-compacting-bar {
+  /* .agent-code-chat 的直接子元素：会话区底部、输入框上方。
+     内缩共用 --chat-input-inset，左右边缘与输入框严格对齐 */
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 0 16px;
-  padding: 6px 10px;
-  font-size: 12px;
-  color: var(--text-muted);
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  align-self: flex-start;
+  gap: 8px;
+  padding: 4px var(--chat-input-inset) 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.agent-compacting-bar::before,
+.agent-compacting-bar::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border);
+}
+
+/* 小圆点用「进行中」的橙（与思考时长 / 工具耗时同色） */
+.agent-compacting-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #d97c00;
+  animation: agent-statusline-pulse 1.4s ease-in-out infinite;
+}
+
+.agent-compacting-text {
+  flex: none;
+  font-weight: 500;
+  animation: agent-statusline-pulse 1.6s ease-in-out infinite;
 }
 
 /* 会话顶部的历史摘要气泡：与消息区左右内边距对齐 */
@@ -6246,6 +6354,11 @@ html.is-panel-resizing .agent-think-body .table-node {
   margin: 0;
   background: transparent;
   max-width: 100%;
+  /* 排除出浏览器的滚动锚点候选：整轮结束时这个容器会在 0.5s 内从几千像素收缩到 0，
+     若它被选为锚点，浏览器会每帧改 scrollTop 去"稳住"它，与 app 自己的滚动管理
+     （scrollToBottom / 流式贴底 pin）抢同一个 scrollTop —— 表现就是收起瞬间的画面抖动。
+     排除后锚点落到它下面的最终正文气泡上：正文保持不动，链在它上方滑走。 */
+  overflow-anchor: none;
 }
 
 /* 头部按钮：去框后即一行状态文字，hover 用透明度反馈可点击 */
@@ -6530,18 +6643,6 @@ html.is-panel-resizing .agent-think-body .table-node {
   min-width: 0;
 }
 
-/* 思考段独立时间标签：段上方，与工具卡时间标签同色 #d97c00（统一实色，不透明分层） */
-.agent-think-time {
-  margin-bottom: 2px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  font-family: var(--font-mono, monospace);
-  font-variant-numeric: tabular-nums;
-  color: #d97c00;
-  user-select: none;
-}
-
 /* ── 链内思考段独立折叠块（嵌套折叠）──
    每个思考段一个可收起/展开子块：完成段默认收起（点击展开阅读），流式段自动展开、
    结束后自动收起；折叠头沿用思考段时间标签的橙色等宽风格，流式段标签转次要色。
@@ -6610,12 +6711,15 @@ html.is-panel-resizing .agent-think-body .table-node {
   background: var(--text-muted);
 }
 
-/* 过程正文段（链内阶段性正文输出）：文字用主文字色（近黑），比弱化的思考文本
-   （次要色）和彩色工具标签更醒目——链内主次层级：过程正文 > 思考文本；
-   正文内容比思考更接近结论，视觉上优先 */
+/* 过程正文段（链内阶段性正文输出）：只用主文字色（近黑）建立层级，不加字重。
+   链内主次靠颜色已经很分明（--text #0a0a0a vs 思考文本 --text-secondary #6b6b6b），
+   再叠一档 600 有两个副作用：
+     ① 段内的 `**加粗**`（.agent-think-body strong = 700）与周围只差一档，肉眼几乎看不出 ——
+        而加粗正是模型标重点的手段；
+     ② 过程正文（600）比最终正文（.chat-msg-markdown = 400）还重，层级反了。
+   与最终正文的区分交给容器本身（链内 vs 独立气泡），不靠字重。 */
 .agent-think-prose {
   color: var(--text);
-  font-weight: 600;
 }
 
 /* 思考块 pending 占位（首 token 未到 / 模型加载上下文中）：三点跳动 + 等待文案 */
@@ -6718,6 +6822,57 @@ html.is-panel-resizing .agent-think-body .table-node {
   font-size: 11px;
   line-height: 1.5;
   color: var(--text);
+}
+
+/* ── 链内「批」（连续的思考 + 工具）折叠块 ───────────────────────────────
+   批头复用思考段折叠头的橙色等宽标签规格（.agent-think-fold-label / .agent-think-grid），
+   批体复用 .agent-think-body 的左竖线缩进——表示「批内时间线」比链内条目再深一层。
+   批内条目原样复用 .agent-think-item（间距 10px），不新增条目级样式。 */
+.agent-think-batch {
+  margin-top: 10px;
+  min-width: 0;
+}
+
+.agent-think-batch:first-child {
+  margin-top: 0;
+}
+
+.agent-think-batch-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
+  color: #d97c00;
+  user-select: none;
+  transition: opacity var(--transition);
+}
+
+.agent-think-batch-head:hover {
+  opacity: .8;
+}
+
+/* 折叠动画：与容器级 .agent-think-anim / 链内 .agent-think-fold-anim 同构的
+   裁剪层 + 内容层分离方案，时长与曲线同样取自 --think-collapse-dur / --think-collapse-ease */
+.agent-think-batch-anim {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height var(--think-collapse-dur, 0.5s) var(--think-collapse-ease, cubic-bezier(0.4, 0, 0.2, 1));
+}
+
+/* 批体内容层：左竖线缩进 + 缩进量，与 .agent-think-body 同款；条目间距由 .agent-think-item 提供 */
+.agent-think-batch-body {
+  margin-left: 6px;
+  border-left: 2px solid var(--border-strong);
+  padding: 4px 0 2px 12px;
+  min-width: 0;
 }
 
 /* 思考链面板内的链元素（思考续段 / 工具卡组）：与思考文本及彼此之间显式留距。
@@ -8116,11 +8271,14 @@ html.theme-dark .agent-img-pill {
 }
 
 /* 全屏预览层：fixed 定位，点任意处关闭（Esc 由消息行的键盘处理兜底不了，故只做点击关闭） */
+/* 遮罩用「浅色渐变蒙版」而不是黑色半透明：截图本身多为浅底，
+   压在黑底上反差过大、边缘像被挖掉一块；白色渐变保留一点透明度做蒙版层次，
+   又不取纯白（纯白会让截图与遮罩糊成一片、看不出图到哪里为止）。 */
 .user-msg-lightbox {
   position: fixed;
   inset: 0;
   z-index: 9999;
-  background: rgba(0, 0, 0, 0.75);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .985));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -8128,11 +8286,18 @@ html.theme-dark .agent-img-pill {
   cursor: zoom-out;
 }
 
+/* 深色主题：同构地换成深色渐变蒙版，避免深色界面里突然闪一块白 */
+html.theme-dark .user-msg-lightbox {
+  background: linear-gradient(180deg, rgba(0, 0, 0, .82), rgba(0, 0, 0, .94));
+}
+
 .user-msg-lightbox img {
   max-width: 100%;
   max-height: 100%;
   border-radius: 8px;
   object-fit: contain;
+  /* 浅色蒙版下截图没有边界感，补一圈描边把图框出来 */
+  border: 1px solid var(--border-strong);
 }
 
 /* ── 用户消息里的文件附件卡片（PDF / DOCX / txt / 代码…，两个模式都渲染）──
@@ -11242,33 +11407,25 @@ html.theme-dark .agent-img-pill {
 }
 
 /* ── 浏览器预览工具卡片（browser_show 参数行 / browser_screenshot 截图结果）──
-   截图缩略图与放大层复用 .user-msg-image / .user-msg-lightbox（用户消息附件那套）。 */
-.agent-tool-shot {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.agent-tool-shot.err {
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
+   参数区与结果区都走通用容器（.agent-tool-io-group / .agent-tool-result），
+   这里只放截图专属的两件：缩略图 .agent-tool-shot-img、尺寸胶囊 .agent-tool-shot-dims；
+   放大层复用全屏遮罩 .user-msg-lightbox。 */
+/* 工具卡里的页面截图：等比例缩到卡片宽度内，描边成框（与其他工具同一套框线语言） */
+.agent-tool-shot-img {
+  display: block;
+  max-width: 320px;
+  max-height: 220px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 6px 8px;
+  background: var(--bg);
+  cursor: zoom-in;
 }
 
-.agent-tool-shot-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--muted);
-  min-width: 0;
+/* view_image 工具卡里的图片：这张图就是该卡的主体（不像截图卡只是两段之一），
+   给比截图缩略图更宽的上限，仍沿用同一套描边框线语言 */
+.agent-tool-img-view {
+  max-width: 420px;
+  max-height: 320px;
 }
 
 .agent-tool-shot-dims {
@@ -11311,11 +11468,6 @@ html.theme-dark .agent-img-pill {
   --code-gutter: var(--text-secondary);
   --code-gutter-dim: color-mix(in srgb, var(--text-secondary) 78%, var(--code-bg));
   --text-dim: #7c7c7c;
-  /* 终端提示行：命令块在两种主题下都保持深色（与 .agent-tool-bash-cmd 的硬编码一致，
-     是「这是一次终端执行」的身份标记），只有下方输出块跟随主题 */
-  --bash-bg: #16161e;
-  --bash-fg: #e2e8f0;
-  --bash-prompt: #fb923c;
 }
 
 html.theme-dark {
@@ -11446,6 +11598,42 @@ html.theme-dark {
 }
 
 /* 参数键值对：键弱化、值加强；两对之间用发丝线分隔，比 `·` 更能表达「这是两个独立参数」 */
+/* ── 结果键值横向流（.agent-tool-kv-*）──
+   浏览器预览类工具的结果字段个数不定（3~6 个），用参数区那种「一行一个字段」的三列网格
+   会竖向拉得很长；这里横向排开、宽度不够才换行，卡片高度稳定在一两行内。
+   描边面语言与参数区一致（同样的 border / radius / 3% 底），只是排布方向不同。 */
+.agent-tool-kv-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+
+.agent-tool-kv-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.agent-tool-kv-key {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+
+.agent-tool-kv-val {
+  min-width: 0;
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .agent-tool-io-kv {
   font-family: var(--font-mono, monospace);
   font-size: 11px;
@@ -11473,6 +11661,7 @@ html.theme-dark {
   padding-top: 0;
   border-top: none;
 }
+
 
 /* ── 结果头右侧：列说明 + 展开开关 ── */
 .agent-tool-result-actions {
@@ -11592,6 +11781,15 @@ html.theme-dark {
 
 .agent-tool-code.is-clipped.expanded .agent-tool-code-row:nth-child(n + 13) {
   display: flex;
+}
+
+/* 展开「读取的全部剩余行」时给结果框限高 + 内部滚动：
+   .agent-tool-code 本身只有 overflow:auto、没有高度上限，展开后会把整张工具卡竖向拉长；
+   这里只让结果框自己滚（上限 360px，与 .agent-tool-result-pre / .agent-tool-lined 同档），
+   卡片高度因此稳定，行号列的 sticky 在滚动容器内照常生效。 */
+.agent-tool-code.is-clipped.expanded {
+  max-height: 360px;
+  overflow-y: auto;
 }
 
 /* 内容被截断时的说明：实线发丝框，比虚线更克制 */
@@ -11716,41 +11914,40 @@ html.theme-dark {
   background: transparent;
 }
 
-/* ── Bash：命令与输出合成一个「终端会话块」──
-   提示行（工作目录 + $ + 命令）与输出同处深色底，读起来就是一次终端会话。
-   注意：命令块在两种主题下都保持深色（与 .agent-tool-bash-cmd 的硬编码一致，
-   是「这是一次终端执行」的身份标记），只有输出块跟随主题。 */
-.agent-tool-term {
+/* ── Bash：执行命令 / 输出结果 两个独立区块 ──
+   命令是工具的参数（command 字段），走「描边面」——与 .agent-tool-io-group 同款
+   （border + radius + 3% 底）；输出是内容，走「填充面」（--code-bg）。
+   两段各由 .agent-tool-result 的标签头领起，不再共用一个深色终端框：
+   深色底原本是为了在同一个框里把命令条与输出区分开，拆成两块后不再需要。 */
+.agent-tool-term-cmd {
+  padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.agent-tool-term-cmd {
-  padding: 7px 10px 6px;
-  border-bottom: 1px solid color-mix(in srgb, var(--bash-fg, #e2e8f0) 10%, transparent);
-  background: var(--bash-bg, #16161e);
-  color: var(--bash-fg, #e2e8f0);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  color: var(--text);
   font-family: var(--font-mono, monospace);
   font-size: 11px;
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.agent-tool-term-cmd .cwd {
-  color: color-mix(in srgb, var(--bash-fg, #e2e8f0) 50%, transparent);
+  /* 长命令（多行脚本）在框内滚动，不把卡片拉长 */
+  max-height: 180px;
+  overflow-y: auto;
 }
 
 .agent-tool-term-cmd .ps {
-  color: var(--bash-prompt, #fb923c);
+  color: #d97c00;
   font-weight: 700;
   user-select: none;
 }
 
+/* 输出结果：填充面 + 限高内部滚动（上限 360px，与 .agent-tool-result-pre / Read 结果框同档）。
+   原来是嵌在 .agent-tool-term 里的无边框内容块，现在独立成块，自带描边与圆角。 */
 .agent-tool-term-out {
   margin: 0;
   padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   background: var(--code-bg);
   color: var(--text);
   font-family: var(--font-mono, monospace);
@@ -11758,6 +11955,8 @@ html.theme-dark {
   line-height: 1.7;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  max-height: 360px;
+  overflow-y: auto;
 }
 
 /* 流式输出光标：比静态的「（实时）」更能说明还在出 */

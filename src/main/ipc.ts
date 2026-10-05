@@ -59,6 +59,9 @@ export interface IpcInternalHandlers {
   handleSaveBrowserScreenshot: (png: Buffer) => { ref?: string; error?: string }
   /** 把模型给的路径解析成工作区内的 HTML 文件绝对路径（浏览器预览用；圈死在工作区内） */
   handleResolvePreviewFile: (raw: string) => { path?: string; error?: string }
+  /** 工具用：把工作区里的一张图片读成 base64（view_image 工具）。
+   *  只放行图片（扩展名 + magic bytes 双重校验），强制工作区边界，并限制单张大小。 */
+  handleReadImage?: (raw: string) => { ok: true; base64: string; mimeType: string; bytes: number; path: string } | { ok: false; error: string }
   /** 把预览自定义协议（app://）里的路径解析成工作区内的真实文件绝对路径。
    *  预览 iframe 走 about:srcdoc，file:// 会被 Chromium 拦，资源改由主进程经该协议提供；
    *  越界 / 不存在 / 非文件一律返回 null，范围与 Read/Write 工具同一套判定。 */
@@ -6973,6 +6976,43 @@ export function registerIpcHandlers(): void {
       return { success: false, error: `读取失败：${e instanceof Error ? e.message : String(e)}` }
     }
   })
+
+  // ── view_image 工具用：读一张工作区图片并交给 pi 作为图片块回灌 ──
+  // 与 read-file-base64 的区别：① 只放行图片，且用 magic bytes 再验一次（不能只信扩展名，
+  // 否则 Read 一个改名成 .png 的文本也会被当图片塞给模型）；② 强制工作区边界（与 Read/Write
+  // 同一套 isSafePath 判定）；③ 限制单张大小 —— 本地模型上下文只有 4k~32k，一张几 MB 的图
+  // 光是视觉 token 就能把窗口吃光。
+  const IMAGE_MAX_BYTES = 8 * 1024 * 1024
+  const IMAGE_MAGIC: Array<{ mime: string; test: (b: Buffer) => boolean }> = [
+    { mime: 'image/png', test: b => b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 },
+    { mime: 'image/jpeg', test: b => b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
+    { mime: 'image/gif', test: b => b.length > 6 && b.subarray(0, 3).toString('latin1') === 'GIF' },
+    { mime: 'image/webp', test: b => b.length > 12 && b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP' },
+    { mime: 'image/bmp', test: b => b.length > 2 && b[0] === 0x42 && b[1] === 0x4d },
+  ]
+  ipcInternal.handleReadImage = (raw: string) => {
+    if (!agentWorkspaceRoot) return { ok: false as const, error: '尚未确定 agent 工作区目录' }
+    const p = redirectToWorkspaceIfMissing(resolveAgentPath(String(raw ?? '')))
+    if (!p) return { ok: false as const, error: 'file_path 不能为空' }
+    if (!isSafePath(agentWorkspaceRoot, p)) return { ok: false as const, error: '路径超出当前工作区范围' }
+    if (!existsSync(p)) return { ok: false as const, error: `文件不存在：${basename(p)}` }
+    let buf: Buffer
+    try {
+      buf = readFileSync(p)
+    } catch (e) {
+      return { ok: false as const, error: `读取失败：${e instanceof Error ? e.message : String(e)}` }
+    }
+    if (buf.byteLength > IMAGE_MAX_BYTES) {
+      return { ok: false as const, error: `图片 ${(buf.byteLength / 1024 / 1024).toFixed(1)}MB 超过 ${IMAGE_MAX_BYTES / 1024 / 1024}MB 上限，请先压缩或裁剪后再看` }
+    }
+    const hit = IMAGE_MAGIC.find(m => m.test(buf))
+    if (!hit) {
+      return { ok: false as const, error: `不是可识别的图片（只支持 png / jpg / gif / webp / bmp）：${basename(p)}` }
+    }
+    return { ok: true as const, base64: buf.toString('base64'), mimeType: hit.mime, bytes: buf.byteLength, path: p }
+  }
+  // 渲染层那条通道（legacy 路径）走同一个实现
+  ipcMain.handle('read-image', (_e, filePath: string) => ipcInternal.handleReadImage!(filePath))
 
   // ── 模型自定义 Logo（Agent Code 模型列表）────────────────────────
   // 图片与记录均为运行时用户数据：目录定点在 renderer/public/logos

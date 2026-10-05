@@ -66,6 +66,9 @@ export interface PiAgentSessionOptions {
   /** pi 原生压缩阈值（渲染层按真实 n_ctx 算好；见 piAgentBridge/index.ts 的 settingsManager） */
   compactionReserveTokens?: number
   compactionKeepRecentTokens?: number
+  /** 模型输出上限（token）。必须与「实际发出的 max_tokens」同口径 —— pi 用它判断
+      「回复是不是被上下文挤断了」，见 piAgentBridge/index.ts 的 getMaxOutputTokens。 */
+  maxOutputTokens?: number
   /** 会话事件回调（由 IPC 层转推 renderer） */
   onEvent: (sessionId: string, event: AgentSessionEvent) => void
 }
@@ -107,6 +110,8 @@ export class PiAgentManager {
       'AskUserQuestion', 'Reflect', 'CodeSearch', 'AnalyzeDir', 'web_search', 'fetch_webpage',
       // 浏览器预览：只显示页面与截图，不做网页操作
       'browser_show', 'browser_screenshot',
+      // 查看工作区里的图片文件（与 browser_screenshot 同一条图片回灌通道）
+      'view_image',
       // 知识库两工具：pi 的 tools 参数是「激活名单」——customTools 只进定义池，
       // 名字不在名单里的自定义工具不会出现在发给模型的请求里（实测 llm_request 验证）
       'knowledge_search', 'knowledge_read'
@@ -225,6 +230,7 @@ export class PiAgentManager {
         reserveTokens: opts.compactionReserveTokens ?? 1024,
         keepRecentTokens: opts.compactionKeepRecentTokens ?? 1500
       }),
+      getMaxOutputTokens: () => opts.maxOutputTokens ?? 4096,
       cwd: opts.cwd,
       agentDir: opts.agentDir,
       systemPrompt: plainChat ? PLAIN_CHAT_SYSTEM_PROMPT : undefined,
@@ -569,6 +575,10 @@ export function createWorkerExecutors(
     // 浏览器预览与截图：真正执行在主进程（面板导航 / webview guest 截图）
     browserShow: (input) => c('browserShow', [input]),
     browserCapture: (opts) => c('browserCapture', [opts]),
+    // view_image：读工作区图片 → base64。真正实现（magic bytes 校验 / 工作区边界 / 大小上限）
+    // 在主进程 ipc.ts 的 handleReadImage 里。此存根必须与 ipcExecutors 的 readImage 成对存在：
+    // 少一个，worker 里 exec.readImage 就是 undefined，工具会直接返回「图片读取未启用」。
+    readImage: (filePath) => c('readImage', [filePath]),
     // ask/approve 走独立通道：需要主进程弹窗等用户输入，可能长时间挂起
     askUser: (questions) => callToolEvent<string>({ type: 'ask', questions }),
     approve: (toolName, args) => callToolEvent<boolean>({ type: 'approve', toolName, args }),

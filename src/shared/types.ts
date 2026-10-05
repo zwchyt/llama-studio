@@ -548,6 +548,27 @@ export interface AgentSession {
   memory?: AgentSessionMemory
 }
 
+/** 单次压缩的元数据记录（append-only 日志，最新在后）。
+    为什么只记元数据、不记每次的摘要全文：pi 是滚动压缩 —— 每次把上一次的摘要一起喂给模型，
+    产出的是「合并后的总摘要」，所以第 N 份摘要必然包含第 1~N-1 份的全部内容，
+    存成列表就是一堆层层包含的长文，读不出「分次」的信息。
+    摘要全文只保留最新一份（见 AgentSessionMemory.summary）；
+    这里留下的价值是「压了几次 / 什么时候 / 什么触发 / 压掉多少 / 哪次失败了」——
+    失败信息原先只出现在一个瞬时弹层里，关掉就查不到。 */
+export interface AgentCompactionRecord {
+  /** 触发来源：pi 的 compaction_end.reason（manual / threshold / overflow） */
+  reason: string
+  /** 本次被摘要替代的渲染层消息条数（主进程把 pi 的 firstKeptEntryId 换算而来） */
+  coveredCount: number
+  /** 压缩前后的上下文 token（pi 的 tokensBefore / estimatedTokensAfter；失败时缺省） */
+  tokensBefore?: number
+  tokensAfter?: number
+  /** 成功 / 失败；失败时 errorMessage 是 pi 给出的原因 */
+  ok: boolean
+  errorMessage?: string
+  at: number
+}
+
 export interface AgentSessionMemory {
   summary: string          // 累积的历史摘要文本
   /** 压缩边界：会话开头有多少条消息已被摘要替代（发送时省略）。
@@ -559,6 +580,8 @@ export interface AgentSessionMemory {
   // 结构化事实附录：压缩时机械提取的「不可转写」事实（文件操作清单 + 用户原话），
   // 逐字保留、不经 LLM 精炼；无此字段的旧会话不受影响。
   facts?: string
+  /** 压缩记录日志（append-only，最新在后）。只记元数据，摘要全文见上面的 summary。 */
+  compactions?: AgentCompactionRecord[]
   /** @deprecated 旧存档字段，仅 normalizeProjects 读取（折算成 coveredCount 后清除）。
       新代码一律写 coveredCount，不要再读它。 */
   coveredMsgIds?: string[]

@@ -17,6 +17,7 @@
 // useAgentPreviewTabs，本文件不再持有。
 
 import { useCallback, useRef, useState } from 'react'
+import { useStore } from '../../../store/useStore'
 import { safeCall } from '../../../utils/safeCall'
 import { newMsgId, uniqueId } from '../utils/ids'
 import { dirName } from '../utils/paths'
@@ -43,6 +44,7 @@ export function useAgentSessionActions({
   const {
     abortRef, piReadyRef, currentStreamIdRef, followUpQueueRef, prevQueueRef,
     appendLiveUserMsgRef, setQueueInfo, setLoading,
+    setStreaming, setStreamKind, setThinkDone, setCurToolName,
   } = run
   const { approvalResolveRef } = ui
   const { activeTab, activeTabPath } = previewDomain
@@ -120,6 +122,18 @@ export function useAgentSessionActions({
     if (resolve) { resolve(); abortRef.current.resolve = null }
     currentStreamIdRef.current = null
     setLoading(false)
+    // ── 本地立刻收尾，不等 pi 回话 ──
+    // pi 的 abort() 只负责「发中止信号」，真正结束要等它的 prompt() 返回；
+    // 而 runPiTurn 正阻塞在 await piAgent.prompt(...) 上，它的 finally 才负责清
+    // streaming / streamKind / thinkDone / curToolName。在那之前这些状态全部保持原样 ——
+    // 表现就是「点了停止，思考中/工具调用中/正在压缩历史 还在跑，停止像没生效」。
+    // 这里同步清掉运行态，让「已停止」立刻可见；finally 稍后再跑一次是幂等的。
+    setStreaming(false)
+    setStreamKind('idle')
+    setThinkDone(true)
+    setCurToolName('')
+    // 压缩提示条同理：它由 pi 的 compaction_end 驱动，停止后那条事件未必还来
+    useStore.getState().setCompacting(false)
   }, [])
 
   // 为已有项目选择或切换工作目录

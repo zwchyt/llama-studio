@@ -20,6 +20,9 @@ import { fileMeta } from '../../../utils/fileIcon'
 import { TOOL_METAS, WRITE_EDIT_TOOLS, BACKUP_TOOLS } from '../../../utils/tools'
 import WebSearchResults from '../../WebSearchResults'
 import BrowserScreenshotResult from '../../BrowserScreenshotResult'
+import BrowserShowResult from '../../BrowserShowResult'
+import ViewImageResult from '../../ViewImageResult'
+import { JsonResultCard } from '../../ToolResultRows'
 import { getEditDiffStat, ToolEditDiff } from '../agent-diff'
 import { LinedPre, LINED_PRE_WINDOW_CHARS } from './LinedPre'
 import { WindowedText } from '../WindowedText'
@@ -202,20 +205,82 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
   const [writeExpanded, setWriteExpanded] = useState(false)
   const filePath = name === 'Read' ? '' : (headFilePath || (parsed && typeof (parsed.file_path ?? parsed.path) === 'string' ? (parsed.file_path ?? parsed.path) as string : ''))
   const isFileEdit = !!parsed && (name === 'Write' || name === 'Edit')
+  // get_datetime 没有任何参数（parameters 是空对象）：通用兜底会把 `{}` 原样打印成一个代码块，
+  // 这里直接不渲染参数区，卡片只保留结果区。
+  if (name === 'get_datetime') return null
+  // view_image 的参数只有一个 file_path，已内联到卡片头部（图片图标 + 文件名，可点跳预览）：
+  // 参数区不再重复。图片本体由结果区的 ViewImageResult 展示。
+  if (name === 'view_image') return null
   // browser_show 的卡片只说明「这一次调用要打开什么」：文件路径 / 网址 / 内联 HTML 的体量。
   // 参数里的 html 是模型生成的整份文档，不再打印出来——源码看文件，效果看右侧预览区。
   if (name === 'browser_show' && parsed) {
     const p = parsed as Record<string, unknown>
     const html = typeof p.html === 'string' ? p.html : ''
+    const rawPath = typeof p.path === 'string' ? p.path : ''
+    const rawUrl = typeof p.url === 'string' ? p.url : ''
+    const rawTitle = typeof p.title === 'string' ? p.title.trim() : ''
     const label = p.type === 'file' ? '打开项目文件' : p.type === 'url' ? '打开网址' : '显示 HTML 页面'
+    // 文件路径按项目既有约定展示：目录段弱化 + 文件名加强（绝对路径会把真正要看的文件名挤掉）
+    const rel = rawPath ? toWorkspaceRelative(rawPath).replace(/\\/g, '/') : ''
+    const cut = rel.lastIndexOf('/')
+    const dir = cut > 0 ? rel.slice(0, cut) : ''
+    const base = cut > 0 ? rel.slice(cut + 1) : rel
+    // 标题去重：模型常把 title 填成与文件名 / 网址一模一样的内容，那样会把同一个名字打印两遍；
+    // 只有 title 真的提供了额外信息（例如给页面起的名字）时才单独显示。
+    const titleRedundant = !rawTitle || rawTitle === rel || rawTitle === rawPath || rawTitle === base || rawTitle === rawUrl
+    // 参数区沿用项目统一的「标签 | 值 | 注」三列参数框（与 Read / Grep / Glob / Write 同款容器），
+    // 结构上与其他工具卡一致：一个描边参数框，逐行说明这次调用要打开什么。
     return (
       <div className="agent-tool-args">
-        <div className="agent-tool-shot-head">
-          <span>{label}</span>
-          {typeof p.path === 'string' && p.path && <span className="agent-tool-shot-dims" title={p.path}>{p.path}</span>}
-          {typeof p.url === 'string' && p.url && <span className="agent-tool-shot-dims" title={p.url}>{p.url}</span>}
-          {typeof p.title === 'string' && p.title && <span className="agent-tool-shot-dims">{p.title}</span>}
-          {html && <span className="agent-tool-shot-dims">HTML {html.length} 字符</span>}
+        <div className="agent-tool-io-group">
+          <div className="agent-tool-io">
+            <span className="agent-tool-io-label">操作</span>
+            <span className="agent-tool-io-value">{label}</span>
+            <span className="agent-tool-io-note">type={typeof p.type === 'string' ? p.type : '—'}</span>
+          </div>
+          {rel && (
+            <div className="agent-tool-io">
+              <span className="agent-tool-io-label">文件</span>
+              <span className="agent-tool-io-value" title={rawPath}>{rel}</span>
+              <span className="agent-tool-io-note">{dir ? `位于 ${dir}/` : '项目根目录'}</span>
+            </div>
+          )}
+          {rawUrl && (
+            <div className="agent-tool-io">
+              <span className="agent-tool-io-label">网址</span>
+              <span className="agent-tool-io-value" title={rawUrl}>{rawUrl}</span>
+            </div>
+          )}
+          {!titleRedundant && (
+            <div className="agent-tool-io">
+              <span className="agent-tool-io-label">标题</span>
+              <span className="agent-tool-io-value">{rawTitle}</span>
+              <span className="agent-tool-io-note">预览页显示名</span>
+            </div>
+          )}
+          {html && (
+            <div className="agent-tool-io">
+              <span className="agent-tool-io-label">内容</span>
+              <span className="agent-tool-io-value">内联 HTML 文档</span>
+              <span className="agent-tool-io-note">{html.length} 字符</span>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+  // browser_screenshot 的参数只有一个 fullPage 开关：摊成参数框一行，和其他工具同款容器。
+  // 以前落到通用兜底，会把 {"fullPage":true} 原样打印出来。
+  if (name === 'browser_screenshot' && parsed) {
+    const fullPage = (parsed as Record<string, unknown>).fullPage === true
+    return (
+      <div className="agent-tool-args">
+        <div className="agent-tool-io-group">
+          <div className="agent-tool-io">
+            <span className="agent-tool-io-label">范围</span>
+            <span className="agent-tool-io-value">{fullPage ? '完整可滚动页面' : '当前可视区域'}</span>
+            <span className="agent-tool-io-note">{fullPage ? 'fullPage=true' : '默认（仅可视区域）'}</span>
+          </div>
         </div>
       </div>
     )
@@ -686,10 +751,26 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
   const editDiffStat = useMemo(() => getEditDiffStat(tc), [tc.name, parsed])
   // 参数还在逐 token 生成时（parsed 出不来）用主进程数出来的行数兜一下，头部不至于空着
   const shownDiffStat = editDiffStat ?? tc.streamStat
+  // Bash 命令：独立成「执行命令」区块，上限从 400 放宽到 1200 字符（原上限会把多行命令截掉）；
+  // 超出仍截断兜底，高度由 CSS 的 max-height 控制，长命令在框内滚动。
   const bashCmd = (() => {
     if (tc.name !== 'Bash') return null
     const c = parsed && typeof parsed.command === 'string' ? parsed.command : null
-    return c && c.length > 400 ? c.slice(0, 400) + '\n…' : c
+    return c && c.length > 1200 ? c.slice(0, 1200) + '\n…' : c
+  })()
+  // Bash 输出：超长结果按 LINED_PRE_WINDOW_CHARS 截断（避免一次性挂满 DOM），
+  // 高度由 CSS 的 max-height 控制（框内滚动），不再把整张卡片拉长。
+  const bashOut = (() => {
+    if (tc.name !== 'Bash' || !done || typeof tc.result !== 'string' || !tc.result) return null
+    return tc.result.length > LINED_PRE_WINDOW_CHARS
+      ? tc.result.slice(0, LINED_PRE_WINDOW_CHARS) + '\n…（输出过长，已截断显示）'
+      : tc.result
+  })()
+  // 输出区右上角量化指标：小结果给行数；超长结果不 split（那正是要避免的一次性开销），改报字符数
+  const bashOutMeta = (() => {
+    if (tc.name !== 'Bash' || !done || typeof tc.result !== 'string' || !tc.result) return null
+    const r = tc.result
+    return r.length > LINED_PRE_WINDOW_CHARS ? `共 ${r.length} 字符` : `${r.split('\n').length} 行`
   })()
   // Read/Write/Edit 统一：文件名内联到头部（文件树同款图标 + 可点跳预览），替代纯文字参数预览。
   let readFilePath = tc.name === 'Read' && parsed && typeof (parsed.file_path ?? parsed.path) === 'string' ? (parsed.file_path ?? parsed.path) as string : ''
@@ -703,7 +784,8 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
   // 点击预览时再由 resolveWorkspacePath 还原成绝对路径，所以这里只影响显示。
   const headFilePath = toWorkspaceRelative(
     readFilePath ||
-    (WRITE_EDIT_TOOLS.has(tc.name) && parsed && typeof (parsed.file_path ?? parsed.path) === 'string'
+    // Write/Edit 的参数、以及 view_image 的 file_path：都内联到卡片头部
+    ((WRITE_EDIT_TOOLS.has(tc.name) || tc.name === 'view_image') && parsed && typeof (parsed.file_path ?? parsed.path) === 'string'
       ? (parsed.file_path ?? parsed.path) as string
       : '')
   )
@@ -749,10 +831,9 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
 
   return (
     <>
-      {/* 每个工具卡的独立时间标签：基于该工具执行时长（elapsed），卡片上方醒目展示 */}
-      {done && tc.durationMs != null && (
-        <div className="agent-tool-time">Tool: {formatDuration(tc.durationMs)}</div>
-      )}
+      {/* 执行时长已并入卡头 meta 区（.agent-tool-call-dur），不再在卡片上方单独占一行——
+          使工具卡折叠态严格是一行，与思考段「Thought: 515ms」、批头「执行工具 N 次 · 1.8s」
+          的「一行 + 可展开」形态对齐 */}
       <div className={`agent-tool-call tool-${tc.name.toLowerCase()}${failed ? ' failed' : ''}${executing ? ' executing' : ''}${pending ? ' pending' : ''}`}>
         <div className="agent-tool-call-head" onClick={handleToggle}>
           <span className="agent-tool-call-icon">
@@ -784,6 +865,11 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
                 {shownDiffStat.removed > 0 && <span className="diff-del">-{shownDiffStat.removed}</span>}
               </span>
             )}
+            {/* 该工具的执行时长（elapsed）：并入卡头、紧邻状态徽标——与思考段折叠头的
+                「Thought: 515ms」、批头的「执行工具 N 次 · 1.8s」同一套橙色等宽标签风格 */}
+            {done && tc.durationMs != null && (
+              <span className="agent-tool-call-dur">{formatDuration(tc.durationMs)}</span>
+            )}
             {executing ? (
               <span className="agent-tool-call-status run"><LoaderIcon size={12} className="spin" /> {TOOL_METAS[tc.name]?.verb || '执行中'}</span>
             ) : awaiting ? (
@@ -814,29 +900,33 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
         {visible && (
           <div className="agent-tool-call-anim" ref={bodyRef} onTransitionEnd={onBodyTransitionEnd}>
             <div className="agent-tool-call-body">
-              {/* Bash：命令与输出合成一个「终端会话块」。
-                  原来命令在 .agent-tool-bash 里、输出由 ToolResultView 单独渲染，是两个割裂的块；
-                  合并后提示行（$ 命令）与输出同处一个深色框，读起来是一次终端会话。
-                  输出按 LINED_PRE_WINDOW_CHARS 截断，避免超长 stdout 一次性挂满 DOM。 */}
+              {/* Bash：拆成「执行命令」与「输出结果」两个独立区块，各带标签头。
+                  命令是工具的参数（command 字段），走描边面（与 Read / Grep / Write 的参数框同一套）；
+                  输出是内容，走填充面（--code-bg）。不再共用一个深色终端框——
+                  深色底原本是为了在同一个框里把命令条与输出区分开，拆成两块后不再需要。
+                  输出区限高 + 内部滚动，长输出不再把整张卡片拉长。 */}
               {tc.name === 'Bash' && bashCmd && (
-                <div className="agent-tool-result">
-                  <div className="agent-tool-result-head">
-                    <span className="agent-tool-result-label">输出</span>
-                    <span className="agent-tool-result-actions">
-                      {executing && <span className="agent-tool-result-running">● 流式接收中</span>}
-                    </span>
-                  </div>
-                  <div className="agent-tool-term">
+                <>
+                  <div className="agent-tool-result">
+                    <div className="agent-tool-result-head">
+                      <span className="agent-tool-result-label">执行命令</span>
+                    </div>
                     <div className="agent-tool-term-cmd"><span className="ps">$</span> {bashCmd}</div>
-                    {done && typeof tc.result === 'string' && tc.result.length > 0 && (
-                      <pre className="agent-tool-term-out">
-                        {tc.result.length > LINED_PRE_WINDOW_CHARS
-                          ? tc.result.slice(0, LINED_PRE_WINDOW_CHARS) + '\n…（输出过长，已截断显示）'
-                          : tc.result}
-                      </pre>
-                    )}
                   </div>
-                </div>
+                  <div className="agent-tool-result">
+                    <div className="agent-tool-result-head">
+                      <span className="agent-tool-result-label">输出结果</span>
+                      <span className="agent-tool-result-actions">
+                        {executing
+                          ? <span className="agent-tool-result-running">● 流式接收中</span>
+                          : bashOutMeta && <span className="agent-tool-result-meta">{bashOutMeta}</span>}
+                      </span>
+                    </div>
+                    {bashOut != null
+                      ? <pre className="agent-tool-term-out">{bashOut}</pre>
+                      : <div className="agent-tool-note">{executing ? '等待输出…' : '（无输出）'}</div>}
+                  </div>
+                </>
               )}
               {tc.name !== 'Bash' && tc.name !== 'web_search' && tc.name !== 'web_search_bing' && <ToolArgsView name={tc.name} args={tc.args} onPreviewFile={onPreviewFile} headFilePath={headFilePath} readRange={readRange} />}
               {(tc.name === 'web_search' || tc.name === 'web_search_bing') && (executing || done) && (
@@ -847,8 +937,15 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
                 />
               )}
               {tc.name === 'browser_screenshot' && done && <BrowserScreenshotResult result={tc.result} />}
-              {/* Bash 的结果已在上面并入终端块，这里排除掉，避免输出渲染两遍 */}
-              {done && !hideResult && tc.name !== 'Bash' && tc.name !== 'web_search' && tc.name !== 'web_search_bing' && (
+              {tc.name === 'browser_show' && done && <BrowserShowResult result={tc.result} />}
+              {/* view_image：图片直接内联在卡里（右侧预览面板同时也会展开，两边都展示） */}
+              {tc.name === 'view_image' && done && <ViewImageResult result={tc.result} />}
+              {/* get_datetime 结果就是 {date, time}：摊成横向键值行（日期 / 时间），不再打印原始 JSON */}
+              {tc.name === 'get_datetime' && done && <JsonResultCard result={tc.result} />}
+              {/* Bash 的结果已并入终端块；web_search / browser_show / browser_screenshot /
+                  view_image / get_datetime 都各自渲染结构化结果卡，这里一并排除，
+                  避免同一份结果渲染两遍 */}
+              {done && !hideResult && tc.name !== 'Bash' && tc.name !== 'web_search' && tc.name !== 'web_search_bing' && tc.name !== 'browser_show' && tc.name !== 'browser_screenshot' && tc.name !== 'view_image' && tc.name !== 'get_datetime' && (
                 <ToolResultView result={tc.result!} truncated={tc.truncated} total={tc.resultTotal} lined={tc.name === 'Read'} grep={grepResult} glob={globResult} readLines={readLines} readRange={readRange} onPreviewFile={onPreviewFile} />
               )}
             </div>

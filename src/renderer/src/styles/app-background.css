@@ -9,6 +9,14 @@
    代码块、表格（--code-bg 等）保持实心负责可读性，浮层弹窗钉回实心。
 
    开关在「设置 › 界面背景」。没图时根节点不带 .has-bg，本文件一条都不生效。
+
+   ⚠️ 背景图只在**浅色主题**生效：暗色底下图的亮部会从半透明面板透上来、吃掉 #ced2d9
+   的浅字，加厚薄纱也救不回来，所以暗色干脆不铺图。这条规则**整条由 html.theme-dark 驱动**
+   （所有透写选择器都带 html:not(.theme-dark)，另加一条把 .app-bg 整层藏掉），
+   刻意**不用 App.tsx 的 useThemeStore 去判**：主题类是在 View Transition 的回调里才切的，
+   比 setTheme 里那次 React set() 晚一步 —— 挂在 React 状态上会让 has-bg 先翻、主题后翻，
+   切换时先闪一帧「深色 + 半透」（暗→亮）或「浅色 + 无图」（亮→暗）。
+   交给 CSS 就与主题类同一帧生效，天然原子。
    ══════════════════════════════════════════════════════════ */
 
 .app.has-bg {
@@ -16,6 +24,10 @@
   /* 独立层叠上下文：让下面 z-index:-1 的图层只沉到 .app 自身背景之下、所有内容之上，
      不会穿到 body 底色后面去（那样图就白铺了）。 */
   isolation: isolate;
+}
+
+/* ── 透写：只在浅色主题生效（见文件头说明） ── */
+html:not(.theme-dark) .app.has-bg {
   --bg: color-mix(in srgb, var(--bg-solid) var(--app-bg-fill), transparent);
   --surface: color-mix(in srgb, var(--surface-solid) var(--app-bg-fill), transparent);
 }
@@ -44,17 +56,19 @@
   opacity: var(--app-bg-veil-o, 0.3);
 }
 
+/* 深色主题：整层不显示（见文件头说明）。
+   必须显式藏：.app 自身没有背景，面板又是唯一的实心面，只靠上面的透写限定浅色还不够 ——
+   不藏的话图会从各面板之间的缝隙里露出来。 */
+html.theme-dark .app-bg {
+  display: none;
+}
+
 /* ── 几个自带一套硬编码底色的页面 ──
    这几页不吃全局 --bg/--surface（各自在页面根上写死了色值），全局调透透不到它们；
    不一起改的话，只有这几页保持实心，切过去就像背景没生效。 */
-.app.has-bg :is(.settings-view, .about-container, .engines-view, .model-folders-view, .model-endpoints-view) {
+html:not(.theme-dark) .app.has-bg :is(.settings-view, .about-container, .engines-view, .model-folders-view, .model-endpoints-view) {
   --bg: color-mix(in srgb, #f4f6f9 var(--app-bg-fill), transparent);
   --surface: color-mix(in srgb, #ffffff var(--app-bg-fill), transparent);
-}
-
-html.theme-dark .app.has-bg :is(.settings-view, .about-container, .engines-view, .model-folders-view, .model-endpoints-view) {
-  --bg: color-mix(in srgb, #24272d var(--app-bg-fill), transparent);
-  --surface: color-mix(in srgb, #2b2f36 var(--app-bg-fill), transparent);
 }
 
 /* ── 导航栏卡面 / 我的消息气泡：同一族写死色值的令牌 ──
@@ -62,32 +76,21 @@ html.theme-dark .app.has-bg :is(.settings-view, .about-container, .engines-view,
    不吃 --bg/--surface，所以本文件的透法到不了它们：强度拉满侧栏依旧实心、气泡永远全不透明，
    与会话面板 .agent-code-chat（吃 --bg）并排就是一深一浅。
    这里按同一条 --app-bg-fill 重算它们的 alpha：色相各留各的，透实程度与会话面板对齐。 */
-.app.has-bg .sidebar-wrapper {
+html:not(.theme-dark) .app.has-bg .sidebar-wrapper {
   --sidebar-bg: linear-gradient(180deg,
       color-mix(in srgb, #ffffff var(--app-bg-fill), transparent) 0%,
       color-mix(in srgb, #f8f9fb var(--app-bg-fill), transparent) 100%);
 }
 
-html.theme-dark .app.has-bg .sidebar-wrapper {
-  --sidebar-bg: linear-gradient(180deg,
-      color-mix(in srgb, #2e3138 var(--app-bg-fill), transparent) 0%,
-      color-mix(in srgb, #282b31 var(--app-bg-fill), transparent) 100%);
-}
-
-.app.has-bg .agent-code-view {
+html:not(.theme-dark) .app.has-bg .agent-code-view {
   --agent-bubble-bg: color-mix(in srgb, #f2f2f2 var(--app-bg-fill), transparent);
-}
-
-/* 深色下气泡取的是实心的 --surface-hover（不受 .has-bg 重写），直接引用它就不必再抄一遍色值 */
-html.theme-dark .app.has-bg .agent-code-view {
-  --agent-bubble-bg: color-mix(in srgb, var(--surface-hover) var(--app-bg-fill), transparent);
 }
 
 /* ── 吃 --surface-hover 的卡面与控件：模式切换 / 列表行（聊天、项目、会话）/ 过滤框 / 新建按钮 / 消息头像 ──
    这些都取 --surface-hover，而它不在本文件的透写名单里 → 常态跟着透、一选中或 hover 就变实心。
    不能整体调透：--surface-hover 还兼作浮层菜单的悬停高亮，那些弹窗是刻意钉回实心的，所以按容器点名。
    基准取 :root 那份实心快照（这几处不在自定 --surface-hover 的那几页里）。 */
-.app.has-bg :is(.sidebar-mode-switch,
+html:not(.theme-dark) .app.has-bg :is(.sidebar-mode-switch,
   .agent-code-chat-item,
   .agent-code-project-item,
   .agent-code-session-item,

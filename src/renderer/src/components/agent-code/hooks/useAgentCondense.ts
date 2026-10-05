@@ -10,10 +10,14 @@
 // 溢出时它还会「省略失败回复 → 压缩 → 重跑该轮」。压缩产出经 compaction_end 事件写回
 // session.memory，所以这里连返回值都不需要接收。
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { useStore } from '../../../store/useStore'
 import { notify } from '../../../store/notificationStore'
 import { playEvent } from '../../../utils/sound'
 import type { AgentSession } from '../../../../../shared/types'
+
+/** 「压缩中」提示的超时兜底（ms）：超过它仍未收到 compaction_end 就强制复位，防止提示条卡死 */
+const COMPACTING_WATCHDOG_MS = 3 * 60 * 1000
 
 export function useAgentCondense({
   activeSessionId, activeSession, loading,
@@ -22,8 +26,21 @@ export function useAgentCondense({
   activeSession: AgentSession | null
   loading: boolean
 }) {
-  const [condensing, setCondensing] = useState(false)   // 正在压缩历史（顶栏轻量提示）
+  // 「压缩中」标志放在 store：手动（本 hook 的 try/finally）与自动（useAgentLoop 收到
+  // compaction_start 事件）两条路径都要置位，输入区据此渲染提示条；本 hook 不再自己持有。
+  const condensing = useStore(s => s.compacting)
+  const setCondensing = useStore(s => s.setCompacting)
   const [condenseMsg, setCondenseMsg] = useState('')    // 压缩历史弹层内的结果反馈
+
+  // 看门狗：压缩中标志只由 pi 的 compaction_start / compaction_end 驱动，一旦结束事件丢失
+  // （客户端被拆、事件落在 detach 之后、或压缩被反复中止），提示条会永远挂着、看起来「取消不掉」。
+  // 这里加一条超时兜底：超过 3 分钟仍未收到结束事件就强制复位。
+  // 本地模型的摘要请求正常在几十秒内完成，3 分钟足够宽松。
+  useEffect(() => {
+    if (!condensing) return
+    const t = window.setTimeout(() => useStore.getState().setCompacting(false), COMPACTING_WATCHDOG_MS)
+    return () => window.clearTimeout(t)
+  }, [condensing])
 
   // 手动压缩：直接让 pi 压一次（不等水位）。无可压缩内容时 pi 会抛
   // "Already compacted" / "Nothing to compact (session too small)"，主进程已转成

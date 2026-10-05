@@ -17,10 +17,25 @@ export type WorkspaceEvent =
   | { type: 'turn_start'; turnIndex: number }
   | { type: 'turn_end'; turnIndex: number; promptTokens: number; completionTokens: number }
   | { type: 'run_end' }
+  /** pi 原生压缩开始（compaction_start）。手动与自动（threshold / overflow）都会发，
+      原先适配层只转发了 end，start 落在 default 被丢掉 —— 自动压缩因此全程静默。
+      reason：'manual' | 'threshold' | 'overflow'。 */
+  | { type: 'compaction_start'; reason: string }
   /** pi 原生压缩完成（compaction_end）。summary 是 pi 生成的结构化摘要；
       coveredCount 由主进程把 pi 的 firstKeptEntryId 换算成渲染层消息数组的下标
       （渲染层没有 pi 条目概念）；aborted/errorMessage 表示这次压缩没成功。 */
-  | { type: 'compaction'; summary: string; coveredCount: number; aborted: boolean; errorMessage?: string }
+  | {
+    type: 'compaction'
+    summary: string
+    coveredCount: number
+    aborted: boolean
+    /** 触发来源：manual / threshold / overflow（压缩记录日志要留档） */
+    reason: string
+    /** 压缩前后的上下文 token（失败时缺省） */
+    tokensBefore?: number
+    tokensAfter?: number
+    errorMessage?: string
+  }
   | { type: 'error'; message: string }
 
 export interface WorkspaceEventSink {

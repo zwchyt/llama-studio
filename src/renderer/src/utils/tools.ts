@@ -1,6 +1,6 @@
 // ── 工具注册中心（类似 textgen 的 tool_use.py + 各 tools/*.py）────
 import type { ComponentType } from 'react'
-import { Eye, FilePlus2, Pencil, Search, FileSearch, TerminalSquare, Clock, HelpCircle, FileText, Trash2, List, ListChecks, FolderOpen, Layers, Lightbulb, Sparkles, Zap, BookOpen, Globe, Camera } from 'lucide-react'
+import { Eye, FilePlus2, Pencil, Search, FileSearch, TerminalSquare, Clock, HelpCircle, FileText, Trash2, List, ListChecks, FolderOpen, Layers, Lightbulb, Sparkles, Zap, BookOpen, Globe, Camera, Image as ImageIcon } from 'lucide-react'
 import { agentConfig } from './agentConfig'
 
 export interface ToolDefinition {
@@ -53,6 +53,7 @@ export const TOOL_METAS: Record<string, ToolMeta> = {
   TaskList:        { kind: 'task',   label: '列出任务', verb: '列出任务中', icon: ListChecks,   readOnly: true,  needsApproval: false, canUndo: false },
   browser_show:    { kind: 'other',  label: '网页预览', verb: '打开页面中', icon: Globe,        readOnly: true,  needsApproval: false, canUndo: false },
   browser_screenshot: { kind: 'other', label: '页面截图', verb: '截图中', icon: Camera,        readOnly: true,  needsApproval: false, canUndo: false },
+  view_image:      { kind: 'read',   label: '查看图片', verb: '读取图片中', icon: ImageIcon,  readOnly: true,  needsApproval: false, canUndo: false },
 }
 
 // 派生集合（替代原先散落在 AgentCodeView 里的字符串 Set）
@@ -119,6 +120,7 @@ import { definition as ReflectDef, execute as ReflectExec } from '../tools/Refle
 import { definition as CodeSearchDef, execute as CodeSearchExec } from '../tools/CodeSearchTool'
 import { definition as BrowserShowDef, execute as BrowserShowExec } from '../tools/BrowserShowTool'
 import { definition as BrowserScreenshotDef, execute as BrowserScreenshotExec } from '../tools/BrowserScreenshotTool'
+import { definition as ViewImageDef, execute as ViewImageExec } from '../tools/ViewImageTool'
 register(WebSearchDef, WebSearchExec)
 register(BingSearchDef, BingSearchExec)
 register(FetchWebpageDef, FetchWebpageExec)
@@ -136,6 +138,7 @@ register(AskUserQuestionDef, AskUserQuestionExec)
 register(ReflectDef, ReflectExec)
 register(BrowserShowDef, BrowserShowExec)
 register(BrowserScreenshotDef, BrowserScreenshotExec)
+register(ViewImageDef, ViewImageExec)
 // CodeSearch（混合检索）：受开关门控——关闭时不注册，模型看不到该工具，行为与现状一致
 if (agentConfig.codeSearchEnabled) register(CodeSearchDef, CodeSearchExec)
 

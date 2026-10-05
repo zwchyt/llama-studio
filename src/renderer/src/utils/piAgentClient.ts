@@ -40,8 +40,19 @@ export interface PiAgentCallbacks {
   onEnd?: () => void
   /** 队列变化（steer/followUp）：可用于在 UI 显示待执行指令计数 */
   onQueueUpdate?: (steering: string[], followUp: string[]) => void
-  /** pi 原生压缩完成：摘要正文 + 被替代的渲染层前缀条数（供写回 session.memory） */
-  onCompaction?: (info: { summary: string; coveredCount: number; aborted: boolean; errorMessage?: string }) => void
+  /** pi 原生压缩开始（手动 / 自动都发）：置位「压缩中」提示。reason: manual / threshold / overflow */
+  onCompactionStart?: (info: { reason: string }) => void
+  /** pi 原生压缩完成：摘要正文 + 被替代的渲染层前缀条数（供写回 session.memory），
+      reason / tokensBefore / tokensAfter 供渲染层落一条压缩记录 */
+  onCompaction?: (info: {
+    summary: string
+    coveredCount: number
+    aborted: boolean
+    reason: string
+    tokensBefore?: number
+    tokensAfter?: number
+    errorMessage?: string
+  }) => void
 }
 
 /**
@@ -105,11 +116,17 @@ class ClientSink implements WorkspaceEventSink {
       case 'run_end':
         this.cb.onEnd?.()
         return
+      case 'compaction_start':
+        this.cb.onCompactionStart?.({ reason: e.reason })
+        return
       case 'compaction':
         this.cb.onCompaction?.({
           summary: e.summary,
           coveredCount: e.coveredCount,
           aborted: e.aborted,
+          reason: e.reason,
+          ...(typeof e.tokensBefore === 'number' ? { tokensBefore: e.tokensBefore } : {}),
+          ...(typeof e.tokensAfter === 'number' ? { tokensAfter: e.tokensAfter } : {}),
           ...(typeof e.errorMessage === 'string' ? { errorMessage: e.errorMessage } : {})
         })
         return

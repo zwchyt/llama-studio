@@ -450,6 +450,10 @@ export default function SettingsView() {
             选一张图铺在整个界面背后：导航栏、对话区、各视图面板这几层改成半透明磨砂把图透出来，
             气泡与代码块保持实心，免得字压在花上。点缩略图立即切换，选「无背景」回到纯色。
           </p>
+          <p className="st-note">
+            只在浅色主题下生效：切到深色主题会自动隐藏背景图、回到纯深色底（深色下图的亮部会穿过
+            半透明面板把浅字吃掉，加厚薄纱也压不住）。想用背景图请先把主题切成浅色。
+          </p>
           <p className="st-desc st-desc--sm">
             图片库就是这个目录：<code>{bgDir || 'src/renderer/public/backgrounds'}</code>
             。往里面丢图就会出现在下方列表；目录本身入库，图片被 .gitignore 排除，不会上传仓库。

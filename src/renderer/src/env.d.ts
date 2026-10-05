@@ -335,7 +335,7 @@ interface LlamaCppApi {
   windowClose: () => Promise<void>
   // ── pi-agent（pi SDK 驱动的 agent 会话）──
   piAgent: {
-    create: (opts: { sessionId: string; port: number; endpoint?: RemoteEndpoint; cwd: string; contextWindow?: number; contextBudget?: number; contextImportanceFold?: boolean; compactionReserveTokens?: number; compactionKeepRecentTokens?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; vision?: boolean; projectSystemPrompt?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
+    create: (opts: { sessionId: string; port: number; endpoint?: RemoteEndpoint; cwd: string; contextWindow?: number; contextBudget?: number; contextImportanceFold?: boolean; compactionReserveTokens?: number; compactionKeepRecentTokens?: number; maxOutputTokens?: number; knowledgeBaseId?: string; plainChat?: boolean; chatTools?: string[]; searchEnabled?: boolean; searchProvider?: 'ddg' | 'bing'; vision?: boolean; projectSystemPrompt?: string; history?: Array<{ role: 'user' | 'assistant'; content: string; toolCalls?: Array<{ id: string; name: string; args: string; result?: string }>; attachments?: Array<{ type: string; dataUrl?: string; content?: string }> }> }) => Promise<{ success: boolean }>
     warmup: () => Promise<{ success: boolean }>
     prompt: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
     steer: (sessionId: string, text: string, images?: Array<{ type: 'image'; data: string; mimeType: string }>) => Promise<{ success: boolean }>
@@ -344,6 +344,10 @@ interface LlamaCppApi {
     compact: (sessionId: string, customInstructions?: string) => Promise<{ success: boolean; summary?: string; error?: string }>
     abort: (sessionId: string) => Promise<{ success: boolean }>
     dispose: (sessionId: string) => Promise<{ success: boolean }>
+    /** view_image 工具用：读工作区里的一张图片（base64）；校验/边界/大小上限在主进程 */
+    readImage: (filePath: string) => Promise<
+      { ok: true; base64: string; mimeType: string; bytes: number; path: string } | { ok: false; error: string }
+    >
     list: () => Promise<{ sessionIds: string[] }>
     onEvent: (cb: (sessionId: string, event: unknown) => void) => void
     onAsk: (cb: (id: number, questions: Array<{ question: string; options?: string[]; allowFreeform?: boolean }>) => void) => void

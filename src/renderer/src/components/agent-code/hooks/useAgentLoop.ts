@@ -30,7 +30,7 @@ import { playEvent, warmUpAudio } from '../../../utils/sound'
 import { agentConfig } from '../../../utils/agentConfig'
 import { hasVisionProjector } from '../../../utils/modelCapabilities'
 import { PiAgentClient } from '../../../utils/piAgentClient'
-import { computeContextBudget, coveredPrefixCount } from '../../../utils/contextBudget'
+import { computeContextBudget, coveredPrefixCount, piContextWindowFor, COMPACTION_TRIGGER_MARGIN } from '../../../utils/contextBudget'
 import { parseSlashCommand, findCommand, expandCommandTemplate } from '../../../agent/slashCommands'
 import { newMsgId, uniqueId } from '../utils/ids'
 import { MIN_EXEC_DISPLAY_MS } from '../utils/constants'
@@ -39,6 +39,10 @@ import { projectMode } from '../../../../../shared/types'
 import { remoteOfCard } from '../../../utils/endpoint'
 import type { useAgentInput } from './useAgentInput'
 import type { useAgentProjects } from './useAgentProjects'
+import type { PanelView } from './useAgentUiState'
+
+/** 压缩记录日志的保留上限：只留最近这些次（元数据很小，限长纯粹是为了会话 JSON 不无限增长） */
+const MAX_COMPACTION_LOG = 20
 
 /** 单轮 pi agent 运行签名（消息操作域的重新生成 / 重发复用同一契约） */
 export type RunPiTurn = (
@@ -72,6 +76,7 @@ export function useAgentLoop({
   modelLabelRef, backupsRef, thinkingLevelRef,
   appendQueuedUserMsg, queueRemoved, runSlashAction,
   scrollToBottom,
+  openPreview,
 }: {
   /** 项目 / 会话域：useAgentProjects 的完整返回值（本域只消费其中 7 项） */
   projects: ReturnType<typeof useAgentProjects>
@@ -112,6 +117,9 @@ export function useAgentLoop({
   runSlashAction: (name: string, args: string) => Promise<void>
   /** 无条件贴底（来自 useAgentScroll）。发消息时用它恢复跟随，见 runPiTurn 里的说明 */
   scrollToBottom: (smooth?: boolean, force?: boolean) => void
+  /** 在右侧预览面板打开一个文件（来自 useAgentPreviewTabs）。
+      view_image 执行成功时用它把图片自动展开到预览列，让用户同步看到模型正在看的画面。 */
+  openPreview?: (path: string, panelMode?: PanelView) => void
 }) {
   const {
     input, setInput, textareaRef, packedInput, setPackedInput,
@@ -136,6 +144,11 @@ export function useAgentLoop({
   // 每次渲染同步一份最新值，起轮时按 pid/sid 从 ref 取。
   const turnScopeRef = useRef({ projectList, activeProject, activeSession })
   turnScopeRef.current = { projectList, activeProject, activeSession }
+  // 预览面板的打开回调：与 turnScopeRef 同理——runPiTurn 的依赖数组刻意只有
+  // updateSessionInProject（回调身份要稳定，队列补发 / followUp 都直接引用它），
+  // 所以这里也走 ref 取最新引用，供 view_image 执行完自动在右侧展开图片。
+  const openPreviewRef = useRef<((path: string, panelMode?: PanelView) => void) | null>(null)
+  openPreviewRef.current = openPreview ?? null
 
 
   // ── pi-agent 模式：pi SDK 驱动的单轮 agent 运行 ──
@@ -230,13 +243,24 @@ export function useAgentLoop({
         ?? (curCard ? useStore.getState().modelMetrics[curCard.template.id]?.nCtx || 0 : 0)
       const ctxEff = ctxN > 0 ? ctxN : agentConfig.ctxDefault
       const contextBudget = computeContextBudget(ctxN)
-      // pi 原生压缩的两个阈值，与上面同一口径：
-      //   reserveTokens 决定触发线（contextTokens > ctxEff - reserveTokens），取「窗口 - 预算」
-      //     就等于沿用原先那条预算水位线。它同时是摘要请求的输出上限基数（pi 取 0.8×），
-      //     所以封顶到 maxOutput：llama.cpp 会按 max_tokens 预留输出槽，放太大会把摘要请求
-      //     自己的 prompt 空间挤没。
+      // 报给 pi 的上下文窗口要补上它自己那份不可配置的输出保留（4096，见
+      // contextBudget.ts 的 PI_CONTEXT_SAFETY_TOKENS）。不补的话 pi 的算式
+      // max_tokens = min(配置值, 窗口 - 已占用 - 4096) 会把真实可用上下文压到
+      // n_ctx - 4096：16k 窗口下已占用过 12288 就把 max_tokens 夹到 1，
+      // 表现是「还剩 3k，模型却什么都不输出」。补偿后算式回到真实窗口，
+      // prompt + 输出恒等于 n_ctx。
+      const piContextWindow = piContextWindowFor(ctxN)
+      // pi 原生压缩的两个阈值：
+      //   reserveTokens 决定触发线（contextTokens > piContextWindow - reserveTokens）。
+      //     窗口抬高后触发线也会跟着抬高，所以这里按「兜底预算 - 余量」反解，保证压缩在
+      //     兜底裁剪顶到天花板之前就能接管，而不是像原先那样永远触发不了。
+      //     它同时是摘要请求的输出上限基数（pi 取 0.8×）：偏大无害 —— pi 的 max_tokens
+      //     夹紧会保证摘要请求自己也不超窗。
       //   keepRecentTokens = 压缩后逐字保留的量，取预算四成，其余交给摘要。
-      const compactionReserveTokens = Math.max(512, Math.min(agentConfig.maxOutput, ctxEff - contextBudget))
+      // 拿不到真实 n_ctx 时（极少见）不下发窗口、沿用 pi 默认值，压缩阈值维持原口径。
+      const compactionReserveTokens = piContextWindow != null
+        ? Math.max(512, piContextWindow - Math.max(512, contextBudget - COMPACTION_TRIGGER_MARGIN))
+        : Math.max(512, Math.min(agentConfig.maxOutput, ctxEff - contextBudget))
       const compactionKeepRecentTokens = Math.max(600, Math.floor(contextBudget * 0.4))
       const res = await window.api.piAgent.create({
         sessionId: piSessionId,
@@ -251,13 +275,18 @@ export function useAgentLoop({
         searchProvider: useStore.getState().searchProvider,
         // 用户可编辑的两段提示词：此前只写进了 project 对象，从未送达模型
         projectSystemPrompt: opts.projectSystemPrompt,
-        contextWindow: ctxN || undefined,
+        contextWindow: piContextWindow,
         // 兜底裁剪的预算与开关：worker 端每次请求都会按这个预算机械裁剪历史
         // （shared/contextGuard.ts，挂在 pi 的 transformContext 上）。
         contextBudget,
         contextImportanceFold: agentConfig.ctxImportanceEnabled,
         compactionReserveTokens,
         compactionKeepRecentTokens,
+        // 模型的输出上限必须与「实际发出的 max_tokens」同口径：pi 用它判断「回复是不是被
+        // 上下文挤断了」（output < model.maxTokens → 压缩 + 重跑该轮）。此前主进程硬编码
+        // 8192，而实际发出的 max_tokens 被上下文夹紧到 ≤8192，于是上下文一过 8192，
+        // 任何一次撞上限的回复都被误判成「被挤断」→ 白烧一次摘要请求 + 白跑一轮重试。
+        maxOutputTokens: agentConfig.maxOutput,
         // 模型支持图像输入时才声明 image 模态，browser_screenshot 的截图才会随工具结果回灌
         vision,
         history,
@@ -594,6 +623,17 @@ export function useAgentLoop({
         if (backupId) {
           backupsRef.current[id] = { path: `pi-undo:${backupId}`, content: '' }
         }
+        // view_image 成功：把这张图自动展开到右侧预览列，让用户同步看到模型正在看的画面
+        // （与 browser_show 展开浏览器面板同一个意图）。结果文本就是
+        // JSON.stringify({ ok, path, mimeType, bytes, note })，path 是已解析的工作区绝对路径，
+        // 直接交给预览域的 openPreview（它按扩展名判图片、读 data URL 渲染 <img>）。
+        // 这里用 ref 取最新引用：runPiTurn 的依赖数组必须保持稳定（见 openPreviewRef 说明）。
+        if (name === 'view_image' && !isError) {
+          try {
+            const r = JSON.parse(resultText) as { ok?: boolean; path?: string }
+            if (r?.ok && typeof r.path === 'string' && r.path) openPreviewRef.current?.(r.path, 'preview')
+          } catch { /* 结果不是 JSON（如「图片读取未启用」）：忽略 */ }
+        }
         const elapsed = execStartMs.has(id) ? Date.now() - execStartMs.get(id)! : Number.MAX_SAFE_INTEGER
         // 最小展示时长：执行太快（本地 IO 不足一帧）时延迟置 done，让「写入中」徽标可见
         const applyDone = (): void => {
@@ -617,7 +657,11 @@ export function useAgentLoop({
         else setTimeout(applyDone, MIN_EXEC_DISPLAY_MS - elapsed)
       },
       onTurnEnd: () => { /* pi 事件不携带需要落地的字段，无需额外处理 */ },
-      onEnd: () => { /* prompt 返回即结束，无需额外处理 */ },
+      onEnd: () => {
+        // 兜底撤掉「压缩中」提示：正常情况下由 compaction_end 清除，但会话中途被销毁时
+        // 那条事件可能永远不来，标志会卡在 true、提示条一直挂着。
+        useStore.getState().setCompacting(false)
+      },
       onQueueUpdate: (_s, f) => {
         // 出队（被执行）的条目 = prev 有而当前无的 → 此刻补写进历史，让其出现在对话里
         const removedFollow = queueRemoved(prevQueueRef.current.followUp, f)
@@ -625,13 +669,56 @@ export function useAgentLoop({
         setQueueInfo({ followUp: f })
         for (const t of removedFollow) appendQueuedUserMsg(t)
       },
+      onCompactionStart: () => {
+        // pi 原生压缩开始（手动 / 自动都发）：置位全局「压缩中」，输入区据此渲染提示条。
+        useStore.getState().setCompacting(true)
+      },
       onCompaction: (info) => {
-        // pi 压缩被中止或没出正文：不动存档，保留上一次的摘要与边界
-        if (info.aborted || !info.summary) return
+        // 压缩结束一律撤掉提示条：pi 在成功 / 中止 / 失败三条路径上都会发 compaction_end
+        useStore.getState().setCompacting(false)
+        // 读「当前」记忆，而不是 opts.memory：后者是本轮开始时捕获的快照，一轮里压缩多次时
+        // 第二次会拿旧快照当基线 → 把第一次的记录整条覆盖掉（列表永远只显示一条，看起来
+        // 「卡在第 1 次」）。store 里的 agentProjects 才是这条数据的唯一事实来源。
+        const prevMemory = useStore.getState().agentProjects
+          .find(p => p.id === pid)?.sessions.find(s => s.id === sid)?.memory
+        // 本次是否真的产出了新摘要（中止 / 失败时 pi 给的是空 summary）
+        const succeeded = !info.aborted && !!info.summary
+        // ── 追加一条压缩记录（成功与失败都记）──
+        // 失败/中止原先只出现在一个瞬时弹层里，关掉就查不到；这里留痕，供「压缩记录」列表展示。
+        // 只记元数据、不记摘要全文：pi 是滚动压缩，每份摘要都包含之前全部内容（见 types 的注释）。
+        const compactions = [
+          ...(prevMemory?.compactions ?? []),
+          {
+            reason: info.reason || 'threshold',
+            coveredCount: info.coveredCount,
+            ...(info.tokensBefore != null ? { tokensBefore: info.tokensBefore } : {}),
+            ...(info.tokensAfter != null ? { tokensAfter: info.tokensAfter } : {}),
+            ok: succeeded,
+            ...(info.errorMessage ? { errorMessage: info.errorMessage } : {}),
+            at: Date.now()
+          }
+        ].slice(-MAX_COMPACTION_LOG)
+        // 没成功：不动摘要与边界（保留上一次的成果），只追加记录
+        if (!succeeded) {
+          updateSessionInProject(pid, sid, {
+            memory: prevMemory
+              ? { ...prevMemory, compactions }
+              : { summary: '', coveredCount: 0, updatedAt: Date.now(), compactions }
+          })
+          return
+        }
         // 边界只允许单调前进：pi 在自己会话里是滚动压缩的，回退会让「已被摘要替代」的
         // 消息在下次重建时重新按原文注入，等于压缩白做。
-        const coveredCount = Math.max(opts.memory?.coveredCount ?? 0, info.coveredCount)
-        updateSessionInProject(pid, sid, { memory: { summary: info.summary, coveredCount, updatedAt: Date.now() } })
+        const coveredCount = Math.max(prevMemory?.coveredCount ?? 0, info.coveredCount)
+        updateSessionInProject(pid, sid, {
+          memory: {
+            ...(prevMemory?.facts ? { facts: prevMemory.facts } : {}),
+            summary: info.summary,
+            coveredCount,
+            updatedAt: Date.now(),
+            compactions
+          }
+        })
       },
     })
     piClientRef.current = client
@@ -705,6 +792,10 @@ export function useAgentLoop({
       setStreamKind('idle')
       setCurToolName('')
       setThinkDone(true)
+      // 兜底撤掉「压缩中」提示：pi 的压缩结束事件可能落在 client.detach() 之后
+      // （例如运行结束后的溢出恢复压缩），那条事件到不了渲染层，标志会卡在 true、
+      // 提示条一直挂着。这里在拆掉客户端的同时无条件复位。
+      useStore.getState().setCompacting(false)
       // 待办卡片的收起条件＝「本轮结束 且 清单已全部收束（completed/cancelled）」。
       // 不能只看本轮结束：模型常在「建好计划」这一轮就停下（等下一轮再执行），
       // 那时清单还是 0/N 待办，卡片必须留着，否则计划刚建好就消失。

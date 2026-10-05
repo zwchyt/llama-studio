@@ -380,6 +380,11 @@ interface AppStore {
   // ── Agent Code 工具执行阶段（pi-web 风格状态机，驱动前端状态栏）──
   agentPhase: { kind: 'running_tools'; tools: { name: string; verb: string }[] } | { kind: 'waiting_model' } | null
   setAgentPhase: (phase: AppStore['agentPhase']) => void
+  // ── Agent Code 历史压缩中（pi 原生压缩，手动与自动都置位）──
+  // 放在 store 而不是某个 hook 的局部 state：置位方在 useAgentLoop 的事件回调里，
+  // 消费方在输入区（AgentInputArea），中间隔着好几层 props；store 是这条链上最省的通道。
+  compacting: boolean
+  setCompacting: (v: boolean) => void
   // ── Agent Code 流式实时消息（独立切片）──
   // 流式期间每个 text_delta（~26ms）都经 IPC 到达；若直接写 agentProjects，整页（侧边栏、
   // 文件树、面板…）每次 commit 都重渲染（实测 15-30ms × 20次/秒 = 卡顿主因）。
@@ -748,6 +753,8 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
   setPendingPlainChat: (v) => set({ pendingPlainChat: v }),
   agentMode: 'code',
   setAgentMode: (m) => set({ agentMode: m }),
+  compacting: false,
+  setCompacting: (v) => set({ compacting: v }),
   agentPhase: null,
   setAgentPhase: (phase) => {
     const prev = useStore.getState().agentPhase

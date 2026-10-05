@@ -140,10 +140,20 @@ export class PiEventAdapter {
       sink.emit({ type: 'run_end' })
       return
     }
+    case 'compaction_start': {
+      // pi 原生压缩开始（手动 / 自动都会发，见 agent-session.js 的两处 _emit）。
+      // 原先这里落在 default 被丢掉，所以自动压缩全程没有任何界面反馈。
+      const extra = raw as Record<string, unknown>
+      sink.emit({ type: 'compaction_start', reason: typeof extra.reason === 'string' ? extra.reason : '' })
+      return
+    }
     case 'compaction_end': {
       // pi 原生压缩完成。lsCoveredCount 是主进程换算出来的「渲染层前缀被摘要替代多少条」
       // （pi 只认条目 id，而渲染层的消息数组没有条目概念），这里原样透传。
-      const r = ev.result as { summary?: unknown } | undefined
+      // reason / tokensBefore / estimatedTokensAfter 一并带下去：渲染层要把每次压缩
+      // 落成一条记录（触发来源、压掉多少 token、成败），失败信息尤其要留痕 ——
+      // 原先它只出现在一个瞬时弹层里，关掉就查不到。
+      const r = ev.result as { summary?: unknown; tokensBefore?: unknown; estimatedTokensAfter?: unknown } | undefined
       const extra = raw as Record<string, unknown>
       const summary = typeof r?.summary === 'string' ? r.summary : ''
       sink.emit({
@@ -151,6 +161,9 @@ export class PiEventAdapter {
         summary,
         coveredCount: Number(extra.lsCoveredCount ?? 0),
         aborted: ev.aborted === true,
+        reason: typeof extra.reason === 'string' ? extra.reason : '',
+        ...(typeof r?.tokensBefore === 'number' ? { tokensBefore: r.tokensBefore } : {}),
+        ...(typeof r?.estimatedTokensAfter === 'number' ? { tokensAfter: r.estimatedTokensAfter } : {}),
         ...(typeof extra.errorMessage === 'string' ? { errorMessage: extra.errorMessage } : {})
       })
       return

@@ -2,7 +2,6 @@ import React, { lazy, Suspense, useDeferredValue, useEffect, useMemo } from 'rea
 import { LoaderIcon } from '@animateicons/react/lucide'
 import { useStore } from './store/useStore'
 import { useImageStore } from './store/imageStore'
-import { useThemeStore } from './store/themeStore'
 import Sidebar from './components/Sidebar'
 import SplashScreen from './components/SplashScreen'
 import UpdateBannerGroup from './components/UpdateBannerGroup'
@@ -752,20 +751,24 @@ function AppMain() {
   }, [deferredView])
 
   // 强度换成两个值交给 CSS：面板实心度与压在图上的薄纱透明度（强度越低纱越厚）。
-  // 明暗各走一条曲线：浅色底下要「够亮」才压得住深字，暗色底下要「够暗」才压得住
-  // 浅字（#ced2d9）。共用一条曲线时，暗色拉到 90+ 就等于把浅色 UI 的透法直接搬到亮图上，
-  // 照片亮部穿过面板把文字吃掉。暗色因此少透 25 个点、纱加厚到最多 0.72。
-  const darkTheme = useThemeStore(s => s.theme === 'dark')
+  // 浅色底下要「够亮」才压得住深字。
+  //
+  // ⚠️ 「背景图只在浅色主题生效」这条规则**不在这里判**，整条落在 CSS（app-background.css）：
+  // 主题类 .theme-dark 是在 View Transition 的回调里才切的，比 setTheme 里那次 React set()
+  // 晚一步。在这里用 useThemeStore 判的话，has-bg 会先翻、主题后翻，切换时先闪一帧
+  // 「深色 + 半透」（暗→亮）或「浅色 + 无图」（亮→暗）—— 这正是之前看到的两段跳。
+  // 交给 CSS 就与主题类同一帧生效，天然原子。
   const bgVars = backgroundUrl ? ({
-    '--app-bg-fill': `${100 - Math.round(backgroundStrength * (darkTheme ? 0.65 : 0.9))}%`,
-    '--app-bg-veil-o': `${(((100 - backgroundStrength) / 100) * (darkTheme ? 0.72 : 0.5)).toFixed(3)}`
+    '--app-bg-fill': `${100 - Math.round(backgroundStrength * 0.9)}%`,
+    '--app-bg-veil-o': `${(((100 - backgroundStrength) / 100) * 0.5).toFixed(3)}`
   } as React.CSSProperties) : undefined
 
   return (
     <>
       <div className={`app${backgroundUrl ? ' has-bg' : ''}`} style={bgVars}>
         {/* 背景图是整窗最底一层：图用 img 铺（几 MB 的 data URL 塞进 style 属性不现实），
-          薄纱压在图上，界面所有面板浮在两者之上、靠半透明底色透出。 */}
+          薄纱压在图上，界面所有面板浮在两者之上、靠半透明底色透出。
+          深色主题下由 CSS 把这一层整块 display:none（见 app-background.css）。 */}
         {backgroundUrl && (
           <div className="app-bg" aria-hidden="true">
             <img className="app-bg-img" src={backgroundUrl} alt="" />

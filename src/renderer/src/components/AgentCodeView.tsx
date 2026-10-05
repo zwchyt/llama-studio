@@ -268,6 +268,8 @@ export default function AgentCodeView() {
     runSlashAction,
     // 发消息时无条件贴底：恢复被用户上滚关掉的跟随，否则新消息会在视野外生成
     scrollToBottom: scroll.scrollToBottom,
+    // view_image 执行完自动在右侧预览列展开这张图（见 useAgentLoop 里的 openPreviewRef）
+    openPreview: previewDomain.openPreview,
   }))
 
   // ── 语音朗读（纯聊天模式的消息行用）──

@@ -30,6 +30,7 @@ import { buildSessionPdfHtml } from '../utils/exportSessionPdf'
 import { useAgentMessageHeights } from '../hooks/useAgentMessageHeights'
 import { useAgentVirtualMessages } from '../hooks/useAgentVirtualMessages'
 import { AgentPrefillBar, HistorySummaryBubble, TopbarBtn, UserMessageEntry, AgentMessageRow } from '../agent-message'
+import { fmtCompactTok } from '../utils/format'
 import AgentContextPanel from '../../AgentContextPanel'
 import AgentMessageSearch from '../../AgentMessageSearch'
 import { AgentTrajectoryPanel } from '../../AgentTrajectoryPanel'
@@ -108,6 +109,18 @@ export interface AgentCodeViewLayoutProps {
   handleInputChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
 }
 
+/** 压缩记录的触发来源文案（取自 pi 的 compaction_end.reason） */
+const COMPACT_REASON_LABEL: Record<string, string> = {
+  manual: '手动',
+  threshold: '自动 · 水位',
+  overflow: '自动 · 溢出',
+}
+
+/** 压缩记录的时钟：列表里只要「时:分」，秒是噪声 */
+function fmtCompactionClock(at: number): string {
+  return new Date(at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+}
+
 export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }) {
   const {
     projects: projectsDomain, inputDomain, preview: previewDomain, hints: hintsDomain,
@@ -117,6 +130,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     msgEndRef, msgRowActionsRef, chatInputAreaRef,
     handleKeyDown, handleInputChange,
   } = view
+
+  // 历史压缩中（pi 原生压缩，手动 / 自动都置位）：在会话区底部、输入框上方横一条提示线。
+  // 订阅单个 boolean —— 一次压缩只翻两次，不会带来额外渲染。
+  const compacting = useStore(s => s.compacting)
 
   const {
     activeProject, activeProjectId, activeSession, activeSessionId,
@@ -676,9 +693,6 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
 
         <div className={`agent-code-chat${chatEmpty ? ' hero-input' : ''}`}>
           <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll} onWheel={onChatWheel} onTouchMove={pauseFollow} onMouseUp={handleMessagesMouseUp}>
-            {condensing && (
-              <div className="agent-condensing"><LoaderIcon size={13} className="spin" /> 正在压缩历史…</div>
-            )}
             {activeSession?.memory?.summary && (
               <HistorySummaryBubble summary={activeSession.memory.summary} count={activeSession.memory.coveredCount} />
             )}
@@ -818,6 +832,41 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                 {activeSession?.memory?.summary && (
                   <pre className="agent-condense-preview">{activeSession.memory.summary}</pre>
                 )}
+                {/* 压缩记录：每次一行元数据（时间 / 触发来源 / 覆盖条数 / token 前后 / 成败）。
+                    摘要全文只保留上面那一份 —— pi 是滚动压缩，每份摘要都包含它之前的全部内容，
+                    逐次列出来只会是一堆层层重复的长文，读不出「分次」的信息。
+                    这里真正的价值是「压了几次、什么触发、压掉多少、哪次失败了」：失败信息
+                    原先只出现在一个瞬时弹层里，关掉就查不到。 */}
+                {(() => {
+                  const log = activeSession?.memory?.compactions ?? []
+                  if (!log.length) return null
+                  return (
+                    <div className="agent-condense-log">
+                      <div className="agent-condense-log-title">压缩记录（{log.length} 次）</div>
+                      <div className="agent-condense-log-list">
+                        {log.map((r, i) => (
+                          <div className={`agent-condense-log-row${r.ok ? '' : ' is-error'}`} key={`${r.at}-${i}`}>
+                            <span className="agent-condense-log-idx">第 {i + 1} 次</span>
+                            <span className="agent-condense-log-time">{fmtCompactionClock(r.at)}</span>
+                            <span className="agent-condense-log-reason">{COMPACT_REASON_LABEL[r.reason] ?? r.reason}</span>
+                            {r.ok ? (
+                              <span className="agent-condense-log-num">
+                                {r.coveredCount > 0 ? `覆盖 ${r.coveredCount} 条` : '已压缩'}
+                                {r.tokensBefore != null && r.tokensAfter != null
+                                  ? ` · ${fmtCompactTok(r.tokensBefore)} → ${fmtCompactTok(r.tokensAfter)}`
+                                  : ''}
+                              </span>
+                            ) : (
+                              <span className="agent-condense-log-err" title={r.errorMessage || ''}>
+                                {r.errorMessage || '压缩未完成'}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })()}
                 {condenseMsg && <div className="agent-condense-result">{condenseMsg}</div>}
                 <div className="agent-condense-actions">
                   <button
@@ -909,6 +958,16 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
             <button className="agent-code-scroll-bottom-btn" onClick={() => scrollToBottom(true, true)} >
               <ChevronDownIcon size={18} />
             </button>
+          )}
+          {/* 历史压缩提示：压缩中在「会话区底部、输入框上方」横一条线，中间写明状态。
+              信号来自 pi 的 compaction_start / compaction_end（手动与自动都发），落在
+              store.compacting 上；结束后自动消失。放在这里而不是输入区内部 —— 它属于
+              对话区的收尾提示，不是输入框的一部分。 */}
+          {compacting && (
+            <div className="agent-compacting-bar" role="status" aria-live="polite">
+              <span className="agent-compacting-dot" aria-hidden />
+              <span className="agent-compacting-text">上下文接近上限，正在压缩历史</span>
+            </div>
           )}
           <AgentInputArea
             inputDomain={inputDomain}
