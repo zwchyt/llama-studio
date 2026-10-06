@@ -413,7 +413,7 @@ export interface AgentMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
-  toolCalls?: { id: string; name: string; args: string; status?: 'pending' | 'await_approval' | 'executing' | 'done'; result?: string; truncated?: boolean; resultTotal?: number; failed?: boolean; durationMs?: number; restored?: boolean; backupPath?: string; streamStat?: { added: number; removed: number } }[]
+  toolCalls?: { id: string; name: string; args: string; /** 参数是否已完整：false/缺省 = 仍在逐 token 生成（渲染层走流式态），true = toolcall_end 已给出完整参数 */ argsComplete?: boolean; status?: 'pending' | 'await_approval' | 'executing' | 'done'; result?: string; truncated?: boolean; resultTotal?: number; failed?: boolean; durationMs?: number; restored?: boolean; backupPath?: string; streamStat?: { added: number; removed: number } }[]
   attachments?: Attachment[]  // 用户消息的附件（图片 / 文件）
   stopped?: boolean           // 用户手动停止生成，消息内容不完整
   /** 「继续生成」注入的接续指令：需要发给模型，但不作为用户消息显示在界面上。

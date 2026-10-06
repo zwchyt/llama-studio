@@ -12,6 +12,16 @@
 import React, { useMemo } from 'react'
 import type { AgentMessage } from '../../../../../shared/types'
 import { WindowedRows } from '../WindowedText'
+import { useThrottledValue } from '../../../utils/useThrottledValue'
+
+/** LCS 动态规划表的单元格上限（n×m）。
+ *
+ * 超过即退化为「全删 + 全增」展示，避免内存溢出或长时间阻塞渲染线程。
+ * 500k ≈ 700×700 行，单次 DP 在中端机器上约数毫秒。
+ *
+ * 注意 computeSplitDiff 是在**裁剪掉公共前后缀之后**用中间段规模与此阈值比较的：
+ * 同一个常量在 countDiffStats 里作用于全文，在 computeSplitDiff 里作用于中间段。 */
+const MAX_DIFF_CELLS = 500_000
 
 export type DiffRow = { type: 'equal' | 'del' | 'ins' | 'replace'; left: string | null; right: string | null; leftNum: number | null; rightNum: number | null }
 
@@ -22,7 +32,6 @@ export function countDiffStats(oldText: string, newText: string): { added: numbe
   const b = newText.split('\n')
   const n = a.length, m = b.length
 
-  const MAX_DIFF_CELLS = 500_000
   if (n === 0) return { added: m, removed: 0 }
   if (m === 0) return { added: 0, removed: n }
 
@@ -82,7 +91,13 @@ export function getEditDiffStat(tc: NonNullable<AgentMessage['toolCalls']>[numbe
   try { parsed = JSON.parse(args || '{}') } catch { parsed = null }
   if (parsed && typeof parsed === 'object') {
     if (tc.name === 'Write') {
-      if (typeof parsed.content === 'string') {
+      // 流式尾部窗口（见主进程 clipWriteStreamArgs）：快照里的 content 只是最后 N 行，
+      // 拿它数行数会把「共 5000 行」算成 60。此时让位给主进程逐帧下发的 streamStat
+      // —— 那边数的是未裁剪的完整内容，卡片头部的 +N −M 才是真的。
+      const tailStart = (parsed as { __tailStart?: unknown }).__tailStart
+      if (typeof tailStart === 'number' && tailStart > 0) {
+        stat = null
+      } else if (typeof parsed.content === 'string') {
         stat = { added: parsed.content.split('\n').length, removed: 0 }
       }
     } else {
@@ -118,61 +133,85 @@ export function computeSplitDiff(oldText: string, newText: string): DiffRow[] {
   const a = oldText.split('\n')
   const b = newText.split('\n')
   const n = a.length, m = b.length
-  // 大文件保护：LCS DP 表为 O(n×m)，超过阈值时直接退化为「全删+全增」展示，
-  // 避免内存溢出或长时间卡顿渲染线程。阈值 500k ≈ 700×700 行。
-  const MAX_DIFF_CELLS = 500_000
-  if (n * m > MAX_DIFF_CELLS) {
-    const rows: DiffRow[] = []
-    let lnum = 1, rnum = 1
-    for (let i = 0; i < n; i++) rows.push({ type: 'del', left: a[i]!, right: null, leftNum: lnum++, rightNum: null })
-    for (let j = 0; j < m; j++) rows.push({ type: 'ins', left: null, right: b[j]!, leftNum: null, rightNum: rnum++ })
-    return rows
-  }
-  // LCS 动态规划
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      dp[i]![j] = a[i] === b[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!)
-    }
-  }
-  // 先生成「编辑脚本」（equal / del / ins 序列，del/ins 各自独立），便于后续配对成一行
-  const script: { type: 'equal' | 'del' | 'ins'; ai: number; bj: number }[] = []
-  let i = 0, j = 0
-  while (i < n && j < m) {
-    if (a[i] === b[j]) { script.push({ type: 'equal', ai: i, bj: j }); i++; j++ }
-    else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) { script.push({ type: 'del', ai: i, bj: -1 }); i++ }
-    else { script.push({ type: 'ins', ai: -1, bj: j }); j++ }
-  }
-  while (i < n) { script.push({ type: 'del', ai: i, bj: -1 }); i++ }
-  while (j < m) { script.push({ type: 'ins', ai: -1, bj: j }); j++ }
+
+  // ── 公共前后缀裁剪 ──
+  // LCS 的 DP 表是 O(n×m)，而一次 Edit 真正改动的往往只是一小块。先把两端逐行相同的部分
+  // 摘出去（O(n) 字符串比较），只对中间段跑 DP —— 流式时 newText 逐帧增长但已收敛的前缀不变，
+  // 于是每帧的 DP 规模只与「尚未收敛的尾部」成正比，等价于无状态的增量复用。
+  // 顺带修掉一个正确性问题：原先 500k 阈值按**整份文件**判定，2000 行文件改 5 行也会超阈值、
+  // 退化成「全删 + 全增」；裁剪后阈值只作用于中间段，小改动能拿到精确 diff。
+  let pre = 0
+  while (pre < n && pre < m && a[pre] === b[pre]) pre++
+  let suf = 0
+  while (suf < n - pre && suf < m - pre && a[n - 1 - suf] === b[m - 1 - suf]) suf++
 
   const rows: DiffRow[] = []
-  let lnum = 1, rnum = 1, k = 0
-  while (k < script.length) {
-    const s = script[k]!
-    if (s.type === 'equal') {
-      rows.push({ type: 'equal', left: a[s.ai]!, right: b[s.bj]!, leftNum: lnum, rightNum: rnum })
-      k++; lnum++; rnum++
-      continue
+  for (let i = 0; i < pre; i++) {
+    rows.push({ type: 'equal', left: a[i]!, right: b[i]!, leftNum: i + 1, rightNum: i + 1 })
+  }
+
+  const an = n - pre - suf // 中间段（旧）行数
+  const bn = m - pre - suf // 中间段（新）行数
+
+  if (an > 0 && bn > 0 && an * bn <= MAX_DIFF_CELLS) {
+    // LCS 动态规划（仅中间段）。下标相对中间段，取内容时统一加 pre 偏移。
+    const dp: number[][] = Array.from({ length: an + 1 }, () => new Array(bn + 1).fill(0))
+    for (let i = an - 1; i >= 0; i--) {
+      for (let j = bn - 1; j >= 0; j--) {
+        dp[i]![j] = a[pre + i] === b[pre + j]
+          ? dp[i + 1]![j + 1]! + 1
+          : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!)
+      }
     }
-    const dels: number[] = []
-    const inss: number[] = []
-    while (k < script.length && script[k]!.type !== 'equal') {
-      if (script[k]!.type === 'del') dels.push(script[k]!.ai)
-      else inss.push(script[k]!.bj)
-      k++
+    // 先生成「编辑脚本」（equal / del / ins 序列，del/ins 各自独立），便于后续配对成一行
+    const script: { type: 'equal' | 'del' | 'ins'; ai: number; bj: number }[] = []
+    let i = 0, j = 0
+    while (i < an && j < bn) {
+      if (a[pre + i] === b[pre + j]) { script.push({ type: 'equal', ai: i, bj: j }); i++; j++ }
+      else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) { script.push({ type: 'del', ai: i, bj: -1 }); i++ }
+      else { script.push({ type: 'ins', ai: -1, bj: j }); j++ }
     }
-    const pairs = Math.min(dels.length, inss.length)
-    for (let p = 0; p < pairs; p++) {
-      rows.push({ type: 'replace', left: a[dels[p]!]!, right: b[inss[p]!]!, leftNum: lnum, rightNum: rnum })
-      lnum++; rnum++
+    while (i < an) { script.push({ type: 'del', ai: i, bj: -1 }); i++ }
+    while (j < bn) { script.push({ type: 'ins', ai: -1, bj: j }); j++ }
+
+    let lnum = pre + 1, rnum = pre + 1, k = 0
+    while (k < script.length) {
+      const s = script[k]!
+      if (s.type === 'equal') {
+        rows.push({ type: 'equal', left: a[pre + s.ai]!, right: b[pre + s.bj]!, leftNum: lnum, rightNum: rnum })
+        k++; lnum++; rnum++
+        continue
+      }
+      const dels: number[] = []
+      const inss: number[] = []
+      while (k < script.length && script[k]!.type !== 'equal') {
+        if (script[k]!.type === 'del') dels.push(script[k]!.ai)
+        else inss.push(script[k]!.bj)
+        k++
+      }
+      const pairs = Math.min(dels.length, inss.length)
+      for (let p = 0; p < pairs; p++) {
+        rows.push({ type: 'replace', left: a[pre + dels[p]!]!, right: b[pre + inss[p]!]!, leftNum: lnum, rightNum: rnum })
+        lnum++; rnum++
+      }
+      for (let p = pairs; p < dels.length; p++) {
+        rows.push({ type: 'del', left: a[pre + dels[p]!]!, right: null, leftNum: lnum, rightNum: null }); lnum++
+      }
+      for (let p = pairs; p < inss.length; p++) {
+        rows.push({ type: 'ins', left: null, right: b[pre + inss[p]!]!, leftNum: null, rightNum: rnum }); rnum++
+      }
     }
-    for (let p = pairs; p < dels.length; p++) {
-      rows.push({ type: 'del', left: a[dels[p]!]!, right: null, leftNum: lnum, rightNum: null }); lnum++
-    }
-    for (let p = pairs; p < inss.length; p++) {
-      rows.push({ type: 'ins', left: null, right: b[inss[p]!]!, leftNum: null, rightNum: rnum }); rnum++
-    }
+  } else if (an > 0 || bn > 0) {
+    // 退化路径：中间段仍然过大（或其中一侧为空）→ 全删 + 全增。
+    // 行号必须从 pre + 1 起接续，否则会与前缀的 equal 行号重叠。
+    let lnum = pre + 1, rnum = pre + 1
+    for (let i = 0; i < an; i++) rows.push({ type: 'del', left: a[pre + i]!, right: null, leftNum: lnum++, rightNum: null })
+    for (let j = 0; j < bn; j++) rows.push({ type: 'ins', left: null, right: b[pre + j]!, leftNum: null, rightNum: rnum++ })
+  }
+
+  for (let i = 0; i < suf; i++) {
+    const ai = n - suf + i, bj = m - suf + i
+    rows.push({ type: 'equal', left: a[ai]!, right: b[bj]!, leftNum: ai + 1, rightNum: bj + 1 })
   }
   return rows
 }
@@ -189,8 +228,19 @@ export const DIFF_WINDOW_ROWS = 400
 const DIFF_WINDOW_ROW_HEIGHT = 17
 const DIFF_WINDOW_VIEW_HEIGHT = 420
 
-export const ToolEditDiff = React.memo(function ToolEditDiff({ oldText, newText }: { oldText: string; newText: string }) {
-  const rows = useMemo(() => computeSplitDiff(oldText, newText), [oldText, newText])
+/** 流式 diff 的节流窗口。
+ *
+ * 取值理由：LCS 是 O(n×m)，而流式期间父组件每帧都会因 args 变化重渲染。120ms ≈ 8 次/秒，
+ * 肉眼已足够连续，主线程占用降到 1/3 以下。注意它与主进程 24ms 的 IPC 合帧是**两层独立**
+ * 的节流：那一层管传输频率，这一层管计算频率，不能互相替代。
+ * 节流实现收敛在共享的 useThrottledValue —— CodeBlock 的流式高亮用的是同一份。 */
+const DIFF_STREAM_THROTTLE_MS = 120
+
+export const ToolEditDiff = React.memo(function ToolEditDiff({ oldText, newText, streaming = false }: { oldText: string; newText: string; streaming?: boolean }) {
+  // 流式期间走节流后的值（完成态直接透传）。old/new 必须**成对**节流：分别节流会在某一帧
+  // 出现「新的 old + 旧的 new」这种错配组合，算出来的 diff 既不属于前一帧也不属于后一帧。
+  const shown = useThrottledValue({ oldText, newText }, [oldText, newText], streaming, DIFF_STREAM_THROTTLE_MS)
+  const rows = useMemo(() => computeSplitDiff(shown.oldText, shown.newText), [shown.oldText, shown.newText])
   // 行内容两个分支共用：窗口态由 WindowedRows 提供行外层，非窗口态自己包一层。
   const renderRow = (idx: number) => {
     const r = rows[idx]!
@@ -210,7 +260,7 @@ export const ToolEditDiff = React.memo(function ToolEditDiff({ oldText, newText 
     )
   }
   return (
-    <div className="agent-tool-diff">
+    <div className="agent-tool-diff" data-streaming={streaming ? 'true' : undefined}>
       <div className="agent-tool-diff-head">
         <span>原内容</span>
         <span>新内容</span>

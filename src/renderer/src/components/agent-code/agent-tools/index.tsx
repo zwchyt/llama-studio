@@ -26,6 +26,8 @@ import { JsonResultCard } from '../../ToolResultRows'
 import { getEditDiffStat, ToolEditDiff } from '../agent-diff'
 import { LinedPre, LINED_PRE_WINDOW_CHARS } from './LinedPre'
 import { WindowedText } from '../WindowedText'
+import { HighlightedCode } from '../HighlightedCode'
+import { langFromPath } from '../utils/highlightLines'
 import { dirName, pathDir, resolveWorkspacePath, toWorkspaceRelative } from '../utils/paths'
 import { formatDuration } from '../utils/format'
 import { useBubbleTip } from '../../useBubbleTip'
@@ -200,7 +202,11 @@ function parseGlobResult(result: string): GlobResult | null {
   return null
 }
 
-export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPreviewFile, headFilePath, readRange }: { name: string; args: string; onPreviewFile: (p: string, line?: number) => void; headFilePath?: string; readRange?: { start: number; end: number; total?: number } | null }) {
+/** Write 流式预览的尾部窗口行数。用户要看的是「正在写到哪里」，不是从头读一份还在生成的文件。
+ *  与主进程的 STREAM_WRITE_TAIL_LINES 是两层独立窗口：那层管过 IPC 的体积，这层管上屏的行数。 */
+const STREAM_WRITE_PREVIEW_LINES = 60
+
+export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPreviewFile, headFilePath, readRange, streaming = false }: { name: string; args: string; onPreviewFile: (p: string, line?: number) => void; headFilePath?: string; readRange?: { start: number; end: number; total?: number } | null; streaming?: boolean }) {
   const parsed = (() => { try { return JSON.parse(args) } catch { return null } })()
   // Write 的「写入内容」折叠状态（超过 12 行时才出现展开按钮）
   const [writeExpanded, setWriteExpanded] = useState(false)
@@ -413,6 +419,16 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
     const writeBytes = writeContent !== null ? new TextEncoder().encode(writeContent).length : 0
     const writeSize = writeBytes >= 1024 ? `${(writeBytes / 1024).toFixed(1)} KB` : `${writeBytes} B`
     const writeClipped = !!writeRows && writeRows.length > 12
+    // Write 流式预览的语法：按目标文件扩展名推断（见 utils/highlightLines）。
+    // 用参数里的路径而不是 headFilePath —— 后者已转成相对路径用于展示，直接读参数少一层耦合。
+    const writeLang = langFromPath(
+      typeof (parsed!.file_path ?? parsed!.path) === 'string' ? ((parsed!.file_path ?? parsed!.path) as string) : ''
+    )
+    // 流式尾部窗口：行号偏移 = 主进程注入的 __tailStart + 本层窗口裁剪偏移，相加才是真实行号。
+    const streamTailStart = typeof parsed!.__tailStart === 'number' ? (parsed!.__tailStart as number) : 0
+    const streamRows = writeContent !== null ? writeContent.split('\n') : []
+    const streamTotalLines = streamTailStart + streamRows.length
+    const streamWinStart = Math.max(0, streamRows.length - STREAM_WRITE_PREVIEW_LINES)
     return (
       <div className="agent-tool-args">
         {name === 'Write' && (
@@ -425,7 +441,32 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
                 <span className="agent-tool-io-note">仅能新建（已存在会被拒绝），自动创建父目录</span>
               </div>
             </div>
-            {writeRows ? (
+            {streaming ? (
+              // 流式态：尾部窗口 + 真实总行数 + 语法高亮。
+              // 刻意与完成态分走两个分支 —— 完成态保留既有的「12 行折叠 + 展开」与 LinedPre 路径，
+              // 不把流式改造扩大成一次 UI 重做。
+              <div className="agent-tool-result">
+                <div className="agent-tool-result-head">
+                  <span className="agent-tool-result-label">写入内容</span>
+                  <span className="agent-tool-result-actions">
+                    <span className="agent-tool-result-meta">
+                      {streamTotalLines} 行{streamWinStart > 0 ? ` · 显示末 ${STREAM_WRITE_PREVIEW_LINES} 行` : ''}
+                    </span>
+                  </span>
+                </div>
+                {writeContent === null ? (
+                  <div className="agent-tool-content-empty">等待内容生成…</div>
+                ) : (
+                  <HighlightedCode
+                    code={streamRows.slice(streamWinStart).join('\n')}
+                    language={writeLang}
+                    startLine={streamTailStart + streamWinStart + 1}
+                    className="no-hash"
+                    streaming
+                  />
+                )}
+              </div>
+            ) : writeRows ? (
               <div className="agent-tool-result">
                 <div className="agent-tool-result-head">
                   <span className="agent-tool-result-label">写入内容</span>
@@ -460,35 +501,51 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
           </>
         )}
         {name === 'Edit' && (() => {
-          // 兼容两代参数：自研旧式 old_string/new_string，pi 原生 path + edits[]（一次多处）
+          // 兼容两代参数：自研旧式 old_string/new_string，pi 原生 path + edits[]（一次多处）。
+          // 流式期间参数是半截的（old_string 已写完而 new_string 还没开始，或反之），所以刻意
+          // 不再要求「两侧同时是 string」—— 旧守卫会让整个 diff 在参数生成的前半程消失。
+          // 缺失的一侧视作空串，渲染「渐进 diff」，等另一侧开始生成再补上。
+          const oldStr = typeof parsed!.old_string === 'string' ? (parsed!.old_string as string) : null
+          const newStr = typeof parsed!.new_string === 'string' ? (parsed!.new_string as string) : null
+          const single = oldStr !== null || newStr !== null
           const edits = Array.isArray(parsed!.edits)
             ? (parsed!.edits as Array<{ oldText?: unknown; newText?: unknown }>).filter(
-              (e) => e && typeof e.oldText === 'string' && typeof e.newText === 'string'
+              (e) => e && (typeof e.oldText === 'string' || typeof e.newText === 'string')
             )
             : []
-          const single = typeof parsed!.old_string === 'string' && typeof parsed!.new_string === 'string'
           const count = single ? 1 : edits.length
           if (count === 0) return null
+          // 恰好一处时不套「编辑 1」子标题。单元素 edits[] 才是常态（pi 的 Edit 提示词已改成
+          // 「一次调用只改一处」），真正的多 edit 只剩历史消息或模型未遵守时才会出现。
+          const oneShot = count === 1
+          const onlyOld = oldStr ?? (typeof edits[0]?.oldText === 'string' ? (edits[0]!.oldText as string) : '')
+          const onlyNew = newStr ?? (typeof edits[0]?.newText === 'string' ? (edits[0]!.newText as string) : '')
           return (
             <>
-              {/* 编辑处数：pi 原生 edits[] 支持一次调用多处，处数决定下面会出现几个 diff */}
+              {/* 编辑处数：处数决定下面会出现几个 diff */}
               <div className="agent-tool-io-group">
                 <div className="agent-tool-io">
                   <span className="agent-tool-io-label">编辑</span>
                   <span className="agent-tool-io-value">{count} 处</span>
                   <span className="agent-tool-io-note">
-                    {single ? 'old_string → new_string 单处替换' : 'edits[] 逐条替换'}
+                    {streaming
+                      ? '参数生成中 · 内容实时预览'
+                      : oneShot ? '单处替换' : 'edits[] 逐条替换'}
                   </span>
                 </div>
               </div>
-              {single ? (
-                <ToolEditDiff oldText={parsed!.old_string as string} newText={parsed!.new_string as string} />
+              {oneShot ? (
+                <ToolEditDiff oldText={onlyOld} newText={onlyNew} streaming={streaming} />
               ) : (
                 <div className="agent-tool-edits">
                   {edits.map((e, i) => (
                     <div className="agent-tool-edit" key={i}>
                       <div className="agent-tool-content-head"><span>编辑 {i + 1}</span></div>
-                      <ToolEditDiff oldText={e.oldText as string} newText={e.newText as string} />
+                      <ToolEditDiff
+                        oldText={typeof e.oldText === 'string' ? e.oldText : ''}
+                        newText={typeof e.newText === 'string' ? e.newText : ''}
+                        streaming={streaming}
+                      />
                     </div>
                   ))}
                 </div>
@@ -743,14 +800,23 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
   const pending = status === 'pending'
   const done = status === 'done'
   const failed = done && !!tc.failed
+  // 参数是否仍在逐 token 生成。由 useAgentLoop 在 onToolCallArgs 里显式置 false、
+  // 在 toolcall_end 置 true；历史消息（无该字段）为 undefined → 一律视为非流式，
+  // 否则旧会话每次打开都会被判成「生成中」，白白走一遍流式态渲染与节流。
+  const argsStreaming = tc.argsComplete === false
   const canRestore = done && canUndo && !tc.restored && BACKUP_TOOLS.has(tc.name)
   // 展开/收起动画：与 ThinkBlock 同方案——由 useCollapseAnimation 提供
   // handleToggle / onBodyTransitionEnd。裁剪层 max-height 像素过渡，首次展开后保持挂载
   // （visible），收起只收到 0 不卸载，避免 diff/高亮重解析卡顿。
   // 工具卡始终默认收起：是否展开由用户逐卡手动决定，无全局批量开关。
   const bodyRef = useRef<HTMLDivElement>(null)
+  // 注意：Write/Edit 流式期间**不自动展开**。曾试过按 useCollapseAnimation 注释里的
+  // 「自动展开」约定接上，但实时预览每帧长高、卡片会持续把界面顶开，打断阅读；且与
+  // 上面「工具卡始终默认收起」的既有约定冲突。改动仍在卡片里照常渲染（含实时 diff /
+  // 尾部窗口高亮），用户点一下就能看到，展开后是实时跟进的。
   const { expanded, visible, onBodyTransitionEnd, toggle: handleToggle } =
     useCollapseAnimation(bodyRef)
+
   const parsed = useMemo(() => { try { return JSON.parse(tc.args || '{}') } catch { return null } }, [tc.args])
   const preview = getToolPreview(parsed)
   // 编辑工具的增删行数统计（显示在工具卡片上方，类似 git diff 的 +N -M）。
@@ -941,7 +1007,7 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
                   </div>
                 </>
               )}
-              {tc.name !== 'Bash' && tc.name !== 'web_search' && tc.name !== 'web_search_bing' && <ToolArgsView name={tc.name} args={tc.args} onPreviewFile={onPreviewFile} headFilePath={headFilePath} readRange={readRange} />}
+              {tc.name !== 'Bash' && tc.name !== 'web_search' && tc.name !== 'web_search_bing' && <ToolArgsView name={tc.name} args={tc.args} onPreviewFile={onPreviewFile} headFilePath={headFilePath} readRange={readRange} streaming={argsStreaming} />}
               {(tc.name === 'web_search' || tc.name === 'web_search_bing') && (executing || done) && (
                 <WebSearchResults
                   result={done ? tc.result ?? undefined : undefined}

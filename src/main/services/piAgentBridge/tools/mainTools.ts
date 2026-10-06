@@ -242,6 +242,62 @@ function isPathInWorkspace(absPath: string, baseDir: string): boolean {
 // 但默认直接操作本地 fs，绕过 llama-studio 的路径沙箱 / 撤销备份，
 // 这里用 wrapper 补回。注意：跨批冲突检测（ipc.ts fileSnapshots hash 比对）pi 原生无此
 // 机制，替换后不再生效——换取 pi 更稳的匹配与多编辑能力，属预期取舍。
+
+// ── 覆盖 pi 原生 Edit 的提示词：一次调用只改一处 ──
+// pi 默认要求模型把同文件的多处改动合并进一次调用；这里逐条改写成「必须单处」，
+// 并补上 pi 原文没有的一条（拆成多次调用后，后一次看到的是前一次的结果）。
+const EDIT_PROMPT_SNIPPET =
+  'Make one precise file edit per call with exact text replacement; use several calls for several locations.'
+
+const EDIT_PROMPT_GUIDELINES = [
+  '- 每次 Edit 只改一处：edits[] 必须恰好一个元素。同一文件有多处要改时，连续发起多次 Edit 调用，不要把多处分装进一次调用。',
+  '- edits[].oldText 必须与文件当前内容逐字符一致（含缩进），且在文件中唯一。不要为了跨过无关区域而把大段未改动内容塞进 oldText。',
+  '- 每次 Edit 调用都会立即落盘，因此后一次调用看到的是前一次的结果。两处改动相邻时，先想清楚自己上一次改成了什么（或重新 Read）再写下一个 oldText，否则会匹配失败。',
+  '- 需要连续改多处时，优先按文件从上到下的顺序改，避免前后两处的定位互相错位。',
+]
+
+const EDIT_DESCRIPTION =
+  'Edit a single file using exact text replacement. Each call makes exactly ONE targeted replacement — pass a single-entry edits[] array. To change several locations in the same file, make several Edit calls, one per location. edits[].oldText must match the file content exactly (including indentation) and must be unique in the file. Do not include large unchanged regions just to connect distant changes.'
+
+const EDIT_EDITS_DESC =
+  'Exactly ONE targeted replacement per call. Always pass a single-element array. To change several separate locations, make several Edit calls instead of one call with multiple entries.'
+
+const EDIT_OLDTEXT_DESC =
+  'Exact text to replace. Must match the file content exactly (including indentation) and be unique in the file.'
+
+/** 覆写 Edit 参数 schema 里两处与新提示词冲突的描述 —— pi 原文写着 "One or more targeted
+ *  replacements" / "must not overlap with any other edits[].oldText in the same call"，
+ *  会让模型同时收到「只能一处」和「可以多处」两个矛盾信号，必须一起改掉。
+ *  只改描述文案、不动结构；该 schema 是纯数据对象，浅克隆即可，不破坏 TypeBox 校验。 */
+function overrideEditSchemaDescriptions<T>(params: T): T {
+  const p = params as unknown as {
+    properties?: Record<string, { description?: string; items?: { properties?: Record<string, { description?: string }> } }>
+  }
+  const props = p.properties
+  const edits = props?.edits
+  if (!props || !edits) return params
+  const items = edits.items
+  const oldText = items?.properties?.oldText
+  return {
+    ...p,
+    properties: {
+      ...props,
+      edits: {
+        ...edits,
+        description: EDIT_EDITS_DESC,
+        ...(items && items.properties && oldText
+          ? {
+              items: {
+                ...items,
+                properties: { ...items.properties, oldText: { ...oldText, description: EDIT_OLDTEXT_DESC } },
+              },
+            }
+          : {}),
+      },
+    },
+  } as unknown as T
+}
+
 async function createPiEditTool(exec: MainToolExecutors, ctx?: CreateMainToolsContext): Promise<ToolDefinition> {
   // main 构建是 CJS，而 pi 系包为 ESM-only（exports 仅 import 条件），静态 import 会
   // require 失败，必须动态 import（与 toolAdapter.ts 对 typebox 的处理一致）。
@@ -256,6 +312,14 @@ async function createPiEditTool(exec: MainToolExecutors, ctx?: CreateMainToolsCo
     ...piCore,
     name: 'Edit', // 保持大写：toolNames 白名单 / TOOL_METAS 元数据 / AgentCodeView 判断均以此为键
     label: '编辑文件',
+    // 改写 pi 的提示词（四路：snippet / guidelines / description / 参数描述）：pi 默认要求
+    // 把同文件多处改动合并进一次调用，本项目要的是「一处改动 = 一次调用 = 一张卡片」。
+    // ⚠️ 代价：pi 原生一次调用是**原子**的（一次算完一次写盘），拆开后第 N 次失败时前 N-1 次
+    // 已落盘、文件停在中间状态，往返次数与备份条目数也变多。只改提示词，不动 schema 结构。
+    promptSnippet: EDIT_PROMPT_SNIPPET,
+    promptGuidelines: EDIT_PROMPT_GUIDELINES,
+    description: EDIT_DESCRIPTION,
+    parameters: overrideEditSchemaDescriptions(piCore.parameters),
     // 兼容模型沿用自研参数（file_path + old_string/new_string + replace_all / hashline）：
     // 先转成 pi 的 path + edits[] 格式，再走 pi 原生垫片（edits 字符串化、顶层 oldText/newText）。
     prepareArguments: (args: unknown) => {
@@ -697,10 +761,25 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     name: 'web_search_bing',
     label: '必应搜索',
     description: 'Search the web via Bing (cn.bing.com). Returns a list of results with title, URL, and snippet. Use this for Chinese/domestic web content and when DuckDuckGo is unreachable.',
+    // ⚠️ 查询词数直接决定结果质量（2026-10 实测 cn.bing.com）：1~2 个词可靠，
+    // 3 个词以上容易分词失败、整批降级成该实体的通用介绍页（`重庆 天气预报 温度 湿度` → 重庆百科
+    // + 旅游攻略）；极端如 `特斯拉财报` 会被当成单个「特」字处理。
+    // 这不是解析器或限流问题（同一查询连发三次结果稳定），且换 setlang / mkt / cc、
+    // www.bing.com、补 cookie / Referer 全部无效 —— 只能从问法上约束。
+    promptGuidelines: [
+      '- query 只用 **1~2 个词**（实体 + 属性），用空格分隔：`重庆 天气`、`特斯拉 财报`、`React 19`。',
+      '- **绝对不要超过 3 个词**：词数一多，必应会分词失败，把结果整批降级成该实体的通用介绍页（实测 `重庆 天气预报 温度 湿度` 返回的是重庆百科与旅游攻略）。',
+      '- 不要加日期、时间、单位、口语修饰：`10月6日`、`温度`、`湿度`、`今天`、`实时`、`情况`、`怎么样` 都会显著拉低质量。要查多天就分多次搜 `重庆 天气`。',
+      '- 不要写成自然语言句子（`帮我查一下重庆的天气情况`）。',
+      '- 一次只查一个方面；结果不够再换关键词重搜，不要靠堆词。',
+    ],
     parameters: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'The search query.' }
+        query: {
+          type: 'string',
+          description: 'Short keyword query — 1 or 2 terms only, entity first (e.g. "重庆 天气", "特斯拉 财报"). Never more than 3 terms, and no dates, units or question words: extra terms make Bing fail to tokenize and fall back to generic entity pages.'
+        }
       },
       required: ['query']
     },

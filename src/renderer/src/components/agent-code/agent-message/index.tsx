@@ -361,18 +361,22 @@ function groupIntoBatches(timeline: ThinkChainItem[], streaming: boolean): Chain
 
 // 思考段独立折叠块（链内嵌套折叠）：每个思考段（含首段）一个可收起/展开的子块。
 // 展开态只跟「这一段是否还在流式生长」走——思考一结束就立刻折成一行「Thought: Xs」，
-// 与批的「活跃批展开、跑完的批收成一行」是同一套语义，链内粒度统一到「段」。
-// 刻意不跟随容器展开态：跟随的话打开思考链会把所有思考段一并铺开，长链又回来了
-// （链内会变成「思考一大段 + 过程正文 + 思考一大段」，正是本次要修的问题）。
-// 用户手动开合过的段保持粘性（不被自动态覆盖，容器重开也不强行展开）。
-// 工具卡与过程正文不折叠，工具卡始终默认收起。
-// 折叠用 max-height 像素过渡 + 保持挂载（不卸载 DOM），与容器级 ThinkBlock 同方案。
-// 展开体设纵向高度上限（.agent-think-fold-body，内部滚动）：单段六七十行不再撑长整条链。
-const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, durationMs, streaming, containerExpanded }: {
+// 与批的「活跃批展开、跑完的批收成一行」是同一套语义。
+// 默认不跟随容器展开态：跟随的话打开思考链会把所有思考段一并铺开，长链又回来了。
+// 用户手动开合过的段保持粘性。工具卡与过程正文不折叠，工具卡始终默认收起。
+// 折叠用 max-height 像素过渡 + 保持挂载，与容器级 ThinkBlock 同方案；展开体有高度上限
+// （.agent-think-fold-body 内部滚动），单段六七十行不会撑长整条链。
+//
+// expandWithContainer：批级联动开关，只由 ToolBatchFold 传 true。批头「执行工具 N 次」是
+// 自包含的回合单元，点开它的人想看的就是「这一轮为什么调这些工具」，所以批开合时其下思考段
+// 一并开合。外层 ThinkBlock 不传 —— 那是全消息级容器，跟随会把整条链全铺开。
+const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, durationMs, streaming, containerExpanded, expandWithContainer }: {
   content: string
   durationMs?: number
   streaming?: boolean
   containerExpanded?: boolean
+  /** 是否跟随 containerExpanded 一并开合（仅批级使用，见上方说明） */
+  expandWithContainer?: boolean
 }) {
   // 只有「本段还在思考」才展开；思考结束（streaming 翻假）由下面的 effect 立即折叠。
   const active = !!streaming
@@ -396,6 +400,13 @@ const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, duratio
     if (!visible) setVisible(true)
     if (!expanded) setExpanded(true)
   }
+  // 批头联动展开（expandWithContainer）：同样走渲染期同步置位 —— 批体的 max-height 已被
+  // 批头置成 none，段若晚两帧才挂载，批体高度会先小后大，展开时跳一下。
+  // !active 是必要的：本段仍在流式时由上面那条 active 分支负责，两者不能同时写。
+  if (!userToggledRef.current && !active && expandWithContainer && containerExpanded === true && (!visible || !expanded)) {
+    if (!visible) setVisible(true)
+    if (!expanded) setExpanded(true)
+  }
   // 收起侧仍留在 effect：collapse() 要读 DOM 高度并写 max-height，不能放在渲染期。
   useEffect(() => {
     if (userToggledRef.current) return
@@ -412,9 +423,11 @@ const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, duratio
       setExpanded(false)
       return
     }
+    // 批展开联动：本段由上面的渲染期同步置位保持展开，这里不能再收回去。
+    if (expandWithContainer && containerExpanded === true) return
     if (visible && expandedRef.current) collapse()
     else { setExpanded(false); setVisible(false) }
-  }, [streaming, active]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [streaming, active, containerExpanded, expandWithContainer]) // eslint-disable-line react-hooks/exhaustive-deps
   // 与 ThinkBlock 相同的首展开优化：容器预挂载后，各思考段的 Markdown 内容也在
   // 浏览器空闲时段预挂载（保持收起、不可见）——否则首次点开容器时每个折叠块
   // 才现解析 Markdown/KaTeX，多段叠加成一帧的重活，表现为首展开卡顿。
@@ -433,8 +446,12 @@ const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, duratio
   // useLayoutEffect：绘制前生效，折叠块内容随容器同一帧完整呈现。
   useLayoutEffect(() => {
     const el = bodyRef.current
-    if (active && visible && expanded && el && !userToggledRef.current) el.style.maxHeight = 'none'
-  }, [active, visible, expanded, renderContent])
+    if (!el || userToggledRef.current) return
+    // 程序化展开（流式自动展开 / 批头联动展开）→ 直接置自适应高度，不走 0→scrollHeight 过渡。
+    if (visible && expanded && (active || (expandWithContainer && containerExpanded === true))) {
+      el.style.maxHeight = 'none'
+    }
+  }, [active, visible, expanded, renderContent, containerExpanded, expandWithContainer])
   // 折叠体内滚动（展开体有高度上限）：流式时贴底跟随最新思考，用户向上滚动阅读时
   // 暂停贴底、滚回底部附近自动恢复；链运行中段结束不重置滚动位置（保持阅读位置），
   // 链结束后复位回顶部，再次展开从头阅读
@@ -595,6 +612,9 @@ const ToolBatchFold = React.memo(function ToolBatchFold({ items, toolCount, tool
                       durationMs={it.durationMs}
                       streaming={it.streaming}
                       containerExpanded={expanded}
+                      // 批级联动：批头「执行工具 N 次」展开时，其下思考段一并展开；收起时一并收起。
+                      // 外层 ThinkBlock 不传此开关（见 ThinkSegmentFold 的说明）。
+                      expandWithContainer
                     />
                   )
                   : (
@@ -638,14 +658,11 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
 }) {
   const bodyRef = useRef<HTMLDivElement>(null)
   const userToggledRef = useRef(false)
-  // 自动折叠单向锁：避免同一时机反复调 collapse()。运行中不收外层（只收链内的批），
-  // 收起只发生在整轮结束后；下一轮运行（又起思考 / 还有未完成工具）会解锁重开。
-  const autoCollapsedRef = useRef(false)
   // 标记「本次 expanded=true 是用户手动点击展开」：仅这类展开走 max-height 像素过渡动画，
   // 自动展开（流式 / 容器联动）仍走自适应高度（见下方 useLayoutEffect）。为 true 时表示
   // 「这一次展开」需要动画，由 useLayoutEffect 消费放行，过渡结束（或收起）时复位。
   const manualExpandRef = useRef(false)
-  const { expanded, visible, setExpanded, setVisible, expandedRef, collapse: autoCollapse, onBodyTransitionEnd: rawBodyTransitionEnd, toggle: handleToggle } =
+  const { expanded, visible, setExpanded, setVisible, expandedRef, onBodyTransitionEnd: rawBodyTransitionEnd, toggle: handleToggle } =
     useCollapseAnimation(bodyRef, {
       initialExpanded: isStreaming ?? false,
       beforeToggle: () => {
@@ -744,36 +761,22 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
     if (userToggledRef.current) return
     // pending 占位态：内容尚未到达，不挂载 body
     if (pending) return
-    // 运行中出现新的活动（思考恢复 / 还有未完成的工具）→ 展开。运行中不做「因正文出现而收起」，
-    // 所以这里主要是把「整轮结束后才收起」的终态在下一轮重新打开，并复位单向锁。
+    // 运行中出现新的活动（思考恢复 / 还有未完成的工具）→ 展开。
     if (thinking || hasLiveTools) {
       setVisible(true)
       setExpanded(true)
-      if (msgStreaming) autoCollapsedRef.current = false
       return
     }
-    // 运行中一律保持展开，不按「是否出现正文」收外层：链内的过程正文只是阶段说明，
-    // 它之后往往还有新的批，且正文段本身也在容器内——这里一收，过程正文与新批会随容器
-    // 一起被藏掉，用户看不到「上面的批收起、过程正文可见、后面的新批展开」这个结构。
-    // 运行中只收「批」（判据在 groupIntoBatches 的 active），外层留到整轮结束再收。
-    if (msgStreaming) return
-    // 收起时机：整轮已结束（最终正文输出完毕 / 被中断），把版面让给结论气泡。
-    if (autoCollapsedRef.current) return
-    autoCollapsedRef.current = true
-    // 走 collapse() 的像素过渡且保持挂载（不再 setVisible(false) 卸载 DOM）——
-    // 卸载会在下一轮思考/重开时全量重解析 Markdown/KaTeX，表现为内容闪断。
-    autoCollapse()
-  }, [thinking, hasLiveTools, pending, msgStreaming, autoCollapse])
+    // 运行中一律保持展开，只收「批」（判据在 groupIntoBatches 的 active）：链内的过程正文段
+    // 也在容器内，一收会连同后面的新批一起被藏掉。
+    //
+    // ⚠️ 整轮结束后**也不再自动收起外层**（原实现是「把版面让给结论气泡」）：链内不只有思考段
+    // 与工具卡，还交错收纳着**过程正文段** —— 那是模型真实输出的一部分，自动收起会一并藏掉。
+    // 现在一律保持展开，收起完全交给用户点击（userToggledRef 粘性）。
+    // 若日后想折中（例如「链内条目超过 N 条才自动收」），加在这里即可。
+  }, [thinking, hasLiveTools, pending])
 
-  // closed 在「segments 渲染点」等于「本次运行已结束」（closed={!streaming}，单调翻转一次）；
-  // 但另一个调用点传的是 `lastClosed || thinkDone`——思考段一闭合、或一进入工具/正文阶段就为真，
-  // 运行中途也为真。所以这里必须再加 msgStreaming 守卫：运行期间不收起，只有整轮结束才补齐收尾。
-  useEffect(() => {
-    if (closed && !msgStreaming && !thinking && !hasLiveTools && !userToggledRef.current && expandedRef.current) {
-      autoCollapsedRef.current = true
-      autoCollapse()
-    }
-  }, [closed, msgStreaming, thinking, hasLiveTools, autoCollapse, expandedRef])
+  // 注：原先还有一条「closed 兜底自动收起」的 effect，已随上面的改动一并移除。
 
   // 首展开卡顿优化：挂载后在浏览器空闲时段预挂载折叠体（保持收起、max-height 0
   // 不可见），把 Markdown/KaTeX 的首次解析成本从「首次点击展开」那一帧挪到空闲期；

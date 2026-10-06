@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import hljs from 'highlight.js/lib/common'
 import { Check, Copy, ChevronDown } from 'lucide-react'
 import { WindowedText } from './agent-code/WindowedText'
+import { highlightLines } from './agent-code/utils/highlightLines'
+import { useThrottledValue } from '../utils/useThrottledValue'
 import { useBubbleTip } from './useBubbleTip'
 // 本组件是共享组件（Agent Code 消息与模型中心 README 都会渲染），样式跟着组件走，
 // 原先寄存在 chat.css 里、靠 AgentCodeView 的静态引入才生效，已迁到自己的文件
@@ -36,6 +38,10 @@ export const CODE_WINDOW_LINES = 300
 const CODE_WINDOW_ROW_HEIGHT = 20
 const CODE_WINDOW_VIEW_HEIGHT = 420
 
+/** 流式高亮的节流窗口。流式期间本组件随每个 delta 批次重渲染，而 hljs 是整块 O(n) 计算
+ *  （见本文件头部注释记录的代价）。120ms ≈ 8 次/秒，对「代码逐行变色」已足够连续。 */
+const CODE_STREAM_HIGHLIGHT_MS = 120
+
 export default function CodeBlock({ language, value, showLineNumbers, isStreaming }: CodeBlockProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const [copied, setCopied] = useState(false)
@@ -62,6 +68,17 @@ export default function CodeBlock({ language, value, showLineNumbers, isStreamin
     () => (isStreaming && lines.length > 1 && lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines),
     [lines, isStreaming]
   )
+  // 流式高亮：整体高亮一次、再按行输出（见 utils/highlightLines 的 splitBalancedLines）。
+  // 关键取舍：**只节流颜色，不节流文本** —— 渲染始终用当前的 codeLines，高亮快照只作为
+  // 「这一行该染什么色」的来源。连文本一起节流会让代码块滞后一个窗口，反而丢掉顺滑感。
+  const streamValue = useThrottledValue(value, [value], !!isStreaming, CODE_STREAM_HIGHLIGHT_MS)
+  const streamHtml = useMemo(() => {
+    if (!isStreaming) return null
+    const h = highlightLines(streamValue, language, false)
+    if (!h) return null
+    // 末尾空行处理必须与 codeLines 一致，否则两个分支行盒数差 1、切换时整块跳一行。
+    return streamValue.endsWith('\n') ? h.slice(0, -1) : h
+  }, [isStreaming, streamValue, language])
   // 长块降级：整块 hljs 高亮是「一个 HTML 字符串塞进一个 <code>」，无法按行窗口化；逐行 hljs
   // 又会因跨行字符串 / 注释 / 模板串错色。所以超阈值的完成态块改为纯文本行窗口，头部标注已
   // 省略高亮，复制仍用完整原文。阈值以下完全走原路径（含语法高亮与折行）。
@@ -178,9 +195,14 @@ export default function CodeBlock({ language, value, showLineNumbers, isStreamin
             <pre className="chat-code-pre">
               {isStreaming ? (
                 <code className={`code-streaming language-${langLabel}`}>
-                  {codeLines.map((ln, i) => (
-                    <span key={i}>{ln || '\u00A0'}</span>
-                  ))}
+                  {codeLines.map((ln, i) => {
+                    // 只取「已定型」行的高亮快照：最后一行仍在增长，快照可能落后于当前文本，
+                    // 用它会把陈旧的半行内容显示出来。i < 快照末行下标 即视为已定型。
+                    const html = streamHtml && i < streamHtml.length - 1 ? streamHtml[i] : undefined
+                    return html !== undefined
+                      ? <span key={i} dangerouslySetInnerHTML={{ __html: html || '\u00A0' }} />
+                      : <span key={i}>{ln || '\u00A0'}</span>
+                  })}
                 </code>
               ) : (
                 <code

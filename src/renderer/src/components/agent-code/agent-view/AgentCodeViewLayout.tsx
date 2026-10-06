@@ -567,6 +567,9 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   // 发送飞行：新用户消息上屏后，从输入框盒真伸缩飞入（STAGE 7r2）。
   // 绘制前执行（无闪烁）；锚点对不上（虚拟窗口/删除/减弱动态）就静默放弃，直接显示。
   useLayoutEffect(() => {
+    // 注意：不要给飞行层传 scrollToBottom 之类的回调去贴底 —— 那会在 layout effect 里
+    // 触发 React 同步重渲染（setAtBottom），插进飞行层的时序中间，气泡会抖。
+    // 详见 sendFlight.ts 里 maybeRunSendFlight 的注释。
     maybeRunSendFlight()
   }, [activeSession?.messages.length])
   return (

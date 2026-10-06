@@ -551,9 +551,10 @@ export function useAgentLoop({
         if (tIdx < 0) tIdx = toolCalls.findIndex(t => t.name === tc.name && !t.args && t.status === 'pending')
         if (tIdx >= 0) {
           // 参数更新（toolcall_end 携带完整 arguments；start 的空串不覆盖已有参数）
-          if (tc.args) toolCalls[tIdx] = { ...toolCalls[tIdx]!, args: tc.args }
+          if (tc.args) toolCalls[tIdx] = { ...toolCalls[tIdx]!, args: tc.args, argsComplete: true }
         } else {
-          toolCalls.push({ id: tc.id, name: tc.name, args: tc.args, status: 'pending' })
+          // 首次建卡：toolcall_start 时空参（argsComplete 缺省 = 流式态）；toolcall_end 直接带完整参数
+          toolCalls.push({ id: tc.id, name: tc.name, args: tc.args, status: 'pending', ...(tc.args ? { argsComplete: true } : {}) })
         }
         const lastTc = toolCalls[toolCalls.length - 1]!
         // 相邻工具调用（之间无文本增量）并入同一工具批，保持「一批工具一张卡组」的展示粒度
@@ -574,10 +575,22 @@ export function useAgentLoop({
       },
       // 参数流式快照：让待办条目「生成完一条就上屏一条」，而不是干等整段 JSON 生成完。
       // 只处理 TodoWrite（其它工具的参数要么不需要预览、要么体量太大，主进程已按量丢弃）。
+      // 参数流式快照（主进程已按体积上限裁剪，只对需要的工具下发）：
+      //   - TodoWrite：让待办条目「生成完一条就上屏一条」，不必干等整段 JSON
+      //   - Edit：让工具卡在参数生成期间就渲染渐进分栏 diff（argsComplete=false 驱动流式态）
       onToolCallArgs: (tc) => {
-        if (tc.name !== 'TodoWrite' || !tc.args) return
-        setTaskModalOpen(true)
-        applyTodoWriteArgs(tc.args, true)
+        if (!tc.args) return
+        if (tc.name === 'TodoWrite') {
+          setTaskModalOpen(true)
+          applyTodoWriteArgs(tc.args, true)
+          return
+        }
+        if (tc.name !== 'Edit' && tc.name !== 'Write') return
+        // 快照逐帧覆盖同一张卡；argsComplete 保持 false，直到 toolcall_end 携带完整参数
+        const i = toolCalls.findIndex(t => t.id === tc.id)
+        if (i < 0) return
+        toolCalls[i] = { ...toolCalls[i]!, args: tc.args, argsComplete: false }
+        commit({ toolCalls: [...toolCalls], segments: buildSegs() })
       },
       // Write/Edit 参数生成中的行数统计（主进程数的换行数）挂到工具卡，让 +N -M 从头就在。
       // 参数流完后渲染层用 LCS 精确值覆盖（getEditDiffStat 只认完整 args）。

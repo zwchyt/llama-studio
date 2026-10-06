@@ -3966,6 +3966,17 @@ html.is-panel-resizing .agent-think-body .table-node {
   color: var(--text-dim);
 }
 
+/* Write 流式态占位：参数已开始生成，但 content 字段还没出现（模型正在写第一个键值对）。
+   给一个虚线占位，避免「写入内容」标题下面空着，让人以为卡片卡住了。 */
+.agent-tool-content-empty {
+  padding: 10px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+}
+
 /* 四个内容块共用基底：底色/边框/圆角/等宽排版/限高滚动，差异项在各自规则内覆盖 */
 .agent-tool-args-pre,
 .agent-tool-content-pre,
@@ -4047,6 +4058,36 @@ html.is-panel-resizing .agent-think-body .table-node {
 
 .agent-tool-diff-head>span:last-child {
   border-left: 1px solid var(--border);
+}
+
+/* Edit 流式态：参数仍在逐 token 生成，此刻的 diff 是「进行中」的中间结果而非最终形态。
+   左缘加一条呼吸光带提示这一点（与工具卡 executing 的 shimmer 同语义，共用 --tool-accent）。
+   幅度刻意压低：diff 正文本身每 120ms 就在变，指示器再抢眼会干扰阅读。
+   注意 ::before 用 absolute 定位 —— .agent-tool-diff-head 是两列 grid，绝对定位的伪元素
+   才不会被当成第三个网格项挤乱「原内容 / 新内容」两栏。 */
+.agent-tool-diff[data-streaming='true'] {
+  border-color: color-mix(in srgb, var(--tool-accent, var(--accent)) 45%, var(--border));
+}
+
+.agent-tool-diff[data-streaming='true'] .agent-tool-diff-head {
+  position: relative;
+}
+
+.agent-tool-diff[data-streaming='true'] .agent-tool-diff-head::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--tool-accent, var(--accent));
+  opacity: 0.5;
+  animation: agentDiffStreamPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes agentDiffStreamPulse {
+  0%, 100% { opacity: 0.28; }
+  50% { opacity: 0.75; }
 }
 
 .agent-tool-diff-body {
@@ -12228,6 +12269,12 @@ html.theme-dark {
   .agent-tool-live-cursor {
     animation: none;
     opacity: 1;
+  }
+
+  /* 流式 diff 的呼吸光带：静止保留常亮描边，语义（正在生成）不靠动画传达 */
+  .agent-tool-diff[data-streaming='true'] .agent-tool-diff-head::before {
+    animation: none;
+    opacity: 0.6;
   }
 }
 

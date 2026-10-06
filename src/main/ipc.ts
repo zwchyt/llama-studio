@@ -6528,28 +6528,78 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('web-search', async (_e, query: string) => handleWebSearch(query))
 
   // ── 必应（国内版）网络搜索工具 ──────────────────────────────
+  // 解析器没问题：Bing 返回正常页面时同一套正则 5/5 正确解析。问题是 Bing 的 HTML SERP
+  // 会对**部分查询**整体降级 —— 词数一多就分词失败，退化成单字匹配或该实体的通用介绍页
+  // （实测：`重庆 天气预报 温度 湿度` → 重庆百科+旅游攻略；`特斯拉 财报` → 「特（汉语汉字）」）。
+  // 换 setlang / mkt / cc、www.bing.com、补 cookie / Referer 全部无效 —— 请求侧无法补救。
+  // 因此这里加一道**结果侧兜底**：相关性不达标就用更短的查询重搜，取分最高的一批。
+  const BING_MAX_RESULTS = 5
+
+  /** 相关性打分：前若干条**标题**里覆盖了几个查询词（只看长度 ≥2 的词，避免单字巧合命中）。
+   *  用标题而不是摘要：摘要里出现查询词可能只是正文顺带提到，标题命中才是真相关。 */
+  function scoreBingRelevance(results: Array<{ title: string }>, terms: string[]): number {
+    if (terms.length === 0 || results.length === 0) return 0
+    const blob = results.map(r => r.title).join('\n')
+    let hit = 0
+    for (const t of terms) if (blob.includes(t)) hit++
+    return hit
+  }
+
+  /** 按词数递降的候选查询：原查询 → 前 2 词 → 首词。
+   *  无空格的中文查询（如「特斯拉财报」）**不参与切分** —— 没有真分词，按字符截断
+   *  反而可能造出无意义的片段，宁可不兜底。 */
+  function bingQueryCandidates(query: string): string[] {
+    const terms = query.trim().split(/\s+/).filter(t => t.length >= 2)
+    if (terms.length < 2) return [query]
+    const out = [query]
+    if (terms.length > 2) out.push(terms.slice(0, 2).join(' '))
+    out.push(terms[0]!)
+    return out
+  }
+
+  function parseBingResults(html: string): Array<{ title: string; url: string; snippet: string }> {
+    const results: Array<{ title: string; url: string; snippet: string }> = []
+    const blockRe = /<li class="b_algo"[^>]*>([\s\S]*?)<\/li>/gi
+    let bm: RegExpExecArray | null
+    while ((bm = blockRe.exec(html)) !== null && results.length < BING_MAX_RESULTS) {
+      const block = bm[1]
+      const linkM = /<h2[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>\s*<\/h2>/i.exec(block)
+      if (!linkM) continue
+      const rawUrl = linkM[1]
+      if (!/^https?:\/\//i.test(rawUrl)) continue
+      const title = stripHtml(linkM[2]).trim()
+      if (!title) continue
+      const snipM = /<p[^>]*>([\s\S]*?)<\/p>/i.exec(block)
+      const snippet = snipM ? stripHtml(snipM[1]).trim() : ''
+      results.push({ title, url: rawUrl, snippet })
+    }
+    return results
+  }
+
   const handleWebSearchBing = async (query: string): Promise<string> => {
     if (!query?.trim()) return JSON.stringify({ error: '搜索关键词不能为空' })
+    const q = query.trim()
+    const terms = q.split(/\s+/).filter(t => t.length >= 2)
+    // 达标线：至少命中 2 个词（查询本身不足 2 个词时要求全中）
+    const pass = Math.min(2, Math.max(1, terms.length))
     try {
-      const encoded = encodeURIComponent(query.trim())
-      const url = `https://cn.bing.com/search?q=${encoded}`
-      const html = await fetchText(url, 15_000)
-      const results: Array<{ title: string; url: string; snippet: string }> = []
-      const blockRe = /<li class="b_algo"[^>]*>([\s\S]*?)<\/li>/gi
-      let bm: RegExpExecArray | null
-      while ((bm = blockRe.exec(html)) !== null && results.length < 5) {
-        const block = bm[1]
-        const linkM = /<h2[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>\s*<\/h2>/i.exec(block)
-        if (!linkM) continue
-        const rawUrl = linkM[1]
-        if (!/^https?:\/\//i.test(rawUrl)) continue
-        const title = stripHtml(linkM[2]).trim()
-        if (!title) continue
-        const snipM = /<p[^>]*>([\s\S]*?)<\/p>/i.exec(block)
-        const snippet = snipM ? stripHtml(snipM[1]).trim() : ''
-        results.push({ title, url: rawUrl, snippet })
+      let best: Array<{ title: string; url: string; snippet: string }> | null = null
+      let bestScore = -1
+      for (const candidate of bingQueryCandidates(q)) {
+        const html = await fetchText(`https://cn.bing.com/search?q=${encodeURIComponent(candidate)}`, 15_000)
+        const results = parseBingResults(html)
+        // 打分始终用**原查询**的词，各候选之间才可比
+        const score = scoreBingRelevance(results, terms)
+        if (score > bestScore) { best = results; bestScore = score }
+        // 达标即停。降级重搜只在两种情况下发生（其余情况原查询已经够用）：
+        //   ① 一个词都没命中 —— 结果与查询完全无关（如「特斯拉 财报」被按单字匹配）；
+        //   ② 查询有 3 个词以上且未达标 —— 实测词数越多越容易触发降级。
+        // 刻意不对「2 个词 + 命中 1 个」做重搜：那多半是结果标题为外文（如腾讯财报返回
+        // 英文标题）导致的误判，重搜成单词反而会把更精确的结果换掉。
+        if (score >= pass) break
+        if (score > 0 && terms.length < 3) break
       }
-      return JSON.stringify(results)
+      return JSON.stringify(best ?? [])
     } catch (e: any) {
       return JSON.stringify({ error: `必应搜索失败: ${e?.message || e}` })
     }

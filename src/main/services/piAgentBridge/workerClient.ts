@@ -172,6 +172,53 @@ function editStreamStat(name: string, args: Record<string, unknown>): { added: n
   }
   return added > 0 || removed > 0 ? { added, removed } : null
 }
+
+/** Edit 流式参数快照的体积上限。比其它工具的 8KB 宽松：old_string / new_string 是分栏 diff
+ *  的两侧基准，几十行的编辑很容易越界。
+ *  超限时宁可退化为纯统计、也不截断 —— 半截 JSON 会让渲染层的 JSON.parse 直接失败。 */
+const STREAM_EDIT_ARGS_MAX_CHARS = 32 * 1024
+
+/** Edit 的流式参数快照：把「参数对象」序列化成可安全过 IPC 的 JSON。
+ *  前提：pi 的 toolcall_delta 里 block.arguments 已是「半截 JSON 尽力解析后的对象」
+ *  （parseStreamingJson），所以序列化后必然合法 —— 渲染层不会 JSON.parse 失败。
+ *  返回 null 表示本帧不转发正文，渲染层继续用 toolcall_stat 的 +N −M 兜底。 */
+function clipStreamArgs(name: string, args: Record<string, unknown>): string | null {
+  if (name === 'Edit') {
+    let json: string
+    try {
+      json = JSON.stringify(args)
+    } catch {
+      return null // 含不可序列化值：跳过快照，等 toolcall_end
+    }
+    return json.length <= STREAM_EDIT_ARGS_MAX_CHARS ? json : null
+  }
+  if (name === 'Write') return clipWriteStreamArgs(args)
+  return null
+}
+
+/** Write 流式快照的体积上限与尾部窗口行数（超限只发尾部 —— 用户要看的是「正在写到哪里」）。 */
+const STREAM_WRITE_ARGS_MAX_CHARS = 32 * 1024
+const STREAM_WRITE_TAIL_LINES = 60
+
+/** Write 的流式参数快照：限内全文，超限尾部窗口。
+ *  起始行号以 __tailStart 注入 args（渲染层据此偏移行号；__ 前缀是本仓库既有约定）。
+ *  ⚠️ 调用方必须继续用**未裁剪**的原始 args 走 editStreamStat，否则头部的 +N −M 会变成窗口行数。 */
+function clipWriteStreamArgs(args: Record<string, unknown>): string | null {
+  const content = typeof args.content === 'string' ? args.content : ''
+  if (!content) return null
+  let full: string
+  try {
+    full = JSON.stringify(args)
+  } catch {
+    return null
+  }
+  if (full.length <= STREAM_WRITE_ARGS_MAX_CHARS) return full
+  const lines = content.split('\n')
+  if (lines.length <= STREAM_WRITE_TAIL_LINES) return full
+  const start = lines.length - STREAM_WRITE_TAIL_LINES
+  return JSON.stringify({ ...args, content: lines.slice(start).join('\n'), __tailStart: start })
+}
+
 let deltaFlushTimer: ReturnType<typeof setTimeout> | null = null
 let deltaSid = ''
 
@@ -249,15 +296,22 @@ function pushEvent(sessionId: string, event: unknown): void {
     const am = e.assistantMessageEvent
     const block = am.partial?.content?.[am.contentIndex ?? -1]
     if (block && block.type === 'toolCall' && block.name) {
+      const blockArgs = (block.arguments ?? {}) as Record<string, unknown>
       if (block.name === 'Write' || block.name === 'Edit') {
-        // 文件改动工具：只回传统计数字，别把整份内容搬过 IPC；数值没变就不入队
-        const stat = editStreamStat(block.name, (block.arguments ?? {}) as Record<string, unknown>)
+        // 文件改动工具：统计数字照发（只数换行，极轻量），让卡片头部 +N −M 从头就在；
+        // 数值没变就不入队，避免无意义的帧。
+        const stat = editStreamStat(block.name, blockArgs)
         if (stat && (!toolStatBuf || toolStatBuf.added !== stat.added || toolStatBuf.removed !== stat.removed)) {
           queueToolStat(sessionId, { id: block.id || '', name: block.name, ...stat })
         }
+        // 额外转发参数正文快照：渲染层据此在参数生成期间就渲染实时预览，
+        // 而不是干等 toolcall_end。Edit 转发全文（超限退化为纯统计，见 clipStreamArgs），
+        // Write 转发全文或尾部窗口（超 32KB 时，见 clipWriteStreamArgs）。
+        const preview = clipStreamArgs(block.name, blockArgs)
+        if (preview) queueToolArgs(sessionId, { id: block.id || '', name: block.name, args: preview })
       } else {
         try {
-          const args = JSON.stringify(block.arguments ?? {})
+          const args = JSON.stringify(blockArgs)
           if (args.length <= TOOL_ARGS_MAX_CHARS) queueToolArgs(sessionId, { id: block.id || '', name: block.name, args })
         } catch { /* 含不可序列化值：跳过快照，等 toolcall_end */ }
       }

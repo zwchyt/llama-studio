@@ -121,6 +121,12 @@ function flipOldRows(list: HTMLElement, a: FlightAnchor): void {
 /**
  * Layout 的 useLayoutEffect 里调用（依赖消息数）：新行已挂载、绘制前执行飞行。
  * 行数没涨（本次发送没上屏，如排队/校验拦截）就把锚点留给下次；对不上就静默放弃。
+ *
+ * ⚠️ 这里的贴底**必须直写 scrollTop**，不要改走 scroll 域的 scrollToBottom：
+ * 后者会调 setAtBottom(true) → 在 layout effect 里触发 React 同步重渲染，插进下面这段
+ * 「量落点 → FLIP 旧行 → 单 rAF 时钟飞行」的时序中间，实测会让飞出的气泡抖动。
+ * 直写虽然没打「程序化滚动」标记，但这里是**向下**滚动，onChatScroll 的方向判断
+ * 本来就会把 following 置真 —— 正是发送想要的语义，所以不构成问题。
  */
 export function maybeRunSendFlight(): void {
   if (!anchor) return

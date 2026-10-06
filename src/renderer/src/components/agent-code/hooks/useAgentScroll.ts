@@ -35,12 +35,23 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
   const FOLLOW_THRESHOLD = 80
   // 上一次 scroll 事件的位置：用于判断用户滚动方向（只有向下滚回底部才重新跟随）。
   const lastScrollTopRef = useRef(0)
+  // 上一次 scroll 事件时的 maxTop：用于区分「用户上滚」与「内容/视口收缩导致的浏览器夹取」。
+  const lastMaxTopRef = useRef(0)
   // 程序化滚动写入的目标位置：scroll 事件只有落在该值上才判定为程序滚动；
   // 若用户滚动与程序写入被合并成同一条 scroll 事件（位置 ≠ 目标），仍按用户输入处理，
   // 否则流式期间拖滚动条/键盘上滚会被 pin 同帧拽回。
   const programmaticScrollTopRef = useRef(0)
-  // 重新跟随阈值：必须真正滚到最底（而非停留在 80px 观察带内）才重新接管贴底。
+  // 重新跟随的两档阈值：真正滚到最底（严格），或回到近底观察带且持续下滚（宽松）。
+  // 只用严格阈值时，流式期间底部一直在跑、用户几乎追不到那 4px；放宽的防抖由 downAccum 负责。
   const REATTACH_THRESHOLD = 4
+  const REATTACH_DOWN_PX = 16
+  // 累计向下位移：出现向上位移立即清零，因此触控板/滚轮的微抖动永远累积不到阈值。
+  const downAccumRef = useRef(0)
+  // 发送后的跟随锁定截止时间：窗口内无条件保持跟随，不做方向推断。
+  // 发送瞬间会连带产生一串非用户滚动事件（输入框清空变矮导致视口变高、程序化贴底与消息提交
+  // 合并成同一条 scroll 等），它们都会命中「位置变小 → 判为用户上滚」。解除只认显式手势。
+  const followLockUntilRef = useRef(0)
+  const FOLLOW_LOCK_MS = 1500
   const railTargetsRef = useRef(new Map<string, HTMLElement>())
   // 已挂载消息的 [id, 元素] 有序表：只承担「位置」职责，供二分读取 getBoundingClientRect。
   const railEntriesRef = useRef<[string, HTMLElement][]>([])
@@ -107,18 +118,33 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     } else if (Date.now() < smoothScrollUntilRef.current) {
       return
     }
-    const distance = el.scrollHeight - top - el.clientHeight
-    // FOLLOW_THRESHOLD 只表达「视口贴近底部」的 UI 态（回到底部按钮），不再驱动跟随翻转。
+    const maxTop = el.scrollHeight - el.clientHeight
+    const distance = maxTop - top
+    const prevMaxTop = lastMaxTopRef.current
+    lastMaxTopRef.current = maxTop
+    // 累计向下位移：出现向上位移立即清零
+    if (top > prevTop) downAccumRef.current += top - prevTop
+    else if (top < prevTop) downAccumRef.current = 0
+    // FOLLOW_THRESHOLD 只表达「视口贴近底部」的 UI 态（回到底部按钮）。
     const bottom = distance <= FOLLOW_THRESHOLD
     atBottomRef.current = bottom
     setAtBottom(bottom)
-    // 重新跟随须同时满足「真正滚到最底」且「方向向下」。只用距离阈值时，近底处的
-    // 小幅上滚会在同帧被重新接管、再被 rAF pin 拽回，表现为滚轮被吃掉；方向判断
-    // 同时覆盖滚动条拖拽与键盘翻页的向上意图。
-    if (distance <= REATTACH_THRESHOLD && top > prevTop) {
+    // 跟随锁定窗口内不做方向推断（按钮态仍按真实位置更新）
+    if (Date.now() < followLockUntilRef.current) {
       followingRef.current = true
+      return
+    }
+    if (top > prevTop) {
+      // 向下：真正到底，或回到近底带且累计下滚足够 → 重新跟随
+      if (distance <= REATTACH_THRESHOLD || (distance <= FOLLOW_THRESHOLD && downAccumRef.current >= REATTACH_DOWN_PX)) {
+        followingRef.current = true
+      }
     } else if (top < prevTop) {
-      followingRef.current = false
+      // 「位置变小」不等于「用户上滚」：收缩时浏览器会把 scrollTop 夹取到新上限，
+      // 同样产生位置变小的事件。只有 maxTop 确实变小、且停在新底部时才算夹取。
+      const shrank = maxTop < prevMaxTop - 0.5
+      const clampedToBottom = shrank && distance <= REATTACH_THRESHOLD
+      if (!clampedToBottom) followingRef.current = false
     }
   }, [])
 
@@ -127,6 +153,8 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
   // 向下滚动不暂停：在底部继续下滚本无位移、无 scroll 事件可把跟随翻回来，若在此暂停
   // 会导致「明明在最底下却不跟走」。
   const pauseFollow = useCallback(() => {
+    // 显式手势 → 解除跟随锁定，把控制权交回用户
+    followLockUntilRef.current = 0
     followingRef.current = false
     atBottomRef.current = false
   }, [])
@@ -225,6 +253,8 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     // force=true 表示「用户主动要求贴底」（点最后一颗点/点回到底部按钮），
     // 此时应抢占并中止旧动画，而不是被忽略。
     if (railAnimatingRef.current && !force) return
+    // 显式贴底 → 开跟随锁定窗口（见 followLockUntilRef）
+    if (force) followLockUntilRef.current = Date.now() + FOLLOW_LOCK_MS
     atBottomRef.current = true
     setAtBottom(true)
     followingRef.current = true
@@ -268,6 +298,27 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     })
   }, [animateScrollTo])
 
+  // 注：曾在此实现 repinIfFollowing（整轮结束后内容异步长高时补贴底），已移除 ——
+  // 它与浏览器默认的 overflow-anchor 互相拉扯，导致 finalize 时整个会话上下抖动。
+
+  // 切换会话：跟随态整体复位（含 followingRef）。
+  // 必须放在下面那条贴底 layout effect **之前** —— 两者同属一个 commit，按声明顺序执行，
+  // 先把跟随打开、贴底才会成立。（挪到 useAgentSessionEffects 的 useEffect 里太晚：那是 paint
+  // 之后，晚于本 hook 的 layout effect，同一帧补不上。）
+  const followSessionIdRef = useRef(activeSession?.id)
+  useLayoutEffect(() => {
+    const sid = activeSession?.id
+    if (followSessionIdRef.current === sid) return
+    followSessionIdRef.current = sid
+    followingRef.current = true
+    atBottomRef.current = true
+    setAtBottom(true)
+    // 滚动基准一并复位：旧会话的位置/高度基准对新会话没有可比性
+    lastScrollTopRef.current = 0
+    lastMaxTopRef.current = 0
+    downAccumRef.current = 0
+  }, [activeSession?.id])
+
   // 贴底滚动必须在 paint 前执行（useLayoutEffect）：finalize 切换完成态行件的同一帧，
   // DOM 布局已含新增的 actions/文件汇总（高度突变），若在 paint 后（useEffect）才滚动，
   // 会先绘制一帧旧滚动位置 + 新布局（内容整体位移），再被拉回底部 → 视觉「跳一下」。
@@ -277,6 +328,10 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
       scrollToBottom()
     }
   }, [activeSession?.messages, scrollToBottom])
+
+  // 注：曾在此实现「贴底延长窗口」（streaming 转 false 后让 pin 多跑 700ms），已移除 ——
+  // 持续的程序化滚动会让 Chromium 对合成层低分辨率光栅化，表现为正文「模糊 → 清晰」地抖。
+  // 教训：这个滚动状态机已高度耦合，不要再往里加写入者。
 
   // 流式期间用 requestAnimationFrame 持续贴底，消除气泡底部“一卡一卡”。
   // 原因：正文通过节流的 display 状态“晚一次提交”才增高，而 messages 变更触发的
@@ -443,6 +498,8 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
   const animateToRailTarget = useCallback((id: string) => {
     const viewport = chatScrollRef.current
     if (!viewport) return
+    // 点击目录点跳转 = 显式离开底部 → 解除发送后的跟随锁定
+    followLockUntilRef.current = 0
     followingRef.current = false
     atBottomRef.current = false
     setAtBottom(false)
@@ -560,10 +617,13 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     if (railScrollIdleTimerRef.current) window.clearTimeout(railScrollIdleTimerRef.current)
   }, [])
 
-  // 会话切换时把跟随态复位（原内联在 activeSessionId 变更 effect 中）
+  // 会话切换时复位跟随态。真正保证「切会话后落在底部」的是上面那条 layout effect ——
+  // 本函数由 useEffect 调用（paint 之后），同一帧补不上；这里补全 followingRef 只是让
+  // 函数名与行为一致（重复置位是幂等的）。
   const resetFollow = useCallback(() => {
     atBottomRef.current = true
     setAtBottom(true)
+    followingRef.current = true
   }, [])
 
   // ── 滚动位置按作用域隔离（当前传入的是工作区模式：通用 / 编码）──
