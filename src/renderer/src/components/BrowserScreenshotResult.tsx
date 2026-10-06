@@ -8,6 +8,7 @@
 // 尺寸已在①的题注里，结果区不再重复成行。
 import { useEffect, useMemo, useState } from 'react'
 import ToolResultRows, { RawResultFallback, buildResultRows, parseResultObject } from './ToolResultRows'
+import { useBubbleTip } from './useBubbleTip'
 
 export default function BrowserScreenshotResult({ result }: { result?: string }) {
   const parsed = useMemo(() => parseResultObject(result), [result])
@@ -20,6 +21,8 @@ export default function BrowserScreenshotResult({ result }: { result?: string })
 
   const [src, setSrc] = useState<string | null>(null)
   const [zoomed, setZoomed] = useState(false)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   useEffect(() => {
     if (!ok || !imageId) return
@@ -32,6 +35,7 @@ export default function BrowserScreenshotResult({ result }: { result?: string })
   if (!parsed) return <RawResultFallback result={result} />
   return (
     <>
+      {tipNode}
       {ok && (
         <div className="agent-tool-result">
           <div className="agent-tool-result-head">
@@ -47,7 +51,7 @@ export default function BrowserScreenshotResult({ result }: { result?: string })
               src={src}
               className="agent-tool-shot-img"
               alt="页面截图"
-              title="点击放大"
+              {...tip('点击放大')}
               onClick={(e) => { e.stopPropagation(); setZoomed(true) }}
             />
           ) : (
@@ -62,7 +66,7 @@ export default function BrowserScreenshotResult({ result }: { result?: string })
         <ToolResultRows rows={rows} />
       </div>
       {zoomed && src && (
-        <div className="user-msg-lightbox" onClick={() => setZoomed(false)} title="点击任意处关闭">
+        <div className="user-msg-lightbox" onClick={() => setZoomed(false)} {...tip('点击任意处关闭')}>
           <img src={src} alt="页面截图" />
         </div>
       )}

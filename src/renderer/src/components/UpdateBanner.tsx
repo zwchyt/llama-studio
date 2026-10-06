@@ -6,6 +6,7 @@ import { safeCall } from '../utils/safeCall'
 import { ENGINE_LABELS } from '../utils/engine'
 import { X, Download, Loader2, ExternalLink, ChevronDown, ArrowUpCircle, Play, Pause } from 'lucide-react'
 import { type BannerSlotProps, useBannerClose, isVersionSkipped, skipVersion, UbProgress } from './updateBannerShared'
+import { useBubbleTip } from './useBubbleTip'
 
 const SKIP_KEY = 'llama_studio_skip_backend_version'
 
@@ -32,6 +33,8 @@ export default function UpdateBanner({ hidden, switcher }: BannerSlotProps = {})
   const [showDropdown, setShowDropdown] = useState(false)
   const { closing, closeWithAnim } = useBannerClose(() => setUpdateDismissed(true))
   const dropdownRef = useRef<HTMLDivElement>(null)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   useEffect(() => {
     if (releaseInfo?.assets?.length && !selectedAssetUrl) {
       setSelectedAssetUrl(releaseInfo.assets[0].downloadUrl)
@@ -77,6 +80,7 @@ export default function UpdateBanner({ hidden, switcher }: BannerSlotProps = {})
   }
   return (
     <div className={`update-banner${closing ? ' closing' : ''}`} style={hidden ? { display: 'none' } : undefined}>
+      {tipNode}
       <span className="ub-badge">
         {isBusy ? <Loader2 size={11} className="spin" /> : <ArrowUpCircle size={11} />}
         {busyEngine}
@@ -94,7 +98,7 @@ export default function UpdateBanner({ hidden, switcher }: BannerSlotProps = {})
           {releaseInfo.assets?.length > 0 ? (
             <>
               <span style={{ position: 'relative', display: 'inline-flex' }} ref={dropdownRef}>
-                <button className="ub-select" onClick={() => setShowDropdown(!showDropdown)} title={selectedAsset?.name}>
+                <button className="ub-select" onClick={() => setShowDropdown(!showDropdown)} {...(selectedAsset?.name ? tip(selectedAsset.name) : {})}>
                   {selectedAsset?.name || '选择版本'} <ChevronDown size={11} style={{ verticalAlign: -1 }} />
                 </button>
                 {showDropdown && (

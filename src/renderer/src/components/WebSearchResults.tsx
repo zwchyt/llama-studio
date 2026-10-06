@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react'
 import { Search, CheckCircle2, Globe, ExternalLink, AlertCircle } from 'lucide-react'
+import { useBubbleTip } from './useBubbleTip'
 
 interface SearchResultItem {
   title: string
@@ -36,9 +37,12 @@ export default function WebSearchResults({ result, query, loading }: { result?: 
   const busy = !!loading && !result
   const items = data?.kind === 'items' ? data.items : []
   const failed = data?.kind === 'error'
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   return (
     <div className="agent-ws">
+      {tipNode}
       <div className="agent-ws-row">
         {busy ? <Globe size={13} className="agent-ws-globe" /> : <Search size={13} />}
         <span className="agent-ws-label">
@@ -79,7 +83,7 @@ export default function WebSearchResults({ result, query, loading }: { result?: 
                 <a
                   className="agent-ws-title"
                   href={item.url}
-                  title={item.url}
+                  {...tip(item.url)}
                   onClick={(e) => { e.preventDefault(); window.api.openExternal(item.url) }}
                 >
                   {item.title}

@@ -6,6 +6,7 @@ import { buildTokenStats, formatNumber } from '../utils/token-stats'
 import type { TokenStats } from '../utils/token-stats'
 import { TokenUsageActivityTab } from './TokenUsageActivityTab'
 import { TokenUsageModelsTab } from './TokenUsageModelsTab'
+import { useBubbleTip } from './useBubbleTip'
 import '../styles/token-stats.css'
 
 // ── Token 使用统计（移植自 local-studio 的 Usage 页） ──────────
@@ -33,6 +34,8 @@ const TAB_HEADINGS: Record<UsageTab, { title: string; description: string }> = {
 }
 
 export default function TokenStatsView() {
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const cards = useStore(s => s.cards)
   const [tab, setTab] = useState<UsageTab>('models')
   const [ledger, setLedger] = useState<TokenUsageLedger>({ entries: [], rollup: [] })
@@ -93,6 +96,7 @@ export default function TokenStatsView() {
 
   return (
     <div className="token-stats">
+      {tipNode}
       <header className="page-header ts-header">
         <div>
           <h1 className="page-title">Token 使用记录</h1>
@@ -105,8 +109,8 @@ export default function TokenStatsView() {
             type="button"
             className="ts-refresh"
             onClick={() => void load()}
-            title="刷新用量"
             aria-label="刷新用量"
+            {...tip('刷新用量')}
           >
             <RefreshCw size={14} className={loading ? 'ts-spin' : ''} />
           </button>

@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore'
 import { paramSetOf } from '../utils/engine'
 import { safeCall } from '../utils/safeCall'
 import CustomSelect from './CustomSelect'
+import { useBubbleTip } from './useBubbleTip'
 import { AudioLines, ExternalLink, RotateCw, Power, CircleStop, LayoutGrid, TriangleAlert } from 'lucide-react'
 import '../styles/audiocpp.css'
 
@@ -37,6 +38,9 @@ export default function AudioCppView() {
   // iframe 刷新：改 key 强制重挂载
   const [frameKey, setFrameKey] = useState(0)
   const reloadFrame = useCallback(() => setFrameKey(k => k + 1), [])
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  // 注意：下方 iframe 的 title 是无障碍命名（跳过，不动）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   const [stopping, setStopping] = useState(false)
   const handleStop = useCallback(async (cardId: string) => {
@@ -72,6 +76,7 @@ export default function AudioCppView() {
 
   return (
     <div className="audiocpp">
+      {tipNode}
       <div className="audiocpp-header">
         <div className="audiocpp-header-left">
           <h2 className="audiocpp-title"><AudioLines size={20} style={{ verticalAlign: '-3px', marginRight: 8 }} />音频工作室</h2>
@@ -96,10 +101,10 @@ export default function AudioCppView() {
             {stopping ? <CircleStop size={13} /> : isRunning ? <Power size={13} /> : <Power size={13} />}
             {isRunning ? '停止' : '去启动'}
           </button>
-          <button className="btn btn-sm" onClick={reloadFrame} title="刷新界面">
+          <button className="btn btn-sm" onClick={reloadFrame} aria-label="刷新界面" {...tip('刷新界面')}>
             <RotateCw size={13} />
           </button>
-          <button className="btn btn-sm" onClick={() => window.api.openExternal(url)} title="在系统浏览器打开">
+          <button className="btn btn-sm" onClick={() => window.api.openExternal(url)} {...tip('在系统浏览器打开')}>
             <ExternalLink size={13} />外部浏览器
           </button>
         </div>

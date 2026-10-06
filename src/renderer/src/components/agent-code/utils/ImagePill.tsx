@@ -19,6 +19,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Image as ImageIcon } from 'lucide-react'
 import { XIcon } from '@animateicons/react/lucide'
+import { useBubbleTip } from '../../useBubbleTip'
 
 /** 预览卡里图片的显示上限（原图按宽高比缩进这个框） */
 const PREVIEW_MAX_W = 280
@@ -87,6 +88,10 @@ export function ImagePill({ name, src, onRemove, removeDisabled, onClick, clickH
     if (timer.current) window.clearTimeout(timer.current)
   }, [])
 
+  // 原生 title 换自定义气泡（与导航栏同款）：胶囊已有悬停预览卡，走 showTip/hideTip 合并进去
+  const { tipHandlers: tip, tipNode, showTip, hideTip } = useBubbleTip()
+  const pillTip = titleText ?? (onClick ? `${name}（${clickHint ?? '点击打开'}）` : name)
+
   // 卡片几何：尺寸＝图片显示尺寸 + 卡片的框；水平以胶囊中心居中，垂直优先在上方
   const card = (() => {
     if (!anchor) return null
@@ -104,18 +109,21 @@ export function ImagePill({ name, src, onRemove, removeDisabled, onClick, clickH
     <span
       ref={pillRef}
       className={`agent-img-pill${onClick ? ' clickable' : ''}`}
-      onMouseEnter={src ? show : undefined}
-      onMouseLeave={src ? hide : undefined}
+      onMouseEnter={(e) => { if (src) show(); showTip(pillTip, e.currentTarget) }}
+      onMouseLeave={() => { if (src) hide(); hideTip() }}
       onClick={onClick}
-      title={titleText ?? (onClick ? `${name}（${clickHint ?? '点击打开'}）` : name)}
     >
+      {tipNode}
       <ImageIcon size={11} className="agent-img-pill-icon" />
       <span className="agent-img-pill-name">{name}</span>
       {onRemove && (
-        <button type="button" className="agent-img-pill-remove" title="移除" disabled={removeDisabled}
-          onClick={e => { e.stopPropagation(); onRemove() }}>
-          <XIcon size={10} />
-        </button>
+        // disabled 的按钮收不到鼠标事件，原生 title 反而能弹：事件挂外层 span 保住提示（常驻包裹，disabled 翻转不重挂）
+        <span style={{ display: 'inline-flex' }} {...tip('移除')}>
+          <button type="button" className="agent-img-pill-remove" aria-label="移除" disabled={removeDisabled}
+            onClick={e => { e.stopPropagation(); onRemove() }}>
+            <XIcon size={10} />
+          </button>
+        </span>
       )}
       {src && card && createPortal(
         <div

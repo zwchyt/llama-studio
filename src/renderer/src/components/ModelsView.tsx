@@ -11,6 +11,7 @@ import { formatDownloadStatus } from '../utils/downloadFormat'
 import { notify } from '../store/notificationStore'
 import '../styles/models.css'
 import { safeCall } from '../utils/safeCall'
+import { useBubbleTip } from './useBubbleTip'
 function UrlDownloadModal({ onClose }: { onClose: () => void }) {
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
@@ -96,6 +97,8 @@ function DownloadRow({ dl }: { dl: ModelDownloadInfo }) {
   
   const [pending, setPending] = useState<'pausing' | 'resuming' | null>(null)
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   async function togglePause() {
     if (isPaused) {
@@ -130,6 +133,7 @@ function DownloadRow({ dl }: { dl: ModelDownloadInfo }) {
 
   return (
     <div className={`models-dl-row ${isDone ? 'done' : ''} ${isErr ? 'error' : ''}`}>
+      {tipNode}
       <div className="models-dl-meta">
         <span className="models-dl-name">{dl.filename}</span>
         <span className="models-dl-size">
@@ -145,11 +149,12 @@ function DownloadRow({ dl }: { dl: ModelDownloadInfo }) {
         </span>
         {!isDone && !isErr && (
           <>
+            <span style={{ display: 'inline-flex' }} {...tip(isPaused ? '继续' : '暂停')}>
             <button
               className="btn btn-ghost btn-icon"
               onClick={togglePause}
               disabled={!!pending}
-              title={isPaused ? '继续' : '暂停'}
+              aria-label={isPaused ? '继续' : '暂停'}
             >
               {pending
                 ? <Loader2 size={13} className="spin" />
@@ -157,6 +162,7 @@ function DownloadRow({ dl }: { dl: ModelDownloadInfo }) {
                 ? <Play size={13} />
                 : <Pause size={13} />}
             </button>
+            </span>
             <button className="btn btn-ghost btn-icon text-danger" onClick={cancel}>
               <X size={13} />
             </button>
@@ -178,6 +184,8 @@ function ModelFileRow({ model, isImage, isTts, isOcr, isSd, onDeleted }: { model
   const setView = useStore(s => s.setView)
   const setModelToolsTarget = useStore(s => s.setModelToolsTarget)
   const [editing, setEditing] = useState(false)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const [newName, setNewName] = useState(model.name.replace(/\.[^.]+$/, ''))
   useEffect(() => {
     setNewName(model.name.replace(/\.[^.]+$/, ''))
@@ -207,6 +215,7 @@ function ModelFileRow({ model, isImage, isTts, isOcr, isSd, onDeleted }: { model
   }
   return (
     <div className="models-file-row">
+      {tipNode}
       <div className="models-file-icon">
         {isSd ? <PaletteIcon size={16} /> : isImage ? <ImageIcon size={16} /> : isTts ? <AudioLines size={16} /> : isOcr ? <ScanText size={16} /> : <FileText size={16} />}
       </div>
@@ -223,20 +232,20 @@ function ModelFileRow({ model, isImage, isTts, isOcr, isSd, onDeleted }: { model
         <div className="models-file-sub">
           <span className="models-folder-badge">{model.folder}</span>
           {model.external && (
-            <span className="models-folder-badge" title="来自外部路径添加的模型文件夹——删除操作不可用">外部</span>
+            <span className="models-folder-badge" {...tip('来自外部路径添加的模型文件夹——删除操作不可用')}>外部</span>
           )}
           {model.external && !isImage && !isSd && !model.tts && !model.ocr && (
-            <span className="models-folder-badge" style={{ background: 'var(--amber, #f59e0b)', color: '#fff' }} title="文字模型（大语言模型）">文本</span>
+            <span className="models-folder-badge" style={{ background: 'var(--amber, #f59e0b)', color: '#fff' }} {...tip('文字模型（大语言模型）')}>文本</span>
           )}
-          {isSd && <span className="models-folder-badge" style={{ background: 'var(--orange, #f97316)', color: '#fff' }} title={model.sdRole === 'vae' ? '生图模型（VAE 组件）' : model.sdRole === 'llm' ? '生图模型（LLM 文本编码器）' : 'stable-diffusion.cpp 生图模型（扩散模型）'}>生图</span>}
-          {isTts && <span className="models-folder-badge" style={{ background: 'var(--violet, #a855f7)', color: '#fff' }} title="语音合成模型文件夹中的文件（OuteTTS / WavTokenizer）——删除操作不可用">语音合成</span>}
-          {isOcr && <span className="models-folder-badge" style={{ background: 'var(--cyan, #06b6d4)', color: '#fff' }} title="OCR 模型文件夹中的文件（多模态 / 图片理解模型）——删除操作不可用">OCR</span>}
-          {isImage && <span className="models-folder-badge" style={{ background: 'var(--green, #10b981)', color: '#fff' }} title="多模态投影仪文件（--mmproj）——删除操作不可用">图片</span>}
+          {isSd && <span className="models-folder-badge" style={{ background: 'var(--orange, #f97316)', color: '#fff' }} {...tip(model.sdRole === 'vae' ? '生图模型（VAE 组件）' : model.sdRole === 'llm' ? '生图模型（LLM 文本编码器）' : 'stable-diffusion.cpp 生图模型（扩散模型）')}>生图</span>}
+          {isTts && <span className="models-folder-badge" style={{ background: 'var(--violet, #a855f7)', color: '#fff' }} {...tip('语音合成模型文件夹中的文件（OuteTTS / WavTokenizer）——删除操作不可用')}>语音合成</span>}
+          {isOcr && <span className="models-folder-badge" style={{ background: 'var(--cyan, #06b6d4)', color: '#fff' }} {...tip('OCR 模型文件夹中的文件（多模态 / 图片理解模型）——删除操作不可用')}>OCR</span>}
+          {isImage && <span className="models-folder-badge" style={{ background: 'var(--green, #10b981)', color: '#fff' }} {...tip('多模态投影仪文件（--mmproj）——删除操作不可用')}>图片</span>}
           <span>{formatBytes(model.size)}</span>
         </div>
       </div>
       <div className="models-file-actions">
-        <button className="btn btn-ghost btn-icon" onClick={handleInspect} title="在模型工具中检查 GGUF 元数据"><FileSearch size={14} /></button>
+        <button className="btn btn-ghost btn-icon" onClick={handleInspect} aria-label="在模型工具中检查 GGUF 元数据" {...tip('在模型工具中检查 GGUF 元数据')}><FileSearch size={14} /></button>
         <button className="btn btn-ghost btn-icon" onClick={() => setEditing(true)}><Pencil size={14} /></button>
         <button className="btn btn-ghost btn-icon" onClick={handleOpenFolder}><FolderOpen size={14} /></button>
         <button className="btn btn-ghost btn-icon text-danger" onClick={handleDelete} disabled={model.external}><Trash size={14} /></button>
@@ -256,6 +265,8 @@ export default function ModelsView() {
   const [loading, setLoading] = useState(false)
   const [filter, setFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState<'all' | 'text' | 'image' | 'tts' | 'ocr' | 'sd'>('all')
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const allModels = useMemo(() => {
     const seen = new Set(models.map(m => m.path))
     const unique = imageModels.filter(m => !seen.has(m.path))
@@ -306,13 +317,14 @@ export default function ModelsView() {
   const activeDownloads = downloads.filter(d => d.phase !== 'cancelled')
   return (
     <div className="models-view">
+      {tipNode}
       <div className="page-header">
         <div>
           <h1 className="page-title">
             模型
             <span
               className="header-count-badge"
-              title={`${filter || typeFilter !== 'all' ? `${filteredModels.length} / ${allModels.length}` : allModels.length} 个模型已安装`}
+              {...tip(`${filter || typeFilter !== 'all' ? `${filteredModels.length} / ${allModels.length}` : allModels.length} 个模型已安装`)}
             >
               {filter || typeFilter !== 'all' ? filteredModels.length : allModels.length}
             </span>
@@ -335,7 +347,8 @@ export default function ModelsView() {
               <button
                 className="btn btn-ghost btn-icon"
                 onClick={() => setFilter('')}
-                title="清除筛选"
+                aria-label="清除筛选"
+                {...tip('清除筛选')}
                 style={{ padding: 4 }}
               >
                 <X size={14} />

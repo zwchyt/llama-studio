@@ -4,6 +4,7 @@ import { shallow } from 'zustand/shallow'
 import { Wrench, FileSearch, Hash, MemoryStick, Loader2, Copy, Check, ChevronDown, Search, Cpu, TriangleAlert, GitCompare, Play } from 'lucide-react'
 import CustomSelect from './CustomSelect'
 import type { GgufMetadata, FitParamsResult } from '../../../shared/types'
+import { useBubbleTip } from './useBubbleTip'
 
 // KV 缓存精度选项（透传给 llama-fit-params 的 -ctk/-ctv；f16 为工具默认）
 type KvType = 'f16' | 'q8_0' | 'q4_0'
@@ -63,6 +64,8 @@ function InspectorTab({ modelPath, setModelPath }: { modelPath: string; setModel
   const [kvFilter, setKvFilter] = useState('')
   const [templateOpen, setTemplateOpen] = useState(false)
   const reqSeq = useRef(0)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   useEffect(() => {
     if (!modelPath) { setMeta(null); setError(''); return }
@@ -102,6 +105,7 @@ function InspectorTab({ modelPath, setModelPath }: { modelPath: string; setModel
 
   return (
     <div className="mtools-tab-body">
+      {tipNode}
       <div className="mtools-form-row">
         <label>模型文件</label>
         <CustomSelect
@@ -184,9 +188,9 @@ function InspectorTab({ modelPath, setModelPath }: { modelPath: string; setModel
             <div className="mtools-kv-table">
               {filteredKv.map(entry => (
                 <div className="mtools-kv-row" key={entry.key}>
-                  <span className="mtools-kv-key" title={entry.key}>{entry.key}</span>
+                  <span className="mtools-kv-key" {...tip(entry.key)}>{entry.key}</span>
                   <span className="mtools-kv-type">{entry.type}</span>
-                  <span className="mtools-kv-value" title={entry.value !== null ? String(entry.value) : undefined}>
+                  <span className="mtools-kv-value" {...(entry.value !== null ? tip(String(entry.value)) : {})}>
                     {entry.arrayLength !== undefined
                       ? `[${entry.arrayPreview?.slice(0, 8).map(v => JSON.stringify(v)).join(', ')}${entry.arrayLength > 8 ? ', …' : ''}] 共 ${entry.arrayLength.toLocaleString()} 项`
                       : String(entry.value)}
@@ -219,6 +223,8 @@ function TokenizerTab({ modelPath, setModelPath }: { modelPath: string; setModel
   const [loading, setLoading] = useState(false)
   const reqSeq = useRef(0)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   // 运行卡片变化时补默认端口
   useEffect(() => {
@@ -256,6 +262,7 @@ function TokenizerTab({ modelPath, setModelPath }: { modelPath: string; setModel
 
   return (
     <div className="mtools-tab-body">
+      {tipNode}
       <div className="mtools-form-row">
         <label>分词来源</label>
         <div className="mtools-mode-tabs">
@@ -334,7 +341,7 @@ function TokenizerTab({ modelPath, setModelPath }: { modelPath: string; setModel
                   key={i}
                   className="mtools-token-chip"
                   style={{ background: `${color}1c`, color, borderColor: `${color}40` }}
-                  title={`id: ${t.id}`}
+                  {...tip(`id: ${t.id}`)}
                 >
                   {visualizePiece(t.piece) || `#${t.id}`}
                 </span>
@@ -366,6 +373,8 @@ function FitTab({ modelPath, setModelPath }: { modelPath: string; setModelPath: 
   const [result, setResult] = useState<FitParamsResult | null>(null)
   const [showLog, setShowLog] = useState(false)
   const reqSeq = useRef(0)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   const ctxSize = useMemo(() => {
     const n = parseInt(ctxText, 10)
@@ -400,6 +409,7 @@ function FitTab({ modelPath, setModelPath }: { modelPath: string; setModelPath: 
 
   return (
     <div className="mtools-tab-body">
+      {tipNode}
       <div className="mtools-form-row">
         <label>模型文件</label>
         <CustomSelect
@@ -493,7 +503,7 @@ function FitTab({ modelPath, setModelPath }: { modelPath: string; setModelPath: 
                   <div className="mtools-fit-item"><span className="mtools-fit-label">GPU 卸载层数（-ngl）</span><span className="mtools-fit-value">{result.gpuLayers === -1 ? `全部层${nLayerTotal ? `（${nLayerTotal}）` : ''}` : `${result.gpuLayers}${nLayerTotal ? ` / ${nLayerTotal}` : ''}`}</span></div>
                 )}
                 {otRules && (
-                  <div className="mtools-fit-item"><span className="mtools-fit-label">内存驻留张量组（-ot）</span><span className="mtools-fit-value" title={otRules.join('\n')}>{otRules.length}</span></div>
+                  <div className="mtools-fit-item"><span className="mtools-fit-label">内存驻留张量组（-ot）</span><span className="mtools-fit-value" {...tip(otRules.join('\n'))}>{otRules.length}</span></div>
                 )}
               </div>
             </div>
@@ -548,6 +558,8 @@ function CompareTab() {
   const [pathB, setPathB] = useState('')
   const a = useGgufMeta(pathA)
   const b = useGgufMeta(pathB)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   // 对比行：两侧都有元数据时才生成；差异行高亮
   const rows = useMemo(() => {
@@ -581,6 +593,7 @@ function CompareTab() {
 
   return (
     <div className="mtools-tab-body">
+      {tipNode}
       <div className="mtools-form-row">
         <label>模型 A</label>
         <CustomSelect className="mtools-select-wrapper" value={pathA} onChange={setPathA} options={opts(pathB)} aria-label="模型 A" />
@@ -606,8 +619,8 @@ function CompareTab() {
             <div className="mtools-cmp-table">
               <div className="mtools-cmp-row head">
                 <span></span>
-                <span title={a.meta.path}>{a.meta.modelName || a.meta.path.split(/[/\\]/).pop()}</span>
-                <span title={b.meta.path}>{b.meta.modelName || b.meta.path.split(/[/\\]/).pop()}</span>
+                <span {...tip(a.meta.path)}>{a.meta.modelName || a.meta.path.split(/[/\\]/).pop()}</span>
+                <span {...tip(b.meta.path)}>{b.meta.modelName || b.meta.path.split(/[/\\]/).pop()}</span>
               </div>
               {rows.map(r => (
                 <div key={r.label} className={`mtools-cmp-row ${r.diff ? 'diff' : ''}`}>

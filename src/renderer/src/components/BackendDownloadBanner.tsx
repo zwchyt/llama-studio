@@ -6,6 +6,7 @@ import { UbProgress, formatSize, ChunkGrid } from './updateBannerShared'
 import { useBackendUpdateVisible } from './UpdateBanner'
 import { notify } from '../store/notificationStore'
 import { ENGINE_LABELS } from '../utils/engine'
+import { useBubbleTip } from './useBubbleTip'
 
 function formatEta(sec: number): string {
   if (sec < 60) return `${sec}秒`
@@ -27,6 +28,8 @@ export default function BackendDownloadBanner() {
     shallow
   )
   const backendBannerVisible = useBackendUpdateVisible()
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   if (!downloadProgress) return null
   // llama.cpp 更新横幅处于展示态时，由它负责下载进度显示，这里跳过避免重复
   if (backendBannerVisible) return null
@@ -55,6 +58,7 @@ export default function BackendDownloadBanner() {
   }
   return (
     <div className="update-banner">
+      {tipNode}
       <span className="ub-badge">
         <Loader2 size={11} className={paused ? '' : 'spin'} />
         {ENGINE_LABELS[engine] ?? engine}
@@ -88,7 +92,8 @@ export default function BackendDownloadBanner() {
         <button
           className="dismiss"
           onClick={() => { window.api.cancelBackendDownload(); setDownloadProgress(null) }}
-          title={paused ? '取消并删除已下载文件' : '取消下载'}
+          aria-label={paused ? '取消并删除已下载文件' : '取消下载'}
+          {...tip(paused ? '取消并删除已下载文件' : '取消下载')}
         >
           <X size={14} />
         </button>

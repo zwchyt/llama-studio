@@ -6,6 +6,7 @@
 // 不占用 pi-agent-event 单监听事件通道（preload onEvent 会 removeAllListeners）。
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { ChevronDownIcon, SearchIcon, Trash2Icon } from '@animateicons/react/lucide'
+import { useBubbleTip } from './useBubbleTip'
 
 interface TrajEntry {
   seq: number
@@ -204,6 +205,8 @@ interface TurnGroup {
 }
 
 export function AgentTrajectoryPanel({ piSessionId }: { piSessionId: string | null }) {
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const [entries, setEntries] = useState<TrajEntry[]>([])
   const [srcFilter, setSrcFilter] = useState<'all' | TrajEntry['src']>('all')
   const [search, setSearch] = useState('')
@@ -441,18 +444,20 @@ export function AgentTrajectoryPanel({ piSessionId }: { piSessionId: string | nu
 
   return (
     <div className="agent-traj">
+      {tipNode}
       {/* 工具栏：折叠控件 + 搜索（对齐参考项目 TrajectoryToolbar） */}
       <div className="traj-toolbar">
+        <span style={{ display: 'inline-flex' }} {...tip(allTurnsCollapsed ? '展开全部轮次' : '折叠全部轮次')}>
         <button
           type="button"
           className={`traj-fold ${allTurnsCollapsed ? 'on' : ''}`}
           onClick={toggleAllTurns}
           disabled={allTurnKeys.length === 0}
-          title={allTurnsCollapsed ? '展开全部轮次' : '折叠全部轮次'}
         >
           <span className="traj-fold-icon">{allTurnsCollapsed ? '⊞' : '⊟'}</span>
           轮次
         </button>
+        </span>
         <div className="traj-searchbox">
           <SearchIcon size={11} className="traj-search-icon" />
           <input
@@ -463,15 +468,17 @@ export function AgentTrajectoryPanel({ piSessionId }: { piSessionId: string | nu
             onChange={e => setSearch(e.target.value)}
           />
         </div>
+        <span style={{ display: 'inline-flex' }} {...tip('清空轨迹')}>
         <button
           type="button"
           className="traj-clear"
           onClick={() => void doClear()}
           disabled={clearing}
-          title="清空轨迹"
+          aria-label="清空轨迹"
         >
           <Trash2Icon size={12} />
         </button>
+        </span>
       </div>
 
       {/* 来源筛选（带计数的小胶囊） */}
@@ -500,7 +507,7 @@ export function AgentTrajectoryPanel({ piSessionId }: { piSessionId: string | nu
             <div
               className="traj-tl-seg dim"
               style={{ flexGrow: tlSegs.fillerGrow }}
-              title={`更早的 ${displayed.length - TL_MAX_SEGS} 条`}
+              {...tip(`更早的 ${displayed.length - TL_MAX_SEGS} 条`)}
             />
           )}
           {tlSegs.segs.map(({ e, grow }) => (
@@ -509,7 +516,8 @@ export function AgentTrajectoryPanel({ piSessionId }: { piSessionId: string | nu
               type="button"
               className={`traj-tl-seg src-${e.src}`}
               style={{ flexGrow: grow }}
-              title={`${TYPE_LABELS[e.type] ?? e.type} · #${e.seq} · ${fmtClock(e.ts)}`}
+              aria-label={`${TYPE_LABELS[e.type] ?? e.type} · #${e.seq} · ${fmtClock(e.ts)}`}
+              {...tip(`${TYPE_LABELS[e.type] ?? e.type} · #${e.seq} · ${fmtClock(e.ts)}`)}
               onClick={() => scrollToRow(e.seq)}
             />
           ))}
@@ -536,7 +544,7 @@ export function AgentTrajectoryPanel({ piSessionId }: { piSessionId: string | nu
                   type="button"
                   className="traj-turn-head"
                   onClick={() => toggleTurn(g.key)}
-                  title={collapsed ? '展开该轮次' : '折叠该轮次'}
+                  {...tip(collapsed ? '展开该轮次' : '折叠该轮次')}
                 >
                   <ChevronDownIcon size={11} className={`traj-caret ${collapsed ? '' : 'open'}`} />
                   <span className="traj-turn-title">{g.label}</span>
@@ -570,7 +578,7 @@ export function AgentTrajectoryPanel({ piSessionId }: { piSessionId: string | nu
                           type="button"
                           className="traj-row-head"
                           onClick={() => select(e.seq)}
-                          title={`${TYPE_LABELS[e.type] ?? e.type} · #${e.seq} · ${fmtClock(e.ts)}`}
+                          {...tip(`${TYPE_LABELS[e.type] ?? e.type} · #${e.seq} · ${fmtClock(e.ts)}`)}
                         >
                           <span className="traj-idx">#{e.seq}</span>
                           <span className={`traj-tag ${isCompact ? 'compacted' : `src-${e.src}`}`}>
@@ -602,7 +610,7 @@ export function AgentTrajectoryPanel({ piSessionId }: { piSessionId: string | nu
                               ) : usage &&
                                 typeof usage.input === 'number' &&
                                 typeof usage.output === 'number' ? (
-                                <span className="traj-metric" title={typeof usage.reasoning === 'number' ? `思考 ${usage.reasoning} tokens` : undefined}>
+                                <span className="traj-metric" {...(typeof usage.reasoning === 'number' ? tip(`思考 ${usage.reasoning} tokens`) : {})}>
                                   ↑{usage.input} ↓{usage.output}
                                   {typeof usage.reasoning === 'number' && usage.reasoning > 0 ? ` ✦${usage.reasoning}` : ''}
                                 </span>
@@ -636,7 +644,7 @@ export function AgentTrajectoryPanel({ piSessionId }: { piSessionId: string | nu
                   type="button"
                   className="traj-detail-btn"
                   onClick={() => setSelected(null)}
-                  title="关闭详情"
+                  {...tip('关闭详情')}
                 >
                   ×
                 </button>

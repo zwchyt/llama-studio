@@ -12,6 +12,7 @@ import { formatDownloadStatus, formatDownloadStripText, formatEta } from '../uti
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import ModelLogo from './ModelLogo'
+import { useBubbleTip } from './useBubbleTip'
 import '../styles/hub.css'
 interface HfModel {
   id: string
@@ -105,6 +106,8 @@ export default function HuggingFaceView() {
   const resultsRef = useRef<HfModel[]>([])
   const searchSeq = useRef(0)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   const runSearch = useCallback(async (
     q: string,
@@ -222,6 +225,7 @@ export default function HuggingFaceView() {
   const getProgress = useCallback((filename: string) => hfDownloads.find(d => d.filename === filename), [hfDownloads])
   return (
     <div className="hub-container">
+      {tipNode}
       <div className="page-header">
         <div>
           <h1 className="page-title">模型中心</h1>
@@ -367,7 +371,7 @@ export default function HuggingFaceView() {
                   <ModelLogo author={model.author} avatarUrl={isHF ? undefined : (model.avatar || undefined)} size={36} fetchAvatar={() => isHF ? window.api.hfModelAvatar(model.author) : window.api.msModelAvatar(model.id)} />
                 </div>
                 <div className="hub-card-body">
-                  <div className="hub-card-name" title={model.name}>{model.name}</div>
+                  <div className="hub-card-name" {...tip(model.name)}>{model.name}</div>
                   <div className="hub-card-author">{model.author}</div>
                   <div className="hub-card-stats">
                     <span><Download size={11} /> {formatNumber(model.downloads)}</span>
@@ -389,13 +393,14 @@ export default function HuggingFaceView() {
                   <ModelLogo author={selectedModel.author} avatarUrl={isHF ? undefined : (selectedModel.avatar || undefined)} size={36} fetchAvatar={() => isHF ? window.api.hfModelAvatar(selectedModel.author) : window.api.msModelAvatar(selectedModel.id)} />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="hub-detail-name" title={selectedModel.name}>{selectedModel.name}</div>
+                  <div className="hub-detail-name" {...tip(selectedModel.name)}>{selectedModel.name}</div>
                   <div className="hub-detail-author">{selectedModel.author}</div>
                 </div>
                 <button
                   className="btn btn-ghost btn-icon"
                   onClick={() => window.api.openExternal(isHF ? `https://huggingface.co/${selectedModel.id}` : `https://modelscope.cn/models/${selectedModel.id}`)}
-                  title={`在 ${sourceLabel} 上打开`}
+                  aria-label={`在 ${sourceLabel} 上打开`}
+                  {...tip(`在 ${sourceLabel} 上打开`)}
                 >
                   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                 </button>
@@ -460,7 +465,7 @@ export default function HuggingFaceView() {
                       <span className="hub-quant-badge" style={{ background: color + '22', color }}>
                         {label}
                       </span>
-                      <div className="hub-file-name" title={file.name}>{file.name}</div>
+                      <div className="hub-file-name" {...tip(file.name)}>{file.name}</div>
                       <div className="hub-file-size">{formatBytes(file.size)}</div>
                     </div>
                     {downloading && !done ? (
@@ -542,7 +547,7 @@ export default function HuggingFaceView() {
                     : isPaused
                       ? <Pause size={12} className="hub-dl-strip-icon" />
                       : <Loader2 size={12} className="hub-dl-strip-icon spin" />}
-                  <span className="hub-dl-strip-name" title={dl.filename}>{dl.filename}</span>
+                  <span className="hub-dl-strip-name" {...tip(dl.filename)}>{dl.filename}</span>
                   <div className="hub-dl-strip-bar">
                     <div className="hub-dl-strip-fill" style={{ width: `${dl.percent}%`, opacity: (isPaused || isError) ? 0.45 : 1, transition: 'width 0.3s ease' }} />
                   </div>

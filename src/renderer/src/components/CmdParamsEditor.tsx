@@ -8,6 +8,7 @@ import { iconComponents } from '../utils/iconMap'
 import { ENGINE_LABELS, paramSetOf, ALL_ENGINES } from '../utils/engine'
 import CustomSelect from './CustomSelect'
 import ModelFileSelect from './ModelFileSelect'
+import { useBubbleTip } from './useBubbleTip'
 // 参数编辑器样式（.cmd-* / .toggle*），与 ParamsModal 共用同一份（同一套 UI 的两个入口）。
 // 原先寄存在 models.css 里，已迁到自己的文件。
 import '../styles/params-editor.css'
@@ -37,6 +38,9 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
   const [descTooltip, setDescTooltip] = useState<{ text: string; x: number; y: number } | null>(null)
   const [copiedParam, setCopiedParam] = useState<string | null>(null)
   const initialSchemaRef = useRef(true)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；disabled 按钮包 span，return 里放一次 {tipNode}）
+  // 注意：cmd 描述的 descTooltip 是自带自定义气泡，不动，只换原生提示
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const catIconRefs = useRef<Record<string, { startAnimation: () => void; stopAnimation: () => void }>>({})
   const engineIconRefs = useRef<Record<string, { startAnimation: () => void; stopAnimation: () => void }>>({})
   const engineIconMap: Record<string, React.ElementType> = {
@@ -370,6 +374,7 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
   }
   return (
     <div className="params-editor-container">
+      {tipNode}
       {disabled && isRunning && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8,
@@ -389,13 +394,12 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
             const installed = backends.some(b => b.kind === e)
             const EngineIcon = engineIconMap[e]
             return (
+              <span key={e} style={{ display: 'inline-flex' }} {...(!installed ? tip(`${ENGINE_LABELS[e]} 尚未安装，可在设置中下载`) : {})}>
               <button
-                key={e}
                 type="button"
                 className={`launch-mode-btn ${effectiveParamSet === e ? 'active' : ''}`}
                 onClick={() => handleParamSetChange(e)}
                 disabled={disabled || !installed}
-                title={installed ? undefined : `${ENGINE_LABELS[e]} 尚未安装，可在设置中下载`}
                 onMouseEnter={() => engineIconRefs.current[e]?.startAnimation?.()}
                 onMouseLeave={() => engineIconRefs.current[e]?.stopAnimation?.()}
               >
@@ -408,6 +412,7 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
                 })}
                 {ENGINE_LABELS[e]}
               </button>
+              </span>
             )
           })}
         </div>

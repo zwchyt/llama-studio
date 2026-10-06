@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useBubbleTip } from './useBubbleTip'
 
 /** 合并调度模式下横幅组件的公共 Props */
 export interface BannerSlotProps {
@@ -55,12 +56,16 @@ export function ChunkGrid({ chunks, cell = 7, maxCells = 32 }: { chunks?: Array<
   // 超出上限时把相邻分片聚合成一格（取区间最差状态），总宽保持 ~maxCells 格。
   const cells = chunks.length > maxCells ? downsampleChunks(chunks, maxCells) : chunks
   const bg: Record<string, string> = { idle: 'var(--bg)', active: 'var(--accent)', done: 'var(--success)' }
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   return (
+    <>
+    {tipNode}
     <span className="ub-chunks" style={{ display: 'inline-flex', gap: 2, alignItems: 'center', verticalAlign: 'middle' }}>
       {cells.map((s, i) => (
         <span
           key={i}
-          title={`分片 ${i + 1}：${s === 'idle' ? '等待中' : s === 'active' ? '下载中' : '已完成'}`}
+          {...tip(`分片 ${i + 1}：${s === 'idle' ? '等待中' : s === 'active' ? '下载中' : '已完成'}`)}
           style={{
             width: cell, height: 12, borderRadius: 2, display: 'inline-block',
             background: bg[s] ?? 'var(--bg)',
@@ -71,6 +76,7 @@ export function ChunkGrid({ chunks, cell = 7, maxCells = 32 }: { chunks?: Array<
         />
       ))}
     </span>
+    </>
   )
 }
 

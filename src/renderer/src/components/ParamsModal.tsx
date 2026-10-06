@@ -9,6 +9,7 @@ import { ENGINE_LABELS, paramSetOf, ALL_ENGINES } from '../utils/engine'
 import { switchParamSetArgs, syncArgsByParamSet } from '../utils/defaultTemplate'
 import CustomSelect from './CustomSelect'
 import ModelFileSelect from './ModelFileSelect'
+import { useBubbleTip } from './useBubbleTip'
 // 参数编辑器样式（.cmd-* / .toggle*），与 CmdParamsEditor 共用同一份（同一套 UI 的两个入口）。
 // 原先寄存在 models.css 里，已迁到自己的文件。
 import '../styles/params-editor.css'
@@ -40,6 +41,8 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   const copyArgsIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
   const copyAllIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
   const tabIconRefs = useRef<Record<string, { startAnimation: () => void; stopAnimation: () => void }>>({})
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；disabled 按钮包 span，return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   const card = cards.find(c => c.template.id === templateId)
   const isRunning = card?.status === 'running'
@@ -445,6 +448,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
         </div>
 
         <div className="modal-body param-modal-body">
+          {tipNode}
           {disabled && (
             <div className="param-locked-banner">
               <LockIcon size={13} className="nav-animate-icon" style={{ flexShrink: 0, opacity: 0.7 }} />
@@ -458,16 +462,16 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
               {ALL_ENGINES.map(e => {
                 const installed = backends.some(b => b.kind === e)
                 return (
+                  <span key={e} style={{ display: 'inline-flex' }} {...(!installed ? tip(`${ENGINE_LABELS[e]} 尚未安装，可在设置中下载`) : {})}>
                   <button
-                    key={e}
                     type="button"
                     className={`launch-mode-btn ${paramSet === e ? 'active' : ''}`}
                     onClick={() => handleParamSetChange(e)}
                     disabled={disabled || !installed}
-                    title={installed ? undefined : `${ENGINE_LABELS[e]} 尚未安装，可在设置中下载`}
                   >
                     {ENGINE_LABELS[e]}
                   </button>
+                  </span>
                 )
               })}
             </div>

@@ -5,6 +5,7 @@
 
 import React, { useEffect } from 'react'
 import { FileTextIcon, XIcon } from '@animateicons/react/lucide'
+import { useBubbleTip } from '../../useBubbleTip'
 
 export type PreviewableAttachment = { name: string; content?: string }
 
@@ -19,15 +20,18 @@ export function AttachmentTextPreview({ att, onClose }: {
   }, [onClose])
 
   const text = (att.content ?? '').trim()
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   return (
-    <div className="att-preview-mask" onClick={onClose} title="点击任意处关闭">
+    <div className="att-preview-mask" onClick={onClose} {...tip('点击任意处关闭')}>
+      {tipNode}
       {/* 卡片自身拦下冒泡：选正文、点标题不该顺手关掉整层 */}
       <div className="att-preview" onClick={e => e.stopPropagation()}>
         <div className="att-preview-head">
           <FileTextIcon size={13} className="att-preview-icon" />
-          <span className="att-preview-name" title={att.name}>{att.name}</span>
+          <span className="att-preview-name" {...tip(att.name)}>{att.name}</span>
           <span className="att-preview-meta">{text ? `${text.length} 字符` : '无文本'}</span>
-          <button type="button" className="att-preview-close" onClick={onClose} title="关闭（Esc）"><XIcon size={13} /></button>
+          <button type="button" className="att-preview-close" onClick={onClose} aria-label="关闭（Esc）" {...tip('关闭（Esc）')}><XIcon size={13} /></button>
         </div>
         <pre className="att-preview-body">
           {text || '这个附件没有可预览的文本——发送时只带了文件名，未抽取到内容。'}

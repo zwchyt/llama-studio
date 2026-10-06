@@ -86,6 +86,46 @@ html:not(.theme-dark) .app.has-bg .agent-code-view {
   --agent-bubble-bg: color-mix(in srgb, #f2f2f2 var(--app-bg-fill), transparent);
 }
 
+/* ── 边框：有图时从实心浅灰换成半透明深色 ──
+   平时 --border 是实心 #d8d8d8（按纯色浅底配的），面板一透、它还实心，
+   压在深图上就是一圈"白边"。换成半透明后，边框底下透出的是面板+图，
+   自己跟着环境走：浅图上呈淡灰线，深图上几乎隐身。
+   自带 --border 的几页（设置/关于/引擎等各自写死了色值）要单独点名，
+   否则它们还吃自己的实心值。 */
+html:not(.theme-dark) .app.has-bg,
+html:not(.theme-dark) .app.has-bg :is(.settings-view, .about-container, .engines-view, .model-folders-view, .model-endpoints-view) {
+  --border: color-mix(in srgb, #0f172a 16%, transparent);
+  --border-strong: color-mix(in srgb, #0f172a 26%, transparent);
+}
+
+/* ── 模型管理页头：搜索框 / 导入新建按钮跟透 ──
+   cards.css 里这两处写死 #f1f1f1 / #e1e1e1（hover #dadada / active #d2d2d2），
+   不吃令牌 → 有图时页头上两块实心补丁。换吃 --surface 自动跟透；
+   hover/active 在 --surface 上覆黑（原 hover 约深 3%、active 约深 6%），
+   透度继承 --surface，无图时本整块不生效、原样不动。 */
+html:not(.theme-dark) .app.has-bg :is(.template-search-bar, .header-input-btn) {
+  background: var(--surface);
+}
+
+html:not(.theme-dark) .app.has-bg .header-input-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface) 96%, black);
+  border-color: var(--border-strong);
+  box-shadow: none;
+}
+
+html:not(.theme-dark) .app.has-bg .header-input-btn:active:not(:disabled) {
+  background: color-mix(in srgb, var(--surface) 90%, black);
+}
+
+/* ── 模型卡片启动按钮：有图时压暗 ──
+   .btn-primary 是实心 #f1f1f1，强度拉满时整页都透了、就它一块亮白最扎眼。
+   按 --app-bg-fill 同拍变透（35% 地板保住可读），深字 #120404 不动；
+   只收 .card-run-btn，不碰全局 .btn-primary（别处的实心按钮还要干活）。 */
+html:not(.theme-dark) .app.has-bg .card-run-btn.btn-primary {
+  background: color-mix(in srgb, #f1f1f1 var(--app-bg-fill), transparent);
+  border-color: color-mix(in srgb, #dbdbdb var(--app-bg-fill), transparent);
+}
+
 /* ── 吃 --surface-hover 的卡面与控件：模式切换 / 列表行（聊天、项目、会话）/ 过滤框 / 新建按钮 / 消息头像 ──
    这些都取 --surface-hover，而它不在本文件的透写名单里 → 常态跟着透、一选中或 hover 就变实心。
    不能整体调透：--surface-hover 还兼作浮层菜单的悬停高亮，那些弹窗是刻意钉回实心的，所以按容器点名。

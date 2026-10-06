@@ -4,6 +4,7 @@ import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
 import { playEvent } from '../utils/sound'
 import ModelFileSelect from './ModelFileSelect'
+import { useBubbleTip } from './useBubbleTip'
 // 本页样式自包含：原先引用的是 tts.css（「语音合成」页的样式文件），已拆出独立文件
 import '../styles/stt.css'
 
@@ -33,6 +34,8 @@ export default function SttView() {
   const [copied, setCopied] = useState(false)
   const sttIdRef = useRef<string | null>(null)
   const audioRef = useRef<HTMLInputElement | null>(null)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   // 模型下拉与「语音合成」同源设计：模型来自「语音转写模型文件夹」（未配置时回退全部模型），
   // mmproj 来自「图片模型文件夹」（与模板 --mmproj 参数下拉同一来源）
@@ -117,6 +120,7 @@ export default function SttView() {
 
   return (
     <div className="stt-view">
+      {tipNode}
       <div className="page-header">
         <div>
           <h1 className="page-title"><Mic size={22} style={{ verticalAlign: '-4px', marginRight: 8 }} />语音转写</h1>
@@ -184,9 +188,11 @@ export default function SttView() {
               <FolderOpen size={13} /> 选择音频…
             </button>
             {audioPath && (
-              <button className="btn" onClick={handleReset} disabled={transcribing} title="清除音频">
-                <X size={13} /> 清除
-              </button>
+              <span style={{ display: 'inline-flex' }} {...tip('清除音频')}>
+                <button className="btn" onClick={handleReset} disabled={transcribing}>
+                  <X size={13} /> 清除
+                </button>
+              </span>
             )}
           </div>
 

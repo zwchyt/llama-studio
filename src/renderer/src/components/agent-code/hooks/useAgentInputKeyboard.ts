@@ -74,7 +74,8 @@ export function useAgentInputKeyboard({
       // （回车已被上方拦截或在不匹配时落空，避免把半个 /命令 发给模型）
       if (e.key === 'Enter' && !e.shiftKey) return
     }
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+    // 输入法组合期间（中文拼音未上屏）的 Enter 只确认组字，不发送
+    if (e.key === 'Enter' && !e.shiftKey && !(e.nativeEvent as KeyboardEvent).isComposing) { e.preventDefault(); handleSend() }
     else if (e.key === 'ArrowUp' && !input) { e.preventDefault(); recallHistory(-1) }
     else if (e.key === 'ArrowDown' && !input) { e.preventDefault(); recallHistory(1) }
   }

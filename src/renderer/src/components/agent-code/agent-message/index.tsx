@@ -30,6 +30,7 @@ import { ToolCallGroup, FileChangeSummary } from '../agent-tools'
 import { fmtCompactTok, fmtThinkDur, formatDuration } from '../utils/format'
 import type { AgentMsgRowActions, RenderSegmentsOpts, AniIconHandle } from '../types'
 import type { AgentMessage, Attachment } from '../../../../../shared/types'
+import { useBubbleTip } from '../../useBubbleTip'
 
 // ── 顶栏指标隔离组件：自订阅 modelMetrics，避免主进程每 2s 广播指标时
 //    触发整个工作台全量重渲染（原实现直接在 AgentCodeView 订阅整棵 modelMetrics 树）──
@@ -76,12 +77,15 @@ export const AgentPrefillBar = React.memo(function AgentPrefillBar() {
   })
   const prefillActive = prefillProgress !== null && prefillProgress < 1
   const prefillDone = prefillProgress !== null && prefillProgress >= 1
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   if (!prefillActive) return null
   return (
     <div
       className="metric-bar-wrap agent-prompt-build-bar"
-      title={prefillDone ? '提示词加载完成' : '正在加载提示词…'}
+      {...tip(prefillDone ? '提示词加载完成' : '正在加载提示词…')}
     >
+      {tipNode}
       <div
         className="metric-bar-fill"
         style={{ width: `${Math.min(100, (prefillProgress ?? 0) * 100)}%`, background: '#7c3aed', opacity: 0.7 }}
@@ -127,6 +131,8 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
     [attachments]
   )
   const srcOf = (a: Attachment) => a.dataUrl || a.fullDataUrl || ''
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   // 点胶囊开右侧预览。此前这里要求 a.path 存在才挂 onClick——于是从剪贴板粘贴、
   // 或从浏览器 / 看图软件拖进来的图（取不到磁盘路径）只能悬停看小图，点它毫无反应。
   // 现在只要外层给了回调就挂上：有路径读原文件，没路径用内存里的 dataUrl 建预览标签。
@@ -168,7 +174,7 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
           type="button"
           key={`${a.name}-${i}`}
           className="user-msg-file"
-          title={`${a.name}（点击预览抽取到的文本）`}
+          {...tip(`${a.name}（点击预览抽取到的文本）`)}
           onClick={() => setPreviewAtt(a)}
         >
           <FileTextIcon size={12} />
@@ -209,12 +215,13 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
   }
   return (
     <>
+    {tipNode}
     {/* 既没文字也没图片时不渲染空气泡；只有图片（正文被摘空）时照常成泡 */}
     {bodyText.trim() || bodyImages.length > 0 ? (
       <div
         className={`chat-msg-bubble chat-msg-markdown${clamped ? ' user-msg-clamped' : ''}`}
         onClick={clamped ? openFull : undefined}
-        title={clamped ? '点击查看完整内容' : undefined}
+        {...(clamped ? tip('点击查看完整内容') : {})}
       >
         <div ref={bodyRef} className="user-plain-text">{bodyInner}</div>
       </div>
@@ -981,10 +988,13 @@ export const StreamingBadge = React.memo(function StreamingBadge({ modelLabel, l
   const shownTps = tps ?? persistedTps ?? null
   // 速度分级配色：>=50 青、>=30 绿、>=15 黄、其余 红（与 pi-web 一致）
   const bg = shownTps == null ? 'var(--text-muted)' : shownTps >= 50 ? '#53b3cb' : shownTps >= 30 ? '#9bc53d' : shownTps >= 15 ? '#f9c22e' : '#e01a4f'
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   return (
     <div className="agent-stream-meta">
+      {tipNode}
       {modelLabel && <span className="agent-stream-model">{modelLabel}</span>}
-      <span className="agent-stream-tokens" title="已解码 token 数（服务端 /slots n_decoded）">
+      <span className="agent-stream-tokens" {...tip('已解码 token 数（服务端 /slots n_decoded）')}>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
           <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
         </svg>
@@ -1259,15 +1269,17 @@ export function TopbarBtn({ icon: Icon, size = 12, btnRef, baseClass = 'agent-co
   iconClassName?: string
 }) {
   const iconRef = useRef<AniIconHandle>(null)
+  // 原生 title 换自定义气泡（与导航栏同款）：已有图标 hover 动画，走 showTip/hideTip 合并进去
+  const { tipNode, showTip, hideTip } = useBubbleTip()
   return (
     <button
       ref={btnRef}
       className={`${baseClass}${active ? ' active' : ''}${className ? ' ' + className : ''}`}
       onClick={onClick}
-      title={title}
-      onMouseEnter={() => iconRef.current?.startAnimation?.()}
-      onMouseLeave={() => iconRef.current?.stopAnimation?.()}
+      onMouseEnter={(e) => { iconRef.current?.startAnimation?.(); if (title) showTip(title, e.currentTarget) }}
+      onMouseLeave={() => { iconRef.current?.stopAnimation?.(); hideTip() }}
     >
+      {tipNode}
       <Icon ref={iconRef as never} size={size} className={iconClassName} />
       {children}
     </button>
@@ -1286,17 +1298,44 @@ export const AniIconButton = React.forwardRef<HTMLButtonElement, {
   children?: React.ReactNode
 }>(function AniIconButton({ icon: Icon, size = 14, onClick, onMouseDown, className, title, disabled, children }, ref) {
   const iconRef = useRef<AniIconHandle>(null)
+  // 原生 title 换自定义气泡（与导航栏同款）：已有图标 hover 动画，走 showTip/hideTip 合并进去；
+  // title 仍由调用方透传（有可见文字的按钮不用加 aria-label，纯图标按钮此处统一从 title 派生可读名）。
+  // disabled 的按钮收不到鼠标事件，事件挂外层 span 保住提示。
+  const { tipNode, showTip, hideTip } = useBubbleTip()
+  const handleEnter = (e: React.MouseEvent<HTMLElement>) => { iconRef.current?.startAnimation?.(); if (title) showTip(title, e.currentTarget) }
+  const handleLeave = () => { iconRef.current?.stopAnimation?.(); hideTip() }
+  if (disabled && title) {
+    return (
+      <>
+        <span style={{ display: 'inline-flex' }} onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
+          <button
+            ref={ref}
+            className={className}
+            onClick={onClick}
+            onMouseDown={onMouseDown}
+            aria-label={title}
+            disabled={disabled}
+          >
+            <Icon ref={iconRef as never} size={size} />
+            {children}
+          </button>
+        </span>
+        {tipNode}
+      </>
+    )
+  }
   return (
     <button
       ref={ref}
       className={className}
       onClick={onClick}
       onMouseDown={onMouseDown}
-      title={title}
+      aria-label={title}
       disabled={disabled}
-      onMouseEnter={() => iconRef.current?.startAnimation?.()}
-      onMouseLeave={() => iconRef.current?.stopAnimation?.()}
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
     >
+      {tipNode}
       <Icon ref={iconRef as never} size={size} />
       {children}
     </button>
@@ -1473,6 +1512,8 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
   // 流式行：live 每次 commit 是新对象 → 只这一行跟随更新。
   const live = useStore(s => (s.liveAgentMsg && s.liveAgentMsg.id === msg.id) ? s.liveAgentMsg : null)
   const isStreaming = !!streaming && !!live
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const src = isStreaming ? live : msg
   const a = actionsRef.current
   const toolCalls = src.toolCalls ?? []
@@ -1484,9 +1525,12 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
   ) : null
   const actions = !isStreaming ? (
     <div className="chat-msg-actions">
-      <button className="chat-msg-action-btn" title="复制" onClick={() => a.copyMessage(msg.content || '')}><CopyIcon size={13} /></button>
+      {tipNode}
+      <button className="chat-msg-action-btn" aria-label="复制" {...tip('复制')} onClick={() => a.copyMessage(msg.content || '')}><CopyIcon size={13} /></button>
       {isLast && (
-        <button className="chat-msg-action-btn" title="重新生成" onClick={() => a.regenerateAt(msg.id)} disabled={loading}><RefreshCwIcon size={13} /></button>
+        <span style={{ display: 'inline-flex' }} {...tip('重新生成')}>
+          <button className="chat-msg-action-btn" aria-label="重新生成" onClick={() => a.regenerateAt(msg.id)} disabled={loading}><RefreshCwIcon size={13} /></button>
+        </span>
       )}
       {/* 朗读 / 继续生成 / 删除只在纯聊天模式出现：工作台模式的消息带工具调用与文件改动，
           这些聊天向操作在那边没有意义，也不该混进工作流的操作区 */}
@@ -1494,15 +1538,20 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
         <>
           <button
             className="chat-msg-action-btn"
-            title={isSpeaking ? '停止朗读' : '朗读'}
+            aria-label={isSpeaking ? '停止朗读' : '朗读'}
+            {...tip(isSpeaking ? '停止朗读' : '朗读')}
             onClick={() => (isSpeaking ? a.stopSpeak() : a.speakMessage(msg.id, msg.content || ''))}
           >
             {isSpeaking ? <Square size={12} /> : <Volume2 size={13} />}
           </button>
           {isLast && (
-            <button className="chat-msg-action-btn" title="继续生成" onClick={() => a.continueAt(msg.id)} disabled={loading}><Play size={13} /></button>
+            <span style={{ display: 'inline-flex' }} {...tip('继续生成')}>
+              <button className="chat-msg-action-btn" aria-label="继续生成" onClick={() => a.continueAt(msg.id)} disabled={loading}><Play size={13} /></button>
+            </span>
           )}
-          <button className="chat-msg-action-btn" title="删除这条回复" onClick={() => a.deleteMessage(msg.id)} disabled={loading}><Trash2 size={13} /></button>
+          <span style={{ display: 'inline-flex' }} {...tip('删除这条回复')}>
+            <button className="chat-msg-action-btn" aria-label="删除这条回复" onClick={() => a.deleteMessage(msg.id)} disabled={loading}><Trash2 size={13} /></button>
+          </span>
         </>
       )}
     </div>

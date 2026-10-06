@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
+import { useBubbleTip } from './useBubbleTip'
 
 // ── Token 统计表格语言（移植自 local-studio 的 catalog-table-shell） ──
 // 无边框表格立在页面底色上，行与行之间用空隙而非发丝线分隔；组头是贯通整行的
@@ -26,8 +27,11 @@ const STAT_TONE_CLASS: Record<StatTone, string> = {
 
 /** StatStrip 的一个单元格；单独导出以便某个统计离开栅格独立存在。 */
 export function StatCell({ label, value, sub, title, tone = 'default' }: Stat) {
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   return (
-    <div className="ts-stat" title={title}>
+    <div className="ts-stat" {...(title ? tip(title) : {})}>
+      {tipNode}
       <div className="ts-stat-label">{label}</div>
       <div className={STAT_TONE_CLASS[tone]}>{value}</div>
       {sub ? <div className="ts-stat-sub">{sub}</div> : null}
@@ -78,17 +82,20 @@ export function HeadCell({
       {children}
     </>
   )
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   return (
     <th
       className={`ts-head ${numeric ? 'ts-num' : ''}`}
       aria-sort={onSort ? (active ? (desc ? 'descending' : 'ascending') : 'none') : undefined}
     >
+      {tipNode}
       {onSort ? (
-        <button type="button" onClick={onSort} title={title} className={`ts-head-btn${active ? ' active' : ''}`}>
+        <button type="button" onClick={onSort} {...(title ? tip(title) : {})} className={`ts-head-btn${active ? ' active' : ''}`}>
           {label}
         </button>
       ) : (
-        <span title={title} className="ts-head-span">{label}</span>
+        <span {...(title ? tip(title) : {})} className="ts-head-span">{label}</span>
       )}
     </th>
   )
@@ -164,8 +171,11 @@ export function NumCell({
   strong?: boolean
   title?: string
 }) {
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   return (
-    <td className="ts-cell ts-cell-num" title={title}>
+    <td className="ts-cell ts-cell-num" {...(title ? tip(title) : {})}>
+      {tipNode}
       <div className={strong ? 'ts-cell-num-strong' : 'ts-cell-num-value'}>{children}</div>
       {sub ? <div className="ts-cell-sub">{sub}</div> : null}
     </td>
@@ -186,8 +196,11 @@ export function BarCell({
   title?: string
 }) {
   const width = Math.min(100, Math.max(share > 0 ? 2 : 0, share * 100))
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   return (
-    <td className="ts-cell ts-cell-num" title={title}>
+    <td className="ts-cell ts-cell-num" {...(title ? tip(title) : {})}>
+      {tipNode}
       <div className="ts-cell-num-value">{children}</div>
       <div className="ts-bar-track">
         <div className="ts-bar-fill" style={{ width: `${width}%` }} />

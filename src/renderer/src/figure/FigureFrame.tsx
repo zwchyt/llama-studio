@@ -15,6 +15,7 @@ import {
   RotateCcw,
 } from 'lucide-react'
 import { copyToClipboard, downloadSvg } from './serializeSvg'
+import { useBubbleTip } from '../components/useBubbleTip'
 import './figure.css'
 
 /**
@@ -116,16 +117,21 @@ function ToolButton({
   onClick: () => void
   children: ReactNode
 }) {
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   return (
+    <>
+      {tipNode}
     <button
       type="button"
       className={`fig-btn${active ? ' fig-btn--on' : ''}`}
-      title={label}
+      {...tip(label)}
       aria-label={label}
       onClick={onClick}
     >
       {children}
     </button>
+    </>
   )
 }
 
@@ -322,9 +328,12 @@ export function FigureFrame({
   const zoomContent = zoomFigure ?? children
   /** 百分比以「刚好铺满」为 100%，而不是以卡片里的原始尺寸 */
   const pct = Math.round((scale / fitScale) * 100)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   return (
     <div className="fig-card">
+      {tipNode}
       <div className="fig-head">
         <div className="fig-title">{title ?? ''}</div>
         <div className={`fig-tools${showSource || copied ? ' fig-tools--pinned' : ''}`}>
@@ -399,18 +408,18 @@ export function FigureFrame({
 
                 <div className="fig-zoom-foot">
                   <div className="fig-zoom-bar">
-                    <button type="button" className="fig-btn" title="缩小" aria-label="缩小" onClick={() => setScale((s) => clamp(s / 1.25, MIN_SCALE, MAX_SCALE))}>
+                    <button type="button" className="fig-btn" aria-label="缩小" {...tip('缩小')} onClick={() => setScale((s) => clamp(s / 1.25, MIN_SCALE, MAX_SCALE))}>
                       <ZoomOut size={14} />
                     </button>
                     <span className="fig-zoom-pct">{pct}%</span>
-                    <button type="button" className="fig-btn" title="放大" aria-label="放大" onClick={() => setScale((s) => clamp(s * 1.25, MIN_SCALE, MAX_SCALE))}>
+                    <button type="button" className="fig-btn" aria-label="放大" {...tip('放大')} onClick={() => setScale((s) => clamp(s * 1.25, MIN_SCALE, MAX_SCALE))}>
                       <ZoomIn size={14} />
                     </button>
                     <button
                       type="button"
                       className="fig-btn"
-                      title="重置"
                       aria-label="重置"
+                      {...tip('重置')}
                       onClick={() => {
                         setScale(fitScale)
                         setOffset({ x: 0, y: 0 })
@@ -418,7 +427,7 @@ export function FigureFrame({
                     >
                       <RotateCcw size={14} />
                     </button>
-                    <button type="button" className="fig-btn" title="关闭 (Esc)" aria-label="关闭" onClick={() => setZoom(false)}>
+                    <button type="button" className="fig-btn" aria-label="关闭" {...tip('关闭 (Esc)')} onClick={() => setZoom(false)}>
                       <X size={14} />
                     </button>
                   </div>

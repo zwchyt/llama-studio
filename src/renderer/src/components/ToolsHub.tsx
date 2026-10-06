@@ -22,6 +22,7 @@ import {
 } from '../utils/navConfig'
 import type { NavDef, ViewKey } from '../utils/navConfig'
 import { renderViewComponent } from '../views/viewRegistry'
+import { useBubbleTip } from './useBubbleTip'
 import '../styles/toolshub.css'
 
 type AnimHandle = { startAnimation: () => void; stopAnimation: () => void }
@@ -75,15 +76,18 @@ function ToolActionItem({ icon: Icon, label, color, active, title, onClick }: {
   onClick: () => void
 }) {
   const iconRef = useRef<AnimHandle | null>(null)
+  // 原生 title 换自定义气泡（与导航栏同款）：已有图标 hover 动画，走 showTip/hideTip 合并进去
+  const { tipNode, showTip, hideTip } = useBubbleTip()
   return (
     <button
       type="button"
       className={`toolhub-item${active ? ' active' : ''}`}
-      title={title}
+      aria-label={title ?? label}
       onClick={onClick}
-      onMouseEnter={() => iconRef.current?.startAnimation()}
-      onMouseLeave={() => iconRef.current?.stopAnimation()}
+      onMouseEnter={(e) => { iconRef.current?.startAnimation(); if (title) showTip(title, e.currentTarget) }}
+      onMouseLeave={() => { iconRef.current?.stopAnimation(); hideTip() }}
     >
+      {tipNode}
       <span
         className="toolhub-ico"
         style={active

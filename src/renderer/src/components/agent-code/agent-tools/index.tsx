@@ -28,6 +28,7 @@ import { LinedPre, LINED_PRE_WINDOW_CHARS } from './LinedPre'
 import { WindowedText } from '../WindowedText'
 import { dirName, pathDir, resolveWorkspacePath, toWorkspaceRelative } from '../utils/paths'
 import { formatDuration } from '../utils/format'
+import { useBubbleTip } from '../../useBubbleTip'
 import type { AgentMessage } from '../../../../../shared/types'
 
 // LinedPre 已抽至 ./LinedPre（长内容行窗口），此处 re-export 保持原导入路径可用
@@ -205,6 +206,8 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
   const [writeExpanded, setWriteExpanded] = useState(false)
   const filePath = name === 'Read' ? '' : (headFilePath || (parsed && typeof (parsed.file_path ?? parsed.path) === 'string' ? (parsed.file_path ?? parsed.path) as string : ''))
   const isFileEdit = !!parsed && (name === 'Write' || name === 'Edit')
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；用到的 return 分支里放 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   // get_datetime 没有任何参数（parameters 是空对象）：通用兜底会把 `{}` 原样打印成一个代码块，
   // 这里直接不渲染参数区，卡片只保留结果区。
   if (name === 'get_datetime') return null
@@ -232,6 +235,7 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
     // 结构上与其他工具卡一致：一个描边参数框，逐行说明这次调用要打开什么。
     return (
       <div className="agent-tool-args">
+        {tipNode}
         <div className="agent-tool-io-group">
           <div className="agent-tool-io">
             <span className="agent-tool-io-label">操作</span>
@@ -241,14 +245,14 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
           {rel && (
             <div className="agent-tool-io">
               <span className="agent-tool-io-label">文件</span>
-              <span className="agent-tool-io-value" title={rawPath}>{rel}</span>
+              <span className="agent-tool-io-value" {...tip(rawPath)}>{rel}</span>
               <span className="agent-tool-io-note">{dir ? `位于 ${dir}/` : '项目根目录'}</span>
             </div>
           )}
           {rawUrl && (
             <div className="agent-tool-io">
               <span className="agent-tool-io-label">网址</span>
-              <span className="agent-tool-io-value" title={rawUrl}>{rawUrl}</span>
+              <span className="agent-tool-io-value" {...tip(rawUrl)}>{rawUrl}</span>
             </div>
           )}
           {!titleRedundant && (
@@ -500,10 +504,11 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
   if (!formatted && !filePath) return null
   return (
     <div className="agent-tool-args">
+      {tipNode}
       {formatted && <pre className="agent-tool-args-pre">{formatted}</pre>}
       {filePath && (
         <div className="agent-tool-filebar">
-          <button className="agent-tool-call-path" title={filePath} onClick={(e) => { e.stopPropagation(); onPreviewFile(resolveWorkspacePath(filePath)) }}>
+          <button className="agent-tool-call-path" {...tip(filePath)} onClick={(e) => { e.stopPropagation(); onPreviewFile(resolveWorkspacePath(filePath)) }}>
             <span className="agent-tool-file-icon" style={{ color: fileMeta(dirName(filePath)).color }}>{(() => { const { Icon: FIcon } = fileMeta(dirName(filePath)); return <FIcon size={12} /> })()}</span>{filePath}
           </button>
         </div>
@@ -549,6 +554,8 @@ export const ToolResultView = React.memo(function ToolResultView({ result, trunc
   const meta = truncated ? `已截断，共 ${total} 字符` : (lines ? `共 ${lineCount} 行` : `共 ${result.length} 字符`)
   // 展开 + 超长 + 非行号：走行窗口，只挂载视口附近的行（行号类由 LinedPre 自己处理）。
   const windowed = expanded && oversized && !lined
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；用到的 return 分支里放 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   // Read 结果：三列（文件真实行号 | 行锚点 | 内容），协议头（File: / Lines:）不再进正文。
   // 超过 12 行折叠为前 12 行，与结果区共用同一个展开状态。
   if (readLines) {
@@ -558,16 +565,17 @@ export const ToolResultView = React.memo(function ToolResultView({ result, trunc
     const unread = readRange?.total ? readRange.total - readRows.length : 0
     return (
       <div className="agent-tool-result">
+        {tipNode}
         <div className="agent-tool-result-head">
           <span className="agent-tool-result-label">结果</span>
           <span className="agent-tool-result-actions">
             <span
               className="agent-tool-result-legend"
-              title={
+              {...tip(
                 hasHash
                   ? '左列为文件真实行号；中列为行内容指纹（FNV-1a 取 7 位十六进制），Edit 用它定位该行'
                   : '左列为文件真实行号'
-              }
+              )}
             >
               {hasHash ? '行号 + 行锚点' : '行号'}
             </span>
@@ -601,6 +609,7 @@ export const ToolResultView = React.memo(function ToolResultView({ result, trunc
   if (glob) {
     return (
       <div className="agent-tool-section">
+        {tipNode}
         <div className="agent-tool-section-head">
           <span className="agent-tool-section-title">📂 匹配结果（{glob.paths.length} 个文件）</span>
         </div>
@@ -611,7 +620,7 @@ export const ToolResultView = React.memo(function ToolResultView({ result, trunc
                 key={p}
                 type="button"
                 className="agent-tool-paths-row"
-                title={p}
+                {...tip(p)}
                 onClick={() => onPreviewFile?.(resolveWorkspacePath(p))}
               >
                 <span className="agent-tool-paths-name">{dirName(p)}</span>
@@ -637,6 +646,7 @@ export const ToolResultView = React.memo(function ToolResultView({ result, trunc
     const summary = grep.kind === 'files' ? `${fileCount} 个文件` : `${hitCount} 处 · ${fileCount} 个文件`
     return (
       <div className="agent-tool-section">
+        {tipNode}
         <div className="agent-tool-section-head">
           <span className="agent-tool-section-title">📂 匹配结果（{summary}）</span>
         </div>
@@ -651,7 +661,7 @@ export const ToolResultView = React.memo(function ToolResultView({ result, trunc
                 key={p}
                 type="button"
                 className="agent-tool-paths-row"
-                title={p}
+                {...tip(p)}
                 onClick={() => onPreviewFile?.(resolveWorkspacePath(p))}
               >
                 <span className="agent-tool-paths-name">{dirName(p)}</span>
@@ -669,7 +679,7 @@ export const ToolResultView = React.memo(function ToolResultView({ result, trunc
                 <button
                   type="button"
                   className="agent-tool-paths-row"
-                  title={g.path}
+                  {...tip(g.path)}
                   onClick={() => onPreviewFile?.(resolveWorkspacePath(g.path))}
                 >
                   <span className="agent-tool-paths-name">{dirName(g.path)}</span>
@@ -827,10 +837,13 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
   // 工具声明（pending）即渲染卡片（与参考项目 Reasonix 的 ToolCard 一致：dispatch 即显示），
   // 状态全程可见：待执行 → 写入中/修改中（verb）→ 完成，执行中的状态不会一闪而过。
   const showCard = done || awaiting || executing || pending
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   if (!showCard) return null
 
   return (
     <>
+      {tipNode}
       {/* 执行时长已并入卡头 meta 区（.agent-tool-call-dur），不再在卡片上方单独占一行——
           使工具卡折叠态严格是一行，与思考段「Thought: 515ms」、批头「执行工具 N 次 · 1.8s」
           的「一行 + 可展开」形态对齐 */}
@@ -843,7 +856,7 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
           {/* Read/Write/Edit：文件名直接内联到头部（文件树同款图标 + 可点跳预览）。
               Read 完成后附行段「文件名:x-y」，点击跳转到读取起始行——与模型实际读到的片段对上 */}
           {headFilePath ? (
-            <button className="agent-tool-call-path" title={headFilePath} onClick={(e) => { e.stopPropagation(); onPreviewFile(resolveWorkspacePath(headFilePath), readRange?.start) }}>
+            <button className="agent-tool-call-path" {...tip(headFilePath)} onClick={(e) => { e.stopPropagation(); onPreviewFile(resolveWorkspacePath(headFilePath), readRange?.start) }}>
               <span className="agent-tool-file-icon" style={{ color: fileMeta(dirName(headFilePath)).color }}>{(() => { const { Icon: FIcon } = fileMeta(dirName(headFilePath)); return <FIcon size={12} /> })()}</span>
               {/* 路径三段式：目录弱化、文件名加强。路径过长被截断时截的是目录而不是文件名，
                   行段做成中性 chip（此前是 `:7-19` 这种带冒号的纯文本，看不出是独立参数） */}
@@ -887,7 +900,7 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
               <span className="agent-tool-call-status ok"><CheckIcon size={12} /> 完成</span>
             )}
             {canRestore && (
-              <button className="agent-tool-undo" title="撤销仅本次运行内有效，重启应用后不可用" onClick={(e) => { e.stopPropagation(); onUndo?.() }}>
+              <button className="agent-tool-undo" {...tip('撤销仅本次运行内有效，重启应用后不可用')} onClick={(e) => { e.stopPropagation(); onUndo?.() }}>
                 <Undo2 size={12} /> 恢复
               </button>
             )}
@@ -1010,12 +1023,15 @@ export const FileChangeSummary = React.memo(function FileChangeSummary({ toolCal
     }
     return [...map.values()]
   }, [toolCalls])
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   if (files.length === 0) return null
   const totalAdded = files.reduce((s, f) => s + f.added, 0)
   const totalRemoved = files.reduce((s, f) => s + f.removed, 0)
   return (
     <div className={`agent-file-changes${expanded ? ' expanded' : ''}`}>
-      <div className="agent-file-changes-head" onClick={() => setExpanded(v => !v)} role="button" tabIndex={0} title={expanded ? '收起文件变更' : '展开文件变更'} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(v => !v) } }}>
+      {tipNode}
+      <div className="agent-file-changes-head" onClick={() => setExpanded(v => !v)} role="button" tabIndex={0} {...tip(expanded ? '收起文件变更' : '展开文件变更')} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(v => !v) } }}>
         <ChevronRightIcon size={12} className={`agent-file-changes-chev${expanded ? ' open' : ''}`} />
         {/* 文件差异图标：与「变更」语义对应，强化卡片身份 */}
         <FileDiff size={13} className="agent-file-changes-head-icon" />
@@ -1024,10 +1040,13 @@ export const FileChangeSummary = React.memo(function FileChangeSummary({ toolCal
           {totalAdded > 0 && <span className="diff-add">+{totalAdded}</span>}
           {totalRemoved > 0 && <span className="diff-del">-{totalRemoved}</span>}
         </span>
-        {/* 头部右侧「撤销」：折叠/展开态均可用，一键写回本次修改前的原文件内容（仅当前会话内存备份有效） */}
-        <button className="agent-file-changes-undo" title="撤销本次全部修改（仅当前会话内存备份有效）" disabled={!canUndoAll} onClick={e => { e.stopPropagation(); onUndoAll?.() }}>
-          <Undo2 size={11} /> 撤销
-        </button>
+        {/* 头部右侧「撤销」：折叠/展开态均可用，一键写回本次修改前的原文件内容（仅当前会话内存备份有效）。
+            disabled 的按钮收不到鼠标事件，事件挂外层 span 保住提示（常驻包裹，disabled 翻转不重挂） */}
+        <span style={{ display: 'inline-flex' }} {...tip('撤销本次全部修改（仅当前会话内存备份有效）')}>
+          <button className="agent-file-changes-undo" aria-label="撤销本次全部修改" disabled={!canUndoAll} onClick={e => { e.stopPropagation(); onUndoAll?.() }}>
+            <Undo2 size={11} /> 撤销
+          </button>
+        </span>
       </div>
       <div className="agent-file-changes-collapse">
         <div className="agent-file-changes-clip">
@@ -1042,7 +1061,7 @@ export const FileChangeSummary = React.memo(function FileChangeSummary({ toolCal
               const parent = cut > 0 ? norm.slice(0, cut) : ''
               return (
                 <div className="agent-file-changes-line" key={f.path}>
-                  <button className="agent-file-changes-row" title={f.path} style={{ animationDelay: `${Math.min(i, 8) * 70}ms` }} onClick={() => onOpenChange(resolveWorkspacePath(f.path))}>
+                  <button className="agent-file-changes-row" {...tip(f.path)} style={{ animationDelay: `${Math.min(i, 8) * 70}ms` }} onClick={() => onOpenChange(resolveWorkspacePath(f.path))}>
                     {(() => { const { Icon: FIcon, color } = fileMeta(dirName(rel)); return <FIcon size={12} style={{ color }} /> })()}
                     <span className="agent-file-changes-name">{dirName(rel)}</span>
                     {/* 增删行数与 A/M 徽标紧跟文件名，扫视时名称、数字、状态一眼对应 */}
@@ -1051,11 +1070,11 @@ export const FileChangeSummary = React.memo(function FileChangeSummary({ toolCal
                       {f.removed > 0 && <span className="diff-del">-{f.removed}</span>}
                     </span>
                     {/* 状态徽标：复用 Git 变更面板同款配色（A 新增 / M 修改） */}
-                    <span className={`agent-git-badge s-${f.status}`} title={f.status === 'A' ? '新增文件' : '修改文件'}>{f.status}</span>
+                    <span className={`agent-git-badge s-${f.status}`} {...tip(f.status === 'A' ? '新增文件' : '修改文件')}>{f.status}</span>
                     {parent && <span className="agent-file-changes-dir">{parent}</span>}
                   </button>
                   {/* 每行右侧「审查」：审查该文件的改动（跳变更面板定位该文件 diff） */}
-                  <button className="agent-file-changes-review" title="在变更面板中审查该文件的改动" onClick={() => onOpenChange(resolveWorkspacePath(f.path))}>
+                  <button className="agent-file-changes-review" {...tip('在变更面板中审查该文件的改动')} onClick={() => onOpenChange(resolveWorkspacePath(f.path))}>
                     <GitBranchIcon size={11} /> 审查
                   </button>
                 </div>

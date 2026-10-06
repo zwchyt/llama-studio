@@ -10495,6 +10495,18 @@ html.theme-dark .user-msg-lightbox {
   display: flex;
   flex-direction: column;
   background: var(--surface);
+  /* 树形连接线颜色：借用弱化文字色，深浅主题都能压到背景之上又不抢内容。
+     26% 时合成结果比 --border 还淡（对比度约 1.2:1），线条几乎看不见；
+     45% 在浅色主题下合成 #d0d0d0、深色主题下合成 #4a4c4e，正好各自落在本主题的
+     --border-strong 档位上，是项目既有的「结构线」强度。
+     保留 color-mix 而非直接引用 --border-strong：面板底色可被背景图透掉，
+     半透明线能跟随实际底色，实心线会在图片背景上糊成一道硬边。 */
+  --file-tree-line: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  /* 折角弧半径：行高 24px 时弧线在行中点前 6px 起弯 */
+  --file-tree-elbow: 6px;
+  /* 箭头位宽 12 + 行内 gap 3：文件行没有 chevron，这段是空槽，
+     折角要跨过它才接得到图标（见 .file-tree-node--leaf） */
+  --file-tree-arrow-slot: 15px;
 }
 
 .file-tree-header {
@@ -10565,6 +10577,11 @@ html.theme-dark .user-msg-lightbox {
   flex: 1;
   overflow-y: auto;
   padding: 4px 0;
+  /* 常驻滚动条槽（全局 ::-webkit-scrollbar 宽 5px）：外层 .agent-code-tree 是 fit-content，
+     槽位出现/消失会改变内容固有宽度。展开目录刚好越过滚动阈值时，宽度 FLIP 量到的是
+     「无槽」值、动画结束释放回 fit-content 才按「有槽」重算，末尾凭空跳 5px。
+     同 global.css 入场动画那条注释记的是同一类抖动。 */
+  scrollbar-gutter: stable;
 }
 
 .file-tree-search {
@@ -10653,6 +10670,10 @@ html.theme-dark .user-msg-lightbox {
 }
 
 .file-tree-node {
+  position: relative;
+  /* 高亮块由 ::before 以 z-index:-1 绘制，需要行自身成堆叠上下文，
+     否则负层级会透到面板底色之下、高亮不可见 */
+  z-index: 0;
   display: flex;
   align-items: center;
   gap: 3px;
@@ -10662,7 +10683,6 @@ html.theme-dark .user-msg-lightbox {
   color: var(--text);
   white-space: nowrap;
   user-select: none;
-  transition: background .15s ease, transform .12s ease;
 }
 
 /* 可拖拽文件节点：拖拽中显示抓取光标 */
@@ -10670,35 +10690,187 @@ html.theme-dark .user-msg-lightbox {
   cursor: grabbing;
 }
 
-.file-tree-node--sub:hover {
-  background: var(--surface-hover);
-  transform: translateX(4px);
+/* 悬停/选中高亮：圆角块从本行缩进之后开始，只覆盖内容区、不含左侧引导线列。
+   旧实现是整行 translateX(4px) 位移，加上连接线后位移会把线扯断，故换成内缩块。
+   --file-tree-level 由节点行内联写入（= 层级），与 paddingLeft 同源。
+   几何规则须同时覆盖 pinned/selected：根行不带 --sub，右键固定时否则会只有背景没有盒子。 */
+.file-tree-node--sub::before,
+.file-tree-node--pinned::before,
+.file-tree-node--selected::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: 1px;
+  bottom: 1px;
+  left: calc(var(--file-tree-level, 0) * 16px);
+  right: 6px;
+  border-radius: 6px;
+  background: transparent;
+  transition: background .15s ease;
 }
 
-.file-tree-node--pinned {
+.file-tree-node--sub:hover::before,
+.file-tree-node--pinned::before {
   background: var(--surface-hover);
-  transform: translateX(4px);
 }
 
-.file-tree-node--selected {
+.file-tree-node--selected::before {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border-right: 2px solid var(--accent);
 }
 
+/* ── 树形连接线 ──
+   引导层绝对定位覆盖左侧缩进区（宽度 = level * 16），不参与行布局。
+   每列一格、格高 = 行高，相邻行的竖线首尾相接即成连续引导线。 */
+.file-tree-guides {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  pointer-events: none;
+}
+
+.file-tree-guide {
+  position: relative;
+  width: 16px;
+  flex-shrink: 0;
+}
+
+/* 竖线：--cont = 祖先续线（该祖先还有后续兄弟），--mid = ├─，--last = └─ */
+.file-tree-guide--cont::before,
+.file-tree-guide--mid::before,
+.file-tree-guide--last::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--file-tree-line);
+}
+
+/* └─：竖线只走到起弧处，剩下四分之一交给弧线，否则直线会穿过弧顶 */
+.file-tree-guide--last::before {
+  bottom: calc(50% + var(--file-tree-elbow));
+}
+
+/* 折角弧线：border-left + border-bottom + 左下圆角 = 竖线在行中点前 r 处起弧、弯平后水平接到内容区。
+   盒高恰等于半径 → 纯四分之一圆弧，无中间直段。
+   --mid 的 border-left 与通高竖线重合（同 x 同色），不会描出双线。 */
+.file-tree-guide--mid::after,
+.file-tree-guide--last::after {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: calc(50% - var(--file-tree-elbow));
+  width: 9px;
+  height: var(--file-tree-elbow);
+  border-left: 1px solid var(--file-tree-line);
+  border-bottom: 1px solid var(--file-tree-line);
+  border-bottom-left-radius: var(--file-tree-elbow);
+}
+
+/* 文件行（不可展开）：箭头位是空槽，折角水平段多跨过它，直接接到图标左缘。
+   目录行不跨——线头会顶到 chevron 的尖上。 */
+.file-tree-node--leaf .file-tree-guide--mid::after,
+.file-tree-node--leaf .file-tree-guide--last::after {
+  width: calc(9px + var(--file-tree-arrow-slot));
+}
+
+/* ── 展开 / 收起动效 ──────────────────────────────────────────────────
+   两个方向的「节奏」不同，但「容器高度必须跟着级联走」这条逻辑相同：
+   高度动画的时长恒等于最后一个参与动画的行的收尾时刻，否则要么空间早开完、
+   行还在慢慢流（两边脱节），要么行早流完、空间还在让（空转尾巴）。
+     展开：间隔固定 --ft-step，一行一行看得清，总长随行数线性增长；
+     收起：间隔按行数压进 --ft-window，总长封顶，让位要快。
+   收起侧 JS 的 exitSpanMs() 必须算出与 --ft-span-out 同一个数，
+   容器高度动画要播完才卸载，改这边记得同步那边。 */
+.file-tree {
+  /* 展开级联间隔：一行行流的节奏就靠它，压了会糊成一片 */
+  --ft-step: 64ms;
+  --ft-row-dur: 240ms;
+  /* 收起级联的总预算：行数多时把间隔压进这个窗口 */
+  --ft-window: 460ms;
+  /* 参与行级淡入淡出的行数。再往下的行只靠容器高度窗口逐行露出（本来就在视口外），
+     免得几百行的目录一次挂出几百个动画。 */
+  --ft-anim-rows: 24;
+}
+
+/* 容器高度动画。只做行淡出的话，空间要等卸载那一刻才让位，下面的兄弟目录会
+   「原地等一会儿再整块跳上来」——这就是收起「结束后才正式收起」。
+   interpolate-size 让 height: 0 ↔ auto 可插值，既不用 JS 量高度也不用 transitionend。
+   ⚠️ 下面这些派生变量必须声明在本元素上：它们要读的行数是行内写在这里的
+   --file-tree-count，放到 .file-tree 里解析只会取到回退值 1，
+   slots 恒为 0 → 两个方向的自适应整体失效。 */
 .file-tree-children {
-  max-height: 0;
-  opacity: 0;
+  --ft-slots: max(min(var(--file-tree-count, 1), var(--ft-anim-rows)) - 1, 0);
+  --ft-step-out: min(var(--ft-step), var(--ft-window) / max(var(--ft-slots), 1));
+  --ft-span-in: calc(var(--ft-step) * var(--ft-slots) + var(--ft-row-dur));
+  --ft-span-out: calc(var(--ft-step-out) * var(--ft-slots) + var(--ft-row-dur));
+  interpolate-size: allow-keywords;
+  /* 裁剪层：行从父行下方「流出来」，靠这一层把还没进入窗口的部分切掉 */
   overflow: hidden;
-  /* 展开/收起均不播折叠动画（长目录逐帧重排很贵）：内容同帧即时出现/退出，
-     观感由面板宽度的 FLIP 平滑过渡接管；
-     content-visibility 保证收起内容退出宽度测量（长文件名不再撑住面板）。 */
-  content-visibility: hidden;
+  animation: file-tree-children-in var(--ft-span-in) cubic-bezier(.25, .6, .35, 1) both;
 }
 
-.file-tree-children.open {
-  max-height: none;
-  opacity: 1;
-  content-visibility: visible;
+@keyframes file-tree-children-in {
+  from { height: 0; }
+  to   { height: auto; }
+}
+
+/* 退场：容器从下沿往上卷，所以行的消失顺序必须反过来（最下面那行先走），
+   否则行还在、窗口却已经把它裁了，看着就是「下面先塌一截」。
+   pointer-events 一并关掉，避免半透明退场中的行被误点。 */
+.file-tree-children.file-tree-children--out {
+  pointer-events: none;
+  animation: file-tree-children-out var(--ft-span-out) ease-in both;
+}
+
+@keyframes file-tree-children-out {
+  from { height: auto; }
+  to   { height: 0; }
+}
+
+/* 行级联。
+   入场：间隔恒为 --ft-step（64ms），不按行数压缩——压缩会把「一行一行」糊成一片，
+   每一行都必须有自己的时刻，也不再有钳顶（先前钳在 8 档，第 9 行起就是一次性刷出来）。
+   退场：用倒数序号 slots-ord 配自适应间隔 --ft-step-out，方向与容器从下沿上收对齐，
+   并把整段压进 --ft-window，让位要快。
+   :nth-child(-n + 24) 里的 24 必须等于 --ft-anim-rows（选择器里没法用变量）。
+   fill-mode both 的 backwards 让行在延迟期间保持未出现，否则全部先显形再各自滑，
+   就成了整块抖动而不是一行行流过。 */
+.file-tree-children > div:nth-child(-n + 24) > .file-tree-node {
+  animation: file-tree-row-in var(--ft-row-dur) cubic-bezier(.25, .6, .35, 1) both;
+  animation-delay: calc(var(--file-tree-stagger, 0) * var(--ft-step));
+}
+
+.file-tree-children.file-tree-children--out > div:nth-child(-n + 24) > .file-tree-node {
+  animation: file-tree-row-out var(--ft-row-dur) ease-in both;
+  animation-delay: calc(max(var(--ft-slots) - var(--file-tree-stagger, 0), 0) * var(--ft-step-out));
+}
+
+@keyframes file-tree-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes file-tree-row-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
 }
 
 .file-tree-arrow {
@@ -12057,4 +12229,37 @@ html.theme-dark {
     animation: none;
     opacity: 1;
   }
+}
+
+/* ── 发送飞行层（sendFlight STAGE 7r2）：只在发送 900ms 内挂载，平时不存在 ──
+   背景/边框/圆角/阴影/字体全部由 JS 实测后写行内（主题无关）；
+   这里只放定位与合成层声明。 */
+.sendfly-pos {
+  position: fixed;
+  z-index: 40;
+  margin: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+  opacity: 1;
+  will-change: transform;
+}
+.sendfly-box {
+  position: absolute;
+  inset: 0;
+  border-style: solid;
+}
+.sendfly-shadow {
+  position: fixed;
+  z-index: 39;
+  margin: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+  opacity: 1;
+  will-change: transform;
+}
+.sendfly-text {
+  position: absolute;
+  opacity: 1;
+  transform-origin: 0 0;
+  will-change: transform;
 }

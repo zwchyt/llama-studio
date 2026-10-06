@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import hljs from 'highlight.js/lib/common'
 import { Check, Copy, ChevronDown } from 'lucide-react'
 import { WindowedText } from './agent-code/WindowedText'
+import { useBubbleTip } from './useBubbleTip'
 // 本组件是共享组件（Agent Code 消息与模型中心 README 都会渲染），样式跟着组件走，
 // 原先寄存在 chat.css 里、靠 AgentCodeView 的静态引入才生效，已迁到自己的文件
 import '../styles/code-block.css'
@@ -39,6 +40,8 @@ export default function CodeBlock({ language, value, showLineNumbers, isStreamin
   const rootRef = useRef<HTMLDivElement>(null)
   const [copied, setCopied] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   // 收尾高亮推迟到「本块进入视口」再做。
   // 长回答里同时存在几十个代码块，流结束的那一次 commit 会让它们的 useEffect 全部同步
   // 执行——实测 30KB / 36 个块时 hljs 计算 19.0ms + innerHTML 整体替换（jsdom 下 75ms，
@@ -128,12 +131,13 @@ export default function CodeBlock({ language, value, showLineNumbers, isStreamin
 
   return (
     <div ref={rootRef} className={`chat-code-block ${collapsed ? 'collapsed' : ''}`}>
+      {tipNode}
       <div className="chat-code-header">
         <div className="chat-code-head-left">
           <button
             className="chat-code-toggle"
             onClick={() => setCollapsed(v => !v)}
-            title={collapsed ? '展开代码' : '收起代码'}
+            {...tip(collapsed ? '展开代码' : '收起代码')}
             aria-label={collapsed ? '展开代码' : '收起代码'}
           >
             <ChevronDown size={13} className={`agent-tool-chev ${collapsed ? '' : 'open'}`} />

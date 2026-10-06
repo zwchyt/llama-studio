@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Search, ChevronUp, ChevronDown, X } from 'lucide-react'
+import { useBubbleTip } from './useBubbleTip'
 
 // 会话内消息搜索：Ctrl/Cmd+F 打开，支持上/下一个跳转 + 计数。
 //
@@ -19,6 +20,8 @@ export default function AgentMessageSearch({ containerRef, messages, onEnsureMes
   onEnsureMessage?: (index: number) => void
 }) {
   const [open, setOpen] = useState(false)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const [query, setQuery] = useState('')
   const [count, setCount] = useState(0)
   const [active, setActive] = useState(0) // 1-based
@@ -149,6 +152,7 @@ export default function AgentMessageSearch({ containerRef, messages, onEnsureMes
   if (!open) return null
   return (
     <div className="agent-msg-search">
+      {tipNode}
       <Search size={13} className="agent-msg-search-icon" />
       <input
         ref={inputRef}
@@ -163,9 +167,9 @@ export default function AgentMessageSearch({ containerRef, messages, onEnsureMes
         }}
       />
       <span className="agent-msg-search-count">{count ? `${active}/${count}` : '0/0'}</span>
-      <button className="agent-msg-search-btn" onClick={() => go(-1)} disabled={!count} title="上一个 (Shift+Enter)"><ChevronUp size={13} /></button>
-      <button className="agent-msg-search-btn" onClick={() => go(1)} disabled={!count} title="下一个 (Enter)"><ChevronDown size={13} /></button>
-      <button className="agent-msg-search-btn" onClick={() => setOpen(false)} title="关闭 (Esc)"><X size={13} /></button>
+      <span style={{ display: 'inline-flex' }} {...tip('上一个 (Shift+Enter)')}><button className="agent-msg-search-btn" onClick={() => go(-1)} disabled={!count} aria-label="上一个 (Shift+Enter)"><ChevronUp size={13} /></button></span>
+      <span style={{ display: 'inline-flex' }} {...tip('下一个 (Enter)')}><button className="agent-msg-search-btn" onClick={() => go(1)} disabled={!count} aria-label="下一个 (Enter)"><ChevronDown size={13} /></button></span>
+      <button className="agent-msg-search-btn" onClick={() => setOpen(false)} aria-label="关闭 (Esc)" {...tip('关闭 (Esc)')}><X size={13} /></button>
     </div>
   )
 }

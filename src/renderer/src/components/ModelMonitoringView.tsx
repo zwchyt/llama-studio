@@ -5,6 +5,7 @@ import { notify } from '../store/notificationStore'
 import { Activity, Database, HardDrive, Square, HardDrive as MemIcon, Zap, Clock, Gauge, Play, MessageSquare, Thermometer, Cpu, RefreshCw, ExternalLink, Copy, Check, ChevronDown, Timer } from 'lucide-react'
 import '../styles/monitoring.css'
 import { addressOfEndpoint, endpointOfCard } from '../utils/endpoint'
+import { useBubbleTip } from './useBubbleTip'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function fmt(n: unknown, digits = 1): string {
@@ -86,6 +87,8 @@ function RunningCard({ card, metrics: metricsProp }: { card: import('../../../sh
   const { toggleMonitorExpanded, setCardStatus, clearActiveChat, systemMetrics } = useStore(s => ({
     toggleMonitorExpanded: s.toggleMonitorExpanded, setCardStatus: s.setCardStatus, clearActiveChat: s.clearActiveChat, systemMetrics: s.systemMetrics
   }), shallow)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const isRunning = card.status === 'running'
   // 外部端点卡：地址/协议/模型名都在端点表上，这里查出来只为展示
   const endpoint = endpointOfCard(card, useStore.getState().modelEndpoints)
@@ -132,6 +135,7 @@ function RunningCard({ card, metrics: metricsProp }: { card: import('../../../sh
   const displayGenTokens = metrics?.nDecoded && metrics.nDecoded > 0 ? metrics.nDecoded : 0
 
   return (<div className={`monitoring-card ${isRunning ? 'running' : ''}`}>
+    {tipNode}
     <div className="monitoring-card-header" onClick={handleHeaderClick}>
       <div className="monitoring-card-icon" style={{ background: isRunning ? 'rgba(22,163,74,.12)' : 'var(--surface-2)' }}>
         <HardDrive size={16} style={{ color: isRunning ? 'var(--success)' : 'var(--text-muted)' }} />
@@ -145,7 +149,7 @@ function RunningCard({ card, metrics: metricsProp }: { card: import('../../../sh
         <span className="monitoring-status-text" style={{ color: statusInfo.color }}>{statusInfo.label}</span>
         {card.pid && <span className="monitoring-pid">PID {card.pid}</span>}
         {isRunning && (
-          <button className="btn btn-ghost btn-icon btn-stop-model" onClick={(e) => { e.stopPropagation(); handleStop() }} title={card.template.external ? '断开（只取消本应用的登记，不关那边的服务）' : '停止'}>
+          <button className="btn btn-ghost btn-icon btn-stop-model" onClick={(e) => { e.stopPropagation(); handleStop() }} aria-label={card.template.external ? '断开（只取消本应用的登记，不关那边的服务）' : '停止'} {...tip(card.template.external ? '断开（只取消本应用的登记，不关那边的服务）' : '停止')}>
             <Square size={13} />
           </button>
         )}
@@ -370,6 +374,8 @@ function RunningCard({ card, metrics: metricsProp }: { card: import('../../../sh
 type ApiTab = 'metrics' | 'props' | 'slots'
 
 function ApiEndpoints({ port }: { port: number }) {
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const [tab, setTab] = useState<ApiTab>('props')
   const [data, setData] = useState<Record<ApiTab, string | null>>({ metrics: null, props: null, slots: null })
   const [loading, setLoading] = useState(false)
@@ -421,6 +427,7 @@ function ApiEndpoints({ port }: { port: number }) {
 
   return (
     <div className="api-endpoints-section">
+      {tipNode}
       <div className="monitoring-metrics-title api-endpoints-header" onClick={() => setCollapsed(!collapsed)}>
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <Database size={12} style={{ marginRight: 5 }} />
@@ -441,13 +448,14 @@ function ApiEndpoints({ port }: { port: number }) {
               </button>
             ))}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-              <button className="api-tab-btn" onClick={handleRefresh} title="刷新" disabled={loading}>
+              {/* disabled 按钮收不到鼠标事件，原生 title 反而能弹：事件挂外层 span 保住提示 */}
+              <span style={{ display: 'inline-flex' }} {...tip('刷新')}><button className="api-tab-btn" onClick={handleRefresh} aria-label="刷新" disabled={loading}>
                 <RefreshCw size={12} className={loading ? 'spin' : ''} />
-              </button>
-              <button className="api-tab-btn" onClick={handleCopy} title="复制" disabled={!data[tab]}>
+              </button></span>
+              <span style={{ display: 'inline-flex' }} {...tip('复制')}><button className="api-tab-btn" onClick={handleCopy} aria-label="复制" disabled={!data[tab]}>
                 {copied ? <Check size={12} /> : <Copy size={12} />}
-              </button>
-              <button className="api-tab-btn" onClick={handleOpenBrowser} title="在浏览器打开">
+              </button></span>
+              <button className="api-tab-btn" onClick={handleOpenBrowser} aria-label="在浏览器打开" {...tip('在浏览器打开')}>
                 <ExternalLink size={12} />
               </button>
             </div>

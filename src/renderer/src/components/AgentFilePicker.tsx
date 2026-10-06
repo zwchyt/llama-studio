@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { ChevronLeft, Search, X, File, Folder, FolderOpen, Check, Loader2, HardDrive } from 'lucide-react'
+import { useBubbleTip } from './useBubbleTip'
 
 interface FileEntry {
   name: string
@@ -40,6 +41,8 @@ function parentDir(p: string) {
 }
 
 export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRemove, onClose, triggerRef }: AgentFilePickerProps) {
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const [currentPath, setCurrentPath] = useState(workspaceDir)
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(false)
@@ -143,6 +146,7 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
 
   return (
     <div className="agent-file-picker" ref={panelRef}>
+      {tipNode}
       <div className="agent-file-picker-header">
         <div className="agent-file-picker-bread">
           {currentPath !== workspaceDir && currentPath !== DRIVES_VIEW && (
@@ -216,7 +220,7 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
             <div className="agent-file-picker-att-title">已选择</div>
             <div className="agent-file-picker-att-list">
               {attached.map(a => (
-                <div className="agent-file-picker-att-item" key={a.path} title={a.path}>
+                <div className="agent-file-picker-att-item" key={a.path} {...tip(a.path)}>
                   {a.isDir ? <Folder size={10} /> : <File size={10} />}
                   <span className="agent-file-picker-att-name">{a.name}</span>
                   <button className="agent-file-picker-att-remove" onClick={() => onRemove(a.path)}>

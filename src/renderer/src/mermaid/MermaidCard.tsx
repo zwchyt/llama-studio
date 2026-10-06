@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, ReactNode } from 'react'
+import { useBubbleTip } from '../components/useBubbleTip'
 import { formatMermaid } from 'mermaid-formatter'
 import './mermaid.css'
 
@@ -296,6 +297,8 @@ export function MermaidCard(renderProps: MermaidCardProps) {
   const [showDownloadMenu, setShowDownloadMenu] = useState(false)
   const [scale, setScale] = useState(1)
   const [translate, setTranslate] = useState({ x: 0, y: 0 })
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   const requestIdRef = useRef(0)
 
@@ -668,7 +671,7 @@ export function MermaidCard(renderProps: MermaidCardProps) {
 
   const toolbar = (
     <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
-      <button type="button" onClick={() => setShowCode(false)} title="图表"
+      <button type="button" onClick={() => setShowCode(false)} aria-label="图表" {...tip('图表')}
         style={{
           ...btnBase,
           background: !showCode ? 'color-mix(in srgb, var(--accent) 18%, transparent)' : 'transparent',
@@ -676,7 +679,7 @@ export function MermaidCard(renderProps: MermaidCardProps) {
         }}>
         {svgIcon('M3 3h18v18H3zM3 15l4-4a2 2 0 012.8 0L15 16M14 14l1-1a2 2 0 012.8 0L21 16')}
       </button>
-      <button type="button" onClick={() => setShowCode(true)} title="代码"
+      <button type="button" onClick={() => setShowCode(true)} {...tip('代码')}
         style={{
           ...btnBase,
           background: showCode ? 'color-mix(in srgb, var(--accent) 18%, transparent)' : 'transparent',
@@ -686,7 +689,7 @@ export function MermaidCard(renderProps: MermaidCardProps) {
       </button>
       <div style={{ width: 1, margin: '0 2px', borderLeft: '1px solid var(--border, #d1d5db)' }} />
       <div ref={downloadMenuRef} style={{ position: 'relative' }}>
-        <button type="button" onClick={() => setShowDownloadMenu((v) => !v)} title="下载"
+        <button type="button" onClick={() => setShowDownloadMenu((v) => !v)} aria-label="下载" {...tip('下载')}
           style={{ ...btnBase, opacity: svg || displayFallbackCode ? 1 : 0.4 }}>
           {svgIcon('M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3')}
         </button>
@@ -721,19 +724,24 @@ export function MermaidCard(renderProps: MermaidCardProps) {
       {zoomable ? (
         <>
           <div style={{ width: 1, margin: '0 2px', borderLeft: '1px solid var(--border, #d1d5db)' }} />
-          <button type="button" onClick={zoomOut} title="缩小" disabled={scale <= ZOOM_MIN}
+          {/* disabled 按钮收不到鼠标事件，原生 title 反而能弹：事件挂外层 span 保住提示 */}
+          <span style={{ display: 'inline-flex' }} {...tip('缩小')}>
+          <button type="button" onClick={zoomOut} aria-label="缩小" disabled={scale <= ZOOM_MIN}
             style={{ ...btnBase, opacity: scale > ZOOM_MIN ? 1 : 0.3 }}>
             {svgIcon('M5 12h14', 12, 12)}
           </button>
-          <button type="button" onClick={zoomReset} title={`${Math.round(scale * 100)}%`}
+          </span>
+          <button type="button" onClick={zoomReset} {...tip(`${Math.round(scale * 100)}%`)}
             style={{ ...btnBase, fontSize: 10, padding: '2px 4px', minWidth: 36 }}>
             {Math.round(scale * 100)}%
           </button>
-          <button type="button" onClick={zoomIn} title="放大" disabled={scale >= ZOOM_MAX}
+          <span style={{ display: 'inline-flex' }} {...tip('放大')}>
+          <button type="button" onClick={zoomIn} aria-label="放大" disabled={scale >= ZOOM_MAX}
             style={{ ...btnBase, opacity: scale < ZOOM_MAX ? 1 : 0.3 }}>
             {svgIcon('M12 5v14M5 12h14', 12, 12)}
           </button>
-          <button type="button" onClick={toggleFullscreen} title={isFullscreen ? '退出全屏' : '全屏'}
+          </span>
+          <button type="button" onClick={toggleFullscreen} aria-label={isFullscreen ? '退出全屏' : '全屏'} {...tip(isFullscreen ? '退出全屏' : '全屏')}
             style={btnBase}>
             {isFullscreen
               ? svgIcon('M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3')
@@ -750,6 +758,7 @@ export function MermaidCard(renderProps: MermaidCardProps) {
       aria-busy={isLoading}
       aria-label={title ? `Mermaid 图表：${title}` : 'Mermaid 图表'}
     >
+      {tipNode}
       <header style={{ ...titleStyle, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {title || 'Mermaid 图表'}
@@ -777,6 +786,7 @@ export function MermaidCard(renderProps: MermaidCardProps) {
       }}
       onClick={(e) => { if (e.target === e.currentTarget) setIsFullscreen(false) }}
     >
+      {tipNode}
       <div style={{
         width: '90vw', height: '90vh', display: 'flex', flexDirection: 'column',
         overflow: 'hidden', borderRadius: 8,

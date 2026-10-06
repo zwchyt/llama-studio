@@ -5,6 +5,7 @@ import { notify } from '../store/notificationStore'
 import { playEvent } from '../utils/sound'
 import ModelFileSelect from './ModelFileSelect'
 import CustomSelect from './CustomSelect'
+import { useBubbleTip } from './useBubbleTip'
 import '../styles/tts.css'
 
 // ── 语音合成视图：本地模型 TTS（llama-tts）──
@@ -58,6 +59,8 @@ export default function TtsView() {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const ttsIdRef = useRef<string | null>(null)
   const autoPlayRef = useRef(false)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   const isQwen3 = ttsMode === 'qwen3'
   const ready = isQwen3
@@ -194,6 +197,7 @@ export default function TtsView() {
 
   return (
     <div className="tts-view">
+      {tipNode}
       <div className="page-header">
         <div>
           <h1 className="page-title"><AudioLines size={22} style={{ verticalAlign: '-4px', marginRight: 8 }} />语音合成</h1>
@@ -276,9 +280,11 @@ export default function TtsView() {
                     <FolderOpen size={13} /> 选择音频…
                   </button>
                   {ttsSpeakerFile && (
-                    <button className="btn" onClick={() => setTtsSpeakerFile('')} disabled={generating} title="清除参考音频">
-                      <X size={13} /> 清除
-                    </button>
+                    <span style={{ display: 'inline-flex' }} {...tip('清除参考音频')}>
+                      <button className="btn" onClick={() => setTtsSpeakerFile('')} disabled={generating}>
+                        <X size={13} /> 清除
+                      </button>
+                    </span>
                   )}
                 </div>
               </div>

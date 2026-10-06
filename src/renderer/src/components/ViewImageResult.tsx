@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import ToolResultRows, { RawResultFallback, buildResultRows, parseResultObject } from './ToolResultRows'
 import { formatBytes } from '../utils/format'
+import { useBubbleTip } from './useBubbleTip'
 
 export default function ViewImageResult({ result }: { result?: string }) {
   const parsed = useMemo(() => parseResultObject(result), [result])
@@ -24,6 +25,8 @@ export default function ViewImageResult({ result }: { result?: string }) {
   const [src, setSrc] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [zoomed, setZoomed] = useState(false)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   useEffect(() => {
     if (!ok || !path) return
@@ -44,6 +47,7 @@ export default function ViewImageResult({ result }: { result?: string }) {
   if (!parsed) return <RawResultFallback result={result} />
   return (
     <>
+      {tipNode}
       {ok && path && (
         <div className="agent-tool-result">
           <div className="agent-tool-result-head">
@@ -57,7 +61,7 @@ export default function ViewImageResult({ result }: { result?: string }) {
               src={src}
               className="agent-tool-shot-img agent-tool-img-view"
               alt="查看的图片"
-              title="点击放大"
+              {...tip('点击放大')}
               onClick={(e) => { e.stopPropagation(); setZoomed(true) }}
             />
           ) : (
@@ -72,7 +76,7 @@ export default function ViewImageResult({ result }: { result?: string }) {
         <ToolResultRows rows={rows} />
       </div>
       {zoomed && src && (
-        <div className="user-msg-lightbox" onClick={() => setZoomed(false)} title="点击任意处关闭">
+        <div className="user-msg-lightbox" onClick={() => setZoomed(false)} {...tip('点击任意处关闭')}>
           <img src={src} alt="查看的图片" />
         </div>
       )}

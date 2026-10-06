@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { X } from 'lucide-react'
+import { useBubbleTip } from './useBubbleTip'
 import { dayKeyOf, formatNumber, modelFileOf } from '../utils/token-stats'
 import type { TokenModelDayRow, TokenModelRow } from '../utils/token-stats'
 import { UsageBarRow, type UsageBar } from './TokenUsageBars'
@@ -70,9 +71,12 @@ export function TokenUsageDrawer({
 
   const avg = model.requests > 0 ? Math.round(model.total_tokens / model.requests) : 0
   const identity = modelFileOf(model.modelPath)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   return (
     <div className="ts-drawer-backdrop" onClick={onClose}>
+      {tipNode}
       <aside
         className="ts-drawer"
         role="dialog"
@@ -88,7 +92,7 @@ export function TokenUsageDrawer({
                 {formatNumber(model.requests)} 次请求 · {formatNumber(model.total_tokens)} tokens
               </span>
             </div>
-            <button type="button" className="ts-drawer-close" onClick={onClose} title="关闭">
+            <button type="button" className="ts-drawer-close" onClick={onClose} aria-label="关闭" {...tip('关闭')}>
               <X size={16} />
             </button>
           </div>

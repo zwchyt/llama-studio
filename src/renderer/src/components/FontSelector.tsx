@@ -1,5 +1,6 @@
 import { Check } from 'lucide-react'
 import { useFontStore, FONT_THEMES } from '../store/fontStore'
+import { useBubbleTip } from './useBubbleTip'
 import '../styles/fonts.css'
 
 /**
@@ -10,16 +11,19 @@ import '../styles/fonts.css'
 export default function FontSelector(): React.JSX.Element {
   const font = useFontStore(s => s.font)
   const setFont = useFontStore(s => s.setFont)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   return (
     <div className="font-selector">
+      {tipNode}
       {FONT_THEMES.map(t => (
         <button
           key={t.id}
           className={`font-selector-card ${font === t.id ? 'active' : ''}`}
           style={{ fontFamily: t.previewStack }}
           onClick={() => setFont(t.id)}
-          title={t.desc}
+          {...tip(t.desc)}
         >
           <span className="font-selector-sample">Aa 字体</span>
           <span className="font-selector-name">

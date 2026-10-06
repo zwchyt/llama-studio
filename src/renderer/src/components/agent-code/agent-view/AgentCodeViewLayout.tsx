@@ -14,7 +14,7 @@
 //
 // 组件体内把域对象二次解构为局部名，使下方 JSX 与拆分前的写法逐字一致。
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Bot, Database, Copy, Check, ImageDown, FileDown, Wrench } from 'lucide-react'
 import {
@@ -38,7 +38,9 @@ import { AgentSessionSidebar, AGENT_SESSION_SLOT_ID } from '../agent-session/Age
 import { AgentInputArea } from '../agent-input/AgentInputArea'
 import { TaskPlanCard } from '../agent-task'
 import { AgentPreviewSlot } from '../agent-preview/AgentPreviewSlot'
+import { useBubbleTip } from '../../useBubbleTip'
 import type { AgentMsgRowActions } from '../types'
+import { maybeRunSendFlight } from '../flight/sendFlight'
 import { PLAIN_CHAT_TOOL_NAMES } from '../../../../../shared/types'
 import type { CardState, ModelEndpoint } from '../../../../../shared/types'
 import type { ModelPickerGroup } from '../../../utils/endpoint'
@@ -134,6 +136,8 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   // 历史压缩中（pi 原生压缩，手动 / 自动都置位）：在会话区底部、输入框上方横一条提示线。
   // 订阅单个 boolean —— 一次压缩只翻两次，不会带来额外渲染。
   const compacting = useStore(s => s.compacting)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   const {
     activeProject, activeProjectId, activeSession, activeSessionId,
@@ -505,13 +509,21 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                       超长正文在气泡里只显示前几行，点气泡正中弹窗看全文。 */}
                   <UserMessageEntry content={msg.content} attachments={msg.attachments} onOpenImage={previewImageAttachment} />
                   <div className="chat-msg-actions">
-                    <button className="chat-msg-action-btn" title="复制" onClick={() => copyMessage(msg.content)}><CopyIcon size={13} /></button>
-                    <button className="chat-msg-action-btn" title="编辑" onClick={() => editAt(msg.id)} disabled={loading}><PencilIcon size={13} /></button>
-                    <button className="chat-msg-action-btn" title="重新发送" onClick={() => resendAt(msg.id)} disabled={loading}><SendIcon size={13} /></button>
-                    <button className="chat-msg-action-btn" title="创建分支" onClick={() => branchAt(msg.id)} disabled={loading}><GitBranchIcon size={13} /></button>
+                    <button className="chat-msg-action-btn" aria-label="复制" {...tip('复制')} onClick={() => copyMessage(msg.content)}><CopyIcon size={13} /></button>
+                    <span style={{ display: 'inline-flex' }} {...tip('编辑')}>
+                      <button className="chat-msg-action-btn" aria-label="编辑" onClick={() => editAt(msg.id)} disabled={loading}><PencilIcon size={13} /></button>
+                    </span>
+                    <span style={{ display: 'inline-flex' }} {...tip('重新发送')}>
+                      <button className="chat-msg-action-btn" aria-label="重新发送" onClick={() => resendAt(msg.id)} disabled={loading}><SendIcon size={13} /></button>
+                    </span>
+                    <span style={{ display: 'inline-flex' }} {...tip('创建分支')}>
+                      <button className="chat-msg-action-btn" aria-label="创建分支" onClick={() => branchAt(msg.id)} disabled={loading}><GitBranchIcon size={13} /></button>
+                    </span>
                     {/* 删除消息只在通用模式提供（编码模式的用户消息是工作流的输入，删掉会让上下文断裂） */}
                     {plainChat && (
-                      <button className="chat-msg-action-btn" title="删除这条消息" onClick={() => deleteMessage(msg.id)} disabled={loading}><Trash2Icon size={13} /></button>
+                      <span style={{ display: 'inline-flex' }} {...tip('删除这条消息')}>
+                        <button className="chat-msg-action-btn" aria-label="删除这条消息" onClick={() => deleteMessage(msg.id)} disabled={loading}><Trash2Icon size={13} /></button>
+                      </span>
                     )}
                   </div>
                 </>
@@ -551,8 +563,15 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     // 按钮永远停在「朗读」、再点一次变成重新朗读而不是停止。
     // 传给行的是布尔（布尔只影响命中那一行），直接传 id 会让窗口内所有行都换 prop 而整屏重渲染。
   }, [activeSession, historyStartIndex, virtual.windowStart, virtual.windowEnd, streaming, loading, thinkDone, editingMsgId, editDraft, confirmEdit, copyMessage, editAt, resendAt, branchAt, msgRowActionsRef, modelLabelRef, streamStartAtRef, handleStreamRate, runningCard, setEditDraft, setEditingMsgId, plainChat, speakingId])
+
+  // 发送飞行：新用户消息上屏后，从输入框盒真伸缩飞入（STAGE 7r2）。
+  // 绘制前执行（无闪烁）；锚点对不上（虚拟窗口/删除/减弱动态）就静默放弃，直接显示。
+  useLayoutEffect(() => {
+    maybeRunSendFlight()
+  }, [activeSession?.messages.length])
   return (
     <div className="agent-code-view">
+      {tipNode}
       {/* 双击顶栏 = 开合右侧面板。原来它还一并开合左侧的会话列表，已去掉：
           会话列表的显隐只由侧栏自己的收起/展开决定，顶栏不再另管一套。 */}
       <div className="agent-code-topbar" onDoubleClick={() => { setTreeOpen(v => !v); setContextModalOpen(false) }}>
@@ -641,7 +660,8 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               className="chat-collapse-btn"
               onClick={toggleRightEntry}
               style={{ marginTop: 0, width: 28, height: 28 }}
-              title="展开右侧面板：文件树 / 变更 / 终端 / 浏览器"
+              aria-label="展开右侧面板：文件树 / 变更 / 终端 / 浏览器"
+              {...tip('展开右侧面板：文件树 / 变更 / 终端 / 浏览器')}
             >
               {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
             </button>
@@ -726,7 +746,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                     type="button"
                     className={`agent-mode-card mode-chat${plainChat ? ' active' : ''}`}
                     aria-pressed={plainChat}
-                    title="无工作区 · 知识库 · 网页"
+                    {...tip('无工作区 · 知识库 · 网页')}
                     onClick={() => switchMode('chat')}
                   >
                     <span className="agent-mode-card-icon"><MessageSquareIcon size={15} /></span>
@@ -736,7 +756,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                     type="button"
                     className={`agent-mode-card mode-code${plainChat ? '' : ' active'}`}
                     aria-pressed={!plainChat}
-                    title="文件树 · 终端 · 变更"
+                    {...tip('文件树 · 终端 · 变更')}
                     onClick={() => switchMode('code')}
                   >
                     <span className="agent-mode-card-icon"><CodeIcon size={15} /></span>
@@ -857,7 +877,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                                   : ''}
                               </span>
                             ) : (
-                              <span className="agent-condense-log-err" title={r.errorMessage || ''}>
+                              <span className="agent-condense-log-err" {...(r.errorMessage ? tip(r.errorMessage) : {})}>
                                 {r.errorMessage || '压缩未完成'}
                               </span>
                             )}
@@ -922,13 +942,14 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                 ) : (
                   <ul className="agent-kb-list">
                     {knowledgeBases.map(kb => (
-                      <li key={kb.id} className="agent-kb-item" title={kb.name}>
+                      <li key={kb.id} className="agent-kb-item" {...tip(kb.name)}>
                         <Database size={13} />
                         <span className="agent-kb-item-name">{kb.name}</span>
                         <span className="agent-kb-item-count">{kb.docCount} 文档</span>
                         <button
                           className="agent-kb-copy"
-                          title="复制库名"
+                          aria-label="复制库名"
+                          {...tip('复制库名')}
                           onClick={(e) => {
                             e.stopPropagation()
                             navigator.clipboard.writeText(kb.name)

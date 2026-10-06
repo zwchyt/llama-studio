@@ -11,6 +11,7 @@ import { endpointOfCard, probeTargetOf, remoteOfCard } from '../utils/endpoint'
 import { PlayIcon, CircleStopIcon, SettingsIcon, EllipsisVerticalIcon, CopyIcon, TrashIcon, DownloadIcon, GlobeIcon, ServerIcon, TerminalIcon, CheckIcon, MessageSquareIcon, ImageIcon, ScanIcon, RefreshCwIcon, AudioLines } from '@animateicons/react/lucide'
 import type { CardState } from '../../../shared/types'
 import ParamsModal from './ParamsModal'
+import { useBubbleTip } from './useBubbleTip'
 interface Props { card: CardState; style?: React.CSSProperties }
 export default function ModelCard({ card, style }: Props) {
   const { updateCard, setCardStatus, removeCard, backends, activeBackend, commandsSchema, setShowCreateModal, clearModelMetrics } = useStore(
@@ -20,6 +21,8 @@ export default function ModelCard({ card, style }: Props) {
   const [showMenu, setShowMenu] = useState(false)
   const [showParamsModal, setShowParamsModal] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const menuRef = useRef<HTMLDivElement>(null)
   const hideTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   const chatIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
@@ -334,11 +337,12 @@ export default function ModelCard({ card, style }: Props) {
   usePopoverDismiss(!!logoMenu, closeLogoMenu, undefined, undefined, logoMenuRef)
   return (
     <div className={`model-card ${isRunning ? 'running' : ''}`} style={style}>
+      {tipNode}
       <div className="card-header">
         <div
           className="card-icon"
           style={logos[card.template.id] ? undefined : { background: avatar.bg, color: avatar.fg }}
-          title={logos[card.template.id] ? '模型 Logo（点击更换/移除）' : '设置模型 Logo'}
+          {...tip(logos[card.template.id] ? '模型 Logo（点击更换/移除）' : '设置模型 Logo')}
           onClick={e => { e.stopPropagation(); toggleLogoMenu(e) }}
         >
           {logos[card.template.id]

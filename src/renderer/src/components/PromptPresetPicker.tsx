@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { Sparkles, Plus, Trash2, RotateCcw } from 'lucide-react'
 import { useImageStore, PRESET_GROUP_ORDER, type PromptPresetSlot } from '../store/imageStore'
+import { useBubbleTip } from './useBubbleTip'
 
 /**
  * 提示词标签选择器：正/负向提示词的「标签」弹窗。
@@ -43,6 +44,8 @@ export default function PromptPresetPicker({ slot, current, onApply }: Props) {
   const [clickCounts, setClickCounts] = useState<Record<string, number>>({})
   const btnRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   // 打开时重置点击计数
   useEffect(() => {
@@ -114,12 +117,13 @@ export default function PromptPresetPicker({ slot, current, onApply }: Props) {
 
   return (
     <>
+      {tipNode}
       <button
         ref={btnRef}
         type="button"
         className="imagegen-preset-btn"
         onClick={toggle}
-        title="提示词预设"
+        {...tip('提示词预设')}
         aria-label="提示词预设"
       >
         <Sparkles size={12} /> 预设
@@ -170,7 +174,7 @@ export default function PromptPresetPicker({ slot, current, onApply }: Props) {
                       {p.cn && <span className="imagegen-preset-cn">{p.cn}</span>}
                     </span>
                     {cnt > 1 && (
-                      <span className="imagegen-preset-count" title={`已添加 ${cnt} 次`}>
+                      <span className="imagegen-preset-count" {...tip(`已添加 ${cnt} 次`)}>
                         ×{cnt}
                       </span>
                     )}
@@ -178,7 +182,7 @@ export default function PromptPresetPicker({ slot, current, onApply }: Props) {
                       type="button"
                       className="imagegen-preset-item-del"
                       onClick={(e) => { e.stopPropagation(); removePreset(slot, p.id) }}
-                      title="删除该预设"
+                      {...tip('删除该预设')}
                       aria-label="删除该预设"
                     >
                       <Trash2 size={12} />

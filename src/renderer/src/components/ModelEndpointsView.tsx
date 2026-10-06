@@ -16,6 +16,7 @@ import { safeCall } from '../utils/safeCall'
 import { playEvent } from '../utils/sound'
 import { addressOfEndpoint, probeTargetOf } from '../utils/endpoint'
 import type { EndpointApi, ModelEndpoint, Template } from '../../../shared/types'
+import { useBubbleTip } from './useBubbleTip'
 import '../styles/model-endpoints.css'
 
 const API_CHOICES: Array<{ value: EndpointApi; label: string }> = [
@@ -96,6 +97,8 @@ export default function EndpointsView() {
   const [busy, setBusy] = useState(false)
   /** 端点 id → 最近一次探测结果（只在本次停留期间有效，进页面不自动打网络） */
   const [probeState, setProbeState] = useState<Record<string, 'ok' | 'fail'>>({})
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   const reload = async (): Promise<void> => {
     const list = await safeCall(() => window.api.listModelEndpoints(), '读取端点列表失败')
@@ -184,6 +187,7 @@ export default function EndpointsView() {
 
   return (
     <div className="model-endpoints-view">
+      {tipNode}
       <div className="page-header">
         <div>
           <h1 className="page-title">外部端点</h1>
@@ -204,15 +208,17 @@ export default function EndpointsView() {
         <div className="me-list">
           {endpoints.map(ep => (
             <div key={ep.id} className="me-row">
-              <span className={`me-dot ${probeState[ep.id] ?? 'unknown'}`} title={probeState[ep.id] === 'ok' ? '上次探测可用' : probeState[ep.id] === 'fail' ? '上次探测不通' : '本次未探测'} />
+              <span className={`me-dot ${probeState[ep.id] ?? 'unknown'}`} {...tip(probeState[ep.id] === 'ok' ? '上次探测可用' : probeState[ep.id] === 'fail' ? '上次探测不通' : '本次未探测')} />
               <div className="me-row-main">
                 <div className="me-row-name">{ep.name}<span className="me-tag">{ep.kind === 'local-port' ? '本机端口' : '远程'}</span></div>
                 <div className="me-row-meta">{addressOfEndpoint(ep)}{ep.kind === 'remote' ? ` · ${API_CHOICES.find(a => a.value === ep.api)?.label ?? ep.api ?? ''}` : ''} · {ep.modelIds.length} 个模型名</div>
               </div>
-              <button className="btn btn-ghost btn-icon" title="探测" onClick={() => void probeSaved(ep)}><PlugZapIcon size={13} /></button>
-              <button className="btn btn-ghost btn-icon" title="建卡片（用第一个模型名）" onClick={() => void createCard(ep, ep.modelIds[0] ?? '')} disabled={!ep.modelIds.length}><TagIcon size={13} /></button>
-              <button className="btn btn-ghost btn-icon" title="编辑" onClick={() => { setDraft(draftOf(ep)); setShowKey(false) }}><PencilIcon size={13} /></button>
-              <button className="btn btn-ghost btn-icon text-danger" title="删除" onClick={() => void remove(ep)}><TrashIcon size={13} /></button>
+              <button className="btn btn-ghost btn-icon" aria-label="探测" {...tip('探测')} onClick={() => void probeSaved(ep)}><PlugZapIcon size={13} /></button>
+              <span style={{ display: 'inline-flex' }} {...tip('建卡片（用第一个模型名）')}>
+              <button className="btn btn-ghost btn-icon" aria-label="建卡片（用第一个模型名）" onClick={() => void createCard(ep, ep.modelIds[0] ?? '')} disabled={!ep.modelIds.length}><TagIcon size={13} /></button>
+              </span>
+              <button className="btn btn-ghost btn-icon" aria-label="编辑" {...tip('编辑')} onClick={() => { setDraft(draftOf(ep)); setShowKey(false) }}><PencilIcon size={13} /></button>
+              <button className="btn btn-ghost btn-icon text-danger" aria-label="删除" {...tip('删除')} onClick={() => void remove(ep)}><TrashIcon size={13} /></button>
             </div>
           ))}
         </div>
@@ -222,7 +228,7 @@ export default function EndpointsView() {
         <div className="me-section me-form">
           <div className="me-section-title">
             {draft.id ? '编辑端点' : '新建端点'}
-            <button className="btn btn-ghost btn-icon me-close" title="收起" onClick={() => setDraft(null)}><XIcon size={13} /></button>
+            <button className="btn btn-ghost btn-icon me-close" aria-label="收起" {...tip('收起')} onClick={() => setDraft(null)}><XIcon size={13} /></button>
           </div>
 
           <div className="me-field">
@@ -267,7 +273,7 @@ export default function EndpointsView() {
                 <div className="me-inline">
                   <input className="me-input me-key" type={showKey ? 'text' : 'password'} value={draft.apiKey} placeholder="本机服务可留空" spellCheck={false}
                     onChange={e => patch({ apiKey: e.target.value })} />
-                  <button className="btn btn-ghost btn-icon" title={showKey ? '隐藏' : '显示'} onClick={() => setShowKey(v => !v)}>
+                  <button className="btn btn-ghost btn-icon" aria-label={showKey ? '隐藏' : '显示'} {...tip(showKey ? '隐藏' : '显示')} onClick={() => setShowKey(v => !v)}>
                     {showKey ? <EyeOffIcon size={13} /> : <EyeIcon size={13} />}
                   </button>
                 </div>
@@ -293,14 +299,14 @@ export default function EndpointsView() {
                 <div key={i} className="me-model-row">
                   <input className="me-input" value={m} placeholder={draft.kind === 'local-port' ? '可留空（llama-server 不校验模型名）' : '例如 qwen3-32b'} spellCheck={false}
                     onChange={e => patch({ modelIds: draft.modelIds.map((x, j) => (j === i ? e.target.value : x)) })} />
-                  <button className="btn btn-ghost btn-icon" title="建卡片" onClick={() => {
+                  <button className="btn btn-ghost btn-icon" aria-label="建卡片" {...tip('建卡片')} onClick={() => {
                     const built = toEndpoint(draft)
                     if (!built.ok) { notify(built.error, 'error'); return }
                     if (!draft.id) { notify('先保存端点，再按模型名建卡片', 'error'); return }
                     const ep = endpoints.find(x => x.id === draft.id)
                     if (ep) void createCard(ep, m.trim())
                   }}><TagIcon size={13} /></button>
-                  <button className="btn btn-ghost btn-icon text-danger" title="删除这一行" onClick={() => patch({ modelIds: draft.modelIds.filter((_, j) => j !== i) })}>
+                  <button className="btn btn-ghost btn-icon text-danger" aria-label="删除这一行" {...tip('删除这一行')} onClick={() => patch({ modelIds: draft.modelIds.filter((_, j) => j !== i) })}>
                     <TrashIcon size={13} />
                   </button>
                 </div>

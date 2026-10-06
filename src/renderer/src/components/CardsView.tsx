@@ -6,6 +6,7 @@ import { PlusIcon, UploadIcon, SearchIcon } from '@animateicons/react/lucide'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import type { Template } from '../../../shared/types'
+import { useBubbleTip } from './useBubbleTip'
 import '../styles/cards.css'
 export default function CardsView() {
   const importIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
@@ -28,14 +29,17 @@ export default function CardsView() {
     if (!q) return cards
     return cards.filter(c => c.template.name.toLowerCase().startsWith(q))
   }, [cards, templateSearch])
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   return (
     <div className="templates-view">
+      {tipNode}
       <div className="page-header">
         <div>
           <h1 className="page-title">
             模型卡片
             {cards.length > 0 && (
-              <span className="header-count-badge" title={`${filtered.length} / ${cards.length} 个模板`}>
+              <span className="header-count-badge" {...tip(`${filtered.length} / ${cards.length} 个模板`)}>
                 {filtered.length}
               </span>
             )}

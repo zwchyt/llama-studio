@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom'
 import { XIcon } from '@animateicons/react/lucide'
 // 复用会话那套 Markdown 渲染（含 KaTeX 公式覆写）；不经 agent-message/index，避免和它互相 import
 import { Markdown } from '../../../markdown/markstream'
+import { useBubbleTip } from '../../useBubbleTip'
 
 export function UserMessageFullText({ text, onClose }: {
   text: string
@@ -17,6 +18,9 @@ export function UserMessageFullText({ text, onClose }: {
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
+
   return createPortal(
     <div
       className="msg-full-mask"
@@ -24,11 +28,12 @@ export function UserMessageFullText({ text, onClose }: {
       // 右键同样关：卡片没拦 contextmenu 冒泡，所以整层（含正文）右键都收，顺带压掉 Electron 那圈默认菜单
       onContextMenu={(e) => { e.preventDefault(); onClose() }}
     >
+      {tipNode}
       {/* 左键在卡片内不关：选正文、点标题不该顺手关掉整层 */}
       <div className="msg-full" onClick={e => e.stopPropagation()}>
         <div className="msg-full-head">
           <span className="msg-full-title">完整消息</span>
-          <button type="button" className="msg-full-close" onClick={onClose} title="关闭（Esc）"><XIcon size={16} /></button>
+          <button type="button" className="msg-full-close" onClick={onClose} aria-label="关闭（Esc）" {...tip('关闭（Esc）')}><XIcon size={16} /></button>
         </div>
         {/* 正文走会话同一套 Markdown + 公式渲染（.chat-msg-markdown 提供排版样式） */}
         <div className="msg-full-body chat-msg-markdown"><Markdown content={text} final variant="agent" /></div>

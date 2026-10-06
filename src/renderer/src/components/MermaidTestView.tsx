@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { MermaidCard } from '../mermaid'
+import { useBubbleTip } from './useBubbleTip'
 
 type Preset = { label: string; code: string }
 
@@ -12,6 +13,8 @@ export default function MermaidTestView() {
   const [activePreset, setActivePreset] = useState(-1)
   const [label, setLabel] = useState('')
   const [dslCode, setDslCode] = useState('')
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   useEffect(() => {
     let cancelled = false
@@ -53,6 +56,7 @@ export default function MermaidTestView() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      {tipNode}
       <div style={{ padding: '16px 20px 0', flexShrink: 0 }}>
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>Mermaid 图表渲染测试</h2>
         <p style={{ margin: '4px 0 8px', fontSize: 13, color: 'var(--text-muted)' }}>
@@ -85,7 +89,7 @@ export default function MermaidTestView() {
           ))}
           <button
             onClick={pickFile}
-            title="选择一个 Mermaid DSL 文件直接渲染"
+            {...tip('选择一个 Mermaid DSL 文件直接渲染')}
             style={{
               padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border, #d1d5db)',
               background: 'transparent', color: 'var(--text, #111827)',

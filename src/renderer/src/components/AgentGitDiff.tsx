@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { AlignJustifyIcon, ArrowUpDownIcon, CheckIcon, ChevronRightIcon, ChevronsDownIcon, ChevronsUpIcon, ChevronsLeftRightIcon, CopyIcon, DiffIcon, FileCheckIcon, FilePenIcon, FileSearchIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, GitCommitHorizontalIcon, GitCompareIcon, HistoryIcon, MinusIcon, PlusIcon, RefreshCwIcon, SearchIcon, WrapTextIcon, XIcon } from '@animateicons/react/lucide'
 import { fileMeta } from '../utils/fileIcon'
 import { usePopoverDismiss } from '../utils/usePopoverDismiss'
+import { useBubbleTip } from './useBubbleTip'
 import type { AniIconHandle } from './agent-code/types'
 import type { ElementType } from 'react'
 
@@ -246,6 +247,8 @@ function renderCodeWithHighlights(text: string, highlights?: { start: number; en
 }
 
 const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceCollapsed, onStage, onUnstage, onDiscard, focused, hideDir, mode, wrap }: { file: GitFileChange; onOpen: (relPath: string, line?: number) => void; forceCollapsed: boolean; onStage?: (path: string) => void; onUnstage?: (path: string) => void; onDiscard?: (path: string) => void; focused?: boolean; hideDir?: boolean; mode: DiffMode; wrap: boolean }) {
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const parsed = useMemo(() => {
     if (file.untracked) {
       const r = contentToRows(file.content || '')
@@ -329,11 +332,12 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
   }
   return (
     <div className={`agent-git-file s-${file.status}${flash ? ' focus-flash' : ''}`} ref={rootRef}>
+      {tipNode}
       <div className="agent-git-file-head" onClick={() => setCollapsed(c => !c)}>
         <ChevronRightIcon size={12} className={`agent-git-chev ${collapsed ? '' : 'open'}`} />
         <button
           className="agent-git-file-path"
-          title={file.path}
+          {...tip(file.path)}
           onClick={(e) => { e.stopPropagation(); onOpen(file.path) }}
         >
           <FileIcon size={11} style={{ color: fileColor }} />
@@ -344,24 +348,24 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
           <span className="add">+{added}</span>
           <span className="del">−{removed}</span>
         </span>
-        <span className={`agent-git-badge s-${file.status}`} title={STATUS_LABEL[file.status] || file.status}>{file.status}</span>
+        <span className={`agent-git-badge s-${file.status}`} {...tip(STATUS_LABEL[file.status] || file.status)}>{file.status}</span>
         {canCopy && (
           <button className="agent-git-copy" onClick={copyDiff}>
             {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
           </button>
         )}
         {!file.staged && !file.untracked && onDiscard && (
-          <button className="agent-git-copy agent-git-discard" title="取消更改（恢复到上次提交）" onClick={(e) => { e.stopPropagation(); onDiscard(file.path) }}>
+          <button className="agent-git-copy agent-git-discard" aria-label="取消更改（恢复到上次提交）" {...tip('取消更改（恢复到上次提交）')} onClick={(e) => { e.stopPropagation(); onDiscard(file.path) }}>
             <HistoryIcon size={12} />
           </button>
         )}
         {!file.staged && onStage && (
-          <button className="agent-git-copy agent-git-stage-add" title="暂存此文件" onClick={(e) => { e.stopPropagation(); onStage(file.path) }}>
+          <button className="agent-git-copy agent-git-stage-add" aria-label="暂存此文件" {...tip('暂存此文件')} onClick={(e) => { e.stopPropagation(); onStage(file.path) }}>
             <PlusIcon size={12} />
           </button>
         )}
         {file.staged && onUnstage && (
-          <button className="agent-git-copy agent-git-stage-remove" title="取消暂存" onClick={(e) => { e.stopPropagation(); onUnstage(file.path) }}>
+          <button className="agent-git-copy agent-git-stage-remove" aria-label="取消暂存" {...tip('取消暂存')} onClick={(e) => { e.stopPropagation(); onUnstage(file.path) }}>
             <MinusIcon size={12} />
           </button>
         )}
@@ -381,7 +385,7 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
                     <div
                       className="agent-git-row split"
                       key={`h-${bi}-${i}`}
-                      title="跳转到源文件此行"
+                      {...tip('跳转到源文件此行')}
                       onClick={() => onOpen(file.path, p.right?.newLine ?? p.left?.oldLine)}
                     >
                       <span className={`agent-git-ln${p.left?.type === 'del' ? ' del' : ''}`}>{p.left?.oldLine ?? ''}</span>
@@ -397,7 +401,7 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
                   <div
                     className={`agent-git-row ${r.type}`}
                     key={`h-${bi}-${i}`}
-                    title="跳转到源文件此行"
+                    {...tip('跳转到源文件此行')}
                     onClick={() => onOpen(file.path, r.newLine ?? r.oldLine)}
                   >
                     <span className="agent-git-ln">{r.oldLine ?? ''}</span>
@@ -530,6 +534,8 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
   branches?: string[]
   checkoutBranch?: (branch: string) => void | Promise<void>
 }) {
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const [allExpanded, setAllExpanded] = useState(false)  // 默认全部折叠（单文件级）
   // 分区级折叠：整段「已暂存的更改 / 更改」可各自收起
   const [sectionCollapsed, setSectionCollapsed] = useState<{ staged: boolean; unstaged: boolean }>({ staged: false, unstaged: false })
@@ -766,13 +772,14 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
   const canCollapse = scopeFiles.length > 0 || Object.keys(commitFiles).length > 0
   return (
     <div className="agent-git">
+      {tipNode}
       <div className="agent-git-header">
         {/* ── 第 1 区：作用域菜单（未提交/未暂存/已暂存/已提交/分支），名称右侧上下箭头 ── */}
         <button
           ref={scopeBtnRef}
           className={`agent-git-menu-btn${scopeOpen ? ' on' : ''}`}
           onClick={() => setScopeOpen(v => !v)}
-          title="切换变更范围"
+          {...tip('切换变更范围')}
         >
           <span className="agent-git-menu-text">{SCOPE_LABEL[scope]}</span>
           <ArrowUpDownIcon size={11} className="agent-git-menu-caret" />
@@ -790,7 +797,8 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
           ref={modeBtnRef}
           className={`agent-git-menu-btn${modeOpen ? ' on' : ''}`}
           onClick={() => setModeOpen(v => !v)}
-          title={mode === 'split' ? 'Diff 显示模式：拆分' : 'Diff 显示模式：堆叠'}
+          aria-label={mode === 'split' ? 'Diff 显示模式：拆分' : 'Diff 显示模式：堆叠'}
+          {...tip(mode === 'split' ? 'Diff 显示模式：拆分' : 'Diff 显示模式：堆叠')}
         >
           <DiffIcon size={12} />
           {wrap && <WrapTextIcon size={11} className="agent-git-menu-tag" />}
@@ -801,27 +809,30 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
             ref={jumpBtnRef}
             className={`agent-git-menu-btn${jumpOpen ? ' on' : ''}`}
             onClick={() => setJumpOpen(v => !v)}
-            title="跳转到文件"
+            aria-label="跳转到文件"
+            {...tip('跳转到文件')}
           >
             <FileSearchIcon size={12} />
           </button>
         )}
         {/* ── 第 5 区：全部收起 / 展开 ── */}
+        <span style={{ display: 'inline-flex' }} {...tip(allExpanded ? '全部收起' : '全部展开')}>
         <button
           className="agent-git-collapse-all"
           onClick={() => setAllExpanded(v => !v)}
-          title={allExpanded ? '全部收起' : '全部展开'}
+          aria-label={allExpanded ? '全部收起' : '全部展开'}
           disabled={!canCollapse}
         >
           {allExpanded ? <ChevronsUpIcon size={14} /> : <ChevronsDownIcon size={14} />}
         </button>
+        </span>
         {/* 保留在最右：视图切换（数形/列表，仅文件作用域）＋刷新 */}
         {isFileScope && (
           <div className="agent-git-viewswitch">
-            <button className={view === 'tree' ? 'on' : ''} title="以数形方式查看（目录树）" onClick={() => switchView('tree')}>
+            <button className={view === 'tree' ? 'on' : ''} aria-label="以数形方式查看（目录树）" {...tip('以数形方式查看（目录树）')} onClick={() => switchView('tree')}>
               <FolderIcon size={12} />
             </button>
-            <button className={view === 'list' ? 'on' : ''} title="以列表方式查看" onClick={() => switchView('list')}>
+            <button className={view === 'list' ? 'on' : ''} aria-label="以列表方式查看" {...tip('以列表方式查看')} onClick={() => switchView('list')}>
               <AlignJustifyIcon size={12} />
             </button>
           </div>
@@ -853,11 +864,11 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
                 <div className="agent-git-commit-head" onClick={() => void toggleCommit(c.hash)}>
                   <ChevronRightIcon size={12} className={`agent-git-chev ${openCommit === c.hash ? 'open' : ''}`} />
                   <GitCommitHorizontalIcon size={12} className="agent-git-commit-dot" />
-                  <span className="agent-git-commit-subject" title={c.subject}>{c.subject}</span>
+                  <span className="agent-git-commit-subject" {...tip(c.subject)}>{c.subject}</span>
                   <span className="agent-git-commit-meta">
                     <span className="agent-git-commit-hash">{c.shortHash}</span>
                     <span className="agent-git-commit-author">{c.author}</span>
-                    <span className="agent-git-commit-time" title={new Date(c.time).toLocaleString('zh-CN')}>{new Date(c.time).toLocaleDateString('zh-CN')}</span>
+                    <span className="agent-git-commit-time" {...tip(new Date(c.time).toLocaleString('zh-CN'))}>{new Date(c.time).toLocaleDateString('zh-CN')}</span>
                   </span>
                 </div>
                 {openCommit === c.hash && (
@@ -898,19 +909,19 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
         ) : (
           <>
             {(scope === 'uncommitted' || scope === 'staged') && renderGroup('已暂存的更改', staged, 'staged', stagedTree, (
-              <button className="agent-git-copy agent-git-stage-remove" title="取消所有暂存" onClick={handleUnstageAll}>
+              <button className="agent-git-copy agent-git-stage-remove" aria-label="取消所有暂存" {...tip('取消所有暂存')} onClick={handleUnstageAll}>
                 <MinusIcon size={12} />
               </button>
             ))}
             {(scope === 'uncommitted' || scope === 'unstaged') && renderGroup('更改', unstaged, 'unstaged', unstagedTree, (
               <>
-                <button className="agent-git-copy" title="复制所有更改" onClick={handleCopyAll}>
+                <button className="agent-git-copy" aria-label="复制所有更改" {...tip('复制所有更改')} onClick={handleCopyAll}>
                   {allCopied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
                 </button>
-                <button className="agent-git-copy agent-git-discard" title="取消所有更改" onClick={handleDiscardAll}>
+                <button className="agent-git-copy agent-git-discard" aria-label="取消所有更改" {...tip('取消所有更改')} onClick={handleDiscardAll}>
                   <HistoryIcon size={12} />
                 </button>
-                <button className="agent-git-copy agent-git-stage-add" title="暂存所有更改" onClick={handleStageAll}>
+                <button className="agent-git-copy agent-git-stage-add" aria-label="暂存所有更改" {...tip('暂存所有更改')} onClick={handleStageAll}>
                   <PlusIcon size={12} />
                 </button>
               </>
@@ -969,7 +980,7 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
             const st = stats.byPath.get(f.path)
             const { Icon: FIcon, color: fColor } = fileMeta(f.path)
             return (
-              <button className="agent-git-jump-item" key={f.path} title={f.path} onClick={() => jumpToFile(f.path)}>
+              <button className="agent-git-jump-item" key={f.path} {...tip(f.path)} onClick={() => jumpToFile(f.path)}>
                 <FIcon size={11} style={{ color: fColor }} />
                 <span className="agent-git-jump-name">{baseName(f.path)}</span>
                 <span className="agent-git-jump-dir">{dirName(f.path)}</span>

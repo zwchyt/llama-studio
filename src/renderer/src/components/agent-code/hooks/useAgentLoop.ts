@@ -24,6 +24,7 @@
 // （与原实现一致，改动会改变闭包新鲜度语义）；本 hook 仅做搬运，未调整依赖项。
 
 import React, { useCallback, useRef } from 'react'
+import { noteSendIntent } from '../flight/sendFlight'
 import { useStore } from '../../../store/useStore'
 import { notify } from '../../../store/notificationStore'
 import { playEvent, warmUpAudio } from '../../../utils/sound'
@@ -851,6 +852,8 @@ export function useAgentLoop({
   const handleSend = useCallback(async (overrideText?: string, overrideAttachments?: Attachment[], packedHint?: string) => {
     // 用户手势内预热音频：否则完成提示音（await 后播放）会被自动播放策略静默拦截
     warmUpAudio()
+    // 发送飞行起跑快照（输入框盒/文字位/旧行位置，同步 DOM 读取；内部吞错，绝不影响发送）
+    noteSendIntent()
     const attachmentsForSend: Attachment[] = overrideAttachments ?? attachedFiles.map(a => ({
       name: a.name,
       type: a.isImage ? 'image' : 'file',

@@ -36,6 +36,7 @@ import { THINKING_LEVELS } from '../../../../../shared/types'
 import type { Attachment, CardState, ModelEndpoint, ThinkingLevel } from '../../../../../shared/types'
 import { useStore } from '../../../store/useStore'
 import { endpointOfCard, type ModelPickerGroup } from '../../../utils/endpoint'
+import { useBubbleTip } from '../../useBubbleTip'
 import { useThemeStore } from '../../../store/themeStore'
 import type { useAgentGit } from '../hooks/useAgentGit'
 import type { useAgentInput } from '../hooks/useAgentInput'
@@ -178,6 +179,9 @@ export function AgentInputArea({
   const { activeProject, activeProjectId, activeSessionId, attachBtnRef, branchBtnRef, branchMenuOpen, branchMenuRef, branches, cards, chatInputAreaRef, checkoutBranch, contextModalOpen, ctxInlineRef, currentBranch, projects, setActiveProjectId, setActiveSessionId, setBranchMenuOpen, setContextModalOpen, setWorkspaceMenuOpen, workspaceBtnRef, workspaceMenuOpen, workspaceMenuRef } = shell
   // 没有磁盘路径的附件（读取时拿不到真实文件）退化成浮层看抽取文本，与消息气泡里的文件卡片同一层
   const [attPreview, setAttPreview] = useState<PreviewableAttachment | null>(null)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）；
+  // 斜杠补全行已有 onMouseEnter，走 showTip/hideTip 合并进去
+  const { tipHandlers: tip, tipNode, showTip, hideTip } = useBubbleTip()
   // 胶囊的悬停预览卡片：显示/隐藏交给状态，不靠纯 :hover——卡片的 pointer-events 可用性
   // 反过来依赖 :hover，指针移向卡片那一小段缝里会两头落空、卡片先收。
   // 事件挂在胶囊上，而卡片是胶囊的子节点，所以 mouseleave 的判定范围就是「胶囊 + 卡片」整体。
@@ -231,10 +235,10 @@ export function AgentInputArea({
             className={`chat-attach-chip${open ? ' previewable' : ''}`}
             key={att.id}
             onClick={open}
-            title={open ? `${path ?? att.name}（点击${path ? '在右侧预览' : '预览抽取到的文本'}）` : att.name}
+            {...tip(open ? `${path ?? att.name}（点击${path ? '在右侧预览' : '预览抽取到的文本'}）` : att.name)}
           >
             <FileTextIcon size={14} className="chat-attach-fileicon" />
-            <span className="chat-attach-name" title={att.name}>{att.name}</span>
+            <span className="chat-attach-name" {...tip(att.name)}>{att.name}</span>
             <button className="chat-attach-remove" onClick={e => { e.stopPropagation(); removeAttachment(att.id) }} disabled={loading}><XIcon size={11} /></button>
           </div>
         )
@@ -248,6 +252,7 @@ export function AgentInputArea({
   )
   return (
     <div className="chat-input-area" ref={chatInputAreaRef}>
+      {tipNode}
       {/* 破坏性工具审批面板：内联显示在输入框内（与提问工具 AskUserQuestionInline 同款位置/风格），不弹窗 */}
       {approvalReq && (
         <div className="agent-approve-inline">
@@ -277,7 +282,7 @@ export function AgentInputArea({
             <div className="chat-at-empty">无匹配文件</div>
           ) : (
             atFiles.map(f => (
-              <button className="chat-at-item" key={f.path} onClick={() => onPickAtFile(f)} title={f.path}>
+              <button className="chat-at-item" key={f.path} onClick={() => onPickAtFile(f)} {...tip(f.path)}>
                 <FileTextIcon size={13} />
                 <span className="chat-at-name">{f.name}</span>
                 <span className="chat-at-rel">{f.relPath}</span>
@@ -314,7 +319,7 @@ export function AgentInputArea({
               <button
                 ref={workspaceBtnRef}
                 className={`chat-workspace-badge${workspaceMenuOpen ? ' active' : ''}`}
-                title={`点击切换工作区：${activeProject.workspaceDir}`}
+                {...tip(`点击切换工作区：${activeProject.workspaceDir}`)}
                 onClick={() => setWorkspaceMenuOpen(v => !v)}
               >
                 <FolderIcon size={12} />
@@ -352,7 +357,7 @@ export function AgentInputArea({
                   ref={branchBtnRef}
                   className={`chat-branch-trigger${branchMenuOpen ? ' active' : ''}`}
                   onClick={() => setBranchMenuOpen(v => !v)}
-                  title={`当前分支：${currentBranch}`}
+                  {...tip(`当前分支：${currentBranch}`)}
                 >
                   <GitBranchIcon size={12} />
                   <span className="chat-branch-name">{currentBranch}</span>
@@ -394,9 +399,9 @@ export function AgentInputArea({
                     className={`chat-slash-item${i === slashIdx ? ' active' : ''}`}
                     key={c.name}
                     ref={i === slashIdx ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
-                    onMouseEnter={() => setSlashIdx(i)}
+                    onMouseEnter={(e) => { setSlashIdx(i); showTip(c.template, e.currentTarget) }}
+                    onMouseLeave={() => hideTip()}
                     onClick={() => onPickSlash(c)}
-                    title={c.template}
                   >
                     <span className="chat-slash-name">/{c.name}</span>
                     <span className="chat-slash-desc">{c.description}</span>
@@ -480,7 +485,7 @@ export function AgentInputArea({
                   onMouseEnter={() => openTip('fold')} onMouseLeave={closeTip}>
                   <AlignLeft size={12} className="chat-input-fold-chip-icon" />
                   <span className="chat-input-fold-chip-label">已折叠 {packedInput.split('\n').length} 行</span>
-                  <button className="agent-ref-chip-remove" title="移除" onClick={() => setPackedInput(null)}>
+                  <button className="agent-ref-chip-remove" aria-label="移除" {...tip('移除')} onClick={() => setPackedInput(null)}>
                     <XIcon size={10} />
                   </button>
                   <div className="chat-input-fold-chip-tip chat-msg-markdown"><Markdown content={packedInput} final variant="agent" /></div>
@@ -545,7 +550,7 @@ export function AgentInputArea({
                         type="button"
                         className="chat-queue-indicator"
                         onClick={() => { window.api.piAgent.clearQueue(`pi-${activeSessionId}`); followUpQueueRef.current = []; prevQueueRef.current = { followUp: [] }; setQueueInfo({ followUp: [] }) }}
-                        title={_tip}
+                        {...tip(_tip)}
                       >
                         <span className="chat-queue-count">追加 {queueInfo.followUp.length}</span>
                         {_last && <span className="chat-queue-preview">：{_prev}</span>}
@@ -618,7 +623,7 @@ export function AgentInputArea({
                         const running = card?.status === 'running'
                         const pick = () => { if (card) void handleModelAction(card); else if (row.endpoint) void pickEndpointModel(row.endpoint, row.modelId ?? '') }
                         return (
-                          <div key={row.key} className={`chat-model-item ${card ? card.status : 'idle'}${card ? '' : ' pending'}`} title={row.name} onClick={pick}>
+                          <div key={row.key} className={`chat-model-item ${card ? card.status : 'idle'}${card ? '' : ' pending'}`} {...tip(row.name)} onClick={pick}>
                             <div className="chat-model-logo" onClick={e => { if (!card) return; e.stopPropagation(); toggleLogoMenu(e, card) }}>
                               {card && modelLogos[card.template.id]
                                 ? <img src={modelLogos[card.template.id]!} alt={row.name} className="chat-model-logo-img" />
@@ -637,11 +642,16 @@ export function AgentInputArea({
                                 {running && <CheckIcon size={12} className="chat-model-item-check" />}
                                 <button
                                   className="chat-model-item-action"
-                                  title={ep
+                                  aria-label={ep
                                     ? (ep.kind === 'remote'
                                       ? running ? '停用该端点（不会碰那边的服务）' : '探测并启用该端点'
                                       : running ? '断开接管（不会关掉那边的服务）' : '接管该端口上的服务')
                                     : undefined}
+                                  {...(ep
+                                    ? tip(ep.kind === 'remote'
+                                      ? running ? '停用该端点（不会碰那边的服务）' : '探测并启用该端点'
+                                      : running ? '断开接管（不会关掉那边的服务）' : '接管该端口上的服务')
+                                    : {})}
                                   onClick={e => { e.stopPropagation(); pick() }}
                                 >
                                   {running ? <CircleStopIcon size={12} /> : ep ? <ServerIcon size={12} /> : <PlayIcon size={12} />}

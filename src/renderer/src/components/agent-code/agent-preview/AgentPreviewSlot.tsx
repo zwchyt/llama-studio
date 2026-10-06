@@ -21,6 +21,7 @@ import { extToMonacoLang } from '../../../utils/monacoLang'
 import { useAgentTerminalStore } from '../../../store/terminalStore'
 import { useStore } from '../../../store/useStore'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
+import { useBubbleTip } from '../../useBubbleTip'
 import { GIT_DIFF_TAB, MEM_IMG_PREFIX } from '../utils/constants'
 import { AgentMarkdown } from '../agent-message'
 // PdfViewer 内部静态依赖 pdfjs+worker（≈2MB）：改为 React.lazy —— 只在真正打开
@@ -214,6 +215,8 @@ export function AgentPreviewSlot({
 
   // 「+」按钮的下拉菜单状态
   const addBtnRef = useRef<HTMLButtonElement>(null)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const [addMenuOpen, setAddMenuOpen] = useState(false)
   const addMenuRef = useRef<HTMLDivElement>(null)
   // 下拉菜单位置（相对于 agent-code-panel-head）
@@ -250,6 +253,7 @@ export function AgentPreviewSlot({
 
   return (
     <div className={`agent-code-right-slot${!treeOnly || slotEmpty ? ' panel-resizable' : ''}`}>
+      {tipNode}
       {/* 面板左缘调宽手柄：四个视图共用这一根，拖它改整块面板宽度（--agent-right-width）。
           原先「只开文件树」时这里换的是另一根调 --agent-preview-width 的手柄，但面板已是
           定宽、预览组又 flex-grow:1 填满剩余，那根手柄拖动不产生任何位移，故合并掉。 */}
@@ -292,7 +296,7 @@ export function AgentPreviewSlot({
                     <button
                       className="agent-code-panel-tab-btn"
                       onClick={() => showRightTab(v)}
-                      title={PANEL_LABEL[v]}
+                      {...tip(PANEL_LABEL[v])}
                       aria-current={active ? 'true' : undefined}
                     >
                       <Icon ref={el => { tabIconRefs.current[v] = el as AniIconHandle | null }} size={12} className="nav-animate-icon" />
@@ -301,8 +305,8 @@ export function AgentPreviewSlot({
                     <button
                       className="agent-code-panel-tab-close"
                       onClick={() => closePanel(v)}
-                      title={`关闭${PANEL_LABEL[v]}`}
                       aria-label={`关闭${PANEL_LABEL[v]}`}
+                      {...tip(`关闭${PANEL_LABEL[v]}`)}
                     >
                       <XIcon size={10} />
                     </button>
@@ -314,8 +318,8 @@ export function AgentPreviewSlot({
                   ref={addBtnRef}
                   className={`agent-code-panel-tab-add${addMenuOpen ? ' active' : ''}`}
                   onClick={toggleAddMenu}
-                  title="添加工作区"
                   aria-label="添加工作区"
+                  {...tip('添加工作区')}
                   onMouseEnter={() => addBtnIconRef.current?.startAnimation?.()}
                   onMouseLeave={() => addBtnIconRef.current?.stopAnimation?.()}
                 >
@@ -437,7 +441,8 @@ export function AgentPreviewSlot({
                         <button
                           className="btn btn-xs ac-icon-btn agent-code-preview-htmltoggle"
                           onClick={() => setHtmlViewMode(m => m === 'preview' ? 'source' : 'preview')}
-                          title={htmlViewMode === 'preview' ? '查看源码' : '渲染预览'}
+                          aria-label={htmlViewMode === 'preview' ? '查看源码' : '渲染预览'}
+                          {...tip(htmlViewMode === 'preview' ? '查看源码' : '渲染预览')}
                         >
                           {htmlViewMode === 'preview' ? <CodeIcon size={12} /> : <EyeIcon size={12} />}
                         </button>
@@ -446,7 +451,8 @@ export function AgentPreviewSlot({
                         <button
                           className="btn btn-xs ac-icon-btn agent-code-preview-mdtoggle"
                           onClick={() => setMdViewMode(m => m === 'preview' ? 'source' : 'preview')}
-                          title={mdViewMode === 'preview' ? '查看源码' : '渲染预览'}
+                          aria-label={mdViewMode === 'preview' ? '查看源码' : '渲染预览'}
+                          {...tip(mdViewMode === 'preview' ? '查看源码' : '渲染预览')}
                         >
                           {mdViewMode === 'preview' ? <CodeIcon size={12} /> : <EyeIcon size={12} />}
                         </button>
@@ -475,7 +481,7 @@ export function AgentPreviewSlot({
                             </button>
                           </>
                         ) : (
-                          <button className="btn btn-xs ac-icon-btn" onClick={() => setPreviewEditing(true)} title="编辑此文件">
+                          <button className="btn btn-xs ac-icon-btn" onClick={() => setPreviewEditing(true)} aria-label="编辑此文件" {...tip('编辑此文件')}>
                             <PencilIcon size={12} />
                           </button>
                         )
@@ -554,11 +560,11 @@ export function AgentPreviewSlot({
                                               <span className={`agent-ann-kind kind-${a.kind}`}>{ANNOTATION_KIND_LABEL[a.kind]}</span>{a.note}
                                             </div>
                                             {a.kind === 'area' && a.rect
-                                              ? <div className="agent-browser-annotations-sel" title={`${Math.round(a.rect.w)}×${Math.round(a.rect.h)} @ (${Math.round(a.rect.x)}, ${Math.round(a.rect.y)})`}>区域 {Math.round(a.rect.w)}×{Math.round(a.rect.h)} @ ({Math.round(a.rect.x)},{Math.round(a.rect.y)}) · 覆盖 {a.elements.length} 元素</div>
+                                              ? <div className="agent-browser-annotations-sel" {...tip(`${Math.round(a.rect.w)}×${Math.round(a.rect.h)} @ (${Math.round(a.rect.x)}, ${Math.round(a.rect.y)})`)}>区域 {Math.round(a.rect.w)}×{Math.round(a.rect.h)} @ ({Math.round(a.rect.x)},{Math.round(a.rect.y)}) · 覆盖 {a.elements.length} 元素</div>
                                               : a.kind === 'text'
-                                                ? <div className="agent-browser-annotations-sel" title={a.text}>"{a.text}"</div>
-                                                : <div className="agent-browser-annotations-sel" title={a.elements.map(e => e.selector).join('\n')}>{a.elements.length > 1 ? `多选 ${a.elements.length} 个元素` : (a.elements[0]?.selector || '')}</div>}
-                                            {a.component && <div className="agent-browser-annotations-comp" title={a.component}>{a.component}</div>}
+                                                ? <div className="agent-browser-annotations-sel" {...(a.text ? tip(a.text) : {})}>"{a.text}"</div>
+                                                : <div className="agent-browser-annotations-sel" {...tip(a.elements.map(e => e.selector).join('\n'))}>{a.elements.length > 1 ? `多选 ${a.elements.length} 个元素` : (a.elements[0]?.selector || '')}</div>}
+                                            {a.component && <div className="agent-browser-annotations-comp" {...(a.component ? tip(a.component) : {})}>{a.component}</div>}
                                             <button className="agent-browser-annotations-del" onClick={() => removeHtmlAnnotation(a.id)}><XIcon size={11} /></button>
                                           </div>
                                         ))}

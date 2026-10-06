@@ -5,6 +5,7 @@ import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import { playEvent } from '../utils/sound'
 import CustomSelect from './CustomSelect'
+import { useBubbleTip } from './useBubbleTip'
 import { extractTextFromFile } from '../utils/extractText'
 import type { KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit } from '../../../shared/types'
 import '../styles/knowledge.css'
@@ -108,6 +109,8 @@ function ManualChunkModal({ fileName, text, ranges, onChange, onCancel, onConfir
     () => lines.filter((l, i) => !inRange.has(i + 1) && l.trim()).length,
     [lines, inRange]
   )
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   const clickLine = (n: number) => {
     const ri = inRange.get(n)
@@ -127,12 +130,13 @@ function ManualChunkModal({ fileName, text, ranges, onChange, onCancel, onConfir
 
   return createPortal(
     <div className="kb-modal-backdrop" onClick={onCancel}>
+      {tipNode}
       <div className="kb-preview kb-manual" onClick={e => e.stopPropagation()}>
         <div className="kb-preview-head">
           <FileText size={16} />
           <span className="kb-preview-title">手动分块 · {fileName}</span>
           <span className="kb-preview-stats">{ranges.length} 块 · 已覆盖 {inRange.size}/{lines.length} 行</span>
-          <button className="kb-row-btn" onClick={onCancel} title="关闭"><X size={14} /></button>
+          <button className="kb-row-btn" onClick={onCancel} aria-label="关闭" {...tip('关闭')}><X size={14} /></button>
         </div>
         <div className="kb-manual-tip">
           点击行号设为起点，再点另一行即成一个块（{anchor !== null ? `起点：第 ${anchor} 行` : '未选起点'}）；点击已覆盖的行可删除所在区间。未覆盖的 {uncovered} 行会自动并入最后一块，不会丢失。
@@ -169,6 +173,8 @@ function ManualChunkModal({ fileName, text, ranges, onChange, onCancel, onConfir
 }
 
 export default function KnowledgeView() {
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const [bases, setBases] = useState<KnowledgeBaseMeta[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [docs, setDocs] = useState<KnowledgeDoc[]>([])
@@ -590,6 +596,7 @@ export default function KnowledgeView() {
 
   return (
     <div className="kb-view">
+      {tipNode}
       <div className="kb-header">
         <BookOpen size={22} />
         <h2>知识库</h2>
@@ -602,13 +609,16 @@ export default function KnowledgeView() {
           <div className="kb-sidebar-head">
             <span>我的知识库</span>
             <div className="kb-sidebar-actions">
-              <button className="btn btn-ghost btn-icon" title="导出当前知识库（JSON）" disabled={!activeBase} onClick={handleExport}>
-                <Download size={15} />
-              </button>
-              <button className="btn btn-ghost btn-icon" title="导入知识库（.kb.json）" onClick={() => importInputRef.current?.click()}>
+              {/* disabled 按钮收不到鼠标事件，原生 title 反而能弹：事件挂外层 span 保住提示 */}
+              <span style={{ display: 'inline-flex' }} {...tip('导出当前知识库（JSON）')}>
+                <button className="btn btn-ghost btn-icon" aria-label="导出当前知识库（JSON）" disabled={!activeBase} onClick={handleExport}>
+                  <Download size={15} />
+                </button>
+              </span>
+              <button className="btn btn-ghost btn-icon" aria-label="导入知识库（.kb.json）" {...tip('导入知识库（.kb.json）')} onClick={() => importInputRef.current?.click()}>
                 <FileUp size={15} />
               </button>
-              <button className="btn btn-ghost btn-icon" title="新建知识库" onClick={() => setCreating(v => !v)}>
+              <button className="btn btn-ghost btn-icon" aria-label="新建知识库" {...tip('新建知识库')} onClick={() => setCreating(v => !v)}>
                 <Plus size={15} />
               </button>
               <input
@@ -667,7 +677,8 @@ export default function KnowledgeView() {
                   {renaming?.kind !== 'kb' || renaming.id !== b.id ? (
                     <button
                       className="btn btn-ghost btn-icon kb-row-btn"
-                      title="重命名"
+                      aria-label="重命名"
+                      {...tip('重命名')}
                       onClick={(e) => { e.stopPropagation(); startRename('kb', b.id, b.name) }}
                     >
                       <Pencil size={12} />
@@ -675,7 +686,8 @@ export default function KnowledgeView() {
                   ) : (
                     <button
                       className="btn btn-ghost btn-icon kb-row-btn"
-                      title="确认"
+                      aria-label="确认"
+                      {...tip('确认')}
                       onClick={(e) => { e.stopPropagation(); commitRename() }}
                     >
                       <Check size={13} />
@@ -683,7 +695,8 @@ export default function KnowledgeView() {
                   )}
                   <button
                     className="btn btn-ghost btn-icon text-danger kb-list-item-del"
-                    title="删除知识库"
+                    aria-label="删除知识库"
+                    {...tip('删除知识库')}
                     onClick={(e) => { e.stopPropagation(); openDeletePop(e, b) }}
                   >
                     <Trash2 size={13} />
@@ -714,7 +727,7 @@ export default function KnowledgeView() {
                   placeholder={bases.length > 1 ? `跨全部 ${bases.length} 个知识库搜索：输入关键词…` : '输入关键词，验证检索质量…'}
                 />
                 {searched && (
-                  <button className="btn btn-ghost btn-sm" onClick={resetSearch} disabled={searching} title="退出搜索，回到文档管理">返回</button>
+                  <span style={{ display: 'inline-flex' }} {...tip('退出搜索，回到文档管理')}><button className="btn btn-ghost btn-sm" onClick={resetSearch} disabled={searching}>返回</button></span>
                 )}
                 <button className="btn btn-primary btn-sm" onClick={() => handleSearch()} disabled={!query.trim() || searching}>
                   {searching ? <Loader2 size={13} className="kb-spin" /> : '搜索'}
@@ -727,7 +740,7 @@ export default function KnowledgeView() {
                 <div className="kb-hits-meta">
                   <span
                     className="kb-hits-stat"
-                    title="结果按「跨知识库融合排名」排序：各库的 BM25 分是各自算 idf 的，量纲不同、不可跨库比较，所以卡片上显示的相关度不一定递减。"
+                    {...tip('结果按「跨知识库融合排名」排序：各库的 BM25 分是各自算 idf 的，量纲不同、不可跨库比较，所以卡片上显示的相关度不一定递减。')}
                   >
                     跨 {searchedCount} 库 · 命中 {hits.length} 条 · 按融合排名
                     {/* 排序优势：倍数够大说明 top 明显优于其余，是「高置信」的依据之一。
@@ -737,9 +750,9 @@ export default function KnowledgeView() {
                   {/* 单个库的弱化说明：不用告警色。
                       某个库区分度不足 / 没命中，不代表这次检索整体不可靠——
                       只要 top 明显领先，就不该报警告。 */}
-                  {kbNote && <span className="kb-hits-note" title={kbNote}>{kbNote}</span>}
+                  {kbNote && <span className="kb-hits-note" {...tip(kbNote)}>{kbNote}</span>}
                   {/* 卡片高度自己调：块正文长度差异大，固定值不可能人人合适 */}
-                  <label className="kb-hit-h" title="调整每个命中卡片的高度（卡片内可滚动）">
+                  <label className="kb-hit-h" {...tip('调整每个命中卡片的高度（卡片内可滚动）')}>
                     <span>块高</span>
                     <input
                       type="range"
@@ -795,7 +808,7 @@ export default function KnowledgeView() {
                         所以列表里不一定单调递减——排序看的是跨库融合排名。悬停说明，免得被当成排序坏了。 */}
                     <span
                       className="kb-hit-score"
-                      title="库内 BM25 相关度：只在同一个知识库内可比，跨库不可比。列表顺序按跨库融合排名。"
+                      {...tip('库内 BM25 相关度：只在同一个知识库内可比，跨库不可比。列表顺序按跨库融合排名。')}
                     >
                       {h.score.toFixed(2)}
                     </span>
@@ -845,19 +858,18 @@ export default function KnowledgeView() {
                   <span className="kb-chunk-hint">拖入单个文件 → 预览里逐对点击行号划块</span>
                 )}
                 {chunkMode !== 'single' && chunkMode !== 'manual' && (
-                  <label>
+                  <label {...tip('单块目标字符数（200-4000）')}>
                     块大小
                     <input
                       type="number" min={200} max={4000} step={100}
                       value={chunkSize}
                       disabled={ingesting}
                       onChange={e => setChunkSize(Math.max(200, Math.min(4000, parseInt(e.target.value) || 1000)))}
-                      title="单块目标字符数（200-4000）"
                     />
                   </label>
                 )}
                 {chunkMode === 'delim' && (
-                  <label>
+                  <label {...tip('按此字符串切分文档，每段一块，不跨边界合并')}>
                     分隔符
                     <input
                       type="text"
@@ -865,7 +877,6 @@ export default function KnowledgeView() {
                       disabled={ingesting}
                       onChange={e => setChunkDelim(e.target.value)}
                       placeholder="如 --- 或 ==="
-                      title="按此字符串切分文档，每段一块，不跨边界合并"
                     />
                   </label>
                 )}
@@ -898,7 +909,7 @@ export default function KnowledgeView() {
                 {docs.length === 0 ? (
                   <div className="kb-empty-sm">该知识库还没有文档</div>
                 ) : docs.map(d => (
-                  <div key={d.id} className="kb-doc-row" onClick={() => setPreviewDoc(d)} title="点击查看文档内容">
+                  <div key={d.id} className="kb-doc-row" onClick={() => setPreviewDoc(d)} {...tip('点击查看文档内容')}>
                     <FileText size={15} className="kb-doc-icon" />
                     {renaming?.kind === 'doc' && renaming.id === d.id ? (
                       <input
@@ -914,26 +925,26 @@ export default function KnowledgeView() {
                         }}
                       />
                     ) : (
-                      <span className="kb-doc-name" title={d.name}>{d.name}</span>
+                      <span className="kb-doc-name" {...tip(d.name)}>{d.name}</span>
                     )}
                     <span className="kb-doc-chunks">
                       {d.chunkMode && <span className="kb-doc-mode">{d.chunkMode}</span>}
                       {d.chunkCount} 块 · {formatChars(d.chars)}
                     </span>
                     <div className="kb-row-actions" onClick={e => e.stopPropagation()}>
-                      <button className="btn btn-ghost btn-icon kb-row-btn" title="预览内容" onClick={() => setPreviewDoc(d)}>
+                      <button className="btn btn-ghost btn-icon kb-row-btn" aria-label="预览内容" {...tip('预览内容')} onClick={() => setPreviewDoc(d)}>
                         <Eye size={12} />
                       </button>
                       {renaming?.kind !== 'doc' || renaming.id !== d.id ? (
-                        <button className="btn btn-ghost btn-icon kb-row-btn" title="重命名" onClick={() => startRename('doc', d.id, d.name)}>
+                        <button className="btn btn-ghost btn-icon kb-row-btn" aria-label="重命名" {...tip('重命名')} onClick={() => startRename('doc', d.id, d.name)}>
                           <Pencil size={12} />
                         </button>
                       ) : (
-                        <button className="btn btn-ghost btn-icon kb-row-btn" title="确认" onClick={() => commitRename()}>
+                        <button className="btn btn-ghost btn-icon kb-row-btn" aria-label="确认" {...tip('确认')} onClick={() => commitRename()}>
                           <Check size={13} />
                         </button>
                       )}
-                      <button className="btn btn-ghost btn-icon text-danger" title="删除文档" onClick={() => handleDeleteDoc(d.id)}>
+                      <button className="btn btn-ghost btn-icon text-danger" aria-label="删除文档" {...tip('删除文档')} onClick={() => handleDeleteDoc(d.id)}>
                         <X size={13} />
                       </button>
                     </div>
@@ -965,7 +976,7 @@ export default function KnowledgeView() {
           <div className="kb-preview">
             <div className="kb-preview-head">
               <FileText size={16} className="kb-doc-icon" />
-              <span className="kb-preview-title" title={docContent?.name || previewDoc.name}>{docContent?.name || previewDoc.name}</span>
+              <span className="kb-preview-title" {...tip(docContent?.name || previewDoc.name)}>{docContent?.name || previewDoc.name}</span>
               <span className="kb-preview-stats">
                 {contentLoading ? '读取中…' : `${docContent?.chunkCount ?? 0} 块 · ${formatChars(docContent?.chars)}`}
               </span>
@@ -990,10 +1001,12 @@ export default function KnowledgeView() {
                   </>
                 )}
               </div>
-              <button className="btn btn-ghost btn-icon" title="复制全文" disabled={!docContent} onClick={handleCopyDoc}>
-                {copied ? <Check size={14} /> : <Copy size={14} />}
-              </button>
-              <button className="btn btn-ghost btn-icon text-danger" title="关闭（Esc）" onClick={() => setPreviewDoc(null)}>
+              <span style={{ display: 'inline-flex' }} {...tip('复制全文')}>
+                <button className="btn btn-ghost btn-icon" aria-label="复制全文" disabled={!docContent} onClick={handleCopyDoc}>
+                  {copied ? <Check size={14} /> : <Copy size={14} />}
+                </button>
+              </span>
+              <button className="btn btn-ghost btn-icon text-danger" aria-label="关闭（Esc）" {...tip('关闭（Esc）')} onClick={() => setPreviewDoc(null)}>
                 <X size={15} />
               </button>
             </div>

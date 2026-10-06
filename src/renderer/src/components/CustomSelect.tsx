@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import { useBubbleTip } from './useBubbleTip'
 
 interface Option {
   value: string
@@ -41,6 +42,8 @@ export default function CustomSelect({
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties | null>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；已有 onMouseEnter 的元素用 showTip/hideTip 合并）
+  const { tipNode, showTip, hideTip } = useBubbleTip()
 
   const close = useCallback(() => { setOpen(false); setPanelStyle(null) }, [])
 
@@ -116,6 +119,7 @@ export default function CustomSelect({
 
   return (
     <div style={{ display: 'inline-block', maxWidth: '100%', ...style }} className={className}>
+      {tipNode}
       <button
         ref={btnRef}
         className={`cmd-select${buttonClass ? ' ' + buttonClass : ''}`}
@@ -157,9 +161,8 @@ export default function CustomSelect({
                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%'
               }}
               onClick={() => { onChange(opt.value); close() }}
-              onMouseEnter={() => setHovered(opt.value)}
-              onMouseLeave={() => setHovered('')}
-              title={opt.label}
+              onMouseEnter={(e) => { setHovered(opt.value); showTip(opt.label, e.currentTarget) }}
+              onMouseLeave={() => { setHovered(''); hideTip() }}
             >
               {opt.label}
             </div>

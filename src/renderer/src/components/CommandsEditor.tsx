@@ -7,6 +7,7 @@ import { Plus, Trash, ChevronDown, ChevronRight, Save, RotateCcw, Pencil, Check,
 import type { CommandsSchema, CommandCategory, CommandParam } from '../../../shared/types'
 import { iconComponents, ICON_NAMES } from '../utils/iconMap'
 import { paramSetOf } from '../utils/engine'
+import { useBubbleTip } from './useBubbleTip'
 // 本组件的样式（.ce-*）跟着组件走，原先寄存在 models.css 里，已迁到自己的文件
 import '../styles/commands-editor.css'
 
@@ -137,6 +138,8 @@ function CategorySection({ cat, catIndex: _catIndex, onChange, onDelete }: Categ
   const deletePopoverRef = useRef<HTMLDivElement>(null)
   const deleteConfirmRef = useRef<HTMLButtonElement>(null)
   const iconRef = useRef<HTMLDivElement>(null)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   useEffect(() => {
     if (!showDeletePopover) return
     function handlePointer(e: MouseEvent) {
@@ -182,6 +185,7 @@ function CategorySection({ cat, catIndex: _catIndex, onChange, onDelete }: Categ
   function saveName() { onChange({ ...cat, name: nameVal }); setEditingName(false) }
   return (
     <div className="ce-category">
+      {tipNode}
       <div className="ce-category-header" onClick={() => setOpen(o => !o)}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -213,7 +217,8 @@ function CategorySection({ cat, catIndex: _catIndex, onChange, onDelete }: Categ
                   key={i}
                   className={`btn btn-ghost btn-icon`} 
                   style={{ padding: 6, background: cat.icon === i ? 'var(--border)' : 'transparent' }}
-                  title={i}
+                  aria-label={i}
+                  {...tip(i)}
                   onClick={() => { onChange({ ...cat, icon: i }); setPickingIcon(false) }}
                 >
                   {React.createElement(iconComponents[i] || iconComponents.Sliders, { size: 14 })}

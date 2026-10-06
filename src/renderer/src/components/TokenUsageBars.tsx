@@ -5,6 +5,8 @@
 // 两者都由相对柱高回答，所以它们用柱。引入图表库只会买到我们不要的
 // 坐标轴和提示框，以及每次页面加载都要付的包体。
 
+import { useBubbleTip } from './useBubbleTip'
+
 export type UsageBar = {
   key: string
   /** 开 labels 时显示在柱子下面；保持两三个字符。 */
@@ -24,11 +26,14 @@ export function UsageBarRow({
   height?: number
 }) {
   const peak = bars.reduce((max, bar) => Math.max(max, bar.value), 0)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   return (
     <div className="ts-bars">
+      {tipNode}
       <div className="ts-bars-axis" style={{ height }}>
         {bars.map(bar => (
-          <div key={bar.key} className="ts-bar-slot" title={bar.title} aria-label={bar.title}>
+          <div key={bar.key} className="ts-bar-slot" {...tip(bar.title)} aria-label={bar.title}>
             <div
               className={`ts-bar${bar.value > 0 ? '' : ' zero'}`}
               // 零柱仍然画出 2px 地板：空时段也是数据，

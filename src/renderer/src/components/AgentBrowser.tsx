@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { ArrowLeftIcon, ArrowRightIcon, RefreshCwIcon, GlobeIcon, XIcon, ExternalLinkIcon, MessageSquarePlusIcon, Trash2Icon, SendIcon, HouseIcon, PlusIcon, MinusIcon } from '@animateicons/react/lucide'
 import '../styles/agent-browser.css'
 import { registerBrowserNavigator } from './agent-code/utils/browserController'
+import { useBubbleTip } from './useBubbleTip'
 // 注释工具脚本（?raw 打包为字符串）：webview dom-ready 后 executeJavaScript 注入。
 // 不走 webview preload 属性——preload 仅接受 file: 协议，dev 模式（http 页面）无法加载。
 import AGENT_ANNOTATE_SCRIPT from '../utils/agentAnnotateScript.js?raw'
@@ -81,6 +82,8 @@ export function formatAnnotations(list: UiAnnotation[]): string {
 }
 
 export default function AgentBrowser({ visible = true, onSendToAgent }: { visible?: boolean; onSendToAgent?: (text: string) => void }) {
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const [initialUrl, setInitialUrl] = useState('')
   const [inputUrl, setInputUrl] = useState('')
   const [title, setTitle] = useState('')
@@ -409,6 +412,7 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
 
   return (
     <div className="agent-browser">
+      {tipNode}
       <div className="agent-browser-toolbar">
         <button className="agent-browser-nav-btn" onClick={goBack} disabled={!canGoBack}>
           <ArrowLeftIcon size={14} />
@@ -416,7 +420,7 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
         <button className="agent-browser-nav-btn" onClick={goForward} disabled={!canGoForward}>
           <ArrowRightIcon size={14} />
         </button>
-        <button className="agent-browser-nav-btn" onClick={loading ? stop : reload} title={loading ? '' : ''}>
+        <button className="agent-browser-nav-btn" onClick={loading ? stop : reload} aria-label={loading ? '停止加载' : '重新加载'} {...tip(loading ? '停止加载' : '重新加载')}>
           {loading ? <XIcon size={14} /> : <RefreshCwIcon size={14} />}
         </button>
         <button className="agent-browser-nav-btn" onClick={() => { try { webviewRef.current?.stop() } catch {} setInitialUrl(''); setInputUrl(''); setTitle(''); setError(null); setCanGoBack(false); setCanGoForward(false) }}>
@@ -441,18 +445,22 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
             <MessageSquarePlusIcon size={14} />
             {annotations.length > 0 && <span className="agent-browser-annotate-count">{annotations.length}</span>}
           </button>
-          <button className="agent-browser-nav-btn" onClick={() => handleZoom(-1)} disabled={zoom <= 0.5} title="缩小">
+          <span style={{ display: 'inline-flex' }} {...tip('缩小')}>
+          <button className="agent-browser-nav-btn" onClick={() => handleZoom(-1)} disabled={zoom <= 0.5} aria-label="缩小">
             <MinusIcon size={13} />
           </button>
-          <button className="agent-browser-nav-btn" onClick={() => handleZoom(1)} disabled={zoom >= 2} title="放大">
+          </span>
+          <span style={{ display: 'inline-flex' }} {...tip('放大')}>
+          <button className="agent-browser-nav-btn" onClick={() => handleZoom(1)} disabled={zoom >= 2} aria-label="放大">
             <PlusIcon size={13} />
           </button>
+          </span>
           <button className="agent-browser-nav-btn" onClick={openExternal}>
             <ExternalLinkIcon size={13} />
           </button>
         </div>
       </div>
-      {title && <div className="agent-browser-title" title={title}>{title}</div>}
+      {title && <div className="agent-browser-title" {...tip(title)}>{title}</div>}
       {initialUrl ? (
         <>
           {error && <div className="agent-browser-error">{error}</div>}
@@ -496,11 +504,11 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
                       <span className={`agent-ann-kind kind-${a.kind}`}>{ANNOTATION_KIND_LABEL[a.kind]}</span>{a.note}
                     </div>
                     {a.kind === 'area' && a.rect
-                      ? <div className="agent-browser-annotations-sel" title={`${Math.round(a.rect.w)}×${Math.round(a.rect.h)} @ (${Math.round(a.rect.x)}, ${Math.round(a.rect.y)})`}>区域 {Math.round(a.rect.w)}×{Math.round(a.rect.h)} @ ({Math.round(a.rect.x)},{Math.round(a.rect.y)}) · 覆盖 {a.elements.length} 元素</div>
-                      : a.kind === 'text'
-                        ? <div className="agent-browser-annotations-sel" title={a.text}>"{a.text}"</div>
-                        : <div className="agent-browser-annotations-sel" title={a.elements.map(e => e.selector).join('\n')}>{a.elements.length > 1 ? `多选 ${a.elements.length} 个元素` : (a.elements[0]?.selector || '')}</div>}
-                    {a.component && <div className="agent-browser-annotations-comp" title={a.component}>{a.component}</div>}
+                      ? <div className="agent-browser-annotations-sel" {...tip(`${Math.round(a.rect.w)}×${Math.round(a.rect.h)} @ (${Math.round(a.rect.x)}, ${Math.round(a.rect.y)})`)}>区域 {Math.round(a.rect.w)}×{Math.round(a.rect.h)} @ ({Math.round(a.rect.x)},{Math.round(a.rect.y)}) · 覆盖 {a.elements.length} 元素</div>
+                        : a.kind === 'text'
+                        ? <div className="agent-browser-annotations-sel" {...(a.text ? tip(a.text) : {})}>"{a.text}"</div>
+                        : <div className="agent-browser-annotations-sel" {...tip(a.elements.map(e => e.selector).join('\n'))}>{a.elements.length > 1 ? `多选 ${a.elements.length} 个元素` : (a.elements[0]?.selector || '')}</div>}
+                    {a.component && <div className="agent-browser-annotations-comp" {...tip(a.component)}>{a.component}</div>}
                     <button className="agent-browser-annotations-del" onClick={() => removeAnnotation(a.id)} ><XIcon size={11} /></button>
                   </div>
                 ))}

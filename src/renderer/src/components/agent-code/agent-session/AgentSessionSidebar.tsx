@@ -17,6 +17,7 @@ import React, { startTransition, useEffect, useLayoutEffect, useMemo, useRef, us
 import { createPortal } from 'react-dom'
 import { FolderOpenIcon, FolderIcon, TrashIcon, UploadIcon, PlusIcon, DownloadIcon, PencilIcon, CodeIcon, EllipsisIcon, MessageSquareIcon, MessageSquarePlusIcon, SearchIcon, XIcon } from '@animateicons/react/lucide'
 import { TopbarBtn } from '../agent-message'
+import { useBubbleTip } from '../../useBubbleTip'
 import { CHAT_WORKSPACE_ID } from '../../../../../shared/types'
 import type { AgentMode, AgentProject, AgentSession } from '../../../../../shared/types'
 
@@ -109,8 +110,11 @@ function listKeyNav(e: React.KeyboardEvent<HTMLDivElement>) {
 
 /** 列表过滤框（视图本地状态，仅决定渲染，不改任何数据） */
 function SidebarFilter({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   return (
     <div className="agent-code-sidebar-filter">
+      {tipNode}
       <SearchIcon size={12} className="agent-code-sidebar-filter-icon" />
       <input
         className="agent-code-sidebar-filter-input"
@@ -121,7 +125,7 @@ function SidebarFilter({ value, onChange, placeholder }: { value: string; onChan
         onChange={e => onChange(e.target.value)}
         onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); onChange(''); (e.target as HTMLInputElement).blur() } }}
       />
-      {value && <button type="button" className="agent-code-sidebar-filter-clear" title="清除" onClick={() => onChange('')}><XIcon size={11} /></button>}
+      {value && <button type="button" className="agent-code-sidebar-filter-clear" aria-label="清除" {...tip('清除')} onClick={() => onChange('')}><XIcon size={11} /></button>}
     </div>
   )
 }
@@ -198,6 +202,8 @@ export function AgentSessionSidebar({
   // ── 视图本地状态：过滤词与行「⋯」菜单开合 ──
   // 只影响"渲染哪些行 / 菜单是否展开"，不触碰任何会话数据，故留在本组件，不上引到 hooks。
   // rowMenuId 存项目 id 或会话 id（全局唯一，两种行共用一套开合逻辑与同一个外点判定 ref）。
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const [filter, setFilter] = useState('')
   const [rowMenuId, setRowMenuId] = useState<string | null>(null)
   const rowMenuWrapRef = useRef<HTMLSpanElement | null>(null)
@@ -251,7 +257,8 @@ export function AgentSessionSidebar({
       <button
         type="button"
         className="agent-code-proj-menu-btn"
-        title="会话操作"
+        aria-label="会话操作"
+        {...tip('会话操作')}
         aria-haspopup="menu"
         aria-expanded={rowMenuId === s.id}
         onClick={e => { e.stopPropagation(); setRowMenuId(v => v === s.id ? null : s.id) }}
@@ -330,6 +337,7 @@ export function AgentSessionSidebar({
 
   return (
     <div className="agent-code-sidebar">
+      {tipNode}
       {mode === 'chat' ? (
         /* ── 通用模式：轻量聊天历史，没有项目层级 ── */
         <>
@@ -368,7 +376,7 @@ export function AgentSessionSidebar({
                     <>
                       <MessageSquareIcon size={13} className="agent-code-chat-icon" />
                       <span className="agent-code-session-title">{s.title}</span>
-                      {ts && <span className="agent-code-session-time" title={`最后活跃 ${new Date(ts).toLocaleString('zh-CN')}`}>{relTimeLabel(ts)}</span>}
+                      {ts && <span className="agent-code-session-time" {...tip(`最后活跃 ${new Date(ts).toLocaleString('zh-CN')}`)}>{relTimeLabel(ts)}</span>}
                     </>
                   )}
                   {/* 会话操作收进「⋯」菜单（与项目行同款）：原先 fork + 导出/重命名/删除
@@ -378,7 +386,8 @@ export function AgentSessionSidebar({
                     <button
                       type="button"
                       className="agent-code-proj-menu-btn"
-                      title="会话操作"
+                      aria-label="会话操作"
+                      {...tip('会话操作')}
                       aria-haspopup="menu"
                       aria-expanded={rowMenuId === s.id}
                       onClick={e => { e.stopPropagation(); setRowMenuId(v => v === s.id ? null : s.id) }}
@@ -469,7 +478,8 @@ export function AgentSessionSidebar({
                       <button
                         type="button"
                         className="agent-code-proj-menu-btn"
-                        title="项目操作"
+                        aria-label="项目操作"
+                        {...tip('项目操作')}
                         aria-haspopup="menu"
                         aria-expanded={rowMenuId === p.id}
                         onClick={e => { e.stopPropagation(); setRowMenuId(v => v === p.id ? null : p.id) }}
@@ -524,7 +534,7 @@ export function AgentSessionSidebar({
                             ) : (
                               <>
                                 <span className="agent-code-session-title">{s.title}</span>
-                                {ts && <span className="agent-code-session-time" title={`最后活跃 ${new Date(ts).toLocaleString('zh-CN')}`}>{relTimeLabel(ts)}</span>}
+                                {ts && <span className="agent-code-session-time" {...tip(`最后活跃 ${new Date(ts).toLocaleString('zh-CN')}`)}>{relTimeLabel(ts)}</span>}
                               </>
                             )}
                             {sessionActions(p.id, s)}

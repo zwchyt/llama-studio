@@ -601,3 +601,52 @@ html.theme-dark .nav-tip {
   border-left: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
 }
+
+/* ── 通用气泡变体（useBubbleTip hook，导航栏之外的原生 title 换装用）──
+   .nav-tip 本体是「右侧、垂直居中」；这里加「下方 / 上方」两档，top 由 JS 实测写入
+   （下缘 + 9px / 上缘 - 9px），横向自身 translateX(-50%) 居中。箭头翻到对应边：
+   保留旋转方块拼尖角的手法，只换描边边（上箭头留上+左，下箭头留左+下）。 */
+.nav-tip-below {
+  transform: translate(-50%, 0);
+  animation: nav-tip-below-in .13s ease both;
+}
+
+@keyframes nav-tip-below-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -4px);
+  }
+}
+
+.nav-tip-below::before {
+  left: 50%;
+  top: -4px;
+  transform: translateX(-50%) rotate(45deg);
+  border-top: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
+  border-bottom: none;
+}
+
+.nav-tip-above {
+  transform: translate(-50%, -100%);
+  animation: nav-tip-above-in .13s ease both;
+}
+
+@keyframes nav-tip-above-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-100% + 4px));
+  }
+}
+
+.nav-tip-above::before {
+  left: 50%;
+  top: auto;
+  bottom: -4px;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+/* 长说明折行：默认 nowrap 会拉成一条横幅，超 28 字（hook 里 WRAP_LEN）自动换这档 */
+.nav-tip-wrap {
+  white-space: normal;
+  max-width: 300px;
+}

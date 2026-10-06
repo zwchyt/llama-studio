@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { Terminal, Gauge, Loader2, Cpu, Zap, HardDrive, BarChart3, Play, Square, ChevronDown, History, Trash2, Trophy } from 'lucide-react'
 import CustomSelect from './CustomSelect'
+import { useBubbleTip } from './useBubbleTip'
 import { playEvent } from '../utils/sound'
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, LabelList } from 'recharts'
 import '../styles/benchmark.css'
@@ -254,6 +255,9 @@ export default function BenchmarkView() {
   const resultRef = useRef<HTMLDivElement>(null)
   const benchIdRef = useRef<string>('')
   const logsRef = useRef<LogEntry[]>([])
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  // 注意：recharts 的 <Tooltip> 组件不是原生提示，不动
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   useEffect(() => {
     if (!benchmarkResult || !benchmarkResult.showResults) return
@@ -454,6 +458,7 @@ export default function BenchmarkView() {
 
   return (
     <div className="benchmark-view">
+      {tipNode}
       <header className="page-header benchmark-header">
         <div>
           <h1 className="page-title">性能基准测试</h1>
@@ -797,7 +802,7 @@ export default function BenchmarkView() {
                 return speedHistory.map(h => (
                   <div key={h.ts} className="benchmark-history-row">
                     <span>{new Date(h.ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
-                    <span title={`${h.model} · ${h.backend}`}>{h.model}</span>
+                    <span {...tip(`${h.model} · ${h.backend}`)}>{h.model}</span>
                     <span>{h.quant || '—'}</span>
                     <span>{h.ngl}</span>
                     <span>{`${h.threads} / ${h.batch}`}</span>
@@ -849,19 +854,21 @@ export default function BenchmarkView() {
                   <span>时间</span><span>模型</span><span>量化</span><span>ngl</span><span>上下文</span><span>PPL</span>
                   <span>
                     {pplHistory.length > 1 && (
+                      <span style={{ display: 'inline-flex' }} {...tip('清空全部困惑度记录')}>
                       <button
                         className="benchmark-history-clear"
-                        title="清空全部困惑度记录"
                         onClick={() => setHistory(prev => { const next = prev.filter(h => h.ppl === null); saveBenchHistory(next); return next })}
                         disabled={running}
+                        aria-label="清空全部困惑度记录"
                       ><Trash2 size={13} /></button>
+                      </span>
                     )}
                   </span>
                 </div>
                 {pplHistory.map(h => (
                   <div key={h.ts} className="benchmark-history-row ppl">
                     <span>{new Date(h.ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
-                    <span title={`${h.model} · ${h.backend}`}>{h.model}</span>
+                    <span {...tip(`${h.model} · ${h.backend}`)}>{h.model}</span>
                     <span>{h.quant || '—'}</span>
                     <span>{h.ngl}</span>
                     <span>{h.ctx ?? '—'}</span>

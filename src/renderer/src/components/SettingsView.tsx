@@ -10,6 +10,7 @@ import FontSelector from './FontSelector'
 // 音色下拉改用项目统一的自定义下拉组件（不再用原生 <select>，避免系统原生弹层样式）
 import CustomSelect from './CustomSelect'
 import { CURSOR_SCHEMES, getCursorSchemeId, applyCursorScheme, CURSOR_STORAGE_KEY, schemeCursorValue, type CursorRole } from '../cursor-theme'
+import { useBubbleTip } from './useBubbleTip'
 import '../styles/settings.css'
 
 const NOTIF_KEY = 'llama_studio_update_notify'
@@ -115,6 +116,8 @@ export default function SettingsView() {
   }
   const [cursorScheme, setCursorScheme] = useState<string>(getCursorSchemeId())
   const [previewId, setPreviewId] = useState<string | null>(null)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const previewScheme = CURSOR_SCHEMES.find(s => s.id === (previewId ?? cursorScheme)) || CURSOR_SCHEMES[0]
 
   // Edge 音色列表：仅在选了 Edge 引擎时拉一次（在线接口，失败只提示不阻塞）
@@ -176,6 +179,7 @@ export default function SettingsView() {
 
   return (
     <div className="max-w-3xl settings-view">
+      {tipNode}
       <div className="page-header">
         <div>
           <h1 className="page-title">设置</h1>
@@ -267,7 +271,7 @@ export default function SettingsView() {
                   type="button"
                   className={`launch-mode-btn st-seg-btn${selected ? ' active' : ''}`}
                   onClick={() => { setNotificationSound(opt.id); previewSound(opt.id) }}
-                  title={opt.description}
+                  {...tip(opt.description)}
                 >
                   {selected && <Check size={12} style={{ marginRight: 4, verticalAlign: 'middle' }} />}
                   {opt.label}
@@ -431,7 +435,7 @@ export default function SettingsView() {
                     key={role}
                     className="cursor-preview-cell"
                     style={{ cursor: v || fallback }}
-                    title={roleLabels[role]}
+                    {...tip(roleLabels[role])}
                   >
                     <span className="cursor-preview-cell-label">{roleLabels[role]}</span>
                   </div>
@@ -480,7 +484,7 @@ export default function SettingsView() {
                     type="button"
                     className={`st-bg-pick${selected ? ' selected' : ''}`}
                     onClick={() => setBackgroundImage(name)}
-                    title={name}
+                    {...tip(name)}
                     aria-pressed={selected}
                   >
                     <span className="st-bg-frame"><BgThumb name={name} /></span>
@@ -491,7 +495,7 @@ export default function SettingsView() {
                     type="button"
                     className="st-bg-del"
                     onClick={() => { void removeBackground(name) }}
-                    title={`从背景目录删除 ${name}`}
+                    {...tip(`从背景目录删除 ${name}`)}
                     aria-label={`删除 ${name}`}
                   >
                     ×

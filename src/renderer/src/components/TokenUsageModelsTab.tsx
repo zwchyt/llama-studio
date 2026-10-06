@@ -6,6 +6,7 @@ import {
 import { TokenUsageDrawer } from './TokenUsageDrawer'
 import { buildModelColors, fmtCompactTokens, formatNumber } from '../utils/token-stats'
 import type { TokenModelRow, TokenStats } from '../utils/token-stats'
+import { useBubbleTip } from './useBubbleTip'
 
 type SortKey = 'model' | 'requests' | 'tokens' | 'avg' | 'prompt' | 'completion'
 
@@ -129,14 +130,18 @@ function ModelRow({
   color: string
   onOpen: () => void
 }) {
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   return (
+    <>
+      {tipNode}
     <DataRow onOpen={onOpen} ariaLabel={`打开 ${row.name} 的使用详情`}>
       <LeadCell>
         <div className="ts-model-id">
           <span className="ts-model-dot" style={{ background: color }} />
-          <span className="ts-model-name" title={row.model}>{row.name}</span>
+          <span className="ts-model-name" {...tip(row.model)}>{row.name}</span>
           {row.templateName ? (
-            <span className="ts-model-sub" title={row.model}>
+            <span className="ts-model-sub" {...tip(row.model)}>
               {row.templateName}
             </span>
           ) : null}
@@ -161,5 +166,6 @@ function ModelRow({
         <span className="ts-cell-num-value">{formatNumber(row.completion_tokens)}</span>
       </EndCell>
     </DataRow>
+    </>
   )
 }

@@ -8,6 +8,7 @@ import { playEvent } from '../utils/sound'
 import { paramSetOf } from '../utils/engine'
 import CustomSelect from './CustomSelect'
 import PromptPresetPicker from './PromptPresetPicker'
+import { useBubbleTip } from './useBubbleTip'
 import '../styles/imagegen.css'
 
 // ── 图像生成视图：调用运行中的 stable-diffusion.cpp sd-server ────
@@ -413,6 +414,8 @@ export default function ImageGenView() {
   const displayDetail = sdProg?.detail || ''
 
   // ── 渲染 ──
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   if (sdCards.length === 0) {
     return (
       <div className="imagegen-empty">
@@ -433,6 +436,7 @@ export default function ImageGenView() {
 
   return (
     <div className="imagegen">
+      {tipNode}
       <div className="imagegen-header">
         <div className="imagegen-header-left">
           <h2 className="imagegen-title">图像生成</h2>
@@ -499,7 +503,7 @@ export default function ImageGenView() {
               <label className="form-label">正向提示词</label>
               <div className="imagegen-field-tools">
                 {prompt && (
-                  <button type="button" className="imagegen-clear-btn" onClick={() => setPrompt('')} title="清空提示词">
+                  <button type="button" className="imagegen-clear-btn" onClick={() => setPrompt('')} {...tip('清空提示词')}>
                     <X size={12} /> 清空
                   </button>
                 )}
@@ -519,7 +523,7 @@ export default function ImageGenView() {
               <label className="form-label">负向提示词</label>
               <div className="imagegen-field-tools">
                 {negativePrompt && (
-                  <button type="button" className="imagegen-clear-btn" onClick={() => setNegativePrompt('')} title="清空提示词">
+                  <button type="button" className="imagegen-clear-btn" onClick={() => setNegativePrompt('')} {...tip('清空提示词')}>
                     <X size={12} /> 清空
                   </button>
                 )}
@@ -732,18 +736,18 @@ export default function ImageGenView() {
                         <img src={item.dataUrl} alt={item.prompt} onClick={() => setLightbox(item.dataUrl)} />
                       </div>
                       <div className="imagegen-result-body">
-                        <p className="imagegen-result-prompt" title={item.prompt}>{item.prompt}</p>
+                        <p className="imagegen-result-prompt" {...tip(item.prompt)}>{item.prompt}</p>
                         {chips.length > 0 && (
                           <div className="imagegen-result-chips">
                             {chips.map(c => <span key={c} className="imagegen-chip">{c}</span>)}
                           </div>
                         )}
                         {item.file && (
-                          <p className="imagegen-result-file" title={item.file}>{item.file}</p>
+                          <p className="imagegen-result-file" {...tip(item.file)}>{item.file}</p>
                         )}
                         <div className="imagegen-result-actions">
                           {(item.file || item.savedPath) ? (
-                            <span className="text-success" title={item.file || item.savedPath}>已保存</span>
+                            <span className="text-success" {...(item.file ? tip(item.file) : item.savedPath ? tip(item.savedPath) : {})}>已保存</span>
                           ) : (
                             <button className="btn btn-primary btn-sm" onClick={() => handleSave(item)}>
                               <Save size={13} /> 保存
@@ -770,7 +774,7 @@ export default function ImageGenView() {
                 {history.map(h => (
                   <div key={h.id} className="imagegen-history-item">
                     <div className="imagegen-history-img">
-                      <img src={h.dataUrl} alt={h.prompt.slice(0, 30)} title={h.prompt} onClick={() => setResults([h])} />
+                      <img src={h.dataUrl} alt={h.prompt.slice(0, 30)} {...tip(h.prompt)} onClick={() => setResults([h])} />
                       <button
                         className="imagegen-history-delete"
                         onClick={() => handleDeleteHistory(h)}

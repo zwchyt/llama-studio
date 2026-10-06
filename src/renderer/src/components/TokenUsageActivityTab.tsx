@@ -10,6 +10,7 @@ import {
 } from '../utils/token-stats'
 import type { TokenDayRow, TokenStats } from '../utils/token-stats'
 import type { TokenUsageEntry, TokenUsageRollupRow } from '../../../shared/types'
+import { useBubbleTip } from './useBubbleTip'
 
 type SortKey = 'date' | 'requests' | 'tokens' | 'prompt' | 'completion'
 
@@ -110,9 +111,12 @@ export function TokenUsageActivityTab({ stats, entries, rollup }: { stats: Token
   )
   const hasDayHourly = dayHourly?.some(bar => bar.value > 0) ?? false
   const selectedDayRecord = selectedDay ? stats.daily.find(day => day.date === selectedDay) : undefined
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   return (
     <div className="ts-tab-body">
+      {tipNode}
       <StatStrip stats={summary} />
 
       <section className="ts-section">
@@ -138,7 +142,7 @@ export function TokenUsageActivityTab({ stats, entries, rollup }: { stats: Token
               type="button"
               className="ts-chip-btn"
               onClick={() => setSelectedDay(null)}
-              title="回到全部历史时段"
+              {...tip('回到全部历史时段')}
             >
               显示全部时段
             </button>
@@ -188,7 +192,7 @@ export function TokenUsageActivityTab({ stats, entries, rollup }: { stats: Token
               {group.rows.map(row => (
                 <DataRow key={row.date} dimmed={row.total_tokens === 0}>
                   <LeadCell>
-                    <span className="ts-day-label" title={row.date}>{dayLabel(row.date)}</span>
+                    <span className="ts-day-label" {...tip(row.date)}>{dayLabel(row.date)}</span>
                   </LeadCell>
                   <NumCell>{formatNumber(row.requests)}</NumCell>
                   <NumCell strong>{formatNumber(row.total_tokens)}</NumCell>

@@ -2,6 +2,7 @@ import React, { useEffect, useCallback, useState, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { RefreshCw, CheckCircle2, XCircle, FolderOpen, Play, Download, ArrowUpCircle, PackagePlus, ExternalLink } from 'lucide-react'
 import type { AgentStatus } from '../store/useStore'
+import { useBubbleTip } from './useBubbleTip'
 import '../styles/agents.css'
 
 export default function AgentsView() {
@@ -174,6 +175,8 @@ export default function AgentsView() {
 }
 
 function AgentRow({ agent, cwd, latestVersion, onInstalled }: { agent: AgentStatus; cwd: string | null; latestVersion: string | null; onInstalled: () => void }) {
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const [launching, setLaunching] = useState(false)
   const [updating, setUpdating] = useState(false)
   const [installing, setInstalling] = useState(false)
@@ -255,10 +258,11 @@ function AgentRow({ agent, cwd, latestVersion, onInstalled }: { agent: AgentStat
       border: hasUpdate ? '1px solid #f5d6a8' : '1px solid var(--border)',
       transition: 'border-color var(--transition)',
     }}>
+      {tipNode}
       {/* Agent logo */}
       <div
         style={{ position: 'relative', flexShrink: 0, width: 28, height: 28, cursor: agent.website ? 'pointer' : 'default' }}
-        title={agent.website ? `访问官网：${agent.website}` : undefined}
+        {...(agent.website ? tip(`访问官网：${agent.website}`) : {})}
         onClick={() => agent.website && window.api.openExternal(agent.website)}
       >
         {agent.logo ? (
@@ -348,11 +352,12 @@ function AgentRow({ agent, cwd, latestVersion, onInstalled }: { agent: AgentStat
           v{latestVersion}
         </span>
       )}
-      {/* Install button — always visible, disabled when installed or installing */}
+      {/* Install button — always visible, disabled when installed or installing。
+          disabled 按钮收不到鼠标事件，原生 title 反而能弹：事件挂外层 span 保住提示 */}
+      <span style={{ display: 'inline-flex' }} {...tip(installing ? '安装中，请在新终端窗口中等待完成…' : agent.installed ? `${agent.name} 已安装` : `安装 ${agent.name}`)}>
       <button
         onClick={handleInstall}
         disabled={installing || agent.installed}
-        title={installing ? '安装中，请在新终端窗口中等待完成…' : agent.installed ? `${agent.name} 已安装` : `安装 ${agent.name}`}
         style={{
           display: 'flex', alignItems: 'center', gap: 4,
           padding: '4px 12px', fontSize: 12, fontWeight: 600,
@@ -374,12 +379,13 @@ function AgentRow({ agent, cwd, latestVersion, onInstalled }: { agent: AgentStat
           <><PackagePlus size={12} /> 安装</>
         )}
       </button>
+      </span>
       {agent.installed && (
         <>
+          <span style={{ display: 'inline-flex' }} {...tip(hasUpdate ? `更新到 ${latestVersion}` : `更新 ${agent.name}`)}>
           <button
             onClick={handleUpdate}
             disabled={updating}
-            title={hasUpdate ? `更新到 ${latestVersion}` : `更新 ${agent.name}`}
             style={{
               display: 'flex', alignItems: 'center', gap: 4,
               padding: '4px 10px', fontSize: 12, fontWeight: 500,
@@ -396,10 +402,11 @@ function AgentRow({ agent, cwd, latestVersion, onInstalled }: { agent: AgentStat
             <Download size={12} />
             更新
           </button>
+          </span>
+          <span style={{ display: 'inline-flex' }} {...tip(cwd ? `启动 ${agent.name}` : '请先选择工作目录')}>
           <button
             onClick={handleLaunch}
             disabled={!cwd || launching}
-            title={cwd ? `启动 ${agent.name}` : '请先选择工作目录'}
             style={{
               display: 'flex', alignItems: 'center', gap: 4,
               padding: '4px 12px', fontSize: 12, fontWeight: 600,
@@ -416,6 +423,7 @@ function AgentRow({ agent, cwd, latestVersion, onInstalled }: { agent: AgentStat
             <Play size={12} fill="currentColor" />
             启动
           </button>
+          </span>
         </>
       )}
     </div>

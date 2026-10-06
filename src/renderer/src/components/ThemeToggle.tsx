@@ -1,6 +1,7 @@
 import React from 'react'
 import { SunIcon, MoonIcon } from '@animateicons/react/lucide'
 import { useThemeStore } from '../store/themeStore'
+import { useBubbleTip } from './useBubbleTip'
 import '../styles/theme-dark.css'
 
 /**
@@ -12,8 +13,12 @@ export default function ThemeToggle() {
   const theme = useThemeStore(s => s.theme)
   const setTheme = useThemeStore(s => s.setTheme)
   const isDark = theme === 'dark'
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   return (
+    <>
+    {tipNode}
     <button
       className="app-theme-toggle"
       onClick={(e) => {
@@ -23,10 +28,11 @@ export default function ThemeToggle() {
           y: Math.round(r.top + r.height / 2),
         })
       }}
-      title={isDark ? '切换为浅色主题' : '切换为黑暗主题'}
+      {...tip(isDark ? '切换为浅色主题' : '切换为黑暗主题')}
       aria-label="切换应用主题"
     >
       {isDark ? <SunIcon size={15} className="nav-animate-icon" /> : <MoonIcon size={15} className="nav-animate-icon" />}
     </button>
+    </>
   )
 }

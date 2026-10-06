@@ -6,6 +6,7 @@ import { FolderOpenIcon, PlusIcon, MinusIcon, RefreshCwIcon } from '@animateicon
 import { safeCall } from '../utils/safeCall'
 import { ansiToHtml } from '../utils/ansiToHtml'
 import { matchTerminalAction, getTerminalKeybinds, subscribeTerminalStore } from '../utils/terminal-keybinds'
+import { useBubbleTip } from './useBubbleTip'
 import '@xterm/xterm/css/xterm.css'
 import '../styles/agent-terminal.css'
 
@@ -30,6 +31,8 @@ function AutoInput({
 }): React.JSX.Element {
   const mirrorRef = useRef<HTMLSpanElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；title 为空时不挂气泡）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   useEffect(() => {
     const mirror = mirrorRef.current
@@ -44,12 +47,13 @@ function AutoInput({
 
   return (
     <span className="agent-terminal-auto-input">
+      {tipNode}
       <span ref={mirrorRef} className="agent-terminal-auto-input-mirror" aria-hidden>{value}</span>
       <input
         ref={inputRef}
         className="agent-terminal-cwd-input"
         type="text"
-        title={title}
+        {...(title ? tip(title) : {})}
         placeholder={placeholder}
         value={value}
         onChange={onChange}

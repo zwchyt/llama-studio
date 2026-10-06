@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore'
 import { Gauge, Clock, Activity, Hash } from 'lucide-react'
 import type { AgentProject, AgentSession } from '../../../shared/types'
 import { estimateContextMeasured } from '../utils/contextBreakdown'
+import { useBubbleTip } from './useBubbleTip'
 
 interface AgentContextPanelProps {
   templateId: string | null   // 正在运行的模型模板 id（用于查 metrics）；未启动为 null
@@ -25,6 +26,8 @@ function fmtDuration(ms: number): string {
 const COMPRESS_THRESHOLD = 0.8   // 设计稿中的「压缩阈值」参考线（本地 LLM 仅作警告，不改变行为）
 
 export default function AgentContextPanel({ templateId, startedAt, requests, cumTokens, session, project }: AgentContextPanelProps) {
+  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
   const metrics = useStore(s => (templateId ? s.modelMetrics[templateId] : undefined))
   // 仅用 setter 每秒触发一次重渲染以刷新运行时间；tick 值本身不参与渲染，故跳过声明
   const [, setTick] = useState(0)
@@ -69,6 +72,7 @@ export default function AgentContextPanel({ templateId, startedAt, requests, cum
 
   return (
     <div className="agent-ctx-panel">
+      {tipNode}
       <div className="agent-ctx-head">
         <span className="agent-ctx-title">上下文窗口</span>
       </div>
@@ -107,7 +111,7 @@ export default function AgentContextPanel({ templateId, startedAt, requests, cum
                 key={c.key}
                 className="agent-ctx-seg"
                 style={{ width: `${catPct(c.tokens)}%`, background: c.color }}
-                title={`${c.label}：${c.tokens.toLocaleString()} token（${catPct(c.tokens).toFixed(0)}%）`}
+                {...tip(`${c.label}：${c.tokens.toLocaleString()} token（${catPct(c.tokens).toFixed(0)}%）`)}
               />
             ))}
           </div>
