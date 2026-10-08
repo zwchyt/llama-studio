@@ -673,84 +673,46 @@
   border-radius: 2px;
 }
 
-/* ── 模型抽屉 ── */
-.ts-drawer-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-overlay);
-  background: rgba(0, 0, 0, .28);
-  display: flex;
-  justify-content: flex-end;
-  animation: ts-fade-in .15s ease-out;
-}
-
-.ts-drawer {
-  width: 400px;
-  max-width: 92vw;
-  height: 100%;
-  background: var(--surface);
-  border-left: 1px solid var(--border-strong);
-  z-index: var(--z-modal);
-  display: flex;
-  flex-direction: column;
-  box-shadow: -12px 0 32px rgba(0, 0, 0, .12);
-  animation: ts-drawer-in .2s ease-out;
-  overflow: hidden;
-}
-
-@keyframes ts-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes ts-drawer-in {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
-}
-
-.ts-drawer-head {
-  flex-shrink: 0;
-  padding: 16px 16px 12px;
+/* ── 模型行的展开详情（行内一行，colSpan 贯通整表）──
+   不做浮层：浮层要遮罩，会把左侧导航一起压暗；固定宽度也装不下 45 根柱。
+   行内展开既没有遮罩问题，又能拿到整张表的宽度。 */
+.ts-detail-cell {
+  padding: 0;
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
 
-.ts-drawer-title-row {
+.ts-detail {
+  padding: 14px 16px 18px;
+}
+
+.ts-detail-head {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.ts-drawer-dot {
+.ts-detail-dot {
   flex-shrink: 0;
   width: 10px;
   height: 10px;
   border-radius: 50%;
 }
 
-.ts-drawer-titles {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.ts-drawer-title {
+.ts-detail-title {
   font-size: 15px;
   font-weight: 700;
   margin: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.ts-drawer-status {
+.ts-detail-status {
   font-size: 11px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
-.ts-drawer-close {
+.ts-detail-close {
+  margin-left: auto;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -765,44 +727,31 @@
   transition: background var(--transition), color var(--transition);
 }
 
-.ts-drawer-close:hover {
+.ts-detail-close:hover {
   background: var(--surface-hover);
   color: var(--text);
 }
 
-.ts-drawer-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 14px 16px 24px;
-}
-
-.ts-drawer-path {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-secondary);
-  margin: 0 0 2px;
-  word-break: break-all;
-}
-
-.ts-drawer-path-sub {
+.ts-detail-path {
   font-size: 11px;
   color: var(--text-muted);
-  margin: 0;
+  margin: 4px 0 0;
   word-break: break-all;
 }
 
+/* 四个数字并成一排：行内展开有整表宽度，不必再折成 2×2 */
 .ts-facts {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
-  margin: 16px 0;
+  margin: 14px 0;
 }
 
 .ts-fact {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
-  background: var(--bg);
+  background: var(--surface);
 }
 
 .ts-fact-label {
@@ -817,27 +766,33 @@
   font-variant-numeric: tabular-nums;
 }
 
-.ts-drawer-section-title {
+.ts-detail-section-title {
   font-size: 12px;
   font-weight: 700;
   margin: 0 0 3px;
 }
 
-.ts-drawer-section-desc {
+.ts-detail-section-desc {
   font-size: 11px;
   color: var(--text-muted);
   margin: 0 0 10px;
 }
 
-.ts-drawer-bars .ts-bars {
+.ts-detail-bars .ts-bars {
   padding: 10px 10px 6px;
 }
 
-.ts-drawer-bar-range {
+.ts-detail-bar-range {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
   font-size: 10px;
   color: var(--text-muted);
   margin-top: 6px;
   font-variant-numeric: tabular-nums;
+}
+
+.ts-detail-bar-peak {
+  color: var(--text-secondary);
 }

@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import {
   BarCell, DataRow, EndCell, HeadCell, LeadCell, NumCell, StatStrip, TableFrame, TableNotice,
   useSortedRows, type Stat,
 } from './TokenUsageTable'
-import { TokenUsageDrawer } from './TokenUsageDrawer'
+import { TokenUsageDetail } from './TokenUsageDrawer'
 import { buildModelColors, fmtCompactTokens, formatNumber } from '../utils/token-stats'
 import type { TokenModelRow, TokenStats } from '../utils/token-stats'
 import { useBubbleTip } from './useBubbleTip'
@@ -98,26 +98,28 @@ export function TokenUsageModelsTab({ stats }: { stats: TokenStats }) {
           </thead>
           <tbody>
             {sorted.map(row => (
-              <ModelRow
-                key={row.model}
-                row={row}
-                peak={peak}
-                color={colorOf.get(row.model) ?? 'var(--accent)'}
-                onOpen={() => setSelected(row)}
-              />
+              <Fragment key={row.model}>
+                <ModelRow
+                  row={row}
+                  peak={peak}
+                  color={colorOf.get(row.model) ?? 'var(--accent)'}
+                  // 再点同一行收起
+                  onOpen={() => setSelected(current => (current?.model === row.model ? null : row))}
+                />
+                {selected?.model === row.model ? (
+                  <TokenUsageDetail
+                    model={row}
+                    daily={stats.daily_by_model}
+                    color={colorOf.get(row.model) ?? 'var(--accent)'}
+                    colSpan={6}
+                    onClose={() => setSelected(null)}
+                  />
+                ) : null}
+              </Fragment>
             ))}
           </tbody>
         </TableFrame>
       )}
-
-      {selected ? (
-        <TokenUsageDrawer
-          model={selected}
-          daily={stats.daily_by_model}
-          color={colorOf.get(selected.model) ?? 'var(--accent)'}
-          onClose={() => setSelected(null)}
-        />
-      ) : null}
     </div>
   )
 }

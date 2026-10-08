@@ -262,8 +262,8 @@ export function parseThinkSegments(content: string): ContentSegment[] {
 // ── segments 时间线（pi 模式）──
 // 时间线切分在 runPiTurn 内实时构建（appendTextDelta/buildSegs）：
 // 思考/正文增量按 <think> 边界切段、工具声明切段，事件到达顺序即真实时间线。
-// 渲染采用「单容器」方案（见 renderSegmentsFor）：整条消息只有一个思考链容器，
-// 思考段 / 工具卡 / 过程正文按时间线交错收纳其中，仅最终正文段独立成泡。
+// 渲染见 renderSegmentsFor：一级标题常驻；链内按时间线分批，过程正文拆到链外以正文气泡渲染，
+// 仅最终正文段独立成泡。
 
 // 思考块渲染节流间隔（与正文流式落盘节奏 ~30ms 同频）。
 // 此前 120ms（8fps）在思考吐字快时每 120ms 跳一大块文字（4-5 个 token），观感「一顿一顿」；
@@ -293,9 +293,9 @@ const ThinkGrid = React.memo(function ThinkGrid() {
 })
 
 // 思考链内的元素（按模型真实时间线排列）：思考续段文本 / 工具卡组 / 过程正文段。
-// 供 ThinkBlock 收纳展示——单条消息的思考链 = 一个 ThinkBlock（单容器方案），
-// 链内全部思考文本、工具卡与过程正文按时间线交错合并，不再按「思考→工具→正文」
-// 切分多个独立思考块；仅最终正文段留在容器下方独立成泡。
+// 供 ThinkBlock 渲染：一级标题常驻最上方，链内元素按时间线分批——连续的「思考 + 工具」
+// 收成一个二级标题块（批），过程正文段则拆到链外、以普通正文气泡独立渲染，
+// 因此正文会把链切成多段、形成多个二级标题；仅最终正文段留在末尾独立成泡。
 // streaming：该思考续段正在流式生长（恢复思考场景，位于 items 而非 value）。
 // segKey：链内元素的稳定身份，只随「是哪一段」变，不随它在 items 里的位置变。
 // 用源段序号（liveSegs 只追加不插入，下标即身份）；工具组用首个工具 id，这样尾部实时
@@ -309,13 +309,14 @@ type ThinkChainItem =
 
 // ── 批（Batch）：思考链内部的组织单位 ──────────────────────────────────────
 // 一段连续的「思考段 + 工具段」合并为一个批，批与批之间由过程正文段切开。
-// 批头一行（有工具 →「执行工具 N 次 · 1.8s」，纯思考 →「思考过程」），点开才是批内时间线。
+// 批头即「二级标题」：只显示计数（有工具 →「N 次工具调用 · 1.8s」，纯思考 →「N 次思考」），
+// 点开才是批内时间线。thinkCount = 批内思考段数，toolCount = 批内工具调用总数。
 // active：该批之后尚未出现过程正文段、且整轮仍在流式 → 默认展开；否则默认收起
 // （「跑着的批展开、跑完的批收成一行」，批结束的判据就是其后出现了过程正文）。
 type BatchItem = Extract<ThinkChainItem, { kind: 'think' | 'tools' }>
 
 type ChainEntry =
-  | { kind: 'batch'; segKey: string; items: BatchItem[]; toolCount: number; toolDurationMs?: number; active: boolean }
+  | { kind: 'batch'; segKey: string; items: BatchItem[]; toolCount: number; thinkCount: number; durationMs?: number; active: boolean }
   | Extract<ThinkChainItem, { kind: 'text' }>
 
 // 时间线 → 批序列：以过程正文段（text）为界，把连续的 think/tools 收成一批。
@@ -326,19 +327,23 @@ function groupIntoBatches(timeline: ThinkChainItem[], streaming: boolean): Chain
   const flush = (): void => {
     if (!cur.length) return
     let toolCount = 0
+    let thinkCount = 0
     // 批内工具总耗时 = 批内各工具段定格时长之和（与链头 chainTotalMs 同一口径）。
     // 一段都没定格时不带该字段（批还在跑），批头就不显示时长。
     let toolDurationMs = 0
     let hasToolDuration = false
     for (const it of cur) {
-      if (it.kind !== 'tools') continue
-      toolCount += it.toolCalls.length
-      if (it.durationMs != null) { toolDurationMs += it.durationMs; hasToolDuration = true }
+      if (it.kind === 'tools') {
+        toolCount += it.toolCalls.length
+        if (it.durationMs != null) { toolDurationMs += it.durationMs; hasToolDuration = true }
+      } else {
+        thinkCount += 1
+      }
     }
     // segKey 取批内首段的身份：批只会向后追加，首段不变 → key 稳定，不重挂
     out.push({
-      kind: 'batch', segKey: `b:${cur[0]!.segKey}`, items: cur, toolCount,
-      ...(hasToolDuration ? { toolDurationMs } : {}),
+      kind: 'batch', segKey: `b:${cur[0]!.segKey}`, items: cur, toolCount, thinkCount,
+      ...(hasToolDuration ? { durationMs: toolDurationMs } : {}),
       active: false,
     })
     cur = []
@@ -367,9 +372,9 @@ function groupIntoBatches(timeline: ThinkChainItem[], streaming: boolean): Chain
 // 折叠用 max-height 像素过渡 + 保持挂载，与容器级 ThinkBlock 同方案；展开体有高度上限
 // （.agent-think-fold-body 内部滚动），单段六七十行不会撑长整条链。
 //
-// expandWithContainer：批级联动开关，只由 ToolBatchFold 传 true。批头「执行工具 N 次」是
-// 自包含的回合单元，点开它的人想看的就是「这一轮为什么调这些工具」，所以批开合时其下思考段
-// 一并开合。外层 ThinkBlock 不传 —— 那是全消息级容器，跟随会把整条链全铺开。
+// expandWithContainer：批级联动开关，只由 BatchFold 传 true。批头（「N 次工具调用 / N 次思考」）
+// 是自包含的回合单元，点开它的人想看的就是「这一轮为什么这么做」，所以批开合时其下思考段
+// 一并开合。一级标题（.agent-think-head）不传 —— 它是常驻总标题，跟随会把整条链全铺开。
 const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, durationMs, streaming, containerExpanded, expandWithContainer }: {
   content: string
   durationMs?: number
@@ -517,22 +522,21 @@ const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, duratio
   )
 })
 
-// ── 批折叠块（链内「思考 + 工具」批的容器）────────────────────────────────
-// 批头：橙色等宽标签（沿用 .agent-think-fold-head 的规格）+ 活跃态像素网格；
-// 批体：左竖线缩进（沿用 .agent-think-body 的规格），内部【原样复用】ThinkSegmentFold
-// 与 ToolCallGroup —— 不新建批内条目组件，保持项目既有的思考块与工具卡形态与信息密度。
+// ── 二级标题块（链内「批」的容器）────────────────────────────────────────
+// 批头即二级标题：橙色等宽标签（沿用 .agent-think-fold-head 的规格）+ 活跃态像素网格，
+// 只显示计数（有工具 →「N 次工具调用」，纯思考 →「N 次思考」），字号/字重明显低于一级
+// 总标题；批体：左竖线缩进（沿用 .agent-think-body 的规格），内部【原样复用】
+// ThinkSegmentFold 与 ToolCallGroup —— 不新建批内条目组件，保持既有思考块与工具卡形态。
 //
-// 展开态默认跟随 active（活跃批展开、已结束批收起），用户点击后转为粘性、不再被自动态覆盖；
-// 外层思考链收起时批体保持挂载、由外层统一裁剪（containerExpanded 约定，与 ThinkSegmentFold 同）。
-const ToolBatchFold = React.memo(function ToolBatchFold({ items, toolCount, toolDurationMs, active, containerExpanded, onPreviewFile, canUndoFor, onUndo }: {
+// 展开态默认跟随 active（活跃批展开、已结束批收起），用户点击后转为粘性、不再被自动态覆盖。
+const BatchFold = React.memo(function BatchFold({ items, toolCount, thinkCount, durationMs, active, onPreviewFile, canUndoFor, onUndo }: {
   items: BatchItem[]
   toolCount: number
+  thinkCount: number
   /** 批内工具总耗时（各工具段定格时长之和）；批还在跑时无值，批头就不显示时长 */
-  toolDurationMs?: number
+  durationMs?: number
   /** 活跃批：其后尚未出现过程正文段且整轮仍在流式 → 默认展开，结束即自动收起 */
   active: boolean
-  /** 外层思考链的展开态：收起时不跑批自己的像素过渡，交给外层统一裁剪 */
-  containerExpanded?: boolean
   onPreviewFile?: (p: string, line?: number) => void
   canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean
   onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void
@@ -548,16 +552,9 @@ const ToolBatchFold = React.memo(function ToolBatchFold({ items, toolCount, tool
     if (!expanded) setExpanded(true)
   }
   // 批结束（其后出现过程正文 / 整轮结束）→ 自动收起；用户手动开合过的批保持粘性。
-  // 外层容器收起引起的收起不跑批自己的过渡，只切状态、保持内容高度，由外层统一裁剪。
   useEffect(() => {
     if (userToggledRef.current) return
     if (active) return
-    if (containerExpanded === false) {
-      const el = bodyRef.current
-      if (el) el.style.maxHeight = 'none'
-      setExpanded(false)
-      return
-    }
     if (visible && expandedRef.current) collapse()
     else { setExpanded(false); setVisible(false) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -572,31 +569,20 @@ const ToolBatchFold = React.memo(function ToolBatchFold({ items, toolCount, tool
     const t = setTimeout(() => setVisible(true), 300)
     return () => clearTimeout(t)
   }, [visible, setVisible])
-  // 程序化展开（活跃 / 容器联动）直接置自适应高度：不走 0→scrollHeight 过渡，
+  // 程序化展开（活跃批）直接置自适应高度：不走 0→scrollHeight 过渡，
   // 否则批体高度测量早于批内折叠块展开，会出现「批头已开、内容被裁」的观感。
   useLayoutEffect(() => {
     const el = bodyRef.current
     if (active && visible && expanded && el && !userToggledRef.current) el.style.maxHeight = 'none'
   }, [active, visible, expanded])
-  // 外层思考链「收起 → 重新展开」时，批必须按自己的展开态恢复裁剪。
-  // 外层收起时批把 max-height 置成 none（内容保持挂载、交给外层统一裁剪，见上面的 effect）；
-  // 外层一旦重新展开就不再裁了，而批的收起 effect 只依赖 active、不会因 containerExpanded
-  // 变化重跑 —— 不在这里补一刀，收起的批体会露在批头外面，而批头箭头仍是收起态，
-  // 表现就是「内容已经展开着、箭头却没向下」。展开态由上面那条 effect 负责，这里只管收起态。
-  useLayoutEffect(() => {
-    if (containerExpanded === false) return
-    if (expanded) return
-    const el = bodyRef.current
-    if (el) el.style.maxHeight = '0px'
-  }, [containerExpanded, expanded])
   return (
     <div className="agent-think-batch">
       <button className="agent-think-batch-head" onClick={handleToggle} aria-expanded={expanded}>
         {active && <ThinkGrid />}
         <span className={`agent-think-fold-label${active ? ' live' : ''}`}>
-          {toolCount > 0 ? `执行工具 ${toolCount} 次` : '思考过程'}
-          {/* 段级时长：与思考段折叠头的「Thought: 515ms」同粒度、同风格（橙色等宽标签） */}
-          {toolDurationMs != null ? ` · ${formatDuration(toolDurationMs)}` : ''}
+          {toolCount > 0 ? `${toolCount} 次工具调用` : `${thinkCount} 次思考`}
+          {/* 工具耗时：与思考段折叠头的「Thought: 515ms」同粒度、同风格（橙色等宽标签） */}
+          {durationMs != null ? ` · ${formatDuration(durationMs)}` : ''}
         </span>
         <ChevronRightIcon size={11} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
       </button>
@@ -612,8 +598,7 @@ const ToolBatchFold = React.memo(function ToolBatchFold({ items, toolCount, tool
                       durationMs={it.durationMs}
                       streaming={it.streaming}
                       containerExpanded={expanded}
-                      // 批级联动：批头「执行工具 N 次」展开时，其下思考段一并展开；收起时一并收起。
-                      // 外层 ThinkBlock 不传此开关（见 ThinkSegmentFold 的说明）。
+                      // 批级联动：批头展开时，其下思考段一并展开；收起时一并收起。
                       expandWithContainer
                     />
                   )
@@ -634,6 +619,45 @@ const ToolBatchFold = React.memo(function ToolBatchFold({ items, toolCount, tool
   )
 })
 
+// ── 正文段统一渲染：文本气泡 / Mermaid / Chart / SVG 分块 ───────────────────
+// 供「链外过程正文」与「最终结论」共用，保证两处样式一致（正文气泡 = chat-msg-bubble）。
+// keyPrefix 区分来源，避免同一条消息内 key 冲突。
+function renderTextBlocks(content: string, streaming: boolean, keyPrefix: string): React.ReactNode[] {
+  return parseContentToBlocks(content, streaming).map((block, i) => {
+    if (block.kind === 'mermaid') {
+      return (
+        <div key={`${keyPrefix}-mermaid-${i}`} className="agent-msg-ui">
+          <MermaidCard code={block.code} renderFallback={(c) => <CodeBlock language="" value={c} />} />
+        </div>
+      )
+    }
+    if (block.kind === 'chart') {
+      return (
+        <div key={`${keyPrefix}-chart-${i}`} className="agent-msg-ui">
+          <ChartCard code={block.code} renderFallback={(c) => <CodeBlock language="" value={c} />} />
+        </div>
+      )
+    }
+    if (block.kind === 'svg') {
+      return (
+        <div key={`${keyPrefix}-svg-${i}`} className="agent-msg-ui">
+          <SvgCard code={block.code} streaming={block.streaming === true} renderFallback={(c) => <CodeBlock language="" value={c} />} />
+        </div>
+      )
+    }
+    return (
+      <div key={`${keyPrefix}-text-${i}`} className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>
+        <StreamingMarkdown content={block.content} isStreaming={streaming} />
+      </div>
+    )
+  })
+}
+
+// ── 思考链：一级总标题 + 二级标题块（批）/ 链外过程正文 ─────────────────────
+// 一级标题（.agent-think-head）显示模型名 / 速度 / 思考时间，点它收起/展开链内容：
+// 运行中自动展开（过程看得见）、回合结束自动收起（把版面让给最终输出），手动开合后保持粘性。
+// 其下按时间线交替排列「二级标题块（批）」与「过程正文」。过程正文已从思考链中拆出，
+// 作为普通正文气泡独立渲染——正文因此把链切成多段，形成多个链块（多个二级标题）。
 export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStreaming, msgStreaming, bodyAppeared, durationMs, items, onPreviewFile, canUndoFor, onUndo, pending, streamStartAt, runTotalMs, meta }: {
   value: string; closed: boolean; isStreaming?: boolean; msgStreaming?: boolean; bodyAppeared?: boolean; durationMs?: number
   // pending：首 token 前占位态（同一思考卡头部：「思考中」+ 流开始连续计时，不挂载内容），
@@ -656,30 +680,7 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
   canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean
   onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void
 }) {
-  const bodyRef = useRef<HTMLDivElement>(null)
-  const userToggledRef = useRef(false)
-  // 标记「本次 expanded=true 是用户手动点击展开」：仅这类展开走 max-height 像素过渡动画，
-  // 自动展开（流式 / 容器联动）仍走自适应高度（见下方 useLayoutEffect）。为 true 时表示
-  // 「这一次展开」需要动画，由 useLayoutEffect 消费放行，过渡结束（或收起）时复位。
-  const manualExpandRef = useRef(false)
-  const { expanded, visible, setExpanded, setVisible, expandedRef, onBodyTransitionEnd: rawBodyTransitionEnd, toggle: handleToggle } =
-    useCollapseAnimation(bodyRef, {
-      initialExpanded: isStreaming ?? false,
-      beforeToggle: () => {
-        userToggledRef.current = true
-        // 点击时若当前是收起态 → 这次是「手动展开」，需要走动画
-        manualExpandRef.current = !expandedRef.current
-      },
-    })
-  // 过渡结束后：手动展开的标记复位，并把 max-height 落回 none 以自适应后续内容增长。
-  const handleBodyTransitionEnd = useCallback((e: React.TransitionEvent<HTMLDivElement>) => {
-    if (e.propertyName === 'max-height') manualExpandRef.current = false
-    rawBodyTransitionEnd(e)
-  }, [rawBodyTransitionEnd])
-  // 仅当「正在流式」时才显示「思考中」转圈。注意不能用 !closed 参与判断：
-  // 模型在「调用工具、不输出闭合 </think>」时 closed 恒为 false，若用 !closed 会让
-  // 思考块永远转圈，直到下一轮才补上闭合标签。改为只看 isStreaming（= 真正流式且未闭合），
-  // 流式一结束（进入工具执行阶段）思考块立即停止转圈。
+  // thinking
   const thinking = isStreaming
   // 思考链内全部工具卡（items 中 tools 组并集）：存在未完成者（待执行/执行中/待确认）
   // 则思考链保持展开显示工具执行态（等待工具结果期间不收起），全部完成后恢复自动收起；
@@ -757,68 +758,7 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
     return groupIntoBatches(timeline, !!msgStreaming && !bodyAppeared)
   }, [value, items, durationMs, thinking, streamThinkItem, msgStreaming, bodyAppeared])
 
-  useEffect(() => {
-    if (userToggledRef.current) return
-    // pending 占位态：内容尚未到达，不挂载 body
-    if (pending) return
-    // 运行中出现新的活动（思考恢复 / 还有未完成的工具）→ 展开。
-    if (thinking || hasLiveTools) {
-      setVisible(true)
-      setExpanded(true)
-      return
-    }
-    // 运行中一律保持展开，只收「批」（判据在 groupIntoBatches 的 active）：链内的过程正文段
-    // 也在容器内，一收会连同后面的新批一起被藏掉。
-    //
-    // ⚠️ 整轮结束后**也不再自动收起外层**（原实现是「把版面让给结论气泡」）：链内不只有思考段
-    // 与工具卡，还交错收纳着**过程正文段** —— 那是模型真实输出的一部分，自动收起会一并藏掉。
-    // 现在一律保持展开，收起完全交给用户点击（userToggledRef 粘性）。
-    // 若日后想折中（例如「链内条目超过 N 条才自动收」），加在这里即可。
-  }, [thinking, hasLiveTools, pending])
-
-  // 注：原先还有一条「closed 兜底自动收起」的 effect，已随上面的改动一并移除。
-
-  // 首展开卡顿优化：挂载后在浏览器空闲时段预挂载折叠体（保持收起、max-height 0
-  // 不可见），把 Markdown/KaTeX 的首次解析成本从「首次点击展开」那一帧挪到空闲期；
-  // 之后展开走「已挂载」路径（纯 max-height 过渡，无重挂载）→ 不卡。
-  // 消息列表有虚拟窗口，预挂载规模受窗口限制，长会话不会因此全量解析。
-  useEffect(() => {
-    if (visible || pending) return
-    if (typeof window.requestIdleCallback === 'function') {
-      const id = window.requestIdleCallback(() => setVisible(true), { timeout: 1500 })
-      return () => window.cancelIdleCallback(id)
-    }
-    const t = setTimeout(() => setVisible(true), 300)
-    return () => clearTimeout(t)
-  }, [visible, pending, setVisible])
-
-  const prevThinkingRef = useRef(thinking)
-  useEffect(() => {
-    if (prevThinkingRef.current && !thinking) userToggledRef.current = false
-    prevThinkingRef.current = thinking
-  }, [thinking])
-
-  // 展开/收起用 max-height 像素过渡（见 agent-code.css）：由 useCollapseAnimation 提供
-  // handleToggle / onBodyTransitionEnd。关键：首次展开挂载 Markdown 后【保持挂载】，
-  // 收起只把 max-height 收到 0（不卸载 DOM）。否则每次收起卸载、展开重新挂载会重解析
-  // Markdown（KaTeX/高亮），在展开瞬间造成明显卡顿。
-
-  // 容器展开时直接以自适应高度呈现（绘制前置 none，不走 0→测量高度 过渡）：
-  // 容器高度测量发生在链内折叠块展开之前，测量值偏小——若走过渡，动画期间内容被
-  // 裁剪、过渡结束后再「长高」，表现为展开卡顿/回跳。收起仍保留像素过渡动画。
-  //
-  // 例外：用户「手动点击」展开时必须走像素过渡（0 → scrollHeight），否则无动画。
-  // 原因：手动展开时 useCollapseAnimation.expand() 刚把 max-height 设为具体像素值，
-  // 若同一帧本 effect 又置 none，过渡的起止值都被抹掉 → 浏览器直接跳到最终高度，
-  // 表现为「展开生硬、收起才有缓冲」的不对称。用 manualExpandRef 放行手动展开一帧，
-  // 由 transitionend（onBodyTransitionEnd）在动画结束后再置 none 自适应。
-  useLayoutEffect(() => {
-    const el = bodyRef.current
-    if (!el || !expanded) return
-    if (manualExpandRef.current) return // 手动展开：保持 expand() 设好的像素值，交给过渡
-    el.style.maxHeight = 'none'
-  }, [expanded])
-
+  // 一级标题常驻、不折叠：外层不再有开合态，链内「批」各自按 active 自动开合（见 BatchFold）。
   // 头部「思考中」状态判定：消息仍在流式即「思考中」（思考/工具/正文/段间间隙统一），
   // 不看「本轮是否已出现正文」（流式临时态，会在两种标题间反复重建）。「思考过程 +
   // 思考了 X 秒」的定格标题只在运行结束（done）时生成一次。
@@ -827,9 +767,62 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
   // 若不带 msgStreaming 守卫，正文/工具阶段（thinking=false）会被误判「已中断」
   // 而给容器加上 stopped 样式。
   const wasStopped = !msgStreaming && !thinking && !closed
+
+  // ── 外层收起/展开 ──────────────────────────────────────────────────────
+  // 触发只用 msgStreaming（回合是否在跑）：运行中展开、回合结束收起。它是单调翻转，
+  // 不会像 bodyAppeared（最后一段是不是正文）那样在运行中反复横跳。
+  // 用户手动点过就保持粘性，直到下一轮开始再交回自动。
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const userToggledRef = useRef(false)
+  // manualExpandRef：这次展开是否来自手动点击 —— 手动展开保留像素过渡，程序化展开直接置 none
+  const manualExpandRef = useRef(false)
+  const { expanded, visible, setExpanded, setVisible, expandedRef, onBodyTransitionEnd: rawBodyTransitionEnd, collapse, toggle: handleToggle } =
+    useCollapseAnimation(bodyRef, {
+      initialExpanded: !!msgStreaming,
+      skipFirstAnim: true,
+      beforeToggle: () => {
+        userToggledRef.current = true
+        manualExpandRef.current = !expandedRef.current
+      },
+    })
+  const handleBodyTransitionEnd = useCallback((e: React.TransitionEvent<HTMLDivElement>) => {
+    if (e.propertyName === 'max-height') manualExpandRef.current = false
+    rawBodyTransitionEnd(e)
+  }, [rawBodyTransitionEnd])
+  // 运行中展开；回合结束收起（用户手动开合过就尊重用户）。
+  useEffect(() => {
+    if (msgStreaming) {
+      userToggledRef.current = false
+      setVisible(true)
+      setExpanded(true)
+      return
+    }
+    if (userToggledRef.current) return
+    collapse()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [msgStreaming])
+  // 收起态空闲预挂载：把 Markdown/KaTeX 的首次解析成本从「首次点开」挪到空闲期，
+  // 否则长链首次展开会卡一下（消息列表有虚拟窗口，预挂载规模受窗口限制）。
+  useEffect(() => {
+    if (visible) return
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(() => setVisible(true), { timeout: 1500 })
+      return () => window.cancelIdleCallback(id)
+    }
+    const t = setTimeout(() => setVisible(true), 300)
+    return () => clearTimeout(t)
+  }, [visible, setVisible])
+  // 程序化展开（运行中 / 新一轮）直接置自适应高度：内容随流式增长，不能锁死在某个像素值上。
+  useLayoutEffect(() => {
+    const el = bodyRef.current
+    if (!el || !expanded || manualExpandRef.current) return
+    el.style.maxHeight = 'none'
+  }, [expanded, visible])
+
   return (
-    <div className={`agent-think ${thinking ? 'thinking' : ''} ${expanded ? 'expanded' : ''} ${wasStopped ? 'stopped' : ''} ${msgStreaming ? 'agent-think--streaming' : ''}`}>
-      <button className="agent-think-toggle" onClick={handleToggle}>
+    <div className={`agent-think agent-think-chain ${thinking ? 'thinking' : ''} ${wasStopped ? 'stopped' : ''} ${msgStreaming ? 'agent-think--streaming' : ''}`}>
+      {/* 一级标题：常驻总标题（模型名 / 速度 / 思考时间）——点它收起/展开链内容 */}
+      <button className="agent-think-head" onClick={handleToggle} aria-expanded={expanded}>
         {showThinking ? (
           <span className="agent-think-status">
             {/* 思考中（含首 token 前 pending 占位）：像素网格 + 流光文案 + 连续计时，全程同一视觉 */}
@@ -841,14 +834,12 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
             {toolCount > 0 && <span className="agent-think-tools-badge">{toolCount} 次工具调用</span>}
             {/* 模型名 + token 计数：思考链阶段也常驻（token 源 = 含思考标签的流文本，实时估算增长） */}
             {meta}
-            <ChevronRightIcon size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
           </span>
         ) : wasStopped ? (
           <span className="agent-think-status">
             <Brain size={13} className="agent-think-brain" /> 思考已中断
             {toolCount > 0 && <span className="agent-think-tools-badge">{toolCount} 次工具调用</span>}
             {meta}
-            <ChevronRightIcon size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
           </span>
         ) : (
           <span className="agent-think-status">
@@ -856,72 +847,40 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
             {headMs > 0 && <span className="agent-think-dur">思考了 {fmtThinkDur(headMs)}</span>}
             {toolCount > 0 && <span className="agent-think-tools-badge">{toolCount} 次工具调用</span>}
             {meta}
-            <ChevronRightIcon size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
           </span>
         )}
+        <ChevronRightIcon size={13} className={`agent-think-chevron ${expanded ? 'open' : ''}`} />
       </button>
       {visible && (
         <div className="agent-think-anim" ref={bodyRef} onTransitionEnd={handleBodyTransitionEnd}>
-          {/* 裁剪层（无 padding/border）做 max-height 动画；内容层承载 padding/字体；首次展开后保持挂载，收起只收到 0；
-	              流式期间父组件已不会再高频重渲染（store 节流 + 模块级 memo），
-	              因此过渡期间 Markdown 不会被重解析，不会卡。 */}
-          <div className="agent-think-body">
-            {/* 链内按「批 / 过程正文段」交替渲染（groupIntoBatches 的结果，即时间线原序）：
-                · 批：连续的「思考 + 工具」——有工具时收成一行批头（「执行工具 N 次」），
-                  点开是批内时间线；活跃批（其后尚未出现过程正文、整轮仍在跑）默认展开，
-                  一旦其后输出过程正文即自动收起；
-                · 纯思考批（无工具）直接铺思考折叠块——每段思考「思考中展开、思考完折成一行」，
-                  与批头同一套语义（跑着的展开、跑完的收成一行）；
-                · 过程正文段平铺常显，永不折叠。
-                调用窗口由调用方保证有 items 时必传渲染回调。 */}
+          {/* 思考内容层：整体左缩进一档，把「过程/推理」与最左的主标题、最终输出拉开层级。
+              主标题（.agent-think-head）不缩进，最终输出在链外、同样不缩进。 */}
+          <div className="agent-think-content">
+            {/* 二级标题块（批）与链外过程正文交替：批按 active 自动开合，正文以普通正文气泡渲染 */}
             {entries.length === 0 ? (
               // pending 阶段（首 token 未到 / 模型加载上下文中）：动态等待提示，替代生硬的「（空）」
-              thinking
-                ? <span className="agent-think-waiting"><i /><i /><i />正在加载上下文…</span>
-                : <span className="agent-think-empty">（暂无内容）</span>
-            ) : entries.map((e) => e.kind === 'batch' ? (
-              e.toolCount > 0 ? (
-                <ToolBatchFold
-                  key={e.segKey}
-                  items={e.items}
-                  toolCount={e.toolCount}
-                  toolDurationMs={e.toolDurationMs}
-                  active={e.active}
-                  containerExpanded={expanded}
-                  onPreviewFile={onPreviewFile}
-                  canUndoFor={canUndoFor}
-                  onUndo={onUndo}
-                />
-              ) : (
-                e.items.map((it) => it.kind === 'think' ? (
-                  <ThinkSegmentFold
-                    key={it.segKey}
-                    content={it.content}
-                    durationMs={it.durationMs}
-                    streaming={it.streaming}
-                    containerExpanded={expanded}
-                  />
-                ) : (
-                  <div key={it.segKey} className="agent-think-item">
-                    <ToolCallGroup
-                      toolCalls={it.toolCalls}
-                      onPreviewFile={onPreviewFile!}
-                      canUndoFor={canUndoFor}
-                      onUndo={onUndo}
-                    />
-                  </div>
-                ))
-              )
-            ) : (
-              // 过程正文段（阶段性说明与流式中的答案都在此）：文字用主文字色
-              // （agent-think-prose），比弱化的思考文本更黑更明显，区分主次；
-              // 仍在生长的那一段走流式管线，完成后换完整 Markdown 栈。
-              <div key={e.segKey} className="agent-think-item agent-think-prose">
-                {/* 流式与完成都走同一个组件：换组件身份会让 React 卸载重挂整棵 Markdown 子树
-                    （长正文可感知，且丢掉块内选中与滚动位置）。这里只翻 isStreaming ——
-                    StreamingMarkdown 内部本就是同一个 <Markdown>，final 由 isStreaming 推出。 */}
-                <StreamingMarkdown content={e.content} isStreaming={!!e.live} />
+              <div className="agent-think-body">
+                {thinking || pending
+                  ? <span className="agent-think-waiting"><i /><i /><i />正在加载上下文…</span>
+                  : <span className="agent-think-empty">（暂无内容）</span>}
               </div>
+            ) : entries.map((e) => e.kind === 'batch' ? (
+              <BatchFold
+                key={e.segKey}
+                items={e.items}
+                toolCount={e.toolCount}
+                thinkCount={e.thinkCount}
+                durationMs={e.durationMs}
+                active={e.active}
+                onPreviewFile={onPreviewFile}
+                canUndoFor={canUndoFor}
+                onUndo={onUndo}
+              />
+            ) : (
+              // 过程正文：已从思考链中拆出，按普通正文气泡渲染（同最终结论）
+              <React.Fragment key={e.segKey}>
+                {renderTextBlocks(e.content, !!e.live, `prose-${e.segKey}`)}
+              </React.Fragment>
             ))}
           </div>
         </div>
@@ -1072,12 +1031,11 @@ export const StreamingMarkdown = React.memo(function StreamingMarkdown({ content
   return <Markdown content={smooth} final={!isStreaming} variant="agent" />
 })
 
-// 旧消息（无 segments）的内容渲染：与 segments 消息同构的「单容器」方案——
-// 按 <think> 边界切出的片段全部收纳进唯一思考链容器（ThinkBlock，链内按时间线
-// 交错收纳思考续段 / 过程正文 / 工具卡），仅最后一个正文段（最终结论）留在容器
-// 下方独立成泡；流式期间「最后一段是正文」只是临时最终态，思考恢复后声明式地
-// 自动收纳回容器。legacy 工具卡无时间线信息，沿用旧规则收纳进容器尾部；
-// 无思考段时保持传统布局（工具卡独立成组、正文按序成泡）。
+// 旧消息（无 segments）的内容渲染：与 segments 消息同构——
+// 按 <think> 边界切出的片段进 ThinkBlock（一级标题常驻；连续的思考+工具收成二级标题块，
+// 过程正文段拆到链外以普通正文气泡渲染），仅最后一个正文段（最终结论）留在末尾独立成泡；
+// 流式期间「最后一段是正文」只是临时最终态，思考恢复后声明式地自动回链。legacy 工具卡
+// 无时间线信息，沿用旧规则收纳进链尾；无思考段时保持传统布局（工具卡独立成组、正文按序成泡）。
 export const StreamingContent = React.memo(function StreamingContent({ content, streaming, thinkDone, toolCalls, runTotalMs, onPreviewFile, canUndoFor, onUndo }: {
   content: string; streaming?: boolean; thinkDone?: boolean;
   runTotalMs?: number
@@ -1354,10 +1312,10 @@ export const AniIconButton = React.forwardRef<HTMLButtonElement, {
 // segments 渲染（思考链 / 工具卡 / 正文气泡）：流式分支与完成分支共用同一实现
 // （原为 AgentCodeView 内部闭包，抽到模块级供 AgentMessageRow 复用，避免两处拷贝漂移）。
 //
-// 单容器时间线：整条消息只有一个思考链容器（一个 ThinkBlock）——思考段、工具卡组、
-// 过程正文段按 segments 原序交错收纳进容器；最后一个正文段视为最终结论，流式期间就在
-// 容器下方独立成泡。容器只在整轮结束时收起一次（中途收起再重开就是跳转的观感）。
-// 工具卡一律收进容器（正文不承载工具卡）。附带保证（沿用原平铺修复）：任意顺序的段都按位渲染，不丢内容。
+// 时间线布局：一级标题常驻；思考段 + 工具卡组按 segments 原序分批收成二级标题块，
+// 过程正文段拆到链外以普通正文气泡渲染（因此正文会把链切成多段）；最后一个正文段视为
+// 最终结论，独立成泡。工具卡一律收进链内（正文不承载工具卡）。
+// 附带保证（沿用原平铺修复）：任意顺序的段都按位渲染，不丢内容。
 export function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']>, msgId: string, streaming: boolean, tailToolCalls: NonNullable<AgentMessage['toolCalls']> | undefined, o: RenderSegmentsOpts): React.ReactNode[] {
   // 流式尾部实时工具卡（尚未切分进 segments）：视为排在时间线最后——它的存在说明
   // 模型在「最终正文」之后又发起了调用，最后正文段随之降级为过程正文收进容器
@@ -1366,9 +1324,21 @@ export function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']
   const lastSeg = segments[segments.length - 1]
   let finalText: string | null = null
   let finalTextIdx = -1
+  // 收尾说明：连续文本增量会被合并成一个段，所以「过程说明 + 结构化正文」常挤在同一段里
+  // （如「渲染正常 ✅ 已加好。」后接「## 改动说明」）。把第一个 Markdown 标题之前的收尾说明
+  // 降级为过程正文收进链内，从标题起才是真正的最终输出。
+  let finalLeadText: string | null = null
   if (!hasTailTools && lastSeg && lastSeg.kind === 'text' && lastSeg.content.trim() !== '') {
     finalTextIdx = segments.length - 1
-    finalText = lastSeg.content
+    const raw = lastSeg.content
+    const m = /(?:^|\n)#{1,6}[ \t]/.exec(raw)
+    const cut = m ? (raw[m.index] === '#' ? m.index : m.index + 1) : -1
+    if (cut > 0 && raw.slice(0, cut).trim() !== '') {
+      finalLeadText = raw.slice(0, cut)
+      finalText = raw.slice(cut)
+    } else {
+      finalText = raw
+    }
   }
   const items: ThinkChainItem[] = []
   let value = ''
@@ -1403,6 +1373,8 @@ export function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']
       ...(streaming && i === segments.length - 1 ? { live: true } : {})
     })
   })
+  // 收尾说明：接在最后一个批之后，作为链内最后一段过程正文（排在最终输出之前）。
+  if (finalLeadText != null) items.push({ kind: 'text', segKey: 'final-lead', content: finalLeadText })
   if (hasTailTools) items.push({ kind: 'tools', segKey: `t${tailToolCalls![0]!.id}`, toolCalls: tailToolCalls! })
 
   const out: React.ReactNode[] = []
@@ -1431,52 +1403,10 @@ export function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']
     )
   }
   if (finalTextIdx >= 0 && finalText != null) {
-    // 将最终文本分割成文本和Mermaid块，按顺序渲染
-    // streaming 透传：流式期间不把未闭合的 mermaid 代码当图表渲染（见该函数注释）
-    const blocks = parseContentToBlocks(finalText, streaming)
-    blocks.forEach((block, i) => {
-      if (block.kind === 'mermaid') {
-        out.push(
-          <div key={`mermaid-seg-final-${i}`} className="agent-msg-ui">
-            <MermaidCard
-              code={block.code}
-              renderFallback={(c) => <CodeBlock language="" value={c} />}
-            />
-          </div>
-        )
-      } else if (block.kind === 'chart') {
-        out.push(
-          <div key={`chart-seg-final-${i}`} className="agent-msg-ui">
-            <ChartCard
-              code={block.code}
-              renderFallback={(c) => <CodeBlock language="" value={c} />}
-            />
-          </div>
-        )
-      } else if (block.kind === 'svg') {
-        out.push(
-          <div key={`svg-seg-final-${i}`} className="agent-msg-ui">
-            <SvgCard
-              code={block.code}
-              // streaming 必须透传：parseContentToBlocks 在流式期间会为「围栏还没闭合」的
-              // ```svg 产出 { kind:'svg', streaming:true }，SvgCard 靠这个标记走 innerHTML
-              // 渐进渲染分支（随输出逐步成形）。漏传的话它会走 <img src="data:..."> 全量分支，
-              // 半截 SVG 过不了 looksLikeSvg → 降级成普通代码块，实时渲染就没了。
-              // 注意与上面 StreamingContent 里同名调用点保持一致，两处不可漂移。
-              streaming={block.streaming === true}
-              renderFallback={(c) => <CodeBlock language="" value={c} />}
-            />
-          </div>
-        )
-      } else {
-        out.push(
-          <div key={`text-seg-final-${i}`} className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>
-            {/* 同上：同一个组件身份，只翻 isStreaming，避免卸载重挂 */}
-            <StreamingMarkdown content={block.content} isStreaming={streaming} />
-          </div>
-        )
-      }
-    })
+    // 最终正文与「链外过程正文」共用同一分块渲染（文本气泡 / Mermaid / Chart / SVG）。
+    // streaming 透传：流式期间不把未闭合的 mermaid/svg 代码当图表渲染（见 parseContentToBlocks：
+    // 未闭合围栏会产出 streaming 标记，SvgCard 靠它走 innerHTML 渐进渲染分支）。
+    out.push(<React.Fragment key="final-text">{renderTextBlocks(finalText, streaming, `final-${msgId}`)}</React.Fragment>)
   }
   return out
 }
@@ -1583,8 +1513,8 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
     />
   ) : null
   if (src.segments && src.segments.length > 0) {
-    // segments 已切分：单容器时间线布局（唯一思考链容器收纳思考/工具卡/过程正文，
-    // 最终正文独立成泡），完成后同一结构静态渲染（ThinkBlock closed、正文只翻 isStreaming）。
+    // segments 已切分：时间线布局（一级标题常驻 + 二级标题块 + 链外过程正文，最终正文独立成泡），
+    // 完成后同一结构静态渲染（ThinkBlock closed、正文只翻 isStreaming）。
     return (
       <>
         {renderSegmentsFor(src.segments, msg.id, isStreaming, isStreaming ? liveToolCalls : undefined, {

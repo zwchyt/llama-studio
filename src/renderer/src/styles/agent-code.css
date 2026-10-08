@@ -4086,8 +4086,15 @@ html.is-panel-resizing .agent-think-body .table-node {
 }
 
 @keyframes agentDiffStreamPulse {
-  0%, 100% { opacity: 0.28; }
-  50% { opacity: 0.75; }
+
+  0%,
+  100% {
+    opacity: 0.28;
+  }
+
+  50% {
+    opacity: 0.75;
+  }
 }
 
 .agent-tool-diff-body {
@@ -6388,18 +6395,104 @@ html.is-panel-resizing .agent-think-body .table-node {
    agentThinkShimmer / agentPixelOn（不再使用 global.css 的紫色系关键帧）。
    ============================================================ */
 
-/* 容器：思考链「去框平铺」——无边框/背景，折叠态只是一行状态文字，
-   展开体靠左侧细竖线 + 缩进作为最小结构锚点（与工具块一致）；
-   不自带外边距：消息体内块间距统一由 .chat-msg-body 的 gap 控制。 */
+/* 容器：思考链「去框平铺」——无边框/背景，一级标题只是一行状态文字，
+   内容靠左侧细竖线 + 缩进作为最小结构锚点（与工具块一致）；
+   不自带外边距：消息体内块间距统一由 .chat-msg-body 的 gap 控制。
+   （历史摘要气泡 HistorySummaryBubble 仍复用本类 + .agent-think-toggle。） */
 .agent-think {
   margin: 0;
   background: transparent;
   max-width: 100%;
-  /* 排除出浏览器的滚动锚点候选：整轮结束时这个容器会在 0.5s 内从几千像素收缩到 0，
-     若它被选为锚点，浏览器会每帧改 scrollTop 去"稳住"它，与 app 自己的滚动管理
+  /* 排除出浏览器的滚动锚点候选：链内二级标题块会自动收起（几千像素 → 一行），
+     若容器被选为锚点，浏览器会每帧改 scrollTop 去"稳住"它，与 app 自己的滚动管理
      （scrollToBottom / 流式贴底 pin）抢同一个 scrollTop —— 表现就是收起瞬间的画面抖动。
-     排除后锚点落到它下面的最终正文气泡上：正文保持不动，链在它上方滑走。 */
+     排除后锚点落到下面的正文气泡上：正文保持不动，链在它上方滑走。 */
   overflow-anchor: none;
+}
+
+/* 思考链容器：一级总标题 + 二级标题块（批）+ 链外过程正文，纵向排列、统一间距。
+   外层折叠由 .agent-think-anim（max-height 过渡）负责，状态类 thinking / stopped /
+   --streaming 挂在容器上，供头部流光与表格锁宽等规则取用。 */
+.agent-think-chain {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 思考内容层：左侧「半包围胶囊」把推理内容包起来——上/左/下三边描边、右侧开口，
+   只圆左侧两角，右上/右下各伸出一小段收口横线。比一条通栏竖线柔和，
+   且用两端收口明确标出推理块的起止：胶囊内 = 推理过程，胶囊外（主标题 / 最终输出）贴基准线。 */
+.agent-think-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-left: 4px;
+  padding-left: 34px;
+}
+
+/* 胶囊主体：右侧不描边，只圆左侧两角 */
+.agent-think-content::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  border: 1px solid var(--border-strong);
+  border-right: none;
+  border-radius: 12px 0 0 12px;
+  pointer-events: none;
+}
+
+/* 右上 / 右下收口横线：一块 6px 宽、上下各内缩 8px 的盒子，
+   只借它的 border-top / border-bottom 画出两段短线（一个伪元素搞定两段） */
+.agent-think-content::after {
+  content: '';
+  position: absolute;
+  left: 18px;
+  top: 8px;
+  bottom: 8px;
+  width: 6px;
+  border-top: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
+  pointer-events: none;
+}
+
+/* 末段归零：markstream 的段落外面还包着 .markstream-react / node-slot / node-content，
+   `.chat-msg-markdown>*:last-child` 的归零只打到最外层包裹、打不到真正的末段 <p>，
+   于是每个正文块底部都白留一个 10px 段落边距——表现出来就是「N 次工具调用」上方多一截空白。
+   这里把推理层内正文的末段底边距归零。 */
+.agent-think-content .chat-msg-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+/* 一级标题：思考链总标题（模型名 / 速度 / 思考时间）——点它收起/展开链内容。
+   按钮去框：整行可点，hover 用透明度反馈。 */
+.agent-think-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--font);
+  text-align: left;
+  transition: opacity var(--transition);
+}
+
+.agent-think-head:hover {
+  opacity: .8;
+}
+
+/* 一级标题状态行：字号/字重明显高于次级标题（批头 11px 等宽），建立主次层级 */
+.agent-think-head .agent-think-status {
+  font-size: 13px;
+  font-weight: 700;
 }
 
 /* 头部按钮：去框后即一行状态文字，hover 用透明度反馈可点击 */
@@ -6674,7 +6767,7 @@ html.is-panel-resizing .agent-think-body .table-node {
    次要色体现「推理层」层级 */
 .agent-think-body {
   margin-left: 6px;
-  border-left: 2px solid var(--border-strong);
+  border-left: 1px solid var(--border);
   padding: 4px 0 6px 12px;
   font-size: 13px;
   line-height: 1.7;
@@ -6750,17 +6843,6 @@ html.is-panel-resizing .agent-think-body .table-node {
 
 .agent-think-fold-body::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
-}
-
-/* 过程正文段（链内阶段性正文输出）：只用主文字色（近黑）建立层级，不加字重。
-   链内主次靠颜色已经很分明（--text #0a0a0a vs 思考文本 --text-secondary #6b6b6b），
-   再叠一档 600 有两个副作用：
-     ① 段内的 `**加粗**`（.agent-think-body strong = 700）与周围只差一档，肉眼几乎看不出 ——
-        而加粗正是模型标重点的手段；
-     ② 过程正文（600）比最终正文（.chat-msg-markdown = 400）还重，层级反了。
-   与最终正文的区分交给容器本身（链内 vs 独立气泡），不靠字重。 */
-.agent-think-prose {
-  color: var(--text);
 }
 
 /* 思考块 pending 占位（首 token 未到 / 模型加载上下文中）：三点跳动 + 等待文案 */
@@ -6865,17 +6947,15 @@ html.is-panel-resizing .agent-think-body .table-node {
   color: var(--text);
 }
 
-/* ── 链内「批」（连续的思考 + 工具）折叠块 ───────────────────────────────
-   批头复用思考段折叠头的橙色等宽标签规格（.agent-think-fold-label / .agent-think-grid），
-   批体复用 .agent-think-body 的左竖线缩进——表示「批内时间线」比链内条目再深一层。
+/* ── 二级标题块：链内「批」（连续的思考 + 工具）折叠块 ─────────────────────
+   批头即二级标题，复用思考段折叠头的橙色等宽标签规格（.agent-think-fold-label /
+   .agent-think-grid），字号/字重明显低于一级标题（.agent-think-head），从属关系清晰；
+   批体复用 .agent-think-body 的左竖线缩进——表示「批内时间线」比二级标题再深一层。
    批内条目原样复用 .agent-think-item（间距 10px），不新增条目级样式。 */
 .agent-think-batch {
-  margin-top: 10px;
-  min-width: 0;
-}
-
-.agent-think-batch:first-child {
+  /* 间距由 .agent-think-chain 的 gap 统一提供，自身不再带外边距 */
   margin-top: 0;
+  min-width: 0;
 }
 
 .agent-think-batch-head {
@@ -6908,11 +6988,13 @@ html.is-panel-resizing .agent-think-body .table-node {
   transition: max-height var(--think-collapse-dur, 0.5s) var(--think-collapse-ease, cubic-bezier(0.4, 0, 0.2, 1));
 }
 
-/* 批体内容层：左竖线缩进 + 缩进量，与 .agent-think-body 同款；条目间距由 .agent-think-item 提供 */
+/* 批体内容层：左竖线缩进 + 缩进量，与 .agent-think-body 同款；条目间距由 .agent-think-item 提供。
+   线比外层胶囊更淡（1px / --border）：胶囊是推理块的外边界，批体线只是批内的次级缩进。 */
 .agent-think-batch-body {
   margin-left: 6px;
-  border-left: 2px solid var(--border-strong);
-  padding: 4px 0 2px 12px;
+  border-left: 1px solid var(--border);
+  /* 顶部不再留 4px：首个条目的 margin-top 已经提供间距，两个叠起来会多出一截空白 */
+  padding: 0 0 2px 12px;
   min-width: 0;
 }
 
@@ -6987,6 +7069,22 @@ html.is-panel-resizing .agent-think-body .table-node {
 
 .agent-think-body p {
   margin: 0 0 8px;
+}
+
+/* 思考文本实际渲染在 .agent-think-fold-body（上面这套规则只到 .agent-think-body，
+   重构后那里只剩 pending 占位），段落因此用上了 markstream 的
+   .paragraph-node{margin:1.25em 0} —— 首段上方、末段下方各白留约 1.25em。
+   这里把折叠体这一层压回项目口径，并把首末段归零。 */
+.agent-think-fold-body p {
+  margin: 0 0 8px;
+}
+
+.agent-think-fold-body p:first-child {
+  margin-top: 0;
+}
+
+.agent-think-fold-body p:last-child {
+  margin-bottom: 0;
 }
 
 .agent-think-body ul,
@@ -10855,8 +10953,13 @@ html.theme-dark .user-msg-lightbox {
 }
 
 @keyframes file-tree-children-in {
-  from { height: 0; }
-  to   { height: auto; }
+  from {
+    height: 0;
+  }
+
+  to {
+    height: auto;
+  }
 }
 
 /* 退场：容器从下沿往上卷，所以行的消失顺序必须反过来（最下面那行先走），
@@ -10868,8 +10971,13 @@ html.theme-dark .user-msg-lightbox {
 }
 
 @keyframes file-tree-children-out {
-  from { height: auto; }
-  to   { height: 0; }
+  from {
+    height: auto;
+  }
+
+  to {
+    height: 0;
+  }
 }
 
 /* 行级联。
@@ -10880,12 +10988,12 @@ html.theme-dark .user-msg-lightbox {
    :nth-child(-n + 24) 里的 24 必须等于 --ft-anim-rows（选择器里没法用变量）。
    fill-mode both 的 backwards 让行在延迟期间保持未出现，否则全部先显形再各自滑，
    就成了整块抖动而不是一行行流过。 */
-.file-tree-children > div:nth-child(-n + 24) > .file-tree-node {
+.file-tree-children>div:nth-child(-n + 24)>.file-tree-node {
   animation: file-tree-row-in var(--ft-row-dur) cubic-bezier(.25, .6, .35, 1) both;
   animation-delay: calc(var(--file-tree-stagger, 0) * var(--ft-step));
 }
 
-.file-tree-children.file-tree-children--out > div:nth-child(-n + 24) > .file-tree-node {
+.file-tree-children.file-tree-children--out>div:nth-child(-n + 24)>.file-tree-node {
   animation: file-tree-row-out var(--ft-row-dur) ease-in both;
   animation-delay: calc(max(var(--ft-slots) - var(--file-tree-stagger, 0), 0) * var(--ft-step-out));
 }
@@ -12290,11 +12398,13 @@ html.theme-dark {
   opacity: 1;
   will-change: transform;
 }
+
 .sendfly-box {
   position: absolute;
   inset: 0;
   border-style: solid;
 }
+
 .sendfly-shadow {
   position: fixed;
   z-index: 39;
@@ -12304,6 +12414,7 @@ html.theme-dark {
   opacity: 1;
   will-change: transform;
 }
+
 .sendfly-text {
   position: absolute;
   opacity: 1;

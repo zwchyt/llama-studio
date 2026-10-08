@@ -1,13 +1,13 @@
 import { useEffect, useMemo } from 'react'
 import { X } from 'lucide-react'
 import { useBubbleTip } from './useBubbleTip'
-import { dayKeyOf, formatNumber, modelFileOf } from '../utils/token-stats'
+import { dayKeyOf, formatNumber } from '../utils/token-stats'
 import type { TokenModelDayRow, TokenModelRow } from '../utils/token-stats'
 import { UsageBarRow, type UsageBar } from './TokenUsageBars'
 
 /** 模型图标点：沿用 token-stats.ts 的固定色表（与表格行完全一致） */
 function ModelDot({ color }: { color: string }) {
-  return <span className="ts-drawer-dot" style={{ background: color }} />
+  return <span className="ts-detail-dot" style={{ background: color }} />
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
@@ -20,20 +20,26 @@ function Fact({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * 一个模型行，展开来看。
- * 表格可以容纳六列，但不能容纳十三列——所以描述一个数字「怎么来的」
- * 的字段（token 总量背后的输入/输出拆分、平均数背后的平均）住在这里，
- * 而不是为了某一行正在被追问的那一行把每一行都加宽。
+ * 模型行的展开详情。
+ *
+ * 作为**表格里的一行**（colSpan 贯通整表）就地展开，而不是从右侧滑出的抽屉：
+ * 抽屉要一层全屏遮罩，会把左侧导航一起压暗；固定 460px 也装不下 45 根柱
+ * （柱体被压到 6px 以下）。行内展开没有遮罩问题，还能拿到整张表的宽度。
+ *
+ * 描述一个数字「怎么来的」的字段住在这里，而不是把表格每一行都加宽 ——
+ * 表格能容纳六列，容不下十三列。
  */
-export function TokenUsageDrawer({
+export function TokenUsageDetail({
   model,
   daily,
   color,
+  colSpan,
   onClose,
 }: {
   model: TokenModelRow
   daily: TokenModelDayRow[]
   color: string
+  colSpan: number
   onClose: () => void
 }) {
   useEffect(() => {
@@ -70,40 +76,29 @@ export function TokenUsageDrawer({
   }, [daily, model.model])
 
   const avg = model.requests > 0 ? Math.round(model.total_tokens / model.requests) : 0
-  const identity = modelFileOf(model.modelPath)
+  // 峰值：给柱状图一个量级参照，否则只能靠悬停才知道柱高对应多少
+  const peak = trend.reduce((max, bar) => Math.max(max, bar.value), 0)
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
   const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   return (
-    <div className="ts-drawer-backdrop" onClick={onClose}>
-      {tipNode}
-      <aside
-        className="ts-drawer"
-        role="dialog"
-        aria-label={`${model.name} 使用详情`}
-        onClick={event => event.stopPropagation()}
-      >
-        <header className="ts-drawer-head">
-          <div className="ts-drawer-title-row">
+    <tr className="ts-detail-row">
+      <td colSpan={colSpan} className="ts-detail-cell">
+        {tipNode}
+        <div className="ts-detail">
+          <header className="ts-detail-head">
             <ModelDot color={color} />
-            <div className="ts-drawer-titles">
-              <h3 className="ts-drawer-title">{model.name}</h3>
-              <span className="ts-drawer-status">
-                {formatNumber(model.requests)} 次请求 · {formatNumber(model.total_tokens)} tokens
-              </span>
-            </div>
-            <button type="button" className="ts-drawer-close" onClick={onClose} aria-label="关闭" {...tip('关闭')}>
+            <h3 className="ts-detail-title">{model.name}</h3>
+            {/* 只放请求数：token 合计在下方 facts 里已有，不重复 */}
+            <span className="ts-detail-status">{formatNumber(model.requests)} 次请求</span>
+            <button type="button" className="ts-detail-close" onClick={onClose} aria-label="收起" {...tip('收起')}>
               <X size={16} />
             </button>
-          </div>
-        </header>
+          </header>
 
-        <div className="ts-drawer-body">
-          {model.modelPath && identity !== model.modelPath ? (
-            <p className="ts-drawer-path">{identity}</p>
-          ) : null}
-          <p className="ts-drawer-path-sub">
-            {model.modelPath ?? (model.templateName ? `模板 ${model.templateName}` : `端口（未知模型）`)}
+          {/* 文件名已在标题里，这里只补完整路径 */}
+          <p className="ts-detail-path">
+            {model.modelPath ?? (model.templateName ? `模板 ${model.templateName}` : '端口（未知模型）')}
           </p>
 
           <div className="ts-facts">
@@ -113,25 +108,26 @@ export function TokenUsageDrawer({
             <Fact label="平均每次请求" value={`${formatNumber(avg)} tokens`} />
           </div>
 
-          <section className="ts-drawer-section">
-            <h4 className="ts-drawer-section-title">日趋势</h4>
-            <p className="ts-drawer-section-desc">
+          <section>
+            <h4 className="ts-detail-section-title">日趋势</h4>
+            <p className="ts-detail-section-desc">
               该模型最近 45 天的每日 tokens。悬浮柱子看精确数字。
             </p>
             {trend.length > 0 && trend.some(bar => bar.value > 0) ? (
-              <div className="ts-drawer-bars">
+              <div className="ts-detail-bars">
                 <UsageBarRow bars={trend} height={80} />
-                <div className="ts-drawer-bar-range">
+                <div className="ts-detail-bar-range">
                   <span>{trend[0]?.key}</span>
+                  <span className="ts-detail-bar-peak">峰值 {formatNumber(peak)}</span>
                   <span>{trend[trend.length - 1]?.key}</span>
                 </div>
               </div>
             ) : (
-              <p className="ts-drawer-section-desc">该模型还没有任何流量，暂无可绘制的趋势。</p>
+              <p className="ts-detail-section-desc">该模型还没有任何流量，暂无可绘制的趋势。</p>
             )}
           </section>
         </div>
-      </aside>
-    </div>
+      </td>
+    </tr>
   )
 }
