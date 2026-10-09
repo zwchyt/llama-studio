@@ -32,6 +32,11 @@
   --text-muted: #a0a0a0;
   --accent: #0a0a0a;
   --accent-fg: #ffffff;
+  /* 正文 / 思考链里的链接色。此前链接直接吃 --accent（#0a0a0a，与 --text 同值），跟正文完全同色，
+     只靠下划线区分，指向感很弱。现改为柔和的浅蓝。
+     ⚠️ 浅色主题下 #83a9df 对 #f7f7f8 的对比度只有约 2.25:1（正文级文字建议 4.5:1），偏淡；
+     需要更清晰时换成 #3f6fb0（约 4.8:1）。深色主题见 theme-dark.css。 */
+  --link: #83a9df;
   --success: #16a34a;
   --danger: #dc2626;
   --warning: #d97706;

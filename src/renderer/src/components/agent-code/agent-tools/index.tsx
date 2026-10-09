@@ -19,6 +19,7 @@ import { useCollapseAnimation } from '../../../utils/useCollapseAnimation'
 import { fileMeta } from '../../../utils/fileIcon'
 import { TOOL_METAS, WRITE_EDIT_TOOLS, BACKUP_TOOLS } from '../../../utils/tools'
 import WebSearchResults from '../../WebSearchResults'
+import FetchWebpageResult from '../../FetchWebpageResult'
 import BrowserScreenshotResult from '../../BrowserScreenshotResult'
 import BrowserShowResult from '../../BrowserShowResult'
 import ViewImageResult from '../../ViewImageResult'
@@ -1007,11 +1008,22 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
                   </div>
                 </>
               )}
-              {tc.name !== 'Bash' && tc.name !== 'web_search' && tc.name !== 'web_search_bing' && <ToolArgsView name={tc.name} args={tc.args} onPreviewFile={onPreviewFile} headFilePath={headFilePath} readRange={readRange} streaming={argsStreaming} />}
+              {/* fetch_webpage 的唯一参数就是 url：它已经在卡头预览里，结果卡的来源行还会再
+                  给一次（带站点图标、可点外开），所以不再渲染 JSON 参数块 —— 那只是一份重复 */}
+              {tc.name !== 'Bash' && tc.name !== 'web_search' && tc.name !== 'web_search_bing' && tc.name !== 'fetch_webpage' && <ToolArgsView name={tc.name} args={tc.args} onPreviewFile={onPreviewFile} headFilePath={headFilePath} readRange={readRange} streaming={argsStreaming} />}
               {(tc.name === 'web_search' || tc.name === 'web_search_bing') && (executing || done) && (
                 <WebSearchResults
                   result={done ? tc.result ?? undefined : undefined}
                   query={parsed && typeof parsed.query === 'string' ? parsed.query : undefined}
+                  loading={executing}
+                />
+              )}
+              {/* 抓取网页：结构化结果卡（来源行 + 分段正文 + 字符数），不再把
+                  {url, content} 那一整行 JSON 原样铺开。执行中也渲染，好让来源行先出现 */}
+              {tc.name === 'fetch_webpage' && (executing || done) && (
+                <FetchWebpageResult
+                  url={parsed && typeof parsed.url === 'string' ? parsed.url : undefined}
+                  result={done ? tc.result ?? undefined : undefined}
                   loading={executing}
                 />
               )}
@@ -1021,10 +1033,10 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
               {tc.name === 'view_image' && done && <ViewImageResult result={tc.result} />}
               {/* get_datetime 结果就是 {date, time}：摊成横向键值行（日期 / 时间），不再打印原始 JSON */}
               {tc.name === 'get_datetime' && done && <JsonResultCard result={tc.result} />}
-              {/* Bash 的结果已并入终端块；web_search / browser_show / browser_screenshot /
-                  view_image / get_datetime 都各自渲染结构化结果卡，这里一并排除，
-                  避免同一份结果渲染两遍 */}
-              {done && !hideResult && tc.name !== 'Bash' && tc.name !== 'web_search' && tc.name !== 'web_search_bing' && tc.name !== 'browser_show' && tc.name !== 'browser_screenshot' && tc.name !== 'view_image' && tc.name !== 'get_datetime' && (
+              {/* Bash 的结果已并入终端块；web_search / fetch_webpage / browser_show /
+                  browser_screenshot / view_image / get_datetime 都各自渲染结构化结果卡，
+                  这里一并排除，避免同一份结果渲染两遍 */}
+              {done && !hideResult && tc.name !== 'Bash' && tc.name !== 'web_search' && tc.name !== 'web_search_bing' && tc.name !== 'fetch_webpage' && tc.name !== 'browser_show' && tc.name !== 'browser_screenshot' && tc.name !== 'view_image' && tc.name !== 'get_datetime' && (
                 <ToolResultView result={tc.result!} truncated={tc.truncated} total={tc.resultTotal} lined={tc.name === 'Read'} grep={grepResult} glob={globResult} readLines={readLines} readRange={readRange} onPreviewFile={onPreviewFile} />
               )}
             </div>

@@ -368,7 +368,8 @@
   margin: 12px 0 6px;
 }
 .hub-detail-readme p { margin: 0 0 10px; }
-.hub-detail-readme a { color: var(--accent); text-decoration: none; }
+/* 与 agent-code.css 的正文链接同一处理：不用 --accent（与 --text 同值，链接跟正文一个色） */
+.hub-detail-readme a { color: var(--link); text-decoration: none; }
 .hub-detail-readme a:hover { text-decoration: underline; }
 .hub-detail-readme ul,
 .hub-detail-readme ol { margin: 0 0 10px; padding-left: 20px; }

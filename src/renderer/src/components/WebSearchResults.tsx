@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react'
-import { Search, CheckCircle2, Globe, ExternalLink, AlertCircle } from 'lucide-react'
+import { Search, Globe, ExternalLink, AlertCircle } from 'lucide-react'
 import { useBubbleTip } from './useBubbleTip'
+import { SiteIcon } from './SiteIcon'
 
 interface SearchResultItem {
   title: string
@@ -15,9 +16,10 @@ type Parsed =
 /**
  * web_search 工具结果卡（对齐 WebSearch 演示设计的视觉语言）：
  * 执行中（loading）→ globe 旋转 + 流光「搜索中 “query”」+ 骨架行；
- * 完成 → 结构化结果列表（check + 标题 + snippet + URL），级联 fade-up 入场；
+ * 完成 → 结构化结果列表（圆形站点图标 + 标题 + snippet + URL），级联 fade-up 入场；
  * 失败 → 错误信息。
  * 数据来自主进程 handleWebSearch 返回的 JSON：{title,url,snippet}[] 或 {error}。
+ * 首列的圆形站点图标见 ./SiteIcon（与抓取网页卡共用）。
  */
 export default function WebSearchResults({ result, query, loading }: { result?: string; query?: string; loading?: boolean }) {
   const data = useMemo<Parsed | null>(() => {
@@ -78,7 +80,7 @@ export default function WebSearchResults({ result, query, loading }: { result?: 
               className="agent-ws-site"
               style={{ animation: `agentFadeUp 320ms cubic-bezier(.23,1,.32,1) ${i * 55}ms both` }}
             >
-              <span className="agent-ws-bullet"><CheckCircle2 size={12} /></span>
+              <SiteIcon url={item.url} />
               <span className="agent-ws-body">
                 <a
                   className="agent-ws-title"

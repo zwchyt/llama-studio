@@ -6626,6 +6626,140 @@ export function registerIpcHandlers(): void {
   ipcInternal.handleFetchWebpage = handleFetchWebpage
   ipcMain.handle('fetch-webpage', async (_e, url: string) => handleFetchWebpage(url))
 
+  // ── 站点图标（favicon）抓取 + 磁盘缓存 ────────────────────────────
+  // 网络搜索结果每条前面要显示站点图标。图标只能由主进程取：渲染进程直接引用第三方
+  // 图标服务在弱网/受限网络下会大面积失败，也拿不到可控的降级路径。这里做三层兜底：
+  //   ① 首页 HTML 里声明的 <link rel="icon">（现代站点的事实标准，命中率最高）
+  //   ② 站点根目录 /favicon.ico（老站兜底）
+  //   ③ DuckDuckGo 图标服务（前两者都失败时；不用 Google——国内不可达且对未知域名
+  //      返回统一的地球占位图，会把「首字母色块」这个更有信息量的降级挤掉）
+  // 取到的字节一律用「魔数」验一遍是不是真图片：很多站点对不存在的图标返回 200 +
+  // 一段 HTML 错误页，只看状态码会把错误页当图标缓存下来。命中后转 data URL 落盘，
+  // 同一站点后续直接读缓存不再发请求；全部失败则返回 error，由渲染进程回退首字母色块。
+  const FAVICON_CACHE_DIR = join(app.getPath('userData'), 'favicon-cache')
+  const FAVICON_MAX_BYTES = 256 * 1024
+  const FAVICON_OK_TTL = 30 * 24 * 60 * 60 * 1000 // 命中：30 天
+  const FAVICON_MISS_TTL = 6 * 60 * 60 * 1000 // 未命中：6 小时，避免每次渲染都重试
+  // 只接受常规域名：host 会被拼进缓存文件名，且抓取目标由渲染进程给定，必须收紧。
+  const FAVICON_HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/
+
+  /** 按魔数判断字节是不是图片并给出 MIME；不是图片返回 null。
+   *  这是「拒绝错误页」的关键：HTTP 200 不代表内容是图标。 */
+  function sniffImageMime(buf: Buffer): string | null {
+    if (buf.length < 8) return null
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png'
+    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg'
+    if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif'
+    if (buf[0] === 0x00 && buf[1] === 0x00 && buf[2] === 0x01 && buf[3] === 0x00) return 'image/x-icon'
+    if (buf[0] === 0x42 && buf[1] === 0x4d) return 'image/bmp'
+    if (buf.length >= 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'image/webp'
+    // SVG 是文本：去掉 BOM 与前导空白后再看是不是 <svg
+    const head = buf.toString('utf-8', 0, Math.min(buf.length, 256)).replace(/^\uFEFF/, '').trimStart()
+    if (/^<svg[\s>]/i.test(head) || (/^<\?xml/i.test(head) && /<svg[\s>]/i.test(head))) return 'image/svg+xml'
+    return null
+  }
+
+  /** 取二进制：与 fetchText 同款超时/体积护栏，但保留 Buffer（图标不能按 utf-8 解码）。 */
+  function fetchBinary(url: string, timeout = 6000): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const req = net.request({
+        url,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+          Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8'
+        }
+      })
+      const t = setTimeout(() => { req.abort(); reject(new Error('请求超时')) }, timeout)
+      req.on('response', (res) => {
+        clearTimeout(t)
+        if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return }
+        const chunks: Buffer[] = []
+        let received = 0
+        let idle = setTimeout(() => { req.abort(); reject(new Error('响应接收超时')) }, timeout)
+        res.on('data', (c: Buffer) => {
+          clearTimeout(idle)
+          received += c.length
+          if (received > FAVICON_MAX_BYTES) { req.abort(); reject(new Error('响应体过大')); return }
+          chunks.push(c)
+          idle = setTimeout(() => { req.abort(); reject(new Error('响应接收超时')) }, timeout)
+        })
+        res.on('end', () => { clearTimeout(idle); resolve(Buffer.concat(chunks)) })
+        res.on('error', (err: Error) => { clearTimeout(idle); reject(err) })
+      })
+      req.on('error', (err) => { clearTimeout(t); reject(err) })
+      req.end()
+    })
+  }
+
+  /** 候选图标打分：apple-touch-icon / png 通常比 .ico 分辨率高，排前面。 */
+  function scoreIconHref(u: string): number {
+    let s = 0
+    if (/apple-touch-icon/i.test(u)) s += 3
+    if (/\.png(\?|$)/i.test(u)) s += 2
+    if (/\.svg(\?|$)/i.test(u)) s += 1
+    return s
+  }
+
+  /** 从首页 HTML 里抠出所有 icon 声明，解析成绝对 URL 并排序。 */
+  function extractIconHrefs(html: string, base: string): string[] {
+    const out: string[] = []
+    const re = /<link\b[^>]*>/gi
+    let m: RegExpExecArray | null
+    while ((m = re.exec(html)) !== null) {
+      const tag = m[0]
+      const rel = (/\brel\s*=\s*["']?([^"'>\s]+)/i.exec(tag)?.[1] ?? '').toLowerCase()
+      if (!rel.includes('icon')) continue
+      const href = /\bhref\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1]
+      if (!href) continue
+      try { out.push(new URL(href, base).toString()) } catch { /* 相对路径解析失败，跳过 */ }
+    }
+    return out.sort((a, b) => scoreIconHref(b) - scoreIconHref(a))
+  }
+
+  const handleFetchFavicon = async (raw: string): Promise<{ dataUrl?: string; error?: string }> => {
+    const host = String(raw ?? '').trim().toLowerCase().replace(/^www\./, '')
+    // IP 字面量 / localhost / .local 一律拒绝：抓取目标由渲染进程给定，避免被用作内网探测
+    if (!host || !FAVICON_HOST_RE.test(host)) return { error: '域名不合法' }
+    if (/^\d+(\.\d+){3}$/.test(host) || host === 'localhost' || host.endsWith('.local')) return { error: '域名不合法' }
+
+    const cacheFile = join(FAVICON_CACHE_DIR, `${createHash('sha1').update(host).digest('hex')}.json`)
+    try {
+      const cached = JSON.parse(readFileSync(cacheFile, 'utf-8')) as { dataUrl?: string; error?: string; at: number }
+      const ttl = cached.dataUrl ? FAVICON_OK_TTL : FAVICON_MISS_TTL
+      if (Date.now() - cached.at < ttl) {
+        return cached.dataUrl ? { dataUrl: cached.dataUrl } : { error: cached.error ?? '未找到站点图标' }
+      }
+    } catch { /* 无缓存或缓存损坏：走抓取 */ }
+
+    const candidates: string[] = []
+    try {
+      candidates.push(...extractIconHrefs(await fetchText(`https://${host}/`, 6000), `https://${host}/`))
+    } catch { /* 首页取不到（http-only 站点 / 超时）：直接走兜底候选 */ }
+    candidates.push(`https://${host}/favicon.ico`)
+    candidates.push(`https://icons.duckduckgo.com/ip3/${host}.ico`)
+
+    for (const url of candidates.slice(0, 6)) {
+      try {
+        const buf = await fetchBinary(url)
+        const mime = sniffImageMime(buf)
+        if (!mime) continue
+        const dataUrl = `data:${mime};base64,${buf.toString('base64')}`
+        try {
+          mkdirSync(FAVICON_CACHE_DIR, { recursive: true })
+          writeFileSync(cacheFile, JSON.stringify({ dataUrl, at: Date.now() }))
+        } catch { /* 缓存写失败不影响本次返回 */ }
+        return { dataUrl }
+      } catch { /* 该候选不可用，试下一个 */ }
+    }
+
+    try {
+      mkdirSync(FAVICON_CACHE_DIR, { recursive: true })
+      writeFileSync(cacheFile, JSON.stringify({ error: '未找到站点图标', at: Date.now() }))
+    } catch { /* ignore */ }
+    return { error: '未找到站点图标' }
+  }
+  ipcMain.handle('fetch-favicon', (_e, host: string) => handleFetchFavicon(host))
+
   ipcMain.handle('print-to-pdf', async (_e, html: string): Promise<string> => {
     // 内联 KaTeX CSS，避免 CDN 加载失败
     let katexCss = ''

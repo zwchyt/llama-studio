@@ -513,9 +513,31 @@
   color: var(--text-secondary);
 }
 
-.chat-msg-markdown a {
-  color: var(--accent);
+/* 正文里的链接：颜色取 --link（中性深灰蓝），不再吃 --accent —— 后者与 --text 同值，
+   链接会和正文完全同色、只靠下划线区分，指向感很弱。
+   下划线默认弱化到 40%、悬停才加深到实色：正文里链接一多不会满屏下划线，鼠标一过指向立刻明确。
+
+   ⚠️ 必须逐个列出容器，不能写宽泛的祖先选择器：
+   · .chat-msg-markdown  —— 助手正文 / 用户消息 / 全文弹窗 / 预览面板 / 输入框引用胶囊
+   · .agent-think-fold-body —— 思考链里的「思考段」正文（这一段没有 .chat-msg-markdown，
+     此前项目里也没有任何 a 规则，链接直接落到浏览器默认样式）
+   · .agent-think-body    —— pending 占位与历史摘要正文
+   反例：写成 .agent-think-content a 会连工具卡一起命中，把搜索结果卡的 .agent-ws-title
+   也刷成 --link + 下划线（0,1,1 压过 .agent-ws-title 的 0,1,0）。 */
+.chat-msg-markdown a,
+.agent-think-fold-body a,
+.agent-think-body a {
+  color: var(--link);
   text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--link) 40%, transparent);
+  text-underline-offset: 3px;
+  transition: text-decoration-color var(--transition);
+}
+
+.chat-msg-markdown a:hover,
+.agent-think-fold-body a:hover,
+.agent-think-body a:hover {
+  text-decoration-color: var(--link);
 }
 
 /* 表格：markstream 已把 <table> 包在 .table-node-wrapper 里做横向滚动（scrollbar-gutter:stable）。
@@ -3058,6 +3080,12 @@ html.is-panel-resizing .agent-think-body .table-node {
 /* 工具块「去框平铺」：无背景/边框，折叠态只是一行带工具色的文字；
    展开内容靠左侧细竖线 + 缩进作为最小结构锚点（与思考链一致）。 */
 .agent-tool-call {
+  /* 工具色兜底：默认中性石板灰。没有这条时，未单独配色的工具会回退到
+     var(--tool-accent, var(--accent)) 的 --accent，而 --accent 在浅色主题是 #0a0a0a
+     ——与正文同色，工具名看起来就是「黑色的」。新增工具 / MCP 工具 / 漏配项
+     （如 web_search_bing）都不会再掉进这个坑。
+     .tool-xxx 与 .failed 都是双类选择器，优先级高于这里，照常覆盖。 */
+  --tool-accent: #64748b;
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
@@ -3147,7 +3175,11 @@ html.is-panel-resizing .agent-think-body .table-node {
   --tool-accent: #059669;
 }
 
-.agent-tool-call.tool-web_search {
+/* 联网搜索：同一个操作的两个引擎。provider 是全局设置（searchProvider: ddg | bing），
+   二者不会同屏出现，故共用玫红，不为「换了个后端」另配一套颜色。
+   必应此前漏了这条规则，名字落到近黑的 --accent，现一并补上。 */
+.agent-tool-call.tool-web_search,
+.agent-tool-call.tool-web_search_bing {
   --tool-accent: #db2777;
 }
 
@@ -7138,10 +7170,9 @@ html.is-panel-resizing .agent-think-body .table-node {
   font-weight: 700;
 }
 
-.agent-think-body a {
-  color: var(--accent);
-  text-decoration: underline;
-}
+/* 链接配色统一到上方的 .chat-msg-markdown / .agent-think-fold-body / .agent-think-body 组。
+   这里原来有一条 .agent-think-body a { color: var(--accent) }，与上方同优先级且更靠后，
+   会把颜色又拉回近黑 —— 已删除，勿再单独给思考链里的 a 设色。 */
 
 /* 表格：与 .chat-msg-markdown table 同源（见上方 527 行的说明），这里同样不能写
    display:block + overflow-x。markstream 已把 <table> 包在 .table-node-wrapper
@@ -11375,16 +11406,200 @@ html.theme-dark .user-msg-lightbox {
 .agent-ws-site {
   display: flex;
   align-items: flex-start;
-  gap: 7px;
+  gap: 8px;
   padding: 3px 0;
 }
 
-.agent-ws-bullet {
+/* 圆形站点图标（共享组件 SiteIcon，搜索卡与抓取网页卡共用）。
+   直径由组件的 size 参数内联给出，这里只管圆形外观与描边。 */
+.agent-site-icon {
+  position: relative;
   display: flex;
   align-items: center;
-  margin-top: 1px;
-  color: var(--success, #2e9e5b);
+  justify-content: center;
   flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+/* 与标题首行光学居中——标题行高 12px×1.45≈17px、图标 28px，故上移 5px。
+   该负偏移只落进 .agent-ws-row 的 4px 下内边距里，不会压到上方的「搜索结果」标签。 */
+.agent-ws-site .agent-site-icon {
+  margin-top: -5px;
+}
+
+/* 字母色块本身已经是高饱和实心圆，再套一圈浅色描边会变成「光环」，故去掉 */
+.agent-site-icon.is-letter {
+  border-color: transparent;
+}
+
+.agent-site-icon-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.agent-site-icon-letter {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  line-height: 1;
+  color: #fff;
+  user-select: none;
+}
+
+/* 右下角小勾角标：保留「这条结果已就绪」的信号。描边取页面底色，
+   把小勾从彩色图标上「抠」出来，避免图标与角标糊成一团。仅 28px 档位启用。 */
+.agent-site-icon-check {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--success, #2e9e5b);
+  color: #fff;
+  box-shadow: 0 0 0 1.5px var(--bg);
+  pointer-events: none;
+}
+
+/* ── fetch_webpage 工具结果卡（FetchWebpageResult）──
+   主进程返回 JSON.stringify({url, content})，content 里全是被转义的换行。
+   此前它落进通用 ToolResultView：整份结果是一行 → 行数=1 → 被判为「短结果」→
+   既不折叠也不走行窗口，把整坨 JSON 原样铺开。这里拆成「来源行 + 分段正文」。 */
+.agent-fw {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 来源行：站点图标 + 域名 + 完整 URL + 外链箭头 */
+.agent-fw-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agent-fw-globe {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.agent-fw-host {
+  flex-shrink: 0;
+  max-width: 40%;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-fw-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--transition);
+}
+
+.agent-fw-url:hover {
+  color: var(--link);
+  text-decoration: underline;
+}
+
+.agent-fw-arrow {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  opacity: .6;
+  transition: color var(--transition), opacity var(--transition);
+}
+
+.agent-fw-source:hover .agent-fw-arrow {
+  color: var(--link);
+  opacity: 1;
+}
+
+/* 正文：不再套第二层竖线（.agent-tool-call-body 已经有一条），只靠段落间距分块 */
+.agent-fw-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 折叠态的高度硬上限。字符预算只决定切在第几块，挡不住「导航项换行」这种形状 ——
+   50 个短词合并成一块后仍可能铺满五六行，所以这里再用像素封一次顶。
+   渐隐收尾沿用用户长消息那一套（见 .user-msg-clamped）：1.4lh 的淡出带上沿
+   > 一行，最后一行整体落在渐隐里，不会看着像被硬切。 */
+.agent-fw-body.is-clipped {
+  max-height: var(--fw-body-max, 92px);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.4lh), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.4lh), transparent);
+}
+
+.agent-fw-p {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* 导航项 / 标签项：页面原文一行一个词，合并成一行用间距分隔，
+   否则「首页 / 预报 / 预警 / 雷达…」会各自占一行、把真正的正文顶到屏幕外 */
+.agent-fw-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.agent-fw-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.agent-fw-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--danger, #e5484d);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger, #e5484d) 8%, transparent);
+}
+
+.agent-fw-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-fw-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-fw-foot .agent-tool-subtoggle {
+  margin-left: auto;
 }
 
 .agent-ws-body {

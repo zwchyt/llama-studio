@@ -196,6 +196,7 @@ interface LlamaCppApi {
   webSearch: (query: string) => Promise<string>
   webSearchBing: (query: string) => Promise<string>
   fetchWebpage: (url: string) => Promise<string>
+  fetchFavicon: (host: string) => Promise<{ dataUrl?: string; error?: string }>
   // ── 终端控制台 ──
   terminalCreate: (opts: { id?: string; cwd?: string; cols?: number; rows?: number; ownerKey?: string }) => Promise<{ success: boolean; id?: string; shell?: string; error?: string; replay?: string; reused?: boolean }>
   terminalInput: (id: string, data: string) => Promise<void>

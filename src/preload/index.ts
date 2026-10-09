@@ -288,6 +288,9 @@ const fullApi = {
   webSearch: (query: string) => ipcRenderer.invoke('web-search', query),
   webSearchBing: (query: string) => ipcRenderer.invoke('web-search-bing', query),
   fetchWebpage: (url: string) => ipcRenderer.invoke('fetch-webpage', url),
+  // 站点图标：主进程抓取 + 磁盘缓存，返回 data URL；取不到时回 { error }，由渲染进程
+  // 回退到「域名首字母 + 哈希底色」的圆形色块（见 WebSearchResults）
+  fetchFavicon: (host: string) => ipcRenderer.invoke('fetch-favicon', host),
 
   // ── 终端控制台 ──
   terminalCreate: (opts: { cwd?: string; cols?: number; rows?: number; ownerKey?: string }) => ipcRenderer.invoke('terminal:create', opts),
