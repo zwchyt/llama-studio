@@ -416,7 +416,7 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
   modelMetrics: {},
   systemMetrics: null,
   setSystemMetrics: (partial) => set((s) => ({
-    systemMetrics: { ...(s.systemMetrics ?? { gpuTemperature: null, gpuUtilization: null, vramUsedMb: null, vramTotalMb: null, gpuName: '', gpuPowerDraw: null, cpuUsage: null, ramUsedMb: null, ramTotalMb: null }), ...partial, lastUpdated: Date.now() } as SystemMetrics
+    systemMetrics: { ...(s.systemMetrics ?? { gpuTemperature: null, gpuUtilization: null, vramUsedMb: null, vramTotalMb: null, gpuName: '', gpuPowerDraw: null, gpuPowerLimit: null, cpuUsage: null, ramUsedMb: null, ramTotalMb: null }), ...partial, lastUpdated: Date.now() } as SystemMetrics
   })),
   modelLogos: {},
   modelCapabilities: {},
@@ -545,12 +545,6 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
             ttftMs: partial.ttftMs ?? null,
             prefillTokS: partial.prefillTokS ?? null,
             reqPerSec: partial.reqPerSec ?? [],
-            vramUsedMb: partial.vramUsedMb ?? null,
-            vramTotalMb: partial.vramTotalMb ?? 0,
-            gpuTemperature: partial.gpuTemperature ?? null,
-            gpuUtilization: partial.gpuUtilization ?? null,
-            gpuName: partial.gpuName ?? '',
-            gpuPowerDraw: partial.gpuPowerDraw ?? null,
             cpuUsage: partial.cpuUsage ?? null,
             nPromptTokens: partial.nPromptTokens ?? 0,
             nPromptTokensCache: partial.nPromptTokensCache ?? 0,

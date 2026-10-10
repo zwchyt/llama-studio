@@ -267,6 +267,21 @@ function RunningCard({ card, metrics: metricsProp }: { card: import('../../../sh
               barMax={100}
               barValue={systemMetrics?.gpuUtilization ?? undefined}
             />
+            {/* 功耗：主进程走 nvidia-smi 的 Power Samples 采样通道（见 ipc.ts 的 refreshGpuPower），
+                约 5s 一档。文案与进度条都取显卡功耗上限（power.limit，本机 115W）做分母 ——
+                写法照抄上面的「显存」卡：当前值带单位进 value，上限走 unit 的弱化后缀；
+                上限读不到时后缀与进度条一起消失，只留当前瓦数 */}
+            <MetricCard
+              label="GPU 功耗"
+              value={systemMetrics?.gpuPowerDraw != null ? `${fmt(systemMetrics.gpuPowerDraw)} W` : '—'}
+              unit={systemMetrics?.gpuPowerDraw != null && systemMetrics.gpuPowerLimit != null
+                ? `/ ${fmt(systemMetrics.gpuPowerLimit, 0)} W`
+                : ''}
+              icon={<Zap size={13} />}
+              accentColor="#eab308"
+              barMax={systemMetrics?.gpuPowerLimit ?? undefined}
+              barValue={systemMetrics?.gpuPowerDraw ?? undefined}
+            />
             <MetricCard
               label="CPU 利用率"
               value={systemMetrics?.cpuUsage != null ? fmt(systemMetrics.cpuUsage) : '—'}

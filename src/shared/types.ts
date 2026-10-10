@@ -155,12 +155,6 @@ export interface ModelMetrics {
   ttftMs: number | null         // time-to-first-token (ms), null until first token arrives
   prefillTokS: number | null    // prompt-eval tok/s read from timing log
   reqPerSec: number[]           // rolling window of req/s samples
-  vramUsedMb: number | null     // GPU memory used
-  vramTotalMb: number           // total adapter VRAM
-  gpuTemperature: number | null // GPU temperature (°C)
-  gpuUtilization: number | null // GPU utilization (%)
-  gpuName: string               // GPU name (e.g. NVIDIA RTX 4090)
-  gpuPowerDraw: number | null   // GPU power draw (W)
   cpuUsage: number | null        // process CPU usage (%)
   nPromptTokens: number         // current request prompt tokens from /slots
   nPromptTokensCache: number    // cached prompt tokens from /slots (computed: n_prompt_tokens - n_prompt_tokens_processed)
@@ -181,6 +175,7 @@ export interface SystemMetrics {
   vramTotalMb: number | null    // GPU 显存总量 (MB)
   gpuName: string               // GPU name (e.g. NVIDIA RTX 4090)
   gpuPowerDraw: number | null   // GPU power draw (W)
+  gpuPowerLimit: number | null  // GPU 功耗上限 (W)：功耗进度条的分母
   cpuUsage: number | null       // 系统整体 CPU 利用率（%，os.cpus 增量）
   ramUsedMb: number | null      // 系统内存已用 (MB)
   ramTotalMb: number | null     // 系统内存总量 (MB)

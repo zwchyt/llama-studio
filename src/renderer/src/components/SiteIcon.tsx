@@ -31,11 +31,18 @@ function colorOf(host: string): string {
 }
 
 // 同域名在一次会话里只问主进程一次（一次搜索常有多条结果同域，来源行也会重复问）。
+// 加个上限：长会话里搜过的域名会一直累积，每条都挂着一张 base64 图标，不设顶会慢慢涨上去。
+const FAVICON_CACHE_MAX = 300
 const faviconCache = new Map<string, Promise<{ dataUrl?: string; error?: string }>>()
 
 function loadFavicon(host: string): Promise<{ dataUrl?: string; error?: string }> {
   let p = faviconCache.get(host)
   if (!p) {
+    // 超上限先淘汰最早插入的一条（Map 迭代即插入顺序），再放新的
+    if (faviconCache.size >= FAVICON_CACHE_MAX) {
+      const oldest = faviconCache.keys().next().value
+      if (oldest !== undefined) faviconCache.delete(oldest)
+    }
     p = Promise.resolve(window.api.fetchFavicon?.(host))
       .then((r) => r ?? { error: '图标接口不可用' })
       .catch(() => ({ error: '图标获取失败' }))

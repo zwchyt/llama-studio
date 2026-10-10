@@ -72,6 +72,18 @@ export function formatToolArgs(raw: string | undefined): string {
   }
 }
 
+// ── 专属渲染的门控集合 ──
+// ToolCallCard 展开体里，参数区与结果区各有「通用实现」与「专属实现」两条路。
+// 原先写成两串内联的 `&& tc.name !== '...'`，每加一个专属卡要改两处、各加一个 !==，
+// 且两串的成员还高度重叠 —— 收成集合后只维护这里一处。
+/** 参数已由卡头预览或专属结果卡呈现，不再走通用 ToolArgsView */
+const CUSTOM_ARGS_TOOLS = new Set(['Bash', 'web_search', 'web_search_bing', 'fetch_webpage'])
+/** 结果由专属结果卡渲染，不再走通用 ToolResultView（否则同一份结果会渲染两遍） */
+const CUSTOM_RESULT_TOOLS = new Set([
+  ...CUSTOM_ARGS_TOOLS,
+  'browser_show', 'browser_screenshot', 'view_image', 'get_datetime'
+])
+
 // 带行号的等宽文本块（工具写入内容 / Read 结果）已抽至 ./LinedPre.tsx：
 // 阈值以下逐行 DOM（原行为），以上走行窗口只挂载视口附近行。
 
@@ -1010,7 +1022,7 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
               )}
               {/* fetch_webpage 的唯一参数就是 url：它已经在卡头预览里，结果卡的来源行还会再
                   给一次（带站点图标、可点外开），所以不再渲染 JSON 参数块 —— 那只是一份重复 */}
-              {tc.name !== 'Bash' && tc.name !== 'web_search' && tc.name !== 'web_search_bing' && tc.name !== 'fetch_webpage' && <ToolArgsView name={tc.name} args={tc.args} onPreviewFile={onPreviewFile} headFilePath={headFilePath} readRange={readRange} streaming={argsStreaming} />}
+              {!CUSTOM_ARGS_TOOLS.has(tc.name) && <ToolArgsView name={tc.name} args={tc.args} onPreviewFile={onPreviewFile} headFilePath={headFilePath} readRange={readRange} streaming={argsStreaming} />}
               {(tc.name === 'web_search' || tc.name === 'web_search_bing') && (executing || done) && (
                 <WebSearchResults
                   result={done ? tc.result ?? undefined : undefined}
@@ -1033,10 +1045,9 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
               {tc.name === 'view_image' && done && <ViewImageResult result={tc.result} />}
               {/* get_datetime 结果就是 {date, time}：摊成横向键值行（日期 / 时间），不再打印原始 JSON */}
               {tc.name === 'get_datetime' && done && <JsonResultCard result={tc.result} />}
-              {/* Bash 的结果已并入终端块；web_search / fetch_webpage / browser_show /
-                  browser_screenshot / view_image / get_datetime 都各自渲染结构化结果卡，
+              {/* Bash 的结果已并入终端块；其余专属结果卡见模块顶部的 CUSTOM_RESULT_TOOLS，
                   这里一并排除，避免同一份结果渲染两遍 */}
-              {done && !hideResult && tc.name !== 'Bash' && tc.name !== 'web_search' && tc.name !== 'web_search_bing' && tc.name !== 'fetch_webpage' && tc.name !== 'browser_show' && tc.name !== 'browser_screenshot' && tc.name !== 'view_image' && tc.name !== 'get_datetime' && (
+              {done && !hideResult && !CUSTOM_RESULT_TOOLS.has(tc.name) && (
                 <ToolResultView result={tc.result!} truncated={tc.truncated} total={tc.resultTotal} lined={tc.name === 'Read'} grep={grepResult} glob={globResult} readLines={readLines} readRange={readRange} onPreviewFile={onPreviewFile} />
               )}
             </div>

@@ -11536,6 +11536,10 @@ html.theme-dark .user-msg-lightbox {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* 显式对齐正文行高：下面 is-clipped 的 1.4lh 淡出带是按**元素自身**的 line-height
+     解析的，不设的话取继承值，与 .agent-fw-p 的 12.5px × 1.7 不一定相等，淡出会偏 */
+  font-size: 12.5px;
+  line-height: 1.7;
 }
 
 /* 折叠态的高度硬上限。字符预算只决定切在第几块，挡不住「导航项换行」这种形状 ——

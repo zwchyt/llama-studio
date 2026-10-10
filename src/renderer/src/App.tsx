@@ -595,12 +595,6 @@ function AppMain() {
       if (typeof raw.reqPerSec === 'number') out.reqPerSec = raw.reqPerSec
       else if (Array.isArray(raw.reqPerSec) && raw.reqPerSec.every(v => typeof v === 'number')) out.reqPerSec = raw.reqPerSec
     }
-    if (raw.vramUsedMb !== undefined && (typeof raw.vramUsedMb === 'number' || raw.vramUsedMb === null)) out.vramUsedMb = raw.vramUsedMb
-    if (typeof raw.vramTotalMb === 'number') out.vramTotalMb = raw.vramTotalMb
-    if (raw.gpuTemperature !== undefined && (typeof raw.gpuTemperature === 'number' || raw.gpuTemperature === null)) out.gpuTemperature = raw.gpuTemperature
-    if (raw.gpuUtilization !== undefined && (typeof raw.gpuUtilization === 'number' || raw.gpuUtilization === null)) out.gpuUtilization = raw.gpuUtilization
-    if (typeof raw.gpuName === 'string') out.gpuName = raw.gpuName
-    if (raw.gpuPowerDraw !== undefined && (typeof raw.gpuPowerDraw === 'number' || raw.gpuPowerDraw === null)) out.gpuPowerDraw = raw.gpuPowerDraw
     if (raw.cpuUsage !== undefined && (typeof raw.cpuUsage === 'number' || raw.cpuUsage === null)) out.cpuUsage = raw.cpuUsage
     if (typeof raw.pid === 'number') out.pid = raw.pid
     if (typeof raw.nPromptTokens === 'number') out.nPromptTokens = raw.nPromptTokens
@@ -651,12 +645,6 @@ function AppMain() {
           partial.reqPerSec = [...hist, rawVal].slice(-30)
         }
       }
-      if (d.vramUsedMb !== undefined) partial.vramUsedMb = d.vramUsedMb as number | null
-      if (d.vramTotalMb !== undefined) partial.vramTotalMb = d.vramTotalMb as number
-      if (d.gpuTemperature !== undefined) partial.gpuTemperature = d.gpuTemperature as number | null
-      if (d.gpuUtilization !== undefined) partial.gpuUtilization = d.gpuUtilization as number | null
-      if (d.gpuName !== undefined) partial.gpuName = d.gpuName as string
-      if (d.gpuPowerDraw !== undefined) partial.gpuPowerDraw = d.gpuPowerDraw as number | null
       if (d.cpuUsage !== undefined) partial.cpuUsage = d.cpuUsage as number | null
       if (d.pid !== undefined) partial.pid = d.pid as number
       if (d.nPromptTokens !== undefined) partial.nPromptTokens = d.nPromptTokens as number
@@ -682,6 +670,7 @@ function AppMain() {
       if (d.vramTotalMb !== undefined) partial.vramTotalMb = d.vramTotalMb as number | null
       if (d.gpuName !== undefined) partial.gpuName = String(d.gpuName)
       if (d.gpuPowerDraw !== undefined) partial.gpuPowerDraw = d.gpuPowerDraw as number | null
+      if (d.gpuPowerLimit !== undefined) partial.gpuPowerLimit = d.gpuPowerLimit as number | null
       if (d.cpuUsage !== undefined) partial.cpuUsage = d.cpuUsage as number | null
       if (d.ramUsedMb !== undefined) partial.ramUsedMb = d.ramUsedMb as number | null
       if (d.ramTotalMb !== undefined) partial.ramTotalMb = d.ramTotalMb as number | null

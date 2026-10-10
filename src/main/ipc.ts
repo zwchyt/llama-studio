@@ -298,6 +298,8 @@ interface GpuInfo {
   memoryUsed: number | null
   memoryTotal: number | null
   powerDraw: number | null
+  /** 功耗上限（W）——面板上功耗进度条的分母 */
+  powerLimit: number | null
 }
 const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 16, keepAliveMsecs: 30000 })
 function hasErrnoCode(err: unknown): err is NodeJS.ErrnoException {
@@ -1347,6 +1349,20 @@ let cachedGpuData: GpuInfo | null = null
 let lastGpuFetch = 0
 let gpuLoggedFail = false
 const GPU_CACHE_TTL = 5000
+// GPU 功耗单独一条通道，不并进上面的快查询。原因：功耗只有 `nvidia-smi -q -d POWER`
+// 的 Power Samples 段能拿到 —— 那一段底层走 nvmlDeviceGetSamples(TOTAL_POWER_SAMPLES)，
+// 而 `--query-gpu=power.draw` 走的 nvmlDeviceGetPowerUsage 在部分卡上返回 NOT_SUPPORTED
+// （实测 RTX 4060 / 驱动 610.88 恒为 [N/A]，power.limit 却能正常读）。
+// 代价是 nvidia-smi 内部要采 ~2.4s 的窗口，塞进 2s 主轮询会把广播拖慢，
+// 所以做成「后台不阻塞刷新 + GPU_POWER_TTL 节流」，主轮询只读缓存值。
+// 实测节奏：广播每 2s 问一次，2.4s 采样与 3s TTL 错开后约 4s 出一档。
+let cachedGpuPower: number | null = null
+/** 上次「尝试」采样的时刻（含失败）——失败也要计一次，否则每轮广播都会重开一次进程 */
+let lastGpuPowerAttempt = 0
+let gpuPowerInFlight = false
+const GPU_POWER_TTL = 3000
+/** 本卡 power.draw 直读是否可用（null = 还没探到 / 探测已作废）。只有 false 才走采样通道。 */
+let gpuDirectPowerSupported: boolean | null = null
 let nvidiaSmiPath: string | undefined = undefined
 
 // ── CPU usage (system-wide, typeperf 性能计数器与任务管理器同源) ────
@@ -4660,6 +4676,68 @@ export function registerIpcHandlers(): void {
     return result
   }
 
+  /** 跑一次 nvidia-smi 取回 stdout（与 refreshGpuData 同款 spawn 方式，win 下走 shell）。 */
+  function runNvidiaSmi(smiPath: string, args: string[], timeoutMs = 8000): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const isWin = process.platform === 'win32'
+      const proc = spawn(
+        isWin ? `"${smiPath}" ${args.map(a => `"${a}"`).join(' ')}` : smiPath,
+        isWin ? [] : args,
+        { windowsHide: true, shell: isWin }
+      )
+      let stdout = '', stderr = ''
+      const timer = setTimeout(() => {
+        try { proc.kill() } catch { /* 已自行退出 */ }
+        reject(new Error('nvidia-smi 超时'))
+      }, timeoutMs)
+      proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+      proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+      proc.on('error', (err) => { clearTimeout(timer); reject(err) })
+      proc.on('close', (code) => {
+        clearTimeout(timer)
+        if (code === 0) resolve(stdout)
+        else reject(new Error(`nvidia-smi 退出码 ${code}: ${stderr.trim()}`))
+      })
+    })
+  }
+
+  /** 从 `nvidia-smi -q -d POWER` 输出里取 Power Samples 段的 Avg（瓦）。
+   *  必须限定在这个段内匹配 —— 同一份输出里还有多行 `Average Power Draw : N/A`，
+   *  全局找 Avg 会先撞上它们（或直接匹配失败）。
+   *  窗口按「段起点往下若干行」取而不是按字节数切：nvidia-smi 哪天多打两行，
+   *  固定字节窗口就会漏掉 Avg。 */
+  function parsePowerSampleAvg(out: string): number | null {
+    const lines = out.split('\n')
+    const start = lines.findIndex((l) => l.includes('Power Samples'))
+    if (start < 0) return null
+    const end = Math.min(start + 8, lines.length)
+    for (let i = start + 1; i < end; i++) {
+      const m = /^\s*Avg\s*:\s*([\d.]+)\s*W\s*$/.exec(lines[i]!)
+      if (m) return parseFloat(m[1]!)
+    }
+    return null
+  }
+
+  /** 后台补 GPU 功耗采样（见上方 cachedGpuPower 的说明）。失败保留上一次的值。 */
+  async function refreshGpuPower(): Promise<void> {
+    if (gpuPowerInFlight) return
+    if (Date.now() - lastGpuPowerAttempt < GPU_POWER_TTL) return
+    const smiPath = findNvidiaSmi()
+    if (!smiPath) return
+    gpuPowerInFlight = true
+    // 先占位再跑：失败也要计一次节流，否则每轮广播都会重开一次进程
+    lastGpuPowerAttempt = Date.now()
+    try {
+      const avg = parsePowerSampleAvg(await runNvidiaSmi(smiPath, ['-q', '-d', 'POWER']))
+      if (avg !== null) {
+        cachedGpuPower = avg
+        // 直接写回当前对象：广播读的就是它，不必等下一轮 refreshGpuData 重建
+        if (cachedGpuData) cachedGpuData.powerDraw = avg
+      }
+    } catch { /* nvidia-smi 不可用 / 超时：保留上一次的值，不打断主轮询 */ }
+    finally { gpuPowerInFlight = false }
+  }
+
   async function refreshGpuData(optTtlMs = GPU_CACHE_TTL): Promise<void> {
     const now = Date.now()
     if (cachedGpuData && (now - lastGpuFetch) < optTtlMs) return
@@ -4669,20 +4747,11 @@ export function registerIpcHandlers(): void {
       return
     }
     try {
-      const result = await new Promise<string>((resolve, reject) => {
-        const isWin = process.platform === 'win32'
-        const smiArgs = ['--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name,power.draw', '--format=csv,noheader,nounits']
-        const proc = spawn(isWin ? `"${smiPath}" ${smiArgs.map(a => `"${a}"`).join(' ')}` : smiPath, isWin ? [] : smiArgs, { windowsHide: true, shell: isWin })
-        let stdout = '', stderr = ''
-        proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-        proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-        proc.on('error', reject)
-        proc.on('close', (code) => {
-          if (code === 0) resolve(stdout.trim())
-          else reject(new Error(`nvidia-smi 退出码 ${code}: ${stderr.trim()}`))
-        })
-      })
-      // output: "32, 8192, 24576, 45, NVIDIA GeForce RTX 4090, 150.50"
+      const result = (await runNvidiaSmi(smiPath, [
+        '--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name,power.draw,power.limit',
+        '--format=csv,noheader,nounits'
+      ])).trim()
+      // output: "32, 8192, 24576, 45, NVIDIA GeForce RTX 4090, 150.50, 350.00"
       const parts = result.split(',').map(s => s.trim())
       if (parts.length >= 4) {
         const util = parseInt(parts[0], 10)
@@ -4691,24 +4760,32 @@ export function registerIpcHandlers(): void {
         const temp = parseInt(parts[3], 10)
         const name = parts[4] || ''
         const power = parts[5] ? parseFloat(parts[5]) : NaN
+        const powerLimit = parts[6] ? parseFloat(parts[6]) : NaN
+        // power.draw 能读就直接用（多数卡如此）；读不到（返回 [N/A]）则回落到采样通道的缓存值
+        const directPower = isNaN(power) ? null : power
+        gpuDirectPowerSupported = directPower !== null
         cachedGpuData = {
           name: name || 'Unknown GPU',
           temperatureGpu: isNaN(temp) ? null : temp,
           utilizationGpu: isNaN(util) ? null : util,
           memoryUsed: isNaN(memUsed) ? null : memUsed,
           memoryTotal: isNaN(memTotal) ? null : memTotal,
-          powerDraw: isNaN(power) ? null : power,
+          powerDraw: directPower ?? cachedGpuPower,
+          powerLimit: isNaN(powerLimit) ? null : powerLimit,
         }
         lastGpuFetch = now
         gpuLoggedFail = false
       }
     } catch (err) {
       if (!gpuLoggedFail) { console.warn('[gpu] nvidia-smi failed:', err); gpuLoggedFail = true }
+      // 探测状态作废：否则一旦被置成 false，之后即使 GPU 查询持续失败，
+      // broadcastMetrics 仍会每 3s 白起一个 nvidia-smi 采样进程
+      gpuDirectPowerSupported = null
     }
   }
 
   async function collectMetrics(id: string, port: number, pid?: number): Promise<Record<string, unknown>> {
-    // TensorSharp 没有 /slots 与 /metrics（llama.cpp 专属），只采集 GPU/CPU 数据
+    // TensorSharp 没有 /slots 与 /metrics（llama.cpp 专属），payload 里只剩模型侧的空值
     const kind = runningProcesses.get(id)?.kind
     const [rawSlots, rawMetrics] = kind === 'tensorsharp'
       ? ['', '']
@@ -4716,7 +4793,6 @@ export function registerIpcHandlers(): void {
         httpGetText(`http://127.0.0.1:${port}/slots`).catch(() => ''),
         httpGetText(`http://127.0.0.1:${port}/metrics`).catch(() => ''),
       ])
-    const gpu = cachedGpuData
     const payload: Record<string, unknown> = { id, lastUpdated: Date.now() }
     const slots = rawSlots ? tryParseJson(rawSlots) : null
     if (slots && Array.isArray(slots) && slots.length > 0) {
@@ -4778,14 +4854,9 @@ export function registerIpcHandlers(): void {
         payload.nCtx = Math.round(prom['llamacpp:kv_cache_tokens'] / prom['llamacpp:kv_cache_usage_ratio'])
       }
     }
-    if (gpu) {
-      payload.vramTotalMb = gpu.memoryTotal || 0
-      payload.vramUsedMb = gpu.memoryUsed ?? null
-      payload.gpuTemperature = gpu.temperatureGpu ?? null
-      payload.gpuUtilization = gpu.utilizationGpu ?? null
-      payload.gpuName = gpu.name || ''
-      payload.gpuPowerDraw = gpu.powerDraw ?? null
-    }
+    // 这里不再塞 GPU 系列字段（vramUsedMb / gpuTemperature / gpuUtilization / gpuName /
+    // gpuPowerDraw）：面板上的显卡数据一律读 systemMetrics（system-metrics-update 那条
+    // 常驻广播），modelMetrics 上那份从来没有任何组件读过，属于纯冗余。
     // Estimate TTFT from prompt token count and prefill speed
     if (typeof payload.nPromptTokens === 'number' && payload.nPromptTokens > 0 &&
       typeof payload.prefillTokS === 'number' && payload.prefillTokS > 0) {
@@ -4829,6 +4900,10 @@ export function registerIpcHandlers(): void {
     const gpuReady = refreshGpuData()
     const sysCpu = getSystemCpuUsage()
     await gpuReady
+    // GPU 功耗：本卡 power.draw 直读不可用时才走采样通道（见 refreshGpuPower 的说明）。
+    // 触发点放在这里而不是 refreshGpuData 内 —— 后者有 5s 缓存，靠它触发会让功耗
+    // 实际变成 ~10s 一档；这里每轮广播（2s）都会问一次，由 GPU_POWER_TTL 自己节流。
+    if (gpuDirectPowerSupported === false) void refreshGpuPower()
     if (cachedGpuData || sysCpu !== null) {
       const sysPayload = {
         gpuTemperature: cachedGpuData?.temperatureGpu ?? null,
@@ -4837,6 +4912,7 @@ export function registerIpcHandlers(): void {
         vramTotalMb: cachedGpuData?.memoryTotal ?? null,
         gpuName: cachedGpuData?.name ?? '',
         gpuPowerDraw: cachedGpuData?.powerDraw ?? null,
+        gpuPowerLimit: cachedGpuData?.powerLimit ?? null,
         cpuUsage: sysCpu,
         ramUsedMb: Math.round((totalmem() - freemem()) / (1024 * 1024)),
         ramTotalMb: Math.round(totalmem() / (1024 * 1024)),
@@ -6616,9 +6692,12 @@ export function registerIpcHandlers(): void {
         .replace(/\s*\x0a\s*\x0a\s*/g, '\x0a\x0a')
         .replace(/[ \t]+/g, ' ')
         .trim()
-      // 截取前 8192 个字符（约 2048 token）
-      const truncated = text.length > 8192 ? text.slice(0, 8192) + '\n\n…（内容已截断）' : text
-      return JSON.stringify({ url, content: truncated || '（页面无文本内容）' })
+      // 截取前 8192 个字符（约 2048 token）。
+      // 「是否截断」走结构化字段，而不是让渲染层去认末尾那句「…（内容已截断）」——
+      // 靠字符串匹配的话，这里改文案渲染层会静默失效（不报错，只是标签消失）
+      const clipped = text.length > 8192
+      const content = clipped ? text.slice(0, 8192) + '\n\n…（内容已截断）' : text
+      return JSON.stringify({ url, content: content || '（页面无文本内容）', truncated: clipped })
     } catch (e: any) {
       return JSON.stringify({ error: `获取页面失败: ${e?.message || e}` })
     }

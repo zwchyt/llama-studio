@@ -16,7 +16,9 @@ import { SiteIcon, hostOf } from './SiteIcon'
  *
  * 数据来自主进程 handleFetchWebpage：{url, content} 或 {error}。
  */
-type Parsed = { kind: 'page'; url: string; content: string } | { kind: 'error'; message: string }
+type Parsed =
+  | { kind: 'page'; url: string; content: string; truncated: boolean }
+  | { kind: 'error'; message: string }
 
 // 不超过这个长度的行视为导航项 / 标签项（导航栏原文一行一个词）
 const CHIP_MAX = 14
@@ -51,10 +53,13 @@ export default function FetchWebpageResult({ url, result, loading }: { url?: str
         if (typeof p.error === 'string') return { kind: 'error', message: p.error }
         const u = typeof p.url === 'string' ? p.url : ''
         const c = typeof p.content === 'string' ? p.content : ''
-        if (u || c) return { kind: 'page', url: u, content: c }
+        // 截断与否取主进程给的结构化字段，不去认正文末尾那句「…（内容已截断）」——
+        // 靠字符串匹配的话，主进程改文案这里会静默失效
+        if (u || c) return { kind: 'page', url: u, content: c, truncated: p.truncated === true }
       }
     } catch { /* 非 JSON 结果按纯文本正文处理 */ }
-    return { kind: 'page', url: url ?? '', content: result }
+    // 防御分支：fetch_webpage 正常总是返回 JSON，走不到这里，截断状态无从判断
+    return { kind: 'page', url: url ?? '', content: result, truncated: false }
   }, [result, url])
 
   const busy = !!loading && !result
@@ -80,7 +85,7 @@ export default function FetchWebpageResult({ url, result, loading }: { url?: str
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip）
   const { tipHandlers: tip, tipNode } = useBubbleTip()
   const host = useMemo(() => hostOf(pageUrl), [pageUrl])
-  const truncated = content.includes('（内容已截断）')
+  const truncated = data?.kind === 'page' && data.truncated
 
   return (
     <div className="agent-fw">
