@@ -2439,12 +2439,11 @@ export function registerIpcHandlers(): void {
       // 同步清理能力检测缓存，避免删除模型卡片后 model-capabilities.json 残留无效条目
       const caps = readModelCaps()
       if (caps[sid]) { delete caps[sid]; writeModelCaps(caps) }
-      // 同步清理模型 Logo（映射 + 图片文件），避免孤儿资源
+      // 只摘掉映射记录，不删图片文件。
+      // logos/ 是用户自己的图库：选图时可直接复用目录内已有图片，同一个文件可能被多张卡片引用，
+      // 删卡片顺手删图会毁掉别处还在用的图，也会弄丢用户攒下的素材。
       const lmap = readLogosMap()
-      const oldName = lmap[sid]
-      if (oldName) {
-        const p = join(LOGOS_DIR, basename(String(oldName)))
-        if (isSafePath(LOGOS_DIR, p)) { try { unlinkSync(p) } catch { } }
+      if (lmap[sid]) {
         delete lmap[sid]
         writeLogosMap(lmap)
       }
@@ -5675,36 +5674,54 @@ export function registerIpcHandlers(): void {
     return { success: true }
   })
 
-  // --- ocr-stream (发送图片到 /completion，llama.cpp 原生多模态格式) ---
+  // --- ocr-stream ---
+  // 走 OpenAI 兼容的 /v1/chat/completions：由服务端套用模型自带的对话模板并插入图片标记。
+  // 原先手写 <|user|>\n<image>\n{prompt}\n<|assistant|> 再打 /completion——
+  // 模板只要和模型对不上，模型收到的就是畸形输入（官方 Web UI 走的正是这条 chat 路径）。
   ipcMain.handle('ocr-stream', async (e, opts: {
-    streamId: string; port: number; image: string; prompt: string; templateArgs?: Record<string, string | number | boolean | null>
+    streamId: string; port: number; image: string; prompt: string
   }): Promise<{ success: boolean; error?: string }> => {
-    const { streamId, port, image, prompt, templateArgs } = opts
-    // 1. 获取 media_marker（告诉模型图片插在哪）
-    let mediaMarker = '<image>'
-    try {
-      const propsJson = await fetchText(`http://127.0.0.1:${port}/props`)
-      const props = JSON.parse(propsJson)
-      if (props?.media_marker) mediaMarker = props.media_marker
-    } catch { /* 使用默认值 */ }
-    const base64Image = image.startsWith('data:') ? image.split(',')[1] : image
-    const promptText = prompt || 'OCR this image:'
-    const finalPrompt = `<|user|>\n${mediaMarker}\n${promptText}\n<|assistant|>`
-    const nPredict = (typeof templateArgs?.['n-predict'] === 'number' ? templateArgs['n-predict'] :
-      typeof templateArgs?.n_predict === 'number' ? templateArgs.n_predict : 2048)
-    const temperature = typeof templateArgs?.temperature === 'number' ? templateArgs.temperature : 0.1
-    const body: Record<string, unknown> = {
-      prompt: {
-        prompt_string: finalPrompt,
-        multimodal_data: [base64Image]
-      },
-      stream: true,
-      n_predict: nPredict,
-      temperature
+    const { streamId, port, image, prompt } = opts
+    const imageUrl = image.startsWith('data:') ? image : `data:image/png;base64,${image}`
+    // 不写死任何生成/采样参数（n_predict、temperature 等）：一律由模型卡的启动参数决定。
+    const body = {
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt || 'OCR' },
+            { type: 'image_url', image_url: { url: imageUrl } }
+          ]
+        }
+      ],
+      stream: true
     }
     const bodyStr = JSON.stringify(body)
     return new Promise((resolve) => {
-      const req = http.request(`http://127.0.0.1:${port}/completion`, {
+      // handler 必须保证 settle：只要有一条出口没走到，ipcRenderer.invoke 就会永久挂起，
+      // 渲染端一重载（dev 下 HMR 每次存盘都算）就会抛 "reply was never sent"。
+      // 所以下面所有出口统一走 settle / send，且各自只生效一次。
+      let settled = false
+      let finished = false
+      const settle = (r: { success: boolean; error?: string }): void => {
+        if (settled) return
+        settled = true
+        resolve(r)
+      }
+      // 渲染端可能已经重载/关闭，此时 send 会抛异常；它绝不能中断主流程
+      const send = (payload: Record<string, unknown>): void => {
+        try { e.sender.send('ocr-chunk', payload) } catch { /* 渲染端已不在 */ }
+      }
+      const finish = (error?: string): void => {
+        activeChatStreams.delete(streamId)
+        if (!finished) {
+          finished = true
+          send(error ? { streamId, done: true, error } : { streamId, done: true })
+        }
+        settle(error ? { success: false, error } : { success: true })
+      }
+
+      const req = http.request(`http://127.0.0.1:${port}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
         agent: httpAgent
@@ -5712,17 +5729,12 @@ export function registerIpcHandlers(): void {
         if (res.statusCode && res.statusCode >= 400) {
           let errBody = ''
           res.on('data', (c: Buffer) => { errBody += c.toString() })
-          res.on('end', () => {
-            activeChatStreams.delete(streamId)
-            e.sender.send('ocr-chunk', { streamId, done: true, error: `HTTP 错误 ${res.statusCode}: ${errBody.slice(0, 500)}` })
-            resolve({ success: false, error: `HTTP 错误 ${res.statusCode}` })
-          })
+          res.on('end', () => finish(`HTTP 错误 ${res.statusCode}: ${errBody.slice(0, 500)}`))
+          res.on('error', () => finish(`HTTP 错误 ${res.statusCode}`))
+          res.on('close', () => finish(`HTTP 错误 ${res.statusCode}`))
           return
         }
         let buf = ''
-        let finished = false
-        let chunkCount = 0
-        const MAX_CHUNKS = 4096
         res.on('data', (c: Buffer) => {
           buf += c.toString()
           let idx: number
@@ -5733,51 +5745,32 @@ export function registerIpcHandlers(): void {
             if (!line) continue
             const payload = line.slice(6).trim()
             if (payload === '[DONE]') {
-              if (!finished) { finished = true; e.sender.send('ocr-chunk', { streamId, done: true }) }
+              finish()
               continue
             }
             try {
               const parsed = JSON.parse(payload)
-              if (parsed.content) {
-                chunkCount++
-                if (chunkCount > MAX_CHUNKS) {
-                  if (!finished) { finished = true; e.sender.send('ocr-chunk', { streamId, done: true }) }
-                  req.destroy()
-                  continue
-                }
-                e.sender.send('ocr-chunk', { streamId, delta: parsed.content, done: false })
-              }
-              if (parsed.stop) {
-                if (!finished) { finished = true; e.sender.send('ocr-chunk', { streamId, done: true }) }
-              }
+              const choice = parsed?.choices?.[0]
+              const delta = choice?.delta?.content
+              if (delta) send({ streamId, delta, done: false })
+              if (choice?.finish_reason) finish()
             } catch { /* skip */ }
           }
         })
-        res.on('end', () => {
-          activeChatStreams.delete(streamId)
-          if (!finished) {
-            if (buf.trim()) {
-              try {
-                const parsed = JSON.parse(buf)
-                if (parsed.content) {
-                  e.sender.send('ocr-chunk', { streamId, delta: parsed.content, done: false })
-                }
-              } catch { /* skip */ }
-            }
-            finished = true
-            e.sender.send('ocr-chunk', { streamId, done: true })
-          }
-          resolve({ success: true })
-        })
+        res.on('end', () => finish())
+        // 兜底：连接被中断（服务端崩溃 / 被 abort）时 res 只有 error/close，不会有 end
+        res.on('error', (err) => finish(err.message))
+        res.on('close', () => finish())
       })
-      req.on('error', (err) => {
-        activeChatStreams.delete(streamId)
-        e.sender.send('ocr-chunk', { streamId, done: true, error: err.message })
-        resolve({ success: false, error: err.message })
-      })
-      req.write(bodyStr)
-      req.end()
+      req.on('error', (err) => finish(err.message))
+      // 先登记再写出：写失败时 finish 会把它摘掉，反过来会留下一个已死的登记
       activeChatStreams.set(streamId, req)
+      try {
+        req.write(bodyStr)
+        req.end()
+      } catch (err) {
+        finish(err instanceof Error ? err.message : String(err))
+      }
     })
   })
 
@@ -7331,12 +7324,7 @@ export function registerIpcHandlers(): void {
       const inLogosDir = resolve(dirname(src)) === resolve(LOGOS_DIR)
       const fileName = inLogosDir ? basename(src) : `${sanitizeLogoFileBase(String(templateId))}${ext}`
       const map = readLogosMap()
-      // 换格式替换时清掉旧格式文件
-      const oldName = map[String(templateId)]
-      if (oldName && oldName !== fileName) {
-        const old = join(LOGOS_DIR, basename(oldName))
-        if (isSafePath(LOGOS_DIR, old)) { try { unlinkSync(old) } catch { } }
-      }
+      // 换图时保留旧文件：同一个图片可能被别的卡片复用，删掉会连带弄坏它们
       if (!inLogosDir) writeFileSync(join(LOGOS_DIR, fileName), readFileSync(src))
       map[String(templateId)] = fileName
       writeLogosMap(map)
@@ -7355,15 +7343,10 @@ export function registerIpcHandlers(): void {
       return Promise.resolve({ success: true, dataUrl: `data:${mime};base64,${readFileSync(fp).toString('base64')}` })
     } catch (err) { return Promise.resolve({ success: false, error: err instanceof Error ? err.message : String(err) }) }
   })
-  // 删除 logo 文件并从映射移除
+  // 只解除关联，保留图片文件（logos/ 是用户图库，同一张图可能被其他卡片复用）
   ipcMain.handle('remove-model-logo', (_e, templateId: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const map = readLogosMap()
-      const oldName = map[String(templateId)]
-      if (oldName) {
-        const p = join(LOGOS_DIR, basename(oldName))
-        if (isSafePath(LOGOS_DIR, p)) { try { unlinkSync(p) } catch { } }
-      }
       delete map[String(templateId)]
       writeLogosMap(map)
       return Promise.resolve({ success: true })

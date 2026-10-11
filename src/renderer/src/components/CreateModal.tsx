@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { notify } from '../store/notificationStore'
@@ -8,6 +8,7 @@ import { switchParamSetArgs, syncArgsByParamSet } from '../utils/defaultTemplate
 import { FolderOpen, ChevronDown, Terminal, Globe, Server, Loader2 } from 'lucide-react'
 import CmdParamsEditor from './CmdParamsEditor'
 import CustomSelect from './CustomSelect'
+import type { ModelFileInfo } from '../store/useStore'
 import type { Template, TemplateArgs, CommandParam, EngineKind } from '../../../shared/types'
 
 /** 各引擎的默认端口：TensorSharp 固定 5000，sd-server 默认 1234，audiocpp 默认 8088，llama.cpp 系列 8080 */
@@ -78,10 +79,18 @@ function parseCommand(cmd: string, shortFlagAliases: Record<string, string>): {
   }
   return { modelPath, serverPort, args }
 }
+/** 合并两组模型并按路径去重（后一组覆盖前一组） */
+function mergeModelLists(base: ModelFileInfo[], extra: ModelFileInfo[]): ModelFileInfo[] {
+  const byPath = new Map<string, ModelFileInfo>()
+  for (const m of base) byPath.set(m.path, m)
+  for (const m of extra) byPath.set(m.path, m)
+  return [...byPath.values()]
+}
+
 export default function CreateModal() {
   const editingTemplate = useStore(s => s.editingTemplate)
-  const { setShowCreateModal, backends, activeBackend, setActiveBackend, addCard, updateCard, models, commandsSchema } = useStore(
-    s => ({ setShowCreateModal: s.setShowCreateModal, backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, addCard: s.addCard, updateCard: s.updateCard, models: s.models, commandsSchema: s.commandsSchema }),
+  const { setShowCreateModal, backends, activeBackend, setActiveBackend, addCard, updateCard, models, imageModels, commandsSchema } = useStore(
+    s => ({ setShowCreateModal: s.setShowCreateModal, backends: s.backends, activeBackend: s.activeBackend, setActiveBackend: s.setActiveBackend, addCard: s.addCard, updateCard: s.updateCard, models: s.models, imageModels: s.imageModels, commandsSchema: s.commandsSchema }),
     shallow
   )
   // Initialize form fields directly from editingTemplate — no useEffect needed.
@@ -159,6 +168,29 @@ export default function CreateModal() {
   const [showImport, setShowImport] = useState(false)
   const [importCmd, setImportCmd] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  // 模型文件下拉：来源就是用户在「模型文件夹」里配置的那些目录——两个扫描结果都要并进来：
+  //   models      文本 / OCR / 生图（含 VAE、CLIP）等各类文件夹
+  //   imageModels 「图片模型文件夹」（单独扫描，不进 models）
+  // 只剔除不能当模板主模型的：VAE、CLIP（sdRole=llm）、mmproj 多模态投影，
+  // 以及语音合成(TTS) / 语音转写(ASR)——这两类各有专用界面，不走模板卡片。
+  // 不按引擎筛：同一批文件夹里的权重可能分属不同引擎，按引擎筛会把用户自己加进来的模型藏掉。
+  const { modelOptions, modelScopeHint } = useMemo(() => {
+    const pool = mergeModelLists(models, imageModels)
+    const matched = pool.filter(m =>
+      !m.tts && !m.asr && m.sdRole !== 'vae' && m.sdRole !== 'llm' && !/mmproj/i.test(m.name))
+    if (matched.length === 0) {
+      return { modelOptions: pool, modelScopeHint: '未找到可用模型，已列出全部文件。' }
+    }
+    const hidden = pool.length - matched.length
+    return {
+      modelOptions: matched,
+      modelScopeHint: hidden > 0
+        ? `来自你配置的模型文件夹，已隐藏 ${hidden} 个 VAE / CLIP / mmproj / 语音模型组件。`
+        : '来自你配置的模型文件夹。'
+    }
+  }, [models, imageModels])
+
   async function handlePickModel() {
     const file = await safeCall(() => window.api.pickModelFile(), '选择模型文件失败')
     if (file) {
@@ -366,8 +398,10 @@ export default function CreateModal() {
                   }}
                   options={[
                     { value: '', label: '-- 选择模型 --' },
-                    ...models.map(m => ({ value: m.path, label: m.name })),
-                    ...(modelPath && !models.find(m => m.path === modelPath)
+                    ...modelOptions.map(m => ({ value: m.path, label: m.name })),
+                    // 当前选中的模型若不在筛选结果里（切换过引擎、或手动浏览进来的文件），
+                    // 补一项，别让下拉显示为空
+                    ...(modelPath && !modelOptions.find(m => m.path === modelPath)
                       ? [{ value: modelPath, label: modelPath.split(/[/\\]/).pop() || '' }]
                       : [])
                   ]}
@@ -378,7 +412,7 @@ export default function CreateModal() {
                   浏览
                 </button>
               </div>
-              <div className="form-hint">从 /models 选择文件或浏览电脑。</div>
+              <div className="form-hint">从已配置的模型文件夹选择，或点「浏览」挑任意文件。{modelScopeHint}</div>
             </div>
             <div className="collapsible-section" style={{ marginTop: 20 }}>
               <button

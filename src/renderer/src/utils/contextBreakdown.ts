@@ -58,10 +58,10 @@ export function estimateContextMeasured(
   }
 
   const categories: CtxCategory[] = [
-    { key: 'system', label: '系统提示 / 模型信息', tokens: systemTok, color: '#8b5cf6' },
-    { key: 'history', label: '对话历史', tokens: historyTok, color: '#3b82f6' },
+    { key: 'system', label: '系统提示词', tokens: systemTok, color: '#8b5cf6' },
+    { key: 'history', label: '对话消息', tokens: historyTok, color: '#3b82f6' },
     { key: 'tools', label: '工具调用', tokens: toolTok, color: '#f59e0b' },
-    { key: 'memory', label: '记忆压缩摘要', tokens: memoryTok, color: '#10b981' },
+    { key: 'memory', label: '记忆压缩', tokens: memoryTok, color: '#10b981' },
   ]
   const total = systemTok + historyTok + toolTok + memoryTok
   return { categories, toolByName, total }

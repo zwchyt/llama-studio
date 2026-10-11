@@ -1,10 +1,10 @@
 /* ══════════════════════════════════════════════════════════
-   工具箱：低频界面聚合页（左侧二级导航 + 右侧内容）
+   工具箱：低频界面聚合页（顶部「组标签 + 当前组条目」+ 下方内容）
    仅在本页生效，不覆盖其他界面样式。
    ══════════════════════════════════════════════════════════ */
 
 /* 抵消 global.css 中 `.view-transition > :not(...)` 给直接子节点套上的卡片样式：
-   本页的两块卡片分别由左侧导航与右侧内容承担，外层容器只负责横向布局。
+   本页的卡片由顶部导航条与下方内容各自承担，外层容器只负责纵向排布。
    选择器提到 (0,4,0) 以稳定压过 global.css 的 (0,3,0)，不依赖文件加载顺序。 */
 .app .content .view-transition>.toolhub {
   padding: 0;
@@ -18,45 +18,39 @@
 
 .toolhub {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
   gap: 8px;
 }
 
-/* ── 左侧二级导航 ── */
-.toolhub-rail {
+/* ── 顶部导航条：一级组标签 + 二级当前组条目，全部横向排在这里 ── */
+.toolhub-top {
   flex-shrink: 0;
-  width: 184px;
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  gap: 8px;
+  padding: 10px 12px;
   background: var(--surface);
   border: 1.5px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
-  overflow: hidden;
 }
 
-.toolhub-rail-head {
+.toolhub-top-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 12px 9px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.toolhub-rail-title {
-  font-size: 11px;
+.toolhub-top-title {
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: .7px;
   color: var(--text);
-  text-transform: uppercase;
 }
 
-.toolhub-rail-count {
-  margin-left: auto;
+.toolhub-top-count {
   font-size: 10px;
   font-weight: 600;
   color: var(--text-muted);
@@ -65,43 +59,75 @@
   padding: 1px 7px;
 }
 
-.toolhub-rail-nav {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 8px 8px 12px;
+.toolhub-top-sep {
+  width: 1px;
+  height: 14px;
+  margin: 0 3px;
+  background: var(--border);
+  flex-shrink: 0;
 }
 
-.toolhub-group+.toolhub-group {
-  margin-top: 10px;
+/* 二级：当前组的条目，横向排布、放不下自动换行 */
+.toolhub-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
-.toolhub-group-label {
-  display: block;
-  font-size: 10px;
+/* 一级：组标签。横向排布、放不下自动换行；
+   选中态用 --accent / --accent-fg，跟随主题的墨色，与全局主按钮同语言。 */
+.toolhub-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.toolhub-gtab {
+  font-family: var(--font);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+
+.toolhub-gtab:hover {
+  color: var(--text);
+}
+
+.toolhub-gtab.active {
+  background: var(--accent);
+  color: var(--accent-fg);
   font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: .8px;
-  padding: 6px 8px 4px;
 }
 
-/* 「后端」还没扫出东西时替换整组行，位置与原左侧导航栏的那条提示等价 */
-.toolhub-rail-empty {
+.toolhub-gtab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* 「后端」还没扫出东西时替换整排条目 */
+.toolhub-chips-empty {
   margin: 0;
-  padding: 6px 8px;
+  padding: 6px 2px;
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-muted);
 }
 
+/* 条目：横向胶囊（图标 + 名称），不再撑满宽度 */
 .toolhub-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 32px;
-  padding: 4px 8px 4px 5px;
+  gap: 7px;
+  height: 30px;
+  padding: 3px 10px 3px 4px;
   border: none;
   background: none;
   border-radius: 9px;
@@ -110,7 +136,7 @@
   font-family: var(--font);
   color: var(--text-secondary);
   cursor: pointer;
-  text-align: left;
+  white-space: nowrap;
   transition: background var(--transition), color var(--transition);
 }
 
@@ -131,9 +157,6 @@
 }
 
 .toolhub-item-label {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

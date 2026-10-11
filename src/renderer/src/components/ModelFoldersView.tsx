@@ -231,7 +231,7 @@ export default function ModelFoldersView() {
         <div className="settings-section-title"><ScanText /> OCR 模型文件夹</div>
         <div className="mf-body">
           <p className="mf-desc">
-            添加存放 OCR / 图片理解模型（如 llava、qwen2-vl 等多模态 GGUF）的文件夹。其中的模型将出现在模型页面，并可用于 OCR 文字识别与图片描述。文件保留在原位置——不会被复制。
+            添加存放 OCR / 图片理解模型（如 llava、qwen2-vl 等多模态 GGUF）的文件夹。其中的模型将出现在模型页面，并可用于 OCR 文字识别。文件保留在原位置——不会被复制。
           </p>
           {ocrFolders.length === 0 ? (
             <div className="mf-empty">未配置 OCR 模型文件夹。</div>

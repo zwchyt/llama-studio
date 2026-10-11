@@ -13,6 +13,57 @@
   overflow-y: auto;
 }
 
+/* 整页都是投放区：拖拽文件进来时给一圈虚线提示 */
+.ocr-view.page-drop {
+  outline: 2px dashed var(--accent);
+  outline-offset: -12px;
+  border-radius: 12px;
+}
+
+.ocr-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 状态胶囊：只表达「当前哪张卡在跑 + 能不能用」，不做切换 */
+.ocr-status-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 260px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ocr-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ocr-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-muted);
+}
+
+.ocr-status-dot.on {
+  background: #16a34a;
+  box-shadow: 0 0 0 3px #16a34a2e;
+}
+
+.ocr-status-dot.warn {
+  background: #d97706;
+  box-shadow: 0 0 0 3px #d977062e;
+}
+
 .ocr-notice {
   display: flex;
   align-items: center;
@@ -27,76 +78,89 @@
 
 .ocr-split {
   display: flex;
-  gap: 16px;
+  gap: 0;
   flex: 1;
   min-height: 0;
 }
 
+/* 左右面板：折叠用 flex-grow + opacity 过渡；面板保持挂载，收起再展开不丢状态 */
 .ocr-left-panel {
-  flex: 1;
+  flex: 1 1 0;
   display: flex;
   flex-direction: column;
   min-width: 0;
   align-self: flex-start;
+  transition: flex-grow 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
 }
 
 .ocr-right-panel {
-  flex: 1;
+  flex: 1 1 0;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  transition: flex-grow 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
 }
 
-.ocr-mode-toggle {
+.ocr-left-panel.is-collapsed,
+.ocr-right-panel.is-collapsed {
+  flex-grow: 0;
+  min-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* 面板分隔条：折叠按钮寄生在这里，不额外占一行工具栏 */
+.ocr-divider {
+  flex: 0 0 28px;
+  width: 28px;
   display: flex;
-  gap: 0;
-  margin-bottom: 12px;
-  background: var(--bg);
-  border-radius: 8px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  width: fit-content;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
 }
 
-.ocr-mode-btn {
-  padding: 5px 14px;
-  font-size: 12px;
-  font-weight: 500;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
+.ocr-divider-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  border-radius: 6px;
-  transition: all 0.2s;
-  white-space: nowrap;
+  opacity: 0.75;
+  transition: opacity 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s;
 }
 
-.ocr-mode-btn:hover {
+.ocr-divider-btn:hover:not(:disabled) {
+  opacity: 1;
+  border-color: var(--accent);
   color: var(--text);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-.ocr-mode-btn.active {
-  background: var(--accent);
-  color: #fff;
+.ocr-divider-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
 }
 
-.ocr-prompt-input {
-  width: 100%;
+/* 解析提示（坐标混用、丢块、降级等）：低调展示，不抢结果 */
+.ocr-warn-inline {
+  margin-bottom: 10px;
   padding: 7px 10px;
-  font-size: 12px;
-  border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
-  color: var(--text);
-  outline: none;
-  transition: border-color 0.2s;
-  box-sizing: border-box;
-  margin-bottom: 12px;
-}
-
-.ocr-prompt-input:focus {
-  border-color: var(--border-strong);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 
 .ocr-dropzone {
@@ -219,11 +283,77 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
 }
 
+/* 图片舞台：叠加层要贴合图片实际渲染区域，所以单独一层承载 img + 叠加层 */
+.ocr-image-stage {
+  position: relative;
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 文字块叠加层：位置与尺寸由 JS 量出的图片渲染矩形决定；纯展示，不挡交互 */
+.ocr-bbox-layer {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* 单块显示：同一时刻图上只画一个框，所以要足够醒目 */
+.ocr-bbox {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--bbox, #2563eb);
+  background: color-mix(in srgb, var(--bbox, #2563eb) 18%, transparent);
+  border-radius: 2px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bbox, #2563eb) 28%, transparent);
+  animation: ocr-bbox-in 0.14s ease-out;
+}
+
+@keyframes ocr-bbox-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 标签牌：贴在框的左上角外侧；贴近图片顶边时用 .inside 改放到框内 */
+.ocr-bbox-label {
+  position: absolute;
+  left: -2px;
+  bottom: 100%;
+  margin-bottom: 1px;
+  padding: 1px 5px;
+  border-radius: 2px;
+  font-family: var(--font-mono, 'SF Mono', Consolas, monospace);
+  font-size: 10px;
+  line-height: 1.5;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.ocr-bbox-label.inside {
+  bottom: auto;
+  top: -2px;
+  margin-bottom: 0;
+}
+
 .ocr-actions {
   display: flex;
   gap: 8px;
   padding: 12px 14px;
   border-top: 1px solid var(--border);
+}
+
+/* hover 微反馈：图标轻微上移。比改背景克制，但足够表达「可点」 */
+.ocr-actions .btn svg,
+.page-actions .btn svg {
+  transition: transform 0.18s ease;
+}
+
+.ocr-actions .btn:hover:not(:disabled) svg,
+.page-actions .btn:hover:not(:disabled) svg {
+  transform: translateY(-1px);
 }
 
 .ocr-placeholder {
@@ -239,20 +369,46 @@
   min-height: 300px;
 }
 
-.ocr-placeholder-icon {
+/* 空态：引导块而不是「小图标 + 两行字」 */
+.ocr-placeholder-icon-wrap {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
   color: var(--text-muted);
-  opacity: 0.4;
+  margin-bottom: 2px;
 }
 
-.ocr-placeholder-text {
+.ocr-placeholder-title {
   font-size: 14px;
-  color: var(--text);
   font-weight: 500;
+  color: var(--text);
 }
 
 .ocr-placeholder-hint {
-  font-size: 12px;
+  max-width: 260px;
+  text-align: center;
+  line-height: 1.6;
+  font-size: 12.5px;
   color: var(--text-muted);
+}
+
+.ocr-placeholder-tags {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.ocr-tag {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 9px;
 }
 
 .ocr-result-card {
@@ -343,6 +499,14 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--card-bg);
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* 与图上框联动的悬停态：左边竖条 + 边框跟随主色，与导航选中态同一套语言 */
+.ocr-box-item.is-hover {
+  border-color: var(--accent);
+  background: var(--bg);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .ocr-box-item-text {
@@ -350,12 +514,8 @@
   line-height: 1.6;
   color: var(--text);
   word-break: break-word;
-}
-
-.ocr-box-item-pos {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
+  /* 表格块整理后可能是多行 Markdown，保留换行才看得清 */
+  white-space: pre-wrap;
 }
 
 .ocr-error-inline {

@@ -215,7 +215,7 @@ interface LlamaCppApi {
   edgeTtsSynthesize: (opts: { text: string; voice: string; rate?: number; pitch?: number }) => Promise<string>
   edgeTtsVoices: () => Promise<Array<{ name: string; label: string; gender: string; locale: string }>>
   // ── OCR ──
-  ocrStream: (opts: { streamId: string; port: number; image: string; prompt: string; templateArgs?: Record<string, string | number | boolean | null> }) => Promise<{ success: boolean; error?: string }>
+  ocrStream: (opts: { streamId: string; port: number; image: string; prompt: string }) => Promise<{ success: boolean; error?: string }>
   abortOcrStream: (streamId: string) => Promise<{ success: boolean }>
   onOcrChunk: (cb: (data: { streamId: string; delta?: string; done: boolean; error?: string }) => void) => void
   removeOcrListeners: () => void
