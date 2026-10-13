@@ -6100,14 +6100,19 @@ html.is-panel-resizing .agent-think-body .table-node {
   position: absolute;
   top: 12px;
   bottom: 12px;
-  right: 4px;
-  width: 28px;
+  /* 宽度 = 短线基准宽(32px) + 左右各 3px 安全边。必须容得下最长的那条短线，
+     超出的部分会被 .agent-code-chat 的 overflow:hidden 裁掉。 */
+  right: 6px;
+  width: 38px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 6px;
   padding: 0;
+  /* 隐藏时整体不接管指针（子元素继承，因此不会留下看不见的可点区域）。
+     可见时必须打开：波浪要读光标在整个竖带里的位置，只靠 3px 高的细条命中会断断续续。
+     代价是这 38px 竖带会吃掉点击 —— 与圆点时代（容器本来就是 pointer-events:auto）一致。 */
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.2s ease;
@@ -6124,54 +6129,74 @@ html.is-panel-resizing .agent-think-body .table-node {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
+  /* 宽度 = 短线基准宽：整条短线（含两端）都可点，而不只是中间那一小段 */
+  width: 32px;
   height: 14px;
-  padding: 8px 4px;
+  padding: 0;
   border: none;
   background: transparent;
   cursor: pointer;
-  pointer-events: auto;
+  /* 不写 pointer-events：让它继承容器的值 —— 容器隐藏时整体为 none（不会留下看不见的
+     可点区域），可见时为 auto。任一侧写死都会破坏另一种状态。 */
   flex: none;
 }
 
+/* 热区四周各外扩 6px：短线只有 2px 高，不加宽命中区很难点中 */
 .agent-chat-rail-item::before {
   content: '';
   position: absolute;
   inset: -6px;
 }
 
+/* 轨道短线（类名沿用 dot，实为横线，见参考图）。
+   基准宽固定 32px（最长那根的完整长度），其余靠 scaleX(--rail-scale) 收缩 ——
+   用 transform 而不是 width，长度变化才走合成层、不触发 reflow，
+   滚动/滑动时逐帧改长度也不会引起布局抖动。 */
 .agent-chat-rail-dot {
   display: block;
-  width: 6px;
-  height: 6px;
+  width: 32px;
+  /* 高度 3px + 全圆角：2px 时圆角半径只有 1px，肉眼看不出来，仍是一根方头细条；
+     3px 才能让两端真正显出「圆头」。 */
+  height: 3px;
+  /* 全圆角（胶囊形两端）。写 999px 而不是固定值：高度变了也永远是正圆头，
+     不用跟着改半径。 */
   border-radius: 999px;
   background: var(--text-tertiary, #9ca3af);
+  transform: scaleX(var(--rail-scale, 0.28));
+  /* 右端固定，只向左伸缩 —— 与参考图一致：所有短线的右端对齐在同一条竖线上，
+     变长/变短只发生在左端。用 center 会让两端同时向中间收，看起来像「整体缩放」。 */
+  transform-origin: right;
   transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) var(--rail-wave-delay, 0ms), background 0.2s ease var(--rail-wave-delay, 0ms);
 }
 
-/* hover：弹性起伏（低频，观感好） */
-.agent-chat-rail-item:hover .agent-chat-rail-dot {
-  background: var(--accent);
-  transform: scale(1.8) translateX(-3px) translateY(-1px);
-}
+/* 刻意没有 :hover 样式：强调（最长 + 最粗 + 最深色）现在由 JS 的「波浪中心」独占 ——
+   光标滑到哪一根，哪一根就是强调条（见 .agent-chat-rail-item--active）。
+   若这里再写一份 :hover，会在相邻条目命中区重叠的那几像素里和波浪打架
+   （波浪判 A 是峰、:hover 判 B 是峰 → 两根同时拉满）。 */
 
-/* active（当前阅读位置）：同样有「起伏」——放大 + 右移，并带波次延迟形成涟漪；
-   与 hover 共用同一组 transform，滚动时由 .agent-chat-rail--scrolling 整体抑制，
-   只有滚动停止（140ms 后）才恢复，因此不会因逐点切换而逐帧合成掉帧。 */
+/* active = 波浪中心的强调条：光标在轨道上时是光标下那根，否则是阅读位置那根。
+   最长 + 最粗 + 最深色，即参考图里那条黑长条。
+   高度 3px → 4px：按钮是 align-items:center，加粗只会上下各扩 0.5px，不会顶动相邻条目。 */
 .agent-chat-rail-item--active .agent-chat-rail-dot {
-  background: var(--accent);
-  transform: scale(1.8) translateX(-3px) translateY(-1px);
+  background: var(--text);
+  height: 4px;
+  transform: scaleX(1);
 }
 
-/* 方案 A：滚动/跳转动画期间，轨道点只做瞬时变色，禁用 transform 弹性与波次延迟。
-   滚动停止 140ms 后由 JS 移除该类，波浪/起伏效果自动恢复。 */
+/* 滚动/跳转动画期间：**保留**一段很短的线性过渡，不要把 transform 直接关掉 ——
+   滚动时「中心」是按消息逐条跳的（阅读位置是整数下标），过渡一关就是逐条硬跳，
+   看起来一卡一卡。给 0.12s 线性，跳动之间会被抹平，观感变成连续滑动。
+   之所以能放心保留（旧实现是 transform:none !important）：长度走 scaleX，是合成层属性，
+   且滚动期间波次延迟已在 JS 侧置 0，不会出现十几条各自带延迟合成的掉帧。 */
 .agent-chat-rail--scrolling .agent-chat-rail-dot {
-  transition: background 0.12s linear !important;
-  transform: none !important;
+  transition: transform 0.12s linear, background 0.12s linear !important;
 }
 
-.agent-chat-rail--scrolling .agent-chat-rail-item--active .agent-chat-rail-dot {
-  transform: none;
+/* 光标在轨道上滑动期间：把过渡压到极短并去掉波次延迟，长度才能紧贴光标 ——
+   否则基础样式的 0.3s 弹性过渡永远追不上光标，看起来「粘手」。
+   用极短(60ms)而不是 none：抹掉高刷鼠标的亚像素抖动，肉眼仍是即时跟随。 */
+.agent-chat-rail--wave .agent-chat-rail-dot {
+  transition: transform 0.06s linear, background 0.06s linear;
 }
 
 /* 预览卡片从 rail 左侧水平展开 */

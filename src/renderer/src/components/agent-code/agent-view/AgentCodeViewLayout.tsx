@@ -187,6 +187,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   const {
     activeRailId, atBottom, chatScrollRef, onChatScroll, onChatWheel, pauseFollow,
     railItems, railOverflowing, railScrolling, scrollToBottom, scrollToRailItem,
+    railWaveCenter, onRailPointerMove, onRailPointerLeave,
     historyStartIndex, loadEarlierMessages, registerVirtualApi,
   } = scroll
   const {
@@ -776,22 +777,43 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
             )}
             <div ref={msgEndRef} />
           </div>
-          <div className={`agent-chat-rail${railOverflowing && railItems.length > 1 ? ' agent-chat-rail--visible' : ''}${railScrolling ? ' agent-chat-rail--scrolling' : ''}`}>
+          <div
+            className={`agent-chat-rail${railOverflowing && railItems.length > 1 ? ' agent-chat-rail--visible' : ''}${railScrolling ? ' agent-chat-rail--scrolling' : ''}${railWaveCenter !== null ? ' agent-chat-rail--wave' : ''}`}
+            // 指针事件挂在轨道容器上：光标只要落在这条竖带里，长度就跟着光标走（波浪）。
+            // 这也意味着容器会吃掉这 52px 宽区域的点击 —— 这是波浪效果的必要代价，
+            // 与改造前（圆点时代容器就是 pointer-events:auto）一致。
+            onPointerMove={onRailPointerMove}
+            onPointerLeave={onRailPointerLeave}
+          >
             {(() => {
               const activeIndex = railItems.findIndex(it => it.id === activeRailId)
+              // 波浪中心：光标在轨道上时听光标的，否则回落到阅读位置。
+              // 用分数下标让相邻两根的长度连续过渡；取整只用来定「哪一根是强调条」。
+              const center = railWaveCenter !== null ? railWaveCenter : activeIndex
+              const peakIndex = center >= 0 ? Math.round(center) : -1
               return railItems.map((item, index) => {
-                const distance = activeIndex >= 0 ? Math.abs(index - activeIndex) : 0
-                // 滚动期间不写波次延迟：此时过渡已被 --scrolling 类禁用，延迟无意义，
-                // 且能避免每个点的内联 style 随 activeIndex 每次变化而重建。
+                const distance = center >= 0 ? Math.abs(index - center) : 0
+                // 滚动期间不写波次延迟：此时过渡已被 --scrolling 类禁用，延迟无意义。
                 const delay = railScrolling ? 0 : distance * 20
+                // 短线长度：**分档**，不是连续渐变（见参考图）——
+                //   中心那根最长(1.0) → 紧邻的一根短一档(0.66) → 再往外全部压到下限(0.28)。
+                // 用 0.34 的陡斜率 + 0.28 下限实现：距离 ≥2 就落到下限，因此
+                // 「除最长那根和它左右两根之外，其余全都一样短」。
+                // 斜率保持连续（不写成 if/else 硬台阶），鼠标滑动时波浪才不会一格一格跳。
+                const scale = center < 0 ? 0.28 : Math.max(0.28, 1 - distance * 0.34)
                 return (
                   <button
                     key={item.id}
-                    className={`agent-chat-rail-item${activeRailId === item.id ? ' agent-chat-rail-item--active' : ''}`}
+                    // 强调条由「中心」决定：光标在轨道上时是光标下那根，否则是阅读位置那根。
+                    className={`agent-chat-rail-item${index === peakIndex ? ' agent-chat-rail-item--active' : ''}`}
                     onClick={() => scrollToRailItem(item)}
                     aria-label={item.ariaLabel}
                     type="button"
-                    style={railScrolling ? undefined : ({ '--rail-wave-delay': `${delay}ms` } as React.CSSProperties)}
+                    // 与旧的圆点实现不同，这里**始终写 style**：长度要跟着中心逐帧变化
+                    // （滚动时跟阅读位置，悬停时跟光标），置空会让所有短线塌回同一长度。
+                    // 性能由 CSS 兜底：--scrolling / --wave 两个类各自把过渡改成瞬时，
+                    // 且长度走 scaleX，不触发 reflow。
+                    style={{ '--rail-wave-delay': `${delay}ms`, '--rail-scale': scale } as React.CSSProperties}
                   >
                     <span className="agent-chat-rail-dot" />
                     <span className="agent-chat-rail-preview">

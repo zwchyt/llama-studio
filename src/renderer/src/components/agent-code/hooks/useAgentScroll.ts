@@ -98,6 +98,59 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     railScrollIdleTimerRef.current = window.setTimeout(() => setRailScrolling(false), 140)
   }, [])
 
+  // ── 鼠标波浪：光标在轨道上滑动时，「最长最深」的那根短线跟随光标，而不是停在阅读位置 ──
+  // 值 = **分数**下标（4.3 表示光标落在第 5、6 根之间靠前 3/10），null = 光标不在轨道上。
+  // 之所以用分数而不是取整：相邻两根的长度要连续过渡，波浪才是「滑过去」而不是「跳一格」。
+  const [railWaveCenter, setRailWaveCenter] = useState<number | null>(null)
+  // 下面几个 ref 供 rAF 回调读取。pointermove 的触发频率可能高于帧率（高刷屏/高频鼠标），
+  // 每条事件都 setState 会让整条轨道按事件频率重渲染，因此合并成每帧一次。
+  const railWaveCenterRef = useRef<number | null>(null)
+  const railWaveYRef = useRef(0)
+  const railWaveElRef = useRef<HTMLElement | null>(null)
+  const railWaveRafRef = useRef<number | undefined>(undefined)
+
+  const applyRailWave = useCallback(() => {
+    railWaveRafRef.current = undefined
+    const el = railWaveElRef.current
+    if (!el) return
+    // 用首尾两根短线的中心点线性插值出分数下标 —— 刻意**不**硬编码条高(14px)/间距(6px)：
+    // 那两个值住在 CSS 里，在 TS 里抄一份，改样式时必然漂移。
+    const nodes = el.querySelectorAll<HTMLElement>('.agent-chat-rail-item')
+    const n = nodes.length
+    if (n === 0) return
+    const first = nodes[0]!.getBoundingClientRect()
+    const last = nodes[n - 1]!.getBoundingClientRect()
+    const firstCenter = first.top + first.height / 2
+    const lastCenter = last.top + last.height / 2
+    const step = n > 1 ? (lastCenter - firstCenter) / (n - 1) : 1
+    const raw = step > 0 ? (railWaveYRef.current - firstCenter) / step : 0
+    const next = Math.max(0, Math.min(n - 1, raw))
+    const prev = railWaveCenterRef.current
+    // 位移不足 1/50 格就不触发重渲染：光标微抖不该让整条轨道跟着重算。
+    if (prev !== null && Math.abs(prev - next) < 0.02) return
+    railWaveCenterRef.current = next
+    setRailWaveCenter(next)
+  }, [])
+
+  const onRailPointerMove = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    // currentTarget 只在事件回调执行期间有效，rAF 里已经取不到，必须先存下来。
+    railWaveElRef.current = e.currentTarget
+    railWaveYRef.current = e.clientY
+    if (railWaveRafRef.current !== undefined) return
+    railWaveRafRef.current = requestAnimationFrame(applyRailWave)
+  }, [applyRailWave])
+
+  const onRailPointerLeave = useCallback(() => {
+    if (railWaveRafRef.current !== undefined) {
+      cancelAnimationFrame(railWaveRafRef.current)
+      railWaveRafRef.current = undefined
+    }
+    railWaveElRef.current = null
+    railWaveCenterRef.current = null
+    // 必须清空：不清的话波浪会冻在光标最后停留的那一格，看起来像「卡住了」。
+    setRailWaveCenter(null)
+  }, [])
+
   const onChatScroll = useCallback(() => {
     const el = chatScrollRef.current
     if (!el) return
@@ -612,9 +665,10 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     }
   }, [scheduleRailSync])
 
-  // 卸载时清理轨道滚动节流定时器，避免卸载后 setState
+  // 卸载时清理轨道滚动节流定时器与波浪 rAF，避免卸载后 setState / 回调打到已卸载组件
   useEffect(() => () => {
     if (railScrollIdleTimerRef.current) window.clearTimeout(railScrollIdleTimerRef.current)
+    if (railWaveRafRef.current !== undefined) cancelAnimationFrame(railWaveRafRef.current)
   }, [])
 
   // 会话切换时复位跟随态。真正保证「切会话后落在底部」的是上面那条 layout effect ——
@@ -661,6 +715,7 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
   return {
     historyStartIndex, loadEarlierMessages,
     chatScrollRef, atBottom, railItems, activeRailId, railOverflowing, railScrolling,
+    railWaveCenter, onRailPointerMove, onRailPointerLeave,
     onChatScroll, onChatWheel, pauseFollow, markRailScrolling,
     animateScrollTo, scrollToBottom, updateActiveRailItem, syncRailItems,
     scheduleRailSync, scrollToRailItem, resetFollow, registerVirtualApi,

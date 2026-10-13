@@ -32,6 +32,13 @@ export interface OcrBox {
   n: { x1: number; y1: number; x2: number; y2: number }
   /** 是否有可用坐标：false 时 n 全为 0，只展示文字、不画框 */
   hasBox: boolean
+  /** 非文字区域块：模型标出了图/表等区域，但没给出文字（text 为空串）。
+   *  以前这类块会被直接丢弃，导致「只识别到文字、识别不到图像」。 */
+  region: boolean
+  /** 结构性区域：标签本身就表示这是一个版面元素（图/表/公式框…），
+   *  即使它带着文字——典型是模型把整张表格的单元格拼成一段文字塞进 table 块里。
+   *  这类块要按「区域」渲染（框 + 区域内容），不能当成普通文字块。 */
+  structural: boolean
   /** 阅读顺序：行号、行内序号；未排序时为 -1 */
   row: number
   col: number
@@ -106,11 +113,15 @@ function coordKindOf(max: number): CoordKind {
   return max > NORM_MAX ? 'pixel' : 'norm'
 }
 
-/** 统一构造：坐标非法（缺失 / 反向 / 零面积）时不丢弃文字，只标记为无位置 */
+/** 统一构造：坐标非法（缺失 / 反向 / 零面积）时不丢弃文字，只标记为无位置。
+ *  「只有标签、没有文字」的块是模型标出的图像/图表区域（如 `figure [x1,y1,x2,y2]`），
+ *  以前在这里被当成空块丢掉；现在保留为区域块——但区域块必须有坐标，否则没有任何可展示的内容。 */
 function makeRaw(text: string, label: string | undefined, c: number[] | null): RawBox | null {
   const t = text.trim()
-  if (!t) return null
-  const noPos: RawBox = { text: t, label, rect: null }
+  const isRegion = t === '' && !!label
+  if (!t && !isRegion) return null
+  // 无文字的块不能没有位置：既没文字又没框，展示层无从下手
+  const noPos: RawBox | null = t ? { text: t, label, rect: null } : null
   if (!c) return noPos
   let [x1, y1, x2, y2] = c
   if (![x1, y1, x2, y2].every(Number.isFinite)) return noPos
@@ -121,6 +132,8 @@ function makeRaw(text: string, label: string | undefined, c: number[] | null): R
 }
 
 const TEXT_KEYS = ['text', 'content', 'value']
+/** 标签字段兼容：模型对同一含义的叫法不一（label / type / category…），全试一遍 */
+const LABEL_KEYS = ['label', 'type', 'category', 'kind', 'tag', 'class']
 const BOX_KEYS = ['bbox', 'box', 'rect', 'coords', 'coordinates']
 
 /** 坐标字段兼容：x1/y1/x2/y2、left/top/right/bottom，或 bbox/box/rect 四元数组 */
@@ -141,9 +154,11 @@ function rawFromObject(item: unknown): RawBox | null {
   if (!item || typeof item !== 'object') return null
   const o = item as Record<string, unknown>
   const text = TEXT_KEYS.map((k) => o[k]).find((v): v is string => typeof v === 'string')
-  if (!text) return null
+  const label = LABEL_KEYS.map((k) => o[k]).find((v): v is string => typeof v === 'string')
+  // 有文字、或有标签，都算有效：只有标签的是模型标出的图像/图表区域
+  if (text === undefined && label === undefined) return null
   // 坐标拿不到也要保留文字：只标记为无位置，交给上层决定怎么展示
-  return makeRaw(text, typeof o.label === 'string' ? o.label : undefined, readCoords(o))
+  return makeRaw(text ?? '', label, readCoords(o))
 }
 
 /** 宽松 JSON：先直解，失败再修补常见毛病（尾逗号、无引号键名、整体单引号、
@@ -247,6 +262,19 @@ function parseLineFormat(text: string): RawBox[] {
 
 const TABLE_TAG_RE = /^\s*<table>([\s\S]*?)<\/table>\s*$/i
 
+/** 还原模型写进 <table> 里的 HTML 实体（`a&gt;0` → `a>0`）。
+ *  不还原的话上层还会再转义一次，界面上就会原样显示成 "a&gt;0"。
+ *  &amp; 必须放最后，否则 "&amp;gt;" 会被拆成两步、还原成 "&gt;" 而不是 ">". */
+function unescapeEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+}
+
 /**
  * 表格块整理：
  * 1) 剥掉模型的 <table>…</table> 包裹；
@@ -259,7 +287,7 @@ const TABLE_TAG_RE = /^\s*<table>([\s\S]*?)<\/table>\s*$/i
 function normalizeTableText(text: string): string {
   const m = TABLE_TAG_RE.exec(text)
   if (!m) return text
-  const inner = m[1].trim()
+  const inner = unescapeEntities(m[1].trim())
   if (!inner) return ''
 
   for (const sep of ['|', '\t']) {
@@ -280,6 +308,18 @@ function normalizeTableText(text: string): string {
     return [header, divider, ...body].join('\n')
   }
   return inner
+}
+
+/** 标签表示「这是一块版面元素」而不是普通文字行的集合。
+ *  模型（Baidu-OCR 等）会输出 `table [x1,y1,x2,y2]<table>…</table>`——
+ *  标签是 table、坐标是整张表、内容是被拼成一段的单元格文字。
+ *  这类块必须按区域渲染，否则表格框会被当成一段普通文字、在界面上消失。 */
+const STRUCTURAL_LABELS = new Set([
+  'table', 'figure', 'image', 'picture', 'photo', 'chart', 'graph', 'diagram', 'logo', 'stamp', 'seal'
+])
+
+function isStructuralLabel(label?: string): boolean {
+  return !!label && STRUCTURAL_LABELS.has(label.toLowerCase())
 }
 
 /**
@@ -315,10 +355,14 @@ function finalize(rawBoxes: RawBox[], opts: OcrParseOptions, warnings: string[])
 
   return rawBoxes.map((b): OcrBox => {
     const text = normalizeTableText(b.text)
+    // 整理后仍无文字 = 区域块（模型只给了标签与框）
+    const region = text === ''
+    // 标签本身表示版面元素（table/figure…）：即使有文字也按区域渲染
+    const structural = isStructuralLabel(b.label)
     if (!b.rect) {
       return {
         text, label: b.label, x1: 0, y1: 0, x2: 0, y2: 0, coordKind: 'norm',
-        n: { x1: 0, y1: 0, x2: 0, y2: 0 }, hasBox: false, row: -1, col: -1
+        n: { x1: 0, y1: 0, x2: 0, y2: 0 }, hasBox: false, region, structural, row: -1, col: -1
       }
     }
     const kx = b.rect.coordKind === 'pixel' ? sx : 1
@@ -338,6 +382,8 @@ function finalize(rawBoxes: RawBox[], opts: OcrParseOptions, warnings: string[])
         y2: clamp(b.rect.y2 * ky, 0, NORM_MAX)
       },
       hasBox: true,
+      region,
+      structural,
       row: -1,
       col: -1
     }
@@ -588,13 +634,16 @@ export function boxesToText(boxes: OcrBox[], opts: BoxesToTextOptions = {}): str
     mergeSameRow = true,
     keepLabel = false
   } = opts
+  // 区域块（模型标出的图/表，没有文字）不进纯文本：复制时它们没有可复制的字符，
+  // 混进来只会变成空行。要取它们请从结果列表里单独拿。
+  const textBoxes = boxes.filter((b) => !b.region)
   const fmt = (b: OcrBox): string => (keepLabel && b.label ? `${b.label} ${b.text}` : b.text)
 
-  if (!mergeSameRow) return boxes.map(fmt).join(rowSeparator)
+  if (!mergeSameRow) return textBoxes.map(fmt).join(rowSeparator)
 
   const lines: string[] = []
   let curRow = -2
-  for (const b of boxes) {
+  for (const b of textBoxes) {
     if (b.row < 0) {
       lines.push(fmt(b))
       curRow = -2
@@ -606,4 +655,56 @@ export function boxesToText(boxes: OcrBox[], opts: BoxesToTextOptions = {}): str
     }
   }
   return lines.join(rowSeparator)
+}
+
+export interface MdTable {
+  header: string[]
+  rows: string[][]
+}
+
+/**
+ * 从块文字里识别 Markdown 表格。
+ *
+ * 模型输出表格的常见形式（PaddleOCR-VL 的 table/ocr 任务就是这样）：
+ *   符号 | 图象的特征
+ *   ---|---
+ *   \( a > 0 \) | 开口向上
+ * 首尾的竖线可有可无；`---` 分隔行可有可无。
+ *
+ * 判定从严，避免把正文里偶然出现的一个 `|` 误判成表格：
+ * 必须有分隔行，或至少两行数据；且所有行的列数一致。
+ */
+export function parseMarkdownTable(text: string): MdTable | null {
+  const lines = text.split(/\r\n|\r|\n/).map((l) => l.trim()).filter((l) => l.length > 0)
+  if (lines.length < 2) return null
+
+  const splitRow = (line: string): string[] | null => {
+    if (!line.includes('|')) return null
+    let s = line
+    if (s.startsWith('|')) s = s.slice(1)
+    if (s.endsWith('|')) s = s.slice(0, -1)
+    const cells = s.split('|').map((c) => c.trim())
+    return cells.length >= 2 ? cells : null
+  }
+
+  const header = splitRow(lines[0])
+  if (!header) return null
+  const cols = header.length
+
+  // 分隔行只要求「每格都是 ---」：模型常把它写成通用的 `---|---|---`，
+  // 段数与数据列数不一致是常态，按列数校验会把整张表误杀。
+  const isDivider = (cells: string[] | null): boolean =>
+    !!cells && cells.every((c) => /^:?-{2,}:?$/.test(c))
+
+  const hasDivider = isDivider(splitRow(lines[1]))
+  const rows: string[][] = []
+  for (let i = hasDivider ? 2 : 1; i < lines.length; i++) {
+    const cells = splitRow(lines[i])
+    if (!cells || cells.length !== cols) return null
+    rows.push(cells)
+  }
+  // 没有分隔行时要求至少两行数据，否则正文里的单个 `|` 也会被当成表格
+  if (!hasDivider && rows.length < 2) return null
+  if (rows.length === 0) return null
+  return { header, rows }
 }

@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
 import { Upload, X, Copy, Check, Loader2, FileText, Trash2, AlertCircle, ImageIcon, ChevronLeft, ChevronRight } from 'lucide-react'
 import { notify } from '../store/notificationStore'
-import { parseOcrResult, boxesToText, type OcrBox } from '../utils/ocrBoxes'
+import { parseOcrResult, boxesToText, parseMarkdownTable, type OcrBox, type MdTable } from '../utils/ocrBoxes'
 import { renderMathInHtml } from './agent-code/utils/mathHtml'
 import 'katex/dist/katex.min.css'
 import '../styles/ocr.css'
@@ -45,6 +45,122 @@ function labelColor(label?: string): string {
   return LABEL_PALETTE[Math.abs(hash) % LABEL_PALETTE.length]
 }
 
+// 区域块的标签 → 中文名。模型（Baidu-OCR 等）标出的图/表区域只有标签没有文字，
+// 结果列表里要让人一眼看出这是「识别到的图像」而不是漏掉的内容。
+const REGION_NAMES: Record<string, string> = {
+  figure: '图像',
+  image: '图片',
+  picture: '图片',
+  photo: '图片',
+  chart: '图表',
+  graph: '图表',
+  diagram: '示意图',
+  logo: '图标',
+  stamp: '印章',
+  seal: '印章',
+  formula: '公式',
+  equation: '公式'
+}
+
+function regionLabelText(label?: string): string {
+  if (!label) return '图像区域'
+  return REGION_NAMES[label.toLowerCase()] ?? label
+}
+
+/** 该块是否按「区域」渲染：没有文字的区域块，或标签本身就表示版面元素
+ *  （table / figure / image…）。后者即使带着文字（模型把整张表的单元格拼成一段）
+ *  也要按区域渲染，否则表格框会被当成普通文字、在界面上消失。 */
+function isRegionLike(b: OcrBox): boolean {
+  return b.region || b.structural
+}
+
+/** 版面视图里单个块的字号，单位 cqw（容器宽度的百分比）。
+ *
+ *  目标：让文字铺满模型给的框——框宽决定换行，框高决定总高度。
+ *  ⚠️ 不能直接把框高当行高：模型给的一个框常常包含多行（整段文字一个框），
+ *  那样算出的字号会大好几倍，文字溢出框外，表现就是"框没框住文字"。
+ *  所以先估行数 L，取 f = 框高 × 0.82 / L；把 L ≈ 文字宽 / 框宽 代入，
+ *  得到 L = sqrt(文字宽系数 × 框高 × 0.82 / 框宽)，一步解出，不用迭代。
+ *
+ *  所有长度统一换算成"占页宽的比例"：页面容器与原图同宽高比，
+ *  所以 框高(占页高) × (原图高/原图宽) = 框高(占页宽)。 */
+function blockFontCqw(text: string, boxWNorm: number, boxHNorm: number, nat: { w: number; h: number }): number {
+  const boxW = Math.max(boxWNorm / 1000, 0.005)
+  const boxH = (boxHNorm / 1000) * (nat.h / nat.w)
+  // 文字宽度系数：中日韩全角按 1 个字号宽，其余按 0.52
+  let widthUnits = 0
+  for (const ch of text) widthUnits += /[\u2e80-\u9fff\uf900-\ufaff\uff00-\uff60]/.test(ch) ? 1 : 0.52
+  if (widthUnits <= 0) return 0.6
+  const lines = Math.max(1, Math.sqrt((widthUnits * boxH * 0.82) / boxW))
+  const fontFrac = (boxH * 0.82) / lines
+  return Math.min(4, Math.max(0.3, fontFrac * 100))
+}
+
+/** 区域块预览：把模型标出的图/表区域从原图里裁出来，画到 canvas 上。
+ *  用 canvas 而不是 CSS 裁切：归一化坐标换算成真实像素后按尺寸裁剪最稳，
+ *  不受容器宽高与 max-height 的相互牵制（用 CSS 缩放在限高时会把裁剪区域拉变形）。 */
+function RegionThumb({ src, box, nat }: { src: string; box: OcrBox; nat: { w: number; h: number } }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  const { x1, y1, x2, y2 } = box.n
+  useEffect(() => {
+    const cv = ref.current
+    if (!cv) return
+    const sx = (x1 / 1000) * nat.w
+    const sy = (y1 / 1000) * nat.h
+    const sw = Math.max(1, ((x2 - x1) / 1000) * nat.w)
+    const sh = Math.max(1, ((y2 - y1) / 1000) * nat.h)
+    const img = new Image()
+    img.onload = () => {
+      // 限制最长边：超大区域不必按原分辨率生成 canvas，展示用不到那么细
+      const k = Math.min(1, 900 / Math.max(sw, sh))
+      cv.width = Math.max(1, Math.round(sw * k))
+      cv.height = Math.max(1, Math.round(sh * k))
+      const ctx = cv.getContext('2d')
+      if (ctx) ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cv.width, cv.height)
+    }
+    img.src = src
+  }, [src, x1, y1, x2, y2, nat.w, nat.h])
+  return <canvas ref={ref} className="ocr-region-canvas" />
+}
+
+/** 是否用「裁图」展示这一块：只有拿不到文字的纯图/表区域才需要。
+ *  有文字的块一律渲染内容——表格渲染成真正的表格，而不是贴一张原图。 */
+function needsCrop(b: OcrBox): boolean {
+  return (b.region || b.structural) && b.text === ''
+}
+
+/** 真正的表格：行列来自模型输出的 Markdown 表格，单元格里填的就是识别到的文字，
+ *  单元格内容仍走 KaTeX，所以表格里的公式也能正常显示。 */
+function MdTable({ table }: { table: MdTable }) {
+  const cell = (s: string): { __html: string } => ({ __html: renderMathInHtml(escapeHtml(s)) })
+  return (
+    <div className="ocr-table-scroll">
+      <table className="ocr-table">
+        <thead>
+          <tr>
+            {table.header.map((c, i) => <th key={i} dangerouslySetInnerHTML={cell(c)} />)}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.map((row, ri) => (
+            <tr key={ri}>
+              {row.map((c, ci) => <td key={ci} dangerouslySetInnerHTML={cell(c)} />)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/** 渲染一块识别内容：能识别成 Markdown 表格就渲染成真正的表格，否则按文字渲染。
+ *  textClassName 用来适配不同容器：列表里是固定字号，版面视图里要继承块上的 cqw 字号。 */
+function BlockContent({ text, textClassName = 'ocr-box-item-text' }: { text: string; textClassName?: string }) {
+  const table = useMemo(() => parseMarkdownTable(text), [text])
+  if (table) return <MdTable table={table} />
+  return <span className={textClassName} dangerouslySetInnerHTML={{ __html: renderMathInHtml(escapeHtml(text)) }} />
+}
+
 export default function OcrView() {
   const cards = useStore(s => s.cards, shallow)
   const backends = useStore(s => s.backends, shallow)
@@ -68,10 +184,14 @@ export default function OcrView() {
   const [ocrBoxes, setOcrBoxes] = useState<OcrBox[] | null>(null)
   // 图片真实尺寸：像素坐标归一化与分栏检测要用；用 ref 才能在只注册一次的流回调里读到最新值
   const imageSizeRef = useRef<{ w: number; h: number } | null>(null)
+  // 同一份尺寸的 state 副本：区域块裁剪要在渲染里用（ref 变更不触发重渲染）
+  const [imgNatural, setImgNatural] = useState<{ w: number; h: number } | null>(null)
   // 解析过程中的提示（坐标混用、丢块、降级等）
   const [ocrWarnings, setOcrWarnings] = useState<string[]>([])
   // 结果列表悬停到哪一行，图上就只画那一行的框（null = 不画）
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
+  // 结果展示方式：版面（按原图坐标摆回原位）/ 列表。默认版面——这是本页要表达的重点。
+  const [resultView, setResultView] = useState<'list' | 'layout'>('layout')
 
   const runningModel = cards.find(c => c.status === 'running')
   const port = runningModel?.template.serverPort
@@ -167,13 +287,19 @@ export default function OcrView() {
     setErrorMsg('')
     setOcrWarnings([])
     imageSizeRef.current = null
+    setImgNatural(null)
     setHoverIdx(null)
     const reader = new FileReader()
     reader.onload = () => {
       const url = reader.result as string
       // 先量出真实尺寸：像素坐标要按图片实际宽高归一化，分栏检测也依赖它
       const img = new Image()
-      img.onload = () => { imageSizeRef.current = { w: img.naturalWidth, h: img.naturalHeight } }
+      img.onload = () => {
+        const size = { w: img.naturalWidth, h: img.naturalHeight }
+        imageSizeRef.current = size
+        // 同步一份到 state：区域块裁剪要在渲染里读
+        setImgNatural(size)
+      }
       img.src = url
       setImageDataUrl(url)
     }
@@ -214,6 +340,7 @@ export default function OcrView() {
     setErrorMsg('')
     setOcrWarnings([])
     imageSizeRef.current = null
+    setImgNatural(null)
     setHoverIdx(null)
     if (streamIdRef.current) {
       window.api.abortOcrStream(streamIdRef.current)
@@ -276,14 +403,11 @@ export default function OcrView() {
   }
 
   const hasResult = status !== 'idle' && (ocrResult || status === 'processing')
+  // 只有带坐标的块才能摆进版面视图；没有坐标（模型不返回位置）时自动退回列表
+  const hasPositions = !!ocrBoxes && ocrBoxes.some(b => b.hasBox)
+  const showLayout = resultView === 'layout' && hasPositions && !!imgNatural
   // 当前悬停项对应的框：只有它会被画到图上
   const hoverBox = hoverIdx !== null ? (ocrBoxes?.[hoverIdx] ?? null) : null
-  // 识别结果里的数学公式用 KaTeX 渲染（模型常输出 \(...\) \[...\] $...$ 这类 LaTeX 分隔符）。
-  // 先转义再渲染：转义不影响反斜杠与 $，但能挡住 OCR 文本里的尖括号被当成 HTML 注入。
-  const boxHtml = useMemo(
-    () => (ocrBoxes ?? []).map((b) => renderMathInHtml(escapeHtml(b.text))),
-    [ocrBoxes]
-  )
   // 状态胶囊：区分「未运行 / 引擎不支持 / 可用」三态
   const statusState = !port ? 'off' : runningIsTensorSharp ? 'warn' : 'on'
   const statusText = runningModel ? runningModel.template.name : '未运行模型'
@@ -461,6 +585,28 @@ export default function OcrView() {
             <div className="ocr-result-card">
               <div className="ocr-result-header">
                 <span className="ocr-result-title">识别结果</span>
+                {status === 'done' && hasPositions && (
+                  <div className="ocr-view-toggle" role="tablist" aria-label="结果展示方式">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={showLayout}
+                      className={`ocr-view-toggle-btn${showLayout ? ' active' : ''}`}
+                      onClick={() => setResultView('layout')}
+                    >
+                      版面
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={!showLayout}
+                      className={`ocr-view-toggle-btn${!showLayout ? ' active' : ''}`}
+                      onClick={() => setResultView('list')}
+                    >
+                      列表
+                    </button>
+                  </div>
+                )}
                 {status === 'processing' && (
                   <span className="ocr-badge ocr-badge-processing">处理中...</span>
                 )}
@@ -489,21 +635,128 @@ export default function OcrView() {
                   <span className="ocr-result-placeholder">正在识别文字及位置...</span>
                 )}
                 {status === 'done' && ocrBoxes && ocrBoxes.length > 0 && (
-                  <div className="ocr-box-list">
-                    {ocrBoxes.map((b, i) => (
-                      <div
-                        key={i}
-                        className={`ocr-box-item${hoverIdx === i ? ' is-hover' : ''}`}
-                        onMouseEnter={() => setHoverIdx(i)}
-                        onMouseLeave={() => setHoverIdx(h => (h === i ? null : h))}
-                      >
-                        <span className="ocr-box-item-text" dangerouslySetInnerHTML={{ __html: boxHtml[i] ?? escapeHtml(b.text) }} />
+                  showLayout ? (
+                    /* ── 版面视图：把每块按原图坐标摆回原位，页面容器与原图同宽高比 ── */
+                    <div className="ocr-layout-wrap">
+                      <div className="ocr-layout-viewport">
+                        <div
+                          className="ocr-layout-page"
+                          style={{ aspectRatio: `${imgNatural!.w} / ${imgNatural!.h}` }}
+                        >
+                          {ocrBoxes.map((b, i) => {
+                            if (!b.hasBox) return null
+                            const bw = Math.max(0, b.n.x2 - b.n.x1)
+                            const bh = Math.max(0, b.n.y2 - b.n.y1)
+                            const crop = needsCrop(b)
+                            // 内容是不是表格：决定用哪种宽度策略（见下面注释）
+                            const table = crop ? null : parseMarkdownTable(b.text)
+                            return (
+                              <div
+                                key={i}
+                                className={`ocr-layout-block${crop ? ' is-region' : ''}${hoverIdx === i ? ' is-hover' : ''}`}
+                                style={
+                                  crop
+                                    ? /* 纯图/表区域：占满模型给的整个区域 */
+                                      {
+                                        left: `${b.n.x1 / 10}%`,
+                                        top: `${b.n.y1 / 10}%`,
+                                        width: `${bw / 10}%`,
+                                        height: `${bh / 10}%`
+                                      }
+                                    : table
+                                      ? /* 表格：必须给「确定宽度」。
+                                            表格容器带 overflow，若外层是 fit-content，就会形成
+                                            「表格撑宽 → 出滚动条 → 可用宽度变小 → 表格变窄 → 滚动条消失」
+                                            的循环，浏览器反复重排，表现就是表格抖动。 */
+                                        {
+                                          left: `${b.n.x1 / 10}%`,
+                                          top: `${b.n.y1 / 10}%`,
+                                          width: `${bw / 10}%`,
+                                          fontSize: `${blockFontCqw(b.text, bw, bh, imgNatural!)}cqw`
+                                        }
+                                      : /* 文字：位置取框的左上角，尺寸由内容撑开（maxWidth 兜住换行宽度）。
+                                           这样悬停时的边框一定贴着内容，不会出现"框没框住" */
+                                        {
+                                          left: `${b.n.x1 / 10}%`,
+                                          top: `${b.n.y1 / 10}%`,
+                                          maxWidth: `${bw / 10}%`,
+                                          fontSize: `${blockFontCqw(b.text, bw, bh, imgNatural!)}cqw`
+                                        }
+                                }
+                                onMouseEnter={() => setHoverIdx(i)}
+                                onMouseLeave={() => setHoverIdx(cur => (cur === i ? null : cur))}
+                              >
+                                {crop ? (
+                                  /* 没有文字的图/表区域：把该区域从原图裁出来放回原位 */
+                                  imageDataUrl ? (
+                                    <RegionThumb src={imageDataUrl} box={b} nat={imgNatural!} />
+                                  ) : (
+                                    <span className="ocr-layout-region-label">{regionLabelText(b.label)}</span>
+                                  )
+                                ) : table ? (
+                                  <MdTable table={table} />
+                                ) : (
+                                  <span
+                                    className="ocr-layout-text"
+                                    dangerouslySetInnerHTML={{ __html: renderMathInHtml(escapeHtml(b.text)) }}
+                                  />
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
                       </div>
-                    ))}
-                  </div>
+                      {ocrBoxes.some(b => !b.hasBox) && (
+                        <p className="ocr-layout-nopos">
+                          {ocrBoxes.filter(b => !b.hasBox).length} 个块没有坐标，只在「列表」里显示
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="ocr-box-list">
+                      {ocrBoxes.map((b, i) => (
+                        <div
+                          key={i}
+                          className={`ocr-box-item${isRegionLike(b) ? ' is-region' : ''}${hoverIdx === i ? ' is-hover' : ''}`}
+                          onMouseEnter={() => setHoverIdx(i)}
+                          onMouseLeave={() => setHoverIdx(h => (h === i ? null : h))}
+                        >
+                          {needsCrop(b) ? (
+                            /* 没有文字的图/表区域：把该区域从原图裁出来展示 */
+                            <>
+                              <span className="ocr-region-head">
+                                <ImageIcon size={13} />
+                                {regionLabelText(b.label)}
+                              </span>
+                              {imageDataUrl && imgNatural && b.hasBox ? (
+                                <RegionThumb src={imageDataUrl} box={b} nat={imgNatural} />
+                              ) : (
+                                <span className="ocr-region-nobox">该区域没有可用坐标，无法裁剪</span>
+                              )}
+                            </>
+                          ) : (
+                            /* 有内容：表格渲染成真正的表格，其余按文字渲染。
+                               结构性块（table/figure…）额外标一下类型 */
+                            <>
+                              {b.structural && (
+                                <span className="ocr-region-head">
+                                  <ImageIcon size={13} />
+                                  {regionLabelText(b.label)}
+                                </span>
+                              )}
+                              <BlockContent text={b.text} />
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )
                 )}
                 {ocrResult && !(ocrBoxes && ocrBoxes.length > 0) && (
-                  <pre className="ocr-result-text">{ocrResult}</pre>
+                  /* 模型没给结构化输出时的兜底：整段文字。若里面是表格，同样渲染成真表格 */
+                  <div className="ocr-result-plain">
+                    <BlockContent text={ocrResult} />
+                  </div>
                 )}
               </div>
             </div>

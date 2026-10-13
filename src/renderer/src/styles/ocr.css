@@ -467,6 +467,10 @@
   overflow-x: hidden;
   min-height: 200px;
   max-height: 600px;
+  /* 常驻滚动条槽：不这样做的话，滚动条出现/消失会改变内容宽度，
+     而版面视图的字号是 cqw（跟随宽度），宽度一变字号就变、高度又变，
+     于是滚动条再次切换 —— 来回震荡就是"表格抖动"的另一个来源。 */
+  scrollbar-gutter: stable;
 }
 
 .ocr-result-text {
@@ -516,6 +520,170 @@
   word-break: break-word;
   /* 表格块整理后可能是多行 Markdown，保留换行才看得清 */
   white-space: pre-wrap;
+}
+
+/* 区域块：模型标出的图像 / 图表等（只有位置、没有文字）——
+   把该区域从原图裁出来展示，让「识别到的图像」也出现在结果里 */
+.ocr-box-item.is-region {
+  gap: 8px;
+}
+
+.ocr-region-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.ocr-region-canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 240px;
+  width: auto;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.ocr-region-nobox {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── 结果展示方式切换（版面 / 列表） ── */
+.ocr-view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.ocr-view-toggle-btn {
+  padding: 3px 11px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ocr-view-toggle-btn.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* ── 版面视图：按原图坐标把每块摆回原位 ── */
+/* 页面容器：与原图同宽高比，宽度铺满可用空间。
+   字号用 cqw，所以宽度一变整页文字就等比缩放，不需要缩放控件。
+   不加边框、不加底色、不做额外滚动容器——列表视图什么样，它就什么样。 */
+.ocr-layout-page {
+  position: relative;
+  width: 100%;
+  container-type: inline-size;
+  margin: 0 auto;
+}
+
+/* 单个块：位置取模型坐标的左上角。文字块尺寸由内容撑开（fit-content + maxWidth），
+   所以悬停边框始终贴着文字；图像/表格块由行内样式给出宽高，占满整个区域。 */
+.ocr-layout-block {
+  position: absolute;
+  box-sizing: border-box;
+  width: fit-content;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  line-height: 1.2;
+  color: var(--text);
+  /* 不裁切：宁可略微溢出，也不能把识别到的字吃掉 */
+  overflow: visible;
+}
+
+.ocr-layout-block.is-hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.ocr-layout-text {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 图像/表格区域：直接把该区域从原图裁出来填在这里，不用占位框 */
+.ocr-layout-block.is-region {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* 版面视图里的裁图：填满所属区域，去掉列表视图里那圈描边 */
+.ocr-layout-block.is-region .ocr-region-canvas {
+  max-width: 100%;
+  max-height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.ocr-layout-region-label {
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ocr-layout-nopos {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── 识别结果里的表格：模型输出 Markdown 表格时，渲染成真正的表格 ── */
+.ocr-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.ocr-table {
+  border-collapse: collapse;
+  line-height: 1.5;
+  color: var(--text);
+  /* 撑满容器而不是按内容撑宽：表格一旦能超出容器，就会和外层的
+     overflow / fit-content 形成「出滚动条↔变窄」的循环，表现为表格抖动。 */
+  width: 100%;
+  /* 不写死字号：版面视图里要继承块上的 cqw 字号，列表里由下面两条补上 */
+}
+
+.ocr-table th,
+.ocr-table td {
+  border: 1px solid var(--border);
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.ocr-table th {
+  background: var(--bg);
+  font-weight: 600;
+}
+
+/* 列表视图 / 无结构兜底：固定 13px，保证可读 */
+.ocr-box-item .ocr-table,
+.ocr-result-plain .ocr-table {
+  font-size: 13px;
+}
+
+/* 无结构化输出时的兜底文字：等宽，便于看空白与对齐 */
+.ocr-result-plain .ocr-box-item-text {
+  font-family: var(--font-mono, 'SF Mono', 'Fira Code', monospace);
 }
 
 .ocr-error-inline {
