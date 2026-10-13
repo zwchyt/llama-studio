@@ -851,12 +851,71 @@ html.is-panel-resizing .agent-think-body .table-node {
 
 }
 
-/* 提示词 Prefill 进度条：作为顶部栏行内条目显示，直接复用运行状态面板的
-   .metric-bar-wrap / .metric-bar-fill 样式（已在 monitoring.css 中定义）。
-   这里只补一个固定宽度，使其作为顶部栏里的一个离散条目（而非撑满整行）。 */
-.agent-prompt-build-bar {
-  width: 120px;
-  flex-shrink: 0;
+/* ── 预填充进度：波形声纹 ──────────────────────────────────────────────────
+   两层几何完全相同的柱阵叠在一起：底层 = 未完成的浅色柱，顶层 = 已完成的深色柱，
+   顶层用 mask 横向裁出进度边界。两层根数与间距一致，所以边界两侧严丝合缝。
+   柱子起伏是纯 CSS 动画（每根错开 55ms 负延迟，形成横向推进的波纹），
+   JS 每帧只写一个 mask 百分比 + 一个数字，开销极小。
+   整条靠 flex:1 吃掉工具行中间那段空白（左侧按钮组与右侧控件组之间）。 */
+.agent-prefill {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+  overflow: hidden;
+}
+
+.agent-prefill-wave {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 14px;
+}
+
+/* 已完成层：mask-image 由 JS 按进度逐帧写入。
+   mask 里的渐变无法用 CSS transition 插值，所以平滑只能由 JS 自己做（见组件内注释）。 */
+.agent-prefill-wave-clip {
+  position: absolute;
+  inset: 0;
+}
+
+.agent-prefill-wave-row {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.agent-prefill-wave-bar {
+  display: block;
+  width: 2px;
+  height: 14px;
+  border-radius: 1px;
+  background: var(--border);
+  transform-origin: center;
+  animation: agent-prefill-wave 1.1s ease-in-out infinite;
+}
+
+.agent-prefill-wave-row--on .agent-prefill-wave-bar {
+  background: var(--text);
+}
+
+@keyframes agent-prefill-wave {
+  0%, 100% { transform: scaleY(.3); }
+  50%      { transform: scaleY(1); }
+}
+
+.agent-prefill-pct {
+  flex: none;
+  min-width: 30px;
+  text-align: right;
+  font-size: 11px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
 }
 
 .agent-code-topbar {

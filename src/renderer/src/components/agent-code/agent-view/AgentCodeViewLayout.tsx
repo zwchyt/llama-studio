@@ -29,7 +29,7 @@ import { markPanelAnimating } from '../../../utils/useResizablePanel'
 import { buildSessionPdfHtml } from '../utils/exportSessionPdf'
 import { useAgentMessageHeights } from '../hooks/useAgentMessageHeights'
 import { useAgentVirtualMessages } from '../hooks/useAgentVirtualMessages'
-import { AgentPrefillBar, HistorySummaryBubble, TopbarBtn, UserMessageEntry, AgentMessageRow } from '../agent-message'
+import { HistorySummaryBubble, TopbarBtn, UserMessageEntry, AgentMessageRow } from '../agent-message'
 import { fmtCompactTok } from '../utils/format'
 import AgentContextPanel from '../../AgentContextPanel'
 import AgentMessageSearch from '../../AgentMessageSearch'
@@ -587,13 +587,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
         </div>
 
         <div className="agent-code-topbar-right">
-          {/* Prefill 进度条：复用「运行状态」面板的同一数据源（modelMetrics[].prefillProgress），
-              自订阅指标，仅在 prefill 进行中（pp < 1）显示，完成后自动消失。 */}
           <div
             ref={topbarScrollRef}
             className={`agent-code-topbar-right-scroll${topbarOvf.left ? ' ovf-left' : ''}${topbarOvf.right ? ' ovf-right' : ''}`}
           >
-            <AgentPrefillBar />
             {/* ── 顶栏按钮按当前工作区模式动态显示（不需要的直接不渲染，不置灰）──
                 编码模式专属：压缩历史 / 轨迹
                 通用模式专属：导出图片 / 导出 PDF / 工具开关

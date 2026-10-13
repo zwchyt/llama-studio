@@ -25,7 +25,7 @@ import { CheckIcon, ChevronDownIcon, CircleStopIcon, CodeIcon, FileTextIcon, Fol
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import AgentFilePicker from '../../AgentFilePicker'
 import AskUserQuestionInline from '../../AskUserQuestionInline'
-import { AgentTopBarCtx, AniIconButton } from '../agent-message'
+import { AgentPrefillBar, AgentTopBarCtx, AniIconButton } from '../agent-message'
 import { ImagePill } from '../utils/ImagePill'
 import { AttachmentTextPreview, type PreviewableAttachment } from '../agent-message/AttachmentTextPreview'
 import { TOOL_META, formatToolArgs } from '../agent-tools'
@@ -586,6 +586,11 @@ export function AgentInputArea({
               </div>
             )}
             <AniIconButton className={`chat-mic-btn${listening || micTranscribing ? ' listening' : ''}`} icon={MicIcon} size={14} onClick={toggleListen} disabled={micTranscribing} title={micTranscribing ? '识别中…' : listening ? '停止录音' : '语音输入'} />
+            {/* 预填充进度：吃掉左侧按钮组（附件/选择文件/语音）与右侧控件组
+                （上下文 · 模型 · 搜索 · 思考程度 · 发送）之间那段空白。
+                靠 flex:1 自适应宽度，无进度时整块不渲染，右侧那组的
+                margin-left:auto 会自动接管这段空白 —— 布局与原来一致。 */}
+            <AgentPrefillBar />
             {/* 工作区目录与 git 分支已上移到输入框上方那一行（.chat-input-context），
                 它们描述的是「这段对话在哪个工作区里」，属于上下文而非操作按钮。 */}
             <AgentTopBarCtx

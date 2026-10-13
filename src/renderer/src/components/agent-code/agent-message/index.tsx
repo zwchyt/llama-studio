@@ -70,26 +70,84 @@ export const AgentTopBarCtx = React.memo(function AgentTopBarCtx({
   )
 })
 
+// ── 预填充进度：波形声纹 ──────────────────────────────────────────────────
+// 两层几何完全相同的柱阵叠在一起：底层是未完成的浅色柱，顶层是已完成的深色柱，
+// 顶层用 mask 横向裁出进度边界 —— 两层根数、间距一致，所以边界处严丝合缝。
+// 柱子起伏是纯 CSS 动画（每根错开 55ms 负延迟），不进 JS：
+// 每帧只写一个 mask 百分比和一个数字，开销极小。
+// 宽度交给 flex:1 吃掉工具行中间那段空白（左侧按钮组与右侧控件组之间），
+// 因此不占额外高度、不改动输入框原有布局。
+//
+// ⚠️ 临时预览开关：置 true 时无论有没有模型在跑都强制显示，并本地跑一条循环动画，
+//    方便不启动模型就直接看动态效果；看完改回 false 即恢复「仅在预填充进行中显示」。
+const PREFILL_PREVIEW = false
+/** 预览动画一圈的时长（ms）：前 85% 从 0 走到 98%，余下停在 98% 一瞬再回零 */
+const PREFILL_PREVIEW_MS = 2400
+/** 柱子根数：固定根数 + space-between，宽度自适应，两层必然对齐 */
+const PREFILL_WAVE_BARS = 44
+/** 相邻柱子的动画负延迟步长（ms）：越小波纹越平缓 */
+const PREFILL_WAVE_STEP_MS = 55
+
+// 柱阵行抽成 memo：mask 每帧都在变，但这层没有任何 props，可以完全跳过重渲染。
+const PrefillWaveRow = React.memo(function PrefillWaveRow({ on }: { on?: boolean }) {
+  return (
+    <span className={`agent-prefill-wave-row${on ? ' agent-prefill-wave-row--on' : ''}`}>
+      {Array.from({ length: PREFILL_WAVE_BARS }, (_, i) => (
+        <i key={i} className="agent-prefill-wave-bar" style={{ animationDelay: `${-i * PREFILL_WAVE_STEP_MS}ms` }} />
+      ))}
+    </span>
+  )
+})
+
 export const AgentPrefillBar = React.memo(function AgentPrefillBar() {
-  const prefillProgress = useStore(s => {
+  const realProgress = useStore(s => {
     const rc = s.cards.find(c => c.status === 'running')
     return rc ? (s.modelMetrics[rc.template.id]?.prefillProgress ?? null) : null
   })
-  const prefillActive = prefillProgress !== null && prefillProgress < 1
-  const prefillDone = prefillProgress !== null && prefillProgress >= 1
-  // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip）
-  const { tipHandlers: tip, tipNode } = useBubbleTip()
-  if (!prefillActive) return null
+  const active = PREFILL_PREVIEW || (realProgress !== null && realProgress < 1)
+
+  // 真实值放 ref：rAF 每帧读最新值即可，effect 不必因它重建
+  //（重建会把 cur 打回 0，动画每来一个指标就闪一下）。
+  const realRef = useRef<number | null>(null)
+  realRef.current = realProgress
+
+  const [shown, setShown] = useState(0)
+  useEffect(() => {
+    if (!active) return
+    let raf = 0
+    let cur = 0
+    const t0 = performance.now()
+    const step = (now: number) => {
+      if (PREFILL_PREVIEW) {
+        // 预览：本地循环，0 → 98% 走完停一瞬再回零。
+        // 不走到 100% 是因为 progress >= 1 会 return null 把整条藏掉，预览时反而看不见。
+        const t = ((now - t0) % PREFILL_PREVIEW_MS) / PREFILL_PREVIEW_MS
+        cur = t < 0.85 ? (t / 0.85) * 0.98 : 0.98
+      } else {
+        // 真实：后端按块上报，直接跟值会一跳一跳，这里指数逼近把台阶抹平。
+        // mask 里的渐变无法用 CSS transition 插值，所以平滑只能自己做。
+        const target = realRef.current ?? 0
+        cur = Math.abs(target - cur) < 0.002 ? target : cur + (target - cur) * 0.16
+      }
+      setShown(cur)
+      raf = requestAnimationFrame(step)
+    }
+    raf = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(raf)
+  }, [active])
+
+  if (!active) return null
+  const pct = Math.max(0, Math.min(1, shown)) * 100
+  const mask = `linear-gradient(90deg, #000 0 ${pct}%, transparent ${pct}%)`
   return (
-    <div
-      className="metric-bar-wrap agent-prompt-build-bar"
-      {...tip(prefillDone ? '提示词加载完成' : '正在加载提示词…')}
-    >
-      {tipNode}
-      <div
-        className="metric-bar-fill"
-        style={{ width: `${Math.min(100, (prefillProgress ?? 0) * 100)}%`, background: '#7c3aed', opacity: 0.7 }}
-      />
+    <div className="agent-prefill" title="正在预填充上下文…">
+      <span className="agent-prefill-wave" aria-hidden="true">
+        <PrefillWaveRow />
+        <span className="agent-prefill-wave-clip" style={{ maskImage: mask, WebkitMaskImage: mask }}>
+          <PrefillWaveRow on />
+        </span>
+      </span>
+      <span className="agent-prefill-pct">{pct.toFixed(0)}%</span>
     </div>
   )
 })
