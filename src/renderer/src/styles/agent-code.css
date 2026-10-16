@@ -1064,6 +1064,17 @@ html.is-panel-resizing .agent-think-body .table-node {
   max-width: 200px;
 }
 
+/* ── 顶栏中段留白（提示载体）──
+   鼠标停在这段空白上弹一句提示，点破「双击顶栏可开合右侧面板」这个隐式交互。
+   flex:1 吃掉左右两组之间的全部自由空间（右侧组本来靠 margin-left:auto 占位，
+   现在自由空间归它，右组依旧贴最右）；align-self:stretch 撑满顶栏高度，hover 好命中。
+   它本身没有点击处理器，事件照常冒泡到 .agent-code-topbar，双击仍能开合面板。 */
+.agent-code-topbar-hint {
+  flex: 1;
+  align-self: stretch;
+  min-width: 0;
+}
+
 .agent-code-rename-input {
   flex: 1;
   min-width: 0;
@@ -1123,8 +1134,14 @@ html.is-panel-resizing .agent-think-body .table-node {
   -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
 }
 
-.agent-code-topbar-right>.chat-collapse-btn {
+/* 顶栏右缘「收起 / 展开右侧面板」按钮：比基类小一号（28×28），也不要基类给聊天区标题行
+   留的 margin-top: 2px。编码模式的四视图入口与通用模式的单按钮共用这个修饰类 ——
+   原来这两个按钮各自在 JSX 里抄了一份一模一样的 style={{ marginTop: 0, width: 28, height: 28 }}。 */
+.chat-collapse-btn--topbar {
   flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin-top: 0;
 }
 
 /* ── 顶栏「工具」下拉（仅通用模式）：通用模式可启用的四个工具 ──
@@ -7872,6 +7889,9 @@ html.is-panel-resizing .agent-think-body .table-node {
   color: var(--accent);
 }
 
+/* 右侧控件组（上下文 · 模型 · 搜索 · 思考程度 · 发送）靠这一条贴到最右。
+   但工具行的自由空间是「两个接管者」：有进度时先被 .agent-prefill 的 flex:1 吃满，
+   auto margin 拿到 0；没渲染时才轮到这条吸收。改其中一个要连带看另一个。 */
 .agent-code-view .chat-input-tools .agent-ctx-inline {
   margin-left: auto;
 }

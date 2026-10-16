@@ -31,6 +31,7 @@ import { useStore } from '../../../store/useStore'
 import { safeCall } from '../../../utils/safeCall'
 import { uniqueId } from '../utils/ids'
 import { dirName } from '../utils/paths'
+import { sessionLastActive } from '../utils/session'
 import {
   CHAT_WORKSPACE_ID, freshChatWorkspace, isChatWorkspace, normalizeProjects, projectMode,
 } from '../../../../../shared/types'
@@ -58,21 +59,9 @@ function dropPlaceholders(list: AgentProject[]): AgentProject[] {
     下游（输入区 / 预览等）直接取 activeProject.workspaceDir，故不能给它 undefined。 */
 const NO_PROJECT: AgentProject = { id: '', title: '未选择项目', workspaceDir: '', expanded: false, sessions: [], mode: 'code' }
 
-/** 会话的「最后活跃」时间：与侧栏的派生逻辑同一套（agent-session/AgentSessionSidebar.tsx:26
-    sessionLastActive）——消息 id 内嵌十进制 Date.now()，取不到再退回会话 id 的 base36 时间戳。
-    两边算法要改一起改；这里不抽公共文件，是为了各自在本文件里一眼可读。 */
-function lastActiveOf(s: AgentSession): number {
-  for (let i = s.messages.length - 1; i >= 0; i--) {
-    const m = /^msg-(\d+)-/.exec(s.messages[i]!.id)
-    if (m) return Number(m[1])
-  }
-  const sess = /^sess-([0-9a-z]+)-/.exec(s.id)
-  if (sess) {
-    const ms = parseInt(sess[1]!, 36)
-    if (Number.isFinite(ms) && ms > 0) return ms
-  }
-  return 0
-}
+/** 「最后活跃」时间；解析不出的（外部导入的 id）按 0 = 最旧处理。
+    算法只有一份，见 utils/session.ts —— 侧栏排序与这里必须用同一套。 */
+const lastActiveOf = (s: AgentSession): number => sessionLastActive(s) ?? 0
 
 /** 装载/兜底时该打开哪条会话：按最后活跃时间取最新的一条。
     不能再用 sessions[0]：主进程是按 createdAt 升序装载的（ipc.ts:7981），

@@ -23,6 +23,7 @@ import { useStore } from '../../../store/useStore'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { useBubbleTip } from '../../useBubbleTip'
 import { GIT_DIFF_TAB, MEM_IMG_PREFIX } from '../utils/constants'
+import { rovingKeyNav } from '../utils/rovingKeyNav'
 import { AgentMarkdown } from '../agent-message'
 // PdfViewer 内部静态依赖 pdfjs+worker（≈2MB）：改为 React.lazy —— 只在真正打开
 // PDF 预览标签的那一刻才加载对应 chunk，避免 pdfjs 常驻首屏主 bundle
@@ -277,6 +278,10 @@ export function AgentPreviewSlot({
                 return (
                   <div
                     key={v}
+                    // 标签条是横向的，方向键走 ←/→；标签本身不可聚焦（焦点只能落在内层按钮上），
+                    // 所以放开 arrowsFromDescendants。与会话栏列表共用同一套 rovingKeyNav。
+                    data-row
+                    onKeyDown={e => rovingKeyNav(e, { horizontal: true, arrowsFromDescendants: true })}
                     className={`agent-code-panel-tab${active ? ' active' : ''}`}
                     onMouseEnter={() => tabIconRefs.current[v]?.startAnimation?.()}
                     onMouseLeave={() => tabIconRefs.current[v]?.stopAnimation?.()}

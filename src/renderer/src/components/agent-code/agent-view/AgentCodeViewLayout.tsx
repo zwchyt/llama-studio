@@ -341,9 +341,9 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     // 容器尺寸变化（窗口缩放 / 侧栏拖拽）
     const ro = new ResizeObserver(sync)
     ro.observe(el)
-    // 子项增删（模式切换会换掉整组按钮、PrefillBar 会挂载/卸载）不改变容器尺寸时
-    // ResizeObserver 不触发，用 MutationObserver 兜住。按钮与 PrefillBar 都是直接子元素，
-    // 不需要 subtree —— 免得 PrefillBar 内部进度文字每次更新都白跑一遍 sync。
+    // 子项增删（模式切换会换掉整组按钮）不改变容器尺寸时 ResizeObserver 不触发，
+    // 用 MutationObserver 兜住。本容器的直接子元素就是这排按钮、文案写死，
+    // 宽度不会在没有增删的情况下变，所以不需要 subtree。
     const mo = new MutationObserver(sync)
     mo.observe(el, { childList: true })
     return () => {
@@ -586,6 +586,11 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
           <span className="agent-code-topbar-title">{activeSession?.title || '新会话'}</span>
         </div>
 
+        {/* 顶栏中段留白：鼠标停在这里弹一句提示，点破「双击顶栏可开合右侧面板」这个隐式交互——
+            双击本身看不见、没人会去试，靠这句话把它讲出来。这里只做提示载体，不接收点击，
+            双击照常冒泡到 .agent-code-topbar 生效。 */}
+        <div className="agent-code-topbar-hint" {...tip('双击顶栏开合右侧面板')} />
+
         <div className="agent-code-topbar-right">
           <div
             ref={topbarScrollRef}
@@ -652,15 +657,14 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               且只在确实打开了预览标签时才出现（否则是点了没反应的按钮）。 */}
           {plainChat ? (
             showRightToggle && (
-              <button className="chat-collapse-btn" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }} style={{ marginTop: 0, width: 28, height: 28 }}>
+              <button className="chat-collapse-btn chat-collapse-btn--topbar" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }}>
                 {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
               </button>
             )
           ) : (
             <button
-              className="chat-collapse-btn"
+              className="chat-collapse-btn chat-collapse-btn--topbar"
               onClick={toggleRightEntry}
-              style={{ marginTop: 0, width: 28, height: 28 }}
               aria-label="展开右侧面板：文件树 / 变更 / 终端 / 浏览器"
               {...tip('展开右侧面板：文件树 / 变更 / 终端 / 浏览器')}
             >
@@ -672,7 +676,9 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
 
       <div className="agent-code-body">
         {/* 列表 portal 到导航栏底部的槽里，**常驻挂载**（不再有开关）。
-            onClickCapture 兜住列表内一切点击（新建 / 重命名 / ⋯ 菜单…），先回工作台再走原逻辑。 */}
+            onClickCapture 兜住列表内一切点击（新建 / 重命名 / ⋯ 菜单…），让「回工作台」先于行自身的
+            点击逻辑执行 —— 列表挂在导航栏上、任何页面都点得到。backToWorkspace 只做一次 store 读 +
+            比较，已处于 agent-code 视图时是空操作，不产生额外开销。 */}
         {sessionSlot && createPortal(
           <div className="agent-code-sidebar-slot" onClickCapture={backToWorkspace}>
             <AgentSessionSidebar

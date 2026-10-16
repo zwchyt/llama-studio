@@ -20,6 +20,8 @@ import { TopbarBtn } from '../agent-message'
 import { useBubbleTip } from '../../useBubbleTip'
 import { CHAT_WORKSPACE_ID } from '../../../../../shared/types'
 import type { AgentMode, AgentProject, AgentSession } from '../../../../../shared/types'
+import { sessionLastActive } from '../utils/session'
+import { rovingKeyNav } from '../utils/rovingKeyNav'
 
 // 槽位 id 抽到 slotId.ts：Sidebar.tsx（入口模块）也要用它，从这里取会把整条 markstream
 // 依赖链拉进入口。这里 re-export 只为兼容原有引用方。
@@ -55,22 +57,6 @@ function RowMenu({ pos, menuRef, children }: {
 
 /** ── 视图级辅助（纯展示派生，不触碰上层状态）── */
 
-/** 会话的「最后活跃」时间：从既有 id 派生——消息 id 由 newMsgId 内嵌十进制
-    Date.now()，会话 id 由 uniqueId 内嵌 base36 时间戳。导入的会话若 id 来自
-    外部（两种格式都对不上）则返回 null，该行不显示时间，不做猜测。 */
-function sessionLastActive(s: AgentSession): number | null {
-  for (let i = s.messages.length - 1; i >= 0; i--) {
-    const m = /^msg-(\d+)-/.exec(s.messages[i]!.id)
-    if (m) return Number(m[1])
-  }
-  const sess = /^sess-([0-9a-z]+)-/.exec(s.id)
-  if (sess) {
-    const ms = parseInt(sess[1]!, 36)
-    if (Number.isFinite(ms) && ms > 0) return ms
-  }
-  return null
-}
-
 /** 列表排序：按最后活跃倒序（最新的在最上面）。时间解析不出来的（外部导入的 id 格式）
  *  按最旧处理，落到列表底部，不与真实活跃时间抢位置。
  *
@@ -84,28 +70,16 @@ function sortByLastActive(sessions: AgentSession[], ts: Map<string, number | nul
 
 /** 相对时间文案（紧凑式）：分 / 时 / 天，一周以上退化为 M-D。
     刻意压到 3 个字符内——侧栏最窄 160px 时行右侧还要放 3~4 个操作按钮，
-    文案长一点就会把整簇挤出容器；完整时间放在 title tooltip 里。 */
-function relTimeLabel(ts: number): string {
-  const d = Date.now() - ts
+    文案长一点就会把整簇挤出容器；完整时间放在 title tooltip 里。
+    now 由调用方传入（组件里的 60s tick），不在这里读 Date.now()——否则文案不会随时间刷新。 */
+function relTimeLabel(ts: number, now: number): string {
+  const d = now - ts
   if (d < 60_000) return '刚刚'
   if (d < 3_600_000) return `${Math.floor(d / 60_000)}分`
   if (d < 86_400_000) return `${Math.floor(d / 3_600_000)}时`
   if (d < 7 * 86_400_000) return `${Math.floor(d / 86_400_000)}天`
   const dt = new Date(ts)
   return `${dt.getMonth() + 1}-${dt.getDate()}`
-}
-
-/** 列表行键盘导航：仅在焦点位于行本身时接管（不抢行内按钮/输入框的键）；
-    方向键在相邻行之间移焦，Enter/Space 等价于点击该行。 */
-function listKeyNav(e: React.KeyboardEvent<HTMLDivElement>) {
-  if (e.target !== e.currentTarget) return
-  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter' && e.key !== ' ') return
-  e.preventDefault()
-  const row = e.currentTarget
-  if (e.key === 'Enter' || e.key === ' ') { row.click(); return }
-  const rows = Array.from(row.parentElement?.querySelectorAll<HTMLElement>(':scope > [data-row]') ?? [])
-  const next = rows[rows.indexOf(row) + (e.key === 'ArrowDown' ? 1 : -1)]
-  next?.focus()
 }
 
 /** 列表过滤框（视图本地状态，仅决定渲染，不改任何数据） */
@@ -206,6 +180,14 @@ export function AgentSessionSidebar({
   const { tipHandlers: tip, tipNode } = useBubbleTip()
   const [filter, setFilter] = useState('')
   const [rowMenuId, setRowMenuId] = useState<string | null>(null)
+  // 相对时间的低频 tick（60s）：relTimeLabel 只在渲染时求值，界面停留久了所有行的
+  // 「刚刚 / 2分 / 3时」都会失真且不会自愈。只更新这一个时间戳 state 驱动重渲染，
+  // 不碰会话数据 —— filteredChats / filteredProjects 的 useMemo 依赖不变，不会重算。
+  const [nowTick, setNowTick] = useState(() => Date.now())
+  useEffect(() => {
+    const t = window.setInterval(() => setNowTick(Date.now()), 60_000)
+    return () => window.clearInterval(t)
+  }, [])
   const rowMenuWrapRef = useRef<HTMLSpanElement | null>(null)
   // 行「⋯」菜单的视口坐标：打开时实测触发按钮，下方放不下就翻到上方，左右夹在视口内
   const [rowMenuPos, setRowMenuPos] = useState<{ top: number; left: number } | null>(null)
@@ -230,6 +212,14 @@ export function AgentSessionSidebar({
   // 冷启动 / 切模式 / 切换会话后把活动会话露出来一次：编码模式下它藏在收起的项目里就展开那个项目，
   // 再把行滚到视野内。按会话 id 记账只处理一次，之后用户自己收起或滚动都不再干预。
   const revealedRef = useRef<string | null>(null)
+  // 展开过渡结束后再滚到目标行。这个一次性监听不能交给下面 effect 的清理函数：toggleProjectExpanded
+  // 会改 codeProjects，effect 随即重跑，清理会在 .26s 过渡结束前就把监听摘掉，revealRow 永远等不到。
+  // 改为登记在 ref 里，只在「换目标」与「卸载」时摘除。
+  const pendingRevealRef = useRef<{ el: HTMLElement; fn: () => void } | null>(null)
+  useEffect(() => () => {
+    const p = pendingRevealRef.current
+    if (p) p.el.removeEventListener('transitionend', p.fn)
+  }, [])
   useEffect(() => {
     const sid = activeSessionId
     if (!sid || revealedRef.current === sid) return
@@ -242,8 +232,13 @@ export function AgentSessionSidebar({
         toggleProjectExpanded(proj)
         // 展开是 .26s 的高度过渡，过渡中容器还没把行铺开，滚了也算不准 —— 等它结束再滚
         const wrap = projectWrapRefs.current.get(proj.id)
-        if (wrap) wrap.addEventListener('transitionend', () => revealRow(sid), { once: true })
-        else revealRow(sid)
+        if (!wrap) { revealRow(sid); return }
+        // 换目标时先摘掉上一个还没触发的监听
+        const prev = pendingRevealRef.current
+        if (prev) prev.el.removeEventListener('transitionend', prev.fn)
+        const onEnd = (): void => { pendingRevealRef.current = null; revealRow(sid) }
+        pendingRevealRef.current = { el: wrap, fn: onEnd }
+        wrap.addEventListener('transitionend', onEnd, { once: true })
         return
       }
     }
@@ -358,7 +353,7 @@ export function AgentSessionSidebar({
                   role="option"
                   aria-selected={s.id === activeSessionId}
                   tabIndex={0}
-                  onKeyDown={listKeyNav}
+                  onKeyDown={rovingKeyNav}
                   className={`agent-code-chat-item${s.id === activeSessionId ? ' active' : ''}`}
                   onClick={() => switchTo(CHAT_WORKSPACE_ID, s.id)}
                 >
@@ -376,7 +371,7 @@ export function AgentSessionSidebar({
                     <>
                       <MessageSquareIcon size={13} className="agent-code-chat-icon" />
                       <span className="agent-code-session-title">{s.title}</span>
-                      {ts && <span className="agent-code-session-time" {...tip(`最后活跃 ${new Date(ts).toLocaleString('zh-CN')}`)}>{relTimeLabel(ts)}</span>}
+                      {ts && <span className="agent-code-session-time" {...tip(`最后活跃 ${new Date(ts).toLocaleString('zh-CN')}`)}>{relTimeLabel(ts, nowTick)}</span>}
                     </>
                   )}
                   {/* 会话操作收进「⋯」菜单（与项目行同款）：原先 fork + 导出/重命名/删除
@@ -437,7 +432,7 @@ export function AgentSessionSidebar({
                     role="button"
                     tabIndex={0}
                     aria-expanded={open}
-                    onKeyDown={listKeyNav}
+                    onKeyDown={rovingKeyNav}
                     onClick={() => {
                       // 点当前项目 = 手动开合（不动指针，自动收敛只在指针变化时触发）；
                       // 点其他项目 = 切目录，原来那组收起、新选的这组展开。
@@ -517,7 +512,7 @@ export function AgentSessionSidebar({
                             role="option"
                             aria-selected={s.id === activeSessionId && p.id === activeProjectId}
                             tabIndex={0}
-                            onKeyDown={listKeyNav}
+                            onKeyDown={rovingKeyNav}
                             className={`agent-code-session-item ${s.id === activeSessionId && p.id === activeProjectId ? 'active' : ''}`}
                             onClick={() => switchTo(p.id, s.id)}
                           >
@@ -534,7 +529,7 @@ export function AgentSessionSidebar({
                             ) : (
                               <>
                                 <span className="agent-code-session-title">{s.title}</span>
-                                {ts && <span className="agent-code-session-time" {...tip(`最后活跃 ${new Date(ts).toLocaleString('zh-CN')}`)}>{relTimeLabel(ts)}</span>}
+                                {ts && <span className="agent-code-session-time" {...tip(`最后活跃 ${new Date(ts).toLocaleString('zh-CN')}`)}>{relTimeLabel(ts, nowTick)}</span>}
                               </>
                             )}
                             {sessionActions(p.id, s)}

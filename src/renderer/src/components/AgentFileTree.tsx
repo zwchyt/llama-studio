@@ -119,6 +119,10 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
   const expandedRef = useRef(expanded)
   expandedRef.current = expanded
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 防抖窗口内累积的待刷目录。必须累积而不是只用最后一个事件：一次爆发常跨多个目录
+  // （git checkout / npm install / 重命名文件夹），只刷最后那个会漏掉其余目录。
+  const pendingDirsRef = useRef<Set<string>>(new Set())
+  const pendingAllRef = useRef(false)   // filename 拿不到时置位 → 退回刷全部已展开
 
   // ── 面板宽度 FLIP 过渡（双向）：外层面板是 fit-content，内在尺寸变化无法被 CSS transition 补间。
   // 展开/收起时内容都在同帧即时出现/退出（不播折叠动画——长目录逐帧重排很贵），
@@ -304,7 +308,7 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
     })()
   }, [workspaceDir, fetchChildren])
 
-  // 自动监听目录变化：启动 watcher 并监听变更事件，刷新所有已展开节点（免去手动刷新按钮）
+  // 自动监听目录变化：启动 watcher 并监听变更事件，刷新变更文件所在目录（免去手动刷新按钮）
   useEffect(() => {
     if (!workspaceDir) return
     window.api.startAgentFileWatch(workspaceDir)
@@ -312,16 +316,39 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
       // 忽略 .git 内部写入：git status/diff 等会刷新 .git/index，否则会与 Git 变更面板刷新形成回环。
       const fn = data?.filename || ''
       if (fn === '.git' || fn.startsWith('.git/') || fn.startsWith('.git\\')) return
+      // 定位变更目录：主进程事件里的 dir 恒为工作区根（见 ipc.ts 的 startAgentFileWatch），
+      // 只能靠 filename —— 它是相对工作区的路径，拼成绝对路径再取父目录。
+      if (fn) {
+        const sep = workspaceDir.includes('\\') ? '\\' : '/'
+        pendingDirsRef.current.add(parentDir(`${workspaceDir.replace(/[\\/]+$/, '')}${sep}${fn.replace(/[\\/]/g, sep)}`))
+      } else {
+        pendingAllRef.current = true
+      }
       if (refreshTimer.current) clearTimeout(refreshTimer.current)
       refreshTimer.current = setTimeout(() => {
-        const dirs = [workspaceDir, ...Array.from(expandedRef.current).filter(p => p !== workspaceDir)]
-        dirs.forEach(p => refreshDir(p))
+        // 只刷「变更文件所在目录」，不刷全部已展开目录：深层展开很多时，一次保存要发几十个目录 IPC。
+        // 但要把整个防抖窗口里累积的目录都刷掉，否则多目录爆发会漏。
+        const dirs = pendingDirsRef.current
+        const all = pendingAllRef.current
+        pendingDirsRef.current = new Set()
+        pendingAllRef.current = false
+        if (all) {
+          // filename 拿不到：宁可多刷，不能漏刷
+          const every = [workspaceDir, ...Array.from(expandedRef.current).filter(p => p !== workspaceDir)]
+          every.forEach(p => refreshDir(p))
+        } else {
+          // 没展开的目录不显示子项，刷了也白刷
+          dirs.forEach(p => { if (p === workspaceDir || expandedRef.current.has(p)) refreshDir(p) })
+        }
         onFilesChanged?.()
       }, 300)
     }
     window.api.onAgentFileChanged(onChange)
     return () => {
       if (refreshTimer.current) clearTimeout(refreshTimer.current)
+      // 换工作区时把累积的旧路径一并丢掉，免得下一轮拿旧路径去刷新树
+      pendingDirsRef.current = new Set()
+      pendingAllRef.current = false
       window.api.removeAgentFileListeners()
       window.api.stopAgentFileWatch()
     }
