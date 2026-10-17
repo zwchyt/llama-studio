@@ -123,6 +123,38 @@ function fmtCompactionClock(at: number): string {
   return new Date(at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
+/** 用户消息的内联编辑框：草稿状态自持，敲键只重渲染本组件。
+ *  此前草稿提到视图根（editDraft），每敲一键都会重建整个消息列表的 element。 */
+const MessageEditBox = React.memo(function MessageEditBox({ initial, onSave, onCancel }: {
+  initial: string
+  onSave: (text: string) => void
+  onCancel: () => void
+}) {
+  const [draft, setDraft] = useState(initial)
+  return (
+    <>
+      {/* 内联回调 ref 每次渲染重新执行：随内容自动撑高（上限由 CSS max-height 封顶） */}
+      <textarea
+        className="agent-msg-edit-area"
+        value={draft}
+        ref={el => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 2 + 'px' } }}
+        onChange={e => setDraft(e.target.value)}
+        autoFocus
+        spellCheck={false}
+        onKeyDown={e => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onSave(draft)
+          if (e.key === 'Escape') onCancel()
+        }}
+      />
+      <div className="agent-msg-edit-actions">
+        <span className="agent-msg-edit-hint">Ctrl+Enter 保存 · Esc 取消</span>
+        <button className="btn btn-primary btn-xs" onClick={() => onSave(draft)}>保存</button>
+        <button className="btn btn-ghost btn-xs" onClick={onCancel}>取消</button>
+      </div>
+    </>
+  )
+})
+
 export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }) {
   const {
     projects: projectsDomain, inputDomain, preview: previewDomain, hints: hintsDomain,
@@ -165,10 +197,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   } = run
   const {
     condenseBtnRef, contextModalOpen,
-    cumTokens, editDraft, editingMsgId, kbBtnRef, kbCopiedId,
+    cumTokens, editingMsgId, kbBtnRef, kbCopiedId,
     kbModalOpen, knowledgeBases, promptBtnRef,
     promptDraft, promptModalOpen, reqCount, rightPanelMode,
-    setContextModalOpen, setEditDraft, setEditingMsgId,
+    setContextModalOpen, setEditingMsgId,
     setKbCopiedId, setPromptDraft, setPromptModalOpen,
     setRightPanelMode, setRightPanelModeAndOpen, setTrajOpen, setTreeOpen,
     openPanels, closePanel, closeOtherPanels, closePanelsRight, closeAllPanels,
@@ -495,13 +527,8 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
             {msg.role === 'user' ? (
               editingMsgId === msg.id ? (
                 <div className="chat-msg-edit">
-                  {/* 内联回调 ref 每次渲染重新执行：随内容自动撑高（上限由 CSS max-height 封顶） */}
-                  <textarea className="agent-msg-edit-area" value={editDraft} ref={el => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 2 + 'px' } }} onChange={e => setEditDraft(e.target.value)} autoFocus spellCheck={false} onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) confirmEdit(); if (e.key === 'Escape') setEditingMsgId(null) }} />
-                  <div className="agent-msg-edit-actions">
-                    <span className="agent-msg-edit-hint">Ctrl+Enter 保存 · Esc 取消</span>
-                    <button className="btn btn-primary btn-xs" onClick={confirmEdit}>保存</button>
-                    <button className="btn btn-ghost btn-xs" onClick={() => setEditingMsgId(null)}>取消</button>
-                  </div>
+                  {/* 编辑框自持草稿：草稿状态留在子组件内，敲键不再重建整条消息列表 */}
+                  <MessageEditBox initial={msg.content} onSave={confirmEdit} onCancel={() => setEditingMsgId(null)} />
                 </div>
               ) : msg.content || msg.attachments?.length ? (
                 <>
@@ -563,7 +590,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     // speakingId 必须在依赖里：朗读态是逐条消息的，漏掉它列表会一直用旧的 null 渲染，
     // 按钮永远停在「朗读」、再点一次变成重新朗读而不是停止。
     // 传给行的是布尔（布尔只影响命中那一行），直接传 id 会让窗口内所有行都换 prop 而整屏重渲染。
-  }, [activeSession, historyStartIndex, virtual.windowStart, virtual.windowEnd, streaming, loading, thinkDone, editingMsgId, editDraft, confirmEdit, copyMessage, editAt, resendAt, branchAt, msgRowActionsRef, modelLabelRef, streamStartAtRef, handleStreamRate, runningCard, setEditDraft, setEditingMsgId, plainChat, speakingId])
+  }, [activeSession, historyStartIndex, virtual.windowStart, virtual.windowEnd, streaming, loading, thinkDone, editingMsgId, confirmEdit, copyMessage, editAt, resendAt, branchAt, msgRowActionsRef, modelLabelRef, streamStartAtRef, handleStreamRate, runningCard, setEditingMsgId, plainChat, speakingId])
 
   // 发送飞行：新用户消息上屏后，从输入框盒真伸缩飞入（STAGE 7r2）。
   // 绘制前执行（无闪烁）；锚点对不上（虚拟窗口/删除/减弱动态）就静默放弃，直接显示。

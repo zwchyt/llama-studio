@@ -6,6 +6,7 @@
 import React, { useEffect } from 'react'
 import { FileTextIcon, XIcon } from '@animateicons/react/lucide'
 import { useBubbleTip } from '../../useBubbleTip'
+import { useModalFocus } from '../hooks/useModalFocus'
 
 export type PreviewableAttachment = { name: string; content?: string }
 
@@ -18,6 +19,8 @@ export function AttachmentTextPreview({ att, onClose }: {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
+  // 焦点进入 / 层内循环 / 关闭归还（见 useModalFocus）
+  const dialogRef = useModalFocus<HTMLDivElement>()
 
   const text = (att.content ?? '').trim()
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip）
@@ -26,7 +29,7 @@ export function AttachmentTextPreview({ att, onClose }: {
     <div className="att-preview-mask" onClick={onClose} {...tip('点击任意处关闭')}>
       {tipNode}
       {/* 卡片自身拦下冒泡：选正文、点标题不该顺手关掉整层 */}
-      <div className="att-preview" onClick={e => e.stopPropagation()}>
+      <div className="att-preview" ref={dialogRef} role="dialog" aria-modal="true" aria-label={`附件预览：${att.name}`} onClick={e => e.stopPropagation()}>
         <div className="att-preview-head">
           <FileTextIcon size={13} className="att-preview-icon" />
           <span className="att-preview-name" {...tip(att.name)}>{att.name}</span>

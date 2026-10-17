@@ -7,6 +7,7 @@ import { XIcon } from '@animateicons/react/lucide'
 // 复用会话那套 Markdown 渲染（含 KaTeX 公式覆写）；不经 agent-message/index，避免和它互相 import
 import { Markdown } from '../../../markdown/markstream'
 import { useBubbleTip } from '../../useBubbleTip'
+import { useModalFocus } from '../hooks/useModalFocus'
 
 export function UserMessageFullText({ text, onClose }: {
   text: string
@@ -17,6 +18,8 @@ export function UserMessageFullText({ text, onClose }: {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
+  // 焦点进入 / 层内循环 / 关闭归还（见 useModalFocus）
+  const dialogRef = useModalFocus<HTMLDivElement>()
 
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip）
   const { tipHandlers: tip, tipNode } = useBubbleTip()
@@ -30,7 +33,7 @@ export function UserMessageFullText({ text, onClose }: {
     >
       {tipNode}
       {/* 左键在卡片内不关：选正文、点标题不该顺手关掉整层 */}
-      <div className="msg-full" onClick={e => e.stopPropagation()}>
+      <div className="msg-full" ref={dialogRef} role="dialog" aria-modal="true" aria-label="完整消息" onClick={e => e.stopPropagation()}>
         <div className="msg-full-head">
           <span className="msg-full-title">完整消息</span>
           <button type="button" className="msg-full-close" onClick={onClose} aria-label="关闭（Esc）" {...tip('关闭（Esc）')}><XIcon size={16} /></button>

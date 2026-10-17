@@ -435,8 +435,12 @@ function convertHistory(history: PiHistoryMessage[]): SeededMessage[] {
   const out: SeededMessage[] = []
   // 历史回流前剥离思考链：持久化的 content 含 <think>…</think> 原文（UI 渲染依赖），
   // 但回注给模型会让它重复看到自己旧的思考过程，污染上下文（与 legacy stripThinkForApi 一致）。
+  // 长标签 <thinking> 同样要剥（部分模型模板用它）：只认 <think> 会让这类模型的历史每轮白占上下文。
+  // 规则与渲染层 utils/text.ts 保持一致；两处不能互相 import（主进程/渲染层分属不同 tsconfig 工程）。
   const stripThink = (s: string): string =>
-    s.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/, '').trim()
+    s.replace(/<think(?:ing)?(?:\s[^>]*)?>[\s\S]*?<\/(?:think(?:ing)?)>/gi, '')
+      .replace(/<think(?:ing)?(?:\s[^>]*)?>[\s\S]*$/i, '')
+      .trim()
   for (let hi = 0; hi < history.length; hi++) {
     const m = history[hi]!
     const ts = Date.now()

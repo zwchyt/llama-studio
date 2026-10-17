@@ -186,12 +186,13 @@ export function useAgentMessageActions({
     setEditDraft(m.content)
   }, [activeSession])
 
-  const confirmEdit = useCallback(() => {
+  // draftOverride：内联编辑框自持草稿时直接回传文本，避免每次按键都把草稿提到视图根
+  const confirmEdit = useCallback((draftOverride?: string) => {
     if (!editingMsgId || !activeSession) return
     const msgs = activeSession.messages
     const idx = msgs.findIndex(m => m.id === editingMsgId)
     if (idx < 0) { setEditingMsgId(null); return }
-    const newContent = editDraft
+    const newContent = draftOverride ?? editDraft
     const updated = msgs.slice(0, idx).concat({ ...msgs[idx]!, content: newContent })
     // 编辑历史消息会改动/截断历史，旧摘要可能失真：清除 memory，下次发送按需重新压缩
     updateSessionInProject(activeProjectId, activeSessionId, { messages: updated, memory: undefined })

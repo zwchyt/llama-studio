@@ -68,6 +68,22 @@ function parseUnifiedDiff(diff: string): { rows: DiffRow[]; hunks: Hunk[] } {
   return { rows, hunks }
 }
 
+// 同一份 diff 会被「文件块」与「顶部统计/跳转列表」各解析一次（两处都 memo，但各算一次）。
+// 按 diff 字符串做有界缓存让两处共用同一份结果；容量小、FIFO 淘汰，避免长会话里字符串被无限持有。
+const DIFF_PARSE_CACHE_MAX = 32
+const diffParseCache = new Map<string, { rows: DiffRow[]; hunks: Hunk[] }>()
+function parseDiffCached(diff: string): { rows: DiffRow[]; hunks: Hunk[] } {
+  const hit = diffParseCache.get(diff)
+  if (hit) return hit
+  const parsed = parseUnifiedDiff(diff)
+  if (diffParseCache.size >= DIFF_PARSE_CACHE_MAX) {
+    const oldest = diffParseCache.keys().next().value
+    if (oldest !== undefined) diffParseCache.delete(oldest)
+  }
+  diffParseCache.set(diff, parsed)
+  return parsed
+}
+
 // 未跟踪文件：无 diff，把整段内容按「全部新增」渲染。
 function contentToRows(content: string): DiffRow[] {
   const lines = content.endsWith('\n') ? content.slice(0, -1).split('\n') : content.split('\n')
@@ -246,6 +262,10 @@ function renderCodeWithHighlights(text: string, highlights?: { start: number; en
   return parts.length > 0 ? parts : ' '
 }
 
+// 折叠态的稳定空值：引用恒定，避免每次渲染新建数组（memo 与依赖比较都靠引用稳定）
+const NO_HIGHLIGHTS: DiffRow[] = []
+const NO_BLOCKS: DiffBlock[] = []
+
 const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceCollapsed, onStage, onUnstage, onDiscard, focused, hideDir, mode, wrap }: { file: GitFileChange; onOpen: (relPath: string, line?: number) => void; forceCollapsed: boolean; onStage?: (path: string) => void; onUnstage?: (path: string) => void; onDiscard?: (path: string) => void; focused?: boolean; hideDir?: boolean; mode: DiffMode; wrap: boolean }) {
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
   const { tipHandlers: tip, tipNode } = useBubbleTip()
@@ -254,7 +274,7 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
       const r = contentToRows(file.content || '')
       return { rows: r, hunks: r.length ? [{ oldStart: 1, oldCount: r.length, newStart: 1, newCount: r.length, firstRow: 0, lastRow: r.length - 1 }] : [] }
     }
-    return parseUnifiedDiff(file.diff)
+    return parseDiffCached(file.diff)
   }, [file])
   const rows = parsed.rows
   const [collapsed, setCollapsed] = useState(forceCollapsed)
@@ -278,11 +298,15 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
   const added = rows.filter(r => r.type === 'add').length
   const removed = rows.filter(r => r.type === 'del').length
   // 行内单词级高亮：仅改动行有高亮；对全量行计算，避免分段后行号/高亮错位。
-  const highlighted = useMemo(() => computeInlineHighlights(rows), [rows])
+  // 折叠态直接给空值：computeInlineHighlights 对每对 del/add 行跑词级 DP，
+  // 几十个文件全折叠时等于白算一遍（展开瞬间才算，一次性代价可接受）。
+  const highlighted = useMemo(() => (collapsed ? NO_HIGHLIGHTS : computeInlineHighlights(rows)), [rows, collapsed])
   // 渲染单元：把 hunk 之间的「按真实行号计算的未改动间隔」做成可折叠的「N 个隐藏的行」提示。
   // 间隔数 = 下一个 hunk 起始行 − 当前 hunk 结束行 − 1（含两端各 3 行上下文），
   // 因此能正确反映几百行的真实间隔，而非 git 默认 3 行上下文切出的极小 ctx 段。
   const blocks = useMemo<DiffBlock[]>(() => {
+    // 折叠态不需要渲染块：跳过切片与 gap 计算（展开时再算一次）
+    if (collapsed) return NO_BLOCKS
     const hs = parsed.hunks
     const out: DiffBlock[] = []
     for (let h = 0; h < hs.length; h++) {
@@ -300,7 +324,7 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
       if (lead > 0) out.unshift({ kind: 'gap', count: lead, startLine: 1, endLine: hs[0]!.newStart - 1 })
     }
     return out
-  }, [parsed, highlighted])
+  }, [parsed, highlighted, collapsed])
   // 未改动区间是否就地展开（点击提示展开该段，默认折叠为提示）
   const [expandedGaps, setExpandedGaps] = useState<Record<number, boolean>>({})
   const [gapContent, setGapContent] = useState<Record<number, string[]>>({})
@@ -661,7 +685,7 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
   const [allCopied, setAllCopied] = useState(false)
   const handleCopyAll = useCallback(async () => {
     const text = unstaged.map(f => {
-      const rows = f.untracked ? contentToRows(f.content || '') : parseUnifiedDiff(f.diff).rows
+      const rows = f.untracked ? contentToRows(f.content || '') : parseDiffCached(f.diff).rows
       const body = rows.map(r => (r.type === 'add' ? '+' : r.type === 'del' ? '-' : ' ') + r.text).join('\n')
       return body ? `# ${f.path}\n${body}` : ''
     }).filter(Boolean).join('\n\n')
@@ -704,7 +728,7 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
     const byPath = new Map<string, { added: number; removed: number }>()
     let added = 0, removed = 0
     for (const f of scopeFiles) {
-      const rows = f.untracked ? contentToRows(f.content || '') : parseUnifiedDiff(f.diff).rows
+      const rows = f.untracked ? contentToRows(f.content || '') : parseDiffCached(f.diff).rows
       let a = 0, d = 0
       for (const r of rows) { if (r.type === 'add') a++; else if (r.type === 'del') d++ }
       if (!byPath.has(f.path)) byPath.set(f.path, { added: a, removed: d })

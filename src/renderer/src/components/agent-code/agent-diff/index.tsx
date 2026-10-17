@@ -9,9 +9,10 @@
 //   - getEditDiffStat：Edit 工具增删行数统计（按 tc.id 缓存）
 //   - ToolEditDiff：分栏 diff 视图组件
 
-import React, { useMemo } from 'react'
+import React, { useCallback, useMemo } from 'react'
 import type { AgentMessage } from '../../../../../shared/types'
 import { WindowedRows } from '../WindowedText'
+import { DIFF_ROW_HEIGHT, DIFF_VIEW_HEIGHT } from '../utils/rowMetrics'
 import { useThrottledValue } from '../../../utils/useThrottledValue'
 
 /** LCS 动态规划表的单元格上限（n×m）。
@@ -80,9 +81,10 @@ const editStatCache = new Map<string, { args: string; stat: EditDiffStat | null 
 // 兼容两代参数：自研旧式 old_string/new_string；pi 原生 path + edits[]（逐条累加）。
 // Write 也走这里：它只能新建文件，没有旧内容可 diff，按写入行数计为纯新增
 // —— 算法与 FileChangeSummary 的 Write 分支一致，避免卡片头部与底部汇总对不上。
-export function getEditDiffStat(tc: NonNullable<AgentMessage['toolCalls']>[number]): EditDiffStat | null {
+export function getEditDiffStat(tc: NonNullable<AgentMessage['toolCalls']>[number], argsOverride?: string): EditDiffStat | null {
   if (tc.name !== 'Edit' && tc.name !== 'Write') return null
-  const args = tc.args || ''
+  // argsOverride：调用方传入节流后的 args，避免流式期间每帧重跑 LCS
+  const args = argsOverride ?? tc.args ?? ''
   const cached = tc.id ? editStatCache.get(tc.id) : undefined
   if (cached && cached.args === args) return cached.stat
 
@@ -223,10 +225,7 @@ export function computeSplitDiff(oldText: string, newText: string): DiffRow[] {
 // 行数超阈值时改走行窗口（只挂载视口附近的行）。阈值以下保持逐行 DOM：短 diff 的成本可接受，
 // 且能保留原有折行视觉——窗口态为了固定行高必须 nowrap，超长行只能省略号截断。
 export const DIFF_WINDOW_ROWS = 400
-// 与 .agent-tool-diff-window 的 11px × line-height 1.5 对齐（见 styles/agent-code.css
-// 末尾「长内容行窗口：固定行高契约」），视口高度对齐原 .agent-tool-diff-body 的 max-height。
-const DIFF_WINDOW_ROW_HEIGHT = 17
-const DIFF_WINDOW_VIEW_HEIGHT = 420
+// 行高与视口高度见 utils/rowMetrics.ts（与 .agent-tool-diff-window 的 11px × line-height 1.5 对齐）
 
 /** 流式 diff 的节流窗口。
  *
@@ -242,7 +241,8 @@ export const ToolEditDiff = React.memo(function ToolEditDiff({ oldText, newText,
   const shown = useThrottledValue({ oldText, newText }, [oldText, newText], streaming, DIFF_STREAM_THROTTLE_MS)
   const rows = useMemo(() => computeSplitDiff(shown.oldText, shown.newText), [shown.oldText, shown.newText])
   // 行内容两个分支共用：窗口态由 WindowedRows 提供行外层，非窗口态自己包一层。
-  const renderRow = (idx: number) => {
+  // 回调固定引用：WindowedRows 是 memo 组件，内联箭头会让它每次都重渲染。
+  const renderRow = useCallback((idx: number) => {
     const r = rows[idx]!
     return (
       <>
@@ -258,7 +258,8 @@ export const ToolEditDiff = React.memo(function ToolEditDiff({ oldText, newText,
         </pre>
       </>
     )
-  }
+  }, [rows])
+  const rowClassName = useCallback((i: number) => `agent-tool-diff-row ${rows[i]!.type}`, [rows])
   return (
     <div className="agent-tool-diff" data-streaming={streaming ? 'true' : undefined}>
       <div className="agent-tool-diff-head">
@@ -268,11 +269,11 @@ export const ToolEditDiff = React.memo(function ToolEditDiff({ oldText, newText,
       {rows.length > DIFF_WINDOW_ROWS ? (
         <WindowedRows
           count={rows.length}
-          viewHeight={DIFF_WINDOW_VIEW_HEIGHT}
-          rowHeight={DIFF_WINDOW_ROW_HEIGHT}
+          viewHeight={DIFF_VIEW_HEIGHT}
+          rowHeight={DIFF_ROW_HEIGHT}
           className="agent-window agent-tool-diff-window"
           rowAttr="data-diff-row"
-          rowClassName={i => `agent-tool-diff-row ${rows[i]!.type}`}
+          rowClassName={rowClassName}
           contentWidth="100%"
           ariaLabel={`Diff（窗口渲染，共 ${rows.length} 行）`}
           renderRow={renderRow}

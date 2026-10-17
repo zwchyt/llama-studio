@@ -7056,6 +7056,11 @@ html.is-panel-resizing .agent-think-body .table-node {
   margin-right: auto;
 }
 
+/* 短思考只有复制按钮：没有左侧文案撑开，靠 flex-end 保持右对齐 */
+.agent-think-text-controls--copy-only {
+  justify-content: flex-end;
+}
+
 /* 通用长文本行窗口（思考完整文本 / 工具结果共用）：固定高内滚，仅挂载视口附近行 */
 
 
@@ -11976,11 +11981,12 @@ html.theme-dark .user-msg-lightbox {
    行窗口的地方都要有对应的固定行高类。TS 侧常量与这里的数值必须一致：
 
      WINDOW_ROW_HEIGHT      = 23  → .agent-window（默认，思考完整文本）
-     LINED_PRE_ROW_HEIGHT   = 17  → .agent-tool-lined-window（工具结果 / 写入内容）
-     CODE_WINDOW_ROW_HEIGHT = 20  → .chat-code-window（代码块，定义在 code-block.css）
-     DIFF_WINDOW_ROW_HEIGHT = 17  → .agent-tool-diff-window（Diff 行）
+     TOOL_RESULT_ROW_HEIGHT = 17  → .agent-tool-lined-window / .agent-tool-result-window
+     CODE_ROW_HEIGHT        = 20  → .chat-code-window（代码块，定义在 code-block.css）
+     DIFF_ROW_HEIGHT        = 17  → .agent-tool-diff-window（Diff 行）
 
-   改动任一处务必同步另一处，否则窗口滚动时会出现行错位。
+   TS 侧的唯一定义处是 agent-code/utils/rowMetrics.ts（组件不再各写一份）。
+   改这里必须同步那里，反之亦然，否则窗口滚动时会出现行错位。
    ══════════════════════════════════════════════════════════════════════════════ */
 
 /* Diff 窗口：原 .agent-tool-diff-code 是 pre-wrap + overflow-wrap: anywhere，行高随内容
@@ -12043,11 +12049,29 @@ html.theme-dark .user-msg-lightbox {
      已经给了整块 composer 一个 3px accent 环（7947 行），再在里面的 textarea
      上画一圈会变成嵌套的双框。
 
-   只覆盖可交互元素，不用通配符，避免给纯容器加框。 */
+   只覆盖可交互元素，不用通配符，避免给纯容器加框。
+   · 覆盖 [role="button"]：工具卡折叠头 / 文件变更汇总头 / 被截断的用户气泡都是
+     「div + role=button + tabIndex」，不在 button 名单里，之前 Tab 到它们完全看不见焦点。
+   · 排除 .agent-code-chat-item / .agent-code-session-item / .agent-code-project-item：
+     它们自带 1.5px 内描边（2761 行，内描边是为了不溢出到相邻行），不排掉会被这条盖成外环。 */
 /* 侧栏列表已 portal 到导航栏里（.sidebar-agent-slot），所以两个容器都要覆盖，否则键盘焦点环丢失 */
-:is(.agent-code-view, .sidebar-agent-slot) :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input, .agent-terminal-cwd-input, .agent-code-sidebar-filter-input, .file-tree-rename-input, .agent-file-picker-search)) {
+:is(.agent-code-view, .sidebar-agent-slot) :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"], [role="button"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input, .agent-terminal-cwd-input, .agent-code-sidebar-filter-input, .file-tree-rename-input, .agent-file-picker-search, .agent-code-chat-item, .agent-code-session-item, .agent-code-project-item)) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* 下面三处的外层容器都是 overflow: hidden，外扩的焦点环会被裁掉一半，
+   改用内描边（与侧栏列表行同一手法）。特异性高于上面的兜底规则，不受书写顺序影响。 */
+.agent-tool-call .agent-tool-call-head:focus-visible,
+.agent-file-changes .agent-file-changes-head:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* 被截断的用户气泡：外描边会顶到消息列边缘，内描边贴着既有边框更稳 */
+.agent-code-view .chat-messages .user-msg-clamped:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 /* ── 浏览器预览工具卡片（browser_show 参数行 / browser_screenshot 截图结果）──

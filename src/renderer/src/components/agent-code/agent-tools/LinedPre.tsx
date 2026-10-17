@@ -4,6 +4,7 @@
 // 完整原文仍在 DOM 之外（复制/展开不依赖已挂载行）。
 import React, { useMemo } from 'react'
 import { buildTextRows } from '../utils/textRows'
+import { TOOL_RESULT_ROW_HEIGHT, TOOL_RESULT_VIEW_HEIGHT } from '../utils/rowMetrics'
 import { WindowedText } from '../WindowedText'
 
 /**
@@ -14,9 +15,7 @@ import { WindowedText } from '../WindowedText'
  */
 export const LINED_PRE_WINDOW_CHARS = 20000
 
-/** 与 .agent-tool-lined-window 的 11px × line-height 1.5 对齐（固定行高是窗口化的前提） */
-const LINED_PRE_ROW_HEIGHT = 17
-
+/** 行高与视口高度见 utils/rowMetrics.ts（与 .agent-tool-lined-window 的 11px × line-height 1.5 对齐） */
 export function LinedPre({ text, maxHeight }: { text: string; maxHeight?: number }) {
   const windowed = text.length > LINED_PRE_WINDOW_CHARS
   const rows = useMemo(() => (windowed ? buildTextRows(text) : null), [text, windowed])
@@ -26,8 +25,8 @@ export function LinedPre({ text, maxHeight }: { text: string; maxHeight?: number
       <WindowedText
         text={text}
         lineNumbers
-        rowHeight={LINED_PRE_ROW_HEIGHT}
-        viewHeight={maxHeight ?? 360}
+        rowHeight={TOOL_RESULT_ROW_HEIGHT}
+        viewHeight={maxHeight ?? TOOL_RESULT_VIEW_HEIGHT}
         className="agent-window agent-tool-lined-window"
         rowAttr="data-tool-row"
         ariaLabel={`工具结果（窗口渲染，共 ${rows.length} 展示行）`}

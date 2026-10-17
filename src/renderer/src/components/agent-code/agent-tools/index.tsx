@@ -8,7 +8,7 @@
 // 对外导出：TOOL_META、formatToolArgs、getToolPreview、LinedPre、
 //           ToolArgsView、ToolResultView、ToolCallCard、ToolCallGroup、FileChangeSummary
 
-import React, { useMemo, useRef, useState } from 'react'
+import React, { useCallback, useMemo, useRef, useState } from 'react'
 import {
   Wrench, XIcon, Undo2, FileDiff,
 } from 'lucide-react'
@@ -26,12 +26,14 @@ import ViewImageResult from '../../ViewImageResult'
 import { JsonResultCard } from '../../ToolResultRows'
 import { getEditDiffStat, ToolEditDiff } from '../agent-diff'
 import { LinedPre, LINED_PRE_WINDOW_CHARS } from './LinedPre'
+import { TOOL_RESULT_ROW_HEIGHT, TOOL_RESULT_VIEW_HEIGHT } from '../utils/rowMetrics'
 import { WindowedText } from '../WindowedText'
 import { HighlightedCode } from '../HighlightedCode'
 import { langFromPath } from '../utils/highlightLines'
 import { dirName, pathDir, resolveWorkspacePath, toWorkspaceRelative } from '../utils/paths'
 import { formatDuration } from '../utils/format'
 import { useBubbleTip } from '../../useBubbleTip'
+import { useThrottledValue } from '../../../utils/useThrottledValue'
 import type { AgentMessage } from '../../../../../shared/types'
 
 // LinedPre 已抽至 ./LinedPre（长内容行窗口），此处 re-export 保持原导入路径可用
@@ -53,12 +55,12 @@ export function getToolPreview(input: unknown): string {
   return typeof first === 'string' ? first.slice(0, 120) : ''
 }
 
-// ── 工具元信息：中文名 / 描述 / 图标（用于工具调用块展示）────
+// ── 工具元信息：中文名 / 图标（用于工具调用块展示）────
 // 工具分类/展示/权限元数据已集中到 utils/tools.ts 的 TOOL_METAS（单一事实来源）。
 // 以下 helper 从元数据派生，替代原先散落的字符串 Set 与手写 Map。
-export const TOOL_META: Record<string, { name: string; desc: string; icon: React.ComponentType<{ size?: number; className?: string }> }> =
+export const TOOL_META: Record<string, { name: string; icon: React.ComponentType<{ size?: number; className?: string }> }> =
   Object.fromEntries(
-    Object.entries(TOOL_METAS).map(([name, m]) => [name, { name: m.label, desc: '', icon: m.icon }])
+    Object.entries(TOOL_METAS).map(([name, m]) => [name, { name: m.label, icon: m.icon }])
   )
 
 // 将工具参数格式化为可读 JSON（参数可能为压缩单行字符串或已解析对象）
@@ -572,6 +574,9 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
   }
   const formatted = formatToolArgs(args)
   if (!formatted && !filePath) return null
+  // 图标与配色只查一次（原为同一表达式调用两次）
+  const fm = filePath ? fileMeta(dirName(filePath)) : null
+  const FileIcon = fm?.Icon
   return (
     <div className="agent-tool-args">
       {tipNode}
@@ -579,7 +584,7 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
       {filePath && (
         <div className="agent-tool-filebar">
           <button className="agent-tool-call-path" {...tip(filePath)} onClick={(e) => { e.stopPropagation(); onPreviewFile(resolveWorkspacePath(filePath)) }}>
-            <span className="agent-tool-file-icon" style={{ color: fileMeta(dirName(filePath)).color }}>{(() => { const { Icon: FIcon } = fileMeta(dirName(filePath)); return <FIcon size={12} /> })()}</span>{filePath}
+            <span className="agent-tool-file-icon" style={{ color: fm?.color }}>{FileIcon && <FileIcon size={12} />}</span>{filePath}
           </button>
         </div>
       )}
@@ -587,10 +592,11 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
   )
 })
 
-// 非行号结果的窗口参数：行高与 .agent-tool-result-window 的 11px × line-height 1.5 对齐
-// （见 styles/agent-code.css 末尾「长内容行窗口：固定行高契约」），视口高度对齐原 max-height。
-const TOOL_RESULT_WINDOW_ROW_HEIGHT = 17
-const TOOL_RESULT_WINDOW_VIEW_HEIGHT = 360
+// Edit 卡片头部 +N −M 的流式节流窗口：与 ToolEditDiff 的 120ms 同一量级
+// （LCS 是 O(n·m)，流式期间按帧跑等于白烧主线程）。
+const EDIT_STAT_THROTTLE_MS = 120
+
+// 非行号结果的窗口参数统一来自 utils/rowMetrics.ts（与 agent-code.css 的固定行高契约同源）
 
 // 取前 n 行的有界前缀：不 split 全文——超大文本 split('\n') 会生成与行数同量的字符串对象，
 // 正是这一步要避免的开销。
@@ -777,7 +783,8 @@ export const ToolResultView = React.memo(function ToolResultView({ result, trunc
         <span className="agent-tool-result-label">结果（{meta}）</span>
         <button className="agent-tool-subtoggle" onClick={() => setExpanded(v => !v)}>
           <ChevronRightIcon size={11} className={`agent-tool-chev ${expanded ? 'open' : ''}`} />
-          {expanded ? '收起' : (isLong ? `展开（显示前 12 / ${meta}）` : (isMulti ? `展开（显示首行 / ${meta}）` : '展开'))}
+          {/* 展开态文案不再重复 meta：头部「结果（共 N 行）」已经说过总量，这里只说「展开后看到什么」 */}
+          {expanded ? '收起' : (isLong ? '展开（显示前 12 行）' : (isMulti ? '展开（显示首行）' : '展开'))}
         </button>
       </div>
       {lined ? (
@@ -785,8 +792,8 @@ export const ToolResultView = React.memo(function ToolResultView({ result, trunc
       ) : windowed ? (
         <WindowedText
           text={result}
-          rowHeight={TOOL_RESULT_WINDOW_ROW_HEIGHT}
-          viewHeight={TOOL_RESULT_WINDOW_VIEW_HEIGHT}
+          rowHeight={TOOL_RESULT_ROW_HEIGHT}
+          viewHeight={TOOL_RESULT_VIEW_HEIGHT}
           className="agent-window agent-tool-result-window"
           rowAttr="data-tool-row"
           ariaLabel={`工具结果（窗口渲染，共 ${result.length} 字符）`}
@@ -801,7 +808,7 @@ export const ToolResultView = React.memo(function ToolResultView({ result, trunc
 // 流式生成阶段的工具状态（写入/修改/调用参数生成中）统一改由输入框上方的常驻状态栏展示，
 // 会话区不再内联渲染生成状态行；此处仅保留 genToolVerb 供状态栏取用。
 
-export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPreviewFile, canUndo, onUndo }: { tc: NonNullable<AgentMessage['toolCalls']>[number]; index: number; total: number; onPreviewFile: (p: string, line?: number) => void; canUndo?: boolean; onUndo?: () => void }) {
+export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total, onPreviewFile, canUndo, onUndo }: { tc: NonNullable<AgentMessage['toolCalls']>[number]; index: number; total: number; onPreviewFile: (p: string, line?: number) => void; canUndo?: boolean; onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void }) {
   const meta = TOOL_META[tc.name]
   const Icon = meta?.icon || Wrench
   // 状态：await_approval(待人工确认) / executing(执行中) / done(已完成)。
@@ -832,42 +839,48 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
 
   const parsed = useMemo(() => { try { return JSON.parse(tc.args || '{}') } catch { return null } }, [tc.args])
   const preview = getToolPreview(parsed)
+  // 撤销回调在卡片内绑定 tc：父级只透传稳定的 onUndo，卡片 memo 才能对未变的卡生效
+  const handleUndo = useCallback(() => onUndo?.(tc), [onUndo, tc])
   // 编辑工具的增删行数统计（显示在工具卡片上方，类似 git diff 的 +N -M）。
   // 实现收敛在模块级 getEditDiffStat（内部跑 LCS diff + 按 tc.id 缓存），与
   // FileChangeSummary 的汇总共用同一份结果，避免同一 args 被算两遍。
-  // 依赖仍按 [tc.name, parsed] 而非 [tc]：parsed 由 tc.args 派生，仅在参数真正变化时
-  // 变化；以 tc 为依赖会因状态流转换对象而每次重算（缓存能挡住，但白付一次查表）。
-  const editDiffStat = useMemo(() => getEditDiffStat(tc), [tc.name, parsed])
+  // 流式期间 args 每帧增长（主进程对 Edit 每帧下发合法 JSON 快照）→ 缓存校验必然不命中、
+  // LCS 必然每帧重跑，故先过 useThrottledValue：8 次/秒肉眼已连续，主线程降到 1/3 以下。
+  const statArgs = useThrottledValue(tc.args || '', [tc.args], argsStreaming, EDIT_STAT_THROTTLE_MS)
+  const editDiffStat = useMemo(() => getEditDiffStat(tc, statArgs), [tc.name, statArgs])
   // 参数还在逐 token 生成时（parsed 出不来）用主进程数出来的行数兜一下，头部不至于空着
   const shownDiffStat = editDiffStat ?? tc.streamStat
   // Bash 命令：独立成「执行命令」区块，上限从 400 放宽到 1200 字符（原上限会把多行命令截掉）；
   // 超出仍截断兜底，高度由 CSS 的 max-height 控制，长命令在框内滚动。
-  const bashCmd = (() => {
+  const bashCmd = useMemo(() => {
     if (tc.name !== 'Bash') return null
     const c = parsed && typeof parsed.command === 'string' ? parsed.command : null
     return c && c.length > 1200 ? c.slice(0, 1200) + '\n…' : c
-  })()
+  }, [tc.name, parsed])
   // Bash 输出：超长结果按 LINED_PRE_WINDOW_CHARS 截断（避免一次性挂满 DOM），
   // 高度由 CSS 的 max-height 控制（框内滚动），不再把整张卡片拉长。
-  const bashOut = (() => {
+  const bashOut = useMemo(() => {
     if (tc.name !== 'Bash' || !done || typeof tc.result !== 'string' || !tc.result) return null
     return tc.result.length > LINED_PRE_WINDOW_CHARS
       ? tc.result.slice(0, LINED_PRE_WINDOW_CHARS) + '\n…（输出过长，已截断显示）'
       : tc.result
-  })()
+  }, [tc.name, done, tc.result])
   // 输出区右上角量化指标：小结果给行数；超长结果不 split（那正是要避免的一次性开销），改报字符数
-  const bashOutMeta = (() => {
+  const bashOutMeta = useMemo(() => {
     if (tc.name !== 'Bash' || !done || typeof tc.result !== 'string' || !tc.result) return null
     const r = tc.result
     return r.length > LINED_PRE_WINDOW_CHARS ? `共 ${r.length} 字符` : `${r.split('\n').length} 行`
-  })()
+  }, [tc.name, done, tc.result])
   // Read/Write/Edit 统一：文件名内联到头部（文件树同款图标 + 可点跳预览），替代纯文字参数预览。
-  let readFilePath = tc.name === 'Read' && parsed && typeof (parsed.file_path ?? parsed.path) === 'string' ? (parsed.file_path ?? parsed.path) as string : ''
-  if (tc.name === 'Read' && typeof tc.result === 'string') {
-    const firstLine = tc.result.split('\n')[0] || ''
-    const m = /^File:\s*(.+)$/i.exec(firstLine)
-    if (m) readFilePath = m[1].trim()
-  }
+  // 首行只截到第一个换行：为了一行 split 全文等于把整份结果再复制一遍（同 boundedHead 的约定）。
+  const readFilePath = useMemo(() => {
+    if (tc.name !== 'Read') return ''
+    const p = parsed && typeof (parsed.file_path ?? parsed.path) === 'string' ? (parsed.file_path ?? parsed.path) as string : ''
+    if (typeof tc.result !== 'string') return p
+    const nl = tc.result.indexOf('\n')
+    const m = /^File:\s*(.+)$/i.exec(nl < 0 ? tc.result : tc.result.slice(0, nl))
+    return m ? m[1].trim() : p
+  }, [tc.name, parsed, tc.result])
   // 头部展示统一用工作区相对路径：Read 结果的 `File:` 头是绝对路径（absForDisplay），
   // Write/Edit 的参数也可能是绝对路径 —— 绝对路径会把真正要看的文件名挤掉。
   // 点击预览时再由 resolveWorkspacePath 还原成绝对路径，所以这里只影响显示。
@@ -883,34 +896,34 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
   const headFileDir = headFilePath && pathDir(headFilePath) !== headFilePath ? pathDir(headFilePath) : ''
   // Read 实际读取的行段（结果头 Lines: x-y 解析）：头部展示「文件名:x-y」、点击文件名跳转到起始行。
   // 行段取自执行结果而非参数，是钳制后的真实范围；同一文件多次分片读取时借此区分各卡片。
-  const readRange = (() => {
+  const readRange = useMemo(() => {
     if (tc.name !== 'Read' || !done || typeof tc.result !== 'string') return null
     const m = tc.result.match(/^Lines: (\d+)-(\d+)(?: of (\d+))?/m)
     return m ? { start: Number(m[1]), end: Number(m[2]), total: m[3] ? Number(m[3]) : undefined } : null
-  })()
+  }, [tc.name, done, tc.result])
   // Read 结果拆成「真实行号 | 行锚点 | 内容」三列渲染。超大结果不拆 ——
   // 保留 LinedPre 的行窗口路径，避免一次性挂载上万个行节点。
-  const readLines = (() => {
+  const readLines = useMemo(() => {
     if (tc.name !== 'Read' || !done || tc.failed || typeof tc.result !== 'string') return null
     if (tc.result.length > LINED_PRE_WINDOW_CHARS) return null
     return parseReadResult(tc.result)
-  })()
+  }, [tc.name, done, tc.failed, tc.result])
   // Write/Edit 成功结果只是一句确认文案，与头部绿勾「完成」重复，隐藏结果块；
   // 写入内容预览 / diff（来自参数）照常展示，失败时仍显示错误结果块。
   // Read 成功结果保留展示（ToolResultView 默认折叠为 12 行预览，可展开），供审计模型实际读到的内容。
   const hideResult = done && !failed && WRITE_EDIT_TOOLS.has(tc.name)
   // Grep 结果按 output_mode 结构化：files_with_matches → 文件列表；content → 按文件分组的命中行。
   // output_mode 缺省即 files_with_matches（与 GrepTool 默认值一致）；count 仍走原文渲染。
-  const grepResult = (() => {
+  const grepResult = useMemo(() => {
     if (tc.name !== 'Grep' || !done || tc.failed || typeof tc.result !== 'string') return null
     const mode = parsed && typeof parsed.output_mode === 'string' ? parsed.output_mode : 'files_with_matches'
     return parseGrepResult(tc.result, mode)
-  })()
+  }, [tc.name, done, tc.failed, tc.result, parsed])
   // Glob 结果按「文件列表」结构化（与 Grep 的 files_with_matches 同形）
-  const globResult = (() => {
+  const globResult = useMemo(() => {
     if (tc.name !== 'Glob' || !done || tc.failed || typeof tc.result !== 'string') return null
     return parseGlobResult(tc.result)
-  })()
+  }, [tc.name, done, tc.failed, tc.result])
 
   // ── 卡片渲染门控 ──
   // 工具声明（pending）即渲染卡片（与参考项目 Reasonix 的 ToolCard 一致：dispatch 即显示），
@@ -918,6 +931,9 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
   const showCard = done || awaiting || executing || pending
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip）
   const { tipHandlers: tip, tipNode } = useBubbleTip()
+  // 头部文件图标与配色只查一次（原为同一表达式调用两次）
+  const headFileMeta = headFilePath ? fileMeta(dirName(headFilePath)) : null
+  const HeadFileIcon = headFileMeta?.Icon
   if (!showCard) return null
 
   return (
@@ -927,7 +943,18 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
           使工具卡折叠态严格是一行，与思考段「Thought: 515ms」、批头「执行工具 N 次 · 1.8s」
           的「一行 + 可展开」形态对齐 */}
       <div className={`agent-tool-call tool-${tc.name.toLowerCase()}${failed ? ' failed' : ''}${executing ? ' executing' : ''}${pending ? ' pending' : ''}`}>
-        <div className="agent-tool-call-head" onClick={handleToggle}>
+        <div
+          className="agent-tool-call-head"
+          onClick={handleToggle}
+          role="button"
+          tabIndex={0}
+          aria-expanded={expanded}
+          onKeyDown={e => {
+            // 头部内还有「文件名」按钮：它自己处理回车/空格，别在这里重复展开
+            if (e.target !== e.currentTarget) return
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleToggle() }
+          }}
+        >
           <span className="agent-tool-call-icon">
             <Icon size={13} />
           </span>
@@ -936,7 +963,7 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
               Read 完成后附行段「文件名:x-y」，点击跳转到读取起始行——与模型实际读到的片段对上 */}
           {headFilePath ? (
             <button className="agent-tool-call-path" {...tip(headFilePath)} onClick={(e) => { e.stopPropagation(); onPreviewFile(resolveWorkspacePath(headFilePath), readRange?.start) }}>
-              <span className="agent-tool-file-icon" style={{ color: fileMeta(dirName(headFilePath)).color }}>{(() => { const { Icon: FIcon } = fileMeta(dirName(headFilePath)); return <FIcon size={12} /> })()}</span>
+              <span className="agent-tool-file-icon" style={{ color: headFileMeta?.color }}>{HeadFileIcon && <HeadFileIcon size={12} />}</span>
               {/* 路径三段式：目录弱化、文件名加强。路径过长被截断时截的是目录而不是文件名，
                   行段做成中性 chip（此前是 `:7-19` 这种带冒号的纯文本，看不出是独立参数） */}
               <span className="agent-tool-call-pathlabel">
@@ -979,7 +1006,7 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
               <span className="agent-tool-call-status ok"><CheckIcon size={12} /> 完成</span>
             )}
             {canRestore && (
-              <button className="agent-tool-undo" {...tip('撤销仅本次运行内有效，重启应用后不可用')} onClick={(e) => { e.stopPropagation(); onUndo?.() }}>
+              <button className="agent-tool-undo" {...tip('撤销仅本次运行内有效，重启应用后不可用')} onClick={(e) => { e.stopPropagation(); handleUndo() }}>
                 <Undo2 size={12} /> 恢复
               </button>
             )}
@@ -1061,7 +1088,7 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
 export const ToolCallGroup = React.memo(function ToolCallGroup({ toolCalls, onPreviewFile, canUndoFor, onUndo }: { toolCalls: NonNullable<AgentMessage['toolCalls']>; onPreviewFile: (p: string, line?: number) => void; canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean; onUndo?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => void }) {
   return (
     <div className="agent-tool-list">
-      {toolCalls.map((tc, i) => <ToolCallCard key={tc.id || i} tc={tc} index={i} total={toolCalls.length} onPreviewFile={onPreviewFile} canUndo={canUndoFor ? canUndoFor(tc) : false} onUndo={onUndo ? () => onUndo(tc) : undefined} />)}
+      {toolCalls.map((tc, i) => <ToolCallCard key={tc.id || i} tc={tc} index={i} total={toolCalls.length} onPreviewFile={onPreviewFile} canUndo={canUndoFor ? canUndoFor(tc) : false} onUndo={onUndo} />)}
     </div>
   )
 })

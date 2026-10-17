@@ -3,6 +3,7 @@ import hljs from 'highlight.js/lib/common'
 import { Check, Copy, ChevronDown } from 'lucide-react'
 import { WindowedText } from './agent-code/WindowedText'
 import { highlightLines } from './agent-code/utils/highlightLines'
+import { CODE_ROW_HEIGHT, CODE_VIEW_HEIGHT } from './agent-code/utils/rowMetrics'
 import { useThrottledValue } from '../utils/useThrottledValue'
 import { useBubbleTip } from './useBubbleTip'
 // 本组件是共享组件（Agent Code 消息与模型中心 README 都会渲染），样式跟着组件走，
@@ -33,10 +34,7 @@ interface CodeBlockProps {
 // 超过该行数即切换为行窗口（仅完成态）。取值理由：阈值以下逐行行号列 + 代码列的成本可接受，
 // 且能保留原有折行视觉；阈值以上是「上千个 span + 两个完整行列表」的固定成本，展开即卡。
 export const CODE_WINDOW_LINES = 300
-// 与 .chat-code-window 的 12.5px × 1.6 对齐（见 styles/agent-code.css 末尾
-// 「长内容行窗口：固定行高契约」）
-const CODE_WINDOW_ROW_HEIGHT = 20
-const CODE_WINDOW_VIEW_HEIGHT = 420
+// 行高与视口高度见 agent-code/utils/rowMetrics.ts（与 .chat-code-window 的 12.5px × line-height 20px 对齐）
 
 /** 流式高亮的节流窗口。流式期间本组件随每个 delta 批次重渲染，而 hljs 是整块 O(n) 计算
  *  （见本文件头部注释记录的代价）。120ms ≈ 8 次/秒，对「代码逐行变色」已足够连续。 */
@@ -177,8 +175,8 @@ export default function CodeBlock({ language, value, showLineNumbers, isStreamin
             text={value}
             lineNumbers
             followTail={streamingWindowed}
-            rowHeight={CODE_WINDOW_ROW_HEIGHT}
-            viewHeight={CODE_WINDOW_VIEW_HEIGHT}
+            rowHeight={CODE_ROW_HEIGHT}
+            viewHeight={CODE_VIEW_HEIGHT}
             className="agent-window chat-code-window"
             rowAttr="data-code-row"
             ariaLabel={`代码块（${streamingWindowed ? '流式' : ''}窗口渲染，共 ${lineCount} 行）`}

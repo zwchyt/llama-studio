@@ -1,10 +1,10 @@
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { buildTextRows, getTextRowWindow } from './utils/textRows'
+import { WINDOW_ROW_HEIGHT, WINDOW_VIEW_HEIGHT } from './utils/rowMetrics'
 
-// 固定行高契约：数值必须与 styles/agent-code.css 末尾「长内容行窗口：固定行高契约」一节一致，
-// 改这里就要同步改那里，否则窗口滚动会出现行错位。
-export const WINDOW_ROW_HEIGHT = 23
-export const WINDOW_VIEW_HEIGHT = 276
+// 固定行高契约的唯一出处见 utils/rowMetrics.ts（数值须与 agent-code.css 末尾同名契约段一致）。
+// 这里 re-export 保持既有导入路径可用。
+export { WINDOW_ROW_HEIGHT, WINDOW_VIEW_HEIGHT }
 
 /**
  * 行窗口的位置与范围计算：调用方只负责「一行怎么画」，滚动与挂载范围都由这里给出。
@@ -54,7 +54,7 @@ export function useRowWindow({ count, viewHeight, rowHeight, followTail, oversca
  * 行的外层 div 由本组件统一提供（一行一节点、key 稳定），调用方通过 renderRow 决定
  * 行内内容，通过 rowClassName / rowStyle 决定行的外观。
  */
-export function WindowedRows({
+export const WindowedRows = React.memo(function WindowedRows({
   count,
   viewHeight,
   rowHeight,
@@ -85,8 +85,12 @@ export function WindowedRows({
 }) {
   const { viewportRef, range, height, totalHeight, onScroll, onWheel, onTouchMove } =
     useRowWindow({ count, viewHeight, rowHeight, followTail, overscan })
-  const visible: number[] = []
-  for (let i = range.start; i < range.end; i += 1) visible.push(i)
+  // 可见行下标数组：依赖收敛到首尾两个数字，避免每次渲染新建数组把 memo 冲掉
+  const visible = useMemo(() => {
+    const out: number[] = []
+    for (let i = range.start; i < range.end; i += 1) out.push(i)
+    return out
+  }, [range.start, range.end])
   return (
     <div
       ref={viewportRef}
@@ -115,7 +119,7 @@ export function WindowedRows({
       </div>
     </div>
   )
-}
+})
 
 /**
  * 纯文本长内容的行窗口：按原文偏移切片，只挂载视口附近的行。
@@ -146,6 +150,18 @@ export const WindowedText = React.memo(function WindowedText({
   rowAttr?: string
 }) {
   const rows = useMemo(() => buildTextRows(text), [text])
+  // 行渲染回调固定引用：WindowedRows 是 memo 组件，内联箭头会让它每次都重渲染
+  const renderRow = useCallback((i: number) => {
+    const row = rows[i]!
+    return (
+      <>
+        {lineNumbers && <span className="agent-window-num">{i + 1}</span>}
+        {text.slice(row.start, row.end) || '\u00a0'}
+      </>
+    )
+  }, [rows, lineNumbers, text])
+  // 行样式对象也要固定引用：内联对象每次渲染都是新引用，同样会把 WindowedRows 的 memo 冲掉
+  const rowStyle = useMemo(() => ({ lineHeight: `${rowHeight}px` }), [rowHeight])
   return (
     <WindowedRows
       count={rows.length}
@@ -156,16 +172,8 @@ export const WindowedText = React.memo(function WindowedText({
       ariaLabel={ariaLabel}
       rowAttr={rowAttr}
       rowClassName="agent-window-row"
-      rowStyle={{ lineHeight: `${rowHeight}px` }}
-      renderRow={i => {
-        const row = rows[i]!
-        return (
-          <>
-            {lineNumbers && <span className="agent-window-num">{i + 1}</span>}
-            {text.slice(row.start, row.end) || '\u00a0'}
-          </>
-        )
-      }}
+      rowStyle={rowStyle}
+      renderRow={renderRow}
     />
   )
 })

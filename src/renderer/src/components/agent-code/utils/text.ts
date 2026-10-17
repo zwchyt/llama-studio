@@ -3,19 +3,27 @@
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 // 搬移自 AgentCodeView.tsx，逻辑未变。
 
-// 发送给模型的历史消息中剥离思考链（闭合的 <think>…</think> 与未闭合的尾部）：
+// 思考链标签：部分模型模板用 <thinking>（markdown/markstream.tsx 也把它注册成了可信自定义标签），
+// 两种都必须认。`(?:\s[^>]*)?` 兜住 <think foo="bar"> 这类带属性的非标准输出。
+const THINK_TAG = 'think(?:ing)?(?:\\s[^>]*)?'
+const THINK_BLOCK_RE = new RegExp(`<${THINK_TAG}>[\\s\\S]*?<\\/(?:think(?:ing)?)>`, 'gi')
+const THINK_OPEN_RE = new RegExp(`<${THINK_TAG}>`, 'i')
+const THINK_OPEN_TAIL_RE = new RegExp(`<${THINK_TAG}>[\\s\\S]*$`, 'i')
+
+// 发送给模型的历史消息中剥离思考链（闭合的思考块与未闭合的尾部）：
 // 推理模型的历史轮思考链回传既白耗本地小上下文预算，也不符合 chat 模板惯例。
 // 仅影响 api 消息，UI 展示的 displayMsgs 仍保留原文。
+// ⚠️ 当前没有调用点：历史剥离已迁到主进程 piAgentBridge/manager.ts 的 stripThink，
+//    这里保留同一套规则，避免哪天重新接线时又只认 <think>。
 export function stripThinkForApi(s: string): string {
-  if (!s || !s.includes('<think>')) return s
-  return s.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/, '').trim()
+  if (!s || !THINK_OPEN_RE.test(s)) return s
+  return s.replace(THINK_BLOCK_RE, '').replace(THINK_OPEN_TAIL_RE, '').trim()
 }
 
 // 展示用：剥离思考链与【…】标注，并压平空白
 export function stripThinkContent(text: string): string {
   return text
-    .replace(/<think>[\s\S]*?<\/think>/gi, '')
-    .replace(/<think[^>]*>[\s\S]*?<\/think>/gi, '')
+    .replace(THINK_BLOCK_RE, '')
     .replace(/【\d+.*?】/g, '')
     .replace(/\s+/g, ' ')
     .trim()

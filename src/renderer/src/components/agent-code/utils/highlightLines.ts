@@ -53,10 +53,23 @@ export function langFromPath(path: string): string | null {
   return EXT_LANG[lower.slice(dot + 1)] ?? null
 }
 
-/** 高亮结果的行缓存（键 = 语言 + \0 + 源码）。流式期间每帧源码都是新的、缓存不命中，
- *  所以流式态由调用方传 cacheable=false；缓存主要服务完成态与滚动回来重新挂载。 */
-const CACHE_MAX = 24
-const cache = new Map<string, string[]>()
+/** 高亮结果的行缓存（键 = 语言 + 长度 + 首尾片段）。
+ *
+ *  键**不**拼整段源码：大代码块可达 20 KB+，每次调用都为拼键复制一遍，比缓存省下的还贵。
+ *  命中时用条目里的源码做值比较校验（长度已由键保证，等长比较是 memcmp 级），不会串色。
+ *  流式期间每帧源码都是新的、缓存不命中，所以流式态由调用方传 cacheable=false。 */
+const CACHE_MAX = 32
+/** 超过该长度的源码不进缓存：条目同时持有源码与高亮行（约 2~4 倍体积），
+ *  不设上限时几十个大块就能吃掉几十 MB —— 32 × 64 KB × 4 是最坏情况约 8 MB 的天花板。 */
+const CACHE_MAX_CODE_CHARS = 64_000
+/** 键里保留的首尾片段长度 */
+const KEY_EDGE = 64
+const cache = new Map<string, { code: string; lines: string[] }>()
+
+function cacheKey(language: string, code: string): string {
+  const tail = code.length > KEY_EDGE * 2 ? code.slice(-KEY_EDGE) : ''
+  return `${language}\u0000${code.length}\u0000${code.slice(0, KEY_EDGE)}\u0000${tail}`
+}
 
 /** 把 hljs 的整块 HTML 切成「自洽的逐行片段」。
  *
@@ -88,10 +101,11 @@ function splitBalancedLines(html: string): string[] {
 export function highlightLines(code: string, language: string | null, cacheable = true): string[] | null {
   if (!code || !language) return null
   if (!hljs.getLanguage(language)) return null
-  const key = `${language}\u0000${code}`
-  if (cacheable) {
+  // 只有可缓存路径才拼键：流式态 cacheable=false 时拼键纯属白复制一遍源码
+  const key = cacheable && code.length <= CACHE_MAX_CODE_CHARS ? cacheKey(language, code) : null
+  if (key) {
     const hit = cache.get(key)
-    if (hit) return hit
+    if (hit && hit.code === code) return hit.lines
   }
   let lines: string[]
   try {
@@ -99,12 +113,12 @@ export function highlightLines(code: string, language: string | null, cacheable 
   } catch {
     return null
   }
-  if (cacheable) {
+  if (key) {
     if (cache.size >= CACHE_MAX) {
       const oldest = cache.keys().next().value
       if (oldest !== undefined) cache.delete(oldest)
     }
-    cache.set(key, lines)
+    cache.set(key, { code, lines })
   }
   return lines
 }

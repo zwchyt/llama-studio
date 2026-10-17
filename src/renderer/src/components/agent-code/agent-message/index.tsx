@@ -12,7 +12,7 @@
 
 import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { Brain, Play, Square, Trash2, Volume2 } from 'lucide-react'
-import { ChevronRightIcon, CircleStopIcon, FileTextIcon, RefreshCwIcon, CopyIcon } from '@animateicons/react/lucide'
+import { ChevronRightIcon, CircleStopIcon, FileTextIcon, RefreshCwIcon, CopyIcon, CheckIcon } from '@animateicons/react/lucide'
 import { useStore } from '../../../store/useStore'
 import { useCollapseAnimation, COLLAPSE_DURATION_MS } from '../../../utils/useCollapseAnimation'
 import { useSmoothStream } from '../hooks/useSmoothStream'
@@ -31,6 +31,25 @@ import { fmtCompactTok, fmtThinkDur, formatDuration } from '../utils/format'
 import type { AgentMsgRowActions, RenderSegmentsOpts, AniIconHandle } from '../types'
 import type { AgentMessage, Attachment } from '../../../../../shared/types'
 import { useBubbleTip } from '../../useBubbleTip'
+
+// ── 共享 ResizeObserver ──
+// 用户消息的「是否被截断」要随宽度变化重量：原实现每条消息各建一个 ResizeObserver，
+// 长会话里观察者数量与消息数同阶。收敛为「一个观察者 + WeakMap 回调」，数量与消息数无关。
+const resizeCallbacks = new WeakMap<Element, () => void>()
+let sharedResizeObserver: ResizeObserver | null = null
+function observeResize(el: Element, cb: () => void): () => void {
+  if (!sharedResizeObserver) {
+    sharedResizeObserver = new ResizeObserver(entries => {
+      for (const entry of entries) resizeCallbacks.get(entry.target)?.()
+    })
+  }
+  resizeCallbacks.set(el, cb)
+  sharedResizeObserver.observe(el)
+  return () => {
+    resizeCallbacks.delete(el)
+    sharedResizeObserver?.unobserve(el)
+  }
+}
 
 // ── 顶栏指标隔离组件：自订阅 modelMetrics，避免主进程每 2s 广播指标时
 //    触发整个工作台全量重渲染（原实现直接在 AgentCodeView 订阅整棵 modelMetrics 树）──
@@ -261,9 +280,7 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
     measure()
     // 会话栏拖宽、窗口缩放都会让正文重新折行、改变总高：重量一次，
     // 否则会出现「文字被裁掉却点不开」的消息
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
+    return observeResize(el, measure)
   }, [bodyText])
   // 选正文不算点开：拖出选区后浏览器仍会在 mouseup 之后补发一次 click，那次放过
   const openFull = (e: React.MouseEvent) => {
@@ -279,7 +296,17 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
       <div
         className={`chat-msg-bubble chat-msg-markdown${clamped ? ' user-msg-clamped' : ''}`}
         onClick={clamped ? openFull : undefined}
-        {...(clamped ? tip('点击查看完整内容') : {})}
+        {...(clamped ? {
+          // 被截断时这层 div 是可点击的交互元素，必须键盘可达（与工具卡头部同一套补齐方式）
+          role: 'button',
+          tabIndex: 0,
+          'aria-label': '查看完整内容',
+          onKeyDown: (e: React.KeyboardEvent) => {
+            if (e.target !== e.currentTarget) return
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setFullOpen(true) }
+          },
+          ...tip('点击查看完整内容')
+        } : {})}
       >
         <div ref={bodyRef} className="user-plain-text">{bodyInner}</div>
       </div>
@@ -291,28 +318,32 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
 })
 
 
-// ── 思考链（reasoning）解析：把含 <think>...</think> 的内容拆成「思考 / 正文」片段 ──
+// ── 思考链（reasoning）解析：把含 <think>/<thinking> 的内容拆成「思考 / 正文」片段 ──
 export type ContentSegment = { type: 'text'; value: string } | { type: 'think'; value: string; closed: boolean }
+// 两种标签都要认：markstream 把 <thinking> 注册成了可信自定义标签（部分模型模板用长标签），
+// 若这里只认 <think>，长标签模型的思考会被当成正文——界面能显示，时间线却切不开。
+const THINK_OPEN_RE = /<think(?:ing)?(?:\s[^>]*)?>/i
+const THINK_CLOSE_RE = /<\/(?:think(?:ing)?)>/i
 export function parseThinkSegments(content: string): ContentSegment[] {
   const segments: ContentSegment[] = []
   let rest = content
   while (rest.length > 0) {
-    const openIdx = rest.indexOf('<think>')
-    if (openIdx === -1) {
+    const open = THINK_OPEN_RE.exec(rest)
+    if (!open) {
       if (rest.trim()) segments.push({ type: 'text', value: rest })
       break
     }
-    if (openIdx > 0 && rest.slice(0, openIdx).trim()) {
-      segments.push({ type: 'text', value: rest.slice(0, openIdx) })
+    if (open.index > 0 && rest.slice(0, open.index).trim()) {
+      segments.push({ type: 'text', value: rest.slice(0, open.index) })
     }
-    rest = rest.slice(openIdx + '<think>'.length)
-    const closeIdx = rest.indexOf('</think>')
-    if (closeIdx === -1) {
+    rest = rest.slice(open.index + open[0].length)
+    const close = THINK_CLOSE_RE.exec(rest)
+    if (!close) {
       segments.push({ type: 'think', value: rest, closed: false })
       break
     }
-    segments.push({ type: 'think', value: rest.slice(0, closeIdx), closed: true })
-    rest = rest.slice(closeIdx + '</think>'.length)
+    segments.push({ type: 'think', value: rest.slice(0, close.index), closed: true })
+    rest = rest.slice(close.index + close[0].length)
   }
   return segments
 }
@@ -447,6 +478,10 @@ const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, duratio
   const userToggledRef = useRef(false)
   const { expanded, visible, setExpanded, setVisible, expandedRef, onBodyTransitionEnd, collapse, toggle: handleToggle } =
     useCollapseAnimation(bodyRef, { initialExpanded: active, skipFirstAnim: active, beforeToggle: () => { userToggledRef.current = true } })
+  // visible 只在下面的收起 effect 里读「当前是否已挂载」：用 ref 镜像，effect 就不必把 visible 放进依赖。
+  // 放进依赖会出事——空闲预挂载把 visible 置 true 时会重跑 effect，把刚挂载的内容又收回去。
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
   // 隐藏段冻结展示输入并停止 rAF 节流；原文仍由消息数据保留，重开时读取最新值。
   // 必须同时检查外层思考链，否则收起外层后内部 streaming 仍会持续更新隐藏 DOM。
   const contentActive = visible && expanded && containerExpanded !== false
@@ -488,9 +523,9 @@ const ThinkSegmentFold = React.memo(function ThinkSegmentFold({ content, duratio
     }
     // 批展开联动：本段由上面的渲染期同步置位保持展开，这里不能再收回去。
     if (expandWithContainer && containerExpanded === true) return
-    if (visible && expandedRef.current) collapse()
+    if (visibleRef.current && expandedRef.current) collapse()
     else { setExpanded(false); setVisible(false) }
-  }, [streaming, active, containerExpanded, expandWithContainer]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [streaming, active, containerExpanded, expandWithContainer, collapse])
   // 与 ThinkBlock 相同的首展开优化：容器预挂载后，各思考段的 Markdown 内容也在
   // 浏览器空闲时段预挂载（保持收起、不可见）——否则首次点开容器时每个折叠块
   // 才现解析 Markdown/KaTeX，多段叠加成一帧的重活，表现为首展开卡顿。
@@ -603,6 +638,9 @@ const BatchFold = React.memo(function BatchFold({ items, toolCount, thinkCount, 
   const userToggledRef = useRef(false)
   const { expanded, visible, setExpanded, setVisible, expandedRef, onBodyTransitionEnd, collapse, toggle: handleToggle } =
     useCollapseAnimation(bodyRef, { initialExpanded: active, skipFirstAnim: active, beforeToggle: () => { userToggledRef.current = true } })
+  // 同 ThinkSegmentFold：effect 只读「当前是否已挂载」，用 ref 镜像避免把 visible 放进依赖
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
   // 活跃批展开走「渲染期同步置位」：与容器同一个 commit 就把内容挂上，避免批头已展开、
   // 批体晚两帧才出现的阶梯感（同 ThinkSegmentFold 的展开侧处理）。
   if (!userToggledRef.current && active && (!visible || !expanded)) {
@@ -613,10 +651,9 @@ const BatchFold = React.memo(function BatchFold({ items, toolCount, thinkCount, 
   useEffect(() => {
     if (userToggledRef.current) return
     if (active) return
-    if (visible && expandedRef.current) collapse()
+    if (visibleRef.current && expandedRef.current) collapse()
     else { setExpanded(false); setVisible(false) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active])
+  }, [active, collapse])
   // 空闲预挂载：把批内 Markdown / 工具卡的首次解析成本从「首次点开」挪到空闲期（同 ThinkBlock）
   useEffect(() => {
     if (visible) return
@@ -678,36 +715,31 @@ const BatchFold = React.memo(function BatchFold({ items, toolCount, thinkCount, 
 })
 
 // ── 正文段统一渲染：文本气泡 / Mermaid / Chart / SVG 分块 ───────────────────
-// 供「链外过程正文」与「最终结论」共用，保证两处样式一致（正文气泡 = chat-msg-bubble）。
-// keyPrefix 区分来源，避免同一条消息内 key 冲突。
-function renderTextBlocks(content: string, streaming: boolean, keyPrefix: string): React.ReactNode[] {
+// 时间线布局（链外过程正文、最终结论）与传统布局（无 segments 的旧消息）共用这一份实现，
+// 避免三处拷贝漂移。keyPrefix 区分来源，避免同一条消息内 key 冲突。
+// wrapUi：是否给图表类块套 .agent-msg-ui（虚线分隔 + 上下留白）。时间线布局需要它把图表与
+// 上方正文隔开；传统布局原本没有这层，保持原样以免视觉变化。
+function renderContentBlocks(content: string, streaming: boolean, keyPrefix: string, wrapUi = true): React.ReactNode[] {
   return parseContentToBlocks(content, streaming).map((block, i) => {
+    const key = `${keyPrefix}-${block.kind}-${i}`
+    let node: React.ReactNode
     if (block.kind === 'mermaid') {
-      return (
-        <div key={`${keyPrefix}-mermaid-${i}`} className="agent-msg-ui">
-          <MermaidCard code={block.code} renderFallback={(c) => <CodeBlock language="" value={c} />} />
+      node = <MermaidCard code={block.code} renderFallback={(c) => <CodeBlock language="" value={c} />} />
+    } else if (block.kind === 'chart') {
+      node = <ChartCard code={block.code} renderFallback={(c) => <CodeBlock language="" value={c} />} />
+    } else if (block.kind === 'svg') {
+      node = <SvgCard code={block.code} streaming={block.streaming === true} renderFallback={(c) => <CodeBlock language="" value={c} />} />
+    } else {
+      node = (
+        <div className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>
+          <StreamingMarkdown content={block.content} isStreaming={streaming} />
         </div>
       )
     }
-    if (block.kind === 'chart') {
-      return (
-        <div key={`${keyPrefix}-chart-${i}`} className="agent-msg-ui">
-          <ChartCard code={block.code} renderFallback={(c) => <CodeBlock language="" value={c} />} />
-        </div>
-      )
-    }
-    if (block.kind === 'svg') {
-      return (
-        <div key={`${keyPrefix}-svg-${i}`} className="agent-msg-ui">
-          <SvgCard code={block.code} streaming={block.streaming === true} renderFallback={(c) => <CodeBlock language="" value={c} />} />
-        </div>
-      )
-    }
-    return (
-      <div key={`${keyPrefix}-text-${i}`} className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>
-        <StreamingMarkdown content={block.content} isStreaming={streaming} />
-      </div>
-    )
+    // 只有图表类块需要 .agent-msg-ui 包裹；文本气泡直接成泡
+    return wrapUi && block.kind !== 'text'
+      ? <div key={key} className="agent-msg-ui">{node}</div>
+      : <React.Fragment key={key}>{node}</React.Fragment>
   })
 }
 
@@ -787,6 +819,9 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
     if (phase === 'idle') { phaseStartRef.current = null; setElapsedMs(0); return }
     if (phase !== prev) { phaseStartRef.current = Date.now(); setElapsedMs(0) }
     if (phaseStartRef.current == null) phaseStartRef.current = Date.now()
+    // 100ms tick 是必需的，不要当冗余删掉：① 无 streamStartAt 时它就是头部的秒数来源；
+    // ② 有 streamStartAt 时 headMs 用 Date.now() 现算，没有 tick 就没有 commit 推动重渲染，
+    //    工具执行阶段（无流式 delta）与慢速首 token 等待期的时钟会直接冻住。
     setElapsedMs(Date.now() - phaseStartRef.current)
     const timer = setInterval(() => setElapsedMs(Date.now() - (phaseStartRef.current ?? Date.now())), 100)
     return () => clearInterval(timer)
@@ -857,8 +892,7 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
     }
     if (userToggledRef.current) return
     collapse()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [msgStreaming])
+  }, [msgStreaming, collapse])
   // 收起态空闲预挂载：把 Markdown/KaTeX 的首次解析成本从「首次点开」挪到空闲期，
   // 否则长链首次展开会卡一下（消息列表有虚拟窗口，预挂载规模受窗口限制）。
   useEffect(() => {
@@ -937,7 +971,7 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
             ) : (
               // 过程正文：已从思考链中拆出，按普通正文气泡渲染（同最终结论）
               <React.Fragment key={e.segKey}>
-                {renderTextBlocks(e.content, !!e.live, `prose-${e.segKey}`)}
+                {renderContentBlocks(e.content, !!e.live, `prose-${e.segKey}`)}
               </React.Fragment>
             ))}
           </div>
@@ -975,7 +1009,8 @@ export const HistorySummaryBubble = React.memo(function HistorySummaryBubble({ s
 // ── 流式元信息徽标（参考 pi-web 的模型输出文字流式设计）──
 // 展示：模型名 + 解码 token 数 + 实时生成速度 t/s。
 // 两者都用服务端真实数据（与「模型数据」监控面板的「生成进度」同源同义）：
-// token 数 = /slots 的 n_decoded 原值；t/s = n_decoded 差分 / 时间（2s 广播粒度）。
+// token 数 = /slots 的 n_decoded 原值；t/s = llama.cpp 自报的
+// llamacpp:predicted_tokens_seconds（官方瞬时速率，不是本地差分推算）。
 // 不再做任何本地估算（estimateTextTokens 已从本组件移除）。
 export const StreamingBadge = React.memo(function StreamingBadge({ modelLabel, live = true, persistedTps, onRate, decoded, templateId }: {
   modelLabel?: string
@@ -1141,67 +1176,27 @@ export const StreamingContent = React.memo(function StreamingContent({ content, 
     return { value, items, finalText, lastClosed, hasThink }
   }, [content, streaming, toolCalls])
 
+  // 过程正文段与最终正文的渲染结果整块 memo：父级每次重渲染不再重复 split/扫描全文。
+  // keyPrefix 逐段带 segKey，保证多段之间 key 不冲突。
+  const processNodes = useMemo(
+    () => items.flatMap(it => (it.kind === 'text' ? renderContentBlocks(it.content, false, `p-${it.segKey}`, false) : [])),
+    [items]
+  )
+  const finalNodes = useMemo(
+    () => (finalText != null ? renderContentBlocks(finalText, !!streaming, 'final', false) : null),
+    [finalText, streaming]
+  )
+
   // 无思考段：传统布局——工具卡独立成组（不套思考链容器），正文段按序成泡
   // （此处 items 只含已完成的正文片段，生长中的正文段在 finalText）
   if (!hasThink) {
-    // 辅助函数：将文本内容分割成文本和Mermaid块
-    const renderContentWithMermaid = (content: string, isStreamingContent: boolean) => {
-      // streaming 透传：流式期间未闭合的 mermaid 代码不会产出图表块（否则会拿残码
-      // 渲染出一张「渲染失败」错误卡，等代码补全后再替换成正确的图 —— 先错图后对图的闪替）。
-      const blocks = parseContentToBlocks(content, isStreamingContent)
-      return blocks.map((block, i) => {
-        if (block.kind === 'mermaid') {
-          return (
-            <MermaidCard
-              key={`mermaid-${i}`}
-              code={block.code}
-              renderFallback={(fallbackCode) => (
-                <CodeBlock language="" value={fallbackCode} />
-              )}
-            />
-          )
-        }
-        if (block.kind === 'chart') {
-          return (
-            <ChartCard
-              key={`chart-${i}`}
-              code={block.code}
-              renderFallback={(fallbackCode) => (
-                <CodeBlock language="" value={fallbackCode} />
-              )}
-            />
-          )
-        }
-        if (block.kind === 'svg') {
-          return (
-            <SvgCard
-              key={`svg-${i}`}
-              code={block.code}
-              streaming={block.streaming === true}
-              renderFallback={(fallbackCode) => (
-                <CodeBlock language="" value={fallbackCode} />
-              )}
-            />
-          )
-        }
-        return (
-          <div key={`text-${i}`} className={`chat-msg-bubble chat-msg-markdown${isStreamingContent ? ' chat-msg-bubble--streaming' : ''}`}>
-            {/* 同上：同一个组件身份，只翻 isStreaming，避免卸载重挂 */}
-            <StreamingMarkdown content={block.content} isStreaming={isStreamingContent} />
-          </div>
-        )
-      })
-    }
-
     return (
       <>
         {toolCalls?.length ? (
           <ToolCallGroup toolCalls={toolCalls} onPreviewFile={onPreviewFile!} canUndoFor={canUndoFor} onUndo={onUndo} />
         ) : null}
-        {items.map((it) => it.kind === 'text' ? (
-          renderContentWithMermaid(it.content, false)
-        ) : null)}
-        {finalText != null && renderContentWithMermaid(finalText, !!streaming)}
+        {processNodes}
+        {finalNodes}
       </>
     )
   }
@@ -1222,53 +1217,9 @@ export const StreamingContent = React.memo(function StreamingContent({ content, 
         canUndoFor={canUndoFor}
         onUndo={onUndo}
       />
-      {finalText != null && (
-        // 最终结论气泡：流式与完成共用 StreamingMarkdown（只翻 isStreaming），不换组件身份
-        // 补齐 KaTeX 公式/raw HTML/sanitize，否则完成后公式不渲染。
-        (() => {
-          // streaming 透传：流式期间不把未闭合的 mermaid 代码当图表渲染（见该函数注释）
-          const blocks = parseContentToBlocks(finalText, !!streaming)
-          return blocks.map((block, i) => {
-            if (block.kind === 'mermaid') {
-              return (
-                <div key={`mermaid-final-${i}`} className="agent-msg-ui">
-                  <MermaidCard
-                    code={block.code}
-                    renderFallback={(c) => <CodeBlock language="" value={c} />}
-                  />
-                </div>
-              )
-            }
-            if (block.kind === 'chart') {
-              return (
-                <div key={`chart-final-${i}`} className="agent-msg-ui">
-                  <ChartCard
-                    code={block.code}
-                    renderFallback={(c) => <CodeBlock language="" value={c} />}
-                  />
-                </div>
-              )
-            }
-            if (block.kind === 'svg') {
-              return (
-                <div key={`svg-final-${i}`} className="agent-msg-ui">
-                  <SvgCard
-                    code={block.code}
-                    streaming={block.streaming === true}
-                    renderFallback={(c) => <CodeBlock language="" value={c} />}
-                  />
-                </div>
-              )
-            }
-            return (
-              <div key={`text-final-${i}`} className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>
-                {/* 同上：同一个组件身份，只翻 isStreaming，避免卸载重挂 */}
-                <StreamingMarkdown content={block.content} isStreaming={streaming} />
-              </div>
-            )
-          })
-        })()
-      )}
+      {/* 最终结论气泡：与过程正文共用同一分块渲染（renderContentBlocks），
+          流式与完成只翻 isStreaming，不换组件身份 */}
+      {finalNodes}
     </>
   )
 })
@@ -1464,10 +1415,38 @@ export function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']
     // 最终正文与「链外过程正文」共用同一分块渲染（文本气泡 / Mermaid / Chart / SVG）。
     // streaming 透传：流式期间不把未闭合的 mermaid/svg 代码当图表渲染（见 parseContentToBlocks：
     // 未闭合围栏会产出 streaming 标记，SvgCard 靠它走 innerHTML 渐进渲染分支）。
-    out.push(<React.Fragment key="final-text">{renderTextBlocks(finalText, streaming, `final-${msgId}`)}</React.Fragment>)
+    out.push(<React.Fragment key="final-text">{renderContentBlocks(finalText, streaming, `final-${msgId}`)}</React.Fragment>)
   }
   return out
 }
+
+// 消息级「复制」：自带 2s 成功反馈（与 CodeBlock 同一复位节奏）。
+// 独立成组件是为了复制态的两次变化不牵动整行消息重渲染。
+const MessageCopyButton = React.memo(function MessageCopyButton({ text, onCopy, tip }: {
+  text: string
+  onCopy: (text: string) => void
+  tip: ReturnType<typeof useBubbleTip>['tipHandlers']
+}) {
+  const [copied, setCopied] = useState(false)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
+  const handleCopy = () => {
+    onCopy(text)
+    setCopied(true)
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => setCopied(false), 2000)
+  }
+  return (
+    <button
+      className="chat-msg-action-btn"
+      aria-label={copied ? '已复制' : '复制'}
+      {...tip(copied ? '已复制' : '复制')}
+      onClick={handleCopy}
+    >
+      {copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+    </button>
+  )
+})
 
 // 「已停止生成」徽标（流式/完成分支共用）
 export const stoppedBadge = (
@@ -1517,7 +1496,7 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
   const actions = !isStreaming ? (
     <div className="chat-msg-actions">
       {tipNode}
-      <button className="chat-msg-action-btn" aria-label="复制" {...tip('复制')} onClick={() => a.copyMessage(msg.content || '')}><CopyIcon size={13} /></button>
+      <MessageCopyButton text={msg.content || ''} onCopy={a.copyMessage} tip={tip} />
       {isLast && (
         <span style={{ display: 'inline-flex' }} {...tip('重新生成')}>
           <button className="chat-msg-action-btn" aria-label="重新生成" onClick={() => a.regenerateAt(msg.id)} disabled={loading}><RefreshCwIcon size={13} /></button>
@@ -1547,20 +1526,27 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
       )}
     </div>
   ) : null
+  // 撤销回调固定引用：内联箭头每次渲染都新建，会让下游 memo（StreamingContent）失效
+  const onUndoStable = useCallback(
+    (tc: NonNullable<AgentMessage['toolCalls']>[number]) => a.onUndo(msg.id, tc),
+    [a, msg.id]
+  )
   // 已切分进 segments 的工具调用 id：流式时把「当前轮尚未切分」的工具卡作为实时尾部追加，
   // 避免流式期所有工具卡堆在顶部、完成后才跳回交错。
-  const liveToolCalls = isStreaming ? (() => {
+  const liveToolCalls = useMemo(() => {
+    if (!isStreaming || !live) return undefined
     const segmentedToolIds = new Set<string>()
     if (live.segments) for (const seg of live.segments) if (seg.kind === 'tools') for (const t of seg.toolCalls) segmentedToolIds.add(t.id)
     return (live.toolCalls || []).filter(t => !segmentedToolIds.has(t.id))
-  })() : undefined
+  }, [isStreaming, live])
   // 首 token 前（无正文/无思考/无工具）：pending 态思考卡（ThinkGrid + 思考中 + 连续计时），
   // 首个思考段到达后由同一思考卡接管，避免等待窗口留白且全程无跳变
   const pendingFirstToken = isStreaming && !src.content && !(src.segments?.length) && !hasToolCalls
   // 模型名/token 计数徽标：常驻思考块头部（流式中含 t/s 速率采样，
   // 完成后模型名/token 总数/t/s（持久化 lastTps 还原）保留不消失）
+  // 用 useMemo 固定元素引用：它作为 ThinkBlock 的 prop，每次新建会让 memo 失效
   const label = src.modelLabel || modelLabel
-  const meta = label ? (
+  const meta = useMemo(() => (label ? (
     <StreamingBadge
       modelLabel={label}
       live={isStreaming}
@@ -1569,19 +1555,25 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
       onRate={onRate}
       templateId={modelTemplateId}
     />
-  ) : null
+  ) : null), [label, isStreaming, src.lastTps, src.decodedTokens, onRate, modelTemplateId])
+  // segments 渲染结果整体 memo：items 数组、meta 元素、onUndo 引用全部稳定后，
+  // ThinkBlock 的 memo 才真正生效（否则每 commit 都是新引用，memo 等于没写）
+  const segmentsNode = useMemo(() => {
+    if (!src.segments || src.segments.length === 0) return null
+    return renderSegmentsFor(src.segments, msg.id, isStreaming, liveToolCalls, {
+      thinkDone: isStreaming ? !!thinkDone : true,
+      onPreviewFile: a.onPreviewFile, canUndoFor: a.canUndoFor, onUndo: a.onUndo,
+      streamStartAt: isStreaming ? streamStartAt : undefined,
+      runTotalMs: src.thinkTotalMs,
+      meta
+    })
+  }, [src.segments, msg.id, isStreaming, liveToolCalls, thinkDone, a, streamStartAt, src.thinkTotalMs, meta])
   if (src.segments && src.segments.length > 0) {
     // segments 已切分：时间线布局（一级标题常驻 + 二级标题块 + 链外过程正文，最终正文独立成泡），
     // 完成后同一结构静态渲染（ThinkBlock closed、正文只翻 isStreaming）。
     return (
       <>
-        {renderSegmentsFor(src.segments, msg.id, isStreaming, isStreaming ? liveToolCalls : undefined, {
-          thinkDone: isStreaming ? !!thinkDone : true,
-          onPreviewFile: a.onPreviewFile, canUndoFor: a.canUndoFor, onUndo: a.onUndo,
-          streamStartAt: isStreaming ? streamStartAt : undefined,
-          runTotalMs: src.thinkTotalMs,
-          meta
-        })}
+        {segmentsNode}
 
         {src.stopped && stoppedBadge}
         {fileSummary}
@@ -1596,7 +1588,7 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
       {pendingFirstToken && (
         <ThinkBlock pending value="" closed={false} isStreaming msgStreaming streamStartAt={streamStartAt} />
       )}
-      <StreamingContent content={src.content} streaming={isStreaming} toolCalls={src.toolCalls || undefined} runTotalMs={src.thinkTotalMs} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={(tc) => a.onUndo(msg.id, tc)} />
+      <StreamingContent content={src.content} streaming={isStreaming} toolCalls={src.toolCalls || undefined} runTotalMs={src.thinkTotalMs} onPreviewFile={a.onPreviewFile} canUndoFor={a.canUndoFor} onUndo={onUndoStable} />
 
       {!isStreaming && hasToolCalls && fileSummary}
       {!isStreaming && !hasToolCalls && actions}
