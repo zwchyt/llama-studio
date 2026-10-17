@@ -2,16 +2,24 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Activity, Cpu, RefreshCw } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { TokenUsageLedger } from '../../../shared/types'
-import { buildTokenStats, formatNumber } from '../utils/token-stats'
+import {
+  buildTokenStats, dayLabel, fmtCompactTokens, fmtHeroTokens, formatNumber,
+} from '../utils/token-stats'
 import type { TokenStats } from '../utils/token-stats'
+import { StatStrip, type Stat } from './TokenUsageTable'
+import { TokenActivityHeatmap } from './TokenActivityHeatmap'
 import { TokenUsageActivityTab } from './TokenUsageActivityTab'
 import { TokenUsageModelsTab } from './TokenUsageModelsTab'
 import { useBubbleTip } from './useBubbleTip'
 import '../styles/token-stats.css'
 
 // ── Token 使用统计（移植自 local-studio 的 Usage 页） ──────────
-// 页面是「模型」与「活动」两个表格页签的并列：同一个标签页外壳、同一套表格
-// 语言，每个标签页的统计条直接概括正下方的行，而不是漂浮在页面顶部。
+// 页面按「先总览、后明细」分两段：
+//   ① 总览区（页头之下、页签之上）——总量大数字、分类统计条、全年热力图。
+//      一打开页面就先看到「用了多少、用在哪、什么时候用」，不必先点页签。
+//   ② 页签区——「模型 / 活动」两张明细表，页签之下才是各自的表格与区块。
+// 热力图挪到页签之上，所以它「选中的那一天」提升到本组件持有：
+// 点热力图上某一天会自动切到「活动」页，把那天 24 小时的分布亮出来。
 // 数据源是本机记账簿（chats/state/token-usage/：按月分片的明细 + _rollup.json 聚合），
 // 仅本地统计，不涉及任何云端模型的 token 计数逻辑。
 
@@ -37,10 +45,15 @@ export default function TokenStatsView() {
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
   const { tipHandlers: tip, tipNode } = useBubbleTip()
   const cards = useStore(s => s.cards)
-  const [tab, setTab] = useState<UsageTab>('models')
+  // 默认落在「活动」：进来第一眼要看到「一天中的时段」图表（上方总览区还带着全年热力图），
+  // 而不是先看模型排行表。
+  const [tab, setTab] = useState<UsageTab>('activity')
   const [ledger, setLedger] = useState<TokenUsageLedger>({ entries: [], rollup: [] })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // 热力图选中的日子：热力图在页签之上，选中态得由本组件持有，
+  // 才能既喂给热力图（高亮），又喂给「活动」页（那天的时段分布）。
+  const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const requestSequence = useRef(0)
 
   const cardOf = useMemo(() => {
@@ -79,20 +92,60 @@ export default function TokenStatsView() {
     [ledger, cardOf],
   )
 
+  // 总览区的分类统计条：整本账的口径，与下方页签无关
+  const overview: Stat[] = useMemo(() => {
+    if (!stats) return []
+    const totals = stats.totals
+    const avgPerReq = totals.total_requests > 0
+      ? Math.round(totals.total_tokens / totals.total_requests)
+      : null
+    return [
+      {
+        label: 'Tokens',
+        value: formatNumber(totals.total_tokens),
+        sub: `${fmtCompactTokens(totals.prompt_tokens)} 入 · ${fmtCompactTokens(totals.completion_tokens)} 出`,
+        title: '本机模型流过的全部 token，输入（新增量）与输出（实测）合计，整个记账周期。',
+      },
+      {
+        label: '请求数',
+        value: formatNumber(totals.total_requests),
+        sub: `${totals.models} 个模型`,
+        title: '通过本机完成的聊天请求次数。',
+      },
+      {
+        label: '平均/次',
+        value: avgPerReq === null ? '—' : formatNumber(avgPerReq),
+        sub: '输入+输出合计',
+        title: '平均每次请求消耗的 token 数。',
+      },
+      {
+        label: '输入（新增）',
+        value: fmtCompactTokens(totals.prompt_tokens),
+        sub: '按同端口会话增量',
+        title: '累计输入：按「同端口上一次请求相比的增长量」计，避免多轮对话把历史上下文反复计入。',
+      },
+      {
+        label: '输出（实测）',
+        value: fmtCompactTokens(totals.completion_tokens),
+        sub: 'llama.cpp 实测',
+        title: '累计输出，流结束时由 llama.cpp 实测上报。',
+      },
+      {
+        label: '涉及模型',
+        value: formatNumber(totals.models),
+        sub: '按模型文件分组',
+        title: '出现过的不同模型数，按模型文件路径分组。',
+      },
+    ]
+  }, [stats])
+
+  // 热力图选日：选中后自动切到「活动」页，让那天的时段分布立刻可见
+  const pickDay = useCallback((key: string | null) => {
+    setSelectedDay(key)
+    if (key) setTab('activity')
+  }, [])
+
   const heading = TAB_HEADINGS[tab]
-  const scope: { scale: string; detail: string } = useMemo(() => {
-    if (!stats) return { scale: '暂无记录', detail: '完成一次聊天后自动记账' }
-    if (tab === 'models') {
-      return {
-        scale: `${stats.totals.models} 个模型`,
-        detail: `${formatNumber(stats.totals.total_requests)} 次请求 · ${formatNumber(stats.totals.total_tokens)} tokens（输入新增量 + 输出实测）`,
-      }
-    }
-    return {
-      scale: `${stats.daily.length} 天记录`,
-      detail: `最近 24 小时 ${formatNumber(stats.recent_activity.last_24h_requests)} 次请求`,
-    }
-  }, [stats, tab])
 
   return (
     <div className="token-stats">
@@ -117,6 +170,46 @@ export default function TokenStatsView() {
         </div>
       </header>
 
+      {/* ① 总览区：首次打开页面先看到的顺序 —— 总量 → 分类统计 → 全年热力图。
+             往下才是页签，所以这里不依赖 tab 状态。 */}
+      {stats ? (
+        <div className="ts-overview">
+          <div className="ts-hero">
+            <div className="ts-hero-value">{fmtHeroTokens(stats.totals.total_tokens)}</div>
+            <div className="ts-hero-caption">
+              本机模型累计流过的 token —— {formatNumber(stats.totals.total_requests)} 次请求，全部本地记账。
+            </div>
+          </div>
+
+          <StatStrip stats={overview} />
+
+          <section className="ts-section">
+            <div className="ts-section-head">
+              <h3 className="ts-section-title">今年</h3>
+              <span className="ts-section-note">
+                {selectedDay
+                  ? `已选 ${dayLabel(selectedDay)} · 见下方「活动」页`
+                  : '1–12 月每日 tokens'}
+              </span>
+              {selectedDay ? (
+                <button
+                  type="button"
+                  className="ts-chip-btn"
+                  onClick={() => pickDay(null)}
+                  {...tip('取消选中，回到全年视图')}
+                >
+                  取消选中
+                </button>
+              ) : null}
+            </div>
+            <div className="ts-section-body">
+              <TokenActivityHeatmap daily={stats.daily} value={selectedDay} onChange={pickDay} />
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {/* ② 页签区：明细表格 */}
       <nav className="ts-tabs" aria-label="Token 统计标签页">
         {TABS.map(t => (
           <button
@@ -135,11 +228,6 @@ export default function TokenStatsView() {
         <h2 className="ts-tab-title">{heading.title}</h2>
         <p className="ts-tab-desc">{heading.description}</p>
 
-        <div className="ts-scope">
-          <span className="ts-scope-scale">{scope.scale}</span>
-          <span className="ts-scope-detail">{scope.detail}</span>
-        </div>
-
         {error && !stats ? (
           <div className="ts-error">
             <p>读取记账簿失败：{error}</p>
@@ -157,7 +245,15 @@ export default function TokenStatsView() {
         ) : (
           tab === 'models'
             ? <TokenUsageModelsTab stats={stats} />
-            : <TokenUsageActivityTab stats={stats} entries={ledger.entries} rollup={ledger.rollup} />
+            : (
+              <TokenUsageActivityTab
+                stats={stats}
+                entries={ledger.entries}
+                rollup={ledger.rollup}
+                selectedDay={selectedDay}
+                onSelectDay={pickDay}
+              />
+            )
         )}
       </section>
     </div>

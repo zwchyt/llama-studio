@@ -3,7 +3,6 @@ import {
   DataRow, EndCell, GroupRow, HeadCell, LeadCell, NumCell, StatStrip, TableFrame, TableNotice,
   useSortedRows, type Stat,
 } from './TokenUsageTable'
-import { TokenActivityHeatmap } from './TokenActivityHeatmap'
 import { UsageBarRow, type UsageBar } from './TokenUsageBars'
 import {
   changeTone, dayLabel, fmtCompactTokens, fmtSignedPct, formatNumber, hourlyForDay, monthLabel,
@@ -13,6 +12,9 @@ import type { TokenUsageEntry, TokenUsageRollupRow } from '../../../shared/types
 import { useBubbleTip } from './useBubbleTip'
 
 type SortKey = 'date' | 'requests' | 'tokens' | 'prompt' | 'completion'
+
+/** 逐日表默认最多摊多少行；超出的折进「展开其余 N 天」 */
+const DAY_ROW_LIMIT = 30
 
 const sortValue = (row: TokenDayRow, key: SortKey): number | string | null => {
   switch (key) {
@@ -36,14 +38,32 @@ function byMonth(rows: readonly TokenDayRow[]): Array<{ label: string; rows: Tok
   return groups
 }
 
-export function TokenUsageActivityTab({ stats, entries, rollup }: { stats: TokenStats; entries: TokenUsageEntry[]; rollup: TokenUsageRollupRow[] }) {
-  // 热力图点击选中的日子：选中后「一天中的时段」联动显示那一天的分布
-  const [selectedDay, setSelectedDay] = useState<string | null>(null)
+export function TokenUsageActivityTab({
+  stats, entries, rollup, selectedDay, onSelectDay,
+}: {
+  stats: TokenStats
+  entries: TokenUsageEntry[]
+  rollup: TokenUsageRollupRow[]
+  /** 热力图选中的日子：热力图在页签之上（见 TokenStatsView 的总览区），选中态由父级持有 */
+  selectedDay: string | null
+  onSelectDay: (dateKey: string | null) => void
+}) {
   const { sorted, head } = useSortedRows<TokenDayRow, SortKey>(stats.daily, sortValue, {
     key: 'date',
     desc: true,
   })
   const activeDays = stats.daily.filter(day => day.total_tokens > 0).length
+
+  // 逐日表只列「有流量」的日子：零流量的空行整行都是 0，留着只会把表拉成一条
+  // 读不出形状的流水账（那些日子在热力图上已经有位置了）。
+  // 再按 DAY_ROW_LIMIT 行封顶，超出的折进「展开其余 N 天」，默认不把整本账摊开。
+  const activeRows = useMemo(
+    () => sorted.filter(row => row.total_tokens > 0 || row.requests > 0),
+    [sorted],
+  )
+  const [showAllDays, setShowAllDays] = useState(false)
+  const visibleRows = showAllDays ? activeRows : activeRows.slice(0, DAY_ROW_LIMIT)
+  const hiddenDays = activeRows.length - visibleRows.length
   const activity = stats.recent_activity
   const wow = stats.week_over_week
 
@@ -119,16 +139,6 @@ export function TokenUsageActivityTab({ stats, entries, rollup }: { stats: Token
       {tipNode}
       <StatStrip stats={summary} />
 
-      <section className="ts-section">
-        <div className="ts-section-head">
-          <h3 className="ts-section-title">今年</h3>
-          <span className="ts-section-note">1–12 月每日 tokens</span>
-        </div>
-        <div className="ts-section-body">
-          <TokenActivityHeatmap daily={stats.daily} value={selectedDay} onChange={setSelectedDay} />
-        </div>
-      </section>
-
       {selectedDay ? (
         <section className="ts-section">
           <div className="ts-section-head">
@@ -141,7 +151,7 @@ export function TokenUsageActivityTab({ stats, entries, rollup }: { stats: Token
             <button
               type="button"
               className="ts-chip-btn"
-              onClick={() => setSelectedDay(null)}
+              onClick={() => onSelectDay(null)}
               {...tip('回到全部历史时段')}
             >
               显示全部时段
@@ -166,7 +176,7 @@ export function TokenUsageActivityTab({ stats, entries, rollup }: { stats: Token
         </section>
       ) : null}
 
-      {stats.daily.length === 0 ? (
+      {activeRows.length === 0 ? (
         <TableNotice
           title="暂无逐日历史"
           body="还没有记录到完整的一天流量。随着请求积累，这张表会逐渐填充。"
@@ -182,7 +192,7 @@ export function TokenUsageActivityTab({ stats, entries, rollup }: { stats: Token
               <HeadCell {...head('completion')} numeric title="当日实测输出 token">输出（实测）</HeadCell>
             </tr>
           </thead>
-          {byMonth(sorted).map(group => (
+          {byMonth(visibleRows).map(group => (
             <tbody key={group.label}>
               <GroupRow
                 colSpan={5}
@@ -190,7 +200,7 @@ export function TokenUsageActivityTab({ stats, entries, rollup }: { stats: Token
                 right={`${formatNumber(group.rows.reduce((sum, row) => sum + row.total_tokens, 0))} tokens`}
               />
               {group.rows.map(row => (
-                <DataRow key={row.date} dimmed={row.total_tokens === 0}>
+                <DataRow key={row.date}>
                   <LeadCell>
                     <span className="ts-day-label" {...tip(row.date)}>{dayLabel(row.date)}</span>
                   </LeadCell>
@@ -202,6 +212,31 @@ export function TokenUsageActivityTab({ stats, entries, rollup }: { stats: Token
               ))}
             </tbody>
           ))}
+          {hiddenDays > 0 || showAllDays ? (
+            <tbody>
+              <tr>
+                <td colSpan={5} className="ts-more-cell">
+                  {hiddenDays > 0 ? (
+                    <button
+                      type="button"
+                      className="ts-more-btn"
+                      onClick={() => setShowAllDays(true)}
+                    >
+                      展开其余 {formatNumber(hiddenDays)} 天（共 {formatNumber(activeRows.length)} 天有流量）
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="ts-more-btn"
+                      onClick={() => setShowAllDays(false)}
+                    >
+                      收起，只留前 {DAY_ROW_LIMIT} 天
+                    </button>
+                  )}
+                </td>
+              </tr>
+            </tbody>
+          ) : null}
           {stats.peak_days.length > 0 ? (
             <tbody>
               <GroupRow colSpan={5} label="历史峰值" blurb="这台机器实际扛过的天花板" />

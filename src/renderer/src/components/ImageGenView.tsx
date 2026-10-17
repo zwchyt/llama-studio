@@ -417,18 +417,26 @@ export default function ImageGenView() {
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
   const { tipHandlers: tip, tipNode } = useBubbleTip()
   if (sdCards.length === 0) {
+    // 空态必须**套在 .imagegen 里**再返回，不能自己当视图根节点：
+    // 视图根节点会被 global.css / toolshub.css 套上卡片外观（background / border /
+    // radius / shadow / padding）并撑满可用宽度，而 .imagegen-empty 自身带着
+    // `max-width: 520px; margin: 0 auto`（它是为「卡片内居中的内容块」写的）——
+    // 两者一撞，整张卡片就被压成一条 520px 宽的窄条浮在页面中间。
     return (
-      <div className="imagegen-empty">
-        <Image size={48} style={{ opacity: 0.35 }} />
-        <h3>还没有 stable-diffusion.cpp 模板</h3>
-        <p>
-          先在「模型管理 」中创建一个 <b>stable-diffusion.cpp</b> 引擎的模板
-          （需要先在「设置 → stable-diffusion.cpp 引擎」下载后端，以及一个扩散模型
-          <code>.safetensors</code> 权重）。创建后回到本页面即可在此查看参数面板并启动生成。
-        </p>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button className="btn btn-primary" onClick={() => setView('cards')}>前往模型管理 </button>
-          <button className="btn btn-secondary" onClick={() => setView('settings')}>前往设置</button>
+      <div className="imagegen">
+        {tipNode}
+        <div className="imagegen-empty">
+          <Image size={48} style={{ opacity: 0.35 }} />
+          <h3>还没有 stable-diffusion.cpp 模板</h3>
+          <p>
+            先在「模型管理 」中创建一个 <b>stable-diffusion.cpp</b> 引擎的模板
+            （需要先在「设置 → stable-diffusion.cpp 引擎」下载后端，以及一个扩散模型
+            <code>.safetensors</code> 权重）。创建后回到本页面即可在此查看参数面板并启动生成。
+          </p>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn btn-primary" onClick={() => setView('cards')}>前往模型管理 </button>
+            <button className="btn btn-secondary" onClick={() => setView('settings')}>前往设置</button>
+          </div>
         </div>
       </div>
     )

@@ -79,6 +79,18 @@ export function fmtCompactTokens(totalTokens: number): string {
   return `${(totalTokens / 1_000_000).toFixed(1)}M`
 }
 
+/**
+ * 总览区页头的大数字：k 取一位小数、M/B 取两位，让量级一眼可辨。
+ * 与表格里的 fmtCompactTokens 分开——表格要的是「能塞进列里的紧凑」，
+ * 页头要的是「一眼读出多少」。
+ */
+export function fmtHeroTokens(totalTokens: number): string {
+  if (totalTokens < 1_000) return String(totalTokens)
+  if (totalTokens < 1_000_000) return `${(totalTokens / 1_000).toFixed(1)}k`
+  if (totalTokens < 1_000_000_000) return `${(totalTokens / 1_000_000).toFixed(2)}M`
+  return `${(totalTokens / 1_000_000_000).toFixed(2)}B`
+}
+
 /** "+12%" / "-3%" / "—"（无基数时无法计算） */
 export function fmtSignedPct(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return '—'

@@ -122,6 +122,27 @@
   --color-terminal-bright-white: #f8f8f8;
 }
 
+/* ── 文字选中高亮 ──
+   此前全仓没有全局 ::selection，所以拖选文字一律走浏览器默认的那个蓝，跟这套黑白灰的
+   界面完全不搭（只有聊天区 / 代码块各自局部换过色，见 agent-code.css 与 code-block.css）。
+   这里统一换成暖琥珀（#f59e0b，与「性能测试 / Token 统计」同色）：
+   浅色下 26% → 约 #f6e0ba 的暖奶油底，黑字压上去对比依旧充足；
+   深色下 24% → 约 #534020 的暗琥珀，浅灰字同样读得清。
+   想换色只改 --selection-bg 一处；文字色用 inherit，不动原文颜色。 */
+:root {
+  --selection-bg: color-mix(in srgb, #f59e0b 26%, transparent);
+  --selection-fg: inherit;
+}
+
+html.theme-dark {
+  --selection-bg: color-mix(in srgb, #f59e0b 24%, transparent);
+}
+
+::selection {
+  background: var(--selection-bg);
+  color: var(--selection-fg);
+}
+
 #splash-screen {
   position: fixed;
   inset: 0;

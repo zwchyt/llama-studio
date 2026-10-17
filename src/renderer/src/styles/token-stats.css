@@ -8,6 +8,31 @@
   padding: 2px 0 24px;
 }
 
+/* ── 总览区（页头之下、页签之上：首次打开即可见） ──────────────
+   顺序固定为 总量大数字 → 分类统计条 → 全年热力图，往下才是页签。
+   用一条底部间距把它和页签区隔开，让「总览 / 明细」两段读起来是两层。 */
+.ts-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-bottom: 28px;
+}
+
+.ts-hero-value {
+  font-size: 42px;
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -1.4px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-hero-caption {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 /* ── 页头 ── */
 .ts-header .page-subtitle {
   max-width: 640px;
@@ -89,28 +114,6 @@
   margin-top: 4px;
   margin-bottom: 14px;
   max-width: 680px;
-}
-
-.ts-scope {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  padding: 8px 12px;
-  margin-bottom: 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-}
-
-.ts-scope-scale {
-  font-weight: 700;
-  color: var(--text);
-}
-
-.ts-scope-detail {
-  color: var(--text-secondary);
 }
 
 /* ── 加载/错误/空态 ── */
@@ -314,6 +317,26 @@
   color: var(--text-secondary);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+/* 逐日表的「展开其余 N 天 / 收起」行：不做成按钮块，只是一行可点的文字，
+   免得它在表格里比数据本身还显眼 */
+.ts-more-cell {
+  padding: 10px 14px;
+}
+
+.ts-more-btn {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.ts-more-btn:hover {
+  text-decoration: underline;
 }
 
 /* 行 */
