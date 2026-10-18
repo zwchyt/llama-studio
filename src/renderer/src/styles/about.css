@@ -81,26 +81,28 @@
 .about-container .ab-accent--terms   { --ab-eng: var(--ab-c-terms); }
 .about-container .ab-accent--privacy { --ab-eng: var(--ab-c-privacy); }
 
-/* ── 2. 关键帧（统一 ab- 前缀） ── */
+/* ── 2. 关键帧（统一 ab- 前缀） ──
+   入场不从 opacity 0 起：透明的头几帧元素等于不存在，露出卡片底色，
+   视觉上就是「闪一下再出来」（亮色闪白 / 暗色闪黑）。只保留位移与缩放。 */
 @keyframes ab-card-in {
-  from { opacity: 0; transform: translateY(16px) scale(.985); }
-  to   { opacity: 1; transform: none; }
+  from { transform: translateY(16px) scale(.985); }
+  to   { transform: none; }
 }
 @keyframes ab-icon-pop {
-  from { opacity: 0; transform: scale(.72) rotate(-10deg); }
-  to   { opacity: 1; transform: none; }
+  from { transform: scale(.72) rotate(-10deg); }
+  to   { transform: none; }
 }
 @keyframes ab-ribbon-in {
-  from { opacity: 0; transform: translateX(-24px); }
-  to   { opacity: .85; transform: none; }
+  from { transform: translateX(-24px); }
+  to   { opacity: .85; }
 }
 @keyframes ab-bar-drop {
-  from { opacity: 0; transform: scaleY(0); }
-  to   { opacity: 1; transform: scaleY(1); }
+  from { transform: scaleY(0); }
+  to   { transform: scaleY(1); }
 }
 @keyframes ab-fade-up {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: none; }
+  from { transform: translateY(8px); }
+  to   { transform: none; }
 }
 @keyframes ab-dot-pulse {
   0%   { box-shadow: 0 0 0 0 rgba(217, 119, 6, .45); }

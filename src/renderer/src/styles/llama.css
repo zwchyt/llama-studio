@@ -63,7 +63,9 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #fff;
+  /* 原为 #fff：Web 界面（iframe 还在加载 / 无活跃会话）时整块是白底，切进来的交叉淡出期间
+     会闪一下白。改用与面板同色，避免亮色闪烁。 */
+  background: var(--surface);
   border-radius: 0 0 var(--radius-lg) var(--radius-lg);
   overflow: hidden;
 }
@@ -72,6 +74,8 @@
   flex: 1;
   border: none;
   width: 100%;
+  /* iframe 自身背景：跨域页面加载前 Chromium 默认白，给一层应用底色减少闪白。 */
+  background: var(--surface);
 }
 
 .llama-chat-status {

@@ -7,7 +7,7 @@
  * 选中态由全局 view 驱动（而不是本组件内部 state）：这样从别处
  * setView('ocr') 跳进来时能自动落在对应工具上，导航音效也照常按 view 触发。
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useDeferredValue, useMemo, useRef, useState } from 'react'
 import type { ElementType } from 'react'
 import { HardDriveIcon, FolderOpenIcon } from '@animateicons/react/lucide'
 import { useStore } from '../store/useStore'
@@ -178,7 +178,13 @@ export default function ToolsHub() {
 
   const activeDef = NAV_DEF_BY_KEY[active]
   const IconComp = activeDef?.icon as ElementType | undefined
-  const content = useMemo(() => renderViewComponent(active), [active])
+  // 工具箱内二级界面切换，与 App 顶层视图切换共用同一套「延迟提交」机制：
+  // 直接渲染实时的 active 时，旧子树（key={active}）立刻卸载，新界面是 lazy 组件、
+  // 其 chunk 若未在缓存里 Suspense 会挂起、fallback 是 null —— 内容区就空白一帧（露卡片底色）。
+  // 改用 useDeferredValue：新界面 chunk 未下载完时，React 继续显示旧界面，下载完再无缝替换，
+  // 全程不出现空帧。导航高亮（chips / 面包屑）仍用实时的 active，点下去即时响应。
+  const deferredActive = useDeferredValue(active)
+  const content = useMemo(() => renderViewComponent(deferredActive), [deferredActive])
 
   return (
     <div className="toolhub">
@@ -274,7 +280,7 @@ export default function ToolsHub() {
           <span className="toolhub-crumb-name">{activeDef?.label ?? '工具箱'}</span>
           {viewGroupLabel && <span className="toolhub-crumb-path">工具箱 / {viewGroupLabel}</span>}
         </div>
-        <div className="toolhub-body" key={active}>{content}</div>
+        <div className="toolhub-body" key={deferredActive}>{content}</div>
       </section>
     </div>
   )

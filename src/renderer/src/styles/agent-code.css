@@ -755,7 +755,8 @@ html.is-panel-resizing .agent-think-body .table-node {
   background: transparent;
   color: var(--text);
   line-height: 1.5;
-  max-height: 200px;
+  /* 高度由 JS 全权控制（useAgentInput 的 autoResize：min(scrollHeight, INPUT_FOLD_CAP)）。
+     这里不写 max-height —— JS 的上限更小，任何更大的 CSS 值都只是死代码，改一处漏一处。 */
   min-height: 24px;
   overflow-y: auto;
   appearance: none;
@@ -3389,6 +3390,16 @@ html.is-panel-resizing .agent-think-body .table-node {
   animation: agentPopIn 250ms cubic-bezier(.23, 1, .32, 1) both;
 }
 
+/* 仅「流式中的最新助手消息」内播放上述入场动画：历史消息在切模式（聊天↔编码）/
+   切会话时整列表按新 key 重挂，若无条件播放会让整段对话闪一下。非流式消息内关闭，
+   既消除导航闪、又保留流式新内容的淡入手感。 */
+.chat-msg:not(.chat-msg--streaming) .agent-tool-call,
+.chat-msg:not(.chat-msg--streaming) .agent-think,
+.chat-msg:not(.chat-msg--streaming) .agent-file-changes,
+.chat-msg:not(.chat-msg--streaming) .agent-file-changes-row {
+  animation: none;
+}
+
 @keyframes agentFadeUp {
   from {
     opacity: 0;
@@ -3793,6 +3804,9 @@ html.is-panel-resizing .agent-think-body .table-node {
   flex-direction: column;
   gap: 0;
   padding: 0;
+  /* 超长工具参数不能把面板顶出窗口：整块限高，正文区自己滚，头与按钮常驻可点 */
+  max-height: 60vh;
+  overflow: hidden;
   background: var(--bg);
   border: 1px solid var(--border-strong);
   border-bottom: none;
@@ -3831,6 +3845,9 @@ html.is-panel-resizing .agent-think-body .table-node {
   flex-direction: column;
   gap: 6px;
   padding: 6px 8px 8px;
+  /* 配合 .agent-approve-inline 的 60vh 限高：只有正文区滚动（min-height: 0 是 flex 内可滚的前提） */
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .agent-approve-inline-footer {
@@ -3838,9 +3855,12 @@ html.is-panel-resizing .agent-think-body .table-node {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+  /* 右侧留 59px：让按钮组右缘与输入框右下角的操作列对齐（改前请对照 .chat-input-tools 里发送键的宽度） */
   padding: 10px 59px 10px 10px;
   margin-top: 2px;
   border-top: 1px solid var(--border);
+  /* 限高时按钮行不被压扁：压缩全部让给可滚动的正文区 */
+  flex-shrink: 0;
 }
 
 .agent-approve-inline-footer .agent-prompt-btn-primary {
@@ -8848,6 +8868,31 @@ html.theme-dark .user-msg-lightbox {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
+/* 拖拽落点反馈：整块输入区都接收文件（见 AgentInputArea 的 onDragOver），
+   字段本体用虚线高亮 + 上方提示。提示走 ::after，不新增 DOM，也不撑高输入框。 */
+.agent-code-view .chat-input-field.dragover {
+  border-color: var(--accent);
+  border-style: dashed;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+}
+
+.agent-code-view .chat-input-field.dragover::after {
+  content: '松开以添加为附件';
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: var(--z-popover);
+}
+
 .agent-code-view .chat-input {
   flex: 1 1 140px;
   min-width: 140px;
@@ -8864,7 +8909,6 @@ html.theme-dark .user-msg-lightbox {
   box-sizing: border-box;
 
   min-height: 24px;
-  max-height: 200px;
   overflow-y: auto;
 }
 
@@ -9222,7 +9266,6 @@ html.theme-dark .user-msg-lightbox {
   padding-left: 0;
 
   min-height: 24px;
-  max-height: 200px;
   overflow-y: auto;
 }
 
@@ -9353,6 +9396,12 @@ html.theme-dark .user-msg-lightbox {
   cursor: pointer;
   white-space: nowrap;
   transition: background .12s ease;
+  /* 由 div 改成 button（键盘可达）：清掉按钮的默认外观，视觉与原来一致 */
+  border: 0;
+  background: none;
+  width: 100%;
+  font-family: inherit;
+  text-align: left;
 }
 
 .chat-model-logo-menu-item:hover {
@@ -12050,14 +12099,25 @@ html.theme-dark .user-msg-lightbox {
      上画一圈会变成嵌套的双框。
 
    只覆盖可交互元素，不用通配符，避免给纯容器加框。
-   · 覆盖 [role="button"]：工具卡折叠头 / 文件变更汇总头 / 被截断的用户气泡都是
-     「div + role=button + tabIndex」，不在 button 名单里，之前 Tab 到它们完全看不见焦点。
+   · 覆盖 [role="button"] 与 [role="option"]：工具卡折叠头 / 文件变更汇总头 / 被截断的用户气泡
+     是「div + role=button + tabIndex」，模型下拉行 / 思考程度 / 搜索项是「role=option + tabIndex」，
+     都不在 button 名单里，之前 Tab 到它们完全看不见焦点。
    · 排除 .agent-code-chat-item / .agent-code-session-item / .agent-code-project-item：
      它们自带 1.5px 内描边（2761 行，内描边是为了不溢出到相邻行），不排掉会被这条盖成外环。 */
 /* 侧栏列表已 portal 到导航栏里（.sidebar-agent-slot），所以两个容器都要覆盖，否则键盘焦点环丢失 */
-:is(.agent-code-view, .sidebar-agent-slot) :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"], [role="button"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input, .agent-terminal-cwd-input, .agent-code-sidebar-filter-input, .file-tree-rename-input, .agent-file-picker-search, .agent-code-chat-item, .agent-code-session-item, .agent-code-project-item)) {
+:is(.agent-code-view, .sidebar-agent-slot) :where(button, a[href], input, textarea, select, [role="tab"], [role="menuitem"], [role="button"], [role="option"]):focus-visible:not(:where(.agent-ctx-inline, .chat-input, .agent-msg-edit-area, .agent-ask-question-other-input, .agent-terminal-cwd-input, .agent-code-sidebar-filter-input, .file-tree-rename-input, .agent-file-picker-search, .agent-code-chat-item, .agent-code-session-item, .agent-code-project-item)) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* 弹层里的选项行：容器本身有 overflow（下拉限高滚动），外扩的环会被裁掉一半 → 改内描边。
+   特异性 (0,3,0) 高于上面的兜底规则，不受书写顺序影响。 */
+.chat-model-picker [role="option"]:focus-visible,
+.chat-think-level-menu [role="option"]:focus-visible,
+.chat-search-menu [role="option"]:focus-visible,
+.chat-at-file-pop [role="option"]:focus-visible,
+.chat-slash-pop [role="option"]:focus-visible {
+  outline-offset: -2px;
 }
 
 /* 下面三处的外层容器都是 overflow: hidden，外扩的焦点环会被裁掉一半，

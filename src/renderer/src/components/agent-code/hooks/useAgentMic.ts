@@ -7,9 +7,9 @@
 //           六个 ref，listening / micTranscribing 两个 state。
 // 对外依赖：仅输入框的 input 与 setInput（识别结果回填）。
 //
-// ⚠️ 保留的原行为：startMic 的 useCallback 依赖数组为 []，因此其中读到的 input
-//    是首次渲染时的值（`micBaseTextRef.current = input` 会取到空串）。这是搬移前
-//    就存在的既有行为，本次拆分严格保持等价，未顺手修正——如需修复请单独提交。
+// 已修：startMic 的 useCallback 依赖数组为 []，直接读闭包里的 input 只会拿到首次渲染的空串
+// （`micBaseTextRef.current = input` 恒为空）——录音前输入框里的文字不会被保留为前缀。
+// 改为用 inputRef 持有最新值，依赖数组仍保持 []，startMic 身份稳定。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useStore } from '../../../store/useStore'
@@ -25,11 +25,22 @@ export function useAgentMic({ input, setInput }: {
   const micStreamRef = useRef<MediaStream | null>(null)
   const micBaseTextRef = useRef('') // 点录音前输入框已有的文字（实时回填时作为前缀保留）
   const micBusyRef = useRef(false) // 实时片段识别是否进行中（防止定时器重叠）
-  const micTimerRef = useRef<number | null>(null)
+  const micTimerRef = useRef<number | null>(null) // 周期实时识别
+  const micFirstTickRef = useRef<number | null>(null) // 首帧实时识别（1200ms，原来未跟踪）
   const [listening, setListening] = useState(false) // 录音中
   const [micTranscribing, setMicTranscribing] = useState(false) // 最终识别中
 
+  // 最新的 input：startMic 的依赖是 []，闭包里的 input 永远是首次渲染的值
+  const inputRef = useRef(input)
+  useEffect(() => { inputRef.current = input }, [input])
+
+  const clearMicTimers = useCallback(() => {
+    if (micTimerRef.current) { clearInterval(micTimerRef.current); micTimerRef.current = null }
+    if (micFirstTickRef.current) { clearTimeout(micFirstTickRef.current); micFirstTickRef.current = null }
+  }, [])
+
   const stopMic = (): void => {
+    clearMicTimers()
     try { mediaRecorderRef.current?.stop() } catch { /* noop */ }
     micStreamRef.current?.getTracks().forEach(t => t.stop())
     micStreamRef.current = null
@@ -59,14 +70,15 @@ export function useAgentMic({ input, setInput }: {
       notify('无法访问麦克风（请检查系统 / Electron 麦克风权限）：' + String(e), 'error')
       return
     }
-    micBaseTextRef.current = input
+    micBaseTextRef.current = inputRef.current
     micStreamRef.current = stream
     const mr = new MediaRecorder(stream)
     micChunksRef.current = []
     mr.ondataavailable = (e: any) => { if (e.data && e.data.size) micChunksRef.current.push(e.data) }
     // 实时回填：录音期间周期性把已录音频送本地 STT，识别结果写回输入框（边说边显示）
     const liveTranscribe = async () => {
-      if (micBusyRef.current || micChunksRef.current.length === 0) return
+      // mr 已停（用户提前收麦 / 组件卸载）时不再跑：否则会多识别一次并留下临时 wav
+      if (micBusyRef.current || micChunksRef.current.length === 0 || mr.state === 'inactive') return
       micBusyRef.current = true
       try {
         const blob = new Blob(micChunksRef.current, { type: mr.mimeType || 'audio/webm' })
@@ -90,7 +102,7 @@ export function useAgentMic({ input, setInput }: {
     mr.onstop = async () => {
       micStreamRef.current?.getTracks().forEach(t => t.stop())
       micStreamRef.current = null
-      if (micTimerRef.current) { clearInterval(micTimerRef.current); micTimerRef.current = null }
+      clearMicTimers()
       try {
         const blob = new Blob(micChunksRef.current, { type: mr.mimeType || 'audio/webm' })
         const wavB64 = await encodeWavBase64(await blob.arrayBuffer())
@@ -119,15 +131,19 @@ export function useAgentMic({ input, setInput }: {
     mediaRecorderRef.current = mr
     mr.start()
     micTimerRef.current = window.setInterval(liveTranscribe, 2000)
-    // 尽早触发第一次实时识别（录音刚开始就开跑，不等满一个间隔）
-    window.setTimeout(liveTranscribe, 1200)
+    // 尽早触发第一次实时识别（录音刚开始就开跑，不等满一个间隔）。
+    // id 必须留住：否则 1200ms 内收麦时它仍会跑一次识别、写一个残留的临时 wav。
+    micFirstTickRef.current = window.setTimeout(liveTranscribe, 1200)
   }, [])
   const toggleListen = useCallback(() => {
     if (micTranscribing) return
     if (listening) stopMic()
     else startMic()
   }, [listening, micTranscribing, startMic, stopMic])
-  useEffect(() => () => { try { mediaRecorderRef.current?.stop() } catch { /* noop */ } if (micTimerRef.current) clearInterval(micTimerRef.current) }, [])
+  useEffect(() => () => {
+    try { mediaRecorderRef.current?.stop() } catch { /* noop */ }
+    clearMicTimers()
+  }, [clearMicTimers])
 
   return { listening, micTranscribing, startMic, toggleListen, stopMic }
 }

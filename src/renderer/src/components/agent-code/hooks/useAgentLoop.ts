@@ -23,7 +23,7 @@
 // 注意：handleSend 的依赖数组刻意未包含 slashCommands / agentConfig 等只读配置
 // （与原实现一致，改动会改变闭包新鲜度语义）；本 hook 仅做搬运，未调整依赖项。
 
-import React, { useCallback, useRef } from 'react'
+import React, { useCallback, useLayoutEffect, useRef } from 'react'
 import { noteSendIntent } from '../flight/sendFlight'
 import { useStore } from '../../../store/useStore'
 import { notify } from '../../../store/notificationStore'
@@ -1044,8 +1044,9 @@ export function useAgentLoop({
     }
   }, [input, attachedFiles, packedInput, refChips, codeSnippets, loading, apiBaseUrl, runningCard, activeProjectId, activeSessionId, activeSession, activeProject, updateSessionInProject])
 
-  // 始终持有最新的 handleSend，供排队回调使用，避免过期闭包
-  handleSendRef.current = handleSend
+  // 始终持有最新的 handleSend，供排队回调使用，避免过期闭包。
+  // 用 layout effect 同步而不是渲染期赋值：并发 / 严格模式下渲染可能被重复执行或丢弃。
+  useLayoutEffect(() => { handleSendRef.current = handleSend }, [handleSend])
 
   return { runPiTurn, handleSend }
 }

@@ -3,7 +3,7 @@
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 // 搬移自 AgentCodeView.tsx 的「@ 提及」与「/命令」两块，逻辑与注释均未改动。
 //
-// 自持：allFilesRef / atLoadedDirRef / atAnchorRef / atPopRef / slashAnchorRef /
+// 自持：allFilesRef / atLoadRef / atAnchorRef / atPopRef / slashAnchorRef /
 //       slashPopRef 六个 ref，以及 atQuery / atFiles / slashQuery / slashList /
 //       slashIdx 五个 state，外加「工作区切换时清空文件缓存」的 effect。
 // 外部输入：输入框自身（input / setInput / textareaRef / autoResize）、光标插入
@@ -37,7 +37,10 @@ export function useAgentInputHints({
   // 工作区文件缓存（扁平列表），按 workspaceDir 加载一次，过滤纯前端
   // FlatFileEntry 类型已抽至 agent-code/types
   const allFilesRef = useRef<FlatFileEntry[]>([])
-  const atLoadedDirRef = useRef<string>('')
+  // 按目录缓存「加载中的 Promise」：原实现先置位目录再 await，并发第二次调用直接早退，
+  // 此时 allFilesRef 还是空的 → filterAtFiles 得到「无匹配文件」闪一下；失败也会被记成已加载。
+  // 改成缓存 Promise：并发复用同一次请求；失败不缓存，下次输入 @ 会重试。
+  const atLoadRef = useRef<{ dir: string; promise: Promise<void> } | null>(null)
   const [atQuery, setAtQuery] = useState<string | null>(null) // 非空=浮层激活，存 @ 后的查询串
   const [atFiles, setAtFiles] = useState<FlatFileEntry[]>([]) // 当前过滤后的列表
   const atAnchorRef = useRef<number | null>(null) // @ 在 input 中的起始索引
@@ -45,16 +48,25 @@ export function useAgentInputHints({
 
 
   // 首次需要时按工作区目录加载扁平文件列表（带上限保护，见主进程 list-flat-files）
-  const ensureWorkspaceFiles = useCallback(async (dir: string) => {
-    if (!dir || atLoadedDirRef.current === dir) return
-    atLoadedDirRef.current = dir
-    try {
-      const res = await window.api.listFlatFiles(dir, { maxDepth: 12, maxFiles: 3000 })
-      if (res.success && res.files) allFilesRef.current = res.files
-      else allFilesRef.current = []
-    } catch {
+  const ensureWorkspaceFiles = useCallback((dir: string): Promise<void> => {
+    if (!dir) return Promise.resolve()
+    const cur = atLoadRef.current
+    if (cur && cur.dir === dir) return cur.promise
+    let ok = false
+    const promise = (async () => {
+      try {
+        const res = await window.api.listFlatFiles(dir, { maxDepth: 12, maxFiles: 3000 })
+        // 期间可能已经切到别的工作区：只有仍是当前目录时才写入，避免把旧目录的文件列表盖上来
+        if (atLoadRef.current?.dir !== dir) return
+        if (res.success && res.files) { allFilesRef.current = res.files; ok = true; return }
+      } catch { /* 落到下面的失败分支 */ }
+      if (atLoadRef.current?.dir !== dir) return
       allFilesRef.current = []
-    }
+      // 失败不缓存：清掉这一条，下次输入 @ 重新请求
+      if (!ok) atLoadRef.current = null
+    })()
+    atLoadRef.current = { dir, promise }
+    return promise
   }, [])
 
   // 根据光标位置检测是否处于「@触发」状态：@ 前为空白或行首，@ 后无空白
@@ -98,7 +110,7 @@ export function useAgentInputHints({
 
   // 切换工作区目录时重置文件缓存（下次输入 @ 重新加载）
   useEffect(() => {
-    atLoadedDirRef.current = ''
+    atLoadRef.current = null
     allFilesRef.current = []
     setAtQuery(null)
   }, [workspaceDir])

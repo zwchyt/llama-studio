@@ -90,6 +90,9 @@ export function useAgentInputKeyboard({
     const caret = e.target.selectionStart ?? value.length
     setInput(value)
     autoResize()
+    // 输入法组合期间（中文拼音还没上屏）不做 / @ 检测：组合态下的字符是拼音，
+    // 拿它去匹配会误弹补全面板。keydown 侧本来就有同样的 isComposing 守卫。
+    if ((e.nativeEvent as InputEvent).isComposing) return
     const dir = workspaceDir
     if (detectSlash(value, caret)) {
       // /命令 补全优先；此时不触发 @ 文件补全

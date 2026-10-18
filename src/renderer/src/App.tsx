@@ -11,7 +11,7 @@ import { endpointOfCard, probeTargetOf } from './utils/endpoint'
 import { notify } from './store/notificationStore'
 import { playEvent, playNavSound, warmUpAudio } from './utils/sound'
 import TitleBar from './components/TitleBar'
-import { GROUPED_VIEWS, navKeyOf } from './utils/navConfig'
+import { GROUPED_VIEWS, navKeyOf, type ViewKey } from './utils/navConfig'
 import { renderViewComponent } from './views/viewRegistry'
 import ThemeToggle from './components/ThemeToggle'
 import './styles/titlebar.css'
@@ -99,10 +99,32 @@ function AppMain() {
   const view = useStore(s => s.view)
   // 视图切换的「延迟值」：懒加载的视图在 chunk 到位前会挂起，若直接渲染新 view，
   // React 会先把旧视图换成 Suspense 占位、chunk 到了再换成真视图 —— 中间多出一次视觉状态，
-  // 真视图随后还要播一次 `view-content-in` 淡入，连起来就是肉眼可见的两次跳动。
+  // 期间整块区域是空的（露出 body 底色，亮色闪白 / 暗色闪黑）。
   // 用 useDeferredValue 后，React 在低优先级渲染里**继续显示旧视图**，等新视图能渲染了才切换：
-  // 全程只有一次视觉状态变化、一次入场动画。导航高亮仍用实时的 view，点下去立刻响应。
+  // 全程只有一次视觉状态变化。导航高亮仍用实时的 view，点下去立刻响应。
   const deferredView = useDeferredValue(view)
+  // 下面两个标志用来让「普通界面容器」和「工作台容器」的显隐与 deferredView 同步，
+  // 而不是与实时的 view 同步。原因：从 agent-code 切出时，deferredView 会先滞后一帧
+  // 保持 'agent-code'，而 renderView('agent-code') 返回 null（工作台单独渲染在 agent-code-host
+  // 里）。如果 view-transition 按实时 view 恢复 opacity:1，里面却是 null；同时 agent-code-host
+  // 又瞬间 display:none —— 同一格里没有任何内容，露出 body 底色，就是「一闪」。
+  // 让三者都跟随 deferredView，则切出第一帧旧内容仍在，deferredView 更新后交叉淡出，全程无空帧。
+  const isAgentCodeDeferred = deferredView === 'agent-code'
+  const isLlamaDeferred = deferredView === 'llama'
+  // 这两个 view 有专属常驻容器（不在 view-transition 里渲染）：agent-code 见下方 agent-code-host，
+  // llama 见下方 llama-host。它们处于当前 deferred 值期间，view-transition 必须保持隐藏，
+  // 否则里面渲染的是 null（renderView 对这两个 key 都返回 null），会露出空白背景。
+  const hideViewTransition = isAgentCodeDeferred || isLlamaDeferred
+  // 切到 agent-code / llama 时，viewRegistry 对 .view-transition 返回 null（这两个 view 由专属容器渲染）。
+  // 若 .view-transition 直接跟随 deferredView，切出的那一帧它的内容会瞬间变成 null、而新容器才刚开始淡入，
+  // 于是「旧界面消失 + 新界面淡入」之间露出 body 底色（亮色闪白 / 暗色闪黑）。
+  // 这里额外保留一个 transitionView：它只在「当前是普通界面」时跟随 deferredView；一旦切到
+  // agent-code / llama（hideViewTransition 为真），就停在上一个普通界面不再更新，于是 .view-transition
+  // 在淡出期间仍显示旧内容，与专属容器交叉淡出，全程无空帧。
+  const [transitionView, setTransitionView] = React.useState<ViewKey>(view)
+  useEffect(() => {
+    if (!hideViewTransition) setTransitionView(deferredView)
+  }, [deferredView, hideViewTransition])
   // 「对话 / 工作台」共用 agent-code 这一个 view，靠 mode 区分，导航音要用到它（见下方 playNavSound）
   const agentMode = useStore(s => s.agentMode)
   // 工作台 / Web 界面的「是否已访问过」。首次进入后永久为 true —— 它们必须保持挂载
@@ -121,17 +143,20 @@ function AppMain() {
   // 但实测它会被后台 / 遮挡的窗口节流（连 timeout 都不兑现），所以再挂一条 setTimeout 保证执行。
   // 两条同时触发也没关系：动态 import 走模块缓存，重复调用是幂等的。
   //
-  // ⚠️ 加载完还要**挂载**（setAgentCodeMounted）—— 只下载不挂载是不够的：
+  // ⚠️ 加载完还要**挂载**（setAgentCodeMounted / setLlamaMounted）—— 只下载不挂载是不够的：
   // 应用左侧导航栏底部那个会话列表，是 AgentCodeViewLayout 通过 portal 注入
   // #sidebar-agent-slot 的（见 AgentCodeViewLayout 里的 setSessionSlot）。
   // 组件不挂载 → portal 不存在 → 那个槽位一直空着，用户不进「对话/工作台」就看不到会话列表。
-  // 这里在 chunk 就绪后把它挂起来（外层用 display:none 藏着，不会改变任何视觉），
-  // 于是 portal 恢复、侧栏列表照旧显示，而首屏仍然不背这笔成本。
+  // llama 同理：LlamaChatView 挂载后才会跑「连接服务器 → 显示 iframe」那一串 effect，
+  // 只下载 chunk 的话，首次点「Web 界面」仍要现挂载 + 等 waitForServer 的 IPC 往返，期间界面
+  // 停在「正在连接服务器…」而不是 iframe —— 用户看到的就是切换时闪一下。
+  // 这里 chunk 就绪后把两者一起挂起来（外层是 opacity:0 + inert 藏着，不改变任何视觉），
+  // 于是 portal 恢复、侧栏列表照旧显示、Web 界面的 iframe 提前就绪，首屏仍不背这笔成本。
   useEffect(() => {
     let cancelled = false
     const preload = () => {
       void importAgentCode().then(() => { if (!cancelled) setAgentCodeMounted(true) })
-      void importLlamaChat()
+      void importLlamaChat().then(() => { if (!cancelled) setLlamaMounted(true) })
     }
     const idle = window.requestIdleCallback(preload, { timeout: 2000 })
     const t = window.setTimeout(preload, 3000)
@@ -734,10 +759,12 @@ function AppMain() {
   // 收进「工具箱」的界面统一由 ToolsHub 接管：它内部用二级导航切换具体界面，
   // 于是导航栏只需保留高频入口，低频界面照样能在页内直接切换。
   // 其余界面走 viewRegistry 的同一套映射（与 ToolsHub 共用，避免两处 switch）。
+  // 普通界面容器渲染 transitionView（切到 agent-code/llama 时保留上一个普通界面用于淡出），
+  // 而非实时的 deferredView（后者在切换瞬间会变成 null，导致空帧闪烁）。
   const currentView = useMemo(() => {
-    if (GROUPED_VIEWS.has(deferredView)) return <ToolsHub />
-    return renderViewComponent(deferredView)
-  }, [deferredView])
+    if (GROUPED_VIEWS.has(transitionView)) return <ToolsHub />
+    return renderViewComponent(transitionView)
+  }, [transitionView])
 
   // 强度换成两个值交给 CSS：面板实心度与压在图上的薄纱透明度（强度越低纱越厚）。
   // 浅色底下要「够亮」才压得住深字。
@@ -770,40 +797,67 @@ function AppMain() {
         <BackendDownloadBanner />
         <div className="main-layout">
           <Sidebar />
-          <main className="content" style={view === 'llama' ? { display: 'none' } : {}}>
+          <main className="content">
             {/* 刻意**不**给这个容器加 key={view}：key 一变 React 会把整棵子树销毁重建，
               于是新视图挂起时没有"旧内容"可保留 → 渲染 fallback（null）→ 界面空白一下再跳出来。
               去掉 key 之后，配合上面的 useDeferredValue，chunk 没就绪时会**继续显示旧视图**，
               到位了再换 —— 全程不出现空白。
-              入场动画不受影响：子元素的 view-content-in 仍会随新元素挂载而播放，
-              只有容器自身那条 view-fade-in 不再重播（视觉上几乎无差别）。 */}
+
+              这一带**不放任何 opacity 从 0 起的动画**（容器、卡片、页头都不放）。
+              之前放过 view-fade-in / view-content-in / view-header-in 三条，全是从透明开始：
+              切换的头几帧那一块什么都没有，直接露出 body 底色（亮色闪白 / 暗色闪黑）。
+              而且那些规则只罩得住普通界面（`.view-transition > *`），罩不住工具箱内部的
+              界面（嵌套在 `.toolhub-body` 里），于是行为还不一致 —— 用户反馈的正是这个。
+              要加动效就加在具体元素上，且不能从透明开始，见 cards.css 的 card-reveal。
+
+              显隐用 opacity + inert，**不用 display:none**：从「聊天 / 编码」切回普通界面时
+              要恢复这个容器，而同一帧工作台那棵重子树正在拆层，Chromium 交不出新帧 ——
+              那一帧整块区域是空的，露出 body 底色或原生窗口底色（#e5e5e5），就是那一闪。
+              常驻绘制后切回来只改合成层透明度，主线程不用重画。
+
+              ⚠️ 下面 style/inert 判的是 isAgentCodeDeferred（基于 deferredView），
+              不是实时的 view。原因见该变量注释。 */}
             <div
               className="view-transition"
-              style={view === 'agent-code' ? { display: 'none' } : {}}
+              style={hideViewTransition ? { opacity: 0, pointerEvents: 'none' } : undefined}
+              inert={hideViewTransition}
             >
               <Suspense fallback={null}>{currentView}</Suspense>
             </div>
             {/* Agent Code 工作台：首次进入才加载（见 LazyOnce），之后常驻挂载 —— 切走时不卸载组件，
-              保证正在进行的生成 / 工具循环不被打断，进度、滚动、输入框状态全部保留。 */}
+              保证正在进行的生成 / 工具循环不被打断，进度、滚动、输入框状态全部保留。
+              显隐同样跟随 deferredView（isAgentCodeDeferred），且用 opacity 代替 display:none，
+              与 .view-transition 形成交叉淡出，避免中间出现空帧。 */}
             <div
               className="agent-code-host"
               style={{
-                display: view === 'agent-code' ? 'flex' : 'none',
+                opacity: isAgentCodeDeferred ? 1 : 0,
+                pointerEvents: isAgentCodeDeferred ? 'auto' : 'none',
                 flexDirection: 'column',
                 flex: 1,
                 minHeight: 0,
                 padding: 0,
                 overflow: 'hidden',
               }}
+              inert={!isAgentCodeDeferred}
             >
               <LazyOnce active={agentCodeMounted} label="正在加载工作台…"><AgentCodeView /></LazyOnce>
             </div>
-          </main>
-          <div style={{ flex: view === 'llama' ? 1 : 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: view === 'llama' ? 'flex' : 'none', flex: 1, overflow: 'hidden', flexDirection: 'column', padding: 24 }}>
+            {/* Web 界面（llama）：与上面两个容器叠在同一 grid 格子里，同样常驻挂载 + opacity 切换。
+              原本它是 main-layout 下的兄弟节点、用 display:none 切换，从它切回普通界面（或从
+              普通界面切到它）的那一帧容器是空的 —— 那是导航栏里除「聊天 / 编码」之外最后一个
+              还会闪的入口。移进同一格后，与另外两个容器共用同一套交叉淡出逻辑。 */}
+            <div
+              className="llama-host"
+              style={{
+                opacity: isLlamaDeferred ? 1 : 0,
+                pointerEvents: isLlamaDeferred ? 'auto' : 'none',
+              }}
+              inert={!isLlamaDeferred}
+            >
               <LazyOnce active={llamaMounted} label="正在加载 Web 界面…"><LlamaChatView /></LazyOnce>
             </div>
-          </div>
+          </main>
         </div>
         {showCreateModal && <Suspense fallback={null}><CreateModal /></Suspense>}
       </div>

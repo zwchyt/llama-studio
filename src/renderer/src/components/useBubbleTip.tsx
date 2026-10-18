@@ -48,17 +48,17 @@ export function useBubbleTip(placement: BubbleTipPlacement = 'below') {
     setTip({ text, left: cx, top: above ? r.top - 9 : belowTop, above })
   }, [placement])
 
-  // 滚动/缩放收掉（见文件头说明）
+  // 滚动 / 缩放收掉气泡（见文件头说明）。监听在挂载时注册一次即可——
+  // 原来依赖 tip，每次悬停都增删一对监听，事件系统白抖一下；没有气泡时 handler 是空操作。
   useEffect(() => {
-    if (!tip) return
-    const hide = () => setTip(null)
+    const hide = () => setTip(p => (p ? null : p))
     window.addEventListener('scroll', hide, true)
     window.addEventListener('resize', hide)
     return () => {
       window.removeEventListener('scroll', hide, true)
       window.removeEventListener('resize', hide)
     }
-  }, [tip])
+  }, [])
 
   // 每个要换装的元素 spread 一份：{...tip('文案')}
   const tipHandlers = useCallback((text: string) => ({

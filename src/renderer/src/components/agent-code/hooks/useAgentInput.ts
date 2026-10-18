@@ -37,6 +37,15 @@ import { uniqueId } from '../utils/ids'
 import { binaryDocLabel, extractTextFromBuffer, extractTextFromFile, isBinaryDoc } from '../../../utils/extractText'
 import type { CodeSnippet } from '../types'
 
+/** 单个附件的大小上限。base64 会膨胀 1/3，而同一份内容在 state、消息 attachments、
+ *  请求体里各存一份——不设限时一次拖入几张大图就能把内存峰值顶上去。 */
+const ATTACH_MAX_FILE_BYTES = 8 * 1024 * 1024
+/** 一次会话里可挂的附件总数上限（含已挂的） */
+const ATTACH_MAX_COUNT = 20
+/** 读取并发：批内并行、批间串行。一次拖入 20 张图时，Promise.all 会同时起 20 个
+ *  FileReader + base64 转换，内存与主线程卡顿都集中在这一瞬。 */
+const ATTACH_READ_CONCURRENCY = 3
+
 // PDF/docx 抽出的正文没有文件名上下文，标出来源；解析失败也要留一行，免得模型收到空附件却无人报错
 function wrapBinaryDocText(name: string, text: string): string {
   const label = binaryDocLabel(name)
@@ -81,6 +90,10 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
   }, [draftScope, input, packedInput])
 
   const inputOverflowRef = useRef(false)
+  // 「本次变化来自粘贴」的一次性标记：自动收胶囊只该在粘贴长文本时发生。
+  // 原实现只看高度，用户打到第 4 行整段文字就被抽走变成胶囊、textarea 清空，且胶囊只能删除不能编辑。
+  const pasteFoldRef = useRef(false)
+  const notePaste = useCallback(() => { pasteFoldRef.current = true }, [])
   const autoResize = useCallback(() => {
     const el = textareaRef.current
     if (!el) return
@@ -89,13 +102,16 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
     inputOverflowRef.current = el.scrollHeight > INPUT_FOLD_CAP + 1
   }, [])
 
-  // 高度重测 + 自动打包（useLayoutEffect 是防闪烁的关键）：必须在 DOM 更新后、
+  // 高度重测 + 粘贴后自动打包（useLayoutEffect 是防闪烁的关键）：必须在 DOM 更新后、
   // 浏览器绘制前同步完成测量与打包——若放 useEffect，粘贴的长文本会先被画出来
   // 一帧再收进 chip，出现「文本闪一下变胶囊」的过渡；layout 阶段完成的 setState
   // 会在同一帧内同步重渲染，用户只看得到最终态（空框 + chip），没有任何中间画面。
+  // 打字（非粘贴）超出行数上限时只内部滚动，不抽走正文——与 constants.ts 的约定一致。
   useLayoutEffect(() => {
     autoResize()
-    if (input && inputOverflowRef.current) {
+    const pasted = pasteFoldRef.current
+    pasteFoldRef.current = false   // 一次性：无论是否折叠都要清掉，否则下一次敲键会误折叠
+    if (pasted && input && inputOverflowRef.current) {
       setPackedInput(prev => (prev ? `${prev}\n\n` : '') + input)
       setInput('')
     }
@@ -157,7 +173,8 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
   const [attachedFiles, setAttachedFiles] = useState<DraftAttachment[]>([])
   // removeAttachment 要按 id 找回它的行内标记，而回调闭包里读不到最新 state
   const attachedFilesRef = useRef<DraftAttachment[]>([])
-  attachedFilesRef.current = attachedFiles
+  // 渲染期写 ref 在并发 / 严格模式下可能被重复执行或读到中间态，改到提交后同步
+  useLayoutEffect(() => { attachedFilesRef.current = attachedFiles }, [attachedFiles])
   // 「引用」引用块：以胶囊（图标 + 缩写）形式内嵌在输入框内，
   // 发送时作为引用块（> …）拼入正文。
   const [refChips, setRefChips] = useState<Array<{ id: string; text: string }>>([])
@@ -356,13 +373,35 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
     return { isImage: false, text }
   }
 
+  // 分批读：批内并行、批间串行（见 ATTACH_READ_CONCURRENCY 的说明）
+  async function readInBatches<T>(files: File[], read: (f: File) => Promise<T>): Promise<T[]> {
+    const out: T[] = []
+    for (let i = 0; i < files.length; i += ATTACH_READ_CONCURRENCY) {
+      const batch = files.slice(i, i + ATTACH_READ_CONCURRENCY)
+      out.push(...await Promise.all(batch.map(read)))
+    }
+    return out
+  }
+
   // 从 File 列表挂附件：图片读成 data URL 挂成图片胶囊，其余抽正文。
   // 附件选择器与「拖入但取不到磁盘路径」两处共用（后者拿不到 path，只能按 File 读）。
   // 图片只进胶囊行，正文一个字都不动——用户正在打的字不会被附件插进来打断。
+  // 超限的文件直接跳过并提示，不做静默丢弃。
   const attachFromFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return
-    const read = await Promise.all(files.map(readAttachmentFile))
-    const next = files.map((f, i) => ({
+    const tooBig = files.filter(f => f.size > ATTACH_MAX_FILE_BYTES)
+    const withinSize = files.filter(f => f.size <= ATTACH_MAX_FILE_BYTES)
+    const room = Math.max(0, ATTACH_MAX_COUNT - attachedFilesRef.current.length)
+    const accepted = withinSize.slice(0, room)
+    if (tooBig.length > 0) {
+      notify(`已跳过 ${tooBig.length} 个超过 ${Math.round(ATTACH_MAX_FILE_BYTES / 1024 / 1024)} MB 的文件`, 'error')
+    }
+    if (withinSize.length > accepted.length) {
+      notify(`附件最多 ${ATTACH_MAX_COUNT} 个，已跳过超出的 ${withinSize.length - accepted.length} 个`, 'error')
+    }
+    if (accepted.length === 0) return
+    const read = await readInBatches(accepted, readAttachmentFile)
+    const next = accepted.map((f, i) => ({
       id: uniqueId('att'),
       name: f.name,
       path: attachmentPath(f),
@@ -490,12 +529,12 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
 
   return {
     // 输入核心
-    input, setInput, textareaRef, packedInput, setPackedInput, inputOverflowRef,
+    input, setInput, textareaRef, packedInput, setPackedInput, inputOverflowRef, notePaste,
     autoResize, insertAtCursor, replaceRange, recallHistory, inputHistoryRef, historyIdxRef,
     // 附件与文件选择器
     fileInputRef, attachedFiles, setAttachedFiles, filePickerAttached,
     filePickerOpen, setFilePickerOpen,
-    readAttachmentFile, handleAttachmentSelect, removeAttachment, clearAttachments, handleFilePickerAttach,
+    readAttachmentFile, handleAttachmentSelect, attachFromFiles, removeAttachment, clearAttachments, handleFilePickerAttach,
     handleInputDragOver, handleInputDrop, handleFilePickerRemove, toggleFilePicker,
     // 引用胶囊 / 代码片段
     refChips, setRefChips, codeSnippets, setCodeSnippets,

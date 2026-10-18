@@ -55,7 +55,9 @@ const TokenStatsView = lazy(VIEW_CHUNKS['token-stats'])
 const AboutView = lazy(VIEW_CHUNKS.about)
 const AgentsView = lazy(VIEW_CHUNKS.agents)
 const WelcomeView = lazy(VIEW_CHUNKS.welcome)
-const LlamaChatView = lazy(VIEW_CHUNKS.llama)
+// llama 的组件实例不在这里创建 —— Web 界面由 App.tsx 的专属容器 llama-host 渲染，
+// 见 renderView 里 case 'llama': return null 的注释。chunk 仍走 VIEW_CHUNKS.llama
+// 供 preloadViewOnHover 预取。
 const OcrView = lazy(VIEW_CHUNKS.ocr)
 const BenchmarkView = lazy(VIEW_CHUNKS.benchmark)
 const ModelToolsView = lazy(VIEW_CHUNKS['model-tools'])
@@ -98,7 +100,6 @@ function renderView(view: ViewKey): React.ReactNode {
     case 'about': return <AboutView />
     case 'agents': return <AgentsView />
     case 'welcome': return <WelcomeView />
-    case 'llama': return <LlamaChatView />
     case 'ocr': return <OcrView />
     case 'benchmark': return <BenchmarkView />
     case 'model-tools': return <ModelToolsView />
@@ -110,7 +111,11 @@ function renderView(view: ViewKey): React.ReactNode {
     case 'mermaid-test': return <MermaidTestView />
     case 'recharts-test': return <RechartsTestView />
     case 'svg-test': return <SvgTestView />
+    // agent-code 与 llama 都有专属的常驻容器（App.tsx 的 agent-code-host / llama-host），
+    // 走 display:none 时代两处会各挂一份实例（iframe / 生成循环双份），纯属浪费还互相干扰。
+    // 这里返回 null：这两个 view 的内容只由专属容器渲染，view-transition 保持空。
     case 'agent-code': return null
+    case 'llama': return null
     default: return <CardsView />
   }
 }

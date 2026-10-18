@@ -19,7 +19,7 @@
 // 注：组内成员类型尽量用 ReturnType<typeof 对应 hook> 表达，hook 增删成员时
 // 类型会自动跟随，不需要同步改这里。
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, AlignLeft, Brain, Eye, Globe, Image as ImageIcon, Search, SearchX, Wrench } from 'lucide-react'
 import { CheckIcon, ChevronDownIcon, CircleStopIcon, CodeIcon, FileTextIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, MicIcon, PlayIcon, PlusIcon, QuoteIcon, RefreshCwIcon, SendIcon, ServerIcon, TrashIcon, XIcon } from '@animateicons/react/lucide'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
@@ -37,12 +37,176 @@ import type { Attachment, CardState, ModelEndpoint, ThinkingLevel } from '../../
 import { useStore } from '../../../store/useStore'
 import { endpointOfCard, type ModelPickerGroup } from '../../../utils/endpoint'
 import { useBubbleTip } from '../../useBubbleTip'
+import { rovingKeyNav } from '../utils/rovingKeyNav'
 import { useThemeStore } from '../../../store/themeStore'
 import type { useAgentGit } from '../hooks/useAgentGit'
 import type { useAgentInput } from '../hooks/useAgentInput'
 import type { useAgentInputHints } from '../hooks/useAgentInputHints'
 import type { useAgentProjects } from '../hooks/useAgentProjects'
-import type { useAgentScroll } from '../hooks/useAgentScroll'
+
+/** 输入区顶部状态栏：把「当前阶段」映射成 orb 状态 + 文案。
+ *  原来这 40 行 if/else 写在 JSX 的 IIFE 里逐帧执行，抽成组件后可读、也可 memo。 */
+const AgentStatusBar = React.memo(function AgentStatusBar({ approvalReq, streamKind, curToolName, thinkDone, streaming, loading, compacting, orbTheme }: {
+  approvalReq: AgentInputAreaProps['approval']['approvalReq']
+  streamKind: AgentInputAreaProps['run']['streamKind']
+  curToolName: string
+  thinkDone: boolean
+  streaming: boolean
+  loading: boolean
+  compacting: boolean
+  orbTheme: ReturnType<typeof useThemeStore.getState>['theme']
+}) {
+  let kind: 'running' | 'idle' = 'idle'
+  let name = ''
+  let text = '就绪'
+  // thinking-orbs 0.3.1 新增 connecting/weaving/breathing 三个状态：
+  // connecting=连接/准备中，weaving=写入/编辑（编织进项目），breathing=待机呼吸；
+  // searching=搜索类工具（0.1.1 已有，此前未用）
+  let orbState: OrbState = 'breathing'
+  if (approvalReq) {
+    kind = 'running'; name = approvalReq.name; text = '等待确认…'; orbState = 'listening'
+  } else if (streamKind === 'tools') {
+    // 工具调用/执行阶段：状态栏显示「工具调用中」+ 当前工具名；
+    // 消息区工具卡另有具体 verb 徽标（如 Write → 写入中）。
+    // orb 按工具类型细分：搜索类→searching，写入/编辑类→weaving，其余→working
+    kind = 'running'; name = curToolName; text = '工具调用中'
+    const toolKind = TOOL_METAS[curToolName]?.kind
+    if (toolKind === 'search' || curToolName === 'web_search' || curToolName === 'web_search_bing') orbState = 'searching'
+    else if (toolKind === 'write' || toolKind === 'edit') orbState = 'weaving'
+    else orbState = 'working'
+  } else if (streamKind === 'think' && !thinkDone) {
+    // 思考闭合（thinkDone=true）后即使 streamKind 残留 'think' 也不再显示
+    // 「思考中」转圈——模型已结束思考（在输出参数/正文/工具的路上）
+    kind = 'running'; text = '思考中'; orbState = 'solving'
+  } else if (streamKind === 'text') {
+    kind = 'running'; text = '输出中'; orbState = 'composing'
+  } else if (streaming) {
+    // 流式中但尚无实际内容（首 token 前）：连接模型/建立会话
+    kind = 'running'; text = '准备中…'; orbState = 'connecting'
+  } else if (loading) {
+    kind = 'running'; text = '准备中…'; orbState = 'connecting'
+  }
+  // 压缩历史期间让出文字位：pi 的轮间自动压缩发生在工具批次结束之后、下一轮开始之前，
+  // 而 streamKind 只在整轮结束才归 idle —— 不抑制的话这里会停在上一阶段的
+  // 「工具调用中」，与上方的「正在压缩历史」并列显示，看起来自相矛盾。
+  // 审批态例外：它是阻塞性的，必须照常显示。
+  const suppressText = compacting && !approvalReq
+  return (
+    <div className={`agent-status-bar agent-status-bar--${kind}`}>
+      {/* 空闲时暂停：orb 默认态是 breathing，一直跑等于让一个 20px 的动画常年占着
+          合成帧（桌面应用空闲功耗）。运行中（含等待确认 / 思考 / 工具）照常动。 */}
+      <ThinkingOrb state={orbState} size={20} theme={orbTheme} paused={kind !== 'running'} className="agent-status-orb" aria-label={text} />
+      {!suppressText && kind === 'running' && name && <span className="agent-status-bar-name">{name}</span>}
+      {!suppressText && kind === 'running' && <span className="agent-status-bar-text">{text}</span>}
+    </div>
+  )
+})
+
+/** 模型 Logo 的小菜单（更换 / 移除）：坐标由触发点给出，打开即定位。 */
+const AgentLogoMenu = React.memo(function AgentLogoMenu({ menu, cards, menuRef, onPickLogo, onRemoveLogo }: {
+  menu: { id: string; x: number; y: number }
+  cards: AgentInputAreaProps['shell']['cards']
+  menuRef: React.RefObject<HTMLDivElement | null>
+  onPickLogo: (card: CardState) => unknown
+  onRemoveLogo: (card: CardState) => unknown
+}) {
+  const card = cards.find(c => c.template.id === menu.id)
+  if (!card) return null
+  return (
+    <div
+      ref={menuRef}
+      className="chat-model-logo-menu"
+      style={{ left: menu.x, top: menu.y }}
+      onClick={e => e.stopPropagation()}
+    >
+      <button type="button" className="chat-model-logo-menu-item" onClick={() => void onPickLogo(card)}><RefreshCwIcon size={12} />更换图片</button>
+      <button type="button" className="chat-model-logo-menu-item danger" onClick={() => void onRemoveLogo(card)}><TrashIcon size={12} />移除 Logo</button>
+    </div>
+  )
+})
+
+/** 队列预览里保留的字符数：够看清开头，又不至于把整条追问铺开 */
+const QUEUE_PREVIEW_CHARS = 14
+
+/** 输入框下方的排队操作条：追加下一条 / 追加队列（点击清空）。 */
+const AgentQueueActions = React.memo(function AgentQueueActions({ canSend, queueInfo, onSend, activeSessionId, followUpQueueRef, prevQueueRef, setQueueInfo, tip }: {
+  canSend: boolean
+  queueInfo: AgentInputAreaProps['run']['queueInfo']
+  onSend: AgentInputAreaProps['run']['handleSend']
+  activeSessionId: string
+  followUpQueueRef: AgentInputAreaProps['run']['followUpQueueRef']
+  prevQueueRef: AgentInputAreaProps['run']['prevQueueRef']
+  setQueueInfo: AgentInputAreaProps['run']['setQueueInfo']
+  tip: ReturnType<typeof useBubbleTip>['tipHandlers']
+}) {
+  // 判据由调用处传入（复用 hasPayload）：新增一种可发送内容时不会出现
+  // 「发送键亮着但这里不出现」的分歧
+  const queueHas = queueInfo.followUp.length > 0
+  if (!canSend && !queueHas) return null
+  const last = queueInfo.followUp[queueInfo.followUp.length - 1] ?? ''
+  const preview = last.length > QUEUE_PREVIEW_CHARS ? last.slice(0, QUEUE_PREVIEW_CHARS) + '…' : last
+  // 这个按钮整颗都是「清空」——提示里必须写明后果，
+  // 否则用户点开只想看排队内容，一次误点就把全部追加提问清了。
+  const clearTip = [
+    `追加队列（${queueInfo.followUp.length} 条）——点击将全部清空：`,
+    ...queueInfo.followUp.map(t => '  • ' + t),
+  ].join('\n')
+  return (
+    <div className="chat-queue-actions">
+      {canSend && (
+        <button
+          type="button"
+          className="chat-queue-act chat-queue-act-followup"
+          onClick={() => onSend(undefined, undefined)}
+        >追加下一条</button>
+      )}
+      {queueHas && (
+        <button
+          type="button"
+          className="chat-queue-indicator"
+          onClick={() => { window.api.piAgent.clearQueue(`pi-${activeSessionId}`); followUpQueueRef.current = []; prevQueueRef.current = { followUp: [] }; setQueueInfo({ followUp: [] }) }}
+          {...tip(clearTip)}
+        >
+          <span className="chat-queue-count">追加 {queueInfo.followUp.length}</span>
+          {last && <span className="chat-queue-preview">：{preview}</span>}
+          <XIcon size={11} className="chat-queue-clear-x" />
+        </button>
+      )}
+    </div>
+  )
+})
+
+/** 破坏性工具审批面板：内联在输入框内（与提问工具 AskUserQuestionInline 同位置/风格），不弹窗。 */
+const ApprovalInline = React.memo(function ApprovalInline({ req, allowBtnRef, rejectBtnRef, autoApproveBtnRef, autoApproveRef, onResolve }: {
+  req: NonNullable<AgentInputAreaProps['approval']['approvalReq']>
+  allowBtnRef: React.RefObject<HTMLButtonElement | null>
+  rejectBtnRef: React.RefObject<HTMLButtonElement | null>
+  autoApproveBtnRef: React.RefObject<HTMLButtonElement | null>
+  autoApproveRef: React.RefObject<boolean>
+  onResolve: (approved: boolean) => void
+}) {
+  return (
+    <div className="agent-approve-inline">
+      <div className="agent-approve-inline-head">
+        <AlertCircle size={15} className="agent-ask-question-icon" />
+        <span className="agent-ask-question-title">需要确认：{TOOL_META[req.name]?.name || req.name}</span>
+      </div>
+      <div className="agent-approve-inline-body">
+        <div className="agent-approve-hint">该操作具有破坏性，执行前需你确认</div>
+        <div className="agent-approve-detail-row"><span>工具</span><code>{req.name}</code></div>
+        <div className="agent-approve-detail-row">
+          <span>参数</span>
+          <pre className="agent-approve-args">{formatToolArgs(req.args) || '(无)'}</pre>
+        </div>
+      </div>
+      <div className="agent-approve-inline-footer">
+        <button ref={rejectBtnRef} className="agent-prompt-btn agent-prompt-btn-ghost" onClick={() => onResolve(false)}>拒绝</button>
+        <button ref={autoApproveBtnRef} className="agent-prompt-btn agent-prompt-btn-ghost" onClick={() => { autoApproveRef.current = true; onResolve(true) }}>本次全部允许</button>
+        <button ref={allowBtnRef} className="agent-prompt-btn agent-prompt-btn-primary" onClick={() => onResolve(true)}>允许</button>
+      </div>
+    </div>
+  )
+})
 
 export type AgentInputAreaProps = {
 
@@ -132,7 +296,6 @@ export type AgentInputAreaProps = {
     ctxInlineRef: React.RefObject<HTMLButtonElement | null>
     currentBranch: ReturnType<typeof useAgentGit>['currentBranch']
     projects: ReturnType<typeof useAgentProjects>['projects']
-    scrollToBottom: ReturnType<typeof useAgentScroll>['scrollToBottom']
     setActiveProjectId: ReturnType<typeof useAgentProjects>['setActiveProjectId']
     setActiveSessionId: ReturnType<typeof useAgentProjects>['setActiveSessionId']
     setBranchMenuOpen: ReturnType<typeof useAgentGit>['setBranchMenuOpen']
@@ -158,8 +321,9 @@ export function AgentInputArea({
   // ── 域解构：把分组 props 摊平回局部名字，组件体内沿用原 JSX 的标识符 ──
 
   const {
-    input, textareaRef, packedInput, setPackedInput, fileInputRef,
+    input, setInput, textareaRef, packedInput, setPackedInput, fileInputRef,
     attachedFiles, clearAttachments, filePickerAttached,
+    attachFromFiles, notePaste,
     filePickerOpen, setFilePickerOpen,
     handleAttachmentSelect, removeAttachment, handleFilePickerAttach,
     handleInputDragOver, handleInputDrop,
@@ -208,10 +372,46 @@ export function AgentInputArea({
   useEffect(() => {
     if (plainChat) setFilePickerOpen(false)
   }, [plainChat, setFilePickerOpen])
+  // 审批是阻塞性交互：出现即把焦点交给「允许」（键盘用户不必先 Tab 过去）；
+  // 审批结束后焦点会随按钮卸载掉到 body，这里把它还给输入框，用户可以直接接着打字。
+  const hadApprovalRef = useRef(false)
+  useEffect(() => {
+    const had = hadApprovalRef.current
+    hadApprovalRef.current = !!approvalReq
+    if (approvalReq) { allowBtnRef.current?.focus(); return }
+    if (had && (document.activeElement === null || document.activeElement === document.body)) {
+      textareaRef.current?.focus()
+    }
+  }, [approvalReq, allowBtnRef, textareaRef])
+  // 拖拽落点反馈：只在「真能接收」的拖拽上亮，避免拖选文字时整块输入区跟着高亮
+  const [dragOver, setDragOver] = useState(false)
+  const isFileDrag = (e: React.DragEvent) => {
+    const t = e.dataTransfer?.types
+    return !!t && (t.includes('Files') || t.includes('application/x-agent-file-path') || t.includes('application/x-agent-files'))
+  }
   // 发送键的可用条件与禁用原因收成一处：此前 disabled 里含 !apiBaseUrl，但 title 恒为
   // 「发送」——模型没启动时按钮灰掉却不说明原因，用户只能猜（这是最常遇到的一种）。
   // 顺带消掉原来在 JSX 里重复两遍的长表达式。
   const hasPayload = input.trim() !== '' || attachedFiles.length > 0 || refChips.length > 0 || codeSnippets.length > 0 || !!packedInput?.trim()
+  // 粘贴：剪贴板里的图片直接挂成图片胶囊（桌面端最高频的操作之一）；纯文本走默认粘贴行为，
+  // 只给输入域打一个「本次是粘贴」的标记——长文本据此决定是否收成胶囊。
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    const images: File[] = []
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i]!
+      if (item.kind !== 'file' || !item.type.startsWith('image/')) continue
+      const f = item.getAsFile()
+      if (f) images.push(f)
+    }
+    if (images.length > 0) {
+      e.preventDefault()
+      void attachFromFiles(images)
+      return
+    }
+    notePaste()
+  }
   const sendDisabled = !hasPayload || !apiBaseUrl
   const sendTitle = !apiBaseUrl ? '请先启动一个模型' : !hasPayload ? '输入内容后发送' : '发送'
   // 动画小球的配色随应用亮/暗主题走：此前写死 light，暗底下对比度全靠运气。
@@ -219,8 +419,8 @@ export function AgentInputArea({
   // 文件类附件的胶囊：排在输入框内部（正文上方一整行，与「引用」胶囊同一容器）。
   // 图片同样排在这里，但自成一整行（.chat-input-imgrow）——与正文彻底分开：
   // 上面是图片胶囊，胶囊下面才是输入的文字。不再往正文里插行内记号、也不再按记号位置盖胶囊。
-  const fileChips = attachedFiles.filter(a => !a.isImage)
-  const imageAtts = attachedFiles.filter(a => a.isImage)
+  const fileChips = useMemo(() => attachedFiles.filter(a => !a.isImage), [attachedFiles])
+  const imageAtts = useMemo(() => attachedFiles.filter(a => a.isImage), [attachedFiles])
   const attachTray = fileChips.length > 0 && (
     <div className="chat-attach-tray">
       {fileChips.map(att => {
@@ -251,38 +451,34 @@ export function AgentInputArea({
     </div>
   )
   return (
-    <div className="chat-input-area" ref={chatInputAreaRef}>
+    <div
+      className="chat-input-area" ref={chatInputAreaRef}
+      // 拖放区覆盖整个输入区（工具栏、上下文行都算）：原来只绑在 .chat-input-field 上，
+      // 拖到旁边一点就失效，用户只能精确对准输入框。
+      onDragOver={e => { if (!isFileDrag(e)) return; handleInputDragOver(e); setDragOver(true) }}
+      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false) }}
+      onDrop={e => { setDragOver(false); handleInputDrop(e) }}
+    >
       {tipNode}
       {/* 破坏性工具审批面板：内联显示在输入框内（与提问工具 AskUserQuestionInline 同款位置/风格），不弹窗 */}
       {approvalReq && (
-        <div className="agent-approve-inline">
-          <div className="agent-approve-inline-head">
-            <AlertCircle size={15} className="agent-ask-question-icon" />
-            <span className="agent-ask-question-title">需要确认：{TOOL_META[approvalReq.name]?.name || approvalReq.name}</span>
-          </div>
-          <div className="agent-approve-inline-body">
-            <div className="agent-approve-hint">该操作具有破坏性，执行前需你确认</div>
-            <div className="agent-approve-detail-row"><span>工具</span><code>{approvalReq.name}</code></div>
-            <div className="agent-approve-detail-row">
-              <span>参数</span>
-              <pre className="agent-approve-args">{formatToolArgs(approvalReq.args) || '(无)'}</pre>
-            </div>
-          </div>
-          <div className="agent-approve-inline-footer">
-            <button ref={rejectBtnRef} className="agent-prompt-btn agent-prompt-btn-ghost" onClick={() => resolveApproval(false)}>拒绝</button>
-            <button ref={autoApproveBtnRef} className="agent-prompt-btn agent-prompt-btn-ghost" onClick={() => { autoApproveRef.current = true; resolveApproval(true) }}>本次全部允许</button>
-            <button ref={allowBtnRef} className="agent-prompt-btn agent-prompt-btn-primary" onClick={() => resolveApproval(true)}>允许</button>
-          </div>
-        </div>
+        <ApprovalInline
+          req={approvalReq}
+          allowBtnRef={allowBtnRef}
+          rejectBtnRef={rejectBtnRef}
+          autoApproveBtnRef={autoApproveBtnRef}
+          autoApproveRef={autoApproveRef}
+          onResolve={resolveApproval}
+        />
       )}
       <AskUserQuestionInline />
       {atQuery !== null && (
-        <div className="chat-at-file-pop" ref={atPopRef}>
+        <div className="chat-at-file-pop" ref={atPopRef} role="listbox" aria-label="引用文件">
           {atFiles.length === 0 ? (
             <div className="chat-at-empty">无匹配文件</div>
           ) : (
             atFiles.map(f => (
-              <button className="chat-at-item" key={f.path} onClick={() => onPickAtFile(f)} {...tip(f.path)}>
+              <button className="chat-at-item" key={f.path} role="option" aria-selected={false} data-row onKeyDown={rovingKeyNav} onClick={() => onPickAtFile(f)} {...tip(f.path)}>
                 <FileTextIcon size={13} />
                 <span className="chat-at-name">{f.name}</span>
                 <span className="chat-at-rel">{f.relPath}</span>
@@ -291,21 +487,15 @@ export function AgentInputArea({
           )}
         </div>
       )}
-      {logoMenu && (() => {
-        const menuCard = cards.find(c => c.template.id === logoMenu.id)
-        if (!menuCard) return null
-        return (
-          <div
-            ref={logoMenuRef}
-            className="chat-model-logo-menu"
-            style={{ left: logoMenu.x, top: logoMenu.y }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="chat-model-logo-menu-item" onClick={() => void pickModelLogo(menuCard)}><RefreshCwIcon size={12} />更换图片</div>
-            <div className="chat-model-logo-menu-item danger" onClick={() => void removeModelLogo(menuCard)}><TrashIcon size={12} />移除 Logo</div>
-          </div>
-        )
-      })()}
+      {logoMenu && (
+        <AgentLogoMenu
+          menu={logoMenu}
+          cards={cards}
+          menuRef={logoMenuRef}
+          onPickLogo={pickModelLogo}
+          onRemoveLogo={removeModelLogo}
+        />
+      )}
       {/* ── 输入框上方的上下文行（仅编码模式）──
           当前工作区目录 + git 分支 + 待发送附件胶囊。前两项描述的是「这段对话跑在哪个
           工作区里」，属于**上下文**而不是操作按钮，所以从底部工具行里提出来单独占一行。
@@ -319,6 +509,9 @@ export function AgentInputArea({
               <button
                 ref={workspaceBtnRef}
                 className={`chat-workspace-badge${workspaceMenuOpen ? ' active' : ''}`}
+                aria-haspopup="menu"
+                aria-expanded={workspaceMenuOpen}
+                aria-label={`切换工作区：${activeProject.workspaceDir}`}
                 {...tip(`点击切换工作区：${activeProject.workspaceDir}`)}
                 onClick={() => setWorkspaceMenuOpen(v => !v)}
               >
@@ -356,6 +549,9 @@ export function AgentInputArea({
                 <button
                   ref={branchBtnRef}
                   className={`chat-branch-trigger${branchMenuOpen ? ' active' : ''}`}
+                  aria-haspopup="menu"
+                  aria-expanded={branchMenuOpen}
+                  aria-label={`当前分支：${currentBranch}`}
                   onClick={() => setBranchMenuOpen(v => !v)}
                   {...tip(`当前分支：${currentBranch}`)}
                 >
@@ -384,13 +580,13 @@ export function AgentInputArea({
         </div>
       )}
       <div className="chat-input-row">
-        <div className="chat-input-field" onDragOver={handleInputDragOver} onDrop={handleInputDrop}>
+        <div className={`chat-input-field${dragOver ? ' dragover' : ''}`}>
           {/* /命令 补全浮层：锚定输入字段本体（CSS 绝对定位 left/right:0 + bottom:100%），
               与输入框同宽、紧贴框顶向上弹出——不依赖输入区 padding（hero 空态 padding 不同
               也不会错位），也不受附件托盘/排队条高度影响。通用模式 detectSlash 不触发，
               slashQuery 恒为 null，这里自然不渲染。 */}
           {slashQuery !== null && (
-            <div className="chat-slash-pop" ref={slashPopRef}>
+            <div className="chat-slash-pop" ref={slashPopRef} role="listbox" aria-label="斜杠命令">
               {slashList.length === 0 ? (
                 <div className="chat-at-empty">无匹配命令</div>
               ) : (
@@ -398,6 +594,10 @@ export function AgentInputArea({
                   <button
                     className={`chat-slash-item${i === slashIdx ? ' active' : ''}`}
                     key={c.name}
+                    role="option"
+                    aria-selected={i === slashIdx}
+                    data-row
+                    onKeyDown={rovingKeyNav}
                     ref={i === slashIdx ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
                     onMouseEnter={(e) => { setSlashIdx(i); showTip(c.template, e.currentTarget) }}
                     onMouseLeave={() => hideTip()}
@@ -411,50 +611,16 @@ export function AgentInputArea({
             </div>
           )}
           {/* ① 状态栏：并入输入框顶部，无框无底；默认只显示 orb 图标，模型运行时才显示文字 */}
-          {(() => {
-            let kind: 'running' | 'idle' = 'idle'
-            let name = ''
-            let text = '就绪'
-            // thinking-orbs 0.3.1 新增 connecting/weaving/breathing 三个状态：
-            // connecting=连接/准备中，weaving=写入/编辑（编织进项目），breathing=待机呼吸；
-            // searching=搜索类工具（0.1.1 已有，此前未用）
-            let orbState: OrbState = 'breathing'
-            if (approvalReq) {
-              kind = 'running'; name = approvalReq.name; text = '等待确认…'; orbState = 'listening'
-            } else if (streamKind === 'tools') {
-              // 工具调用/执行阶段：状态栏显示「工具调用中」+ 当前工具名；
-              // 消息区工具卡另有具体 verb 徽标（如 Write → 写入中）。
-              // orb 按工具类型细分：搜索类→searching，写入/编辑类→weaving，其余→working
-              kind = 'running'; name = curToolName; text = '工具调用中'
-              const toolKind = TOOL_METAS[curToolName]?.kind
-              if (toolKind === 'search' || curToolName === 'web_search' || curToolName === 'web_search_bing') orbState = 'searching'
-              else if (toolKind === 'write' || toolKind === 'edit') orbState = 'weaving'
-              else orbState = 'working'
-            } else if (streamKind === 'think' && !thinkDone) {
-              // 思考闭合（thinkDone=true）后即使 streamKind 残留 'think' 也不再显示
-              // 「思考中」转圈——模型已结束思考（在输出参数/正文/工具的路上）
-              kind = 'running'; text = '思考中'; orbState = 'solving'
-            } else if (streamKind === 'text') {
-              kind = 'running'; text = '输出中'; orbState = 'composing'
-            } else if (streaming) {
-              // 流式中但尚无实际内容（首 token 前）：连接模型/建立会话
-              kind = 'running'; text = '准备中…'; orbState = 'connecting'
-            } else if (loading) {
-              kind = 'running'; text = '准备中…'; orbState = 'connecting'
-            }
-            // 压缩历史期间让出文字位：pi 的轮间自动压缩发生在工具批次结束之后、下一轮开始之前，
-            // 而 streamKind 只在整轮结束才归 idle —— 不抑制的话这里会停在上一阶段的
-            // 「工具调用中」，与上方的「正在压缩历史」并列显示，看起来自相矛盾。
-            // 审批态例外：它是阻塞性的，必须照常显示。
-            const suppressText = compacting && !approvalReq
-            return (
-              <div className={`agent-status-bar agent-status-bar--${kind}`}>
-                <ThinkingOrb state={orbState} size={20} theme={orbTheme} paused={false} className="agent-status-orb" aria-label={text} />
-                {!suppressText && kind === 'running' && name && <span className="agent-status-bar-name">{name}</span>}
-                {!suppressText && kind === 'running' && <span className="agent-status-bar-text">{text}</span>}
-              </div>
-            )
-          })()}
+          <AgentStatusBar
+            approvalReq={approvalReq}
+            streamKind={streamKind}
+            curToolName={curToolName}
+            thinkDone={thinkDone}
+            streaming={streaming}
+            loading={loading}
+            compacting={compacting}
+            orbTheme={orbTheme}
+          />
           {/* ② 输入区（中间）：引用胶囊 + 文本 */}
           <div className="chat-input-mid">
             <div className="chat-input-textwrap">
@@ -466,7 +632,12 @@ export function AgentInputArea({
                   <QuoteIcon size={12} className="agent-ref-chip-icon" />
                   <span className="agent-ref-chip-label">引用</span>
                   <button className="agent-ref-chip-remove" onClick={() => removeRefChip(chip.id)} disabled={loading}><XIcon size={10} /></button>
-                  <div className="agent-ref-chip-tip chat-msg-markdown"><Markdown content={chip.text} final variant="agent" /></div>
+                  {/* 预览内容只在悬停（tipKey 命中）时挂载：每颗胶囊都常驻一份完整 Markdown
+                      （可能含 KaTeX）的话，输入区每次重渲染都要把它们重新解析一遍。
+                      外层 div 保留，opacity 过渡与悬停桥不受影响。 */}
+                  <div className="agent-ref-chip-tip chat-msg-markdown">
+                    {tipKey === tipId && <Markdown content={chip.text} final variant="agent" />}
+                  </div>
                 </div>
                 )
               })}
@@ -484,11 +655,26 @@ export function AgentInputArea({
                 <div className={`chat-input-fold-chip${tipKey === 'fold' ? ' tip-open' : ''}`}
                   onMouseEnter={() => openTip('fold')} onMouseLeave={closeTip}>
                   <AlignLeft size={12} className="chat-input-fold-chip-icon" />
-                  <span className="chat-input-fold-chip-label">已折叠 {packedInput.split('\n').length} 行</span>
+                  {/* 标签可点：把胶囊里的正文放回输入框继续编辑。
+                      此前胶囊只有「删除」，长文本一旦被折叠就只能重打。 */}
+                  <button
+                    type="button"
+                    className="chat-input-fold-chip-label"
+                    aria-label="展开编辑"
+                    {...tip('点击展开编辑')}
+                    onClick={() => {
+                      setInput(packedInput)
+                      setPackedInput(null)
+                      requestAnimationFrame(() => textareaRef.current?.focus())
+                    }}
+                  >已折叠 {packedInput.split('\n').length} 行</button>
                   <button className="agent-ref-chip-remove" aria-label="移除" {...tip('移除')} onClick={() => setPackedInput(null)}>
                     <XIcon size={10} />
                   </button>
-                  <div className="chat-input-fold-chip-tip chat-msg-markdown"><Markdown content={packedInput} final variant="agent" /></div>
+                  {/* 同引用胶囊：折叠正文的预览也只在悬停时解析 */}
+                  <div className="chat-input-fold-chip-tip chat-msg-markdown">
+                    {tipKey === 'fold' && <Markdown content={packedInput} final variant="agent" />}
+                  </div>
                 </div>
               ) : null}
               {/* 附件胶囊排在正文上方（同一容器内 width:100% 自成一整行） */}
@@ -517,50 +703,25 @@ export function AgentInputArea({
                 <textarea
                   ref={textareaRef}
                   className="chat-input"
-                  placeholder="" rows={1} value={input}
-                  onChange={handleInputChange} onKeyDown={handleKeyDown}
+                  aria-label="消息输入框"
+                  placeholder={plainChat ? '输入消息，Enter 发送 · Shift+Enter 换行' : '输入消息，Enter 发送 · Shift+Enter 换行 · / 命令 · @ 引用文件'}
+                  rows={1} value={input}
+                  onChange={handleInputChange} onKeyDown={handleKeyDown} onPaste={handlePaste}
                 />
               </div>
             </div>
-            {loading && runningCard && (() => {
-              // 判据复用顶部 hasPayload：此前这里把同一长表达式又抄了一遍，
-              // 新增一种可发送内容时漏改一处就会出现「发送键亮着但这里不出现」的分歧。
-              const queueHas = queueInfo.followUp.length > 0
-              if (!hasPayload && !queueHas) return null
-              return (
-                <div className="chat-queue-actions">
-                  {hasPayload && (
-                    <button
-                      type="button"
-                      className="chat-queue-act chat-queue-act-followup"
-                      onClick={() => handleSend(undefined, undefined)}
-                    >追加下一条</button>
-                  )}
-                  {queueHas && (() => {
-                    const _last = queueInfo.followUp[queueInfo.followUp.length - 1] ?? ''
-                    const _prev = _last.length > 14 ? _last.slice(0, 14) + '…' : _last
-                    // 这个按钮整颗都是「清空」——提示里必须写明后果，
-                    // 否则用户点开只想看排队内容，一次误点就把全部追加提问清了。
-                    const _tip = [
-                      `追加队列（${queueInfo.followUp.length} 条）——点击将全部清空：`,
-                      ...queueInfo.followUp.map(t => '  • ' + t),
-                    ].join('\n')
-                    return (
-                      <button
-                        type="button"
-                        className="chat-queue-indicator"
-                        onClick={() => { window.api.piAgent.clearQueue(`pi-${activeSessionId}`); followUpQueueRef.current = []; prevQueueRef.current = { followUp: [] }; setQueueInfo({ followUp: [] }) }}
-                        {...tip(_tip)}
-                      >
-                        <span className="chat-queue-count">追加 {queueInfo.followUp.length}</span>
-                        {_last && <span className="chat-queue-preview">：{_prev}</span>}
-                        <XIcon size={11} className="chat-queue-clear-x" />
-                      </button>
-                    )
-                  })()}
-                </div>
-              )
-            })()}
+            {loading && runningCard && (
+              <AgentQueueActions
+                canSend={hasPayload}
+                queueInfo={queueInfo}
+                onSend={handleSend}
+                activeSessionId={activeSessionId}
+                followUpQueueRef={followUpQueueRef}
+                prevQueueRef={prevQueueRef}
+                setQueueInfo={setQueueInfo}
+                tip={tip}
+              />
+            )}
           </div>
           {/* ③ 底部按钮行：附件 / 麦克风（左）… 上下文 · 模型 · 搜索 · 发送（右）
               （工作区目录与 git 分支已上移到 .chat-input-context） */}
@@ -604,6 +765,9 @@ export function AgentInputArea({
               <button
                 ref={modelBtnRef}
                 className={`chat-model-dropdown${modelPickerOpen ? ' active' : ''}${runningCard ? ' running' : ''}${runningCard?.ready ? ' ready' : ''}`}
+                aria-haspopup="listbox"
+                aria-expanded={modelPickerOpen}
+                aria-label="选择模型"
                 onClick={() => setModelPickerOpen(v => !v)}
               >
                 {runningCard && (
@@ -617,7 +781,7 @@ export function AgentInputArea({
               </button>
               {/* 与搜索/思考等级菜单同一套弹出逻辑：打开才挂载，点外部或 Esc 关闭 */}
               {modelPickerOpen && (
-                <div ref={modelPickerRef} className="chat-model-picker" style={{ width: modelPickerWidth }}>
+                <div ref={modelPickerRef} className="chat-model-picker" style={{ width: modelPickerWidth }} role="listbox" aria-label="模型列表">
                   {modelGroups.map(group => (
                     <div key={group.title} className="chat-model-group">
                       <div className="chat-model-group-title">{group.title}</div>
@@ -628,7 +792,17 @@ export function AgentInputArea({
                         const running = card?.status === 'running'
                         const pick = () => { if (card) void handleModelAction(card); else if (row.endpoint) void pickEndpointModel(row.endpoint, row.modelId ?? '') }
                         return (
-                          <div key={row.key} className={`chat-model-item ${card ? card.status : 'idle'}${card ? '' : ' pending'}`} {...tip(row.name)} onClick={pick}>
+                          <div
+                            key={row.key}
+                            className={`chat-model-item ${card ? card.status : 'idle'}${card ? '' : ' pending'}`}
+                            role="option"
+                            aria-selected={!!running}
+                            data-row
+                            tabIndex={0}
+                            onKeyDown={rovingKeyNav}
+                            {...tip(row.name)}
+                            onClick={pick}
+                          >
                             <div className="chat-model-logo" onClick={e => { if (!card) return; e.stopPropagation(); toggleLogoMenu(e, card) }}>
                               {card && modelLogos[card.template.id]
                                 ? <img src={modelLogos[card.template.id]!} alt={row.name} className="chat-model-logo-img" />
@@ -684,16 +858,24 @@ export function AgentInputArea({
                   type="button"
                   className="chat-think-level-trigger"
                   disabled={loading}
+                  aria-haspopup="listbox"
+                  aria-expanded={thinkLevelOpen}
+                  aria-label="思考程度"
                   onClick={() => setThinkLevelOpen(v => !v)}
                 >
                   <span className="chat-think-level-label">{thinkingLevel}</span>
                 </button>
                 {thinkLevelOpen && (
-                  <ul className="chat-think-level-menu">
+                  <ul className="chat-think-level-menu" role="listbox" aria-label="思考程度">
                     {THINKING_LEVELS.map(l => (
                       <li
                         key={l}
                         className={`chat-think-level-item${l === thinkingLevel ? ' active' : ''}`}
+                        role="option"
+                        aria-selected={l === thinkingLevel}
+                        data-row
+                        tabIndex={0}
+                        onKeyDown={rovingKeyNav}
                         onClick={() => {
                           setThinkingLevel(l)
                           setThinkLevelOpen(false)
@@ -725,6 +907,9 @@ export function AgentInputArea({
                   type="button"
                   className="chat-search-trigger"
                   disabled={loading}
+                  aria-haspopup="listbox"
+                  aria-expanded={searchMenuOpen}
+                  aria-label="网络搜索"
                   onClick={() => setSearchMenuOpen(v => !v)}
                 >
                   {!searchEnabled ? (
@@ -737,17 +922,32 @@ export function AgentInputArea({
                   <span className="chat-search-label">{!searchEnabled ? '搜索关' : searchProvider === 'bing' ? '必应' : 'DDG'}</span>
                 </button>
                 {searchMenuOpen && (
-                  <ul className="chat-search-menu">
+                  <ul className="chat-search-menu" role="listbox" aria-label="网络搜索">
                     <li
                       className={`chat-search-item${!searchEnabled ? ' active' : ''}`}
+                      role="option"
+                      aria-selected={!searchEnabled}
+                      data-row
+                      tabIndex={0}
+                      onKeyDown={rovingKeyNav}
                       onClick={() => applySearchChange(false, searchProvider)}
                     ><SearchX size={12} />关闭网络搜索</li>
                     <li
                       className={`chat-search-item${searchEnabled && searchProvider === 'bing' ? ' active' : ''}`}
+                      role="option"
+                      aria-selected={searchEnabled && searchProvider === 'bing'}
+                      data-row
+                      tabIndex={0}
+                      onKeyDown={rovingKeyNav}
                       onClick={() => applySearchChange(true, 'bing')}
                     ><Globe size={12} />必应 Bing（国内）</li>
                     <li
                       className={`chat-search-item${searchEnabled && searchProvider === 'ddg' ? ' active' : ''}`}
+                      role="option"
+                      aria-selected={searchEnabled && searchProvider === 'ddg'}
+                      data-row
+                      tabIndex={0}
+                      onKeyDown={rovingKeyNav}
                       onClick={() => applySearchChange(true, 'ddg')}
                     ><Search size={12} />DuckDuckGo（国际）</li>
                   </ul>

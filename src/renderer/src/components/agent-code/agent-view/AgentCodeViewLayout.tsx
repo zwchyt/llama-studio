@@ -1081,7 +1081,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               currentBranch,
               // 工作区切换菜单只列真实项目：通用工作区（伪项目）不是可选的工作区
               projects: codeProjects,
-              scrollToBottom, setActiveProjectId,
+              setActiveProjectId,
               setActiveSessionId, setBranchMenuOpen, setContextModalOpen,
               setWorkspaceMenuOpen, workspaceBtnRef, workspaceMenuOpen,
               workspaceMenuRef,

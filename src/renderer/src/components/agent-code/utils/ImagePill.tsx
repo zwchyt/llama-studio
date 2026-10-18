@@ -88,6 +88,14 @@ export function ImagePill({ name, src, onRemove, removeDisabled, onClick, clickH
     if (timer.current) window.clearTimeout(timer.current)
   }, [])
 
+  // 窗口缩放：卡片几何是渲染期按 innerWidth / innerHeight 现算的，不重算就会停在旧位置。
+  // 与 useBubbleTip 同一策略——直接收起，重新悬停即按新尺寸重算。监听只注册一次。
+  useEffect(() => {
+    const close = () => setAnchor(null)
+    window.addEventListener('resize', close)
+    return () => window.removeEventListener('resize', close)
+  }, [])
+
   // 原生 title 换自定义气泡（与导航栏同款）：胶囊已有悬停预览卡，走 showTip/hideTip 合并进去
   const { tipHandlers: tip, tipNode, showTip, hideTip } = useBubbleTip()
   const pillTip = titleText ?? (onClick ? `${name}（${clickHint ?? '点击打开'}）` : name)

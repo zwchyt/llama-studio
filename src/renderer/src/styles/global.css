@@ -260,35 +260,89 @@ textarea {
   flex: 1;
   overflow: hidden;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
+  /* 普通界面容器与工作台容器**叠在同一个 grid 格子里**：谁显隐都不影响另一个的布局，
+     所以两边都不必改定位方式（position 一改就会抢走后代的包含块，
+     视图里几十处 position:absolute 会集体错位）。 */
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
 }
 
+/* 同一个格子里叠加。min-*:0 是 grid 子项的常规兜底，防止内容把格子顶高。 */
+.content>* {
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 常驻挂载、常驻绘制，靠 opacity 切换显隐 —— **绝不用 display:none**。
+   只有从「聊天 / 编码」切回普通界面时才需要恢复它，而恢复的同一帧里，
+   工作台那棵重子树（Monaco / 终端 / markstream）正在拆层，Chromium 交不出新帧；
+   这一帧整块区域没有内容，露出的是 body 底色（亮色闪白 / 暗色闪黑）或原生窗口底色
+   （main/index.ts 的 backgroundColor: #e5e5e5）—— 就是「从聊天切到别的界面闪一下」。
+   保持绘制（opacity:0 也会画，层也还在），切回来只改合成层透明度，主线程不用重画。
+   inert 由 App.tsx 同步加上，避免 Tab 穿进看不见的界面。
+   三个容器（.view-transition / .agent-code-host / .llama-host）叠在同一 grid 格子里，
+   显隐都跟随 deferredView，用 120ms ease 交叉淡出，避免中间出现空帧。
+
+   will-change: opacity —— 必须加。Chromium 对长期 opacity:0 的合成层会**回收光栅贴图**
+   （不可见层的 tile 优先级最低，内存紧张时最先丢）。agent-code-host 是全屏最重的子树
+   （消息流 + 文件树 + 终端 + 编辑器），贴图被丢后切回来那几帧只能重画，内容一时半会儿
+   画不全 —— 旧界面在淡出、新层还只有半截，露出底色，就是「设置 → 聊天」仍闪的原因。
+   will-change 让这块层常驻显存并保持贴图，切回来第一帧就是完整内容。
+   代价是三个全屏合成层的显存（约 20–30MB），桌面应用付得起。 */
 .view-transition {
   display: flex;
   flex-direction: column;
-  flex: 1;
   min-height: 0;
-  animation: view-fade-in 0.22s cubic-bezier(.4, 0, .2, 1) both;
+  transition: opacity 120ms ease;
+  will-change: opacity;
 }
 
-.view-transition>.page-header {
-  animation: view-header-in 0.22s cubic-bezier(.4, 0, .2, 1) both;
+.agent-code-host {
+  display: flex;
+  transition: opacity 120ms ease;
+  will-change: opacity;
 }
 
-.view-transition>:not(.page-header) {
-  animation: view-content-in 0.22s cubic-bezier(.4, 0, .2, 1) both;
-}
+/* 这里**不放任何入场动画**。
+   曾经放过两条：容器上的 view-fade-in 与页头上的 view-header-in，两条都从 opacity 0 起。
+   后果是只有普通界面会播（工具箱内部的界面嵌套在 .toolhub-body 里，选择器够不着），
+   于是切换行为不一致 —— 进普通界面「闪一下」，进工具箱界面不闪，用户反馈这就是 bug。
+   更糟的是页头那条：它让标题行在头几帧里不存在，露出的是卡片底色。
+   要加动效只能加在具体元素上，且不能从 opacity 0 开始（见 cards.css 的 card-reveal）。 */
 
 
 /* 主界面外层留白：上下取 8px，与导航栏卡片（sidebar.css 的 .sidebar { margin: 8px }）
    以及 Agent Code 列（agent-code.css 的 topbar / chat 各 8px）同口径——三类容器的顶边、
    底边因此落在同一线上。左右仍留 24px，那是主界面与侧栏之间的水平间距，不在这次范围内。 */
-.content>*:not(.chat-layout):not(.agent-code-view) {
+.content>*:not(.chat-layout):not(.agent-code-view):not(.llama-host) {
   padding: 8px 24px;
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+}
+
+/* Web 界面容器：与 .view-transition / .agent-code-host 叠在同一 grid 格子里，
+   常驻绘制 + opacity 切换 + inert（显隐由 App.tsx 按 deferredView 驱动）。
+   24px 内边距沿用原来它作为 main-layout 兄弟节点时的取值。 */
+.llama-host {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 24px;
+  overflow: hidden;
+  transition: opacity 120ms ease;
+  will-change: opacity;
+}
+
+/* 系统「减少动态效果」偏好下，三个视图容器的交叉淡出改为瞬时切换。
+   有动效敏感（如前庭功能障碍）的用户开着这个偏好，就不该再看到任何渐变。 */
+@media (prefers-reduced-motion: reduce) {
+  .view-transition,
+  .agent-code-host,
+  .llama-host {
+    transition: none;
+  }
 }
 
 .view-transition>:not(.chat-layout):not(.agent-code-view) {
@@ -302,41 +356,6 @@ textarea {
   box-shadow: var(--shadow);
   /* 上下留白已由上一层给到 8，这里再写 margin-bottom 会叠成 16、把底边推歪 */
   margin: 0 8px 0 0;
-}
-
-@keyframes view-fade-in {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes view-header-in {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-/* 入场只做淡入，不做位移：位移后的盒子会算进祖先的可滚动溢出区，而 .view-transition 与页面卡片
-   两层都是 overflow-y: auto（见上面两条规则）——动画头几帧凭空多出 12px 底部溢出，滚动条一闪，
-   内容宽度少 5px（::-webkit-scrollbar），切页面就成了「左右弹一下」。 */
-@keyframes view-content-in {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
 }
 
 @keyframes navPulse {
