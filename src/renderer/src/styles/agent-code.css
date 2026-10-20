@@ -4579,12 +4579,88 @@ html.is-panel-resizing .agent-think-body .table-node {
   scrollbar-width: thin;
 }
 
+/* 预览文件标签条溢出渐隐：与顶栏 .ovf-left/.ovf-right 同一思路——不能常驻，否则不溢出时
+   渐隐区正好落在最后一个标签上变成假提示；由 JS 按真实溢出 + 滚动位置切换 class */
+.agent-code-preview-tabs.ovf-right {
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+
+.agent-code-preview-tabs.ovf-left {
+  mask-image: linear-gradient(to right, transparent, #000 28px);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px);
+}
+
+.agent-code-preview-tabs.ovf-left.ovf-right {
+  mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+}
+
+/* 标签的键盘焦点指示：不用全局兜底那条 2px --accent 外环——浅色主题下 --accent 是近黑
+   （global.css --accent:#0a0a0a），在细小的标签上就是一圈粗黑边；且标签条 overflow 会把
+   外扩的环裁掉。改为跟随本应用列表行的内描边设计（.agent-code-session-item 同款思路），
+   用 --text-secondary 中性色细线贴内缘：文件标签自身已有 1.5px --border-strong 边框，
+   内描边退 2.5px 与它区分；工作区标签按钮无边框，贴内缘 1.5px 即可。深浅主题都成立。 */
+.agent-code-preview-tabs .agent-code-preview-tab:focus-visible {
+  outline: 1.5px solid var(--text-secondary);
+  outline-offset: -2.5px;
+}
+
+.agent-code-panel-tabs .agent-code-panel-tab-btn:focus-visible {
+  outline: 1.5px solid var(--text-secondary);
+  outline-offset: -1.5px;
+}
+
+/* 大文件截断告知 + 分段续读条：truncated 字段早已存在，此前零消费方。
+   文字 + 「加载更多 / 完整内容」按钮一行排布，正文（flex:1 的 body）不被挤压。 */
+.agent-code-preview-trunc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-hover);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.agent-code-preview-trunc-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.agent-code-preview-trunc-btn {
+  flex-shrink: 0;
+}
+
+/* 截断期间编辑入口的占位：灰掉的铅笔 + 悬停说明为什么不可用（避免「按钮凭空消失」的困惑） */
+.agent-code-preview-trunc-lock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--text-dim);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.agent-code-preview-trunc-lock-icon {
+  display: block;
+}
+
 .agent-code-preview-tab {
   display: flex;
   align-items: center;
   gap: 4px;
   flex-shrink: 1;
-  min-width: 0;
+  /* 保底宽度：空间不够时不许把名字压没、只剩一个「×」。约 5~6 个字符 + 关闭钮；
+     再装不下就靠整条 overflow-x 滚动 + 两端渐隐兜底（活动标签完整显示见下方 .active 规则） */
+  min-width: 72px;
   max-width: 160px;
   padding: 2px 4px 2px 8px;
   background: var(--bg);
@@ -4611,6 +4687,19 @@ html.is-panel-resizing .agent-think-body .table-node {
 .agent-code-preview-tab-name {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 活动标签完整显示文件名（不省略、不被压缩）——用户靠它确认当前打开的是哪个文件；
+   非活动标签保持 160px 省略宽。整条可横向滚动，切换时的 scrollIntoView 兜住可视性；
+   flex-shrink:0 防止空间紧张时活动标签又被压回省略。 */
+.agent-code-preview-tab.active {
+  flex-shrink: 0;
+  max-width: none;
+}
+
+.agent-code-preview-tab.active .agent-code-preview-tab-name {
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .agent-code-preview-tab-close {

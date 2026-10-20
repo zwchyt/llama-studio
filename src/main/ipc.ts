@@ -7178,8 +7178,10 @@ export function registerIpcHandlers(): void {
       }
       const slicedContent = selectedLines.join('\n')
 
-      // Token 预算预估：超限则引导使用 Grep
-      const estimatedTokens = estimateTokens(slicedContent)
+      // Token 预算预估：超限则引导使用 Grep。raw=true 是 UI 预览专用（不带行号、不进模型
+      // 上下文），这个预算守卫只针对模型读取——UI 侧自带 maxBytes 上限，这里放行，
+      // 否则 128KB 以上的密集文本预览会被误判 FileTooLarge（25k token ≈ 100KB 文本）。
+      const estimatedTokens = opts?.raw ? 0 : estimateTokens(slicedContent)
       if (estimatedTokens > MAX_READ_TOKENS) {
         return {
           success: false,
@@ -7203,7 +7205,8 @@ export function registerIpcHandlers(): void {
         lines: selectedLines.length,
         totalLines,
         startLine: offset,
-        truncated: previewLarge
+        truncated: previewLarge,
+        fileSize
       }
     } catch (e) {
       return { success: false, error: `读取失败：${e instanceof Error ? e.message : String(e)}`, errorType: 'FileReadError' }

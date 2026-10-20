@@ -29,7 +29,7 @@ import { AgentMarkdown } from '../agent-message'
 // PDF 预览标签的那一刻才加载对应 chunk，避免 pdfjs 常驻首屏主 bundle
 // （与 extractText.ts 的按需加载同批优化；Suspense 包裹见下方渲染处）。
 const PdfViewer = React.lazy(() => import('./PdfViewer').then(m => ({ default: m.PdfViewer })))
-import type { useAgentPreviewTabs } from '../hooks/useAgentPreviewTabs'
+import { PREVIEW_LIMITS, type useAgentPreviewTabs } from '../hooks/useAgentPreviewTabs'
 import type { AniIconHandle } from '../types'
 import type { PanelView, RightPanelMode } from '../hooks/useAgentUiState'
 import type { AgentProject } from '../../../../../shared/types'
@@ -122,8 +122,13 @@ export function AgentPreviewSlot({
     htmlPreviewRef, tabMenu, setTabMenu, tabMenuRef,
     previewHighlightLine, previewEditing, setPreviewEditing, previewDraft, setPreviewDraft,
     isPreviewHtml, isPreviewMarkdown, htmlPreviewSrcDoc,
-    openPreview, savePreviewFile, closeTab, closeOtherTabs, closeAllTabs,
+    openPreview, savePreviewFile, closeTab, closeOtherTabs, closeAllTabs, loadMorePreview,
   } = preview
+  // 续读条上的体积展示：KB 一档、MB 一档，未知（读不到 fileSize）显问号
+  const fmtBytes = (n?: number | null) => {
+    if (n == null) return '?'
+    return n >= 1024 * 1024 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`
+  }
   // Markdown 预览：markstream 会把整篇文档同步解析 + 逐个块挂载，长文档一次上千毫秒。
   // 直接读 activeTab.content 会让这份开销落进「点开文件」那次 click 处理器的同步渲染里，
   // DevTools 就报 'click' handler took 1209ms。useDeferredValue 把这次渲染降到低优先级：
@@ -252,6 +257,72 @@ export function AgentPreviewSlot({
     showRightTab(v)
   }, [showRightTab])
 
+  // ── 预览文件标签条的溢出提示（与顶栏同款：读真实溢出 + 滚动位置，样式见 agent-code.css 的
+  //    .agent-code-preview-tabs.ovf-*）──
+  // 该条是 overflow-x: auto + 细滚动条，开满标签后被滚出视野的标签没有任何迹象。
+  const previewTabsRef = useRef<HTMLDivElement>(null)
+  const [tabsOvf, setTabsOvf] = useState({ left: false, right: false })
+  useEffect(() => {
+    const el = previewTabsRef.current
+    if (!el) return
+    const sync = () => {
+      const max = el.scrollWidth - el.clientWidth
+      const left = el.scrollLeft > 1
+      const right = max > 1 && el.scrollLeft < max - 1
+      // 滚动时每帧都会跑，只在「进入/离开溢出状态」时才值得重渲染
+      setTabsOvf(prev => (prev.left === left && prev.right === right ? prev : { left, right }))
+    }
+    sync()
+    el.addEventListener('scroll', sync, { passive: true })
+    // 纵向滚轮转横向滚动：标签溢出后不必去按那条细滚动条，悬停在标签上滚滚轮即可左右滑。
+    // 仅在确实溢出时接管；触控板 / Shift+滚轮的横向分量（deltaX）交给浏览器原生处理。
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY === 0 || el.scrollWidth <= el.clientWidth) return
+      e.preventDefault()
+      el.scrollLeft += e.deltaY
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    // 标签增删但容器尺寸不变（如关掉一个、再开一个）时 ResizeObserver 不触发
+    const mo = new MutationObserver(sync)
+    mo.observe(el, { childList: true })
+    return () => {
+      el.removeEventListener('scroll', sync)
+      el.removeEventListener('wheel', onWheel)
+      ro.disconnect()
+      mo.disconnect()
+    }
+  }, [])
+
+  // 从文件树打开的标签可能落在可视区之外：切到它时滚进视野（最近距离，不居中）
+  useEffect(() => {
+    if (!activeTabPath) return
+    previewTabsRef.current
+      ?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [activeTabPath, openTabs.length])
+
+  // 文件标签的键盘导航：不用 rovingKeyNav——它对「项本身不可聚焦」的情况会退而聚焦项内
+  // 第一个控件，而这里的非活动标签是 tabIndex=-1，会被它的 FOCUSABLE 排除，焦点就会落到
+  // 内层「关闭」按钮上，方向键移过去按 Enter 就误关标签了。
+  // 采用「自动激活」模型（文件标签类应用惯例）：方向键移动焦点的同时切换内容，
+  // 只移焦点不激活会变成「标题在动、正文不动」。焦点在内层「关闭」按钮上时按键不接管。
+  const handlePreviewTabKeyDown = useCallback((e: React.KeyboardEvent<HTMLElement>) => {
+    const self = e.currentTarget
+    if (e.target !== self) return
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); self.click(); return }
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+    e.preventDefault()
+    const idx = openTabs.findIndex(t => t.path === activeTabPath) + (e.key === 'ArrowRight' ? 1 : -1)
+    const next = openTabs[idx]
+    if (!next) return
+    setActiveTabPath(next.path)
+    // 焦点跟到目标标签（tabIndex=-1 也可被 .focus() 聚焦）；容器子元素顺序与 openTabs 一致
+    const el = previewTabsRef.current?.children[idx] as HTMLElement | undefined
+    el?.focus()
+  }, [openTabs, activeTabPath, setActiveTabPath])
+
   return (
     <div className={`agent-code-right-slot${!treeOnly || slotEmpty ? ' panel-resizable' : ''}`}>
       {tipNode}
@@ -271,7 +342,7 @@ export function AgentPreviewSlot({
             通用模式没有这套工作区，维持原样（只有内容区）。 */}
         {!plainChat && openPanels.length > 0 && (
           <div className="agent-code-panel-head">
-            <div className="agent-code-panel-tabs">
+            <div className="agent-code-panel-tabs" role="tablist" aria-label="右侧面板工作区">
               {openPanels.map(v => {
                 const Icon = PANEL_ICON[v]
                 const active = rightPanelMode === v
@@ -300,9 +371,10 @@ export function AgentPreviewSlot({
                   >
                     <button
                       className="agent-code-panel-tab-btn"
+                      role="tab"
+                      aria-selected={active}
                       onClick={() => showRightTab(v)}
                       {...tip(PANEL_LABEL[v])}
-                      aria-current={active ? 'true' : undefined}
                     >
                       <Icon ref={el => { tabIconRefs.current[v] = el as AniIconHandle | null }} size={12} className="nav-animate-icon" />
                       <span>{PANEL_LABEL[v]}</span>
@@ -403,11 +475,24 @@ export function AgentPreviewSlot({
               <div className={`agent-code-preview-group ${openTabs.length === 0 && rightPanelMode !== 'files' && rightPanelMode !== 'preview' ? 'collapsed' : ''} ${rightPanelMode === 'browser' || rightPanelMode === 'terminal' || rightPanelMode === 'diff' ? 'hidden' : ''}`}>
                 <div className={`agent-code-preview${openTabs.length === 0 ? ' agent-code-preview--empty' : ''}`}>
                   <div className="agent-code-preview-header">
-                    <div className="agent-code-preview-tabs">
+                    <div
+                      ref={previewTabsRef}
+                      className={`agent-code-preview-tabs${tabsOvf.left ? ' ovf-left' : ''}${tabsOvf.right ? ' ovf-right' : ''}`}
+                      role="tablist"
+                      aria-label="已打开的文件"
+                    >
                       {openTabs.map((t, tabIdx) => (
                         <div
                           key={t.path}
+                          data-row
+                          role="tab"
+                          aria-selected={t.path === activeTabPath}
+                          // roving tabindex：只有活动标签进 Tab 序列，方向键在标签间移动
+                          tabIndex={t.path === activeTabPath ? 0 : -1}
+                          onKeyDown={handlePreviewTabKeyDown}
                           className={`agent-code-preview-tab ac-icon-btn ${t.path === activeTabPath ? 'active' : ''}`}
+                          // 非活动标签名称被省略：悬停用完整路径气泡兜底，便于确认是哪个文件
+                          {...tip(t.path)}
                           onClick={() => setActiveTabPath(t.path)}
                           onContextMenu={(e) => { e.preventDefault(); setTabMenu({ x: e.clientX, y: e.clientY, path: t.path }) }}
                           onMouseDown={(e) => {
@@ -475,7 +560,7 @@ export function AgentPreviewSlot({
                       {/* 源码预览编辑：进入/退出编辑态；保存写回文件。
                     Markdown 在「源码」模式下同样允许编辑（渲染态不可直接编辑）。
                     PDF / DOCX 不给编辑：预览的是抽取文本，写回会毁掉原文件（保存处另有兜底）。 */}
-                      {!isPreviewHtml && (!isPreviewMarkdown || mdViewMode === 'source') && activeTab && !activeTab.isBinaryDoc && activeTabPath !== GIT_DIFF_TAB && (
+                      {!isPreviewHtml && (!isPreviewMarkdown || mdViewMode === 'source') && activeTab && !activeTab.isBinaryDoc && !activeTab.truncated && activeTabPath !== GIT_DIFF_TAB && (
                         previewEditing ? (
                           <>
                             <button className="btn btn-xs ac-icon-btn agent-code-preview-save" onClick={() => { if (previewDraft !== null) savePreviewFile(previewDraft) }} disabled={previewDraft === null || previewDraft === activeTab.content}>
@@ -490,6 +575,11 @@ export function AgentPreviewSlot({
                             <PencilIcon size={12} />
                           </button>
                         )
+                      )}
+                      {activeTab?.truncated && !activeTab.isBinaryDoc && !isPreviewHtml && (
+                        <span className="agent-code-preview-trunc-lock" {...tip('文件未完整加载，编辑保存会丢失未读入的部分；先加载完整内容再编辑')}>
+                          <PencilIcon size={12} className="agent-code-preview-trunc-lock-icon" />
+                        </span>
                       )}
                       <button className="btn btn-xs agent-code-preview-close ac-icon-btn" onClick={() => activeTab && closeTab(activeTab.path)} disabled={!activeTab}>
                         <XIcon size={12} />
@@ -512,6 +602,35 @@ export function AgentPreviewSlot({
                       </div>
                     )
                   })()}
+                  {/* 大文件截断告知 + 分段续读（7.1 + 7.9）。truncated 字段早已存在，此前零消费方。
+                      截断时编辑按钮一并隐藏（用部分内容写回会删掉未读入的部分），加载完整后恢复。 */}
+                  {activeTab?.truncated && (
+                    <div className="agent-code-preview-trunc">
+                      {(activeTab.loadedBytes ?? 0) >= PREVIEW_LIMITS.HARD ? (
+                        <span className="agent-code-preview-trunc-text">已达预览上限（{fmtBytes(PREVIEW_LIMITS.HARD)}），更后面的内容请用外部编辑器查看</span>
+                      ) : (
+                        <>
+                          <span className="agent-code-preview-trunc-text">已截断 · 已显示 {fmtBytes(activeTab.loadedBytes)}{activeTab.fileSize != null ? ` / 共 ${fmtBytes(activeTab.fileSize)}` : ''}</span>
+                          <button
+                            className="btn btn-xs agent-code-preview-trunc-btn"
+                            disabled={!!activeTab.loadingMore}
+                            onClick={() => activeTabPath && loadMorePreview(activeTabPath, false)}
+                          >
+                            {activeTab.loadingMore ? '读取中…' : '加载更多'}
+                          </button>
+                          {(activeTab.fileSize ?? PREVIEW_LIMITS.FULL) <= PREVIEW_LIMITS.FULL && (
+                            <button
+                              className="btn btn-xs agent-code-preview-trunc-btn"
+                              disabled={!!activeTab.loadingMore}
+                              onClick={() => activeTabPath && loadMorePreview(activeTabPath, true)}
+                            >
+                              加载完整内容
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
                   <div className="agent-code-preview-body">
                     {!activeTab ? (
                       <div className="agent-code-preview-empty">

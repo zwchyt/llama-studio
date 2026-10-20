@@ -36,6 +36,16 @@ import type { PanelView, RightPanelMode } from './useAgentUiState'
 
 const LEGACY_DOC_ERROR = '旧版 .doc 无法解析：请在 Word 里另存为 .docx 再预览'
 
+// ── 文本预览的读取档位（字节）──
+// 初始只读 128KB 防卡顿；「加载更多」每次 +256KB；「加载完整内容」只对 ≤2MB 的文件出现；
+// 分段累计上限 4MB——再往上继续塞 Monaco 会明显卡顿，更大的文件是外部编辑器的活。
+export const PREVIEW_LIMITS = {
+  INIT: 128 * 1024,
+  STEP: 256 * 1024,
+  FULL: 2 * 1024 * 1024,
+  HARD: 4 * 1024 * 1024,
+} as const
+
 /** base64 → 字节。优先用原生 Uint8Array.fromBase64（一次调用，解码在实现内部完成）；
  *  环境不支持或输入非法时，退回 atob + 逐字符 charCodeAt 循环（旧行为）。
  *  后者对 48MB 的 PDF 要跑 6400 万次，同步卡住主线程几百毫秒——而且这段在 await 之后的
@@ -58,7 +68,7 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
   /** 关掉最后一个文件标签时，「预览」那列工作区跟着关掉（最后一列则整块面板收起） */
   closePanel: (view: PanelView) => void
 }) {
-  const PREVIEW_MAX_BYTES = 128 * 1024
+  const PREVIEW_MAX_BYTES = PREVIEW_LIMITS.INIT
   // PDF / DOCX 要在渲染进程整体解码，给原始体积留个上限（base64 约 4/3 倍 → 约 48MB 文件）
   const BINARY_DOC_MAX_B64 = 64 * 1024 * 1024
   // PreviewTab 类型已抽至 agent-code/types
@@ -98,6 +108,9 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
     // 二进制文档的 content 是抽取出的文本而非文件本体，写回等于用一段文本盖掉整个 PDF/DOCX。
     // 编辑按钮已按 isBinaryDoc 隐藏，这里兜住 Monaco 的 Ctrl+S 那条路。
     if (tab.isBinaryDoc) { notify('PDF / DOCX 预览的是抽取文本，不能写回原文件', 'error'); return }
+    // 截断状态下写回 = 用已加载的部分覆盖整个文件，未读入的内容会被删掉——必须先加载完整。
+    // 编辑按钮已按 truncated 隐藏，这里兜住 Ctrl+S 等其它入口。
+    if (tab.truncated) { notify('文件未完整加载：请先加载完整内容再编辑保存，否则会丢失未读入的部分', 'error'); return }
     try {
       const res = await window.api.writeFile(tab.path, content)
       if (!res.success) { notify('保存失败：' + (res.error || '未知错误'), 'error'); return }
@@ -220,6 +233,18 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
     return out
   }, [])
 
+  // 文本预览的统一读取：raw（不带行号前缀，Markdown 渲染要纯净原文）+ limit:0（取满
+  // maxBytes 内的全部行——默认 2000 行的上限会把字节块悄悄砍掉一截，表现为「没截断却少内容」）
+  // + 疑似 Markdown 时内联本地图片。预览只走字节块路径，不会进主进程的流式分支（那边 limit:0 取空）。
+  const readPreviewText = useCallback(async (path: string, maxBytes: number) => {
+    const res = await window.api.readFile(path, { maxBytes, raw: true, limit: 0 })
+    let content = res.success ? (res.content || '') : null
+    if (content && /(^|\n)\s*(<[a-zA-Z]|#{1,6}\s|>\s|!\[|\[.+\]|```|[-*+]\s+\S)/.test(content.slice(0, 3000))) {
+      try { content = await inlineLocalImages(content, path) } catch { /* 内联失败不影响文本预览 */ }
+    }
+    return { res, content }
+  }, [inlineLocalImages])
+
   const openPreview = useCallback(async (path: string, panelMode: PanelView = 'files') => {
     const name = dirName(path)
     const ext = (/\.([a-z0-9]+)$/i.exec(path)?.[1] || '').toLowerCase()
@@ -284,12 +309,7 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
       } : t))
       return
     }
-    const res = await window.api.readFile(path, { maxBytes: PREVIEW_MAX_BYTES, raw: true })
-    let content = res.success ? (res.content || '') : null
-    // 仅对疑似 Markdown 的内容内联本地图片（避免代码文件被无意义扫描）。
-    if (content && /(^|\n)\s*(<[a-zA-Z]|#{1,6}\s|>\s|!\[|\[.+\]|```|[-*+]\s+\S)/.test(content.slice(0, 3000))) {
-      try { content = await inlineLocalImages(content, path) } catch { /* 内联失败不影响文本预览 */ }
-    }
+    const { res, content } = await readPreviewText(path, PREVIEW_MAX_BYTES)
     setOpenTabs(prev => prev.map(t => t.path === path ? {
       ...t,
       loading: false,
@@ -297,8 +317,39 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
       content,
       lines: res.success ? (res.lines ?? 0) : null,
       truncated: !!res.truncated,
+      fileSize: res.fileSize ?? null,
+      loadedBytes: res.success ? (res.truncated ? PREVIEW_MAX_BYTES : (res.fileSize ?? PREVIEW_MAX_BYTES)) : null,
     } : t))
-  }, [inlineLocalImages])
+  }, [readPreviewText])
+
+  // 分段续读：从头发起一次更大的读取并整块替换。不用「按字节追加」是因为主进程 readFile
+  // 只有行级 offset，且整块替换能保证行号、Markdown 图片内联、编辑基线三者始终一致；
+  // 本地磁盘读 ≤4MB 的代价可忽略。full = 尽量一次读全（按钮只对 ≤2MB 的文件出现）。
+  const loadMorePreview = useCallback(async (path: string, full: boolean) => {
+    const tab = openTabsRef.current.find(t => t.path === path)
+    if (!tab || !tab.truncated || tab.isImage || tab.isPdf || tab.isBinaryDoc) return
+    const loaded = tab.loadedBytes ?? PREVIEW_LIMITS.INIT
+    const fileSize = tab.fileSize ?? 0
+    const want = full ? (fileSize || PREVIEW_LIMITS.FULL) : loaded + PREVIEW_LIMITS.STEP
+    const target = Math.min(want, PREVIEW_LIMITS.HARD)
+    if (target <= loaded) return
+    setOpenTabs(prev => prev.map(t => t.path === path ? { ...t, loadingMore: true } : t))
+    try {
+      const { res, content } = await readPreviewText(path, target)
+      setOpenTabs(prev => prev.map(t => t.path === path ? {
+        ...t,
+        loadingMore: false,
+        error: res.success ? null : (res.error || '读取失败'),
+        content: res.success ? content : t.content,
+        lines: res.success ? (res.lines ?? 0) : t.lines,
+        truncated: res.success ? !!res.truncated : t.truncated,
+        fileSize: res.fileSize ?? t.fileSize ?? null,
+        loadedBytes: res.success ? (res.truncated ? target : (res.fileSize ?? target)) : t.loadedBytes,
+      } : t))
+    } catch {
+      setOpenTabs(prev => prev.map(t => t.path === path ? { ...t, loadingMore: false } : t))
+    }
+  }, [readPreviewText])
 
   // 内存图片：没有磁盘路径的图（剪贴板粘贴、从浏览器 / 看图软件拖入）也走右侧预览面板。
   // 图片数据本来就在 dataUrl 里，直接建一个装好图的标签，不需要任何磁盘读取。
@@ -437,7 +488,7 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
     previewHighlightLine, setPreviewHighlightLine,
     previewEditing, setPreviewEditing, previewDraft, setPreviewDraft,
     isPreviewHtml, isPreviewMarkdown, htmlPreviewSrcDoc, inlineLocalImages,
-    openPreview, openPreviewAtLine, openFileAtLine, openMemoryImage,
+    openPreview, openPreviewAtLine, openFileAtLine, openMemoryImage, loadMorePreview,
     savePreviewFile, closeTab, closeOtherTabs, closeAllTabs, closeTabMenu,
   }
 }

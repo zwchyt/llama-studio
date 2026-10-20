@@ -55,6 +55,12 @@ export interface PreviewTab {
   truncated: boolean
   loading: boolean
   error: string | null
+  /** 文本预览：文件总字节数（主进程返回；图片 / PDF 等非文本标签为空） */
+  fileSize?: number | null
+  /** 文本预览：当前已加载的字节数（截断续读用；完整读入后 = fileSize） */
+  loadedBytes?: number | null
+  /** 「加载更多 / 完整内容」进行中：不置 loading——那会把正文整体换成读取占位 */
+  loadingMore?: boolean
   isImage?: boolean
   imageDataUrl?: string | null
   /** PDF / DOCX：禁止编辑与写回——把文本存回 .pdf 会毁掉原文件。 */
