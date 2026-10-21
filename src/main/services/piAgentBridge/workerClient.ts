@@ -10,6 +10,7 @@ import { createIpcExecutors } from './ipcExecutors'
 import { showBrowserPreview, setBrowserNavigateHandler } from '../agentBrowserService'
 import type { MainToolExecutors, AskUserQuestionInput } from './tools/mainTools'
 import type { BrowserNavigateCommand, BrowserShowResult } from '../../../shared/browserPreview'
+import type { ThinkingLevel } from '../../../shared/types'
 
 interface WorkerInbound { kind: string; id?: number; action?: string; args?: Record<string, unknown>; agentDir?: string; toolNames?: string[]; event?: Record<string, unknown>; ok?: boolean; value?: unknown }
 interface WorkerOutbound { kind: string; id?: number; sessionId?: string; event?: unknown; ok?: boolean; value?: unknown; level?: 'log' | 'warn' | 'error'; args?: unknown[]; name?: string; message?: string }
@@ -487,7 +488,8 @@ export const piWorker = {
   clearQueue: (sessionId: string) => sendCmd('clearQueue', { sessionId }),
   abort: (sessionId: string) => sendCmd('abort', { sessionId }),
   dispose: (sessionId: string) => sendCmd('dispose', { sessionId }),
-  setThinkingLevel: (sessionId: string, level: unknown) => sendCmd('setThinkingLevel', { sessionId, level }),
+  setThinkingLevel: (sessionId: string, level: unknown) =>
+    sendCmd<{ success: boolean; level?: ThinkingLevel }>('setThinkingLevel', { sessionId, level }),
   compact: (sessionId: string, customInstructions?: string) =>
     sendCmd<{ success: boolean; summary?: string; error?: string }>('compact', { sessionId, customInstructions }),
   undo: (toolCallId: string) => sendCmd<{ success: boolean; path?: string; error?: string }>('undo', { toolCallId }),

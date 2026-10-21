@@ -164,7 +164,7 @@ export default function AgentCodeView() {
     setPlanItems, setPlanTitle,
     editingMsgId, setEditingMsgId, editDraft, setEditDraft,
   } = (ui = useAgentUiState({
-    modelGroups, loading, piReadyRef,
+    loading, piReadyRef,
     // 模式由所属工作区决定（不再挂在会话上），所以这里传的是 projects 域的模式
     mode: projectsDomain.mode,
     activeProjectId, activeSessionId, activeSession, updateSessionInProject,
@@ -262,7 +262,7 @@ export default function AgentCodeView() {
     setTaskModalOpen, setPlanTitle, setPlanItems, planItemsRef,
     abortRef, sendingRef, piReadyRef, followUpQueueRef, prevQueueRef,
     appendLiveUserMsgRef, streamingSessionRef, streamStartAtRef, lastRateRef,
-    modelLabelRef, backupsRef, thinkingLevelRef,
+    modelLabelRef, backupsRef, thinkingLevelRef, setThinkingLevel,
     appendQueuedUserMsg: sessionActions.appendQueuedUserMsg,
     queueRemoved: sessionActions.queueRemoved,
     runSlashAction,

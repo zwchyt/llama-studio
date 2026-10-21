@@ -7309,16 +7309,20 @@ export function registerIpcHandlers(): void {
     writeFileSync(LOGOS_MAP_FILE, JSON.stringify(map, null, 2))
   }
   // 弹文件选择框 → 复制进 logos/ → 更新映射 → 返回文件名
-  ipcMain.handle('set-model-logo', async (_e, templateId: string): Promise<{ success: boolean; fileName?: string; error?: string }> => {
+  ipcMain.handle('set-model-logo', async (event, templateId: string): Promise<{ success: boolean; fileName?: string; error?: string }> => {
     try {
       // 确保目录存在后直接打开 logos 目录，方便用户挑选/管理已有图片
       mkdirSync(LOGOS_DIR, { recursive: true })
-      const r = await dialog.showOpenDialog({
+      const opts = {
         title: '选择模型 Logo 图片',
         defaultPath: LOGOS_DIR,
         filters: [{ name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'svg', 'webp'] }],
-        properties: ['openFile']
-      })
+        properties: ['openFile' as const]
+      }
+      // 挂到发起窗口上：无父窗口的对话框在部分 Windows 环境下会被主窗口盖住，
+      // 表现为「点了没反应」；有父窗口就是窗口模态，必定浮在前面
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
       if (r.canceled || r.filePaths.length === 0) return { success: false, error: '已取消' }
       const src = r.filePaths[0]!
       const ext = extname(src).toLowerCase()

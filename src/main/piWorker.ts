@@ -84,8 +84,8 @@ async function handleCmd(action: string, args: Record<string, unknown>): Promise
       m.disposeSession(String(args.sessionId))
       return { success: true }
     case 'setThinkingLevel':
-      m.setThinkingLevel(String(args.sessionId), args.level as never)
-      return { success: true }
+      // 回传 clamp 后的实际生效档（模型能力不支持时 SDK 会降档）
+      return { success: true, level: m.setThinkingLevel(String(args.sessionId), args.level as never) }
     case 'undo': {
       const res = await m.undo(String(args.toolCallId))
       return { success: res.success, path: res.path, error: res.error }

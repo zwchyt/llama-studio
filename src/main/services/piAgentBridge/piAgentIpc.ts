@@ -71,10 +71,10 @@ export function registerPiAgentIpc(win: BrowserWindow): void {
     return { success: true }
   })
 
-  // 动态设置会话级思考程度（发送前由 renderer 调用）
+  // 动态设置会话级思考程度（发送前由 renderer 调用）；回传实际生效档供 UI 纠正
   ipcMain.handle('pi-agent-set-thinking-level', async (_e, sessionId: string, level: ThinkingLevel) => {
-    await piWorker.setThinkingLevel(sessionId, level)
-    return { success: true }
+    const res = await piWorker.setThinkingLevel(sessionId, level)
+    return { success: true, level: res?.level ?? level }
   })
 
   ipcMain.handle('pi-agent-undo', async (_e, _sessionId: string, toolCallId: string) => {

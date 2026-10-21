@@ -74,7 +74,7 @@ export function useAgentLoop({
   setTaskModalOpen, setPlanTitle, setPlanItems, planItemsRef,
   abortRef, sendingRef, piReadyRef, followUpQueueRef, prevQueueRef,
   appendLiveUserMsgRef, streamingSessionRef, streamStartAtRef, lastRateRef,
-  modelLabelRef, backupsRef, thinkingLevelRef,
+  modelLabelRef, backupsRef, thinkingLevelRef, setThinkingLevel,
   appendQueuedUserMsg, queueRemoved, runSlashAction,
   scrollToBottom,
   openPreview,
@@ -112,6 +112,8 @@ export function useAgentLoop({
   modelLabelRef: React.RefObject<string>
   backupsRef: React.RefObject<Record<string, { path: string; content: string }>>
   thinkingLevelRef: React.RefObject<ThinkingLevel>
+  /** 思考程度写入口：主进程 clamp 后回传实际生效档，用它回填（否则 UI 会显示没生效的档位） */
+  setThinkingLevel: React.Dispatch<React.SetStateAction<ThinkingLevel>>
   /** ── 主组件内的 useCallback（作为依赖注入，避免本域反向依赖其声明）── */
   appendQueuedUserMsg: (text: string) => void
   queueRemoved: (prev: string[], next: string[]) => string[]
@@ -297,7 +299,11 @@ export function useAgentLoop({
       piPlainRef.current = modeSig
     }
     // 应用当前选择的思考程度（同步方法，按模型能力自动 clamp；不支持思考的模型无效但非致命）
-    try { await window.api.piAgent.setThinkingLevel(piSessionId, thinkingLevelRef.current) } catch { /* 模型不支持思考时 SDK 自行 clamp，忽略异常 */ }
+    try {
+      const res = await window.api.piAgent.setThinkingLevel(piSessionId, thinkingLevelRef.current)
+      // 被降档时回填 UI（max/xhigh 在无 thinkingLevelMap 的模型上会落到 high）
+      if (res?.level && res.level !== thinkingLevelRef.current) setThinkingLevel(res.level)
+    } catch { /* 模型不支持思考时 SDK 自行 clamp，忽略异常 */ }
     // 占位助手消息（pi 事件驱动其内容/工具卡片）
     const liveId = newMsgId()
     // 流开始时刻：pending 思考卡/思考块实时计时锚点（连续、含 TTFT）

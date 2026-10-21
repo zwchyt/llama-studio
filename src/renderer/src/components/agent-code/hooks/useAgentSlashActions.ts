@@ -143,8 +143,18 @@ export function useAgentSlashActions({
         const valid: ThinkingLevel[] = ['low', 'medium', 'high']
         if (arg && valid.includes(arg as ThinkingLevel)) {
           setThinkingLevel(arg as ThinkingLevel)
-          if (runningCard) window.api.piAgent.setThinkingLevel(`pi-${activeSessionId}`, arg as ThinkingLevel).catch(() => { })
-          appendResult(`思考程度已设置为 **${arg}**。`)
+          let applied = arg as ThinkingLevel
+          if (runningCard) {
+            // 主进程回传 clamp 后的实际生效档，回填 UI 并如实汇报
+            try {
+              const res = await window.api.piAgent.setThinkingLevel(`pi-${activeSessionId}`, arg as ThinkingLevel)
+              if (res?.level) applied = res.level
+            } catch { /* 非致命 */ }
+          }
+          if (applied !== arg) setThinkingLevel(applied)
+          appendResult(applied === arg
+            ? `思考程度已设置为 **${arg}**。`
+            : `思考程度已设置为 **${arg}**，但当前模型不支持该档，实际生效 **${applied}**。`)
           return
         }
         appendResult(`当前思考程度：**${thinkingLevel}**\n可选值：low / medium / high（用法：\`/thinking high\`）`)

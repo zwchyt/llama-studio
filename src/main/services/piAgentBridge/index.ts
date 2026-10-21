@@ -151,7 +151,12 @@ export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promis
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow,
         maxTokens: maxOutputTokens,
-        ...(openAiStyle ? { compat: { supportsUsageInStreaming: true } } : {}),
+        // 本地模型显式关掉 reasoning_effort：pi 的 detectCompat 对 localhost 默认认为支持，
+        // 会在请求体里带上档位名（llama.cpp 不认，个别严格后端直接 400）。远程端点保留默认，
+        // 免得误关掉真支持 effort 的服务。
+        ...(openAiStyle
+          ? { compat: { supportsUsageInStreaming: true, ...(ep ? {} : { supportsReasoningEffort: false }) } }
+          : {}),
         ...(options.getExtraBody ? { samplingParams: options.getExtraBody() } : {})
       }
     ]
@@ -192,8 +197,9 @@ export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promis
     agentDir,
     model,
     modelRuntime,
-    // 本地模型：思考由模型自行输出 <think> 文本（content 通道）；不给 pi 发
-    // reasoning 参数（thinkingLevel off），避免后端不识别 reasoning_effort 等字段
+    // 本地模型：思考由模型自行输出 <think> 文本（content 通道）。会话初值给 off，
+    // 之后由渲染层按 UI 档位每轮 setThinkingLevel 覆盖；档位只落在 session 状态上，
+    // 不进请求体（见上面 compat.supportsReasoningEffort: false）。
     thinkingLevel: 'off',
     resourceLoader,
     sessionManager,

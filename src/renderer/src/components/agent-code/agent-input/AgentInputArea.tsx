@@ -36,7 +36,9 @@ import { THINKING_LEVELS } from '../../../../../shared/types'
 import type { Attachment, CardState, ModelEndpoint, ThinkingLevel } from '../../../../../shared/types'
 import { useStore } from '../../../store/useStore'
 import { endpointOfCard, type ModelPickerGroup } from '../../../utils/endpoint'
+import { hasVisionProjector } from '../../../utils/modelCapabilities'
 import { useBubbleTip } from '../../useBubbleTip'
+import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { rovingKeyNav } from '../utils/rovingKeyNav'
 import { useThemeStore } from '../../../store/themeStore'
 import type { useAgentGit } from '../hooks/useAgentGit'
@@ -46,7 +48,7 @@ import type { useAgentProjects } from '../hooks/useAgentProjects'
 
 /** 输入区顶部状态栏：把「当前阶段」映射成 orb 状态 + 文案。
  *  原来这 40 行 if/else 写在 JSX 的 IIFE 里逐帧执行，抽成组件后可读、也可 memo。 */
-const AgentStatusBar = React.memo(function AgentStatusBar({ approvalReq, streamKind, curToolName, thinkDone, streaming, loading, compacting, orbTheme }: {
+const AgentStatusBar = React.memo(function AgentStatusBar({ approvalReq, streamKind, curToolName, thinkDone, streaming, loading, compacting, orbTheme, modelRunning }: {
   approvalReq: AgentInputAreaProps['approval']['approvalReq']
   streamKind: AgentInputAreaProps['run']['streamKind']
   curToolName: string
@@ -55,6 +57,8 @@ const AgentStatusBar = React.memo(function AgentStatusBar({ approvalReq, streamK
   loading: boolean
   compacting: boolean
   orbTheme: ReturnType<typeof useThemeStore.getState>['theme']
+  /** 是否有模型已启动（卡片 status==='running'）：有就常驻呼吸动画 */
+  modelRunning: boolean
 }) {
   let kind: 'running' | 'idle' = 'idle'
   let name = ''
@@ -93,9 +97,9 @@ const AgentStatusBar = React.memo(function AgentStatusBar({ approvalReq, streamK
   const suppressText = compacting && !approvalReq
   return (
     <div className={`agent-status-bar agent-status-bar--${kind}`}>
-      {/* 空闲时暂停：orb 默认态是 breathing，一直跑等于让一个 20px 的动画常年占着
-          合成帧（桌面应用空闲功耗）。运行中（含等待确认 / 思考 / 工具）照常动。 */}
-      <ThinkingOrb state={orbState} size={20} theme={orbTheme} paused={kind !== 'running'} className="agent-status-orb" aria-label={text} />
+      {/* 模型已启动就常驻呼吸动画（空闲也动，表示"活着"）；未启动模型时才停成静止帧。
+          orb 自带 IntersectionObserver + visibilitychange，滚出视口或窗口隐藏时会自行停 rAF。 */}
+      <ThinkingOrb state={orbState} size={20} theme={orbTheme} paused={kind !== 'running' && !modelRunning} className="agent-status-orb" aria-label={text} />
       {!suppressText && kind === 'running' && name && <span className="agent-status-bar-name">{name}</span>}
       {!suppressText && kind === 'running' && <span className="agent-status-bar-text">{text}</span>}
     </div>
@@ -121,6 +125,32 @@ const AgentLogoMenu = React.memo(function AgentLogoMenu({ menu, cards, menuRef, 
     >
       <button type="button" className="chat-model-logo-menu-item" onClick={() => void onPickLogo(card)}><RefreshCwIcon size={12} />更换图片</button>
       <button type="button" className="chat-model-logo-menu-item danger" onClick={() => void onRemoveLogo(card)}><TrashIcon size={12} />移除 Logo</button>
+    </div>
+  )
+})
+
+/** 来源图标的小菜单（设置 / 更换 / 移除）：与模型 Logo 菜单同一套样式，
+ *  区别是直接按 id 操作——来源没有模型卡片，不走 CardState。 */
+const SourceLogoMenu = React.memo(function SourceLogoMenu({ menu, menuRef, hasLogo, onPick, onRemove }: {
+  menu: { id: string; x: number; y: number }
+  menuRef: React.RefObject<HTMLDivElement | null>
+  hasLogo: boolean
+  onPick: (id: string) => unknown
+  onRemove: (id: string) => unknown
+}) {
+  return (
+    <div
+      ref={menuRef}
+      className="chat-model-logo-menu"
+      style={{ left: menu.x, top: menu.y }}
+      // 关键：菜单挂在浮层之外，文档级的 pointerdown 关闭监听会把这次按下当成「点外部」，
+      // 在 click 落地前就把菜单卸载掉 —— 表现为「点了没反应」。这里拦在菜单根部。
+      onPointerDown={e => e.stopPropagation()}
+      onContextMenu={e => e.preventDefault()}
+      onClick={e => e.stopPropagation()}
+    >
+      <button type="button" className="chat-model-logo-menu-item" onClick={() => void onPick(menu.id)}><RefreshCwIcon size={12} />{hasLogo ? '更换图片' : '设置图标'}</button>
+      {hasLogo && <button type="button" className="chat-model-logo-menu-item danger" onClick={() => void onRemove(menu.id)}><TrashIcon size={12} />移除图标</button>}
     </div>
   )
 })
@@ -227,7 +257,6 @@ export type AgentInputAreaProps = {
     modelLogos: ReturnType<typeof useStore.getState>['modelLogos']
     modelPickerOpen: boolean
     modelPickerRef: React.RefObject<HTMLDivElement | null>
-    modelPickerWidth: number
     handleModelAction: (card: CardState) => Promise<void>
     /** 端点上还没建卡的模型名：点这一行就地建卡并启用 */
     pickEndpointModel: (ep: ModelEndpoint, modelId: string) => Promise<void>
@@ -236,6 +265,9 @@ export type AgentInputAreaProps = {
     toggleLogoMenu: (e: React.MouseEvent, card: CardState) => void
     pickModelLogo: (card: CardState) => Promise<void>
     removeModelLogo: (card: CardState) => Promise<void>
+    /** 左栏「来源」图标：与模型 Logo 同一份存储，key 为 src:<来源名> */
+    pickSourceLogo: (id: string) => Promise<void>
+    removeSourceLogo: (id: string) => Promise<void>
     setModelPickerOpen: React.Dispatch<React.SetStateAction<boolean>>
     thinkLevelMenuRef: React.RefObject<HTMLDivElement | null>
     thinkLevelOpen: boolean
@@ -335,7 +367,7 @@ export function AgentInputArea({
     setSlashIdx, slashPopRef, onPickAtFile, onPickSlash,
   } = hintsDomain
   const { listening, micTranscribing, toggleListen } = mic
-  const { modelGroups, modelBtnRef, modelCaps, modelLabel, modelLogos, modelPickerOpen, modelPickerRef, modelPickerWidth, handleModelAction, pickEndpointModel, logoMenu, logoMenuRef, toggleLogoMenu, pickModelLogo, removeModelLogo, setModelPickerOpen, thinkLevelMenuRef, thinkLevelOpen, setThinkLevelOpen, thinkingLevel, setThinkingLevel } = models
+  const { modelGroups, modelBtnRef, modelCaps, modelLabel, modelLogos, modelPickerOpen, modelPickerRef, handleModelAction, pickEndpointModel, pickSourceLogo, removeSourceLogo, logoMenu, logoMenuRef, toggleLogoMenu, pickModelLogo, removeModelLogo, setModelPickerOpen, thinkLevelMenuRef, thinkLevelOpen, setThinkLevelOpen, thinkingLevel, setThinkingLevel } = models
   const { searchEnabled, searchProvider, searchMenuOpen, searchMenuRef, setSearchMenuOpen, applySearchChange } = search
   const { plainChat } = chatMode
   const { apiBaseUrl, curToolName, followUpQueueRef, handleSend, handleStop, loading, piReadyRef, prevQueueRef, queueInfo, setQueueInfo, runningCard, streamKind, streaming, thinkDone } = run
@@ -346,6 +378,9 @@ export function AgentInputArea({
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）；
   // 斜杠补全行已有 onMouseEnter，走 showTip/hideTip 合并进去
   const { tipHandlers: tip, tipNode, showTip, hideTip } = useBubbleTip()
+  // 模型选择弹窗里的气泡（来源图标 / 模型名）改用带悬停延迟的一份：
+  // 弹窗是扫视式浏览，鼠标掠过就弹会盖住列表；停 400ms 才显示名称更稳。
+  const { tipHandlers: tipHover, tipNode: tipHoverNode } = useBubbleTip('below', 400)
   // 胶囊的悬停预览卡片：显示/隐藏交给状态，不靠纯 :hover——卡片的 pointer-events 可用性
   // 反过来依赖 :hover，指针移向卡片那一小段缝里会两头落空、卡片先收。
   // 事件挂在胶囊上，而卡片是胶囊的子节点，所以 mouseleave 的判定范围就是「胶囊 + 卡片」整体。
@@ -372,6 +407,25 @@ export function AgentInputArea({
   useEffect(() => {
     if (plainChat) setFilePickerOpen(false)
   }, [plainChat, setFilePickerOpen])
+  // 模型下拉左栏当前选中的来源（分组标题）。面板每次打开重置为「运行中模型所在来源」，
+  // 否则第一组；shownModelGroup 用派生值兜底——来源集合变化（端点增删）后旧选中项失效
+  // 会自动落到第一组，不会出现右栏空白。
+  const [activeModelGroup, setActiveModelGroup] = useState<string | null>(null)
+  const modelPickerWasOpen = useRef(false)
+  useEffect(() => {
+    if (modelPickerOpen && !modelPickerWasOpen.current) {
+      const runningGroup = modelGroups.find(g => g.rows.some(r => r.card?.template.id === runningCard?.template.id))
+      setActiveModelGroup(runningGroup?.title ?? modelGroups[0]?.title ?? null)
+    }
+    modelPickerWasOpen.current = modelPickerOpen
+  }, [modelPickerOpen, modelGroups, runningCard])
+  const shownModelGroup = modelGroups.find(g => g.title === activeModelGroup) ?? modelGroups[0]
+  // 左栏来源图标：右键弹出的小菜单（更换 / 移除）；固定定位坐标来自右键点。
+  // 面板关闭时一并收起，避免菜单浮在已关闭的下拉外面。
+  const [sourceLogoMenu, setSourceLogoMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const sourceLogoMenuRef = useRef<HTMLDivElement>(null)
+  usePopoverDismiss(!!sourceLogoMenu, () => setSourceLogoMenu(null), undefined, undefined, sourceLogoMenuRef)
+  useEffect(() => { if (!modelPickerOpen) setSourceLogoMenu(null) }, [modelPickerOpen])
   // 审批是阻塞性交互：出现即把焦点交给「允许」（键盘用户不必先 Tab 过去）；
   // 审批结束后焦点会随按钮卸载掉到 body，这里把它还给输入框，用户可以直接接着打字。
   const hadApprovalRef = useRef(false)
@@ -460,6 +514,7 @@ export function AgentInputArea({
       onDrop={e => { setDragOver(false); handleInputDrop(e) }}
     >
       {tipNode}
+      {tipHoverNode}
       {/* 破坏性工具审批面板：内联显示在输入框内（与提问工具 AskUserQuestionInline 同款位置/风格），不弹窗 */}
       {approvalReq && (
         <ApprovalInline
@@ -494,6 +549,15 @@ export function AgentInputArea({
           menuRef={logoMenuRef}
           onPickLogo={pickModelLogo}
           onRemoveLogo={removeModelLogo}
+        />
+      )}
+      {sourceLogoMenu && (
+        <SourceLogoMenu
+          menu={sourceLogoMenu}
+          menuRef={sourceLogoMenuRef}
+          hasLogo={!!modelLogos[sourceLogoMenu.id]}
+          onPick={id => { setSourceLogoMenu(null); return pickSourceLogo(id) }}
+          onRemove={id => { setSourceLogoMenu(null); return removeSourceLogo(id) }}
         />
       )}
       {/* ── 输入框上方的上下文行（仅编码模式）──
@@ -620,6 +684,7 @@ export function AgentInputArea({
             loading={loading}
             compacting={compacting}
             orbTheme={orbTheme}
+            modelRunning={!!runningCard}
           />
           {/* ② 输入区（中间）：引用胶囊 + 文本 */}
           <div className="chat-input-mid">
@@ -779,69 +844,115 @@ export function AgentInputArea({
                 )}
                 <span className="chat-model-dropdown-name">{runningCard ? modelLabel : '选择模型'}</span>
               </button>
-              {/* 与搜索/思考等级菜单同一套弹出逻辑：打开才挂载，点外部或 Esc 关闭 */}
+              {/* 与搜索/思考等级菜单同一套弹出逻辑：打开才挂载，点外部或 Esc 关闭。
+                  双栏：左栏来源（llama.cpp / 端点名…），右栏只列选中来源的模型；
+                  只有一个来源时不渲染左栏，退回原单列样式。底部入口横贯全宽、不随列表滚动。 */}
               {modelPickerOpen && (
-                <div ref={modelPickerRef} className="chat-model-picker" style={{ width: modelPickerWidth }} role="listbox" aria-label="模型列表">
-                  {modelGroups.map(group => (
-                    <div key={group.title} className="chat-model-group">
-                      <div className="chat-model-group-title">{group.title}</div>
-                      {group.rows.map(row => {
-                        const card = row.card
-                        // 端点记录：卡片行按 endpointId 查，端点行（还没建卡）就是它自己
-                        const ep = card ? endpointOfCard(card, modelEndpoints) : row.endpoint
-                        const running = card?.status === 'running'
-                        const pick = () => { if (card) void handleModelAction(card); else if (row.endpoint) void pickEndpointModel(row.endpoint, row.modelId ?? '') }
-                        return (
-                          <div
-                            key={row.key}
-                            className={`chat-model-item ${card ? card.status : 'idle'}${card ? '' : ' pending'}`}
-                            role="option"
-                            aria-selected={!!running}
-                            data-row
-                            tabIndex={0}
-                            onKeyDown={rovingKeyNav}
-                            {...tip(row.name)}
-                            onClick={pick}
-                          >
-                            <div className="chat-model-logo" onClick={e => { if (!card) return; e.stopPropagation(); toggleLogoMenu(e, card) }}>
-                              {card && modelLogos[card.template.id]
-                                ? <img src={modelLogos[card.template.id]!} alt={row.name} className="chat-model-logo-img" />
-                                : ep ? <ServerIcon size={11} /> : <ImageIcon size={11} />}
-                            </div>
-                            <div className="chat-model-item-info">
-                              <div className="chat-model-item-name">{row.name}</div>
-                              {card && modelCaps[card.template.id] && (
-                                <span className="chat-model-caps">
-                                  {modelCaps[card.template.id]?.thinking && <span className="chat-model-cap cap-thinking"><Brain size={11} /></span>}
-                                  {modelCaps[card.template.id]?.tools && <span className="chat-model-cap cap-tools"><Wrench size={11} /></span>}
-                                  {modelCaps[card.template.id]?.vision && <span className="chat-model-cap cap-vision"><Eye size={11} /></span>}
-                                </span>
-                              )}
-                              <div className="chat-model-item-tail">
-                                {running && <CheckIcon size={12} className="chat-model-item-check" />}
-                                <button
-                                  className="chat-model-item-action"
-                                  aria-label={ep
-                                    ? (ep.kind === 'remote'
-                                      ? running ? '停用该端点（不会碰那边的服务）' : '探测并启用该端点'
-                                      : running ? '断开接管（不会关掉那边的服务）' : '接管该端口上的服务')
-                                    : undefined}
-                                  {...(ep
-                                    ? tip(ep.kind === 'remote'
-                                      ? running ? '停用该端点（不会碰那边的服务）' : '探测并启用该端点'
-                                      : running ? '断开接管（不会关掉那边的服务）' : '接管该端口上的服务')
-                                    : {})}
-                                  onClick={e => { e.stopPropagation(); pick() }}
-                                >
-                                  {running ? <CircleStopIcon size={12} /> : ep ? <ServerIcon size={12} /> : <PlayIcon size={12} />}
-                                </button>
+                <div ref={modelPickerRef} className="chat-model-picker" role="group" aria-label="选择模型">
+                  <div className="chat-model-picker-body">
+                    {modelGroups.length > 1 && (
+                      <div className="chat-model-picker-nav" aria-label="模型来源">
+                        {modelGroups.map(g => {
+                          const logoKey = `src:${g.title}`
+                          const logo = modelLogos[logoKey]
+                          const active = g.title === shownModelGroup?.title
+                          return (
+                            <button
+                              key={g.title}
+                              type="button"
+                              aria-pressed={active}
+                              aria-label={g.title}
+                              className={`chat-model-nav-item${active ? ' active' : ''}`}
+                              {...tipHover(`${g.title} · 右键设置图标`)}
+                              onClick={() => setActiveModelGroup(g.title)}
+                              onContextMenu={e => {
+                                e.preventDefault()
+                                // 还没图标 → 直接选图；已有 → 弹出更换/移除菜单
+                                if (!logo) { void pickSourceLogo(logoKey); return }
+                                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                                setSourceLogoMenu({ id: logoKey, x: rect.right + 4, y: rect.top })
+                              }}
+                            >
+                              {logo
+                                ? <img src={logo} alt="" className="chat-model-nav-logo" />
+                                : <span className="chat-model-nav-letter">{g.title.trim().charAt(0).toUpperCase()}</span>}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                    <div className="chat-model-picker-list" role="listbox" aria-label="模型列表">
+                      {shownModelGroup && (
+                        <>
+                          {shownModelGroup.rows.map(row => {
+                            const card = row.card
+                            // 端点记录：卡片行按 endpointId 查，端点行（还没建卡）就是它自己
+                            const ep = card ? endpointOfCard(card, modelEndpoints) : row.endpoint
+                            const running = card?.status === 'running'
+                            const pick = () => { if (card) void handleModelAction(card); else if (row.endpoint) void pickEndpointModel(row.endpoint, row.modelId ?? '') }
+                            // 能力三态：暗=不支持，中性=支持但没启动，点亮=正在跑且真实可用。
+                            // 视觉单独判：纯文本模型启动时不挂 --mmproj，这时即使主模型架构能看图也保持熄灭。
+                            const caps = card ? modelCaps[card.template.id] : null
+                            const capOn = {
+                              thinking: !!caps?.thinking,
+                              tools: !!caps?.tools,
+                              vision: !!caps?.vision && (ep?.kind === 'remote' ? ep.vision === true : hasVisionProjector(card?.template.args)),
+                            }
+                            const capClass = (kind: 'thinking' | 'tools' | 'vision') =>
+                              `chat-model-cap cap-${kind}${capOn[kind] ? ' on' : ''}${running && capOn[kind] ? ' lit' : ''}`
+                            return (
+                              <div
+                                key={row.key}
+                                className={`chat-model-item ${card ? card.status : 'idle'}${card ? '' : ' pending'}`}
+                                role="option"
+                                aria-selected={!!running}
+                                data-row
+                                tabIndex={0}
+                                onKeyDown={rovingKeyNav}
+                                {...tipHover(row.name)}
+                                onClick={pick}
+                              >
+                                <div className="chat-model-logo" onClick={e => { if (!card) return; e.stopPropagation(); toggleLogoMenu(e, card) }}>
+                                  {card && modelLogos[card.template.id]
+                                    ? <img src={modelLogos[card.template.id]!} alt={row.name} className="chat-model-logo-img" />
+                                    : ep ? <ServerIcon size={11} /> : <ImageIcon size={11} />}
+                                </div>
+                                <div className="chat-model-item-info">
+                                  <div className="chat-model-item-name">{row.name}</div>
+                                  {card && (
+                                    <span className="chat-model-caps">
+                                      <span className={capClass('thinking')}><Brain size={11} /></span>
+                                      <span className={capClass('tools')}><Wrench size={11} /></span>
+                                      <span className={capClass('vision')}><Eye size={11} /></span>
+                                    </span>
+                                  )}
+                                  <div className="chat-model-item-tail">
+                                    {running && <CheckIcon size={12} className="chat-model-item-check" />}
+                                    <button
+                                      className="chat-model-item-action"
+                                      aria-label={ep
+                                        ? (ep.kind === 'remote'
+                                          ? running ? '停用该端点（不会碰那边的服务）' : '探测并启用该端点'
+                                          : running ? '断开接管（不会关掉那边的服务）' : '接管该端口上的服务')
+                                        : undefined}
+                                      {...(ep
+                                        ? tipHover(ep.kind === 'remote'
+                                          ? running ? '停用该端点（不会碰那边的服务）' : '探测并启用该端点'
+                                          : running ? '断开接管（不会关掉那边的服务）' : '接管该端口上的服务')
+                                        : {})}
+                                      onClick={e => { e.stopPropagation(); pick() }}
+                                    >
+                                      {running ? <CircleStopIcon size={12} /> : ep ? <ServerIcon size={12} /> : <PlayIcon size={12} />}
+                                    </button>
+                                  </div>
+                                </div>
                               </div>
-                            </div>
-                          </div>
-                        )
-                      })}
+                            )
+                          })}
+                        </>
+                      )}
                     </div>
-                  ))}
+                  </div>
                   <div className="chat-model-attach-sep" />
                   <button className="chat-model-attach-entry" onClick={() => { setModelPickerOpen(false); setView('endpoints') }}>
                     <ServerIcon size={13} /> 管理外部端点…
@@ -849,49 +960,55 @@ export function AgentInputArea({
                 </div>
               )}
             </div>
-            {!plainChat && (
-              <div
-                ref={thinkLevelMenuRef}
-                className={`chat-think-level${thinkLevelOpen ? ' open' : ''}`}
+            {/* 思考程度：两种模式都显示。聊天模式后台本就每次发送都下发思考程度
+                （useAgentLoop 里 setThinkingLevel 不分模式），这里放开 UI 让它可见可控；
+                模型不支持思考时主进程/SDK 自动 clamp，与编码模式行为一致。 */}
+            <div
+              ref={thinkLevelMenuRef}
+              className={`chat-think-level${thinkLevelOpen ? ' open' : ''}`}
+            >
+              <button
+                type="button"
+                className="chat-think-level-trigger"
+                disabled={loading}
+                aria-haspopup="listbox"
+                aria-expanded={thinkLevelOpen}
+                aria-label="思考程度"
+                onClick={() => setThinkLevelOpen(v => !v)}
               >
-                <button
-                  type="button"
-                  className="chat-think-level-trigger"
-                  disabled={loading}
-                  aria-haspopup="listbox"
-                  aria-expanded={thinkLevelOpen}
-                  aria-label="思考程度"
-                  onClick={() => setThinkLevelOpen(v => !v)}
-                >
-                  <span className="chat-think-level-label">{thinkingLevel}</span>
-                </button>
-                {thinkLevelOpen && (
-                  <ul className="chat-think-level-menu" role="listbox" aria-label="思考程度">
-                    {THINKING_LEVELS.map(l => (
-                      <li
-                        key={l}
-                        className={`chat-think-level-item${l === thinkingLevel ? ' active' : ''}`}
-                        role="option"
-                        aria-selected={l === thinkingLevel}
-                        data-row
-                        tabIndex={0}
-                        onKeyDown={rovingKeyNav}
-                        onClick={() => {
-                          setThinkingLevel(l)
-                          setThinkLevelOpen(false)
-                          const cur = piReadyRef.current
-                          if (cur.ready && cur.sid) {
-                            window.api.piAgent.setThinkingLevel(`pi-${cur.sid}`, l).catch(() => { /* 非致命 */ })
-                          }
-                        }}
-                      >
-                        {l}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
+                <span className="chat-think-level-label">{thinkingLevel}</span>
+              </button>
+              {thinkLevelOpen && (
+                <ul className="chat-think-level-menu" role="listbox" aria-label="思考程度">
+                  {THINKING_LEVELS.map(l => (
+                    <li
+                      key={l}
+                      className={`chat-think-level-item${l === thinkingLevel ? ' active' : ''}`}
+                      role="option"
+                      aria-selected={l === thinkingLevel}
+                      data-row
+                      tabIndex={0}
+                      onKeyDown={rovingKeyNav}
+                      onClick={async () => {
+                        setThinkingLevel(l)
+                        setThinkLevelOpen(false)
+                        const cur = piReadyRef.current
+                        if (cur.ready && cur.sid) {
+                          // 主进程按模型能力 clamp 后回传实际生效档（如 max/xhigh 无映射→high），
+                          // 回填后 UI 不再显示一个实际没生效的档位。
+                          try {
+                            const res = await window.api.piAgent.setThinkingLevel(`pi-${cur.sid}`, l)
+                            if (res?.level && res.level !== l) setThinkingLevel(res.level)
+                          } catch { /* 非致命 */ }
+                        }
+                      }}
+                    >
+                      {l}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
             {/* 网络搜索开关：只在编码模式出现。
                 通用模式的工具开关（含网络搜索）已经统一在界面顶栏那个「工具」按钮里
                 （见 AgentCodeViewLayout 的 chat-tools 菜单），这里再放一个就是同一份

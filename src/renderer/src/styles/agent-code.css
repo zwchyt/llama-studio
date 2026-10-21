@@ -7147,7 +7147,7 @@ html.is-panel-resizing .agent-think-body .table-node {
   min-width: 0;
 }
 
-/* 思考文本默认预览：与流式文本同视觉，顶部控制行提供「查看完整思考」与复制 */
+/* 思考文本默认预览：与流式文本同视觉，顶部控制行只提供「查看完整思考」 */
 .agent-think-text-controls {
   display: flex;
   align-items: center;
@@ -7163,11 +7163,6 @@ html.is-panel-resizing .agent-think-body .table-node {
 
 .agent-think-text-controls span {
   margin-right: auto;
-}
-
-/* 短思考只有复制按钮：没有左侧文案撑开，靠 flex-end 保持右对齐 */
-.agent-think-text-controls--copy-only {
-  justify-content: flex-end;
 }
 
 /* 通用长文本行窗口（思考完整文本 / 工具结果共用）：固定高内滚，仅挂载视口附近行 */
@@ -8384,16 +8379,6 @@ html.is-panel-resizing .agent-think-body .table-node {
   }
 }
 
-@keyframes think-grad {
-  0% {
-    background-position: 0% 50%;
-  }
-
-  100% {
-    background-position: 200% 50%;
-  }
-}
-
 /* 思考程度菜单：右缘对齐按钮、向左展开。
    这三个按钮（模型 / 思考程度 / 搜索）都在输入框底部行的右侧组，面板宽度又大于按钮，
    左缘对齐会直接顶出输入框右边；改成右缘对齐后向左展开，弹窗始终落在会话区内。
@@ -8429,35 +8414,35 @@ html.is-panel-resizing .agent-think-body .table-node {
   background-clip: text;
   color: transparent;
   -webkit-text-fill-color: transparent;
-  animation: think-item-in 0.22s ease-out both, think-grad 3s linear infinite;
+  animation: think-item-in 0.22s ease-out both;
 }
 
 .agent-code-view .chat-input-tools .chat-think-level-item:nth-child(1) {
-  animation-delay: 0.02s, 0s;
+  animation-delay: 0.02s;
 }
 
 .agent-code-view .chat-input-tools .chat-think-level-item:nth-child(2) {
-  animation-delay: 0.05s, 0s;
+  animation-delay: 0.05s;
 }
 
 .agent-code-view .chat-input-tools .chat-think-level-item:nth-child(3) {
-  animation-delay: 0.08s, 0s;
+  animation-delay: 0.08s;
 }
 
 .agent-code-view .chat-input-tools .chat-think-level-item:nth-child(4) {
-  animation-delay: 0.11s, 0s;
+  animation-delay: 0.11s;
 }
 
 .agent-code-view .chat-input-tools .chat-think-level-item:nth-child(5) {
-  animation-delay: 0.14s, 0s;
+  animation-delay: 0.14s;
 }
 
 .agent-code-view .chat-input-tools .chat-think-level-item:nth-child(6) {
-  animation-delay: 0.17s, 0s;
+  animation-delay: 0.17s;
 }
 
 .agent-code-view .chat-input-tools .chat-think-level-item:nth-child(7) {
-  animation-delay: 0.20s, 0s;
+  animation-delay: 0.20s;
 }
 
 .agent-code-view .chat-input-tools .chat-think-level-item:hover:not(.active) {
@@ -8469,13 +8454,18 @@ html.is-panel-resizing .agent-think-body .table-node {
   background: var(--surface-hover);
 }
 
+/* 选中态：不再用实心 --accent 铺底 —— 浅色主题的 --accent 是近黑 #0a0a0a，
+   在输入框里等于砸出一块黑板，和周围面板完全不搭。改成 accent 的低透明度染色
+   + 内描边 + 正常文字色，与模型选择弹窗「运行中」行同一套视觉语言。 */
 .agent-code-view .chat-input-tools .chat-think-level-item.active {
   background-image: none;
-  -webkit-text-fill-color: var(--accent-fg);
-  color: var(--accent-fg);
   -webkit-background-clip: border-box;
   background-clip: border-box;
-  background: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
+  -webkit-text-fill-color: var(--text);
+  color: var(--text);
+  font-weight: 500;
 }
 
 /* 网络搜索引擎开关：与思考程度选择器同款小尺寸，自绘互斥下拉 */
@@ -9378,10 +9368,14 @@ html.theme-dark .user-msg-lightbox {
   right: 0;
   left: auto;
   bottom: calc(100% + 4px);
-  width: 200px;
+  /* 固定宽度：不随模型名长短变宽变窄，超长名称走省略号（见 .chat-model-item-name） */
+  width: 440px;
   max-width: calc(100vw - 72px);
   max-height: 320px;
-  overflow-y: auto;
+  /* 双栏布局：面板本身是 flex 列（滚动交给内部列表），底部入口固定不随列表滚动 */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: 4px;
   background: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   border: 1px solid var(--border-strong);
@@ -9391,6 +9385,88 @@ html.theme-dark .user-msg-lightbox {
   /* 打开才挂载 + 同一条 think-menu-in 进场关键帧（面板右缘对齐按钮，变换原点在右下） */
   transform-origin: bottom right;
   animation: think-menu-in 0.16s ease-out;
+}
+
+/* 双栏主体：左栏来源导航（固定宽度）+ 右栏模型列表（独立滚动） */
+.chat-model-picker-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* 左栏是图标条：只显示来源图标（自定义 logo，未设置时为首字母色块），
+   名称走悬停气泡——省出的宽度全给右栏模型名 */
+.chat-model-picker-nav {
+  flex: 0 0 44px;
+  width: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-right: 4px;
+  padding: 2px 4px 2px 2px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.chat-model-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+  transition: background .12s ease;
+}
+
+.chat-model-nav-item:hover {
+  background: var(--surface-hover);
+}
+
+/* 面板 overflow: hidden，外扩的焦点环会被裁掉一半 → 左栏改用内描边 */
+.chat-model-picker-nav .chat-model-nav-item:focus-visible {
+  outline-offset: -2px;
+}
+
+.chat-model-nav-item.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.chat-model-nav-logo {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+/* 未设置图标的来源：首字母色块，至少能与其他来源区分开 */
+.chat-model-nav-letter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.chat-model-nav-item.active .chat-model-nav-letter {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.chat-model-picker-list {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
 }
 
 .chat-model-item {
@@ -9405,13 +9481,6 @@ html.theme-dark .user-msg-lightbox {
   white-space: nowrap;
   transition: background .12s ease, color .12s ease;
   flex-wrap: nowrap;
-}
-
-/* 分组小标题：外部行按端点名分组，本地卡按引擎名分组 */
-.chat-model-group-title {
-  padding: 6px 8px 3px;
-  font-size: 10px;
-  color: var(--text-muted);
 }
 
 /* 行尾那一列：勾与启停键叠在同一个 22px 位里（悬停时互相让位），整体钉在右侧 */
@@ -9510,10 +9579,13 @@ html.theme-dark .user-msg-lightbox {
   color: var(--text);
 }
 
-/* 当前启用的那一项：与搜索菜单选中项同款的实心药丸 */
+/* 当前启用的那一项：主题色淡底 + 内描边。
+   原来用实心 accent（浅色主题下接近纯黑），整块黑底既和界面不搭，
+   也会把上面刚点亮的思考/工具/视觉彩色图标压得看不清。 */
 .chat-model-item.running {
-  background: var(--accent);
-  color: var(--accent-fg);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
 }
 
 .chat-model-item.error {
@@ -9558,6 +9630,7 @@ html.theme-dark .user-msg-lightbox {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
   font-weight: 500;
@@ -9580,6 +9653,11 @@ html.theme-dark .user-msg-lightbox {
   background: color-mix(in srgb, var(--text-muted) 8%, transparent);
 }
 
+/* 能力图标三态：
+   · 默认（不支持）—— 暗淡
+   · .on（模型具备该能力，但没启动）—— 中性
+   · .lit（正在运行且真实可用）—— 点亮（彩色 + 底色）
+   视觉单独判：纯文本模型启动时不挂 --mmproj，即使架构支持看图也保持中性 */
 .chat-model-cap {
   display: inline-flex;
   align-items: center;
@@ -9588,36 +9666,37 @@ html.theme-dark .user-msg-lightbox {
   height: 14px;
   border-radius: 3px;
   color: var(--text-muted);
-  transition: background .12s ease, color .12s ease;
+  opacity: .28;
+  transition: background .12s ease, color .12s ease, opacity .12s ease;
 }
 
-.chat-model-cap:hover {
-  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+.chat-model-cap.on {
+  opacity: .75;
+}
+
+.chat-model-cap.on:hover {
+  opacity: 1;
   color: var(--text);
 }
 
-.chat-model-item.running .chat-model-cap.cap-thinking {
-  color: #a78bfa;
+.chat-model-item.running .chat-model-cap.lit {
+  opacity: 1;
 }
 
-.chat-model-item.running .chat-model-cap.cap-tools {
-  color: #60a5fa;
+/* 点亮色向主题文字色靠一点：浅色主题下更沉、深色主题下更亮，两边都看得清 */
+.chat-model-item.running .chat-model-cap.lit.cap-thinking {
+  color: color-mix(in srgb, #a78bfa 65%, var(--text));
+  background: color-mix(in srgb, #a78bfa 18%, transparent);
 }
 
-.chat-model-item.running .chat-model-cap.cap-vision {
-  color: #34d399;
+.chat-model-item.running .chat-model-cap.lit.cap-tools {
+  color: color-mix(in srgb, #60a5fa 65%, var(--text));
+  background: color-mix(in srgb, #60a5fa 18%, transparent);
 }
 
-.chat-model-item.running .chat-model-cap.cap-thinking:hover {
-  background: color-mix(in srgb, #a78bfa 15%, transparent);
-}
-
-.chat-model-item.running .chat-model-cap.cap-tools:hover {
-  background: color-mix(in srgb, #60a5fa 15%, transparent);
-}
-
-.chat-model-item.running .chat-model-cap.cap-vision:hover {
-  background: color-mix(in srgb, #34d399 15%, transparent);
+.chat-model-item.running .chat-model-cap.lit.cap-vision {
+  color: color-mix(in srgb, #34d399 65%, var(--text));
+  background: color-mix(in srgb, #34d399 18%, transparent);
 }
 
 .chat-model-item-action {

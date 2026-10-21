@@ -361,7 +361,7 @@ interface LlamaCppApi {
     browserShow: (input: { type: 'file' | 'html' | 'url'; path?: string; html?: string; url?: string; title?: string }) => Promise<{ ok: boolean; type: 'file' | 'html' | 'url'; title: string; url?: string; error?: string }>
     browserCapture: (opts: { fullPage: boolean }) => Promise<{ ok: boolean; imageId?: string; mimeType?: 'image/png'; width?: number; height?: number; fullPage?: boolean; error?: string }>
     undo: (sessionId: string, toolCallId: string) => Promise<{ success: boolean; path?: string; error?: string }>
-    setThinkingLevel: (sessionId: string, level: ThinkingLevel) => Promise<{ success: boolean }>
+    setThinkingLevel: (sessionId: string, level: ThinkingLevel) => Promise<{ success: boolean; level?: ThinkingLevel }>
     // ── 轨迹台账（事件流落盘的查询侧；read 支持 fromSeq 增量）──
     trajectoryList: () => Promise<Array<{ sessionId: string; bytes: number; mtimeMs: number }>>
     trajectoryRead: (sessionId: string, fromSeq: number) => Promise<{ entries: Array<{ seq: number; ts: number; type: string; src: 'flow' | 'assistant' | 'tool' | 'user' | 'system'; payload: unknown }>; nextSeq: number }>

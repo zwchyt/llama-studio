@@ -20,7 +20,7 @@
 // 注意：面板的 usePopoverDismiss 调用与 handleModelAction 仍留在主组件
 // （前者与 condenseOpen 等循环域状态交织，后者是独立的模型卡动作域）。
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useStore } from '../../../store/useStore'
 import { notify } from '../../../store/notificationStore'
 import { safeCall } from '../../../utils/safeCall'
@@ -29,7 +29,6 @@ import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { askUserQuestionRegistry } from '../../../utils/askUserQuestionRegistry'
 import { runBrowserNavigate, toBrowserShowResult } from '../utils/browserController'
 import type { AgentMode, AgentSession, CardState, KnowledgeBaseMeta, TodoUpdate } from '../../../../../shared/types'
-import type { ModelPickerGroup } from '../../../utils/endpoint'
 
 /** 右侧面板模式：files=文件树+预览 / preview=独立预览列 / browser=内嵌浏览器 / terminal=内嵌终端 / diff=Git变更 / menu=顶栏「»」展开的工作区选择界面 */
 export type RightPanelMode = 'files' | 'preview' | 'browser' | 'terminal' | 'diff' | 'menu'
@@ -39,10 +38,9 @@ export type PanelView = 'files' | 'preview' | 'diff' | 'terminal' | 'browser'
 type ModePanelState = { treeOpen: boolean; rightPanelMode: RightPanelMode; openPanels: PanelView[] }
 
 export function useAgentUiState({
-  modelGroups, loading, piReadyRef, mode,
+  loading, piReadyRef, mode,
   activeProjectId, activeSessionId, activeSession, updateSessionInProject,
 }: {
-  modelGroups: ModelPickerGroup[]
   loading: boolean
   piReadyRef: React.RefObject<{ sid: string | null; ready: boolean }>
   /** 当前工作区模式：通用模式（'chat'）下顶栏与输入区收掉编码专属控件 */
@@ -116,25 +114,6 @@ export function useAgentUiState({
   // 全局 store 共享 + model-capabilities.json 持久化，检测结果不重复读盘
   const modelCaps = useStore(s => s.modelCapabilities)
   const loadModelCapabilities = useStore(s => s.loadModelCapabilities)
-  // 下拉面板宽度：按列表中最长文字 + 行内元素估算，保证名称完整显示不省略
-  const modelPickerWidth = useMemo(() => {
-    // 下拉里要量的文字：分组标题 + 每一行的模型名（含端点上还没建卡的那几行）
-    const texts = [...modelGroups.map(g => g.title), ...modelGroups.flatMap(g => g.rows.map(r => r.name))]
-    if (texts.length === 0) return 200
-    const ctx = document.createElement('canvas').getContext('2d')
-    if (!ctx) return 200
-    ctx.font = '500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-    // 能力徽标只挂在卡片行上：按最宽的那一行预留（单个徽标 14 + 间距 3）
-    let maxCapsW = 0
-    for (const card of modelGroups.flatMap(g => g.rows.map(r => r.card))) {
-      const caps = card && modelCaps[card.template.id]
-      const capsCount = caps ? Number(!!caps.thinking) + Number(!!caps.tools) + Number(!!caps.vision) : 0
-      if (capsCount > 0) maxCapsW = Math.max(maxCapsW, capsCount * 17 + 6)
-    }
-    // 行内固定余量：logo 18 + 三处间距 6×3 + 行尾 22 + 行内边距 8×2 + 面板内边距 4×2
-    const widest = Math.max(...texts.map(t => ctx.measureText(t).width))
-    return Math.min(Math.max(widest + maxCapsW + 18 + 6 * 3 + 22 + 16 + 8, 200), 560)
-  }, [modelGroups, modelCaps])
   // 各模型的自定义 Logo（key = template.id；data URL 或 null=无）：全局 store 共享，
   // 与「模型管理 」卡片同一份数据，任一处设置/移除后两处立即同步
   const modelLogos = useStore(s => s.modelLogos)
@@ -173,6 +152,23 @@ export function useAgentUiState({
     if (!res.success) { notify(`移除 Logo 失败：${res.error}`, 'error'); return }
     setModelLogoEntry(card.template.id, null)
     setLogoMenu(null)
+  }, [])
+  // 模型下拉左栏「来源」的图标：与模型 Logo 共用同一份映射，key 加 src: 前缀区分。
+  // 主进程那边 id 只影响落盘文件名，任意 key 都能用，所以直接复用同一套选图/删图逻辑。
+  const pickSourceLogo = useCallback(async (id: string) => {
+    const res = await window.api.setModelLogo(id)
+    if (!res.success) {
+      if (res.error !== '已取消') notify(`设置图标失败：${res.error}`, 'error')
+      return
+    }
+    const img = await window.api.getModelLogoImage(res.fileName!)
+    setModelLogoEntry(id, img.success && img.dataUrl ? img.dataUrl : null)
+  }, [])
+  const removeSourceLogo = useCallback(async (id: string) => {
+    const res = await safeCall(() => window.api.removeModelLogo(id), '移除图标失败')
+    if (!res) return
+    if (!res.success) { notify(`移除图标失败：${res.error}`, 'error'); return }
+    setModelLogoEntry(id, null)
   }, [])
   // Logo 菜单外部点击收起
   const closeLogoMenu = useCallback(() => setLogoMenu(null), [setLogoMenu])
@@ -433,9 +429,10 @@ export function useAgentUiState({
     closeSearchMenu, applySearchChange,
     plainChat, mode,
     chatTools, chatToolsMenuOpen, setChatToolsMenuOpen, chatToolsMenuRef, closeChatToolsMenu, toggleChatTool,
-    modelCaps, loadModelCapabilities, modelPickerWidth,
+    modelCaps, loadModelCapabilities,
     modelLogos, setModelLogoEntry, loadModelLogos,
     logoMenu, setLogoMenu, logoMenuRef, toggleLogoMenu, pickModelLogo, removeModelLogo, closeLogoMenu,
+    pickSourceLogo, removeSourceLogo,
     modelBtnRef, attachBtnRef,
     // 侧栏 / 文件树 / 右侧面板 / 终端
     treeOpen, setTreeOpen, rightPanelMode, setRightPanelMode, setRightPanelModeAndOpen,

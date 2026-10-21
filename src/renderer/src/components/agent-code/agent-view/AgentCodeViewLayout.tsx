@@ -207,7 +207,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     terminalMounted, trajBtnRef, trajOpen, treeOpen,
     allowBtnRef, approvalReq, autoApproveBtnRef, autoApproveRef, attachBtnRef,
     ctxInlineRef, currentPlanItems, logoMenu, logoMenuRef, modelBtnRef, modelCaps,
-    modelLogos, modelPickerOpen, modelPickerRef, modelPickerWidth, pickModelLogo,
+    modelLogos, modelPickerOpen, modelPickerRef, pickModelLogo, pickSourceLogo, removeSourceLogo,
     planTitle, rejectBtnRef, removeModelLogo, resolveApproval, searchEnabled,
     searchMenuOpen, searchMenuRef, searchProvider, setModelPickerOpen, setSearchMenuOpen,
     plainChat,
@@ -1053,7 +1053,8 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
             }}
             models={{
               modelGroups, modelBtnRef, modelCaps, modelLabel, modelLogos,
-              modelPickerOpen, modelPickerRef, modelPickerWidth, handleModelAction, pickEndpointModel,
+              modelPickerOpen, modelPickerRef, handleModelAction, pickEndpointModel,
+              pickSourceLogo, removeSourceLogo,
               logoMenu, logoMenuRef, toggleLogoMenu, pickModelLogo, removeModelLogo,
               setModelPickerOpen, thinkLevelMenuRef, thinkLevelOpen,
               setThinkLevelOpen, thinkingLevel, setThinkingLevel,

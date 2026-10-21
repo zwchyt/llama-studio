@@ -378,10 +378,12 @@ export class PiAgentManager {
     await bridge.session.abort()
   }
 
-  /** 动态设置会话级思考程度（发送前调用；会按当前模型能力自动 clamp）。 */
-  setThinkingLevel(sessionId: string, level: ThinkingLevel): void {
+  /** 动态设置会话级思考程度（发送前调用；会按当前模型能力自动 clamp）。
+      返回 clamp 后的实际生效档，供渲染层纠正 UI（如 max/xhigh 无映射时会被降成 high）。 */
+  setThinkingLevel(sessionId: string, level: ThinkingLevel): ThinkingLevel {
     const bridge = this.getBridge(sessionId)
     bridge.session.setThinkingLevel(level)
+    return bridge.session.thinkingLevel
   }
 
   /** 手动压缩：直连 pi 的 session.compact()。

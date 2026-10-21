@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 // ── 共用自定义气泡（useBubbleTip）──
@@ -30,8 +30,15 @@ const MIN_H = 44
 
 type TipState = { text: string; left: number; top: number; above: boolean }
 
-export function useBubbleTip(placement: BubbleTipPlacement = 'below') {
+export function useBubbleTip(placement: BubbleTipPlacement = 'below', delayMs = 0) {
   const [tip, setTip] = useState<TipState | null>(null)
+  // 悬停延迟（delayMs > 0 时生效）：鼠标快速掠过不弹，停住才弹。
+  // 默认 0 保持原有「即时」行为，只有显式传了延迟的调用点才变慢。
+  const delayTimer = useRef<number | null>(null)
+  const clearDelay = useCallback(() => {
+    if (delayTimer.current !== null) { window.clearTimeout(delayTimer.current); delayTimer.current = null }
+  }, [])
+  useEffect(() => clearDelay, [clearDelay])
 
   const show = useCallback((text: string, el: HTMLElement | null) => {
     if (!el) { setTip(null); return }
@@ -62,12 +69,18 @@ export function useBubbleTip(placement: BubbleTipPlacement = 'below') {
 
   // 每个要换装的元素 spread 一份：{...tip('文案')}
   const tipHandlers = useCallback((text: string) => ({
-    onMouseEnter: (e: React.MouseEvent<HTMLElement>) => show(text, e.currentTarget),
-    onMouseLeave: () => setTip(null),
-  }), [show])
+    onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
+      const el = e.currentTarget
+      clearDelay()
+      if (delayMs <= 0) { show(text, el); return }
+      // 延迟期间元素位置可能变化，坐标在真正显示时再取
+      delayTimer.current = window.setTimeout(() => { delayTimer.current = null; show(text, el) }, delayMs)
+    },
+    onMouseLeave: () => { clearDelay(); setTip(null) },
+  }), [show, delayMs, clearDelay])
 
   // 已有 onMouseEnter 的元素走这对裸方法，在原处理里顺手调用（见 ToolsHub 的 ToolActionItem）
-  const hideTip = useCallback(() => setTip(null), [])
+  const hideTip = useCallback(() => { clearDelay(); setTip(null) }, [clearDelay])
 
   const tipNode = tip ? createPortal(
     <div
