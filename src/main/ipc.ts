@@ -7047,6 +7047,8 @@ export function registerIpcHandlers(): void {
     error?: string
     errorType?: string
     fileSize?: number
+    /** 文件修改时间（预览保存前的「外部是否改过」比对基准；statSync 已算过，零额外开销） */
+    mtimeMs?: number
     suggestedCommand?: string
   }> => {
     try {
@@ -7206,7 +7208,8 @@ export function registerIpcHandlers(): void {
         totalLines,
         startLine: offset,
         truncated: previewLarge,
-        fileSize
+        fileSize,
+        mtimeMs: fileStat.mtimeMs
       }
     } catch (e) {
       return { success: false, error: `读取失败：${e instanceof Error ? e.message : String(e)}`, errorType: 'FileReadError' }
@@ -7223,9 +7226,20 @@ export function registerIpcHandlers(): void {
     webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml', ico: 'image/x-icon',
     avif: 'image/avif',
   }
-  ipcMain.handle('read-file-base64', async (_e, filePath: string): Promise<{ success: boolean; dataUrl?: string; error?: string }> => {
+  ipcMain.handle('read-file-base64', async (_e, filePath: string, opts?: { maxBytes?: number }): Promise<{ success: boolean; dataUrl?: string; error?: string; fileSize?: number }> => {
     try {
       filePath = resolveAgentPath(filePath)
+      // 体积守卫：整份读进内存再转 base64，不设限时几十 MB 的图会把内存和主线程一起拖住。
+      // 读之前用 statSync 只查元信息，超限直接拒——别等 readFileSync 把字节全搬进来再判。
+      if (opts?.maxBytes && opts.maxBytes > 0) {
+        try {
+          const size = statSync(filePath).size
+          if (size > opts.maxBytes) {
+            const mb = (n: number) => (n / 1024 / 1024).toFixed(1)
+            return { success: false, error: `文件过大（${mb(size)} MB），超过内联上限 ${mb(opts.maxBytes)} MB`, fileSize: size }
+          }
+        } catch { /* stat 失败留给下面的 readFileSync 报错 */ }
+      }
       const ext = /\.([a-z0-9]+)$/i.exec(filePath)
       const mime = ext ? (MIME_BY_EXT[ext[1]!.toLowerCase()] ?? 'application/octet-stream') : 'application/octet-stream'
       const buf = readFileSync(filePath)

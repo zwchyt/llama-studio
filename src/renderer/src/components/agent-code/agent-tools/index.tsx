@@ -30,7 +30,7 @@ import { TOOL_RESULT_ROW_HEIGHT, TOOL_RESULT_VIEW_HEIGHT } from '../utils/rowMet
 import { WindowedText } from '../WindowedText'
 import { HighlightedCode } from '../HighlightedCode'
 import { langFromPath } from '../utils/highlightLines'
-import { dirName, pathDir, resolveWorkspacePath, toWorkspaceRelative } from '../utils/paths'
+import { baseName, pathDir, resolveWorkspacePath, toWorkspaceRelative } from '../utils/paths'
 import { formatDuration } from '../utils/format'
 import { useBubbleTip } from '../../useBubbleTip'
 import { useThrottledValue } from '../../../utils/useThrottledValue'
@@ -45,8 +45,8 @@ export function getToolPreview(input: unknown): string {
   const o = input as Record<string, unknown>
   const pick = (k: string) => (typeof o[k] === 'string' ? (o[k] as string) : '')
   if (pick('command')) return pick('command').slice(0, 120)
-  if (pick('file_path')) return dirName(pick('file_path'))
-  if (pick('path')) return dirName(pick('path'))
+  if (pick('file_path')) return baseName(pick('file_path'))
+  if (pick('path')) return baseName(pick('path'))
   if (pick('pattern')) return pick('pattern')
   if (pick('query')) return pick('query')
   const keys = Object.keys(o)
@@ -575,7 +575,7 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
   const formatted = formatToolArgs(args)
   if (!formatted && !filePath) return null
   // 图标与配色只查一次（原为同一表达式调用两次）
-  const fm = filePath ? fileMeta(dirName(filePath)) : null
+  const fm = filePath ? fileMeta(baseName(filePath)) : null
   const FileIcon = fm?.Icon
   return (
     <div className="agent-tool-args">
@@ -699,7 +699,7 @@ export const ToolResultView = React.memo(function ToolResultView({ result, trunc
                 {...tip(p)}
                 onClick={() => onPreviewFile?.(resolveWorkspacePath(p))}
               >
-                <span className="agent-tool-paths-name">{dirName(p)}</span>
+                <span className="agent-tool-paths-name">{baseName(p)}</span>
                 {/* 展示用工作区相对路径；title 与点击跳转仍用原绝对路径 */}
                 <span className="agent-tool-paths-full">{toWorkspaceRelative(p)}</span>
                 <span className="agent-tool-paths-hint">（点击文件名可在编辑器中打开）</span>
@@ -740,7 +740,7 @@ export const ToolResultView = React.memo(function ToolResultView({ result, trunc
                 {...tip(p)}
                 onClick={() => onPreviewFile?.(resolveWorkspacePath(p))}
               >
-                <span className="agent-tool-paths-name">{dirName(p)}</span>
+                <span className="agent-tool-paths-name">{baseName(p)}</span>
                 <span className="agent-tool-paths-full">{toWorkspaceRelative(p)}</span>
                 <span className="agent-tool-paths-hint">（点击文件名可在编辑器中打开）</span>
               </button>
@@ -758,7 +758,7 @@ export const ToolResultView = React.memo(function ToolResultView({ result, trunc
                   {...tip(g.path)}
                   onClick={() => onPreviewFile?.(resolveWorkspacePath(g.path))}
                 >
-                  <span className="agent-tool-paths-name">{dirName(g.path)}</span>
+                  <span className="agent-tool-paths-name">{baseName(g.path)}</span>
                   <span className="agent-tool-paths-full">{toWorkspaceRelative(g.path)}</span>
                 </button>
                 <div className="agent-tool-code no-hash no-counter">
@@ -932,7 +932,7 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip）
   const { tipHandlers: tip, tipNode } = useBubbleTip()
   // 头部文件图标与配色只查一次（原为同一表达式调用两次）
-  const headFileMeta = headFilePath ? fileMeta(dirName(headFilePath)) : null
+  const headFileMeta = headFilePath ? fileMeta(baseName(headFilePath)) : null
   const HeadFileIcon = headFileMeta?.Icon
   if (!showCard) return null
 
@@ -968,7 +968,7 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
                   行段做成中性 chip（此前是 `:7-19` 这种带冒号的纯文本，看不出是独立参数） */}
               <span className="agent-tool-call-pathlabel">
                 {headFileDir && <span className="agent-tool-call-pathdir">{headFileDir}/</span>}
-                <span className="agent-tool-call-pathname">{dirName(headFilePath)}</span>
+                <span className="agent-tool-call-pathname">{baseName(headFilePath)}</span>
               </span>
               {readRange && <span className="agent-tool-call-linerange">{readRange.start}-{readRange.end}</span>}
             </button>
@@ -1178,8 +1178,8 @@ export const FileChangeSummary = React.memo(function FileChangeSummary({ toolCal
               return (
                 <div className="agent-file-changes-line" key={f.path}>
                   <button className="agent-file-changes-row" {...tip(f.path)} style={{ animationDelay: `${Math.min(i, 8) * 70}ms` }} onClick={() => onOpenChange(resolveWorkspacePath(f.path))}>
-                    {(() => { const { Icon: FIcon, color } = fileMeta(dirName(rel)); return <FIcon size={12} style={{ color }} /> })()}
-                    <span className="agent-file-changes-name">{dirName(rel)}</span>
+                    {(() => { const { Icon: FIcon, color } = fileMeta(baseName(rel)); return <FIcon size={12} style={{ color }} /> })()}
+                    <span className="agent-file-changes-name">{baseName(rel)}</span>
                     {/* 增删行数与 A/M 徽标紧跟文件名，扫视时名称、数字、状态一眼对应 */}
                     <span className="agent-tool-diffstat">
                       {f.added > 0 && <span className="diff-add">+{f.added}</span>}

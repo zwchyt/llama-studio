@@ -116,7 +116,7 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
   }, [])
 
   useEffect(() => {
-    return registerBrowserNavigator(async (cmd) => {
+    const off = registerBrowserNavigator(async (cmd) => {
       setInputUrl(cmd.url)
       setError(null)
       setCrashed(false)
@@ -151,6 +151,17 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
         ...(r.error ? { error: r.error } : {})
       }
     })
+    return () => {
+      off()
+      // 导航进行中面板被卸载（切面板 / 关面板）：清掉 25s 兜底定时器，并让等待中的
+      // 工具调用立刻拿到结果——否则它要白等满 25s 才收到「页面加载超时」。
+      const p = pendingNavRef.current
+      if (p) {
+        clearTimeout(p.timer)
+        pendingNavRef.current = null
+        p.resolve({ ok: false, error: '浏览器面板已关闭' })
+      }
+    }
   }, [])
 
   // 注释模式开关：通知 webview 内的注释工具（preload 会回传状态）
@@ -181,14 +192,19 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
     webviewRef.current?.executeJavaScript('window.__agentAnnotate && window.__agentAnnotate.clear()').catch(() => {})
   }, [annotations, onSendToAgent])
 
-  // 轮询取回注释工具状态（active + 注释列表）：注入脚本在页面上下文无法推送，
-  // 由宿主周期性 snapshot；浏览器面板不可见时暂停以省开销。
-  // snapshot 每次返回新数组引用，内容比较后才 setState，避免轮询触发整组件重渲染。
+  // 轮询取回注释工具状态（active + 注释列表）。为什么必须轮询：
+  // ① 注入脚本在 guest 页面上下文，webview 不能挂 preload（只接受 file: 协议，dev 的
+  //    http 页面加载不了），页面侧没有 IPC 通道能推给宿主；
+  // ② 页面内还有 Ctrl+Shift+F 可以自行开关注释，宿主不轮询就永远不知道。
+  // 间隔保持 800ms：这个间隔**就是**宿主按钮的状态滞后上限（点宿主按钮也要等下一轮才亮），
+  // 降频换来的省（1.25 → 0.4 次/秒 IPC）不值那个可感知的延迟。这里只把 setInterval 换成
+  // 自调度：guest 忙、单轮超过 800ms 时不会像 setInterval 那样把 tick 叠起来。
   useEffect(() => {
     if (!initialUrl || !visible) return
     const wv = webviewRef.current
     if (!wv) return
     let stopped = false
+    let timer: ReturnType<typeof setTimeout> | null = null
     const tick = async () => {
       if (stopped) return
       try {
@@ -202,10 +218,10 @@ export default function AgentBrowser({ visible = true, onSendToAgent }: { visibl
           })
         }
       } catch {}
+      if (!stopped) timer = setTimeout(() => void tick(), 800)
     }
-    const t = setInterval(tick, 800)
-    tick()
-    return () => { stopped = true; clearInterval(t) }
+    void tick()
+    return () => { stopped = true; if (timer) clearTimeout(timer) }
   }, [initialUrl, visible])
 
   // webview dom-ready 后绑定事件

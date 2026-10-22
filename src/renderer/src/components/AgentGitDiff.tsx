@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { createPortal } from 'react-dom'
 import { AlignJustifyIcon, ArrowUpDownIcon, CheckIcon, ChevronRightIcon, ChevronsDownIcon, ChevronsUpIcon, ChevronsLeftRightIcon, CopyIcon, DiffIcon, FileCheckIcon, FilePenIcon, FileSearchIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, GitCommitHorizontalIcon, GitCompareIcon, HistoryIcon, MinusIcon, PlusIcon, RefreshCwIcon, SearchIcon, WrapTextIcon, XIcon } from '@animateicons/react/lucide'
 import { fileMeta } from '../utils/fileIcon'
+import { joinPath } from './agent-code/utils/paths'
 import { usePopoverDismiss } from '../utils/usePopoverDismiss'
 import { useBubbleTip } from './useBubbleTip'
 import type { AniIconHandle } from './agent-code/types'
@@ -91,7 +92,7 @@ function contentToRows(content: string): DiffRow[] {
 }
 
 const baseName = (p: string) => p.split('/').pop() || p
-const dirName = (p: string) => { const i = p.lastIndexOf('/'); return i >= 0 ? p.slice(0, i) : '' }
+const parentOf = (p: string) => { const i = p.lastIndexOf('/'); return i >= 0 ? p.slice(0, i) : '' }
 
 const STATUS_LABEL: Record<string, string> = { M: '修改', A: '新增', D: '删除', R: '重命名', C: '复制', U: '冲突', '?': '未跟踪' }
 
@@ -345,7 +346,7 @@ const GitFileBlock = React.memo(function GitFileBlock({ file, onOpen, forceColla
     }
   }, [expandedGaps, blocks, file.path, gapContent])
 
-  const dir = dirName(file.path)
+  const dir = parentOf(file.path)
   const { Icon: FileIcon, color: fileColor } = fileMeta(file.path)
   const [copied, setCopied] = useState(false)
   const canCopy = !file.binary && rows.length > 0
@@ -648,8 +649,7 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
   }, [checkoutBranch, onRefresh])
   // 打开文件回调固定引用：内联函数会击穿 GitFileBlock 的 memo，任意父层重渲染都会重渲染全部文件块
   const openFile = useCallback((relPath: string, line?: number) => {
-    const root = workspaceDir.replace(/[\\/]+$/, '')
-    onOpenFile(`${root}/${relPath}`, line)
+    onOpenFile(joinPath(workspaceDir, relPath), line)
   }, [workspaceDir, onOpenFile])
   // 暂存/取消暂存操作
   const handleStage = useCallback(async (path: string) => {
@@ -1007,7 +1007,7 @@ export default function AgentGitDiff({ data, loading, onRefresh, onOpenFile, wor
               <button className="agent-git-jump-item" key={f.path} {...tip(f.path)} onClick={() => jumpToFile(f.path)}>
                 <FIcon size={11} style={{ color: fColor }} />
                 <span className="agent-git-jump-name">{baseName(f.path)}</span>
-                <span className="agent-git-jump-dir">{dirName(f.path)}</span>
+                <span className="agent-git-jump-dir">{parentOf(f.path)}</span>
                 <span className="agent-git-stat">
                   <span className="add">+{st?.added ?? 0}</span>
                   <span className="del">−{st?.removed ?? 0}</span>

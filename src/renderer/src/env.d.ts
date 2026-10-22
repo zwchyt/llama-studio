@@ -262,14 +262,14 @@ interface LlamaCppApi {
   // ── Agent Code 文件树自动刷新（目录监听）──
   startAgentFileWatch: (dir: string) => Promise<{ success: boolean; error?: string }>
   stopAgentFileWatch: () => Promise<{ success: boolean }>
-  onAgentFileChanged: (cb: (data: { dir: string; filename: string }) => void) => void
+  onAgentFileChanged: (cb: (data: { dir: string; filename: string }) => void) => () => void
   removeAgentFileListeners: () => void
   // ── Agent Code 目录操作 ──
   listDir: (dirPath: string) => Promise<{ success: boolean; entries?: { name: string; isDir: boolean; fileCount: number; size?: number }[]; truncated?: boolean; total?: number; error?: string }>
   // ── Agent Code 文件操作 ──
-  readFile: (filePath: string, opts?: { maxBytes?: number; offset?: number; limit?: number; raw?: boolean }) => Promise<{ success: boolean; content?: string; lines?: number; totalLines?: number; startLine?: number; truncated?: boolean; error?: string; errorType?: string; fileSize?: number; suggestedCommand?: string }>
+  readFile: (filePath: string, opts?: { maxBytes?: number; offset?: number; limit?: number; raw?: boolean }) => Promise<{ success: boolean; content?: string; lines?: number; totalLines?: number; startLine?: number; truncated?: boolean; error?: string; errorType?: string; fileSize?: number; mtimeMs?: number; suggestedCommand?: string }>
   statFile: (filePath: string) => Promise<{ mtimeMs: number; size: number } | null>
-  readFileBase64: (filePath: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>
+  readFileBase64: (filePath: string, opts?: { maxBytes?: number }) => Promise<{ success: boolean; dataUrl?: string; error?: string; fileSize?: number }>
   getFilePath: (file: File) => string
   writeFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>
   writeTempFile: (fileName: string, base64: string) => Promise<{ success: boolean; path?: string; error?: string }>

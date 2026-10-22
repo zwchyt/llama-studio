@@ -40,6 +40,7 @@ import { TaskPlanCard } from '../agent-task'
 import { AgentPreviewSlot } from '../agent-preview/AgentPreviewSlot'
 import { useBubbleTip } from '../../useBubbleTip'
 import type { AgentMsgRowActions } from '../types'
+import { PANEL_BINDS } from '../utils/panels'
 import { maybeRunSendFlight } from '../flight/sendFlight'
 import { PLAIN_CHAT_TOOL_NAMES } from '../../../../../shared/types'
 import type { CardState, ModelEndpoint } from '../../../../../shared/types'
@@ -456,17 +457,11 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     if (src) openMemoryImage(a.name, src, 'preview')
   }, [openPreview, openMemoryImage])
 
-  // 五个工作区的快捷键 F1~F5；卡片上显示的提示文案在 AgentPreviewSlot.tsx 的 PANEL_SHORTCUT
+  // 五个工作区的快捷键 F1~F5：绑定表与卡片上的提示文案同源于 utils/panels 的 PANEL_BINDS。
   // 再按同一个键关闭它自己：走 closePanel（与标签条上的 × 同一条路径），还并开着别的
   // 工作区时切到剩下的那个，全关完才收起整块面板。
   useEffect(() => {
-    const binds = [
-      { tab: 'files' as const, code: 'F1' },
-      { tab: 'diff' as const, code: 'F2' },
-      { tab: 'terminal' as const, code: 'F3' },
-      { tab: 'browser' as const, code: 'F4' },
-      { tab: 'preview' as const, code: 'F5' },
-    ]
+    const binds = PANEL_BINDS
     const onKey = (e: KeyboardEvent) => {
       // 按住不放会连发，一次连发能把面板开关来回抖动十几次
       if (e.repeat) return

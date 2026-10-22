@@ -5,9 +5,31 @@
 
 import { getWorkspaceRootForSession } from '../../../tools/workspaceRoot'
 
-export function dirName(p: string) { return p.split('\\').pop()?.split('/').pop() || p }
+// 取路径最后一段（文件名/目录名）。先剥尾分隔符：否则 'E:\a\b\' 会取到空串、兜底返回整条路径。
+export function baseName(p: string) {
+  const s = p.replace(/[\\/]+$/, '')
+  return s.split(/[\\/]/).pop() || p
+}
 
 export const pathDir = (p: string) => p.replace(/[\\/][^\\/]*$/, '').replace(/\\/g, '/')
+
+// 统一分隔符为 '/'、压缩重复分隔符、去尾分隔符。UNC（\\server\share）保留开头的双斜杠。
+// 各处不再手写 replace(/\\/g,'/')：盘符冒号、尾斜杠、混合分隔符的边界只在这一处处理。
+export function normalizePath(p: string): string {
+  if (!p) return ''
+  const unified = p.replace(/\\/g, '/')
+  const isUnc = unified.startsWith('//')
+  const body = unified.replace(/\/{2,}/g, '/').replace(/\/+$/, '')
+  if (isUnc) return '/' + body
+  return body || '/'
+}
+
+// 拼一段路径并归一化：空段直接返回另一段（避免出现以 '/' 开头的半截路径）
+export function joinPath(a: string, b: string): string {
+  if (!a) return normalizePath(b)
+  if (!b) return normalizePath(a)
+  return normalizePath(a.replace(/[\\/]+$/, '') + '/' + b.replace(/^[\\/]+/, ''))
+}
 
 // 将工具参数中的相对路径按当前工作区解析为绝对路径（用于点击预览）
 export function resolveWorkspacePath(p: string): string {

@@ -219,7 +219,7 @@ const fullApi = {
 
   // ── Agent Code 工作台 文件操作 ──
   readFile: (filePath: string, opts?: { maxBytes?: number; raw?: boolean }) => ipcRenderer.invoke('read-file', filePath, opts),
-  readFileBase64: (filePath: string) => ipcRenderer.invoke('read-file-base64', filePath),
+  readFileBase64: (filePath: string, opts?: { maxBytes?: number }) => ipcRenderer.invoke('read-file-base64', filePath, opts),
   statFile: (filePath: string) => ipcRenderer.invoke('stat-file', filePath) as Promise<{ mtimeMs: number; size: number } | null>,
   getFilePath: (file: File) => webUtils.getPathForFile(file),
   writeFile: (filePath: string, content: string) => ipcRenderer.invoke('write-file', filePath, content),
@@ -229,9 +229,12 @@ const fullApi = {
   // ── Agent Code 工作台 文件树自动刷新（目录监听）──
   startAgentFileWatch: (dir: string) => ipcRenderer.invoke('start-agent-file-watch', dir),
   stopAgentFileWatch: () => ipcRenderer.invoke('stop-agent-file-watch'),
+  // 多订阅：返回退订函数。此前这里先 removeAllListeners 再 on，等于「最后一个订阅者赢」，
+  // 且任一订阅者卸载时会把别人的监听一起删掉（文件树与预览列都要监听同一个事件）。
   onAgentFileChanged: (cb: (data: { dir: string; filename: string }) => void) => {
-    ipcRenderer.removeAllListeners('agent-file-changed')
-    ipcRenderer.on('agent-file-changed', (_e, data) => cb(data))
+    const handler = (_e: unknown, data: { dir: string; filename: string }) => cb(data)
+    ipcRenderer.on('agent-file-changed', handler)
+    return () => { ipcRenderer.removeListener('agent-file-changed', handler) }
   },
   removeAgentFileListeners: () => {
     ipcRenderer.removeAllListeners('agent-file-changed')

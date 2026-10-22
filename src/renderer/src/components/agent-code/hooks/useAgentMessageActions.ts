@@ -19,7 +19,8 @@ import { useCallback, useRef } from 'react'
 import { notify } from '../../../store/notificationStore'
 import { parseThinkSegments } from '../agent-message'
 import { uniqueId } from '../utils/ids'
-import { dirName } from '../utils/paths'
+import { baseName } from '../utils/paths'
+import { PI_UNDO_PREFIX } from '../utils/constants'
 import type { AgentMessage, AgentProject, AgentSession, CardState } from '../../../../../shared/types'
 import type { useAgentProjects } from './useAgentProjects'
 import type { useAgentGit } from './useAgentGit'
@@ -217,9 +218,9 @@ export function useAgentMessageActions({
         } : s)
       } : p))
     }
-    if (b.path.startsWith('pi-undo:')) {
+    if (b.path.startsWith(PI_UNDO_PREFIX)) {
       // pi 模式：撤销在 main 进程执行（写回备份或删除新建文件）
-      const backupId = b.path.slice('pi-undo:'.length)
+      const backupId = b.path.slice(PI_UNDO_PREFIX.length)
       try {
         const res = await window.api.piAgent.undo(`pi-${activeSessionId}`, backupId)
         if (!res.success) { notify('撤销失败：' + (res.error || '未知错误'), 'error'); return }
@@ -239,7 +240,7 @@ export function useAgentMessageActions({
     }
     if (!res.success) { notify('恢复失败：' + (res.error || '未知错误'), 'error'); return }
     markRestored()
-    notify('已恢复文件：' + dirName(b.path), 'success')
+    notify('已恢复文件：' + baseName(b.path), 'success')
   }, [activeProjectId, activeSessionId, setProjects])
   // 转发给 runSlashAction 使用（其定义早于 handleUndo）
   handleUndoRef.current = handleUndo
@@ -255,11 +256,11 @@ export function useAgentMessageActions({
     for (const { id, b } of entries) {
       try {
         const res = await window.api.writeFile(b.path, b.content)
-        if (!res.success) { failed.push(dirName(b.path)); continue }
+        if (!res.success) { failed.push(baseName(b.path)); continue }
         delete backupsRef.current[id]
         okIds.add(id)
         ok++
-      } catch { failed.push(dirName(b.path)) }
+      } catch { failed.push(baseName(b.path)) }
     }
     setProjects(prev => prev.map(p => p.id === activeProjectId ? {
       ...p,

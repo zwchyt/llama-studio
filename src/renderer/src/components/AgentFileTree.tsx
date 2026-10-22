@@ -1,13 +1,16 @@
-import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, memo } from 'react'
+import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, useSyncExternalStore, memo } from 'react'
 import { AlertCircle } from 'lucide-react'
 import {
   ChevronRightIcon, ChevronDownIcon, FolderIcon, FolderOpenIcon, LoaderIcon, CornerDownLeftIcon, CopyIcon, SearchIcon, XIcon, ChevronsUpIcon, ChevronsDownIcon, PencilIcon, Trash2Icon
 } from '@animateicons/react/lucide'
 import { fileMeta } from '../utils/fileIcon'
+import { kindOf } from '../utils/fileKind'
+import { normalizePath } from './agent-code/utils/paths'
+import { IMAGE_LIMITS } from './agent-code/utils/constants'
+import { getImgThumb, setImgThumb, subscribeImgThumb } from './agent-code/utils/imgThumbStore'
+import { subscribeAgentFileChanged } from './agent-code/utils/agentFileEvents'
 import { notify } from '../store/notificationStore'
 import { useBubbleTip } from './useBubbleTip'
-
-const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico', 'avif'])
 
 // 退场要等容器高度动画播完才卸载，时长跟着本次行数走 —— 与 CSS 的 --ft-span-out 同式：
 //   slots = min(count, ANIM_ROWS) - 1 ; step = min(STEP, WINDOW / slots) ; span = step*slots + ROW
@@ -39,9 +42,8 @@ function parentDir(p: string): string {
 
 // 相对工作区根的路径：统一正斜杠，越出工作区时原样返回
 function relativeTo(p: string, root: string): string {
-  const norm = (s: string) => s.replace(/[\\/]+/g, '/')
-  const base = norm(root).replace(/\/+$/, '')
-  const full = norm(p)
+  const base = normalizePath(root)
+  const full = normalizePath(p)
   if (!base) return full
   return full.toLowerCase().startsWith(base.toLowerCase() + '/') ? full.slice(base.length + 1) : full
 }
@@ -81,6 +83,19 @@ function updateNodeInTree(root: FileNode, targetPath: string, updates: Partial<F
   return root
 }
 
+// 图片悬停缩略图浮层：只订阅 store，hover 时重渲染的只有这个浮层，不是整棵树
+function ImgThumbLayer() {
+  const thumb = useSyncExternalStore(subscribeImgThumb, getImgThumb, getImgThumb)
+  if (!thumb) return null
+  return (
+    <div className="file-tree-img-tooltip" style={{ left: thumb.x, top: thumb.y }}>
+      {thumb.dataUrl
+        ? <img src={thumb.dataUrl} alt="preview" />
+        : <span style={{ display: 'block', padding: '2px 6px', fontSize: 11, lineHeight: 1.5, color: 'var(--text-muted)' }}>{thumb.note}</span>}
+    </div>
+  )
+}
+
 // memo：文件树是整页重渲染的最大单项成本（几百个节点的递归重建 ≈ 10-30ms/次）。
 // 流式期间整页可能频繁重渲染，包 memo 后只要 workspaceDir/回调引用不变就整树跳过。
 export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSendFileName, onFilesChanged }: { workspaceDir: string; onPreviewFile?: (path: string) => void; onSendFileName?: (name: string) => void; onFilesChanged?: () => void }) {
@@ -108,8 +123,7 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
   // 同一次「路径+文本」只结算一次：Enter 提交后紧跟的 blur 会带同一份快照再触发一遍，
   // 而此时原路径已改名成功，第二次调用只会弹出「原文件不存在」的假错误。
   const renameSettledRef = useRef<string | null>(null)
-  // 图片悬停缩略图
-  const [imgTooltip, setImgTooltip] = useState<{ x: number; y: number; dataUrl: string } | null>(null)
+  // 图片悬停缩略图（数据在组件外的 store 里，见 utils/imgThumbStore）
   const imgHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const imgHoverPath = useRef<string | null>(null)
   // 节点图标动画联动：鼠标落在节点行任意位置（名称/留白）都触发类型图标动画
@@ -309,6 +323,11 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
   }, [workspaceDir, fetchChildren])
 
   // 自动监听目录变化：启动 watcher 并监听变更事件，刷新变更文件所在目录（免去手动刷新按钮）
+  // onFilesChanged 走 ref 而不是依赖项：它的身份随右侧面板切换（useAgentGit 里依赖
+  // rightPanelMode）变化，放进依赖会让每次按 F1~F5 都把 watcher 停掉再重开——
+  // 那段时间里发生的文件写入会被漏掉（预览的静默刷新也依赖这条事件流）。
+  const onFilesChangedRef = useRef(onFilesChanged)
+  onFilesChangedRef.current = onFilesChanged
   useEffect(() => {
     if (!workspaceDir) return
     window.api.startAgentFileWatch(workspaceDir)
@@ -340,19 +359,20 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
           // 没展开的目录不显示子项，刷了也白刷
           dirs.forEach(p => { if (p === workspaceDir || expandedRef.current.has(p)) refreshDir(p) })
         }
-        onFilesChanged?.()
+        onFilesChangedRef.current?.()
       }, 300)
     }
-    window.api.onAgentFileChanged(onChange)
+    const offFileChanged = subscribeAgentFileChanged(onChange)
     return () => {
       if (refreshTimer.current) clearTimeout(refreshTimer.current)
       // 换工作区时把累积的旧路径一并丢掉，免得下一轮拿旧路径去刷新树
       pendingDirsRef.current = new Set()
       pendingAllRef.current = false
-      window.api.removeAgentFileListeners()
+      // 只退订自己这一份：底层监听由 agentFileEvents 统一持有（预览列也订阅了同一事件）
+      offFileChanged()
       window.api.stopAgentFileWatch()
     }
-  }, [workspaceDir, refreshDir, onFilesChanged])
+  }, [workspaceDir, refreshDir])
 
   // 拖入输入框完成后清除多选高亮
   useEffect(() => {
@@ -444,9 +464,8 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
     const isError = errorSet.has(node.path)
     // 该节点正在内联改名：名称位换成输入框，同时关掉行拖拽（否则框内选字会被整行拖走）
     const renamingHere = renaming && renaming.path === node.path ? renaming : null
-    // 图片文件检测（用于悬停缩略图）
-    const ext = (!node.isDir ? (/\.([a-z0-9]+)$/i.exec(node.name)?.[1] || '').toLowerCase() : '')
-    const isImage = IMG_EXT.has(ext)
+    // 图片文件检测（用于悬停缩略图）：类型判定统一走 utils/fileKind
+    const isImage = !node.isDir && kindOf(node.name) === 'image'
     // 文件与目录节点都弹出自定义菜单（重命名/复制路径/复制相对路径）；
     // 「发送到输入框」「删除」只对文件开放——目录名发进输入框无意义，递归删目录不可恢复。
     const onNodeContextMenu = (e: React.MouseEvent) => {
@@ -465,9 +484,15 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
       if (imgHoverTimer.current) clearTimeout(imgHoverTimer.current)
       imgHoverTimer.current = setTimeout(async () => {
         if (imgHoverPath.current !== node.path) return
-        const r = await window.api.readFileBase64(node.path)
-        if (r.success && r.dataUrl && imgHoverPath.current === node.path) {
-          setImgTooltip({ x: rect.left + rect.width / 2, y: rect.top, dataUrl: r.dataUrl })
+        // 缩略图只给看得清的精度：超过 2MB 不读整张，否则悬停扫过几张就是一次内存峰值。
+        // 超限时给一行说明而不是什么都不弹——否则看起来像悬停预览坏了。
+        const r = await window.api.readFileBase64(node.path, { maxBytes: IMAGE_LIMITS.THUMB })
+        if (imgHoverPath.current !== node.path) return
+        if (r.success && r.dataUrl) {
+          setImgThumb({ x: rect.left + rect.width / 2, y: rect.top, dataUrl: r.dataUrl })
+        } else if (r.fileSize != null) {
+          const mb = (r.fileSize / 1024 / 1024).toFixed(1)
+          setImgThumb({ x: rect.left + rect.width / 2, y: rect.top, note: `图片过大（${mb} MB），不预览` })
         }
       }, 350)
     }
@@ -476,7 +501,7 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
       if (!isImage) return
       imgHoverPath.current = null
       if (imgHoverTimer.current) { clearTimeout(imgHoverTimer.current); imgHoverTimer.current = null }
-      setImgTooltip(null)
+      setImgThumb(null)
     }
     return (
       <div key={node.path} style={level > 0 ? { '--file-tree-stagger': ord } as React.CSSProperties : undefined}>
@@ -788,11 +813,7 @@ export default memo(function AgentFileTree({ workspaceDir, onPreviewFile, onSend
           </div>
         )
       })()}
-      {imgTooltip && (
-        <div className="file-tree-img-tooltip" style={{ left: imgTooltip.x, top: imgTooltip.y }}>
-          <img src={imgTooltip.dataUrl} alt="preview" />
-        </div>
-      )}
+      <ImgThumbLayer />
     </div>
   )
 })

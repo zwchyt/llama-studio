@@ -176,7 +176,7 @@ export default function AgentCodeView() {
   // ── 预览标签页与内容读取（自持 state 与回调，见 agent-code/hooks/useAgentPreviewTabs.ts）──
   // 整个域对象同时透传给 AgentPreviewSlot，避免在调用处铺开 30 余个 props。
   let previewDomain!: ReturnType<typeof useAgentPreviewTabs>
-  previewDomain = useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel })
+  previewDomain = useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel, workspaceDir: activeProject.workspaceDir })
 
   // 通用弹窗关闭：点击弹窗/触发按钮外部 或 Escape 键时关闭。
   // 实现见 utils/usePopoverDismiss（支持 btnRef / popRef / popSelector 三种判定，

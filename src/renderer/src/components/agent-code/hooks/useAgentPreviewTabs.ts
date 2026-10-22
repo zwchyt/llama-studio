@@ -25,10 +25,11 @@ import katexCssInline from 'katex/dist/katex.min.css?inline'
 import katexJsInline from 'katex/dist/katex.min.js?raw'
 import { notify } from '../../../store/notificationStore'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
-import { CODE_EXT, MD_EXT, IMG_EXT } from '../utils/fileExt'
-import { MEM_IMG_PREFIX } from '../utils/constants'
+import { kindOf } from '../../../utils/fileKind'
+import { MEM_IMG_PREFIX, isSentinelTabPath, IMAGE_LIMITS } from '../utils/constants'
+import { subscribeAgentFileChanged } from '../utils/agentFileEvents'
 import { renderMathInHtml } from '../utils/mathHtml'
-import { dirName, pathDir } from '../utils/paths'
+import { baseName, joinPath, normalizePath, pathDir } from '../utils/paths'
 import { extractTextFromBuffer, isBinaryDoc } from '../../../utils/extractText'
 import type { PreviewTab } from '../types'
 import type { UiAnnotation } from '../../AgentBrowser'
@@ -61,12 +62,14 @@ function decodeBase64Bytes(b64: string): Uint8Array {
   return bytes
 }
 
-export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel }: {
+export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel, workspaceDir }: {
   setRightPanelMode: React.Dispatch<React.SetStateAction<RightPanelMode>>
   /** 打开文件时把右侧面板展开（通用模式默认收起，否则预览不可见） */
   setTreeOpen: React.Dispatch<React.SetStateAction<boolean>>
   /** 关掉最后一个文件标签时，「预览」那列工作区跟着关掉（最后一列则整块面板收起） */
   closePanel: (view: PanelView) => void
+  /** 工作区根：文件变更事件里的 filename 相对它，用来定位被改的预览文件 */
+  workspaceDir: string
 }) {
   const PREVIEW_MAX_BYTES = PREVIEW_LIMITS.INIT
   // PDF / DOCX 要在渲染进程整体解码，给原始体积留个上限（base64 约 4/3 倍 → 约 48MB 文件）
@@ -86,7 +89,9 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; path: string } | null>(null)
   const tabMenuRef = useRef<HTMLDivElement>(null)
   // 点击 diff 行 → 打开源文件并跳到对应行：记录待跳转目标（内容渲染完成后由 effect 滚动+高亮）。
-  const previewJumpRef = useRef<{ path: string; line: number } | null>(null)
+  // 点击 diff 行 → 打开源文件并跳到对应行：按 path 记待跳转行（内容渲染完成后由 effect 滚动+高亮）。
+  // 用 Map 而不是单个值：快速连点两个文件时前一个请求不会被后一个覆盖掉。
+  const previewJumpRef = useRef<Map<string, number>>(new Map())
   const [previewHighlightLine, setPreviewHighlightLine] = useState<number | null>(null)
   // 性能优化：避免删除项目/切换会话时重复触发 codemap 构建与工作区同步
 
@@ -101,8 +106,8 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
   // 保存源码预览：写回文件并同步 openTabs 内容，退出编辑态
   const savePreviewFile = useCallback(async (content: string) => {
     const tab = openTabsRef.current.find(t => t.path === activeTabPath) || null
-    // 哨兵标签（Git 变更面板 / 内存图片）背后没有文件可写
-    if (!tab || tab.path.startsWith('pi-undo:') || tab.path.startsWith(MEM_IMG_PREFIX)) {
+    // 哨兵标签（Git 变更面板 / 内存图片 / pi 撤销备份）背后没有文件可写
+    if (!tab || isSentinelTabPath(tab.path)) {
       notify('当前标签不支持保存', 'error'); return
     }
     // 二进制文档的 content 是抽取出的文本而非文件本体，写回等于用一段文本盖掉整个 PDF/DOCX。
@@ -111,10 +116,23 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
     // 截断状态下写回 = 用已加载的部分覆盖整个文件，未读入的内容会被删掉——必须先加载完整。
     // 编辑按钮已按 truncated 隐藏，这里兜住 Ctrl+S 等其它入口。
     if (tab.truncated) { notify('文件未完整加载：请先加载完整内容再编辑保存，否则会丢失未读入的部分', 'error'); return }
+    // 打开后文件被外部（Agent / 其它程序）改过：直接写回会静默盖掉对方的改动。
+    // 拦下并保留草稿，让用户先看到最新内容再决定怎么合并。1ms 容差吸收文件系统的
+    // mtime 取整差异，避免「自己刚存完又报冲突」。
+    if (tab.mtimeMs != null) {
+      const st = await window.api.statFile(tab.path)
+      if (st && Math.abs(st.mtimeMs - tab.mtimeMs) > 1) {
+        setOpenTabs(prev => prev.map(t => t.path === tab.path ? { ...t, stale: true } : t))
+        notify('文件已被外部修改，已取消本次保存；请退出编辑并重新打开该文件查看最新内容后再合并', 'error')
+        return
+      }
+    }
     try {
       const res = await window.api.writeFile(tab.path, content)
       if (!res.success) { notify('保存失败：' + (res.error || '未知错误'), 'error'); return }
-      setOpenTabs(prev => prev.map(t => t.path === tab.path ? { ...t, content } : t))
+      // 写回后刷新 mtime 基线：否则下一次保存会把「自己刚写的」判成外部修改
+      const after = await window.api.statFile(tab.path)
+      setOpenTabs(prev => prev.map(t => t.path === tab.path ? { ...t, content, mtimeMs: after?.mtimeMs ?? t.mtimeMs, stale: false } : t))
       setPreviewDraft(null)
       setPreviewEditing(false)
       notify(`已保存 ${tab.name}`, 'success')
@@ -124,24 +142,21 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
   }, [activeTabPath, setOpenTabs])
   const isPreviewMarkdown = useMemo(() => {
     const p = activeTabPath || ''
-    const extMatch = /\.([a-z0-9]+)$/i.exec(p)
-    const ext = extMatch ? extMatch[1].toLowerCase() : ''
-    if (MD_EXT.has(ext)) return true
-    if (CODE_EXT.has(ext)) return false
+    const kind = kindOf(p)
+    if (kind === 'markdown') return true
+    // html 在 CODE_EXT 里，历史行为就是「不按 Markdown 渲染」，这里保持一致
+    if (kind === 'code' || kind === 'html') return false
     const c = activeTab?.content
     if (c && /(^|\n)\s*(<[a-zA-Z][a-zA-Z0-9]*(\s[^>]*)?>|#{1,6}\s|>\s|[-*+]\s+\S|\d+\.\s+\S|```|!?\[|\[.+\]\(|\|[^\n]*\|)/.test(c.slice(0, 3000))) {
       return true
     }
 
-    const base = dirName(p).toLowerCase()
+    const base = baseName(p).toLowerCase()
     return /^(readme|changelog|license|licence|contributing|notice|authors|code_of_conduct|security|todo|notes?)$/.test(base)
   }, [activeTabPath, activeTab?.content])
 
   // 是否为 HTML 文件（可切换“渲染预览 / 源码”）。
-  const isPreviewHtml = useMemo(() => {
-    const ext = (/\.([a-z0-9]+)$/i.exec(activeTabPath || '')?.[1] || '').toLowerCase()
-    return ext === 'html' || ext === 'htm'
-  }, [activeTabPath])
+  const isPreviewHtml = useMemo(() => kindOf(activeTabPath || '') === 'html', [activeTabPath])
 
   // 源码预览逐行高亮 HTML（整文高亮一次后拆行，随内容/路径变化重算）。
   // 源码预览行高亮由 MonacoEditor 的 deltaDecorations 完成（highlightLine prop）  // 供 HTML 预览 iframe 注入的 KaTeX CSS：把字体 url() 改写为基于应用自身源的
@@ -156,7 +171,7 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
   // base 走自定义协议 app://（主进程 protocol.handle 提供），不用 file://——about:srcdoc 的
   // iframe 加载 file:// 会被 Chromium 直接拦掉（Not allowed to load local resource）。
   const buildHtmlSrcDoc = (content: string, filePath: string): string => {
-    const dir = filePath.replace(/[\\/][^\\/]*$/, '').replace(/\\/g, '/')
+    const dir = pathDir(filePath)
     // 逐段编码（空格 / 中文等），但把 Windows 盘符的冒号还原：E: 不能变成 E%3A
     const encodedDir = dir.replace(/^\/+/, '').split('/').map(s => encodeURIComponent(s)).join('/').replace(/%3A/g, ':')
     const baseTag = `<base href="app://local/${encodedDir}/">`
@@ -214,14 +229,23 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
     if (matches.length === 0) return markdown
 
     const replaced = await Promise.all(matches.map(async (match) => {
-      const abs = (dir + '/' + match.url).replace(/\\/g, '/').replace(/\/+/g, '/')
-      const r = await window.api.readFileBase64(abs)
-      return { ...match, dataUrl: r.success ? r.dataUrl : null }
+      const abs = joinPath(dir, match.url)
+      const r = await window.api.readFileBase64(abs, { maxBytes: IMAGE_LIMITS.INLINE })
+      return { ...match, dataUrl: r.success ? r.dataUrl : null, tooLarge: !r.success && r.fileSize != null ? r.fileSize : null }
     }))
 
     let out = markdown
     for (const item of replaced) {
-      if (!item.dataUrl) continue
+      if (!item.dataUrl) {
+        // 超过内联上限：换成一行说明。**不能**只"保留原相对路径"——渲染进程里相对路径
+        // 加载不到本地文件（这正是必须内联的原因），会渲染成裂图，看起来像 bug。
+        // 读取失败（文件不存在等）则原样保留，交给 Markdown 自己处理。
+        if (item.tooLarge == null) continue
+        const mb = (item.tooLarge / 1024 / 1024).toFixed(1)
+        const note = `[图片过大（${mb} MB），未内联预览：${item.url}]`
+        out = out.split(item.full).join(item.type === 'md' ? `*${note}*` : note)
+        continue
+      }
       if (item.type === 'md') {
         out = out.split(item.full).join(`![${item.alt}](${item.dataUrl})`)
       } else {
@@ -245,32 +269,112 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
     return { res, content }
   }, [inlineLocalImages])
 
-  const openPreview = useCallback(async (path: string, panelMode: PanelView = 'files') => {
-    const name = dirName(path)
-    const ext = (/\.([a-z0-9]+)$/i.exec(path)?.[1] || '').toLowerCase()
-    const isImage = IMG_EXT.has(ext)
+  // ── 文件变更 → 静默重读已打开的预览 ──
+  // 此前预览内容是打开时的快照：Agent 改完文件，用户必须关掉标签重开才能看到新内容
+  // （文件树那边的监听只刷目录与 git 列表）。这里订阅同一个变更事件（preload 已改为多订阅）：
+  // 命中已打开的文本标签 → 与基线 mtime 比对 → 真的变了才重读。
+  const activeTabPathRef = useRef(activeTabPath)
+  activeTabPathRef.current = activeTabPath
+  const previewEditingRef = useRef(previewEditing)
+  previewEditingRef.current = previewEditing
+
+  const refreshPreviewIfChanged = useCallback(async (path: string) => {
+    // 分隔符与盘符大小写都可能不一致（事件里是 OS 原生分隔符，标签路径来自主进程 join），
+    // 统一归一化后比较，避免「同一个文件认不出来」
+    const want = normalizePath(path).toLowerCase()
+    const tab = openTabsRef.current.find(t => normalizePath(t.path).toLowerCase() === want)
+    // 只重读文本标签：图片 / PDF / DOCX 要整份重新解码，代价远高于收益；哨兵标签背后没有文件。
+    // .doc（旧二进制格式）也必须跳过——它的标签只有一条「无法解析」的友好错误、isBinaryDoc 为
+    // false，重读会把二进制当文本读进来，把错误提示换成一屏乱码。
+    if (!tab || tab.loading || isSentinelTabPath(tab.path) || tab.isImage || tab.isPdf || tab.isBinaryDoc) return
+    if (kindOf(tab.path) === 'doc') return
+    const st = await window.api.statFile(tab.path)
+    if (!st) return
+    // 与基线一致 = 我们自己刚写的（保存后已刷新基线），不重读，避免「保存 → 监听 → 再读」回环
+    if (tab.mtimeMs != null && Math.abs(st.mtimeMs - tab.mtimeMs) <= 1) return
+    // 正在编辑这个文件：自动重读会把草稿冲掉，只打标记，由保存拦截兜底
+    if (previewEditingRef.current && activeTabPathRef.current === tab.path) {
+      setOpenTabs(prev => prev.map(t => t.path === tab.path ? { ...t, stale: true } : t))
+      return
+    }
+    // 按已加载的档位重读，不要打回 128KB 初始档
+    const { res, content } = await readPreviewText(tab.path, tab.loadedBytes ?? PREVIEW_LIMITS.INIT)
+    if (!res.success) return
+    setOpenTabs(prev => prev.map(t => t.path === tab.path ? {
+      ...t,
+      content,
+      error: null,
+      lines: res.lines ?? t.lines,
+      truncated: !!res.truncated,
+      fileSize: res.fileSize ?? t.fileSize ?? null,
+      mtimeMs: res.mtimeMs ?? null,
+      stale: false,
+    } : t))
+  }, [readPreviewText])
+
+  useEffect(() => {
+    if (!workspaceDir) return
+    // 与文件树同一套防抖：一次保存往往连着几个事件，攒 300ms 再统一处理
+    const pending = new Set<string>()
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const off = subscribeAgentFileChanged((data) => {
+      const fn = data?.filename || ''
+      // .git 内部写入（status/diff 会刷 .git/index）与预览无关，且会与 git 面板形成回环
+      if (!fn || fn === '.git' || fn.startsWith('.git/') || fn.startsWith('.git\\')) return
+      pending.add(joinPath(workspaceDir, fn))
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        const paths = Array.from(pending)
+        pending.clear()
+        paths.forEach(p => void refreshPreviewIfChanged(p))
+      }, 300)
+    })
+    return () => {
+      if (timer) clearTimeout(timer)
+      off()
+    }
+  }, [workspaceDir, refreshPreviewIfChanged])
+
+  // 编辑期间被外部改过时只打了 stale 标记、没重读（不能打断输入）。这里在「退出编辑」或
+  // 「切回该标签」时补一次重读：否则取消编辑后看到的还是旧内容，再进编辑保存又被拦，
+  // 只能关标签重开——死循环。stale 只会在编辑态产生，重读成功后置回 false，不会反复触发。
+  useEffect(() => {
+    if (previewEditing || !activeTabPath) return
+    const tab = openTabsRef.current.find(t => t.path === activeTabPath)
+    if (tab?.stale) void refreshPreviewIfChanged(activeTabPath)
+  }, [previewEditing, activeTabPath, refreshPreviewIfChanged])
+
+  // jumpLine：来自 diff 行点击，内容渲染完成后滚到该行。普通打开不传——同时把该路径上
+  // 残留的陈旧跳转清掉，否则「上次没消费掉的跳转」会劫持这次普通打开。
+  const openPreview = useCallback(async (path: string, panelMode: PanelView = 'files', jumpLine?: number) => {
+    previewJumpRef.current.delete(path)
+    const name = baseName(path)
+    // 类型判定统一走 kindOf（优先级 image > pdf > docx > doc > 文本，见 utils/fileKind）
+    const kind = kindOf(path)
+    const isImage = kind === 'image'
     // PDF 走版面渲染（pdf.js 画页面）；DOCX 只有文本抽取一条路。两者都不能当文本读：
     // 主进程 readFile 的 25k token 预算守卫会把二进制残骸估成「内容过多…请使用 Grep」，
     // 那是给 agent 工具看的建议语，对预览毫无意义（src/main/ipc.ts 的 MAX_READ_TOKENS）。
-    const isPdf = !isImage && /\.pdf$/i.test(name)
+    const isPdf = kind === 'pdf'
     const binaryDoc = !isImage && !isPdf && isBinaryDoc(name)
     // .doc（2003 的老二进制格式）全仓没有解析器（mammoth 只认 .docx），当文本读只会得到
     // 一屏乱码。判定并进建标签这一次 setState：否则先亮一帧「读取中…」再跳错误。
-    const legacyDoc = !isImage && !isPdf && !binaryDoc && ext === 'doc'
+    const legacyDoc = kind === 'doc'
     // 切到该文件所属的面板工作区（默认文件树那列；输入框附件走独立预览列），并把右侧
     // 面板展开——通用模式的右槽默认收起（没有文件树），不主动展开的话「打开文件」看起来毫无反应。
     setRightPanelMode(panelMode)
     setTreeOpen(true)
-    // 已打开则仅切换到该标签，不重复读取
+    // 已打开则不新增标签（但下面仍会重读一次内容：点文件树 / diff 跳行等于顺手刷新）
     setOpenTabs(prev => {
       if (prev.some(t => t.path === path)) return prev
       return [...prev, { path, name, content: null, lines: null, truncated: false, loading: !legacyDoc, error: legacyDoc ? LEGACY_DOC_ERROR : null, isImage, imageDataUrl: null, isBinaryDoc: isPdf || binaryDoc, isPdf, pdfData: null }]
     })
     setActiveTabPath(path)
+    if (jumpLine != null) previewJumpRef.current.set(path, jumpLine)
     if (legacyDoc) return
     // 图片：读为 data URL 直接渲染 <img>，不当文本读（二进制会被拒）
     if (isImage) {
-      const r = await window.api.readFileBase64(path)
+      const r = await window.api.readFileBase64(path, { maxBytes: IMAGE_LIMITS.PREVIEW })
       setOpenTabs(prev => prev.map(t => t.path === path ? {
         ...t, loading: false, isImage: true,
         error: r.success ? null : (r.error || '读取失败'),
@@ -309,7 +413,10 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
       } : t))
       return
     }
-    const { res, content } = await readPreviewText(path, PREVIEW_MAX_BYTES)
+    // 已打开过的标签按它当前已加载的档位重读：重开（点文件树 / diff 跳行）不该把
+    // 「加载更多」的进度打回 128KB 初始档。
+    const want = Math.min(openTabsRef.current.find(t => t.path === path)?.loadedBytes ?? PREVIEW_MAX_BYTES, PREVIEW_LIMITS.HARD)
+    const { res, content } = await readPreviewText(path, want)
     setOpenTabs(prev => prev.map(t => t.path === path ? {
       ...t,
       loading: false,
@@ -318,7 +425,9 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
       lines: res.success ? (res.lines ?? 0) : null,
       truncated: !!res.truncated,
       fileSize: res.fileSize ?? null,
-      loadedBytes: res.success ? (res.truncated ? PREVIEW_MAX_BYTES : (res.fileSize ?? PREVIEW_MAX_BYTES)) : null,
+      mtimeMs: res.success ? (res.mtimeMs ?? null) : null,
+      stale: false,
+      loadedBytes: res.success ? (res.truncated ? want : (res.fileSize ?? want)) : null,
     } : t))
   }, [readPreviewText])
 
@@ -344,6 +453,7 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
         lines: res.success ? (res.lines ?? 0) : t.lines,
         truncated: res.success ? !!res.truncated : t.truncated,
         fileSize: res.fileSize ?? t.fileSize ?? null,
+        mtimeMs: res.success ? (res.mtimeMs ?? t.mtimeMs ?? null) : t.mtimeMs,
         loadedBytes: res.success ? (res.truncated ? target : (res.fileSize ?? target)) : t.loadedBytes,
       } : t))
     } catch {
@@ -355,8 +465,18 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
   // 图片数据本来就在 dataUrl 里，直接建一个装好图的标签，不需要任何磁盘读取。
   // 标签键用 MEM_IMG_PREFIX + 文件名（真实路径不可能长这样，不会撞车）；同名再点不新开标签——
   // 同一张就不动，换了一张（同名不同图）就把图刷新掉，免得开出一排同名标签。
+  // dataUrl 的短指纹：长度 + 头尾各 256 字符做 FNV-1a。整串扫一遍在几十 MB 的图上
+  // 是可感知的卡顿，采样足够区分「同名不同图」，又让「同一张图再点一次」不新开标签。
+  const fingerprint = (dataUrl: string) => {
+    const s = `${dataUrl.length}:${dataUrl.slice(0, 256)}:${dataUrl.length > 256 ? dataUrl.slice(-256) : ''}`
+    let h = 0x811c9dc5
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) }
+    return (h >>> 0).toString(36)
+  }
+
   const openMemoryImage = useCallback((name: string, dataUrl: string, panelMode: PanelView = 'preview') => {
-    const key = MEM_IMG_PREFIX + name
+    // 键带内容指纹：同名不同图（剪贴板截图常都叫 image.png）不会再互相顶掉同一个标签
+    const key = `${MEM_IMG_PREFIX}${name}#${fingerprint(dataUrl)}`
     setRightPanelMode(panelMode)
     setTreeOpen(true)
     setOpenTabs(prev => {
@@ -464,11 +584,10 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
   }, [isPreviewHtml, htmlViewMode])
 
   // 打开源文件并跳转到指定行（供 Git diff 行点击使用）。
-  // openPreview 完成后由 useAgentViewEffects 的跳行 effect 滚动 + 短暂高亮。
+  // 跳转意图交给 openPreview 记录，内容渲染完成后由 useAgentViewEffects 的跳行 effect 滚动 + 高亮。
   const openPreviewAtLine = useCallback(async (absPath: string, line: number) => {
     setPreviewHighlightLine(null)
-    previewJumpRef.current = { path: absPath, line }
-    await openPreview(absPath)
+    await openPreview(absPath, 'files', line)
   }, [openPreview])
 
   // 打开文件的通用回调（可选跳转到指定行）：Git 变更面板与工具卡（Read 文件名跳读取起始行）共用。

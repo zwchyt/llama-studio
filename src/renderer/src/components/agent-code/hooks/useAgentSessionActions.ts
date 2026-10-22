@@ -20,7 +20,7 @@ import { useCallback, useRef, useState } from 'react'
 import { useStore } from '../../../store/useStore'
 import { safeCall } from '../../../utils/safeCall'
 import { newMsgId, uniqueId } from '../utils/ids'
-import { dirName } from '../utils/paths'
+import { baseName } from '../utils/paths'
 import type { AgentMessage, AgentProject } from '../../../../../shared/types'
 import type { useAgentProjects } from './useAgentProjects'
 import type { useAgentRunState } from './useAgentRunState'
@@ -142,7 +142,7 @@ export function useAgentSessionActions({
     if (!res?.path) return
     // 更改目录后，标题同步显示为该目录的主目录文件名，
     // 使左侧标题栏始终等于当前切换到的目录名
-    const patch: Partial<AgentProject> = { workspaceDir: res.path, title: dirName(res.path) }
+    const patch: Partial<AgentProject> = { workspaceDir: res.path, title: baseName(res.path) }
     updateProject(projId, patch)
   }, [updateProject])
 

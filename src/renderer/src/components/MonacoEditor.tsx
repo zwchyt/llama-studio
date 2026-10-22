@@ -57,12 +57,15 @@ interface MonacoEditorProps {
   onSelectionAction?: (text: string, startLine: number, endLine: number) => void
   onChange?: (value: string) => void
   onSave?: (value: string) => void
+  /** 当前内容所属的文件键（如路径）：键不变而 value 变 = 同一文件的静默刷新，保留滚动位置 */
+  preserveScrollKey?: string
 }
 
-export default function MonacoEditor({ value, language, readOnly, highlightLine, onSelectionAction, onChange, onSave }: MonacoEditorProps) {
+export default function MonacoEditor({ value, language, readOnly, highlightLine, onSelectionAction, onChange, onSave, preserveScrollKey }: MonacoEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
   const decorationsRef = useRef<string[]>([])
+  const scrollKeyRef = useRef(preserveScrollKey)
   const selectionActionRef = useRef(onSelectionAction)
   const saveRef = useRef(onSave)
   const readOnlyRef = useRef(readOnly)
@@ -133,9 +136,17 @@ export default function MonacoEditor({ value, language, readOnly, highlightLine,
     if (!editor) return
     const model = editor.getModel()
     if (!model) return
-    if (model.getValue() !== value) model.setValue(value)
+    // 同一个文件的内容被外部刷新（Agent 改完文件后的静默重读）：内容换了但阅读位置该留住。
+    // 切标签时 key 变了，仍按原行为回到顶部。
+    const sameFile = scrollKeyRef.current === preserveScrollKey
+    scrollKeyRef.current = preserveScrollKey
+    if (model.getValue() !== value) {
+      const top = sameFile ? editor.getScrollTop() : 0
+      model.setValue(value)
+      if (top > 0) editor.setScrollTop(top)
+    }
     if (language && model.getLanguageId() !== language) monaco.editor.setModelLanguage(model, language)
-  }, [value, language])
+  }, [value, language, preserveScrollKey])
 
   // 主题切换时更新 monaco 主题。View Transitions 的旧快照在渲染帧 style/layout 之前捕获，
   // rAF 回调先于快照运行、useEffect/useLayoutEffect 时序不可靠，因此用双重 rAF 把

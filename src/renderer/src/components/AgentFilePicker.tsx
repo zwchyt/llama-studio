@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { ChevronLeft, Search, X, File, Folder, FolderOpen, Check, Loader2, HardDrive } from 'lucide-react'
+import { baseName } from './agent-code/utils/paths'
 import { useBubbleTip } from './useBubbleTip'
 
 interface FileEntry {
@@ -22,10 +23,6 @@ interface AgentFilePickerProps {
   onRemove: (path: string) => void
   onClose: () => void
   triggerRef?: React.RefObject<HTMLElement | null>
-}
-
-function dirName(p: string) {
-  return p.replace(/\\/g, '/').split('/').filter(Boolean).pop() || p
 }
 
 // 「此电脑」磁盘列表视图的路径哨兵：盘符根再向上导航时进入
@@ -179,7 +176,7 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
                     className={`agent-file-picker-crumb ${p === currentPath ? 'agent-file-picker-crumb-active' : ''}`}
                     onClick={() => setCurrentPath(p)}
                   >
-                    {dirName(p)}
+                    {baseName(p)}
                   </button>
                 </span>
               ))}
@@ -192,7 +189,7 @@ export default function AgentFilePicker({ workspaceDir, attached, onAttach, onRe
                   className={`agent-file-picker-crumb ${p === currentPath ? 'agent-file-picker-crumb-active' : ''}`}
                   onClick={() => setCurrentPath(p)}
                 >
-                  {dirName(p)}
+                  {baseName(p)}
                 </button>
               </span>
             ))

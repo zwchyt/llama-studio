@@ -9,9 +9,17 @@ import type { BrowserNavigateCommand, BrowserShowResult } from '../../../../../s
 export type BrowserNavigator = (cmd: BrowserNavigateCommand) => Promise<Partial<BrowserShowResult>>
 
 let navigator: BrowserNavigator | null = null
+// 等「面板挂载并注册导航能力」的挂起者：注册那一刻一次性唤醒。
+// 此前这里是 while + sleep(50) 忙等（最长 3s），既空转定时器又把「等事件」写成了轮询。
+const waiters = new Set<(fn: BrowserNavigator) => void>()
 
 export function registerBrowserNavigator(fn: BrowserNavigator): () => void {
   navigator = fn
+  if (waiters.size > 0) {
+    const pending = Array.from(waiters)
+    waiters.clear()
+    pending.forEach(wake => wake(fn))
+  }
   return () => {
     if (navigator === fn) navigator = null
   }
@@ -20,13 +28,21 @@ export function registerBrowserNavigator(fn: BrowserNavigator): () => void {
 export async function runBrowserNavigate(cmd: BrowserNavigateCommand, waitMountedMs = 3000): Promise<Partial<BrowserShowResult>> {
   // 面板此前没打开过时 AgentBrowser 尚未挂载（导航能力在组件挂载时才注册），
   // 而调用方刚 setRightPanelMode('browser') 要等一次渲染才生效，这里等它注册上。
-  const until = Date.now() + waitMountedMs
-  while (!navigator && Date.now() < until) {
-    await new Promise((r) => setTimeout(r, 50))
+  let nav = navigator
+  if (!nav) {
+    nav = await new Promise<BrowserNavigator | null>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const onReady = (fn: BrowserNavigator) => {
+        if (timer) clearTimeout(timer)
+        resolve(fn)
+      }
+      timer = setTimeout(() => { waiters.delete(onReady); resolve(null) }, waitMountedMs)
+      waiters.add(onReady)
+    })
   }
-  if (!navigator) return { ok: false, error: '浏览器面板未能打开' }
+  if (!nav) return { ok: false, error: '浏览器面板未能打开' }
   try {
-    return await navigator(cmd)
+    return await nav(cmd)
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }

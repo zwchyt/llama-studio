@@ -34,7 +34,8 @@ import { PiAgentClient } from '../../../utils/piAgentClient'
 import { computeContextBudget, coveredPrefixCount, piContextWindowFor, COMPACTION_TRIGGER_MARGIN } from '../../../utils/contextBudget'
 import { parseSlashCommand, findCommand, expandCommandTemplate } from '../../../agent/slashCommands'
 import { newMsgId, uniqueId } from '../utils/ids'
-import { MIN_EXEC_DISPLAY_MS } from '../utils/constants'
+import { MIN_EXEC_DISPLAY_MS, PI_UNDO_PREFIX } from '../utils/constants'
+import { extOf } from '../../../utils/fileKind'
 import type { AgentMessage, AgentSession, AgentTask, Attachment, CardState, ThinkingLevel, TodoUpdate } from '../../../../../shared/types'
 import { projectMode } from '../../../../../shared/types'
 import { remoteOfCard } from '../../../utils/endpoint'
@@ -641,7 +642,7 @@ export function useAgentLoop({
         // 或备份记录失败时 backupId 为 undefined → 不写入备份引用 → canUndoFor 返回 false
         // → 工具卡不显示撤销按钮，避免「无备份可写回」的空撤销。
         if (backupId) {
-          backupsRef.current[id] = { path: `pi-undo:${backupId}`, content: '' }
+          backupsRef.current[id] = { path: `${PI_UNDO_PREFIX}${backupId}`, content: '' }
         }
         // view_image 成功：把这张图自动展开到右侧预览列，让用户同步看到模型正在看的画面
         // （与 browser_show 展开浏览器面板同一个意图）。结果文本就是
@@ -891,7 +892,7 @@ export function useAgentLoop({
       if (packedInput?.trim()) parts.push(packedInput.trim())
       // 代码片段胶囊：以 fenced code block + 文件行号标注注入
       for (const snip of codeSnippets) {
-        const ext = (/\.([a-z0-9]+)$/i.exec(snip.fileName)?.[1] || '').toLowerCase()
+        const ext = extOf(snip.fileName)
         parts.push(`[代码引用: ${snip.fileName} L${snip.startLine}-L${snip.endLine}]\n\`\`\`${ext}\n${snip.code}\n\`\`\``)
       }
       // 引用胶囊

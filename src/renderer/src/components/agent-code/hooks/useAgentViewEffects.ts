@@ -46,12 +46,12 @@ export function useAgentViewEffects({
 
   // 内容渲染完成后执行跳转：把目标行滚到中间并短暂高亮。仅对代码预览有效（Markdown 无行结构）。
   useEffect(() => {
-    const jump = previewJumpRef.current
-    if (!jump || activeTabPath !== jump.path) return
-    const tab = openTabs.find(t => t.path === jump.path)
+    if (!activeTabPath) return
+    const line = previewJumpRef.current.get(activeTabPath)
+    if (line == null) return
+    const tab = openTabs.find(t => t.path === activeTabPath)
     if (!tab || tab.loading || tab.content == null) return
-    previewJumpRef.current = null
-    const line = jump.line
+    previewJumpRef.current.delete(activeTabPath)
     requestAnimationFrame(() => {
       const el = document.getElementById(`agent-preview-line-${line}`)
       if (!el) return

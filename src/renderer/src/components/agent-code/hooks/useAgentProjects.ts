@@ -30,7 +30,7 @@ import { notify } from '../../../store/notificationStore'
 import { useStore } from '../../../store/useStore'
 import { safeCall } from '../../../utils/safeCall'
 import { uniqueId } from '../utils/ids'
-import { dirName } from '../utils/paths'
+import { baseName } from '../utils/paths'
 import { sessionLastActive } from '../utils/session'
 import {
   CHAT_WORKSPACE_ID, freshChatWorkspace, isChatWorkspace, normalizeProjects, projectMode,
@@ -292,7 +292,7 @@ export function useAgentProjects({ storedProjects }: {
   const createProject = useCallback(async () => {
     const res = await safeCall<{ path: string | null }>(() => window.api.selectDirectory(), '选择目录')
     if (!res?.path) return
-    const name = dirName(res.path)
+    const name = baseName(res.path)
     const proj: AgentProject = { id: uniqueId('proj'), title: name, workspaceDir: res.path, expanded: true, sessions: [newSession('code')], mode: 'code' }
     // 创建真实项目后，自动移除仍处于空状态的默认占位项目（避免与新建项目并存）
     setProjects(prev => [...prev.filter(p => !isPlaceholderProject(p)), proj])
@@ -421,7 +421,7 @@ export function useAgentProjects({ storedProjects }: {
       setProjects(prev => prev.map(p => p.id === existing.id ? { ...p, sessions: [...p.sessions, sess] } : p))
     } else {
       const proj: AgentProject = {
-        id: uniqueId('proj'), title: dirName(dir), workspaceDir: dir,
+        id: uniqueId('proj'), title: baseName(dir), workspaceDir: dir,
         expanded: true, sessions: [sess], mode: 'code',
       }
       pid = proj.id

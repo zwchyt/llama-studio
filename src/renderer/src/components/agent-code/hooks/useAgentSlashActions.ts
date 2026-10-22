@@ -18,6 +18,7 @@
 import React, { useCallback } from 'react'
 import { useStore } from '../../../store/useStore'
 import { notify } from '../../../store/notificationStore'
+import { PI_UNDO_PREFIX } from '../utils/constants'
 import { mergeCommands } from '../../../agent/slashCommands'
 import { addressOfEndpoint, endpointOfCard } from '../../../utils/endpoint'
 import { newMsgId, uniqueId } from '../utils/ids'
@@ -263,7 +264,7 @@ export function useAgentSlashActions({
         }
         if (!last) { appendResult('没有可撤销的文件修改。'); return }
         if (handleUndoRef.current) await handleUndoRef.current(last.msgId, last.tcId)
-        appendResult(`已撤销最近一次文件修改：${last.path.startsWith('pi-undo:') ? '(Pi 备份)' : last.path}`)
+        appendResult(`已撤销最近一次文件修改：${last.path.startsWith(PI_UNDO_PREFIX) ? '(Pi 备份)' : last.path}`)
         return
       }
       default:

@@ -8,6 +8,8 @@
 // 完全失效（模块已在同一 chunk 里，lazy 拿到的就是它）。
 // 拆出来之后 MonacoEditor 只剩 lazy 一条引用路径，monaco 才真正变成按需 chunk。
 
+import { extOf } from './fileKind'
+
 const EXT_LANG: Record<string, string> = {
   js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
   ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
@@ -22,6 +24,5 @@ const EXT_LANG: Record<string, string> = {
 }
 
 export function extToMonacoLang(path: string): string | undefined {
-  const ext = (/\.([a-z0-9]+)$/i.exec(path)?.[1] || '').toLowerCase()
-  return EXT_LANG[ext]
+  return EXT_LANG[extOf(path)]
 }

@@ -11,7 +11,7 @@
 //    的接口边界有据可依，而不是凭空设计。
 
 import React, { Suspense, useDeferredValue, useRef, useState, useEffect, useCallback } from 'react'
-import { EllipsisVerticalIcon, ChevronRightIcon, EyeIcon, CodeIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, GlobeIcon, PencilIcon, PlusIcon, SaveIcon, SendIcon, MessageSquarePlusIcon, TerminalIcon, Trash2Icon, XIcon, CopyIcon } from '@animateicons/react/lucide'
+import { EllipsisVerticalIcon, ChevronRightIcon, EyeIcon, CodeIcon, FolderOpenIcon, PencilIcon, PlusIcon, SaveIcon, SendIcon, MessageSquarePlusIcon, Trash2Icon, XIcon, CopyIcon } from '@animateicons/react/lucide'
 import AgentFileTree from '../../AgentFileTree'
 import AgentBrowser, { ANNOTATION_KIND_LABEL, type UiAnnotation } from '../../AgentBrowser'
 import AgentGitDiff from '../../AgentGitDiff'
@@ -22,7 +22,8 @@ import { useAgentTerminalStore } from '../../../store/terminalStore'
 import { useStore } from '../../../store/useStore'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { useBubbleTip } from '../../useBubbleTip'
-import { GIT_DIFF_TAB, MEM_IMG_PREFIX } from '../utils/constants'
+import { isSentinelTabPath } from '../utils/constants'
+import { PANEL_ICON, PANEL_LABEL, PANEL_ORDER, PANEL_SHORTCUT } from '../utils/panels'
 import { rovingKeyNav } from '../utils/rovingKeyNav'
 import { AgentMarkdown } from '../agent-message'
 // PdfViewer 内部静态依赖 pdfjs+worker（≈2MB）：改为 React.lazy —— 只在真正打开
@@ -40,15 +41,6 @@ const MonacoEditor = React.lazy(() => import('../../MonacoEditor'))
 const TerminalView = React.lazy(() => import('../../TerminalView'))
 
 type PreviewDomain = ReturnType<typeof useAgentPreviewTabs>
-
-// 工作区的展示顺序，与 PANEL_SHORTCUT 的 F1~F5 一一对应（标签条、「+」菜单、选择界面共用）
-const PANEL_ORDER: PanelView[] = ['files', 'diff', 'terminal', 'browser', 'preview']
-const PANEL_LABEL: Record<PanelView, string> = { files: '文件树', preview: '预览', diff: '变更', terminal: '终端', browser: '浏览器' }
-const PANEL_ICON: Record<PanelView, typeof FolderIcon> = {
-  files: FolderIcon, preview: EyeIcon, diff: GitBranchIcon, terminal: TerminalIcon, browser: GlobeIcon,
-}
-// 与 AgentCodeViewLayout.tsx 里 binds 的按键一一对应，改了那边要改这里
-const PANEL_SHORTCUT: Record<PanelView, string> = { files: 'F1', diff: 'F2', terminal: 'F3', browser: 'F4', preview: 'F5' }
 type GitChanges = Parameters<typeof AgentGitDiff>[0]['data']
 
 export type AgentPreviewSlotProps = {
@@ -560,7 +552,7 @@ export function AgentPreviewSlot({
                       {/* 源码预览编辑：进入/退出编辑态；保存写回文件。
                     Markdown 在「源码」模式下同样允许编辑（渲染态不可直接编辑）。
                     PDF / DOCX 不给编辑：预览的是抽取文本，写回会毁掉原文件（保存处另有兜底）。 */}
-                      {!isPreviewHtml && (!isPreviewMarkdown || mdViewMode === 'source') && activeTab && !activeTab.isBinaryDoc && !activeTab.truncated && activeTabPath !== GIT_DIFF_TAB && (
+                      {!isPreviewHtml && (!isPreviewMarkdown || mdViewMode === 'source') && activeTab && !activeTab.isBinaryDoc && !activeTab.truncated && !isSentinelTabPath(activeTabPath) && (
                         previewEditing ? (
                           <>
                             <button className="btn btn-xs ac-icon-btn agent-code-preview-save" onClick={() => { if (previewDraft !== null) savePreviewFile(previewDraft) }} disabled={previewDraft === null || previewDraft === activeTab.content}>
@@ -595,13 +587,19 @@ export function AgentPreviewSlot({
                         <button className="file-tree-ctx-item" onClick={() => { closeTab(tabMenu.path); setTabMenu(null) }}><XIcon size={13} /> 关闭</button>
                         <button className="file-tree-ctx-item" onClick={() => { closeOtherTabs(tabMenu.path); setTabMenu(null) }}><XIcon size={13} /> 关闭其他</button>
                         <button className="file-tree-ctx-item" onClick={() => { closeAllTabs(); setTabMenu(null) }}><Trash2Icon size={13} /> 关闭全部</button>
-                        {/* 哨兵标签（Git 变更面板 / 内存图片）没有磁盘路径可复制 */}
-                        {tabMenu.path !== GIT_DIFF_TAB && !tabMenu.path.startsWith(MEM_IMG_PREFIX) && (
+                        {/* 哨兵标签（Git 变更面板 / 内存图片 / pi 撤销备份）没有磁盘路径可复制 */}
+                        {!isSentinelTabPath(tabMenu.path) && (
                           <button className="file-tree-ctx-item" onClick={() => { navigator.clipboard.writeText(tabMenu.path).catch(() => { }); setTabMenu(null) }}><CopyIcon size={13} /> 复制路径</button>
                         )}
                       </div>
                     )
                   })()}
+                  {/* 编辑期间文件被外部改过：不自动重读（会打断输入），但要让人知道保存会被拦下 */}
+                  {activeTab?.stale && (
+                    <div className="agent-code-preview-trunc">
+                      <span className="agent-code-preview-trunc-text">文件已被外部修改 · 保存会被拦下，请重新打开该文件后再合并</span>
+                    </div>
+                  )}
                   {/* 大文件截断告知 + 分段续读（7.1 + 7.9）。truncated 字段早已存在，此前零消费方。
                       截断时编辑按钮一并隐藏（用部分内容写回会删掉未读入的部分），加载完整后恢复。 */}
                   {activeTab?.truncated && (
@@ -715,6 +713,7 @@ export function AgentPreviewSlot({
                                         onChange={v => { if (previewEditing) setPreviewDraft(v) }}
                                         onSave={v => savePreviewFile(v)}
                                         onSelectionAction={previewEditing ? undefined : (text, startLine, endLine) => addCodeSnippet(startLine, endLine, text)}
+                                        preserveScrollKey={activeTabPath || ''}
                                       />
                                     </Suspense>
                                   </div>

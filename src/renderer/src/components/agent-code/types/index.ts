@@ -59,6 +59,10 @@ export interface PreviewTab {
   fileSize?: number | null
   /** 文本预览：当前已加载的字节数（截断续读用；完整读入后 = fileSize） */
   loadedBytes?: number | null
+  /** 打开（或最近一次读入）时的文件 mtime：保存前比对，判断是否被外部改过 */
+  mtimeMs?: number | null
+  /** 编辑期间文件被外部改过（未自动重读，保存时会被拦下） */
+  stale?: boolean
   /** 「加载更多 / 完整内容」进行中：不置 loading——那会把正文整体换成读取占位 */
   loadingMore?: boolean
   isImage?: boolean
