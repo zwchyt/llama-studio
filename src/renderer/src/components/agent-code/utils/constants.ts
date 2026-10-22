@@ -22,6 +22,10 @@ export const GIT_DIFF_TAB = '__agent_git_changes__'
 // 绝不参与磁盘读写。前缀带 :// 是为了与真实路径不可能撞车（Windows 路径不会长这样）。
 export const MEM_IMG_PREFIX = 'memimg://'
 
+// 内存文本（气泡里点「折叠/引用/代码」胶囊 → 在预览区打开那段内容）。
+// 与内存图片同性质：只当标签 key，不参与磁盘读写。
+export const MEM_TEXT_PREFIX = 'memtext://'
+
 // pi 模式的撤销备份在预览标签里用哨兵路径占位（真实文件在 main 侧，标签只存
 // `pi-undo:<id>` 标记）。与上面两个前缀同性质：只当标签 key，不参与磁盘读写。
 export const PI_UNDO_PREFIX = 'pi-undo:'
@@ -29,7 +33,7 @@ export const PI_UNDO_PREFIX = 'pi-undo:'
 /** 是否为「背后没有真实文件」的哨兵标签路径（Git 变更面板 / 内存图片 / pi 撤销备份）。 */
 export function isSentinelTabPath(p: string | null | undefined): boolean {
   if (!p) return false
-  return p === GIT_DIFF_TAB || p.startsWith(MEM_IMG_PREFIX) || p.startsWith(PI_UNDO_PREFIX)
+  return p === GIT_DIFF_TAB || p.startsWith(MEM_IMG_PREFIX) || p.startsWith(MEM_TEXT_PREFIX) || p.startsWith(PI_UNDO_PREFIX)
 }
 
 // 图片内联的体积上限（字节）。read-file-base64 会把整份文件读成 data URL，

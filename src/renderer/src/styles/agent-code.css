@@ -764,6 +764,183 @@ html.is-panel-resizing .agent-think-body .table-node {
   box-shadow: none;
 }
 
+/* ── 富文本输入框（contenteditable）：几何沿用 .chat-input，这里只补 contenteditable
+   特有的换行/占位符，以及内联胶囊。textarea 换成它之后，胶囊才能长在文字中间。 ── */
+.chat-input-editor {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  outline: none;
+  cursor: text;
+}
+
+/* contenteditable 没有原生 placeholder：靠 data-empty 属性 + ::before 兜一个 */
+.chat-input-editor[data-empty="true"]::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+/* 内联胶囊：夹在文字中间的一颗小标签，点标签编辑/预览、点 × 删除。
+   皮与附件胶囊（.agent-img-pill）完全对齐：var(--bg) 底 + --border-strong 描边 + 全圆角，
+   四种胶囊（折叠/引用/图片/文件）混排时看起来是同一族。 */
+.chat-inline-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 2px;
+  max-width: 220px;
+  padding: 1px 4px 1px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  vertical-align: -1px;
+  user-select: none;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+
+.chat-inline-chip:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.chat-inline-chip-label {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 胶囊前面的彩色图标：折叠=蓝（材料类），引用=绿（引用块）。两种都是既有语义色，
+   不新造色值；想换配色改这两行即可。 */
+.chat-inline-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--link);
+}
+
+.chat-inline-chip-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.chat-inline-chip[data-kind="quote"] .chat-inline-chip-icon {
+  color: var(--success);
+}
+
+/* 图片 = 紫（项目里「图片＝紫」的既有约定，同 .agent-img-pill）；
+   文件 = 琥珀；折叠 = 蓝；引用 = 绿。 */
+.chat-inline-chip[data-kind="image"] .chat-inline-chip-icon {
+  color: #7c3aed;
+}
+
+html.theme-dark .chat-inline-chip[data-kind="image"] .chat-inline-chip-icon {
+  color: #a78bfa;
+}
+
+.chat-inline-chip[data-kind="file"] .chat-inline-chip-icon {
+  color: var(--warning);
+}
+
+/* 代码片段 = 青（与文件/图片区分开，代码类内容一眼可辨） */
+.chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
+  color: #0d9488;
+}
+
+html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
+  color: #2dd4bf;
+}
+
+/* 代码胶囊的标签是「文件:行范围」，字重比折叠/引用轻一档，避免和正文抢注意力 */
+.chat-inline-chip[data-kind="code"] .chat-inline-chip-label {
+  font-weight: 500;
+}
+
+.chat-inline-chip[data-kind="file"] .chat-inline-chip-label {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.chat-inline-chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chat-inline-chip-x:hover {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+/* 胶囊悬停预览卡：portal 到 body（输入区 overflow 会裁），固定定位在胶囊正上方。
+   纯展示，pointer-events: none —— 不做"移进卡片继续看"的悬停桥，省掉一条容易抖的链路。 */
+.chat-inline-chip-tip {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  transform: translateY(-100%);
+  width: max-content;
+  max-width: min(420px, calc(100vw - 40px));
+  max-height: 240px;
+  padding: 8px 11px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow: auto;
+  overscroll-behavior: contain;
+  pointer-events: none;
+  word-break: break-word;
+}
+
+.chat-inline-chip-tip--img {
+  padding: 4px;
+}
+
+.chat-inline-chip-tip--img img {
+  display: block;
+  max-width: 360px;
+  max-height: 220px;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.chat-inline-chip-tip-file {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-weight: 600;
+}
+
+.chat-inline-chip-tip-file span {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .chat-collapse-btn {
   display: flex;
   align-items: center;
@@ -7485,6 +7662,86 @@ html.is-panel-resizing .agent-think-body .table-node {
    不用 padding-bottom：全局 border-box，padding 会挤进 max-height 少露半行字。
    淡出带上沿取 1.8lh（> 一行）：整条最后一行都在渐隐里，行顶就已虚到约一半；
    若只取 1lh，行顶是实心的，看着就像最后一行没被遮。想更糊把 --user-msg-fade 调大。 */
+/* 内联在正文里的文件卡片：比下面的文件块更紧凑，与胶囊同一套几何 */
+.agent-code-view .chat-messages .user-msg-file--inline {
+  gap: 4px;
+  padding: 0 7px;
+  font-size: 12px;
+  line-height: 1.7;
+  vertical-align: -1px;
+  border-color: var(--border-strong);
+  background: var(--bg);
+}
+
+.agent-code-view .chat-messages .user-msg-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin: 0 2px;
+  padding: 0 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+  vertical-align: -1px;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+
+/* 气泡胶囊前面的彩色图标：与输入框胶囊同一套图标与配色 */
+.agent-code-view .chat-messages .user-msg-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--link);
+}
+
+.agent-code-view .chat-messages .user-msg-chip-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.agent-code-view .chat-messages .user-msg-chip[data-kind="quote"] .user-msg-chip-icon {
+  color: var(--success);
+}
+
+.agent-code-view .chat-messages .user-msg-chip[data-kind="code"] .user-msg-chip-icon {
+  color: #0d9488;
+}
+
+html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"] .user-msg-chip-icon {
+  color: #2dd4bf;
+}
+
+.agent-code-view .chat-messages .user-msg-chip:hover {
+  background: var(--surface-hover);
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
+/* 展开态：回到普通行内文本（保留 pre-wrap，多行内容照常换行） */
+.agent-code-view .chat-messages .user-msg-chip--open {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre-wrap;
+  cursor: pointer;
+}
+
 .agent-code-view .chat-messages .user-msg-clamped .user-plain-text {
   margin-bottom: -12px;
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--user-msg-fade, 1.8lh)), transparent);
@@ -7597,6 +7854,71 @@ html.is-panel-resizing .agent-think-body .table-node {
   background: var(--agent-selection-bg);
 }
 
+/* ── 「已折叠」胶囊的编辑弹窗：沿用上面这套遮罩与卡片，正文区换成 textarea ──
+   弹窗是 portal 到 body 的，落在 .agent-code-view 之外，所以这里不挂作用域前缀
+   （同 .msg-full 系列）。卡片给固定高度，让 textarea 吃满剩余空间、底部按钮常驻。 */
+.msg-full--edit {
+  height: min(620px, calc(100vh - 96px));
+}
+
+/* 阅读弹窗的遮罩用 zoom-out 光标（暗示"点一下收起"），编辑弹窗里点遮罩是"取消"，
+   沿用那个光标会让人以为是放大查看，这里改回普通箭头 */
+.packed-edit-mask {
+  cursor: default;
+}
+
+.packed-edit-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  padding: 6px 32px 4px;
+}
+
+/* 正文编辑区：默认描边保持原样（1px --border，与界面其它输入框一致），
+   这里只改**聚焦高亮**。 */
+.msg-full--edit .packed-edit-textarea {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.6;
+  tab-size: 2;
+  resize: none;
+  outline: none;
+  overflow-y: auto;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+/* 聚焦：描边只**加深一档** + 一圈很淡的中性光环。
+   ⚠️ 不能用 `border-color: var(--accent)`：--accent 在浅色主题就是 #0a0a0a（近黑）、
+   深色主题是 #c6cad2（近白），点进去会直接变成一条生硬的黑框/白框，
+   看着像没洗样式的原生输入框。混一档到 --border 上才是"高亮"而不是"换了个框"。 */
+.msg-full--edit .packed-edit-textarea:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.packed-edit-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 10px 32px 24px;
+}
+
+.packed-edit-count {
+  margin-right: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ═══ 输入框超长折叠 chip ═══
    内容高度超过折叠上限（INPUT_FOLD_CAP ≈ 3 行）后，chips 行出现一枚「已折叠 N 行」
    小胶囊，样式与「引用」胶囊一致（同一套中性 tint，随主题走）：图标 + 标签 +
@@ -7623,6 +7945,13 @@ html.is-panel-resizing .agent-think-body .table-node {
   color: var(--text);
 }
 
+/* 后粘的胶囊排在文字下面时自成一整行：textarea 是 flex:1，同行放不下会把它挤到边角，
+   这里显式占满一行，视觉上就是"你的文字 → 下面这颗胶囊" */
+.chat-input-foldrow {
+  width: 100%;
+  display: flex;
+}
+
 .agent-code-view .chat-input-fold-chip-icon {
   flex-shrink: 0;
   color: var(--text-muted);
@@ -7630,9 +7959,23 @@ html.is-panel-resizing .agent-think-body .table-node {
 
 .agent-code-view .chat-input-fold-chip-label {
   flex-shrink: 0;
+  /* 这是个 <button>（点它把正文放回输入框继续编辑）：不重置就是浏览器原生的
+     灰底 + 2px 外凸边框 + 默认内边距，跟胶囊其余部分完全不是一套皮。
+     引用胶囊那边标签是 <span>，所以没暴露这个问题。 */
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: inherit;
   font-size: 11px;
   font-weight: 600;
+  line-height: inherit;
   color: var(--text);
+  cursor: pointer;
+}
+
+.agent-code-view .chat-input-fold-chip-label:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 /* 悬停预览：与 .agent-ref-chip-tip 同款，展示折叠内容的原文（等宽、限 10 行） */

@@ -134,7 +134,7 @@ export default function AgentCodeView() {
   // 输入草稿按模式（通用 / 编码）隔离，待发送附件按项目隔离。
   let inputDomain!: ReturnType<typeof useAgentInput>
   const {
-    input, setInput, textareaRef,
+    input, setInput, editorRef,
     autoResize, insertAtCursor, replaceRange, setSelectionPopover,
   } = (inputDomain = useAgentInput({ draftScope: projectsDomain.mode, attachScope: activeProjectId }))
 
@@ -296,7 +296,7 @@ export default function AgentCodeView() {
   // 整个域对象同时透传给 AgentInputArea。
   let hintsDomain!: ReturnType<typeof useAgentInputHints>
   hintsDomain = useAgentInputHints({
-    input, setInput, insertAtCursor, replaceRange, textareaRef, autoResize,
+    input, setInput, insertAtCursor, replaceRange, editorRef, autoResize,
     workspaceDir: activeProject.workspaceDir,
     // 通用模式不启用斜杠命令（编码工作台能力），@ 文件补全不受影响
     plainChat: ui.plainChat,

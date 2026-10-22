@@ -48,7 +48,7 @@ export function useAgentSessionActions({
   } = run
   const { approvalResolveRef } = ui
   const { activeTab, activeTabPath } = previewDomain
-  const { setCodeSnippets, setPreviewSelPopover } = inputDomain
+  const { codeSnippets, setCodeSnippets, setPreviewSelPopover, addCodeChip } = inputDomain
 
   // 队列出队检测：返回 prev 中存在、next 中不存在的项（多重集语义，正确处理重复文本）
   function queueRemoved(prev: string[], next: string[]): string[] {
@@ -93,14 +93,17 @@ export function useAgentSessionActions({
     const lines = code.split('\n').filter(l => l.trim())
     let preview = lines[0]?.trim() || ''
     if (preview.length > 30) preview = preview.slice(0, 30) + '···'
-    // 去重：同一文件同一行范围不重复添加
-    setCodeSnippets(prev => {
-      if (prev.some(s => s.filePath === path && s.startLine === startLine && s.endLine === endLine)) return prev
-      return [...prev, { id: uniqueId('snip'), filePath: path, fileName, startLine, endLine, code, preview }]
-    })
+    // 去重：同一文件同一行范围不重复添加（判断提到外面，才能决定要不要插胶囊）
+    const dup = codeSnippets.some(s => s.filePath === path && s.startLine === startLine && s.endLine === endLine)
+    if (!dup) {
+      const snip = { id: uniqueId('snip'), filePath: path, fileName, startLine, endLine, code, preview }
+      setCodeSnippets(prev => [...prev, snip])
+      // 内联胶囊：标签 = 文件名:行范围，正文 = 围栏代码块（发送时按位置展开）
+      addCodeChip(snip)
+    }
     setPreviewSelPopover(null)
     try { window.getSelection()?.removeAllRanges() } catch { /* ignore */ }
-  }, [activeTabPath, activeTab?.content])
+  }, [activeTabPath, activeTab?.content, codeSnippets, setCodeSnippets, addCodeChip])
 
   // ── 停止生成（中止当前流式 + 退出工具循环）──
   const handleStop = useCallback(() => {

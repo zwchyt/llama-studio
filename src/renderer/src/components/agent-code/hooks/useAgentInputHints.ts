@@ -15,6 +15,7 @@
 // 完成——因此本 hook 不依赖 runSlashAction。调用点选在 handleKeyDown 之前：该位置
 // 之后才有代码引用本域符号，移动不影响既有行为。
 
+import type { RichInputHandle } from '../agent-input/RichInput'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useStore } from '../../../store/useStore'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
@@ -22,13 +23,13 @@ import { filterCommands } from '../../../agent/slashCommands'
 import type { FlatFileEntry } from '../types'
 
 export function useAgentInputHints({
-  input, setInput, insertAtCursor, replaceRange, textareaRef, autoResize, workspaceDir, plainChat,
+  input, setInput, insertAtCursor, replaceRange, editorRef, autoResize, workspaceDir, plainChat,
 }: {
   input: string
   setInput: (v: string) => void
   insertAtCursor: (text: string) => void
   replaceRange: (start: number, end: number, text: string) => void
-  textareaRef: React.RefObject<HTMLTextAreaElement | null>
+  editorRef: React.RefObject<RichInputHandle | null>
   autoResize: () => void
   workspaceDir: string
   /** 通用模式（聊天工作区）：不提供 / 命令——斜杠命令是编码工作台的能力 */
@@ -99,7 +100,7 @@ export function useAgentInputHints({
     const anchor = atAnchorRef.current
     if (anchor == null) { insertAtCursor(entry.name); setAtQuery(null); return }
     // 替换从 @ 到当前光标处的整段（即 @查询串）
-    const caret = textareaRef.current?.selectionStart ?? input.length
+    const caret = editorRef.current?.getCaretOffset() ?? input.length
     replaceRange(anchor, caret, entry.name)
     setAtQuery(null)
   }, [insertAtCursor, replaceRange, input.length])
@@ -153,16 +154,14 @@ export function useAgentInputHints({
   // 选中命令：把 /查询串 替换为 "/name "（留出参数位置），不发送
   const onPickSlash = useCallback((cmd: import('../../../../../shared/types').SlashCommand) => {
     const anchor = slashAnchorRef.current
-    const el = textareaRef.current
-    const caret = el?.selectionStart ?? input.length
+    const caret = editorRef.current?.getCaretOffset() ?? input.length
     if (anchor == null) { setInput(`/${cmd.name} `); setSlashQuery(null); return }
     const next = input.slice(0, anchor) + `/${cmd.name} ` + input.slice(caret)
     setInput(next)
     setSlashQuery(null)
     requestAnimationFrame(() => {
-      el?.focus()
-      const pos = anchor + cmd.name.length + 2
-      el?.setSelectionRange(pos, pos)
+      // 编辑器按 value 重建后把光标放到命令名之后（留出参数位置）
+      editorRef.current?.setCaretOffset(anchor + cmd.name.length + 2)
       autoResize()
     })
   }, [input, autoResize])

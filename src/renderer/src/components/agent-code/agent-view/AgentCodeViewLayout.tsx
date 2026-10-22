@@ -14,6 +14,7 @@
 //
 // 组件体内把域对象二次解构为局部名，使下方 JSX 与拆分前的写法逐字一致。
 
+import type { RichValue } from '../agent-input/RichInput'
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Bot, Database, Copy, Check, ImageDown, FileDown, Wrench } from 'lucide-react'
@@ -108,8 +109,8 @@ export interface AgentCodeViewLayoutProps {
   chatInputAreaRef: React.RefObject<HTMLDivElement | null>
 
   /** ── 散装值：输入区键盘处理 ── */
-  handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
-  handleInputChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
+  handleKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => void
+  handleInputChange: (v: RichValue) => void
 }
 
 /** 压缩记录的触发来源文案（取自 pi 的 compaction_end.reason） */
@@ -187,7 +188,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   } = inputDomain
   const {
     htmlAnnotateActive, htmlAnnotations, injectHtmlAnnotate, toggleHtmlAnnotate,
-    clearHtmlAnnotations, removeHtmlAnnotation, openFileAtLine, openPreview, openMemoryImage, openTabs,
+    clearHtmlAnnotations, removeHtmlAnnotation, openFileAtLine, openPreview, openMemoryImage, openMemoryText, openTabs,
   } = previewDomain
   const {
     loading, streaming, thinkDone, condenseOpen, setCondenseOpen,
@@ -451,6 +452,12 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   // 点图片胶囊：有磁盘路径的按路径打开原文件（预览区读原始字节）；
   // 没有路径的（剪贴板粘贴、从浏览器 / 看图软件拖入——webUtils.getPathForFile 取不到）
   // 用内存里的 dataUrl 直接开一个预览标签。两种图点击都有反应，不再只有「悬停能看」。
+  // 点气泡里的「折叠 / 引用 / 代码」胶囊：把那段内容作为内存文本标签开在右侧预览区
+  // （与输入框里点胶囊打开编辑弹窗是两回事——这里只是"看"）。
+  const previewChipText = useCallback((label: string, text: string) => {
+    openMemoryText(label, text, 'preview')
+  }, [openMemoryText])
+
   const previewImageAttachment = useCallback((a: { name: string; path?: string; dataUrl?: string; fullDataUrl?: string }) => {
     if (a.path) { void openPreview(a.path, 'preview'); return }
     const src = a.dataUrl || a.fullDataUrl
@@ -530,7 +537,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                   {/* 附件两种模式都渲染（图片＝正文内联胶囊，文件卡片点击看抽取文本）；
                       只发附件不发文字时也要有这条消息的气泡，否则附件整块消失。
                       超长正文在气泡里只显示前几行，点气泡正中弹窗看全文。 */}
-                  <UserMessageEntry content={msg.content} attachments={msg.attachments} onOpenImage={previewImageAttachment} />
+                  <UserMessageEntry content={msg.content} attachments={msg.attachments} chipRanges={msg.chipRanges} onOpenImage={previewImageAttachment} onOpenText={previewChipText} />
                   <div className="chat-msg-actions">
                     <button className="chat-msg-action-btn" aria-label="复制" {...tip('复制')} onClick={() => copyMessage(msg.content)}><CopyIcon size={13} /></button>
                     <span style={{ display: 'inline-flex' }} {...tip('编辑')}>

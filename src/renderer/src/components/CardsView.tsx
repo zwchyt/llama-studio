@@ -7,6 +7,7 @@ import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
 import type { Template } from '../../../shared/types'
 import { useBubbleTip } from './useBubbleTip'
+import { useGridFlip } from '../utils/useGridFlip'
 import '../styles/cards.css'
 export default function CardsView() {
   const importIconRef = useRef<{ startAnimation: () => void; stopAnimation: () => void }>(null)
@@ -31,6 +32,10 @@ export default function CardsView() {
   }, [cards, templateSearch])
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
   const { tipHandlers: tip, tipNode } = useBubbleTip()
+  // 网格重排过渡：窗口/面板宽度跨过「能放几列」的阈值时，卡片从旧位置滑到新位置，
+  // 而不是瞬移（CSS Grid 的列数变化本身没有可过渡的属性）
+  const gridRef = useRef<HTMLDivElement>(null)
+  useGridFlip(gridRef, { active: templatesReady && filtered.length > 0, revision: filtered.length })
   return (
     <div className="templates-view">
       {tipNode}
@@ -106,7 +111,7 @@ export default function CardsView() {
           <button className="btn btn-ghost" onClick={() => setTemplateSearch('')}>清除搜索</button>
         </div>
       ) : (
-        <div className="cards-grid cards-grid--ready">
+        <div className="cards-grid cards-grid--ready" ref={gridRef}>
           {filtered.map((card, i) => (
             // 交错渐入：每张卡片延迟 (index × 30ms) 依次浮现（上限 450ms），
             // 配合网格区整体淡入，避免模板加载完成后卡片「突然蹦出」

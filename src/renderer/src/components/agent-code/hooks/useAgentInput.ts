@@ -10,7 +10,7 @@
 //     attachedFiles 派生，不另存一份），fileInputRef；含 readAttachmentFile / handleAttachmentSelect /
 //     removeAttachment / handleFilePickerAttach / handleInputDragOver / handleInputDrop /
 //     handleFilePickerRemove / toggleFilePicker；
-//   · 引用胶囊与代码片段：refChips / codeSnippets 两个 state；
+//   · 引用块与代码片段：引用块并入内联 chips（kind='quote'），代码片段仍是独立 state；
 //   · 选区浮层：selectionPopover / previewSelPopover 两个 state，previewSelRef /
 //     selectionPopoverRef / previewDragStartLineRef 三个 ref。
 // 外部输入：draftScope（输入草稿的隔离作用域）与 attachScope（附件的隔离作用域，
@@ -31,7 +31,8 @@
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { notify } from '../../../store/notificationStore'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
-import { INPUT_FOLD_CAP } from '../utils/constants'
+import type { RichChip, RichInputHandle } from '../agent-input/RichInput'
+import { extOf } from '../../../utils/fileKind'
 import { previewLineNoFromTarget, selectionMarkdown, selectionTextWithMath } from '../utils/dom'
 import { uniqueId } from '../utils/ids'
 import { binaryDocLabel, extractTextFromBuffer, extractTextFromFile, isBinaryDoc } from '../../../utils/extractText'
@@ -45,6 +46,18 @@ const ATTACH_MAX_COUNT = 20
 /** 读取并发：批内并行、批间串行。一次拖入 20 张图时，Promise.all 会同时起 20 个
  *  FileReader + base64 转换，内存与主线程卡顿都集中在这一瞬。 */
 const ATTACH_READ_CONCURRENCY = 3
+
+/** 粘贴折叠的阈值：只看**粘进来的这一段**，与输入框里已有的内容无关。
+ *  阈值必须对齐输入框的真实折叠线：font-size 14px × line-height 1.5 = 21px/行，
+ *  加上 padding 8px×2，3 行就是 79px，早已超过 INPUT_FOLD_CAP(63)——所以「3 行」才折，
+ *  写成 4 行会让本来会折叠的 3 行粘贴悄悄变成普通文本（曾经踩过）。
+ *  字符阈值按 3 行 × 60 字估，兜住「一整段没有换行、靠自动换行撑满 3 行」的情况。
+ *  不按「输入框整体高度」判，是因为那样「先打几行字再粘长文」会把草稿一起卷进胶囊。 */
+const PASTE_FOLD_LINES = 3
+const PASTE_FOLD_CHARS = 180
+export function isLongPaste(text: string): boolean {
+  return text.split('\n').length >= PASTE_FOLD_LINES || text.length >= PASTE_FOLD_CHARS
+}
 
 // PDF/docx 抽出的正文没有文件名上下文，标出来源；解析失败也要留一行，免得模型收到空附件却无人报错
 function wrapBinaryDocText(name: string, text: string): string {
@@ -66,94 +79,48 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
 
   const [input, setInput] = useState('')
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // 富文本编辑器句柄（contenteditable）：光标偏移、插入文本/胶囊、区间替换都走它
+  const editorRef = useRef<RichInputHandle | null>(null)
 
   const inputHistoryRef = useRef<string[]>([])
   const historyIdxRef = useRef<number>(-1)
 
-  const [packedInput, setPackedInput] = useState<string | null>(null)
+  // 内联胶囊：每颗胶囊是编辑器里的一个 contenteditable=false 节点，input 里对应位置是
+  // \uFFFC 占位符。位置完全由用户在编辑器里的光标决定，不再有"排在前面/后面"的标记。
+  const [chips, setChips] = useState<RichChip[]>([])
 
   // ── 输入草稿按作用域隔离（当前传入的是工作区模式：通用 / 编码）──
-  // 切模式时把当前草稿（含已折叠成胶囊的长文本）存回原作用域，再恢复目标作用域的草稿。
+  // 切模式时把当前草稿（含内联胶囊）存回原作用域，再恢复目标作用域的草稿。
   // 用 layout effect 而不是 useEffect：在同一帧内完成切换，不会先画出旧文本再替换。
-  // scopeRef 记录上一个作用域，effect 因 input 变化重跑时（每次敲字）会立刻早退。
-  const draftsRef = useRef<Record<string, { text: string; packed: string | null }>>({})
+  const draftsRef = useRef<Record<string, { text: string; chips: RichChip[] }>>({})
   const scopeRef = useRef(draftScope)
   useLayoutEffect(() => {
     const prev = scopeRef.current
     if (prev === draftScope) return
     scopeRef.current = draftScope
-    draftsRef.current[prev] = { text: input, packed: packedInput }
+    draftsRef.current[prev] = { text: input, chips }
     const next = draftsRef.current[draftScope]
     setInput(next?.text ?? '')
-    setPackedInput(next?.packed ?? null)
-  }, [draftScope, input, packedInput])
+    setChips(next?.chips ?? [])
+  }, [draftScope, input, chips])
 
-  const inputOverflowRef = useRef(false)
-  // 「本次变化来自粘贴」的一次性标记：自动收胶囊只该在粘贴长文本时发生。
-  // 原实现只看高度，用户打到第 4 行整段文字就被抽走变成胶囊、textarea 清空，且胶囊只能删除不能编辑。
-  const pasteFoldRef = useRef(false)
-  const notePaste = useCallback(() => { pasteFoldRef.current = true }, [])
-  const autoResize = useCallback(() => {
-    const el = textareaRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = Math.min(el.scrollHeight, INPUT_FOLD_CAP) + 'px'
-    inputOverflowRef.current = el.scrollHeight > INPUT_FOLD_CAP + 1
-  }, [])
+  const autoResize = useCallback(() => { editorRef.current?.resize() }, [])
 
-  // 高度重测 + 粘贴后自动打包（useLayoutEffect 是防闪烁的关键）：必须在 DOM 更新后、
-  // 浏览器绘制前同步完成测量与打包——若放 useEffect，粘贴的长文本会先被画出来
-  // 一帧再收进 chip，出现「文本闪一下变胶囊」的过渡；layout 阶段完成的 setState
-  // 会在同一帧内同步重渲染，用户只看得到最终态（空框 + chip），没有任何中间画面。
-  // 打字（非粘贴）超出行数上限时只内部滚动，不抽走正文——与 constants.ts 的约定一致。
-  useLayoutEffect(() => {
-    autoResize()
-    const pasted = pasteFoldRef.current
-    pasteFoldRef.current = false   // 一次性：无论是否折叠都要清掉，否则下一次敲键会误折叠
-    if (pasted && input && inputOverflowRef.current) {
-      setPackedInput(prev => (prev ? `${prev}\n\n` : '') + input)
-      setInput('')
-    }
-  }, [autoResize, input])
-
-  // 把文本插入到输入框光标处（追加/插入文本，不触发发送）
+  // 把文本插入到光标处（追加/插入文本，不触发发送）
   // 用于文件浏览器右键「发送到输入框」：插入文件名到当前光标位置
   const insertAtCursor = useCallback((text: string) => {
-    const el = textareaRef.current
-    if (!el) {
-      setInput(prev => prev ? `${prev}\n${text}` : text)
-      autoResize()
-      return
-    }
-    const start = el.selectionStart ?? el.value.length
-    const end = el.selectionEnd ?? el.value.length
-    const next = el.value.slice(0, start) + text + el.value.slice(end)
-    setInput(next)
-    // 还原光标到插入文本之后，并聚焦输入框
-    requestAnimationFrame(() => {
-      el.focus()
-      const pos = start + text.length
-      el.setSelectionRange(pos, pos)
-      autoResize()
-    })
-  }, [autoResize])
+    const ed = editorRef.current
+    if (ed) { ed.insertText(text); return }
+    // 编辑器还没挂载（极少见）：退化成追加到末尾
+    setInput(prev => prev ? `${prev}\n${text}` : text)
+  }, [])
 
+  // 用 text 替换 [start, end)：@ 补全选中文件后把 "@query" 换成文件名
   const replaceRange = useCallback((start: number, end: number, text: string) => {
-    const el = textareaRef.current
-    if (!el) {
-      setInput(prev => prev.slice(0, start) + text + prev.slice(end))
-      return
-    }
-    const next = el.value.slice(0, start) + text + el.value.slice(end)
-    setInput(next)
-    requestAnimationFrame(() => {
-      el.focus()
-      const pos = start + text.length
-      el.setSelectionRange(pos, pos)
-      autoResize()
-    })
-  }, [autoResize])
+    const ed = editorRef.current
+    if (ed) { ed.replaceRange(start, end, text); return }
+    setInput(prev => prev.slice(0, start) + text + prev.slice(end))
+  }, [])
 
   const recallHistory = useCallback((dir: number) => {
     const hist = inputHistoryRef.current
@@ -162,11 +129,18 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
     if (idx === -1) idx = hist.length - 1
     else idx = idx + dir
     if (idx < 0) idx = 0
-    if (idx >= hist.length) { historyIdxRef.current = -1; setInput(''); autoResize(); return }
+    if (idx >= hist.length) {
+      historyIdxRef.current = -1
+      setInput('')
+      requestAnimationFrame(() => editorRef.current?.setCaretOffset(0))
+      return
+    }
     historyIdxRef.current = idx
-    setInput(hist[idx]!)
-    autoResize()
-  }, [autoResize])
+    const text = hist[idx]!
+    setInput(text)
+    // 编辑器按 value 重建后把光标放到末尾（历史召回是"接着改"，不是"从头改"）
+    requestAnimationFrame(() => editorRef.current?.setCaretOffset(text.length))
+  }, [])
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -175,9 +149,8 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
   const attachedFilesRef = useRef<DraftAttachment[]>([])
   // 渲染期写 ref 在并发 / 严格模式下可能被重复执行或读到中间态，改到提交后同步
   useLayoutEffect(() => { attachedFilesRef.current = attachedFiles }, [attachedFiles])
-  // 「引用」引用块：以胶囊（图标 + 缩写）形式内嵌在输入框内，
-  // 发送时作为引用块（> …）拼入正文。
-  const [refChips, setRefChips] = useState<Array<{ id: string; text: string }>>([])
+  // 「引用」不再单独存一份：它和折叠胶囊是同一种内联节点，只是 kind='quote'，
+  // 由 chips 统一持有（位置就是用户在编辑器里插的地方），发送时按 kind 决定怎么展开。
   // 代码片段胶囊：从源码预览中选中代码后引用，发送时以 fenced code block 注入正文。
   // CodeSnippet 类型已抽至 agent-code/types
   const [codeSnippets, setCodeSnippets] = useState<CodeSnippet[]>([])
@@ -222,16 +195,16 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
     try { window.getSelection()?.removeAllRanges() } catch { /* ignore */ }
   }, [])
 
-  // 新增一个引用块胶囊。
+  // 新增一个引用块胶囊：插在光标处（与折叠胶囊同一套内联机制）。
   const addRefChip = useCallback((text: string) => {
     const t = text.trim()
     if (!t) return
-    setRefChips(prev => [...prev, { id: uniqueId('ref'), text: t }])
+    editorRef.current?.insertChip(t, 'quote')
   }, [])
 
-  // 移除胶囊。
+  // 移除胶囊（按 id，位置由编辑器自己维护）。
   const removeRefChip = useCallback((id: string) => {
-    setRefChips(prev => prev.filter(c => c.id !== id))
+    editorRef.current?.removeChip(id)
   }, [])
 
   // 复制所选内容到剪贴板。
@@ -383,6 +356,17 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
     return out
   }
 
+  // 代码片段胶囊：正文存"围栏代码块"（发送时原样展开），标签只显示 文件名:行范围
+  const addCodeChip = useCallback((snip: CodeSnippet) => {
+    const block = `[代码引用: ${snip.fileName} L${snip.startLine}-L${snip.endLine}]\n\`\`\`${extOf(snip.fileName)}\n${snip.code}\n\`\`\``
+    editorRef.current?.insertChip(block, 'code', snip.id, `${snip.fileName}:L${snip.startLine}-L${snip.endLine}`)
+  }, [])
+
+  // 附件本体入库后，在光标处插一颗内联胶囊（id 用附件自己的 id，删胶囊时据此摘附件）
+  const addAttachmentChip = useCallback((a: { id: string; name: string; isImage: boolean }) => {
+    editorRef.current?.insertChip(a.name, a.isImage ? 'image' : 'file', a.id)
+  }, [])
+
   // 从 File 列表挂附件：图片读成 data URL 挂成图片胶囊，其余抽正文。
   // 附件选择器与「拖入但取不到磁盘路径」两处共用（后者拿不到 path，只能按 File 读）。
   // 图片只进胶囊行，正文一个字都不动——用户正在打的字不会被附件插进来打断。
@@ -410,7 +394,8 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
       content: read[i]!.text,
     }))
     setAttachedFiles(prev => [...prev, ...next])
-  }, [])
+    next.forEach(addAttachmentChip)
+  }, [addAttachmentChip])
 
   const handleAttachmentSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
@@ -424,6 +409,8 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
 
   // 「全部清除」：清空全部待发送附件（正文里不再有与附件绑定的占位文字，无需同步）
   const clearAttachments = useCallback(() => {
+    // 胶囊和附件本体一一对应：清空时把对应节点也摘掉，否则会留下空胶囊
+    attachedFilesRef.current.forEach(a => editorRef.current?.removeChip(a.id))
     setAttachedFiles([])
   }, [])
 
@@ -442,6 +429,7 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
           setAttachedFiles(prev => [...prev, {
             id, name: entry.name, path: entry.path, isImage: true, dataUrl: b64.dataUrl, content: '',
           }])
+          addAttachmentChip({ id, name: entry.name, isImage: true })
           return
         }
       } catch { /* 读不出来则退回下面的普通附件路径，至少按路径还能预览 */ }
@@ -453,6 +441,7 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
     setAttachedFiles(prev => prev.some(a => a.path === entry.path)
       ? prev
       : [...prev, { id, name: entry.name, isImage: false, path: entry.path, content: '' }])
+    addAttachmentChip({ id, name: entry.name, isImage: false })
     let text: string | null = null
     try {
       // 工作区里的 PDF/docx：主进程 readFile 只做文本读取，二进制会返回乱码，
@@ -529,7 +518,7 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
 
   return {
     // 输入核心
-    input, setInput, textareaRef, packedInput, setPackedInput, inputOverflowRef, notePaste,
+    input, setInput, editorRef, chips, setChips,
     autoResize, insertAtCursor, replaceRange, recallHistory, inputHistoryRef, historyIdxRef,
     // 附件与文件选择器
     fileInputRef, attachedFiles, setAttachedFiles, filePickerAttached,
@@ -537,8 +526,8 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
     readAttachmentFile, handleAttachmentSelect, attachFromFiles, removeAttachment, clearAttachments, handleFilePickerAttach,
     handleInputDragOver, handleInputDrop, handleFilePickerRemove, toggleFilePicker,
     // 引用胶囊 / 代码片段
-    refChips, setRefChips, codeSnippets, setCodeSnippets,
-    addRefChip, removeRefChip, removeCodeSnippet,
+    codeSnippets, setCodeSnippets,
+    addRefChip, removeRefChip, removeCodeSnippet, addCodeChip,
     // 选区浮层
     selectionPopover, setSelectionPopover, selectionPopoverRef,
     previewSelPopover, setPreviewSelPopover, previewSelRef,

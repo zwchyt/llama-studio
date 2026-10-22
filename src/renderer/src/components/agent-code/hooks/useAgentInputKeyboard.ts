@@ -11,6 +11,7 @@
 // handleSend 由循环域注入，workspaceDir 取当前项目工作目录。
 
 import React, { useCallback, useEffect, useRef } from 'react'
+import type { RichValue } from '../agent-input/RichInput'
 import type { useAgentInput } from './useAgentInput'
 import type { useAgentInputHints } from './useAgentInputHints'
 
@@ -23,8 +24,8 @@ export function useAgentInputKeyboard({
   workspaceDir: string
 }) {
   const {
-    input, setInput, packedInput, setPackedInput,
-    refChips, setRefChips, codeSnippets, setCodeSnippets,
+    input, setInput, editorRef, setChips,
+
     autoResize, recallHistory,
   } = inputDomain
   const {
@@ -33,21 +34,9 @@ export function useAgentInputKeyboard({
     detectAt, filterAtFiles, detectSlash, onPickSlash,
   } = hintsDomain
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     // IME 组合输入中（中文/日文输入法选词）不触发发送，避免误发消息
     if (e.nativeEvent.isComposing || e.keyCode === 229) return
-    // 光标在最开头且无选区时按退格：像删文字一样从右往左删掉最后一个胶囊
-    // （超长打包 chip 排最右 → 引用胶囊 → 代码片段胶囊）
-    if ((e.key === 'Backspace' || e.key === 'Delete') && (packedInput !== null || refChips.length > 0 || codeSnippets.length > 0) && !input) {
-      const el = e.currentTarget
-      if ((el.selectionStart ?? 0) === 0 && (el.selectionEnd ?? 0) === 0) {
-        e.preventDefault()
-        if (packedInput !== null) setPackedInput(null)
-        else if (refChips.length > 0) setRefChips(prev => prev.slice(0, -1))
-        else setCodeSnippets(prev => prev.slice(0, -1))
-        return
-      }
-    }
     // /命令 补全浮层激活时，方向键/回车/Tab/Esc 优先用于选择，绝不发送、不翻历史
     if (slashQuery !== null) {
       if (e.key === 'Escape') {
@@ -84,15 +73,15 @@ export function useAgentInputKeyboard({
   const atQueryRef = useRef<string>('')
   useEffect(() => { atQueryRef.current = atQuery ?? '' }, [atQuery])
 
-  // 输入框 onChange：更新文本 + 自动增高，并检测 @ 触发文件补全浮层
-  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const value = e.target.value
-    const caret = e.target.selectionStart ?? value.length
+  // 输入框 onChange：更新文本 + 内联胶囊 + 自动增高，并检测 @ 触发文件补全浮层
+  const handleInputChange = useCallback((v: RichValue) => {
+    const value = v.text
+    const caret = editorRef.current?.getCaretOffset() ?? value.length
     setInput(value)
+    setChips(v.chips)
     autoResize()
-    // 输入法组合期间（中文拼音还没上屏）不做 / @ 检测：组合态下的字符是拼音，
-    // 拿它去匹配会误弹补全面板。keydown 侧本来就有同样的 isComposing 守卫。
-    if ((e.nativeEvent as InputEvent).isComposing) return
+    // 输入法组合期间不会走到这里：编辑器在组字阶段不 emit，上屏时才回调一次。
+    // （原来按 isComposing 早退，是因为 textarea 的 onChange 在组字中途也会触发。）
     const dir = workspaceDir
     if (detectSlash(value, caret)) {
       // /命令 补全优先；此时不触发 @ 文件补全

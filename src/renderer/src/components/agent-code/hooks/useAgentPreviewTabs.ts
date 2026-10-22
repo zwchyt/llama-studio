@@ -26,7 +26,7 @@ import katexJsInline from 'katex/dist/katex.min.js?raw'
 import { notify } from '../../../store/notificationStore'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { kindOf } from '../../../utils/fileKind'
-import { MEM_IMG_PREFIX, isSentinelTabPath, IMAGE_LIMITS } from '../utils/constants'
+import { MEM_IMG_PREFIX, MEM_TEXT_PREFIX, isSentinelTabPath, IMAGE_LIMITS } from '../utils/constants'
 import { subscribeAgentFileChanged } from '../utils/agentFileEvents'
 import { renderMathInHtml } from '../utils/mathHtml'
 import { baseName, joinPath, normalizePath, pathDir } from '../utils/paths'
@@ -494,6 +494,24 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
     setActiveTabPath(key)
   }, [])
 
+  // 打开一段「内存文本」（气泡里点折叠/引用/代码胶囊）：不读盘，内容直接进标签。
+  // 键带内容指纹，同一段文字重复点只切过去，不同内容各自一个标签。
+  const openMemoryText = useCallback((name: string, text: string, panelMode: PanelView = 'preview') => {
+    const key = `${MEM_TEXT_PREFIX}${name}#${fingerprint(text)}`
+    setRightPanelMode(panelMode)
+    setTreeOpen(true)
+    setOpenTabs(prev => {
+      const hit = prev.find(t => t.path === key)
+      if (hit) return prev.map(t => t.path === key ? { ...t, content: text, loading: false, error: null } : t)
+      return [...prev, {
+        path: key, name, content: text, lines: text.split('\n').length, truncated: false,
+        loading: false, error: null, isImage: false, imageDataUrl: null,
+        isBinaryDoc: false, isPdf: false, pdfData: null,
+      }]
+    })
+    setActiveTabPath(key)
+  }, [])
+
   const closeTab = useCallback((path: string) => {
     const next = openTabsRef.current.filter(t => t.path !== path)
     setOpenTabs(next)
@@ -607,7 +625,7 @@ export function useAgentPreviewTabs({ setRightPanelMode, setTreeOpen, closePanel
     previewHighlightLine, setPreviewHighlightLine,
     previewEditing, setPreviewEditing, previewDraft, setPreviewDraft,
     isPreviewHtml, isPreviewMarkdown, htmlPreviewSrcDoc, inlineLocalImages,
-    openPreview, openPreviewAtLine, openFileAtLine, openMemoryImage, loadMorePreview,
+    openPreview, openPreviewAtLine, openFileAtLine, openMemoryImage, openMemoryText, loadMorePreview,
     savePreviewFile, closeTab, closeOtherTabs, closeAllTabs, closeTabMenu,
   }
 }

@@ -19,19 +19,22 @@
 // 注：组内成员类型尽量用 ReturnType<typeof 对应 hook> 表达，hook 增删成员时
 // 类型会自动跟随，不需要同步改这里。
 
-import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, AlignLeft, Brain, Eye, Globe, Image as ImageIcon, Search, SearchX, Wrench } from 'lucide-react'
-import { CheckIcon, ChevronDownIcon, CircleStopIcon, CodeIcon, FileTextIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, MicIcon, PlayIcon, PlusIcon, QuoteIcon, RefreshCwIcon, SendIcon, ServerIcon, TrashIcon, XIcon } from '@animateicons/react/lucide'
+import React, { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { AlertCircle, Brain, Eye, Globe, Image as ImageIcon, Search, SearchX, Wrench } from 'lucide-react'
+import { CheckIcon, ChevronDownIcon, CircleStopIcon, FileTextIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, MicIcon, PlayIcon, PlusIcon, RefreshCwIcon, SendIcon, ServerIcon, TrashIcon, XIcon } from '@animateicons/react/lucide'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import AgentFilePicker from '../../AgentFilePicker'
 import AskUserQuestionInline from '../../AskUserQuestionInline'
 import { AgentPrefillBar, AgentTopBarCtx, AniIconButton } from '../agent-message'
-import { ImagePill } from '../utils/ImagePill'
 import { AttachmentTextPreview, type PreviewableAttachment } from '../agent-message/AttachmentTextPreview'
+import { PackedTextEditor } from './PackedTextEditor'
+import { RichInput, type ChipKind, type RichValue } from './RichInput'
+import { Markdown } from '../../../markdown/markstream'
+import { INPUT_FOLD_CAP } from '../utils/constants'
 import { TOOL_META, formatToolArgs } from '../agent-tools'
 import { TOOL_METAS } from '../../../utils/tools'
 // 预览卡片直接复用会话那套 Markdown 渲染（含 KaTeX 公式覆写），不再自己拼 HTML
-import { Markdown } from '../../../markdown/markstream'
 import { THINKING_LEVELS } from '../../../../../shared/types'
 import type { Attachment, CardState, ModelEndpoint, ThinkingLevel } from '../../../../../shared/types'
 import { useStore } from '../../../store/useStore'
@@ -42,7 +45,7 @@ import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import { rovingKeyNav } from '../utils/rovingKeyNav'
 import { useThemeStore } from '../../../store/themeStore'
 import type { useAgentGit } from '../hooks/useAgentGit'
-import type { useAgentInput } from '../hooks/useAgentInput'
+import { isLongPaste, type useAgentInput } from '../hooks/useAgentInput'
 import type { useAgentInputHints } from '../hooks/useAgentInputHints'
 import type { useAgentProjects } from '../hooks/useAgentProjects'
 
@@ -337,8 +340,8 @@ export type AgentInputAreaProps = {
     workspaceMenuOpen: ReturnType<typeof useAgentGit>['workspaceMenuOpen']
     workspaceMenuRef: ReturnType<typeof useAgentGit>['workspaceMenuRef']
   }
-  handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
-  handleInputChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
+  handleKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => void
+  handleInputChange: (v: RichValue) => void
   /** 点击附件 chip：按磁盘路径把原文件送到右侧「预览」工作区（PDF 版面 / DOCX / 图片 / HTML / 代码） */
   onPreviewAttachment: (path: string) => void
   /** 点图片胶囊：有磁盘路径的读原文件，只有内存图的（剪贴板粘贴 / 浏览器拖入）用 dataUrl 建预览标签 */
@@ -353,14 +356,14 @@ export function AgentInputArea({
   // ── 域解构：把分组 props 摊平回局部名字，组件体内沿用原 JSX 的标识符 ──
 
   const {
-    input, setInput, textareaRef, packedInput, setPackedInput, fileInputRef,
-    attachedFiles, clearAttachments, filePickerAttached,
-    attachFromFiles, notePaste,
+    input, editorRef, chips, setChips, fileInputRef,
+    attachedFiles, filePickerAttached,
+    attachFromFiles,
     filePickerOpen, setFilePickerOpen,
     handleAttachmentSelect, removeAttachment, handleFilePickerAttach,
     handleInputDragOver, handleInputDrop,
-    handleFilePickerRemove, toggleFilePicker, refChips, codeSnippets,
-    removeRefChip, removeCodeSnippet,
+    handleFilePickerRemove, toggleFilePicker, codeSnippets,
+    removeCodeSnippet,
   } = inputDomain
   const {
     atQuery, atFiles, atPopRef, slashQuery, slashList, slashIdx,
@@ -375,27 +378,17 @@ export function AgentInputArea({
   const { activeProject, activeProjectId, activeSessionId, attachBtnRef, branchBtnRef, branchMenuOpen, branchMenuRef, branches, cards, chatInputAreaRef, checkoutBranch, contextModalOpen, ctxInlineRef, currentBranch, projects, setActiveProjectId, setActiveSessionId, setBranchMenuOpen, setContextModalOpen, setWorkspaceMenuOpen, workspaceBtnRef, workspaceMenuOpen, workspaceMenuRef } = shell
   // 没有磁盘路径的附件（读取时拿不到真实文件）退化成浮层看抽取文本，与消息气泡里的文件卡片同一层
   const [attPreview, setAttPreview] = useState<PreviewableAttachment | null>(null)
+  // 正在编辑的内联胶囊 id（弹窗里改正文，不动输入框；见 PackedTextEditor）
+  const [editingChipId, setEditingChipId] = useState<string | null>(null)
+  // 悬停预览：胶囊是编辑器里的 DOM 节点，内容（Markdown / 图片）只有这里拿得到
+  const [chipTip, setChipTip] = useState<{ id: string; kind: ChipKind; rect: DOMRect } | null>(null)
+  const editingChip = editingChipId ? chips.find(c => c.id === editingChipId) ?? null : null
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）；
   // 斜杠补全行已有 onMouseEnter，走 showTip/hideTip 合并进去
   const { tipHandlers: tip, tipNode, showTip, hideTip } = useBubbleTip()
   // 模型选择弹窗里的气泡（来源图标 / 模型名）改用带悬停延迟的一份：
   // 弹窗是扫视式浏览，鼠标掠过就弹会盖住列表；停 400ms 才显示名称更稳。
   const { tipHandlers: tipHover, tipNode: tipHoverNode } = useBubbleTip('below', 400)
-  // 胶囊的悬停预览卡片：显示/隐藏交给状态，不靠纯 :hover——卡片的 pointer-events 可用性
-  // 反过来依赖 :hover，指针移向卡片那一小段缝里会两头落空、卡片先收。
-  // 事件挂在胶囊上，而卡片是胶囊的子节点，所以 mouseleave 的判定范围就是「胶囊 + 卡片」整体。
-  const [tipKey, setTipKey] = useState<string | null>(null)
-  const tipTimer = useRef<number | null>(null)
-  const openTip = (key: string) => {
-    if (tipTimer.current) window.clearTimeout(tipTimer.current)
-    tipTimer.current = null
-    setTipKey(key)
-  }
-  // 延后一拍再收：指针快速掠过缝隙时不至于把卡片直接收掉
-  const closeTip = () => {
-    if (tipTimer.current) window.clearTimeout(tipTimer.current)
-    tipTimer.current = window.setTimeout(() => setTipKey(null), 120)
-  }
   // 外部端点：卡片只存 endpointId，这里查表是为了区分「本机端口 / 远程」的角标与提示文案；
   // 端点本身在「外部端点」页管理，下拉里只留一个跳转入口。
   const modelEndpoints = useStore(s => s.modelEndpoints)
@@ -434,9 +427,9 @@ export function AgentInputArea({
     hadApprovalRef.current = !!approvalReq
     if (approvalReq) { allowBtnRef.current?.focus(); return }
     if (had && (document.activeElement === null || document.activeElement === document.body)) {
-      textareaRef.current?.focus()
+      editorRef.current?.focus()
     }
-  }, [approvalReq, allowBtnRef, textareaRef])
+  }, [approvalReq, allowBtnRef, editorRef])
   // 拖拽落点反馈：只在「真能接收」的拖拽上亮，避免拖选文字时整块输入区跟着高亮
   const [dragOver, setDragOver] = useState(false)
   const isFileDrag = (e: React.DragEvent) => {
@@ -446,12 +439,12 @@ export function AgentInputArea({
   // 发送键的可用条件与禁用原因收成一处：此前 disabled 里含 !apiBaseUrl，但 title 恒为
   // 「发送」——模型没启动时按钮灰掉却不说明原因，用户只能猜（这是最常遇到的一种）。
   // 顺带消掉原来在 JSX 里重复两遍的长表达式。
-  const hasPayload = input.trim() !== '' || attachedFiles.length > 0 || refChips.length > 0 || codeSnippets.length > 0 || !!packedInput?.trim()
-  // 粘贴：剪贴板里的图片直接挂成图片胶囊（桌面端最高频的操作之一）；纯文本走默认粘贴行为，
-  // 只给输入域打一个「本次是粘贴」的标记——长文本据此决定是否收成胶囊。
-  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+  const hasPayload = input.trim() !== '' || attachedFiles.length > 0 || chips.length > 0
+  // 粘贴：图片挂成图片胶囊；长文本在**光标处**插一颗内联胶囊（前后、中间都行），
+  // 短文本交给编辑器的默认粘贴。返回 true 表示这次粘贴已被接管。
+  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>): boolean => {
     const items = e.clipboardData?.items
-    if (!items) return
+    if (!items) return false
     const images: File[] = []
     for (let i = 0; i < items.length; i += 1) {
       const item = items[i]!
@@ -462,48 +455,37 @@ export function AgentInputArea({
     if (images.length > 0) {
       e.preventDefault()
       void attachFromFiles(images)
-      return
+      return true
     }
-    notePaste()
+    const text = (e.clipboardData.getData('text/plain') || '').replace(/\r\n?/g, '\n')
+    if (text && isLongPaste(text)) {
+      e.preventDefault()
+      editorRef.current?.insertChip(text)
+      return true
+    }
+    return false
+  }
+  // 胶囊被删（× 或退格）→ 同步摘掉附件本体：只对「上一帧已存在的胶囊」做差集，
+  // 新加的附件在插胶囊之前不会被误判成删除
+  const prevChipIdsRef = useRef<string[]>([])
+  const handleEditorChange = (v: RichValue) => {
+    handleInputChange(v)
+    const alive = new Set(v.chips.map(c => c.id))
+    const removed = prevChipIdsRef.current.filter(id => !alive.has(id))
+    prevChipIdsRef.current = v.chips.map(c => c.id)
+    if (removed.length === 0) return
+    removed.forEach(id => {
+      if (attachedFiles.some(a => a.id === id)) removeAttachment(id)
+      else if (codeSnippets.some(s => s.id === id)) removeCodeSnippet(id)
+    })
   }
   const sendDisabled = !hasPayload || !apiBaseUrl
   const sendTitle = !apiBaseUrl ? '请先启动一个模型' : !hasPayload ? '输入内容后发送' : '发送'
   // 动画小球的配色随应用亮/暗主题走：此前写死 light，暗底下对比度全靠运气。
   const orbTheme = useThemeStore(s => s.theme)
-  // 文件类附件的胶囊：排在输入框内部（正文上方一整行，与「引用」胶囊同一容器）。
-  // 图片同样排在这里，但自成一整行（.chat-input-imgrow）——与正文彻底分开：
-  // 上面是图片胶囊，胶囊下面才是输入的文字。不再往正文里插行内记号、也不再按记号位置盖胶囊。
-  const fileChips = useMemo(() => attachedFiles.filter(a => !a.isImage), [attachedFiles])
-  const imageAtts = useMemo(() => attachedFiles.filter(a => a.isImage), [attachedFiles])
-  const attachTray = fileChips.length > 0 && (
-    <div className="chat-attach-tray">
-      {fileChips.map(att => {
-        // 有磁盘路径 → 点开右侧「预览」工作区看原文件（PDF 版面 / DOCX / HTML / 代码）；
-        // 拿不到路径的才退回浮层，看模型实际读到的那段文本。
-        const path = att.path
-        const open = path
-          ? () => onPreviewAttachment(path)
-          : att.content ? () => setAttPreview({ name: att.name, content: att.content }) : undefined
-        return (
-          <div
-            className={`chat-attach-chip${open ? ' previewable' : ''}`}
-            key={att.id}
-            onClick={open}
-            {...tip(open ? `${path ?? att.name}（点击${path ? '在右侧预览' : '预览抽取到的文本'}）` : att.name)}
-          >
-            <FileTextIcon size={14} className="chat-attach-fileicon" />
-            <span className="chat-attach-name" {...tip(att.name)}>{att.name}</span>
-            <button className="chat-attach-remove" onClick={e => { e.stopPropagation(); removeAttachment(att.id) }} disabled={loading}><XIcon size={11} /></button>
-          </div>
-        )
-      })}
-      {attachedFiles.length > 1 && (
-        <button className="chat-attach-clear-all" onClick={clearAttachments} disabled={loading}>
-          <XIcon size={12} />全部清除
-        </button>
-      )}
-    </div>
-  )
+  // 附件（图片/文件）不再单独占一行：它们是编辑器里的内联胶囊，和折叠/引用同一套节点，
+  // 位置由用户的光标决定；删胶囊会同步摘掉附件本体（见 handleEditorChange 的差集）。
+
   return (
     <div
       className="chat-input-area" ref={chatInputAreaRef}
@@ -689,89 +671,29 @@ export function AgentInputArea({
           {/* ② 输入区（中间）：引用胶囊 + 文本 */}
           <div className="chat-input-mid">
             <div className="chat-input-textwrap">
-              {refChips.map(chip => {
-                const tipId = `ref-${chip.id}`
-                return (
-                <div className={`agent-ref-chip${tipKey === tipId ? ' tip-open' : ''}`} key={chip.id}
-                  onMouseEnter={() => openTip(tipId)} onMouseLeave={closeTip}>
-                  <QuoteIcon size={12} className="agent-ref-chip-icon" />
-                  <span className="agent-ref-chip-label">引用</span>
-                  <button className="agent-ref-chip-remove" onClick={() => removeRefChip(chip.id)} disabled={loading}><XIcon size={10} /></button>
-                  {/* 预览内容只在悬停（tipKey 命中）时挂载：每颗胶囊都常驻一份完整 Markdown
-                      （可能含 KaTeX）的话，输入区每次重渲染都要把它们重新解析一遍。
-                      外层 div 保留，opacity 过渡与悬停桥不受影响。 */}
-                  <div className="agent-ref-chip-tip chat-msg-markdown">
-                    {tipKey === tipId && <Markdown content={chip.text} final variant="agent" />}
-                  </div>
-                </div>
-                )
-              })}
-              {codeSnippets.map(snip => (
-                <div className="code-snippet-chip" key={snip.id}>
-                  <CodeIcon size={12} className="code-snippet-chip-icon" />
-                  <span className="code-snippet-file">{snip.fileName}:L{snip.startLine}-L{snip.endLine}</span>
-                  <button className="agent-ref-chip-remove" onClick={() => removeCodeSnippet(snip.id)} disabled={loading}><XIcon size={10} /></button>
-                </div>
-              ))}
-              {packedInput ? (
-                /* 超长打包 chip：完全按「引用」胶囊样式与功能——图标 + 标签 +
-                   × 移除按钮 + 悬停全文预览；输入框为空时 Backspace/Delete
-                   也能删掉它。chip 里的正文发送时拼回正文 */
-                <div className={`chat-input-fold-chip${tipKey === 'fold' ? ' tip-open' : ''}`}
-                  onMouseEnter={() => openTip('fold')} onMouseLeave={closeTip}>
-                  <AlignLeft size={12} className="chat-input-fold-chip-icon" />
-                  {/* 标签可点：把胶囊里的正文放回输入框继续编辑。
-                      此前胶囊只有「删除」，长文本一旦被折叠就只能重打。 */}
-                  <button
-                    type="button"
-                    className="chat-input-fold-chip-label"
-                    aria-label="展开编辑"
-                    {...tip('点击展开编辑')}
-                    onClick={() => {
-                      setInput(packedInput)
-                      setPackedInput(null)
-                      requestAnimationFrame(() => textareaRef.current?.focus())
-                    }}
-                  >已折叠 {packedInput.split('\n').length} 行</button>
-                  <button className="agent-ref-chip-remove" aria-label="移除" {...tip('移除')} onClick={() => setPackedInput(null)}>
-                    <XIcon size={10} />
-                  </button>
-                  {/* 同引用胶囊：折叠正文的预览也只在悬停时解析 */}
-                  <div className="chat-input-fold-chip-tip chat-msg-markdown">
-                    {tipKey === 'fold' && <Markdown content={packedInput} final variant="agent" />}
-                  </div>
-                </div>
-              ) : null}
-              {/* 附件胶囊排在正文上方（同一容器内 width:100% 自成一整行） */}
-              {attachTray}
-              {/* 图片胶囊：自成一整行排在正文上方——胶囊在上、文字在下，两者彻底分开。
-                  此前是「正文里插行内记号 + 按量出的记号坐标盖胶囊」，需要隐形镜像逐字量算、
-                  还要跟 textarea 的滚动同步，量偏一点胶囊就错位；改成独立一行后这套全都不需要了。
-                  胶囊本体仍是消息气泡那副 .agent-img-pill（悬停预览卡 + 点开右侧预览）。 */}
-              {imageAtts.length > 0 && (
-                <div className="chat-input-imgrow">
-                  {imageAtts.map(att => (
-                    <ImagePill key={att.id} name={att.name} src={att.dataUrl}
-                      onRemove={() => removeAttachment(att.id)} removeDisabled={loading}
-                      onClick={() => onPreviewImage(att)}
-                      clickHint="点击在右侧预览" />
-                  ))}
-                  {/* 「全部清除」在文件托盘里已有一颗；只有这里才渲染时补上，免得并排出现两颗 */}
-                  {attachedFiles.length > 1 && fileChips.length === 0 && (
-                    <button className="chat-attach-clear-all" onClick={clearAttachments} disabled={loading}>
-                      <XIcon size={12} />全部清除
-                    </button>
-                  )}
-                </div>
-              )}
               <div className="chat-input-tabox">
-                <textarea
-                  ref={textareaRef}
-                  className="chat-input"
-                  aria-label="消息输入框"
+                {/* 富文本输入框：内联胶囊就长在文字流里，光标停在哪就插在哪 */}
+                <RichInput
+                  ref={editorRef}
+                  value={{ text: input, chips }}
+                  onChange={handleEditorChange}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
+                  onChipHover={(id, kind, rect) => setChipTip(id && kind && rect ? { id, kind, rect } : null)}
+                  onEditChip={(id, kind) => {
+                    if (kind === 'image' || kind === 'file') {
+                      const att = attachedFiles.find(a => a.id === id)
+                      if (!att) return
+                      // 图片用 dataUrl 预览（剪贴板图没有路径）；文件按磁盘路径预览，没路径就不响应
+                      if (att.isImage) onPreviewImage(att)
+                      else if (att.path) onPreviewAttachment(att.path)
+                      return
+                    }
+                    setEditingChipId(id)
+                  }}
+                  ariaLabel="消息输入框"
+                  maxHeight={INPUT_FOLD_CAP}
                   placeholder={plainChat ? '输入消息，Enter 发送 · Shift+Enter 换行' : '输入消息，Enter 发送 · Shift+Enter 换行 · / 命令 · @ 引用文件'}
-                  rows={1} value={input}
-                  onChange={handleInputChange} onKeyDown={handleKeyDown} onPaste={handlePaste}
                 />
               </div>
             </div>
@@ -1080,6 +1002,38 @@ export function AgentInputArea({
         </div>
       </div>
       {attPreview && <AttachmentTextPreview att={attPreview} onClose={() => setAttPreview(null)} />}
+      {chipTip && createPortal(
+        <div
+          className={`chat-inline-chip-tip${chipTip.kind === 'image' ? ' chat-inline-chip-tip--img' : ' chat-msg-markdown'}`}
+          style={{ left: Math.max(8, Math.min(chipTip.rect.left, window.innerWidth - 380)), top: chipTip.rect.top - 8 }}
+        >
+          {chipTip.kind === 'image'
+            ? (() => {
+              const att = attachedFiles.find(a => a.id === chipTip.id)
+              return att?.dataUrl ? <img src={att.dataUrl} alt={att.name} /> : null
+            })()
+            : chipTip.kind === 'file'
+              ? <div className="chat-inline-chip-tip-file">
+                {attachedFiles.find(a => a.id === chipTip.id)?.name ?? ''}
+                <span>点击在右侧预览</span>
+              </div>
+              : <Markdown content={chips.find(c => c.id === chipTip.id)?.text ?? ''} final variant="agent" />}
+        </div>,
+        document.body
+      )}
+      {editingChip && (
+        <PackedTextEditor
+          text={editingChip.text}
+          title={editingChip.kind === 'quote' ? '编辑引用内容' : '编辑折叠内容'}
+          onSave={next => {
+            // 清空 = 连标记一起删掉这颗胶囊；否则只更新内容，位置不动
+            if (next.trim()) setChips(prev => prev.map(c => c.id === editingChip.id ? { ...c, text: next } : c))
+            else editorRef.current?.removeChip(editingChip.id)
+            setEditingChipId(null)
+          }}
+          onClose={() => setEditingChipId(null)}
+        />
+      )}
       <input ref={fileInputRef} type="file" multiple hidden onChange={handleAttachmentSelect} />
     </div>
   )

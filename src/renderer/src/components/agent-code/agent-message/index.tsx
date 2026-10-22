@@ -20,6 +20,7 @@ import { ThinkTextContent } from './ThinkTextContent'
 import { AttachmentTextPreview } from './AttachmentTextPreview'
 import { UserMessageFullText } from './UserMessageFullText'
 import { ImagePill } from '../utils/ImagePill'
+import { CHIP_ICON, type ChipKind } from '../agent-input/RichInput'
 import { splitByImageMarkers } from '../utils/imageMarker'
 import { Markdown } from '../../../markdown/markstream'
 import { MermaidCard, parseContentToBlocks } from '../../../mermaid'
@@ -31,6 +32,10 @@ import { fmtCompactTok, fmtThinkDur, formatDuration } from '../utils/format'
 import type { AgentMsgRowActions, RenderSegmentsOpts, AniIconHandle } from '../types'
 import type { AgentMessage, Attachment } from '../../../../../shared/types'
 import { useBubbleTip } from '../../useBubbleTip'
+
+// 正文出现后需稳定这么久才算「开始写答案」，见 ThinkBlock 里的 answerSettled。
+// 取值要大于「模型写一句就去调工具」的间隔（通常一两百毫秒），又小到用户察觉不到延迟。
+const ANSWER_SETTLE_MS = 500
 
 // ── 共享 ResizeObserver ──
 // 用户消息的「是否被截断」要随宽度变化重量：原实现每条消息各建一个 ResizeObserver，
@@ -188,9 +193,42 @@ export const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { co
 // 由实到虚平滑淡出，不写任何提示文字；被截到的那条可点 → 正中弹窗看全文（.msg-full）。
 // 复制按钮与发给模型的内容始终是完整原文。
 
-export const UserMessageEntry = React.memo(function UserMessageEntry({ content, attachments, onOpenImage }: {
+/** 气泡里的折叠块：默认只显示标签，点一下原地展开成原文（再点收起）。
+    纯展示组件——正文已经发给模型了，这里只影响"看得见多少"。 */
+/** 气泡里的胶囊：点一下把这段内容开在**右侧预览区**（不是就地展开，也不是输入框那套编辑弹窗）。 */
+function SentChip({ label, text, kind, onOpen }: {
+  label: string
+  text: string
+  kind: ChipKind
+  onOpen?: (label: string, text: string) => void
+}) {
+  // 引用块的正文是 `> 逐行`（发给模型的样子），给人看时去掉前缀
+  const shown = kind === 'quote' ? text.replace(/^> ?/gm, '') : text
+  return (
+    <span
+      className="user-msg-chip"
+      data-kind={kind}
+      role="button"
+      tabIndex={0}
+      title="点击在右侧预览"
+      onClick={() => onOpen?.(label, shown)}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen?.(label, shown) }
+      }}
+    >
+      <span className="user-msg-chip-icon" dangerouslySetInnerHTML={{ __html: CHIP_ICON[kind] }} />
+      {label}
+    </span>
+  )
+}
+
+export const UserMessageEntry = React.memo(function UserMessageEntry({ content, attachments, chipRanges, onOpenImage, onOpenText }: {
   content: string
   attachments?: Attachment[]
+  /** 内联胶囊在 content 里的字符区间（折叠/代码两类）：气泡里显示成胶囊 */
+  chipRanges?: { start: number; end: number; label: string; kind: string }[]
+  /** 点胶囊：把这段内容开在右侧预览区 */
+  onOpenText?: (label: string, text: string) => void
   /** 点图片胶囊开右侧预览：有磁盘路径的读原文件，只有内存图的用 dataUrl 建标签。
    *  走哪条路由外层判定（见 AgentCodeViewLayout 的 previewImageAttachment）。 */
   onOpenImage?: (a: Attachment) => void
@@ -235,18 +273,71 @@ export const UserMessageEntry = React.memo(function UserMessageEntry({ content, 
   // 直接作为 .user-plain-text 的行内子节点排进去即可——绝不能再套一层 div/flex 容器：
   // 一旦成了块级盒子，它就会把文字挤到下一行，变成上下两行。
   // 胶囊与文字之间补一个空格（正文里本来就以空格分词），文字换行时后续行自然从左边起排。
+  // 按胶囊区间把正文切成「文本段 / 折叠块」交替。bodyText 与 text 不一致说明
+  // 摘过旧的图片行内记号，偏移已不可信 → 退回整段纯文本。
+  const bodySegments = useMemo(() => {
+    if (!chipRanges?.length || bodyText !== text) return null
+    // 零长区间 = 图片/文件的插入点（正文里没有字符，靠 label 认领附件）
+    const sorted = [...chipRanges].filter(r => r.start >= 0 && r.end <= bodyText.length && r.end >= r.start)
+      .sort((a, b) => a.start - b.start)
+    if (sorted.length === 0) return null
+    const imgPool = [...bodyImages]
+    const filePool = [...files]
+    type Seg =
+      | { kind: 'text'; text: string }
+      | { kind: 'chip'; label: string; text: string; chipKind: ChipKind }
+      | { kind: 'image'; att: Attachment }
+      | { kind: 'file'; att: Attachment }
+    const segs: Seg[] = []
+    let cur = 0
+    for (const r of sorted) {
+      if (r.start < cur) continue
+      if (r.start > cur) segs.push({ kind: 'text', text: bodyText.slice(cur, r.start) })
+      if (r.end > r.start) {
+        segs.push({ kind: 'chip', label: r.label, text: bodyText.slice(r.start, r.end), chipKind: (r.kind as ChipKind) ?? 'fold' })
+      } else if (r.kind === 'image') {
+        const at = imgPool.findIndex(a => a.name === r.label)
+        if (at >= 0) segs.push({ kind: 'image', att: imgPool.splice(at, 1)[0]! })
+      } else if (r.kind === 'file') {
+        const at = filePool.findIndex(a => a.name === r.label)
+        if (at >= 0) segs.push({ kind: 'file', att: filePool.splice(at, 1)[0]! })
+      }
+      cur = r.end
+    }
+    if (cur < bodyText.length) segs.push({ kind: 'text', text: bodyText.slice(cur) })
+    // 池里剩下的（旧消息 / 名字对不上）仍按老样子排在正文前
+    return { segs, restImages: imgPool, restFiles: filePool }
+  }, [bodyText, text, chipRanges, bodyImages, files])
+  const restImages = bodySegments ? bodySegments.restImages : bodyImages
   const bodyInner = (
     <>
-      {bodyImages.map((a, i) => (
-        <ImagePill key={`img-${a.name}-${i}`} name={a.name} src={srcOf(a)} onClick={openOf(a)} clickHint="点击在右侧预览" />
+      {restImages.map((a, i) => (
+        <ImagePill key={`img-${a.name}-${i}`} name={a.name} src={srcOf(a)} onClick={openOf(a)} />
       ))}
-      {bodyImages.length > 0 && bodyText ? ' ' : null}
-      {bodyText}
+      {restImages.length > 0 && bodyText ? ' ' : null}
+      {bodySegments
+        ? bodySegments.segs.map((seg, i) => {
+          if (seg.kind === 'text') return <React.Fragment key={`t-${i}`}>{seg.text}</React.Fragment>
+          if (seg.kind === 'image') {
+            return <ImagePill key={`img-${i}`} name={seg.att.name} src={srcOf(seg.att)} onClick={openOf(seg.att)} />
+          }
+          if (seg.kind === 'file') {
+            return (
+              <button type="button" key={`f-${i}`} className="user-msg-file user-msg-file--inline" onClick={() => setPreviewAtt(seg.att)}>
+                <FileTextIcon size={12} />
+                <span className="user-msg-file-name">{seg.att.name}</span>
+              </button>
+            )
+          }
+          return <SentChip key={`chip-${i}`} label={seg.label} text={seg.text} kind={seg.chipKind} onOpen={onOpenText} />
+        })
+        : bodyText}
     </>
   )
-  const fileNode = files.length > 0 ? (
+  const restFiles = bodySegments ? bodySegments.restFiles : files
+  const fileNode = restFiles.length > 0 ? (
     <div className="user-msg-files">
-      {files.map((a, i) => (
+      {restFiles.map((a, i) => (
         <button
           type="button"
           key={`${a.name}-${i}`}
@@ -628,7 +719,7 @@ const BatchFold = React.memo(function BatchFold({ items, toolCount, thinkCount, 
   thinkCount: number
   /** 批内工具总耗时（各工具段定格时长之和）；批还在跑时无值，批头就不显示时长 */
   durationMs?: number
-  /** 活跃批：其后尚未出现过程正文段且整轮仍在流式 → 默认展开，结束即自动收起 */
+  /** 活跃批：整轮仍在流式、且答案还没稳定开始输出 → 默认展开；否则自动收起 */
   active: boolean
   onPreviewFile?: (p: string, line?: number) => void
   canUndoFor?: (tc: NonNullable<AgentMessage['toolCalls']>[number]) => boolean
@@ -839,17 +930,30 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
   // 已下沉到 ThinkSegmentFold（每个思考段独立折叠块各自持有一套）。
   const streamThinkItem = (items ?? []).find((it): it is Extract<ThinkChainItem, { kind: 'think' }> => it.kind === 'think' && !!it.streaming)
 
+  // 正文出现后稳定 ANSWER_SETTLE_MS 才算「开始写答案」。为什么不直接用 bodyAppeared：
+  // 它只表示「最后一段是正文」，模型写完一句就去调工具时这段正文会变成过程正文、
+  // 标记翻回 false——拿它直接触发收起，整条链会合上又弹开。稳定窗口把这种瞬态滤掉，
+  // 真正的答案会一直保持，500ms 后才收（用户此时已在读答案，链让位）。
+  const [answerSettled, setAnswerSettled] = useState(false)
+  useEffect(() => {
+    if (!bodyAppeared) { setAnswerSettled(false); return }
+    const t = setTimeout(() => setAnswerSettled(true), ANSWER_SETTLE_MS)
+    return () => clearTimeout(t)
+  }, [bodyAppeared])
+
   // 链内时间线 → 批序列：把首段思考（value）还原成时间线首项，与 items 一起分批。
   // 分批结果就是链内最终渲染顺序：批 / 过程正文段 交替（批头一行、过程正文平铺）。
-  // 注意活跃判据里带上 bodyAppeared：最终正文段由调用方留在容器下方、不进 items，
-  // 所以「最后一个批之后是否还有正文」要看这个标记——最终正文一开始输出，
-  // 最后一个批也要立刻收成一行（与「跑着的批展开、跑完的批收起」同一语义）。
+  //
+  // 「正文是否已经开始」用 answerSettled 而不是 bodyAppeared：bodyAppeared 只是
+  // 「最后一段是不是正文」，模型先说一句再调工具时它会翻回去（见下方收起 effect 的说明），
+  // 直接拿它当判据会让批开了又合。稳定窗口过后才认为答案真的开始了——批与外层在同一刻收起，
+  // 只收一次，不再出现「先收工具、正文写完再收整链」的两段式。
   const entries = useMemo(() => {
     const timeline: ThinkChainItem[] = []
     if (value) timeline.push({ kind: 'think', segKey: 'value', content: value, durationMs, streaming: thinking && !streamThinkItem })
     if (items?.length) timeline.push(...items)
-    return groupIntoBatches(timeline, !!msgStreaming && !bodyAppeared)
-  }, [value, items, durationMs, thinking, streamThinkItem, msgStreaming, bodyAppeared])
+    return groupIntoBatches(timeline, !!msgStreaming && !answerSettled)
+  }, [value, items, durationMs, thinking, streamThinkItem, msgStreaming, answerSettled])
 
   // 一级标题常驻、不折叠：外层不再有开合态，链内「批」各自按 active 自动开合（见 BatchFold）。
   // 头部「思考中」状态判定：消息仍在流式即「思考中」（思考/工具/正文/段间间隙统一），
@@ -862,8 +966,10 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
   const wasStopped = !msgStreaming && !thinking && !closed
 
   // ── 外层收起/展开 ──────────────────────────────────────────────────────
-  // 触发只用 msgStreaming（回合是否在跑）：运行中展开、回合结束收起。它是单调翻转，
-  // 不会像 bodyAppeared（最后一段是不是正文）那样在运行中反复横跳。
+  // 触发条件 =「回合在跑 且 正文还没稳定输出」：满足就展开，否则收起。
+  // 收起因此有两个入口（正文稳定 / 回合结束），但两者共用同一条 collapse 路径，
+  // 而且 answerSettled 一旦为真就不会再变回 false（除非那段正文被判定为过程正文），
+  // 所以正常回合只看到一次收起。
   // 用户手动点过就保持粘性，直到下一轮开始再交回自动。
   const bodyRef = useRef<HTMLDivElement>(null)
   const userToggledRef = useRef(false)
@@ -882,17 +988,26 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
     if (e.propertyName === 'max-height') manualExpandRef.current = false
     rawBodyTransitionEnd(e)
   }, [rawBodyTransitionEnd])
-  // 运行中展开；回合结束收起（用户手动开合过就尊重用户）。
+  // 运行中展开；正文稳定输出后（answerSettled）或回合结束收起。
+  // 两处收起走同一条路径：答案一开始写，批与外层在同一刻收——只收一次，不再有
+  // 「先收过程思考/工具、正文写完再收整链」的两段式。
+  // userToggled 只在「新回合开始」时复位：回合中途手动收起后，不会因为后面又出现
+  // 工具轮次（bodyAppeared 翻回 false）而被自动弹开。
+  const prevStreamingRef = useRef(!!msgStreaming)
   useEffect(() => {
-    if (msgStreaming) {
-      userToggledRef.current = false
+    const streaming = !!msgStreaming
+    if (streaming && !prevStreamingRef.current) userToggledRef.current = false
+    prevStreamingRef.current = streaming
+    if (streaming && !answerSettled) {
+      if (userToggledRef.current) return
       setVisible(true)
       setExpanded(true)
       return
     }
     if (userToggledRef.current) return
-    collapse()
-  }, [msgStreaming, collapse])
+    // 已经收起就别再调：collapse() 会把 maxHeight 重新撑到内容高度再收回，会闪一下
+    if (expandedRef.current) collapse()
+  }, [msgStreaming, answerSettled, collapse])
   // 收起态空闲预挂载：把 Markdown/KaTeX 的首次解析成本从「首次点开」挪到空闲期，
   // 否则长链首次展开会卡一下（消息列表有虚拟窗口，预挂载规模受窗口限制）。
   useEffect(() => {

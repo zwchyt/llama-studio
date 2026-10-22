@@ -33,7 +33,7 @@ type Size = { w: number; h: number }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
-export function ImagePill({ name, src, onRemove, removeDisabled, onClick, clickHint, titleText }: {
+export function ImagePill({ name, src, onRemove, removeDisabled, onClick }: {
   name: string
   /** 图片 data URL：有值才挂悬停预览 */
   src?: string
@@ -43,10 +43,6 @@ export function ImagePill({ name, src, onRemove, removeDisabled, onClick, clickH
   removeDisabled?: boolean
   /** 点击行为：拿得到磁盘路径时＝在右侧「预览」工作区打开原图 */
   onClick?: () => void
-  /** 有 onClick 时的提示后缀 */
-  clickHint?: string
-  /** 覆盖悬停提示（输入框行内胶囊：没有路径可开时点它是定位光标，提示要另写） */
-  titleText?: string
 }) {
   const pillRef = useRef<HTMLSpanElement>(null)
   // 卡片开着时＝胶囊的矩形（快照）；关闭后置空。坐标在渲染时现算，见文件头说明。
@@ -96,9 +92,9 @@ export function ImagePill({ name, src, onRemove, removeDisabled, onClick, clickH
     return () => window.removeEventListener('resize', close)
   }, [])
 
-  // 原生 title 换自定义气泡（与导航栏同款）：胶囊已有悬停预览卡，走 showTip/hideTip 合并进去
-  const { tipHandlers: tip, tipNode, showTip, hideTip } = useBubbleTip()
-  const pillTip = titleText ?? (onClick ? `${name}（${clickHint ?? '点击打开'}）` : name)
+  // 只保留删除按钮的气泡提示；胶囊本身**不再弹文件名提示**——
+  // 名字已经写在胶囊上，再弹一次会挡住刚出来的预览卡。
+  const { tipHandlers: tip, tipNode } = useBubbleTip()
 
   // 卡片几何：尺寸＝图片显示尺寸 + 卡片的框；水平以胶囊中心居中，垂直优先在上方
   const card = (() => {
@@ -117,8 +113,8 @@ export function ImagePill({ name, src, onRemove, removeDisabled, onClick, clickH
     <span
       ref={pillRef}
       className={`agent-img-pill${onClick ? ' clickable' : ''}`}
-      onMouseEnter={(e) => { if (src) show(); showTip(pillTip, e.currentTarget) }}
-      onMouseLeave={() => { if (src) hide(); hideTip() }}
+      onMouseEnter={() => { if (src) show() }}
+      onMouseLeave={() => { if (src) hide() }}
       onClick={onClick}
     >
       {tipNode}

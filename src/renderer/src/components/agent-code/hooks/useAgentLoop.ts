@@ -35,7 +35,43 @@ import { computeContextBudget, coveredPrefixCount, piContextWindowFor, COMPACTIO
 import { parseSlashCommand, findCommand, expandCommandTemplate } from '../../../agent/slashCommands'
 import { newMsgId, uniqueId } from '../utils/ids'
 import { MIN_EXEC_DISPLAY_MS, PI_UNDO_PREFIX } from '../utils/constants'
-import { extOf } from '../../../utils/fileKind'
+import { CHIP_MARK, type RichChip } from '../agent-input/RichInput'
+
+/** 把输入文本里的 \uFFFC 占位符按顺序替换成胶囊正文：内联胶囊的顺序 = 编辑器里的顺序 */
+function expandChips(text: string, chips: RichChip[]): { text: string; ranges: NonNullable<AgentMessage['chipRanges']> } {
+  if (!text.includes(CHIP_MARK)) return { text, ranges: [] }
+  const parts = text.split(CHIP_MARK)
+  const ranges: NonNullable<AgentMessage['chipRanges']> = []
+  let out = ''
+  let i = 0
+  parts.forEach((part, idx) => {
+    out += part
+    if (idx === parts.length - 1) return
+    const c = chips[i++]
+    if (!c) return
+    // 附件胶囊（图片/文件）不进正文：它们走 attachments 通道单独发给模型
+    const content = c.kind === 'image' || c.kind === 'file'
+      ? ''
+      : c.kind === 'quote'
+        ? c.text.split('\n').map(line => `> ${line}`).join('\n')
+        : c.text
+    const start = out.length
+    out += content
+    const lines = c.text.split('\n').length
+    const label = c.label ?? (c.kind === 'quote'
+      ? '引用'
+      : lines > 1 ? `已折叠 ${lines} 行` : `已折叠 ${c.text.length} 字符`)
+    // 图片/文件：正文里没有字符，记一个**零长区间**当插入点（label = 文件名），
+    // 气泡据此把附件卡片摆到用户插它的位置，而不是一律顶到最前面。
+    if (c.kind === 'image' || c.kind === 'file') {
+      ranges.push({ start, end: start, kind: c.kind, label: c.text })
+      return
+    }
+    // 其余（折叠 / 代码 / 引用…）记真实区间，气泡里显示成可点开的胶囊
+    if (content) ranges.push({ start, end: out.length, kind: c.kind, label })
+  })
+  return { text: out, ranges }
+}
 import type { AgentMessage, AgentSession, AgentTask, Attachment, CardState, ThinkingLevel, TodoUpdate } from '../../../../../shared/types'
 import { projectMode } from '../../../../../shared/types'
 import { remoteOfCard } from '../../../utils/endpoint'
@@ -126,8 +162,8 @@ export function useAgentLoop({
   openPreview?: (path: string, panelMode?: PanelView) => void
 }) {
   const {
-    input, setInput, textareaRef, packedInput, setPackedInput,
-    attachedFiles, setAttachedFiles, refChips, setRefChips, codeSnippets, setCodeSnippets,
+    input, setInput, editorRef, chips, setChips,
+    attachedFiles, setAttachedFiles, setCodeSnippets,
     inputHistoryRef, historyIdxRef,
   } = inputDomain
 
@@ -869,7 +905,7 @@ export function useAgentLoop({
   runPiTurnRef.current = runPiTurn
 
   // ── 区域：发送消息（构建附件、创建会话、调用 agent） ──
-  const handleSend = useCallback(async (overrideText?: string, overrideAttachments?: Attachment[], packedHint?: string) => {
+  const handleSend = useCallback(async (overrideText?: string, overrideAttachments?: Attachment[], _packedHint?: string) => {
     // 用户手势内预热音频：否则完成提示音（await 后播放）会被自动播放策略静默拦截
     warmUpAudio()
     // 发送飞行起跑快照（输入框盒/文字位/旧行位置，同步 DOM 读取；内部吞错，绝不影响发送）
@@ -884,24 +920,20 @@ export function useAgentLoop({
     }))
     // 引用胶囊：仅在非 override（非重新生成/重发）时拼入正文，作为引用块；最后接用户自己输入的正文。
     // 超长打包 chip 的内容是用户正文的前段，排在最前。
-    const rawBody = overrideText ?? input
-    let outgoing = rawBody
-    if (overrideText === undefined && (packedInput || refChips.length > 0 || codeSnippets.length > 0)) {
-      const parts: string[] = []
-      // 超长打包 chip：整段被打包的正文（用户消息本体的前段）
-      if (packedInput?.trim()) parts.push(packedInput.trim())
-      // 代码片段胶囊：以 fenced code block + 文件行号标注注入
-      for (const snip of codeSnippets) {
-        const ext = extOf(snip.fileName)
-        parts.push(`[代码引用: ${snip.fileName} L${snip.startLine}-L${snip.endLine}]\n\`\`\`${ext}\n${snip.code}\n\`\`\``)
-      }
-      // 引用胶囊
-      const toQ = (t: string) => t.split('\n').map(l => `> ${l}`).join('\n')
-      for (const c of refChips) { if (c.text.trim()) parts.push(toQ(c.text.trim())) }
-      if (rawBody.trim()) parts.push(rawBody.trim())
-      outgoing = parts.join('\n\n')
-    }
+    // 内联胶囊按占位符顺序展开成正文 —— 顺序天然等于编辑器里看到的顺序，
+    // 不再需要"胶囊排最前/最后"那套拼装规则。
+    // 内联胶囊（折叠/引用/代码/附件）按占位符顺序展开成正文 —— 顺序天然等于编辑器里的顺序。
+    // 同时记下「折叠/代码」两类在正文里的区间，供气泡渲染成可点开的折叠块。
+    const expanded = overrideText === undefined ? expandChips(input, chips) : { text: overrideText, ranges: [] }
+    const rawBody = expanded.text
+    const outgoing = rawBody
     const text = outgoing.trim()
+    // 消息正文是 trim 过的：若开头有空白，所有区间要整体左移，否则气泡里的胶囊会错位/被过滤掉
+    const leadTrim = rawBody.length - rawBody.trimStart().length
+    const chipRanges = expanded.ranges
+      .map(r => ({ ...r, start: r.start - leadTrim, end: r.end - leadTrim }))
+      // 零长区间是图片/文件的插入点，必须保留（end > start 会把它们全滤掉）
+      .filter(r => r.start >= 0 && r.end >= r.start)
     const hasAttach = attachmentsForSend.length > 0
     // ── /命令 展开：/name args → 提示词模板（参数替换为 $ARGUMENTS）──
     // 在模型未启动的提前返回之前展开：保留展开后的文本在输入框，待启动后可手动发送。
@@ -913,16 +945,15 @@ export function useAgentLoop({
       const cmd = findCommand(parsedCmd.name, slashCommands)
       if (!cmd) {
         notify(`未知命令 /${parsedCmd.name}（输入 / 查看可用命令）`, 'error')
-        if (text) { setInput(text); setPackedInput(null); setRefChips([]); setCodeSnippets([]) }
+        if (text) { setInput(text); setChips([]); setCodeSnippets([]) }
         return
       }
       // 动作型命令：renderer 侧直接处理（状态查询 / UI 动作），不发给模型
       if (cmd.kind === 'action') {
         setInput('')
-        if (textareaRef.current) textareaRef.current.style.height = 'auto'
+        editorRef.current?.resize()
         setAttachedFiles([])
-        setPackedInput(null)
-        setRefChips([])
+        setChips([])
         setCodeSnippets([])
         await runSlashAction(cmd.name, parsedCmd.args)
         return
@@ -931,34 +962,34 @@ export function useAgentLoop({
     }
     if (!apiBaseUrl || !runningCard) {
       // 模型未启动：把建议文本保留在输入框，待启动后手动发送（胶囊已合入文本，清空避免重复）
-      if (resolvedText) { setInput(resolvedText); setPackedInput(null); setRefChips([]); setCodeSnippets([]) }
+      if (resolvedText) { setInput(resolvedText); setChips([]); setCodeSnippets([]) }
       return
     }
     if (sendingRef.current && !loading) {
       // 异步准备窗口（loading 已置真前）：沿用原排队兜底，避免并发双流
-      pendingSendRef.current.push({ text: outgoing, attachments: attachmentsForSend, packedText: overrideText === undefined ? packedInput?.trim() || undefined : undefined })
+      pendingSendRef.current.push({ text: outgoing, attachments: attachmentsForSend, packedText: undefined })
       setInput('')
-      if (textareaRef.current) textareaRef.current.style.height = 'auto'
+      editorRef.current?.resize()
       setAttachedFiles([])
-      if (overrideText === undefined) { setPackedInput(null); setRefChips([]); setCodeSnippets([]) }
+      if (overrideText === undefined) { setChips([]); setCodeSnippets([]) }
       return
     }
     if (loading) {
       // 空插话：仅复位输入，不向 SDK 发空消息
       if (!resolvedText && attachmentsForSend.length === 0) {
         setInput('')
-        if (textareaRef.current) textareaRef.current.style.height = 'auto'
+        editorRef.current?.resize()
         setAttachedFiles([])
-        if (overrideText === undefined) { setPackedInput(null); setRefChips([]); setCodeSnippets([]) }
+        if (overrideText === undefined) { setChips([]); setCodeSnippets([]) }
         return
       }
       setInput('')
-      if (textareaRef.current) textareaRef.current.style.height = 'auto'
+      editorRef.current?.resize()
       setAttachedFiles([])
-      if (overrideText === undefined) { setPackedInput(null); setRefChips([]); setCodeSnippets([]) }
+      if (overrideText === undefined) { setChips([]); setCodeSnippets([]) }
       // 运行中：追加（followUp）走前端队列，当前轮 runPiTurn 结束后自动发起独立新轮，
       // 让模型真正作答（SDK 自动续跑会被单轮 runPiTurn 架构吞掉回复）。
-      followUpQueueRef.current.push({ text: resolvedText, attachments: attachmentsForSend, packedText: overrideText === undefined ? packedInput?.trim() || undefined : undefined })
+      followUpQueueRef.current.push({ text: resolvedText, attachments: attachmentsForSend, packedText: undefined })
       setQueueInfo(prev => ({ ...prev, followUp: [...prev.followUp, resolvedText] }))
       return
     }
@@ -976,7 +1007,7 @@ export function useAgentLoop({
     try {
       // 立即清空输入框并复位高度：消息已成功加入会话，避免输入框残留刚发出的内容
       setInput('')
-      if (textareaRef.current) textareaRef.current.style.height = 'auto'
+      editorRef.current?.resize()
 
       const pid = activeProjectId
       // 确保存在活动会话：项目可能尚无会话（sessions:[]），首次发送时就地创建，避免「按两次才发送」
@@ -1003,11 +1034,17 @@ export function useAgentLoop({
 
       // 构建附件（已在上文算好 attachmentsForSend）
       const attachments = attachmentsForSend
-      if (overrideText === undefined) { setAttachedFiles([]); setPackedInput(null); setRefChips([]); setCodeSnippets([]) }
+      if (overrideText === undefined) { setAttachedFiles([]); setChips([]); setCodeSnippets([]) }
 
       // packedText：本次发送含「超长打包 chip」的那段正文 → 气泡里该段显示为 chip
-      const packedPart = overrideText === undefined ? packedInput?.trim() || undefined : packedHint
-      const userMsg: AgentMessage = { id: newMsgId(), role: 'user', content: resolvedText, attachments: attachments.length ? attachments : undefined, packedText: packedPart }
+      const packedPart = undefined
+      const userMsg: AgentMessage = {
+        id: newMsgId(), role: 'user', content: resolvedText,
+        attachments: attachments.length ? attachments : undefined,
+        // slash 命令会把正文改写成模板，字符区间随之失效 → 那种情况不带
+        chipRanges: resolvedText === rawBody.trim() && chipRanges.length ? chipRanges : undefined,
+        packedText: packedPart,
+      }
       // 仅在该会话尚无任何用户消息时，用首条消息自动生成标题（后续不再覆盖，保留手动重命名）
       const shouldAutoTitle = !baseMessages.some(m => m.role === 'user')
       let displayMsgs: AgentMessage[] = [...baseMessages, userMsg]
@@ -1049,7 +1086,7 @@ export function useAgentLoop({
     } finally {
       sendingRef.current = false
     }
-  }, [input, attachedFiles, packedInput, refChips, codeSnippets, loading, apiBaseUrl, runningCard, activeProjectId, activeSessionId, activeSession, activeProject, updateSessionInProject])
+  }, [input, chips, attachedFiles, loading, apiBaseUrl, runningCard, activeProjectId, activeSessionId, activeSession, activeProject, updateSessionInProject])
 
   // 始终持有最新的 handleSend，供排队回调使用，避免过期闭包。
   // 用 layout effect 同步而不是渲染期赋值：并发 / 严格模式下渲染可能被重复执行或丢弃。

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState, forwardRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore } from '../store/useStore'
-import { useSidebarStore } from '../store/sidebarStore'
+import { useSidebarStore, SIDEBAR_AUTO_COLLAPSE_MAX_WIDTH } from '../store/sidebarStore'
 import { shallow } from 'zustand/shallow'
 import {
   MODE_ITEMS,
@@ -150,6 +150,19 @@ export default function Sidebar() {
   useEffect(() => () => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current)
     if (leaveTimer.current) clearTimeout(leaveTimer.current)
+  }, [])
+
+  // ── 窄窗口自动收起 / 展开 ──
+  // 用 matchMedia 而不是 resize：只在跨过阈值那一刻回调一次，拖拽窗口时不做每帧计算。
+  // 与手动逻辑的分工见 store：窄屏下的点击写 narrowOverride（跨过阈值即失效），
+  // 宽屏下的点击写 userCollapsed（变窄再变宽会恢复它）——所以「手动收起后拉大窗口」
+  // 不会被自动展开，「窄屏手动展开」也不会被下一次 resize 立刻收回去。
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${SIDEBAR_AUTO_COLLAPSE_MAX_WIDTH}px)`)
+    const apply = () => useSidebarStore.getState().syncAutoNarrow(mq.matches)
+    apply()
+    mq.addEventListener('change', apply)
+    return () => mq.removeEventListener('change', apply)
   }, [])
 
   // 「只剩图标」**立刻生效**：两态几何已经做成完全一致（见 sidebar.css 里收起宽度取 60px 的说明），
