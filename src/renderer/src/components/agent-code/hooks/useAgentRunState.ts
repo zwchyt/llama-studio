@@ -2,7 +2,7 @@
 // ║ 区域：useAgentRunState —— 流式运行态与跨域共享 ref                            ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 // 搬移自 AgentCodeView.tsx：loading / queueInfo / streaming / streamKind / thinkDone /
-// thinkingLevel（含同步 ref）/ thinkLevelOpen / curToolName / condenseOpen 这批运行态
+// thinkingLevel（含同步 ref）/ thinkLevelOpen / curToolName 这批运行态
 // state，以及被循环域、压缩域、消息操作域、斜杠命令域共同消费的 ref
 // （sending / streamingSession / abort / currentStreamId / streamStartAt / modelLabel /
 // lastRate / piReady / prevQueue / appendLiveUserMsg / followUpQueue）。
@@ -39,7 +39,6 @@ export function useAgentRunState() {
   const thinkLevelMenuRef = useRef<HTMLDivElement>(null)
   usePopoverDismiss(thinkLevelOpen, setThinkLevelOpen, undefined, undefined, thinkLevelMenuRef)
   const [curToolName, setCurToolName] = useState('')  // 当前正在调用/执行的工具名（状态栏 name 标签）
-  const [condenseOpen, setCondenseOpen] = useState(false)  // 压缩历史弹层开关
   const sendingRef = useRef(false)
   // 流式归属会话：渲染层据此判定「当前会话是否正在流式」，避免 A 会话生成时
   // 切到 B 会话，B 的末条助手消息被误渲染为流式中（状态串扰）。
@@ -75,7 +74,6 @@ export function useAgentRunState() {
     streamKind, setStreamKind, thinkDone, setThinkDone,
     thinkingLevel, setThinkingLevel, thinkingLevelRef,
     thinkLevelOpen, setThinkLevelOpen, thinkLevelMenuRef, curToolName, setCurToolName,
-    condenseOpen, setCondenseOpen,
     sendingRef, streamingSessionRef, abortRef, currentStreamIdRef, streamStartAtRef,
     modelLabelRef, lastRateRef, handleStreamRate, piReadyRef,
     prevQueueRef, appendLiveUserMsgRef, followUpQueueRef,

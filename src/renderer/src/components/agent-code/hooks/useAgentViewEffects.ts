@@ -45,11 +45,15 @@ export function useAgentViewEffects({
   // （顶栏左上角开关 / 双击顶栏），收起就保持收起。
 
   // 内容渲染完成后执行跳转：把目标行滚到中间并短暂高亮。仅对代码预览有效（Markdown 无行结构）。
+  // 依赖收窄为 activeTabPath + 目标 tab 本身（test.md 9.11）：openTabs 整数组作依赖时，
+  // 任何一个标签的内容更新都会重跑本 effect；find 取到的 tab 对象在别的标签变化时引用不变，
+  // 只有目标标签自己加载/换内容才会触发重跑。
+  const jumpTab = openTabs.find(t => t.path === activeTabPath)
   useEffect(() => {
     if (!activeTabPath) return
     const line = previewJumpRef.current.get(activeTabPath)
     if (line == null) return
-    const tab = openTabs.find(t => t.path === activeTabPath)
+    const tab = jumpTab
     if (!tab || tab.loading || tab.content == null) return
     previewJumpRef.current.delete(activeTabPath)
     requestAnimationFrame(() => {
@@ -59,7 +63,7 @@ export function useAgentViewEffects({
       setPreviewHighlightLine(line)
       setTimeout(() => setPreviewHighlightLine(null), 1600)
     })
-  }, [activeTabPath, openTabs])
+  }, [activeTabPath, jumpTab])
 
   // 测量输入框区域高度，写入 CSS 变量，使浮动按钮精确浮在输入框上方
   useEffect(() => {

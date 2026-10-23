@@ -191,14 +191,14 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     clearHtmlAnnotations, removeHtmlAnnotation, openFileAtLine, openPreview, openMemoryImage, openMemoryText, openTabs,
   } = previewDomain
   const {
-    loading, streaming, thinkDone, condenseOpen, setCondenseOpen,
+    loading, streaming, thinkDone,
     modelLabelRef, streamStartAtRef, handleStreamRate, streamingSessionRef,
     queueInfo, setQueueInfo, streamKind, curToolName,
     thinkLevelOpen, setThinkLevelOpen, thinkLevelMenuRef, thinkingLevel, setThinkingLevel,
     followUpQueueRef, piReadyRef, prevQueueRef,
   } = run
   const {
-    condenseBtnRef, contextModalOpen,
+    condenseBtnRef, condenseOpen, setCondenseOpen, contextModalOpen,
     cumTokens, editingMsgId, kbBtnRef, kbCopiedId,
     kbModalOpen, knowledgeBases, promptBtnRef,
     promptDraft, promptModalOpen, reqCount, rightPanelMode,
@@ -208,8 +208,8 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     openPanels, closePanel, closeOtherPanels, closePanelsRight, closeAllPanels,
     terminalMounted, trajBtnRef, trajOpen, treeOpen,
     allowBtnRef, approvalReq, autoApproveBtnRef, autoApproveRef, attachBtnRef,
-    ctxInlineRef, currentPlanItems, logoMenu, logoMenuRef, modelBtnRef, modelCaps,
-    modelLogos, modelPickerOpen, modelPickerRef, pickModelLogo, pickSourceLogo, removeSourceLogo,
+    ctxInlineRef, currentPlanItems, logoMenu, logoMenuRef, modelBtnRef,
+    modelPickerOpen, modelPickerRef, pickModelLogo, pickSourceLogo, removeSourceLogo,
     planTitle, rejectBtnRef, removeModelLogo, resolveApproval, searchEnabled,
     searchMenuOpen, searchMenuRef, searchProvider, setModelPickerOpen, setSearchMenuOpen,
     plainChat,
@@ -251,6 +251,11 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   // 导航栏在同一个 commit 里先于本组件提交，所以 effect 运行时一定取得到那个节点。
   const [sessionSlot, setSessionSlot] = useState<HTMLElement | null>(null)
   useEffect(() => { setSessionSlot(document.getElementById(AGENT_SESSION_SLOT_ID)) }, [])
+  // 知识库卡「已复制」勾选的复位定时器（8.5）：id 存 ref，卸载时清理，避免卸载后 setState
+  const kbCopyTimerRef = useRef<number | null>(null)
+  useEffect(() => () => {
+    if (kbCopyTimerRef.current != null) window.clearTimeout(kbCopyTimerRef.current)
+  }, [])
   // 列表挂在导航栏上，任何页面都点得到：点它先回到工作台，否则点了会话人还停在知识库页。
   const backToWorkspace = useCallback(() => {
     const s = useStore.getState()
@@ -592,7 +597,10 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
     // speakingId 必须在依赖里：朗读态是逐条消息的，漏掉它列表会一直用旧的 null 渲染，
     // 按钮永远停在「朗读」、再点一次变成重新朗读而不是停止。
     // 传给行的是布尔（布尔只影响命中那一行），直接传 id 会让窗口内所有行都换 prop 而整屏重渲染。
-  }, [activeSession, historyStartIndex, virtual.windowStart, virtual.windowEnd, streaming, loading, thinkDone, editingMsgId, confirmEdit, copyMessage, editAt, resendAt, branchAt, msgRowActionsRef, modelLabelRef, streamStartAtRef, handleStreamRate, runningCard, setEditingMsgId, plainChat, speakingId])
+  // 依赖收敛为 id + messages（test.md 9.5）：整个 activeSession 作依赖时，改标题 /
+  // 压缩摘要 / chatTools 等与消息列表无关的字段也会重建整段元素；流式 commit 换的是
+  // messages 数组本身，保留该依赖即可穿透。
+  }, [activeSession?.id, activeSession?.messages, historyStartIndex, virtual.windowStart, virtual.windowEnd, streaming, loading, thinkDone, editingMsgId, confirmEdit, copyMessage, editAt, resendAt, branchAt, msgRowActionsRef, modelLabelRef, streamStartAtRef, handleStreamRate, runningCard, setEditingMsgId, plainChat, speakingId])
 
   // 发送飞行：新用户消息上屏后，从输入框盒真伸缩飞入（STAGE 7r2）。
   // 绘制前执行（无闪烁）；锚点对不上（虚拟窗口/删除/减弱动态）就静默放弃，直接显示。
@@ -950,6 +958,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                     className="agent-prompt-btn agent-prompt-btn-primary agent-condense-run"
                     onClick={handleManualCondense}
                     disabled={loading || condensing || !runningCard}
+                    title={!runningCard ? '需先启动模型才能压缩' : undefined}
                   >
                     {condensing ? <><LoaderIcon size={12} className="spin" /> 正在压缩…</> : '立即压缩历史'}
                   </button>
@@ -1011,7 +1020,12 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                             e.stopPropagation()
                             navigator.clipboard.writeText(kb.name)
                             setKbCopiedId(kb.id)
-                            window.setTimeout(() => setKbCopiedId(null), 1200)
+                            // 复位定时器只保留在飞的一个；id 存 ref，卸载时统一清理（8.5）
+                            if (kbCopyTimerRef.current != null) window.clearTimeout(kbCopyTimerRef.current)
+                            kbCopyTimerRef.current = window.setTimeout(() => {
+                              setKbCopiedId(null)
+                              kbCopyTimerRef.current = null
+                            }, 1200)
                           }}
                         >{kbCopiedId === kb.id ? <Check size={12} /> : <Copy size={12} />}</button>
                       </li>
@@ -1054,7 +1068,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               listening, micTranscribing, toggleListen,
             }}
             models={{
-              modelGroups, modelBtnRef, modelCaps, modelLabel, modelLogos,
+              modelGroups, modelBtnRef, modelLabel,
               modelPickerOpen, modelPickerRef, handleModelAction, pickEndpointModel,
               pickSourceLogo, removeSourceLogo,
               logoMenu, logoMenuRef, toggleLogoMenu, pickModelLogo, removeModelLogo,

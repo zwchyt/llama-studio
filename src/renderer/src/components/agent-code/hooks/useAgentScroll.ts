@@ -33,6 +33,14 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
   // 用时间窗口在整个动画期间持续抑制，而不是只挡一帧。
   const smoothScrollUntilRef = useRef(0)
   const FOLLOW_THRESHOLD = 80
+  // 滚动停止多久后恢复轨道点的波浪过渡（test.md 9.9）：与 smoothScrollUntilRef 的
+  // 抑制窗口同理——动画/滚动期间的过渡纯浪费，停稳后再放回来
+  const RAIL_IDLE_MS = 140
+  // smooth 滚动抑制窗口（ms）：animateScrollTo 动画期间连发的 scroll 事件不算用户滚动
+  const SMOOTH_SCROLL_SUPPRESS_MS = 1400
+  // 目录「当前项」参考线距视口顶部的最大偏移（px）：取 min(120, 视口高度 1/4)，
+  // 短视口时参考线跟着视口走，避免参考线落在视口外
+  const RAIL_REF_LINE_MAX_PX = 120
   // 上一次 scroll 事件的位置：用于判断用户滚动方向（只有向下滚回底部才重新跟随）。
   const lastScrollTopRef = useRef(0)
   // 上一次 scroll 事件时的 maxTop：用于区分「用户上滚」与「内容/视口收缩导致的浏览器夹取」。
@@ -94,8 +102,8 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
   const markRailScrolling = useCallback(() => {
     setRailScrolling(true)
     if (railScrollIdleTimerRef.current) window.clearTimeout(railScrollIdleTimerRef.current)
-    // 节流：滚动停止 140ms 后恢复波浪效果
-    railScrollIdleTimerRef.current = window.setTimeout(() => setRailScrolling(false), 140)
+    // 节流：滚动停止 RAIL_IDLE_MS 后恢复波浪效果
+    railScrollIdleTimerRef.current = window.setTimeout(() => setRailScrolling(false), RAIL_IDLE_MS)
   }, [])
 
   // ── 鼠标波浪：光标在轨道上滑动时，「最长最深」的那根短线跟随光标，而不是停在阅读位置 ──
@@ -328,7 +336,7 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     el.style.overflowAnchor = 'none'
     // 抑制窗口覆盖整段动画：rAF 每帧写 scrollTop 会产生 scroll 事件，
     // 若窗口过期会被 onChatScroll 误判为用户滚动 → 提前翻转 following 退出。
-    smoothScrollUntilRef.current = Date.now() + 1400
+    smoothScrollUntilRef.current = Date.now() + SMOOTH_SCROLL_SUPPRESS_MS
     animateScrollTo(el, () => el.scrollHeight - el.clientHeight, {
       maxDuration: 900,
       onDone: () => {
@@ -437,7 +445,7 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     }
 
     // 消息节点按文档顺序排列，位置单调：二分查找将每帧布局读取从 O(N) 降为 O(log N)。
-    const refLine = viewportRect.top + Math.min(120, viewportRect.height * 0.25)
+    const refLine = viewportRect.top + Math.min(RAIL_REF_LINE_MAX_PX, viewportRect.height * 0.25)
     let low = 0
     let high = targets.length
     while (low < high) {
@@ -454,11 +462,19 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
   // 随挂载范围抖动（rail id 落在哪条消息上取决于当时谁在 DOM 里）。
   // DOM 只保留「位置」职责：按 data-message-index 建一次索引，供二分与跳转取节点；
   // 取不到节点的条目仍进目录（顺序正确），只是暂时不参与位置二分。
+  // 流式期 activeSession.messages 每个 commit 都换新引用。syncRailItems 经此 ref 读消息，
+  // 依赖收敛为「会话 id + 加载区间」：否则 syncRailItems → scheduleRailSync 身份随每次
+  // commit 变化，下面两个 effect（scroll 监听 / MutationObserver + ResizeObserver）会
+  // 每个 commit 整体重挂，还白跑一次全量扫描（test.md 9.1）。
+  // 会话切换 / 加载更早消息走 id 与 historyStartIndex 依赖，effect 重挂时照旧触发一次 sync。
+  const messagesRef = useRef<AgentSession['messages']>([])
+  messagesRef.current = activeSession?.messages ?? []
+
   const syncRailItems = useCallback(() => {
     const viewport = chatScrollRef.current
     if (!viewport) return
 
-    const all = activeSession?.messages ?? []
+    const all = messagesRef.current
     const messages = all.slice(historyStartIndex)
     const nodeByIndex = new Map<number, HTMLElement>()
     for (const node of viewport.querySelectorAll<HTMLElement>('[data-slot="message"]')) {
@@ -532,7 +548,7 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
       return nextItems
     })
     setRailOverflowing(viewport.scrollHeight > viewport.clientHeight + 1 && nextItems.length > 1)
-  }, [activeSession?.messages, historyStartIndex])
+  }, [activeSession?.id, historyStartIndex])
 
   const scheduleRailSync = useCallback(() => {
     if (railFrameRef.current) return
@@ -558,7 +574,7 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     setAtBottom(false)
     const prevAnchor = viewport.style.overflowAnchor
     viewport.style.overflowAnchor = 'none'
-    smoothScrollUntilRef.current = Date.now() + 1400
+    smoothScrollUntilRef.current = Date.now() + SMOOTH_SCROLL_SUPPRESS_MS
     // 目标位置每帧重算：消息高度可能因懒渲染变化，重算可保证最终精确落在目标处。
     // 用「不变式」求目标的绝对内容偏移：contentTop = scrollTop + (tgtRect.top - viewRect.top)。
     // 该值不随滚动变化（下滚 δ 时两 rect.top 同步减 δ、scrollTop 加 δ，互相抵消），
@@ -642,10 +658,12 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
 
     // 数据变化 / 挂载消息范围变化才重建目录。正文 token、代码高亮及思考计时
     // 只改变位置，不应重新扫描整棵 DOM 和重建所有目录项。
+    // 置脏条件覆盖 childList 与 characterData：流式追加的正文是 characterData 突变，
+    // 只认 childList 会让正在流式那条的目录预览停更（该突变 target 不是 viewport 本身）。
     railDirtyRef.current = true
     scheduleRailSync()
     const mutationObserver = typeof MutationObserver !== 'undefined' ? new MutationObserver(records => {
-      if (records.some(record => record.type === 'childList' && record.target === viewport)) railDirtyRef.current = true
+      if (records.some(record => record.type === 'childList' || record.type === 'characterData')) railDirtyRef.current = true
       scheduleRailSync()
     }) : null
     mutationObserver?.observe(viewport, {

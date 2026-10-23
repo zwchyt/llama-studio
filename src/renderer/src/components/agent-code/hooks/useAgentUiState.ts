@@ -3,7 +3,7 @@
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 // 搬移自 AgentCodeView.tsx 的界面状态声明与其配套回调 / effect，逻辑与注释均未改动：
 //   · 顶栏卡片按钮 ref（上下文 / 压缩 / 轨迹 / 提示词 / 知识库）
-//   · 模型选择器（打开态、宽度估算、能力徽标、Logo 菜单与设置/移除）
+//   · 模型选择器（打开态、能力徽标、Logo 菜单与设置/移除）
 //   · 联网搜索开关（searchEnabled / searchProvider 与其变更回调 applySearchChange）
 //   · 通用模式派生量（plainChat 由当前工作区模式推导；不再有「把当前会话改成通用」的路径）
 //   · 文件树 / 右侧面板模式（**按模式分槽**：切模式恢复该模式上次的面板布局，互不污染）
@@ -17,10 +17,10 @@
 //           mode（当前工作区模式）。
 // 对外输出：上述全部 state（值 + setter）与 ref、以及若干派生值 / 回调。
 //
-// 注意：面板的 usePopoverDismiss 调用与 handleModelAction 仍留在主组件
-// （前者与 condenseOpen 等循环域状态交织，后者是独立的模型卡动作域）。
+// 注意：各浮层的 usePopoverDismiss 调用与 handleModelAction 仍留在主组件
+// （五张用户卡的互斥态已收敛到本 hook 的 activeCard，主组件持 setter 与 ref 只做接线）。
 
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../../../store/useStore'
 import { notify } from '../../../store/notificationStore'
 import { safeCall } from '../../../utils/safeCall'
@@ -36,6 +36,20 @@ export type RightPanelMode = 'files' | 'preview' | 'browser' | 'terminal' | 'dif
 export type PanelView = 'files' | 'preview' | 'diff' | 'terminal' | 'browser'
 /** 按模式分槽的面板状态（切模式时各恢复各的）；openPanels=已打开的工作区标签，rightPanelMode=当前显示的那个 */
 type ModePanelState = { treeOpen: boolean; rightPanelMode: RightPanelMode; openPanels: PanelView[] }
+/** 浮动卡片区的五张用户卡（互斥，见下方 activeCard）：上下文窗口 / 压缩历史 / 轨迹 / 提示词 / 知识库 */
+type CardKey = 'ctx' | 'condense' | 'traj' | 'prompt' | 'kb'
+
+/** 浮动卡片的兼容 setter：入参保持 React setState 的两种写法（布尔 / v => !v）。
+ *  开 = 切到该卡（顶掉其他卡，即互斥本意）；关 = 仅当该卡正开时清空（不动其他卡）。 */
+function cardSetter(k: CardKey, setActiveCard: React.Dispatch<React.SetStateAction<CardKey | null>>) {
+  return (v: boolean | ((p: boolean) => boolean)) => {
+    setActiveCard(prev => {
+      const open = typeof v === 'function' ? v(prev === k) : v
+      if (open) return k
+      return prev === k ? null : prev
+    })
+  }
+}
 
 export function useAgentUiState({
   loading, piReadyRef, mode,
@@ -111,12 +125,14 @@ export function useAgentUiState({
   }, [activeProjectId, activeSessionId, chatTools, updateSessionInProject, loading, piReadyRef])
 
   // 各模型的能力徽标（key = template.id；null = 读取失败/非 GGUF，不显示图标）：
-  // 全局 store 共享 + model-capabilities.json 持久化，检测结果不重复读盘
-  const modelCaps = useStore(s => s.modelCapabilities)
+  // 全局 store 共享 + model-capabilities.json 持久化，检测结果不重复读盘。
+  // 注意（test.md 9.2）：此处不再整表订阅 modelCapabilities / modelLogos——任一 key
+  // 写入都会让 AgentCodeView 整棵树重渲染，而真正的渲染消费方只有输入区的模型下拉。
+  // 本 hook 内的两处调用点（toggleLogoMenu / GGUF 补读 effect）改走 useStore.getState()
+  // 读快照；渲染消费由 AgentInputArea 自行订阅（见该文件 modelEndpoints 订阅处的注释）。
   const loadModelCapabilities = useStore(s => s.loadModelCapabilities)
   // 各模型的自定义 Logo（key = template.id；data URL 或 null=无）：全局 store 共享，
   // 与「模型管理 」卡片同一份数据，任一处设置/移除后两处立即同步
-  const modelLogos = useStore(s => s.modelLogos)
   const setModelLogoEntry = useStore(s => s.setModelLogoEntry)
   const loadModelLogos = useStore(s => s.loadModelLogos)
   // 打开下拉时兜底补读（App 启动已全局加载；此处幂等，只读缺失项）
@@ -129,11 +145,12 @@ export function useAgentUiState({
 
   // 无 Logo → 直接选图；有 Logo → 弹出更换/移除菜单（菜单 fixed 定位，避开 picker 滚动裁切）
   const toggleLogoMenu = useCallback((e: React.MouseEvent, card: CardState) => {
-    if (!modelLogos[card.template.id]) { void pickModelLogo(card); return }
+    // 经 store 快照读「有没有 Logo」：比渲染期订阅整表更新，也不随无关 key 写入重渲染
+    if (!useStore.getState().modelLogos[card.template.id]) { void pickModelLogo(card); return }
     if (logoMenu?.id === card.template.id) { setLogoMenu(null); return }
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     setLogoMenu({ id: card.template.id, x: rect.right, y: rect.bottom })
-  }, [modelLogos, logoMenu])
+  }, [logoMenu])
   // 选图：主进程弹选择框、复制进 logos/ 并更新映射 → 立即刷新图片
   const pickModelLogo = useCallback(async (card: CardState) => {
     const res = await window.api.setModelLogo(card.template.id)
@@ -176,22 +193,27 @@ export function useAgentUiState({
 
   // 打开下拉时对未缓存的模型读取 GGUF 元数据并判定能力（只读头部，毫秒级）；
   // 检测成功即持久化到 model-capabilities.json，下次启动直接载入不再读盘
+  // 世代号（test.md 9.13）：快速开关面板会叠加多轮读盘（Promise.allSettled 无取消），
+  // 每轮开面板自增一代，读盘返回后世代已变就丢弃结果，避免过期轮次写回。
+  const capsGenRef = useRef(0)
   useEffect(() => {
     if (!modelPickerOpen) return
+    const gen = ++capsGenRef.current
     void loadModelCapabilities().catch(() => { })
     const store = useStore.getState()
-    const missing = store.cards.filter(c => !(c.template.id in modelCaps) && !!c.template.modelPath)
+    const missing = store.cards.filter(c => !(c.template.id in store.modelCapabilities) && !!c.template.modelPath)
     if (missing.length === 0) return
       ; (async () => {
         await Promise.allSettled(missing.map(async (card) => {
           const res = await window.api.readGgufMeta(card.template.modelPath!)
           if ('error' in res || !card.template.modelPath) return
+          if (gen !== capsGenRef.current) return  // 面板已关闭/重开：本轮结果作废
           const caps = detectModelCapabilities({ architecture: res.architecture, chatTemplate: res.chatTemplate, kv: res.kv })
           useStore.getState().setModelCapabilitiesEntry(card.template.id, caps)
           void window.api.saveModelCapabilities(card.template.id, caps).catch(() => { })
         }))
       })()
-    // modelCaps 不参与依赖：缓存命中判断用引用快照，避免打开一次列表触发两轮读取
+    // 能力表不参与依赖：经 store 快照读取（getState），避免打开一次列表触发两轮读取
   }, [modelPickerOpen])
   const modelBtnRef = useRef<HTMLButtonElement>(null)
   const attachBtnRef = useRef<HTMLButtonElement>(null)
@@ -315,8 +337,23 @@ export function useAgentUiState({
   // 会话列表（portal 到导航栏底部那个槽）**常驻挂载**，不再有开关。
   // 顶栏左上角原来有一颗「收起会话列表」按钮，已删除：侧栏内容的显隐只该由侧栏自己的
   // 收起/展开决定，不该让顶栏另管一套（两处状态并存时，点顶栏那颗按钮看着就像没反应）。
-  const [contextModalOpen, setContextModalOpen] = useState(false)
-  const [trajOpen, setTrajOpen] = useState(false)  // 轨迹台账面板开关
+  // ── 浮动卡片区互斥（test.md 8.1）：五张用户卡同锚聊天区右上角，只允许同时开一张 ──
+  // 单值 activeCard 替代五个独立布尔：打开第二张卡时第一张自动收起，
+  // 不再出现「卡叠卡」与被盖住的卡点不动。待办卡（taskModalOpen）由模型触发、
+  // 无手动关闭入口，不参与互斥，保持独立。
+  const [activeCard, setActiveCard] = useState<CardKey | null>(null)
+  const contextModalOpen = activeCard === 'ctx'
+  const condenseOpen = activeCard === 'condense'  // 压缩历史卡片开关
+  const trajOpen = activeCard === 'traj'  // 轨迹台账面板开关
+  const promptModalOpen = activeCard === 'prompt'
+  const kbModalOpen = activeCard === 'kb'
+  // 兼容 setter：身份必须恒定（usePopoverDismiss 的 effect 以 setter 为依赖，
+  // 每次渲染换新函数会让监听器反复摘挂）
+  const setContextModalOpen = useMemo(() => cardSetter('ctx', setActiveCard), [])
+  const setCondenseOpen = useMemo(() => cardSetter('condense', setActiveCard), [])
+  const setTrajOpen = useMemo(() => cardSetter('traj', setActiveCard), [])
+  const setPromptModalOpen = useMemo(() => cardSetter('prompt', setActiveCard), [])
+  const setKbModalOpen = useMemo(() => cardSetter('kb', setActiveCard), [])
   const treeOpenRef = useRef(treeOpen)
   treeOpenRef.current = treeOpen
   // 任务清单卡片（Todo / Task 工具的可视化）：浮在会话区右上角。
@@ -353,10 +390,8 @@ export function useAgentUiState({
   const rejectBtnRef = useRef<HTMLButtonElement>(null)
   const autoApproveBtnRef = useRef<HTMLButtonElement>(null)
   const allowBtnRef = useRef<HTMLButtonElement>(null)
-  const [promptModalOpen, setPromptModalOpen] = useState(false)
   const [promptDraft, setPromptDraft] = useState('')
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseMeta[]>([])
-  const [kbModalOpen, setKbModalOpen] = useState(false)
   const [kbCopiedId, setKbCopiedId] = useState<string | null>(null)
 
   usePopoverDismiss(promptModalOpen, setPromptModalOpen, promptBtnRef, '.agent-card-prompt')
@@ -365,12 +400,15 @@ export function useAgentUiState({
   // 用户消息内联编辑中的消息 id（null = 无）
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState('')
+  // 依赖必须为空（test.md 9.7）：函数体只读 ref 与 setState，不碰项目/会话 id。
+  // 原先 deps 带着两个未使用的 id，与上方「身份必须恒定」的注释自相矛盾——每次切项目 /
+  // 会话都重建，连带下面的 keydown effect 重挂并重新聚焦「允许」按钮。
   const resolveApproval = useCallback((approved: boolean) => {
     const r = approvalResolveRef.current
     approvalResolveRef.current = null
     setApprovalReq(null)
     if (r) r(approved)
-  }, [activeProjectId, activeSessionId])
+  }, [])
   // 审批面板键盘导航：方向键切换按钮，Enter 确认允许，Escape 拒绝
   useEffect(() => {
     if (!approvalReq) return
@@ -429,8 +467,8 @@ export function useAgentUiState({
     closeSearchMenu, applySearchChange,
     plainChat, mode,
     chatTools, chatToolsMenuOpen, setChatToolsMenuOpen, chatToolsMenuRef, closeChatToolsMenu, toggleChatTool,
-    modelCaps, loadModelCapabilities,
-    modelLogos, setModelLogoEntry, loadModelLogos,
+    loadModelCapabilities,
+    setModelLogoEntry, loadModelLogos,
     logoMenu, setLogoMenu, logoMenuRef, toggleLogoMenu, pickModelLogo, removeModelLogo, closeLogoMenu,
     pickSourceLogo, removeSourceLogo,
     modelBtnRef, attachBtnRef,
@@ -438,8 +476,9 @@ export function useAgentUiState({
     treeOpen, setTreeOpen, rightPanelMode, setRightPanelMode, setRightPanelModeAndOpen,
     openPanels, closePanel, closeOtherPanels, closePanelsRight, closeAllPanels,
     terminalMounted, setTerminalMounted,
-    // 功能面板开关
+    // 功能面板开关（五张用户卡由 activeCard 互斥，待办卡独立）
     contextModalOpen, setContextModalOpen,
+    condenseOpen, setCondenseOpen,
     trajOpen, setTrajOpen,
     treeOpenRef,
     // 任务清单卡

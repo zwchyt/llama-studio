@@ -143,7 +143,6 @@ export default function AgentCodeView() {
   const {
     loading, setLoading, streaming, setStreaming, setStreamKind, setThinkDone,
     thinkingLevel, setThinkingLevel, thinkingLevelRef, setCurToolName, setQueueInfo,
-    condenseOpen, setCondenseOpen,
     sendingRef, streamingSessionRef, abortRef, streamStartAtRef,
     modelLabelRef, lastRateRef, piReadyRef,
     prevQueueRef, appendLiveUserMsgRef, followUpQueueRef,
@@ -159,6 +158,7 @@ export default function AgentCodeView() {
     modelPickerOpen, setModelPickerOpen, modelPickerRef, modelBtnRef,
     treeOpen, setTreeOpen, rightPanelMode, setRightPanelMode, closePanel,
     contextModalOpen, setContextModalOpen,
+    condenseOpen, setCondenseOpen,
     trajOpen, setTrajOpen,
     setTaskModalOpen, planItemsRef,
     setPlanItems, setPlanTitle,

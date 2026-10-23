@@ -21,7 +21,8 @@
 // （声明在前，无 TDZ）。两者各自把最新引用写入 ref，故对外函数身份稳定。
 //
 // 注意：handleSend 的依赖数组刻意未包含 slashCommands / agentConfig 等只读配置
-// （与原实现一致，改动会改变闭包新鲜度语义）；本 hook 仅做搬运，未调整依赖项。
+// （agentConfig 是模块单例，始终最新；slashCommands 与主组件的四个 useCallback 已改为
+// 经 ref 读取最新引用，见下方 *Ref 声明处，闭包不再停在首次渲染那一份）。
 
 import React, { useCallback, useLayoutEffect, useRef } from 'react'
 import { noteSendIntent } from '../flight/sendFlight'
@@ -34,7 +35,7 @@ import { PiAgentClient } from '../../../utils/piAgentClient'
 import { computeContextBudget, coveredPrefixCount, piContextWindowFor, COMPACTION_TRIGGER_MARGIN } from '../../../utils/contextBudget'
 import { parseSlashCommand, findCommand, expandCommandTemplate } from '../../../agent/slashCommands'
 import { newMsgId, uniqueId } from '../utils/ids'
-import { MIN_EXEC_DISPLAY_MS, PI_UNDO_PREFIX } from '../utils/constants'
+import { MIN_EXEC_DISPLAY_MS, PI_UNDO_PREFIX, PROJECTS_SYNC_MS, COMPACTION_RESERVE_FLOOR_TOKENS, COMPACTION_KEEP_RECENT_RATIO, COMPACTION_KEEP_RECENT_FLOOR_TOKENS } from '../utils/constants'
 import { CHIP_MARK, type RichChip } from '../agent-input/RichInput'
 
 /** 把输入文本里的 \uFFFC 占位符按顺序替换成胶囊正文：内联胶囊的顺序 = 编辑器里的顺序 */
@@ -189,7 +190,20 @@ export function useAgentLoop({
   // 所以这里也走 ref 取最新引用，供 view_image 执行完自动在右侧展开图片。
   const openPreviewRef = useRef<((path: string, panelMode?: PanelView) => void) | null>(null)
   openPreviewRef.current = openPreview ?? null
-
+  // 与 turnScopeRef / openPreviewRef 同款模式（test.md 9.8）：runPiTurn 的 deps 只有
+  // updateSessionInProject、handleSend 的 deps 不含只读配置，两者都是流式热路径上的
+  // 稳定身份回调。它们用到的五个外部引用（贴底 / 队列补写 / 出队检测 / 斜杠命令表 /
+  // 斜杠动作分发）经 ref 读取最新值，避免闭包停在首次渲染那一份。
+  const scrollToBottomRef = useRef(scrollToBottom)
+  scrollToBottomRef.current = scrollToBottom
+  const appendQueuedUserMsgRef = useRef(appendQueuedUserMsg)
+  appendQueuedUserMsgRef.current = appendQueuedUserMsg
+  const queueRemovedRef = useRef(queueRemoved)
+  queueRemovedRef.current = queueRemoved
+  const slashCommandsRef = useRef(slashCommands)
+  slashCommandsRef.current = slashCommands
+  const runSlashActionRef = useRef(runSlashAction)
+  runSlashActionRef.current = runSlashAction
 
   // ── pi-agent 模式：pi SDK 驱动的单轮 agent 运行 ──
   // displayMsgs 的最后一条为最新 user 消息（由 prompt 发送）；此前消息作为历史注入 pi session。
@@ -217,7 +231,7 @@ export function useAgentLoop({
     // 之后再发消息，新增的这条只会在下方生成而不被滚进视野，得手动往下滑才看得到。
     // force=true：即便此刻有轨道补间动画在跑也要抢占（scrollToBottom 的早退分支在
     // 重置 followingRef 之前，不加 force 会被直接忽略）。
-    scrollToBottom(false, true)
+    scrollToBottomRef.current(false, true)
     // 模式与聊天工具集都由「本轮所属工作区 / 会话」决定，集中在这里推导一次。
     //
     // 原先这两个值由每个起轮点各自传（RunPiTurn 的 opts 字段），5 个入口里 3 个
@@ -299,9 +313,9 @@ export function useAgentLoop({
       //   keepRecentTokens = 压缩后逐字保留的量，取预算四成，其余交给摘要。
       // 拿不到真实 n_ctx 时（极少见）不下发窗口、沿用 pi 默认值，压缩阈值维持原口径。
       const compactionReserveTokens = piContextWindow != null
-        ? Math.max(512, piContextWindow - Math.max(512, contextBudget - COMPACTION_TRIGGER_MARGIN))
-        : Math.max(512, Math.min(agentConfig.maxOutput, ctxEff - contextBudget))
-      const compactionKeepRecentTokens = Math.max(600, Math.floor(contextBudget * 0.4))
+        ? Math.max(COMPACTION_RESERVE_FLOOR_TOKENS, piContextWindow - Math.max(COMPACTION_RESERVE_FLOOR_TOKENS, contextBudget - COMPACTION_TRIGGER_MARGIN))
+        : Math.max(COMPACTION_RESERVE_FLOOR_TOKENS, Math.min(agentConfig.maxOutput, ctxEff - contextBudget))
+      const compactionKeepRecentTokens = Math.max(COMPACTION_KEEP_RECENT_FLOOR_TOKENS, Math.floor(contextBudget * COMPACTION_KEEP_RECENT_RATIO))
       const res = await window.api.piAgent.create({
         sessionId: piSessionId,
         port: opts.port,
@@ -372,7 +386,6 @@ export function useAgentLoop({
     // 轮末精确快照：输出结束时刻主动查询端点最新 /slots（与端点 n_decoded 当前值一致，
     // 不依赖 500ms 广播周期）；查询失败或缺省时回退 store 里最近一次广播值
     let finalDecoded: number | undefined
-    const SYNC_PROJECTS_MS = 500
     let projectsSyncTimer: ReturnType<typeof setTimeout> | null = null
     let lastProjectsSyncAt = 0
     const syncProjects = (): void => {
@@ -382,8 +395,8 @@ export function useAgentLoop({
         updateSessionInProject(pid, sid, { messages: msgs })
       }
       const now = performance.now()
-      if (now - lastProjectsSyncAt >= SYNC_PROJECTS_MS) apply()
-      else projectsSyncTimer = setTimeout(() => { projectsSyncTimer = null; apply() }, SYNC_PROJECTS_MS - (now - lastProjectsSyncAt))
+      if (now - lastProjectsSyncAt >= PROJECTS_SYNC_MS) apply()
+      else projectsSyncTimer = setTimeout(() => { projectsSyncTimer = null; apply() }, PROJECTS_SYNC_MS - (now - lastProjectsSyncAt))
     }
     // forceSync=true：轮末/失败收尾——立即写 projects + 清掉排队同步，保证最终态入库。
     const commit = (patch: Partial<AgentMessage>, forceSync = false): void => {
@@ -721,10 +734,10 @@ export function useAgentLoop({
       },
       onQueueUpdate: (_s, f) => {
         // 出队（被执行）的条目 = prev 有而当前无的 → 此刻补写进历史，让其出现在对话里
-        const removedFollow = queueRemoved(prevQueueRef.current.followUp, f)
+        const removedFollow = queueRemovedRef.current(prevQueueRef.current.followUp, f)
         prevQueueRef.current = { followUp: f }
         setQueueInfo({ followUp: f })
-        for (const t of removedFollow) appendQueuedUserMsg(t)
+        for (const t of removedFollow) appendQueuedUserMsgRef.current(t)
       },
       onCompactionStart: () => {
         // pi 原生压缩开始（手动 / 自动都发）：置位全局「压缩中」，输入区据此渲染提示条。
@@ -942,7 +955,7 @@ export function useAgentLoop({
     // hints 域被禁用；这里同样跳过分发，用户手敲的 /xxx 作为普通文本发给模型。
     const parsedCmd = projectMode(activeProject) === 'chat' ? null : parseSlashCommand(text)
     if (parsedCmd) {
-      const cmd = findCommand(parsedCmd.name, slashCommands)
+      const cmd = findCommand(parsedCmd.name, slashCommandsRef.current)
       if (!cmd) {
         notify(`未知命令 /${parsedCmd.name}（输入 / 查看可用命令）`, 'error')
         if (text) { setInput(text); setChips([]); setCodeSnippets([]) }
@@ -955,7 +968,7 @@ export function useAgentLoop({
         setAttachedFiles([])
         setChips([])
         setCodeSnippets([])
-        await runSlashAction(cmd.name, parsedCmd.args)
+        await runSlashActionRef.current(cmd.name, parsedCmd.args)
         return
       }
       resolvedText = expandCommandTemplate(cmd.template, parsedCmd.args)

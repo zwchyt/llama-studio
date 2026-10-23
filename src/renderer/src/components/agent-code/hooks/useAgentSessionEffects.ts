@@ -64,8 +64,11 @@ export function useAgentSessionEffects({
     // 而启动瞬间磁盘存档可能还没加载完——那一下会把用户已有的会话文件全部删掉。
     // 已删除项目/会话的残留文件由 markDirty 的「项目被删除」分支在下一次真实保存时带走。
     const hasRealContent = projects.some(p => p.workspaceDir || p.sessions.some(s => s.messages.length > 0))
-    if (hasRealContent) setAgentProjects(projects)
-  }, [projects, setAgentProjects])
+    // 引用短路（test.md 9.12）：store 里的正是本地这份数组时跳过写入——流式期间
+    // projects 每个 commit 都换引用，原先每次都会走一次 setAgentProjects + 持久化脏标记，
+    // 而值与 store 里相同的写入不会改变任何订阅方的读取结果。
+    if (hasRealContent && storedProjects !== projects) setAgentProjects(projects)
+  }, [projects, storedProjects, setAgentProjects])
 
   // 应用启动后，store 从磁盘载入历史项目时，把本地状态同步为已持久化的内容（仅一次）。
   // 走 hydrateProjects 而不是裸 setProjects：它顺带做旧存档迁移（补 mode / 把带 plainChat 的

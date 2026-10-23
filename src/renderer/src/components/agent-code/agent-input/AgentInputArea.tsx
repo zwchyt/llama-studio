@@ -255,9 +255,7 @@ export type AgentInputAreaProps = {
   models: {
     modelGroups: ModelPickerGroup[]
     modelBtnRef: React.RefObject<HTMLButtonElement | null>
-    modelCaps: ReturnType<typeof useStore.getState>['modelCapabilities']
     modelLabel: string
-    modelLogos: ReturnType<typeof useStore.getState>['modelLogos']
     modelPickerOpen: boolean
     modelPickerRef: React.RefObject<HTMLDivElement | null>
     handleModelAction: (card: CardState) => Promise<void>
@@ -370,7 +368,7 @@ export function AgentInputArea({
     setSlashIdx, slashPopRef, onPickAtFile, onPickSlash,
   } = hintsDomain
   const { listening, micTranscribing, toggleListen } = mic
-  const { modelGroups, modelBtnRef, modelCaps, modelLabel, modelLogos, modelPickerOpen, modelPickerRef, handleModelAction, pickEndpointModel, pickSourceLogo, removeSourceLogo, logoMenu, logoMenuRef, toggleLogoMenu, pickModelLogo, removeModelLogo, setModelPickerOpen, thinkLevelMenuRef, thinkLevelOpen, setThinkLevelOpen, thinkingLevel, setThinkingLevel } = models
+  const { modelGroups, modelBtnRef, modelLabel, modelPickerOpen, modelPickerRef, handleModelAction, pickEndpointModel, pickSourceLogo, removeSourceLogo, logoMenu, logoMenuRef, toggleLogoMenu, pickModelLogo, removeModelLogo, setModelPickerOpen, thinkLevelMenuRef, thinkLevelOpen, setThinkLevelOpen, thinkingLevel, setThinkingLevel } = models
   const { searchEnabled, searchProvider, searchMenuOpen, searchMenuRef, setSearchMenuOpen, applySearchChange } = search
   const { plainChat } = chatMode
   const { apiBaseUrl, curToolName, followUpQueueRef, handleSend, handleStop, loading, piReadyRef, prevQueueRef, queueInfo, setQueueInfo, runningCard, streamKind, streaming, thinkDone } = run
@@ -392,6 +390,11 @@ export function AgentInputArea({
   // 外部端点：卡片只存 endpointId，这里查表是为了区分「本机端口 / 远程」的角标与提示文案；
   // 端点本身在「外部端点」页管理，下拉里只留一个跳转入口。
   const modelEndpoints = useStore(s => s.modelEndpoints)
+  // 模型能力徽标 / Logo 映射（test.md 9.2）：订阅下沉到唯一消费组件。原先由
+  // useAgentUiState 整表订阅——任一 key 写入都会让 AgentCodeView 整棵树重渲染；
+  // 输入区本就随流式高频重渲染，这两张低频表在此订阅，爆炸半径缩到本组件。
+  const modelCaps = useStore(s => s.modelCapabilities)
+  const modelLogos = useStore(s => s.modelLogos)
   const setView = useStore(s => s.setView)
   // 历史压缩中（pi 原生压缩，手动 / 自动都置位）：驱动输入框上方的提示条
   const compacting = useStore(s => s.compacting)

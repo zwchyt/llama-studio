@@ -44,3 +44,16 @@ export const IMAGE_LIMITS = {
   INLINE: 4 * 1024 * 1024,
   PREVIEW: 8 * 1024 * 1024,
 } as const
+
+// 工作区列表回写 store 的节流窗口（useAgentLoop，test.md 9.9）：流式期间 projects
+// 高频变化，超过该间隔才真正落一次 store，避免每个 commit 都写。
+export const PROJECTS_SYNC_MS = 500
+
+// pi 原生压缩阈值（useAgentLoop 起轮时下发，test.md 9.9）：
+//   RESERVE_FLOOR_TOKENS     —— 压缩触发线（reserveTokens）的下限：窗口再小也至少留这么多，
+//                                保证压缩永远有机会在兜底裁剪顶到天花板之前接管
+//   KEEP_RECENT_RATIO        —— 压缩后逐字保留近期对话的比例（其余交给摘要）
+//   KEEP_RECENT_FLOOR_TOKENS —— 逐字保留量的下限，避免小窗口下保留段被压到没有意义
+export const COMPACTION_RESERVE_FLOOR_TOKENS = 512
+export const COMPACTION_KEEP_RECENT_RATIO = 0.4
+export const COMPACTION_KEEP_RECENT_FLOOR_TOKENS = 600

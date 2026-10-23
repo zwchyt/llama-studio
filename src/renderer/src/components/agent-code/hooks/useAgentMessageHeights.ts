@@ -23,9 +23,22 @@ const HEIGHT_COMMIT_DEBOUNCE_MS = 150
 
 type MeasurableMessage = { id: string; content?: string; toolCalls?: readonly unknown[] }
 
-// 内容指纹：只取 O(1) 可得的量，不做字符串拼接/哈希。
+// 内容指纹（test.md 9.10）：除长度外再取 content 首尾各 32 字符与 toolCalls 的
+// 状态 / 参数长度签名。仅用长度时，「等长内容替换」（编辑消息）不失效，缓存会一直
+// 留着旧内容对应的高度，要等高度真变才被纠正。首尾采样对「只改中间一小段」仍不敏感，
+// 但那类改动的渲染高度差由 measureNodes 里的高度比对 + ResizeObserver 兜底。
 function fingerprintOf(msg: MeasurableMessage): string {
-  return `${msg.content?.length ?? 0}|${msg.toolCalls?.length ?? 0}`
+  const text = msg.content ?? ''
+  const head = text.slice(0, 32)
+  const tail = text.length > 32 ? text.slice(-32) : ''
+  const tc = msg.toolCalls
+  const tcSig = tc
+    ? tc.reduce<number>((n, t) => {
+      const call = t as { status?: string; args?: string }
+      return n + (call.status?.length ?? 0) + (call.args?.length ?? 0)
+    }, 0)
+    : 0
+  return `${text.length}|${head}|${tail}|${tc?.length ?? 0}|${tcSig}`
 }
 
 export function useAgentMessageHeights({ sessionId, viewportRef, messages, volatileId }: {
