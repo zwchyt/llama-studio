@@ -14,11 +14,13 @@ import { getMessagePreview } from '../utils/text'
 import { useAgentHistoryWindow } from './useAgentHistoryWindow'
 import type { AgentSession } from '../../../../../shared/types'
 
-export function useAgentScroll({ activeSession, streaming, setSelectionPopover, scrollScope = 'default' }: {
+export function useAgentScroll({ activeSession, streaming, setSelectionPopover, streamingSessionRef, scrollScope = 'default' }: {
   activeSession: AgentSession | null
   streaming: boolean
   // 滚动时收起选区操作条：只用来清空，故收窄成 null（免得跟着选区状态字段一起改）
   setSelectionPopover: (v: null) => void
+  /** 发起本轮流式的会话 id：pin 只允许钉「自己的」会话（test.md 10.1） */
+  streamingSessionRef: React.RefObject<string | null>
   /** 滚动位置的作用域（当前传入工作区模式）：切作用域时保存 / 恢复滚动偏移 */
   scrollScope?: string
 }) {
@@ -399,11 +401,21 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
   // scrollToBottom 在增高之前就已执行，两者相位错开 → 滞后一拍的追赶式跳动。
   // 改为每帧把滚动条钉到底（仅当用户处于底部），滚动便与真实内容高度同步增长；
   // 用户上滚查看时（atBottomRef=false）不打断。
+  // 当前会话 id 的 ref 镜像：pin 在 rAF 里执行，闭包里的 activeSession 可能过期。
+  const activeSessionIdRef = useRef(activeSession?.id)
+  activeSessionIdRef.current = activeSession?.id
   useEffect(() => {
     if (!streaming) return
     let raf = 0
     const pin = () => {
       const el = chatScrollRef.current
+      // 流式归属校验（test.md 10.1）：A 在流式、用户切到 B 时，pin 不得去钉 B。
+      // 与布局层的 streamingHere（streamingSessionRef.current === activeSession.id）对齐。
+      // 不满足时连 scrollHeight 都不读，顺带省掉每帧两次强制布局；循环不断，切回 A 立刻恢复。
+      if (streamingSessionRef.current !== activeSessionIdRef.current) {
+        raf = requestAnimationFrame(pin)
+        return
+      }
       // 滚动动画进行中不抢滚动控制权：直接赋值 scrollTop 会打断补间动画，
       // 表现为「点击轨道点后上下抖动 / 停在半路」。动画由 animateScrollTo 收尾后恢复贴底。
       if (el && followingRef.current && !railAnimatingRef.current && Date.now() >= smoothScrollUntilRef.current) {

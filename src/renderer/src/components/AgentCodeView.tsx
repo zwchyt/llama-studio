@@ -202,7 +202,7 @@ export default function AgentCodeView() {
   // ── 聊天区滚动跟随 + 目录 rail（自持 ref / state / 回调，见 agent-code/hooks/useAgentScroll.ts）──
   let scroll!: ReturnType<typeof useAgentScroll>
   scroll = useAgentScroll({
-    activeSession, streaming, setSelectionPopover,
+    activeSession, streaming, setSelectionPopover, streamingSessionRef,
     scrollScope: projectsDomain.mode,
   })
 

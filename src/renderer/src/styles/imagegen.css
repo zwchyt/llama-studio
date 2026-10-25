@@ -1024,13 +1024,14 @@
   .imagegen-ig-glow { animation: none; opacity: 0.7; }
 }
 
-@media (prefers-color-scheme: dark) {
-  .imagegen-ig-canvas { background: #1f1f1f; }
-  .imagegen-ig-dots { background-image: radial-gradient(circle, #f5f5f5 0.7px, transparent 1.3px); }
-  .imagegen-ig-glow { background-image: radial-gradient(circle, #f5f5f5 1.1px, transparent 1.6px); }
-  .imagegen-ig-res { color: #a3a3a3; background: rgba(26, 26, 26, 0.72); }
-  .imagegen-ig-prompt { color: #a3a3a3; }
-}
+/* 深色规则改由 html.theme-dark 驱动（test.md 11.2）：原来写的是
+   @media (prefers-color-scheme: dark)，会让「操作系统深色 + 应用选浅色」时画布、点阵、
+   分辨率标签全部变深，与整页浅色冲突。值原样搬过来，只是把触发条件从「系统」换成「应用」。 */
+html.theme-dark .imagegen-ig-canvas { background: #1f1f1f; }
+html.theme-dark .imagegen-ig-dots { background-image: radial-gradient(circle, #f5f5f5 0.7px, transparent 1.3px); }
+html.theme-dark .imagegen-ig-glow { background-image: radial-gradient(circle, #f5f5f5 1.1px, transparent 1.6px); }
+html.theme-dark .imagegen-ig-res { color: #a3a3a3; background: rgba(26, 26, 26, 0.72); }
+html.theme-dark .imagegen-ig-prompt { color: #a3a3a3; }
 
 .imagegen-loading-note {
   font-size: 12px;

@@ -8609,7 +8609,7 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
 .agent-code-view .chat-cmd-del {
   border: 1px solid var(--border);
   background: transparent;
-  color: var(--danger, #ff6b6b);
+  color: var(--danger);
   border-radius: 6px;
   width: 20px;
   height: 20px;
@@ -8661,7 +8661,7 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
 }
 
 .agent-code-view .chat-cmd-error {
-  color: var(--danger, #ff6b6b);
+  color: var(--danger);
   font-size: 11px;
 }
 
@@ -9605,8 +9605,8 @@ html.theme-dark .user-msg-lightbox {
 
 /* 麦克风按钮录音中：红色 + 脉冲，明确提示正在听写 */
 .agent-code-view .chat-input-row .chat-mic-btn.listening {
-  color: var(--danger, #ef4444);
-  background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
   animation: agent-mic-pulse 1.2s ease-in-out infinite;
 }
 
@@ -9910,11 +9910,11 @@ html.theme-dark .user-msg-lightbox {
 }
 
 .chat-model-logo-menu-item.danger {
-  color: var(--danger, #ef4444);
+  color: var(--danger);
 }
 
 .chat-model-logo-menu-item.danger:hover {
-  background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .chat-model-item:hover:not(.running) {
@@ -9932,8 +9932,8 @@ html.theme-dark .user-msg-lightbox {
 }
 
 .chat-model-item.error {
-  background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent);
-  color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
 }
 
 .chat-model-item-avatar {
@@ -9952,13 +9952,13 @@ html.theme-dark .user-msg-lightbox {
 }
 
 .chat-model-item.running .chat-model-item-avatar {
-  background: color-mix(in srgb, var(--success, #22c55e) 18%, transparent);
-  color: var(--success, #22c55e);
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
 }
 
 .chat-model-item.error .chat-model-item-avatar {
-  background: color-mix(in srgb, var(--danger, #ef4444) 18%, transparent);
-  color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
 }
 
 .chat-model-item-info {
@@ -10201,12 +10201,12 @@ html.theme-dark .user-msg-lightbox {
 }
 
 .agent-git-total-stat .add {
-  color: var(--success, #22c55e);
+  color: var(--success);
   font-weight: 700;
 }
 
 .agent-git-total-stat .del {
-  color: var(--danger, #ef4444);
+  color: var(--danger);
   font-weight: 700;
 }
 
@@ -10231,11 +10231,11 @@ html.theme-dark .user-msg-lightbox {
 }
 
 .agent-git-stage-add:hover {
-  color: var(--success, #22c55e);
+  color: var(--success);
 }
 
 .agent-git-stage-remove:hover {
-  color: var(--danger, #ef4444);
+  color: var(--danger);
 }
 
 .agent-git-discard:hover {
@@ -10706,13 +10706,13 @@ html.theme-dark .user-msg-lightbox {
 }
 
 .agent-git-badge.s-A {
-  background: color-mix(in srgb, var(--success, #22c55e) 22%, transparent);
-  color: var(--success, #22c55e);
+  background: color-mix(in srgb, var(--success) 22%, transparent);
+  color: var(--success);
 }
 
 .agent-git-badge.s-D {
-  background: color-mix(in srgb, var(--danger, #ef4444) 22%, transparent);
-  color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--danger) 22%, transparent);
+  color: var(--danger);
 }
 
 .agent-git-badge.s-R,
@@ -10722,8 +10722,8 @@ html.theme-dark .user-msg-lightbox {
 }
 
 .agent-git-badge.s-U {
-  background: color-mix(in srgb, var(--danger, #ef4444) 30%, transparent);
-  color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--danger) 30%, transparent);
+  color: var(--danger);
 }
 
 .agent-git-file-path {
@@ -10771,11 +10771,11 @@ html.theme-dark .user-msg-lightbox {
 }
 
 .agent-git-stat .add {
-  color: var(--success, #22c55e);
+  color: var(--success);
 }
 
 .agent-git-stat .del {
-  color: var(--danger, #ef4444);
+  color: var(--danger);
 }
 
 .agent-git-note {
@@ -10822,11 +10822,11 @@ html.theme-dark .user-msg-lightbox {
 }
 
 .agent-git-row.add {
-  background: color-mix(in srgb, var(--success, #22c55e) 12%, transparent);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
 }
 
 .agent-git-row.del {
-  background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 /* 左侧 accent 条：add 实心绿条，del 红色斜纹条（对齐 FileDiff 设计） */
@@ -10841,21 +10841,21 @@ html.theme-dark .user-msg-lightbox {
 }
 
 .agent-git-row.add::before {
-  background: var(--success, #22c55e);
+  background: var(--success);
 }
 
 .agent-git-row.del::before {
-  background: repeating-linear-gradient(45deg, var(--danger, #ef4444) 0, var(--danger, #ef4444) 1.5px, transparent 1.5px, transparent 3px);
+  background: repeating-linear-gradient(45deg, var(--danger) 0, var(--danger) 1.5px, transparent 1.5px, transparent 3px);
 }
 
 /* 行内单词级差异高亮：变更部分加深背景色 */
 .agent-git-row.add .agent-git-hl {
-  background: color-mix(in srgb, var(--success, #22c55e) 28%, transparent);
+  background: color-mix(in srgb, var(--success) 28%, transparent);
   border-radius: 2px;
 }
 
 .agent-git-row.del .agent-git-hl {
-  background: color-mix(in srgb, var(--danger, #ef4444) 28%, transparent);
+  background: color-mix(in srgb, var(--danger) 28%, transparent);
   border-radius: 2px;
 }
 
@@ -10871,12 +10871,12 @@ html.theme-dark .user-msg-lightbox {
 
 /* add 行新行号、del 行旧行号着色（对齐 FileDiff：行号与符号同色） */
 .agent-git-row.add .agent-git-ln+.agent-git-ln {
-  color: var(--success, #22c55e);
+  color: var(--success);
   opacity: 1;
 }
 
 .agent-git-row.del .agent-git-ln:first-child {
-  color: var(--danger, #ef4444);
+  color: var(--danger);
   opacity: 1;
 }
 
@@ -10889,11 +10889,11 @@ html.theme-dark .user-msg-lightbox {
 }
 
 .agent-git-row.add .agent-git-sign {
-  color: var(--success, #22c55e);
+  color: var(--success);
 }
 
 .agent-git-row.del .agent-git-sign {
-  color: var(--danger, #ef4444);
+  color: var(--danger);
 }
 
 .agent-git-code {
@@ -10975,11 +10975,11 @@ html.theme-dark .user-msg-lightbox {
 }
 
 .agent-git-row.split .agent-git-code.add {
-  background: color-mix(in srgb, var(--success, #22c55e) 12%, transparent);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
 }
 
 .agent-git-row.split .agent-git-code.del {
-  background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 /* 对侧留空的那半栏（纯增/纯删行）：给个底色表示「这边没有内容」 */
@@ -10988,12 +10988,12 @@ html.theme-dark .user-msg-lightbox {
 }
 
 .agent-git-row.split .agent-git-ln.add {
-  color: var(--success, #22c55e);
+  color: var(--success);
   opacity: 1;
 }
 
 .agent-git-row.split .agent-git-ln.del {
-  color: var(--danger, #ef4444);
+  color: var(--danger);
   opacity: 1;
 }
 
@@ -12057,9 +12057,9 @@ html.theme-dark .user-msg-lightbox {
   gap: 6px;
   padding: 6px 8px;
   font-size: 12px;
-  color: var(--danger, #e5484d);
+  color: var(--danger);
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--danger, #e5484d) 8%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
 .agent-ws-list {
@@ -12131,7 +12131,7 @@ html.theme-dark .user-msg-lightbox {
   width: 13px;
   height: 13px;
   border-radius: 50%;
-  background: var(--success, #2e9e5b);
+  background: var(--success);
   color: #fff;
   box-shadow: 0 0 0 1.5px var(--bg);
   pointer-events: none;
@@ -12254,9 +12254,9 @@ html.theme-dark .user-msg-lightbox {
   gap: 6px;
   padding: 6px 8px;
   font-size: 12px;
-  color: var(--danger, #e5484d);
+  color: var(--danger);
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--danger, #e5484d) 8%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
 .agent-fw-foot {
@@ -12361,7 +12361,7 @@ html.theme-dark .user-msg-lightbox {
 .agent-task-head-check {
   width: 16px;
   height: 16px;
-  color: var(--success, #22c55e);
+  color: var(--success);
 }
 
 /* 滚动数字计数 */

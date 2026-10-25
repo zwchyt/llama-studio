@@ -159,23 +159,11 @@ html.theme-dark {
   display: block;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --code-bg: #161b22;
-    --code-header-bg: #1a1f27;
-    --code-border: #262c36;
-    --code-text: #e6edf3;
-    --code-comment: #8b949e;
-    --code-keyword: #ff7b72;
-    --code-string: #a5d6ff;
-    --code-number: #79c0ff;
-    --code-attr: #d2a8ff;
-    --code-deletion: #ffa198;
-
-    --table-head-bg: #1c222b;
-    --quote-bg: #191e26;
-  }
-}
+/* 系统深色不再参与取色（test.md 11.2）：主题唯一来源是 html.theme-dark。
+   原先这里有一段 @media (prefers-color-scheme: dark) 覆盖 --code-* / --table-head-bg /
+   --quote-bg，导致「操作系统深色 + 应用选浅色」时代码块、表格头、引用块变深，与整页浅色冲突。
+   深色下的对应值已由 theme-dark.css 的 html.theme-dark 提供（--code-* / --table-head-bg /
+   --quote-bg 均在其中定义），删除后深色观感不变。 */
 
 html,
 body,

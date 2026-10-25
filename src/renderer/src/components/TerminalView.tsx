@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react'
 import { createTerminal, attach, fitTerminal, disposeTerminal, updateTerminalTheme, getTerminalFontSize, setTerminalFontSize, TERMINAL_FONT_SIZE_DEFAULT, detachTerminal, isTerminalReady, beginReplayGate, applyReplayAndFlush, endReplayGate } from '../utils/terminalRegistry'
 import { useAgentTerminalStore, type TerminalStoreHook } from '../store/terminalStore'
+import { useThemeStore } from '../store/themeStore'
 import { Terminal } from 'lucide-react'
 import { FolderOpenIcon, PlusIcon, MinusIcon, RefreshCwIcon } from '@animateicons/react/lucide'
 import { safeCall } from '../utils/safeCall'
@@ -242,13 +243,15 @@ function TermScreen({ id, visible, store }: { id: string; visible: boolean; stor
       }, 250)
     })
     ro.observe(el)
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    const onThemeChange = () => updateTerminalTheme(id)
-    mq.addEventListener('change', onThemeChange)
+    // 主题跟随应用（test.md 11.2）：原来监听的是系统 prefers-color-scheme，于是
+    // ① 系统深浅变化会重刷终端配色（与应用无关），② 应用内切主题反而不重刷，终端停在旧配色。
+    // buildTerminalTheme 读的是容器上的 --color-terminal-*（由 html.theme-dark 改写），
+    // 所以只要订阅应用主题即可，系统媒体查询完全不需要。
+    const unsubTheme = useThemeStore.subscribe(() => updateTerminalTheme(id))
     const unsubKeybinds = subscribeTerminalStore(() => { })
     return () => {
       unsubKeybinds()
-      mq.removeEventListener('change', onThemeChange)
+      unsubTheme()
       onData.dispose()
       onResize.dispose()
       ro.disconnect()

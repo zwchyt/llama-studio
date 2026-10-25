@@ -604,12 +604,20 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
 
   // 发送飞行：新用户消息上屏后，从输入框盒真伸缩飞入（STAGE 7r2）。
   // 绘制前执行（无闪烁）；锚点对不上（虚拟窗口/删除/减弱动态）就静默放弃，直接显示。
+  // 会话归属（test.md 10.10）：anchor 是模块级单例，若在 A 发出、未上屏前切到 B，
+  // B 的行数变化会让它拿 A 的 anchor 在 B 里飞一个幽灵气泡。故只认「同一会话内的行数变化」。
+  // prev 为 null（还没有会话）时放行 —— 全新会话的第一条消息也要飞。
+  const flightSidRef = useRef<string | null | undefined>(undefined)
   useLayoutEffect(() => {
     // 注意：不要给飞行层传 scrollToBottom 之类的回调去贴底 —— 那会在 layout effect 里
     // 触发 React 同步重渲染（setAtBottom），插进飞行层的时序中间，气泡会抖。
     // 详见 sendFlight.ts 里 maybeRunSendFlight 的注释。
+    const sid = activeSession?.id ?? null
+    const prev = flightSidRef.current
+    flightSidRef.current = sid
+    if (prev != null && prev !== sid) return
     maybeRunSendFlight()
-  }, [activeSession?.messages.length])
+  }, [activeSession?.id, activeSession?.messages.length])
   return (
     <div className="agent-code-view">
       {tipNode}
