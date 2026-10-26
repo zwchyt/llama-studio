@@ -20,7 +20,11 @@ import { createPortal } from 'react-dom'
 //  · placement 'right' 是导航栏专用（箭头在左、垂直居中），其它界面用 'below'。
 //  · 超过 WRAP_LEN 个字自动折行（.nav-tip-wrap），长说明文字不断成一条横幅。
 //  · 视口修正：下方放不下翻到上方，左右贴边内收 90px（原生 title 会被系统钳制，
-//    我们自己动手）。滚动/缩放直接收掉——fixed 坐标滚后即错位，原生滚一下也没。
+//    我们自己动手）。
+//  · 自动收起的时机：指针离开锚点、滚动、缩放、按下鼠标、按键、指针移到别的元素上。
+//    只挂 mouseleave 会漏两种：点开浮层时指针没动（浏览器不补发 mouseleave），
+//    以及锚点被卸载（列表重排 / 流式刷新 / 切视图），后者一个事件都不会来，
+//    气泡就会一直挂在屏幕上。fixed 坐标滚后还会错位，所以滚动也收。
 
 export type BubbleTipPlacement = 'right' | 'below'
 
@@ -35,13 +39,16 @@ export function useBubbleTip(placement: BubbleTipPlacement = 'below', delayMs = 
   // 悬停延迟（delayMs > 0 时生效）：鼠标快速掠过不弹，停住才弹。
   // 默认 0 保持原有「即时」行为，只有显式传了延迟的调用点才变慢。
   const delayTimer = useRef<number | null>(null)
+  // 当前气泡挂在哪个元素上：指针移开、锚点被卸载、用户按下时都靠它判断要不要收
+  const anchorRef = useRef<HTMLElement | null>(null)
   const clearDelay = useCallback(() => {
     if (delayTimer.current !== null) { window.clearTimeout(delayTimer.current); delayTimer.current = null }
   }, [])
   useEffect(() => clearDelay, [clearDelay])
 
   const show = useCallback((text: string, el: HTMLElement | null) => {
-    if (!el) { setTip(null); return }
+    if (!el) { anchorRef.current = null; setTip(null); return }
+    anchorRef.current = el
     const r = el.getBoundingClientRect()
     if (placement === 'right') {
       // 导航栏：右缘 + 9px，垂直中心（CSS translateY(-50%) 对齐，见 sidebar.css 注释）
@@ -55,17 +62,46 @@ export function useBubbleTip(placement: BubbleTipPlacement = 'below', delayMs = 
     setTip({ text, left: cx, top: above ? r.top - 9 : belowTop, above })
   }, [placement])
 
-  // 滚动 / 缩放收掉气泡（见文件头说明）。监听在挂载时注册一次即可——
-  // 原来依赖 tip，每次悬停都增删一对监听，事件系统白抖一下；没有气泡时 handler 是空操作。
+  // 收气泡的统一出口：清延迟、断锚点、关状态。三件事必须一起做，
+  // 漏了断锚点，后面的 pointerover 判断会拿一个已经作废的元素去比。
+  const hideTip = useCallback(() => {
+    clearDelay()
+    anchorRef.current = null
+    setTip(p => (p ? null : p))
+  }, [clearDelay])
+
+  // 滚动 / 缩放 / 按下 / 按键，都收掉气泡。这些事件本身不频繁，常驻注册一次即可。
+  // 只靠 mouseleave 不够：点开浮层时指针没动，浏览器不会补发 mouseleave。
   useEffect(() => {
-    const hide = () => setTip(p => (p ? null : p))
-    window.addEventListener('scroll', hide, true)
-    window.addEventListener('resize', hide)
+    window.addEventListener('scroll', hideTip, true)
+    window.addEventListener('resize', hideTip)
+    window.addEventListener('pointerdown', hideTip, true)
+    window.addEventListener('keydown', hideTip, true)
     return () => {
-      window.removeEventListener('scroll', hide, true)
-      window.removeEventListener('resize', hide)
+      window.removeEventListener('scroll', hideTip, true)
+      window.removeEventListener('resize', hideTip)
+      window.removeEventListener('pointerdown', hideTip, true)
+      window.removeEventListener('keydown', hideTip, true)
     }
-  }, [])
+  }, [hideTip])
+
+  // 指针移到别的元素上、或锚点已被卸载，也收掉。
+  // 这一条只在有气泡时挂：本 hook 有 83 个调用点，常驻一个 document 级 pointerover 监听
+  // 等于每次指针跨元素都跑 83 次空判断，没必要。
+  useEffect(() => {
+    if (!tip) return
+    const onPointerOver = (e: PointerEvent) => {
+      const a = anchorRef.current
+      if (!a) return
+      // 锚点已从文档里移除（列表重排 / 流式刷新 / 切视图）：气泡没有依附对象了，直接收
+      if (!a.isConnected) { hideTip(); return }
+      const t = e.target as Node | null
+      if (t && (t === a || a.contains(t))) return
+      hideTip()
+    }
+    document.addEventListener('pointerover', onPointerOver, true)
+    return () => document.removeEventListener('pointerover', onPointerOver, true)
+  }, [tip, hideTip])
 
   // 每个要换装的元素 spread 一份：{...tip('文案')}
   const tipHandlers = useCallback((text: string) => ({
@@ -76,11 +112,8 @@ export function useBubbleTip(placement: BubbleTipPlacement = 'below', delayMs = 
       // 延迟期间元素位置可能变化，坐标在真正显示时再取
       delayTimer.current = window.setTimeout(() => { delayTimer.current = null; show(text, el) }, delayMs)
     },
-    onMouseLeave: () => { clearDelay(); setTip(null) },
-  }), [show, delayMs, clearDelay])
-
-  // 已有 onMouseEnter 的元素走这对裸方法，在原处理里顺手调用（见 ToolsHub 的 ToolActionItem）
-  const hideTip = useCallback(() => { clearDelay(); setTip(null) }, [clearDelay])
+    onMouseLeave: () => hideTip(),
+  }), [show, delayMs, clearDelay, hideTip])
 
   const tipNode = tip ? createPortal(
     <div

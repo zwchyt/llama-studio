@@ -55,7 +55,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 .ask-user-question-modal .modal-close-btn:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
   color: var(--text);
 }
 
@@ -116,7 +116,7 @@ div[style*="cursor: pointer"]:hover .agent-website-badge {
 }
 
 .ask-question-option:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
   border-color: var(--border-strong);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.10);
   transform: translateY(-1px);

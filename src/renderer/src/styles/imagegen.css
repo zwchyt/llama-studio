@@ -934,7 +934,8 @@
 
 .imagegen-skeleton {
   aspect-ratio: 1;
-  border-radius: var(--radius-md);
+  /* 与 .imagegen-result-card 的 12px 对齐，占位块换成真卡时轮廓才不跳 */
+  border-radius: 12px;
   background: linear-gradient(
     100deg,
     color-mix(in srgb, var(--border) 45%, transparent) 30%,
@@ -1049,7 +1050,7 @@ html.theme-dark .imagegen-ig-prompt { color: #a3a3a3; }
   gap: 10px;
   color: var(--text-muted);
   border: 1px dashed var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   min-height: 280px;
   background: color-mix(in srgb, var(--surface) 50%, transparent);
 }

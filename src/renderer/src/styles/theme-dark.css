@@ -5,6 +5,10 @@
    本文件为纯新增，不修改任何旧样式文件；浅色主题下完全不生效。
    ══════════════════════════════════════════════════════════ */
 
+/* ── 契约：变量块必须挂在 html.theme-dark 上（特异性 0,1,1），不许写 :root（0,1,0）。
+   深色值靠特异性压过 global.css 的 :root，不靠引入顺序——本文件经 ThemeToggle 静态引入，
+   实际求值早于 global.css（见 main.tsx 顶部）。若写成 :root，同级就由先后决定，深色会失效。 ── */
+
 /* ── 切换主题的瞬间禁用一切过渡：类挂在 <html> 上、不依赖 .theme-dark，
    浅↔深两个方向都生效。避免各元素以不同步的 transition 时长渐变造成整屏闪烁。
    移除时机见 themeStore.ts：圆形揭示路径要挂满整个动画（它还兼任下面的滚动条守卫），
@@ -419,4 +423,10 @@ html.theme-dark body {
 .app-theme-toggle:hover {
   background: var(--hover-bg, rgba(128, 128, 128, 0.15));
   color: var(--text);
+}
+
+/* Git 状态徽标 M（已修改）：浅色下 #b8860b 压在半透明琥珀底上可读，
+   深色下同一底色合成出来是深橄榄，暗金文字只剩 2.4:1；换亮琥珀后 4.7:1。 */
+html.theme-dark .agent-git-badge.s-M {
+  color: #f9c22e;
 }

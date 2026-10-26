@@ -1,11 +1,13 @@
 // 必须排在 react-dom 之前：ReactDOM 在模块求值阶段就读 __REACT_DEVTOOLS_GLOBAL_HOOK__，
 // 晚一步就拦不住「Download the React DevTools」提示（见该文件内的说明）。
 import './devtools-silence'
+// 基础样式必须排在 App 之前：App 的传递依赖（theme-dark / sidebar / titlebar 等）
+// 会在模块求值阶段注入各自的样式，global.css 排在后面就会反过来盖住它们。
+import './styles/global.css'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import ToastContainer from './components/ToastContainer'
 import { notify } from './store/notificationStore'
-import './styles/global.css'
 import './styles/fonts.css'
 import './store/fontStore' // 启动时应用已保存的字体预设（模块副作用）
 import './cursor-theme'

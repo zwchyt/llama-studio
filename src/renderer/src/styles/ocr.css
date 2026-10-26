@@ -130,7 +130,7 @@
   padding: 0;
   border-radius: 50%;
   border: 1px solid var(--border);
-  background: var(--card-bg);
+  background: var(--surface);
   color: var(--text-secondary);
   display: flex;
   align-items: center;
@@ -174,14 +174,14 @@
   gap: 10px;
   cursor: pointer;
   transition: border-color 0.2s, background 0.2s;
-  background: var(--card-bg);
+  background: var(--surface);
   min-height: 300px;
 }
 
 .ocr-dropzone:hover,
 .ocr-dropzone.dragover {
   border-color: var(--border-strong);
-  background: color-mix(in srgb, var(--accent) 6%, var(--card-bg));
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
 }
 
 .ocr-dropzone-icon {
@@ -201,7 +201,7 @@
 }
 
 .ocr-image-card {
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 12px;
   border: 1px solid var(--border);
   overflow: hidden;
@@ -365,7 +365,7 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
-  background: var(--card-bg);
+  background: var(--surface);
   min-height: 300px;
 }
 
@@ -412,7 +412,7 @@
 }
 
 .ocr-result-card {
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 12px;
   border: 1px solid var(--border);
   overflow: hidden;
@@ -502,7 +502,7 @@
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--card-bg);
+  background: var(--surface);
   transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 

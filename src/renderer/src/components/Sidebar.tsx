@@ -206,6 +206,27 @@ export default function Sidebar() {
     if (!tipEnabled) setTip(null)
   }, [tipEnabled])
 
+  // 气泡只在悬停期间存在。只挂 mouseleave 会漏两种：
+  //  · 点导航项时指针没动，浏览器不补发 mouseleave，切完视图气泡还挂在那儿；
+  //  · 列表滚动 / 窗口缩放后 fixed 坐标失效，气泡会飘到别处。
+  // 监听在挂载时注册一次即可，没有气泡时 handler 是空操作。
+  useEffect(() => {
+    const hide = () => setTip(p => (p ? null : p))
+    window.addEventListener('scroll', hide, true)
+    window.addEventListener('resize', hide)
+    window.addEventListener('pointerdown', hide, true)
+    window.addEventListener('keydown', hide, true)
+    return () => {
+      window.removeEventListener('scroll', hide, true)
+      window.removeEventListener('resize', hide)
+      window.removeEventListener('pointerdown', hide, true)
+      window.removeEventListener('keydown', hide, true)
+    }
+  }, [])
+
+  // 视图 / 模式一变就收：气泡描述的是「刚才那个入口」，换页之后已经没有意义
+  useEffect(() => { setTip(null) }, [view, agentMode])
+
   // 气泡位置在这里实测：NavItem 只把元素交上来。
   // 坐标用 getBoundingClientRect（视口系），气泡是 position: fixed（同为视口系），两边一致；
   // 若改成 absolute 就得再减滚动偏移，没必要。

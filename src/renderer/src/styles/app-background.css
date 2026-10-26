@@ -161,7 +161,6 @@ html:not(.theme-dark) .app.has-bg :is(.sidebar-mode-switch,
   /* 对话输入区的各类弹层 */
   .chat-at-file-pop, .chat-slash-pop, .chat-workspace-menu, .chat-branch-menu,
   .chat-model-logo-menu, .chat-model-picker, .chat-think-level-menu, .chat-search-menu,
-  .agent-code-view .chat-cmd-manager,
   /* Agent Code 的菜单 / 浮层 / 气泡 / 悬浮按钮 */
   .agent-code-tools-menu, .agent-code-proj-menu, .agent-task-card, .agent-file-picker,
   .agent-code-add-workspace-menu, .agent-sel-popover, .agent-msg-search,

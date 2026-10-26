@@ -30,7 +30,7 @@
 
 .audiocpp-subtitle {
   font-size: 12px;
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
 .audiocpp-header-right {
@@ -42,7 +42,7 @@
 
 .audiocpp-server-label {
   font-size: 12px;
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
 .audiocpp-server-select-wrap {
@@ -113,7 +113,7 @@
   justify-content: center;
   gap: 10px;
   text-align: center;
-  color: var(--muted);
+  color: var(--text-muted);
   border: 1px dashed var(--border, #444);
   border-radius: 10px;
   padding: 32px;

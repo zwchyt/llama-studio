@@ -1,6 +1,16 @@
 /* ══ 以下并入自原 chat.css：仅 Agent Code 使用的样式（工作台与纯聊天共用同一套）══ */
 /* 保持在文件最前，等价于原先 chat.css 整体先于本文件加载的级联顺序 */
 
+/* 分区索引（按出现顺序；用标题文字搜索定位，行号会漂故不写）
+   1. 会话文字选区体验
+   2. Agent 思考链样式
+   3. 思考链展开/收起节奏
+   4. 引用 / 追问 引用块胶囊
+   5. 长内容行窗口：固定行高契约
+   6. 键盘焦点兜底
+   7. 工具卡片补充（参数区 / 代码视图 / 说明框 / 命中列表 / 终端块）
+   其余为逐条样式规则，取舍就地写在规则上方。 */
+
 
 
 /* 用户头像：与助手头像同款配色方案（主题色淡底 + 图标色） */
@@ -116,7 +126,7 @@
 
 .chat-msg-context-menu {
   position: fixed;
-  z-index: 9999;
+  z-index: var(--z-top);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -198,7 +208,7 @@
   border-radius: 10px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, .3);
   padding: 4px;
-  z-index: 50;
+  z-index: var(--z-panel);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -327,7 +337,7 @@
   font-size: 11px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background .15s, color .15s, border-color .15s;
+  transition: background var(--dur-base), color var(--dur-base), border-color var(--dur-base);
 }
 
 .chat-attach-clear-all:hover:not(:disabled) {
@@ -553,7 +563,11 @@
    .markstream-react .my-8（margin-top/bottom:2rem）、.text-sm、.p-[calc(4/7*1em)]（th/td 的 padding）——
    特指度都是 0,2,0；而 .chat-msg-markdown table / th / td 只有 0,1,1，会被整体压过去。
    于是 margin:0 根本不生效：表格在卡片里顶着 2rem 上外边距，卡片白底就在表头带上方露出 32px 白条
-   （下边同样多一条）。加一层 wrapper 把特指度提到 0,2,1 才压得住。 */
+   （下边同样多一条）。加一层 wrapper 把特指度提到 0,2,1 才压得住。
+
+   ⚠️ 升级 markstream 前先看这一段：.table-node-wrapper / .table-node / .border-b / .paragraph-node /
+   .my-8 / .text-sm / .p-[…] 都是它挂的类名，不是本项目的命名。优先改用它的 classNames 配置，
+   别在这里继续加全局覆盖。 */
 .chat-msg-markdown .table-node-wrapper {
   /* 卡片自己的局部配色（暗色在下方 .theme-dark 里整组换掉）
      内容区不再是纯白：正文底比会话底色（--bg #f5f6f8）只亮 2 阶，卡片不再是一块刺眼的白，
@@ -1403,7 +1417,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background var(--dur-base) ease, border-color var(--dur-base) ease;
 }
 
 .agent-code-panel-tab.active {
@@ -1495,7 +1509,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   font-size: 12px;
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 
 .agent-code-add-workspace-item:hover {
@@ -1584,7 +1598,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   font-size: 15px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.12s ease;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform var(--dur-fast) ease;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
   /* 五张卡片错峰滑入：依次进场，节奏见上方注释 */
   animation: panel-picker-item-in 0.34s cubic-bezier(0.22, 0.8, 0.36, 1) backwards;
@@ -1796,7 +1810,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   cursor: col-resize;
   background: transparent;
   touch-action: none;
-  transition: background .15s, opacity .2s ease;
+  transition: background var(--dur-base), opacity .2s ease;
   z-index: calc(var(--z-above) + 1);
   display: flex;
   align-items: center;
@@ -2192,7 +2206,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   background: var(--bg);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all .15s ease;
+  transition: all var(--dur-base) ease;
   white-space: nowrap;
 }
 
@@ -2414,7 +2428,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   /* 侧栏收起/展开时宽度逐帧变化，文字折行会跟着逐帧重排（=抖动）；不折行则只是被裁掉 */
   white-space: nowrap;
   cursor: pointer;
-  transition: all .15s ease;
+  transition: all var(--dur-base) ease;
   flex-shrink: 0;
 }
 
@@ -2498,7 +2512,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   align-items: center;
   justify-content: center;
   line-height: 1;
-  transition: background .15s, color .15s;
+  transition: background var(--dur-base), color var(--dur-base);
 }
 
 .agent-code-session-fork:hover {
@@ -2541,7 +2555,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   line-height: 1;
   color: var(--text);
   cursor: pointer;
-  transition: background .15s ease, color .15s ease;
+  transition: background var(--dur-base) ease, color var(--dur-base) ease;
   user-select: none;
   border-radius: var(--radius-sm);
   position: relative;
@@ -2560,7 +2574,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 .agent-code-project-icon {
   flex-shrink: 0;
   color: var(--text-muted);
-  transition: color .15s ease;
+  transition: color var(--dur-base) ease;
 }
 
 .agent-code-project-item:hover .agent-code-project-icon,
@@ -2651,7 +2665,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   height: 5px;
   border-radius: 50%;
   background: var(--border-strong);
-  transition: background .15s, transform .15s;
+  transition: background var(--dur-base), transform var(--dur-base);
 }
 
 .agent-code-session-item:hover {
@@ -2695,7 +2709,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   align-items: center;
   justify-content: center;
   line-height: 1;
-  transition: opacity .15s, background .15s, color .15s;
+  transition: opacity var(--dur-base), background var(--dur-base), color var(--dur-base);
 }
 
 .agent-code-project-item:hover .agent-code-session-del,
@@ -2725,7 +2739,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   align-items: center;
   justify-content: center;
   line-height: 1;
-  transition: opacity .15s, background .15s, color .15s;
+  transition: opacity var(--dur-base), background var(--dur-base), color var(--dur-base);
 }
 
 .agent-code-project-item:hover .agent-code-session-add,
@@ -2865,7 +2879,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   align-items: center;
   justify-content: center;
   line-height: 1;
-  transition: opacity .15s, background .15s, color .15s;
+  transition: opacity var(--dur-base), background var(--dur-base), color var(--dur-base);
 }
 
 .agent-code-project-item:hover .agent-code-proj-menu-btn,
@@ -2955,7 +2969,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   color: var(--text-muted);
   font-size: 12px;
   cursor: pointer;
-  transition: all .15s ease;
+  transition: all var(--dur-base) ease;
   border-radius: var(--radius-sm);
 }
 
@@ -3071,7 +3085,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   line-height: 1.2;
   white-space: nowrap;
   cursor: pointer;
-  transition: background .15s ease, color .15s ease, transform .08s ease;
+  transition: background var(--dur-base) ease, color var(--dur-base) ease, transform .08s ease;
 }
 
 .agent-mode-card:hover {
@@ -3197,7 +3211,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   font-size: 13px;
   text-align: left;
   cursor: pointer;
-  transition: border-color .15s, background .15s, transform .08s, box-shadow .15s;
+  transition: border-color var(--dur-base), background var(--dur-base), transform .08s, box-shadow var(--dur-base);
 }
 
 .agent-suggestion:nth-child(4n + 1) {
@@ -3666,10 +3680,6 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   transform: translateY(var(--agent-tool-file-icon-y, 2px));
 }
 
-.agent-tool-call-path:hover {
-  text-decoration: underline;
-}
-
 /* Read 卡头部文件名后的行段后缀（文件名:起-止）：弱化显示，与文件名区分 */
 .agent-tool-call-linerange {
   color: var(--text-dim);
@@ -3687,14 +3697,14 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 
 /* 工具执行时长（elapsed）：并入卡头 meta 区、紧邻状态徽标。原来是卡片上方独立一行，
    现改为内联，让工具卡折叠态严格是一行；配色/字体沿用思考段折叠头与批头的
-   橙色等宽标签约定（11px mono / #d97c00 / tabular-nums），三处时长形态一致。 */
+   橙色等宽标签约定（11px mono / --warm-accent / tabular-nums），三处时长形态一致。 */
 .agent-tool-call-dur {
   font-family: var(--font-mono, monospace);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.03em;
   font-variant-numeric: tabular-nums;
-  color: #d97c00;
+  color: var(--warm-accent);
   user-select: none;
 }
 
@@ -3810,7 +3820,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 .agent-file-changes-chev {
   flex-shrink: 0;
   color: var(--text-muted);
-  transition: transform .15s;
+  transition: transform var(--dur-base);
 }
 
 .agent-file-changes-chev.open {
@@ -4162,7 +4172,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   line-height: 1.6;
   font-family: inherit;
   box-sizing: border-box;
-  transition: border-color .15s ease, box-shadow .15s ease;
+  transition: border-color var(--dur-base) ease, box-shadow var(--dur-base) ease;
 }
 
 .agent-msg-edit-area:focus {
@@ -4198,11 +4208,13 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   padding-top: 10px;
 }
 
+/* .jui-card 是 markstream 渲染 UI 组件时挂的类名，不是本项目的。
+   这里只做「去投影」一处覆盖；升级 markstream 时先确认该类仍在，否则这条会静默失效。 */
 .agent-msg-ui .jui-card {
   box-shadow: none;
 }
 
-/* 工具卡独立时间标签：卡片上方，实色 #d97c00（橙）为最高层级 */
+/* 工具卡独立时间标签：卡片上方，实色 --warm-accent（橙）为最高层级 */
 .agent-tool-diffstat {
   display: inline-flex;
   align-items: center;
@@ -4549,46 +4561,6 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 
 .agent-tool-call.failed .agent-tool-result-label {
   color: var(--danger);
-}
-
-.agent-tool-bash {
-  margin: 0 0 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-/* 命令栏：用 Bash 工具色轻着色，强化终端身份 */
-.agent-tool-bash-bar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  background: color-mix(in srgb, var(--tool-accent, var(--accent)) 7%, var(--surface));
-  border-bottom: 1px solid var(--border);
-  font-size: 10px;
-  color: color-mix(in srgb, var(--tool-accent, var(--accent)) 60%, var(--text-dim));
-}
-
-/* 命令/输出块统一终端深色底（两种主题下保持一致），避免随主题变色破坏终端观感 */
-.agent-tool-bash-cmd {
-  margin: 0;
-  padding: 8px 10px;
-  background: #16161e;
-  color: #e2e8f0;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-/* 命令前缀 $ 提示符：用工具色区分命令与输出，不参与选中复制 */
-.agent-tool-bash-cmd::before {
-  content: '$ ';
-  color: var(--tool-accent, #ea580c);
-  font-weight: 700;
-  user-select: none;
 }
 
 .agent-code-preview-md img {
@@ -4947,7 +4919,8 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   height: 100%;
 }
 
-/* monaco 自身背景透明：容器 var(--bg) + 渐变过渡负责背景（主题水波切换时随界面缓慢过渡） */
+/* monaco 自身背景透明：容器 var(--bg) + 渐变过渡负责背景（主题水波切换时随界面缓慢过渡）。
+   .monaco-editor* 是 monaco 的类名，升级 monaco 时确认这些类还在，否则透明失效、编辑器变白块。 */
 .agent-code-preview-monaco .monaco-editor,
 .agent-code-preview-monaco .monaco-editor-background,
 .agent-code-preview-monaco .monaco-editor .margin,
@@ -5144,7 +5117,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   font-family: var(--font);
   cursor: pointer;
   border: 1px solid transparent;
-  transition: all .15s ease;
+  transition: all var(--dur-base) ease;
   white-space: nowrap;
 }
 
@@ -5185,7 +5158,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm, 6px);
   cursor: pointer;
-  transition: border-color .15s ease;
+  transition: border-color var(--dur-base) ease;
 }
 
 .agent-prompt-select:focus {
@@ -5264,7 +5237,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
-  transition: background .15s, color .15s;
+  transition: background var(--dur-base), color var(--dur-base);
 }
 
 .agent-file-picker-up:hover {
@@ -5285,7 +5258,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   font-size: 11px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background .15s, color .15s;
+  transition: background var(--dur-base), color var(--dur-base);
 }
 
 .agent-file-picker-crumb:hover {
@@ -5403,7 +5376,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   border-radius: 4px;
   font-size: 10.5px;
   color: var(--text);
-  transition: background .15s;
+  transition: background var(--dur-base);
 }
 
 .agent-file-picker-att-item:hover {
@@ -5432,7 +5405,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   flex-shrink: 0;
   padding: 0;
   opacity: 0;
-  transition: opacity .15s, background .15s, color .15s;
+  transition: opacity var(--dur-base), background var(--dur-base), color var(--dur-base);
 }
 
 .agent-file-picker-att-item:hover .agent-file-picker-att-remove {
@@ -5493,7 +5466,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   font-size: 12px;
   text-align: left;
   cursor: pointer;
-  transition: border-color .15s, background .15s;
+  transition: border-color var(--dur-base), background var(--dur-base);
   min-width: 0;
 }
 
@@ -5576,7 +5549,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 .agent-traj .traj-caret {
   flex-shrink: 0;
   color: var(--text-muted);
-  transition: transform .12s ease-out;
+  transition: transform var(--dur-fast) ease-out;
 }
 
 .agent-traj .traj-caret.open {
@@ -5614,12 +5587,12 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 }
 
 .traj-fold:hover:not(:disabled) {
-  color: var(--text-normal);
+  color: var(--text);
   border-color: var(--border-strong);
 }
 
 .traj-fold.on {
-  color: var(--text-normal);
+  color: var(--text);
   background: var(--surface-hover);
   border-color: var(--border-strong);
 }
@@ -5707,12 +5680,12 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 }
 
 .traj-chip:hover {
-  color: var(--text-normal);
+  color: var(--text);
   border-color: var(--border-strong);
 }
 
 .traj-chip.active {
-  color: var(--text-normal);
+  color: var(--text);
   background: var(--surface-hover);
   border-color: var(--border-strong);
 }
@@ -5886,7 +5859,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 .traj-turn-head {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: var(--z-base);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -6159,7 +6132,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 }
 
 .traj-more:hover {
-  color: var(--text-normal);
+  color: var(--text);
   border-color: var(--border-strong);
 }
 
@@ -6379,45 +6352,6 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   opacity: .7;
 }
 
-.agent-task-card-status {
-  flex-shrink: 0;
-  font-size: 10px;
-  font-weight: 600;
-  padding: 1px 7px;
-  border-radius: 8px;
-  line-height: 1.4;
-}
-
-.agent-task-card-status.status-pending {
-  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
-  color: #000;
-  border: 1px solid var(--border, #cfcfcf);
-}
-
-.agent-task-card-status.status-in_progress {
-  background: color-mix(in srgb, var(--warning) 16%, transparent);
-  color: var(--warning);
-  border: 1px solid var(--warning);
-}
-
-.agent-task-card-status.status-completed {
-  background: color-mix(in srgb, #6fbc8f 16%, transparent);
-  color: #0a3b1e;
-  border: 1px solid #6fbc8f;
-}
-
-.agent-task-card-status.status-cancelled {
-  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
-  color: var(--text-muted);
-  border: 1px solid var(--border, #cfcfcf);
-}
-
-.agent-task-card-status.status-deleted {
-  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
-  color: var(--text-muted);
-  border: 1px dashed var(--border, #cfcfcf);
-}
-
 .agent-task-card-content {
   flex: 1;
   min-width: 0;
@@ -6478,7 +6412,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.2s ease;
-  z-index: 5;
+  z-index: var(--z-float);
 }
 
 .agent-chat-rail--visible {
@@ -6551,7 +6485,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
    之所以能放心保留（旧实现是 transform:none !important）：长度走 scaleX，是合成层属性，
    且滚动期间波次延迟已在 JS 侧置 0，不会出现十几条各自带延迟合成的掉帧。 */
 .agent-chat-rail--scrolling .agent-chat-rail-dot {
-  transition: transform 0.12s linear, background 0.12s linear !important;
+  transition: transform var(--dur-fast) linear, background var(--dur-fast) linear !important;
 }
 
 /* 光标在轨道上滑动期间：把过渡压到极短并去掉波次延迟，长度才能紧贴光标 ——
@@ -6578,7 +6512,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   white-space: nowrap;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition: opacity var(--dur-base) ease;
 }
 
 .agent-chat-rail-item:hover .agent-chat-rail-preview {
@@ -6649,7 +6583,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #d97c00;
+  background: var(--warm-accent);
   animation: agent-statusline-pulse 1.4s ease-in-out infinite;
 }
 
@@ -6703,8 +6637,9 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   max-width: 100%;
 }
 
-/* ============================================================
+/* ══════════════════════════════════════════════════════════════════════════════
    会话文字选区体验
+   ──────────────────────────────────────────────────────────────────────────────
    1) 自定义选区高亮颜色（脱离浏览器默认蓝，改用主题强调色）。
       颜色由 --agent-selection-bg / --agent-selection-fg 控制，可集中改。
       作用域是整个会话面板（.agent-code-chat），而不是只到消息正文：
@@ -6712,8 +6647,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
       原来只覆盖 .chat-msg-markdown / .agent-think-body，这些地方左键拖选
       会掉回系统默认蓝（与相邻消息的选区颜色不一致）。
       右侧预览区不在此作用域内，它有自己的同款规则。
-   2) 选中后弹出的浮动操作条 .agent-sel-popover。
-   ============================================================ */
+   2) 选中后弹出的浮动操作条 .agent-sel-popover。 */
 .agent-code-view {
   --agent-selection-bg: rgba(129, 147, 230, 0.22);
   --agent-selection-fg: inherit;
@@ -6807,12 +6741,13 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   line-height: 1.4;
 }
 
-/* ============================================================
-   Agent 思考链样式（.agent-think*）——与原生聊天 .chat-think*（chat.css）完全解耦，
-   独立命名、独立维护。改动本块只影响 Agent 工作台，不波及原生聊天；反之亦然。
+/* ══════════════════════════════════════════════════════════════════════════════
+   Agent 思考链样式（.agent-think*）
+   ──────────────────────────────────────────────────────────────────────────────
+   与原生聊天 .chat-think*（chat.css）完全解耦，独立命名、独立维护。
+   改动本块只影响 Agent 工作台，不波及原生聊天；反之亦然。
    配色完全由主题变量驱动（中性灰 + --accent），思考中状态用本文件私有关键帧
-   agentThinkShimmer / agentPixelOn（不再使用 global.css 的紫色系关键帧）。
-   ============================================================ */
+   agentThinkShimmer / agentPixelOn（不再使用 global.css 的紫色系关键帧）。 */
 
 /* 容器：思考链「去框平铺」——无边框/背景，一级标题只是一行状态文字，
    内容靠左侧细竖线 + 缩进作为最小结构锚点（与工具块一致）；
@@ -7011,67 +6946,11 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   }
 }
 
-/* ── 首 token 前思考加载器（.agent-think-loader*）：流光标签 + 等宽计时 ── */
-.agent-think-loader {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: fit-content;
-  padding: 2px 0;
-}
-
-@keyframes agentPixelOn {
-
-  0%,
-  45%,
-  100% {
-    opacity: .12;
-  }
-
-  30% {
-    opacity: 1;
-  }
-}
-
-.agent-think-loader-label {
-  font-size: 13px;
-  font-weight: 500;
-  background: linear-gradient(90deg, var(--text-muted) 35%, var(--text) 50%, var(--text-muted) 65%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: agentLoaderShimmer 1.4s linear infinite;
-}
-
-@keyframes agentLoaderShimmer {
-  from {
-    background-position: 200% 0;
-  }
-
-  to {
-    background-position: -200% 0;
-  }
-}
-
-.agent-think-loader-time {
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-  font-size: 12px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-/* reduced-motion：网格冻结为暗态（不播放动画），流光文字转静态弱化色，
-   工具卡/思考块/文件汇总的入场动画一并关闭，计时仍走 */
+/* reduced-motion：网格冻结为暗态（不播放动画），
+   工具卡/思考块/文件汇总的入场动画一并关闭 */
 @media (prefers-reduced-motion: reduce) {
   .agent-think-cell {
     animation: none;
-  }
-
-  .agent-think-loader-label {
-    animation: none;
-    background: none;
-    -webkit-text-fill-color: var(--text-secondary);
   }
 
   .agent-tool-call,
@@ -7213,7 +7092,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   font-weight: 600;
   letter-spacing: 0.03em;
   font-variant-numeric: tabular-nums;
-  color: #d97c00;
+  color: var(--warm-accent);
   user-select: none;
   transition: opacity var(--transition);
 }
@@ -7390,7 +7269,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   font-weight: 600;
   letter-spacing: 0.03em;
   font-variant-numeric: tabular-nums;
-  color: #d97c00;
+  color: var(--warm-accent);
   user-select: none;
   transition: opacity var(--transition);
 }
@@ -7436,10 +7315,10 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   font-size: 10px;
   font-weight: 500;
   line-height: 1.7;
-  color: #b98407;
+  color: var(--warm-accent-strong);
   /* 关键：思考态容器的 -webkit-text-fill-color: transparent（流光文字）会继承到徽标，
      导致框内文字透明不可见（空框无文字）；这里显式压回实色。 */
-  -webkit-text-fill-color: #b98407;
+  -webkit-text-fill-color: var(--warm-accent-strong);
   background: var(--surface-2, var(--bg));
   border: 1px solid var(--border-strong);
   white-space: nowrap;
@@ -8005,7 +7884,7 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
   opacity: 0;
   pointer-events: none;
   transform: translateY(4px);
-  transition: opacity .12s ease, transform .12s ease;
+  transition: opacity var(--dur-fast) ease, transform var(--dur-fast) ease;
 }
 
 /* 悬停桥（同 .agent-ref-chip::after）：挂在胶囊上而不是卡片上——
@@ -8074,7 +7953,7 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   background: var(--bg);
-  transition: border-color .15s ease, box-shadow .15s ease;
+  transition: border-color var(--dur-base) ease, box-shadow var(--dur-base) ease;
 }
 
 /* ② 中间输入区：文本换行容器 + 发送按钮（右侧底对齐） */
@@ -8174,7 +8053,7 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
   /* 上限 140px，同时不超过收缩后的包裹层宽度（避免溢出与相邻组件重叠） */
   max-width: min(140px, 100%);
   overflow: hidden;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast);
 }
 
 .chat-workspace-badge:hover,
@@ -8199,7 +8078,7 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
   position: absolute;
   bottom: calc(100% + 4px);
   left: 0;
-  z-index: 40;
+  z-index: var(--z-raised);
   min-width: 140px;
   max-height: 220px;
   overflow-y: auto;
@@ -8264,7 +8143,7 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
   border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast);
 }
 
 .chat-branch-trigger:hover,
@@ -8283,7 +8162,7 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
 
 .chat-branch-caret {
   opacity: 0.5;
-  transition: transform 0.15s ease;
+  transition: transform var(--dur-base) ease;
 }
 
 .chat-branch-trigger.active .chat-branch-caret {
@@ -8294,7 +8173,7 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
   position: absolute;
   bottom: calc(100% + 4px);
   left: 0;
-  z-index: 40;
+  z-index: var(--z-raised);
   min-width: 140px;
   max-height: 220px;
   overflow-y: auto;
@@ -8403,26 +8282,6 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
   cursor: not-allowed;
 }
 
-.agent-code-view .chat-input-tools .chat-cmd-btn {
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-secondary);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.agent-code-view .chat-input-tools .chat-cmd-btn:hover,
-.agent-code-view .chat-input-tools .chat-cmd-btn.active {
-  background: var(--bg);
-  border-color: var(--border-strong);
-  color: var(--text);
-}
-
 /* ── /命令 自动补全浮层 ──
    锚定输入字段本体（.chat-input-field，position:relative）：与输入框同宽、紧贴框顶
    向上弹出。旧写法挂在 .chat-input-area 上，用 left:54px 魔法数对齐其 padding——
@@ -8442,7 +8301,7 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
   border-radius: 12px;
   box-shadow: var(--shadow-lg);
   padding: 5px;
-  z-index: 50;
+  z-index: var(--z-panel);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -8464,7 +8323,7 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
   font-size: 12.5px;
   text-align: left;
   cursor: pointer;
-  transition: background .12s ease, border-color .12s ease;
+  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease;
 }
 
 .agent-code-view .chat-slash-item:hover {
@@ -8512,185 +8371,6 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
   text-align: right;
 }
 
-/* ── /命令 管理浮层 ── */
-.agent-code-view .chat-cmd-manager {
-  position: absolute;
-  right: 8px;
-  bottom: 100%;
-  margin-bottom: 8px;
-  width: 360px;
-  max-height: 460px;
-  display: flex;
-  flex-direction: column;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, .35);
-  z-index: 60;
-  overflow: hidden;
-}
-
-.agent-code-view .chat-cmd-manager-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  font-size: 13px;
-  font-weight: 600;
-  border-bottom: 1px solid var(--border);
-}
-
-.agent-code-view .chat-cmd-add {
-  border: 1px solid var(--border);
-  background: var(--surface-hover);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 3px 10px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.agent-code-view .chat-cmd-list {
-  overflow-y: auto;
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.agent-code-view .chat-cmd-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--surface-hover);
-}
-
-.agent-code-view .chat-cmd-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
-}
-
-.agent-code-view .chat-cmd-rowname {
-  font-weight: 600;
-  font-size: 12px;
-  color: var(--accent, #6ea8fe);
-}
-
-.agent-code-view .chat-cmd-rowdesc {
-  font-size: 11px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-code-view .chat-cmd-rowactions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.agent-code-view .chat-cmd-edit {
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text);
-  border-radius: 6px;
-  padding: 2px 8px;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.agent-code-view .chat-cmd-del {
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--danger);
-  border-radius: 6px;
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.agent-code-view .chat-cmd-builtin {
-  font-size: 11px;
-  color: var(--text-muted);
-  border: 1px dashed var(--border);
-  border-radius: 6px;
-  padding: 2px 8px;
-}
-
-.agent-code-view .chat-cmd-form {
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  overflow-y: auto;
-}
-
-.agent-code-view .chat-cmd-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.agent-code-view .chat-cmd-input,
-.agent-code-view .chat-cmd-textarea {
-  background: var(--bg-input, #1a1a1f);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  padding: 6px 8px;
-  font-size: 12px;
-  font-family: inherit;
-  outline: none;
-}
-
-.agent-code-view .chat-cmd-textarea {
-  min-height: 84px;
-  resize: vertical;
-}
-
-.agent-code-view .chat-cmd-error {
-  color: var(--danger);
-  font-size: 11px;
-}
-
-.agent-code-view .chat-cmd-form-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
-
-.agent-code-view .chat-cmd-save {
-  background: var(--accent, #6ea8fe);
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  padding: 6px 14px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.agent-code-view .chat-cmd-cancel {
-  background: transparent;
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 14px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
 .agent-code-view .chat-input-tools .chat-think-level-label {
   text-transform: lowercase;
   letter-spacing: 0.2px;
@@ -8731,7 +8411,7 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
   bottom: calc(100% + 4px);
   right: 0;
   left: auto;
-  z-index: 40;
+  z-index: var(--z-raised);
   min-width: 92px;
   margin: 0;
   padding: 4px;
@@ -8998,7 +8678,7 @@ html.theme-dark .agent-img-pill {
 .user-msg-lightbox {
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  z-index: var(--z-top);
   background: linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .985));
   display: flex;
   align-items: center;
@@ -9045,7 +8725,7 @@ html.theme-dark .user-msg-lightbox {
   font-size: 11px;
   line-height: 1.2;
   cursor: pointer;
-  transition: background .15s ease, color .15s ease, border-color .15s ease;
+  transition: background var(--dur-base) ease, color var(--dur-base) ease, border-color var(--dur-base) ease;
 }
 
 .user-msg-file:hover {
@@ -9177,7 +8857,7 @@ html.theme-dark .user-msg-lightbox {
   bottom: calc(100% + 4px);
   right: 0;
   left: auto;
-  z-index: 40;
+  z-index: var(--z-raised);
   min-width: 132px;
   margin: 0;
   padding: 4px;
@@ -9339,12 +9019,12 @@ html.theme-dark .user-msg-lightbox {
   font-size: 12px;
 }
 
-/* ============================================================
+/* ══════════════════════════════════════════════════════════════════════════════
    引用 / 追问 引用块胶囊（与文本同处输入字段内，行内排列）
+   ──────────────────────────────────────────────────────────────────────────────
    与「代码片段」胶囊同一套中性 tint：吃 --accent / --bg / --border 令牌，
    深浅主题都成立（原来写死 #d1d0d0 底 + 纯黑字，深色主题下是一块亮斑）。
-   悬停弹出自定义提示框（非浏览器原生 title）。
-   ============================================================ */
+   悬停弹出自定义提示框（非浏览器原生 title）。 */
 .agent-ref-chip {
   position: relative;
   display: inline-flex;
@@ -9437,7 +9117,7 @@ html.theme-dark .user-msg-lightbox {
   opacity: 0;
   pointer-events: none;
   transform: translateY(4px);
-  transition: opacity .12s ease, transform .12s ease;
+  transition: opacity var(--dur-fast) ease, transform var(--dur-fast) ease;
 }
 
 /* 卡片与胶囊之间那 8px 缝补一层透明桥：鼠标从胶囊移进卡片不会穿过 hover 空洞把卡片弄丢。
@@ -9548,7 +9228,7 @@ html.theme-dark .user-msg-lightbox {
   background: var(--accent);
   color: var(--accent-fg, #fff);
   border-color: var(--border-strong);
-  transition: opacity .15s ease, transform .05s ease, box-shadow .15s ease;
+  transition: opacity var(--dur-base) ease, transform .05s ease, box-shadow var(--dur-base) ease;
 }
 
 .agent-code-view .chat-send-btn.btn:hover:not(:disabled) {
@@ -9677,7 +9357,7 @@ html.theme-dark .user-msg-lightbox {
 .agent-code-view .chat-input-row .chat-model-dropdown-caret {
   flex-shrink: 0;
   opacity: .6;
-  transition: transform .15s ease;
+  transition: transform var(--dur-base) ease;
 }
 
 .agent-code-view .chat-input-row .chat-model-dropdown.active .chat-model-dropdown-caret {
@@ -9764,7 +9444,7 @@ html.theme-dark .user-msg-lightbox {
   border-radius: 7px;
   background: transparent;
   cursor: pointer;
-  transition: background .12s ease;
+  transition: background var(--dur-fast) ease;
 }
 
 .chat-model-nav-item:hover {
@@ -9822,7 +9502,7 @@ html.theme-dark .user-msg-lightbox {
   font-size: 11px;
   color: var(--text-secondary);
   white-space: nowrap;
-  transition: background .12s ease, color .12s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
   flex-wrap: nowrap;
 }
 
@@ -9840,7 +9520,7 @@ html.theme-dark .user-msg-lightbox {
   inset: 0;
   margin: auto;
   color: inherit;
-  transition: opacity .12s ease;
+  transition: opacity var(--dur-fast) ease;
 }
 
 /* 模型自定义 Logo：无图时灰底占位图标，有图时整体显示所选图片
@@ -9857,7 +9537,7 @@ html.theme-dark .user-msg-lightbox {
   background: color-mix(in srgb, var(--text-muted) 10%, transparent);
   color: var(--text-muted);
   cursor: pointer;
-  transition: background .12s ease, color .12s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 
 .chat-model-logo:hover {
@@ -9896,7 +9576,7 @@ html.theme-dark .user-msg-lightbox {
   border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background .12s ease;
+  transition: background var(--dur-fast) ease;
   /* 由 div 改成 button（键盘可达）：清掉按钮的默认外观，视觉与原来一致 */
   border: 0;
   background: none;
@@ -9948,7 +9628,7 @@ html.theme-dark .user-msg-lightbox {
   flex-shrink: 0;
   background: color-mix(in srgb, var(--accent) 15%, transparent);
   color: var(--accent);
-  transition: background .12s ease, color .12s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 
 .chat-model-item.running .chat-model-item-avatar {
@@ -10010,7 +9690,7 @@ html.theme-dark .user-msg-lightbox {
   border-radius: 3px;
   color: var(--text-muted);
   opacity: .28;
-  transition: background .12s ease, color .12s ease, opacity .12s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, opacity var(--dur-fast) ease;
 }
 
 .chat-model-cap.on {
@@ -10056,7 +9736,7 @@ html.theme-dark .user-msg-lightbox {
   flex-shrink: 0;
   /* 启停键平时收着，悬停该行才出现（见下方 .chat-model-item:hover） */
   opacity: 0;
-  transition: opacity .12s ease, background .12s ease, color .12s ease;
+  transition: opacity var(--dur-fast) ease, background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 
 .chat-model-item:hover .chat-model-item-action {
@@ -10093,7 +9773,7 @@ html.theme-dark .user-msg-lightbox {
   font-size: 12px;
   text-align: left;
   cursor: pointer;
-  transition: background .12s ease;
+  transition: background var(--dur-fast) ease;
 }
 
 .chat-model-attach-entry:hover {
@@ -10140,7 +9820,7 @@ html.theme-dark .user-msg-lightbox {
   cursor: pointer;
   min-width: 0;
   flex-shrink: 1;
-  transition: background .12s ease, border-color .12s ease, color .12s ease;
+  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 
 .agent-git-menu-btn:hover {
@@ -10222,7 +9902,7 @@ html.theme-dark .user-msg-lightbox {
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
-  transition: background .12s ease, color .12s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 
 .agent-git-copy:hover {
@@ -10259,7 +9939,7 @@ html.theme-dark .user-msg-lightbox {
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
-  transition: background .12s ease, color .12s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 
 .agent-git-refresh:hover {
@@ -10287,7 +9967,7 @@ html.theme-dark .user-msg-lightbox {
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background .12s ease, color .12s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 
 .agent-git-viewswitch button+button {
@@ -10314,7 +9994,7 @@ html.theme-dark .user-msg-lightbox {
   border-radius: 6px;
   cursor: pointer;
   user-select: none;
-  transition: background .12s ease;
+  transition: background var(--dur-fast) ease;
 }
 
 .agent-git-tree-head:hover {
@@ -10356,7 +10036,7 @@ html.theme-dark .user-msg-lightbox {
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
-  transition: background .12s ease, color .12s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 
 .agent-git-collapse-all:hover:not(:disabled) {
@@ -10388,7 +10068,7 @@ html.theme-dark .user-msg-lightbox {
   border-radius: 6px;
   cursor: pointer;
   user-select: none;
-  transition: background .12s ease;
+  transition: background var(--dur-fast) ease;
 }
 
 .agent-git-commit-head:hover {
@@ -10449,7 +10129,7 @@ html.theme-dark .user-msg-lightbox {
   font-size: 12px;
   text-align: left;
   cursor: pointer;
-  transition: background .12s ease;
+  transition: background var(--dur-fast) ease;
 }
 
 .agent-git-branch:hover:not(:disabled) {
@@ -10482,7 +10162,7 @@ html.theme-dark .user-msg-lightbox {
 /* ── 跳转到文件：搜索 + 「名称 / 相对路径 / +N −M」的列表 ── */
 .agent-git-jump {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-modal);
   width: 320px;
   max-width: calc(100vw - 16px);
   padding: 4px;
@@ -10623,7 +10303,7 @@ html.theme-dark .user-msg-lightbox {
   align-items: center;
   gap: 6px;
   opacity: 0;
-  transition: opacity .15s;
+  transition: opacity var(--dur-base);
 }
 
 .agent-git-section:hover .agent-git-section-actions {
@@ -10678,7 +10358,7 @@ html.theme-dark .user-msg-lightbox {
 
 .agent-git-chev {
   color: var(--text-muted);
-  transition: transform .12s ease;
+  transition: transform var(--dur-fast) ease;
   flex-shrink: 0;
 }
 
@@ -10805,7 +10485,7 @@ html.theme-dark .user-msg-lightbox {
   left: 82px;
   width: 0.5px;
   background: #a3bf9d;
-  z-index: 1;
+  z-index: var(--z-base);
 }
 
 .agent-git-row {
@@ -11136,7 +10816,7 @@ html.theme-dark .user-msg-lightbox {
   background: var(--surface);
   cursor: pointer;
   position: relative;
-  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+  transition: border-color var(--dur-base) ease, background var(--dur-base) ease, box-shadow var(--dur-base) ease;
 }
 
 .agent-ask-question-option:hover {
@@ -11196,7 +10876,7 @@ html.theme-dark .user-msg-lightbox {
   border-radius: 7px;
   background: var(--surface);
   color: var(--text);
-  transition: border-color .15s ease, box-shadow .15s ease;
+  transition: border-color var(--dur-base) ease, box-shadow var(--dur-base) ease;
 }
 
 .agent-ask-question-other-input:focus {
@@ -11253,7 +10933,7 @@ html.theme-dark .user-msg-lightbox {
   color: var(--text);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
   cursor: pointer;
-  transition: background 0.15s ease, transform 0.12s ease, opacity 0.15s ease;
+  transition: background var(--dur-base) ease, transform var(--dur-fast) ease, opacity var(--dur-base) ease;
 }
 
 .agent-code-scroll-bottom-btn:hover {
@@ -11300,7 +10980,7 @@ html.theme-dark .user-msg-lightbox {
   pointer-events: none;
   opacity: 0;
   transform: translateX(-50%) translateY(4px);
-  transition: opacity .15s ease, transform .15s ease;
+  transition: opacity var(--dur-base) ease, transform var(--dur-base) ease;
   z-index: var(--z-panel);
 }
 
@@ -11511,7 +11191,8 @@ html.theme-dark .user-msg-lightbox {
 .file-tree-node {
   position: relative;
   /* 高亮块由 ::before 以 z-index:-1 绘制，需要行自身成堆叠上下文，
-     否则负层级会透到面板底色之下、高亮不可见 */
+     否则负层级会透到面板底色之下、高亮不可见。
+     这里的 0 是堆叠上下文开关，不是层级，不参与令牌阶梯。 */
   z-index: 0;
   display: flex;
   align-items: center;
@@ -11538,6 +11219,7 @@ html.theme-dark .user-msg-lightbox {
 .file-tree-node--selected::before {
   content: '';
   position: absolute;
+  /* 负层级：压在本行内容之下、行底色之上，不参与令牌阶梯 */
   z-index: -1;
   top: 1px;
   bottom: 1px;
@@ -11545,7 +11227,7 @@ html.theme-dark .user-msg-lightbox {
   right: 6px;
   border-radius: 6px;
   background: transparent;
-  transition: background .15s ease;
+  transition: background var(--dur-base) ease;
 }
 
 .file-tree-node--sub:hover::before,
@@ -11792,7 +11474,7 @@ html.theme-dark .user-msg-lightbox {
 
 .file-tree-ctx-menu {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-modal);
   min-width: 152px;
   padding: 4px;
   background: var(--surface);
@@ -11864,7 +11546,7 @@ html.theme-dark .user-msg-lightbox {
   outline: none;
   user-select: text;
   -webkit-user-select: text;
-  transition: background .12s ease, border-color .12s ease;
+  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease;
 }
 
 .file-tree-rename-input:focus {
@@ -11876,7 +11558,8 @@ html.theme-dark .user-msg-lightbox {
 /* 图片文件悬停缩略图：显示在文件节点正上方 */
 .file-tree-img-tooltip {
   position: fixed;
-  z-index: 1000;
+  /* 需压过右侧面板内所有浮层，故借用弹窗档（不是普通工具提示层） */
+  z-index: var(--z-modal);
   max-width: 200px;
   max-height: 160px;
   padding: 4px;
@@ -11951,7 +11634,7 @@ html.theme-dark .user-msg-lightbox {
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
-  transition: background .12s ease, color .12s ease;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 
 .agent-msg-search-btn:hover:not(:disabled) {
@@ -12112,7 +11795,7 @@ html.theme-dark .user-msg-lightbox {
 }
 
 .agent-site-icon-letter {
-  font-family: var(--font-sans);
+  font-family: var(--font);
   font-weight: 600;
   line-height: 1;
   color: #fff;
@@ -12525,7 +12208,7 @@ html.theme-dark .user-msg-lightbox {
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: color var(--transition, .15s), background var(--transition, .15s);
+  transition: color var(--transition, var(--dur-base)), background var(--transition, var(--dur-base));
 }
 
 .agent-kb-copy:hover {
@@ -12670,7 +12353,7 @@ html.theme-dark .user-msg-lightbox {
 .agent-tool-shot-dims {
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
   font-size: 10.5px;
-  color: var(--muted);
+  color: var(--text-muted);
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 1px 7px;
@@ -12682,12 +12365,12 @@ html.theme-dark .user-msg-lightbox {
 
 .agent-tool-shot-loading {
   font-size: 11px;
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
-/* ╔══════════════════════════════════════════════════════════════════════════════╗
-   ║ 区域：工具卡片补充 —— 参数区 / 代码视图 / 说明框 / 命中列表 / 终端块          ║
-   ╚══════════════════════════════════════════════════════════════════════════════╝
+/* ══════════════════════════════════════════════════════════════════════════════
+   工具卡片补充 —— 参数区 / 代码视图 / 说明框 / 命中列表 / 终端块
+   ──────────────────────────────────────────────────────────────────────────────
    来源：toolcall-ui-demo.html。四条约定：
    1) 层级用「色阶」而非透明度 —— opacity 让颜色与背景混合、对比度不可计算；
       需要压低的文字一律用实色，取值都算过对比度（注释标注）。
@@ -12956,7 +12639,7 @@ html.theme-dark {
 .agent-tool-code .agent-tool-code-num {
   position: sticky;
   left: 0;
-  z-index: 1;
+  z-index: var(--z-base);
   flex: none;
   box-sizing: border-box;
   width: 44px;
@@ -12972,7 +12655,7 @@ html.theme-dark {
 .agent-tool-code .agent-tool-code-hash {
   position: sticky;
   left: 44px;
-  z-index: 1;
+  z-index: var(--z-base);
   flex: none;
   box-sizing: border-box;
   width: 54px;
@@ -13175,7 +12858,7 @@ html.theme-dark {
 }
 
 .agent-tool-term-cmd .ps {
-  color: #d97c00;
+  color: var(--warm-accent);
   font-weight: 700;
   user-select: none;
 }
@@ -13262,7 +12945,7 @@ html.theme-dark {
 .agent-tool-diff .agent-tool-diff-num {
   position: sticky;
   left: 0;
-  z-index: 1;
+  z-index: var(--z-base);
   flex: none;
   box-sizing: border-box;
   width: 46px;
@@ -13309,7 +12992,7 @@ html.theme-dark {
    这里只放定位与合成层声明。 */
 .sendfly-pos {
   position: fixed;
-  z-index: 40;
+  z-index: var(--z-raised);
   margin: 0;
   box-sizing: border-box;
   pointer-events: none;
@@ -13325,7 +13008,8 @@ html.theme-dark {
 
 .sendfly-shadow {
   position: fixed;
-  z-index: 39;
+  /* 必须比 .sendfly-pos 低一层，否则阴影会盖到盒子上面 */
+  z-index: calc(var(--z-raised) - 1);
   margin: 0;
   box-sizing: border-box;
   pointer-events: none;

@@ -123,5 +123,5 @@
 }
 
 .llama-empty-close:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }

@@ -40,6 +40,10 @@
   --success: #16a34a;
   --danger: #dc2626;
   --warning: #d97706;
+  /* 暖橙强调：时长标签、进行中圆点、终端 $ 前缀共用同一色（原为 5 处散落的 #d97c00） */
+  --warm-accent: #d97c00;
+  /* 暖橙的深一档：思考块「N 次工具调用」徽标文字 */
+  --warm-accent-strong: #b98407;
   --radius: 14px;
   --radius-sm: 8px;
   --radius-lg: 20px;
@@ -47,6 +51,9 @@
   --shadow-md: 0 4px 12px rgba(0, 0, 0, .1), 0 2px 4px rgba(0, 0, 0, .06);
   --shadow-lg: 0 10px 32px rgba(0, 0, 0, .14), 0 4px 8px rgba(0, 0, 0, .08);
   --transition: 180ms cubic-bezier(.4, 0, .2, 1);
+  /* 过渡时长两档：收掉 agent-code.css 里 122 处重复的 .12s / .15s */
+  --dur-fast: 120ms;
+  --dur-base: 150ms;
   --font: 'Inter', system-ui, sans-serif;
 
   /* z-index 层级体系：按角色分层，避免散落的魔法数字 */
@@ -62,6 +69,8 @@
   /* 下拉/弹出菜单 */
   --z-popover: 30;
   /* 弹出卡片（压缩、提示词、任务清单） */
+  --z-raised: 40;
+  /* 抬升层（输入区临时菜单、发送飞行层） */
   --z-panel: 50;
   /* 浮动面板（模型选择、地址补全） */
   --z-overlay: 60;
@@ -70,8 +79,18 @@
   /* Toast/通知 */
   --z-tooltip: 80;
   /* 工具提示 */
+  --z-menu: 200;
+  /* 卡片内下拉菜单（需压过相邻卡片） */
+  --z-confirm: 400;
+  /* 卡片内确认气泡（需压过下拉菜单） */
   --z-modal: 1000;
-  /* 模态弹窗（最高优先） */
+  /* 模态弹窗（面板与遮罩之上） */
+  --z-top: 9999;
+  /* 全屏预览层、消息右键菜单（压在模态之上） */
+  --z-max: 10000;
+  /* 全局提示气泡（最高交互层） */
+  --z-splash: 2147483647;
+  /* 启动画面（开机遮罩，仅此一处） */
 
   /* 代码块：原来 --code-bg #f7f7f8 与新的 --surface 撞色（卡片面变浅后两者相等），
      这里整体压到比卡片面再深一档，白外框 / 灰卡面两种背景下都能看出块。 */
@@ -146,7 +165,7 @@ html.theme-dark {
 #splash-screen {
   position: fixed;
   inset: 0;
-  z-index: 2147483647;
+  z-index: var(--z-splash);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -568,7 +587,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: var(--z-modal);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   animation: fadeIn 150ms ease;
@@ -606,7 +625,7 @@ textarea {
   border-radius: var(--radius);
   box-shadow: var(--shadow-md);
   padding: 14px;
-  z-index: 400;
+  z-index: var(--z-confirm);
   animation: popoverIn 160ms cubic-bezier(.16, 1, .3, 1);
   transform-origin: top right;
 }
@@ -1203,7 +1222,7 @@ textarea {
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-md);
   min-width: 160px;
-  z-index: 200;
+  z-index: var(--z-menu);
   overflow: hidden;
   animation: fadeIn 120ms ease;
 }
@@ -1301,7 +1320,7 @@ textarea {
   line-height: 1.4;
   opacity: 0;
   pointer-events: none;
-  z-index: 10000;
+  z-index: var(--z-max);
   transition: opacity 150ms ease;
 }
 
@@ -1411,7 +1430,7 @@ textarea {
   cursor: pointer;
   padding: 0;
   transition: all 150ms ease;
-  z-index: 10;
+  z-index: var(--z-sticky);
 }
 
 .cmd-param-copy-btn:hover {
@@ -1462,7 +1481,7 @@ textarea {
 
 .cmd-section-header.preview-header .cmd-copy-all-btn {
   position: relative;
-  z-index: 1;
+  z-index: var(--z-base);
 }
 
 .cmd-section-header.preview-header:hover {
@@ -1579,7 +1598,7 @@ textarea {
   margin-bottom: 16px;
   position: sticky;
   top: calc(-1 * var(--content-pad, 0px));
-  z-index: 10;
+  z-index: var(--z-sticky);
   box-shadow: var(--shadow);
 }
 
@@ -1893,12 +1912,6 @@ webview {
   50% {
     transform: translateY(-10px);
     opacity: 1;
-  }
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
   }
 }
 
