@@ -891,23 +891,17 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               </button>
             </div>
           )}
-          {/* 上下文卡片（浮动在聊天区右上角） */}
+          {/* 上下文卡片（浮动在聊天区右上角）：卡片外壳与标题由面板自己渲染，含关闭按钮 */}
           {contextModalOpen && (
-            <div className="agent-task-card agent-card-ctx">
-              <div className="agent-task-card-header">
-                <span>上下文窗口</span>
-              </div>
-              <div className="agent-task-card-body">
-                <AgentContextPanel
-                  templateId={runningCard?.template.id ?? null}
-                  startedAt={runningCard?.startedAt}
-                  requests={reqCount}
-                  cumTokens={cumTokens}
-                  session={activeSession}
-                  project={activeProject}
-                />
-              </div>
-            </div>
+            <AgentContextPanel
+              templateId={runningCard?.template.id ?? null}
+              startedAt={runningCard?.startedAt}
+              requests={reqCount}
+              cumTokens={cumTokens}
+              session={activeSession}
+              project={activeProject}
+              onClose={() => setContextModalOpen(false)}
+            />
           )}
           {/* 压缩历史卡片（浮动在聊天区右上角）*/}
           {condenseOpen && (

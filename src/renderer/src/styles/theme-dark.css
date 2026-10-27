@@ -324,11 +324,6 @@ html.theme-dark body {
   color: var(--text);
 }
 
-/* ── Agent Code 工作台：上下文面板 ── */
-.theme-dark .agent-ctx-panel {
-  background: var(--surface);
-}
-
 /* ── Agent Code 工作台：用户消息气泡 ──
    气泡底色由局部变量 --agent-bubble-bg 写死为浅灰 #e3e3e3，
    黑暗下文字已变浅而气泡仍是浅底，导致浅底浅字看不清；
@@ -350,9 +345,8 @@ html.theme-dark body {
   border-color: var(--border-stronger);
 }
 
-/* ── Agent Code 工作台：上下文进度条、标签页选中态、引用胶囊 ── */
-.theme-dark .agent-ctx-inline-bar,
-.theme-dark .agent-ctx-bar {
+/* ── Agent Code 工作台：上下文胶囊、标签页选中态、引用胶囊 ── */
+.theme-dark .agent-ctx-inline-bar {
   background: var(--surface-raised);
 }
 
