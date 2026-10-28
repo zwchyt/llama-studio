@@ -1,9 +1,8 @@
 import { create } from 'zustand'
 
-// 窄窗口自动收起的阈值（px，窗口宽度）。默认窗口 1280、最小窗口 960，阈值落在中间：
-// 正常使用不受影响，缩到窄屏时侧栏把宽度让给对话区。
-// 只按窗口宽度判断，不看右侧面板拖宽——拖宽面板时左侧栏突然消失太突兀。
-export const SIDEBAR_AUTO_COLLAPSE_MAX_WIDTH = 1080
+// 窄窗口自动收起的阈值（px，窗口宽度）。窗口缩到 1190 及以下时侧栏自动收起，把宽度让给对话区。
+// 只按窗口宽度判断，不看右侧面板拖宽——拖窗口时左侧栏突然消失太突兀。
+export const SIDEBAR_AUTO_COLLAPSE_MAX_WIDTH = 1190
 
 interface SidebarState {
   /** 有效收起态（宽度窄）。所有消费方（侧栏 / 标题栏按钮）都读它 */

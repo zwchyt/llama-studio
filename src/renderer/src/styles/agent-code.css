@@ -479,29 +479,73 @@
   margin: 0 0 10px;
 }
 
-.chat-msg-markdown h1,
-.chat-msg-markdown h2,
-.chat-msg-markdown h3,
-.chat-msg-markdown h4 {
-  margin: 16px 0 8px;
+/* 正文标题：六级梯度 + 两条结构性标记（h1 顶线 / h2 左竖条）。
+   旧版只有四级、每级差 2px，h4 与正文同号（14px），扫一眼分不出层级；h5/h6 更是没有规则，
+   落到 markstream 自带的 1rem，和正文一样大。字号梯度配合线条，长文档里结构才看得出来。
+
+   ⚠️ 两条约束，改之前先看：
+   ① 选择器必须带上 .markstream-react：包内有一条 `.markstream-react .font-semibold`（0,2,0）
+      给每个标题都压了 600 字重，只用 `.chat-msg-markdown h1`（0,1,1）根本盖不住。
+   ② 线条颜色不能用 var(--border)：markstream 在 `.markstream-react` 上把 --border 重定义成
+      HSL 三元组（`214.3 31.8% 91.4%`，给它自己 `hsl(var(--border))` 用的），在正文里直接当颜色
+      用是非法值，整条 border 声明会被丢弃。这里改用 --text 混出线条色。 */
+.chat-msg-markdown .markstream-react h1,
+.chat-msg-markdown .markstream-react h2,
+.chat-msg-markdown .markstream-react h3,
+.chat-msg-markdown .markstream-react h4,
+.chat-msg-markdown .markstream-react h5,
+.chat-msg-markdown .markstream-react h6 {
   font-weight: 700;
   line-height: 1.3;
+  color: var(--text);
 }
 
-.chat-msg-markdown h1 {
-  font-size: 19px;
+.chat-msg-markdown .markstream-react h1 {
+  margin: 26px 0 10px;
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  font-size: 22px;
+  line-height: 1.25;
 }
 
-.chat-msg-markdown h2 {
-  font-size: 17px;
+.chat-msg-markdown .markstream-react h2 {
+  margin: 20px 0 8px;
+  padding-left: 10px;
+  border-left: 3px solid color-mix(in srgb, var(--text) 22%, transparent);
+  font-size: 18px;
 }
 
-.chat-msg-markdown h3 {
+.chat-msg-markdown .markstream-react h3 {
+  margin: 15px 0 6px;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.chat-msg-markdown .markstream-react h4 {
+  margin: 12px 0 6px;
   font-size: 15px;
+  font-weight: 600;
 }
 
-.chat-msg-markdown h4 {
-  font-size: 14px;
+.chat-msg-markdown .markstream-react h5 {
+  margin: 10px 0 4px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.chat-msg-markdown .markstream-react h6 {
+  margin: 10px 0 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* 消息开头的标题不画顶线、不留顶部内边距，否则第一行就顶着一条横线。
+   正文在 markstream 根元素里多包了一层，所以不能只靠上面那两条 :first-child 归零规则。 */
+.chat-msg-markdown .markstream-react h1:first-child {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .chat-msg-markdown ul,
@@ -8854,6 +8898,50 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
 .agent-code-view .chat-input-tools .chat-think-level {
   position: relative;
   max-width: 96px;
+}
+
+/* 思考开关：一键开/关思考模式，与右侧「思考程度」共用同一个档位状态 */
+.agent-code-view .chat-input-tools .chat-think-toggle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.agent-code-view .chat-input-tools .chat-think-toggle svg {
+  display: block;
+  flex: none;
+}
+
+.agent-code-view .chat-input-tools .chat-think-toggle:hover:not(:disabled) {
+  background: var(--bg);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.agent-code-view .chat-input-tools .chat-think-toggle.on {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+
+.agent-code-view .chat-input-tools .chat-think-toggle.on:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.agent-code-view .chat-input-tools .chat-think-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .agent-code-view .chat-input-tools .chat-think-level-trigger {

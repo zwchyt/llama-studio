@@ -300,6 +300,8 @@ textarea {
 .view-transition {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-width: 0;
   min-height: 0;
   transition: opacity 120ms ease;
   will-change: opacity;
@@ -319,13 +321,15 @@ textarea {
    要加动效只能加在具体元素上，且不能从 opacity 0 开始（见 cards.css 的 card-reveal）。 */
 
 
-/* 主界面外层留白：上下取 8px，与导航栏卡片（sidebar.css 的 .sidebar { margin: 8px }）
-   以及 Agent Code 列（agent-code.css 的 topbar / chat 各 8px）同口径——三类容器的顶边、
-   底边因此落在同一线上。左右仍留 24px，那是主界面与侧栏之间的水平间距，不在这次范围内。 */
+/* 主界面外层留白：上下右取 8px，与导航栏卡片（sidebar.css 的 .sidebar { margin: 8px }）
+   以及 Agent Code 列（agent-code.css 的 topbar / chat 各 8px）同口径——四边落点一致。
+   左边取 16px：侧栏自己还有 8px 外边距，8+16=24，与右侧 8px 的视觉间距拉平。 */
 .content>*:not(.chat-layout):not(.agent-code-view):not(.llama-host) {
-  padding: 8px 24px;
-  overflow-y: auto;
+  /* 间距保留：上右下 8、左 16。左边那 8px 被导航栏边框和投影吃掉，写 8 会贴死。
+     底色透色的问题由 .view-transition 自己的实底背景解决，不靠归零内边距。 */
+  padding: 8px 8px 8px 16px;
   flex: 1;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -336,7 +340,8 @@ textarea {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 24px;
+  /* 与普通页面同一口径：上右下 8、左 16（左边多出的 8 被导航栏吃掉） */
+  padding: 8px 8px 8px 16px;
   overflow: hidden;
   transition: opacity 120ms ease;
   will-change: opacity;
@@ -361,8 +366,9 @@ textarea {
   border: 1.5px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
-  /* 上下留白已由上一层给到 8，这里再写 margin-bottom 会叠成 16、把底边推歪 */
-  margin: 0 8px 0 0;
+  /* 上下留白已由上一层给到 8，这里再写 margin-bottom 会叠成 16、把底边推歪。
+     右边距不再额外加：横向留白统一由上一层 padding 给（左 24 贴侧栏、右 8 贴窗口）。 */
+  margin: 0;
 }
 
 @keyframes navPulse {

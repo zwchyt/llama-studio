@@ -154,8 +154,22 @@ export async function createPiAgentBridge(options: PiAgentBridgeOptions): Promis
         // 本地模型显式关掉 reasoning_effort：pi 的 detectCompat 对 localhost 默认认为支持，
         // 会在请求体里带上档位名（llama.cpp 不认，个别严格后端直接 400）。远程端点保留默认，
         // 免得误关掉真支持 effort 的服务。
+        // 思考开关走 llama.cpp 的每请求参数：thinkingFormat='chat-template' 让 pi 把档位翻译成
+        // chat_template_kwargs.enable_thinking（off → false，其余档 → true），模板自己决定收不收。
+        // 不用 reasoning_effort：那是 OpenAI 的字段，llama.cpp 只把它当模板变量名，语义对不上。
         ...(openAiStyle
-          ? { compat: { supportsUsageInStreaming: true, ...(ep ? {} : { supportsReasoningEffort: false }) } }
+          ? {
+              compat: {
+                supportsUsageInStreaming: true,
+                ...(ep
+                  ? {}
+                  : {
+                      supportsReasoningEffort: false,
+                      thinkingFormat: 'chat-template' as const,
+                      chatTemplateKwargs: { enable_thinking: { $var: 'thinking.enabled' as const } },
+                    }),
+              },
+            }
           : {}),
         ...(options.getExtraBody ? { samplingParams: options.getExtraBody() } : {})
       }

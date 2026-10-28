@@ -53,9 +53,9 @@ function resolveIcon(): string | undefined {
 function createWindow(): BrowserWindow {
   const icon = resolveIcon()
   const mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 960,
+    width: 1360,
+    height: 960,
+    minWidth: 900,
     minHeight: 600,
     show: false,
     frame: false,

@@ -403,6 +403,28 @@ export function AgentInputArea({
   useEffect(() => {
     if (plainChat) setFilePickerOpen(false)
   }, [plainChat, setFilePickerOpen])
+  // ── 思考开关（输入框里那个一键 on/off）──
+  // 和右边的「思考程度」共用同一个档位状态：关 = off，开 = 回到上次的非 off 档（默认 medium）。
+  // 本地模型（llama.cpp）现在会把档位翻译成 chat_template_kwargs.enable_thinking（见主进程注册），
+  // 所以这里的开关是真正落到请求体上的，不是只改 UI。
+  const thinkOn = thinkingLevel !== 'off'
+  const lastThinkLevelRef = useRef<ThinkingLevel>(thinkingLevel === 'off' ? 'medium' : thinkingLevel)
+  useEffect(() => {
+    if (thinkingLevel !== 'off') lastThinkLevelRef.current = thinkingLevel
+  }, [thinkingLevel])
+  /** 统一落档：先改本地状态，再同步给 pi 会话；被主进程 clamp 后回填真实生效档 */
+  const applyThinkLevel = async (level: ThinkingLevel) => {
+    setThinkingLevel(level)
+    const cur = piReadyRef.current
+    if (!cur.ready || !cur.sid) return
+    try {
+      const res = await window.api.piAgent.setThinkingLevel(`pi-${cur.sid}`, level)
+      // 主进程按模型能力 clamp 后回传实际生效档（如 max/xhigh 无映射→high），
+      // 回填后 UI 不再显示一个实际没生效的档位。
+      if (res?.level && res.level !== level) setThinkingLevel(res.level)
+    } catch { /* 非致命：档位下一轮才用，失败不挡发送 */ }
+  }
+  const toggleThink = () => { void applyThinkLevel(thinkOn ? 'off' : lastThinkLevelRef.current) }
   // 模型下拉左栏当前选中的来源（分组标题）。面板每次打开重置为「运行中模型所在来源」，
   // 否则第一组；shownModelGroup 用派生值兜底——来源集合变化（端点增删）后旧选中项失效
   // 会自动落到第一组，不会出现右栏空白。
@@ -885,6 +907,20 @@ export function AgentInputArea({
                 </div>
               )}
             </div>
+            {/* 思考开关：一键开/关，与右边的「思考程度」共用同一个档位状态。
+                关 → off，开 → 回到上次的非 off 档。主进程按模型能力 clamp 后回填。 */}
+            <button
+              type="button"
+              className={`chat-think-toggle${thinkOn ? ' on' : ''}`}
+              aria-pressed={thinkOn}
+              aria-label={thinkOn ? '关闭思考模式' : '开启思考模式'}
+              disabled={loading}
+              onClick={toggleThink}
+              {...tip(thinkOn ? '思考已开 · 点击关闭' : '思考已关 · 点击开启')}
+            >
+              <Brain size={13} />
+              <span>思考</span>
+            </button>
             {/* 思考程度：两种模式都显示。聊天模式后台本就每次发送都下发思考程度
                 （useAgentLoop 里 setThinkingLevel 不分模式），这里放开 UI 让它可见可控；
                 模型不支持思考时主进程/SDK 自动 clamp，与编码模式行为一致。 */}
@@ -914,19 +950,7 @@ export function AgentInputArea({
                       data-row
                       tabIndex={0}
                       onKeyDown={rovingKeyNav}
-                      onClick={async () => {
-                        setThinkingLevel(l)
-                        setThinkLevelOpen(false)
-                        const cur = piReadyRef.current
-                        if (cur.ready && cur.sid) {
-                          // 主进程按模型能力 clamp 后回传实际生效档（如 max/xhigh 无映射→high），
-                          // 回填后 UI 不再显示一个实际没生效的档位。
-                          try {
-                            const res = await window.api.piAgent.setThinkingLevel(`pi-${cur.sid}`, l)
-                            if (res?.level && res.level !== l) setThinkingLevel(res.level)
-                          } catch { /* 非致命 */ }
-                        }
-                      }}
+                      onClick={() => { setThinkLevelOpen(false); void applyThinkLevel(l) }}
                     >
                       {l}
                     </li>
