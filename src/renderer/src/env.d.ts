@@ -1,4 +1,4 @@
-import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, SystemMetrics, ChatSession, TokenUsageEntry, TokenUsageLedger, ChatStreamChunk, AgentProject, AgentSession, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit, ThinkingLevel, SdCudartStatus, EndpointProbe, EndpointAttachResult, ProbeTarget, RemoteEndpoint, ModelEndpoint } from '../../shared/types'
+import type { Template, BackendVersion, CommandsSchema, ReleaseInfo, ModelMetrics, SystemMetrics, ChatSession, TokenUsageEntry, TokenUsageLedger, ChatStreamChunk, AgentProject, AgentSession, AgentTask, TodoItem, TodoUpdate, CodeMapStatus, CodeMapSymbolHit, CodeMapFileSkeleton, CodeMapNeighbors, CodeSearchResponse, GgufMetadata, TokenizeResult, FitParamsResult, KnowledgeBaseMeta, KnowledgeDoc, KnowledgeDocContent, KnowledgeHit, ThinkingLevel, SdCudartStatus, EndpointProbe, EndpointAttachResult, ProbeTarget, RemoteEndpoint, ModelEndpoint, ServerPropsResult } from '../../shared/types'
 // 共享给 HuggingFaceView.tsx 的类型（HfFileResult 也被 MS 复用）
 interface ImagePromptPresetPayload {
   id: string; tag: string; cn: string; group: string
@@ -179,7 +179,7 @@ interface LlamaCppApi {
   clearTokenUsage: () => Promise<{ success: boolean }>
   chatStream: (opts: { streamId: string; port: number; body: object }) => Promise<{ success: boolean; error?: string }>
   chatCompletion: (opts: { port: number; endpoint?: RemoteEndpoint; body: object }) => Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }>
-  getServerProps: (port: number) => Promise<{ ok: boolean; modalities?: { vision?: boolean; audio?: boolean }; error?: string }>
+  getServerProps: (port: number) => Promise<ServerPropsResult>
   saveChatImage: (dataUrl: string) => Promise<{ ok: boolean; ref?: string; error?: string }>
   readChatImage: (ref: string) => Promise<string | null>
   saveImages: (opts: { images: string[]; mode?: string; seed?: number; steps?: number; cfg?: number; width?: number; height?: number; prompt?: string; negativePrompt?: string; sampler?: string; scheduler?: string; model?: string }) => Promise<{ ok: boolean; files?: string[]; error?: string }>

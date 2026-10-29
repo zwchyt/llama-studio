@@ -269,6 +269,15 @@ export interface EndpointProbe {
   error?: string
 }
 
+/** /props 探测结果：判断服务端能力与并行槽位数（实时语音按槽数决定开不开第二条转写会话） */
+export interface ServerPropsResult {
+  ok: boolean
+  modalities?: { vision?: boolean; audio?: boolean }
+  /** 服务端并行槽位数（/props 的 total_slots）；读不到时缺省 */
+  slots?: number
+  error?: string
+}
+
 /** attach-endpoint 的返回：登记成功时带回探测结果供界面回显 */
 export interface EndpointAttachResult {
   success: boolean

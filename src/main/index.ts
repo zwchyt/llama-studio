@@ -144,7 +144,9 @@ protocol.registerSchemesAsPrivileged([
  *  app: 是上面那个预览资源协议，预览 iframe 继承这份策略，不放行它 css/js 全加载不到。 */
 const RENDERER_CSP = [
   "default-src 'self' app: http://localhost:*",
-  "connect-src 'self' app: http://* https://*",
+  // ws:// 只放行本机回环：实时语音走 llama-server 的 /v1/realtime WebSocket，
+  // 不放开到任意主机，避免把「能连外网任意 WebSocket」写进策略。
+  "connect-src 'self' app: http://* https://* ws://127.0.0.1:* ws://localhost:*",
   "frame-src * http://localhost:*",
   "script-src 'self' 'unsafe-inline' app:",
   "style-src 'self' 'unsafe-inline' https: app:",

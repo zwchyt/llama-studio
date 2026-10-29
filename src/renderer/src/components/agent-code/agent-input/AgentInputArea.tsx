@@ -22,7 +22,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AlertCircle, Brain, Eye, Globe, Image as ImageIcon, Search, SearchX, Wrench } from 'lucide-react'
-import { CheckIcon, ChevronDownIcon, CircleStopIcon, FileTextIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, MicIcon, PlayIcon, PlusIcon, RefreshCwIcon, SendIcon, ServerIcon, TrashIcon, XIcon } from '@animateicons/react/lucide'
+import { CheckIcon, ChevronDownIcon, CircleStopIcon, FileTextIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, MicIcon, PlayIcon, PlusIcon, RefreshCwIcon, SendIcon, ServerIcon, TrashIcon, XIcon, AudioLinesIcon } from '@animateicons/react/lucide'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import AgentFilePicker from '../../AgentFilePicker'
 import AskUserQuestionInline from '../../AskUserQuestionInline'
@@ -252,6 +252,12 @@ export type AgentInputAreaProps = {
     micTranscribing: boolean
     toggleListen: () => void
   }
+  /** 实时语音对话（useRealtimeVoice）：只给通用模式用，编码模式下模型往往不是语音模型 */
+  realtime: {
+    active: boolean
+    phase: 'idle' | 'connecting' | 'live'
+    toggle: () => void
+  }
   models: {
     modelGroups: ModelPickerGroup[]
     modelBtnRef: React.RefObject<HTMLButtonElement | null>
@@ -348,7 +354,7 @@ export type AgentInputAreaProps = {
 
 
 export function AgentInputArea({
-  inputDomain, hintsDomain, mic, models, search, chatMode, run, approval, shell, handleKeyDown, handleInputChange,
+  inputDomain, hintsDomain, mic, realtime, models, search, chatMode, run, approval, shell, handleKeyDown, handleInputChange,
   onPreviewAttachment, onPreviewImage,
 }: AgentInputAreaProps) {
   // ── 域解构：把分组 props 摊平回局部名字，组件体内沿用原 JSX 的标识符 ──
@@ -368,6 +374,7 @@ export function AgentInputArea({
     setSlashIdx, slashPopRef, onPickAtFile, onPickSlash,
   } = hintsDomain
   const { listening, micTranscribing, toggleListen } = mic
+  const { active: rtActive, phase: rtPhase, toggle: toggleRealtime } = realtime
   const { modelGroups, modelBtnRef, modelLabel, modelPickerOpen, modelPickerRef, handleModelAction, pickEndpointModel, pickSourceLogo, removeSourceLogo, logoMenu, logoMenuRef, toggleLogoMenu, pickModelLogo, removeModelLogo, setModelPickerOpen, thinkLevelMenuRef, thinkLevelOpen, setThinkLevelOpen, thinkingLevel, setThinkingLevel } = models
   const { searchEnabled, searchProvider, searchMenuOpen, searchMenuRef, setSearchMenuOpen, applySearchChange } = search
   const { plainChat } = chatMode
@@ -759,6 +766,17 @@ export function AgentInputArea({
               </div>
             )}
             <AniIconButton className={`chat-mic-btn${listening || micTranscribing ? ' listening' : ''}`} icon={MicIcon} size={14} onClick={toggleListen} disabled={micTranscribing} title={micTranscribing ? '识别中…' : listening ? '停止录音' : '语音输入'} />
+            {/* 实时语音对话：麦克风直连本地模型的实时接口，边说边听边回，不走「录音→转写→发送」。
+                只在通用模式出现——编码模式的模型通常不是语音模型。 */}
+            {plainChat && (
+              <AniIconButton
+                className={`chat-mic-btn chat-realtime-btn${rtActive ? ' active' : ''}`}
+                icon={AudioLinesIcon}
+                size={14}
+                onClick={toggleRealtime}
+                title={rtPhase === 'connecting' ? '连接中…（点击取消）' : rtActive ? '结束实时对话' : '实时语音对话'}
+              />
+            )}
             {/* 预填充进度：吃掉左侧按钮组（附件/选择文件/语音）与右侧控件组
                 （上下文 · 模型 · 搜索 · 思考程度 · 发送）之间那段空白。
                 靠 flex:1 自适应宽度，无进度时整块不渲染，右侧那组的

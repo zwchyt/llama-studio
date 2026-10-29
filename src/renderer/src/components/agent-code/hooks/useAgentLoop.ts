@@ -35,6 +35,7 @@ import { PiAgentClient } from '../../../utils/piAgentClient'
 import { computeContextBudget, coveredPrefixCount, piContextWindowFor, COMPACTION_TRIGGER_MARGIN } from '../../../utils/contextBudget'
 import { parseSlashCommand, findCommand, expandCommandTemplate } from '../../../agent/slashCommands'
 import { newMsgId, uniqueId } from '../utils/ids'
+import { isRealtimeMetaContent } from '../utils/realtimeTurns'
 import { MIN_EXEC_DISPLAY_MS, PI_UNDO_PREFIX, PROJECTS_SYNC_MS, COMPACTION_RESERVE_FLOOR_TOKENS, COMPACTION_KEEP_RECENT_RATIO, COMPACTION_KEEP_RECENT_FLOOR_TOKENS } from '../utils/constants'
 import { CHIP_MARK, type RichChip } from '../agent-input/RichInput'
 
@@ -272,6 +273,9 @@ export function useAgentLoop({
         })
       }
       for (const m of prior.slice(coveredPrefix)) {
+        // 实时语音的占位/报错文案只是界面状态（「语音输入（识别中…）」之类），
+        // 不是用户说过的话，不能当历史喂给模型
+        if (isRealtimeMetaContent(m.content)) continue
         history.push({ role: m.role, content: m.content, toolCalls: m.toolCalls, attachments: m.attachments })
       }
       // 「本轮能不能把图发给模型」三层判据，从可信到不可信：

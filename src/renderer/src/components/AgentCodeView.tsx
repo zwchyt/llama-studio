@@ -18,6 +18,8 @@ import { useAgentProjects } from './agent-code/hooks/useAgentProjects'
 import { useAgentInput } from './agent-code/hooks/useAgentInput'
 import { useAgentRunState } from './agent-code/hooks/useAgentRunState'
 import { useAgentMic } from './agent-code/hooks/useAgentMic'
+import { useRealtimeVoice } from './agent-code/hooks/useRealtimeVoice'
+import { mergeRealtimeTurns } from './agent-code/utils/realtimeTurns'
 import { useAgentUiState } from './agent-code/hooks/useAgentUiState'
 import { useAgentPanels } from './agent-code/hooks/useAgentPanels'
 import { useAgentPreviewTabs } from './agent-code/hooks/useAgentPreviewTabs'
@@ -275,6 +277,81 @@ export default function AgentCodeView() {
   // ── 语音朗读（纯聊天模式的消息行用）──
   const { speakingId, speak, stop: stopSpeak } = useTts()
 
+  // ── 实时语音对话（纯聊天模式输入框旁的按钮）──
+  // 语音的收与发都依赖模板里的音频投影（--mmproj）；没挂投影时按钮会给出明确提示，而不是静默无声。
+  const realtime = useRealtimeVoice({
+    port: runningCard?.template.serverPort ?? 0,
+    hasProjector: (() => {
+      const v = String(runningCard?.template.args?.['--mmproj'] ?? '').trim()
+      return v !== '' && v.toLowerCase() !== 'none'
+    })(),
+    // 模板里声明的并行槽数：服务端实际报的槽数比它少，说明服务是改参数之前启动的
+    expectedSlots: Number(runningCard?.template.args?.['--parallel'] ?? 1) || 1,
+  })
+  // 本组件常驻挂载（切走只是 display:none），所以离开聊天界面时必须主动收摊，
+  // 否则麦克风会在后台一直开着。选择器只返回布尔值，只在「离开/回到」时触发重渲染。
+  const awayFromChat = useStore(s => s.view !== 'agent-code')
+  const stopRealtime = realtime.stop
+  useEffect(() => {
+    if (awayFromChat) stopRealtime()
+  }, [awayFromChat, stopRealtime])
+
+  // ── 实时语音的每轮文本落进会话，和普通聊天一样留在对话记录里 ──
+  // 三个约束：
+  //   ① 只写进「按下开始那一刻所在的会话」——中途切到别的历史会话，不能把这段对话再复制过去。
+  //   ② 消息 id 带本次语音会话的标识（runId）——同一段聊天里开两次语音，轮次都从 1 开始，
+  //      不区分就会把上一次的消息覆盖掉。
+  //   ③ 写入时在「最新状态」上合并，而不是拿渲染快照整体覆盖——打字聊天可能同时在往同一个
+  //      会话追加消息，整体覆盖会把对方刚写的冲掉。
+  const setProjectsRef = useRef(projectsDomain.setProjects)
+  setProjectsRef.current = projectsDomain.setProjects
+  const rtTurns = realtime.turns
+  const plainChat = ui.plainChat
+  // 上一次合并的指纹：回合数、最后一条的文字都没变时直接跳过，避免每个 token 都跑一次全量合并
+  const rtSigRef = useRef('')
+  const rtSessionRef = useRef<{ pid: string; sid: string; run: string } | null>(null)
+  useEffect(() => {
+    if (!realtime.active || !realtime.runId || !activeProjectId || !activeSessionId) return
+    // 每段语音重新锁定一次归属；停止后保留，让最后一句的转写还能落回原会话
+    if (rtSessionRef.current?.run === realtime.runId) return
+    rtSessionRef.current = { pid: activeProjectId, sid: activeSessionId, run: realtime.runId }
+  }, [realtime.active, realtime.runId, activeProjectId, activeSessionId])
+
+  useEffect(() => {
+    const target = rtSessionRef.current
+    if (!target || target.run !== realtime.runId || !plainChat || rtTurns.length === 0) return
+    // 指纹只算「回合数 + 文字总长 + 完成条数」，不拼字符串：晚到的转写会改中间某一条，
+    // 所以要看全体，但不必每条都拼一遍文本
+    let lenSum = 0
+    let doneCount = 0
+    for (const t of rtTurns) {
+      lenSum += t.text.length
+      if (t.done) doneCount++
+    }
+    const sig = `${target.run}|${rtTurns.length}|${lenSum}|${doneCount}`
+    if (sig === rtSigRef.current) return
+    rtSigRef.current = sig
+    const ordered = [...rtTurns].sort((a, b) => a.round - b.round || (a.role === 'user' ? -1 : 1))
+    setProjectsRef.current(prev => {
+      let hit = false
+      const next = prev.map(p => {
+        if (p.id !== target.pid) return p
+        return {
+          ...p,
+          sessions: p.sessions.map(s => {
+            if (s.id !== target.sid) return s
+            const merged = mergeRealtimeTurns(s.messages, ordered, target.run, modelLabel)
+            if (merged === s.messages) return s
+            hit = true
+            return { ...s, messages: merged }
+          }),
+        }
+      })
+      // 没有任何变化时返回原数组，避免无谓的重渲染与落盘
+      return hit ? next : prev
+    })
+  }, [rtTurns, plainChat, modelLabel, realtime.runId])
+
   // ── 消息级操作（自持逻辑、复用循环域与项目域的共享引用，见 agent-code/hooks/useAgentMessageActions.ts）──
   let messageActions!: ReturnType<typeof useAgentMessageActions>
   const { msgRowActionsRef } = (messageActions = useAgentMessageActions({
@@ -325,6 +402,7 @@ export default function AgentCodeView() {
         scroll,
         git,
         mic,
+        realtime,
         loop,
         panels,
         modals,

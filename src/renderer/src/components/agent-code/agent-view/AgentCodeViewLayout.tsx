@@ -37,6 +37,7 @@ import AgentMessageSearch from '../../AgentMessageSearch'
 import { AgentTrajectoryPanel } from '../../AgentTrajectoryPanel'
 import { AgentSessionSidebar, AGENT_SESSION_SLOT_ID } from '../agent-session/AgentSessionSidebar'
 import { AgentInputArea } from '../agent-input/AgentInputArea'
+import { RealtimeVoicePanel } from '../agent-input/RealtimeVoicePanel'
 import { TaskPlanCard } from '../agent-task'
 import { AgentPreviewSlot } from '../agent-preview/AgentPreviewSlot'
 import { useBubbleTip } from '../../useBubbleTip'
@@ -61,6 +62,7 @@ import type { useAgentLoop } from '../hooks/useAgentLoop'
 import type { useAgentPanels } from '../hooks/useAgentPanels'
 import type { useAgentModals } from '../hooks/useAgentModals'
 import type { useAgentSessionActions } from '../hooks/useAgentSessionActions'
+import type { useRealtimeVoice } from '../hooks/useRealtimeVoice'
 
 /** 通用模式可启用的工具中文名（与 PLAIN_CHAT_TOOL_NAMES 一一对应） */
 const PLAIN_CHAT_TOOL_LABELS: Record<string, string> = {
@@ -83,6 +85,8 @@ export interface AgentCodeViewLayoutProps {
   scroll: ReturnType<typeof useAgentScroll>
   git: ReturnType<typeof useAgentGit>
   mic: ReturnType<typeof useAgentMic>
+  /** 实时语音对话（聊天模式输入框旁的按钮 + 输入框上方的状态条） */
+  realtime: ReturnType<typeof useRealtimeVoice>
   loop: ReturnType<typeof useAgentLoop>
   panels: ReturnType<typeof useAgentPanels>
   modals: ReturnType<typeof useAgentModals>
@@ -160,7 +164,7 @@ const MessageEditBox = React.memo(function MessageEditBox({ initial, onSave, onC
 export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }) {
   const {
     projects: projectsDomain, inputDomain, preview: previewDomain, hints: hintsDomain,
-    run, ui, condense, messageActions, scroll, git, mic, loop, panels, modals, sessionActions,
+    run, ui, condense, messageActions, scroll, git, mic, realtime, loop, panels, modals, sessionActions,
     cards, modelGroups, runningCard, apiBaseUrl, modelLabel, handleModelAction, pickEndpointModel, handleStop,
     speakingId,
     msgEndRef, msgRowActionsRef, chatInputAreaRef,
@@ -1063,11 +1067,30 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               <span className="agent-compacting-text">上下文接近上限，正在压缩历史</span>
             </div>
           )}
+          {/* 实时语音状态条：与「上下文压缩中」同位置，贴在输入框上方一条。
+              只在会话进行中挂载，未开始时输入区外观与原来完全一致。 */}
+          {realtime.active && (
+            <RealtimeVoicePanel
+              phase={realtime.phase}
+              speaking={realtime.speaking}
+              slots={realtime.slots}
+              singleSlot={realtime.singleSlot}
+              error={realtime.error}
+              notice={realtime.notice}
+              turns={realtime.turns}
+              levelRef={realtime.levelRef}
+              commit={realtime.commit}
+              stop={realtime.stop}
+            />
+          )}
           <AgentInputArea
             inputDomain={inputDomain}
             hintsDomain={hintsDomain}
             mic={{
               listening, micTranscribing, toggleListen,
+            }}
+            realtime={{
+              active: realtime.active, phase: realtime.phase, toggle: realtime.toggle,
             }}
             models={{
               modelGroups, modelBtnRef, modelLabel,

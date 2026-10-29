@@ -17,7 +17,7 @@ import http from 'http'
 import { app } from 'electron'
 import { randomUUID, createHash } from 'crypto'
 import type * as ptyNs from 'node-pty'
-import type { AgentProject, AgentSession, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus, EngineKind, ReleaseInfo, SdCudartMarker, SdCudartStatus, SdCudartUpstream, EndpointProbe, EndpointAttachResult, ProbeTarget, RemoteEndpoint, ModelEndpoint, EndpointApi } from '../shared/types'
+import type { AgentProject, AgentSession, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus, EngineKind, ReleaseInfo, SdCudartMarker, SdCudartStatus, SdCudartUpstream, EndpointProbe, EndpointAttachResult, ProbeTarget, RemoteEndpoint, ModelEndpoint, EndpointApi, ServerPropsResult } from '../shared/types'
 import { registerCodeMapIpc, disposeCodeMaps, deleteSnapshotForWorkspace } from './services/codeMapService'
 import { registerRetrievalIpc, disposeIndexForWorkspace } from './services/retrievalService'
 import { readGgufMeta } from './services/ggufReader'
@@ -4795,7 +4795,24 @@ export function registerIpcHandlers(): void {
     const payload: Record<string, unknown> = { id, lastUpdated: Date.now() }
     const slots = rawSlots ? tryParseJson(rawSlots) : null
     if (slots && Array.isArray(slots) && slots.length > 0) {
-      const s = slots[0]
+      // 多槽时取「已用上下文最多的那个槽」，不能固定读 0 号槽：
+      // 实时语音、并行会话会落在别的槽上，读空闲槽会让上下文占用永远显示 0。
+      // 注意：这样取到的 nCtx 是**单个槽**的容量（总上下文 ÷ 并行数），
+      // 不是服务端总量——上下文面板里的「上下文窗口」因此显示的是单槽可用量。
+      type SlotMetrics = {
+        n_ctx?: number
+        n_prompt_tokens?: number
+        n_prompt_tokens_processed?: number
+        n_prompt_tokens_cache?: number
+        is_processing?: boolean
+        next_token?: Array<{ n_decoded?: number }>
+        params?: { n_predict?: number }
+      }
+      const list = slots as SlotMetrics[]
+      const s = list.reduce(
+        (best, cur) => ((cur.n_prompt_tokens ?? 0) > (best.n_prompt_tokens ?? 0) ? cur : best),
+        list[0]!
+      )
       if (s.n_ctx !== undefined) payload.nCtx = s.n_ctx
       if (s.n_prompt_tokens !== undefined) payload.nPromptTokens = s.n_prompt_tokens
       if (s.n_prompt_tokens_processed !== undefined) payload.nPromptTokensProcessed = s.n_prompt_tokens_processed
@@ -5096,12 +5113,14 @@ export function registerIpcHandlers(): void {
   })
 
   // --- server-props (查询 llama-server /props：多模态能力检测) ---
-  ipcMain.handle('server-props', async (_e, port: number): Promise<{ ok: boolean; modalities?: { vision?: boolean; audio?: boolean }; error?: string }> => {
+  ipcMain.handle('server-props', async (_e, port: number): Promise<ServerPropsResult> => {
     try {
       const raw = await httpGetText(`http://127.0.0.1:${port}/props`)
       const props = JSON.parse(raw)
       const modalities = props && typeof props.modalities === 'object' ? props.modalities : undefined
-      return { ok: true, modalities }
+      // 并行槽数：实时语音要按它决定能不能再开一条转写会话
+      const slots = props && typeof props.total_slots === 'number' ? props.total_slots : undefined
+      return { ok: true, modalities, slots }
     } catch (e: any) {
       return { ok: false, error: e?.message || '/props 请求失败' }
     }

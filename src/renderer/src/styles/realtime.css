@@ -1,0 +1,154 @@
+/* ══════════════════════════════════════════════════════════════
+   实时语音对话（聊天模式）的样式
+   ──────────────────────────────────────────────────────────────
+   两处：输入框上方的状态条（RealtimeVoicePanel）、输入框里的麦克风按钮。
+   全部挂在 .agent-code-view 下，不会串到其他页面；颜色走主题变量，
+   明暗两套主题都不用单独覆盖。
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── 状态条：.agent-code-chat 的直接子元素，贴在输入框正上方 ── */
+.agent-code-view .rt-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* 左右内缩共用 --chat-input-inset，边缘与输入框严格对齐 */
+  margin: 0 var(--chat-input-inset) 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 12px;
+  user-select: none;
+}
+
+/* 状态圆点：未连通是灰的，连通后青绿，模型说话时变玫红并呼吸 */
+.agent-code-view .rt-bar-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-muted);
+}
+
+.agent-code-view .rt-bar.live .rt-bar-dot {
+  background: #0d9488;
+}
+
+.agent-code-view .rt-bar-dot.speaking {
+  background: #f43f5e;
+  animation: rt-dot-pulse 1s ease-in-out infinite;
+}
+
+@keyframes rt-dot-pulse {
+  50% { opacity: .35; }
+}
+
+.agent-code-view .rt-bar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.agent-code-view .rt-bar.live .rt-bar-status {
+  color: var(--text);
+}
+
+/* 电平条：只做视觉反馈，宽度由行内 style 驱动 */
+.agent-code-view .rt-bar-level {
+  width: 72px;
+  height: 4px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  background: var(--surface-hover);
+  overflow: hidden;
+}
+
+.agent-code-view .rt-bar-level-fill {
+  height: 100%;
+  background: #0d9488;
+  /* 不写 transition：宽度由 rAF 逐帧驱动，再叠一层过渡会拖影、滞后 */
+}
+
+/* 最新一句：单行省略，鼠标悬停看全文 */
+.agent-code-view .rt-bar-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+}
+
+.agent-code-view .rt-bar-text.is-user {
+  color: var(--text-secondary);
+}
+
+/* 单槽模式提示：服务端只有 1 个槽，开不了第二条转写连接 */
+.agent-code-view .rt-bar-note {
+  flex-shrink: 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* 配置没生效（模板写了多槽、服务端仍单槽）：用告警色，但只占这一小块，不抢正文 */
+.agent-code-view .rt-bar-note-warn {
+  color: #b45309;
+  border-left-color: color-mix(in srgb, #b45309 40%, var(--border));
+}
+
+.agent-code-view .rt-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.agent-code-view .rt-bar-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.agent-code-view .rt-bar-btn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.agent-code-view .rt-bar-btn-stop {
+  color: var(--danger, #ef4444);
+}
+
+/* ── 输入框里的实时语音按钮：底子复用 chat-mic-btn，只补「进行中」的配色 ── */
+.agent-code-view .chat-realtime-btn.active {
+  color: #0d9488;
+  background: color-mix(in srgb, #0d9488 14%, transparent);
+  animation: rt-btn-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes rt-btn-pulse {
+  50% { background: color-mix(in srgb, #0d9488 24%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-code-view .rt-bar-dot.speaking,
+  .agent-code-view .chat-realtime-btn.active {
+    animation: none;
+  }
+}
