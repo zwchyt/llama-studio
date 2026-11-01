@@ -28,11 +28,14 @@ import '../styles/sidebar.css'
 const AGENT_ENTRY_LABEL = '智能体'
 
 interface NavItemProps {
-  /** 图标。可省略——省略时只渲染文字（「聊天 / 编码」模式切换就是纯文字按钮：
-   *  它们的图标在侧栏里没有信息增量，反而是收起/展开时最容易看出抖动的地方）。 */
+  /** 图标。可省略——省略时只渲染文字。 */
   icon?: React.ElementType
   label: string
   active?: boolean
+  /** 切换按钮的按下态（aria-pressed）。只有"同一个界面的两种模式"这类分段控件需要：
+   *  它的选中态是纯视觉的（底色 + 形状），读屏拿不到；常驻导航项的"当前页"不吃这条，
+   *  那类语义由视图本身承载，不传就是普通按钮。 */
+  pressed?: boolean
   onClick?: () => void
   /** 鼠标移入时触发：用于提前拉取该视图的 chunk（见 views/viewRegistry 的 preloadViewOnHover） */
   onHover?: () => void
@@ -46,7 +49,7 @@ interface NavItemProps {
 }
 
 const NavItem = forwardRef<{ startAnimation: () => void; stopAnimation: () => void }, NavItemProps>(
-  ({ icon: Icon, label, active, onClick, onHover, onTip, style, children, className = '' }, ref) => {
+  ({ icon: Icon, label, active, pressed, onClick, onHover, onTip, style, children, className = '' }, ref) => {
     const innerRef = useRef<{ startAnimation: () => void; stopAnimation: () => void } | null>(null)
 
     React.useImperativeHandle(ref, () => ({
@@ -80,6 +83,7 @@ const NavItem = forwardRef<{ startAnimation: () => void; stopAnimation: () => vo
            展开态两者一致，覆盖掉可见文字也不产生差异。 */
         data-label={label}
         aria-label={label}
+        aria-pressed={pressed}
         type="button"
       >
         {Icon && <Icon ref={innerRef as any} size={16} className="nav-animate-icon" />}
@@ -332,17 +336,20 @@ export default function Sidebar() {
             否则站在别的页面就没法切回对话 / 工作台了。 */}
         <div className="sidebar-agent-slot" id={AGENT_SESSION_SLOT_ID}>
           <div className="sidebar-mode-switch" role="group" aria-label="Agent Code 模式">
-            {MODE_ITEMS.map((item) => (
-              <NavItem
-                key={navKeyOf(item)}
-                /* 不传 icon：纯文字按钮。这两个模式的图标没有信息增量，
-                   反而在收起/展开的宽度动画里最容易被看出抖动。 */
-                label={item.label}
-                active={isActiveItem(item)}
-                onClick={() => openItem(item)}
-                onHover={() => preloadViewOnHover(item.key)}
-              />
-            ))}
+            {MODE_ITEMS.map((item) => {
+              const on = isActiveItem(item)
+              return (
+                <NavItem
+                  key={navKeyOf(item)}
+                  icon={item.icon}
+                  label={item.label}
+                  active={on}
+                  pressed={on}
+                  onClick={() => openItem(item)}
+                  onHover={() => preloadViewOnHover(item.key)}
+                />
+              )
+            })}
           </div>
         </div>
 

@@ -625,103 +625,6 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   return (
     <div className="agent-code-view">
       {tipNode}
-      {/* 双击顶栏 = 开合右侧面板。原来它还一并开合左侧的会话列表，已去掉：
-          会话列表的显隐只由侧栏自己的收起/展开决定，顶栏不再另管一套。 */}
-      <div className="agent-code-topbar" onDoubleClick={() => { setTreeOpen(v => !v); setContextModalOpen(false) }}>
-        <div className="agent-code-topbar-left">
-          {/* 这里原有「收起 / 展开会话列表」按钮（toggle sidebarOpen），已删除：
-              它和侧栏自己的收起按钮管的是两回事，点下去看不出反应。
-              会话列表现在常驻挂载（见下面 portal 的条件）。 */}
-          <span className="agent-code-topbar-title">{activeSession?.title || '新会话'}</span>
-        </div>
-
-        {/* 顶栏中段留白：鼠标停在这里弹一句提示，点破「双击顶栏可开合右侧面板」这个隐式交互——
-            双击本身看不见、没人会去试，靠这句话把它讲出来。这里只做提示载体，不接收点击，
-            双击照常冒泡到 .agent-code-topbar 生效。 */}
-        <div className="agent-code-topbar-hint" {...tip('双击顶栏开合右侧面板')} />
-
-        <div className="agent-code-topbar-right">
-          <div
-            ref={topbarScrollRef}
-            className={`agent-code-topbar-right-scroll${topbarOvf.left ? ' ovf-left' : ''}${topbarOvf.right ? ' ovf-right' : ''}`}
-          >
-            {/* ── 顶栏按钮按当前工作区模式动态显示（不需要的直接不渲染，不置灰）──
-                编码模式专属：压缩历史 / 轨迹
-                通用模式专属：导出图片 / 导出 PDF / 工具开关
-                两种模式都有：提示词 / 知识库
-                （变更 / 浏览器 / 终端与文件树在右缘「»」按钮的四视图菜单里；通用模式浏览器仍在顶栏） */}
-            {!plainChat && (
-              <TopbarBtn
-                btnRef={condenseBtnRef}
-                active={condenseOpen}
-                onClick={() => setCondenseOpen(v => !v)}
-                icon={condensing ? LoaderIcon : BrainIcon}
-                iconClassName={condensing ? 'spin' : undefined}
-              >压缩历史</TopbarBtn>
-            )}
-            <TopbarBtn btnRef={promptBtnRef} active={promptModalOpen} onClick={openPromptModal} icon={SlidersHorizontalIcon}>提示词</TopbarBtn>
-            <TopbarBtn btnRef={kbBtnRef} active={kbModalOpen} onClick={openKbModal} icon={Database} title="知识库列表（智能体可检索全部库）">知识库</TopbarBtn>
-            {!plainChat && (
-              <TopbarBtn btnRef={trajBtnRef} active={trajOpen} onClick={() => setTrajOpen(v => !v)} icon={RouteIcon}>轨迹</TopbarBtn>
-            )}
-            {/* 变更 / 浏览器 / 终端与文件树已整合到顶栏右缘「»」展开按钮的四视图菜单 */}
-            {/* 导出只在通用模式出现（编码模式的消息带工具卡与文件改动，截图意义不大） */}
-            {plainChat && (
-              <>
-                {/* 通用模式没有文件树/变更/终端，浏览器维持顶栏入口即可 */}
-                <TopbarBtn active={treeOpen && rightPanelMode === 'browser'} onClick={() => toggleRightPanel('browser')} icon={GlobeIcon}>浏览器</TopbarBtn>
-                <TopbarBtn active={false} onClick={handleExportImage} icon={ImageDown} title="把当前可见的对话导出为 PNG（消息区是虚拟滚动的，只截当前这一屏）">导出图片</TopbarBtn>
-                <TopbarBtn active={false} onClick={handleExportPdf} icon={FileDown} title="把整段对话导出为 PDF（遍历全部消息，不受虚拟滚动限制）">导出 PDF</TopbarBtn>
-              </>
-            )}
-          </div>
-          {/* 通用模式的工具开关（原在输入区，随模式切换一起上移到顶栏）。
-              必须放在 -right-scroll 之外：那个容器 overflow-x:auto 会把向下展开的菜单裁掉。 */}
-          {plainChat && (
-            <div ref={chatToolsMenuRef} className="agent-code-tools-switch">
-              <TopbarBtn active={chatToolsMenuOpen} onClick={() => setChatToolsMenuOpen(v => !v)} icon={Wrench} title="通用模式下可启用的工具（默认全关）">
-                工具{chatToolOnCount > 0 ? ` ${chatToolOnCount}` : ''}
-              </TopbarBtn>
-              {chatToolsMenuOpen && (
-                <ul className="agent-code-tools-menu">
-                  {PLAIN_CHAT_TOOL_NAMES.map(name => {
-                    const on = name === 'web_search' ? searchEnabled : chatTools.includes(name)
-                    return (
-                      <li
-                        key={name}
-                        className={`agent-code-tools-item${on ? ' active' : ''}`}
-                        onClick={() => toggleChatTool(name)}
-                      >
-                        {on ? <CheckIcon size={12} /> : <XIcon size={12} />}{PLAIN_CHAT_TOOL_LABELS[name] ?? name}
-                      </li>
-                    )
-                  })}
-                </ul>
-              )}
-            </div>
-          )}
-          {/* 右侧面板展开按钮：编码模式下它不再只是「展开文件树」——点开后面板直接
-              展开成四视图选择界面（文件树 / 变更 / 终端 / 浏览器），点哪个侧边面板
-              就切成哪个界面。通用模式没有这四样，维持原来的单按钮开合，
-              且只在确实打开了预览标签时才出现（否则是点了没反应的按钮）。 */}
-          {plainChat ? (
-            showRightToggle && (
-              <button className="chat-collapse-btn chat-collapse-btn--topbar" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }}>
-                {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
-              </button>
-            )
-          ) : (
-            <button
-              className="chat-collapse-btn chat-collapse-btn--topbar"
-              onClick={toggleRightEntry}
-              aria-label="展开右侧面板：文件树 / 变更 / 终端 / 浏览器"
-              {...tip('展开右侧面板：文件树 / 变更 / 终端 / 浏览器')}
-            >
-              {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
-            </button>
-          )}
-        </div>
-      </div>
 
       <div className="agent-code-body">
         {/* 列表 portal 到导航栏底部的槽里，**常驻挂载**（不再有开关）。
@@ -768,6 +671,103 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
         )}
 
         <div className={`agent-code-chat${chatEmpty ? ' hero-input' : ''}`}>
+          {/* 双击顶栏 = 开合右侧面板。原来它还一并开合左侧的会话列表，已去掉：
+              会话列表的显隐只由侧栏自己的收起/展开决定，顶栏不再另管一套。 */}
+          <div className="agent-code-topbar" onDoubleClick={() => { setTreeOpen(v => !v); setContextModalOpen(false) }}>
+            <div className="agent-code-topbar-left">
+              {/* 这里原有「收起 / 展开会话列表」按钮（toggle sidebarOpen），已删除：
+                  它和侧栏自己的收起按钮管的是两回事，点下去看不出反应。
+                  会话列表现在常驻挂载（见下面 portal 的条件）。 */}
+              <span className="agent-code-topbar-title">{activeSession?.title || '新会话'}</span>
+            </div>
+
+            {/* 顶栏中段留白：鼠标停在这里弹一句提示，点破「双击顶栏可开合右侧面板」这个隐式交互——
+                双击本身看不见、没人会去试，靠这句话把它讲出来。这里只做提示载体，不接收点击，
+                双击照常冒泡到 .agent-code-topbar 生效。 */}
+            <div className="agent-code-topbar-hint" {...tip('双击顶栏开合右侧面板')} />
+
+            <div className="agent-code-topbar-right">
+              <div
+                ref={topbarScrollRef}
+                className={`agent-code-topbar-right-scroll${topbarOvf.left ? ' ovf-left' : ''}${topbarOvf.right ? ' ovf-right' : ''}`}
+              >
+                {/* ── 顶栏按钮按当前工作区模式动态显示（不需要的直接不渲染，不置灰）──
+                    编码模式专属：压缩历史 / 轨迹
+                    通用模式专属：导出图片 / 导出 PDF / 工具开关
+                    两种模式都有：提示词 / 知识库
+                    （变更 / 浏览器 / 终端与文件树在右缘「»」按钮的四视图菜单里；通用模式浏览器仍在顶栏） */}
+                {!plainChat && (
+                  <TopbarBtn
+                    btnRef={condenseBtnRef}
+                    active={condenseOpen}
+                    onClick={() => setCondenseOpen(v => !v)}
+                    icon={condensing ? LoaderIcon : BrainIcon}
+                    iconClassName={condensing ? 'spin' : undefined}
+                  >压缩历史</TopbarBtn>
+                )}
+                <TopbarBtn btnRef={promptBtnRef} active={promptModalOpen} onClick={openPromptModal} icon={SlidersHorizontalIcon}>提示词</TopbarBtn>
+                <TopbarBtn btnRef={kbBtnRef} active={kbModalOpen} onClick={openKbModal} icon={Database} title="知识库列表（智能体可检索全部库）">知识库</TopbarBtn>
+                {!plainChat && (
+                  <TopbarBtn btnRef={trajBtnRef} active={trajOpen} onClick={() => setTrajOpen(v => !v)} icon={RouteIcon}>轨迹</TopbarBtn>
+                )}
+                {/* 变更 / 浏览器 / 终端与文件树已整合到顶栏右缘「»」展开按钮的四视图菜单 */}
+                {/* 导出只在通用模式出现（编码模式的消息带工具卡与文件改动，截图意义不大） */}
+                {plainChat && (
+                  <>
+                    {/* 通用模式没有文件树/变更/终端，浏览器维持顶栏入口即可 */}
+                    <TopbarBtn active={treeOpen && rightPanelMode === 'browser'} onClick={() => toggleRightPanel('browser')} icon={GlobeIcon}>浏览器</TopbarBtn>
+                    <TopbarBtn active={false} onClick={handleExportImage} icon={ImageDown} title="把当前可见的对话导出为 PNG（消息区是虚拟滚动的，只截当前这一屏）">导出图片</TopbarBtn>
+                    <TopbarBtn active={false} onClick={handleExportPdf} icon={FileDown} title="把整段对话导出为 PDF（遍历全部消息，不受虚拟滚动限制）">导出 PDF</TopbarBtn>
+                  </>
+                )}
+              </div>
+              {/* 通用模式的工具开关（原在输入区，随模式切换一起上移到顶栏）。
+                  必须放在 -right-scroll 之外：那个容器 overflow-x:auto 会把向下展开的菜单裁掉。 */}
+              {plainChat && (
+                <div ref={chatToolsMenuRef} className="agent-code-tools-switch">
+                  <TopbarBtn active={chatToolsMenuOpen} onClick={() => setChatToolsMenuOpen(v => !v)} icon={Wrench} title="通用模式下可启用的工具（默认全关）">
+                    工具{chatToolOnCount > 0 ? ` ${chatToolOnCount}` : ''}
+                  </TopbarBtn>
+                  {chatToolsMenuOpen && (
+                    <ul className="agent-code-tools-menu">
+                      {PLAIN_CHAT_TOOL_NAMES.map(name => {
+                        const on = name === 'web_search' ? searchEnabled : chatTools.includes(name)
+                        return (
+                          <li
+                            key={name}
+                            className={`agent-code-tools-item${on ? ' active' : ''}`}
+                            onClick={() => toggleChatTool(name)}
+                          >
+                            {on ? <CheckIcon size={12} /> : <XIcon size={12} />}{PLAIN_CHAT_TOOL_LABELS[name] ?? name}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+                </div>
+              )}
+              {/* 右侧面板展开按钮：编码模式下它不再只是「展开文件树」——点开后面板直接
+                  展开成四视图选择界面（文件树 / 变更 / 终端 / 浏览器），点哪个侧边面板
+                  就切成哪个界面。通用模式没有这四样，维持原来的单按钮开合，
+                  且只在确实打开了预览标签时才出现（否则是点了没反应的按钮）。 */}
+              {plainChat ? (
+                showRightToggle && (
+                  <button className="chat-collapse-btn chat-collapse-btn--topbar" onClick={() => { setContextModalOpen(false); setTreeOpen(v => !v) }}>
+                    {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
+                  </button>
+                )
+              ) : (
+                <button
+                  className="chat-collapse-btn chat-collapse-btn--topbar"
+                  onClick={toggleRightEntry}
+                  aria-label="展开右侧面板：文件树 / 变更 / 终端 / 浏览器"
+                  {...tip('展开右侧面板：文件树 / 变更 / 终端 / 浏览器')}
+                >
+                  {treeOpen ? <ChevronRightIcon size={14} /> : <ChevronLeftIcon size={14} />}
+                </button>
+              )}
+            </div>
+          </div>
           <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll} onWheel={onChatWheel} onTouchMove={pauseFollow} onMouseUp={handleMessagesMouseUp}>
             {activeSession?.memory?.summary && (
               <HistorySummaryBubble summary={activeSession.memory.summary} count={activeSession.memory.coveredCount} />

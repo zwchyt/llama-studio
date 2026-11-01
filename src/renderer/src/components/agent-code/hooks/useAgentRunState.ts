@@ -30,8 +30,8 @@ export function useAgentRunState() {
   // 思考增量 → false（思考中）；正文增量 / 思考闭合 / 工具声明 → true（思考结束）。
   // 思考链转圈只看 streaming && !thinkDone，不依赖任何推断，工具执行期间必然收起。
   const [thinkDone, setThinkDone] = useState(true)
-  // 思考程度（发送给 Pi 会话前动态设置），默认 medium；ref 供 runPiTurn 闭包读最新值而不必进 deps。
-  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>('medium')
+  // 思考程度（发送给 Pi 会话前动态设置），默认关闭；ref 供 runPiTurn 闭包读最新值而不必进 deps。
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>('off')
   const thinkingLevelRef = useRef<ThinkingLevel>(thinkingLevel)
   thinkingLevelRef.current = thinkingLevel
   // 思考程度自绘下拉（替代原生 <select>，使展开列表也可用项目暗色主题）

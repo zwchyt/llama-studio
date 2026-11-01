@@ -32,7 +32,13 @@
 
 html.theme-dark .sidebar-wrapper {
   --sidebar-bg: linear-gradient(180deg, rgba(46, 49, 56, .97) 0%, rgba(40, 43, 49, .98) 100%);
-  --sidebar-border: rgba(255, 255, 255, .075);
+  /* 深色下描边直接取全局的 --border-strong (#4b505b)，与会话面板、右侧面板同一色：
+     原来这条是 rgba(255,255,255,.075)，落在应用底色 (#202227) 上算出来是 #313337，
+     与卡面 #2e3138 只差 2、3 档——等于看不见。而紧挨着它的会话面板左边框是 #4b505b，
+     两张贴在一起、一边有一边没有，中间那道缝就格外显眼。
+     粗细仍保持 1px 不动：图标定位那条链（8 外边距 + 1 边框 + 10 内边距 + 10 导航项内边距）
+     按 1px 算成定点，改成会话面板的 1.5px 会让收起/展开时的图标横挪半像素。 */
+  --sidebar-border: var(--border-strong);
   --sidebar-inner-highlight: inset 0 1px 0 rgba(255, 255, 255, .045);
   --sidebar-shadow: 0 1px 2px rgba(0, 0, 0, .2), 0 10px 30px rgba(0, 0, 0, .16);
   --nav-hover: rgba(255, 255, 255, .055);
@@ -70,9 +76,9 @@ html.theme-dark .sidebar-wrapper {
    （原来这里改了内边距并让导航项居中，切换瞬间图标会横跳 6.5px，
    叠起来就是「收完了停一下再啪地变过去」。）
    下面这条 .nav-item>*:not(:first-child) 是收起态唯一的"内容"改动：把 <span> 标签藏掉。
-   注意它按**子节点位置**判定，所以「图标必须是第一个子节点」是硬约束——
-   模式切换那两个按钮（纯文字、无图标）不能用这条规则，它们靠父级 .sidebar-agent-slot
-   整块淡出来处理，见下。 */
+   注意它按**子节点位置**判定，所以「图标必须是第一个子节点」是硬约束。
+   模式切换那两个按钮也吃这条，但看不出效果：收起时父级 .sidebar-agent-slot 整块淡出，
+   见下。 */
 
 .sidebar-wrapper.icon-only .nav-item>*:not(:first-child) {
   display: none;
@@ -142,37 +148,124 @@ html.theme-dark .sidebar-wrapper {
    排在「新建聊天 / 新添项目」之上。做成两列分段控件而不是再堆两行导航项：
    一眼看出是同一个界面的两种模式，省一半高度，也把「选模式 → 新建 → 挑会话」
    这条自上而下的动作串成一条。
-   左右内缩 12px 与下方 .agent-code-session-new-btn 的 margin 对齐。 */
+   左右内缩 12px 与下方 .agent-code-session-new-btn 的 margin 对齐。
+
+   这个容器一共三层，每层只干一件事，任何一层都不越界：
+     外框  —— 容器与层级：比侧栏卡面深一档的凹槽底 + 1px 描边 + 12px 圆角；
+     ::before —— 唯一的"选中面"：一枚按格宽平移的胶囊，选中态的白面与形状全在它身上；
+     两格  —— 只放图标和文字，常态 / 悬停 / 按下 / 选中四态一律不画底色、不画描边、不画投影。
+   选中态只能有一个来源。格身只要画了任何东西，它就会与那枚面错位——
+   基础 .nav-item.active 带的 --nav-active 填充和 0 1px 2px 外投影，就是两格中间那道
+   竖阴影的来源（它按格子的直角矩形投影，面是胶囊，两者对不上）。下面用一组并列
+   选择器把它彻底压掉。
+
+   几何：两格填满外框（外框内边距 0、两格之间不留缝）。选中面外端圆角正好等于外框内沿
+   （12 − 1 描边 = 11px）所以严丝合缝；内端收成半径 18px 的半圆（= 格高 36 的一半）。
+   切换时两头同时改形状，border-radius 与 transform 走同一条曲线：中途正好是两头等长的
+   胶囊，落位才分出方圆。位移走 transform（只合成不重排），文字提亮的时长与它对齐，
+   面和字是同一件事，不是两件事。
+   面上不投任何阴影：这枚面只有内端那一头是可见边界，投影必然糊在那道半圆收口上，
+   看着就是"两边没对齐"；层级由凹槽底与浮起面的色差承担，不需要投影再强调一次。
+
+   配色：外框必须比它所在的侧栏卡面明显深一档，否则两层糊成一层、看不出这是一个容器。
+   浅色下外框不用任何实心浅灰，改用一层压暗的半透明底（文字色 9%）——它叠在卡面（或界面
+   背景图）之上取色，卡面变透它跟着变深，永远比卡面暗，不会像 --surface-hover (#f2f2f3)
+   那样和近白的卡面 (约 #fbfcfd) 只差十几分之一、开背景图时更是跟着一起透掉。
+   选中面吃 --surface：浅色下与压暗后的外框差约 16 档。深色下方向相反（--surface-hover
+   比 --surface 更亮，拿它当底会让选中面反而发暗），所以底取全局最深的 --bg #202227，
+   比侧栏卡面 (#2e3138 → #282b31) 也深一档，仍是"面比底亮、底比卡面暗"。
+
+   总高 38px = 描边 1×2 + 格高 36，与改造前（按钮 30 + 下内边距 8）相同，
+   下面的会话列表不会因为这里被顶动。 */
 .sidebar-mode-switch {
+  position: relative;
+  /* 选中面是 z-index: -1 的伪元素，靠这条把它关进本容器的层叠上下文，
+     否则会掉到侧栏卡面后面去（直接看不见）——与 .nav-item 那层柔光同一个做法。 */
+  isolation: isolate;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  padding: 0 12px 8px;
+  margin: 0 12px 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
 }
 
-/* 复用 .nav-item 的激活语义（填充 + 左侧竖条），只把「整行导航项」压成半个分段按钮。
-   纯文字、不带图标：这两个模式的图标没有信息增量，而在收起/展开的宽度动画里，
-   图标是唯一会被逐帧重新栅格化的东西——去掉它，这块就没有会抖的元素了。
-   选中态用实心 + 描边双重标记：只换底色的话，两个按钮在浅色主题下几乎分不出谁亮着。 */
+html.theme-dark .sidebar-mode-switch {
+  background: var(--bg);
+}
+
+/* 滑动的那枚选中面。
+   外端圆角必须正好等于外框内沿的圆角（外框 12px − 1px 描边 = 11px）才贴合：
+   更早的做法是让面探出外框 20px、由 overflow 裁掉外端——但裁切只能切掉、不能补满，
+   面自己的 18px 圆角比内沿的 11px 更鼓，转角处就会剩下一弯凹槽底色。
+   现在面自己按位置摆两头，不再依赖裁切，也就不需要外框 overflow: hidden。 */
+.sidebar-mode-switch::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 50%;
+  border-radius: 11px 18px 18px 11px;
+  background: var(--surface);
+  transition: transform .24s cubic-bezier(.2, .8, .2, 1), border-radius .24s cubic-bezier(.2, .8, .2, 1);
+}
+
+/* 第二项（编码）被选中时整枚滑到右半边，两头圆角跟着镜像过来。
+   用 :has() 而不是在组件里加类：形状与位置全由 CSS 从已有的 .active 派生，组件不多一个状态。 */
+.sidebar-mode-switch:has(.nav-item.active:last-child)::before {
+  transform: translateX(100%);
+  border-radius: 18px 11px 11px 18px;
+}
+
+/* 系统「减少动态效果」偏好下这枚面直接跳到位。本文件其余过渡（侧栏宽度、槽淡出）
+   沿用既有做法不加守卫，这里只为自己新引入的这段位移负责。 */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-mode-switch::before {
+    transition: none;
+  }
+}
+
+/* 带图标：图标由 navConfig 的 MODE_ITEMS 唯一定义，收起/展开动画的抖动已由
+   .nav-item svg 的 will-change: transform 单独成层解决（见下面那条说明）。 */
 .sidebar-mode-switch .nav-item {
   justify-content: center;
   gap: 6px;
-  height: 30px;
+  height: 36px;
+  /* margin 归零：基础规则的上下 1px 会把格顶出外框。
+     圆角与选中面同形（外端 11 / 内端 18，右格镜像）：格身不画底，这个形状只服务
+     键盘焦点环，让 Tab 走到哪一格，哪一格就亮起面该有的轮廓。 */
   padding: 0 8px;
-  border: 1px solid var(--border);
-  background: var(--bg);
+  margin: 0;
+  border: none;
+  border-radius: 11px 18px 18px 11px;
   font-size: 12px;
+  /* 文字提亮与面的位移同时走完；沿用基础那条 .15s 会先字后形，看着是两件事 */
+  transition: color .24s cubic-bezier(.2, .8, .2, 1), transform .15s ease;
 }
 
-.sidebar-mode-switch .nav-item:hover {
-  border-color: var(--border-strong);
+.sidebar-mode-switch .nav-item:last-child {
+  border-radius: 18px 11px 11px 18px;
+}
+
+/* 格身四态一律不画填充与投影——选中态由那枚面独占。
+   必须把这些状态并列写全，逐条单独压会漏：基础 .nav-item:hover 与 .nav-item.active
+   都是 (0,2,0) 且落在本文件后面，只压 .nav-item 会被盖回去；深色那条
+   html.theme-dark .nav-item.active 带元素选择器、权重更高，要单独再压一次。 */
+.sidebar-mode-switch .nav-item,
+.sidebar-mode-switch .nav-item:hover,
+.sidebar-mode-switch .nav-item.active {
+  background: none;
+  box-shadow: none;
+}
+
+html.theme-dark .sidebar-mode-switch .nav-item.active {
+  box-shadow: none;
 }
 
 .sidebar-mode-switch .nav-item.active {
-  background: var(--surface-hover);
-  border-color: var(--border-strong);
   color: var(--text);
-  box-shadow: var(--shadow);
 }
 
 /* 槽位内容（会话侧栏）是在首屏空闲时才挂载进来的：之前它没有任何过渡，是直接"跳"出来的。
@@ -408,8 +501,8 @@ html.theme-dark .nav-item.active {
   background: var(--accent);
 }
 
-/* 只作用于图标，不能写成 `>*:first-child`：模式切换是**纯文字**按钮，
-   它的第一个子节点就是标签——按 first-child 命中会把 font-size 归零，文字直接消失。 */
+/* 只作用于图标，不写成 `>*:first-child`：NavItem 的图标是可选的，一旦某项没传图标，
+   first-child 就命中标签，把 font-size 归零、文字直接消失。 */
 .nav-item>.nav-animate-icon {
   align-self: center;
   flex-shrink: 0;
@@ -451,11 +544,6 @@ html.theme-dark .nav-item.active {
 .sidebar-mode-switch .nav-item::after,
 .sidebar-mode-switch .nav-item::before {
   display: none;
-}
-
-/* 模式切换是纯文字按钮，没有图标要跟标签对齐，取消那条 -1.5px 的微调 */
-.sidebar-mode-switch .nav-item>span {
-  transform: none;
 }
 
 /* 收起态（只剩图标）：填充与竖条照旧生效——竖条是伪元素，不受

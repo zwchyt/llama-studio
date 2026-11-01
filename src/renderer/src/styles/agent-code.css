@@ -1154,19 +1154,22 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   color: var(--text-secondary);
 }
 
+/* ── 会话卡片的头部 ──
+   它原来是浮在卡片上方的一枚独立圆角条（自带描边 + 20px 圆角 + 8px 外边距），
+   与会话卡片并排就是"两个容器叠着"。现在 DOM 已搬进 .agent-code-chat 成为它的第一个
+   子节点，描边、圆角、外边距全部由卡片那一圈提供，这里只留一条底部分隔线。
+   高度取自卡片上定义的 --chat-head-h，是那个数的唯一使用处：卡片内所有"顶到上边"的
+   浮层（右侧消息导航竖条、右上角各张卡、消息搜索条）都按它让位，改这一处全体跟着动。
+   底色不再自写：透出卡片的 --bg，整张卡片一个底，融合才成立。 */
 .agent-code-topbar {
   user-select: none;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 8px;
-  /* 顶部同样留 8px（与左右一致）：不留的话圆角上边框会顶在标题栏下沿 */
-  margin: 8px 8px 0;
-  height: 40px;
+  padding: 0 10px;
+  height: var(--chat-head-h);
   flex-shrink: 0;
-  border: 1.5px solid var(--border-strong);
-  background: var(--surface);
-  border-radius: var(--radius-lg, 20px);
+  border-bottom: 1px solid var(--border);
 }
 
 .agent-code-topbar-left {
@@ -1925,6 +1928,9 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
      会话栏一宽过 860px 输入框就比对话宽出一截；让内缩跟着居中留白一起长，窄栏时退化成 54px 原样。
      定义在本层（而不是 .chat-input-area 上）是为了让同为直接子元素的压缩提示条也能对齐输入框。 */
   --chat-input-inset: calc(54px + max(0px, (100% - 860px) / 2));
+  /* 头部（.agent-code-topbar）的高度。卡片里凡是"顶到上边"的浮层都要按它让位，
+     所以这个数只在这里定义一次，头部与各处浮层共用。 */
+  --chat-head-h: 40px;
 }
 
 /* ── 项目 / 会话列表 ──
@@ -2013,8 +2019,9 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   width: 820px;
   max-width: calc(100% - 16px);
   /* 高度跟着聊天区走：父级 .agent-code-chat 是 flex:1 的定位容器且 overflow:hidden，
-     超出会被裁掉，所以只留 16px 边距 */
-  max-height: calc(100% - 16px);
+     超出会被裁掉。卡片本体已从 top 让开了头部，所以可用高度也要把头部扣掉，
+     否则底部那一段会被卡片的 overflow 裁掉。 */
+  max-height: calc(100% - 16px - var(--chat-head-h));
   container-type: inline-size;
 }
 
@@ -3799,6 +3806,19 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   --hero-accent: #acdfe7;
   justify-content: center;
   gap: 14px;
+  /* 空会话时整张卡片靠 justify-content: center 把「欢迎块 + 输入框 + 建议项」这一组
+     垂直居中。头部不能参与这个居中（否则它会跟着飘到中间，还多占一个 14px 间距），
+     所以这里把它取出文档流、钉在卡片上沿，再用 padding-top 把居中区推到头部下方。
+     绝对定位后 left/right:0 的基准是卡片的 padding box，顶部两角由卡片的圆角裁齐，
+     与有消息时的表现一致。 */
+  padding-top: var(--chat-head-h);
+}
+
+.agent-code-chat.hero-input .agent-code-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
 }
 
 /* 消息区不再撑满，改为按内容高度参与居中；flex-shrink 保留，
@@ -6147,7 +6167,8 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 
 .agent-task-card {
   position: absolute;
-  top: 8px;
+  /* 让位给卡片头部（顶栏）：头部现在是卡片的一部分，不让就会压在它上面 */
+  top: calc(8px + var(--chat-head-h));
   right: 8px;
   z-index: var(--z-panel);
   width: 320px;
@@ -7038,7 +7059,9 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 
 .agent-chat-rail {
   position: absolute;
-  top: 12px;
+  /* 让位给卡片头部：这条竖带 right:6px + width:38px 正压在头部右缘那枚「展开右侧面板」
+     按钮上，且可见时 pointer-events:auto，不让位就会吃掉那里的单击与双击。 */
+  top: calc(12px + var(--chat-head-h));
   bottom: 12px;
   /* 宽度 = 短线基准宽(32px) + 左右各 3px 安全边。必须容得下最长的那条短线，
      超出的部分会被 .agent-code-chat 的 overflow:hidden 裁掉。 */
@@ -12271,7 +12294,8 @@ html.theme-dark .user-msg-lightbox {
 /* ── 会话内消息搜索栏（Ctrl/Cmd+F）────────────── */
 .agent-msg-search {
   position: absolute;
-  top: 10px;
+  /* 让位给卡片头部（Ctrl/Cmd+F 的浮条原本贴着会话区上沿，现在上沿是头部）*/
+  top: calc(10px + var(--chat-head-h));
   right: 16px;
   z-index: var(--z-tooltip);
   display: flex;

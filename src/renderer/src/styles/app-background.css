@@ -126,12 +126,14 @@ html:not(.theme-dark) .app.has-bg .card-run-btn.btn-primary {
   border-color: color-mix(in srgb, #dbdbdb var(--app-bg-fill), transparent);
 }
 
-/* ── 吃 --surface-hover 的卡面与控件：模式切换 / 列表行（聊天、项目、会话）/ 过滤框 / 新建按钮 / 消息头像 ──
+/* ── 吃 --surface-hover 的卡面与控件：列表行（聊天、项目、会话）/ 过滤框 / 新建按钮 / 消息头像 ──
    这些都取 --surface-hover，而它不在本文件的透写名单里 → 常态跟着透、一选中或 hover 就变实心。
    不能整体调透：--surface-hover 还兼作浮层菜单的悬停高亮，那些弹窗是刻意钉回实心的，所以按容器点名。
-   基准取 :root 那份实心快照（这几处不在自定 --surface-hover 的那几页里）。 */
-html:not(.theme-dark) .app.has-bg :is(.sidebar-mode-switch,
-  .agent-code-chat-item,
+   基准取 :root 那份实心快照（这几处不在自定 --surface-hover 的那几页里）。
+   侧栏模式切换不在此列：它的凹槽底改成了一层压暗的半透明底（见 sidebar.css 的
+   .sidebar-mode-switch），本来就叠在卡面与背景图之上取色，无需再按 --app-bg-fill 折算；
+   选中那格吃 --surface，已由上面的 .app.has-bg 透写覆盖。 */
+html:not(.theme-dark) .app.has-bg :is(.agent-code-chat-item,
   .agent-code-project-item,
   .agent-code-session-item,
   .agent-code-add-sess-btn,

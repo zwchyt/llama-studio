@@ -322,7 +322,8 @@ textarea {
 
 
 /* 主界面外层留白：上下右取 8px，与导航栏卡片（sidebar.css 的 .sidebar { margin: 8px }）
-   以及 Agent Code 列（agent-code.css 的 topbar / chat 各 8px）同口径——四边落点一致。
+   以及 Agent Code 会话卡片（agent-code.css 的 .agent-code-chat { margin: 8px }）同口径——
+   四边落点一致。顶栏已并入会话卡片成为它的头部，不再单独占一份 8px。
    左边取 16px：侧栏自己还有 8px 外边距，8+16=24，与右侧 8px 的视觉间距拉平。 */
 .content>*:not(.chat-layout):not(.agent-code-view):not(.llama-host) {
   /* 间距保留：上右下 8、左 16。左边那 8px 被导航栏边框和投影吃掉，写 8 会贴死。
