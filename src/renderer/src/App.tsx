@@ -837,7 +837,11 @@ function AppMain() {
                 flex: 1,
                 minHeight: 0,
                 padding: 0,
-                overflow: 'hidden',
+                // clip + 24px 外延（而不是 hidden）：这一层左缘正压在导航栏与主界面的分界上，
+                // 齐刀切会把工作台卡片的投影尾巴截成一条实心灰带，看着像导航栏还套着边框。
+                // 详见 agent-code.css 的 .agent-code-view / .agent-code-body（同一条处理）。
+                overflow: 'clip',
+                overflowClipMargin: '24px',
               }}
               inert={!isAgentCodeDeferred}
             >

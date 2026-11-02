@@ -4,8 +4,9 @@
    图铺在整窗最底一层（App.tsx 里的 .app-bg），界面上每一层面板浮在它上面、
    靠半透明底色把图透出来。透的做法是重写 --bg / --surface 两个底色令牌，不是
    挨个容器点名：全界面的外框与卡面都吃这两个令牌，一处改就都跟着透，以后新增
-   界面也不用回来补选择器。另有一批卡面走独立令牌（导航栏 --sidebar-bg、消息气泡
-   --agent-bubble-bg），不吃那两个变量，按同一条 --app-bg-fill 单独点名一起透；
+   界面也不用回来补选择器。底层 --layer-base（导航栏与卡片那圈缝同用的一层）与它们一起透；
+   另有一批面走独立令牌（消息气泡 --agent-bubble-bg），不吃那两个变量，
+   按同一条 --app-bg-fill 单独点名一起透；
    代码块、表格（--code-bg 等）保持实心负责可读性，浮层弹窗钉回实心。
 
    开关在「设置 › 界面背景」。没图时根节点不带 .has-bg，本文件一条都不生效。
@@ -30,6 +31,9 @@
 html:not(.theme-dark) .app.has-bg {
   --bg: color-mix(in srgb, var(--bg-solid) var(--app-bg-fill), transparent);
   --surface: color-mix(in srgb, var(--surface-solid) var(--app-bg-fill), transparent);
+  /* 底层（导航栏 + 界面卡片那圈缝）一起透：它不透的话，图铺上去之后导航区会比面板实心一截，
+     前后层次就反过来了。 */
+  --layer-base: color-mix(in srgb, var(--layer-base-solid) var(--app-bg-fill), transparent);
 }
 
 /* ── 最底一层：铺图 + 压纱 ── */
@@ -71,17 +75,10 @@ html:not(.theme-dark) .app.has-bg :is(.settings-view, .about-container, .engines
   --surface: color-mix(in srgb, #ffffff var(--app-bg-fill), transparent);
 }
 
-/* ── 导航栏卡面 / 我的消息气泡：同一族写死色值的令牌 ──
-   两者各带一套自己的不透明底色（--sidebar-bg 是自带 alpha 的渐变、--agent-bubble-bg 是实色），
-   不吃 --bg/--surface，所以本文件的透法到不了它们：强度拉满侧栏依旧实心、气泡永远全不透明，
-   与会话面板 .agent-code-chat（吃 --bg）并排就是一深一浅。
-   这里按同一条 --app-bg-fill 重算它们的 alpha：色相各留各的，透实程度与会话面板对齐。 */
-html:not(.theme-dark) .app.has-bg .sidebar-wrapper {
-  --sidebar-bg: linear-gradient(180deg,
-      color-mix(in srgb, #ffffff var(--app-bg-fill), transparent) 0%,
-      color-mix(in srgb, #f8f9fb var(--app-bg-fill), transparent) 100%);
-}
-
+/* ── 我的消息气泡：写死色值的独立令牌 ──
+   它带一套自己的不透明底色（--agent-bubble-bg 是实色），不吃 --bg/--surface，所以本文件的
+   透法到不了它：强度拉满气泡永远全不透明，与会话面板 .agent-code-chat（吃 --bg）并排就是
+   一深一浅。这里按同一条 --app-bg-fill 重算它的 alpha，透实程度与会话面板对齐。 */
 html:not(.theme-dark) .app.has-bg .agent-code-view {
   --agent-bubble-bg: color-mix(in srgb, #f2f2f2 var(--app-bg-fill), transparent);
 }
@@ -131,7 +128,7 @@ html:not(.theme-dark) .app.has-bg .card-run-btn.btn-primary {
    不能整体调透：--surface-hover 还兼作浮层菜单的悬停高亮，那些弹窗是刻意钉回实心的，所以按容器点名。
    基准取 :root 那份实心快照（这几处不在自定 --surface-hover 的那几页里）。
    侧栏模式切换不在此列：它的凹槽底改成了一层压暗的半透明底（见 sidebar.css 的
-   .sidebar-mode-switch），本来就叠在卡面与背景图之上取色，无需再按 --app-bg-fill 折算；
+   .sidebar-mode-switch），本来就叠在应用底色与背景图之上取色，无需再按 --app-bg-fill 折算；
    选中那格吃 --surface，已由上面的 .app.has-bg 透写覆盖。 */
 html:not(.theme-dark) .app.has-bg :is(.agent-code-chat-item,
   .agent-code-project-item,

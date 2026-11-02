@@ -23,6 +23,11 @@
   --bg-solid: var(--bg);
   --surface-solid: var(--surface);
   --surface-hover-solid: var(--surface-hover);
+  /* 底层：导航栏整片 + 界面卡片四周那圈缝所露出的面，全局最靠下的一层。
+     界面卡片浮在它上面，前后关系只靠这档色差（比 --bg 深约 4.6 个 L*、比 --surface 深约 5.0），
+     不靠边框和投影。深色值见 theme-dark.css，开背景图时的透写见 app-background.css。 */
+  --layer-base: #e6e9ef;
+  --layer-base-solid: var(--layer-base);
   /* 边框必须比它所在的面深一档才有轮廓（曾为 #e8e8e8，比当时的 #e5e5e5 底色更浅，
      导致工具内容块等 1px 边框呈现"白色描边"）；#d8d8d8 与 --border-strong #d0d0d0 成梯度 */
   --border: #d8d8d8;
@@ -48,6 +53,13 @@
   --radius-sm: 8px;
   --radius-lg: 20px;
   --shadow: 0 1px 3px rgba(0, 0, 0, .08), 0 1px 2px rgba(0, 0, 0, .06);
+  /* 界面面板（普通界面卡 / 工作台会话卡 / 右侧面板）浮在底层 --layer-base 上的投影。
+     面板四周只有 8px 空档（贴导航栏那侧 16px），所以横向必须收得住：两层大模糊都带负扩散，
+     横向只探出 4~7px、纵向靠位移往下走（下边那 8px 之外就是窗口边，被裁掉也看不见）。
+     若写成不分方向的 20px 模糊，投影会在左侧那条缝上被容器硬切出一道竖线。
+     向上不留溢出（位移大于模糊半径减扩散），顶边那条缝保持干净。 */
+  --shadow-panel:
+    0 1px 2px rgba(16, 20, 28, .09), 0 6px 14px -3px rgba(16, 20, 28, .13), 0 18px 34px -10px rgba(16, 20, 28, .16);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, .1), 0 2px 4px rgba(0, 0, 0, .06);
   --shadow-lg: 0 10px 32px rgba(0, 0, 0, .14), 0 4px 8px rgba(0, 0, 0, .08);
   --transition: 180ms cubic-bezier(.4, 0, .2, 1);
@@ -247,6 +259,11 @@ textarea {
   display: flex;
   flex: 1;
   overflow: hidden;
+  /* 底层只在这里铺一次：导航栏那一片和界面卡片四周那圈缝是同一块 painted 面，
+     中间没有第二层，所以导航栏右缘不可能出现竖线。
+     （先前分两处铺在 .sidebar 与 .content 上——两处只要有一处没生效或色值不同，
+     就会在两者相接的那条边界上留出色差。） */
+  background: var(--layer-base);
 }
 
 /* 注：这里原有 @keyframes sidebar-flyout-in（收起态侧栏浮层的入场动画），已删除。
@@ -265,8 +282,14 @@ textarea {
 
 .content {
   flex: 1;
-  overflow: hidden;
+  /* 用 clip 而不是 hidden，并留出 24px 外延：界面面板的投影横向铺到导航区这一侧，
+     裁切面若正好压在导航栏与主界面的分界（220）上，投影尾巴会被齐刀切断——
+     那 8 像素缝就变成一条上下等宽的实心灰带、左右各一道硬边，看着就是"导航栏右边多了一条线"。
+     留 24px 让投影在自己范围内淡完，缝里只剩自然渐隐。 */
+  overflow: clip;
+  overflow-clip-margin: 24px;
   min-height: 0;
+  /* 不铺底：底层由上一层 .main-layout 一整片铺好，本容器与导航栏之间不存在第二层。 */
   /* 普通界面容器与工作台容器**叠在同一个 grid 格子里**：谁显隐都不影响另一个的布局，
      所以两边都不必改定位方式（position 一改就会抢走后代的包含块，
      视图里几十处 position:absolute 会集体错位）。 */
@@ -321,14 +344,13 @@ textarea {
    要加动效只能加在具体元素上，且不能从 opacity 0 开始（见 cards.css 的 card-reveal）。 */
 
 
-/* 主界面外层留白：上下右取 8px，与导航栏卡片（sidebar.css 的 .sidebar { margin: 8px }）
-   以及 Agent Code 会话卡片（agent-code.css 的 .agent-code-chat { margin: 8px }）同口径——
-   四边落点一致。顶栏已并入会话卡片成为它的头部，不再单独占一份 8px。
-   左边取 16px：侧栏自己还有 8px 外边距，8+16=24，与右侧 8px 的视觉间距拉平。 */
+/* 主界面外层留白：四边统一 8px，与 Agent Code 会话卡片（agent-code.css 的
+   .agent-code-chat { margin: 8px }）同口径。顶栏已并入会话卡片成为它的头部，不再单独占一份 8px。
+   左边不再多给：导航栏不铺自己的底、与这圈缝同属一整片底层，两侧同宽才对称。
+   8px 也刚好容得下界面面板的投影（横向探出 ≤7px），不会被本容器裁成竖线。 */
 .content>*:not(.chat-layout):not(.agent-code-view):not(.llama-host) {
-  /* 间距保留：上右下 8、左 16。左边那 8px 被导航栏边框和投影吃掉，写 8 会贴死。
-     底色透色的问题由 .view-transition 自己的实底背景解决，不靠归零内边距。 */
-  padding: 8px 8px 8px 16px;
+  /* 四边 8。那圈缝露出的底色来自上一层 .main-layout（一整片底层），本容器不铺底。 */
+  padding: 8px;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -341,8 +363,8 @@ textarea {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  /* 与普通页面同一口径：上右下 8、左 16（左边多出的 8 被导航栏吃掉） */
-  padding: 8px 8px 8px 16px;
+  /* 与普通页面同一口径：四边 8 */
+  padding: 8px;
   overflow: hidden;
   transition: opacity 120ms ease;
   will-change: opacity;
@@ -364,9 +386,11 @@ textarea {
   flex: 1;
   min-height: 0;
   background: var(--surface);
-  border: 1.5px solid var(--border);
+  /* 描边留宽不留色：这圈线紧贴导航栏右缘时会被读成「导航栏自己的圆角边框」。
+     卡片的边界改由底色差 + 投影表达；宽度留着是为了不改动盒模型（去掉会让内容区宽 3px）。 */
+  border: 1.5px solid transparent;
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-panel);
   /* 上下留白已由上一层给到 8，这里再写 margin-bottom 会叠成 16、把底边推歪。
      右边距不再额外加：横向留白统一由上一层 padding 给（左 24 贴侧栏、右 8 贴窗口）。 */
   margin: 0;

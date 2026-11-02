@@ -4,7 +4,9 @@
   align-items: center;
   height: 32px;
   flex-shrink: 0;
-  background: var(--bg);
+  /* 与导航栏、界面卡片那圈缝同属底层（--layer-base）：整窗最下面那一层是一整片，
+     标题栏不再单独比它亮一档。按钮都是透明底 + 半透明悬停层，跟着这片底走。 */
+  background: var(--layer-base);
   position: relative;
   z-index: 9999;
 }
@@ -29,7 +31,9 @@
   height: 100%;
   border: none;
   background: transparent;
-  color: var(--text-muted);
+  /* 底色加深到底层之后，原来那档灰 (#a0a0a0) 对底层只有 2.15:1，图形类控件要求 3:1；
+     提到 --text-secondary 是 4.38:1，也和同一栏里的折叠键、主题键（本来就是这档）对齐。 */
+  color: var(--text-secondary);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }

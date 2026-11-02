@@ -1078,13 +1078,20 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   white-space: nowrap;
 }
 
+/* 左偏移归零：导航栏不铺自己的底、与这圈缝同属一整片底层，工作台这边也统一成卡片自身的 8px。 */
+/* overflow 用 clip + 24px 外延，与 global.css 的 .content 同一处理：
+   这三层裁切面（本层 / .agent-code-body / App.tsx 的 .agent-code-host）左缘全都压在
+   导航栏与主界面的分界 220px 上，而卡片（在 228）的投影要往左铺到 ~204。
+   用 hidden 就是齐刀切在 220：那 8px 缝被填成一条上下等宽、左右各一道硬边的实心灰带，
+   读起来就是「导航栏外面还套着一层圆角边框」。外延 24px 让投影在自己范围内淡完，
+   缝里只剩自然渐隐——这也是普通页面（模型管理 / 知识库 / 工具箱…）已经不出现这条线的原因。
+   纯绘制层面：clip 与 hidden 的裁切盒、BFC 都一样，实测卡片与右侧面板的矩形逐位不变。 */
 .agent-code-view {
   display: flex;
   flex-direction: column;
   height: 100%;
-  overflow: hidden;
-  margin-left: 16px;
-
+  overflow: clip;
+  overflow-clip-margin: 24px;
 }
 
 /* ── 预填充进度：波形声纹 ──────────────────────────────────────────────────
@@ -1787,7 +1794,10 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   flex: 1;
   display: flex;
   position: relative;
-  overflow: hidden;
+  /* 与 .agent-code-view 同一个理由：这一层的左缘同样压在 220，
+     不外延 24px 的话卡片投影还是会被它切回来，外层放开也没用（嵌套裁取的是交集）。 */
+  overflow: clip;
+  overflow-clip-margin: 24px;
   min-height: 0;
 }
 
@@ -1923,7 +1933,9 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   background: var(--bg);
   margin: 8px;
   border-radius: var(--radius, 10px);
-  border: 1.5px solid var(--border-strong);
+  /* 与 global.css 的界面卡片同一处理：描边留宽不留色，边界交给底色差与投影。 */
+  border: 1.5px solid transparent;
+  box-shadow: var(--shadow-panel);
   /* 与对话同宽：消息行是 max-width:860px 居中（见 .chat-msg），输入区原来固定 54px 内缩，
      会话栏一宽过 860px 输入框就比对话宽出一截；让内缩跟着居中留白一起长，窄栏时退化成 54px 原样。
      定义在本层（而不是 .chat-input-area 上）是为了让同为直接子元素的压缩提示条也能对齐输入框。 */
@@ -1936,17 +1948,27 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 /* ── 项目 / 会话列表 ──
    列表本体现在经 portal 挂在应用左侧导航栏底部的槽里（见 sidebar.css 的 .sidebar-agent-slot、
    AgentCodeViewLayout.tsx），所以下面两项：宿主层只是包一层，列表自身平铺、不再自带卡片外壳
-   ——原先的边框/圆角/底色由导航栏那个面板提供。
+   ——导航栏已是一整片平底（没有卡面 / 边框 / 圆角），列表直接坐在这层底上。
    收起（导航栏顶栏那个折叠键）时 JSX 干脆不挂 portal，槽变空，分隔线由 :empty 收掉。 */
 .agent-code-sidebar-slot {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* 收缩链条的中转层：导航栏纵向吃紧时（见 sidebar.css 的 .sidebar-agent-slot），
+     超出量要一路传到里面的列表才被消化。这一层 overflow 是 visible，
+     自动最小尺寸 = 内容高，所以必须显式写 min-height: 0 才收得下去；
+     flex-grow 让它把槽剩下的空间整个接住，列表才有固定的滚动高度可依赖。 */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .agent-code-sidebar {
   width: 100%;
-  flex-shrink: 0;
+  /* 收缩必须一路传到这一层，槽里的高度才算真正落定：写死 flex-shrink: 0 的话
+     列表保持原高、从槽里溢出来，正好盖住下方的「设置」。
+     本层 overflow: hidden 已把自动最小尺寸降到 0，min-height 只是把这件事写明。 */
+  flex-shrink: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1975,7 +1997,9 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   transition: margin-right var(--agent-right-collapse-dur, 0.25s) ease, width var(--agent-right-collapse-dur, 0.25s) ease, opacity 0.2s ease, max-width 0s linear var(--agent-right-collapse-dur, 0.25s);
   margin: 8px;
   border-radius: var(--radius, 10px);
-  border: 1.5px solid var(--border-strong);
+  /* 同上：描边留宽不留色 */
+  border: 1.5px solid transparent;
+  box-shadow: var(--shadow-panel);
   background: var(--surface);
 }
 
@@ -3084,7 +3108,8 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   margin: 4px 12px 12px;
   width: calc(100% - 24px);
   padding: 10px 12px;
-  border: 1px dashed var(--border-strong);
+  /* 导航栏这一列不画框：虚线描边去掉，宽度留着占位。可点性靠文字本身 + 悬停时浮出的底色。 */
+  border: 1px dashed transparent;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
@@ -3098,8 +3123,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 }
 
 .agent-code-session-new-btn:hover {
-  border-color: var(--border-strong);
-  border-style: solid;
+  /* 悬停不重新画框：靠浮出的底色 + 轻投影表达可点 */
   background: var(--surface-hover);
   color: var(--text);
   box-shadow: var(--shadow);

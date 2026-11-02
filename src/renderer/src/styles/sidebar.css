@@ -1,18 +1,17 @@
 /* ══════════════════════════════════════════════════════════════════
-   侧栏视觉（重做）
-   卡面 / 边框 / 阴影 / 交互三态换一套更轻的语言。**几何值两态共用**——
+   侧栏视觉
+   侧栏不再是一张卡：没有边框 / 圆角 / 投影，也**不铺自己的底色**——它直接透出
+   .main-layout 那一整片底层（--layer-base），与界面卡片四周那圈缝是同一块面，
+   所以导航栏与界面之间不存在第二条边。**几何值两态共用**——
    收起态与展开态用的是同一批类（.sidebar / .nav-item / .sidebar-toggle），
    任何几何改动都会同时作用于两态，这正是「收起 / 展开不跳动」的前提：
    不要出现只写在 .icon-only 里的尺寸（唯一例外是居中，见文件后段）。
    主题值挂在 .sidebar-wrapper 上而不是 :root：它们只服务这一处。
    ══════════════════════════════════════════════════════════════════ */
 .sidebar-wrapper {
-  /* 卡面：极轻的纵向渐变（顶部略亮）+ 发丝边框 + 内高光 + 极轻投影
-     开启界面背景图时 --sidebar-bg 由 app-background.css 按 --app-bg-fill 重写，与会话面板同透 */
-  --sidebar-bg: linear-gradient(180deg, rgba(255, 255, 255, .82) 0%, rgba(248, 249, 251, .96) 100%);
+  /* 侧栏不铺自己的底（底层由 .main-layout 一整片铺好，见 global.css）；
+     下面这条只剩折叠按钮悬停时那圈描边在用。 */
   --sidebar-border: rgba(0, 0, 0, .085);
-  --sidebar-inner-highlight: inset 0 1px 0 rgba(255, 255, 255, .92);
-  --sidebar-shadow: 0 1px 2px rgba(0, 0, 0, .035), 0 8px 24px rgba(31, 35, 48, .045);
   /* 导航项三态：悬停 / 当前页 / 当前页描边 */
   --nav-hover: rgba(10, 10, 10, .045);
   --nav-active: rgba(10, 10, 10, .07);
@@ -31,16 +30,9 @@
 }
 
 html.theme-dark .sidebar-wrapper {
-  --sidebar-bg: linear-gradient(180deg, rgba(46, 49, 56, .97) 0%, rgba(40, 43, 49, .98) 100%);
-  /* 深色下描边直接取全局的 --border-strong (#4b505b)，与会话面板、右侧面板同一色：
-     原来这条是 rgba(255,255,255,.075)，落在应用底色 (#202227) 上算出来是 #313337，
-     与卡面 #2e3138 只差 2、3 档——等于看不见。而紧挨着它的会话面板左边框是 #4b505b，
-     两张贴在一起、一边有一边没有，中间那道缝就格外显眼。
-     粗细仍保持 1px 不动：图标定位那条链（8 外边距 + 1 边框 + 10 内边距 + 10 导航项内边距）
-     按 1px 算成定点，改成会话面板的 1.5px 会让收起/展开时的图标横挪半像素。 */
+  /* 折叠按钮悬停描边仍取全局 --border-strong (#4b505b)：它落在底层 (#16181c) 上，
+     再浅一档就看不见。底层色值本身见 theme-dark.css 的 --layer-base。 */
   --sidebar-border: var(--border-strong);
-  --sidebar-inner-highlight: inset 0 1px 0 rgba(255, 255, 255, .045);
-  --sidebar-shadow: 0 1px 2px rgba(0, 0, 0, .2), 0 10px 30px rgba(0, 0, 0, .16);
   --nav-hover: rgba(255, 255, 255, .055);
   --nav-active: rgba(255, 255, 255, .085);
   --nav-active-border: rgba(255, 255, 255, .06);
@@ -58,13 +50,12 @@ html.theme-dark .sidebar-wrapper {
                   刻意不碰任何几何（内边距、对齐都沿用展开态）——见下面收起宽度的说明。
    两者在"收起且没悬浮"时同时成立；悬浮展开时只有 .collapsed 成立。 */
 /* 收起宽度取 60px（不是 50）：**为了让两态的几何完全一致**。
-   图标横向位置只由一条"内边距链"决定，两态共用：
-     8(卡片外边距) + 1(卡片边框) + 10(卡片内边距) + 10(导航项内边距) = 29px。
-   展开态内容盒 198px、收起态内容盒 38px，但这个 29px 只依赖上面四个值、与内容盒宽度无关，
+   图标横向位置只由一条"内边距链"决定，两态共用（相对外壳左缘）：
+     11(侧栏内边距) + 10(导航项内边距) + 1(导航项边框) = 22px。
+   展开态内容盒 198px、收起态内容盒 38px，但这个 22px 只依赖上面三个值、与内容盒宽度无关，
    所以导航项**两态都保持左对齐**（这里不做任何居中），图标一步都不动。
-   38px 的内容盒里图标占 29→46px，卡片右缘在 68px，不会被 .sidebar 的 overflow-x 裁到；
-   顺带图标中心 37.5px 几乎正好落在卡片中心 38px 上——收起后看着是"居中"的，
-   但那是算出来的巧合，不是靠居中属性实现的。
+   收起态外壳占 0→60px，图标落在 22→39px、中心 30.5px，几乎正好落在外壳中心 30px 上——
+   收起后看着是"居中"的，但那是算出来的巧合，不是靠居中属性实现的。
    50px 不行：内容盒只剩 28px，图标虽仍能放下，但右缘只剩 2px、视觉上明显偏右。 */
 .sidebar-wrapper.collapsed {
   width: 60px;
@@ -129,18 +120,34 @@ html.theme-dark .sidebar-wrapper {
      的显隐档，动画中途正好跨过它，会再啪地跳一次。两者合起来就是「文字在抖」。
      定宽之后这些都不重排，多出来的部分由 .sidebar 的 overflow-x 裁掉 —— 展开只是把
      列表揭开，不是把它重新排一遍。
-     198 = wrapper 展开宽 220 − 卡片左右边框 1×2 − 卡片左右内边距 10×2（见上面收起宽度 60px 那条说明）*/
+     198 = wrapper 展开宽 220 − 侧栏左右内边距 11×2（见上面收起宽度 60px 那条说明）*/
   width: 198px;
-  /* flex-shrink: 0 是**必需的**，不能沿用默认的 1：
-     槽里装的是会话列表，高度随会话数增长。默认允许收缩的话，侧栏一旦纵向吃紧，
-     flex 会把槽的盒子压扁，而槽里的列表（.agent-code-sidebar 是 flex-shrink: 0）
-     保持原高、从槽里溢出来——溢出的部分正好盖在下面新加的底部固定区（「设置」）上。
-     槽不收缩，超出就交给 .sidebar 自己滚（它本来就是 overflow-y: auto），
-     这样列表、空档、「设置」三者永远按顺序排，不会互相压。 */
-  flex-shrink: 0;
+  /* 纵向必须**允许收缩**（flex-shrink: 1 + min-height: 0），否则会话一多，
+     槽就按内容长到 1700+px：上面的常驻导航项和底部「设置」都是 flex-shrink: 0 的固定行，
+     撑不下去，只能由 .sidebar 整体滚动来接——结果是「设置」被推到滚动区末尾，
+     897px 高的窗口里根本看不见，看着就像元素被挤出去了。
+     收缩链条一路传到底部的列表（.agent-code-sidebar-slot → .agent-code-sidebar →
+     .agent-code-session-list，最后一条本身是 overflow-y: auto 的滚动容器），
+     于是**多出来的会话在列表内部滚**，导航栏自己不滚：
+     「智能体」入口、模式切换、列表空档、「设置」永远各在其位。
+     收缩的分工由「自动最小尺寸」规则保证：固定行（新建按钮、搜索框、小标题）overflow 是
+     visible，最小高度 = 内容高，压不扁；只有那条列表 overflow 非 visible、最小高度为 0，
+     所以吃紧的只有它。 */
+  flex-shrink: 1;
   min-height: 0;
   /* 收起时随宽度一起淡出（见上面的 .icon-only / .slot-gone） */
   transition: opacity .18s ease;
+}
+
+/* 列表在槽内滚动后，那条 6px 的滚动条就落在导航栏右内壁上——一道灰色竖线，
+   与「这一列不画边」整条前提冲突。滚轮 / 触控板照常可用，只把轨道隐掉，
+   与 .sidebar 自己的处理方式一致（见上面 scrollbar-width: none）。 */
+.sidebar-agent-slot .agent-code-session-list {
+  scrollbar-width: none;
+}
+
+.sidebar-agent-slot .agent-code-session-list::-webkit-scrollbar {
+  width: 0;
 }
 
 /* ── 「对话 / 工作台」模式切换 ──
@@ -151,7 +158,7 @@ html.theme-dark .sidebar-wrapper {
    左右内缩 12px 与下方 .agent-code-session-new-btn 的 margin 对齐。
 
    这个容器一共三层，每层只干一件事，任何一层都不越界：
-     外框  —— 容器与层级：比侧栏卡面深一档的凹槽底 + 1px 描边 + 12px 圆角；
+     外框  —— 容器与层级：比侧栏区域深一档的凹槽底 + 12px 圆角（描边只占位、不画色）；
      ::before —— 唯一的"选中面"：一枚按格宽平移的胶囊，选中态的白面与形状全在它身上；
      两格  —— 只放图标和文字，常态 / 悬停 / 按下 / 选中四态一律不画底色、不画描边、不画投影。
    选中态只能有一个来源。格身只要画了任何东西，它就会与那枚面错位——
@@ -167,31 +174,35 @@ html.theme-dark .sidebar-wrapper {
    面上不投任何阴影：这枚面只有内端那一头是可见边界，投影必然糊在那道半圆收口上，
    看着就是"两边没对齐"；层级由凹槽底与浮起面的色差承担，不需要投影再强调一次。
 
-   配色：外框必须比它所在的侧栏卡面明显深一档，否则两层糊成一层、看不出这是一个容器。
-   浅色下外框不用任何实心浅灰，改用一层压暗的半透明底（文字色 9%）——它叠在卡面（或界面
-   背景图）之上取色，卡面变透它跟着变深，永远比卡面暗，不会像 --surface-hover (#f2f2f3)
-   那样和近白的卡面 (约 #fbfcfd) 只差十几分之一、开背景图时更是跟着一起透掉。
+   配色：外框必须比它所在的侧栏区域明显深一档，否则两层糊成一层、看不出这是一个容器。
+   浅色下外框不用任何实心浅灰，改用一层压暗的半透明底（文字色 9%）——它叠在应用底色（或界面
+   背景图）之上取色，底色变透它跟着变深，永远比周围暗，不会像 --surface-hover (#f2f2f3)
+   那样和近白的应用底色只差十几分之一、开背景图时更是跟着一起透掉。
    选中面吃 --surface：浅色下与压暗后的外框差约 16 档。深色下方向相反（--surface-hover
-   比 --surface 更亮，拿它当底会让选中面反而发暗），所以底取全局最深的 --bg #202227，
-   比侧栏卡面 (#2e3138 → #282b31) 也深一档，仍是"面比底亮、底比卡面暗"。
+   比 --surface 更亮，拿它当底会让选中面反而发暗），所以底取一层压黑的半透明，
+   仍比周围（应用底色 #202227）深一档，保持"面比底亮、底比周围暗"。
 
    总高 38px = 描边 1×2 + 格高 36，与改造前（按钮 30 + 下内边距 8）相同，
    下面的会话列表不会因为这里被顶动。 */
 .sidebar-mode-switch {
   position: relative;
   /* 选中面是 z-index: -1 的伪元素，靠这条把它关进本容器的层叠上下文，
-     否则会掉到侧栏卡面后面去（直接看不见）——与 .nav-item 那层柔光同一个做法。 */
+     否则会掉到侧栏后面去（直接看不见）——与 .nav-item 那层柔光同一个做法。 */
   isolation: isolate;
   display: grid;
   grid-template-columns: 1fr 1fr;
   margin: 0 12px 8px;
-  border: 1px solid var(--border);
+  /* 描边留宽不留色：导航栏这一列不画框。宽度必须留着——选中那枚胶囊的外端圆角 11px
+     是按「外框 12 − 1px 描边」算出来的，去掉宽度胶囊就贴不进内沿、转角会露出一弯凹槽底。 */
+  border: 1px solid transparent;
   border-radius: 12px;
   background: color-mix(in srgb, var(--text) 9%, transparent);
 }
 
 html.theme-dark .sidebar-mode-switch {
-  background: var(--bg);
+  /* 侧栏已经没有卡面了，周围就是应用底色 #202227：底再取 --bg 会与周围同色、凹槽隐身，
+     所以改成一层压黑，仍比周围暗一档。 */
+  background: color-mix(in srgb, #000 25%, transparent);
 }
 
 /* 滑动的那枚选中面。
@@ -351,25 +362,17 @@ html.theme-dark .sidebar-mode-switch .nav-item.active {
 .sidebar {
   position: relative;
   width: 100%;
-  /* 四边都留 8px（含顶部）：上边不留的话卡片上边框会直接顶在标题栏下沿 */
-  height: calc(100% - 16px);
+  height: 100%;
   flex-shrink: 0;
-  margin: 8px;
-  /* 内边距 10px 是个**定点值**，不是随手取的：
-     展开态图标 x = 8(外边距) + 1(边框) + P + 10(导航项左内边距)；
-     收起态图标在内容盒里居中，x = 8 + 1 + P + (内容盒宽 - 图标宽)/2。
-     两者在 P = 10 时相等（都落在 29.5px）——图标在收起/展开时一步不动。
-     改成别的值会引入 (P - 10) 像素的横向跳动。 */
-  padding: 10px;
+  /* 内边距 11px 是个**定点值**，不是随手取的：
+     图标 x = 11(本层内边距) + 10(导航项内边距) + 1(导航项边框) = 22px，两态同一个值；
+     收起态外壳宽 60，图标中心 30.5px 落在外壳中心 30px 上（差 0.5px，看不出来）。
+     同时 220 − 11×2 = 198 正好是会话槽的定宽（见 .sidebar-agent-slot）。
+     改成别的值会同时挪动图标，并让会话槽宽度对不上。 */
+  padding: 11px;
   display: flex;
   flex-direction: column;
   gap: 0;
-  background: var(--sidebar-bg);
-  border: 1px solid var(--sidebar-border);
-  border-radius: 15px;
-  box-shadow:
-    var(--sidebar-inner-highlight),
-    var(--sidebar-shadow);
   overflow-x: hidden;
   overflow-y: auto;
   /* 滚动条隐掉但保留滚动能力：轨道只有 60px，一条滚动条会吃掉 8px 内容宽度 */
@@ -379,23 +382,6 @@ html.theme-dark .sidebar-mode-switch .nav-item.active {
 .sidebar::-webkit-scrollbar {
   width: 0;
   height: 0;
-}
-
-/* 顶部一道极细光泽：只提升精致度，不参与布局 */
-.sidebar::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 12px;
-  right: 12px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .72), transparent);
-  opacity: .65;
-  pointer-events: none;
-}
-
-html.theme-dark .sidebar::before {
-  opacity: .1;
 }
 
 .nav-section-label {
@@ -431,7 +417,7 @@ html.theme-dark .sidebar::before {
   text-align: left;
   cursor: pointer;
   /* 柔光层是 z-index: -1 的伪元素，靠它把自己关进本项的层叠上下文里，
-     否则会掉到侧栏卡面后面去（看不见）。 */
+     否则会掉到侧栏后面去（看不见）。 */
   isolation: isolate;
   transition:
     color .15s ease,
@@ -454,11 +440,12 @@ html.theme-dark .sidebar::before {
   transition: opacity .15s ease;
 }
 
-/* 悬停：淡填充 + 极淡描边。比原来的 --bg 实心块更轻，不与「当前页」抢。 */
+/* 悬停：只给淡填充。导航栏这一列不画任何描边（描边宽度留着占位，改色不改盒），
+   状态靠填充深浅区分：常态无底、悬停 --nav-hover、当前页 --nav-active。 */
 .nav-item:hover {
   color: var(--text);
   background: var(--nav-hover);
-  border-color: color-mix(in srgb, var(--text) 5%, transparent);
+  border-color: transparent;
 }
 
 .nav-item:hover::after {
@@ -469,12 +456,12 @@ html.theme-dark .sidebar::before {
   transform: scale(.95);
 }
 
-/* 当前页：比悬停更实一档的填充 + 描边 + 内高光。
+/* 当前页：比悬停更实一档的填充 + 内高光（描边同样只占位不画色）。
    填充必须比悬停重（.07 vs .045），否则两个状态并排时分不出哪个是选中的。 */
 .nav-item.active {
   color: var(--text);
   background: var(--nav-active);
-  border-color: var(--nav-active-border);
+  border-color: transparent;
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, white 55%, transparent),
     0 1px 2px rgba(0, 0, 0, .025);
@@ -568,10 +555,10 @@ html.theme-dark .nav-item.active {
    ══════════════════════════════════════════════════════════════════ */
 
 /* ── 导航分隔线 ──
-   卡片顶端的一道发丝线。折叠按钮不在侧栏里（它在标题栏的 .titlebar-btn-sidebar），
-   但位置正好落在卡片正上方，所以这条线读起来就是「标题栏 / 导航区」的分界，
+   导航区顶端的一道发丝线。折叠按钮不在侧栏里（它在标题栏的 .titlebar-btn-sidebar），
+   但位置正好落在它正下方，所以这条线读起来就是「标题栏 / 导航区」的分界，
    和底部「设置」上方那条线一上一下把导航列表夹住。
-   展开态铺满内容宽度（220px 轨道里一条通栏发丝线），收起态缩到 22px 居中——
+   展开态铺满内容宽度（198px 内容盒里一条通栏发丝线），收起态缩到 22px 居中——
    只有横向变化，纵向占位（1 + 1 + 8 = 10px）两态完全相同，所以收起 / 展开时
    它只是变宽变窄，不会带动任何图标上下动。
    居中用 auto 外边距而不是 align-self: center：宽度变化时浏览器直接按剩余空间
