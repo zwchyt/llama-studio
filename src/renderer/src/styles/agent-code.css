@@ -1081,10 +1081,10 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 /* 左偏移归零：导航栏不铺自己的底、与这圈缝同属一整片底层，工作台这边也统一成卡片自身的 8px。 */
 /* overflow 用 clip + 24px 外延，与 global.css 的 .content 同一处理：
    这三层裁切面（本层 / .agent-code-body / App.tsx 的 .agent-code-host）左缘全都压在
-   导航栏与主界面的分界 220px 上，而卡片（在 228）的投影要往左铺到 ~204。
-   用 hidden 就是齐刀切在 220：那 8px 缝被填成一条上下等宽、左右各一道硬边的实心灰带，
-   读起来就是「导航栏外面还套着一层圆角边框」。外延 24px 让投影在自己范围内淡完，
-   缝里只剩自然渐隐——这也是普通页面（模型管理 / 知识库 / 工具箱…）已经不出现这条线的原因。
+   导航栏与主界面的分界 220px 上。原先卡片（在 228）的投影要往左铺到 ~204，用 hidden 就是
+   齐刀切在 220：那 8px 缝被填成一条上下等宽、左右各一道硬边的实心灰带，读起来就是
+   「导航栏外面还套着一层圆角边框」。现在面板投影已整圈去掉，这个用途不存在了，
+   外延先留着——收紧裁切盒会改变贴边内容的可见范围，需要肉眼逐项核对才敢动。
    纯绘制层面：clip 与 hidden 的裁切盒、BFC 都一样，实测卡片与右侧面板的矩形逐位不变。 */
 .agent-code-view {
   display: flex;
@@ -1933,7 +1933,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   background: var(--bg);
   margin: 8px;
   border-radius: var(--radius, 10px);
-  /* 与 global.css 的界面卡片同一处理：描边留宽不留色，边界交给底色差与投影。 */
+  /* 与 global.css 的界面卡片同一处理：描边留宽不留色，边界只交给底色差（面板投影已整圈去掉）。 */
   border: 1.5px solid transparent;
   box-shadow: var(--shadow-panel);
   /* 与对话同宽：消息行是 max-width:860px 居中（见 .chat-msg），输入区原来固定 54px 内缩，
@@ -1997,8 +1997,9 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   transition: margin-right var(--agent-right-collapse-dur, 0.25s) ease, width var(--agent-right-collapse-dur, 0.25s) ease, opacity 0.2s ease, max-width 0s linear var(--agent-right-collapse-dur, 0.25s);
   margin: 8px;
   border-radius: var(--radius, 10px);
-  /* 同上：描边留宽不留色 */
+  /* 描边留宽不留色；左边不占宽，让工作区分隔线贴住容器左缘（否则有 1.5px 细缝） */
   border: 1.5px solid transparent;
+  border-left: none;
   box-shadow: var(--shadow-panel);
   background: var(--surface);
 }
@@ -3089,7 +3090,10 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 14px 16px 8px;
+  /* 第 2 档：与它下面的行同层（左 27 + 内缩 11 → 文字落 38px） */
+  margin-left: 16px;
+  max-width: 156px;
+  padding: 14px 11px 8px;
   font-size: 11px;
   font-weight: 700;
   color: var(--text-muted);
@@ -3105,11 +3109,15 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  margin: 4px 12px 12px;
-  width: calc(100% - 24px);
+  /* 与 .nav-item 同一条列（188px 上限、盒左 11px）；内容照旧居中 */
+  margin: 4px 0 12px;
+  width: 100%;
+  max-width: 188px;
   padding: 10px 12px;
-  /* 导航栏这一列不画框：虚线描边去掉，宽度留着占位。可点性靠文字本身 + 悬停时浮出的底色。 */
-  border: 1px dashed transparent;
+  /* 虚线框画出来：这个按钮平时没有底色，不描边就看不出是一个可点的面。
+     取 --border（浅 #d8d8d8 / 深 #41454e），比底层 --layer-base 深一档，够看见又不抢眼；
+     宽度仍是 1px，盒模型不变。 */
+  border: 1px dashed var(--border);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
@@ -3131,15 +3139,21 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 
 /* ── 通用模式：扁平的聊天历史列表（没有项目层级，视觉更轻）── */
 .agent-code-chat-list {
-  padding: 0 8px 8px;
+  /* 横向不再内缩：位置由行自己的档位给（左右各进 8px 才是第 2 档），
+     否则这 8px 会和行的 margin-left 叠加，把平铺会话行挤到第 3 档去 */
+  padding: 0 0 8px;
 }
 
 .agent-code-chat-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 1px 0;
-  padding: 8px 10px;
+  /* 平铺的会话行（聊天模式）= 第 2 档：左 27、右 183 → 图标落 38px，与上面的小标题同层。
+     分层规则：每往下一层左右各进 8px（窄 16px），所以每层都居在上一层的中间，
+     整列中轴固定在 105px。第 0 档是导航项 / 胶囊 / 新建按钮（左 11、右 199）。 */
+  margin: 1px 0 1px 16px;
+  max-width: 156px;
+  padding: 8px 10px 8px 11px;
   font-size: 12px;
   color: var(--text-secondary);
   cursor: pointer;
@@ -3231,14 +3245,18 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 }
 
 .agent-code-project-group {
-  padding: 4px 12px;
+  /* 横向不再内缩：每一档的位置由行自己给出（见下面几条） */
+  padding: 4px 0;
 }
 
 .agent-code-project-item {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 8px;
+  /* 项目名 = 第 2 档：左 27、右 183 → 图标落 38px，居在搜索框（第 1 档）的正中间 */
+  margin-left: 16px;
+  max-width: 156px;
+  padding: 8px 8px 8px 11px;
   font-size: 13px;
   font-weight: 600;
   line-height: 1;
@@ -3313,19 +3331,24 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 0 12px 0 16px;
+  /* 横向不再内缩：缩进由行自己的左内边距给（见 .agent-code-session-item），
+     这样行外缘仍与导航项同一条列 */
+  padding: 0;
   transition: padding .26s cubic-bezier(.4, 0, .2, 1);
 }
 
 .agent-code-child-wrap.open .agent-code-child-sessions {
-  padding: 4px 12px 6px 16px;
+  padding: 4px 0 6px;
 }
 
 .agent-code-session-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 10px;
+  /* 项目展开后的子会话 = 第 3 档：左 35、右 175 → 图标落 46px，居在项目行（第 2 档）的正中间 */
+  margin-left: 24px;
+  max-width: 140px;
+  padding: 7px 10px 7px 11px;
   font-size: 12px;
   color: var(--text-secondary);
   cursor: pointer;
@@ -3469,8 +3492,12 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 2px 8px 0;
-  padding: 5px 8px;
+  /* 分层是「居中套一层」而不是往下爬：每往下一层，左右各进 8px（比上一层窄 16px），
+     于是每一层都正好落在上一层的中间。整列的中轴固定在 105px 上。
+     本层 = 第 1 档（搜索框）：左 19、右 191，放大镜落 30px。 */
+  margin: 2px 0 0 8px;
+  max-width: 172px;
+  padding: 5px 8px 5px 11px;
   /* 不用常驻 border 界定输入区：--border / --border-strong 在暗色主题里就是一条硬边暗框，
      再加上更深的 --bg 底色，整块看成"黑长方形"。改成浅一档底色浮出面板 + 仅聚焦时给描边。 */
   border: none;

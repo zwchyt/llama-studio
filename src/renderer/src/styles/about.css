@@ -131,7 +131,6 @@
   box-shadow: 0 0 0 3px rgba(13, 148, 136, .10);
   transform-origin: top center;
   transition: height var(--ab-t-slow) var(--ab-ease-out), box-shadow var(--ab-t-slow) var(--ab-ease);
-  animation: ab-bar-drop 520ms var(--ab-ease-out) 60ms backwards;
 }
 
 .about-container .page-title:hover::before {
@@ -144,7 +143,6 @@
   height: 34px;
   image-rendering: crisp-edges;
   transition: transform 320ms var(--ab-ease-spring);
-  animation: ab-fade-up 520ms var(--ab-ease-out) 120ms backwards;
 }
 
 .about-container .page-title:hover .about-logo {
@@ -153,7 +151,6 @@
 
 .about-container .page-subtitle {
   margin-left: 16px;
-  animation: ab-fade-up 520ms var(--ab-ease-out) 200ms backwards;
 }
 
 /* ── 4. 分区与标题 ── */
@@ -165,19 +162,11 @@
 
 .about-container .about-section {
   position: relative;
-  animation: ab-card-in 560ms var(--ab-ease-out) backwards;
 }
 
 .about-container .about-hero {
   margin-bottom: 28px;
 }
-
-/* 逐块错开入场 */
-.about-container .about-stack > .about-section:nth-child(1) { animation-delay: 60ms; }
-.about-container .about-stack > .about-section:nth-child(2) { animation-delay: 130ms; }
-.about-container .about-stack > .about-section:nth-child(3) { animation-delay: 200ms; }
-.about-container .about-grid > .about-section:nth-child(1) { animation-delay: 270ms; }
-.about-container .about-grid > .about-section:nth-child(2) { animation-delay: 340ms; }
 
 .about-container .about-section-title {
   display: flex;
@@ -203,7 +192,6 @@
   color: #fff;
   box-shadow: 0 2px 6px color-mix(in srgb, var(--ab-eng, var(--accent)) 30%, transparent);
   transition: transform 320ms var(--ab-ease-spring), box-shadow var(--ab-t-base) var(--ab-ease);
-  animation: ab-icon-pop 520ms var(--ab-ease-spring) 110ms backwards;
 }
 
 .about-container .about-section:hover .about-section-title > svg {
@@ -242,7 +230,6 @@
   background: linear-gradient(90deg, var(--ab-eng, var(--accent)), transparent);
   opacity: .85;
   transition: width 480ms var(--ab-ease-out), opacity var(--ab-t-base) var(--ab-ease);
-  animation: ab-ribbon-in 620ms var(--ab-ease-out) 160ms backwards;
 }
 
 .about-container .about-card:hover::before {

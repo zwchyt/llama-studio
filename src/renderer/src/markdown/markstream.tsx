@@ -134,10 +134,25 @@ function resolveHfSrc(src: string | undefined, base: string): string {
   return base.replace(/\/+$/, '') + '/' + src.replace(/^[./]+/, '')
 }
 
+// ── 图片加载失败降级 ──
+// GitHub 域名的图先换公共镜像（images.weserv.nl）重试一次，再失败整张收起；
+// 重试标记记在 dataset，同一张 <img> 只重试一次。
+function handleImgError(e: React.SyntheticEvent<HTMLImageElement>): void {
+  const img = e.currentTarget
+  if (img.dataset.degraded) { img.style.display = 'none'; return }
+  img.dataset.degraded = '1'
+  const src = img.getAttribute('src') ?? ''
+  if (/^https?:\/\/(raw\.githubusercontent\.com|github\.com)\//i.test(src)) {
+    img.src = `https://images.weserv.nl/?url=${encodeURIComponent(src)}`
+  } else {
+    img.style.display = 'none'
+  }
+}
+
 function MsHfImage({ node }: MsNodeProps<MsImageNode>) {
   const src = resolveHfSrc(node?.src, _hfBase)
   if (!src) return null
-  return <img src={src} alt={node?.alt ?? ''} loading="lazy" />
+  return <img src={src} alt={node?.alt ?? ''} loading="lazy" onError={handleImgError} />
 }
 
 // Markdown 文件预览的图片：本地相对路径经主进程读成 data URL 再显示。
@@ -160,7 +175,7 @@ function MsPreviewImage({ node }: MsNodeProps<MsImageNode>) {
       setDataSrc(r.success ? r.dataUrl : src)
     }).catch(() => setDataSrc(src))
   }, [src])
-  return <img src={dataSrc || src || ''} alt={node?.alt ?? ''} style={{ maxWidth: '100%', height: 'auto' }} />
+  return <img src={dataSrc || src || ''} alt={node?.alt ?? ''} style={{ maxWidth: '100%', height: 'auto' }} onError={handleImgError} />
 }
 
 // ── mermaid ────────────────────────────────────────────────
@@ -332,6 +347,25 @@ setCustomComponents('ls-hf', {
 const configureMarkdownIt = (md: any): any => md.set({ linkify: true, validateLink: (url: string) => !/^\s*(javascript|vbscript|data):/i.test(url) })
 const CUSTOM_HTML_TAGS: readonly string[] = ['thinking']
 
+// ── 裸 HTML <p> 块降级为空行分隔的普通段落 ──
+// 否则 <p> 会被真实渲染且内部内容重解析出 paragraph-node，造成 <p> 嵌 <p>（React 19 报错）。
+// 围栏/行内代码先遮罩再还原（里面的 <p> 是代码内容），未闭合围栏遮到结尾。
+function stripRawParagraphTags(md: string): string {
+  if (!/<p[\s>]/i.test(md)) return md
+  const kept: string[] = []
+  const mask = (s: string): string => {
+    kept.push(s)
+    return `\u0000K${kept.length - 1}\u0000`
+  }
+  const masked = md
+    .replace(/(```+|~~~+)[^\n]*\n[\s\S]*?(?:\n\1[^\n]*(?=\n|$)|$)/g, mask)
+    .replace(/`[^`\n]*`/g, mask)
+  const transformed = masked
+    .replace(/<p(\s[^>]*)?>([\s\S]*?)<\/p>/gi, (_m, _attrs: string | undefined, inner: string) => `\n\n${inner}\n\n`)
+    .replace(/<\/?p(\s[^>]*)?>/gi, '')
+  return transformed.replace(/\u0000K(\d+)\u0000/g, (_m, i: string) => kept[Number(i)] ?? '')
+}
+
 export type MarkdownVariant = 'chat' | 'chat-preview' | 'agent' | 'hf'
 
 const VARIANT_ID: Record<MarkdownVariant, string> = {
@@ -363,7 +397,7 @@ export const Markdown = React.memo(function Markdown({
   const isDark = useThemeStore(s => s.theme === 'dark')
   return (
     <MarkdownRender
-      content={content}
+      content={stripRawParagraphTags(content)}
       final={final}
       customId={VARIANT_ID[variant]}
       deferNodesUntilVisible={false}

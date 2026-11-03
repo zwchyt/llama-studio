@@ -120,7 +120,6 @@
   box-shadow: 0 0 0 3px rgba(13, 148, 136, .10);
   transform-origin: top center;
   transition: height var(--st-t-slow) var(--st-ease-out), box-shadow var(--st-t-slow) var(--st-ease);
-  animation: st-bar-drop 520ms var(--st-ease-out) 60ms backwards;
 }
 
 .settings-view .page-title:hover::before {
@@ -130,7 +129,6 @@
 
 .settings-view .page-subtitle {
   margin-left: 15px;
-  animation: st-fade-up 520ms var(--st-ease-out) 160ms backwards;
 }
 
 /* ── 4. 分区卡片（.settings-section） ── */
@@ -145,7 +143,6 @@
   transition: box-shadow var(--st-t-slow) var(--st-ease),
               transform var(--st-t-slow) var(--st-ease),
               border-color var(--st-t-base) var(--st-ease);
-  animation: st-card-in 560ms var(--st-ease-out) backwards;
 }
 
 .settings-view .settings-section:hover {
@@ -154,14 +151,7 @@
   border-color: var(--border-strong);
 }
 
-/* 逐张错开入场：page-header 是第 1 个子元素，卡片从第 2 个开始 */
-.settings-view > .settings-section:nth-child(2) { animation-delay: 40ms; }
-.settings-view > .settings-section:nth-child(3) { animation-delay: 110ms; }
-.settings-view > .settings-section:nth-child(4) { animation-delay: 180ms; }
-.settings-view > .settings-section:nth-child(5) { animation-delay: 250ms; }
-.settings-view > .settings-section:nth-child(6) { animation-delay: 320ms; }
-
-/* 卡片顶部色带：入场时从左侧探出；hover 时向右铺满整张卡片 */
+/* 卡片顶部色带：hover 时向右铺满整张卡片 */
 .settings-view .settings-section::before {
   content: '';
   position: absolute;
@@ -173,7 +163,6 @@
   background: linear-gradient(90deg, var(--st-eng, var(--accent)), transparent);
   opacity: .85;
   transition: width 480ms var(--st-ease-out), opacity var(--st-t-base) var(--st-ease);
-  animation: st-ribbon-in 620ms var(--st-ease-out) 140ms backwards;
 }
 
 .settings-view .settings-section:hover::before {
@@ -206,7 +195,6 @@
   color: #fff;
   box-shadow: 0 2px 6px color-mix(in srgb, var(--st-eng, var(--accent)) 30%, transparent);
   transition: transform 320ms var(--st-ease-spring), box-shadow var(--st-t-base) var(--st-ease);
-  animation: st-icon-pop 520ms var(--st-ease-spring) 110ms backwards;
 }
 
 .settings-view .settings-section:hover .settings-section-title > svg {
@@ -504,156 +492,7 @@ html.theme-dark .st-select-panel {
   box-shadow: 0 0 0 4px var(--st-accent-ring), 0 1px 3px rgba(13, 148, 136, .45);
 }
 
-/* ── 10. 光标样式选择 ── */
-.settings-view .st-cursor-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 8px;
-  width: 100%;
-}
-
-.settings-view .cursor-theme-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 11px 9px;
-  min-height: 68px;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text-secondary);
-  font-family: var(--font);
-  font-size: 12px;
-  text-align: center;
-  line-height: 1.3;
-  cursor: pointer;
-  transition: border-color var(--st-t-base) var(--st-ease),
-              background-color var(--st-t-base) var(--st-ease),
-              box-shadow var(--st-t-base) var(--st-ease),
-              color var(--st-t-base) var(--st-ease),
-              transform var(--st-t-fast) var(--st-ease);
-}
-
-.settings-view .cursor-theme-card:hover {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: var(--surface-hover);
-  color: var(--text);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-sm);
-}
-
-.settings-view .cursor-theme-card:active {
-  transform: translateY(0) scale(.985);
-}
-
-.settings-view .cursor-theme-card:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--st-accent-ring);
-}
-
-.settings-view .cursor-theme-card.selected {
-  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
-  background: var(--st-accent-soft);
-  color: var(--text);
-  box-shadow: 0 0 0 3px var(--st-accent-ring);
-}
-
-.settings-view .cursor-theme-card-name {
-  font-weight: 600;
-}
-
-/* 选中标记：右上角渐变圆点 + 白勾 */
-.settings-view .cursor-theme-card-check {
-  position: absolute;
-  top: 6px;
-  right: 7px;
-  width: 16px;
-  height: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--st-accent-line);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1;
-  box-shadow: 0 1px 3px rgba(13, 148, 136, .45);
-  animation: st-icon-pop 320ms var(--st-ease-spring);
-}
-
-.settings-view .cursor-theme-card-swatch {
-  width: 100%;
-  height: 22px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--st-surface-2);
-  transition: border-color var(--st-t-base) var(--st-ease);
-}
-
-.settings-view .cursor-theme-card.selected .cursor-theme-card-swatch {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-}
-
-/* 预览区 */
-.settings-view .cursor-preview-box {
-  width: 100%;
-  margin-top: 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 12px;
-  background: var(--st-surface-2);
-  transition: box-shadow var(--st-t-base) var(--st-ease), border-color var(--st-t-base) var(--st-ease);
-}
-
-.settings-view .cursor-preview-box:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
-}
-
-.settings-view .cursor-preview-hint {
-  font-size: 11.5px;
-  color: var(--text-muted);
-  margin-bottom: 10px;
-}
-
-.settings-view .cursor-preview-cells {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.settings-view .cursor-preview-cell {
-  flex: 1;
-  min-width: 84px;
-  height: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text-secondary);
-  font-size: 12px;
-  transition: border-color var(--st-t-base) var(--st-ease),
-              background-color var(--st-t-base) var(--st-ease),
-              transform var(--st-t-fast) var(--st-ease);
-}
-
-.settings-view .cursor-preview-cell:hover {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
-  background: var(--st-accent-soft);
-  transform: translateY(-1px);
-}
-
-.settings-view .cursor-preview-cell-label {
-  pointer-events: none;
-}
-
-/* ── 界面背景：图库缩略图网格（交互与上面的光标主题卡同款）── */
+/* ── 界面背景：图库缩略图网格 ── */
 .settings-view .st-bg-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
@@ -809,7 +648,7 @@ html.theme-dark .st-select-panel {
   animation: st-icon-pop 320ms var(--st-ease-spring);
 }
 
-/* ── 11. 暗色主题：只换令牌值，规则与动画完全复用 ── */
+/* ── 10. 暗色主题：只换令牌值，规则与动画完全复用 ── */
 html.theme-dark .settings-view {
   --bg: #24272d;
   --surface: #2b2f36;
@@ -860,16 +699,11 @@ html.theme-dark .settings-view .launch-mode-btn.active {
   color: var(--accent-fg);
 }
 
-html.theme-dark .settings-view .cursor-theme-card.selected {
-  background: var(--st-accent-soft);
-  color: var(--text);
-}
-
 html.theme-dark .settings-view .st-range::-webkit-slider-thumb {
   border-color: var(--surface);
 }
 
-/* ── 12. 无障碍：尊重系统"减弱动态效果" ──
+/* ── 11. 无障碍：尊重系统"减弱动态效果" ──
    入场动画都用 backwards（不保持终态），时长归零后元素直接呈现最终状态，
    不会残留透明或位移。 */
 @media (prefers-reduced-motion: reduce) {

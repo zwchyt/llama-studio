@@ -95,7 +95,7 @@
 
 /* ── 2. 基础骨架（本页自包含） ──
    下面这些规则原先由 settings.css 提供。settings.css 其实是「设置」页的样式文件
-   （内含 .cursor-theme-card / .cursor-preview-* 等设置页专属规则），
+   （内含 .st-bg-card 这类只在设置页出现的专属规则），
    本页与 ModelFoldersView 只是当年从设置页拆分时顺带继承了那个 import。
 
    为了做到「改这个文件绝不可能影响其它页面」，这里把本页真正依赖的骨架规则
@@ -249,7 +249,6 @@
   box-shadow: 0 0 0 3px rgba(13, 148, 136, .10);
   transform-origin: top center;
   transition: height var(--ev-t-slow) var(--ev-ease-out), box-shadow var(--ev-t-slow) var(--ev-ease);
-  animation: ev-bar-drop 520ms var(--ev-ease-out) 60ms backwards;
 }
 
 .engines-view .page-title:hover::before {
@@ -259,7 +258,6 @@
 
 .engines-view .page-subtitle {
   margin-left: 15px;
-  animation: ev-fade-up 520ms var(--ev-ease-out) 160ms backwards;
 }
 
 /* ── 5. 卡片（.settings-section） ── */
@@ -274,7 +272,6 @@
   transition: box-shadow var(--ev-t-slow) var(--ev-ease),
               transform var(--ev-t-slow) var(--ev-ease),
               border-color var(--ev-t-base) var(--ev-ease);
-  animation: ev-card-in 560ms var(--ev-ease-out) backwards;
 }
 
 .engines-view .settings-section:hover {
@@ -308,7 +305,6 @@
   background: linear-gradient(90deg, var(--ev-eng), transparent);
   opacity: .85;
   transition: width 480ms var(--ev-ease-out), opacity var(--ev-t-base) var(--ev-ease);
-  animation: ev-ribbon-in 620ms var(--ev-ease-out) 120ms backwards;
 }
 
 .engines-view .ev-card--engine:hover::before {
@@ -337,7 +333,6 @@
   color: #fff;
   box-shadow: 0 2px 6px rgba(13, 148, 136, .28);
   transition: transform 320ms var(--ev-ease-spring), box-shadow var(--ev-t-base) var(--ev-ease);
-  animation: ev-icon-pop 520ms var(--ev-ease-spring) 90ms backwards;
 }
 
 .engines-view .settings-section:hover .settings-section-title > svg {
@@ -387,7 +382,6 @@
               background var(--ev-t-base) var(--ev-ease),
               box-shadow var(--ev-t-base) var(--ev-ease),
               transform var(--ev-t-base) var(--ev-ease);
-  animation: ev-row-in 460ms var(--ev-ease-out) backwards;
 }
 
 /* 左侧 3px 引擎色竖条 */
@@ -405,7 +399,6 @@
   transition: opacity var(--ev-t-base) var(--ev-ease),
               top var(--ev-t-base) var(--ev-ease),
               bottom var(--ev-t-base) var(--ev-ease);
-  animation: ev-bar-grow 520ms var(--ev-ease-out) 140ms backwards;
 }
 
 .engines-view .settings-row.backend-row:hover {

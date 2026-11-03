@@ -1,15 +1,10 @@
 /**
- * 工具箱：把低频界面集中到一页。
- *
- * 导航不占左侧栏，全部收进页面顶部一条：上排是组标签（一级），下排是当前组的条目（二级），
- * 切换都在顶部完成，下方整块留给内容。
- *
- * 选中态由全局 view 驱动（而不是本组件内部 state）：这样从别处
- * setView('ocr') 跳进来时能自动落在对应工具上，导航音效也照常按 view 触发。
+ * 设置中心（原工具箱）整屏：左侧固定工具栏 + 右侧内容舞台。
+ * 防闪烁三原则：分组标题纯静态、页面全量常驻（display 显隐）、代码未就绪不切页（见 ensureChunk）。
  */
-import React, { useEffect, useDeferredValue, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useDeferredValue, useRef, useState } from 'react'
 import type { ElementType } from 'react'
-import { HardDriveIcon, FolderOpenIcon } from '@animateicons/react/lucide'
+import { ArrowLeftIcon, HardDriveIcon, FolderOpenIcon, SettingsIcon } from '@animateicons/react/lucide'
 import { useStore } from '../store/useStore'
 import { playEvent } from '../utils/sound'
 import { shallow } from 'zustand/shallow'
@@ -20,105 +15,12 @@ import {
   TOOLS_FALLBACK_VIEW,
   TOOLS_LAST_VIEW_STORAGE_KEY
 } from '../utils/navConfig'
-import type { NavDef, ViewKey } from '../utils/navConfig'
-import { renderViewComponent } from '../views/viewRegistry'
+import type { ViewKey } from '../utils/navConfig'
+import { renderStageViewComponent, loadViewChunk } from '../views/viewRegistry'
 import { useBubbleTip } from './useBubbleTip'
 import '../styles/toolshub.css'
 
-type AnimHandle = { startAnimation: () => void; stopAnimation: () => void }
-
-/** 顶部导航的分组：前几组是「工具组」（组内条目各自对应一个 view），
- *  后两组是动作组（后端 / 本地目录），点了只执行动作、不切视图。 */
-type HubGroup =
-  | { label: string; kind: 'views'; items: NavDef[] }
-  | { label: string; kind: 'backends' }
-  | { label: string; kind: 'folders' }
-
-function ToolNavItem({ def, active, onSelect }: {
-  def: NavDef
-  active: boolean
-  onSelect: () => void
-}) {
-  const iconRef = useRef<AnimHandle | null>(null)
-  const IconComp = def.icon
-  return (
-    <button
-      type="button"
-      className={`toolhub-item${active ? ' active' : ''}`}
-      onClick={onSelect}
-      onMouseEnter={() => iconRef.current?.startAnimation()}
-      onMouseLeave={() => iconRef.current?.stopAnimation()}
-    >
-      <span
-        className="toolhub-ico"
-        style={active
-          ? { background: def.color, color: '#fff', boxShadow: `0 2px 8px ${def.color}55` }
-          : { background: `${def.color}1c`, color: def.color }}
-      >
-        <IconComp
-          ref={(el) => { iconRef.current = el ? (el as unknown as AnimHandle) : null }}
-          className="nav-animate-icon"
-          size={14}
-        />
-      </span>
-      <span className="toolhub-item-label">{def.label}</span>
-      {/* 这里同样只表达「当前在哪一项」，不再挂「有服务在跑」的跟随提示 */}
-      {active && (
-        <span
-          className="toolhub-active-dot"
-          style={{ background: def.color, boxShadow: `0 0 0 3px ${def.color}38` }}
-        />
-      )}
-    </button>
-  )
-}
-
-/** 后端 / 本地目录的行：不切视图、只执行一个动作，但外观与悬停动画对齐 ToolNavItem */
-function ToolActionItem({ icon: Icon, label, color, active, title, onClick }: {
-  icon: ElementType
-  label: string
-  color: string
-  active?: boolean
-  title?: string
-  onClick: () => void
-}) {
-  const iconRef = useRef<AnimHandle | null>(null)
-  // 原生 title 换自定义气泡（与导航栏同款）：已有图标 hover 动画，走 showTip/hideTip 合并进去
-  const { tipNode, showTip, hideTip } = useBubbleTip()
-  return (
-    <button
-      type="button"
-      className={`toolhub-item${active ? ' active' : ''}`}
-      aria-label={title ?? label}
-      onClick={onClick}
-      onMouseEnter={(e) => { iconRef.current?.startAnimation(); if (title) showTip(title, e.currentTarget) }}
-      onMouseLeave={() => { iconRef.current?.stopAnimation(); hideTip() }}
-    >
-      {tipNode}
-      <span
-        className="toolhub-ico"
-        style={active
-          ? { background: color, color: '#fff', boxShadow: `0 2px 8px ${color}55` }
-          : { background: `${color}1c`, color }}
-      >
-        <Icon
-          ref={(el) => { iconRef.current = el ? (el as unknown as AnimHandle) : null }}
-          className="nav-animate-icon"
-          size={14}
-        />
-      </span>
-      <span className="toolhub-item-label">{label}</span>
-      {active && (
-        <span
-          className="toolhub-active-dot"
-          style={{ background: color, boxShadow: `0 0 0 3px ${color}38` }}
-        />
-      )}
-    </button>
-  )
-}
-
-export default function ToolsHub() {
+export default function ToolsHub({ backView }: { backView?: ViewKey } = {}) {
   const { view, setView, backends, backendsStatus, activeBackend, setActiveBackend, paths } = useStore(
     (s) => ({
       view: s.view,
@@ -132,7 +34,10 @@ export default function ToolsHub() {
     shallow
   )
 
-  // 侧栏那份「本地目录」原样搬过来，顺序与名称保持一致
+  // 整屏模式下的「返回主界面」落点：App 记住进工具箱前的界面；无记录时回模型管理
+  const exitTarget: ViewKey = backView ?? 'cards'
+  const { tipNode, showTip, hideTip } = useBubbleTip()
+
   const folders: { label: string; path: string }[] = paths ? [
     { label: '/backend', path: paths.backend },
     { label: '/models', path: paths.models },
@@ -141,147 +46,221 @@ export default function ToolsHub() {
     { label: '/chat-templates', path: paths.chatTemplates },
   ] : []
 
-  // ToolsHub 只在 view ∈ GROUPED_VIEWS 时渲染，兜底分支仅防御异常值
-  const active: ViewKey = GROUPED_VIEWS.has(view) ? view : TOOLS_FALLBACK_VIEW
+  // 兜底分支仅防御异常值
+  const active: ViewKey = GROUPED_VIEWS.has(view) || view === 'settings' ? view : TOOLS_FALLBACK_VIEW
 
-  // 记住上次打开的界面：下次点「工具箱」直接回到这里，不用每次重新找
+  // 记住上次打开的界面，下次进来直接回到这里
   useEffect(() => {
     try { localStorage.setItem(TOOLS_LAST_VIEW_STORAGE_KEY, active) } catch { /* ignore */ }
   }, [active])
 
-  // 顶部导航的分组清单：工具组 + 两个动作组（「本地目录」要有 paths 才出现）
-  const railGroups: HubGroup[] = [
-    ...TOOL_GROUPS.map((g) => ({ label: g.label, kind: 'views' as const, items: g.items })),
-    { label: '后端', kind: 'backends' as const },
-    ...(paths ? [{ label: '本地目录', kind: 'folders' as const }] : [])
-  ]
-
-  // 当前展示的组：默认跟随 view 所属的组；切到「后端 / 本地目录」这类无 view 的组时，
-  // 用本地态临时覆盖（view 一变回某个工具组就自动让位）。
-  const [manualGroup, setManualGroup] = useState<string | null>(null)
-  useEffect(() => {
-    if (TOOL_GROUPS.some((g) => g.items.some((i) => i.key === active))) setManualGroup(null)
-  }, [active])
-  const viewGroupLabel = TOOL_GROUPS.find((g) => g.items.some((i) => i.key === active))?.label
-  const shownGroupLabel = manualGroup ?? viewGroupLabel ?? TOOL_GROUPS[0].label
-  const shownGroup = railGroups.find((g) => g.label === shownGroupLabel) ?? railGroups[0]
-
-  // 点组标签：工具组顺手落到该组第一项（否则会出现「切了组、内容还是上一组」）；动作组只切列表
-  const selectGroup = (g: HubGroup) => {
-    if (g.kind === 'views') {
-      setManualGroup(null)
-      if (!g.items.some((i) => i.key === active)) setView(g.items[0].key)
-    } else {
-      setManualGroup(g.label)
+  // chunk 就绪追踪：代码没就绪的页面不走快速显隐通道，宁可多显示旧内容一帧也不闪白
+  const chunkPendingRef = useRef(new Set<ViewKey>())
+  const [readyViews, setReadyViews] = useState<ViewKey[]>([])
+  const ensureChunk = (v: ViewKey): void => {
+    if (readyViews.includes(v) || chunkPendingRef.current.has(v)) return
+    chunkPendingRef.current.add(v)
+    const p = loadViewChunk(v)
+    if (!p) {
+      // 不在懒加载表里（eager/未知）：直接视为就绪
+      setReadyViews((prev) => (prev.includes(v) ? prev : [...prev, v]))
+      return
     }
+    p.then(() => { setReadyViews((prev) => (prev.includes(v) ? prev : [...prev, v])) })
+      .catch(() => { chunkPendingRef.current.delete(v) })
   }
 
-  const activeDef = NAV_DEF_BY_KEY[active]
-  const IconComp = activeDef?.icon as ElementType | undefined
-  // 工具箱内二级界面切换，与 App 顶层视图切换共用同一套「延迟提交」机制：
-  // 直接渲染实时的 active 时，旧子树（key={active}）立刻卸载，新界面是 lazy 组件、
-  // 其 chunk 若未在缓存里 Suspense 会挂起、fallback 是 null —— 内容区就空白一帧（露卡片底色）。
-  // 改用 useDeferredValue：新界面 chunk 未下载完时，React 继续显示旧界面，下载完再无缝替换，
-  // 全程不出现空帧。导航高亮（chips / 面包屑）仍用实时的 active，点下去即时响应。
+  // 进入即全量预取（设置页也在列）
+  useEffect(() => {
+    ensureChunk('settings')
+    GROUPED_VIEWS.forEach((v) => ensureChunk(v))
+  }, [])
+
+  // 代码未就绪的页面继续显示旧内容，就绪后由 deferred 提交自然换页
   const deferredActive = useDeferredValue(active)
-  const content = useMemo(() => renderViewComponent(deferredActive), [deferredActive])
+
+  // 展示哪一页：目标页就绪 → 实时 active；未就绪 → 停在最近一个已就绪页（不闪空壳）
+  const shown = readyViews.includes(active)
+    ? active
+    : readyViews.includes(deferredActive) ? deferredActive : null
+
+  // 面包屑跟随 shown：标题与内容同帧换，避免新标题配旧内容的错位帧
+  const shownDef = shown ? NAV_DEF_BY_KEY[shown] : undefined
+  const StageIcon = shownDef?.icon as ElementType | undefined
+  const shownGroupLabel = shown
+    ? TOOL_GROUPS.find((g) => g.items.some((i) => i.key === shown))?.label
+    : undefined
+
+  // 全量常驻（含设置页）：切换 = 纯显隐；内存上界约 30~40MB，桌面应用可承受
+  const aliveViews = React.useMemo<ViewKey[]>(
+    () => ['settings' as ViewKey, ...Array.from(GROUPED_VIEWS)],
+    []
+  )
+
+  // 页面元素按 view 缓存：常驻页面拿同一引用，重渲染时跳过整树重算
+  const pageElCache = useRef(new Map<ViewKey, React.ReactNode>())
 
   return (
     <div className="toolhub">
-      <header className="toolhub-top">
-        <div className="toolhub-top-bar">
-          <span className="toolhub-top-title">工具箱</span>
-          <span className="toolhub-top-count">{GROUPED_VIEWS.size}</span>
-          <span className="toolhub-top-sep" aria-hidden="true" />
+      {/* ══ 左：固定工具栏（分组标题纯静态，切换只挪一个 .active） ══ */}
+      <aside className="toolhub-rail">
+        <div className="toolhub-rail-head">
+          <button
+            type="button"
+            className="toolhub-back"
+            aria-label="返回主界面"
+            onClick={() => setView(exitTarget)}
+            onMouseEnter={(e) => showTip('返回主界面', e.currentTarget)}
+            onMouseLeave={hideTip}
+          >
+            {tipNode}
+            <ArrowLeftIcon size={14} />
+            <span>返回</span>
+          </button>
+          <span className="toolhub-rail-title">设置</span>
+          <span className="toolhub-rail-count">{GROUPED_VIEWS.size}</span>
+        </div>
 
-          {/* 一级：组标签，横向排在顶部 */}
-          <div className="toolhub-groups" role="tablist" aria-label="工具箱分组">
-            {railGroups.map((g) => {
-              const on = g.label === shownGroupLabel
+        <div className="toolhub-rail-scroll">
+          {/* 设置：侧栏顶部第一项（设置统一从工具箱进，主侧栏不再有独立入口） */}
+          <button
+            type="button"
+            className={`toolhub-rail-item${active === 'settings' ? ' active' : ''}`}
+            onClick={() => setView('settings')}
+            onMouseEnter={() => ensureChunk('settings')}
+          >
+            <span
+              className="toolhub-rail-ico"
+              style={active === 'settings'
+                ? { background: '#6b7280', color: '#fff' }
+                : { background: '#6b72801c', color: '#6b7280' }}
+            >
+              <SettingsIcon size={13} />
+            </span>
+            <span className="toolhub-rail-item-label">设置</span>
+            {active === 'settings' && <span className="toolhub-rail-dot" style={{ background: '#6b7280' }} />}
+          </button>
+
+          {TOOL_GROUPS.map((g) => (
+            <React.Fragment key={g.label}>
+              <div className="toolhub-rail-label">{g.label}</div>
+              {g.items.map((def) => {
+                const ItemIcon = def.icon as ElementType
+                const on = active === def.key
+                return (
+                  <button
+                    key={def.key}
+                    type="button"
+                    className={`toolhub-rail-item${on ? ' active' : ''}`}
+                    onClick={() => setView(def.key)}
+                    onMouseEnter={() => ensureChunk(def.key)}
+                  >
+                    <span
+                      className="toolhub-rail-ico"
+                      style={on
+                        ? { background: def.color, color: '#fff' }
+                        : { background: `${def.color}1c`, color: def.color }}
+                    >
+                      <ItemIcon size={13} />
+                    </span>
+                    <span className="toolhub-rail-item-label">{def.label}</span>
+                    {on && <span className="toolhub-rail-dot" style={{ background: def.color }} />}
+                  </button>
+                )
+              })}
+            </React.Fragment>
+          ))}
+
+          {/* 后端（动作区）：不切视图，只把该后端设为当前 */}
+          <div className="toolhub-rail-label">后端</div>
+          {backends.length > 0 ? (
+            backends.map((b) => {
+              const on = activeBackend?.name === b.name
               return (
                 <button
-                  key={g.label}
-                  type="button"
-                  role="tab"
-                  aria-selected={on}
-                  className={`toolhub-gtab${on ? ' active' : ''}`}
-                  onClick={() => selectGroup(g)}
-                >
-                  {g.label}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* 二级：当前组的条目，同样横向排在顶部 */}
-        <div className="toolhub-chips">
-          {shownGroup.kind === 'views' &&
-            shownGroup.items.map((def) => (
-              <ToolNavItem
-                key={def.key}
-                def={def}
-                active={def.key === active}
-                onSelect={() => setView(def.key)}
-              />
-            ))}
-
-          {/* 后端：不切视图，点了只把该后端设为当前 */}
-          {shownGroup.kind === 'backends' &&
-            (backends.length > 0 ? (
-              backends.map((b) => (
-                <ToolActionItem
                   key={b.name}
-                  icon={HardDriveIcon}
-                  color="#3b82f6"
-                  label={b.name}
-                  active={activeBackend?.name === b.name}
-                  title={activeBackend?.name === b.name ? '当前后端' : '设为当前后端'}
+                  type="button"
+                  className={`toolhub-rail-item${on ? ' active' : ''}`}
                   onClick={() => {
-                    if (activeBackend?.name === b.name) return
-                    // 切后端不切视图，所以不走导航音对照表，单独给一个「勾上」音
+                    if (on) return
                     playEvent('check')
                     setActiveBackend(b)
-                    // 参数集 schema 由 App 的 activeBackend watcher 统一拉取，这里不重复请求，
-                    // 免得快速切换时新旧响应乱序覆盖
                   }}
-                />
-              ))
-            ) : (
-              <p className="toolhub-chips-empty">
-                {backendsStatus === 'loading' ? '扫描后端中…' : <>未找到后端。<br />可在「后端与引擎」里下载。</>}
-              </p>
-            ))}
+                >
+                  <span className="toolhub-rail-ico" style={{ background: '#3b82f61c', color: '#3b82f6' }}>
+                    <HardDriveIcon size={13} />
+                  </span>
+                  <span className="toolhub-rail-item-label">{b.name}</span>
+                  {on && <span className="toolhub-rail-dot" style={{ background: '#3b82f6' }} />}
+                </button>
+              )
+            })
+          ) : (
+            <p className="toolhub-rail-empty">
+              {backendsStatus === 'loading' ? '扫描后端中…' : '未找到后端，可在「后端与引擎」里下载'}
+            </p>
+          )}
 
-          {/* 本地目录：只打开系统文件管理器 */}
-          {shownGroup.kind === 'folders' &&
-            folders.map((f) => (
-              <ToolActionItem
-                key={f.label}
-                icon={FolderOpenIcon}
-                color="#f59e0b"
-                label={`打开 ${f.label}`}
-                onClick={() => window.api.openFolder(f.path)}
-              />
-            ))}
+          {/* 本地目录（动作区）：只打开系统文件管理器 */}
+          {folders.length > 0 && (
+            <>
+              <div className="toolhub-rail-label">本地目录</div>
+              {folders.map((f) => (
+                <button
+                  key={f.label}
+                  type="button"
+                  className="toolhub-rail-item"
+                  onClick={() => window.api.openFolder(f.path)}
+                >
+                  <span className="toolhub-rail-ico" style={{ background: '#f59e0b1c', color: '#f59e0b' }}>
+                    <FolderOpenIcon size={13} />
+                  </span>
+                  <span className="toolhub-rail-item-label">{f.label}</span>
+                </button>
+              ))}
+            </>
+          )}
         </div>
-      </header>
+      </aside>
 
-      <section className="toolhub-main">
-        <div className="toolhub-crumb">
-          {IconComp && activeDef && (
+      {/* ══ 右：内容舞台（页面全部常驻，切换 = display 翻转） ══ */}
+      <main className="toolhub-stage">
+        <div className="toolhub-stage-bar">
+          {StageIcon && shownDef && (
             <span
-              className="toolhub-crumb-ico"
-              style={{ background: `${activeDef.color}1c`, color: activeDef.color }}
+              className="toolhub-stage-ico"
+              style={{ background: `${shownDef.color}1c`, color: shownDef.color }}
             >
-              <IconComp size={13} />
+              <StageIcon size={13} />
             </span>
           )}
-          <span className="toolhub-crumb-name">{activeDef?.label ?? '工具箱'}</span>
-          {viewGroupLabel && <span className="toolhub-crumb-path">工具箱 / {viewGroupLabel}</span>}
+          <span className="toolhub-stage-name">{shownDef?.label ?? '设置'}</span>
+          {shownGroupLabel && <span className="toolhub-stage-path">设置 / {shownGroupLabel}</span>}
         </div>
-        <div className="toolhub-body" key={deferredActive}>{content}</div>
-      </section>
+        <div className="toolhub-stage-body">
+          {/* 一个就绪页都还没有时（刚进整屏、代码在解压）：显示加载态而不是空白舞台 */}
+          {readyViews.length === 0 ? (
+            <div className="toolhub-stage-loading">正在加载设置…</div>
+          ) : (
+            aliveViews.map((v) => {
+              let el = pageElCache.current.get(v)
+              if (!el) {
+                el = renderStageViewComponent(v)
+                pageElCache.current.set(v, el)
+              }
+              return (
+                <div
+                  key={v}
+                  className={`toolhub-page${v === shown ? ' visible' : ''}`}
+                  inert={v === shown ? undefined : true}
+                >
+                  {el}
+                </div>
+              )
+            })
+          )}
+        </div>
+      </main>
     </div>
   )
 }

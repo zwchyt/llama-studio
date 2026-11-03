@@ -78,8 +78,8 @@ export const NAV_ITEMS: NavDef[] = [
 ]
 
 /** 导航栏常驻项（「工具箱」入口**之后**的那一段）。
- *  单独拆一段的原因：「工具箱」不对应任何 view、由 Sidebar 直接渲染，而它要排在「设置」之前。
- *  顺序仍必须只在本文件里定义，所以按「工具箱之前 / 之后」切成两段，由 Sidebar 夹着渲染。 */
+ *  「设置」已并入工具箱（工具箱侧栏顶部第一项），侧栏底部不再有独立入口；
+ *  这份清单保留下来只为给 NAV_DEF_BY_KEY 提供设置的名称 / 图标定义。 */
 export const NAV_TAIL_ITEMS: NavDef[] = [
   { key: 'settings', label: '设置', icon: SettingsIcon, color: '#6b7280' }
 ]
@@ -155,14 +155,14 @@ export const NAV_DEF_BY_KEY: Record<string, NavDef> = Object.fromEntries(
 /** 记住上次在工具箱里打开的界面，避免每次进来都回到默认项 */
 export const TOOLS_LAST_VIEW_STORAGE_KEY = 'toolsLastView'
 
-/** 工具箱兜底落地页（无历史记录时打开的第一个界面） */
-export const TOOLS_FALLBACK_VIEW: ViewKey = 'imagegen'
+/** 工具箱兜底落地页（无历史记录时打开的第一个界面）：落在「模型」组第一个工具页 */
+export const TOOLS_FALLBACK_VIEW: ViewKey = 'models'
 
-/** 解析点开「工具箱」时应落在哪个界面 */
+/** 解析点开「工具箱」时应落在哪个界面（设置也在工具箱里，同样算有效落点） */
 export function resolveToolsEntryView(): ViewKey {
   try {
     const last = localStorage.getItem(TOOLS_LAST_VIEW_STORAGE_KEY)
-    if (last && GROUPED_VIEWS.has(last as ViewKey)) return last as ViewKey
+    if (last && (GROUPED_VIEWS.has(last as ViewKey) || last === 'settings')) return last as ViewKey
   } catch { /* ignore */ }
   return TOOLS_FALLBACK_VIEW
 }

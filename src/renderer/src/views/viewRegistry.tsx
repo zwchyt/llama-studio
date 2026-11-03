@@ -87,10 +87,14 @@ export function renderViewComponent(view: ViewKey): React.ReactNode {
   return <Suspense fallback={null}>{renderView(view)}</Suspense>
 }
 
+/** 供工具箱舞台使用：'settings' 在这里返回真实组件（view-transition 路径返回 null）。 */
+export function renderStageViewComponent(view: ViewKey): React.ReactNode {
+  return <Suspense fallback={null}>{view === 'settings' ? <SettingsView /> : renderView(view)}</Suspense>
+}
+
 function renderView(view: ViewKey): React.ReactNode {
   switch (view) {
     case 'hub': return <HuggingFaceView />
-    case 'settings': return <SettingsView />
     case 'engines': return <EnginesView />
     case 'endpoints': return <ModelEndpointsView />
     case 'folders': return <ModelFoldersView />
@@ -111,11 +115,11 @@ function renderView(view: ViewKey): React.ReactNode {
     case 'mermaid-test': return <MermaidTestView />
     case 'recharts-test': return <RechartsTestView />
     case 'svg-test': return <SvgTestView />
-    // agent-code 与 llama 都有专属的常驻容器（App.tsx 的 agent-code-host / llama-host），
-    // 走 display:none 时代两处会各挂一份实例（iframe / 生成循环双份），纯属浪费还互相干扰。
-    // 这里返回 null：这两个 view 的内容只由专属容器渲染，view-transition 保持空。
+    // 这三个 view 由专属容器渲染（设置页在工具箱舞台），这里返回 null。
+    // 'settings' 不能在上方再写一份，否则重复 case（Vite 编译警告）。
     case 'agent-code': return null
     case 'llama': return null
+    case 'settings': return null
     default: return <CardsView />
   }
 }
@@ -128,4 +132,10 @@ function renderView(view: ViewKey): React.ReactNode {
  *  鼠标移到导航项上时顺手拉一下：成本为零，又覆盖了绝大多数点击（用户点之前鼠标必然已在该项上）。 */
 export function preloadViewOnHover(view: ViewKey): void {
   void VIEW_CHUNKS[view as keyof typeof VIEW_CHUNKS]?.()
+}
+
+/** 拿某个视图的 chunk 加载 Promise（ToolsHub 做就绪追踪用）。
+ *  返回 undefined = 该视图不在懒加载表里（eager 或未知），可直接视为就绪。 */
+export function loadViewChunk(view: ViewKey): Promise<unknown> | undefined {
+  return VIEW_CHUNKS[view as keyof typeof VIEW_CHUNKS]?.()
 }

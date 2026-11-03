@@ -118,7 +118,6 @@
   box-shadow: 0 0 0 3px rgba(13, 148, 136, .10);
   transform-origin: top center;
   transition: height var(--mf-t-slow) var(--mf-ease-out), box-shadow var(--mf-t-slow) var(--mf-ease);
-  animation: mf-bar-drop 520ms var(--mf-ease-out) 60ms backwards;
 }
 
 .model-folders-view .page-title:hover::before {
@@ -128,7 +127,6 @@
 
 .model-folders-view .page-subtitle {
   margin-left: 15px;
-  animation: mf-fade-up 520ms var(--mf-ease-out) 160ms backwards;
 }
 
 /* ── 4. 分区卡片（.settings-section） ── */
@@ -143,7 +141,6 @@
   transition: box-shadow var(--mf-t-slow) var(--mf-ease),
               transform var(--mf-t-slow) var(--mf-ease),
               border-color var(--mf-t-base) var(--mf-ease);
-  animation: mf-card-in 560ms var(--mf-ease-out) backwards;
 }
 
 .model-folders-view .settings-section:hover {
@@ -152,15 +149,7 @@
   border-color: var(--border-strong);
 }
 
-/* 逐张错开入场：page-header 是第 1 个子元素，卡片从第 2 个开始 */
-.model-folders-view > .settings-section:nth-child(2) { animation-delay: 40ms; }
-.model-folders-view > .settings-section:nth-child(3) { animation-delay: 110ms; }
-.model-folders-view > .settings-section:nth-child(4) { animation-delay: 180ms; }
-.model-folders-view > .settings-section:nth-child(5) { animation-delay: 250ms; }
-.model-folders-view > .settings-section:nth-child(6) { animation-delay: 320ms; }
-.model-folders-view > .settings-section:nth-child(7) { animation-delay: 390ms; }
-
-/* 卡片顶部色带：入场时从左侧探出；hover 时向右铺满整张卡片 */
+/* 卡片顶部色带：hover 时向右铺满整张卡片 */
 .model-folders-view .settings-section::before {
   content: '';
   position: absolute;
@@ -172,7 +161,6 @@
   background: linear-gradient(90deg, var(--mf-eng, var(--accent)), transparent);
   opacity: .85;
   transition: width 480ms var(--mf-ease-out), opacity var(--mf-t-base) var(--mf-ease);
-  animation: mf-ribbon-in 620ms var(--mf-ease-out) 140ms backwards;
 }
 
 .model-folders-view .settings-section:hover::before {
@@ -205,7 +193,6 @@
   color: #fff;
   box-shadow: 0 2px 6px color-mix(in srgb, var(--mf-eng, var(--accent)) 30%, transparent);
   transition: transform 320ms var(--mf-ease-spring), box-shadow var(--mf-t-base) var(--mf-ease);
-  animation: mf-icon-pop 520ms var(--mf-ease-spring) 110ms backwards;
 }
 
 .model-folders-view .settings-section:hover .settings-section-title > svg {
@@ -264,7 +251,6 @@
               background var(--mf-t-base) var(--mf-ease),
               box-shadow var(--mf-t-base) var(--mf-ease),
               transform var(--mf-t-base) var(--mf-ease);
-  animation: mf-row-in 460ms var(--mf-ease-out) backwards;
 }
 
 /* 左侧 3px 分区色竖条：与卡片顶部色带呼应，形成视觉节奏 */

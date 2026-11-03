@@ -6,22 +6,18 @@ import { shallow } from 'zustand/shallow'
 import {
   MODE_ITEMS,
   NAV_ITEMS,
-  NAV_TAIL_ITEMS,
-  TOOLS_ENTRY,
   GROUPED_VIEWS,
-  navKeyOf,
-  resolveToolsEntryView
+  navKeyOf
 } from '../utils/navConfig'
 import type { NavDef } from '../utils/navConfig'
 import { playNavSound } from '../utils/sound'
+import { SettingsIcon } from '@animateicons/react/lucide'
 import { AGENT_SESSION_SLOT_ID } from './agent-code/agent-session/slotId'
 import { preloadViewOnHover } from '../views/viewRegistry'
 import '../styles/sidebar.css'
 
-// 导航清单已统一收敛到 utils/navConfig.ts：NAV_ITEMS / NAV_TAIL_ITEMS 是常驻项，
-// 两段中间夹着「工具箱」入口（这样「设置」才落在导航最末）；
-// 「对话 / 工作台」两项在 MODE_ITEMS 里、渲染进底部 Agent Code 槽（见下方）；
-// 收进「工具箱」页的低频界面在 TOOL_GROUPS 里。本组件只负责渲染。
+// 导航清单收敛在 utils/navConfig.ts：NAV_ITEMS 是常驻项；「设置」入口在底部固定区
+// （整屏设置中心，工具箱已并入）；「对话 / 工作台」在 MODE_ITEMS 里。本组件只负责渲染。
 
 // 导航栏那个 Agent Code 入口的名字：固定叫「智能体」（README 对这组界面的统称），
 // 不跟着模式叫「聊天 / 编码」——紧挨着下面就是那两个切换按钮，同名会让人以为有两组入口。
@@ -240,9 +236,10 @@ export default function Sidebar() {
       return
     }
     const r = el.getBoundingClientRect()
-    // left = 导航项右缘 + 9px：给气泡的箭头（7px 方块的一半 + 1px 描边）留出贴合距离。
+    // left = 导航项右缘 + 5px：箭头是 7px 方块旋转 45°，尖端探出气泡约 5px，这个间距刚好
+    // 让尖端贴到导航项外沿而又不压上去；再小就会露出断开的尖角。
     // top = 导航项垂直中心，气泡自身用 translateY(-50%) 对齐，所以这里不必减去气泡高度。
-    setTip({ label, left: r.right + 9, top: r.top + r.height / 2 })
+    setTip({ label, left: r.right + 5, top: r.top + r.height / 2 })
   }
 
   // 「对话 / 工作台」共用 agent-code 这一个 view，只有工作区模式能把它们分开
@@ -258,8 +255,8 @@ export default function Sidebar() {
     setView(item.key)
   }
 
-  // 「工具箱」入口：落在任一被收纳的界面里即算激活
-  const toolsActive = GROUPED_VIEWS.has(view)
+  // 「设置」入口：打开设置中心整屏；停在设置或任一工具页都算激活
+  const settingsActive = view === 'settings' || GROUPED_VIEWS.has(view)
 
   // 常驻导航项的统一渲染：NAV_ITEMS 与 NAV_TAIL_ITEMS 两段共用——「工具箱」入口夹在中间，
   // 所以清单在 navConfig 里切成两段（原因见那里的注释）。抽成函数是为了两段的样式不会各自漂移。
@@ -293,23 +290,13 @@ export default function Sidebar() {
       className={`sidebar-wrapper${collapsed ? ' collapsed' : ''}${isCollapsed ? ' icon-only' : ''}${slotSettled ? ' slot-gone' : ''}${slotEntered ? ' slot-entered' : ''}${isHoverExpanded ? ' hover-expanded' : ''}`}
     >
       <nav className="sidebar">
-        {/* ── 导航分隔线 ──
-            把折叠按钮（窗口级操作）和下面这组页面级导航分开。收起 / 展开时它只改宽度
-            （展开通栏、收起 22px 居中），纵向占位两态一致，所以不会带动任何图标移动。
-            纯装饰，对读屏器隐藏。见 sidebar.css 的 .nav-divider。 */}
+        {/* ── 导航区顶端留白 ──
+            分组线已按要求去掉（见 sidebar.css 的 .nav-divider），这个元素只留 10px 纵向占位，
+            删掉它会让下面整列导航项上移。纯装饰，对读屏器隐藏。 */}
         <div className="nav-divider" aria-hidden="true" />
 
-        {/* ── 常驻导航项（「工具箱」入口之前）：清单与顺序见 utils/navConfig.ts 的 NAV_ITEMS ── */}
+        {/* ── 常驻导航项：清单与顺序见 utils/navConfig.ts 的 NAV_ITEMS ── */}
         {NAV_ITEMS.map(renderNavItem)}
-
-        {/* ── 工具箱：低频界面统一收进这一页，页内用二级导航切换 ── */}
-        <NavItem
-          icon={TOOLS_ENTRY.icon}
-          label={TOOLS_ENTRY.label}
-          active={toolsActive}
-          onClick={() => setView(resolveToolsEntryView())}
-          onTip={makeTipHandler(TOOLS_ENTRY.label)}
-        />
 
         {/* ── Agent Code 入口：名字固定「智能体」，图标跟随当前模式（聊天 / 编码）──
             紧贴下面那个会话槽放，让「入口 → 模式切换 → 会话列表」在视觉上连成一件事。
@@ -354,11 +341,23 @@ export default function Sidebar() {
         </div>
 
         {/* ── 底部固定区 ──
-            弹性空档 + 「设置」。空档（flex: 1）吸掉剩余空间，把「设置」压到侧栏最底；
-            内容超一屏时它收到 min-height 让位，整体照旧滚动。见 sidebar.css 的
-            .sidebar-spacer / .sidebar-bottom。顺序见 navConfig 的 NAV_TAIL_ITEMS。 ── */}
+            「设置」入口：打开设置中心整屏（左栏顶部是设置页，下面是各工具页）。
+            停在设置或任一工具页都算激活。 ── */}
         <div className="sidebar-spacer" aria-hidden="true" />
-        <div className="sidebar-bottom">{NAV_TAIL_ITEMS.map(renderNavItem)}</div>
+        <div className="sidebar-bottom">
+          <NavItem
+            icon={SettingsIcon}
+            label="设置"
+            active={settingsActive}
+            onClick={() => setView('settings')}
+            onHover={() => {
+              // 悬停就把设置中心整屏的壳 + 设置页代码都预取掉，点击零等待
+              preloadViewOnHover('settings')
+              void import('../components/ToolsHub')
+            }}
+            onTip={makeTipHandler('设置')}
+          />
+        </div>
       </nav>
 
       {/* ── 收起态标签气泡 ──

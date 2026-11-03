@@ -17,6 +17,7 @@
   --text-muted: #8a97a8;
   --accent: #0d9488;
   --me-accent-soft: #e6f7f5;
+  --me-accent-ring: rgba(13, 148, 136, .15);
   --me-accent-line: linear-gradient(135deg, #14b8a6 0%, #0891b2 100%);
   --danger: #dc2626;
   --me-warn: #d97706;
@@ -25,7 +26,7 @@
   --shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 6px 20px -6px rgba(15, 23, 42, .10);
   --transition: 220ms cubic-bezier(.4, 0, .2, 1);
 
-  max-width: 760px;
+  /* 不限宽：与其它工具页同一口径，铺满工具箱内容区卡片 */
   padding-bottom: 40px;
 }
 
@@ -150,6 +151,12 @@
   margin-bottom: 12px;
 }
 
+/* 组内最后一个元素去底边距，纵向节奏由组间距统一控制 */
+.model-endpoints-view .me-group > :last-child,
+.model-endpoints-view .me-field > :last-child {
+  margin-bottom: 0;
+}
+
 .model-endpoints-view .me-field > label {
   display: block;
   margin-bottom: 5px;
@@ -165,14 +172,47 @@
   border-radius: 8px;
   background: var(--surface);
   color: var(--text);
-  font-family: var(--font-mono, ui-monospace, monospace);
+  /* 默认用正文字体：名称、下拉这类自然语言字段不该是代码味 */
+  font-family: inherit;
   font-size: 12px;
   outline: none;
-  transition: border-color var(--transition);
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+/* 地址 / 端口 / 密钥 / 模型名这类机器字符串仍用等宽 */
+.model-endpoints-view .me-mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
 }
 
 .model-endpoints-view .me-input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--me-accent-ring);
+}
+
+.model-endpoints-view .me-input::placeholder {
+  color: var(--text-muted);
+  opacity: .7;
+}
+
+/* 自定义下拉触发按钮：与 .me-input 同一外观语言（.cmd-select 本体无基础样式，这里补全） */
+.model-endpoints-view .cmd-select.me-select-btn {
+  padding: 6px 26px 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background-color: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.model-endpoints-view .cmd-select.me-select-btn:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.model-endpoints-view .cmd-select.me-select-btn:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--me-accent-ring);
 }
 
 .model-endpoints-view .me-input-port {
@@ -201,6 +241,98 @@
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--text-muted);
+}
+
+/* ── 编辑表单：头部 + 分组结构 ── */
+/* 头部：图标徽章 + 标题 + 一句话说明，底部一条分隔线把「标题区」和「表单区」分开 */
+.model-endpoints-view .me-form-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.model-endpoints-view .me-form-head .me-section-title {
+  margin-bottom: 0;
+}
+
+.model-endpoints-view .me-form-ico {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--me-accent-soft);
+  color: var(--accent);
+}
+
+.model-endpoints-view .me-form-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.model-endpoints-view .me-form-sub {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+/* 分组标题承担结构感，组间只留间距、不套卡片 */
+.model-endpoints-view .me-group + .me-group {
+  margin-top: 16px;
+}
+
+.model-endpoints-view .me-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 9px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.model-endpoints-view .me-group-title::before {
+  content: '';
+  width: 3px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--me-accent-line);
+}
+
+/* 字段网格：横向上把相关短字段并排，铺满宽度时避免一根输入框拉满全行 */
+.model-endpoints-view .me-grid {
+  display: grid;
+  gap: 0 14px;
+  align-items: start;
+}
+
+/* 名称（弹性）+ 来源（自适应） */
+.model-endpoints-view .me-grid-head {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+/* API 类型 + API Key 等宽两列 */
+.model-endpoints-view .me-grid-2 {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+/* 上下文窗口（窄列）+ 视觉勾选（弹性列） */
+.model-endpoints-view .me-grid-ctx {
+  grid-template-columns: 170px minmax(0, 1fr);
+}
+
+/* 提高优先级：.me-check 的基础边距声明在本文件更靠后，两段同权重时后者胜 */
+.model-endpoints-view .me-check.me-check-in-grid {
+  align-self: center;
+  margin: 0 0 12px;
 }
 
 /* 来源二选一：选中态用浅底 + 描边，不做实心主色块 */
@@ -261,9 +393,14 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 14px;
+  margin-top: 16px;
   padding-top: 14px;
   border-top: 1px solid var(--border);
+}
+
+/* 探测靠左，取消 / 保存推到右边：辅助动作和决断动作分开 */
+.model-endpoints-view .me-actions-space {
+  flex: 1;
 }
 
 .model-endpoints-view button:disabled {

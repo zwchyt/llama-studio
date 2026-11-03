@@ -9,7 +9,6 @@ import { dataUrlToBlobUrl } from '../utils/audioUrl'
 import FontSelector from './FontSelector'
 // 音色下拉改用项目统一的自定义下拉组件（不再用原生 <select>，避免系统原生弹层样式）
 import CustomSelect from './CustomSelect'
-import { CURSOR_SCHEMES, getCursorSchemeId, applyCursorScheme, CURSOR_STORAGE_KEY, schemeCursorValue, type CursorRole } from '../cursor-theme'
 import { useBubbleTip } from './useBubbleTip'
 import '../styles/settings.css'
 
@@ -114,11 +113,8 @@ export default function SettingsView() {
       setBgErr(`删除失败：${e instanceof Error ? e.message : String(e)}`)
     }
   }
-  const [cursorScheme, setCursorScheme] = useState<string>(getCursorSchemeId())
-  const [previewId, setPreviewId] = useState<string | null>(null)
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
   const { tipHandlers: tip, tipNode } = useBubbleTip()
-  const previewScheme = CURSOR_SCHEMES.find(s => s.id === (previewId ?? cursorScheme)) || CURSOR_SCHEMES[0]
 
   // Edge 音色列表：仅在选了 Edge 引擎时拉一次（在线接口，失败只提示不阻塞）
   useEffect(() => {
@@ -159,13 +155,6 @@ export default function SettingsView() {
       setPreviewErr(e instanceof Error ? e.message : String(e))
       setVoicePreviewing(false)
     }
-  }
-  const previewRoles: CursorRole[] = ['default', 'pointer', 'wait']
-  const roleLabels: Record<CursorRole, string> = { default: '箭头', pointer: '手型', wait: '忙碌', progress: '后台', notAllowed: '禁止', move: '移动', help: '帮助' }
-  function handleCursorSchemeChange(v: string) {
-    setCursorScheme(v)
-    applyCursorScheme(v)
-    try { localStorage.setItem(CURSOR_STORAGE_KEY, v) } catch { /* ignore */ }
   }
 
   useEffect(() => {
@@ -394,55 +383,6 @@ export default function SettingsView() {
             <span className="toggle-track"></span>
             <span className="toggle-thumb"></span>
           </label>
-        </div>
-        <div className="st-block">
-          <p className="st-desc">
-            选择界面鼠标光标样式。悬停卡片可在下方预览区试用，点击应用并保存。部分样式可能只包含部分状态（如仅忙碌动画），其余状态使用系统默认光标。
-          </p>
-          <div
-            className="st-cursor-grid"
-            onMouseLeave={() => setPreviewId(null)}
-          >
-            {CURSOR_SCHEMES.map(s => {
-              const selected = s.id === cursorScheme
-              return (
-                <button
-                  key={s.id}
-                  type="button"
-                  className={`cursor-theme-card${selected ? ' selected' : ''}`}
-                  onClick={() => handleCursorSchemeChange(s.id)}
-                  onMouseEnter={() => setPreviewId(s.id)}
-                  aria-pressed={selected}
-                >
-                  <span className="cursor-theme-card-name">{s.label}</span>
-                  {selected && <span className="cursor-theme-card-check">✓</span>}
-                  <span
-                    className="cursor-theme-card-swatch"
-                    style={{ cursor: schemeCursorValue(s.id, 'default') || 'default' }}
-                  />
-                </button>
-              )
-            })}
-          </div>
-          <div className="cursor-preview-box">
-            <div className="cursor-preview-hint">预览区：在下方格子里移动鼠标，体验「{previewScheme.label}」的光标</div>
-            <div className="cursor-preview-cells">
-              {previewRoles.map(role => {
-                const v = schemeCursorValue(previewId ?? cursorScheme, role)
-                const fallback = role === 'pointer' ? 'pointer' : role === 'wait' ? 'wait' : 'default'
-                return (
-                  <div
-                    key={role}
-                    className="cursor-preview-cell"
-                    style={{ cursor: v || fallback }}
-                    {...tip(roleLabels[role])}
-                  >
-                    <span className="cursor-preview-cell-label">{roleLabels[role]}</span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
         </div>
       </div>
 

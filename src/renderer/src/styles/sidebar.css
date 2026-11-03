@@ -16,10 +16,6 @@
   --nav-hover: rgba(10, 10, 10, .045);
   --nav-active: rgba(10, 10, 10, .07);
   --nav-active-border: rgba(10, 10, 10, .055);
-  /* 图标底部那层柔光 */
-  --icon-hover-bg: rgba(255, 255, 255, .86);
-  /* 分隔线（导航顶部 / 底部设置上方 / 会话槽上方） */
-  --separator: rgba(0, 0, 0, .065);
 
   position: relative;
   flex-shrink: 0;
@@ -36,8 +32,6 @@ html.theme-dark .sidebar-wrapper {
   --nav-hover: rgba(255, 255, 255, .055);
   --nav-active: rgba(255, 255, 255, .085);
   --nav-active-border: rgba(255, 255, 255, .06);
-  --icon-hover-bg: rgba(255, 255, 255, .045);
-  --separator: rgba(255, 255, 255, .065);
 }
 
 /* ── 收起态的两个类，含义必须分清 ──
@@ -106,12 +100,11 @@ html.theme-dark .sidebar-wrapper {
 /* ── Agent Code 区：模式切换 + 新建 + 会话列表 ──
    槽位本身由 Sidebar.tsx 渲染，模式切换（对话 / 工作台）是它的首个子节点；
    会话列表经 portal 追加在后面（见 AgentCodeViewLayout）。
-   顶部这条分隔线取 --separator，与 .nav-divider、.sidebar-bottom::before 同一档——
-   三处都是"分组线"而不是"结构边框"，色重必须一致，否则并排看会有一处发脏。 */
+   「智能体」下方那条分组线已按要求去掉：线本身占 1px，并进取上内边距（12 + 1 = 13），
+   槽内内容与下方布局都不会整体上移 1px。 */
 .sidebar-agent-slot {
   margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--separator);
+  padding-top: 13px;
   display: flex;
   flex-direction: column;
   /* 宽度钉死在展开态的内容盒，不跟着 wrapper 的 60→220 动画一起变窄。
@@ -155,7 +148,8 @@ html.theme-dark .sidebar-wrapper {
    排在「新建聊天 / 新添项目」之上。做成两列分段控件而不是再堆两行导航项：
    一眼看出是同一个界面的两种模式，省一半高度，也把「选模式 → 新建 → 挑会话」
    这条自上而下的动作串成一条。
-   左右内缩 12px 与下方 .agent-code-session-new-btn 的 margin 对齐。
+   外框宽 188px 上限、左缘贴侧栏内边距 11px（与 .nav-item 同一条列）：外缘与上方导航项、
+   下方「新建聊天 / 新添项目」齐成一条，格内内容仍各自居中。
 
    这个容器一共三层，每层只干一件事，任何一层都不越界：
      外框  —— 容器与层级：比侧栏区域深一档的凹槽底 + 12px 圆角（描边只占位、不画色）；
@@ -187,11 +181,14 @@ html.theme-dark .sidebar-wrapper {
 .sidebar-mode-switch {
   position: relative;
   /* 选中面是 z-index: -1 的伪元素，靠这条把它关进本容器的层叠上下文，
-     否则会掉到侧栏后面去（直接看不见）——与 .nav-item 那层柔光同一个做法。 */
+     否则会掉到侧栏后面去（直接看不见）。 */
   isolation: isolate;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  margin: 0 12px 8px;
+  /* 与导航项同一条列：同宽同左缘（原来靠左右 12px 外边距内缩） */
+  width: 100%;
+  max-width: 188px;
+  margin: 0 0 8px;
   /* 描边留宽不留色：导航栏这一列不画框。宽度必须留着——选中那枚胶囊的外端圆角 11px
      是按「外框 12 − 1px 描边」算出来的，去掉宽度胶囊就贴不进内沿、转角会露出一弯凹槽底。 */
   border: 1px solid transparent;
@@ -282,7 +279,7 @@ html.theme-dark .sidebar-mode-switch .nav-item.active {
 /* 槽位内容（会话侧栏）是在首屏空闲时才挂载进来的：之前它没有任何过渡，是直接"跳"出来的。
    父级从 display:none 变 flex 没法用 transition 补（display 不参与过渡），
    但动画在元素**创建时**就会跑，正好补上这个入场。
-   从上方 8px 滑下来 + 淡入，方向与槽位顶部那条分隔线一致。 */
+   从上方 8px 滑下来 + 淡入。 */
 .sidebar-agent-slot>* {
   animation: sidebar-slot-in 0.3s cubic-bezier(0.22, 0.61, 0.36, 1) both;
 }
@@ -394,12 +391,18 @@ html.theme-dark .sidebar-mode-switch .nav-item.active {
 }
 
 .nav-item {
-  /* 当前页的左侧指示条（.nav-item.active::before）与柔光层（::after）都以本项为锚点 */
   position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
+  /* 整列宽 + 188px 上限（= 展开态内容盒 198 内缩 10）。用上限而不是百分比，两件事一起解决：
+     · 收起态内容盒只有 38px，上限根本不参与，胶囊仍是整列宽 → 窄轨里左右各 11 / 10，
+       图标 22px 那条链不动，看着就在正中；
+     · 收起 / 展开那 250ms 全程连续——宽度长到 188 之前一路跟手，之后右缘停住不再动，
+       任何一帧都不出现按态切换的尺寸跳变。
+     模式切换那两格各占半格（94px），这条上限根本够不着它们。 */
   width: 100%;
+  max-width: 188px;
   /* 导航项是固定高度的常驻行，不参与纵向收缩：底部加了弹性空档之后，侧栏一旦吃紧，
      默认的 flex-shrink: 1 会先按比例把这七行压扁（height: 36px 拦不住——它只是
      flex-basis，收缩本来就是允许的）。压扁比滚动难看得多，所以直接退出收缩。 */
@@ -416,28 +419,12 @@ html.theme-dark .sidebar-mode-switch .nav-item.active {
   color: var(--text-secondary);
   text-align: left;
   cursor: pointer;
-  /* 柔光层是 z-index: -1 的伪元素，靠它把自己关进本项的层叠上下文里，
-     否则会掉到侧栏后面去（看不见）。 */
-  isolation: isolate;
   transition:
     color .15s ease,
     background .15s ease,
     border-color .15s ease,
     box-shadow .15s ease,
     transform .15s ease;
-}
-
-/* 图标底部那层柔光：默认全透明，悬停时透出。
-   用 radial-gradient 而不是实心圆，边缘自然淡出，不会看出一个"圆片"。 */
-.nav-item::after {
-  content: '';
-  position: absolute;
-  inset: 4px;
-  z-index: -1;
-  border-radius: 7px;
-  background: radial-gradient(circle at 50% 40%, var(--icon-hover-bg), transparent 75%);
-  opacity: 0;
-  transition: opacity .15s ease;
 }
 
 /* 悬停：只给淡填充。导航栏这一列不画任何描边（描边宽度留着占位，改色不改盒），
@@ -448,45 +435,25 @@ html.theme-dark .sidebar-mode-switch .nav-item.active {
   border-color: transparent;
 }
 
-.nav-item:hover::after {
-  opacity: .7;
-}
-
 .nav-item:active {
   transform: scale(.95);
 }
 
-/* 当前页：比悬停更实一档的填充 + 内高光（描边同样只占位不画色）。
-   填充必须比悬停重（.07 vs .045），否则两个状态并排时分不出哪个是选中的。 */
+/* 当前页：比悬停更实一档的填充（描边同样只占位不画色）。
+   填充必须比悬停重（.07 vs .045），否则两个状态并排时分不出哪个是选中的。
+   顶部内高光已去掉：它在半透明填充上会显成一条白边。 */
 .nav-item.active {
   color: var(--text);
   background: var(--nav-active);
   border-color: transparent;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 55%, transparent),
-    0 1px 2px rgba(0, 0, 0, .025);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .025);
 }
 
 html.theme-dark .nav-item.active {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, .045),
-    0 1px 2px rgba(0, 0, 0, .12);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .12);
 }
 
-/* 当前页指示条：短、细、圆头，**悬在项目左缘外侧**（原来贴在左缘内的直角黑条）。
-   左缘外侧那 4px 落在侧栏内边距里，而 .sidebar 的 overflow-x: hidden 裁的是 padding box，
-   所以它不会被切掉。 */
-.nav-item.active::before {
-  content: '';
-  position: absolute;
-  left: -4px;
-  top: 50%;
-  width: 2px;
-  height: 16px;
-  transform: translateY(-50%);
-  border-radius: 999px;
-  background: var(--accent);
-}
+/* 当前页指示条已移除：选中态由玻璃填充面自己表达，左缘外侧不再挂竖条。 */
 
 /* 只作用于图标，不写成 `>*:first-child`：NavItem 的图标是可选的，一旦某项没传图标，
    first-child 就命中标签，把 font-size 归零、文字直接消失。 */
@@ -526,13 +493,6 @@ html.theme-dark .nav-item.active {
   white-space: nowrap;
 }
 
-/* 模式切换的按钮复用 .nav-item，但它自带描边与三态：把导航项那两件附加装饰关掉，
-   否则柔光层会盖住它的底色、指示条会跑到相邻按钮上。 */
-.sidebar-mode-switch .nav-item::after,
-.sidebar-mode-switch .nav-item::before {
-  display: none;
-}
-
 /* 收起态（只剩图标）：填充与竖条照旧生效——竖条是伪元素，不受
    `.sidebar-wrapper.icon-only .nav-item>*:not(:first-child) { display: none }` 影响。
    此前这里单独补了一块绿色底：那是因为「当前页」的提示点也是子元素、被同一条规则
@@ -554,26 +514,15 @@ html.theme-dark .nav-item.active {
    收起 / 展开的「零跳动」前提见文件顶部说明，这里不再重复。
    ══════════════════════════════════════════════════════════════════ */
 
-/* ── 导航分隔线 ──
-   导航区顶端的一道发丝线。折叠按钮不在侧栏里（它在标题栏的 .titlebar-btn-sidebar），
-   但位置正好落在它正下方，所以这条线读起来就是「标题栏 / 导航区」的分界，
-   和底部「设置」上方那条线一上一下把导航列表夹住。
-   展开态铺满内容宽度（198px 内容盒里一条通栏发丝线），收起态缩到 22px 居中——
-   只有横向变化，纵向占位（1 + 1 + 8 = 10px）两态完全相同，所以收起 / 展开时
-   它只是变宽变窄，不会带动任何图标上下动。
-   居中用 auto 外边距而不是 align-self: center：宽度变化时浏览器直接按剩余空间
-   重新分配左右外边距，不需要额外重算，动画期间也不会闪。 */
+/* ── 导航区顶端留白 ──
+   这里原来是一道发丝分组线，已按要求去掉：线不画了，但盒子保留——
+   1（上外边距）+ 1（高）+ 8（下外边距）= 10px 的纵向占位还撑着下方所有导航项的位置，
+   连元素一起删会整列上移 10px。 */
 .nav-divider {
   width: 100%;
   height: 1px;
   margin: 1px auto 8px;
   flex-shrink: 0;
-  background: linear-gradient(90deg, transparent, var(--separator), transparent);
-  transition: width .25s cubic-bezier(.25, .1, .25, 1);
-}
-
-.sidebar-wrapper.icon-only .nav-divider {
-  width: 22px;
 }
 
 /* ── 底部固定区（设置）──
@@ -593,21 +542,8 @@ html.theme-dark .nav-item.active {
   position: relative;
   /* 常驻项，不允许被会话列表挤扁 */
   flex-shrink: 0;
+  /* 与上方导航列表之间的分组线已去掉，这里只留 8px 呼吸 */
   padding-top: 8px;
-}
-
-/* 上方那条分隔线用伪元素而不是 border-top：border 会算进盒子高度，
-   而伪元素绝对定位、完全不占位——纵向占位就只剩 padding-top: 8px 这一处，
-   两态一致，切换时不会因为多出 1px 而抖。
-   左右各缩进 7px：线不顶到卡片内壁，和上面的通栏分隔线形成层级差。 */
-.sidebar-bottom::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 7px;
-  right: 7px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--separator), transparent);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -617,14 +553,15 @@ html.theme-dark .nav-item.active {
    挂在 body 上（Sidebar.tsx 用 createPortal）而不是侧栏内部，有两个硬理由：
      · .sidebar 是 overflow: hidden，挂在里面会被裁掉；
      · 收起时轨道只有 60px，气泡根本放不下。
-   定位由 JS 写入（left = 导航项右缘 + 9px，top = 导航项垂直中心），
+   定位由 JS 写入（left = 导航项右缘 + 5px，top = 导航项垂直中心），
    这里只管外观与入场：从左侧 4px 处滑进来。
    注意 top 已由 JS 设在中心点，所以纵向平移固定是 -50%（居中），
    不要改成别的比例，否则气泡会偏离图标。 */
 .nav-tip {
   position: fixed;
   z-index: var(--z-tooltip);
-  padding: 7px 10px;
+  /* 内边距收紧一档：气泡整体更短，少往主界面里探（原来 7px 10px） */
+  padding: 5px 7px;
   border-radius: 8px;
   /* 用 --surface-solid（不透明快照）而不是 --surface：后者在开启背景图时会被调透，
      气泡浮在图片上会糊成一团。气泡不在 .app 里（portal 到 body），拿到的本来就是

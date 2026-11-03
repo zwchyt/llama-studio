@@ -17,6 +17,7 @@ import { playEvent } from '../utils/sound'
 import { addressOfEndpoint, probeTargetOf } from '../utils/endpoint'
 import type { EndpointApi, ModelEndpoint, Template } from '../../../shared/types'
 import { useBubbleTip } from './useBubbleTip'
+import CustomSelect from './CustomSelect'
 import '../styles/model-endpoints.css'
 
 const API_CHOICES: Array<{ value: EndpointApi; label: string }> = [
@@ -226,100 +227,131 @@ export default function EndpointsView() {
 
       {draft && (
         <div className="me-section me-form">
-          <div className="me-section-title">
-            {draft.id ? '编辑端点' : '新建端点'}
+          {/* 表单头：图标 + 标题 + 一句话说明，收起按钮靠右 */}
+          <div className="me-form-head">
+            <span className="me-form-ico" aria-hidden="true">
+              {draft.id ? <PencilIcon size={14} /> : <PlusIcon size={14} />}
+            </span>
+            <div className="me-form-head-text">
+              <div className="me-section-title">{draft.id ? '编辑端点' : '新建端点'}</div>
+              <p className="me-form-sub">
+                {draft.kind === 'local-port' ? '本机端口 · 服务已在别处运行，这里只做登记' : '远程 URL · OpenAI / Anthropic 兼容服务'}
+              </p>
+            </div>
             <button className="btn btn-ghost btn-icon me-close" aria-label="收起" {...tip('收起')} onClick={() => setDraft(null)}><XIcon size={13} /></button>
           </div>
 
-          <div className="me-field">
-            <label>名称</label>
-            <input className="me-input" value={draft.name} placeholder="本机 8080 / 公司网关…" onChange={e => patch({ name: e.target.value })} />
-          </div>
-
-          <div className="me-field">
-            <label>来源</label>
-            <div className="me-seg">
-              <button className={`me-seg-btn${draft.kind === 'local-port' ? ' active' : ''}`} onClick={() => patch({ kind: 'local-port' })}>本机端口</button>
-              <button className={`me-seg-btn${draft.kind === 'remote' ? ' active' : ''}`} onClick={() => patch({ kind: 'remote' })}>远程 URL</button>
+          {/* 组一：基本信息 */}
+          <div className="me-group">
+            <div className="me-group-title">基本信息</div>
+            <div className="me-grid me-grid-head">
+              <div className="me-field">
+                <label>名称</label>
+                <input className="me-input" value={draft.name} placeholder="本机 8080 / 公司网关…" onChange={e => patch({ name: e.target.value })} />
+              </div>
+              <div className="me-field">
+                <label>来源</label>
+                <div className="me-seg">
+                  <button className={`me-seg-btn${draft.kind === 'local-port' ? ' active' : ''}`} onClick={() => patch({ kind: 'local-port' })}>本机端口</button>
+                  <button className={`me-seg-btn${draft.kind === 'remote' ? ' active' : ''}`} onClick={() => patch({ kind: 'remote' })}>远程 URL</button>
+                </div>
+              </div>
             </div>
           </div>
 
-          {draft.kind === 'local-port' ? (
-            <div className="me-field">
-              <label>端口</label>
-              <div className="me-inline">
-                <span className="me-prefix">127.0.0.1:</span>
-                <input className="me-input me-input-port" value={draft.port} inputMode="numeric" spellCheck={false}
-                  onChange={e => patch({ port: e.target.value.replace(/\D/g, '').slice(0, 5) })} />
-              </div>
-              <p className="me-hint">服务得已经在别处启动。这里不启动、也不停止它，断开只是取消本应用的登记。</p>
-            </div>
-          ) : (
-            <>
+          {/* 组二：连接参数，两种来源各一张子表 */}
+          <div className="me-group">
+            <div className="me-group-title">连接</div>
+            {draft.kind === 'local-port' ? (
               <div className="me-field">
-                <label>接口地址（Base URL）</label>
-                <input className="me-input" value={draft.baseUrl} placeholder="http://127.0.0.1:8080/v1" spellCheck={false}
-                  onChange={e => patch({ baseUrl: e.target.value })} />
-                <p className="me-hint">填到版本路径为止，例如 http://127.0.0.1:8080/v1 或 https://api.example.com/v1</p>
-              </div>
-              <div className="me-field">
-                <label>API 类型</label>
-                <select className="me-input" value={draft.api} onChange={e => patch({ api: e.target.value as EndpointApi })}>
-                  {API_CHOICES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                </select>
-              </div>
-              <div className="me-field">
-                <label>API Key</label>
+                <label>端口</label>
                 <div className="me-inline">
-                  <input className="me-input me-key" type={showKey ? 'text' : 'password'} value={draft.apiKey} placeholder="本机服务可留空" spellCheck={false}
-                    onChange={e => patch({ apiKey: e.target.value })} />
-                  <button className="btn btn-ghost btn-icon" aria-label={showKey ? '隐藏' : '显示'} {...tip(showKey ? '隐藏' : '显示')} onClick={() => setShowKey(v => !v)}>
-                    {showKey ? <EyeOffIcon size={13} /> : <EyeIcon size={13} />}
-                  </button>
+                  <span className="me-prefix">127.0.0.1:</span>
+                  <input className="me-input me-mono me-input-port" value={draft.port} inputMode="numeric" spellCheck={false}
+                    onChange={e => patch({ port: e.target.value.replace(/\D/g, '').slice(0, 5) })} />
                 </div>
-                <p className="me-hint">明文存在 endpoints.json 里（本机应用，没有接系统密钥链）。</p>
+                <p className="me-hint">服务得已经在别处启动。这里不启动、也不停止它，断开只是取消本应用的登记。</p>
               </div>
-              <div className="me-field">
-                <label>上下文窗口</label>
-                <input className="me-input me-input-port" value={draft.contextWindow} inputMode="numeric" placeholder="128000" spellCheck={false}
-                  onChange={e => patch({ contextWindow: e.target.value.replace(/\D/g, '').slice(0, 8) })} />
-                <p className="me-hint">远程端点没有 /props，这个值只能手填；留空按 128000 算。</p>
-              </div>
-              <label className="me-check">
-                <input type="checkbox" checked={draft.vision} onChange={e => patch({ vision: e.target.checked })} />
-                该端点支持图像输入（勾了截图工具才会把图发给模型）
-              </label>
-            </>
-          )}
+            ) : (
+              <>
+                <div className="me-field">
+                  <label>接口地址（Base URL）</label>
+                  <input className="me-input me-mono" value={draft.baseUrl} placeholder="http://127.0.0.1:8080/v1" spellCheck={false}
+                    onChange={e => patch({ baseUrl: e.target.value })} />
+                  <p className="me-hint">填到版本路径为止，例如 http://127.0.0.1:8080/v1 或 https://api.example.com/v1</p>
+                </div>
+                <div className="me-grid me-grid-2">
+                  <div className="me-field">
+                    <label>API 类型</label>
+                    <CustomSelect
+                      value={draft.api}
+                      onChange={v => patch({ api: v as EndpointApi })}
+                      options={API_CHOICES}
+                      aria-label="API 类型"
+                      style={{ width: '100%' }}
+                      buttonClass="me-select-btn"
+                    />
+                  </div>
+                  <div className="me-field">
+                    <label>API Key</label>
+                    <div className="me-inline">
+                      <input className="me-input me-mono me-key" type={showKey ? 'text' : 'password'} value={draft.apiKey} placeholder="本机服务可留空" spellCheck={false}
+                        onChange={e => patch({ apiKey: e.target.value })} />
+                      <button className="btn btn-ghost btn-icon" aria-label={showKey ? '隐藏' : '显示'} {...tip(showKey ? '隐藏' : '显示')} onClick={() => setShowKey(v => !v)}>
+                        {showKey ? <EyeOffIcon size={13} /> : <EyeIcon size={13} />}
+                      </button>
+                    </div>
+                    <p className="me-hint">明文存在 endpoints.json 里（本机应用，没有接系统密钥链）。</p>
+                  </div>
+                </div>
+                <div className="me-grid me-grid-ctx">
+                  <div className="me-field">
+                    <label>上下文窗口</label>
+                    <input className="me-input me-mono me-input-port" value={draft.contextWindow} inputMode="numeric" placeholder="128000" spellCheck={false}
+                      onChange={e => patch({ contextWindow: e.target.value.replace(/\D/g, '').slice(0, 8) })} />
+                    <p className="me-hint">远程端点没有 /props，这个值只能手填；留空按 128000 算。</p>
+                  </div>
+                  <label className="me-check me-check-in-grid">
+                    <input type="checkbox" checked={draft.vision} onChange={e => patch({ vision: e.target.checked })} />
+                    该端点支持图像输入（勾了截图工具才会把图发给模型）
+                  </label>
+                </div>
+              </>
+            )}
+          </div>
 
-          <div className="me-field">
-            <label>Model ID</label>
-            <div className="me-models">
-              {draft.modelIds.map((m, i) => (
-                <div key={i} className="me-model-row">
-                  <input className="me-input" value={m} placeholder={draft.kind === 'local-port' ? '可留空（llama-server 不校验模型名）' : '例如 qwen3-32b'} spellCheck={false}
-                    onChange={e => patch({ modelIds: draft.modelIds.map((x, j) => (j === i ? e.target.value : x)) })} />
-                  <button className="btn btn-ghost btn-icon" aria-label="建卡片" {...tip('建卡片')} onClick={() => {
-                    const built = toEndpoint(draft)
-                    if (!built.ok) { notify(built.error, 'error'); return }
-                    if (!draft.id) { notify('先保存端点，再按模型名建卡片', 'error'); return }
-                    const ep = endpoints.find(x => x.id === draft.id)
-                    if (ep) void createCard(ep, m.trim())
-                  }}><TagIcon size={13} /></button>
-                  <button className="btn btn-ghost btn-icon text-danger" aria-label="删除这一行" {...tip('删除这一行')} onClick={() => patch({ modelIds: draft.modelIds.filter((_, j) => j !== i) })}>
-                    <TrashIcon size={13} />
-                  </button>
-                </div>
-              ))}
+          {/* 组三：模型名列表 */}
+          <div className="me-group">
+            <div className="me-group-title">Model ID</div>
+            <div className="me-field">
+              <div className="me-models">
+                {draft.modelIds.map((m, i) => (
+                  <div key={i} className="me-model-row">
+                    <input className="me-input me-mono" value={m} placeholder={draft.kind === 'local-port' ? '可留空（llama-server 不校验模型名）' : '例如 qwen3-32b'} spellCheck={false}
+                      onChange={e => patch({ modelIds: draft.modelIds.map((x, j) => (j === i ? e.target.value : x)) })} />
+                    <button className="btn btn-ghost btn-icon" aria-label="建卡片" {...tip('建卡片')} onClick={() => {
+                      const built = toEndpoint(draft)
+                      if (!built.ok) { notify(built.error, 'error'); return }
+                      if (!draft.id) { notify('先保存端点，再按模型名建卡片', 'error'); return }
+                      const ep = endpoints.find(x => x.id === draft.id)
+                      if (ep) void createCard(ep, m.trim())
+                    }}><TagIcon size={13} /></button>
+                    <button className="btn btn-ghost btn-icon text-danger" aria-label="删除这一行" {...tip('删除这一行')} onClick={() => patch({ modelIds: draft.modelIds.filter((_, j) => j !== i) })}>
+                      <TrashIcon size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => patch({ modelIds: [...draft.modelIds, ''] })}><PlusIcon size={12} /> 添加 Model ID</button>
+              <p className="me-hint">点「探测」会把端点上报的模型名并进来。一个模型名对应一张模型卡片。</p>
             </div>
-            <button className="btn btn-ghost btn-sm" onClick={() => patch({ modelIds: [...draft.modelIds, ''] })}><PlusIcon size={12} /> 添加 Model ID</button>
-            <p className="me-hint">点「探测」会把端点上报的模型名并进来。一个模型名对应一张模型卡片。</p>
           </div>
 
           <div className="me-actions">
             <button className="btn btn-secondary btn-sm" onClick={() => void probeDraft()} disabled={busy}>{busy ? '探测中…' : '探测'}</button>
-            <button className="btn btn-primary btn-sm" onClick={() => void save()}>保存</button>
+            <span className="me-actions-space" aria-hidden="true" />
             <button className="btn btn-ghost btn-sm" onClick={() => setDraft(null)}>取消</button>
+            <button className="btn btn-primary btn-sm" onClick={() => void save()}>保存</button>
           </div>
         </div>
       )}

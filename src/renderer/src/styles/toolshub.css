@@ -1,211 +1,166 @@
-/* ══════════════════════════════════════════════════════════
-   工具箱：低频界面聚合页（顶部「组标签 + 当前组条目」+ 下方内容）
-   仅在本页生效，不覆盖其他界面样式。
-   ══════════════════════════════════════════════════════════ */
+/* ══ 设置中心整屏：左侧固定工具栏 + 右侧内容舞台 ══ */
 
-/* 抵消 global.css 中 `.view-transition > :not(...)` 给直接子节点套上的卡片样式：
-   本页的卡片由顶部导航条与下方内容各自承担，外层容器只负责纵向排布。
-   选择器提到 (0,4,0) 以稳定压过 global.css 的 (0,3,0)，不依赖文件加载顺序。 */
-.app .content .view-transition>.toolhub {
-  padding: 0;
-  overflow: hidden;
-  background: none;
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-  margin: 0;
+/* 整屏模式：导航栏让位（display:none） */
+.main-layout.tools-fullscreen .sidebar-wrapper {
+  display: none;
 }
 
-.toolhub {
+/* 常驻容器：显隐由 App.tsx 内联 opacity/inert 驱动；切换瞬时（transition:none，防重叠闪烁） */
+.toolhub-host {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  min-width: 0;
   min-height: 0;
-  gap: 8px;
+  padding: 8px;
+  overflow: hidden;
+  transition: none;
+  will-change: opacity;
 }
 
-/* ── 顶部导航条：一级组标签 + 二级当前组条目，全部横向排在这里 ── */
-.toolhub-top {
+/* 工具箱外壳不再吃 .view-transition 的卡片样式（宿主换了，抵消规则跟着换宿主） */
+.toolhub-host>.toolhub {
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  border-radius: 0;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── 外壳：侧栏 + 舞台，两块地皮大小永远不变 ── */
+.toolhub {
+  display: flex;
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* ══ 左：固定工具栏 ══ */
+.toolhub-rail {
+  width: 218px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
   background: var(--surface);
-  border: 1.5px solid var(--border);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
-.toolhub-top-bar {
+.toolhub-rail-head {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
-.toolhub-top-title {
+/* 返回按钮：整屏模式的出口 */
+.toolhub-back {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2, var(--bg));
+  color: var(--text-secondary);
+  font-family: var(--font);
   font-size: 12px;
-  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+
+.toolhub-back:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.toolhub-back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.toolhub-rail-title {
+  font-size: 13px;
+  font-weight: 700;
   color: var(--text);
 }
 
-.toolhub-top-count {
+.toolhub-rail-count {
+  margin-left: auto;
   font-size: 10px;
-  font-weight: 600;
   color: var(--text-muted);
-  background: var(--bg);
+  background: var(--surface-2, var(--bg));
   border-radius: 999px;
   padding: 1px 7px;
 }
 
-.toolhub-top-sep {
-  width: 1px;
-  height: 14px;
-  margin: 0 3px;
-  background: var(--border);
-  flex-shrink: 0;
-}
-
-/* 二级：当前组的条目，横向排布、放不下自动换行 */
-.toolhub-chips {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-/* 一级：组标签。横向排布、放不下自动换行；
-   选中态用 --accent / --accent-fg，跟随主题的墨色，与全局主按钮同语言。 */
-.toolhub-groups {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.toolhub-gtab {
-  font-family: var(--font);
-  font-size: 11.5px;
-  font-weight: 500;
-  line-height: 1;
-  padding: 6px 10px;
-  border: none;
-  border-radius: 7px;
-  background: var(--bg);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background var(--transition), color var(--transition);
-}
-
-.toolhub-gtab:hover {
-  color: var(--text);
-}
-
-.toolhub-gtab.active {
-  background: var(--accent);
-  color: var(--accent-fg);
-  font-weight: 600;
-}
-
-.toolhub-gtab:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-/* 「后端」还没扫出东西时替换整排条目 */
-.toolhub-chips-empty {
-  margin: 0;
-  padding: 6px 2px;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--text-muted);
-}
-
-/* 条目：横向胶囊（图标 + 名称），不再撑满宽度 */
-.toolhub-item {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 30px;
-  padding: 3px 10px 3px 4px;
-  border: none;
-  background: none;
-  border-radius: 9px;
-  font-size: 12.5px;
-  font-weight: 500;
-  font-family: var(--font);
-  color: var(--text-secondary);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background var(--transition), color var(--transition);
-}
-
-.toolhub-item:hover {
-  background: var(--bg);
-  color: var(--text);
-}
-
-.toolhub-item.active {
-  background: var(--bg);
-  color: var(--text);
-  font-weight: 600;
-}
-
-.toolhub-item:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-.toolhub-item-label {
-  white-space: nowrap;
-}
-
-/* 彩色图标胶囊：沿用顶栏导航的语言，激活时实心点亮 */
-.toolhub-ico {
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: background var(--transition), color var(--transition), box-shadow var(--transition), transform var(--transition);
-}
-
-.toolhub-item:hover .toolhub-ico {
-  transform: translateY(-1px);
-}
-
-.toolhub-item.active .toolhub-ico {
-  transform: none;
-}
-
-.toolhub-active-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  animation: fadeIn 150ms ease, navPulse 1.6s ease-in-out infinite;
-}
-
-/* ── 右侧内容区 ── */
-.toolhub-main {
+.toolhub-rail-scroll {
   flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+  overflow-y: auto;
+  padding: 8px;
 }
 
-.toolhub-crumb {
+/* 分组标题：纯静态文字，不是按钮、不参与任何状态 */
+.toolhub-rail-label {
+  padding: 10px 8px 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .8px;
+  color: var(--text-muted);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 4px 8px;
-  flex-shrink: 0;
+  gap: 6px;
 }
 
-.toolhub-crumb-ico {
+.toolhub-rail-label::before {
+  content: '';
+  width: 3px;
+  height: 10px;
+  border-radius: 2px;
+  background: linear-gradient(135deg, #14b8a6, #0891b2);
+}
+
+.toolhub-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-family: var(--font);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition), color var(--transition);
+}
+
+.toolhub-rail-item:hover {
+  background: var(--surface-2, var(--bg));
+  color: var(--text);
+}
+
+.toolhub-rail-item.active {
+  background: var(--accent-soft, rgba(13, 148, 136, .12));
+  color: var(--text);
+  font-weight: 600;
+}
+
+.toolhub-rail-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.toolhub-rail-ico {
   width: 22px;
   height: 22px;
   border-radius: 6px;
@@ -215,36 +170,114 @@
   flex-shrink: 0;
 }
 
-.toolhub-crumb-name {
+.toolhub-rail-item.active .toolhub-rail-ico {
+  box-shadow: 0 2px 6px rgba(13, 148, 136, .35);
+}
+
+.toolhub-rail-item-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toolhub-rail-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.toolhub-rail-empty {
+  margin: 2px 8px 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* ══ 右：内容舞台 ══ */
+.toolhub-stage {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.toolhub-stage-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  height: 46px; /* 高度定死：标题文字变化不引起任何布局跳动 */
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.toolhub-stage-ico {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.toolhub-stage-name {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
 }
 
-.toolhub-crumb-path {
+.toolhub-stage-path {
+  margin-left: auto;
   font-size: 11.5px;
   color: var(--text-muted);
-  margin-left: auto;
 }
 
-.toolhub-body {
+.toolhub-stage-body {
   flex: 1;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
+  position: relative;
+  background: var(--surface-2, var(--bg));
 }
 
-/* 内层界面沿用原 `.view-transition > *` 的卡片样式与弹性尺寸：
-   界面组件本身没改，只是从 .view-transition 的直接子节点挪到了这里。
-   flex 用 `1 1 auto`（与 ocr.css / hub.css 对 global 规则的覆盖一致），
-   以兼容根节点带 height:100% 的界面。 */
-.toolhub-body>*:not(.chat-layout):not(.agent-code-view) {
+/* 内容未就绪时的加载态（刚进整屏、页面代码在解压的短暂窗口） */
+.toolhub-stage-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+/* 常驻页面：全在 DOM 里，非当前页 display:none + inert，切换纯显隐 */
+.toolhub-stage-body > .toolhub-page {
+  position: absolute;
+  inset: 0;
+  display: none;
+  overflow: hidden;
+}
+
+.toolhub-stage-body > .toolhub-page.visible {
+  display: block;
+}
+
+/* 内层页面沿用卡片外观 */
+.toolhub-stage-body > .toolhub-page > *:not(.chat-layout):not(.agent-code-view) {
+  height: 100%;
   padding: 24px;
-  flex: 1 1 auto;
-  min-height: 0;
   overflow-y: auto;
   background: var(--surface);
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }

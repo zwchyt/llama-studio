@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useDeferredValue, useEffect, useMemo } from 'react'
+import React, { lazy, Suspense, useEffect } from 'react'
 import { LoaderIcon } from '@animateicons/react/lucide'
 import { useStore } from './store/useStore'
 import { useImageStore } from './store/imageStore'
@@ -12,7 +12,7 @@ import { notify } from './store/notificationStore'
 import { playEvent, playNavSound, warmUpAudio } from './utils/sound'
 import TitleBar from './components/TitleBar'
 import { GROUPED_VIEWS, navKeyOf, type ViewKey } from './utils/navConfig'
-import { renderViewComponent } from './views/viewRegistry'
+import { renderViewComponent, loadViewChunk } from './views/viewRegistry'
 import ThemeToggle from './components/ThemeToggle'
 import './styles/titlebar.css'
 import './styles/app-background.css'
@@ -76,6 +76,11 @@ function LazyOnce({ active, label, children }: {
 const searchParams = new URLSearchParams(window.location.search)
 const initChatUrl = searchParams.get('chat_url')
 
+/** 普通主界面：工具页/settings 在工具箱舞台，llama/agent-code 有专属容器，均不算。 */
+function isRegularMainView(v: ViewKey): boolean {
+  return !GROUPED_VIEWS.has(v) && v !== 'settings' && v !== 'llama' && v !== 'agent-code'
+}
+
 export default function App() {
   const chatUrl = initChatUrl
 
@@ -97,34 +102,12 @@ function AppMain() {
   const timeoutsRef = React.useRef<ReturnType<typeof setTimeout>[]>([])
 
   const view = useStore(s => s.view)
-  // 视图切换的「延迟值」：懒加载的视图在 chunk 到位前会挂起，若直接渲染新 view，
-  // React 会先把旧视图换成 Suspense 占位、chunk 到了再换成真视图 —— 中间多出一次视觉状态，
-  // 期间整块区域是空的（露出 body 底色，亮色闪白 / 暗色闪黑）。
-  // 用 useDeferredValue 后，React 在低优先级渲染里**继续显示旧视图**，等新视图能渲染了才切换：
-  // 全程只有一次视觉状态变化。导航高亮仍用实时的 view，点下去立刻响应。
-  const deferredView = useDeferredValue(view)
-  // 下面两个标志用来让「普通界面容器」和「工作台容器」的显隐与 deferredView 同步，
-  // 而不是与实时的 view 同步。原因：从 agent-code 切出时，deferredView 会先滞后一帧
-  // 保持 'agent-code'，而 renderView('agent-code') 返回 null（工作台单独渲染在 agent-code-host
-  // 里）。如果 view-transition 按实时 view 恢复 opacity:1，里面却是 null；同时 agent-code-host
-  // 又瞬间 display:none —— 同一格里没有任何内容，露出 body 底色，就是「一闪」。
-  // 让三者都跟随 deferredView，则切出第一帧旧内容仍在，deferredView 更新后交叉淡出，全程无空帧。
-  const isAgentCodeDeferred = deferredView === 'agent-code'
-  const isLlamaDeferred = deferredView === 'llama'
-  // 这两个 view 有专属常驻容器（不在 view-transition 里渲染）：agent-code 见下方 agent-code-host，
-  // llama 见下方 llama-host。它们处于当前 deferred 值期间，view-transition 必须保持隐藏，
-  // 否则里面渲染的是 null（renderView 对这两个 key 都返回 null），会露出空白背景。
-  const hideViewTransition = isAgentCodeDeferred || isLlamaDeferred
-  // 切到 agent-code / llama 时，viewRegistry 对 .view-transition 返回 null（这两个 view 由专属容器渲染）。
-  // 若 .view-transition 直接跟随 deferredView，切出的那一帧它的内容会瞬间变成 null、而新容器才刚开始淡入，
-  // 于是「旧界面消失 + 新界面淡入」之间露出 body 底色（亮色闪白 / 暗色闪黑）。
-  // 这里额外保留一个 transitionView：它只在「当前是普通界面」时跟随 deferredView；一旦切到
-  // agent-code / llama（hideViewTransition 为真），就停在上一个普通界面不再更新，于是 .view-transition
-  // 在淡出期间仍显示旧内容，与专属容器交叉淡出，全程无空帧。
-  const [transitionView, setTransitionView] = React.useState<ViewKey>(view)
-  useEffect(() => {
-    if (!hideViewTransition) setTransitionView(deferredView)
-  }, [deferredView, hideViewTransition])
+  // 整屏容器的显隐跟实时 view（不走 deferred）：deferred 会让旧整屏多停留一拍。
+  const isAgentCodeLive = view === 'agent-code'
+  const isLlamaLive = view === 'llama'
+  const isToolsFullscreen = GROUPED_VIEWS.has(view) || view === 'settings'
+  // 专属容器的 view 不在 view-transition 里渲染（renderView 返回 null），隐藏期间须防露底。
+  const hideViewTransition = isAgentCodeLive || isLlamaLive || isToolsFullscreen
   // 「对话 / 工作台」共用 agent-code 这一个 view，靠 mode 区分，导航音要用到它（见下方 playNavSound）
   const agentMode = useStore(s => s.agentMode)
   // 工作台 / Web 界面的「是否已访问过」。首次进入后永久为 true —— 它们必须保持挂载
@@ -132,10 +115,25 @@ function AppMain() {
   // 「要不要开始加载」，不用它控制卸载。初始值取当前 view：直接落在该页时首帧就渲染，不闪。
   const [agentCodeMounted, setAgentCodeMounted] = React.useState(view === 'agent-code')
   const [llamaMounted, setLlamaMounted] = React.useState(view === 'llama')
+  const [toolhubMounted, setToolhubMounted] = React.useState(GROUPED_VIEWS.has(view) || view === 'settings')
   useEffect(() => {
     if (view === 'agent-code') setAgentCodeMounted(true)
     if (view === 'llama') setLlamaMounted(true)
+    if (GROUPED_VIEWS.has(view) || view === 'settings') setToolhubMounted(true)
   }, [view])
+  // 「返回主界面」落点：最近的非工具页，工具箱返回按钮用；进工具箱期间冻结。
+  const [lastMainView, setLastMainView] = React.useState<ViewKey>(
+    GROUPED_VIEWS.has(view) || view === 'settings' ? 'cards' : view
+  )
+  useEffect(() => {
+    if (!GROUPED_VIEWS.has(view) && view !== 'settings') setLastMainView(view)
+  }, [view])
+
+  // 整屏切换走瞬时翻转而非交叉淡出：淡出中段两层都半透明、互相透出（重叠闪烁）。
+  // 渲染期读写 ref（effect 晚一个提交，会错过切换帧）。
+  const prevHiddenRef = React.useRef(hideViewTransition)
+  const instantViewSwap = hideViewTransition !== prevHiddenRef.current
+  prevHiddenRef.current = hideViewTransition
   // 空闲预加载：工作台 / Web 界面的 chunk 很大，但用户不一定马上点进去。
   // 不在启动时同步加载 —— 那等于把成本压回首屏；而是等首屏画完、主线程空闲时悄悄下好，
   // 用户真正点进去时通常已经就绪，连骨架都看不到。
@@ -157,6 +155,13 @@ function AppMain() {
     const preload = () => {
       void importAgentCode().then(() => { if (!cancelled) setAgentCodeMounted(true) })
       void importLlamaChat().then(() => { if (!cancelled) setLlamaMounted(true) })
+      // 设置中心（工具箱整屏）空闲预挂载：点「设置」时无骨架、页面全部就绪
+      void import('./components/ToolsHub').then(() => { if (!cancelled) setToolhubMounted(true) })
+      // 主界面几个页面全量预取 + 预挂载（隐藏），与工具箱同一策略
+      ;(['cards', 'knowledge', 'monitoring', 'token-stats', 'welcome'] as ViewKey[]).forEach((v) => {
+        ensureMainChunk(v)
+        setAliveMainViews((prev) => (prev.includes(v) ? prev : [...prev, v]))
+      })
     }
     const idle = window.requestIdleCallback(preload, { timeout: 2000 })
     const t = window.setTimeout(preload, 3000)
@@ -756,15 +761,37 @@ function AppMain() {
     }
   }
 
-  // 收进「工具箱」的界面统一由 ToolsHub 接管：它内部用二级导航切换具体界面，
-  // 于是导航栏只需保留高频入口，低频界面照样能在页内直接切换。
-  // 其余界面走 viewRegistry 的同一套映射（与 ToolsHub 共用，避免两处 switch）。
-  // 普通界面容器渲染 transitionView（切到 agent-code/llama 时保留上一个普通界面用于淡出），
-  // 而非实时的 deferredView（后者在切换瞬间会变成 null，导致空帧闪烁）。
-  const currentView = useMemo(() => {
-    if (GROUPED_VIEWS.has(transitionView)) return <ToolsHub />
-    return renderViewComponent(transitionView)
-  }, [transitionView])
+  // ── 主界面常驻缓存（与工具箱舞台同一套机制）──
+  // 进过的页面保留挂载、切换 = display 翻转；代码未就绪时继续显示上一个就绪页，不闪空壳。
+  const mainChunkPendingRef = React.useRef(new Set<ViewKey>())
+  const [mainReadyViews, setMainReadyViews] = React.useState<ViewKey[]>([])
+  const ensureMainChunk = (v: ViewKey): void => {
+    if (mainReadyViews.includes(v) || mainChunkPendingRef.current.has(v)) return
+    mainChunkPendingRef.current.add(v)
+    const p = loadViewChunk(v)
+    if (!p) {
+      setMainReadyViews((prev) => (prev.includes(v) ? prev : [...prev, v]))
+      return
+    }
+    p.then(() => { setMainReadyViews((prev) => (prev.includes(v) ? prev : [...prev, v])) })
+      .catch(() => { mainChunkPendingRef.current.delete(v) })
+  }
+  const [aliveMainViews, setAliveMainViews] = React.useState<ViewKey[]>(
+    () => (isRegularMainView(view) ? [view] : ['cards' as ViewKey])
+  )
+  useEffect(() => {
+    if (isRegularMainView(view)) {
+      ensureMainChunk(view)
+      setAliveMainViews((prev) => (prev.includes(view) ? prev : [...prev, view]))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view])
+  // 展示哪一页：目标页代码就绪 → 实时 view；未就绪 → 停在最近一个就绪页（绝不闪空壳）
+  const shownMain = isRegularMainView(view) && mainReadyViews.includes(view)
+    ? view
+    : (aliveMainViews.find((v) => mainReadyViews.includes(v)) ?? null)
+  // 页面元素按 view 缓存：App 重渲染时常驻页面拿到同一引用，React 跳过重渲染
+  const mainElCache = React.useRef(new Map<ViewKey, React.ReactNode>())
 
   // 强度换成两个值交给 CSS：面板实心度与压在图上的薄纱透明度（强度越低纱越厚）。
   // 浅色底下要「够亮」才压得住深字。
@@ -795,13 +822,14 @@ function AppMain() {
         <ThemeToggle />
         <UpdateBannerGroup />
         <BackendDownloadBanner />
-        <div className="main-layout">
+        <div className={`main-layout${isToolsFullscreen ? ' tools-fullscreen' : ''}`}>
           <Sidebar />
           <main className="content">
             {/* 刻意**不**给这个容器加 key={view}：key 一变 React 会把整棵子树销毁重建，
               于是新视图挂起时没有"旧内容"可保留 → 渲染 fallback（null）→ 界面空白一下再跳出来。
-              去掉 key 之后，配合上面的 useDeferredValue，chunk 没就绪时会**继续显示旧视图**，
-              到位了再换 —— 全程不出现空白。
+              去掉 key 之后，普通界面是**常驻挂载**的（进过的页面保留在 DOM 里，
+              靠 .view-page 的 display 显隐切换），chunk 与页面数据在首次进入 /
+              空闲预挂载时就绪 —— 切换零重建、零空白。
 
               这一带**不放任何 opacity 从 0 起的动画**（容器、卡片、页头都不放）。
               之前放过 view-fade-in / view-content-in / view-header-in 三条，全是从透明开始：
@@ -815,24 +843,42 @@ function AppMain() {
               那一帧整块区域是空的，露出 body 底色或原生窗口底色（#e5e5e5），就是那一闪。
               常驻绘制后切回来只改合成层透明度，主线程不用重画。
 
-              ⚠️ 下面 style/inert 判的是 isAgentCodeDeferred（基于 deferredView），
-              不是实时的 view。原因见该变量注释。 */}
+              ⚠️ 下面 style/inert 判的是 hideViewTransition（实时 view 驱动）。 */}
             <div
               className="view-transition"
-              style={hideViewTransition ? { opacity: 0, pointerEvents: 'none' } : undefined}
+              style={hideViewTransition
+                ? { opacity: 0, pointerEvents: 'none', transition: instantViewSwap ? 'none' : undefined }
+                : instantViewSwap
+                  ? { transition: 'none' }
+                  : undefined}
               inert={hideViewTransition}
             >
-              <Suspense fallback={null}>{currentView}</Suspense>
+              {/* 常驻主界面：进过的页面全挂在 DOM 里，非当前页 display:none + inert */}
+              {aliveMainViews.map((v) => {
+                let el = mainElCache.current.get(v)
+                if (!el) {
+                  el = renderViewComponent(v)
+                  mainElCache.current.set(v, el)
+                }
+                return (
+                  <div
+                    key={v}
+                    className={`view-page${v === shownMain ? ' visible' : ''}`}
+                    inert={v === shownMain ? undefined : true}
+                  >
+                    {el}
+                  </div>
+                )
+              })}
             </div>
             {/* Agent Code 工作台：首次进入才加载（见 LazyOnce），之后常驻挂载 —— 切走时不卸载组件，
               保证正在进行的生成 / 工具循环不被打断，进度、滚动、输入框状态全部保留。
-              显隐同样跟随 deferredView（isAgentCodeDeferred），且用 opacity 代替 display:none，
-              与 .view-transition 形成交叉淡出，避免中间出现空帧。 */}
+              显隐跟随实时 view，切换为瞬时（transition: none，理由见 .toolhub-host）。 */}
             <div
               className="agent-code-host"
               style={{
-                opacity: isAgentCodeDeferred ? 1 : 0,
-                pointerEvents: isAgentCodeDeferred ? 'auto' : 'none',
+                opacity: isAgentCodeLive ? 1 : 0,
+                pointerEvents: isAgentCodeLive ? 'auto' : 'none',
                 flexDirection: 'column',
                 flex: 1,
                 minHeight: 0,
@@ -843,7 +889,7 @@ function AppMain() {
                 overflow: 'clip',
                 overflowClipMargin: '24px',
               }}
-              inert={!isAgentCodeDeferred}
+              inert={!isAgentCodeLive}
             >
               <LazyOnce active={agentCodeMounted} label="正在加载工作台…"><AgentCodeView /></LazyOnce>
             </div>
@@ -854,12 +900,23 @@ function AppMain() {
             <div
               className="llama-host"
               style={{
-                opacity: isLlamaDeferred ? 1 : 0,
-                pointerEvents: isLlamaDeferred ? 'auto' : 'none',
+                opacity: isLlamaLive ? 1 : 0,
+                pointerEvents: isLlamaLive ? 'auto' : 'none',
               }}
-              inert={!isLlamaDeferred}
+              inert={!isLlamaLive}
             >
               <LazyOnce active={llamaMounted} label="正在加载 Web 界面…"><LlamaChatView /></LazyOnce>
+            </div>
+            {/* 设置中心（原工具箱）整屏容器：常驻挂载，切换为瞬时显隐 */}
+            <div
+              className="toolhub-host"
+              style={{
+                opacity: isToolsFullscreen ? 1 : 0,
+                pointerEvents: isToolsFullscreen ? 'auto' : 'none',
+              }}
+              inert={!isToolsFullscreen}
+            >
+              <LazyOnce active={toolhubMounted} label="正在加载设置…"><ToolsHub backView={lastMainView} /></LazyOnce>
             </div>
           </main>
         </div>

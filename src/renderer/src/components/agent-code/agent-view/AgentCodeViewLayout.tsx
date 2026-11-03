@@ -468,8 +468,17 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   }, [openMemoryText])
 
   const previewImageAttachment = useCallback((a: { name: string; path?: string; dataUrl?: string; fullDataUrl?: string }) => {
-    if (a.path) { void openPreview(a.path, 'preview'); return }
     const src = a.dataUrl || a.fullDataUrl
+    const diskPath = a.path
+    if (diskPath) {
+      // 磁盘文件可能已被移动 / 删除（ENOENT）：退回内存 dataUrl 预览；两者皆无才走路径打开报错
+      void window.api.statFile(diskPath).then((st) => {
+        if (st) { void openPreview(diskPath, 'preview'); return }
+        if (src) { openMemoryImage(a.name, src, 'preview'); return }
+        void openPreview(diskPath, 'preview')
+      })
+      return
+    }
     if (src) openMemoryImage(a.name, src, 'preview')
   }, [openPreview, openMemoryImage])
 

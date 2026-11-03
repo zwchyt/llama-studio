@@ -44,6 +44,9 @@ export function useGridFlip(
     const readCols = (): number =>
       new Set(Array.from(grid.children, el => Math.round(el.getBoundingClientRect().left))).size
     let prevCols = 0
+    // 网格宽度为 0 = 页面隐藏（整屏切换期间）：隐藏期快照全为 0，恢复那一次的位移
+    // 是整屏布局切换造成的，不是列数重排 —— 不参与 FLIP，否则卡片成片从错误位置滑入。
+    let prevGridWidth = grid.getBoundingClientRect().width
     const snapshot = (): void => {
       prevRects = new Map(Array.from(grid.children, el => [el, el.getBoundingClientRect()] as const))
       prevCols = readCols()
@@ -51,6 +54,12 @@ export function useGridFlip(
     snapshot()
 
     const ro = new ResizeObserver(() => {
+      const gridWidth = grid.getBoundingClientRect().width
+      if (gridWidth === 0 || prevGridWidth === 0) {
+        prevGridWidth = gridWidth
+        snapshot()
+        return
+      }
       const cols = readCols()
       if (cols !== prevCols) {
         for (const el of Array.from(grid.children)) {
@@ -69,6 +78,7 @@ export function useGridFlip(
           if (anim) runningRef.current.set(el, anim)
         }
       }
+      prevGridWidth = gridWidth
       snapshot()
     })
     ro.observe(grid)

@@ -53,13 +53,10 @@
   --radius-sm: 8px;
   --radius-lg: 20px;
   --shadow: 0 1px 3px rgba(0, 0, 0, .08), 0 1px 2px rgba(0, 0, 0, .06);
-  /* 界面面板（普通界面卡 / 工作台会话卡 / 右侧面板）浮在底层 --layer-base 上的投影。
-     面板四周只有 8px 空档（贴导航栏那侧 16px），所以横向必须收得住：两层大模糊都带负扩散，
-     横向只探出 4~7px、纵向靠位移往下走（下边那 8px 之外就是窗口边，被裁掉也看不见）。
-     若写成不分方向的 20px 模糊，投影会在左侧那条缝上被容器硬切出一道竖线。
-     向上不留溢出（位移大于模糊半径减扩散），顶边那条缝保持干净。 */
-  --shadow-panel:
-    0 1px 2px rgba(16, 20, 28, .09), 0 6px 14px -3px rgba(16, 20, 28, .13), 0 18px 34px -10px rgba(16, 20, 28, .16);
+  /* 界面面板（普通界面卡 / 工作台会话卡 / 右侧面板）不再投影：四周那一圈灰环按需求整圈去掉，
+     卡面边界只靠底色差表达。深色主题仍留上下内缘的明暗补偿（见 theme-dark.css 同名令牌），
+     那里色差小，全靠边缘那道亮度差把卡片从底层里分出来。 */
+  --shadow-panel: none;
   --shadow-md: 0 4px 12px rgba(0, 0, 0, .1), 0 2px 4px rgba(0, 0, 0, .06);
   --shadow-lg: 0 10px 32px rgba(0, 0, 0, .14), 0 4px 8px rgba(0, 0, 0, .08);
   --transition: 180ms cubic-bezier(.4, 0, .2, 1);
@@ -282,19 +279,19 @@ textarea {
 
 .content {
   flex: 1;
-  /* 用 clip 而不是 hidden，并留出 24px 外延：界面面板的投影横向铺到导航区这一侧，
-     裁切面若正好压在导航栏与主界面的分界（220）上，投影尾巴会被齐刀切断——
-     那 8 像素缝就变成一条上下等宽的实心灰带、左右各一道硬边，看着就是"导航栏右边多了一条线"。
-     留 24px 让投影在自己范围内淡完，缝里只剩自然渐隐。 */
+  /* 用 clip 而不是 hidden，并留出 24px 外延：这条外延原本是给界面面板的投影准备的——
+     裁切面若正好压在导航栏与主界面的分界（220）上，投影尾巴会被齐刀切断，那 8 像素缝就变成
+     一条实心灰带。面板投影已整圈去掉，这个用途没了，但外延先留着：改回 0 会挪动裁切盒，
+     影响这一层里其它贴边内容的可见范围，得肉眼逐一核对才敢动。 */
   overflow: clip;
   overflow-clip-margin: 24px;
   min-height: 0;
   /* 不铺底：底层由上一层 .main-layout 一整片铺好，本容器与导航栏之间不存在第二层。 */
-  /* 普通界面容器与工作台容器**叠在同一个 grid 格子里**：谁显隐都不影响另一个的布局，
-     所以两边都不必改定位方式（position 一改就会抢走后代的包含块，
-     视图里几十处 position:absolute 会集体错位）。 */
+  /* 普通界面容器与工作台容器**叠在同一个 grid 格子里**：谁显隐都不影响另一个的布局。 */
   display: grid;
   grid-template-rows: minmax(0, 1fr);
+  /* 底部抬高 32px（= 标题栏高度），上下留白对称；只抬内容区，侧栏底部的「设置」按钮不动 */
+  padding-bottom: 32px;
 }
 
 /* 同一个格子里叠加。min-*:0 是 grid 子项的常规兜底，防止内容把格子顶高。 */
@@ -332,7 +329,8 @@ textarea {
 
 .agent-code-host {
   display: flex;
-  transition: opacity 120ms ease;
+  /* 瞬时切换（理由同 .toolhub-host）：交叉淡出让两个整屏在中段同时半透明、互相透出 */
+  transition: none;
   will-change: opacity;
 }
 
@@ -366,28 +364,45 @@ textarea {
   /* 与普通页面同一口径：四边 8 */
   padding: 8px;
   overflow: hidden;
-  transition: opacity 120ms ease;
+  /* 瞬时切换（理由同 .toolhub-host） */
+  transition: none;
   will-change: opacity;
 }
 
-/* 系统「减少动态效果」偏好下，三个视图容器的交叉淡出改为瞬时切换。
+/* 系统「减少动态效果」偏好下，视图容器的交叉淡出改为瞬时切换。
    有动效敏感（如前庭功能障碍）的用户开着这个偏好，就不该再看到任何渐变。 */
 @media (prefers-reduced-motion: reduce) {
   .view-transition,
   .agent-code-host,
-  .llama-host {
+  .llama-host,
+  .toolhub-host {
     transition: none;
   }
 }
 
-.view-transition>:not(.chat-layout):not(.agent-code-view) {
+/* 常驻主界面：进过的页面常驻挂载，切换 = .visible 翻转 display；包装层只管占位与显隐 */
+.view-transition>.view-page {
+  display: none;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+.view-transition>.view-page.visible {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 页面根节点沿用原 `.view-transition > *` 的卡片口径 */
+.view-transition>.view-page.visible>*:not(.chat-layout):not(.agent-code-view) {
   padding: 24px;
   overflow-y: auto;
   flex: 1;
   min-height: 0;
   background: var(--surface);
   /* 描边留宽不留色：这圈线紧贴导航栏右缘时会被读成「导航栏自己的圆角边框」。
-     卡片的边界改由底色差 + 投影表达；宽度留着是为了不改动盒模型（去掉会让内容区宽 3px）。 */
+     卡片的边界只靠底色差表达（面板投影已整圈去掉）；宽度留着是为了不改动盒模型（去掉会让内容区宽 3px）。 */
   border: 1.5px solid transparent;
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-panel);
@@ -1964,9 +1979,11 @@ webview {
   }
 }
 
+/* 全局光标：一律用系统关键字（自定义光标主题功能已取消）。
+   这几条本身还负责「可点的非原生元素也显示手型 / 禁用元素显示禁止」，所以保留规则、只去掉变量层。 */
 html,
 body {
-  cursor: var(--cursor-default, default);
+  cursor: default;
 }
 
 a,
@@ -1979,29 +1996,29 @@ label,
 input[type="button"]:not(:disabled),
 input[type="submit"]:not(:disabled),
 input[type="reset"]:not(:disabled) {
-  cursor: var(--cursor-pointer, pointer) !important;
+  cursor: pointer !important;
 }
 
 [disabled],
 .disabled,
 :disabled {
-  cursor: var(--cursor-not-allowed, not-allowed) !important;
+  cursor: not-allowed !important;
 }
 
 [aria-busy="true"],
 .loading,
 .spinner {
-  cursor: var(--cursor-wait, var(--cursor-progress, wait)) !important;
+  cursor: wait !important;
 }
 
 [draggable="true"],
 .drag-handle {
-  cursor: var(--cursor-move, move) !important;
+  cursor: move !important;
 }
 
 .help-cursor,
 [help] {
-  cursor: var(--cursor-help, help) !important;
+  cursor: help !important;
 }
 
 @keyframes agent-banner-pulse {
