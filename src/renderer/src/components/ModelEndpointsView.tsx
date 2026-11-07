@@ -10,6 +10,7 @@
 
 import { useEffect, useState } from 'react'
 import { PlusIcon, ServerIcon, TrashIcon, PlugZapIcon, EyeIcon, EyeOffIcon, PencilIcon, XIcon, TagIcon } from '@animateicons/react/lucide'
+import { ImagePlus, X } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { notify } from '../store/notificationStore'
 import { safeCall } from '../utils/safeCall'
@@ -25,6 +26,9 @@ const API_CHOICES: Array<{ value: EndpointApi; label: string }> = [
   { value: 'openai-responses', label: 'OpenAI Responses' },
   { value: 'anthropic-messages', label: 'Anthropic Messages' }
 ]
+
+/** 端点图标在 logos/logos.json 里的键：加前缀避免与模板 id、来源图标键撞车 */
+const logoKeyOf = (id: string): string => `endpoint:${id}`
 
 /** 表单草稿：数字与列表都用字符串/数组存，保存时再收敛成 ModelEndpoint */
 type Draft = {
@@ -93,6 +97,9 @@ function toEndpoint(d: Draft): { ok: true; value: ModelEndpoint } | { ok: false;
 export default function EndpointsView() {
   const endpoints = useStore(s => s.modelEndpoints)
   const setModelEndpoints = useStore(s => s.setModelEndpoints)
+  const modelLogos = useStore(s => s.modelLogos)
+  const setModelLogoEntry = useStore(s => s.setModelLogoEntry)
+  const loadModelLogos = useStore(s => s.loadModelLogos)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [showKey, setShowKey] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -107,8 +114,8 @@ export default function EndpointsView() {
   }
 
   // 进页面就以磁盘为准刷一次：老卡片是在 list-templates 时被迁移成端点记录的，
-  // 应用启动时若已缓存过一份空表，这里补上。
-  useEffect(() => { void reload() }, [])
+  // 应用启动时若已缓存过一份空表，这里补上。图标映射同样补读一次（幂等，已缓存不重读）。
+  useEffect(() => { void reload(); void loadModelLogos().catch(() => {}) }, [])
 
   const patch = (p: Partial<Draft>): void => setDraft(d => (d ? { ...d, ...p } : d))
 
@@ -154,8 +161,33 @@ export default function EndpointsView() {
     if (!res?.success) { notify(`删除失败：${res?.error ?? ''}`, 'error'); return }
     await reload()
     if (draft?.id === ep.id) setDraft(null)
+    // 端点删掉后清掉它的图标映射，避免 logos.json 留下孤儿键（图片文件仍留在图库里）
+    setModelLogoEntry(logoKeyOf(ep.id), null)
+    void window.api.removeModelLogo(logoKeyOf(ep.id)).catch(() => {})
     const refs = useStore.getState().cards.filter(c => c.template.endpointId === ep.id)
     notify(refs.length ? `已删除端点；${refs.length} 张引用它的卡片会失效，需要时重新添加` : '已删除端点', 'info')
+  }
+
+  /** 选图：复用模型卡片的图标接口，文件框默认打开模型卡片图标目录 */
+  const pickEndpointLogo = async (id: string): Promise<void> => {
+    const key = logoKeyOf(id)
+    const res = await safeCall(() => window.api.setModelLogo(key), '设置端点图标失败')
+    if (!res) return
+    if (!res.success) {
+      if (res.error !== '已取消') notify(`设置端点图标失败：${res.error ?? ''}`, 'error')
+      return
+    }
+    const img = await safeCall(() => window.api.getModelLogoImage(res.fileName!), '读取端点图标失败')
+    setModelLogoEntry(key, img?.success && img.dataUrl ? img.dataUrl : null)
+  }
+
+  /** 移除：只解除映射，图片本身留在图库里供其它条目复用 */
+  const removeEndpointLogo = async (id: string): Promise<void> => {
+    const key = logoKeyOf(id)
+    const res = await safeCall(() => window.api.removeModelLogo(key), '移除端点图标失败')
+    if (!res) return
+    if (!res.success) { notify(`移除端点图标失败：${res.error ?? ''}`, 'error'); return }
+    setModelLogoEntry(key, null)
   }
 
   /** 为端点的某个模型名建一张卡片（卡片只存 endpointId 引用） */
@@ -207,21 +239,45 @@ export default function EndpointsView() {
           <div className="me-empty">还没有端点。新建一个，探测通过后按模型名建卡片，模型下拉里就会出现它。</div>
         )}
         <div className="me-list">
-          {endpoints.map(ep => (
-            <div key={ep.id} className="me-row">
-              <span className={`me-dot ${probeState[ep.id] ?? 'unknown'}`} {...tip(probeState[ep.id] === 'ok' ? '上次探测可用' : probeState[ep.id] === 'fail' ? '上次探测不通' : '本次未探测')} />
-              <div className="me-row-main">
-                <div className="me-row-name">{ep.name}<span className="me-tag">{ep.kind === 'local-port' ? '本机端口' : '远程'}</span></div>
-                <div className="me-row-meta">{addressOfEndpoint(ep)}{ep.kind === 'remote' ? ` · ${API_CHOICES.find(a => a.value === ep.api)?.label ?? ep.api ?? ''}` : ''} · {ep.modelIds.length} 个模型名</div>
+          {endpoints.map(ep => {
+            const logo = modelLogos[logoKeyOf(ep.id)]
+            const probeText = probeState[ep.id] === 'ok' ? '上次探测可用' : probeState[ep.id] === 'fail' ? '上次探测不通' : '本次未探测'
+            return (
+              <div key={ep.id} className="me-row">
+                <span className="me-logo-wrap">
+                  <button
+                    type="button"
+                    className={`me-logo${logo ? ' has-logo' : ''}`}
+                    aria-label={logo ? `更换「${ep.name}」的图标` : `为「${ep.name}」添加图标`}
+                    {...tip(`${probeText} · 点击${logo ? '更换' : '添加'}图标`)}
+                    onClick={() => void pickEndpointLogo(ep.id)}
+                  >
+                    {logo ? <img className="me-logo-img" src={logo} alt="" /> : <ImagePlus size={15} />}
+                    <span className={`me-dot ${probeState[ep.id] ?? 'unknown'}`} aria-hidden="true" />
+                  </button>
+                  {logo && (
+                    <button
+                      type="button"
+                      className="me-logo-remove"
+                      aria-label={`移除「${ep.name}」的图标`}
+                      {...tip('移除图标')}
+                      onClick={() => void removeEndpointLogo(ep.id)}
+                    ><X size={9} /></button>
+                  )}
+                </span>
+                <div className="me-row-main">
+                  <div className="me-row-name">{ep.name}<span className="me-tag">{ep.kind === 'local-port' ? '本机端口' : '远程'}</span></div>
+                  <div className="me-row-meta">{addressOfEndpoint(ep)}{ep.kind === 'remote' ? ` · ${API_CHOICES.find(a => a.value === ep.api)?.label ?? ep.api ?? ''}` : ''} · {ep.modelIds.length} 个模型名</div>
+                </div>
+                <button className="btn btn-ghost btn-icon" aria-label="探测" {...tip('探测')} onClick={() => void probeSaved(ep)}><PlugZapIcon size={13} /></button>
+                <span style={{ display: 'inline-flex' }} {...tip('建卡片（用第一个模型名）')}>
+                <button className="btn btn-ghost btn-icon" aria-label="建卡片（用第一个模型名）" onClick={() => void createCard(ep, ep.modelIds[0] ?? '')} disabled={!ep.modelIds.length}><TagIcon size={13} /></button>
+                </span>
+                <button className="btn btn-ghost btn-icon" aria-label="编辑" {...tip('编辑')} onClick={() => { setDraft(draftOf(ep)); setShowKey(false) }}><PencilIcon size={13} /></button>
+                <button className="btn btn-ghost btn-icon text-danger" aria-label="删除" {...tip('删除')} onClick={() => void remove(ep)}><TrashIcon size={13} /></button>
               </div>
-              <button className="btn btn-ghost btn-icon" aria-label="探测" {...tip('探测')} onClick={() => void probeSaved(ep)}><PlugZapIcon size={13} /></button>
-              <span style={{ display: 'inline-flex' }} {...tip('建卡片（用第一个模型名）')}>
-              <button className="btn btn-ghost btn-icon" aria-label="建卡片（用第一个模型名）" onClick={() => void createCard(ep, ep.modelIds[0] ?? '')} disabled={!ep.modelIds.length}><TagIcon size={13} /></button>
-              </span>
-              <button className="btn btn-ghost btn-icon" aria-label="编辑" {...tip('编辑')} onClick={() => { setDraft(draftOf(ep)); setShowKey(false) }}><PencilIcon size={13} /></button>
-              <button className="btn btn-ghost btn-icon text-danger" aria-label="删除" {...tip('删除')} onClick={() => void remove(ep)}><TrashIcon size={13} /></button>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 

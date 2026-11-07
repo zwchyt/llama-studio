@@ -574,15 +574,13 @@ export function AgentInputArea({
           onRemove={id => { setSourceLogoMenu(null); return removeSourceLogo(id) }}
         />
       )}
-      {/* ── 输入框上方的上下文行（仅编码模式）──
-          当前工作区目录 + git 分支 + 待发送附件胶囊。前两项描述的是「这段对话跑在哪个
-          工作区里」，属于**上下文**而不是操作按钮，所以从底部工具行里提出来单独占一行。
-          两个下拉都是 bottom:100% 向上弹出，放在这里反而比原来更不容易被容器裁掉。
-          附件胶囊跟着这一行走（不再单独占一行压在项目名上方）；只有这一行的成员之一
-          存在时才渲染。通用模式没有工作区概念，整行不渲染，胶囊改单独贴在输入框上方。 */}
-      {!plainChat && (activeProject.workspaceDir || currentBranch || attachedFiles.length > 0) && (
+      {/* ── 输入框上方的上下文行 ──
+          编码模式放工作区目录 + git 分支：它们描述「这段对话跑在哪个工作区里」，是上下文
+          而不是操作按钮，所以单占一行；两个下拉都是 bottom:100% 向上弹出，放这里不易被裁。
+          行尾是预填充波浪：搬出工具行后不再和长模型名抢宽度，也不会撑高工具行造成抖动。
+          整行始终挂载，成员都缺席时由样式表的 :empty 规则隐藏，不留空白间距。 */}
         <div className="chat-input-context">
-          {activeProject.workspaceDir && (
+          {!plainChat && activeProject.workspaceDir && (
             <div className="chat-workspace-badge-wrap">
               <button
                 ref={workspaceBtnRef}
@@ -621,7 +619,7 @@ export function AgentInputArea({
               )}
             </div>
           )}
-          {activeProject.workspaceDir && currentBranch && (
+          {!plainChat && activeProject.workspaceDir && currentBranch && (
             <div className="chat-branch-selector">
               <div className="chat-branch-wrap">
                 <button
@@ -655,8 +653,8 @@ export function AgentInputArea({
               </div>
             </div>
           )}
+          <AgentPrefillBar />
         </div>
-      )}
       <div className="chat-input-row">
         <div className={`chat-input-field${dragOver ? ' dragover' : ''}`}>
           {/* /命令 补全浮层：锚定输入字段本体（CSS 绝对定位 left/right:0 + bottom:100%），
@@ -777,13 +775,9 @@ export function AgentInputArea({
                 title={rtPhase === 'connecting' ? '连接中…（点击取消）' : rtActive ? '结束实时对话' : '实时语音对话'}
               />
             )}
-            {/* 预填充进度：吃掉左侧按钮组（附件/选择文件/语音）与右侧控件组
-                （上下文 · 模型 · 搜索 · 思考程度 · 发送）之间那段空白。
-                靠 flex:1 自适应宽度，无进度时整块不渲染，右侧那组的
-                margin-left:auto 会自动接管这段空白 —— 布局与原来一致。 */}
-            <AgentPrefillBar />
             {/* 工作区目录与 git 分支已上移到输入框上方那一行（.chat-input-context），
-                它们描述的是「这段对话在哪个工作区里」，属于上下文而非操作按钮。 */}
+                它们描述的是「这段对话在哪个工作区里」，属于上下文而非操作按钮。
+                预填充波浪也一并搬到那一行的右端，工具行不再有可伸可缩的中间元素。 */}
             <AgentTopBarCtx
               active={contextModalOpen}
               onToggle={() => setContextModalOpen(v => !v)}

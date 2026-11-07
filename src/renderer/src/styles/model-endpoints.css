@@ -407,3 +407,118 @@
   opacity: .5;
   cursor: default;
 }
+
+/* ── 端点图标：默认「加图」占位，右下角保留探测状态点 ── */
+.model-endpoints-view .me-logo-wrap {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+}
+
+.model-endpoints-view .me-logo {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color var(--transition), color var(--transition), background var(--transition);
+}
+
+.model-endpoints-view .me-logo.has-logo {
+  border-style: solid;
+}
+
+.model-endpoints-view .me-logo:hover {
+  border-color: var(--accent);
+  background: var(--me-accent-soft);
+  color: var(--accent);
+}
+
+.model-endpoints-view .me-logo:focus-visible,
+.model-endpoints-view .me-logo-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.model-endpoints-view .me-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 7px;
+  display: block;
+}
+
+/* 状态点压在图标右下角，用一圈卡面底色和图片隔开 */
+.model-endpoints-view .me-logo .me-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* 有图标时才出现的移除按钮：悬停或键盘聚焦到这一组即可见 */
+.model-endpoints-view .me-logo-remove {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition), color var(--transition), border-color var(--transition);
+}
+
+.model-endpoints-view .me-logo-wrap:hover .me-logo-remove,
+.model-endpoints-view .me-logo-wrap:focus-within .me-logo-remove,
+.model-endpoints-view .me-logo-remove:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.model-endpoints-view .me-logo-remove:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* ── 暗色主题：只换令牌值，规则与动画完全复用（同 settings.css / model-folders.css） ── */
+html.theme-dark .model-endpoints-view {
+  --bg: #24272d;
+  --surface: #2b2f36;
+  --surface-hover: #33373f;
+  --me-surface-2: #272b31;
+
+  --border: #383c44;
+  --border-strong: #4b505b;
+
+  --text: #ced2d9;
+  --text-secondary: #9298a2;
+  --text-muted: #71767f;
+
+  --accent: #2dd4bf;
+  --me-accent-soft: rgba(45, 212, 191, .12);
+  --me-accent-ring: rgba(45, 212, 191, .22);
+  --me-accent-line: linear-gradient(135deg, #14b8a6 0%, #0891b2 100%);
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, .26), 0 6px 20px -6px rgba(0, 0, 0, .40);
+}
+
+/* 深色下悬停往亮处走，避免行面一悬停反而变暗 */
+html.theme-dark .model-endpoints-view .me-row:hover {
+  background: color-mix(in srgb, var(--surface-hover) 90%, var(--text) 10%);
+}

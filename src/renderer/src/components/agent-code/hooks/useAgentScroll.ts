@@ -35,6 +35,12 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
   // 用时间窗口在整个动画期间持续抑制，而不是只挡一帧。
   const smoothScrollUntilRef = useRef(0)
   const FOLLOW_THRESHOLD = 80
+  // 只有显式用户输入才允许「位置变小」翻转跟随。程序化贴底、浏览器锚定、内容重排
+  // 都会产生同类 scroll 事件；窗口覆盖一次滚轮 / 拖动动作的全过程。
+  const USER_INPUT_MS = 400
+  // 内容总高度一次变化超过这个量就算布局突变（思考段折叠 / 批收起 / 工具卡开合），
+  // 不是用户滚动。明显大于单行行高 23px，又远小于一次折叠的几百到几千像素。
+  const LAYOUT_JUMP_PX = 96
   // 滚动停止多久后恢复轨道点的波浪过渡（test.md 9.9）：与 smoothScrollUntilRef 的
   // 抑制窗口同理——动画/滚动期间的过渡纯浪费，停稳后再放回来
   const RAIL_IDLE_MS = 140
@@ -62,6 +68,8 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
   // 合并成同一条 scroll 等），它们都会命中「位置变小 → 判为用户上滚」。解除只认显式手势。
   const followLockUntilRef = useRef(0)
   const FOLLOW_LOCK_MS = 1500
+  // 最近一次显式用户输入（滚轮上滚 / 触摸 / 按下滚动条 / 键盘）的截止时间戳
+  const userInputUntilRef = useRef(0)
   const railTargetsRef = useRef(new Map<string, HTMLElement>())
   // 已挂载消息的 [id, 元素] 有序表：只承担「位置」职责，供二分读取 getBoundingClientRect。
   const railEntriesRef = useRef<[string, HTMLElement][]>([])
@@ -185,6 +193,8 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     const distance = maxTop - top
     const prevMaxTop = lastMaxTopRef.current
     lastMaxTopRef.current = maxTop
+    // 内容总高度一次大跳不是用户滚动，下面用它和收缩判定一起排除布局突变。
+    const layoutJump = Math.abs(maxTop - prevMaxTop) > LAYOUT_JUMP_PX
     // 累计向下位移：出现向上位移立即清零
     if (top > prevTop) downAccumRef.current += top - prevTop
     else if (top < prevTop) downAccumRef.current = 0
@@ -204,10 +214,18 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
       }
     } else if (top < prevTop) {
       // 「位置变小」不等于「用户上滚」：收缩时浏览器会把 scrollTop 夹取到新上限，
-      // 同样产生位置变小的事件。只有 maxTop 确实变小、且停在新底部时才算夹取。
+      // 折叠过渡的每一帧、以及内容总高度一次大跳（锚定重排 / 工具结果落地）都会
+      // 产生这类事件。判定放宽到「收缩后仍在近底带」：原先只认 4px 夹取，
+      // 而贴底每帧循环比收缩晚一拍，距离常有几十像素，会被误判成用户上滚，
+      // 于是工具调用一次就把跟随永久关掉，整轮后续输出都不再自动贴底。
+      // 用户上滚不会改变内容总高度，滚到远处（超出近底带）仍照常打断跟随。
       const shrank = maxTop < prevMaxTop - 0.5
-      const clampedToBottom = shrank && distance <= REATTACH_THRESHOLD
-      if (!clampedToBottom) followingRef.current = false
+      const shrankNearBottom = shrank && distance <= FOLLOW_THRESHOLD
+      // 没有显式用户输入时，一律不把这类事件当成手动上滚（工具调用后的锚定 / 重排
+      // 会连发一串位置变小的事件，此前就是它们把跟随永久关掉，视口卡在工具卡那一屏）。
+      // 补一档「已明显滚离底部」兜底键盘等没有手势标记的输入，避免跟随关不掉。
+      const userGesture = Date.now() < userInputUntilRef.current || distance > FOLLOW_THRESHOLD * 3
+      if (!shrankNearBottom && !layoutJump && userGesture) followingRef.current = false
     }
   }, [])
 
@@ -220,6 +238,12 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     followLockUntilRef.current = 0
     followingRef.current = false
     atBottomRef.current = false
+    userInputUntilRef.current = Date.now() + USER_INPUT_MS
+  }, [])
+  // 拖滚动条 / 键盘上滚没有 wheel 事件，靠容器上的 mousedown / keydown 记一次输入，
+  // 让滚动事件仍能把这类真实上滚判成「手动打断」。
+  const markUserInput = useCallback(() => {
+    userInputUntilRef.current = Date.now() + USER_INPUT_MS
   }, [])
   const { historyStartIndex, loadEarlierMessages } = useAgentHistoryWindow(
     activeSession?.id, activeSession?.messages ?? [], chatScrollRef, pauseFollow,
@@ -746,7 +770,7 @@ export function useAgentScroll({ activeSession, streaming, setSelectionPopover, 
     historyStartIndex, loadEarlierMessages,
     chatScrollRef, atBottom, railItems, activeRailId, railOverflowing, railScrolling,
     railWaveCenter, onRailPointerMove, onRailPointerLeave,
-    onChatScroll, onChatWheel, pauseFollow, markRailScrolling,
+    onChatScroll, onChatWheel, pauseFollow, markUserInput, markRailScrolling,
     animateScrollTo, scrollToBottom, updateActiveRailItem, syncRailItems,
     scheduleRailSync, scrollToRailItem, resetFollow, registerVirtualApi,
   }

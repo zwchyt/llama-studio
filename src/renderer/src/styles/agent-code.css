@@ -170,10 +170,10 @@
   position: relative;
 }
 
-/* 输入框上方的上下文行（仅编码模式）：当前工作区目录 + git 分支。
-   从底部工具行里提出来单独占一行——它们描述的是「这段对话在哪个工作区里」，
-   属于上下文而不是操作按钮，混在一排图标里不容易被看见。
-   两个下拉仍是 bottom:100% 向上弹出，放在输入框上方反而比原来更不容易被容器裁掉。 */
+/* 输入框上方的上下文行：编码模式放当前工作区目录 + git 分支，行尾放预填充波浪。
+   前两项描述的是「这段对话在哪个工作区里」，属于上下文而不是操作按钮，
+   混在一排图标里不容易被看见。两个下拉仍是 bottom:100% 向上弹出，
+   放在输入框上方反而比原来更不容易被容器裁掉。 */
 .chat-input-context {
   display: flex;
   align-items: center;
@@ -181,6 +181,12 @@
   margin-bottom: 6px;
   min-width: 0;
   flex-shrink: 0;
+}
+
+/* 徽章、分支、波浪都缺席时整行不占位（否则空 flex 行仍留 6px 外边距）。
+   这行始终挂载是为了让通用模式、以及没有工作区的编码会话也能显示预填充进度。 */
+.chat-input-context:empty {
+  display: none;
 }
 
 .chat-input-context>* {
@@ -1099,7 +1105,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
    顶层用 mask 横向裁出进度边界。两层根数与间距一致，所以边界两侧严丝合缝。
    柱子起伏是纯 CSS 动画（每根错开 55ms 负延迟，形成横向推进的波纹），
    JS 每帧只写一个 mask 百分比 + 一个数字，开销极小。
-   整条靠 flex:1 吃掉工具行中间那段空白（左侧按钮组与右侧控件组之间）。 */
+   整条挂在输入框上方那一行的右端，不再参与工具行的宽度争夺。 */
 .agent-prefill {
   flex: 1 1 auto;
   min-width: 0;
@@ -1108,6 +1114,15 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   gap: 8px;
   padding: 0 6px;
   overflow: hidden;
+}
+
+/* 上方那一行里的波浪：靠 auto 外边距贴到行尾，宽度有上限也有下限——
+   长工作区名 / 长分支名只会自己截断，不会把波浪挤到看不见。 */
+.chat-input-context .agent-prefill {
+  flex: 0 1 220px;
+  min-width: 110px;
+  margin-left: auto;
+  padding: 0;
 }
 
 .agent-prefill-wave {
@@ -8939,8 +8954,8 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
 }
 
 /* 右侧控件组（上下文 · 模型 · 搜索 · 思考程度 · 发送）靠这一条贴到最右。
-   但工具行的自由空间是「两个接管者」：有进度时先被 .agent-prefill 的 flex:1 吃满，
-   auto margin 拿到 0；没渲染时才轮到这条吸收。改其中一个要连带看另一个。 */
+   预填充波浪已移到输入框上方那一行，工具行的自由空间只由这条 auto margin 接管，
+   不再有第二个可伸可缩的元素跟它抢，模型名变长也不会连带挤掉进度条。 */
 .agent-code-view .chat-input-tools .agent-ctx-inline {
   margin-left: auto;
 }

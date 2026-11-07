@@ -223,7 +223,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
   const { condensing, condenseMsg, handleManualCondense } = condense
   const { copyMessage, editAt, resendAt, branchAt, confirmEdit, deleteMessage } = messageActions
   const {
-    activeRailId, atBottom, chatScrollRef, onChatScroll, onChatWheel, pauseFollow,
+    activeRailId, atBottom, chatScrollRef, onChatScroll, onChatWheel, pauseFollow, markUserInput,
     railItems, railOverflowing, railScrolling, scrollToBottom, scrollToRailItem,
     railWaveCenter, onRailPointerMove, onRailPointerLeave,
     historyStartIndex, loadEarlierMessages, registerVirtualApi,
@@ -777,7 +777,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
               )}
             </div>
           </div>
-          <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll} onWheel={onChatWheel} onTouchMove={pauseFollow} onMouseUp={handleMessagesMouseUp}>
+          <div className="chat-messages" ref={chatScrollRef} onScroll={onChatScroll} onWheel={onChatWheel} onTouchMove={pauseFollow} onMouseDown={markUserInput} onKeyDown={markUserInput} onMouseUp={handleMessagesMouseUp}>
             {activeSession?.memory?.summary && (
               <HistorySummaryBubble summary={activeSession.memory.summary} count={activeSession.memory.coveredCount} />
             )}
