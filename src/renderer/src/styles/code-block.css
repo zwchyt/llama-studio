@@ -57,10 +57,11 @@
    取值沿用 theme-dark.css 里原来的 --code-bg / --code-header-bg / --code-border（同色），
    所以那两条针对 .chat-code-pre / .chat-code-header 的旧暗色补丁已删除，不在这里重复打一遍 */
 html.theme-dark .chat-code-block {
-  --cd-panel: #26292f;
-  --cd-head: #26292f;
-  --cd-edge: #333840;
-  --cd-hair: rgba(255, 255, 255, .07);
+  /* 面板 / 头部 / 外框三层拉开：原来头部与面板同色，深色下整块糊进会话底 */
+  --cd-panel: #2b2f36;
+  --cd-head: #383e48;
+  --cd-edge: #5a626e;
+  --cd-hair: rgba(255, 255, 255, .12);
   --cd-text: #ccd2da;
   --cd-lang: #e6ebf2;
   --cd-muted: #8b94a3;
@@ -117,7 +118,9 @@ html.theme-dark .chat-code-block {
   background: var(--cd-hover);
 }
 
-.chat-code-toggle:active { transform: scale(.94); }
+.chat-code-toggle:active {
+  transform: scale(.94);
+}
 
 .chat-code-toggle:focus-visible {
   outline: 2px solid var(--cd-select);
@@ -157,7 +160,9 @@ html.theme-dark .chat-code-block {
   color: var(--cd-lang);
 }
 
-.chat-code-copy:active { transform: scale(.96); }
+.chat-code-copy:active {
+  transform: scale(.96);
+}
 
 .chat-code-copy:focus-visible {
   outline: 2px solid var(--cd-select);
@@ -184,17 +189,31 @@ html.theme-dark .chat-code-block {
     radial-gradient(farthest-side at 100% 50%, var(--cd-scroll), transparent) right / 10px 100% no-repeat scroll;
 }
 
-.chat-code-pre::-webkit-scrollbar { height: 8px; }
-.chat-code-pre::-webkit-scrollbar-track { background: transparent; }
-.chat-code-pre::-webkit-scrollbar-thumb { background: var(--cd-scroll); border-radius: 8px; }
-.chat-code-pre::-webkit-scrollbar-thumb:hover { background: var(--cd-scroll-hi); }
+.chat-code-pre::-webkit-scrollbar {
+  height: 8px;
+}
+
+.chat-code-pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-code-pre::-webkit-scrollbar-thumb {
+  background: var(--cd-scroll);
+  border-radius: 8px;
+}
+
+.chat-code-pre::-webkit-scrollbar-thumb:hover {
+  background: var(--cd-scroll-hi);
+}
 
 .chat-code-pre code {
   background: transparent;
   padding: 0;
 }
 
-.chat-code-pre ::selection { background: var(--cd-select); }
+.chat-code-pre ::selection {
+  background: var(--cd-select);
+}
 
 .chat-code-body {
   display: flex;
@@ -261,9 +280,19 @@ html.theme-dark .chat-code-block {
   scrollbar-color: var(--cd-scroll) transparent;
 }
 
-.chat-code-window::-webkit-scrollbar { width: 8px; height: 8px; }
-.chat-code-window::-webkit-scrollbar-thumb { background: var(--cd-scroll); border-radius: 8px; }
-.chat-code-window::-webkit-scrollbar-thumb:hover { background: var(--cd-scroll-hi); }
+.chat-code-window::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.chat-code-window::-webkit-scrollbar-thumb {
+  background: var(--cd-scroll);
+  border-radius: 8px;
+}
+
+.chat-code-window::-webkit-scrollbar-thumb:hover {
+  background: var(--cd-scroll-hi);
+}
 
 /* 行号钉在左边缘：横着滚的时候不再跟着代码一起跑掉（只作用在代码卡里，
    .agent-window-num 是思考窗口/工具窗口共用的类，不动 global.css） */
@@ -275,21 +304,92 @@ html.theme-dark .chat-code-block {
   border-right-color: var(--cd-hair);
 }
 
-.chat-code-window .agent-window-row:hover { background: var(--cd-hover); }
-.chat-code-window .agent-window-row:hover .agent-window-num { color: var(--cd-lang); }
+.chat-code-window .agent-window-row:hover {
+  background: var(--cd-hover);
+}
+
+.chat-code-window .agent-window-row:hover .agent-window-num {
+  color: var(--cd-lang);
+}
 
 /* ── highlight.js 配色主题（--tk-* 随面板深浅整组切换，见文件开头）── */
-.hljs { color: var(--cd-text); background: transparent; }
-.hljs-comment, .hljs-quote { color: var(--tk-comment); font-style: italic; }
-.hljs-keyword, .hljs-selector-tag, .hljs-name, .hljs-tag, .hljs-section { color: var(--tk-keyword); }
-.hljs-built_in, .hljs-type, .hljs-title.class_ { color: var(--tk-type); }
-.hljs-title, .hljs-title.function_ { color: var(--tk-function); }
-.hljs-string, .hljs-template-tag, .hljs-template-variable, .hljs-regexp, .hljs-addition { color: var(--tk-string); }
-.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet { color: var(--tk-number); }
-.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-selector-id, .hljs-selector-class { color: var(--tk-property); }
-.hljs-meta, .hljs-meta-string, .hljs-meta-keyword { color: var(--tk-meta); }
-.hljs-link { color: var(--tk-function); text-decoration: underline; }
-.hljs-deletion { color: var(--tk-property); }
-.hljs-string .hljs-attr { color: var(--tk-string); }
-.hljs-emphasis { font-style: italic; }
-.hljs-strong { font-weight: 600; }
+.hljs {
+  color: var(--cd-text);
+  background: transparent;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--tk-comment);
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-name,
+.hljs-tag,
+.hljs-section {
+  color: var(--tk-keyword);
+}
+
+.hljs-built_in,
+.hljs-type,
+.hljs-title.class_ {
+  color: var(--tk-type);
+}
+
+.hljs-title,
+.hljs-title.function_ {
+  color: var(--tk-function);
+}
+
+.hljs-string,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-regexp,
+.hljs-addition {
+  color: var(--tk-string);
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-symbol,
+.hljs-bullet {
+  color: var(--tk-number);
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-variable,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: var(--tk-property);
+}
+
+.hljs-meta,
+.hljs-meta-string,
+.hljs-meta-keyword {
+  color: var(--tk-meta);
+}
+
+.hljs-link {
+  color: var(--tk-function);
+  text-decoration: underline;
+}
+
+.hljs-deletion {
+  color: var(--tk-property);
+}
+
+.hljs-string .hljs-attr {
+  color: var(--tk-string);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 600;
+}

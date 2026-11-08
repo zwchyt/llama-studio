@@ -304,10 +304,38 @@ html.theme-dark body {
   background: rgba(220, 38, 38, .14);
 }
 
+/* ── 主界面卡片：深色下只靠底色差会与底层 --layer-base 糊成一片 ──
+   浅色里 --surface 比底层亮一档就够「浮起」；深底上同样的差值不易察觉，
+   把原本透明的 1.5px 描边用起来，再补回一点外投影撑起前后层次。 */
+html.theme-dark .view-transition>.view-page.visible>*:not(.chat-layout):not(.agent-code-view) {
+  border-color: var(--border-stronger);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .10), inset 0 -1px 0 rgba(0, 0, 0, .35),
+    0 4px 14px rgba(0, 0, 0, .45);
+}
+
+/* Web 界面与智能体工作台有专属容器，不挂在 .view-page 下：单独补同一套深色边界。
+   只给描边上色和投影，不动 border 宽度，避免改变这两块已有布局的盒模型。 */
+html.theme-dark :is(.llama-host>*, .agent-code-chat) {
+  border-color: var(--border-stronger);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .10), inset 0 -1px 0 rgba(0, 0, 0, .35),
+    0 4px 14px rgba(0, 0, 0, .45);
+}
+
 /* ── 设置页 / 关于页卡片 ── */
 .theme-dark .settings-section,
 .theme-dark .about-card {
   background: var(--surface);
+}
+
+/* ── 会话内图形卡片：深底上 1px 亮描边天生偏弱，单独提亮一档并补内缘高光，
+   免得卡片与消息气泡糊成一片。只作用于 .fig-card，不动全局 --border。 ── */
+html.theme-dark .fig-card {
+  border-color: var(--border-stronger);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .10), inset 0 -1px 0 rgba(0, 0, 0, .30),
+    0 1px 3px rgba(0, 0, 0, .25), 0 1px 2px rgba(0, 0, 0, .18);
 }
 
 /* ── 聊天视图：引用、预览 ──

@@ -618,7 +618,7 @@
    ⚠️ 升级 markstream 前先看这一段：.table-node-wrapper / .table-node / .border-b / .paragraph-node /
    .my-8 / .text-sm / .p-[…] 都是它挂的类名，不是本项目的命名。优先改用它的 classNames 配置，
    别在这里继续加全局覆盖。 */
-.chat-msg-markdown .table-node-wrapper {
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper {
   /* 卡片自己的局部配色（暗色在下方 .theme-dark 里整组换掉）
      内容区不再是纯白：正文底比会话底色（--bg #f5f6f8）只亮 2 阶，卡片不再是一块刺眼的白，
      表头比正文深 14 阶，层次靠表头这条带子拉，不靠内容区发白 */
@@ -650,7 +650,7 @@
   scrollbar-gutter: auto;
 }
 
-.chat-msg-markdown .table-node-wrapper>table {
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper>table {
   border-collapse: separate;
   border-spacing: 0;
   margin: 0;
@@ -662,9 +662,9 @@
 /* markstream 在 <thead> / <tr> 上还挂了 .border-b + .border-[var(--table-border)]（同为 0,2,0），
    显式清掉：表头带和行上不该再多一层默认边框色（separate 模式下多数浏览器本就忽略 tr 的边框，
    但别指望它，且这两条会把 --table-border 的颜色透出来） */
-.chat-msg-markdown .table-node-wrapper thead,
-.chat-msg-markdown .table-node-wrapper tbody,
-.chat-msg-markdown .table-node-wrapper tr {
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper thead,
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper tbody,
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper tr {
   border: none;
 }
 
@@ -686,8 +686,8 @@ html.is-panel-resizing .agent-think-body .table-node {
 /* 格线：横线 + 列间竖线，但**不画外框** —— 外框由卡片自己的 border 承担，
    单元格再画一圈就会和卡片边线贴成 2px 双线。
    var 仍带回退值：万一有裸 <table> 没拿到 wrapper 上的变量，也不至于取不到色 */
-.chat-msg-markdown .table-node-wrapper th,
-.chat-msg-markdown .table-node-wrapper td {
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper th,
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper td {
   border: none;
   padding: 9px 14px;
   text-align: left;
@@ -698,14 +698,14 @@ html.is-panel-resizing .agent-think-body .table-node {
 /* 表头自己**不铺色**，让 wrapper 的灰底透出来。
    这样表头带和「填进内容区圆角缺口」的是同一块底色，中间不会出现第二条边；
    表头带的上两角也不需要自己收 —— wrapper 的圆角已经把整层底色裁好了。 */
-.chat-msg-markdown .table-node-wrapper th {
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper th {
   background: transparent;
   font-weight: 600;
   color: var(--tb-muted, var(--text-secondary));
   white-space: nowrap;
 }
 
-.chat-msg-markdown .table-node-wrapper td {
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper td {
   background: var(--tb-bg);
   border-top: 1px solid var(--tb-line, var(--border));
 }
@@ -714,8 +714,8 @@ html.is-panel-resizing .agent-think-body .table-node {
    表头行同一套 —— th 虽然是透明的，右边线照样压在表头带上。
    注意别用 `border-right: none` 去清最后一列：下面首行/末行的圆角规则只动 border-radius，
    两者不冲突。 */
-.chat-msg-markdown .table-node-wrapper th:not(:last-child),
-.chat-msg-markdown .table-node-wrapper td:not(:last-child) {
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper th:not(:last-child),
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper td:not(:last-child) {
   border-right: 1px solid var(--tb-col, var(--tb-line));
 }
 
@@ -725,23 +725,23 @@ html.is-panel-resizing .agent-think-body .table-node {
    末行：下边两角收 9px —— 这个值和卡片圆角是绑死的（外 10px 减 1px 边框）：
    必须严格等于 wrapper 的内裁切弧，否则底部两角会漏出表头色。
    分隔线取 --tb-head-line（比行间线 --tb-line 深一档）：它是表头与正文的分界，本来就该重一档。 */
-.chat-msg-markdown .table-node-wrapper tbody:first-of-type tr:first-child td {
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper tbody:first-of-type tr:first-child td {
   border-top-color: var(--tb-head-line, var(--border));
 }
 
-.chat-msg-markdown .table-node-wrapper tbody:first-of-type tr:first-child td:first-child {
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper tbody:first-of-type tr:first-child td:first-child {
   border-top-left-radius: 18px;
 }
 
-.chat-msg-markdown .table-node-wrapper tbody:first-of-type tr:first-child td:last-child {
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper tbody:first-of-type tr:first-child td:last-child {
   border-top-right-radius: 18px;
 }
 
-.chat-msg-markdown .table-node-wrapper tbody:last-of-type tr:last-child td:first-child {
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper tbody:last-of-type tr:last-child td:first-child {
   border-bottom-left-radius: 9px;
 }
 
-.chat-msg-markdown .table-node-wrapper tbody:last-of-type tr:last-child td:last-child {
+:is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper tbody:last-of-type tr:last-child td:last-child {
   border-bottom-right-radius: 9px;
 }
 
@@ -762,13 +762,15 @@ html.is-panel-resizing .agent-think-body .table-node {
 }
 
 /* 暗色主题：只换这一组局部变量 */
-.theme-dark .chat-msg-markdown .table-node-wrapper {
-  --tb-bg: #22252b;
-  --tb-head: #2e333c;
-  --tb-edge: #3a4048;
-  --tb-line: #3d434e;
-  --tb-head-line: #4d5561;
-  --tb-col: #454d5a;
+.theme-dark :is(.chat-msg-markdown, .agent-think-fold-body) .table-node-wrapper {
+  /* 深底上 1px 线要跟所在的面差到 ~30 个色阶才看得见（见上方浅色组的说明）；
+     内容底也要和会话底 #202227 拉开，否则整张表会糊进背景里。 */
+  --tb-bg: #2b2f36;
+  --tb-head: #383e48;
+  --tb-edge: #5a626e;
+  --tb-line: #484f5a;
+  --tb-head-line: #5c6470;
+  --tb-col: #4d5561;
   --tb-text: var(--text);
   --tb-muted: #a7b0bd;
   box-shadow: 0 1px 2px rgba(0, 0, 0, .3);
@@ -1162,8 +1164,15 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 }
 
 @keyframes agent-prefill-wave {
-  0%, 100% { transform: scaleY(.3); }
-  50%      { transform: scaleY(1); }
+
+  0%,
+  100% {
+    transform: scaleY(.3);
+  }
+
+  50% {
+    transform: scaleY(1);
+  }
 }
 
 .agent-prefill-pct {
@@ -2056,6 +2065,8 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
    卡片外壳由 AgentContextPanel.tsx 自己渲染（含标题与关闭按钮）。820 是宽度上限：
    聊天区更窄时由 max-width 收住，内部再用容器查询把双栏降成单栏、指标卡降列。 */
 .agent-task-card.agent-card-ctx {
+  /* 实心浅灰：基准取不受背景强度滑杆影响的 --surface-solid，面板不跟着透、也不发白 */
+  background: color-mix(in srgb, var(--surface-solid) 94%, var(--text) 6%);
   width: 820px;
   max-width: calc(100% - 16px);
   /* 高度跟着聊天区走：父级 .agent-code-chat 是 flex:1 的定位容器且 overflow:hidden，
@@ -2288,7 +2299,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   white-space: nowrap;
 }
 
-.ctxp-kpi .lb > span:first-child {
+.ctxp-kpi .lb>span:first-child {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2560,7 +2571,7 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   background: color-mix(in srgb, var(--surface-hover) 40%, transparent);
 }
 
-.ctxp-panel + .ctxp-panel {
+.ctxp-panel+.ctxp-panel {
   margin-top: 10px;
 }
 
@@ -8209,14 +8220,15 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 
 .agent-think-body .table-node-wrapper th,
 .agent-think-body .table-node-wrapper td {
-  border: 1px solid var(--border);
+  /* 历史摘要气泡也是可折叠的 markdown 表格：深色下 --border 太弱，改用提亮档，浅色回落原值 */
+  border: 1px solid var(--border-stronger, var(--border));
   padding: 5px 8px;
   text-align: left;
 }
 
 .agent-think-body .table-node-wrapper th {
   font-weight: 600;
-  background: rgba(128, 128, 128, 0.08);
+  background: color-mix(in srgb, var(--text) 9%, transparent);
 }
 
 .agent-code-view .chat-messages .chat-msg-user .chat-msg-markdown {
@@ -11319,7 +11331,8 @@ html.theme-dark .user-msg-lightbox {
 .agent-git-ln {
   flex-shrink: 0;
   width: 32px;
-  padding: 0 7px;
+  /* 32px 列宽要放得下三位数行号：内边距收窄，配合自动换行时行号不折行 */
+  padding: 0 4px;
   text-align: right;
   color: var(--text-muted);
   opacity: .7;
@@ -11475,13 +11488,19 @@ html.theme-dark .user-msg-lightbox {
   overflow-x: hidden;
 }
 
+/* 只让代码格折行：加在整行上会连带把固定宽度的行号格折成两行，整行被撑高 */
+.agent-git-diff-body.wrap-view .agent-git-ln,
+.agent-git-diff-body.wrap-view .agent-git-sign {
+  white-space: nowrap;
+}
+
 .agent-git-diff-body.wrap-view .agent-git-row {
-  white-space: pre-wrap;
-  word-break: break-all;
   min-width: 0;
 }
 
 .agent-git-diff-body.wrap-view .agent-git-code {
+  white-space: pre-wrap;
+  word-break: break-all;
   overflow: visible;
   text-overflow: clip;
 }

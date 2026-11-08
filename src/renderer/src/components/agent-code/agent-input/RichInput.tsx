@@ -355,7 +355,11 @@ export const RichInput = forwardRef<RichInputHandle, Props>(function RichInput(
       data-placeholder={placeholder}
       spellCheck={false}
       onInput={() => { if (!composingRef.current) emit() }}
-      onCompositionStart={() => { composingRef.current = true }}
+      // 组字期间不 emit，data-empty 不会更新，占位伪元素会把组字文字顶到提示后面
+      onCompositionStart={() => {
+        composingRef.current = true
+        if (elRef.current) elRef.current.dataset.empty = 'false'
+      }}
       onCompositionEnd={() => { composingRef.current = false; emit() }}
       onKeyDown={e => {
         onKeyDown?.(e)

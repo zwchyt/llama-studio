@@ -50,7 +50,16 @@ function fmtClock(at: number): string {
 export default function AgentContextPanel({ templateId, startedAt, requests, cumTokens, session, project, onClose }: AgentContextPanelProps) {
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
   const { tipHandlers: tip, tipNode } = useBubbleTip()
-  const metrics = useStore(s => (templateId ? s.modelMetrics[templateId] : undefined))
+  // 停机后按会话显示各自最后的读数：以 session.id 为键存 store，面板卸载重开也还在
+  const sessionId = session?.id ?? ''
+  const rawMetrics = useStore(s => (templateId ? s.modelMetrics[templateId] : undefined))
+  const saved = useStore(s => (sessionId ? s.lastContextSnapshots[sessionId] : undefined))
+  const saveSnapshot = useStore(s => s.saveContextSnapshot)
+  useEffect(() => {
+    if (!rawMetrics || !sessionId) return
+    saveSnapshot(sessionId, { metrics: rawMetrics, startedAt, lastSeenAt: Date.now() })
+  }, [rawMetrics, startedAt, sessionId, saveSnapshot])
+  const metrics = rawMetrics ?? saved?.metrics ?? undefined
   const template = useStore(s => (templateId ? s.cards.find(c => c.template.id === templateId)?.template : undefined))
   const gradId = useId().replace(/:/g, '')
   // 仅用 setter 每秒触发一次重渲染以刷新运行时间；tick 值本身不参与渲染，故跳过声明
@@ -74,8 +83,11 @@ export default function AgentContextPanel({ templateId, startedAt, requests, cum
   const pct = nCtx > 0 ? Math.min(100, (used / nCtx) * 100) : 0
   const warning = pct >= COMPRESS_THRESHOLD * 100
   const toCompress = Math.max(0, Math.floor(nCtx * COMPRESS_THRESHOLD) - used)
-  const uptime = startedAt ? fmtDuration(Date.now() - startedAt) : '—'
-  const noModel = !templateId
+  const uptime = startedAt
+    ? fmtDuration(Date.now() - startedAt)
+    : (saved?.startedAt ? fmtDuration(saved.lastSeenAt - saved.startedAt) : '—')
+  const noModel = !templateId && !saved
+  const stopped = !templateId && !!saved
 
   // 较上轮涨幅：metrics 每两秒广播一次，但 used 只在请求之间变，所以「值变了」即「换了一轮」
   const prevUsedRef = useRef<number | null>(null)
@@ -188,7 +200,7 @@ export default function AgentContextPanel({ templateId, startedAt, requests, cum
       <div className="ctxp-head">
         <h2>上下文窗口</h2>
         <span className={`ctxp-pill${warning ? ' warn' : ''}`}>
-          {noModel ? '未启动' : warning ? '上下文紧张' : '上下文充足'}
+          {noModel ? '未启动' : stopped ? '已停止' : warning ? '上下文紧张' : '上下文充足'}
         </span>
         <span className="ctxp-win">{nCtx > 0 ? `${nCtx.toLocaleString()} token` : '—'}</span>
         {onClose && (

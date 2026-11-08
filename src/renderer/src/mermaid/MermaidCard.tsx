@@ -125,7 +125,11 @@ function getThemeVariables(): Record<string, string> {
   const surface = getCssVariable('--surface', '#ffffff')
   const background = getCssVariable('--bg', '#f5f5f5')
   const border = getCssVariable('--border', '#d1d5db')
-  const strongBorder = getCssVariable('--border-strong', '#9ca3af')
+  // 深色下 --border-strong 与卡面只差约 15 个亮度单位，节点框会糊在底上；改用更亮的次级文字色
+  const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('theme-dark')
+  const strongBorder = isDark
+    ? getCssVariable('--text-secondary', '#9298a2')
+    : getCssVariable('--border-strong', '#9ca3af')
   const text = getCssVariable('--text', '#111827')
   const mutedText = getCssVariable('--text-muted', '#6b7280')
 
@@ -534,7 +538,7 @@ export function MermaidCard(renderProps: MermaidCardProps) {
 
   const cardStyle: CSSProperties = {
     overflow: 'hidden',
-    border: '1px solid var(--border, #d1d5db)',
+    border: '1px solid var(--border-stronger, var(--border, #d1d5db))',
     borderRadius: 6,
     background: 'var(--surface, #ffffff)',
     color: 'var(--text, #111827)',
@@ -542,7 +546,7 @@ export function MermaidCard(renderProps: MermaidCardProps) {
 
   const titleStyle: CSSProperties = {
     padding: '6px 10px',
-    borderBottom: '1px solid var(--border, #d1d5db)',
+    borderBottom: '1px solid var(--border-stronger, var(--border, #d1d5db))',
     fontSize: 12,
     fontWeight: 600,
     lineHeight: 1.4,
@@ -687,7 +691,7 @@ export function MermaidCard(renderProps: MermaidCardProps) {
         }}>
         &lt;/&gt;
       </button>
-      <div style={{ width: 1, margin: '0 2px', borderLeft: '1px solid var(--border, #d1d5db)' }} />
+      <div style={{ width: 1, margin: '0 2px', borderLeft: '1px solid var(--border-stronger, var(--border, #d1d5db))' }} />
       <div ref={downloadMenuRef} style={{ position: 'relative' }}>
         <button type="button" onClick={() => setShowDownloadMenu((v) => !v)} aria-label="下载" {...tip('下载')}
           style={{ ...btnBase, opacity: svg || displayFallbackCode ? 1 : 0.4 }}>
@@ -697,7 +701,7 @@ export function MermaidCard(renderProps: MermaidCardProps) {
           <div style={{
             position: 'absolute', top: '100%', right: 0, marginTop: 4,
             minWidth: 140, padding: '4px 0', borderRadius: 6,
-            border: '1px solid var(--border, #d1d5db)',
+            border: '1px solid var(--border-stronger, var(--border, #d1d5db))',
             background: 'var(--surface, #ffffff)',
             boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
             zIndex: 100,
@@ -723,23 +727,23 @@ export function MermaidCard(renderProps: MermaidCardProps) {
       </div>
       {zoomable ? (
         <>
-          <div style={{ width: 1, margin: '0 2px', borderLeft: '1px solid var(--border, #d1d5db)' }} />
+          <div style={{ width: 1, margin: '0 2px', borderLeft: '1px solid var(--border-stronger, var(--border, #d1d5db))' }} />
           {/* disabled 按钮收不到鼠标事件，原生 title 反而能弹：事件挂外层 span 保住提示 */}
           <span style={{ display: 'inline-flex' }} {...tip('缩小')}>
-          <button type="button" onClick={zoomOut} aria-label="缩小" disabled={scale <= ZOOM_MIN}
-            style={{ ...btnBase, opacity: scale > ZOOM_MIN ? 1 : 0.3 }}>
-            {svgIcon('M5 12h14', 12, 12)}
-          </button>
+            <button type="button" onClick={zoomOut} aria-label="缩小" disabled={scale <= ZOOM_MIN}
+              style={{ ...btnBase, opacity: scale > ZOOM_MIN ? 1 : 0.3 }}>
+              {svgIcon('M5 12h14', 12, 12)}
+            </button>
           </span>
           <button type="button" onClick={zoomReset} {...tip(`${Math.round(scale * 100)}%`)}
             style={{ ...btnBase, fontSize: 10, padding: '2px 4px', minWidth: 36 }}>
             {Math.round(scale * 100)}%
           </button>
           <span style={{ display: 'inline-flex' }} {...tip('放大')}>
-          <button type="button" onClick={zoomIn} aria-label="放大" disabled={scale >= ZOOM_MAX}
-            style={{ ...btnBase, opacity: scale < ZOOM_MAX ? 1 : 0.3 }}>
-            {svgIcon('M12 5v14M5 12h14', 12, 12)}
-          </button>
+            <button type="button" onClick={zoomIn} aria-label="放大" disabled={scale >= ZOOM_MAX}
+              style={{ ...btnBase, opacity: scale < ZOOM_MAX ? 1 : 0.3 }}>
+              {svgIcon('M12 5v14M5 12h14', 12, 12)}
+            </button>
           </span>
           <button type="button" onClick={toggleFullscreen} aria-label={isFullscreen ? '退出全屏' : '全屏'} {...tip(isFullscreen ? '退出全屏' : '全屏')}
             style={btnBase}>
@@ -790,7 +794,7 @@ export function MermaidCard(renderProps: MermaidCardProps) {
       <div style={{
         width: '90vw', height: '90vh', display: 'flex', flexDirection: 'column',
         overflow: 'hidden', borderRadius: 8,
-        border: '1px solid var(--border, #d1d5db)',
+        border: '1px solid var(--border-stronger, var(--border, #d1d5db))',
         background: 'var(--surface, #ffffff)',
         color: 'var(--text, #111827)',
         boxShadow: '0 8px 32px rgba(0,0,0,0.3)',

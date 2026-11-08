@@ -187,6 +187,9 @@ interface AppStore {
   setModelDiagnosis: (id: string, d: { code: number | null; severity: 'info' | 'warning' | 'critical'; title: string; cause: string; recommendations: string[]; evidence: string; logExcerpt?: { lines: string[]; start: number; errorLine: number } }) => void
   dismissModelDiagnosis: (id: string) => void
   modelMetrics: Record<string, ModelMetrics>
+  /** 上下文窗口按会话留存的最后读数：停机后各会话显示各自的数据，重启应用即清空 */
+  lastContextSnapshots: Record<string, { metrics: ModelMetrics; startedAt?: number; lastSeenAt: number }>
+  saveContextSnapshot: (sessionId: string, snapshot: { metrics: ModelMetrics; startedAt?: number; lastSeenAt: number }) => void
   /** 系统级资源指标（GPU/CPU/内存/显存）：常驻采集广播，与模型是否运行无关 */
   systemMetrics: SystemMetrics | null
   setSystemMetrics: (partial: Partial<SystemMetrics>) => void
@@ -414,6 +417,10 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
   modelLogs: {},
   modelDiagnostics: {},
   modelMetrics: {},
+  lastContextSnapshots: {},
+  saveContextSnapshot: (sessionId, snapshot) => set((s) => ({
+    lastContextSnapshots: { ...s.lastContextSnapshots, [sessionId]: snapshot },
+  })),
   systemMetrics: null,
   setSystemMetrics: (partial) => set((s) => ({
     systemMetrics: { ...(s.systemMetrics ?? { gpuTemperature: null, gpuUtilization: null, vramUsedMb: null, vramTotalMb: null, gpuName: '', gpuPowerDraw: null, gpuPowerLimit: null, cpuUsage: null, ramUsedMb: null, ramTotalMb: null }), ...partial, lastUpdated: Date.now() } as SystemMetrics
