@@ -1,6 +1,6 @@
 {
   "name": "llama-studio",
-  "version": "1.0.267",
+  "version": "1.0.268",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",
   "main": "out/main/index.js",
@@ -20,7 +20,8 @@
     "electron"
   ],
   "overrides": {
-    "canvas": "file:./scripts/canvas-stub"
+    "canvas": "file:./scripts/canvas-stub",
+    "node-gyp": "^12.1.0"
   },
   "dependencies": {
     "@animateicons/react": "^0.4.3",

@@ -104,9 +104,8 @@ jobs:
 
   build:
     needs: release
-    # node-gyp 9.x 只认 VS2017/2019/2022；windows-latest 已换成 VS2026(18.x)，
-    # 会让 electron-rebuild 判定「找不到 VS」。钉回仍预装 VS2022 的镜像。
-    runs-on: windows-2022
+    # node-gyp 由 package.json 的 overrides 锁定到 12.x：支持 VS2026、不再依赖 distutils
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
