@@ -42,6 +42,8 @@ export const TOOL_METAS: Record<string, ToolMeta> = {
   get_datetime:    { kind: 'other',  label: '获取时间', verb: '获取时间中', icon: Clock,        readOnly: true,  needsApproval: false, canUndo: false },
   web_search:      { kind: 'other',  label: '网络搜索', verb: '搜索中', icon: Search,          readOnly: true,  needsApproval: false, canUndo: false },
   web_search_bing: { kind: 'other',  label: '必应搜索', verb: '搜索中', icon: Search,          readOnly: true,  needsApproval: false, canUndo: false },
+  knowledge_list:  { kind: 'list',   label: '知识库列表', verb: '获取知识库列表中', icon: BookOpen,  readOnly: true,  needsApproval: false, canUndo: false },
+  knowledge_overview: { kind: 'read', label: '知识库概括', verb: '读取概括中', icon: FileText,    readOnly: true,  needsApproval: false, canUndo: false },
   knowledge_search: { kind: 'search', label: '知识库检索', verb: '检索知识库中', icon: BookOpen,   readOnly: true,  needsApproval: false, canUndo: false },
   knowledge_read:  { kind: 'read',   label: '知识库读取块', verb: '读取知识块中', icon: BookOpen,     readOnly: true,  needsApproval: false, canUndo: false },
   fetch_webpage:   { kind: 'other',  label: '抓取网页', verb: '抓取中', icon: FileText,        readOnly: true,  needsApproval: false, canUndo: false },
@@ -121,6 +123,10 @@ import { definition as CodeSearchDef, execute as CodeSearchExec } from '../tools
 import { definition as BrowserShowDef, execute as BrowserShowExec } from '../tools/BrowserShowTool'
 import { definition as BrowserScreenshotDef, execute as BrowserScreenshotExec } from '../tools/BrowserScreenshotTool'
 import { definition as ViewImageDef, execute as ViewImageExec } from '../tools/ViewImageTool'
+import { definition as KnowledgeListDef, createExecute as createKnowledgeListExecute } from '../tools/KnowledgeListTool'
+import { definition as KnowledgeOverviewDef, createExecute as createKnowledgeOverviewExecute } from '../tools/KnowledgeOverviewTool'
+import { definition as KnowledgeSearchDef, createExecute as createKnowledgeSearchExecute } from '../tools/KnowledgeSearchTool'
+import { definition as KnowledgeReadDef, createExecute as createKnowledgeReadExecute } from '../tools/KnowledgeReadTool'
 register(WebSearchDef, WebSearchExec)
 register(BingSearchDef, BingSearchExec)
 register(FetchWebpageDef, FetchWebpageExec)
@@ -139,6 +145,13 @@ register(ReflectDef, ReflectExec)
 register(BrowserShowDef, BrowserShowExec)
 register(BrowserScreenshotDef, BrowserScreenshotExec)
 register(ViewImageDef, ViewImageExec)
+// 知识库四步：列表 → 概括 → 检索 → 读块。规格来自共享文件，执行统一转发到主进程，
+// 与 pi worker 那条链路共用同一份实现，不在这里复制检索逻辑。
+const knowledgeCall = (name: string, args: Record<string, unknown>) => window.api.knowledgeToolCall(name, args)
+register(KnowledgeListDef, createKnowledgeListExecute(knowledgeCall))
+register(KnowledgeOverviewDef, createKnowledgeOverviewExecute(knowledgeCall))
+register(KnowledgeSearchDef, createKnowledgeSearchExecute(knowledgeCall))
+register(KnowledgeReadDef, createKnowledgeReadExecute(knowledgeCall))
 // CodeSearch（混合检索）：受开关门控——关闭时不注册，模型看不到该工具，行为与现状一致
 if (agentConfig.codeSearchEnabled) register(CodeSearchDef, CodeSearchExec)
 

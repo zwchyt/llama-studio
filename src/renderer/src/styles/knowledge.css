@@ -83,8 +83,9 @@
   font-family: inherit;
 }
 
+/* 聚焦时边框不加提示色：亮色主题下 --accent 是近黑色，重命名框一自动聚焦就会变成黑框。
+   只保留中性的背景变化作为焦点反馈，轮廓仍由 .kb-input 的 outline: none 清掉。 */
 .kb-input:focus {
-  border-color: var(--accent, #0d9488);
   background: var(--surface);
 }
 
@@ -655,6 +656,113 @@
 
 .kb-row-btn:hover {
   color: var(--text);
+}
+
+/* ── 本库概括：右栏文档区上方，一个知识库一条；折叠时只占标题与预览两行 ── */
+.kb-summary-card {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  /* 矮窗口兜底：整张卡片最多占视口六成（不超过 520px），剩余高度留给可滚动的文档列表。
+     输入框本身按内容撑高，这里只是防止长概括把文档列表挤没。 */
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+}
+
+.kb-summary-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.kb-summary-card-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.kb-summary-card-title {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.kb-summary-card.has-value .kb-summary-card-icon,
+.kb-summary-card.has-value .kb-summary-card-title {
+  color: #0d9488;
+}
+
+.kb-summary-card-sub {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kb-summary-preview {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kb-summary-card.has-value .kb-summary-preview {
+  color: var(--text-secondary);
+}
+
+.kb-summary-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kb-summary-textarea {
+  /* 宽度撑满卡片，只有高度跟着文字内容自动增减；不设固定高度上限，框内不出现滚动条 */
+  width: 100%;
+  min-height: 76px;
+  box-sizing: border-box;
+  field-sizing: content;
+  /* 只允许手动上下拖动，不允许横向拖动 */
+  resize: vertical;
+  overflow-y: auto;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  /* 关掉浏览器自带的输入框外观，不让原生边框透出来 */
+  appearance: none;
+  -webkit-appearance: none;
+  /* 只用一条跟随主题的中性边框，亮色/深色主题各取各的值；不加任何悬停或聚焦提示色。
+     不引用 --accent：亮色主题下它是近黑色，输入框自动聚焦时会变成黑框。 */
+  border: 1px solid var(--border-strong, #cbd5e1);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-secondary);
+  outline: none;
+  box-shadow: none;
+  font-family: inherit;
+}
+
+.kb-summary-editor-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kb-summary-count {
+  flex: 1;
+  font-size: 10px;
+  color: var(--text-muted);
 }
 
 .kb-rename-input {

@@ -307,11 +307,13 @@ interface LlamaCppApi {
   // ── 本地知识库 RAG（knowledgeService）──
   knowledgeList: () => Promise<KnowledgeBaseMeta[]>
   knowledgeCreate: (name: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
+  knowledgeSetSummary: (id: string, text: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
   knowledgeDelete: (id: string) => Promise<{ success: boolean; error?: string }>
   knowledgeGet: (kbId: string) => Promise<{ id: string; name: string; createdAt: string; docs: KnowledgeDoc[] } | null>
   knowledgeAddDoc: (kbId: string, doc: { name: string; text: string; chunking?: { mode?: 'auto' | 'heading' | 'delim' | 'single' | 'manual' | 'code'; size?: number; delimiter?: string; ranges?: number[][]; lang?: string } }) => Promise<{ success: boolean; chunkCount?: number; meta?: KnowledgeBaseMeta; error?: string }>
   knowledgeDeleteDoc: (kbId: string, docId: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
   knowledgeQuery: (kbId: string, query: string, limit?: number) => Promise<{ hits: KnowledgeHit[]; lowConfidence: boolean; suggestedQuery: string }>
+  knowledgeToolCall: (name: string, args: Record<string, unknown>) => Promise<string>
   knowledgeQueryAll: (query: string, limit?: number) => Promise<{
     hits: KnowledgeHit[]
     lowConfidence: boolean

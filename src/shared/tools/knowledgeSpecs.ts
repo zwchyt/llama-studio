@@ -2,6 +2,8 @@
 // 从 src/renderer/src/tools/KnowledgeSearchTool 与 KnowledgeReadTool 抽离，
 // 消除 main → renderer 跨构建图 import（分析文档 R4）。两边统一引用本文件，避免 spec/prompt/format 被两份构建各编一次。
 
+export const KNOWLEDGE_LIST_TOOL_NAME = 'knowledge_list'
+export const KNOWLEDGE_OVERVIEW_TOOL_NAME = 'knowledge_overview'
 export const KNOWLEDGE_SEARCH_TOOL_NAME = 'knowledge_search'
 export const KNOWLEDGE_READ_TOOL_NAME = 'knowledge_read'
 
@@ -16,7 +18,8 @@ export const KNOWLEDGE_SEARCH_DESCRIPTION_BASE =
   'Use it whenever the user question may be answered by their documents. ' +
   'The auto-attached top chunk is already the best hit — do NOT call knowledge_read for it. ' +
   'Only call knowledge_read with docName+ordinal pairs when you need the body of the OTHER catalog entries. ' +
-  'Pass the optional kb parameter ONLY to narrow the search to one specific library; omit it to search every library (recommended).'
+  'Pass the optional kb parameter ONLY to narrow the search to one specific library; omit it to search every library (recommended). ' +
+  'If you do not yet know what the libraries contain, call knowledge_list and knowledge_overview first to pick distinctive query terms.'
 
 export const KNOWLEDGE_SEARCH_GUIDELINES: string[] = [
   'knowledge_search 一次调用即检索全部知识库并合并排序，目录每条都标注来源库名——不要为「选库」单独发起多次调用，也不要逐库排除。',
@@ -27,7 +30,70 @@ export const KNOWLEDGE_SEARCH_GUIDELINES: string[] = [
   'query 一般只传 2–6 个关键词，不要原样转述用户的整句提问。长查询会掺进「如何/应该/什么」这类低信息量词，把所有块的分数一起抬高，真正相关的块反而拉不开差距；中文长句还会被切成大量跨词假词（「如何配置」→「何配」）造成误匹配。正确做法是自己从问题里抽出最有区分度的名词 / 标识符再检索，必要时换关键词多搜一次，而不是把问题原样丢进来。（例外：问题本身就是一条命令 / API / 报错原文时，按上一条整条传入。）',
   '目录按跨库融合排名降序，每行还标了「词序吻合 X%」与命中词——判断该读哪条请优先看排名、词序吻合度和命中词。行尾的相关度是各库内部的 BM25 分，跨库不可比、列表里不一定递减，不要拿两个不同库的条目去比这个数字。',
   '查询词全是常见词（在库里几乎每个块都出现）时，检索会返回一批分数很低的命中并标记低置信，且不给建议关键词——这种情况直接换更有区分度的词，不要反复用同一批词重搜。',
+  '构造 query 之前，先用 knowledge_list 看有哪些知识库、再用 knowledge_overview 取相关库的概括，从概括里挑出文档里可能实际出现的名词或术语；概括只是选词参考，不是检索结果，检索时仍省略 kb 一次查完全部库。',
 ]
+
+export const KNOWLEDGE_LIST_DESCRIPTION =
+  'List every local knowledge base with its name and whether a user-written summary exists. ' +
+  'Call this FIRST whenever a question may need the user documents, so you know which libraries exist. ' +
+  'Then call knowledge_overview for the libraries whose names look relevant, and finally knowledge_search to retrieve chunks.'
+
+export const KNOWLEDGE_LIST_GUIDELINES: string[] = [
+  '要用知识库时先调 knowledge_list 拿到全部库名，库名本身按内容命名，据此判断哪些库可能相关；再用 knowledge_overview 取它们的概括，最后才用 knowledge_search 检索。',
+  'knowledge_search 仍建议省略 kb 一次检索全部知识库；列表和概括工具只是帮你挑检索词，不是让你逐库试错或逐个排除。',
+]
+
+export const KNOWLEDGE_OVERVIEW_DESCRIPTION =
+  'Read the user-written summary of one knowledge base (pass kb with the exact name from knowledge_list), ' +
+  'or of all libraries when kb is omitted. Use the nouns, document names, section names and identifiers in the summary ' +
+  'to build a distinctive knowledge_search query. A summary is a keyword hint, NOT the content of the library.'
+
+export const KNOWLEDGE_OVERVIEW_GUIDELINES: string[] = [
+  'knowledge_overview 的 kb 用 knowledge_list 返回的库名原样传入；省略 kb 会返回全部库的概括，库多时一次读全会占用较多上下文，所以优先按库名挑一到两个相关库。',
+  '概括只是选词参考，不代表库里只有这些内容，也不要把概括当检索结果引用；拿到概括后仍用 knowledge_search 省略 kb 做全库检索。',
+]
+
+/** 用户为知识库手写的概括（由知识库界面维护，随知识库文件保存） */
+export interface KnowledgeBaseSummary {
+  name: string
+  summary: string
+}
+
+/** 知识库工具的执行器：主进程传 RPC，渲染层传进程通道；本文件因此不必依赖 window。 */
+export type KnowledgeToolExecutor = (name: string, args: Record<string, unknown>) => Promise<string>
+
+/** 与渲染层注册中心的工具定义结构一致，但不引用它，避免主进程工程被拉进渲染层依赖。 */
+export interface KnowledgeToolDefinition {
+  name: string
+  label?: string
+  description: string
+  promptGuidelines?: string[]
+  parameters: Record<string, unknown>
+}
+
+/** 库列表输出：只给库名与概括状态，库再多也只是每人一行短文本。 */
+export function formatKnowledgeBaseList(libs: readonly KnowledgeBaseSummary[]): string {
+  if (libs.length === 0) return '本机尚未创建任何知识库。'
+  const lines = libs.map((l, i) => `[${i + 1}] ${l.name.replace(/\s+/g, ' ').trim()} · ${l.summary ? '已写概括' : '未写概括'}`)
+  return `本机共 ${libs.length} 个知识库：\n${lines.join('\n')}\n（库名按内容命名；下一步用 knowledge_overview 取相关库的概括，再据此挑关键词检索。）`
+}
+
+/** 概括输出：按库返回全文，随时读取磁盘最新值；支持只取一个库以省上下文。
+    不做长度截断——写多长由用户在界面里自己控制，代码不替他砍内容。 */
+export function formatKnowledgeOverview(libs: readonly KnowledgeBaseSummary[], kb?: string): string {
+  const want = kb?.trim()
+  const picked = want ? libs.filter(l => l.name === want) : libs
+  if (want && picked.length === 0) {
+    return `未找到知识库「${want}」。可用库名：${libs.map(l => l.name).join('、') || '（无）'}`
+  }
+  const lines = picked.map(s => {
+    const name = s.name.replace(/\s+/g, ' ').trim()
+    const text = (s.summary ?? '').replace(/\s+/g, ' ').trim()
+    return `【${name}】${text || '（未写概括）'}`
+  })
+  if (lines.length === 0) return '本机尚未创建任何知识库。'
+  return `知识库概括（由用户维护，仅供挑选检索词，不代表库内全部内容）：\n${lines.join('\n')}\n（据此挑出文档里可能实际出现的名词、术语或章节名，再用 knowledge_search 省略 kb 做全库检索。）`
+}
 
 export const KNOWLEDGE_READ_DESCRIPTION_BASE =
   'Read the FULL text of specific knowledge-base chunks selected from a previous knowledge_search catalog. ' +
@@ -265,4 +331,41 @@ export function formatKnowledgeChunks(r: KnowledgeReadResult): string {
   return r.hits
     .map(h => `【${h.title || '（无标题）'}】(${h.kbName ? `${h.kbName} · ` : ''}${h.docName} · 第${h.ordinal + 1}块)\n${h.text}`)
     .join('\n--------------------\n')
+}
+
+/** 工具一：列出本机全部知识库，只给名字与概括状态，库再多也不占上下文。 */
+export function createKnowledgeListSpec(): {
+  name: string
+  label: string
+  description: string
+  promptGuidelines?: string[]
+  parameters: Record<string, unknown>
+} {
+  return {
+    name: KNOWLEDGE_LIST_TOOL_NAME,
+    label: '知识库列表',
+    description: KNOWLEDGE_LIST_DESCRIPTION,
+    promptGuidelines: KNOWLEDGE_LIST_GUIDELINES,
+    parameters: { type: 'object', properties: {} }
+  }
+}
+
+/** 工具二：按库名取用户手写的概括；省略 kb 时返回全部，不截断。 */
+export function createKnowledgeOverviewSpec(kbNames?: string[]): {
+  name: string
+  label: string
+  description: string
+  promptGuidelines?: string[]
+  parameters: Record<string, unknown>
+} {
+  const kbProp: Record<string, unknown> = kbNames && kbNames.length > 0
+    ? { type: 'string', description: 'Library name exactly as returned by knowledge_list. Omit to read summaries of ALL libraries.', enum: kbNames }
+    : { type: 'string', description: 'Library name. Omit to read all summaries.' }
+  return {
+    name: KNOWLEDGE_OVERVIEW_TOOL_NAME,
+    label: '知识库概括',
+    description: KNOWLEDGE_OVERVIEW_DESCRIPTION,
+    promptGuidelines: KNOWLEDGE_OVERVIEW_GUIDELINES,
+    parameters: { type: 'object', properties: { kb: kbProp } }
+  }
 }

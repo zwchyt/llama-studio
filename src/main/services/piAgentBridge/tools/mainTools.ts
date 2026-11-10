@@ -8,13 +8,17 @@ import { makePiTool, getTypebox, type PlainToolSpec } from './toolAdapter'
 import type { BrowserCaptureOptions, BrowserCaptureResult, BrowserShowInput, BrowserShowResult } from '../../../../shared/browserPreview'
 import type { TokenUsageEntry } from '../../../../shared/types'
 import {
+  createKnowledgeListSpec,
+  createKnowledgeOverviewSpec,
   createKnowledgeSearchSpec,
-  formatKnowledgeCatalog,
   createKnowledgeReadSpec,
-  parseChunkRefs,
-  formatKnowledgeChunks,
-  mergeKbHits,
 } from '../../../../shared/tools/knowledgeSpecs'
+// 执行器来自 renderer/src/tools 下的四个规范目录（tsconfig.node.json 已把它们纳入主进程工程），
+// 与渲染层注册中心共用同一份 createExecute，不在这里另写一套。
+import { createExecute as createKnowledgeListExecute } from '../../../../renderer/src/tools/KnowledgeListTool/KnowledgeListTool'
+import { createExecute as createKnowledgeOverviewExecute } from '../../../../renderer/src/tools/KnowledgeOverviewTool/KnowledgeOverviewTool'
+import { createExecute as createKnowledgeSearchExecute } from '../../../../renderer/src/tools/KnowledgeSearchTool/KnowledgeSearchTool'
+import { createExecute as createKnowledgeReadExecute } from '../../../../renderer/src/tools/KnowledgeReadTool/KnowledgeReadTool'
 
 export interface MainToolExecutors {
   readFile(
@@ -100,8 +104,10 @@ export interface MainToolExecutors {
   }>
   /** 知识库元信息（库名+文档清单）：跨库读取时按 docName 定位条目归属库 */
   describeKb(kbId: string): { name: string; docs: string[] } | null
-  /** 知识库列表（utility process 经 RPC 回主进程读取） */
-  listKb(): Promise<{ id: string; name: string }[]>
+  /** 知识库列表（utility process 经 RPC 回主进程读取；summary 为用户手写的库概括） */
+  listKb(): Promise<{ id: string; name: string; summary?: string }[]>
+  /** 四个知识库工具的统一执行入口：主进程唯一实现，避免两条链路各写一套 */
+  knowledgeToolCall(name: string, args: Record<string, unknown>): Promise<string>
   /** 模型端口登记信息（token 记账用；未登记返回 null） */
   getPortModelInfo(port: number): Promise<{ templateId: string; modelPath: string | null } | null | undefined>
   /** Token 入账：必须回主进程落盘（tokenLedger 的目录注入、promptDelta 累计表、月度封存都是主进程状态，worker 内直接 append 会被静默丢弃） */
@@ -523,8 +529,8 @@ export interface CreateMainToolsContext {
   workspaceDir?: string
   /** 项目绑定的知识库 id（提供时注册 knowledge_search 工具） */
   knowledgeBaseId?: string
-  /** 本机全部知识库清单：注入工具参数 kb 的 enum（模型从真实列表选择，非提示词） */
-  knowledgeBases?: { id: string; name: string }[]
+  /** 本机全部知识库清单：注入工具参数 kb 的 enum，并把用户手写的概括注入检索指引 */
+  knowledgeBases?: { id: string; name: string; summary?: string }[]
   /** 当前模型是否支持图像输入：支持时截图才作为图片块回灌进上下文 */
   vision?: boolean
 }
@@ -808,157 +814,28 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
   // 模型按目录挑中后用 knowledge_read 精确读取（refs 带库名可跨库，省略时按 docName 全库唯一定位）。
   const kbLibs = ctx?.knowledgeBases ?? []
   const kbNames = kbLibs.map(l => l.name)
-  const findKb = (want: string): { id?: string; error?: string } => {
-    const hit = kbLibs.find(l => l.name === want || l.id === want)
-    return hit ? { id: hit.id } : { error: `未找到知识库「${want}」。可用的知识库：${kbNames.join('、') || '（无）'}` }
-  }
+  let knowledgeList: ToolDefinition | null = null
+  let knowledgeOverview: ToolDefinition | null = null
   let knowledgeSearch: ToolDefinition | null = null
   let knowledgeRead: ToolDefinition | null = null
   if (ctx?.knowledgeBaseId || kbLibs.length > 0) {
-    const searchSpec = createKnowledgeSearchSpec(kbNames)
+    // 四个工具只负责「规格 + 转发」：规格来自共享文件，执行统一在主进程 callKnowledgeTool，
+    // 渲染层自研注册中心也转发到同一个入口，两条链路不再各写一套执行逻辑。
+    knowledgeList = make({
+      ...createKnowledgeListSpec(),
+      execute: createKnowledgeListExecute((name, args) => exec.knowledgeToolCall(name, args))
+    })
+    knowledgeOverview = make({
+      ...createKnowledgeOverviewSpec(kbNames),
+      execute: createKnowledgeOverviewExecute((name, args) => exec.knowledgeToolCall(name, args))
+    })
     knowledgeSearch = make({
-      ...searchSpec,
-      execute: async (args) => {
-        // 目标库：显式 kb → 单库；省略 → 全部库一次查完（默认路径）。
-        let targets: { id: string }[]
-        const want = typeof args.kb === 'string' ? args.kb.trim() : ''
-        if (want) {
-          const t = findKb(want)
-          if (!t.id) return t.error ?? '知识库不可用'
-          targets = [{ id: t.id }]
-        } else if (kbLibs.length > 0) {
-          targets = kbLibs
-        } else if (ctx?.knowledgeBaseId) {
-          targets = [{ id: ctx.knowledgeBaseId }]
-        } else {
-          return '本机尚未创建任何知识库。'
-        }
-        const query = String(args.query ?? '')
-        const cap = Math.max(1, Math.min(Math.floor(typeof args.limit === 'number' ? args.limit : 8), 12))
-        const results = await Promise.all(targets.map(t => exec.knowledgeQuery(t.id, query, cap)))
-        // 各库内部已按 BM25 降序并做过噪音剪枝；这里用共享的 mergeKbHits 做跨库合并：
-        // RRF 排名融合 + 全局相对剪枝。不能用原始 BM25 分排序——各库 idf 各算各的，量纲不同。
-        const merge = (rs: typeof results) => mergeKbHits(rs, cap)
-        // 建议关键词：各库按 idf 给出的高区分度词取并集（去重、保序，最多 6 个）。
-        // 它既是自动重搜的查询，也是回给模型照抄的「改用这些词」。
-        const suggestFrom = (rs: typeof results): string => {
-          const seen = new Set<string>()
-          const out: string[] = []
-          for (const r of rs) {
-            for (const term of (r.suggestedQuery ?? '').split(/\s+/)) {
-              if (!term || seen.has(term)) continue
-              seen.add(term)
-              out.push(term)
-              if (out.length >= 6) return out.join(' ')
-            }
-          }
-          return out.join(' ')
-        }
-
-        let merged = merge(results)
-        let lowConfidence = results.length > 0 && results.every(r => r.lowConfidence)
-        let suggestion = suggestFrom(results)
-        let retried = false
-        // 实际被采纳的那一组结果（重搜可能被替换掉），后面的「部分库低置信」标注要读它，
-        // 否则重搜成功后仍会按原始结果打上低置信标记。
-        let adopted = results
-        // 零命中 / 低置信 → 先用建议关键词自动重搜一次（确定性兜底，不依赖模型配合）。
-        // 只在建议词与原查询确实不同、且确有建议词时做，避免同词重复检索。
-        if ((merged.length === 0 || lowConfidence) && suggestion && suggestion !== query.trim()) {
-          const retry = await Promise.all(targets.map(t => exec.knowledgeQuery(t.id, suggestion, cap)))
-          const retryMerged = merge(retry)
-          const retryLow = retry.length > 0 && retry.every(r => r.lowConfidence)
-          // 只在重搜确实更好时采纳：不再低置信，或融合分更高。
-          // 用融合分而非原始 BM25 分比较——后者各库各算 idf，跨库比大小没有意义。
-          if (!retryLow || (retryMerged[0]?.fusionScore ?? 0) > (merged[0]?.fusionScore ?? 0)) {
-            merged = retryMerged
-            lowConfidence = retryLow
-            suggestion = suggestFrom(retry) || suggestion
-            adopted = retry
-            retried = true
-          }
-        }
-
-        const libLabel = kbNames.length > 1 ? `（已检索 ${kbNames.length} 个知识库：${kbNames.join('、')}）` : ''
-        if (merged.length === 0) {
-          return `知识库未命中任何内容。${libLabel}\n`
-            + (suggestion ? `建议改用这些关键词重搜：${suggestion}\n` : '')
-            + '检索是字面词法匹配（没有向量/语义通道）：请换更具体的关键词重搜——中文文档用中文词、代码术语用英文标识符（如 sequenceDiagram）；命令 / API / 报错原文请整条原样传入，保留词序与 --flag 参数。'
-            + (retried ? '\n（已按建议关键词自动重搜过一次，仍无命中。）' : '')
-        }
-        // 重搜后仍然低置信：整批丢弃，不把噪音目录与正文交给模型。
-        // 低相关度的命中比「没有命中」更危险——模型会把噪音块当可靠证据引用。
-        // 这里只回一条「换关键词重搜」的指令，并直接给出建议词，让模型照抄即可。
-        if (lowConfidence) {
-          return `知识库检索置信度不足，本次结果已丢弃（低相关度命中比无命中更容易误导）。${libLabel}\n`
-            + (suggestion ? `建议改用这些关键词重搜：${suggestion}\n` : '建议换更具体的关键词重搜。\n')
-            + '检索是字面词法匹配：中文文档用中文词、代码术语用英文标识符（如 sequenceDiagram）；命令 / API / 报错原文整条原样传入，保留词序与 --flag 参数。'
-            + (retried ? '\n（已按建议关键词自动重搜过一次，仍不达标。）' : '')
-            + '\n若换词后仍无结果，说明当前知识库里很可能没有相关内容，请直接说明，不要勉强引用。'
-        }
-        // 自动附带跨库合并后的全局最优块的完整正文：mergeKbHits 已按融合排名降序，hits[0] 就是所有库中最相关的块。
-        const top = merged[0]
-        const auto = `\n\n【已附带排名最高的分块正文（库内相关度 ${top.score}${top.adjacent ? `，词序吻合 ${Math.round(top.adjacent * 100)}%` : ''}，无需再调用 knowledge_read 读它）】\n`
-          + `【${top.title || '（无标题）'}】(${top.kbName ? `${top.kbName} · ` : ''}${top.docName} · 第${top.ordinal + 1}块)\n${top.text}`
-        // 多库合并时可能只有部分库不达标（全部不达标已在上一步拦掉）：此时目录照给，
-        // 但用 O1 的头部标记提示模型对这批条目保持怀疑。
-        const someLow = adopted.some(r => r.lowConfidence)
-        const hint = someLow
-          ? '\n\n（其中部分知识库的命中置信度偏低，对应条目请谨慎引用，必要时换关键词重搜。）'
-          : ''
-        return formatKnowledgeCatalog({ hits: merged, lowConfidence: someLow }) + auto + hint
-      }
+      ...createKnowledgeSearchSpec(kbNames),
+      execute: createKnowledgeSearchExecute((name, args) => exec.knowledgeToolCall(name, args))
     })
     knowledgeRead = make({
       ...createKnowledgeReadSpec(kbNames),
-      execute: async (args) => {
-        const refs = parseChunkRefs(args.refs)
-        if (refs.length === 0) return '未指定有效的块引用（需要 docName + ordinal）。'
-        // 逐条解析归属库：ref.kb → 顶层 kb → docName 全库唯一定位。目录条目来自不同库时，
-        // 一次读取调用即可覆盖（describeKb 提供各库文档清单，按库缓存避免重复解析）。
-        const docCache = new Map<string, { name: string; docs: string[] } | null>()
-        const docHolder = (kbId: string, docName: string): boolean => {
-          if (!docCache.has(kbId)) docCache.set(kbId, exec.describeKb(kbId))
-          return docCache.get(kbId)?.docs.includes(docName) ?? false
-        }
-        const plan: { ref: { docName: string; ordinal: number }; kbId?: string; error?: string }[] = []
-        for (const r of refs) {
-          const want = r.kb ?? (typeof args.kb === 'string' ? args.kb.trim() : '')
-          if (want) {
-            const lib = kbLibs.find(l => l.name === want || l.id === want)
-            if (!lib) { plan.push({ ref: r, error: `未找到知识库「${want}」（可用：${kbNames.join('、')}）` }); continue }
-            plan.push({ ref: r, kbId: lib.id }); continue
-          }
-          const holders = kbLibs.filter(l => docHolder(l.id, r.docName))
-          if (holders.length === 1) { plan.push({ ref: r, kbId: holders[0].id }); continue }
-          if (holders.length === 0) { plan.push({ ref: r, error: `所有知识库中都找不到文档「${r.docName}」，请对照检索目录核对库名与文档名` }); continue }
-          plan.push({ ref: r, error: `文档「${r.docName}」在多个库中存在（${holders.map(h => h.name).join('、')}），请为该条目指定 kb` })
-        }
-        const byKb = new Map<string, { docName: string; ordinal: number }[]>()
-        for (const p of plan) {
-          if (!p.kbId) continue
-          const g = byKb.get(p.kbId) ?? []
-          g.push({ docName: p.ref.docName, ordinal: p.ref.ordinal })
-          byKb.set(p.kbId, g)
-        }
-        const errors = plan.filter(p => p.error).map(p => p.error!)
-        if (byKb.size === 0) return errors.join('\n') || '没有可读取的条目。'
-        const entries = [...byKb.entries()]
-        const groups = await Promise.all(entries.map(([id, rs]) => exec.knowledgeRead(id, rs)))
-        type ReadHit = { docName: string; ordinal: number; title: string; text: string; kbName: string }
-        const found = new Map<string, ReadHit>()
-        entries.forEach(([id], i) => { for (const h of groups[i].hits ?? []) found.set(`${id}|${h.docName}|${h.ordinal}`, h) })
-        // 按模型传入 refs 的顺序输出（跨库分组读取会打乱顺序）
-        const ordered: ReadHit[] = []
-        for (const p of plan) {
-          if (!p.kbId) continue
-          const h = found.get(`${p.kbId}|${p.ref.docName}|${p.ref.ordinal}`)
-          if (h && !ordered.some(o => o.kbName === h.kbName && o.docName === h.docName && o.ordinal === h.ordinal)) ordered.push(h)
-        }
-        if (ordered.length === 0) return errors.join('\n') || '没有匹配到任何块（文档名或块号不存在，请对照目录重试）。'
-        const body = formatKnowledgeChunks({ hits: ordered })
-        return errors.length > 0 ? `${body}\n（部分条目未读取：${errors.join('；')}）` : body
-      }
+      execute: createKnowledgeReadExecute((name, args) => exec.knowledgeToolCall(name, args))
     })
   }
 
@@ -1703,5 +1580,5 @@ export async function createMainTools(exec: MainToolExecutors, ctx?: CreateMainT
     }
   })
 
-  return [getDatetime, webSearch, webSearchBing, fetchWebpage, ...(knowledgeSearch && knowledgeRead ? [knowledgeSearch, knowledgeRead] : []), read, bash, write, edit, glob, grep, ripgrep, listDir, deleteTool, todoWrite, taskGet, taskList, askUserQuestion, reflect, codeSearch, analyzeDir, browserShow, browserScreenshot, viewImage]
+  return [getDatetime, webSearch, webSearchBing, fetchWebpage, ...(knowledgeList && knowledgeOverview && knowledgeSearch && knowledgeRead ? [knowledgeList, knowledgeOverview, knowledgeSearch, knowledgeRead] : []), read, bash, write, edit, glob, grep, ripgrep, listDir, deleteTool, todoWrite, taskGet, taskList, askUserQuestion, reflect, codeSearch, analyzeDir, browserShow, browserScreenshot, viewImage]
 }

@@ -16,7 +16,13 @@ import { randomUUID } from 'crypto'
 import type { KnowledgeBaseMeta, KnowledgeHit } from '../../shared/types'
 import { tokenize } from './retrievalService'
 // 排序与剪枝策略放在共享模块：工具侧的跨库合并要用同一份实现（避免两处漂移）
-import { RELATIVE_NOISE_RATIO, MIN_HIT_SCORE, mergeKbHits } from '../../shared/tools/knowledgeSpecs'
+import {
+  RELATIVE_NOISE_RATIO, MIN_HIT_SCORE, mergeKbHits,
+  KNOWLEDGE_LIST_TOOL_NAME, KNOWLEDGE_OVERVIEW_TOOL_NAME,
+  KNOWLEDGE_SEARCH_TOOL_NAME, KNOWLEDGE_READ_TOOL_NAME,
+  formatKnowledgeBaseList, formatKnowledgeOverview,
+  formatKnowledgeCatalog, formatKnowledgeChunks, parseChunkRefs,
+} from '../../shared/tools/knowledgeSpecs'
 
 // ── 分块参数 ──
 const CHUNK_TARGET = 1000       // 单块目标字符数
@@ -101,9 +107,10 @@ function buildPhraseMatchers(query: string): RegExp[] {
 }
 
 // ── 持久化数据结构 ──
+// 库概括不设长度上限：写多长由用户在界面里自己控制，代码不做截断。
 interface KbChunk { docId: string; docName: string; ordinal: number; text: string; title?: string }
 interface KbDoc { id: string; name: string; chunkCount: number; chars?: number; chunkMode?: string }
-interface KbFile { id: string; name: string; createdAt: string; docs: KbDoc[]; chunks: KbChunk[] }
+interface KbFile { id: string; name: string; createdAt: string; summary?: string; docs: KbDoc[]; chunks: KbChunk[] }
 
 // ── 内存 BM25 索引（按 kbId 缓存）──
 interface KbIndex {
@@ -143,7 +150,11 @@ function saveKb(kb: KbFile): void {
 }
 
 function metaOf(kb: KbFile): KnowledgeBaseMeta {
-  return { id: kb.id, name: kb.name, createdAt: kb.createdAt, docCount: kb.docs.length, chunkCount: kb.chunks.length }
+  return {
+    id: kb.id, name: kb.name, createdAt: kb.createdAt,
+    docCount: kb.docs.length, chunkCount: kb.chunks.length,
+    ...(kb.summary ? { summary: kb.summary } : {})
+  }
 }
 
 // ── KB 元数据缓存（M11）：列表/重名检测只需元信息，却会全量解析含全部分块的大 JSON。
@@ -554,14 +565,14 @@ export function describeKnowledgeBase(kbId: string): { name: string; docs: strin
   return { name: kb.name, docs: kb.docs.map(d => d.name) }
 }
 
-// ── 本机全部知识库清单（供 Agent 工具参数 kb 的 enum 注入：模型从真实库名中选择）──
-export function listKnowledgeBases(): { id: string; name: string }[] {
+// ── 本机全部知识库清单（供 Agent 注入库名 enum 与用户手写的库概括）──
+export function listKnowledgeBases(): { id: string; name: string; summary?: string }[] {
   if (!KNOWLEDGE_DIR || !existsSync(KNOWLEDGE_DIR)) return []
-  const out: { id: string; name: string }[] = []
+  const out: { id: string; name: string; summary?: string }[] = []
   for (const f of readdirSync(KNOWLEDGE_DIR)) {
     if (!f.endsWith('.json')) continue
     const meta = cachedKbMeta(f.slice(0, -5))
-    if (meta) out.push({ id: meta.id, name: meta.name })
+    if (meta) out.push({ id: meta.id, name: meta.name, ...(meta.summary ? { summary: meta.summary } : {}) })
   }
   return out
 }
@@ -674,6 +685,139 @@ export function queryAllKnowledgeBases(query: string, limit?: number): AllKbSear
 }
 
 // ── IPC 注册（由 ipc.ts 的 registerIpcHandlers 调用）──
+// ── 四个知识库工具的统一执行入口（主进程唯一实现）──
+// pi worker 注册的工具与渲染层自研注册中心的工具都转发到这里：规格、提示词、格式化在
+// knowledgeSpecs，检索与读取在本文件，两条链路不再各写一套执行逻辑。
+export function callKnowledgeTool(toolName: string, args: Record<string, unknown>): string {
+  const libs = listKnowledgeBases()
+  const summaries = libs.map(l => ({ name: l.name, summary: l.summary ?? '' }))
+  const kbNames = libs.map(l => l.name)
+
+  if (toolName === KNOWLEDGE_LIST_TOOL_NAME) return formatKnowledgeBaseList(summaries)
+
+  if (toolName === KNOWLEDGE_OVERVIEW_TOOL_NAME) {
+    const kb = typeof args.kb === 'string' ? args.kb.trim() : ''
+    return formatKnowledgeOverview(summaries, kb || undefined)
+  }
+
+  if (toolName === KNOWLEDGE_SEARCH_TOOL_NAME) {
+    if (libs.length === 0) return '本机尚未创建任何知识库。'
+    const want = typeof args.kb === 'string' ? args.kb.trim() : ''
+    let targets: { id: string }[]
+    if (want) {
+      const lib = libs.find(l => l.name === want || l.id === want)
+      if (!lib) return `未找到知识库「${want}」。可用的知识库：${kbNames.join('、') || '（无）'}`
+      targets = [{ id: lib.id }]
+    } else {
+      targets = libs
+    }
+    const query = String(args.query ?? '')
+    const cap = Math.max(1, Math.min(Math.floor(typeof args.limit === 'number' ? args.limit : 8), 12))
+    const results = targets.map(t => queryKnowledgeBase(t.id, query, cap))
+    const merge = (rs: typeof results) => mergeKbHits(rs, cap)
+    const suggestFrom = (rs: typeof results): string => {
+      const seen = new Set<string>()
+      const out: string[] = []
+      for (const r of rs) {
+        for (const term of (r.suggestedQuery ?? '').split(/\s+/)) {
+          if (!term || seen.has(term)) continue
+          seen.add(term)
+          out.push(term)
+          if (out.length >= 6) return out.join(' ')
+        }
+      }
+      return out.join(' ')
+    }
+    let merged = merge(results)
+    let lowConfidence = results.length > 0 && results.every(r => r.lowConfidence)
+    let suggestion = suggestFrom(results)
+    let retried = false
+    let adopted = results
+    // 零命中 / 低置信 → 用建议关键词自动重搜一次（确定性兜底，不依赖模型配合）
+    if ((merged.length === 0 || lowConfidence) && suggestion && suggestion !== query.trim()) {
+      const retry = targets.map(t => queryKnowledgeBase(t.id, suggestion, cap))
+      const retryMerged = merge(retry)
+      const retryLow = retry.length > 0 && retry.every(r => r.lowConfidence)
+      if (!retryLow || (retryMerged[0]?.fusionScore ?? 0) > (merged[0]?.fusionScore ?? 0)) {
+        merged = retryMerged
+        lowConfidence = retryLow
+        suggestion = suggestFrom(retry) || suggestion
+        adopted = retry
+        retried = true
+      }
+    }
+    const libLabel = kbNames.length > 1 ? `（已检索 ${kbNames.length} 个知识库：${kbNames.join('、')}）` : ''
+    if (merged.length === 0) {
+      return `知识库未命中任何内容。${libLabel}\n`
+        + (suggestion ? `建议改用这些关键词重搜：${suggestion}\n` : '')
+        + '检索是字面词法匹配（没有向量/语义通道）：请换更具体的关键词重搜——中文文档用中文词、代码术语用英文标识符（如 sequenceDiagram）；命令 / API / 报错原文请整条原样传入，保留词序与 --flag 参数。'
+        + (retried ? '\n（已按建议关键词自动重搜过一次，仍无命中。）' : '')
+    }
+    if (lowConfidence) {
+      return `知识库检索置信度不足，本次结果已丢弃（低相关度命中比无命中更容易误导）。${libLabel}\n`
+        + (suggestion ? `建议改用这些关键词重搜：${suggestion}\n` : '建议换更具体的关键词重搜。\n')
+        + '检索是字面词法匹配：中文文档用中文词、代码术语用英文标识符（如 sequenceDiagram）；命令 / API / 报错原文整条原样传入，保留词序与 --flag 参数。'
+        + (retried ? '\n（已按建议关键词自动重搜过一次，仍不达标。）' : '')
+        + '\n若换词后仍无结果，说明当前知识库里很可能没有相关内容，请直接说明，不要勉强引用。'
+    }
+    // 自动附带全局最优块正文：mergeKbHits 已按融合排名降序
+    const top = merged[0]!
+    const auto = `\n\n【已附带排名最高的分块正文（库内相关度 ${top.score}${top.adjacent ? `，词序吻合 ${Math.round(top.adjacent * 100)}%` : ''}，无需再调用 knowledge_read 读它）】\n`
+      + `【${top.title || '（无标题）'}】(${top.kbName ? `${top.kbName} · ` : ''}${top.docName} · 第${top.ordinal + 1}块)\n${top.text}`
+    const someLow = adopted.some(r => r.lowConfidence)
+    const hint = someLow ? '\n\n（其中部分知识库的命中置信度偏低，对应条目请谨慎引用，必要时换关键词重搜。）' : ''
+    return formatKnowledgeCatalog({ hits: merged, lowConfidence: someLow }) + auto + hint
+  }
+
+  if (toolName === KNOWLEDGE_READ_TOOL_NAME) {
+    const refs = parseChunkRefs(args.refs)
+    if (refs.length === 0) return '未指定有效的块引用（需要 docName + ordinal）。'
+    const docCache = new Map<string, { name: string; docs: string[] } | null>()
+    const docHolder = (kbId: string, docName: string): boolean => {
+      if (!docCache.has(kbId)) docCache.set(kbId, describeKnowledgeBase(kbId))
+      return docCache.get(kbId)?.docs.includes(docName) ?? false
+    }
+    const plan: { ref: { docName: string; ordinal: number }; kbId?: string; error?: string }[] = []
+    for (const r of refs) {
+      const want = r.kb ?? (typeof args.kb === 'string' ? args.kb.trim() : '')
+      if (want) {
+        const lib = libs.find(l => l.name === want || l.id === want)
+        if (!lib) { plan.push({ ref: r, error: `未找到知识库「${want}」（可用：${kbNames.join('、')}）` }); continue }
+        plan.push({ ref: r, kbId: lib.id }); continue
+      }
+      const holders = libs.filter(l => docHolder(l.id, r.docName))
+      if (holders.length === 1) { plan.push({ ref: r, kbId: holders[0]!.id }); continue }
+      if (holders.length === 0) { plan.push({ ref: r, error: `所有知识库中都找不到文档「${r.docName}」，请对照检索目录核对库名与文档名` }); continue }
+      plan.push({ ref: r, error: `文档「${r.docName}」在多个库中存在（${holders.map(h => h.name).join('、')}），请为该条目指定 kb` })
+    }
+    const byKb = new Map<string, { docName: string; ordinal: number }[]>()
+    for (const p of plan) {
+      if (!p.kbId) continue
+      const g = byKb.get(p.kbId) ?? []
+      g.push({ docName: p.ref.docName, ordinal: p.ref.ordinal })
+      byKb.set(p.kbId, g)
+    }
+    const errors = plan.filter(p => p.error).map(p => p.error!)
+    if (byKb.size === 0) return errors.join('\n') || '没有可读取的条目。'
+    type ReadHit = { docName: string; ordinal: number; title: string; text: string; kbName: string }
+    const found = new Map<string, ReadHit>()
+    for (const [id, rs] of byKb) {
+      for (const h of readKnowledgeChunks(id, rs).hits ?? []) found.set(`${id}|${h.docName}|${h.ordinal}`, h)
+    }
+    const ordered: ReadHit[] = []
+    for (const p of plan) {
+      if (!p.kbId) continue
+      const h = found.get(`${p.kbId}|${p.ref.docName}|${p.ref.ordinal}`)
+      if (h && !ordered.some(o => o.kbName === h.kbName && o.docName === h.docName && o.ordinal === h.ordinal)) ordered.push(h)
+    }
+    if (ordered.length === 0) return errors.join('\n') || '没有匹配到任何块（文档名或块号不存在，请对照目录重试）。'
+    const body = formatKnowledgeChunks({ hits: ordered })
+    return errors.length > 0 ? `${body}\n（部分条目未读取：${errors.join('；')}）` : body
+  }
+
+  return `未知的知识库工具：${toolName}`
+}
+
 export function registerKnowledgeIpc(appRoot: string): void {
   KNOWLEDGE_DIR = join(appRoot, 'knowledge')
   ensureDir()
@@ -760,6 +904,11 @@ export function registerKnowledgeIpc(appRoot: string): void {
     return queryAllKnowledgeBases(query, limit)
   })
 
+  // 四个知识库工具的统一调用口：pi worker 与渲染层自研注册中心都转发到这里
+  ipcMain.handle('knowledge-tool-call', async (_e, toolName: string, args: Record<string, unknown>) => {
+    return callKnowledgeTool(String(toolName ?? ''), args && typeof args === 'object' ? args : {})
+  })
+
   // ── 文档内容预览：按 ordinal 拼接该文档全部分块还原全文 ──
   ipcMain.handle('knowledge-doc-content', async (_e, kbId: string, docId: string) => {
     const kb = loadKb(kbId)
@@ -780,7 +929,7 @@ export function registerKnowledgeIpc(appRoot: string): void {
     if (!kb) return { success: false, error: '知识库不存在' }
     const payload = {
       app: 'llama-studio', type: 'knowledge-base', version: 1,
-      name: kb.name, createdAt: kb.createdAt,
+      name: kb.name, createdAt: kb.createdAt, summary: kb.summary ?? '',
       docs: kb.docs, chunks: kb.chunks.map(({ docId, docName, ordinal, text }) => ({ docId, docName, ordinal, text }))
     }
     return { success: true, name: kb.name, json: JSON.stringify(payload, null, 2) }
@@ -789,7 +938,7 @@ export function registerKnowledgeIpc(appRoot: string): void {
   // ── 导入：解析导出 JSON 建新库（全新 id 防碰撞；重名自动加后缀；docName 以 docs 列表回填）──
   ipcMain.handle('knowledge-import', async (_e, json: string) => {
     try {
-      const raw = JSON.parse(String(json ?? '')) as { name?: unknown; docs?: unknown; chunks?: unknown }
+      const raw = JSON.parse(String(json ?? '')) as { name?: unknown; summary?: unknown; docs?: unknown; chunks?: unknown }
       if (!raw || !Array.isArray(raw.docs) || !Array.isArray(raw.chunks)) return { success: false, error: '文件格式不正确（缺少 docs/chunks 字段）' }
       const name = String(raw.name ?? '').trim().slice(0, 100) || '导入的知识库'
       let finalName = name
@@ -827,7 +976,10 @@ export function registerKnowledgeIpc(appRoot: string): void {
       }
       for (const c of chunks) c.docName = docs.find(d => d.id === c.docId)?.name ?? '未命名文档'
       if (docs.length === 0 || chunks.length === 0) return { success: false, error: '文件中没有可导入的文档内容' }
-      const kb: KbFile = { id: randomUUID(), name: finalName, createdAt: new Date().toISOString(), docs, chunks }
+      const kb: KbFile = {
+        id: randomUUID(), name: finalName, createdAt: new Date().toISOString(), docs, chunks,
+        ...(typeof raw.summary === 'string' && raw.summary.trim() ? { summary: raw.summary.trim() } : {})
+      }
       saveKb(kb)
       indexes.delete(kb.id)
       return { success: true, meta: metaOf(kb) }
@@ -843,6 +995,18 @@ export function registerKnowledgeIpc(appRoot: string): void {
     const nn = String(name ?? '').trim().slice(0, 100)
     if (!nn) return { success: false, error: '名称不能为空' }
     kb.name = nn
+    saveKb(kb)
+    return { success: true, meta: metaOf(kb) }
+  })
+
+  // ── 知识库概括：用户手写，随库文件保存；由概括工具按需返回，不截断 ──
+  ipcMain.handle('knowledge-set-summary', async (_e, kbId: string, text: string) => {
+    const kb = loadKb(kbId)
+    if (!kb) return { success: false, error: '知识库不存在' }
+    const s = String(text ?? '').trim()
+    if (s) kb.summary = s
+    else delete kb.summary
+    // 概括不参与 BM25 索引，无需失效 indexes；saveKb 改变 mtime 会让 kbMetaCache 自动失效。
     saveKb(kb)
     return { success: true, meta: metaOf(kb) }
   })

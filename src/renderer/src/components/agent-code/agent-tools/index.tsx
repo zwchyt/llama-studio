@@ -8,7 +8,7 @@
 // 对外导出：TOOL_META、formatToolArgs、getToolPreview、LinedPre、
 //           ToolArgsView、ToolResultView、ToolCallCard、ToolCallGroup、FileChangeSummary
 
-import React, { useCallback, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Wrench, XIcon, Undo2, FileDiff,
 } from 'lucide-react'
@@ -610,9 +610,31 @@ function boundedHead(text: string, n: number): string {
   return text.slice(0, pos) + '…'
 }
 
+// 工具结果「短」的判定：不超过 20 行且不超过 1200 字。
+// 依据是结果区展开后的最大可视高度 360px（agent-code.css 的 .agent-tool-result-pre / .agent-tool-lined），
+// 按 11px 字号、1.5 行高折算约 21 行——「展开后不用滚动就能看全」的结果默认展开，超过才收起。
+// 字数上限兜住长行折行：一行几千字的 JSON 行数很少，但实际高度远超一屏。
+const SHORT_RESULT_MAX_LINES = 20
+const SHORT_RESULT_MAX_CHARS = 1200
+function isShortToolResult(result: string): boolean {
+  if (!result) return false
+  if (result.length > SHORT_RESULT_MAX_CHARS) return false
+  return result.split('\n').length <= SHORT_RESULT_MAX_LINES
+}
+
 export const ToolResultView = React.memo(function ToolResultView({ result, truncated, total, lined, grep, glob, readLines, readRange, onPreviewFile }: { result: string; truncated?: boolean; total?: number; lined?: boolean; grep?: GrepResult | null; glob?: GlobResult | null; readLines?: ReadResult | null; readRange?: { start: number; end: number; total?: number } | null; onPreviewFile?: (p: string, line?: number) => void }) {
-  // 所有工具结果默认收起，点击「展开」才显示完整内容
-  const [expanded, setExpanded] = useState(false)
+  // 短结果默认展开、长结果默认收起；用户手动点过之后以用户为准，不再被自动判定改回去。
+  const [expanded, setExpanded] = useState(() => isShortToolResult(result))
+  const userToggledRef = useRef(false)
+  // 结果在挂载后继续变化（流式）时，未手动切换则跟随长度重新判定
+  useEffect(() => {
+    if (userToggledRef.current) return
+    setExpanded(isShortToolResult(result))
+  }, [result])
+  const toggleResult = useCallback(() => {
+    userToggledRef.current = true
+    setExpanded(v => !v)
+  }, [])
   // 超长结果不 split：阈值判断只看字符数，这样不必先 split 全文就能决定走不走窗口。
   const oversized = result.length > LINED_PRE_WINDOW_CHARS
   const lines = useMemo(() => (oversized ? null : result.split('\n')), [result, oversized])
@@ -656,7 +678,7 @@ export const ToolResultView = React.memo(function ToolResultView({ result, trunc
               {hasHash ? '行号 + 行锚点' : '行号'}
             </span>
             {clipped && (
-              <button type="button" className="agent-tool-btn" onClick={() => setExpanded((v) => !v)}>
+              <button type="button" className="agent-tool-btn" onClick={toggleResult}>
                 <ChevronDownIcon size={11} className={`agent-tool-subchev ${expanded ? 'open' : ''}`} />
                 {expanded ? '收起' : `展开（12 / ${readRows.length} 行）`}
               </button>
@@ -781,7 +803,7 @@ export const ToolResultView = React.memo(function ToolResultView({ result, trunc
     <div className="agent-tool-result">
       <div className="agent-tool-result-head">
         <span className="agent-tool-result-label">结果（{meta}）</span>
-        <button className="agent-tool-subtoggle" onClick={() => setExpanded(v => !v)}>
+        <button className="agent-tool-subtoggle" onClick={toggleResult}>
           <ChevronRightIcon size={11} className={`agent-tool-chev ${expanded ? 'open' : ''}`} />
           {/* 展开态文案不再重复 meta：头部「结果（共 N 行）」已经说过总量，这里只说「展开后看到什么」 */}
           {expanded ? '收起' : (isLong ? '展开（显示前 12 行）' : (isMulti ? '展开（显示首行）' : '展开'))}

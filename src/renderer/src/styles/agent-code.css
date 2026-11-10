@@ -4210,7 +4210,16 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   --tool-accent: #65a30d;
 }
 
-/* 知识库两阶段：检索=琥珀 / 读取=深青 */
+/* 知识库四步：列表=深橙棕 / 概括=深青绿 / 检索=琥珀 / 读取=深青。
+   前两步是本轮新增的前置工具，沿用低饱和深色系，与现有二十多个工具色不重复。 */
+.agent-tool-call.tool-knowledge_list {
+  --tool-accent: #9a3412;
+}
+
+.agent-tool-call.tool-knowledge_overview {
+  --tool-accent: #0f766e;
+}
+
 .agent-tool-call.tool-knowledge_search {
   --tool-accent: #aa6f54;
 }

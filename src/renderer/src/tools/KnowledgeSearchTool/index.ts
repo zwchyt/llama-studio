@@ -1,12 +1,10 @@
-// 兼容层：知识库检索工具原实现已抽到 src/shared/tools/knowledgeSpecs（main 与 renderer 双侧共享）。
-// 保留本 barrel 以兼容任何按原路径导入的模块。
 export {
   KNOWLEDGE_SEARCH_TOOL_NAME,
   KNOWLEDGE_SEARCH_DESCRIPTION_BASE,
   KNOWLEDGE_SEARCH_GUIDELINES,
   createKnowledgeSearchSpec,
   formatKnowledgeCatalog,
-} from '../../../../shared/tools/knowledgeSpecs'
+} from './constants'
 export type {
   KnowledgeSearchInput,
   KnowledgeBaseRef,
@@ -14,4 +12,6 @@ export type {
   KnowledgeSearchHit,
   KnowledgeSearchResult,
   KnowledgeBaseInfo,
-} from '../../../../shared/tools/knowledgeSpecs'
+} from './types'
+export { getKnowledgeSearchPrompt } from './prompt'
+export { definition, createExecute } from './KnowledgeSearchTool'

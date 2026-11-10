@@ -6,7 +6,7 @@ import { ipcInternal } from '../../ipc'
 import { appendTokenUsage } from '../../tokenLedger'
 import { captureBrowser } from '../agentBrowserService'
 import { handleCodeSearchQuery } from '../retrievalService'
-import { queryKnowledgeBase, readKnowledgeChunks, listKnowledgeBases, describeKnowledgeBase } from '../knowledgeService'
+import { queryKnowledgeBase, readKnowledgeChunks, listKnowledgeBases, describeKnowledgeBase, callKnowledgeTool } from '../knowledgeService'
 import type { MainToolExecutors } from './tools/mainTools'
 
 export function createIpcExecutors(): MainToolExecutors {
@@ -71,6 +71,7 @@ export function createIpcExecutors(): MainToolExecutors {
     knowledgeRead: async (kbId, refs) => readKnowledgeChunks(kbId, refs),
     describeKb: (kbId) => describeKnowledgeBase(kbId),
     listKb: async () => listKnowledgeBases(),
+    knowledgeToolCall: async (name, args) => callKnowledgeTool(name, args),
     getPortModelInfo: async (port) => ipcInternal.getPortModelInfo?.(port),
     // Token 账本只在主进程有状态（init / lastPromptByKey / 月度封存），worker 的入账经此落盘
     appendTokenUsage: async (entry) => { appendTokenUsage(entry) },

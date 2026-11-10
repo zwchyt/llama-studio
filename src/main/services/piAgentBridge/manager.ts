@@ -114,7 +114,7 @@ export class PiAgentManager {
       'view_image',
       // 知识库两工具：pi 的 tools 参数是「激活名单」——customTools 只进定义池，
       // 名字不在名单里的自定义工具不会出现在发给模型的请求里（实测 llm_request 验证）
-      'knowledge_search', 'knowledge_read'
+      'knowledge_list', 'knowledge_overview', 'knowledge_search', 'knowledge_read'
     ]
   ) {
     // 撤销备份由 manager 统一管理（注入 recordUndo/undo 到工具执行器）
@@ -188,9 +188,9 @@ export class PiAgentManager {
       ? (() => {
         const want = new Set(opts.chatTools ?? [])
         const out = this.toolNames.filter(n => (CHAT_TOOL_NAMES as readonly string[]).includes(n) && n !== 'web_search' && want.has(n))
-        // knowledge_search 的返回里会指引模型用 knowledge_read 取其它条目正文，
-        // 所以启用检索时把读取工具一起带上，否则模型只能看目录、读不到内容。
-        if (want.has('knowledge_search')) out.push('knowledge_read')
+        // 知识库是「列表 → 概括 → 检索 → 读块」一条链：检索的返回会指引模型用读块工具取
+        // 其它条目正文，而列表与概括是检索前的两步，四个必须一起激活，链路才不会断在半路。
+        if (want.has('knowledge_search')) out.push('knowledge_list', 'knowledge_overview', 'knowledge_read')
         // 搜索工具只看全局搜索开关（searchEnabled），**不**看 chatTools。
         // 原因：界面上「联网搜索」那一项的开关状态与点击行为都接在全局 searchEnabled 上
         // （见 useAgentUiState.toggleChatTool 的 web_search 分支：它只翻转全局开关，
@@ -575,6 +575,7 @@ export function createWorkerExecutors(
     knowledgeRead: (kbId, refs) => c('knowledgeRead', [kbId, refs]),
     describeKb: (kbId) => c('describeKb', [kbId]),
     listKb: () => c('listKb', []),
+    knowledgeToolCall: (name, args) => c('knowledgeToolCall', [name, args]),
     getPortModelInfo: (port) => c('getPortModelInfo', [port]),
     appendTokenUsage: (entry) => c('appendTokenUsage', [entry]),
     setAgentWorkspace: (cwd) => c('setAgentWorkspace', [cwd]),

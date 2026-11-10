@@ -236,6 +236,11 @@ export default function KnowledgeView() {
   const [renaming, setRenaming] = useState<{ kind: 'kb' | 'doc'; id: string } | null>(null)
   const [renameValue, setRenameValue] = useState('')
 
+  // ── 知识库概括：用户手写，注入检索工具指引供模型构造关键词 ──
+  const [summaryEditing, setSummaryEditing] = useState<string | null>(null)
+  const [summaryDraft, setSummaryDraft] = useState('')
+  const [summarySaving, setSummarySaving] = useState(false)
+
   // 试搜索（跨全部知识库，不局限于当前选中的库）
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
@@ -254,6 +259,8 @@ export default function KnowledgeView() {
   const [searched, setSearched] = useState(false)
 
   const activeBase = bases.find(b => b.id === activeId) || null
+  const activeName = activeBase?.name ?? ''
+  const activeSummary = activeBase?.summary ?? ''
 
   const refreshBases = useCallback(async () => {
     const list = await window.api.knowledgeList().catch(() => [])
@@ -273,7 +280,7 @@ export default function KnowledgeView() {
   }, [refreshBases])
 
   useEffect(() => {
-    if (activeId) { loadDocs(activeId); setHits([]); setSearched(false); setQuery('') }
+    if (activeId) { loadDocs(activeId); setHits([]); setSearched(false); setQuery(''); setSummaryEditing(null) }
     else setDocs([])
   }, [activeId, loadDocs])
 
@@ -287,6 +294,25 @@ export default function KnowledgeView() {
       await refreshBases()
       setActiveId(res.meta.id)
     } else notify('创建失败：' + (res.error || '未知错误'), 'error')
+  }
+
+  function openSummaryEditor() {
+    setSummaryEditing(activeId)
+    setSummaryDraft(activeSummary)
+  }
+
+  async function saveSummary() {
+    const kbId = activeId
+    if (!kbId) return
+    setSummarySaving(true)
+    const res = await safeCall(() => window.api.knowledgeSetSummary(kbId, summaryDraft), '保存概括失败')
+    setSummarySaving(false)
+    if (!res) return
+    if (res.success) {
+      setSummaryEditing(null)
+      await refreshBases()
+      notify('概括已保存，新会话中生效', 'success')
+    } else notify('保存失败：' + (res.error || '未知错误'), 'error')
   }
 
   // Esc 关闭删除确认悬浮弹窗
@@ -418,7 +444,7 @@ export default function KnowledgeView() {
     const q = (override ?? query).trim()
     if (!q) return
     if (override !== undefined) setQuery(override)
-    setSearching(true); setSearched(true)
+    setSearching(true); setSearched(true); setSummaryEditing(null)
     const res = await window.api.knowledgeQueryAll(q, 6).catch(() => null)
     // IPC 边界不信任返回结构：主进程可能是旧版本（改了 main 但没重启），缺字段时逐个兜底。
     // 直接 setState(res.xxx) 会在字段缺失时写入 undefined，下一次渲染读 .length 就把整个面板崩掉。
@@ -670,7 +696,7 @@ export default function KnowledgeView() {
                 ) : (
                   <div className="kb-list-item-main">
                     <span className="kb-list-item-name">{b.name}</span>
-                    <span className="kb-list-item-sub">{b.docCount} 文档 · {b.chunkCount} 块</span>
+                    <span className="kb-list-item-sub">{b.docCount} 文档 · {b.chunkCount} 块{b.summary ? ' · 已设概括' : ''}</span>
                   </div>
                 )}
                 <div className="kb-row-actions">
@@ -901,6 +927,46 @@ export default function KnowledgeView() {
                   <><Loader2 size={20} className="kb-spin" /><span>{ingestMsg || '正在导入…'}</span></>
                 ) : (
                   <><Upload size={20} /><span>拖入或点击选择文档（txt / md / pdf / docx / 代码）</span></>
+                )}
+              </div>
+
+              {/* 本库概括：一个知识库一条，描述下面这批文档整体；模型检索前会先看到它 */}
+              <div className={`kb-summary-card${activeSummary ? ' has-value' : ''}`}>
+                <div className="kb-summary-card-head">
+                  <FileText size={14} className="kb-summary-card-icon" />
+                  <span className="kb-summary-card-title">本库概括</span>
+                  <span className="kb-summary-card-sub">{activeName} · {docs.length} 个文档 · 模型检索前会先看到</span>
+                  {summaryEditing !== activeId && (
+                    <button className="btn btn-ghost btn-sm" onClick={openSummaryEditor}>
+                      {activeSummary ? '编辑' : '填写'}
+                    </button>
+                  )}
+                </div>
+                {summaryEditing === activeId ? (
+                  <div className="kb-summary-editor">
+                    <textarea
+                      autoFocus
+                      className="kb-summary-textarea"
+                      value={summaryDraft}
+                      placeholder="用一两句话说明这个知识库里有什么、涉及哪些术语和文档；模型检索前会先看到它，据此挑选关键词…"
+                      onChange={e => setSummaryDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Escape') setSummaryEditing(null)
+                        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void saveSummary() }
+                      }}
+                    />
+                    <div className="kb-summary-editor-foot">
+                      <span className="kb-summary-count">{summaryDraft.length} 字 · 新会话生效</span>
+                      <button className="btn btn-ghost btn-sm" onClick={() => setSummaryEditing(null)}>取消</button>
+                      <button className="btn btn-primary btn-sm" disabled={summarySaving} onClick={() => void saveSummary()}>
+                        {summarySaving ? '保存中…' : '保存'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="kb-summary-preview" {...(activeSummary ? tip(activeSummary) : {})}>
+                    {activeSummary || '还没写概括。写清楚这个库里有哪些主题、术语和文档，模型检索时会据此挑关键词。'}
+                  </div>
                 )}
               </div>
 

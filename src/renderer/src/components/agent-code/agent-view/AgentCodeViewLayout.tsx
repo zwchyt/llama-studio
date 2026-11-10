@@ -1017,7 +1017,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                 <span>知识库 · {knowledgeBases.length} 个</span>
               </div>
               <div className="agent-task-card-body agent-card-prompt-body">
-                <p className="agent-prompt-hint">智能体自带 knowledge_search / knowledge_read 两阶段检索工具，可访问下列所有知识库；模型会按库名指定检索目标，无需在此选择。</p>
+                <p className="agent-prompt-hint">智能体先查知识库列表与概括，再全库检索并按需读取正文；概括由你在「知识库」页面维护，无需在此选择库。</p>
                 {knowledgeBases.length === 0 ? (
                   <p className="agent-prompt-hint">尚未创建知识库——可在左侧「知识库」页面新建并导入文档。</p>
                 ) : (

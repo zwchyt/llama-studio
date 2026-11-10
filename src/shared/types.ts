@@ -777,6 +777,8 @@ export interface KnowledgeBaseMeta {
   createdAt: string
   docCount: number
   chunkCount: number
+  /** 用户手写的知识库概括：注入检索工具指引，供模型构造关键词（旧库可能没有） */
+  summary?: string
 }
 
 /** 知识库内单个文档（knowledge-get 返回） */
