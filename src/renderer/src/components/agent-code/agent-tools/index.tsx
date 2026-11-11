@@ -74,6 +74,32 @@ export function formatToolArgs(raw: string | undefined): string {
   }
 }
 
+/** 取出知识库检索的查询词；不是该工具或字段类型不符时返回空串。 */
+function knowledgeQueryOf(name: string, parsed: unknown): string {
+  if (name !== 'knowledge_search' || !parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return ''
+  const q = (parsed as Record<string, unknown>).query
+  return typeof q === 'string' ? q : ''
+}
+
+/** 查询词按空白分组、每组各包一层中括号，仅用于界面显示，不改写真正传给检索的参数。
+ *  切分口径与检索侧词序加权一致（query.trim().split(/\s+/)）。
+ *  maxLen 给卡片头部的单行预览用：按整词裁剪，避免省略号切在半个括号里。 */
+function bracketKnowledgeQuery(raw: string, maxLen = 0): string {
+  const terms = raw.trim().split(/\s+/).filter(Boolean)
+  if (terms.length === 0) return ''
+  const parts: string[] = []
+  let len = 0
+  for (const term of terms) {
+    let part = `[${term}]`
+    if (maxLen > 0 && part.length > maxLen) part = `[${term.slice(0, Math.max(1, maxLen - 3))}…]`
+    const next = len + (parts.length ? 1 : 0) + part.length
+    if (maxLen > 0 && parts.length > 0 && next > maxLen) { parts.push('…'); break }
+    parts.push(part)
+    len = next
+  }
+  return parts.join(' ')
+}
+
 // ── 专属渲染的门控集合 ──
 // ToolCallCard 展开体里，参数区与结果区各有「通用实现」与「专属实现」两条路。
 // 原先写成两串内联的 `&& tc.name !== '...'`，每加一个专属卡要改两处、各加一个 !==，
@@ -229,9 +255,9 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
   const isFileEdit = !!parsed && (name === 'Write' || name === 'Edit')
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；用到的 return 分支里放 {tipNode}）
   const { tipHandlers: tip, tipNode } = useBubbleTip()
-  // get_datetime 没有任何参数（parameters 是空对象）：通用兜底会把 `{}` 原样打印成一个代码块，
-  // 这里直接不渲染参数区，卡片只保留结果区。
-  if (name === 'get_datetime') return null
+  // 无参工具的参数是空对象，通用兜底会把 `{}` 打印成代码块；这里不渲染参数区，只保留结果区。
+  // 仅在解析成功且无文件栏时生效，流式生成中解析失败仍走原逻辑。
+  if (!headFilePath && parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).length === 0) return null
   // view_image 的参数只有一个 file_path，已内联到卡片头部（图片图标 + 文件名，可点跳预览）：
   // 参数区不再重复。图片本体由结果区的 ViewImageResult 展示。
   if (name === 'view_image') return null
@@ -572,7 +598,12 @@ export const ToolArgsView = React.memo(function ToolArgsView({ name, args, onPre
       </div>
     )
   }
-  const formatted = formatToolArgs(args)
+  // 知识库检索：只在显示层把查询词逐个括起来，真实参数与格式化函数都不动
+  const kq = knowledgeQueryOf(name, parsed)
+  const displayArgs = kq
+    ? JSON.stringify({ ...(parsed as Record<string, unknown>), query: bracketKnowledgeQuery(kq) })
+    : args
+  const formatted = formatToolArgs(displayArgs)
   if (!formatted && !filePath) return null
   // 图标与配色只查一次（原为同一表达式调用两次）
   const fm = filePath ? fileMeta(baseName(filePath)) : null
@@ -860,7 +891,11 @@ export const ToolCallCard = React.memo(function ToolCallCard({ tc, index, total,
     useCollapseAnimation(bodyRef)
 
   const parsed = useMemo(() => { try { return JSON.parse(tc.args || '{}') } catch { return null } }, [tc.args])
-  const preview = getToolPreview(parsed)
+  // 知识库检索：头部也逐个括出查询词，长内容按整词裁剪，保证每个括号都闭合
+  const preview = useMemo(() => {
+    const kq = knowledgeQueryOf(tc.name, parsed)
+    return kq ? bracketKnowledgeQuery(kq, 120) : getToolPreview(parsed)
+  }, [parsed, tc.name])
   // 撤销回调在卡片内绑定 tc：父级只透传稳定的 onUndo，卡片 memo 才能对未变的卡生效
   const handleUndo = useCallback(() => onUndo?.(tc), [onUndo, tc])
   // 编辑工具的增删行数统计（显示在工具卡片上方，类似 git diff 的 +N -M）。

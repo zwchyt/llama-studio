@@ -25,7 +25,7 @@ export const KNOWLEDGE_SEARCH_GUIDELINES: string[] = [
   'knowledge_search 一次调用即检索全部知识库并合并排序，目录每条都标注来源库名——不要为「选库」单独发起多次调用，也不要逐库排除。',
   'knowledge_search 会在返回「标题目录」的同时，自动把相关度最高的那一块的完整正文附在末尾——所以一次检索通常就够用，不必再为它调用 knowledge_read。',
   '只有当你要读的正文不在目录末尾附带的那一块里时，才用 knowledge_read 传对应条目的 kb（库名）、docName 与 ordinal 去取。',
-  '构造查询词时优先使用文档标题、章节名或领域关键词；检索是字面词法匹配（没有向量/语义通道），同义改述可能漏检——中文文档换中文词、代码术语换英文标识符再试一次。',
+  '构造查询词时只从用户问题里抽内容词：章节名、领域术语、代码标识符等文档正文里真会出现的词；库名、文档名、文件名不是检索词，不要写进 query（检索只匹配块正文与块标题，文档名只用于选库和 knowledge_read 定位）。检索是字面词法匹配（没有向量/语义通道），同义改述可能漏检——中文文档换中文词、代码术语换英文标识符再试一次。',
   '查询内容本身是命令、API 调用、报错或配置项时，把它整条原样传入，保留词序与 --flag / -m 这类参数，不要拆成零散关键词。检索对「相邻词对」加权：整条命令原样出现会显著加分，打乱词序或删掉参数恰好丢掉这部分信号（实测「git commit --amend -m」拆成关键词后，讲 Mermaid gitGraph 语法的块会靠 commit 词频排到正确的块前面）。',
   'query 一般只传 2–6 个关键词，不要原样转述用户的整句提问。长查询会掺进「如何/应该/什么」这类低信息量词，把所有块的分数一起抬高，真正相关的块反而拉不开差距；中文长句还会被切成大量跨词假词（「如何配置」→「何配」）造成误匹配。正确做法是自己从问题里抽出最有区分度的名词 / 标识符再检索，必要时换关键词多搜一次，而不是把问题原样丢进来。（例外：问题本身就是一条命令 / API / 报错原文时，按上一条整条传入。）',
   '目录按跨库融合排名降序，每行还标了「词序吻合 X%」与命中词——判断该读哪条请优先看排名、词序吻合度和命中词。行尾的相关度是各库内部的 BM25 分，跨库不可比、列表里不一定递减，不要拿两个不同库的条目去比这个数字。',
@@ -39,7 +39,7 @@ export const KNOWLEDGE_LIST_DESCRIPTION =
   'Then call knowledge_overview for the libraries whose names look relevant, and finally knowledge_search to retrieve chunks.'
 
 export const KNOWLEDGE_LIST_GUIDELINES: string[] = [
-  '要用知识库时先调 knowledge_list 拿到全部库名，库名本身按内容命名，据此判断哪些库可能相关；再用 knowledge_overview 取它们的概括，最后才用 knowledge_search 检索。',
+  '要用知识库时先调 knowledge_list 拿到全部库名，据此判断哪些库可能相关；库名只用于选库和 knowledge_read 定位，不是检索词。再用 knowledge_overview 取它们的概括，最后才用 knowledge_search 检索。',
   'knowledge_search 仍建议省略 kb 一次检索全部知识库；列表和概括工具只是帮你挑检索词，不是让你逐库试错或逐个排除。',
 ]
 
@@ -75,7 +75,7 @@ export interface KnowledgeToolDefinition {
 export function formatKnowledgeBaseList(libs: readonly KnowledgeBaseSummary[]): string {
   if (libs.length === 0) return '本机尚未创建任何知识库。'
   const lines = libs.map((l, i) => `[${i + 1}] ${l.name.replace(/\s+/g, ' ').trim()} · ${l.summary ? '已写概括' : '未写概括'}`)
-  return `本机共 ${libs.length} 个知识库：\n${lines.join('\n')}\n（库名按内容命名；下一步用 knowledge_overview 取相关库的概括，再据此挑关键词检索。）`
+  return `本机共 ${libs.length} 个知识库：\n${lines.join('\n')}\n（库名只用于选库和读块时定位，不是检索词；下一步用 knowledge_overview 取相关库的概括，再从概括里挑文档正文中会出现的词检索。）`
 }
 
 /** 概括输出：按库返回全文，随时读取磁盘最新值；支持只取一个库以省上下文。
@@ -177,7 +177,10 @@ export function createKnowledgeSearchSpec(kbNames?: string[]): {
           type: 'string',
           description:
             'Search query, NOT the user\'s whole question. Usually pass 2-6 distinctive terms extracted from the question ' +
-            '(document titles, section names, domain terms, code identifiers); drop filler words such as how / should / what / please. ' +
+            '(section names, domain terms, code identifiers, or any words that actually appear in the chunk text); ' +
+            'drop filler words such as how / should / what / please. ' +
+            'Never include library names, document names or file names: retrieval matches only chunk text and chunk titles, ' +
+            'and those names are used for choosing a library and for knowledge_read refs instead. ' +
             'Exception: when the question is about an exact command, API call, error message or config key, pass that string verbatim — ' +
             'keep its word order and flags such as --amend / -m. Retrieval is lexical and gives a word-order bonus when adjacent query words ' +
             'appear adjacently in a chunk, so shuffling terms or stripping flags loses signal, and paraphrases may miss.'

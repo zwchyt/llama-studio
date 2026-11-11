@@ -402,14 +402,11 @@ function getIndex(kb: KbFile): KbIndex {
   evictIndexes()
   const idx: KbIndex = { chunks: [], df: new Map(), totalLen: 0 }
   for (const c of kb.chunks) {
-    // 文档名属于「文档级」信息，只能计入该文档的首块；块标题由本块正文提取，属于块自身内容。
-    // 之前把文档名计进每一块，会让文件名里的词 df = 块数 = N、idf 塌到 ~0.5/N
-    // （实测 30 块的库 idf=0.02，正常应约 1.5），后果有两个：
-    //   1) 「拿文件名当查询词」反而搜不出东西——与这段代码原本的目的正好相反；
-    //   2) 文件名里恰好也出现在正文中的词（如 Mermaid 库的 mermaid/渲染/格式）被一起压权，
-    //      正文里明明很有区分度的词被压成噪声，整个库得分低到过不了 MIN_HIT_SCORE。
-    // 只计首块后 df 回到「文档数」量级，idf 恢复正常，文件名查询会命中该文档首块。
-    const headTokens = tokenize(`${c.ordinal === 0 ? c.docName : ''} ${c.title ?? ''}`)
+    // 检索只认块内容：正文 + 本块标题（标题由正文前几行提取，属于块自身）。
+    // 文档名是文件级元信息，不参与检索：多个文档常共用同一段命名（如 xxx-格式渲染-标志示例.md），
+    // 一旦计入首块，这些共享字会以高权重命中所有同名文档的首块，分数虚高压过真正相关的块。
+    // 文档名仍用于目录展示与 knowledge_read 的精确定位，那条路径不走分词。
+    const headTokens = tokenize(c.title ?? '')
     const tokens = [...tokenize(c.text), ...headTokens]
     const tf = new Map<string, number>()
     for (const t of tokens) tf.set(t, (tf.get(t) ?? 0) + 1)
@@ -483,15 +480,15 @@ function search(idx: KbIndex, query: string, limit: number): { hits: KnowledgeHi
     }
     if (boosted) scored.sort((a, b) => b.score - a.score)
   }
-  // 双重剪枝：相对阈值（最高分 × 15%，只沾到常见词/文档名共享词的块不进目录）
+  // 双重剪枝：相对阈值（最高分 × 15%，只沾到常见词的块不进目录）
   // + 绝对下限 MIN_HIT_SCORE。只有相对阈值时，「整库都弱」会把一堆弱块放进来
   // （bestScore 本身低 → 阈值低 → 只沾一个常见词的块也过线）。
   const bestScore = scored[0]?.score ?? 0
   // 但绝对下限在「查询词全是库内常见词」时会反过来误杀：所有 idf 都趋近 0 时全库得分都极低，
   // 门槛会把整个库判成「未命中」——分数低是因为词太常见，不代表内容不相关。
-  // 实测：拿文档名本身当查询（「Mermaid 渲染格式」），这几个词因为被计入了每个块的
-  // headTokens（getIndex 把 docName/title 的词也放进 tf）而 df = 块数 = 30、idf 塌到 0.02，
-  // 全库得分 0.04 远低于门槛 1.0 → 该库 0 命中，而它恰恰是唯一相关的库。
+  // 历史实测：拿一批库内常见词当查询（当时索引还把文档名计入首块，例「Mermaid 渲染格式」），
+  // 这几个词 df = 块数 = 30、idf 塌到 0.02，全库得分 0.04 远低于门槛 1.0
+  // → 该库 0 命中，而它恰恰是唯一相关的库。索引已不含文档名，常见词触发的同类误杀仍需这层降级。
   // 判据要同时满足两条：
   //   1) 平均 idf 过低 —— 词本身没有区分度，低分是词的性质而非内容不相关；
   //   2) 绝对下限确实是压死结果的那一刀（bestScore 本就低于门槛）。
