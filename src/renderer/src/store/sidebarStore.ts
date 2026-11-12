@@ -34,14 +34,21 @@ export const useSidebarStore = create<SidebarState>((set, get) => {
     settleTimer = setTimeout(() => { settleTimer = null; set({ collapsing: false }) }, 250)
   }
 
+  // 首屏同步判断是否窄窗口：若初始 collapsed 为 false，挂载后 matchMedia 才切成收起，
+  // 侧栏 0.25s 的宽度过渡会把整个内容区推一下（刷新时右边框抖）。这里先算好，
+  // 挂载后 syncAutoNarrow 读到相同值会早退，过渡不触发。
+  const initialNarrow = (() => {
+    try { return window.matchMedia(`(max-width: ${SIDEBAR_AUTO_COLLAPSE_MAX_WIDTH}px)`).matches } catch { return false }
+  })()
+
   return {
-    collapsed: false,
+    collapsed: initialNarrow,
     collapsing: false,
     hoverExpanded: false,
     hoverExpandEnabled: (() => {
       try { return localStorage.getItem('sidebarHoverExpand') !== 'false' } catch { return true }
     })(),
-    autoNarrow: false,
+    autoNarrow: initialNarrow,
     userCollapsed: false,
     narrowOverride: null,
     setCollapsed: (v) => set({ collapsed: v }),

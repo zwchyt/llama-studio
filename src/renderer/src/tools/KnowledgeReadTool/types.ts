@@ -1,7 +1,4 @@
-// 块引用类型沿用共享规格文件，不另写一份。
-export type { KnowledgeChunkRef } from '../../../../shared/tools/knowledgeSpecs'
-
+// 工具四入参：最近一次目录里的块编号列表。
 export interface KnowledgeReadInput {
-  kb?: string
-  refs: { kb?: string; docName: string; ordinal: number }[]
+  chunkIds: string[]
 }

@@ -752,7 +752,8 @@ export const useStore = createWithEqualityFn<AppStore>((set, get) => ({
   },
   pendingPlainChat: null,
   setPendingPlainChat: (v) => set({ pendingPlainChat: v }),
-  agentMode: 'code',
+  // 默认进「聊天」模式：刷新后首屏的会话列表与模式开关都按聊天来，不再默认编码。
+  agentMode: 'chat',
   setAgentMode: (m) => set({ agentMode: m }),
   compacting: false,
   setCompacting: (v) => set({ compacting: v }),

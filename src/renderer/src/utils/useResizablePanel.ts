@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
+import { startTransition, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 /**
  * 拖拽面板宽度期间要「钉住」的元素。
@@ -132,8 +132,10 @@ export function useResizablePanel(opts: ResizablePanelOptions) {
     if (root) root.style.setProperty(cssVarName, `${clamped}px`)
   }, [clamp, cssVarName, rootSelector])
 
-  // 宽度状态变化 → 写入 CSS 变量
-  useEffect(() => { applyWidth(width) }, [width, applyWidth])
+  // 宽度状态变化 → 写入 CSS 变量。
+  // 用 useLayoutEffect 而不是 useEffect：它在首次绘制前执行，首帧直接拿到存储宽度，
+  // 面板的 width 过渡不会从默认值（如 480）缓动到存储值，刷新时不再「抖一下」。
+  useLayoutEffect(() => { applyWidth(width) }, [width, applyWidth])
 
   const startResize = useCallback((e: React.PointerEvent) => {
     e.preventDefault()

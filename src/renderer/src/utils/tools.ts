@@ -147,7 +147,9 @@ register(BrowserScreenshotDef, BrowserScreenshotExec)
 register(ViewImageDef, ViewImageExec)
 // 知识库四步：列表 → 概括 → 检索 → 读块。规格来自共享文件，执行统一转发到主进程，
 // 与 pi worker 那条链路共用同一份实现，不在这里复制检索逻辑。
-const knowledgeCall = (name: string, args: Record<string, unknown>) => window.api.knowledgeToolCall(name, args)
+// 自研注册中心与 pi 链路共用主进程状态：给它一个独立会话键，避免两条链路串库。
+const knowledgeCall = (name: string, args: Record<string, unknown>) =>
+  window.api.knowledgeToolCall(name, { ...args, _sessionId: 'renderer' })
 register(KnowledgeListDef, createKnowledgeListExecute(knowledgeCall))
 register(KnowledgeOverviewDef, createKnowledgeOverviewExecute(knowledgeCall))
 register(KnowledgeSearchDef, createKnowledgeSearchExecute(knowledgeCall))

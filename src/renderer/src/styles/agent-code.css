@@ -366,6 +366,9 @@
 .chat-messages {
   flex: 1;
   overflow-y: auto;
+  /* 预留滚动条槽位：消息加载前没有滚动条、加载后出现，会让内容整体左移 5px（窗口右边跳一下）。
+     stable 让槽位常驻，滚动条出现/消失都不再挤内容。 */
+  scrollbar-gutter: stable;
   padding: 18px 0 8px;
   min-height: 0;
   position: relative;
@@ -7130,6 +7133,8 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 .agent-code-view .chat-messages {
   flex: 1;
   overflow-y: auto;
+  /* 同 .chat-messages：预留滚动条槽位，避免刷新时消息加载出来后内容整体左移。 */
+  scrollbar-gutter: stable;
   padding: 16px 24px 16px 16px;
   display: flex;
   flex-direction: column;
@@ -8756,6 +8761,30 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
   width: auto;
   min-width: 0;
   flex-shrink: 0;
+}
+
+/* 停止发送按钮：沉稳深红实色 + 柔和投影，做出「危险动作」的分量与质感。
+   不用渐变、内高光、底部暗线等上下明暗手法，避免出现上下层次；
+   高级感来自单一色调的深度、干净描边与投影抬升。三阶类名压过 .btn-ghost 的透明底，浅色/深色通用。 */
+.agent-code-view .chat-input-tools .chat-stop-btn {
+  background: #c62828;
+  border-color: #a32020;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(166, 30, 28, .30), 0 1px 2px rgba(0, 0, 0, .10);
+}
+.agent-code-view .chat-input-tools .chat-stop-btn:hover:not(:disabled) {
+  background: #d32f2f;
+  border-color: #b32424;
+  box-shadow: 0 4px 12px rgba(166, 30, 28, .36), 0 1px 3px rgba(0, 0, 0, .12);
+}
+.agent-code-view .chat-input-tools .chat-stop-btn:active:not(:disabled) {
+  transform: scale(.96);
+  background: #b71c1c;
+  box-shadow: 0 1px 3px rgba(166, 30, 28, .24);
+}
+/* 深色主题：红底在深背景上已足够醒目，描边改为极淡亮边，避免像亮圈 */
+.theme-dark .agent-code-view .chat-input-tools .chat-stop-btn {
+  border-color: rgba(255, 255, 255, .12);
 }
 
 /* 文本类控件可收缩：文字省略而不是溢出按钮框与相邻组件重叠 */

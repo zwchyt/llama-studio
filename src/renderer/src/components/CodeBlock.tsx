@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import hljs from 'highlight.js/lib/common'
 import { Check, Copy, ChevronDown } from 'lucide-react'
 import { WindowedText } from './agent-code/WindowedText'
@@ -86,10 +86,16 @@ export default function CodeBlock({ language, value, showLineNumbers, isStreamin
   const streamingWindowed = !!isStreaming && lineCount > CODE_WINDOW_LINES
   const windowedAny = windowed || streamingWindowed
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isStreaming || windowed) return
     const el = rootRef.current
     if (!el) return
+    // 首帧前同步判断：块已经在视口附近就直接高亮。
+    // 原来只靠 IntersectionObserver（首帧之后才回调）→ 先渲染纯文本、再重渲染成高亮，
+    // 这次二次渲染会带动滚动/布局调整，表现为刷新时这块「向下抖一下」。
+    const r = el.getBoundingClientRect()
+    const vh = window.innerHeight || document.documentElement.clientHeight
+    if (r.bottom >= -300 && r.top <= vh + 300) { setInView(true); return }
     // 无 IntersectionObserver（测试环境）时退化为立即高亮，保持旧行为
     if (typeof IntersectionObserver === 'undefined') { setInView(true); return }
     const io = new IntersectionObserver(

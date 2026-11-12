@@ -37,7 +37,7 @@ export const PI_TOOL_GUIDANCE: string[] = [
 // 这里只保留三件事：路由（哪种意图用哪种围栏）、去哪找语法、检索不到时怎么办。
 export const PI_CHART_ROUTING: string[] = [
   '## 图表输出（语法查知识库，不要凭记忆写）',
-  '- 需要图表时：先用 knowledge_search 检索该图表类型的**示例**（关键词直接用类型名，如 flowchart / sequenceDiagram / gantt / 雷达图 / 折线图 / svg 图标），命中块的正文会自动附在目录末尾，拿到示例后**严格照它的语法输出**。',
+  '- 需要图表时：先 knowledge_list 看有哪些知识库、再用 knowledge_overview 选中存放图表语法文档的库，然后 knowledge_search 检索该图表类型的**示例**（关键词直接用类型名，如 flowchart / sequenceDiagram / gantt / 雷达图 / 折线图 / svg 图标）；检索只在已选库内进行，排名第一块的正文会自动附在目录末尾，拿到示例后**严格照它的语法输出**。',
   '- 路由：描述「结构 / 关系 / 流程」→ ```mermaid；描述「数值 / 数据」→ ```chart；描述「外观 / 形状」→ ```svg；要「结构化 spec」',
   '- ```chart / ```svg 的 spec 形状是本项目特有的，**必须以知识库里的示例为准**；若 knowledge_search 不可用（未配置知识库）或检索不到示例：不要猜 spec，改用 markdown 表格或普通代码块，并提示用户把图表语法文档导入资料库。',
   '- ```mermaid 是通用语法，检索不到示例时可用你已知的标准 mermaid 语法。',

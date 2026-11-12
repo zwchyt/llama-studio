@@ -27,6 +27,10 @@
   margin-bottom: 12px;
   box-shadow: var(--shadow);
   min-width: 0;
+  /* 图表内部的 ResponsiveContainer 会在挂载后量宽度再重渲染一次。这次重排若被浏览器的
+     滚动锚定选中做位置补偿，看起来就是「图表卡把下面的正文挤下来一下」。
+     只在本卡片内关掉锚定补偿，不影响其它消息的滚动行为。 */
+  overflow-anchor: none;
 }
 
 /* ── 头部：标题占满左侧，工具条贴右 ──

@@ -61,10 +61,14 @@ function normalizeCode(raw: string | undefined | null): string {
     trimmed,
   )
   const code = (fencedCodeBlock?.[1] ?? trimmed).trim()
-  // 格式化：自动缩进嵌套块（group/loop/alt 等）、规范化箭头间距
+  // 格式化：自动缩进嵌套块（group/loop/alt 等）、规范化箭头间距。
+  // 但 mermaid-formatter 只理解结构化图语法：它会把 sankey 的 CSV 行
+  // （"Source","Target",10）当成图节点重排，导致 parse 报 "Parse error on line 2"。
+  // sankey 是非结构化 CSV 语法，跳过格式化、保留原始 DSL。
+  const skipFormat = /^\s*sankey(?:-beta)?\b/i.test(code)
   let formatted: string
   try {
-    formatted = formatMermaid(code)
+    formatted = skipFormat ? code : formatMermaid(code)
   } catch {
     formatted = code
   }
@@ -178,6 +182,24 @@ function getThemeVariables(): Record<string, string> {
     doneTaskBorderColor: border,
     critBkgColor: surface,
     critBorderColor: strongBorder,
+    // treemap 等图用 cScale0..11 上色。mermaid 默认按 cScale0=primaryColor、
+    // cScale1=secondaryColor、cScale2=tertiaryColor、其余由 primaryColor 调色相推导；
+    // 而这里 primary/secondary/tertiary 取的是卡面/底色（近白），推导出的 12 个色阶
+    // 全是白色 → treemap 瓦片没有填充色、看不见。显式给一组浅色调色板修正。
+    // 标签色固定深色：瓦片是浅色系，深色标签在浅色/深色主题下都清晰。
+    cScale0: '#8ea6e8',
+    cScale1: '#f2cf6b',
+    cScale2: '#7fd0a8',
+    cScale3: '#f2a06b',
+    cScale4: '#c39bd3',
+    cScale5: '#6fc9df',
+    cScale6: '#eb8f8f',
+    cScale7: '#b5d99c',
+    cScale8: '#f4a7c3',
+    cScale9: '#a9b7c4',
+    cScale10: '#e6c27a',
+    cScale11: '#8fd3c7',
+    scaleLabelColor: '#1a1a1a',
   }
 }
 
@@ -218,13 +240,56 @@ function ensureSvgSizing(tag: string): string {
   return tag.replace(m[0], () => ` style="${merged}"`)
 }
 
+// treemap 兜底上色：mermaid 瓦片的填充来自主题 cScale，而 cScale 由 primaryColor 等推导，
+// 在部分环境（或主题覆盖未生效时）会退化成白色，看起来「没有颜色」。这里在渲染结果上再兜一层：
+// 只要瓦片的 fill 是空白（none/transparent/白/近白），就按调色板强制上色。
+const TREEMAP_PALETTE = [
+  '#8ea6e8', '#f2cf6b', '#7fd0a8', '#f2a06b', '#c39bd3', '#6fc9df',
+  '#eb8f8f', '#b5d99c', '#f4a7c3', '#a9b7c4', '#e6c27a', '#8fd3c7',
+]
+function isBlankFill(v: string | undefined): boolean {
+  if (!v) return true
+  const s = v.trim().toLowerCase()
+  return s === 'none' || s === 'transparent' || s === 'white' ||
+    s === '#fff' || s === '#ffffff' || s === '#f7f7f8' || s === '#f5f6f8' ||
+    s === '#f5f5f5' || s === '#f2f2f3'
+}
+function colorizeTreemap(svg: string): string {
+  if (!/class="[^"]*treemap(?:Leaf|Section)/.test(svg)) return svg
+  let leafIdx = 0
+  return svg.replace(/<rect\b[^>]*\bclass="([^"]*)"[^>]*>/g, (tag, cls: string) => {
+    if (/treemapSectionHeader/.test(cls)) return tag
+    let color: string | undefined
+    if (/treemapLeaf/.test(cls)) {
+      color = TREEMAP_PALETTE[leafIdx % TREEMAP_PALETTE.length]
+      leafIdx++
+    } else if (/treemapSection/.test(cls)) {
+      const m = /section(\d+)/.exec(cls)
+      if (!m) return tag
+      const n = Number(m[1])
+      if (n === 0) return tag // 根分区是透明的，不上色
+      color = TREEMAP_PALETTE[n % TREEMAP_PALETTE.length]
+    }
+    if (!color) return tag
+    const fill = (/\bfill="([^"]*)"/.exec(tag) || [])[1]
+    if (!isBlankFill(fill)) return tag // 主题已经给出有效颜色时保留，不破坏分组配色
+    let out = /\bfill="/.test(tag)
+      ? tag.replace(/\bfill="[^"]*"/, `fill="${color}"`)
+      : tag.replace(/\s*\/?>$/, (m) => ` fill="${color}"${m}`)
+    if (/\bstroke="/.test(out)) out = out.replace(/\bstroke="[^"]*"/, `stroke="${color}"`)
+    if (/\bfill-opacity="/.test(out)) out = out.replace(/\bfill-opacity="[^"]*"/, 'fill-opacity="0.9"')
+    return out
+  })
+}
+
 function sanitizeSvg(svg: string): string {
-  return svg
+  const safe = svg
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/\bon\w+\s*=/gi, 'data-blocked=')
     .replace(/javascript:/gi, 'blocked:')
     // 只动开头这个标签：mermaid 的 style 出现在标签前半段，用 [^>]* 截到第一个 > 足够
     .replace(/<svg\b[^>]*/i, (tag) => ensureSvgSizing(tag))
+  return colorizeTreemap(safe)
 }
 
 async function getMermaid(): Promise<MermaidInstance> {

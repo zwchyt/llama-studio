@@ -211,6 +211,15 @@ export class PiAgentManager {
       knowledgeBases: await this.executors.listKb(),
       vision: opts.vision === true
     })
+    // 纯聊天模式不走「列表→概括」：由代码层预置默认检索范围，模型直接检索也不会被拒绝。
+    // 有项目绑定库时只查它，没绑定时查本机全部库；编码模式仍由模型按四步选库。
+    if (plainChat && (opts.chatTools ?? []).includes('knowledge_search')) {
+      // 预置只是兜底：进程间调用失败时会话仍要照常建起来，模型还能走四步选库。
+      await this.executors.knowledgeToolCall('_knowledge_init', {
+        _sessionId: opts.sessionId.replace(/^pi-/, ''),
+        kbIds: opts.knowledgeBaseId ? [opts.knowledgeBaseId] : []
+      }).catch(() => '')
+    }
     // 追加进 system prompt 的两批内容分开算：
     //   codingGuidance —— 静态的编码 agent 指引，纯聊天模式必须清掉（见 plainChat 说明）
     //   userPromptSections —— 用户可编辑的项目指令，两种模式都追加。它不是「编码 agent

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   ResponsiveContainer,
   LineChart,
@@ -133,23 +133,6 @@ const LEGEND_STYLE = { fontSize: 12, color: 'var(--text-secondary)' }
  */
 const RESIZE_DEBOUNCE_MS = 120
 
-/**
- * 面板拖拽期间，把 recharts 的尺寸响应挂起这么久（相当于「本次拖拽内不再响应」）。
- *
- * 为什么要挂起：拖拽时容器宽度每帧在变，而 chart.css 那边同时在用 CSS 把 svg
- * 按容器**等比缩放**（连续、零成本）。如果 recharts 照常每 120ms 重排一次，
- * 每次都会改掉 viewBox —— 内部布局变了，而 CSS 缩放还压在外面，
- * 两者叠加时点、线就会在「CSS 缩放」和「recharts 重排」之间来回跳，看着就是抖动
- * （折线图的点尤其明显，因为点位置每重排一次就变一次）。
- *
- * 挂起之后，拖拽期间画面只由 CSS 缩放驱动，是连续的；松手时 debounce 恢复原值，
- * ResponsiveContainer 的 effect 重跑（debounce 是它的依赖），立刻按最终尺寸量一次
- * 并重排，衔接无缝 —— 这也是为什么松手不需要额外等它。
- *
- * 取值要 < 2^31-1：setTimeout 对超过这个数的延迟会退化成 1ms（等于没挂起）。
- */
-const RESIZE_SUSPEND_MS = 60_000
-
 export default function ChartView({ spec }: { spec: ChartSpec }) {
   const series = resolveSeries(spec)
   const palette = spec.colors?.length ? spec.colors : PALETTE
@@ -171,6 +154,33 @@ export default function ChartView({ spec }: { spec: ChartSpec }) {
     mo.observe(root, { attributes: true, attributeFilter: ['class'] })
     return () => mo.disconnect()
   }, [])
+
+  // 首帧前测量容器宽度：ResponsiveContainer 自带的 ResizeObserver 是异步的，首帧拿不到宽度会先按 0 画、
+  // 量到后再按真实宽度重绘一次，表现为「图表内容缩/放一下」。这里在首帧前量好宽度直接传给容器，
+  // 图表第一次绘制就是最终宽度。面板拖拽期间跳过更新（结束时再量一次），避免每帧重绘。
+  const hostRef = useRef<HTMLDivElement>(null)
+  const [measuredWidth, setMeasuredWidth] = useState(0)
+  useLayoutEffect(() => {
+    const el = hostRef.current
+    if (!el) return
+    let timer: number | null = null
+    const apply = () => {
+      if (panelResizing) return
+      const w = el.clientWidth
+      if (w > 0) setMeasuredWidth(w)
+    }
+    apply()
+    const ro = new ResizeObserver(() => {
+      if (panelResizing) return
+      if (timer) window.clearTimeout(timer)
+      timer = window.setTimeout(apply, RESIZE_DEBOUNCE_MS)
+    })
+    ro.observe(el)
+    return () => {
+      ro.disconnect()
+      if (timer) window.clearTimeout(timer)
+    }
+  }, [panelResizing])
 
   /**
    * 图表边距：四周留白均匀，绘图区落在正中间。
@@ -330,12 +340,12 @@ export default function ChartView({ spec }: { spec: ChartSpec }) {
   }
 
   return (
-    <ResponsiveContainer
-      width="100%"
-      height={height}
-      debounce={panelResizing ? RESIZE_SUSPEND_MS : RESIZE_DEBOUNCE_MS}
-    >
-      {body}
-    </ResponsiveContainer>
+    <div ref={hostRef} style={{ width: '100%', height }}>
+      {measuredWidth > 0 ? (
+        <ResponsiveContainer width={measuredWidth} height={height} debounce={0}>
+          {body}
+        </ResponsiveContainer>
+      ) : null}
+    </div>
   )
 }

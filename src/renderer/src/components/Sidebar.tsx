@@ -324,7 +324,10 @@ export default function Sidebar() {
         <div className="sidebar-agent-slot" id={AGENT_SESSION_SLOT_ID}>
           <div className="sidebar-mode-switch" role="group" aria-label="Agent Code 模式">
             {MODE_ITEMS.map((item) => {
-              const on = isActiveItem(item)
+              // 模式开关反映「当前选中的模式」，与当前所在视图无关。
+              // 原来用 isActiveItem（要求 view === agent-code）：站在别的页面时两个都不亮，
+              // 选中胶囊停在左边像「聊天」，而下面的会话列表仍按 agentMode 显示编码，看着就不一致。
+              const on = agentMode === item.mode
               return (
                 <NavItem
                   key={navKeyOf(item)}

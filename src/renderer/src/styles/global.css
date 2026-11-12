@@ -199,6 +199,19 @@ body,
   height: 100%;
 }
 
+/* 根元素永不滚动。
+   外壳（.app）是 height: 100vh + overflow: hidden 的固定布局，所有滚动都发生在内部容器里，
+   文档级滚动本来就不该存在。但只要有东西往 body 上挂一个「未定位」的元素，它就会进入文档流
+   并把文档撑高，html 随即补一条根滚动条——这条滚动条宽 5px（见下方 ::-webkit-scrollbar），
+   出现/消失会把整页横向挤一下，肉眼就是「右边框抖一下」。
+   实例：mermaid 每次 render() 都会往 body 追加一个 <div id="d{id}"> 暂存图表，渲染完再移除
+   （node_modules/mermaid/dist/mermaid.core.mjs 的 appendDivSvgG，只有 id、没有 class、没有 position）。
+   所以在根这一层直接禁掉滚动，而不是给某个库写兜底样式——任何库再往 body 插东西都不会抖。
+   注：theme-dark.css 的 html.theme-switching 出于同一原因临时加过同一条，这里把它变成常态。 */
+html {
+  overflow: hidden;
+}
+
 body {
   font-family: var(--font);
   background: var(--bg);

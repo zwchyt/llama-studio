@@ -172,6 +172,20 @@ function ManualChunkModal({ fileName, text, ranges, onChange, onCancel, onConfir
   )
 }
 
+// 试搜索每次最多取 6 条，两个范围接口共用这个上限。
+const SEARCH_HIT_LIMIT = 6
+
+/** 两种检索接口归一化后的形状：界面状态只认这一份，不直接吃进程间返回。 */
+interface SearchView {
+  hits: KnowledgeHit[]
+  lowConfidence: boolean
+  lowKbNames: string[]
+  missKbNames: string[]
+  suggestedQuery: string
+  topMargin: number
+  searchedCount: number
+}
+
 export default function KnowledgeView() {
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）
   const { tipHandlers: tip, tipNode } = useBubbleTip()
@@ -241,9 +255,11 @@ export default function KnowledgeView() {
   const [summaryDraft, setSummaryDraft] = useState('')
   const [summarySaving, setSummarySaving] = useState(false)
 
-  // 试搜索（跨全部知识库，不局限于当前选中的库）
+  // 试搜索：范围由顶部按钮切换，默认只搜当前选中的库；打开「全部库」时跨全部知识库检索。
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
+  /** 范围开关：false = 当前库，true = 全部库 */
+  const [searchAll, setSearchAll] = useState(false)
   const [hits, setHits] = useState<KnowledgeHit[]>([])
   const [lowConf, setLowConf] = useState(false)
   /** 置信度偏低的库名（只含「有命中但不达标」的库） */
@@ -437,25 +453,62 @@ export default function KnowledgeView() {
     if (res.success) { await loadDocs(activeId); await refreshBases() }
   }
 
-  // 跨全部知识库检索：不再依赖 activeId——「试搜索」是用来验证整个检索链路的，
-  // 只搜当前库既容易漏掉内容，也会让人误以为别的库没建好。
-  // override 用于「按建议关键词重搜」：直接带着新词再搜一次，不必先改输入框。
-  async function handleSearch(override?: string) {
+  // 范围按钮决定走哪个接口：当前库用单库检索，全部库用跨库融合检索。
+  // 两个接口返回结构不同，先归一化，界面状态只认 SearchView。
+  async function runSearch(q: string, all: boolean): Promise<SearchView | null> {
+    if (!all) {
+      if (!activeId) return null
+      const r = await window.api.knowledgeQuery(activeId, q, SEARCH_HIT_LIMIT).catch(() => null)
+      if (!r) return null
+      const scores = (r.hits ?? []).map(h => h.score)
+      return {
+        hits: r.hits ?? [],
+        lowConfidence: r.lowConfidence ?? false,
+        lowKbNames: [],
+        missKbNames: [],
+        suggestedQuery: r.suggestedQuery ?? '',
+        // 单库内分数可比，直接取前两名的倍数；不足两条时给 0。
+        topMargin: scores.length > 1 && scores[1]! > 0 ? Math.round((scores[0]! / scores[1]!) * 10) / 10 : 0,
+        searchedCount: 1
+      }
+    }
+    const r = await window.api.knowledgeQueryAll(q, SEARCH_HIT_LIMIT).catch(() => null)
+    if (!r) return null
+    return {
+      hits: r.hits ?? [],
+      lowConfidence: r.lowConfidence ?? false,
+      lowKbNames: r.lowKbNames ?? [],
+      missKbNames: r.missKbNames ?? [],
+      suggestedQuery: r.suggestedQuery ?? '',
+      topMargin: r.topMargin ?? 0,
+      searchedCount: r.searched?.length ?? 0
+    }
+  }
+
+  // override 用于「按建议关键词重搜」；scope 用于切换范围后按新范围立刻重搜。
+  async function handleSearch(override?: string, scope?: boolean) {
     const q = (override ?? query).trim()
     if (!q) return
     if (override !== undefined) setQuery(override)
+    const all = scope ?? searchAll
     setSearching(true); setSearched(true); setSummaryEditing(null)
-    const res = await window.api.knowledgeQueryAll(q, 6).catch(() => null)
-    // IPC 边界不信任返回结构：主进程可能是旧版本（改了 main 但没重启），缺字段时逐个兜底。
-    // 直接 setState(res.xxx) 会在字段缺失时写入 undefined，下一次渲染读 .length 就把整个面板崩掉。
-    setHits(res?.hits ?? [])
-    setLowConf(res?.lowConfidence ?? false)
-    setLowKbNames(res?.lowKbNames ?? [])
-    setMissKbNames(res?.missKbNames ?? [])
-    setSuggested(res?.suggestedQuery ?? '')
-    setSearchedCount(res?.searched?.length ?? 0)
-    setTopMargin(res?.topMargin ?? 0)
+    // 进程间返回可能来自旧版本主进程，缺字段时逐个兜底，避免写入 undefined 把面板崩掉。
+    const view = await runSearch(q, all)
+    setHits(view?.hits ?? [])
+    setLowConf(view?.lowConfidence ?? false)
+    setLowKbNames(view?.lowKbNames ?? [])
+    setMissKbNames(view?.missKbNames ?? [])
+    setSuggested(view?.suggestedQuery ?? '')
+    setSearchedCount(view?.searchedCount ?? 0)
+    setTopMargin(view?.topMargin ?? 0)
     setSearching(false)
+  }
+
+  function toggleScope() {
+    const next = !searchAll
+    setSearchAll(next)
+    // 已有结果时按新范围重搜，避免按钮状态与结果范围对不上。
+    if (searched && query.trim() && !searching) void handleSearch(undefined, next)
   }
 
   function resetSearch() {
@@ -733,10 +786,9 @@ export default function KnowledgeView() {
           </div>
         </div>
 
-        {/* 右栏：全局检索 + 文档管理 */}
+        {/* 右栏：可切换范围的检索 + 文档管理 */}
         <div className="kb-main">
-          {/* 全局搜索栏：常驻右栏顶部，跨全部知识库检索。
-              不再依赖当前选中的库——只搜一个库既容易漏内容，也看不出别的库有没有建好。 */}
+          {/* 顶部搜索栏常驻：范围按钮关闭时只搜当前选中的库，打开时跨全部知识库检索。 */}
           {bases.length > 0 && (
             <div className="kb-search">
               <div className="kb-search-bar">
@@ -749,9 +801,26 @@ export default function KnowledgeView() {
                     // 清空输入即复位结果区，恢复默认布局（不留旧卡片）
                     if (!e.target.value.trim()) resetSearch()
                   }}
-                  onKeyDown={e => { if (e.key === 'Enter') handleSearch() }}
-                  placeholder={bases.length > 1 ? `跨全部 ${bases.length} 个知识库搜索：输入关键词…` : '输入关键词，验证检索质量…'}
+                  onKeyDown={e => { if (e.key === 'Enter' && !searching) handleSearch() }}
+                  placeholder={searchAll
+                    ? `跨全部 ${bases.length} 个知识库搜索：输入关键词…`
+                    : `在《${activeName || '当前知识库'}》中搜索：输入关键词…`}
                 />
+                {/* 禁用态按钮收不到鼠标事件，气泡挂外层 span，与「返回」按钮同一处理。 */}
+                <span style={{ display: 'inline-flex' }} {...tip(searchAll ? '正在搜全部知识库，点击改为只搜当前库' : '正在搜当前知识库，点击改为搜全部知识库')}>
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${searchAll ? 'btn-primary' : 'btn-ghost'}`}
+                    aria-pressed={searchAll}
+                    aria-label={searchAll
+                      ? '搜索范围：全部知识库。点击改为只搜当前库'
+                      : `搜索范围：当前知识库${activeName ? `《${activeName}》` : ''}。点击改为搜全部知识库`}
+                    onClick={toggleScope}
+                    disabled={searching}
+                  >
+                    {searchAll ? '全部库' : '当前库'}
+                  </button>
+                </span>
                 {searched && (
                   <span style={{ display: 'inline-flex' }} {...tip('退出搜索，回到文档管理')}><button className="btn btn-ghost btn-sm" onClick={resetSearch} disabled={searching}>返回</button></span>
                 )}
@@ -766,11 +835,15 @@ export default function KnowledgeView() {
                 <div className="kb-hits-meta">
                   <span
                     className="kb-hits-stat"
-                    {...tip('结果按「跨知识库融合排名」排序：各库的 BM25 分是各自算 idf 的，量纲不同、不可跨库比较，所以卡片上显示的相关度不一定递减。')}
+                    {...tip(searchAll
+                      ? '结果按「跨知识库融合排名」排序：各库的 BM25 分是各自算 idf 的，量纲不同、不可跨库比较，所以卡片上显示的相关度不一定递减。'
+                      : '结果按当前库内的 BM25 相关度降序，分数在同一个库内可以直接比较。')}
                   >
-                    跨 {searchedCount} 库 · 命中 {hits.length} 条 · 按融合排名
+                    {searchAll
+                      ? `跨 ${searchedCount} 库 · 命中 ${hits.length} 条 · 按融合排名`
+                      : `当前库 · 命中 ${hits.length} 条 · 按库内相关度`}
                     {/* 排序优势：倍数够大说明 top 明显优于其余，是「高置信」的依据之一。
-                        只有前两名同库时才有值——库内 BM25 分可比，跨库不可比（各库 idf 各算各的）。 */}
+                        全库时只有前两名同库才有值；当前库时前两名必然同库。 */}
                     {topMargin > 0 && ` · top ${topMargin}×`}
                   </span>
                   {/* 单个库的弱化说明：不用告警色。
@@ -830,11 +903,13 @@ export default function KnowledgeView() {
                   <div className="kb-hit-head">
                     {h.kbName && <span className="kb-hit-kb">{h.kbName}</span>}
                     <span className="kb-hit-doc">{h.docName} · 第 {h.ordinal + 1} 块</span>
-                    {/* 这个数字是「库内 BM25 相关度」，量纲随库而变（各库 idf 各算各的），
-                        所以列表里不一定单调递减——排序看的是跨库融合排名。悬停说明，免得被当成排序坏了。 */}
+                    {/* 这个数字是「库内 BM25 相关度」：全库检索时各库 idf 各算各的，
+                        列表按融合排名、数字不一定递减；当前库检索时按分数降序。 */}
                     <span
                       className="kb-hit-score"
-                      {...tip('库内 BM25 相关度：只在同一个知识库内可比，跨库不可比。列表顺序按跨库融合排名。')}
+                      {...tip(searchAll
+                        ? '库内 BM25 相关度：只在同一个知识库内可比，跨库不可比。列表顺序按跨库融合排名。'
+                        : '库内 BM25 相关度：同一次检索都在当前库内，列表按分数降序，数字可以直接比较。')}
                     >
                       {h.score.toFixed(2)}
                     </span>
@@ -856,7 +931,7 @@ export default function KnowledgeView() {
           ) : !activeBase ? (
             <div className="kb-empty">
               <BookOpen size={40} strokeWidth={1.2} style={{ opacity: 0.3 }} />
-              <p>{bases.length > 0 ? '从左侧选一个知识库管理文档，或直接在上方搜索全部知识库' : '选择或新建一个知识库开始'}</p>
+              <p>{bases.length > 0 ? '从左侧选一个知识库管理文档，或在上方搜索知识库' : '选择或新建一个知识库开始'}</p>
             </div>
           ) : (
             <>

@@ -6,12 +6,13 @@
 // ║ 检索：复用 retrievalService 的 tokenize（驼峰/下划线拆分 + 命令行 flag + CJK 二元组），      ║
 // ║       精简 BM25 打分（idf + k1/b）+ 词序（相邻词对）加权，附 idf 加权覆盖率做低置信兜底。   ║
 // ║       跨库合并走 RRF 排名融合（各库 idf 量纲不同，裸分不可跨库比较）。                      ║
-// ║ 持久化：每个知识库一个 JSON（KNOWLEDGE_DIR/<kbId>.json），含文档与全部分块。   ║
+// ║ 持久化：每个知识库一个目录（KNOWLEDGE_DIR/<kbId>/），_kb.json 存库信息，        ║
+// ║         每个文档一个 JSON（<文档名>.json），含该文档的全部分块。                ║
 // ║ 索引：按 kbId 惰性构建、驻内存缓存；文档增删时失效，下次查询重建。             ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 import { ipcMain } from 'electron'
 import { join, resolve, sep } from 'path'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync, statSync, rmSync } from 'fs'
 import { randomUUID } from 'crypto'
 import type { KnowledgeBaseMeta, KnowledgeHit } from '../../shared/types'
 import { tokenize } from './retrievalService'
@@ -20,8 +21,10 @@ import {
   RELATIVE_NOISE_RATIO, MIN_HIT_SCORE, mergeKbHits,
   KNOWLEDGE_LIST_TOOL_NAME, KNOWLEDGE_OVERVIEW_TOOL_NAME,
   KNOWLEDGE_SEARCH_TOOL_NAME, KNOWLEDGE_READ_TOOL_NAME,
+  KNOWLEDGE_TOOL_TOP_K_DEFAULT as TOOL_TOP_K_DEFAULT,
+  KNOWLEDGE_TOOL_TOP_K_MAX as TOOL_TOP_K_MAX,
   formatKnowledgeBaseList, formatKnowledgeOverview,
-  formatKnowledgeCatalog, formatKnowledgeChunks, parseChunkRefs,
+  formatKnowledgeCatalog, formatKnowledgeChunks,
 } from '../../shared/tools/knowledgeSpecs'
 
 // ── 分块参数 ──
@@ -130,23 +133,143 @@ function isSafeId(id: string): boolean {
   return typeof id === 'string' && id.length > 0 && !/[\\/]/.test(id) && !id.includes('..')
 }
 
-function kbPath(id: string): string {
+// 目录名用知识库名称（安全化）；id 仍是稳定 UUID，存在 _kb.json 里，改名不影响绑定
+const kbDirCache = new Map<string, string>() // id -> 目录名
+
+function safeKbDirName(name: string): string {
+  let s = String(name ?? '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/\s+/g, ' ').trim()
+  if (!s) s = '未命名知识库'
+  if (s.length > 100) s = s.slice(0, 100)
+  return s
+}
+
+// 按 id 找库目录名：优先缓存，缓存失效则扫描各目录的 _kb.json
+function findKbDirName(id: string): string | null {
+  const cached = kbDirCache.get(id)
+  if (cached && existsSync(join(KNOWLEDGE_DIR, cached, '_kb.json'))) return cached
+  kbDirCache.delete(id)
+  try {
+    for (const f of readdirSync(KNOWLEDGE_DIR)) {
+      if (f.endsWith('.json')) continue
+      const mp = join(KNOWLEDGE_DIR, f, '_kb.json')
+      if (!existsSync(mp)) continue
+      try {
+        const m = JSON.parse(readFileSync(mp, 'utf-8')) as KbMetaFile
+        if (m && m.id === id) { kbDirCache.set(id, f); return f }
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+  return null
+}
+
+function kbDir(id: string): string | null {
+  const name = findKbDirName(id)
+  return name ? join(KNOWLEDGE_DIR, name) : null
+}
+function kbMetaPath(dir: string): string {
+  return join(dir, '_kb.json')
+}
+// 旧格式：knowledge/<id>.json（单文件含全部文档）；仅用于兼容与迁移
+function kbLegacyPath(id: string): string {
   return join(KNOWLEDGE_DIR, `${id}.json`)
 }
 
-function loadKb(id: string): KbFile | null {
-  if (!isSafeId(id)) return null
-  const fp = kbPath(id)
-  if (!existsSync(fp)) return null
-  const rBase = resolve(KNOWLEDGE_DIR)
-  const rTarget = resolve(fp)
-  if (rTarget !== rBase && !rTarget.startsWith(rBase + sep)) return null
-  try { return JSON.parse(readFileSync(fp, 'utf-8')) as KbFile } catch { return null }
+// 文档名 → 文件名：替换非法字符、限长；重名由 saveKb 追加序号
+function safeDocFileName(name: string): string {
+  let s = String(name ?? '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/\s+/g, ' ').trim()
+  if (!s) s = 'untitled'
+  if (s.length > 120) s = s.slice(0, 120)
+  return s
 }
 
+interface KbMetaFile { id: string; name: string; createdAt: string; summary?: string }
+interface KbDocFile { id: string; name: string; chunkMode?: string; chars?: number; chunks?: { ordinal: number; text: string; title?: string }[] }
+
+// 读库：优先新结构（目录 + _kb.json + 每文档一个 json），回退旧单文件
+function loadKb(id: string): KbFile | null {
+  if (!isSafeId(id)) return null
+  const dir = kbDir(id)
+  if (dir && existsSync(dir)) {
+    const rBase = resolve(KNOWLEDGE_DIR)
+    const rDir = resolve(dir)
+    if (rDir !== rBase && !rDir.startsWith(rBase + sep)) return null
+    try {
+      const meta = JSON.parse(readFileSync(kbMetaPath(dir), 'utf-8')) as KbMetaFile
+      const docs: KbDoc[] = []
+      const chunks: KbChunk[] = []
+      for (const f of readdirSync(dir)) {
+        if (!f.endsWith('.json') || f === '_kb.json') continue
+        const d = JSON.parse(readFileSync(join(dir, f), 'utf-8')) as KbDocFile
+        if (!d || typeof d.id !== 'string' || typeof d.name !== 'string') continue
+        const list = Array.isArray(d.chunks) ? d.chunks : []
+        docs.push({ id: d.id, name: d.name, chunkCount: list.length, chars: d.chars, chunkMode: d.chunkMode })
+        for (const c of list) {
+          if (!c || typeof c.text !== 'string' || !Number.isInteger(c.ordinal)) continue
+          chunks.push({ docId: d.id, docName: d.name, ordinal: c.ordinal, text: c.text, title: c.title })
+        }
+      }
+      docs.sort((a, b) => a.name.localeCompare(b.name))
+      chunks.sort((a, b) => a.docName.localeCompare(b.docName) || a.ordinal - b.ordinal)
+      return { id: meta.id, name: meta.name, createdAt: meta.createdAt, docs, chunks, ...(meta.summary ? { summary: meta.summary } : {}) }
+    } catch { return null }
+  }
+  const legacy = kbLegacyPath(id)
+  if (!existsSync(legacy)) return null
+  const rBase = resolve(KNOWLEDGE_DIR)
+  const rLegacy = resolve(legacy)
+  if (rLegacy !== rBase && !rLegacy.startsWith(rBase + sep)) return null
+  try { return JSON.parse(readFileSync(legacy, 'utf-8')) as KbFile } catch { return null }
+}
+
+// 写库：目录名用库名，_kb.json 存库信息，每文档一个文件；改名时删旧目录，清理失效文档文件
 function saveKb(kb: KbFile): void {
   ensureDir()
-  writeFileSync(kbPath(kb.id), JSON.stringify(kb, null, 2))
+  const oldName = findKbDirName(kb.id)
+  const taken = new Set<string>()
+  try {
+    for (const f of readdirSync(KNOWLEDGE_DIR)) {
+      if (f === oldName) continue
+      if (!f.endsWith('.json') && existsSync(join(KNOWLEDGE_DIR, f, '_kb.json'))) taken.add(f)
+    }
+  } catch { /* ignore */ }
+  const base = safeKbDirName(kb.name)
+  let dirName = base
+  let i = 2
+  while (taken.has(dirName)) dirName = `${base} (${i++})`
+  const dir = join(KNOWLEDGE_DIR, dirName)
+  mkdirSync(dir, { recursive: true })
+  const meta: KbMetaFile = { id: kb.id, name: kb.name, createdAt: kb.createdAt, ...(kb.summary ? { summary: kb.summary } : {}) }
+  writeFileSync(kbMetaPath(dir), JSON.stringify(meta, null, 2))
+  const used = new Set<string>(['_kb.json'])
+  for (const doc of kb.docs) {
+    const dbase = safeDocFileName(doc.name)
+    let file = `${dbase}.json`
+    let j = 2
+    while (used.has(file)) { file = `${dbase} (${j++}).json` }
+    used.add(file)
+    const docChunks = kb.chunks
+      .filter(c => c.docId === doc.id)
+      .sort((a, b) => a.ordinal - b.ordinal)
+      .map(c => ({ ordinal: c.ordinal, text: c.text, ...(c.title ? { title: c.title } : {}) }))
+    const payload: KbDocFile = {
+      id: doc.id, name: doc.name,
+      ...(doc.chunkMode ? { chunkMode: doc.chunkMode } : {}),
+      ...(doc.chars !== undefined ? { chars: doc.chars } : {}),
+      chunks: docChunks
+    }
+    writeFileSync(join(dir, file), JSON.stringify(payload, null, 2))
+  }
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith('.json') || used.has(f)) continue
+    try { unlinkSync(join(dir, f)) } catch { /* ignore */ }
+  }
+  // 库改名：删掉旧目录
+  if (oldName && oldName !== dirName) {
+    try { rmSync(join(KNOWLEDGE_DIR, oldName), { recursive: true, force: true }) } catch { /* ignore */ }
+  }
+  kbDirCache.set(kb.id, dirName)
+  const legacy = kbLegacyPath(kb.id)
+  if (existsSync(legacy)) { try { unlinkSync(legacy) } catch { /* ignore */ } }
 }
 
 function metaOf(kb: KbFile): KnowledgeBaseMeta {
@@ -160,10 +283,23 @@ function metaOf(kb: KbFile): KnowledgeBaseMeta {
 // ── KB 元数据缓存（M11）：列表/重名检测只需元信息，却会全量解析含全部分块的大 JSON。
 // 按 (kbId → 文件 mtime) 缓存 meta，文件未变时零解析；保存/改名后 mtime 变化自动失效。──
 const kbMetaCache = new Map<string, { meta: KnowledgeBaseMeta; mtimeMs: number }>()
+// 元数据 mtime：取库目录、_kb.json、各文档文件、旧单文件的最大值
+function kbMtimeMs(id: string): number {
+  let max = -1
+  const bump = (p: string) => { try { const m = statSync(p).mtimeMs; if (m > max) max = m } catch { /* ignore */ } }
+  const dir = kbDir(id)
+  if (dir && existsSync(dir)) {
+    bump(dir)
+    try { for (const f of readdirSync(dir)) if (f.endsWith('.json')) bump(join(dir, f)) } catch { /* ignore */ }
+  }
+  const legacy = kbLegacyPath(id)
+  if (existsSync(legacy)) bump(legacy)
+  return max
+}
+
 function cachedKbMeta(id: string): KnowledgeBaseMeta | null {
-  const fp = kbPath(id)
-  let mtimeMs = -1
-  try { mtimeMs = statSync(fp).mtimeMs } catch { return null }
+  const mtimeMs = kbMtimeMs(id)
+  if (mtimeMs < 0) return null
   const hit = kbMetaCache.get(id)
   if (hit && hit.mtimeMs === mtimeMs) return hit.meta
   const kb = loadKb(id)
@@ -563,19 +699,33 @@ export function describeKnowledgeBase(kbId: string): { name: string; docs: strin
 }
 
 // ── 本机全部知识库清单（供 Agent 注入库名 enum 与用户手写的库概括）──
-export function listKnowledgeBases(): { id: string; name: string; summary?: string }[] {
+// 列出本机全部知识库 id：新结构是目录（读 _kb.json 里的 id），兼容旧单文件
+function listKbIds(): string[] {
   if (!KNOWLEDGE_DIR || !existsSync(KNOWLEDGE_DIR)) return []
-  const out: { id: string; name: string; summary?: string }[] = []
+  const ids = new Set<string>()
   for (const f of readdirSync(KNOWLEDGE_DIR)) {
-    if (!f.endsWith('.json')) continue
-    const meta = cachedKbMeta(f.slice(0, -5))
+    if (f.endsWith('.json')) { ids.add(f.slice(0, -5)); continue }
+    const mp = join(KNOWLEDGE_DIR, f, '_kb.json')
+    if (!existsSync(mp)) continue
+    try {
+      const m = JSON.parse(readFileSync(mp, 'utf-8')) as KbMetaFile
+      if (m && typeof m.id === 'string') { ids.add(m.id); kbDirCache.set(m.id, f) }
+    } catch { /* ignore */ }
+  }
+  return [...ids]
+}
+
+export function listKnowledgeBases(): { id: string; name: string; summary?: string }[] {
+  const out: { id: string; name: string; summary?: string }[] = []
+  for (const id of listKbIds()) {
+    const meta = cachedKbMeta(id)
     if (meta) out.push({ id: meta.id, name: meta.name, ...(meta.summary ? { summary: meta.summary } : {}) })
   }
   return out
 }
 
-// ── 按引用读取选中块的完整内容（两阶段检索第二段：模型先 knowledge_search 看标题目录，
-// 再用 docName+ordinal 精确读取需要的块，避免把无关块灌进上下文）──
+// ── 按引用读取选中块的完整内容（四步链最后一段：模型传目录里的块编号，
+// 由代码层换算成 docName+ordinal 精确定位，避免把无关块灌进上下文）──
 export function readKnowledgeChunks(
   kbId: string,
   refs: { docName?: string; ordinal?: number }[]
@@ -596,7 +746,7 @@ export function readKnowledgeChunks(
   return { hits: out }
 }
 
-// ── 查询单库（Agent 工具按库逐个调用；跨库合并在 mainTools 工具层做）──
+// ── 查询单库（工具三按已选库逐个调用；跨库合并由 callKnowledgeTool 里的融合排名做）──
 export function queryKnowledgeBase(kbId: string, query: string, limit?: number): { hits: KnowledgeHit[]; lowConfidence: boolean; suggestedQuery: string } {
   if (!query || typeof query !== 'string') return { hits: [], lowConfidence: true, suggestedQuery: '' }
   const kb = loadKb(kbId)
@@ -685,32 +835,131 @@ export function queryAllKnowledgeBases(query: string, limit?: number): AllKbSear
 // ── 四个知识库工具的统一执行入口（主进程唯一实现）──
 // pi worker 注册的工具与渲染层自研注册中心的工具都转发到这里：规格、提示词、格式化在
 // knowledgeSpecs，检索与读取在本文件，两条链路不再各写一套执行逻辑。
+
+// 会话级状态：已选库编号列表、四步进度、最近一次目录的块编号映射。
+// 只活在主进程内存，按会话标识隔开；不写磁盘、不随消息历史持久化。
+interface KbToolSession {
+  selectedKbIds: string[]
+  listDone: boolean
+  overviewDone: boolean
+  catalog: Map<string, { kbId: string; docName: string; ordinal: number }>
+}
+const KB_SESSION_MAX = 64
+// 工具侧的条数来自共享规格，与界面「试搜索」的 8/12 分开，改工具不会连界面结果一起变少。
+const kbToolSessions = new Map<string, KbToolSession>()
+function getKbSession(sessionId: string): KbToolSession {
+  const hit = kbToolSessions.get(sessionId)
+  if (hit) {
+    kbToolSessions.delete(sessionId)
+    kbToolSessions.set(sessionId, hit)
+    return hit
+  }
+  const fresh: KbToolSession = { selectedKbIds: [], listDone: false, overviewDone: false, catalog: new Map() }
+  kbToolSessions.set(sessionId, fresh)
+  while (kbToolSessions.size > KB_SESSION_MAX) {
+    const oldest = kbToolSessions.keys().next().value
+    if (oldest === undefined) break
+    kbToolSessions.delete(oldest)
+  }
+  return fresh
+}
+/** 库被删掉后，会话里残留的编号要清掉，否则后续检索会指向不存在的库。 */
+function pruneKbIds(s: KbToolSession, libs: readonly { id: string }[]): string[] {
+  const alive = new Set(libs.map(l => l.id))
+  s.selectedKbIds = s.selectedKbIds.filter(id => alive.has(id))
+  return s.selectedKbIds
+}
+function logKbTool(sessionId: string, toolName: string, detail: string): void {
+  console.log(`[kb-tool] session=${sessionId} tool=${toolName} ${detail}`)
+}
+/** 库类型由现有信息派生，不往库文件里加字段：项目绑定库 / 本机库。 */
+function kbTypeOf(kbId: string, boundKbId: string): string {
+  return boundKbId && kbId === boundKbId ? '项目绑定' : '本机'
+}
+
 export function callKnowledgeTool(toolName: string, args: Record<string, unknown>): string {
   const libs = listKnowledgeBases()
-  const summaries = libs.map(l => ({ name: l.name, summary: l.summary ?? '' }))
-  const kbNames = libs.map(l => l.name)
+  const summaries = libs.map(l => ({ id: l.id, name: l.name, summary: l.summary ?? '' }))
+  const sessionId = typeof args._sessionId === 'string' && args._sessionId.trim() ? args._sessionId.trim() : 'default'
+  const boundKbId = typeof args._boundKbId === 'string' ? args._boundKbId : ''
+  const session = getKbSession(sessionId)
 
-  if (toolName === KNOWLEDGE_LIST_TOOL_NAME) return formatKnowledgeBaseList(summaries)
+  // 内部初始化：纯聊天等不走「列表→概括」的链路，由代码层预置默认检索范围。
+  if (toolName === '_knowledge_init') {
+    const raw = Array.isArray(args.kbIds) ? args.kbIds.map(String) : []
+    const alive = new Set(libs.map(l => l.id))
+    const valid = raw.filter(id => alive.has(id))
+    // 传进来的库编号可能已全部失效（库被删），这时退回全部库，别预置出空范围。
+    session.selectedKbIds = valid.length ? valid : libs.map(l => l.id)
+    session.listDone = true
+    session.overviewDone = true
+    session.catalog.clear()
+    logKbTool(sessionId, toolName, `preset=${session.selectedKbIds.length}`)
+    return `已初始化知识库会话，默认检索 ${session.selectedKbIds.length} 个库。`
+  }
+
+  if (toolName === KNOWLEDGE_LIST_TOOL_NAME) {
+    session.listDone = true
+    session.overviewDone = false
+    session.selectedKbIds = []
+    session.catalog.clear()
+    logKbTool(sessionId, toolName, `libs=${libs.length} selection-reset`)
+    return formatKnowledgeBaseList(summaries)
+  }
 
   if (toolName === KNOWLEDGE_OVERVIEW_TOOL_NAME) {
-    const kb = typeof args.kb === 'string' ? args.kb.trim() : ''
-    return formatKnowledgeOverview(summaries, kb || undefined)
+    const raw = args.kbs ?? args.kb
+    const wants = (typeof raw === 'string' ? [raw.trim()] : Array.isArray(raw) ? raw.map(v => String(v).trim()) : [])
+      .filter(Boolean)
+    if (wants.length === 0) {
+      logKbTool(sessionId, toolName, 'rejected=empty-selection')
+      return '请先用 kb 指定要选中的知识库（库名或库编号，可传数组一次选多个）。库清单由 knowledge_list 返回；若还没调用过，请先调用 knowledge_list。'
+    }
+    type KbLib = { id: string; name: string; summary?: string }
+    const picked = wants
+      .map(w => libs.find(l => l.name === w || l.id === w))
+      .filter((l): l is KbLib => !!l)
+    if (picked.length === 0) {
+      logKbTool(sessionId, toolName, `rejected=not-found(${wants.join(',')})`)
+      return `未找到知识库「${wants.join('、')}」。请先调用 knowledge_list 取最新的库名与库编号。`
+    }
+    const alive = pruneKbIds(session, libs)
+    if (args.replace === true) session.selectedKbIds = []
+    // 多次调用可攒出多库列表；replace=true 时先清空，即换库。
+    session.selectedKbIds = [...new Set([...session.selectedKbIds, ...picked.map(l => l.id)])]
+    session.overviewDone = true
+    session.catalog.clear() // 选库范围变了，旧目录的块编号立即失效
+    const selected = session.selectedKbIds
+      .map(id => libs.find(l => l.id === id))
+      .filter((l): l is KbLib => !!l)
+      .map(l => ({ id: l.id, name: l.name }))
+    logKbTool(sessionId, toolName, `selected=${session.selectedKbIds.join(',')} replace=${args.replace === true} alive=${alive.length}`)
+    return formatKnowledgeOverview(summaries, picked.map(l => l.id), selected)
   }
 
   if (toolName === KNOWLEDGE_SEARCH_TOOL_NAME) {
     if (libs.length === 0) return '本机尚未创建任何知识库。'
-    const want = typeof args.kb === 'string' ? args.kb.trim() : ''
-    let targets: { id: string }[]
-    if (want) {
-      const lib = libs.find(l => l.name === want || l.id === want)
-      if (!lib) return `未找到知识库「${want}」。可用的知识库：${kbNames.join('、') || '（无）'}`
-      targets = [{ id: lib.id }]
-    } else {
-      targets = libs
+    const selected = pruneKbIds(session, libs)
+    if (!session.listDone || !session.overviewDone || selected.length === 0) {
+      logKbTool(sessionId, toolName, 'rejected=no-selection')
+      return '当前会话还没有选中的知识库，检索已拒绝。请先调用 knowledge_list 获取库名与库编号，再用 knowledge_overview 选中要查的库；库编号由代码层注入本工具，不需要你填写。'
     }
+    const targets = selected
+      .map(id => libs.find(l => l.id === id))
+      .filter((l): l is { id: string; name: string } => !!l)
     const query = String(args.query ?? '')
-    const cap = Math.max(1, Math.min(Math.floor(typeof args.limit === 'number' ? args.limit : 8), 12))
-    const results = targets.map(t => queryKnowledgeBase(t.id, query, cap))
+    // 工具侧的条数与界面「试搜索」分开：改这里不会让界面结果变少。
+    const cap = Math.max(1, Math.min(Math.floor(typeof args.limit === 'number' ? args.limit : TOOL_TOP_K_DEFAULT), TOOL_TOP_K_MAX))
+    session.catalog.clear() // 每次检索重新编号，旧目录立即失效
+    const runQuery = (q: string) => targets.map(t => {
+      const r = queryKnowledgeBase(t.id, q, cap)
+      for (const h of r.hits) {
+        h.kbId = t.id
+        h.kbType = kbTypeOf(t.id, boundKbId)
+      }
+      return r
+    })
+    const results = runQuery(query)
     const merge = (rs: typeof results) => mergeKbHits(rs, cap)
     const suggestFrom = (rs: typeof results): string => {
       const seen = new Set<string>()
@@ -732,7 +981,7 @@ export function callKnowledgeTool(toolName: string, args: Record<string, unknown
     let adopted = results
     // 零命中 / 低置信 → 用建议关键词自动重搜一次（确定性兜底，不依赖模型配合）
     if ((merged.length === 0 || lowConfidence) && suggestion && suggestion !== query.trim()) {
-      const retry = targets.map(t => queryKnowledgeBase(t.id, suggestion, cap))
+      const retry = runQuery(suggestion)
       const retryMerged = merge(retry)
       const retryLow = retry.length > 0 && retry.every(r => r.lowConfidence)
       if (!retryLow || (retryMerged[0]?.fusionScore ?? 0) > (merged[0]?.fusionScore ?? 0)) {
@@ -743,7 +992,7 @@ export function callKnowledgeTool(toolName: string, args: Record<string, unknown
         retried = true
       }
     }
-    const libLabel = kbNames.length > 1 ? `（已检索 ${kbNames.length} 个知识库：${kbNames.join('、')}）` : ''
+    const libLabel = `（已检索 ${targets.length} 个已选知识库：${targets.map(t => t.name).join('、')}）`
     if (merged.length === 0) {
       return `知识库未命中任何内容。${libLabel}\n`
         + (suggestion ? `建议改用这些关键词重搜：${suggestion}\n` : '')
@@ -757,9 +1006,17 @@ export function callKnowledgeTool(toolName: string, args: Record<string, unknown
         + (retried ? '\n（已按建议关键词自动重搜过一次，仍不达标。）' : '')
         + '\n若换词后仍无结果，说明当前知识库里很可能没有相关内容，请直接说明，不要勉强引用。'
     }
+    // 块编号 → 定位信息：工具四只认这份最近目录，日志里同时记下映射便于按块编号回查。
+    merged.forEach((h, i) => {
+      const chunkId = `C${i + 1}`
+      h.chunkId = chunkId
+      if (h.kbId) session.catalog.set(chunkId, { kbId: h.kbId, docName: h.docName, ordinal: h.ordinal })
+    })
+    logKbTool(sessionId, toolName, `libs=${targets.length} hits=${merged.length} chunks=${session.catalog.size} cap=${cap}`
+      + (merged.length ? ` [${merged.map(h => `${h.chunkId}=${h.kbId}/${h.docName}/${h.ordinal}`).join(' ')}]` : ''))
     // 自动附带全局最优块正文：mergeKbHits 已按融合排名降序
     const top = merged[0]!
-    const auto = `\n\n【已附带排名最高的分块正文（库内相关度 ${top.score}${top.adjacent ? `，词序吻合 ${Math.round(top.adjacent * 100)}%` : ''}，无需再调用 knowledge_read 读它）】\n`
+    const auto = `\n\n【已附带排名最高的分块正文（块 ${top.chunkId}，库内相关度 ${top.score}${top.adjacent ? `，词序吻合 ${Math.round(top.adjacent * 100)}%` : ''}，无需再调用 knowledge_read 读它）】\n`
       + `【${top.title || '（无标题）'}】(${top.kbName ? `${top.kbName} · ` : ''}${top.docName} · 第${top.ordinal + 1}块)\n${top.text}`
     const someLow = adopted.some(r => r.lowConfidence)
     const hint = someLow ? '\n\n（其中部分知识库的命中置信度偏低，对应条目请谨慎引用，必要时换关键词重搜。）' : ''
@@ -767,49 +1024,56 @@ export function callKnowledgeTool(toolName: string, args: Record<string, unknown
   }
 
   if (toolName === KNOWLEDGE_READ_TOOL_NAME) {
-    const refs = parseChunkRefs(args.refs)
-    if (refs.length === 0) return '未指定有效的块引用（需要 docName + ordinal）。'
-    const docCache = new Map<string, { name: string; docs: string[] } | null>()
-    const docHolder = (kbId: string, docName: string): boolean => {
-      if (!docCache.has(kbId)) docCache.set(kbId, describeKnowledgeBase(kbId))
-      return docCache.get(kbId)?.docs.includes(docName) ?? false
+    const raw = args.chunkIds
+    // 目录最多 TOOL_TOP_K_MAX 条，去重后无须再截断；无效编号在下面整批报出，不静默吞掉。
+    const ids = [...new Set(
+      (Array.isArray(raw) ? raw.map(v => String(v).trim()) : typeof raw === 'string' ? [raw.trim()] : [])
+        .filter(Boolean)
+    )]
+    if (ids.length === 0) {
+      logKbTool(sessionId, toolName, 'rejected=empty-chunk-ids')
+      return `请用 chunkIds 传最近一次 knowledge_search 目录里的块编号（C1、C2…），单次最多 ${TOOL_TOP_K_MAX} 个。`
     }
-    const plan: { ref: { docName: string; ordinal: number }; kbId?: string; error?: string }[] = []
-    for (const r of refs) {
-      const want = r.kb ?? (typeof args.kb === 'string' ? args.kb.trim() : '')
-      if (want) {
-        const lib = libs.find(l => l.name === want || l.id === want)
-        if (!lib) { plan.push({ ref: r, error: `未找到知识库「${want}」（可用：${kbNames.join('、')}）` }); continue }
-        plan.push({ ref: r, kbId: lib.id }); continue
-      }
-      const holders = libs.filter(l => docHolder(l.id, r.docName))
-      if (holders.length === 1) { plan.push({ ref: r, kbId: holders[0]!.id }); continue }
-      if (holders.length === 0) { plan.push({ ref: r, error: `所有知识库中都找不到文档「${r.docName}」，请对照检索目录核对库名与文档名` }); continue }
-      plan.push({ ref: r, error: `文档「${r.docName}」在多个库中存在（${holders.map(h => h.name).join('、')}），请为该条目指定 kb` })
+    if (!session.listDone || !session.overviewDone || session.catalog.size === 0) {
+      logKbTool(sessionId, toolName, 'rejected=skipped-steps')
+      return '读取被拒绝：当前没有可用的检索目录。请先按顺序调用 knowledge_list → knowledge_overview → knowledge_search，并确保检索有命中；块编号只来自最近一次检索目录。'
+    }
+    const selected = pruneKbIds(session, libs)
+    const unknown = ids.filter(id => !session.catalog.has(id))
+    if (unknown.length > 0) {
+      logKbTool(sessionId, toolName, `rejected=unknown-chunks(${unknown.join(',')})`)
+      const shown = unknown.slice(0, TOOL_TOP_K_MAX).join('、')
+      const more = unknown.length > TOOL_TOP_K_MAX ? ` 等 ${unknown.length} 个` : ''
+      return `块编号 ${shown}${more} 不在最近一次检索目录里。请重新调用 knowledge_search，再按新目录里的块编号读取。`
+    }
+    const plan = ids.map(id => ({ id, ref: session.catalog.get(id)! }))
+    const cross = plan.filter(p => !selected.includes(p.ref.kbId))
+    if (cross.length > 0) {
+      logKbTool(sessionId, toolName, `rejected=cross-library(${cross.map(c => c.id).join(',')})`)
+      return `块编号 ${cross.map(c => c.id).join('、')} 指向已选范围之外的知识库（可能是换库或库被删除）。请重新调用 knowledge_overview 选库并重新检索。`
     }
     const byKb = new Map<string, { docName: string; ordinal: number }[]>()
     for (const p of plan) {
-      if (!p.kbId) continue
-      const g = byKb.get(p.kbId) ?? []
+      const g = byKb.get(p.ref.kbId) ?? []
       g.push({ docName: p.ref.docName, ordinal: p.ref.ordinal })
-      byKb.set(p.kbId, g)
+      byKb.set(p.ref.kbId, g)
     }
-    const errors = plan.filter(p => p.error).map(p => p.error!)
-    if (byKb.size === 0) return errors.join('\n') || '没有可读取的条目。'
-    type ReadHit = { docName: string; ordinal: number; title: string; text: string; kbName: string }
+    type ReadHit = { docName: string; ordinal: number; title: string; text: string; kbName: string; chunkId?: string; kbId?: string; kbType?: string }
     const found = new Map<string, ReadHit>()
     for (const [id, rs] of byKb) {
       for (const h of readKnowledgeChunks(id, rs).hits ?? []) found.set(`${id}|${h.docName}|${h.ordinal}`, h)
     }
     const ordered: ReadHit[] = []
     for (const p of plan) {
-      if (!p.kbId) continue
-      const h = found.get(`${p.kbId}|${p.ref.docName}|${p.ref.ordinal}`)
-      if (h && !ordered.some(o => o.kbName === h.kbName && o.docName === h.docName && o.ordinal === h.ordinal)) ordered.push(h)
+      const h = found.get(`${p.ref.kbId}|${p.ref.docName}|${p.ref.ordinal}`)
+      if (h) ordered.push({ ...h, chunkId: p.id, kbId: p.ref.kbId, kbType: kbTypeOf(p.ref.kbId, boundKbId) })
     }
-    if (ordered.length === 0) return errors.join('\n') || '没有匹配到任何块（文档名或块号不存在，请对照目录重试）。'
-    const body = formatKnowledgeChunks({ hits: ordered })
-    return errors.length > 0 ? `${body}\n（部分条目未读取：${errors.join('；')}）` : body
+    if (ordered.length === 0) {
+      logKbTool(sessionId, toolName, 'rejected=chunks-gone')
+      return '这些块在库里已经不存在（文档可能被删除）。请重新调用 knowledge_search 取新目录。'
+    }
+    logKbTool(sessionId, toolName, `chunks=${ordered.map(o => `${o.chunkId}=${o.kbId}/${o.docName}/${o.ordinal}`).join(' ')}`)
+    return formatKnowledgeChunks({ hits: ordered })
   }
 
   return `未知的知识库工具：${toolName}`
@@ -822,9 +1086,8 @@ export function registerKnowledgeIpc(appRoot: string): void {
   ipcMain.handle('knowledge-list', async (): Promise<KnowledgeBaseMeta[]> => {
     ensureDir()
     const out: KnowledgeBaseMeta[] = []
-    for (const f of readdirSync(KNOWLEDGE_DIR)) {
-      if (!f.endsWith('.json')) continue
-      const meta = cachedKbMeta(f.slice(0, -5))
+    for (const id of listKbIds()) {
+      const meta = cachedKbMeta(id)
       if (meta) out.push(meta)
     }
     out.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
@@ -840,10 +1103,17 @@ export function registerKnowledgeIpc(appRoot: string): void {
 
   ipcMain.handle('knowledge-delete', async (_e, id: string) => {
     if (!isSafeId(id)) return { success: false, error: '无效的知识库 ID' }
-    const fp = kbPath(id)
     const rBase = resolve(KNOWLEDGE_DIR)
-    if (resolve(fp) !== rBase && !resolve(fp).startsWith(rBase + sep)) return { success: false, error: '访问被拒绝' }
-    try { if (existsSync(fp)) unlinkSync(fp) } catch { /* ignore */ }
+    const dir = kbDir(id)
+    if (dir) {
+      const rDir = resolve(dir)
+      if (rDir !== rBase && !rDir.startsWith(rBase + sep)) return { success: false, error: '访问被拒绝' }
+      try { if (existsSync(dir)) rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ }
+    }
+    const legacy = kbLegacyPath(id)
+    try { if (existsSync(legacy)) unlinkSync(legacy) } catch { /* ignore */ }
+    kbDirCache.delete(id)
+    kbMetaCache.delete(id)
     indexes.delete(id)
     return { success: true }
   })
@@ -940,9 +1210,8 @@ export function registerKnowledgeIpc(appRoot: string): void {
       const name = String(raw.name ?? '').trim().slice(0, 100) || '导入的知识库'
       let finalName = name
       const existingNames = new Set<string>()
-      for (const f of readdirSync(KNOWLEDGE_DIR)) {
-        if (!f.endsWith('.json')) continue
-        const meta = cachedKbMeta(f.slice(0, -5))
+      for (const id of listKbIds()) {
+        const meta = cachedKbMeta(id)
         if (meta) existingNames.add(meta.name)
       }
       if (existingNames.has(finalName)) {

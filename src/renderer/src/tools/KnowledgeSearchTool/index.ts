@@ -7,11 +7,8 @@ export {
 } from './constants'
 export type {
   KnowledgeSearchInput,
-  KnowledgeBaseRef,
-  KnowledgeChunkRef,
   KnowledgeSearchHit,
   KnowledgeSearchResult,
-  KnowledgeBaseInfo,
 } from './types'
 export { getKnowledgeSearchPrompt } from './prompt'
 export { definition, createExecute } from './KnowledgeSearchTool'

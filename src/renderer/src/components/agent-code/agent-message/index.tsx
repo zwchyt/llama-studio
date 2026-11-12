@@ -1008,17 +1008,10 @@ export const ThinkBlock = React.memo(function ThinkBlock({ value, closed, isStre
     // 已经收起就别再调：collapse() 会把 maxHeight 重新撑到内容高度再收回，会闪一下
     if (expandedRef.current) collapse()
   }, [msgStreaming, answerSettled, collapse])
-  // 收起态空闲预挂载：把 Markdown/KaTeX 的首次解析成本从「首次点开」挪到空闲期，
-  // 否则长链首次展开会卡一下（消息列表有虚拟窗口，预挂载规模受窗口限制）。
-  useEffect(() => {
-    if (visible) return
-    if (typeof window.requestIdleCallback === 'function') {
-      const id = window.requestIdleCallback(() => setVisible(true), { timeout: 1500 })
-      return () => window.cancelIdleCallback(id)
-    }
-    const t = setTimeout(() => setVisible(true), 300)
-    return () => clearTimeout(t)
-  }, [visible, setVisible])
+  // 收起态**不再**空闲预挂载内容体：预挂载会在刷新后（最多 1.5 秒）把内容体挂进来，
+  // 挂载那一刻会带动一次布局变化，表现为「思考过程这一列把下面的正文挤下来一下」。
+  // 首次展开由 expand() 的 else 分支在同一 commit 里 setVisible(true) + setExpanded(true)，
+  // 不依赖预挂载，去掉后展开行为不变，只是首次点开会现场解析一次。
   // 程序化展开（运行中 / 新一轮）直接置自适应高度：内容随流式增长，不能锁死在某个像素值上。
   useLayoutEffect(() => {
     const el = bodyRef.current

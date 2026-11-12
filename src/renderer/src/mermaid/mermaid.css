@@ -52,3 +52,9 @@ html.is-panel-resizing .mmd-viewport {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* treemap：mermaid 渲染器给瓦片的 fill-opacity 只有 0.6（分区）/ 0.3（叶子），
+   在白色卡面上几乎透明，看起来就像「没有颜色」。提高不透明度，让 cScale 调色板
+   真正显现。!important 用于压过 SVG 元素上的 fill-opacity 呈现属性。 */
+.mmd-viewport .treemapSection { fill-opacity: .85 !important; }
+.mmd-viewport .treemapLeaf { fill-opacity: .9 !important; }

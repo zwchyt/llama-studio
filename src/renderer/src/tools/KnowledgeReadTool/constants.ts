@@ -4,6 +4,5 @@ export {
   KNOWLEDGE_READ_DESCRIPTION_BASE,
   KNOWLEDGE_READ_GUIDELINES,
   createKnowledgeReadSpec,
-  parseChunkRefs,
   formatKnowledgeChunks,
 } from '../../../../shared/tools/knowledgeSpecs'
