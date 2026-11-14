@@ -430,11 +430,26 @@ function chunkText(text: string, opts: KnowledgeChunkOptions = {}): string[] {
     if (mode === 'heading') {
       sections = []
       let cur: string[] = []
+      // 围栏（``` / ~~~）内的行原样保留行首缩进：示例代码的缩进是格式的一部分
+      // （图表 DSL / JSON / SVG 靠缩进表达层级），剥掉会让模型学到无法渲染的格式
+      let fence: string | null = null
       for (const raw of clean.split('\n')) {
-        const line = raw.replace(/\s+$/, '').trim()
-        if (!line) continue
-        if (/^#{1,6}\s+/.test(line) && cur.length > 0) { sections.push(cur.join('\n')); cur = [] }
-        cur.push(line)
+        const line = raw.replace(/\s+$/, '')
+        if (fence) {
+          if (new RegExp(`^\\s*${fence[0]}{${fence.length},}`).test(line)) fence = null
+          cur.push(line)
+          continue
+        }
+        const open = /^\s*(`{3,}|~{3,})/.exec(line)
+        if (open) {
+          fence = open[1]
+          cur.push(line.trimStart())
+          continue
+        }
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        if (/^#{1,6}\s+/.test(trimmed) && cur.length > 0) { sections.push(cur.join('\n')); cur = [] }
+        cur.push(trimmed)
       }
       if (cur.length > 0) sections.push(cur.join('\n'))
     } else {

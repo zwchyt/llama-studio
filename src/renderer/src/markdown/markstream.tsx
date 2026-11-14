@@ -58,6 +58,8 @@ import katex from 'katex'
 import '../styles/markstream.css'
 import { useThemeStore } from '../store/themeStore'
 import CodeBlock from '../components/CodeBlock'
+import { InfographicCard } from '../infographic/InfographicCard'
+import { D2Card } from '../d2/D2Card'
 // 直接进具体模块而不是 '../mermaid' barrel：barrel 会顺带拉进 parseContentToBlocks（及其 ChartCard 依赖）
 import { MermaidCard } from '../mermaid/MermaidCard'
 
@@ -192,6 +194,28 @@ function MsMermaidAsCode({ node }: MsNodeProps<MsCodeBlockNode>) {
   return <CodeBlock language="mermaid" value={pickCode(node)} isStreaming={!!node?.loading} />
 }
 
+// ── infographic ────────────────────────────────────────────
+// 会话正文：统一走本项目的卡片外壳（与 SVG / 图表卡片同款工具条），
+// 不用 markstream 内置的 infographic 节点（它自带另一套 Preview/Source UI，观感不一致）。
+// 流式期间围栏未闭合（node.loading）时保持代码块，避免拿半截 DSL 去渲染；
+// DSL 写错时卡片降级为源码块，不摆错误卡。
+function MsInfographic({ node }: MsNodeProps<MsCodeBlockNode>) {
+  const code = pickCode(node)
+  if (node?.loading) return <CodeBlock language="infographic" value={code} isStreaming />
+  // 限高 420：模板是竖版海报构图，不限高的话图会按聊天区宽度等比放大到上千 px、
+  // 占满整屏；固定高度后 SVG 等比缩进框内完整显示（参照 markstream 内置节点 500px 默认限高取值）。
+  return <InfographicCard code={code} height={420} renderFallback={(c) => <CodeBlock language="" value={c} />} />
+}
+
+// ── d2 ─────────────────────────────────────────────────────
+// 会话正文：与 infographic 同一套路——统一卡片外壳、流式期间保持代码块、
+// 编译/渲染失败降级为源码块。限高 420 与 infographic 卡片对齐。
+function MsD2({ node }: MsNodeProps<MsCodeBlockNode>) {
+  const code = pickCode(node)
+  if (node?.loading) return <CodeBlock language="d2" value={code} isStreaming />
+  return <D2Card code={code} height={420} renderFallback={(c) => <CodeBlock language="" value={c} />} />
+}
+
 // ── 数学公式 ───────────────────────────────────────────────
 // 为什么不用 markstream 自带的 Math 组件：它把 TeX 送进 Web Worker 渲染，而那个 worker 必须由
 // 使用方自己 new 出来再调 setKaTeXWorker() 注入（markstream 不提供默认实例）。没注入时它退回
@@ -311,6 +335,8 @@ setCustomComponents('ls-chat', {
   inline_code: MsInlineCode,
   link: MsLink,
   mermaid: MsMermaidAsCode,
+  infographic: MsInfographic,
+  d2: MsD2,
   thinking: MsThinking,
   math_block: MsMathBlock,
   math_inline: MsMathInline,
@@ -329,6 +355,8 @@ setCustomComponents('ls-agent', {
   inline_code: MsInlineCode,
   link: MsLink,
   mermaid: MsMermaidCard,
+  infographic: MsInfographic,
+  d2: MsD2,
   thinking: MsThinking,
   math_block: MsMathBlock,
   math_inline: MsMathInline,

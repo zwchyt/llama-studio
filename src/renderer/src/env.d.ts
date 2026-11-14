@@ -162,8 +162,10 @@ interface LlamaCppApi {
   setMetricsPolling: (enabled: boolean) => Promise<{ success: boolean }>
   getRunningProcesses: () => Promise<string[]>
   getModelLogs: (id: string) => Promise<{ stream: string; text: string }[]>
-  getChartPresets: () => Promise<{ path: string; groups: { mermaid: { label: string; code: string }[]; recharts: { label: string; code: string }[]; svg: { label: string; code: string }[] }; error?: string }>
-  pickChartFile: (group: 'mermaid' | 'recharts' | 'svg') => Promise<{ canceled: boolean; path?: string; name?: string; code?: string; error?: string }>
+  getChartPresets: () => Promise<{ path: string; groups: { mermaid: { label: string; code: string }[]; recharts: { label: string; code: string }[]; svg: { label: string; code: string }[]; infographic: { label: string; code: string }[]; d2: { label: string; code: string }[] }; error?: string }>
+  pickChartFile: (group: 'mermaid' | 'recharts' | 'svg' | 'infographic' | 'd2') => Promise<{ canceled: boolean; path?: string; name?: string; code?: string; error?: string }>
+  /** D2 渲染在主进程执行（WASM 运行时含字符串求值，渲染进程 CSP 不放行；见 d2Service.ts） */
+  renderD2: (code: string) => Promise<{ svg?: string; error?: string }>
   getUiSettings: () => Promise<{ splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; ttsMode?: 'qwen3' | 'outetts'; ttsLang?: string; ttsMmprojPath?: string; ttsSpeakerFile?: string; sttModelPath?: string; sttMmprojPath?: string; sttPrompt?: string; sttResult?: string; slashCommands?: unknown }>
   setUiSetting: (key: string, value: boolean | string) => Promise<void>
   listGlobalAgents: () => Promise<{ name: string; pkg: string; cmd: string; installed: boolean; version: string | null; website?: string }[]>

@@ -125,7 +125,9 @@ export const TOOL_GROUPS: NavSection[] = [
     items: [
       { key: 'mermaid-test', label: 'Mermaid 测试', icon: GitBranchIcon, color: '#f59e0b' },
       { key: 'recharts-test', label: 'Recharts 测试', icon: ChartBarIcon, color: '#3b82f6' },
-      { key: 'svg-test', label: 'SVG 测试', icon: ImageIcon, color: '#8b5cf6' }
+      { key: 'svg-test', label: 'SVG 测试', icon: ImageIcon, color: '#8b5cf6' },
+      { key: 'infographic-test', label: 'Infographic 测试', icon: TrendingUpIcon, color: '#ec4899' },
+      { key: 'd2-test', label: 'D2 测试', icon: BoxesIcon, color: '#10b981' }
     ]
   }
 ]

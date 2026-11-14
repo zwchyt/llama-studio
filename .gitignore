@@ -72,15 +72,19 @@ knowledge/*
 chat-templates/*
 !chat-templates/.gitkeep
 
-# 图表测试页（Mermaid / Recharts / SVG）预设：
-# chart-presets/ 本身、以及它的三个子目录都入库（靠 .gitkeep 保留空文件夹），
-# 只有用户自己往三个子目录里添加的预设文件不入库。
+# 图表测试页（Mermaid / Recharts / SVG / Infographic / D2）预设：
+# chart-presets/ 本身、以及各子目录都入库（靠 .gitkeep 保留空文件夹），
+# 只有用户自己往子目录里添加的预设文件不入库。
 chart-presets/mermaid/*
 chart-presets/recharts/*
 chart-presets/svg/*
+chart-presets/infographic/*
+chart-presets/d2/*
 !chart-presets/mermaid/.gitkeep
 !chart-presets/recharts/.gitkeep
 !chart-presets/svg/.gitkeep
+!chart-presets/infographic/.gitkeep
+!chart-presets/d2/.gitkeep
 # 用户运行时添加的模型 Logo（不入库；保留空文件夹）
 src/renderer/public/logos/*
 !src/renderer/public/logos/.gitkeep

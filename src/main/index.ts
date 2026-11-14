@@ -141,14 +141,19 @@ protocol.registerSchemesAsPrivileged([
 /** 渲染进程的 CSP（与 src/renderer/index.html 的 <meta> 一致，且**不含 'unsafe-eval'**）。
  *  meta 版只在文档里生效，而 Electron 的开发者安全检查看的是响应头，没头就报「no CSP set」；
  *  同时 unsafe-eval 是那条警告单独列出的第二种情况，带上它等于没修。
- *  app: 是上面那个预览资源协议，预览 iframe 继承这份策略，不放行它 css/js 全加载不到。 */
+ *  app: 是上面那个预览资源协议，预览 iframe 继承这份策略，不放行它 css/js 全加载不到。
+ *  'wasm-unsafe-eval'：只放行 WASM 编译、不放行 JS eval（CSP3 标准指令）——D2 引擎的
+ *  编译器 WASM 跑在 blob: Worker 里，没有它 WebAssembly.instantiate 会被拦；
+ *  worker-src blob:：放行引擎自建的 blob Worker（没有 worker-src 会回退到 script-src，
+ *  blob: 不在 script-src 里，Worker 直接被拦——症状是 D2 永远卡在「编译中」）。 */
 const RENDERER_CSP = [
   "default-src 'self' app: http://localhost:*",
   // ws:// 只放行本机回环：实时语音走 llama-server 的 /v1/realtime WebSocket，
   // 不放开到任意主机，避免把「能连外网任意 WebSocket」写进策略。
   "connect-src 'self' app: http://* https://* ws://127.0.0.1:* ws://localhost:*",
   "frame-src * http://localhost:*",
-  "script-src 'self' 'unsafe-inline' app:",
+  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: app:",
+  "worker-src 'self' blob: app:",
   "style-src 'self' 'unsafe-inline' https: app:",
   "font-src 'self' data: https: app:",
   "img-src 'self' data: blob: https://* app:",

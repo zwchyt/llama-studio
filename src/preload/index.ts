@@ -166,6 +166,7 @@ const fullApi = {
   getModelLogs: (id: string) => ipcRenderer.invoke('get-model-logs', id),
   // 图表测试页预设：读取项目根目录 chart-presets/<分组>/ 下的原生文件（用户可自行增删）
   getChartPresets: () => ipcRenderer.invoke('get-chart-presets'),
+  renderD2: (code: string) => ipcRenderer.invoke('render-d2', code),
   // 直接挑一个磁盘上的图表文件读取内容（返回 { canceled } 或 { path, name, code }）
   pickChartFile: (group: 'mermaid' | 'recharts' | 'svg') => ipcRenderer.invoke('pick-chart-file', group),
   onMetricsUpdate: (callback: (data: Record<string, unknown>) => void) => {

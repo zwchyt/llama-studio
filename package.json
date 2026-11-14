@@ -1,6 +1,6 @@
 {
   "name": "llama-studio",
-  "version": "1.0.271",
+  "version": "1.0.272",
   "description": "llama-studio — a GUI for llama.cpp",
   "author": "llama-studio",
   "main": "out/main/index.js",
@@ -25,9 +25,11 @@
   },
   "dependencies": {
     "@animateicons/react": "^0.4.3",
+    "@antv/infographic": "^0.2.3",
     "@earendil-works/pi-agent-core": "^1.0.2",
     "@earendil-works/pi-ai": "^1.0.2",
     "@earendil-works/pi-coding-agent": "^1.0.2",
+    "@terrastruct/d2": "^0.1.33",
     "@vscode/ripgrep": "^1.18.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
@@ -40,7 +42,7 @@
     "jspdf": "^4.2.1",
     "katex": "^0.17.0",
     "mammoth": "^1.12.0",
-    "markstream-react": "^2.0.12",
+    "markstream-react": "^2.0.26",
     "mermaid": "^12.0.0",
     "mermaid-formatter": "^0.3.0",
     "monaco-editor": "^0.56.0",

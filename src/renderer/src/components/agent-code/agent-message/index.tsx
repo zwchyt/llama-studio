@@ -1437,8 +1437,9 @@ export function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']
   // 流式尾部实时工具卡（尚未切分进 segments）：视为排在时间线最后——它的存在说明
   // 模型在「最终正文」之后又发起了调用，最后正文段随之降级为过程正文收进容器
   const hasTailTools = !!tailToolCalls && tailToolCalls.length > 0
-  // 最终正文段：最后一个段是非空 text（且无尾部工具卡）时独立成泡，流式期间也在泡里输出。
   const lastSeg = segments[segments.length - 1]
+  // 本消息是否存在思考段：决定流式期间「最后一段正文」能否被当作最终输出提升出链
+  const sawThink = segments.some(s => s.kind === 'think')
   let finalText: string | null = null
   let finalTextIdx = -1
   // 收尾说明：连续文本增量会被合并成一个段，所以「过程说明 + 结构化正文」常挤在同一段里
@@ -1446,24 +1447,30 @@ export function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']
   // 降级为过程正文收进链内，从标题起才是真正的最终输出。
   let finalLeadText: string | null = null
   if (!hasTailTools && lastSeg && lastSeg.kind === 'text' && lastSeg.content.trim() !== '') {
-    finalTextIdx = segments.length - 1
     const raw = lastSeg.content
     const m = /(?:^|\n)#{1,6}[ \t]/.exec(raw)
-    const cut = m ? (raw[m.index] === '#' ? m.index : m.index + 1) : -1
-    if (cut > 0 && raw.slice(0, cut).trim() !== '') {
-      finalLeadText = raw.slice(0, cut)
-      finalText = raw.slice(cut)
-    } else {
-      finalText = raw
+    // 流式期间的提升门槛：交错推理（思考→正文→思考）场景下，生长中的过程正文随时是
+    // 「最后一段」，无条件提升会让它跳出链外、思考恢复时又跳回链内。因此流式期间只在
+    // 两类信号下才提升：① 本消息没有思考段（无思考链的普通消息，维持原行为）；
+    // ② 正文已出现 Markdown 标题（真实最终输出的起跑信号）。非流式（整轮结束）无条件
+    // 提升，正文定格到链外泡——那是唯一一次位置变化，属正常转场。
+    const promotable = !streaming || !sawThink || m != null
+    if (promotable) {
+      finalTextIdx = segments.length - 1
+      const cut = m ? (raw[m.index] === '#' ? m.index : m.index + 1) : -1
+      if (cut > 0 && raw.slice(0, cut).trim() !== '') {
+        finalLeadText = raw.slice(0, cut)
+        finalText = raw.slice(cut)
+      } else {
+        finalText = raw
+      }
     }
   }
   const items: ThinkChainItem[] = []
   let value = ''
   let valueDurationMs: number | undefined
-  let sawThink = false
   segments.forEach((seg, i) => {
     if (seg.kind === 'think') {
-      sawThink = true
       // 生长中的思考段（最后一段且仍在流式）：即使内容暂空也保留（等待态/流式渲染标记）
       const isLive = streaming && !o.thinkDone && !hasTailTools && i === segments.length - 1
       if (seg.content.trim() === '' && !isLive) return

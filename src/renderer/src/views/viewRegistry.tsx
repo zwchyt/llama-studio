@@ -35,6 +35,8 @@ const VIEW_CHUNKS = {
   'mermaid-test': () => import('../components/MermaidTestView'),
   'recharts-test': () => import('../components/RechartsTestView'),
   'svg-test': () => import('../components/SvgTestView'),
+  'infographic-test': () => import('../components/InfographicTestView'),
+  'd2-test': () => import('../components/D2TestView'),
 }
 
 // ── 除首屏那一个外，全部走 lazy ──
@@ -69,6 +71,8 @@ const AudioCppView = lazy(VIEW_CHUNKS.audiocpp)
 const MermaidTestView = lazy(VIEW_CHUNKS['mermaid-test'])
 const RechartsTestView = lazy(VIEW_CHUNKS['recharts-test'])
 const SvgTestView = lazy(VIEW_CHUNKS['svg-test'])
+const InfographicTestView = lazy(VIEW_CHUNKS['infographic-test'])
+const D2TestView = lazy(VIEW_CHUNKS['d2-test'])
 
 /** 为什么 fallback 是 null，而不是一个"加载中…"占位：
  *
@@ -115,6 +119,8 @@ function renderView(view: ViewKey): React.ReactNode {
     case 'mermaid-test': return <MermaidTestView />
     case 'recharts-test': return <RechartsTestView />
     case 'svg-test': return <SvgTestView />
+    case 'infographic-test': return <InfographicTestView />
+    case 'd2-test': return <D2TestView />
     // 这三个 view 由专属容器渲染（设置页在工具箱舞台），这里返回 null。
     // 'settings' 不能在上方再写一份，否则重复 case（Vite 编译警告）。
     case 'agent-code': return null
