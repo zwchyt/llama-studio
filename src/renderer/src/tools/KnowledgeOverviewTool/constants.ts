@@ -4,5 +4,6 @@ export {
   KNOWLEDGE_OVERVIEW_DESCRIPTION,
   KNOWLEDGE_OVERVIEW_GUIDELINES,
   createKnowledgeOverviewSpec,
-  formatKnowledgeOverview,
+  formatKnowledgeDocCards,
+  formatKnowledgeDocSummary,
 } from '../../../../shared/tools/knowledgeSpecs'

@@ -18,7 +18,7 @@
 import { useCallback, useRef } from 'react'
 import { notify } from '../../../store/notificationStore'
 import { parseThinkSegments } from '../agent-message'
-import { uniqueId } from '../utils/ids'
+import { uniqueId, newSessionId } from '../utils/ids'
 import { baseName } from '../utils/paths'
 import { PI_UNDO_PREFIX } from '../utils/constants'
 import type { AgentMessage, AgentProject, AgentSession, CardState } from '../../../../../shared/types'
@@ -173,7 +173,7 @@ export function useAgentMessageActions({
     const idx = msgs.findIndex(m => m.id === msgId)
     if (idx < 0 || msgs[idx]!.role !== 'user') return
     const branchMsgs = msgs.slice(0, idx + 1).map(m => ({ ...m }))
-    const branchSess: AgentSession = { id: uniqueId('sess'), title: activeSession.title + ' (分支)', messages: branchMsgs }
+    const branchSess: AgentSession = { id: newSessionId(), title: activeSession.title + ' (分支)', messages: branchMsgs }
     setProjects(prev => prev.map(p => p.id === activeProjectId ? { ...p, sessions: [...p.sessions, branchSess] } : p))
     setActiveSessionId(branchSess.id)
     notify('已创建分支对话', 'success')

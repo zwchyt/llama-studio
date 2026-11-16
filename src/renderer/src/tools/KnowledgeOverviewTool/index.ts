@@ -3,7 +3,8 @@ export {
   KNOWLEDGE_OVERVIEW_DESCRIPTION,
   KNOWLEDGE_OVERVIEW_GUIDELINES,
   createKnowledgeOverviewSpec,
-  formatKnowledgeOverview,
+  formatKnowledgeDocCards,
+  formatKnowledgeDocSummary,
 } from './constants'
 export type { KnowledgeOverviewInput, KnowledgeBaseSummary } from './types'
 export { getKnowledgeOverviewPrompt } from './prompt'

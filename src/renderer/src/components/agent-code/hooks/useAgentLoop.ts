@@ -34,7 +34,7 @@ import { hasVisionProjector } from '../../../utils/modelCapabilities'
 import { PiAgentClient } from '../../../utils/piAgentClient'
 import { computeContextBudget, coveredPrefixCount, piContextWindowFor, COMPACTION_TRIGGER_MARGIN } from '../../../utils/contextBudget'
 import { parseSlashCommand, findCommand, expandCommandTemplate } from '../../../agent/slashCommands'
-import { newMsgId, uniqueId } from '../utils/ids'
+import { newMsgId, newSessionId } from '../utils/ids'
 import { isRealtimeMetaContent } from '../utils/realtimeTurns'
 import { MIN_EXEC_DISPLAY_MS, PI_UNDO_PREFIX, PROJECTS_SYNC_MS, COMPACTION_RESERVE_FLOOR_TOKENS, COMPACTION_KEEP_RECENT_RATIO, COMPACTION_KEEP_RECENT_FLOOR_TOKENS } from '../utils/constants'
 import { CHIP_MARK, type RichChip } from '../agent-input/RichInput'
@@ -1031,7 +1031,7 @@ export function useAgentLoop({
       let sid = activeSessionId
       let baseMessages: AgentMessage[] = activeSession ? activeSession.messages : []
       if (!activeSession) {
-        sid = uniqueId('sess')
+        sid = newSessionId()
         const freshSess: AgentSession = {
           id: sid,
           title: resolvedText.slice(0, 40),

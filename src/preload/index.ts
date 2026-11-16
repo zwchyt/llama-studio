@@ -243,6 +243,7 @@ const fullApi = {
   // ── Agent Code 工作台 项目持久化 ──
   loadAgentProjects: () => ipcRenderer.invoke('load-agent-projects'),
   saveAgentProjects: (projects: AgentProject[], opts?: { gcScope?: string[] }) => ipcRenderer.invoke('save-agent-projects', projects, opts),
+  deleteAgentSession: (sessionId: string) => ipcRenderer.invoke('delete-agent-session', { sessionId }),
   exportAgentSession: (sessionId: string) => ipcRenderer.invoke('export-agent-session', { sessionId }),
   importAgentSession: (projectId: string) => ipcRenderer.invoke('import-agent-session', { projectId }),
   deletePath: (targetPath: string, recursive: boolean) => ipcRenderer.invoke('delete-path', targetPath, recursive),
@@ -273,6 +274,7 @@ const fullApi = {
   knowledgeList: () => ipcRenderer.invoke('knowledge-list'),
   knowledgeCreate: (name: string) => ipcRenderer.invoke('knowledge-create', name),
   knowledgeSetSummary: (id: string, text: string) => ipcRenderer.invoke('knowledge-set-summary', id, text),
+  knowledgeSetDocSummary: (kbId: string, docId: string, patch: { summaryOneLine?: string; keywords?: string[]; fullSummary?: string }) => ipcRenderer.invoke('knowledge-set-doc-summary', kbId, docId, patch),
   knowledgeDelete: (id: string) => ipcRenderer.invoke('knowledge-delete', id),
   knowledgeGet: (kbId: string) => ipcRenderer.invoke('knowledge-get', kbId),
   knowledgeAddDoc: (kbId: string, doc: { name: string; text: string; chunking?: { mode?: 'auto' | 'heading' | 'delim' | 'single' | 'manual' | 'code'; size?: number; delimiter?: string; ranges?: number[][]; lang?: string } }) => ipcRenderer.invoke('knowledge-add-doc', kbId, doc),

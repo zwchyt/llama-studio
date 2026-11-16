@@ -799,6 +799,22 @@
   overflow: hidden;
 }
 
+/* 文档导航编辑弹窗：高度随内容伸缩，不预留空白；内容过长时到上限再滚动 */
+.kb-docnav-modal {
+  width: min(560px, calc(100vw - 64px));
+  height: auto;
+  max-height: min(85vh, 760px);
+}
+
+.kb-docnav-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
 .kb-preview-head {
   display: flex;
   align-items: center;

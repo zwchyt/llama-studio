@@ -280,6 +280,7 @@ interface LlamaCppApi {
   // ── Agent Code 工作台项目持久化 ──
   loadAgentProjects: () => Promise<AgentProject[]>
   saveAgentProjects: (projects: AgentProject[], opts?: { gcScope?: string[] }) => Promise<{ success: boolean; error?: string }>
+  deleteAgentSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>
   exportAgentSession: (sessionId: string) => Promise<{ success: boolean; canceled?: boolean; error?: string }>
   importAgentSession: (projectId: string) => Promise<{ success: boolean; canceled?: boolean; sessionId?: string; session?: AgentSession; error?: string }>
   // ── Agent Code 文件删除 ──
@@ -310,6 +311,7 @@ interface LlamaCppApi {
   knowledgeList: () => Promise<KnowledgeBaseMeta[]>
   knowledgeCreate: (name: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
   knowledgeSetSummary: (id: string, text: string) => Promise<{ success: boolean; meta?: KnowledgeBaseMeta; error?: string }>
+  knowledgeSetDocSummary: (kbId: string, docId: string, patch: { summaryOneLine?: string; keywords?: string[]; fullSummary?: string }) => Promise<{ success: boolean; error?: string }>
   knowledgeDelete: (id: string) => Promise<{ success: boolean; error?: string }>
   knowledgeGet: (kbId: string) => Promise<{ id: string; name: string; createdAt: string; docs: KnowledgeDoc[] } | null>
   knowledgeAddDoc: (kbId: string, doc: { name: string; text: string; chunking?: { mode?: 'auto' | 'heading' | 'delim' | 'single' | 'manual' | 'code'; size?: number; delimiter?: string; ranges?: number[][]; lang?: string } }) => Promise<{ success: boolean; chunkCount?: number; meta?: KnowledgeBaseMeta; error?: string }>

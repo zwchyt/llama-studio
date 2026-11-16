@@ -14,52 +14,51 @@ export const KNOWLEDGE_TOOL_TOP_K_DEFAULT = 3
 export const KNOWLEDGE_TOOL_TOP_K_MAX = 5
 
 export const KNOWLEDGE_SEARCH_DESCRIPTION_BASE =
-  'Search ONLY the knowledge bases already selected by knowledge_overview — the code layer injects their stable library ids, ' +
-  'so you never pass a library name or id to this tool. Retrieval is BM25 lexical keyword matching (no embeddings, so paraphrases may miss). ' +
-  'Results from the selected libraries are merged by cross-library rank fusion and ordered by that rank. ' +
-  'Each entry carries a chunk id (C1, C2 ...), library id, library type, library name, document name, chunk index, ' +
-  'the library-internal relevance score and a short content excerpt. ' +
-  'The 相关度 value is comparable only within one library and NOT across libraries. ' +
-  'The full text of the top-ranked chunk is auto-attached — do NOT call knowledge_read for that one. ' +
-  'For the other entries, pass their chunk ids to knowledge_read. ' +
-  'You MUST call knowledge_list first and then knowledge_overview to select libraries; otherwise this call is rejected ' +
-  'with a hint to restart from knowledge_list.'
+  'Search ONLY the knowledge base selected by knowledge_overview — the code layer injects the library, so never pass a library name or id. ' +
+  'Optionally pass docId (a D-number from the overview document list) to search INSIDE that one document first; ' +
+  'if it has no hit, the code layer automatically falls back to the whole library. ' +
+  'Retrieval is BM25 lexical keyword matching (no embeddings, so paraphrases may miss). ' +
+  'The catalog lists only chunk ids (C1, C2 ...), the chunk title and matched terms — no library names, scores or excerpts. ' +
+  'The full text of the top-ranked chunk is auto-attached at the end: if it answers the question, STOP here and do NOT call knowledge_read. ' +
+  'knowledge_read is on-demand ONLY — use it solely when you need the full text of a lower-ranked chunk. ' +
+  'You MUST call knowledge_list then knowledge_overview first; otherwise this call is rejected.'
 
 export const KNOWLEDGE_SEARCH_GUIDELINES: string[] = [
-  '四个工具必须按 knowledge_list → knowledge_overview → knowledge_search → knowledge_read 顺序走；跳过选库直接检索会被拒绝，拒绝信息会提示重新调用 knowledge_list。',
-  '检索范围由代码层按会话注入（工具一给出固定库编号、工具二选中库后由代码层记录），不要自己传库名或库编号，也不要逐库试错。',
-  'knowledge_search 会在返回命中目录的同时，自动把排名最高那一块的完整正文附在末尾——所以一次检索通常就够用，不必再为它调用 knowledge_read。',
-  '目录每条都有块编号、库编号、库类型、库名、文档名、块号、相关度与内容摘要；需要其它块的正文时，用 knowledge_read 传对应的块编号。',
-  '构造查询词时只从用户问题里抽内容词：章节名、领域术语、代码标识符等文档正文里真会出现的词；库名、文档名、文件名不是检索词，不要写进 query（检索只匹配块正文与块标题）。检索是字面词法匹配（没有向量/语义通道），同义改述可能漏检——中文文档换中文词、代码术语换英文标识符再试一次。',
-  '查询内容本身是命令、API 调用、报错或配置项时，把它整条原样传入，保留词序与 --flag / -m 这类参数，不要拆成零散关键词。检索对「相邻词对」加权：整条命令原样出现会显著加分，打乱词序或删掉参数恰好丢掉这部分信号（实测「git commit --amend -m」拆成关键词后，讲 Mermaid gitGraph 语法的块会靠 commit 词频排到正确的块前面）。',
-  'query 一般只传 2–6 个关键词，不要原样转述用户的整句提问。长查询会掺进「如何/应该/什么」这类低信息量词，把所有块的分数一起抬高，真正相关的块反而拉不开差距；中文长句还会被切成大量跨词假词（「如何配置」→「何配」）造成误匹配。正确做法是自己从问题里抽出最有区分度的名词 / 标识符再检索，必要时换关键词多搜一次，而不是把问题原样丢进来。（例外：问题本身就是一条命令 / API / 报错原文时，按上一条整条传入。）',
-  '目录按跨库融合排名降序，每行还标了「词序吻合 X%」与命中词——判断该读哪条请优先看排名、词序吻合度、命中词与内容摘要。行尾的相关度是各库内部的 BM25 分，跨库不可比、列表里不一定递减，不要拿两个不同库的条目去比这个数字。',
-  '查询词全是常见词（在库里几乎每个块都出现）时，检索会返回一批分数很低的命中并标记低置信，且不给建议关键词——这种情况直接换更有区分度的词，不要反复用同一批词重搜。',
-  '构造 query 之前，先用 knowledge_list 看有哪些知识库，再用 knowledge_overview 选中相关库并取概括，从概括里挑出文档里可能实际出现的名词或术语；概括只是选词参考，不是检索结果。',
+  '四个工具不要求走完：必走的是 knowledge_list → knowledge_overview → knowledge_search。knowledge_read 是按需的，不是第四步必做。',
+  '检索范围由代码层按会话注入，不要自己传库名，也不要逐库试错。',
+  '若 knowledge_overview 里锁定了某文档，把它的 D 编号传给 docId 可先在该文档内检索；该文档无命中时代码层自动回退整库，不必换参数重试。',
+  '排名最高那一块的完整正文会自动附在目录末尾。若它已能回答问题，直接回答即可，不要再调 knowledge_read——绝不要为相关度低的其余块重复读取。',
+  '只有当你判断第一块正文不足、且需要某个较低排名块的完整正文时，才用 knowledge_read 传它的 C 编号；一次只读需要的那一块。',
+  '目录每条只有块编号 C、块标题与命中词，用于判断该不该读；排序按融合排名降序，排在前面的优先。',
+  '构造查询词时只从用户问题里抽内容词：章节名、领域术语、代码标识符等正文里真会出现的词；库名、文档名、文件名不是检索词（检索只匹配块正文与块标题）。字面词法匹配，同义改述可能漏检——中文文档换中文词、代码术语换英文标识符再试一次。',
+  '查询内容本身是命令、API 调用、报错或配置项时，整条原样传入，保留词序与 --flag / -m 这类参数，不要拆成零散关键词；检索对相邻词对加权，打乱词序或删参数会丢信号。',
+  'query 一般只传 2–6 个关键词，不要原样转述整句提问；长查询掺进低信息量词会把所有块分数一起抬高，中文长句还会切出跨词假词。例外的整条命令按上一条处理。',
+  '查询词全是常见词时会返回低置信结果并标记，此时直接换更有区分度的词，不要反复用同一批词重搜。',
+  '构造 query 前先 knowledge_list 选库，再 knowledge_overview 取文档名列表；只有需要选词参考时才传 D 编号展开单个文档的关键词与概括。',
 ]
 
 export const KNOWLEDGE_LIST_DESCRIPTION =
-  'List every local knowledge base with its STABLE library id, name and whether a user-written summary exists. ' +
-  'Call this FIRST whenever a question may need the user documents. ' +
-  'Then call knowledge_overview to select the libraries; the code layer records their ids and injects them into the later tools. ' +
-  'Calling this tool again clears the selection.'
+  'List every local knowledge base by name. Call this FIRST whenever a question may need the user documents. ' +
+  'The library number is handled by the code layer — you only need the name. ' +
+  'Then call knowledge_overview with the chosen name. Calling this tool again clears the selection.'
 
 export const KNOWLEDGE_LIST_GUIDELINES: string[] = [
-  '要用知识库时先调 knowledge_list 拿到全部库名与固定库编号，据此判断哪些库可能相关；库名和编号都不是检索词，不要写进 query。',
-  '再用 knowledge_overview 选中相关库取概括，最后才用 knowledge_search 检索；选库结果由代码层记住，后续检索只在已选库内进行。再次调用本工具会清空已选库。',
+  '要用知识库时先调 knowledge_list 拿到全部库名，据此判断哪些库可能相关；库名不是检索词，不要写进 query。',
+  '再用 knowledge_overview 选中相关库、取文档名列表，最后用 knowledge_search 检索；选库结果由代码层记住，后续检索只在已选库内进行。再次调用本工具会清空已选库。',
 ]
 
 export const KNOWLEDGE_OVERVIEW_DESCRIPTION =
-  'Select the knowledge bases to search and read their user-written summaries. ' +
-  'Pass kb with an exact name or stable id from knowledge_list, or kbs as an array to select several at once. ' +
-  'The code layer records the library ids; repeated calls accumulate the selection, and replace:true switches libraries. ' +
-  'Use the nouns, document names, section names and identifiers in the summary to build a distinctive knowledge_search query. ' +
-  'A summary is a keyword hint, NOT the content of the library.'
+  'Select one knowledge base by exact name from knowledge_list and return its DOCUMENT NAME list, ' +
+  'each with a short D-number (D1, D2 ...). By default no keywords or summaries are included. ' +
+  'The D-number maps to the real document id in the code layer — pass it as docId to knowledge_search ' +
+  'to search inside that document, or back to this tool to expand that ONE document\'s keywords and summary. ' +
+  'Use cursor to page. Repeated calls with a different kb switch libraries.'
 
 export const KNOWLEDGE_OVERVIEW_GUIDELINES: string[] = [
-  'knowledge_overview 的 kb 用 knowledge_list 返回的库名或库编号原样传入；kbs 可一次传多个；库多时优先挑一到两个相关库，别一次读全部概括。',
-  '多次调用会攒出多库列表；换库时传 replace:true 清空上次选择，换库后旧目录的块编号立即失效，需要重新检索。',
-  '概括只是选词参考，不代表库里只有这些内容，也不要把概括当检索结果引用；选中库之后再用 knowledge_search 检索，库编号由代码层注入，不要自己填。',
+  'knowledge_overview 的 kb 用 knowledge_list 返回的库名原样传入，一次只选一个库；默认只返回文档名 + D 编号，不含关键词与概括。',
+  '用文档名判断哪个文档可能相关；需要它的关键词/概括来构造查询词时，才传该文档的 D 编号再次调用本工具单独展开，默认不要展开任何文档。',
+  '把 D 编号传给 knowledge_search 的 docId 可只在选中文档内检索，无命中会自动回退整库。',
+  '文档多时按 cursor 翻页，别一次读完；换库后旧 D 编号与块编号立即失效，需要重新取列表与检索。',
 ]
 
 /** 用户为知识库手写的概括（由知识库界面维护，随知识库文件保存）。
@@ -68,7 +67,25 @@ export interface KnowledgeBaseSummary {
   id: string
   name: string
   summary: string
+  docCount?: number
 }
+
+/** 文档导航数据：默认只输出文档名 + D 编号，关键词/概括按需展开。 */
+export interface KnowledgeDocCard {
+  docId: string
+  docName: string
+  /** 一句定位，缺省时由代码层回退为文档名或首块摘要 */
+  summaryOneLine?: string
+  /** 3–8 个查询词，缺省时由代码层回退抽取 */
+  keywords?: string[]
+  chunkCount?: number
+}
+
+/** 工具二的返回预算：单页最多 20 个文档、正文总长 ≤1500 字，超出用 cursor 翻页。 */
+export const KNOWLEDGE_CARD_PAGE_SIZE = 20
+export const KNOWLEDGE_CARD_TEXT_BUDGET = 1500
+/** 文档级一句定位的展示上限 */
+export const KNOWLEDGE_ONELINE_MAX = 60
 
 /** 知识库工具的执行器：主进程传 RPC，渲染层传进程通道；本文件因此不必依赖 window。 */
 export type KnowledgeToolExecutor = (name: string, args: Record<string, unknown>) => Promise<string>
@@ -87,48 +104,55 @@ export interface KnowledgeToolSpec extends KnowledgeToolDefinition {
   label: string
 }
 
-/** 库列表输出：给固定库编号、库名与概括状态，库再多也只是每库一行短文本。 */
+/** 工具一输出：只有库名。库编号由代码层记录，概括与文档数不进上下文。 */
 export function formatKnowledgeBaseList(libs: readonly KnowledgeBaseSummary[]): string {
   if (libs.length === 0) return '本机尚未创建任何知识库。'
-  const lines = libs.map((l, i) => `[${i + 1}] 库编号 ${l.id} · ${l.name.replace(/\s+/g, ' ').trim()} · ${l.summary ? '已写概括' : '未写概括'}`)
-  return `本机共 ${libs.length} 个知识库：\n${lines.join('\n')}\n（库编号固定不变，只由代码层记录，不用写进检索参数。下一步用 knowledge_overview 选中要查的库，可传库名或库编号；选中的库编号会由代码层注入后续检索，检索只在已选库内进行。再次调用本工具会清空已选库。）`
+  // 只给库名：编号由代码层记住，概括与文档数不进上下文，选库靠库名即可。
+  return libs.map((l, i) => `[${i + 1}] ${l.name.replace(/\s+/g, ' ').trim()}`).join('\n')
 }
 
-/** 概括输出：按库返回全文，随时读取磁盘最新值；支持一次选多个库以省上下文。
-    不做长度截断——写多长由用户在界面里自己控制，代码不替他砍内容。
-    selected 是代码层记录的已选库编号，随输出回给模型确认范围。 */
-export function formatKnowledgeOverview(
-  libs: readonly KnowledgeBaseSummary[],
-  kb?: string | readonly string[],
-  selected: readonly { id: string; name: string }[] = []
+/** 工具二默认输出：只给文档名 + D 编号，一句话定位与关键词都不进上下文。
+    D 编号是本页全局序号（D1、D2…），由执行层映射回真实 docId；文档多时用 cursor 翻页。 */
+export function formatKnowledgeDocCards(
+  _lib: { name: string; id: string },
+  cards: readonly KnowledgeDocCard[],
+  cursor: number,
+  pageSize: number = KNOWLEDGE_CARD_PAGE_SIZE,
+  _budget: number = KNOWLEDGE_CARD_TEXT_BUDGET
 ): string {
-  const wants = (typeof kb === 'string' ? [kb] : kb ? [...kb] : []).map(w => String(w).trim()).filter(Boolean)
-  const picked = wants.length ? libs.filter(l => wants.some(w => l.name === w || l.id === w)) : libs
-  if (wants.length && picked.length === 0) {
-    return `未找到知识库「${wants.join('、')}」。可用库名与编号：${libs.map(l => `${l.name}（${l.id}）`).join('、') || '（无）'}`
-  }
-  const lines = picked.map(s => {
-    const name = s.name.replace(/\s+/g, ' ').trim()
-    const text = (s.summary ?? '').replace(/\s+/g, ' ').trim()
-    return `【${name} · 库编号 ${s.id}】${text || '（未写概括）'}`
-  })
-  if (lines.length === 0) return '本机尚未创建任何知识库。'
-  const range = selected.length
-    ? `\n（当前已选 ${selected.length} 个库：${selected.map(s => `${s.name}（${s.id}）`).join('、')}；库编号由代码层注入后续检索，不要自己写进参数。）`
-    : ''
-  return `知识库概括（由用户维护，仅供挑选检索词，不代表库内全部内容）：\n${lines.join('\n')}${range}\n（据此挑出文档里可能实际出现的名词、术语或章节名，再用 knowledge_search 检索；检索只在已选库内进行。）`
+  const start = Number.isInteger(cursor) && cursor > 0 ? cursor : 0
+  const page = cards.slice(start, start + pageSize)
+  if (page.length === 0) return '（该库没有可用文档）'
+  const lines = page.map((c, k) => `D${start + k + 1} · ${c.docName.replace(/\s+/g, ' ').trim()}`)
+  const shown = start + page.length
+  const more = shown < cards.length ? `\n（还有 ${cards.length - shown} 个文档，用 cursor=${shown} 继续。）` : ''
+  return lines.join('\n') + more
+}
+
+/** 单文档展开：传 docId（D 编号）时按需返回该文档的关键词与完整概括，常路径不触发。 */
+export function formatKnowledgeDocSummary(libName: string, doc: KnowledgeDocCard, full: string): string {
+  const name = doc.docName.replace(/\s+/g, ' ').trim()
+  const kw = (doc.keywords ?? []).map(w => String(w).trim()).filter(Boolean)
+  const body = (full ?? '').replace(/\s+/g, ' ').trim()
+  const head = `${name}（库「${libName}」）`
+  const kwLine = kw.length ? `\n关键词：${kw.join('、')}` : ''
+  // 概括与关键词重复时不重复打印：很多库 fullSummary 就是关键词的另一种拼法。
+  const bodyLine = body && body !== kw.join('、') ? `\n概括：${body}` : ''
+  return head + kwLine + bodyLine
 }
 
 export const KNOWLEDGE_READ_DESCRIPTION_BASE =
-  'Read the FULL text of chunks selected from the MOST RECENT knowledge_search catalog. ' +
-  'Pass their chunk ids (C1, C2 ...) as chunkIds; the code layer resolves each id to its library and chunk. ' +
-  'Chunks outside the selected libraries or outside the latest catalog are rejected, ' +
-  'and you cannot skip the list / overview / search steps.'
+  'On-demand ONLY. Read the FULL text of a chunk from the MOST RECENT knowledge_search catalog, by its chunk id (C1, C2 ...). ' +
+  'The top-ranked chunk is ALREADY attached in full to the search result — do NOT read it again. ' +
+  'Only call this when the attached chunk is insufficient and you specifically need a lower-ranked chunk; ' +
+  'do NOT re-read low-relevance chunks just because they appear in the catalog. ' +
+  'If the attached chunk answers the question, finish without calling this tool.'
 
 export const KNOWLEDGE_READ_GUIDELINES: string[] = [
-  'knowledge_read 只接受最近一次 knowledge_search 目录里的块编号（C1、C2…），不要自己拼库名、文档名或块号。',
-  '必须先按顺序调用 knowledge_list → knowledge_overview → knowledge_search；跳步、拿旧目录的块编号、或读已选范围之外的库都会被拒绝，拒绝信息会告诉你下一步该调哪个工具。',
-  `单次最多读取 ${KNOWLEDGE_TOOL_TOP_K_MAX} 块（就是目录里的全部条目）；排名第一块的正文已由 knowledge_search 自动附带，不必再读它。多个已选库里的块可以在同一次调用里一起读，回答不受影响。`,
+  'knowledge_read 是按需工具，不是必走的第四步：排名最高那块正文已随 knowledge_search 返回，够用就直接用它回答，不要调本工具。',
+  '只有第一块正文不足、且明确需要某个较低排名块的完整正文时才调用，传它的 C 编号；不要为了"看全"去读相关度低的其他块，那是重复且浪费上下文。',
+  '块编号只接受最近一次 knowledge_search 目录里的 C 编号，不要自己拼；跳过 list / overview / search、拿旧目录编号、读已选范围之外的库都会被拒绝。',
+  `单次最多可传 ${KNOWLEDGE_TOOL_TOP_K_MAX} 个块编号，但按需建议一次只读真正需要的那一块。`,
 ]
 
 export interface KnowledgeSearchInput {
@@ -145,7 +169,7 @@ export interface KnowledgeSearchResult {
   error?: string
 }
 
-/** 工具三：检索范围由代码层按会话注入，模型不再传库名/库编号。 */
+/** 工具三：检索范围由代码层按会话注入，模型不传库名。 */
 export function createKnowledgeSearchSpec(): KnowledgeToolSpec {
   return {
     name: KNOWLEDGE_SEARCH_TOOL_NAME,
@@ -166,6 +190,10 @@ export function createKnowledgeSearchSpec(): KnowledgeToolSpec {
             'Exception: when the question is about an exact command, API call, error message or config key, pass that string verbatim — ' +
             'keep its word order and flags such as --amend / -m. Retrieval is lexical and gives a word-order bonus when adjacent query words ' +
             'appear adjacently in a chunk, so shuffling terms or stripping flags loses signal, and paraphrases may miss.'
+        },
+        docId: {
+          type: 'string',
+          description: 'Optional document id from the knowledge_overview card catalog. When set, search inside that document first; the code layer falls back to the whole library if it has no hit.'
         },
         limit: { type: 'number', description: `Max number of merged entries to return. Default ${KNOWLEDGE_TOOL_TOP_K_DEFAULT}, max ${KNOWLEDGE_TOOL_TOP_K_MAX}.` }
       },
@@ -232,26 +260,23 @@ export function mergeKbHits<T extends { score: number; fusionWeight?: number; fu
 export function formatKnowledgeCatalog(r: KnowledgeSearchResult): string {
   if (r.error && !r.hits.length) return `检索失败：${r.error}`
   if (!r.hits.length) return '知识库未命中任何内容。'
-  const catalog = r.hits
-    .map((h, i) => {
-      // 命中词：让模型看到「这条是靠什么命中的」——只看分数没法判断该不该继续读下一条。
-      const m = (h.matched ?? []).slice(0, CATALOG_MATCHED_SHOW)
-      const hitLabel = m.length > 0 ? ` · 命中 ${m.join('/')}` : ''
-      // 词序吻合标记：BM25 只看词不看词序，「整条命令原样出现」和「碰巧重复了同一个词」
-      // 分数可能相近。这个词序比例是模型区分两者最直接的信号，比分数可靠。
-      const seqLabel = (h.adjacent ?? 0) > 0 ? ` · 词序吻合 ${Math.round((h.adjacent ?? 0) * 100)}%` : ''
-      const plain = (h.text ?? '').replace(/\s+/g, ' ').trim()
-      const excerpt = plain.slice(0, CATALOG_EXCERPT_SHOW) + (plain.length > CATALOG_EXCERPT_SHOW ? '…' : '')
-      return `[${i + 1}] 块 ${h.chunkId ?? `C${i + 1}`} · 库编号 ${h.kbId ?? '未知'}（${h.kbType ?? '本机'}）· ${h.kbName ? `${h.kbName} · ` : ''}${h.docName} · 第${h.ordinal + 1}块 · 相关度 ${h.score}${seqLabel}${hitLabel}\n    内容：${excerpt}`
-    })
-    .join('\n')
-  // 低置信标记放在目录「头部」而不是末尾：末尾的尾注很容易被模型跳过。
-  const head = r.lowConfidence
-    ? '⚠️ 低置信检索：以下条目可能只沾到部分查询词，引用前请先核对原文或换关键词重搜。\n'
+  // 极简目录：块编号 + 块标题 + 命中词。库编号/库名/文档名/相关度/摘要都不进上下文——
+  // 来源在自动附的第一块正文标题里给出，其余块要读全文才带文档名（工具四）。
+  // 相关度等字段仍保留在对象里供内部排序，只是不打印。
+  const lines = r.hits.map((h, i) => {
+    const cid = h.chunkId ?? `C${i + 1}`
+    const title = (h.title ?? '').replace(/\s+/g, ' ').trim() || '（无标题）'
+    const m = (h.matched ?? []).slice(0, CATALOG_MATCHED_SHOW)
+    const hitLabel = m.length > 0 ? ` · 命中 ${m.join('/')}` : ''
+    const attached = i === 0 ? '（正文见下）' : ''
+    return `[${i + 1}] ${cid} ${title}${hitLabel}${attached}`
+  })
+  const rest = r.hits.slice(1).map((h, i) => h.chunkId ?? `C${i + 2}`)
+  const tail = rest.length > 0
+    ? `\n（按融合排名降序；其余用 knowledge_read 传块编号读全文。）`
     : ''
-  // 排序口径必须写清楚：条目按「跨库融合分」排序，显示的相关度是各库内部 BM25 分，
-  // 两者量纲不同，所以列表里的相关度不一定单调递减。
-  return `${head}${catalog}\n（以上为已选知识库内的命中目录，按跨库融合排名降序。相关度是各库内部 BM25 分，只在同一个库内可比、跨库不可比，故不一定单调递减；判断该读哪条请优先看排名、词序吻合度、命中词与内容摘要。第 [1] 条的完整正文已自动附在下方；如需其他条的正文，用 knowledge_read 传对应的块编号。）`
+  const head = r.lowConfidence ? '⚠️ 低置信检索，引用前请核对原文或换关键词重搜。\n' : ''
+  return head + lines.join('\n') + tail
 }
 
 interface KnowledgeReadResult {
@@ -268,7 +293,7 @@ interface KnowledgeReadResult {
   error?: string
 }
 
-/** 工具四：只按最近一次目录里的块编号读全文，库编号由代码层注入，模型不再写库名。 */
+/** 工具四：按需读最近一次目录里某块的正文，库由代码层按块编号注入。 */
 export function createKnowledgeReadSpec(): KnowledgeToolSpec {
   return {
     name: KNOWLEDGE_READ_TOOL_NAME,
@@ -293,7 +318,7 @@ export function formatKnowledgeChunks(r: KnowledgeReadResult): string {
   if (r.error && !r.hits.length) return `读取失败：${r.error}`
   if (!r.hits.length) return '没有匹配到任何块（块编号不存在，请对照最近一次检索目录重试）。'
   return r.hits
-    .map(h => `【块 ${h.chunkId ?? '?'} · 库编号 ${h.kbId ?? '未知'}（${h.kbType ?? '本机'}）· ${h.title || '（无标题）'}】(${h.kbName ? `${h.kbName} · ` : ''}${h.docName} · 第${h.ordinal + 1}块)\n${h.text}`)
+    .map(h => `【${h.chunkId ?? '?'}】${h.docName} · 第${h.ordinal}块\n${h.text}`)
     .join('\n--------------------\n')
 }
 
@@ -308,31 +333,28 @@ export function createKnowledgeListSpec(): KnowledgeToolSpec {
   }
 }
 
-/** 工具二：选中要检索的库并取用户手写的概括；库编号由代码层记录，后续工具不再传库名。 */
+/** 工具二：选中一个库并返回文档名 + D 编号；传 D 编号按需展开单个文档。 */
 export function createKnowledgeOverviewSpec(kbNames?: string[], kbIds?: string[]): KnowledgeToolSpec {
   // 同名库会让枚举出现重复值，去重后再交给参数校验。
   const choices = [...new Set([...(kbNames ?? []), ...(kbIds ?? [])])]
   const kbProp: Record<string, unknown> = {
     type: 'string',
-    description: 'Library name or stable library id exactly as returned by knowledge_list.',
+    description: 'Library name exactly as returned by knowledge_list.',
     ...(choices.length > 0 ? { enum: choices } : {})
   }
   return {
     name: KNOWLEDGE_OVERVIEW_TOOL_NAME,
-    label: '知识库概括',
+    label: '知识库文档列表',
     description: KNOWLEDGE_OVERVIEW_DESCRIPTION,
     promptGuidelines: KNOWLEDGE_OVERVIEW_GUIDELINES,
     parameters: {
       type: 'object',
       properties: {
         kb: kbProp,
-        kbs: {
-          type: 'array',
-          description: 'Select several libraries at once; names or ids from knowledge_list.',
-          items: choices.length > 0 ? { type: 'string', enum: choices } : { type: 'string' }
-        },
-        replace: { type: 'boolean', description: 'Set true to switch libraries: clear the accumulated selection before adding these.' }
-      }
+        docId: { type: 'string', description: 'Optional D-number (D1, D2 ...) from the document list: expand that ONE document\'s keywords and summary. Default OFF — do not pass it in the normal path.' },
+        cursor: { type: 'number', description: 'Pagination offset for the document name list. Use the cursor hint from the previous page. Default 0.' }
+      },
+      required: ['kb']
     }
   }
 }

@@ -21,7 +21,7 @@ import { notify } from '../../../store/notificationStore'
 import { PI_UNDO_PREFIX } from '../utils/constants'
 import { mergeCommands } from '../../../agent/slashCommands'
 import { addressOfEndpoint, endpointOfCard } from '../../../utils/endpoint'
-import { newMsgId, uniqueId } from '../utils/ids'
+import { newMsgId, newSessionId } from '../utils/ids'
 import type { AgentMessage, AgentProject, AgentSession, CardState, ThinkingLevel, TodoUpdate } from '../../../../../shared/types'
 import type { useAgentProjects } from './useAgentProjects'
 
@@ -63,7 +63,7 @@ export function useAgentSlashActions({
       let sid = activeSessionId
       let base = activeSession ? activeSession.messages : []
       if (!activeSession) {
-        sid = uniqueId('sess')
+        sid = newSessionId()
         const fresh: AgentSession = { id: sid, title: `/${name}`, messages: [] }
         setProjects(prev => prev.map(p => p.id === pid ? { ...p, sessions: [...p.sessions, fresh] } : p))
         setActiveSessionId(sid)
@@ -241,7 +241,7 @@ export function useAgentSlashActions({
       case 'branch': {
         if (!activeSession) { appendResult('当前没有可分支的会话。'); return }
         const branchMsgs = activeSession.messages.map(m => ({ ...m }))
-        const branchSess: AgentSession = { id: uniqueId('sess'), title: activeSession.title + ' (分支)', messages: branchMsgs }
+        const branchSess: AgentSession = { id: newSessionId(), title: activeSession.title + ' (分支)', messages: branchMsgs }
         setProjects(prev => prev.map(p => p.id === activeProjectId ? { ...p, sessions: [...p.sessions, branchSess] } : p))
         setActiveSessionId(branchSess.id)
         notify('已创建分支对话', 'success')

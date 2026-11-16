@@ -18,6 +18,7 @@ import { app } from 'electron'
 import { randomUUID, createHash } from 'crypto'
 import type * as ptyNs from 'node-pty'
 import type { AgentProject, AgentSession, AgentMessage, AgentTask, TodoUpdate, AgentTaskStatus, EngineKind, ReleaseInfo, SdCudartMarker, SdCudartStatus, SdCudartUpstream, EndpointProbe, EndpointAttachResult, ProbeTarget, RemoteEndpoint, ModelEndpoint, EndpointApi, ServerPropsResult } from '../shared/types'
+import { CHAT_WORKSPACE_ID } from '../shared/types'
 import { registerCodeMapIpc, disposeCodeMaps, deleteSnapshotForWorkspace } from './services/codeMapService'
 import { registerRetrievalIpc, disposeIndexForWorkspace } from './services/retrievalService'
 import { readGgufMeta } from './services/ggufReader'
@@ -8275,13 +8276,56 @@ export function registerIpcHandlers(): void {
 
   // ── Agent Tracing 落盘 ──
   // ── Agent Code 工作台：项目（含会话）持久化 ──
-  // 每个会话独立存储为一个 JSON 文件，统一放在 `Agent session/` 文件夹下：
-  //   Agent session/<sessionId>.json  —— 单个会话的全部消息 + 所属项目信息
+  // 每个会话独立存储为一个 JSON 文件，按模式分两个子目录存放：
+  //   Agent session/chat/<sessionId>.json  —— 通用聊天会话（projectId = CHAT_WORKSPACE_ID）
+  //   Agent session/code/<sessionId>.json  —— 编码项目会话
   // 加载时按 projectId 分组重建出项目列表；空文件夹通过 .gitkeep 保留在仓库中。
+  // 根目录的历史会话文件仍会被扫描并读取（兼容旧版本），保存时归位到对应子目录。
   const AGENT_PROJECTS_DIR = join(APP_ROOT, 'Agent session')
+  const AGENT_CHAT_DIR = join(AGENT_PROJECTS_DIR, 'chat')
+  const AGENT_CODE_DIR = join(AGENT_PROJECTS_DIR, 'code')
+  const SESSION_DIRS = [AGENT_CHAT_DIR, AGENT_CODE_DIR, AGENT_PROJECTS_DIR] // 根目录垫底兼容旧文件
+
+  // 会话 id 即文件名：sess-YYYYMMDD-HHMMSS-xxxx，按创建时间可读、末尾随机防撞。
+  // 与渲染层 agent-code/utils/ids.ts 的 newSessionId 保持同一格式（导入会话在主进程生成 id）。
+  function newSessionIdForMain(now: number = Date.now()): string {
+    const d = new Date(now)
+    const p = (n: number) => String(n).padStart(2, '0')
+    const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+    return `sess-${stamp}-${randomUUID().slice(0, 4)}`
+  }
   // 遗留单文件（旧版：所有会话塞进一个 agent-projects.json）
   const AGENT_PROJECTS_LEGACY_PATH = join(AGENT_PROJECTS_DIR, 'agent-projects.json')
   const AGENT_PROJECTS_ROOT_LEGACY_PATH = join(APP_ROOT, 'agent-projects.json')
+
+  // 按会话所属项目推断其落盘子目录：通用聊天进 chat，编码项目进 code。
+  function sessionDirForProject(projectId: string): string {
+    return projectId === CHAT_WORKSPACE_ID ? AGENT_CHAT_DIR : AGENT_CODE_DIR
+  }
+
+  // 定位会话文件的真实路径：新子目录优先，兼容根目录历史文件；找不到时按 projectId 给出目标路径。
+  function findSessionFile(sessionId: string, projectId?: string): string {
+    for (const dir of SESSION_DIRS) {
+      const p = join(dir, `${sessionId}.json`)
+      if (existsSync(p)) return p
+    }
+    return join(sessionDirForProject(projectId ?? ''), `${sessionId}.json`)
+  }
+
+  // 列出全部会话文件（chat / code 子目录 + 根目录历史文件），返回所在目录以便就地清理。
+  function listSessionFiles(): { dir: string; name: string; path: string }[] {
+    const out: { dir: string; name: string; path: string }[] = []
+    for (const dir of SESSION_DIRS) {
+      let names: string[] = []
+      try { names = readdirSync(dir) } catch { continue }
+      for (const name of names) {
+        if (!name.endsWith('.json') || name === 'agent-projects.json') continue
+        out.push({ dir, name, path: join(dir, name) })
+      }
+    }
+    return out
+  }
+
   // 会话派生数据目录：轨迹（pi 事件流）与审计（工具执行记录）。
   // 严格按会话归属，文件名 = `pi-` + 应用会话 id；会话删除时必须随之清理，
   // 否则孤儿文件无限增长（轨迹单会话可达数 MB）。
@@ -8336,13 +8380,11 @@ export function registerIpcHandlers(): void {
   function deleteWorkspaceArtifactsIfUnreferenced(workspaceDirs: string[]): void {
     const candidates = [...new Set(workspaceDirs.filter(Boolean).map(d => { try { return resolve(d) } catch { return '' } }))]
     if (candidates.length === 0) return
-    let files: string[] = []
-    try { files = readdirSync(AGENT_PROJECTS_DIR) } catch { return }
+    const files = listSessionFiles()
     const live = new Set<string>()
     for (const f of files) {
-      if (!f.endsWith('.json') || f === 'agent-projects.json') continue
       try {
-        const raw = JSON.parse(readFileSync(join(AGENT_PROJECTS_DIR, f), 'utf-8')) as { workspaceDir?: string }
+        const raw = JSON.parse(readFileSync(f.path, 'utf-8')) as { workspaceDir?: string }
         if (raw?.workspaceDir) live.add(resolve(raw.workspaceDir).toLowerCase())
       } catch { /* 跳过损坏文件 */ }
     }
@@ -8373,6 +8415,8 @@ export function registerIpcHandlers(): void {
 
   function ensureAgentProjectsDir(): void {
     if (!existsSync(AGENT_PROJECTS_DIR)) mkdirSync(AGENT_PROJECTS_DIR, { recursive: true })
+    if (!existsSync(AGENT_CHAT_DIR)) mkdirSync(AGENT_CHAT_DIR, { recursive: true })
+    if (!existsSync(AGENT_CODE_DIR)) mkdirSync(AGENT_CODE_DIR, { recursive: true })
   }
 
   // 将遗留的单文件（所有会话）拆分为多个独立会话文件，并删除旧单文件
@@ -8396,7 +8440,7 @@ export function registerIpcHandlers(): void {
               messages: s.messages || [],
             }
             try {
-              await fsPromises.writeFile(join(AGENT_PROJECTS_DIR, `${s.id}.json`), JSON.stringify(file, null, 2))
+              await fsPromises.writeFile(join(sessionDirForProject(p.id), `${s.id}.json`), JSON.stringify(file, null, 2))
             } catch { /* 单条失败不影响其他 */ }
           }
         }
@@ -8408,14 +8452,11 @@ export function registerIpcHandlers(): void {
   // 读取所有独立会话文件，按 projectId 分组重建出项目列表；无会话文件时尝试迁移遗留单文件
   async function loadAgentProjectsFromDisk(): Promise<AgentProject[]> {
     ensureAgentProjectsDir()
-    let files: string[] = []
-    try {
-      files = readdirSync(AGENT_PROJECTS_DIR).filter(f => f.endsWith('.json') && f !== 'agent-projects.json')
-    } catch { return [] }
+    const files = listSessionFiles()
     const sessions: SessionFile[] = []
     for (const f of files) {
       try {
-        const raw = JSON.parse(readFileSync(join(AGENT_PROJECTS_DIR, f), 'utf-8'))
+        const raw = JSON.parse(readFileSync(f.path, 'utf-8'))
         if (raw && typeof raw.id === 'string' && Array.isArray(raw.messages)) sessions.push(raw as SessionFile)
       } catch { /* 跳过损坏文件 */ }
     }
@@ -8487,7 +8528,9 @@ export function registerIpcHandlers(): void {
           liveIds.add(s.id)
           // 保留已有文件的 createdAt，保证排序稳定（新会话用当前时间戳）
           let createdAt = Date.now()
-          const existingPath = join(AGENT_PROJECTS_DIR, `${s.id}.json`)
+          const targetDir = sessionDirForProject(p.id)
+          const targetPath = join(targetDir, `${s.id}.json`)
+          const existingPath = findSessionFile(s.id, p.id)
           try {
             if (existsSync(existingPath)) {
               const ex = JSON.parse(readFileSync(existingPath, 'utf-8'))
@@ -8507,27 +8550,33 @@ export function registerIpcHandlers(): void {
             ...(s.chatTools ? { chatTools: s.chatTools } : {}),
             ...(s.memory ? { memory: s.memory } : {}),
           }
-          await fsPromises.writeFile(existingPath, JSON.stringify(file, null, 2))
+          await fsPromises.writeFile(targetPath, JSON.stringify(file, null, 2))
+          // 归位：文件此前落在根目录或错误子目录时，把配套 tasks 迁到目标目录并删掉旧主文件
+          if (existingPath !== targetPath && existsSync(existingPath)) {
+            const oldTasks = join(dirname(existingPath), `${s.id}.tasks.json`)
+            const newTasks = join(targetDir, `${s.id}.tasks.json`)
+            if (existsSync(oldTasks) && !existsSync(newTasks)) {
+              try { renameSync(oldTasks, newTasks) } catch { /* 迁移失败不阻塞保存 */ }
+            }
+            try { unlinkSync(existingPath) } catch { /* ignore */ }
+          }
         }
       }
       // GC：删除已被删除会话残留的孤立文件（排除遗留单文件，含 .tasks.json）
       // 增量落盘时只在该项目范围内 GC（gcScope），避免误删其他项目的会话文件
       const gcScope = opts?.gcScope
-      let allFiles: string[] = []
-      try { allFiles = readdirSync(AGENT_PROJECTS_DIR) } catch { allFiles = [] }
+      const allFiles = listSessionFiles()
       const deletedWorkspaceDirs: string[] = []
       for (const f of allFiles) {
-        if (!f.endsWith('.json')) continue
-        if (f === 'agent-projects.json') continue
-        const sessionId = f.endsWith('.tasks.json') ? f.slice(0, -11) : f.slice(0, -5)
+        const sessionId = f.name.endsWith('.tasks.json') ? f.name.slice(0, -11) : f.name.slice(0, -5)
         if (!liveIds.has(sessionId)) {
           let wsDir: string | undefined
           try {
-            const ex = JSON.parse(readFileSync(join(AGENT_PROJECTS_DIR, f), 'utf-8')) as { projectId?: string; workspaceDir?: string }
+            const ex = JSON.parse(readFileSync(f.path, 'utf-8')) as { projectId?: string; workspaceDir?: string }
             if (gcScope && gcScope.length && !gcScope.includes(ex.projectId || '')) continue
             wsDir = ex.workspaceDir
           } catch { if (gcScope && gcScope.length) continue }
-          try { unlinkSync(join(AGENT_PROJECTS_DIR, f)) } catch { /* ignore */ }
+          try { unlinkSync(f.path) } catch { /* ignore */ }
           // 会话删除的同时清掉其轨迹 / 审计派生文件，防止孤儿数据无限增长
           deleteSessionArtifacts(sessionId)
           if (wsDir) deletedWorkspaceDirs.push(wsDir)
@@ -8541,11 +8590,43 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  // 即时删除单个会话：界面删除后不依赖 800ms 防抖回写 + GC，直接落盘删文件。
+  // 幂等：文件不存在也视为成功；同时清掉配套 tasks 与轨迹/审计派生文件。
+  ipcMain.handle('delete-agent-session', async (_e, { sessionId }: { sessionId: string }): Promise<{ success: boolean; error?: string }> => {
+    try {
+      if (typeof sessionId !== 'string' || !sessionId) return { success: false, error: '缺少会话编号' }
+      let wsDir: string | undefined
+      // 主会话文件：可能在 chat / code 子目录，也可能是根目录历史文件
+      const mainPath = findSessionFile(sessionId)
+      if (existsSync(mainPath)) {
+        try {
+          const ex = JSON.parse(readFileSync(mainPath, 'utf-8')) as { workspaceDir?: string }
+          wsDir = ex?.workspaceDir
+        } catch { /* 损坏文件也要删掉 */ }
+        try { unlinkSync(mainPath) } catch { /* ignore */ }
+      }
+      // 配套任务清单：与主文件同目录（findSessionFile 已覆盖各目录）
+      for (const dir of SESSION_DIRS) {
+        const tasksPath = join(dir, `${sessionId}.tasks.json`)
+        if (existsSync(tasksPath)) {
+          try { unlinkSync(tasksPath) } catch { /* ignore */ }
+        }
+      }
+      // 轨迹 / 审计派生文件
+      deleteSessionArtifacts(sessionId)
+      // 工作区不再被任何现存会话引用时，清掉其 memory / codemap
+      if (wsDir) deleteWorkspaceArtifactsIfUnreferenced([wsDir])
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
   // ── Agent 会话导入 / 导出（.jsonl：首行为会话元数据，其后每行一条消息）──
   ipcMain.handle('export-agent-session', async (_e, { sessionId }: { sessionId: string }): Promise<{ success: boolean; canceled?: boolean; error?: string }> => {
     try {
       ensureAgentProjectsDir()
-      const src = join(AGENT_PROJECTS_DIR, `${sessionId}.json`)
+      const src = findSessionFile(sessionId)
       if (!existsSync(src)) return { success: false, error: '会话文件不存在' }
       const data = JSON.parse(readFileSync(src, 'utf-8'))
       const r = await dialog.showSaveDialog({
@@ -8587,7 +8668,7 @@ export function registerIpcHandlers(): void {
       const meta = JSON.parse(lines[0])
       if (meta?.__type !== 'agent-session') return { success: false, error: '不是有效的会话 JSONL 文件' }
       const messages = lines.slice(1).map((l) => JSON.parse(l))
-      const newId = randomUUID()
+      const newId = newSessionIdForMain()
       ensureAgentProjectsDir()
       const file = {
         id: newId,
@@ -8601,7 +8682,7 @@ export function registerIpcHandlers(): void {
         systemPrompt: meta.systemPrompt,
         memory: meta.memory,
       }
-      writeFileSync(join(AGENT_PROJECTS_DIR, `${newId}.json`), JSON.stringify(file, null, 2), 'utf-8')
+      writeFileSync(join(sessionDirForProject(projectId), `${newId}.json`), JSON.stringify(file, null, 2), 'utf-8')
       const session: AgentSession = { id: newId, title: file.title, messages: file.messages || [], memory: file.memory }
       return { success: true, sessionId: newId, session }
     } catch (e) {
@@ -8615,7 +8696,8 @@ export function registerIpcHandlers(): void {
   const agentTaskStore = new Map<string, AgentTask[]>()
 
   function agentTaskFilePath(sessionId: string): string {
-    return join(AGENT_PROJECTS_DIR, `${sessionId}.tasks.json`)
+    // 任务清单始终与主会话文件同目录；主文件按模式落在 chat 或 code 子目录。
+    return join(dirname(findSessionFile(sessionId)), `${sessionId}.tasks.json`)
   }
 
   function loadAgentTasks(sessionId: string): AgentTask[] {
@@ -8639,8 +8721,17 @@ export function registerIpcHandlers(): void {
   function saveAgentTasks(sessionId: string, tasks: AgentTask[]): void {
     agentTaskStore.set(sessionId, tasks)
     try {
+      const p = agentTaskFilePath(sessionId)
+      // 空任务清单不落盘：不为每个会话多造一个只有 `[]` 的子文件。
+      // 若此前写过（有任务后又清空），把文件删掉，保持"无任务即无文件"。
+      if (tasks.length === 0) {
+        if (existsSync(p)) {
+          try { unlinkSync(p) } catch { /* ignore */ }
+        }
+        return
+      }
       ensureAgentProjectsDir()
-      writeFileSync(agentTaskFilePath(sessionId), JSON.stringify(tasks, null, 2))
+      writeFileSync(p, JSON.stringify(tasks, null, 2))
     } catch (e) {
       console.error('[agent-task] 保存失败:', e)
     }

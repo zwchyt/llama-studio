@@ -255,6 +255,11 @@ export default function KnowledgeView() {
   const [summaryDraft, setSummaryDraft] = useState('')
   const [summarySaving, setSummarySaving] = useState(false)
 
+  // ── 文档导航字段：一句定位 + 关键词 + 完整概括，用户手写；空值走代码回退 ──
+  const [docNavEditing, setDocNavEditing] = useState<string | null>(null)
+  const [docNavDraft, setDocNavDraft] = useState({ oneLine: '', keywords: '', full: '' })
+  const [docNavSaving, setDocNavSaving] = useState(false)
+
   // 试搜索：范围由顶部按钮切换，默认只搜当前选中的库；打开「全部库」时跨全部知识库检索。
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
@@ -328,6 +333,39 @@ export default function KnowledgeView() {
       setSummaryEditing(null)
       await refreshBases()
       notify('概括已保存，新会话中生效', 'success')
+    } else notify('保存失败：' + (res.error || '未知错误'), 'error')
+  }
+
+  function openDocNavEditor(d: KnowledgeDoc) {
+    setDocNavEditing(d.id)
+    setDocNavDraft({
+      oneLine: d.summaryOneLine ?? '',
+      keywords: (d.keywords ?? []).join('\n'),
+      full: d.fullSummary ?? ''
+    })
+  }
+
+  async function saveDocNav() {
+    const kbId = activeId
+    const docId = docNavEditing
+    if (!kbId || !docId) return
+    setDocNavSaving(true)
+    // 只按顿号、逗号、换行分隔；不再用 \s 吞掉词内空格。保留重复项，用户写几条存几条。
+    const keywords = docNavDraft.keywords.split(/[、,，\n\r]+/).map(s => s.trim()).filter(Boolean)
+    const res = await safeCall(
+      () => window.api.knowledgeSetDocSummary(kbId, docId, {
+        summaryOneLine: docNavDraft.oneLine,
+        keywords,
+        fullSummary: docNavDraft.full
+      }),
+      '保存文档导航信息失败'
+    )
+    setDocNavSaving(false)
+    if (!res) return
+    if (res.success) {
+      setDocNavEditing(null)
+      await loadDocs(kbId)
+      notify('文档定位与关键词已保存，新会话中生效', 'success')
     } else notify('保存失败：' + (res.error || '未知错误'), 'error')
   }
 
@@ -902,7 +940,7 @@ export default function KnowledgeView() {
                 <div key={i} className="kb-hit">
                   <div className="kb-hit-head">
                     {h.kbName && <span className="kb-hit-kb">{h.kbName}</span>}
-                    <span className="kb-hit-doc">{h.docName} · 第 {h.ordinal + 1} 块</span>
+                    <span className="kb-hit-doc">{h.docName} · 第 {h.ordinal} 块</span>
                     {/* 这个数字是「库内 BM25 相关度」：全库检索时各库 idf 各算各的，
                         列表按融合排名、数字不一定递减；当前库检索时按分数降序。 */}
                     <span
@@ -1073,6 +1111,9 @@ export default function KnowledgeView() {
                       {d.chunkCount} 块 · {formatChars(d.chars)}
                     </span>
                     <div className="kb-row-actions" onClick={e => e.stopPropagation()}>
+                      <button className="btn btn-ghost btn-icon kb-row-btn" aria-label="设置定位与关键词" {...tip('设置一句定位、关键词与完整概括')} onClick={() => openDocNavEditor(d)}>
+                        <Settings2 size={12} />
+                      </button>
                       <button className="btn btn-ghost btn-icon kb-row-btn" aria-label="预览内容" {...tip('预览内容')} onClick={() => setPreviewDoc(d)}>
                         <Eye size={12} />
                       </button>
@@ -1098,7 +1139,59 @@ export default function KnowledgeView() {
         </div>
       </div>
 
-      {/* 文档内容预览：Portal 到 body 的居中大面板（全文/分块双视图 + 关键词高亮导航） */}
+      {/* 文档导航编辑：一句定位 + 关键词 + 完整概括，用户手写；不预填、不改已有内容 */}
+      {docNavEditing && createPortal(
+        <>
+          <div className="kb-modal-backdrop" onClick={() => setDocNavEditing(null)} />
+          <div className="kb-preview kb-docnav-modal">
+            <div className="kb-preview-head">
+              <Settings2 size={16} />
+              <span className="kb-preview-title">设置文档定位与关键词</span>
+              <button className="btn btn-ghost btn-icon" aria-label="关闭" onClick={() => setDocNavEditing(null)}><X size={14} /></button>
+            </div>
+            <div className="kb-docnav-body">
+              <p style={{ margin: 0, opacity: 0.7, fontSize: 12 }}>一句定位 + 关键词别写长文，模型据此选文档并构造检索词；长篇说明放完整概括，默认不读。</p>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
+                一句定位
+                <textarea
+                  className="kb-summary-textarea"
+                  value={docNavDraft.oneLine}
+                  rows={2}
+                  onChange={e => setDocNavDraft(p => ({ ...p, oneLine: e.target.value }))}
+                  placeholder="例：ComfyUI 生图工作流的安装与节点配置"
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
+                关键词（用顿号、逗号或换行分隔，可手动拉伸）
+                <textarea
+                  className="kb-summary-textarea"
+                  value={docNavDraft.keywords}
+                  rows={2}
+                  onChange={e => setDocNavDraft(p => ({ ...p, keywords: e.target.value }))}
+                  placeholder={'每行一个，或顿号分隔：\nComfyUI\n工作流\n节点\n工作流导出'}
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
+                完整概括（可选，模型按需展开时才读）
+                <textarea
+                  className="kb-summary-textarea"
+                  value={docNavDraft.full}
+                  rows={6}
+                  onChange={e => setDocNavDraft(p => ({ ...p, full: e.target.value }))}
+                  placeholder="写清楚这个文档涵盖哪些主题、术语与章节。"
+                />
+              </label>
+              <div className="kb-summary-editor-foot">
+                <button className="btn btn-ghost btn-sm" onClick={() => setDocNavEditing(null)}>取消</button>
+                <button className="btn btn-primary btn-sm" disabled={docNavSaving} onClick={() => void saveDocNav()}>
+                  {docNavSaving ? '保存中…' : '保存'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
       {manualEditor && createPortal(
         <ManualChunkModal
           fileName={manualEditor.name}
@@ -1162,7 +1255,7 @@ export default function KnowledgeView() {
                 <div className="kb-chunk-list">
                   {docContent.chunks.map(c => (
                     <div key={c.ordinal} className="kb-chunk-card">
-                      <div className="kb-chunk-head">第 {c.ordinal + 1} 块 · {c.text.replace(/\s/g, '').length.toLocaleString()} 字</div>
+                      <div className="kb-chunk-head">第 {c.ordinal} 块 · {c.text.replace(/\s/g, '').length.toLocaleString()} 字</div>
                       <div className="kb-chunk-text"><Hl text={c.text} terms={hlQuery.trim() ? [hlQuery] : []} /></div>
                     </div>
                   ))}

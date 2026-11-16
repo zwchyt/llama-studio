@@ -790,6 +790,12 @@ export interface KnowledgeDoc {
   chars?: number
   /** 该文档导入时使用的分块方式中文标签（自动分段/标题分块/分隔符/单块/手动划块；旧文档缺失） */
   chunkMode?: string
+  /** 用户手写的一句定位（≤60字），供工具二文档卡使用；旧文档缺失 */
+  summaryOneLine?: string
+  /** 用户手写的 3–8 个查询关键词，供工具二文档卡使用；旧文档缺失 */
+  keywords?: string[]
+  /** 用户手写的完整概括，工具二按 docId 可选展开，常路径不读；旧文档缺失 */
+  fullSummary?: string
 }
 
 /** knowledge-doc-content 返回：按块序拼接还原的全文 + 分块结构 */
@@ -804,7 +810,7 @@ export interface KnowledgeDocContent {
 /** knowledge-query 命中的文档段落 */
 export interface KnowledgeHit {
   docName: string
-  ordinal: number      // 知识库中该块的块号
+  ordinal: number      // 知识库中该块的块号（从 1 开始）
   text: string
   /** 最小匹配（BM25 时从块内容取；向量检索时由相似度取得），用于排序展示 */
   title?: string

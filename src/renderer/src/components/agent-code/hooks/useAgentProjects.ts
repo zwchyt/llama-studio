@@ -29,7 +29,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { notify } from '../../../store/notificationStore'
 import { useStore } from '../../../store/useStore'
 import { safeCall } from '../../../utils/safeCall'
-import { uniqueId } from '../utils/ids'
+import { uniqueId, newSessionId } from '../utils/ids'
 import { baseName } from '../utils/paths'
 import { sessionLastActive } from '../utils/session'
 import {
@@ -116,7 +116,7 @@ export function useAgentProjects({ storedProjects }: {
 }) {
   /** 新建会话：标题按模式区分，通用模式叫「新聊天」更像聊天历史 */
   function newSession(mode: AgentMode): AgentSession {
-    return { id: uniqueId('sess'), title: mode === 'chat' ? '新聊天' : '新会话', messages: [] }
+    return { id: newSessionId(), title: mode === 'chat' ? '新聊天' : '新会话', messages: [] }
   }
   /** 保证通用工作区存在且至少有一条会话：通用模式切过去必须能直接开聊，不能是空列表 */
   function ensureChatWorkspace(list: AgentProject[]): AgentProject[] {
@@ -360,7 +360,7 @@ export function useAgentProjects({ storedProjects }: {
       会一并切到通用模式——新会话属于通用工作区，留在编码模式会看不到它。 */
   const openNewChatSession = useCallback((title?: string) => {
     // 先生成会话对象再写入：这样 pid/sid 一定是同一份数据，不会出现指针错位
-    const sess: AgentSession = { id: uniqueId('sess'), title: title || '新聊天', messages: [] }
+    const sess: AgentSession = { id: newSessionId(), title: title || '新聊天', messages: [] }
     setProjects(prev => {
       const idx = prev.findIndex(isChatWorkspace)
       if (idx < 0) return [...prev, { ...freshChatWorkspace(), sessions: [sess] }]
@@ -386,6 +386,9 @@ export function useAgentProjects({ storedProjects }: {
     // 避免 fallback 会话未插入时指针悬空导致消息写进虚空。
     const proj = projects.find(p => p.id === projId)
     if (!proj) return
+    // 立即删磁盘文件：不能再只靠 800ms 防抖回写 + GC——删除后很快退出时那次保存会丢失，
+    // 重启就把已删会话读回来。主进程接口幂等，失败静默（下一次 GC 仍会兜底清理）。
+    window.api?.deleteAgentSession(sessId).catch(() => { })
     const projMode = projectMode(proj)
     let next = proj.sessions.filter(s => s.id !== sessId)
     if (next.length === 0) next = [newSession(projMode)]
@@ -409,7 +412,7 @@ export function useAgentProjects({ storedProjects }: {
     // 复制上下文：消息逐条浅拷贝（toolCalls / attachments 一并带上），压缩摘要也带上
     const copied = src.messages.map(m => ({ ...m }))
     const sess: AgentSession = {
-      id: uniqueId('sess'),
+      id: newSessionId(),
       title: `${src.title}（编码）`,
       messages: copied,
       ...(src.memory ? { memory: { ...src.memory } } : {}),

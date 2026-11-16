@@ -23,8 +23,10 @@ import {
   KNOWLEDGE_SEARCH_TOOL_NAME, KNOWLEDGE_READ_TOOL_NAME,
   KNOWLEDGE_TOOL_TOP_K_DEFAULT as TOOL_TOP_K_DEFAULT,
   KNOWLEDGE_TOOL_TOP_K_MAX as TOOL_TOP_K_MAX,
-  formatKnowledgeBaseList, formatKnowledgeOverview,
+  formatKnowledgeBaseList, formatKnowledgeDocCards, formatKnowledgeDocSummary,
   formatKnowledgeCatalog, formatKnowledgeChunks,
+  KNOWLEDGE_ONELINE_MAX,
+  type KnowledgeDocCard,
 } from '../../shared/tools/knowledgeSpecs'
 
 // ── 分块参数 ──
@@ -112,12 +114,25 @@ function buildPhraseMatchers(query: string): RegExp[] {
 // ── 持久化数据结构 ──
 // 库概括不设长度上限：写多长由用户在界面里自己控制，代码不做截断。
 interface KbChunk { docId: string; docName: string; ordinal: number; text: string; title?: string }
-interface KbDoc { id: string; name: string; chunkCount: number; chars?: number; chunkMode?: string }
+// 文档级导航字段：一句定位 + 关键词由用户手写（工具二的文档卡直接取用），
+// fullSummary 是可选展开的完整概括。三者都可选，旧文档缺字段时工具层走回退，不写空值。
+interface KbDoc {
+  id: string
+  name: string
+  chunkCount: number
+  chars?: number
+  chunkMode?: string
+  summaryOneLine?: string
+  keywords?: string[]
+  fullSummary?: string
+}
 interface KbFile { id: string; name: string; createdAt: string; summary?: string; docs: KbDoc[]; chunks: KbChunk[] }
 
 // ── 内存 BM25 索引（按 kbId 缓存）──
 interface KbIndex {
-  chunks: { docName: string; ordinal: number; text: string; title: string; tf: Map<string, number>; len: number }[]
+  // docId 随索引一起缓存：工具三按文档过滤时直接用它，避免再回查库文件；
+  // 与 docName 并存是因为文档可能重名，过滤只认稳定的 docId。
+  chunks: { docId: string; docName: string; ordinal: number; text: string; title: string; tf: Map<string, number>; len: number }[]
   df: Map<string, number>
   totalLen: number
 }
@@ -183,7 +198,16 @@ function safeDocFileName(name: string): string {
 }
 
 interface KbMetaFile { id: string; name: string; createdAt: string; summary?: string }
-interface KbDocFile { id: string; name: string; chunkMode?: string; chars?: number; chunks?: { ordinal: number; text: string; title?: string }[] }
+interface KbDocFile {
+  id: string
+  name: string
+  chunkMode?: string
+  chars?: number
+  summaryOneLine?: string
+  keywords?: string[]
+  fullSummary?: string
+  chunks?: { ordinal: number; text: string; title?: string }[]
+}
 
 // 读库：优先新结构（目录 + _kb.json + 每文档一个 json），回退旧单文件
 function loadKb(id: string): KbFile | null {
@@ -202,10 +226,18 @@ function loadKb(id: string): KbFile | null {
         const d = JSON.parse(readFileSync(join(dir, f), 'utf-8')) as KbDocFile
         if (!d || typeof d.id !== 'string' || typeof d.name !== 'string') continue
         const list = Array.isArray(d.chunks) ? d.chunks : []
-        docs.push({ id: d.id, name: d.name, chunkCount: list.length, chars: d.chars, chunkMode: d.chunkMode })
-        for (const c of list) {
-          if (!c || typeof c.text !== 'string' || !Number.isInteger(c.ordinal)) continue
-          chunks.push({ docId: d.id, docName: d.name, ordinal: c.ordinal, text: c.text, title: c.title })
+        docs.push({
+          id: d.id, name: d.name, chunkCount: list.length, chars: d.chars, chunkMode: d.chunkMode,
+          ...(typeof d.summaryOneLine === 'string' && d.summaryOneLine ? { summaryOneLine: d.summaryOneLine } : {}),
+          ...(Array.isArray(d.keywords) && d.keywords.length ? { keywords: d.keywords.filter(k => typeof k === 'string' && k.trim()) } : {}),
+          ...(typeof d.fullSummary === 'string' && d.fullSummary ? { fullSummary: d.fullSummary } : {})
+        })
+        const validChunks = list.filter(c => c && typeof c.text === 'string' && Number.isInteger(c.ordinal))
+        // 兼容旧 0-based 数据：最小块号为 0 时整体 +1，统一成 1-based
+        const minOrdinal = validChunks.reduce((m, c) => Math.min(m, c.ordinal), Number.MAX_SAFE_INTEGER)
+        const shift = minOrdinal === 0 ? 1 : 0
+        for (const c of validChunks) {
+          chunks.push({ docId: d.id, docName: d.name, ordinal: c.ordinal + shift, text: c.text, title: c.title })
         }
       }
       docs.sort((a, b) => a.name.localeCompare(b.name))
@@ -255,6 +287,9 @@ function saveKb(kb: KbFile): void {
       id: doc.id, name: doc.name,
       ...(doc.chunkMode ? { chunkMode: doc.chunkMode } : {}),
       ...(doc.chars !== undefined ? { chars: doc.chars } : {}),
+      ...(doc.summaryOneLine ? { summaryOneLine: doc.summaryOneLine } : {}),
+      ...(doc.keywords?.length ? { keywords: doc.keywords } : {}),
+      ...(doc.fullSummary ? { fullSummary: doc.fullSummary } : {}),
       chunks: docChunks
     }
     writeFileSync(join(dir, file), JSON.stringify(payload, null, 2))
@@ -561,7 +596,7 @@ function getIndex(kb: KbFile): KbIndex {
     const tokens = [...tokenize(c.text), ...headTokens]
     const tf = new Map<string, number>()
     for (const t of tokens) tf.set(t, (tf.get(t) ?? 0) + 1)
-    idx.chunks.push({ docName: c.docName, ordinal: c.ordinal, text: c.text, title: c.title ?? '', tf, len: tokens.length })
+    idx.chunks.push({ docId: c.docId, docName: c.docName, ordinal: c.ordinal, text: c.text, title: c.title ?? '', tf, len: tokens.length })
     idx.totalLen += tokens.length
     for (const term of tf.keys()) idx.df.set(term, (idx.df.get(term) ?? 0) + 1)
   }
@@ -570,7 +605,7 @@ function getIndex(kb: KbFile): KbIndex {
 }
 
 // ── 精简 BM25 检索（面向文档块）──
-function search(idx: KbIndex, query: string, limit: number): { hits: KnowledgeHit[]; lowConfidence: boolean; suggestedQuery: string } {
+function search(idx: KbIndex, query: string, limit: number, docId?: string): { hits: KnowledgeHit[]; lowConfidence: boolean; suggestedQuery: string } {
   const qTokens = tokenize(query)
   if (qTokens.length === 0) return { hits: [], lowConfidence: true, suggestedQuery: '' }
   const N = idx.chunks.length
@@ -602,6 +637,9 @@ function search(idx: KbIndex, query: string, limit: number): { hits: KnowledgeHi
   const scored: { i: number; score: number; coverage: number; adjacent: number }[] = []
   for (let i = 0; i < N; i++) {
     const c = idx.chunks[i]
+    // 文档内检索：只给目标文档的块打分。idf / avgdl 仍用整库统计（保持分数口径与整库一致，
+    // 也让 lowConfidence 阈值在两种模式下可比），仅候选范围收窄到该文档。
+    if (docId && c.docId !== docId) continue
     let score = 0
     let matchedIdf = 0
     for (const term of effective) {
@@ -751,7 +789,7 @@ export function readKnowledgeChunks(
   if (list.length === 0) return { hits: [], error: '未指定要读取的块' }
   const out: { docName: string; ordinal: number; title: string; text: string; kbName: string }[] = []
   for (const r of list) {
-    if (typeof r?.ordinal !== 'number' || !Number.isInteger(r.ordinal) || r.ordinal < 0) continue
+    if (typeof r?.ordinal !== 'number' || !Number.isInteger(r.ordinal) || r.ordinal < 1) continue
     const name = typeof r.docName === 'string' ? r.docName : ''
     const c = kb.chunks.find(x => x.ordinal === r.ordinal && (name ? x.docName === name : true))
     if (c && !out.some(o => o.docName === c.docName && o.ordinal === c.ordinal)) {
@@ -762,13 +800,15 @@ export function readKnowledgeChunks(
 }
 
 // ── 查询单库（工具三按已选库逐个调用；跨库合并由 callKnowledgeTool 里的融合排名做）──
-export function queryKnowledgeBase(kbId: string, query: string, limit?: number): { hits: KnowledgeHit[]; lowConfidence: boolean; suggestedQuery: string } {
+export function queryKnowledgeBase(kbId: string, query: string, limit?: number, docId?: string): { hits: KnowledgeHit[]; lowConfidence: boolean; suggestedQuery: string } {
   if (!query || typeof query !== 'string') return { hits: [], lowConfidence: true, suggestedQuery: '' }
   const kb = loadKb(kbId)
   if (!kb) return { hits: [], lowConfidence: true, suggestedQuery: '' }
+  // 指定 docId 但该库没有这个文档时直接空结果，交由上层决定是否回退整库检索。
+  if (docId && !kb.docs.some(d => d.id === docId)) return { hits: [], lowConfidence: true, suggestedQuery: '' }
   const idx = getIndex(kb)
   const cap = Math.max(1, Math.min(Math.floor(limit ?? QUERY_LIMIT_DEFAULT), QUERY_LIMIT_MAX))
-  const r = search(idx, query.slice(0, 2000), cap)
+  const r = search(idx, query.slice(0, 2000), cap, docId)
   // 标注来源库：跨库合并目录/读取时模型需要知道每条来自哪个库
   for (const h of r.hits) h.kbName = kb.name
   return r
@@ -858,6 +898,8 @@ interface KbToolSession {
   listDone: boolean
   overviewDone: boolean
   catalog: Map<string, { kbId: string; docName: string; ordinal: number }>
+  // D 编号 → 真实文档编号：工具二默认只给 D1/D2…，执行层在这里映射回稳定 docId。
+  docMap: Map<string, { kbId: string; docId: string }>
 }
 const KB_SESSION_MAX = 64
 // 工具侧的条数来自共享规格，与界面「试搜索」的 8/12 分开，改工具不会连界面结果一起变少。
@@ -869,7 +911,7 @@ function getKbSession(sessionId: string): KbToolSession {
     kbToolSessions.set(sessionId, hit)
     return hit
   }
-  const fresh: KbToolSession = { selectedKbIds: [], listDone: false, overviewDone: false, catalog: new Map() }
+  const fresh: KbToolSession = { selectedKbIds: [], listDone: false, overviewDone: false, catalog: new Map(), docMap: new Map() }
   kbToolSessions.set(sessionId, fresh)
   while (kbToolSessions.size > KB_SESSION_MAX) {
     const oldest = kbToolSessions.keys().next().value
@@ -892,9 +934,59 @@ function kbTypeOf(kbId: string, boundKbId: string): string {
   return boundKbId && kbId === boundKbId ? '项目绑定' : '本机'
 }
 
+/** 文档卡回退：用户没写一句定位时，取首块前若干字；没写关键词时，从首块标题+正文抽高频词。
+    只影响工具二的展示，不写回磁盘、不参与 BM25 索引。 */
+function docCardOf(kb: KbFile, d: KbDoc): KnowledgeDocCard {
+  const first = kb.chunks.filter(c => c.docId === d.id).sort((a, b) => a.ordinal - b.ordinal)[0]
+  const firstText = (first?.text ?? '').replace(/\s+/g, ' ').trim()
+  const one = (d.summaryOneLine ?? '').replace(/\s+/g, ' ').trim().slice(0, KNOWLEDGE_ONELINE_MAX)
+    || firstText.slice(0, KNOWLEDGE_ONELINE_MAX)
+    || d.name
+  let keywords = (d.keywords ?? []).filter(k => typeof k === 'string' && k.trim())
+  if (keywords.length === 0) {
+    const freq = new Map<string, number>()
+    for (const t of tokenize(`${first?.title ?? ''} ${firstText}`)) freq.set(t, (freq.get(t) ?? 0) + 1)
+    keywords = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([t]) => t)
+  }
+  return { docId: d.id, docName: d.name, summaryOneLine: one, keywords, chunkCount: d.chunkCount }
+}
+
+/** 按稳定 docId 找文档；找不到返回 null（工具二据此提示重新取卡片）。 */
+function findDoc(kb: KbFile, docId: string): KbDoc | null {
+  return kb.docs.find(d => d.id === docId) ?? null
+}
+
+/** docId 入参解析：D 编号（工具二默认只给短号）映射回真实 docId，原样 UUID 也兼容。
+    返回 { docId, kbId? }；D 编号不在表里时 docId 为空，由调用方提示重新取文档列表。 */
+function resolveDocRef(s: KbToolSession, raw: string): { docId: string; kbId?: string } {
+  const value = raw.trim()
+  if (/^D\d+$/i.test(value)) {
+    const hit = s.docMap.get(value.toUpperCase())
+    return hit ? { docId: hit.docId, kbId: hit.kbId } : { docId: '' }
+  }
+  return { docId: value } // 兼容旧调用方直接传真实 docId
+}
+
+/** 选中库时重建 D 编号表：整库文档按当前顺序编号，D1…Dn，翻页不改变编号。 */
+function rebuildDocMap(s: KbToolSession, kbId: string, docs: readonly { id: string }[]): void {
+  s.docMap.clear()
+  docs.forEach((d, i) => s.docMap.set(`D${i + 1}`, { kbId, docId: d.id }))
+}
+
+/** 文档内检索：先按 docId 收窄，整库无命中由调用方决定是否回退，避免把无关块混进结果。 */
+function queryScoped(kbId: string, query: string, cap: number, docId: string) {
+  const inDoc = queryKnowledgeBase(kbId, query, cap, docId)
+  if (inDoc.hits.length > 0) return { result: inDoc, scoped: true }
+  const whole = queryKnowledgeBase(kbId, query, cap)
+  return { result: whole, scoped: false }
+}
+
 export function callKnowledgeTool(toolName: string, args: Record<string, unknown>): string {
   const libs = listKnowledgeBases()
-  const summaries = libs.map(l => ({ id: l.id, name: l.name, summary: l.summary ?? '' }))
+  const summaries = libs.map(l => ({
+    id: l.id, name: l.name, summary: l.summary ?? '',
+    docCount: cachedKbMeta(l.id)?.docCount
+  }))
   const sessionId = typeof args._sessionId === 'string' && args._sessionId.trim() ? args._sessionId.trim() : 'default'
   const boundKbId = typeof args._boundKbId === 'string' ? args._boundKbId : ''
   const session = getKbSession(sessionId)
@@ -909,6 +1001,7 @@ export function callKnowledgeTool(toolName: string, args: Record<string, unknown
     session.listDone = true
     session.overviewDone = true
     session.catalog.clear()
+    session.docMap.clear()
     logKbTool(sessionId, toolName, `preset=${session.selectedKbIds.length}`)
     return `已初始化知识库会话，默认检索 ${session.selectedKbIds.length} 个库。`
   }
@@ -918,38 +1011,58 @@ export function callKnowledgeTool(toolName: string, args: Record<string, unknown
     session.overviewDone = false
     session.selectedKbIds = []
     session.catalog.clear()
+    session.docMap.clear()
     logKbTool(sessionId, toolName, `libs=${libs.length} selection-reset`)
     return formatKnowledgeBaseList(summaries)
   }
 
   if (toolName === KNOWLEDGE_OVERVIEW_TOOL_NAME) {
-    const raw = args.kbs ?? args.kb
-    const wants = (typeof raw === 'string' ? [raw.trim()] : Array.isArray(raw) ? raw.map(v => String(v).trim()) : [])
-      .filter(Boolean)
-    if (wants.length === 0) {
+    const want = typeof args.kb === 'string' ? args.kb.trim() : ''
+    if (!want) {
       logKbTool(sessionId, toolName, 'rejected=empty-selection')
-      return '请先用 kb 指定要选中的知识库（库名或库编号，可传数组一次选多个）。库清单由 knowledge_list 返回；若还没调用过，请先调用 knowledge_list。'
+      return '请先用 kb 指定要选中的知识库（用 knowledge_list 返回的库名）。'
     }
-    type KbLib = { id: string; name: string; summary?: string }
-    const picked = wants
-      .map(w => libs.find(l => l.name === w || l.id === w))
-      .filter((l): l is KbLib => !!l)
-    if (picked.length === 0) {
-      logKbTool(sessionId, toolName, `rejected=not-found(${wants.join(',')})`)
-      return `未找到知识库「${wants.join('、')}」。请先调用 knowledge_list 取最新的库名与库编号。`
+    const picked = libs.find(l => l.name === want || l.id === want)
+    if (!picked) {
+      logKbTool(sessionId, toolName, `rejected=not-found(${want})`)
+      return `未找到知识库「${want}」。请先调用 knowledge_list 取最新库名。`
     }
     const alive = pruneKbIds(session, libs)
-    if (args.replace === true) session.selectedKbIds = []
-    // 多次调用可攒出多库列表；replace=true 时先清空，即换库。
-    session.selectedKbIds = [...new Set([...session.selectedKbIds, ...picked.map(l => l.id)])]
+
+    // 可选展开：传 docId（D 编号）才返回该文档的关键词与概括，常路径不走这里。
+    // 展开不重置已选库与目录；D 编号必须先在上一次默认调用里建好表。
+    const rawDocId = typeof args.docId === 'string' ? args.docId.trim() : ''
+    if (rawDocId) {
+      const ref = resolveDocRef(session, rawDocId)
+      if (/^D\d+$/i.test(rawDocId) && ref.kbId && ref.kbId !== picked.id) {
+        logKbTool(sessionId, toolName, `rejected=doc-cross-lib(${rawDocId})`)
+        return `文档编号 ${rawDocId.toUpperCase()} 不属于知识库「${picked.name}」。请重新调用 knowledge_overview 取该库的文档名列表。`
+      }
+      const kb = loadKb(picked.id)
+      const doc = ref.docId && kb ? findDoc(kb, ref.docId) : null
+      if (!kb || !doc) {
+        logKbTool(sessionId, toolName, `rejected=doc-not-found(${rawDocId})`)
+        return `文档编号 ${rawDocId} 不在知识库「${picked.name}」里。请重新调用 knowledge_overview 取文档名列表。`
+      }
+      const card = docCardOf(kb, doc)
+      logKbTool(sessionId, toolName, `expand-doc=${rawDocId} alive=${alive.length}`)
+      return formatKnowledgeDocSummary(picked.name, card, doc.fullSummary ?? '')
+    }
+
+    // 默认：换库，只保留当前库，旧目录与 D 编号表立即失效。
+    session.selectedKbIds = [picked.id]
     session.overviewDone = true
-    session.catalog.clear() // 选库范围变了，旧目录的块编号立即失效
-    const selected = session.selectedKbIds
-      .map(id => libs.find(l => l.id === id))
-      .filter((l): l is KbLib => !!l)
-      .map(l => ({ id: l.id, name: l.name }))
-    logKbTool(sessionId, toolName, `selected=${session.selectedKbIds.join(',')} replace=${args.replace === true} alive=${alive.length}`)
-    return formatKnowledgeOverview(summaries, picked.map(l => l.id), selected)
+    session.catalog.clear()
+    const kb = loadKb(picked.id)
+    if (!kb) {
+      logKbTool(sessionId, toolName, 'rejected=kb-gone')
+      return `知识库「${picked.name}」暂时读不到，请稍后重试或重新调用 knowledge_list。`
+    }
+    rebuildDocMap(session, picked.id, kb.docs)
+    const cards = kb.docs.map(d => docCardOf(kb, d))
+    const cursor = Math.max(0, Math.floor(typeof args.cursor === 'number' ? args.cursor : 0))
+    logKbTool(sessionId, toolName, `selected=${picked.id} docs=${cards.length} cursor=${cursor} alive=${alive.length}`)
+    return formatKnowledgeDocCards({ name: picked.name, id: picked.id }, cards, cursor)
   }
 
   if (toolName === KNOWLEDGE_SEARCH_TOOL_NAME) {
@@ -957,7 +1070,7 @@ export function callKnowledgeTool(toolName: string, args: Record<string, unknown
     const selected = pruneKbIds(session, libs)
     if (!session.listDone || !session.overviewDone || selected.length === 0) {
       logKbTool(sessionId, toolName, 'rejected=no-selection')
-      return '当前会话还没有选中的知识库，检索已拒绝。请先调用 knowledge_list 获取库名与库编号，再用 knowledge_overview 选中要查的库；库编号由代码层注入本工具，不需要你填写。'
+      return '当前会话还没有选中的知识库，检索已拒绝。请先调用 knowledge_list 获取库名，再用 knowledge_overview 选中要查的库；检索范围由代码层注入本工具，不需要你填写。'
     }
     const targets = selected
       .map(id => libs.find(l => l.id === id))
@@ -966,8 +1079,35 @@ export function callKnowledgeTool(toolName: string, args: Record<string, unknown
     // 工具侧的条数与界面「试搜索」分开：改这里不会让界面结果变少。
     const cap = Math.max(1, Math.min(Math.floor(typeof args.limit === 'number' ? args.limit : TOOL_TOP_K_DEFAULT), TOOL_TOP_K_MAX))
     session.catalog.clear() // 每次检索重新编号，旧目录立即失效
-    const runQuery = (q: string) => targets.map(t => {
-      const r = queryKnowledgeBase(t.id, q, cap)
+    // docId 由 knowledge_overview 的文档名列表给出（D 编号或真实 docId）：
+    // 限定在该文档所属库内、先做文档内检索，无命中自动回退整库；不在已选库则拒绝。
+    const rawDocId = typeof args.docId === 'string' ? args.docId.trim() : ''
+    let docId = ''
+    if (rawDocId) {
+      docId = resolveDocRef(session, rawDocId).docId
+      if (!docId) {
+        logKbTool(sessionId, toolName, `rejected=doc-not-found(${rawDocId})`)
+        return `文档编号 ${rawDocId} 不在当前文档列表里。请重新调用 knowledge_overview 取文档名列表；若只想整库检索，不要传 docId。`
+      }
+    }
+    let scopedNote = ''
+    let scopeTargets = targets
+    if (docId) {
+      const owner = targets.find(t => { const k = loadKb(t.id); return !!k && !!findDoc(k, docId) })
+      if (!owner) {
+        logKbTool(sessionId, toolName, `rejected=doc-not-in-selection(${rawDocId})`)
+        return `文档编号 ${rawDocId} 不在当前选中的知识库里。请重新调用 knowledge_overview 取文档名列表；若只想整库检索，不要传 docId。`
+      }
+      scopeTargets = [owner]
+    }
+    const runQuery = (q: string) => scopeTargets.map(t => {
+      const scoped = docId ? queryScoped(t.id, q, cap, docId) : null
+      const r = scoped ? scoped.result : queryKnowledgeBase(t.id, q, cap)
+      if (docId && scoped) {
+        scopedNote = scoped.scoped
+          ? `（已在文档「${findDoc(loadKb(t.id)!, docId)?.name ?? docId}」内检索）`
+          : '（该文档内无命中，已自动回退到整库检索）'
+      }
       for (const h of r.hits) {
         h.kbId = t.id
         h.kbType = kbTypeOf(t.id, boundKbId)
@@ -1007,7 +1147,7 @@ export function callKnowledgeTool(toolName: string, args: Record<string, unknown
         retried = true
       }
     }
-    const libLabel = `（已检索 ${targets.length} 个已选知识库：${targets.map(t => t.name).join('、')}）`
+    const libLabel = `（已检索 ${scopeTargets.length} 个已选知识库：${scopeTargets.map(t => t.name).join('、')}）${scopedNote}`
     if (merged.length === 0) {
       return `知识库未命中任何内容。${libLabel}\n`
         + (suggestion ? `建议改用这些关键词重搜：${suggestion}\n` : '')
@@ -1029,13 +1169,13 @@ export function callKnowledgeTool(toolName: string, args: Record<string, unknown
     })
     logKbTool(sessionId, toolName, `libs=${targets.length} hits=${merged.length} chunks=${session.catalog.size} cap=${cap}`
       + (merged.length ? ` [${merged.map(h => `${h.chunkId}=${h.kbId}/${h.docName}/${h.ordinal}`).join(' ')}]` : ''))
-    // 自动附带全局最优块正文：mergeKbHits 已按融合排名降序
+    // 自动附带排名第一块正文：只给编号、块标题、文档名与块号，相关度/词序不占上下文。
     const top = merged[0]!
-    const auto = `\n\n【已附带排名最高的分块正文（块 ${top.chunkId}，库内相关度 ${top.score}${top.adjacent ? `，词序吻合 ${Math.round(top.adjacent * 100)}%` : ''}，无需再调用 knowledge_read 读它）】\n`
-      + `【${top.title || '（无标题）'}】(${top.kbName ? `${top.kbName} · ` : ''}${top.docName} · 第${top.ordinal + 1}块)\n${top.text}`
+    const auto = `\n\n【${top.chunkId} · ${top.title || '（无标题）'}】${top.docName} · 第${top.ordinal}块\n${top.text}`
     const someLow = adopted.some(r => r.lowConfidence)
-    const hint = someLow ? '\n\n（其中部分知识库的命中置信度偏低，对应条目请谨慎引用，必要时换关键词重搜。）' : ''
-    return formatKnowledgeCatalog({ hits: merged, lowConfidence: someLow }) + auto + hint
+    const hint = someLow ? '\n\n（部分知识库命中置信度偏低，引用请谨慎，必要时换关键词重搜。）' : ''
+    const scope = scopedNote ? `${scopedNote}\n` : ''
+    return scope + formatKnowledgeCatalog({ hits: merged, lowConfidence: someLow }) + auto + hint
   }
 
   if (toolName === KNOWLEDGE_READ_TOOL_NAME) {
@@ -1149,7 +1289,7 @@ export function registerKnowledgeIpc(appRoot: string): void {
     const chunkOpts = doc?.chunking && typeof doc.chunking === 'object' ? doc.chunking : {}
     const pieces = chunkText(text, { ...chunkOpts, lang: (name.split('.').pop() || '').toLowerCase() })
     if (pieces.length === 0) return { success: false, error: '分块结果为空' }
-    pieces.forEach((p, i) => kb.chunks.push({ docId, docName: name, ordinal: i, text: p, title: deriveChunkTitle(p) }))
+    pieces.forEach((p, i) => kb.chunks.push({ docId, docName: name, ordinal: i + 1, text: p, title: deriveChunkTitle(p) }))
     // chars = 有效字符数（剔除空格/缩进/换行等空白），供文档列表/预览展示统计
     const cleanedLen = visibleCharLen(text.replace(/\r\n/g, '\n').slice(0, DOC_TEXT_CAP))
     // 记录该文档实际使用的分块方式（每个文档可不同，列表按文档展示）
@@ -1236,7 +1376,8 @@ export function registerKnowledgeIpc(appRoot: string): void {
       }
       const idMap = new Map<string, string>()
       const docs: KbDoc[] = []
-      for (const d of raw.docs as { id?: unknown; name?: unknown; chunkCount?: unknown; chars?: unknown; chunkMode?: unknown }[]) {
+      type ImportDoc = { id?: unknown; name?: unknown; chunkCount?: unknown; chars?: unknown; chunkMode?: unknown; summaryOneLine?: unknown; keywords?: unknown; fullSummary?: unknown }
+      for (const d of raw.docs as ImportDoc[]) {
         if (!d || typeof d.id !== 'string') continue
         const nid = randomUUID()
         idMap.set(d.id, nid)
@@ -1245,15 +1386,29 @@ export function registerKnowledgeIpc(appRoot: string): void {
           name: String(d.name ?? '未命名文档').trim().slice(0, 200) || '未命名文档',
           chunkCount: Math.max(0, Math.floor(Number(d.chunkCount) || 0)),
           chars: Number(d.chars) > 0 ? Number(d.chars) : undefined,
-          chunkMode: typeof d.chunkMode === 'string' ? d.chunkMode : undefined
+          chunkMode: typeof d.chunkMode === 'string' ? d.chunkMode : undefined,
+          ...(typeof d.summaryOneLine === 'string' && d.summaryOneLine ? { summaryOneLine: d.summaryOneLine } : {}),
+          ...(Array.isArray(d.keywords) && d.keywords.length ? { keywords: d.keywords.filter(k => typeof k === 'string' && k.trim()) } : {}),
+          ...(typeof d.fullSummary === 'string' && d.fullSummary ? { fullSummary: d.fullSummary } : {})
         })
       }
       const chunks: KbChunk[] = []
-      for (const c of raw.chunks as { docId?: unknown; ordinal?: unknown; text?: unknown }[]) {
-        if (!c || typeof c.docId !== 'string' || typeof c.text !== 'string' || !c.text.trim()) continue
-        const nid = idMap.get(c.docId)
+      // 导出文件可能是旧 0-based 编号：按文档分组、按原序号排序后统一重排为 1-based，避免 0 与 1 撞号
+      const rawChunks = (raw.chunks as { docId?: unknown; ordinal?: unknown; text?: unknown }[])
+        .filter(c => c && typeof c.docId === 'string' && typeof c.text === 'string' && c.text.trim())
+      const byOldDoc = new Map<string, typeof rawChunks>()
+      for (const c of rawChunks) {
+        const arr = byOldDoc.get(c.docId as string) ?? []
+        arr.push(c)
+        byOldDoc.set(c.docId as string, arr)
+      }
+      for (const [oldDocId, arr] of byOldDoc) {
+        const nid = idMap.get(oldDocId)
         if (!nid) continue
-        chunks.push({ docId: nid, docName: '', ordinal: Math.max(0, Math.floor(Number(c.ordinal) || 0)), text: c.text.slice(0, DOC_TEXT_CAP) })
+        arr.sort((a, b) => Number(a.ordinal) - Number(b.ordinal))
+        arr.forEach((c, idx) => chunks.push({
+          docId: nid, docName: '', ordinal: idx + 1, text: (c.text as string).slice(0, DOC_TEXT_CAP)
+        }))
       }
       for (const c of chunks) c.docName = docs.find(d => d.id === c.docId)?.name ?? '未命名文档'
       if (docs.length === 0 || chunks.length === 0) return { success: false, error: '文件中没有可导入的文档内容' }
@@ -1290,6 +1445,33 @@ export function registerKnowledgeIpc(appRoot: string): void {
     // 概括不参与 BM25 索引，无需失效 indexes；saveKb 改变 mtime 会让 kbMetaCache 自动失效。
     saveKb(kb)
     return { success: true, meta: metaOf(kb) }
+  })
+
+  // ── 文档导航字段（一句定位 / 关键词 / 完整概括）：用户手写，随文档文件保存。
+  // 只改指定文档的三个字段，不重建索引（这些字段不参与 BM25），不动其它文档与库概括。
+  ipcMain.handle('knowledge-set-doc-summary', async (_e, kbId: string, docId: string, patch: {
+    summaryOneLine?: string; keywords?: string[]; fullSummary?: string
+  }) => {
+    const kb = loadKb(kbId)
+    if (!kb) return { success: false, error: '知识库不存在' }
+    const doc = kb.docs.find(d => d.id === docId)
+    if (!doc) return { success: false, error: '文档不存在' }
+    const p = patch && typeof patch === 'object' ? patch : {}
+    // 用户手写内容不设长度/条数上限：写多少存多少，只是 trim 去首尾空白。
+    const one = typeof p.summaryOneLine === 'string' ? p.summaryOneLine.trim() : undefined
+    if (one) doc.summaryOneLine = one
+    else delete doc.summaryOneLine
+    const kws = Array.isArray(p.keywords)
+      ? p.keywords.filter(k => typeof k === 'string' && k.trim()).map(k => k.trim())
+      : []
+    if (kws.length) doc.keywords = kws
+    else delete doc.keywords
+    const full = typeof p.fullSummary === 'string' ? p.fullSummary.trim() : undefined
+    if (full) doc.fullSummary = full
+    else delete doc.fullSummary
+    // saveKb 只重写文档文件与 _kb.json；这些字段不进索引，无需 indexes.delete。
+    saveKb(kb)
+    return { success: true }
   })
 
   // ── 重命名文档：同步更新所有块的冗余 docName ──
