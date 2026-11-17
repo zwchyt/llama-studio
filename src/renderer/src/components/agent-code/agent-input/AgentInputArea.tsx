@@ -19,7 +19,7 @@
 // 注：组内成员类型尽量用 ReturnType<typeof 对应 hook> 表达，hook 增删成员时
 // 类型会自动跟随，不需要同步改这里。
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AlertCircle, Brain, Eye, Globe, Image as ImageIcon, Search, SearchX, Wrench } from 'lucide-react'
 import { CheckIcon, ChevronDownIcon, CircleStopIcon, FileTextIcon, FolderIcon, FolderOpenIcon, GitBranchIcon, MicIcon, PlayIcon, PlusIcon, RefreshCwIcon, SendIcon, ServerIcon, TrashIcon, XIcon, AudioLinesIcon } from '@animateicons/react/lucide'
@@ -29,7 +29,7 @@ import AskUserQuestionInline from '../../AskUserQuestionInline'
 import { AgentPrefillBar, AgentTopBarCtx, AniIconButton } from '../agent-message'
 import { AttachmentTextPreview, type PreviewableAttachment } from '../agent-message/AttachmentTextPreview'
 import { PackedTextEditor } from './PackedTextEditor'
-import { RichInput, type ChipKind, type RichValue } from './RichInput'
+import { RichInput, claimChipTip, type ChipKind, type RichValue } from './RichInput'
 import { Markdown } from '../../../markdown/markstream'
 import { INPUT_FOLD_CAP } from '../utils/constants'
 import { TOOL_META, formatToolArgs } from '../agent-tools'
@@ -387,6 +387,12 @@ export function AgentInputArea({
   const [editingChipId, setEditingChipId] = useState<string | null>(null)
   // 悬停预览：胶囊是编辑器里的 DOM 节点，内容（Markdown / 图片）只有这里拿得到
   const [chipTip, setChipTip] = useState<{ id: string; kind: ChipKind; rect: DOMRect } | null>(null)
+  // 预览卡关闭延迟：离开胶囊不立即关，给鼠标留出移进卡里滚动阅读的时间；
+  // 卡的 onMouseEnter 会取消这次关闭，onMouseLeave 立即关（悬停桥，见 .chat-inline-chip-tip）。
+  const chipTipCloseRef = useRef<number | null>(null)
+  const chipTipCardRef = useRef<HTMLDivElement>(null)
+  // 统一关闭入口（稳定引用，供互斥桥 claimChipTip 登记使用）
+  const closeChipTip = useCallback(() => setChipTip(null), [])
   const editingChip = editingChipId ? chips.find(c => c.id === editingChipId) ?? null : null
   // 原生 title 换自定义气泡（与导航栏同款，见 useBubbleTip；return 里放一次 {tipNode}）；
   // 斜杠补全行已有 onMouseEnter，走 showTip/hideTip 合并进去
@@ -506,6 +512,9 @@ export function AgentInputArea({
     const removed = prevChipIdsRef.current.filter(id => !alive.has(id))
     prevChipIdsRef.current = v.chips.map(c => c.id)
     if (removed.length === 0) return
+    // 删胶囊时鼠标常停在 × 上，节点移除后 mouseout 不再触发，悬停预览卡会残留成
+    // 空白圆角块（内容指向已删的胶囊）。随差集一起清，覆盖 × / 退格 / 编辑清空三条路径。
+    setChipTip(prev => prev && removed.includes(prev.id) ? null : prev)
     removed.forEach(id => {
       if (attachedFiles.some(a => a.id === id)) removeAttachment(id)
       else if (codeSnippets.some(s => s.id === id)) removeCodeSnippet(id)
@@ -523,9 +532,12 @@ export function AgentInputArea({
       className="chat-input-area" ref={chatInputAreaRef}
       // 拖放区覆盖整个输入区（工具栏、上下文行都算）：原来只绑在 .chat-input-field 上，
       // 拖到旁边一点就失效，用户只能精确对准输入框。
-      onDragOver={e => { if (!isFileDrag(e)) return; handleInputDragOver(e); setDragOver(true) }}
-      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false) }}
-      onDrop={e => { setDragOver(false); handleInputDrop(e) }}
+      // 悬停阶段让插入光标跟随鼠标：文件拖放不会自动移动光标，手动按坐标定位，
+      // 滑到哪里松手就插到哪里。caretToPointer 幂等，高频 dragover 里开销可忽略；
+      // 文字拖拽不进来，不影响正常选区。
+      onDragOver={e => { if (!isFileDrag(e)) return; editorRef.current?.caretToPointer(e.clientX, e.clientY); handleInputDragOver(e); setDragOver(true) }}
+      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) { setDragOver(false); editorRef.current?.hideDragCaret() } }}
+      onDrop={e => { setDragOver(false); editorRef.current?.hideDragCaret(); handleInputDrop(e) }}
     >
       {tipNode}
       {tipHoverNode}
@@ -709,7 +721,24 @@ export function AgentInputArea({
                   onChange={handleEditorChange}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
-                  onChipHover={(id, kind, rect) => setChipTip(id && kind && rect ? { id, kind, rect } : null)}
+                  onChipHover={(id, kind, rect) => {
+                    if (id && kind && rect) {
+                      // 进入新胶囊：取消未决关闭，立即切换内容，并关掉另一套（消息气泡）还挂着的卡
+                      if (chipTipCloseRef.current) { clearTimeout(chipTipCloseRef.current); chipTipCloseRef.current = null }
+                      setChipTip({ id, kind, rect })
+                      claimChipTip(closeChipTip)
+                    } else {
+                      // 离开胶囊：只有内容可滚动（卡能交互）才延迟关，给鼠标移进卡的时间；
+                      // 不可滚动的卡立即关——快速跨胶囊移动不会出现两卡短暂并存的重叠
+                      if (chipTipCloseRef.current) clearTimeout(chipTipCloseRef.current)
+                      const card = chipTipCardRef.current
+                      if (card && card.scrollHeight > card.clientHeight + 1) {
+                        chipTipCloseRef.current = window.setTimeout(() => { chipTipCloseRef.current = null; closeChipTip() }, 150)
+                      } else {
+                        closeChipTip()
+                      }
+                    }
+                  }}
                   onEditChip={(id, kind) => {
                     if (kind === 'image' || kind === 'file') {
                       const att = attachedFiles.find(a => a.id === id)
@@ -1043,8 +1072,14 @@ export function AgentInputArea({
       {attPreview && <AttachmentTextPreview att={attPreview} onClose={() => setAttPreview(null)} />}
       {chipTip && createPortal(
         <div
+          ref={chipTipCardRef}
           className={`chat-inline-chip-tip${chipTip.kind === 'image' ? ' chat-inline-chip-tip--img' : ' chat-msg-markdown'}`}
           style={{ left: Math.max(8, Math.min(chipTip.rect.left, window.innerWidth - 380)), top: chipTip.rect.top - 8 }}
+          // 悬停桥的"卡"侧：鼠标进卡取消关闭（可以滚动阅读），离卡立即关
+          onMouseEnter={() => {
+            if (chipTipCloseRef.current) { clearTimeout(chipTipCloseRef.current); chipTipCloseRef.current = null }
+          }}
+          onMouseLeave={() => { chipTipCloseRef.current = null; closeChipTip() }}
         >
           {chipTip.kind === 'image'
             ? (() => {

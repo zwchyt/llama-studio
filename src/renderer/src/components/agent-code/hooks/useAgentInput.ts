@@ -28,7 +28,7 @@
 // 附件与文件选择器一段）。已验证各段在「本 hook 调用点 ~ 原声明处」区间内均无引用，
 // 因此可整体前移到调用点一次性收口。
 
-import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { notify } from '../../../store/notificationStore'
 import { usePopoverDismiss } from '../../../utils/usePopoverDismiss'
 import type { RichChip, RichInputHandle } from '../agent-input/RichInput'
@@ -183,6 +183,13 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
   // text=选中的排版文本（复制用），md=同一选区还原出的 Markdown 源（引用用），
   // x/y=选区外接矩形的视口坐标（用 position:fixed 定位）。
   const [selectionPopover, setSelectionPopover] = useState<{ text: string; md: string; x: number; y: number } | null>(null)
+  // 指示线与引用弹层联动：弹层出现→在输入框失焦前的光标位置显示插入指示线，
+  // 让用户看清「引用胶囊会插到哪」；弹层无论从哪条路径关闭（点引用/点外部/滚动/
+  // 取消选区）都会把 state 置空，指示线随之消失，无需各调用点单独处理。
+  useEffect(() => {
+    if (selectionPopover) editorRef.current?.showCaretBar()
+    else editorRef.current?.hideDragCaret()
+  }, [selectionPopover])
   // 源码预览选区浮动按钮：选中代码后弹出「引用代码」按钮。
   const [previewSelPopover, setPreviewSelPopover] = useState<{ x: number; y: number; startLine: number; endLine: number; text: string } | null>(null)
   const previewSelRef = useRef<HTMLDivElement>(null)
@@ -196,9 +203,12 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
   }, [])
 
   // 新增一个引用块胶囊：插在光标处（与折叠胶囊同一套内联机制）。
+  // 点引用按钮时编辑器已失焦（焦点在按钮上），先恢复到失焦前的光标位置再插入——
+  // 用户把光标放到哪就插到哪；从未点过输入框才退到末尾。
   const addRefChip = useCallback((text: string) => {
     const t = text.trim()
     if (!t) return
+    editorRef.current?.restoreCaret()
     editorRef.current?.insertChip(t, 'quote')
   }, [])
 
@@ -471,6 +481,12 @@ export function useAgentInput({ draftScope = 'default', attachScope = 'default' 
     }
   }, [])
   const handleInputDrop = useCallback((e: React.DragEvent) => {
+    // drop 前把光标定到松手点：文件拖放不会自动移动光标，悬停期间 dragover 已让
+    // 光标跟随鼠标，这里按 drop 坐标再定一次，保证胶囊落在鼠标松开的位置。
+    editorRef.current?.caretToPointer(e.clientX, e.clientY)
+    // 定位完立刻隐藏指示线：drop 之后 dragover 不再触发，caretToPointer 刚刚
+    // 又把指示线显示了出来，不隐藏的话它会一直卡在插入点（只能靠再次拖入覆盖）。
+    editorRef.current?.hideDragCaret()
     // 多文件拖入支持
     const filesJson = e.dataTransfer.getData('application/x-agent-files')
     if (filesJson) {

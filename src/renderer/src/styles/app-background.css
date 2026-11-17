@@ -152,7 +152,8 @@ html:not(.theme-dark) .app.has-bg :is(.agent-code-chat-item,
    页面内的装饰性块（.welcome-chip / .hub-empty-chip / .welcome-icon-wrap …）**不要**加：
    它们属于页面面的一部分，本来就该跟着一起透。
    漏一个的后果不是"背景图被挡住"，而是反过来——那层变半透明、图从它里面透出来，
-   看着像图层错位（.agent-code-scroll-bottom-btn 就这么漏过一次）。
+   看着像图层错位。唯一例外是 .agent-code-scroll-bottom-btn：它按需求跟随背景强度、
+   再多透 10 个百分点，单独在下面处理，不在这份钉回实心的名单里。
    自检办法：扫一遍全 CSS 里「position: fixed/absolute + background: var(--surface)」的规则，
    逐条对照本名单。伪元素（如 .delete-popover::before）不用单列——--surface 从宿主继承。 */
 .app.has-bg :is(
@@ -164,7 +165,6 @@ html:not(.theme-dark) .app.has-bg :is(.agent-code-chat-item,
   .agent-code-tools-menu, .agent-code-proj-menu, .agent-task-card, .agent-file-picker,
   .agent-code-add-workspace-menu, .agent-sel-popover, .agent-msg-search,
   .agent-chat-rail-preview, .agent-git-jump,
-  .agent-code-scroll-bottom-btn,
   .agent-ref-chip-tip, .chat-input-fold-chip-tip,
   /* 图片胶囊的悬停预览卡 */
   .agent-img-pill-preview,
@@ -175,4 +175,13 @@ html:not(.theme-dark) .app.has-bg :is(.agent-code-chat-item,
   .delete-popover, .update-banner .ub-menu, .kb-del-pop, .settings-view .st-bg-del,
   .ac-tip, .file-tree-img-tooltip) {
   --surface: var(--surface-solid);
+}
+
+/* ── 滚到底部悬浮按钮：比面板再多透 10 个百分点 ──
+   它悬在对话内容之上但只是个小圆钮、不承载文字，透过背景图不会读不清，
+   所以不钉回实心：按面板同一条 --app-bg-fill 再减 10 个点跟透。
+   30% 地板：背景强度拉满时 --app-bg-fill 只剩 10%，再减就全透、箭头看不见。 */
+html:not(.theme-dark) .app.has-bg .agent-code-scroll-bottom-btn {
+  --surface: color-mix(in srgb, var(--surface-solid) max(30%, calc(var(--app-bg-fill) - 10%)), transparent);
+  --surface-hover: color-mix(in srgb, var(--surface-hover-solid) max(30%, calc(var(--app-bg-fill) - 10%)), transparent);
 }

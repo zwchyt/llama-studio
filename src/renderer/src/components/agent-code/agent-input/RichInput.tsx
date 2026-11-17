@@ -30,6 +30,20 @@ export type RichValue = { text: string; chips: RichChip[] }
 
 export type RichInputHandle = {
   focus: () => void
+  /** 聚焦并把光标钉到内容末尾（编辑器从未有过光标时的兜底） */
+  focusEnd: () => void
+  /** 把插入光标定位到 (x, y) 所指的位置：文件拖放悬停时光标跟随鼠标滑动，
+      滑到哪里松手就插到哪里（Chromium 对文件拖放不会自动移动光标，需手动定位）。
+      鼠标不在编辑器文字区上时，退回失焦前的光标位置 / 末尾。 */
+  caretToPointer: (x: number, y: number) => void
+  /** 在失焦前的光标位置显示插入指示线（纯几何定位，不碰选区、不抢焦点）——
+      引用弹层出现时标出「胶囊会插到哪」，插入或弹层关闭后由 hideDragCaret 消失 */
+  showCaretBar: () => void
+  /** 聚焦并恢复到失焦前的光标位置；从未记录过则钉到末尾（点引用按钮等编辑器
+      已失焦的场景用——用户光标放在哪，插入就在哪） */
+  restoreCaret: () => void
+  /** 隐藏拖放插入指示线（drop / 拖离编辑器时调用） */
+  hideDragCaret: () => void
   /** 在光标处插入纯文本（走 execCommand，保留原生撤销栈） */
   insertText: (text: string) => void
   /** 在光标处插入一颗胶囊（长粘贴 = fold；选区引用 = quote） */
@@ -79,8 +93,19 @@ export const CHIP_ICON: Record<ChipKind, string> = {
   code: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 8-4 4 4 4M15 8l4 4-4 4"/></svg>',
 }
 
-/** DOM → { text, chipIds }：文本节点直取，<br> 记换行，胶囊记一个占位符 */
-function serializeIds(root: Node): { text: string; ids: string[] } {
+// ── 两套胶囊预览卡的互斥桥 ──
+// 输入框（AgentInputArea）与消息气泡（SentChip）各自渲染预览卡，且都有「离开胶囊
+// 延迟关」的悬停桥；不互斥的话，跨这两套快速移动鼠标时两张卡会短暂并存重叠。
+// 任何卡打开时登记自己的关闭函数，登记动作会立即关掉另一套还挂着的卡。
+// 不需要注销：卡卸载后 close 只是幂等的 setState，残留登记无害。
+let activeChipTipCloser: (() => void) | null = null
+export function claimChipTip(close: () => void): void {
+  const prev = activeChipTipCloser
+  activeChipTipCloser = close
+  if (prev && prev !== close) prev()
+}
+
+/** DOM → { text, chipIds }：文本节点直取，<br> 记换行，胶囊记一个占位符 */function serializeIds(root: Node): { text: string; ids: string[] } {
   const ids: string[] = []
   let text = ''
   const walk = (node: Node): void => {
@@ -111,7 +136,10 @@ function serializeIds(root: Node): { text: string; ids: string[] } {
     })
   }
   walk(root)
-  return { text, ids }
+  // 首尾的换行只来自 contenteditable 为「只有胶囊、无文字」时自动补的占位 <br>，
+  // 不是用户内容。带进去的话 renderDom 重建时又会变成换行文本节点，
+  // 表现为胶囊上方那块空的可编辑行。这里去掉首尾换行，中间换行照常保留。
+  return { text: text.replace(/^\n+|\n+$/g, ''), ids }
 }
 
 function buildChip(chip: RichChip): HTMLElement {
@@ -181,6 +209,10 @@ export const RichInput = forwardRef<RichInputHandle, Props>(function RichInput(
   // 带着旧 value.chips 的重渲染，ref 会被旧数组盖回去 —— 下一轮 serialize 就查不到
   // 刚插入的胶囊，正文退化成空串（表现为「引用胶囊没内容 / 气泡里没有胶囊」）。
   // ref 只在三处更新：renderDom（外部写入）、serialize（每次序列化后自纠）、insertChip。
+  // 注意：DOM 驱动的更新（打字/插胶囊/删胶囊）必须同步它，否则 useLayoutEffect 会误判
+  // 为「外部写入」而 renderDom 重建整段 DOM，光标就丢回最前面；而 value 驱动的更新
+  // （编辑弹窗改胶囊正文）绝不能同步，否则检测不到变化、DOM 上的标签不刷新。
+  const renderedChipsRef = useRef<RichChip[]>([])
 
   const serialize = useCallback((): RichValue => {
     const el = elRef.current
@@ -190,16 +222,20 @@ export const RichInput = forwardRef<RichInputHandle, Props>(function RichInput(
     // 顺序以 DOM 为准：父级只管内容，位置由编辑器决定
     const chips = ids.map(id => byId.get(id) ?? { id, text: '', kind: 'fold' as ChipKind })
     chipsRef.current = chips
+    renderedChipsRef.current = chips
     return { text, chips }
   }, [value])
 
   const resize = useCallback(() => {
     const el = elRef.current
     if (!el) return
+    const { text, ids } = serializeIds(el)
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`
     el.style.overflowY = el.scrollHeight > maxHeight + 1 ? 'auto' : 'hidden'
-    el.dataset.empty = serializeIds(el).text.length === 0 ? 'true' : 'false'
+    // 只有胶囊没有文字也算「有内容」：serializeIds 会 trim 首尾换行，纯胶囊输入框
+    // 的 text 是空串，漏判的话占位提示会顶在胶囊前面
+    el.dataset.empty = text.length === 0 && ids.length === 0 ? 'true' : 'false'
   }, [maxHeight])
 
   /** 把 value 写进 DOM（只在外部写入时调用） */
@@ -218,7 +254,6 @@ export const RichInput = forwardRef<RichInputHandle, Props>(function RichInput(
   }, [resize])
 
   // 外部写入同步：只在「值与 DOM 不一致」时重建（打字时两者一致，直接跳过）
-  const renderedChipsRef = useRef<RichChip[]>([])
   useLayoutEffect(() => {
     const el = elRef.current
     if (!el) return
@@ -252,6 +287,13 @@ export const RichInput = forwardRef<RichInputHandle, Props>(function RichInput(
     sel?.addRange(r)
   }, [])
 
+  // 失焦前的光标位置（serialize 口径偏移）：桌面拖入文件会让窗口获焦、光标被
+  // Chromium 丢回最前面，restoreCaret 靠它还原用户离开前的位置
+  const lastCaretRef = useRef<number | null>(null)
+  // 文件拖放悬停时的自定义插入指示线：系统"+复制"徽章是 OS 画的，去不掉，
+  // 但可以用主题色竖条标记插入点，比细光标显眼得多
+  const dragCaretRef = useRef<HTMLDivElement>(null)
+
   const caretOffset = useCallback((): number => {
     const el = elRef.current
     const sel = window.getSelection()
@@ -280,7 +322,23 @@ export const RichInput = forwardRef<RichInputHandle, Props>(function RichInput(
       sel.removeAllRanges()
       sel.addRange(r)
     } else {
+      // 桌面拖入 / 程序化插入：焦点不在编辑器内，选区不在 el 里。
+      // 只 appendChild 的话，contenteditable 会在胶囊旁自动补一个 <br> 占位行：
+      // serializeIds 把 <br> 读成 '\n'，胶囊就被挤到各自一行（多个文件上下堆叠），
+      // 且胶囊上方会多出一块"可以输入文字"的空行。
+      // 显式把光标落在胶囊之后，与有选区的分支保持一致，不再产生占位行。
       el.appendChild(node)
+      const after = document.createRange()
+      after.setStartAfter(node)
+      after.collapse(true)
+      sel?.removeAllRanges()
+      sel?.addRange(after)
+    }
+    // 编辑器里只有不可编辑的胶囊时，浏览器会在胶囊前面自动补一个 <br> 当光标落点，
+    // pre-wrap 下就显示成「胶囊上方还能打字的一行」。没有真实文字时把这个开头占位 <br>
+    // 清掉；光标仍由上面的 range 放在胶囊右边，上方空行随之消失。
+    if (!Array.from(el.childNodes).some(c => c.nodeType === Node.TEXT_NODE && (c as Text).data.trim())) {
+      while (el.firstChild?.nodeName === 'BR') el.firstChild.remove()
     }
     // 新胶囊的正文由调用方持有：把「旧 chips + 新胶囊」一起回传，顺序以 DOM 为准
     const { text: nextText, ids } = serializeIds(el)
@@ -288,13 +346,135 @@ export const RichInput = forwardRef<RichInputHandle, Props>(function RichInput(
     byId.set(id, { id, text, kind, label })
     const nextChips = ids.map(i => byId.get(i) ?? { id: i, text: '', kind })
     chipsRef.current = nextChips
+    // DOM 驱动的插入必须同步这个镜像，否则 useLayoutEffect 会把这次 onChange 误判成
+    // 外部写入而 renderDom 重建整段 DOM——光标丢回输入框最前面。
+    renderedChipsRef.current = nextChips
     onChange({ text: nextText, chips: nextChips })
     resize()
     el.focus()
+    // focus 后再把光标钉回新胶囊右边：拖放等场景下 Chromium 会忽略 focus 前设置的选区，
+    // 把光标丢回编辑器最前面（还会在开头补一个 <br> 当光标载体），于是光标一直在最前面
+    // 闪烁，下一次插入也会插到最前面。这里强制落回胶囊右边。
+    const caret = document.createRange()
+    caret.setStartAfter(node)
+    caret.collapse(true)
+    const finalSel = window.getSelection()
+    finalSel?.removeAllRanges()
+    finalSel?.addRange(caret)
+    // focus 可能又在开头补了占位 <br>：一并清掉（光标已钉在胶囊右边，不受影响）
+    if (!Array.from(el.childNodes).some(c => c.nodeType === Node.TEXT_NODE && (c as Text).data.trim())) {
+      while (el.firstChild?.nodeName === 'BR') el.firstChild.remove()
+    }
   }, [value, onChange, resize])
 
   useImperativeHandle(ref, () => ({
     focus: () => elRef.current?.focus(),
+    // 聚焦并把光标钉到内容末尾：拖入文件等「编辑器原本无焦点」的场景，
+    // 裸 focus() 会让 Chromium 把光标放到最前面；先建好末尾选区再插入，
+    // 后续 insertChip 就走与项目内添加完全一致的光标处插入路径。
+    focusEnd: () => {
+      const el = elRef.current
+      if (!el) return
+      el.focus()
+      const r = document.createRange()
+      r.selectNodeContents(el)
+      r.collapse(false)
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      sel?.addRange(r)
+    },
+    caretToPointer: (x: number, y: number) => {
+      const el = elRef.current
+      if (!el) return
+      const hit = document.caretRangeFromPoint(x, y)
+      const bar = dragCaretRef.current
+      if (hit && el.contains(hit.startContainer)) {
+        // 鼠标悬在编辑器文字/胶囊上：光标跟随到所指位置（胶囊上会落到它前/后）
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        sel?.addRange(hit)
+        // 同步移动自定义插入指示线（系统"+复制"徽章挡住细光标时也能看清插入点）
+        if (bar) {
+          let { left, top, height } = hit.getBoundingClientRect()
+          if (height === 0) {
+            const host = (hit.startContainer.nodeType === Node.TEXT_NODE
+              ? hit.startContainer.parentElement
+              : hit.startContainer) as HTMLElement | null
+            const hr = host?.getBoundingClientRect()
+            if (hr) { top = hr.top; height = hr.height }
+          }
+          if (height > 0 && !(left === 0 && top === 0)) {
+            bar.style.display = 'block'
+            bar.style.left = `${left}px`
+            bar.style.top = `${top}px`
+            bar.style.height = `${height}px`
+          } else {
+            bar.style.display = 'none'
+          }
+        }
+        return
+      }
+      // 鼠标不在编辑器文字区上（工具栏/上下文行）：退回失焦前位置；从未记录过则末尾
+      if (bar) bar.style.display = 'none'
+      el.focus()
+      const off = lastCaretRef.current
+      const sel = window.getSelection()
+      if (off == null) {
+        const r = document.createRange()
+        r.selectNodeContents(el)
+        r.collapse(false)
+        sel?.removeAllRanges()
+        sel?.addRange(r)
+        return
+      }
+      // 内容已变化导致越界时 rangeAt 自带末尾兜底
+      caretAt(off)
+    },
+    restoreCaret: () => {
+      const el = elRef.current
+      if (!el) return
+      el.focus()
+      const off = lastCaretRef.current
+      const sel = window.getSelection()
+      if (off == null) {
+        const r = document.createRange()
+        r.selectNodeContents(el)
+        r.collapse(false)
+        sel?.removeAllRanges()
+        sel?.addRange(r)
+        return
+      }
+      // 恢复到失焦前的位置；内容已变化导致越界时 rangeAt 自带末尾兜底
+      caretAt(off)
+    },
+    showCaretBar: () => {
+      const el = elRef.current
+      if (!el) return
+      const off = lastCaretRef.current
+      const bar = dragCaretRef.current
+      // 从没点过输入框：没有可标记的位置（引用会插到末尾），不显示
+      if (!bar || off == null) return
+      const r = rangeAt(el, off)
+      let { left, top, height } = r.getBoundingClientRect()
+      if (height === 0) {
+        const host = (r.startContainer.nodeType === Node.TEXT_NODE
+          ? r.startContainer.parentElement
+          : r.startContainer) as HTMLElement | null
+        const hr = host?.getBoundingClientRect()
+        if (hr) { top = hr.top; height = hr.height }
+      }
+      if (height > 0 && !(left === 0 && top === 0)) {
+        bar.style.display = 'block'
+        bar.style.left = `${left}px`
+        bar.style.top = `${top}px`
+        bar.style.height = `${height}px`
+      } else {
+        bar.style.display = 'none'
+      }
+    },
+    hideDragCaret: () => {
+      if (dragCaretRef.current) dragCaretRef.current.style.display = 'none'
+    },
     insertText: (text: string) => {
       const el = elRef.current
       if (!el) return
@@ -344,6 +524,7 @@ export const RichInput = forwardRef<RichInputHandle, Props>(function RichInput(
   }), [emit, insertChip, caretAt, caretOffset, resize, onChange])
 
   return (
+    <>
     <div
       ref={elRef}
       className={`chat-input chat-input-editor${className ? ` ${className}` : ''}`}
@@ -355,6 +536,8 @@ export const RichInput = forwardRef<RichInputHandle, Props>(function RichInput(
       data-placeholder={placeholder}
       spellCheck={false}
       onInput={() => { if (!composingRef.current) emit() }}
+      // 失焦时记住光标位置：拖文件回来后 restoreCaret 据此还原，光标不会跑到最前面
+      onBlur={() => { lastCaretRef.current = caretOffset() }}
       // 组字期间不 emit，data-empty 不会更新，占位伪元素会把组字文字顶到提示后面
       onCompositionStart={() => {
         composingRef.current = true
@@ -410,5 +593,7 @@ export const RichInput = forwardRef<RichInputHandle, Props>(function RichInput(
         onEditChip?.(id, (chipEl.dataset.kind as ChipKind) ?? 'fold')
       }}
     />
+    <div ref={dragCaretRef} className="chat-drag-caret" aria-hidden="true" />
+    </>
   )
 })

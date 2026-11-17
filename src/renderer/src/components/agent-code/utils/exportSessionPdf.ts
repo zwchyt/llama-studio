@@ -8,10 +8,44 @@ import remarkGfm from 'remark-gfm'
 import remarkRehype from 'remark-rehype'
 import rehypeKatex from 'rehype-katex'
 import rehypeStringify from 'rehype-stringify'
-import type { AgentSession } from '../../../../../shared/types'
+import type { AgentSession, AgentMessage } from '../../../../../shared/types'
+import { parseThinkSegments } from '../agent-message'
+import { TOOL_METAS } from '../../../utils/tools'
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;')
+}
+
+type ToolCall = NonNullable<AgentMessage['toolCalls']>[number]
+
+/** 工具结果/参数摘要上限：搜索返回动辄上万字符，截断避免把 PDF 撑爆 */
+const TOOL_TEXT_CAP = 600
+function clip(text: string): string {
+  const t = text.trim()
+  return t.length <= TOOL_TEXT_CAP ? t : `${t.slice(0, TOOL_TEXT_CAP)}\n…（已省略 ${t.length - TOOL_TEXT_CAP} 字符）`
+}
+/** 参数可能是压缩单行 JSON，展开成可读多行后再截断 */
+function prettyArgs(raw: string): string {
+  if (!raw) return ''
+  try { return clip(JSON.stringify(JSON.parse(raw), null, 2)) } catch { return clip(raw) }
+}
+
+/** 把一条工具调用的「名称 + 参数 + 结果 + 状态」渲染成 PDF 里的一个小块 */
+function renderToolCall(tc: ToolCall): string {
+  const label = TOOL_METAS[tc.name]?.label ?? tc.name
+  const args = prettyArgs(tc.args ?? '')
+  const result = clip(tc.result ?? '')
+  const flags = [
+    tc.failed ? '失败' : '',
+    tc.status === 'await_approval' ? '等待确认' : '',
+    tc.truncated ? '结果已截断' : '',
+  ].filter(Boolean).join('、')
+  const status = flags ? ` <span class="tool-flag">（${escapeHtml(flags)}）</span>` : ''
+  return `<div class="tool-call">
+    <div class="tool-head">工具调用 · ${escapeHtml(label)} <span class="tool-name">${escapeHtml(tc.name)}</span>${status}</div>
+    ${args ? `<div class="tool-section"><span class="tool-key">参数</span><pre class="tool-pre">${escapeHtml(args)}</pre></div>` : ''}
+    ${result ? `<div class="tool-section"><span class="tool-key">结果</span><pre class="tool-pre">${escapeHtml(result)}</pre></div>` : ''}
+  </div>`
 }
 
 const markdownProcessor = unified()
@@ -56,6 +90,19 @@ const PDF_STYLE = `
   .atts { display: flex; flex-wrap: wrap; gap: 6pt; margin-top: 6pt; }
   .atts img { max-width: 160pt; max-height: 120pt; border: 1px solid #ddd; border-radius: 3pt; object-fit: contain; }
   .att-file { font-size: 9pt; color: #666; border: 1px solid #ddd; border-radius: 9pt; padding: 2pt 7pt; }
+  /* 思考链：与正文一眼分开的浅灰块，闭合成未闭合都按同一块呈现 */
+  .think-block { border-left: 3px solid #cbd5e1; background: #f6f7f9; border-radius: 0 4px 4px 0; padding: 6pt 10pt; margin: 6pt 0; }
+  .think-label { font-size: 9pt; font-weight: 700; color: #94a3b8; margin-bottom: 3pt; letter-spacing: .3pt; }
+  .think-body { font-size: 9.5pt; line-height: 1.6; color: #6b7280; }
+  .think-body p { margin: 3pt 0; }
+  /* 工具调用：与正文分开的浅框，参数/结果用等宽小字，超长已截断 */
+  .tool-call { border: 1px solid #e2e8f0; background: #fbfcfd; border-radius: 4px; padding: 5pt 9pt; margin: 6pt 0; page-break-inside: avoid; }
+  .tool-head { font-size: 9.5pt; font-weight: 700; color: #475569; margin-bottom: 3pt; }
+  .tool-name { font-weight: 400; color: #94a3b8; font-size: 8.5pt; }
+  .tool-flag { color: #b45309; font-weight: 400; font-size: 8.5pt; }
+  .tool-section { margin-top: 3pt; }
+  .tool-key { font-size: 8.5pt; color: #64748b; font-weight: 700; }
+  .tool-pre { background: #f1f5f9; border: none; margin: 2pt 0 0; padding: 5pt 7pt; font-size: 8.5pt; line-height: 1.45; white-space: pre-wrap; word-break: break-all; color: #475569; }
   @page { margin: 0; }
 `
 
@@ -64,8 +111,8 @@ export async function buildSessionPdfHtml(session: AgentSession): Promise<string
   const body = await Promise.all(
     session.messages
       // continuation 是「继续生成」注入的接续指令，界面上不显示，导出的对话记录里也不该出现。
-      // 空正文要有附件也算一条消息（只发文件不打字），否则整条消息在导出里消失。
-      .filter(m => !m.continuation && (m.content.trim() || (m.attachments?.length ?? 0) > 0))
+      // 空正文但有附件或纯工具调用也算一条消息，否则这类消息在导出里消失。
+      .filter(m => !m.continuation && (m.content.trim() || (m.attachments?.length ?? 0) > 0 || (m.toolCalls?.length ?? 0) > 0))
       .map(async m => {
         const roleLabel = m.role === 'user' ? '用户' : '助手'
         const stopped = m.stopped ? ' <span class="stopped">（已停止，内容不完整）</span>' : ''
@@ -77,7 +124,29 @@ export async function buildSessionPdfHtml(session: AgentSession): Promise<string
             : `<span class="att-file">附件：${escapeHtml(a.name)}</span>`
         ).join('')
         const attBlock = atts ? `<div class="atts">${atts}</div>` : ''
-        return `<div class="msg ${m.role}"><span class="role">${roleLabel}${stopped}</span><div class="body">${await markdownToHtml(m.content)}${attBlock}</div></div>`
+        // 按真实时间线渲染：有 segments 的消息直接用它交错输出「思考 / 正文 / 工具调用」，
+        // 顺序与界面一致（思考→工具→再思考→再工具…）。旧消息无 segments 时回退到
+        // <think> 标签解析，工具块附在正文后（旧数据没有顺序信息）。
+        let timelineHtml = ''
+        if (m.segments && m.segments.length > 0) {
+          const parts = await Promise.all(m.segments.map(async s => {
+            if (s.kind === 'tools') return s.toolCalls.map(renderToolCall).join('')
+            const html = await markdownToHtml(s.content)
+            return s.kind === 'think'
+              ? `<div class="think-block"><div class="think-label">思考过程</div><div class="think-body">${html}</div></div>`
+              : html
+          }))
+          timelineHtml = parts.join('')
+        } else {
+          const parts = await Promise.all(parseThinkSegments(m.content).map(async seg => {
+            const html = await markdownToHtml(seg.value)
+            return seg.type === 'think'
+              ? `<div class="think-block"><div class="think-label">思考过程</div><div class="think-body">${html}</div></div>`
+              : html
+          }))
+          timelineHtml = parts.join('') + (m.toolCalls ?? []).map(renderToolCall).join('')
+        }
+        return `<div class="msg ${m.role}"><span class="role">${roleLabel}${stopped}</span><div class="body">${timelineHtml}${attBlock}</div></div>`
       })
   )
   return `<!DOCTYPE html>

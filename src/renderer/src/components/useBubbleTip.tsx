@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 // ── 共用自定义气泡（useBubbleTip）──
@@ -32,7 +32,7 @@ const WRAP_LEN = 28
 const EDGE = 90
 const MIN_H = 44
 
-type TipState = { text: string; left: number; top: number; above: boolean }
+type TipState = { text: string; left: number; top: number; above: boolean; anchorCx?: number; arrowX?: number }
 
 export function useBubbleTip(placement: BubbleTipPlacement = 'below', delayMs = 0) {
   const [tip, setTip] = useState<TipState | null>(null)
@@ -41,6 +41,9 @@ export function useBubbleTip(placement: BubbleTipPlacement = 'below', delayMs = 
   const delayTimer = useRef<number | null>(null)
   // 当前气泡挂在哪个元素上：指针移开、锚点被卸载、用户按下时都靠它判断要不要收
   const anchorRef = useRef<HTMLElement | null>(null)
+  // 气泡节点：渲染后测量实际宽度，超视口时把 left 内收（EDGE=90 的粗钳制
+  // 兜不住宽气泡——顶栏最右的长文案气泡右半会伸出窗外被切）
+  const tipRef = useRef<HTMLDivElement | null>(null)
   const clearDelay = useCallback(() => {
     if (delayTimer.current !== null) { window.clearTimeout(delayTimer.current); delayTimer.current = null }
   }, [])
@@ -59,8 +62,37 @@ export function useBubbleTip(placement: BubbleTipPlacement = 'below', delayMs = 
     const belowTop = r.bottom + 9
     // 下面剩不下 MIN_H 就翻到上面（top = 上缘 - 9px，CSS translate(-50%,-100%) 顶对齐）
     const above = belowTop + MIN_H > window.innerHeight
-    setTip({ text, left: cx, top: above ? r.top - 9 : belowTop, above })
+    // anchorCx = 未钳制的锚点中心：气泡盒子被视口内收后，箭头靠它拉回锚点正上方
+    setTip({ text, left: cx, top: above ? r.top - 9 : belowTop, above, anchorCx: r.left + r.width / 2 })
   }, [placement])
+
+  // 气泡渲染后按实际宽度做一次视口内收：中心点 clamp（EDGE）只保证锚点不出界，
+  // 宽气泡的右半仍可能伸出视口（顶栏最右按钮的长文案就是这样被切的）。
+  // 内收的同时算出箭头补偿量（--tip-arrow-x）：箭头固定在气泡中心 50% 处，
+  // 盒子挪了之后要用锚点中心拉回去，否则尖尖指着的是旁边的按钮。
+  useLayoutEffect(() => {
+    const el = tipRef.current
+    if (!el || !tip) return
+    const r = el.getBoundingClientRect()
+    const MARGIN = 8
+    let next: TipState | null = null
+    if (r.right > window.innerWidth - MARGIN) {
+      next = { ...tip, left: tip.left - (r.right - (window.innerWidth - MARGIN)) }
+    } else if (r.left < MARGIN) {
+      next = { ...tip, left: tip.left + (MARGIN - r.left) }
+    }
+    if (tip.anchorCx != null && placement !== 'right') {
+      // 内收位移 + 气泡实际宽度 → 锚点中心相对气泡中心的偏移；钳在气泡半宽内（留 12px 给圆角）
+      const dxLeft = next ? next.left - tip.left : 0
+      const bubbleCx = r.left + r.width / 2 + dxLeft
+      const half = r.width / 2 - 12
+      const arrowX = Math.max(-half, Math.min(half, tip.anchorCx - bubbleCx))
+      if (next && next.arrowX === arrowX) next = null
+      else if (!next && tip.arrowX !== arrowX) next = { ...tip, arrowX }
+      else if (next) next.arrowX = arrowX
+    }
+    if (next && (next.left !== tip.left || (next.arrowX ?? 0) !== (tip.arrowX ?? 0))) setTip(next)
+  }, [tip, placement])
 
   // 收气泡的统一出口：清延迟、断锚点、关状态。三件事必须一起做，
   // 漏了断锚点，后面的 pointerover 判断会拿一个已经作废的元素去比。
@@ -117,12 +149,13 @@ export function useBubbleTip(placement: BubbleTipPlacement = 'below', delayMs = 
 
   const tipNode = tip ? createPortal(
     <div
+      ref={tipRef}
       role="tooltip"
       className={
         `nav-tip${placement === 'below' ? (tip.above ? ' nav-tip-above' : ' nav-tip-below') : ''}` +
         (tip.text.length > WRAP_LEN ? ' nav-tip-wrap' : '')
       }
-      style={{ left: tip.left, top: tip.top }}
+      style={{ left: tip.left, top: tip.top, '--tip-arrow-x': `${tip.arrowX ?? 0}px` } as React.CSSProperties}
     >
       {tip.text}
     </div>,

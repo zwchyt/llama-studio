@@ -8,6 +8,19 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- 开发时屏蔽 vite 客户端的 [vite] connecting/connected 连接日志（verbose 级噪音）。
+         仅当页面被 vite dev 注入（含 @vite/client 标签）时生效，生产构建不受影响；
+         普通内联脚本在解析期同步执行，先于所有 defer 的 module 脚本，能抢先拦截。 -->
+    <script>
+      if (document.querySelector('script[src*="@vite/client"]')) {
+        const origDebug = console.debug.bind(console)
+        console.debug = function (...args) {
+          const first = args[0]
+          if (typeof first === 'string' && /^\[vite\] (connecting|connected)/.test(first)) return
+          origDebug.apply(console, args)
+        }
+      }
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

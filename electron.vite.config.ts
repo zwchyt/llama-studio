@@ -242,6 +242,32 @@ function makePiWorkerPlugin(): Plugin {
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// postcss 浏览器占位：渲染进程里只有 @antv/infographic 的「字体导出」
+// 会用到 postcss（本项目取渲染结果直接用 svg.outerHTML，走不到该链路）。
+// 占位掉它后，vite 预构建不会再把 path/fs/url 等 node 内置模块打进浏览器
+// 包，控制台成串的 "externalized for browser compatibility" 警告随之消失。
+// ─────────────────────────────────────────────────────────────
+const POSTCSS_STUB_CODE =
+  `// 浏览器占位：postcss 仅被 @antv/infographic 的字体导出引用，渲染端不可用\n` +
+  `export default {\n` +
+  `  parse() { throw new Error('postcss is stubbed in renderer: font embedding not supported') },\n` +
+  `}\n`
+
+function makePostcssStubPlugin(): Plugin {
+  const virtualId = '\0ls-postcss-browser-stub'
+  return {
+    name: 'ls-postcss-browser-stub',
+    enforce: 'pre',
+    resolveId(source) {
+      return source === 'postcss' ? virtualId : null
+    },
+    load(id) {
+      return id === virtualId ? POSTCSS_STUB_CODE : null
+    },
+  }
+}
+
 export default defineConfig({
   // 注：electron-vite 自身的 "built successfully" / "-----" / "starting electron app"
   // 等提示由 CLI 的 `--logLevel silent` 抑制（见 package.json 的 dev/preview 脚本），
@@ -265,6 +291,7 @@ export default defineConfig({
     },
     plugins: [
       react(),
+      makePostcssStubPlugin(),
       {
         name: 'suppress-vite-url',
         configureServer(server) {
@@ -272,5 +299,26 @@ export default defineConfig({
         },
       },
     ],
+    // 依赖预构建走 esbuild 自己的解析、不经过 vite 插件容器，需另挂 esbuild
+    // 插件才能拦到 @antv/infographic 内部的 `import postcss`
+    optimizeDeps: {
+      esbuildOptions: {
+        plugins: [
+          {
+            name: 'ls-postcss-browser-stub-esbuild',
+            setup(build) {
+              build.onResolve({ filter: /^postcss$/ }, () => ({
+                path: 'postcss-stub',
+                namespace: 'ls-postcss-stub',
+              }))
+              build.onLoad({ filter: /.*/, namespace: 'ls-postcss-stub' }, () => ({
+                contents: POSTCSS_STUB_CODE,
+                loader: 'js',
+              }))
+            },
+          },
+        ],
+      },
+    },
   },
 })

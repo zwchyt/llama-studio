@@ -11,8 +11,10 @@
 //           stoppedBadge、AgentMessageRow
 
 import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
-import { Brain, Play, Square, Trash2, Volume2 } from 'lucide-react'
-import { ChevronRightIcon, CircleStopIcon, FileTextIcon, RefreshCwIcon, CopyIcon, CheckIcon } from '@animateicons/react/lucide'
+import { createPortal } from 'react-dom'
+import { Brain } from 'lucide-react'
+// 消息行操作按钮全部走动态图标（包内图标自带 hover 动画，无需 ref 触发）
+import { ChevronRightIcon, CircleStopIcon, FileTextIcon, RefreshCwIcon, CopyIcon, CheckIcon, Volume2Icon, PlayIcon, Trash2Icon } from '@animateicons/react/lucide'
 import { useStore } from '../../../store/useStore'
 import { useCollapseAnimation, COLLAPSE_DURATION_MS } from '../../../utils/useCollapseAnimation'
 import { useSmoothStream } from '../hooks/useSmoothStream'
@@ -20,7 +22,7 @@ import { ThinkTextContent } from './ThinkTextContent'
 import { AttachmentTextPreview } from './AttachmentTextPreview'
 import { UserMessageFullText } from './UserMessageFullText'
 import { ImagePill } from '../utils/ImagePill'
-import { CHIP_ICON, type ChipKind } from '../agent-input/RichInput'
+import { CHIP_ICON, claimChipTip, type ChipKind } from '../agent-input/RichInput'
 import { splitByImageMarkers } from '../utils/imageMarker'
 import { Markdown } from '../../../markdown/markstream'
 import { MermaidCard, parseContentToBlocks } from '../../../mermaid'
@@ -195,7 +197,9 @@ export const AgentMarkdown = React.memo(function AgentMarkdown({ content }: { co
 
 /** 气泡里的折叠块：默认只显示标签，点一下原地展开成原文（再点收起）。
     纯展示组件——正文已经发给模型了，这里只影响"看得见多少"。 */
-/** 气泡里的胶囊：点一下把这段内容开在**右侧预览区**（不是就地展开，也不是输入框那套编辑弹窗）。 */
+/** 气泡里的胶囊：点一下把这段内容开在**右侧预览区**（不是就地展开，也不是输入框那套编辑弹窗）。
+    悬停弹自定义预览卡（复用输入框胶囊的 .chat-inline-chip-tip 样式）显示引用/折叠/代码内容——
+    取代原先的原生 title 提示（原生框样式突兀且挡内容）；点击与悬停互不影响。 */
 function SentChip({ label, text, kind, onOpen }: {
   label: string
   text: string
@@ -204,21 +208,56 @@ function SentChip({ label, text, kind, onOpen }: {
 }) {
   // 引用块的正文是 `> 逐行`（发给模型的样子），给人看时去掉前缀
   const shown = kind === 'quote' ? text.replace(/^> ?/gm, '') : text
+  const [tipRect, setTipRect] = useState<DOMRect | null>(null)
+  // 悬停桥：离开胶囊延迟关（鼠标可移进卡里滚动阅读），进卡取消，离卡立即关。
+  // 只有内容可滚动的卡才延迟关——短内容卡立即关，跨胶囊快速移动不会短暂重叠。
+  const tipCloseRef = useRef<number | null>(null)
+  const tipCardRef = useRef<HTMLDivElement>(null)
+  const closeTip = useCallback(() => setTipRect(null), [])
   return (
-    <span
-      className="user-msg-chip"
-      data-kind={kind}
-      role="button"
-      tabIndex={0}
-      title="点击在右侧预览"
-      onClick={() => onOpen?.(label, shown)}
-      onKeyDown={e => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen?.(label, shown) }
-      }}
-    >
-      <span className="user-msg-chip-icon" dangerouslySetInnerHTML={{ __html: CHIP_ICON[kind] }} />
-      {label}
-    </span>
+    <>
+      <span
+        className="user-msg-chip"
+        data-kind={kind}
+        role="button"
+        tabIndex={0}
+        onMouseEnter={e => {
+          if (tipCloseRef.current) { clearTimeout(tipCloseRef.current); tipCloseRef.current = null }
+          setTipRect(e.currentTarget.getBoundingClientRect())
+          claimChipTip(closeTip)
+        }}
+        onMouseLeave={() => {
+          if (tipCloseRef.current) clearTimeout(tipCloseRef.current)
+          const card = tipCardRef.current
+          if (card && card.scrollHeight > card.clientHeight + 1) {
+            tipCloseRef.current = window.setTimeout(() => { tipCloseRef.current = null; closeTip() }, 150)
+          } else {
+            closeTip()
+          }
+        }}
+        onClick={() => { setTipRect(null); onOpen?.(label, shown) }}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen?.(label, shown) }
+        }}
+      >
+        <span className="user-msg-chip-icon" dangerouslySetInnerHTML={{ __html: CHIP_ICON[kind] }} />
+        {label}
+      </span>
+      {tipRect && createPortal(
+        <div
+          ref={tipCardRef}
+          className="chat-inline-chip-tip chat-msg-markdown"
+          style={{ left: Math.max(8, Math.min(tipRect.left, window.innerWidth - 380)), top: tipRect.top - 8 }}
+          onMouseEnter={() => {
+            if (tipCloseRef.current) { clearTimeout(tipCloseRef.current); tipCloseRef.current = null }
+          }}
+          onMouseLeave={() => { tipCloseRef.current = null; closeTip() }}
+        >
+          <Markdown content={shown} final variant="agent" />
+        </div>,
+        document.body,
+      )}
+    </>
   )
 }
 
@@ -1349,16 +1388,28 @@ export function TopbarBtn({ icon: Icon, size = 12, btnRef, baseClass = 'agent-co
   const iconRef = useRef<AniIconHandle>(null)
   // 原生 title 换自定义气泡（与导航栏同款）：已有图标 hover 动画，走 showTip/hideTip 合并进去
   const { tipNode, showTip, hideTip } = useBubbleTip()
+  // 动态图标包（@animateicons）不是全量覆盖：Database / Wrench / FileDown / ImageDown
+  // 没有动态版，ref 上拿不到 startAnimation。这类图标降级用一段 CSS 弹跳动画，
+  // 保证所有顶栏按钮 hover 都有图标动效反馈，风格靠参数贴近 animateicons。
+  const [cssBounce, setCssBounce] = useState(false)
   return (
     <button
       ref={btnRef}
       className={`${baseClass}${active ? ' active' : ''}${className ? ' ' + className : ''}`}
       onClick={onClick}
-      onMouseEnter={(e) => { iconRef.current?.startAnimation?.(); if (title) showTip(title, e.currentTarget) }}
-      onMouseLeave={() => { iconRef.current?.stopAnimation?.(); hideTip() }}
+      onMouseEnter={(e) => {
+        if (typeof iconRef.current?.startAnimation === 'function') iconRef.current.startAnimation()
+        else setCssBounce(true)
+        if (title) showTip(title, e.currentTarget)
+      }}
+      onMouseLeave={() => {
+        iconRef.current?.stopAnimation?.()
+        setCssBounce(false)
+        hideTip()
+      }}
     >
       {tipNode}
-      <Icon ref={iconRef as never} size={size} className={iconClassName} />
+      <Icon ref={iconRef as never} size={size} className={`${iconClassName ?? ''}${cssBounce ? ' topbar-icon-bounce' : ''}`} />
       {children}
     </button>
   )
@@ -1627,15 +1678,15 @@ export const AgentMessageRow = React.memo(function AgentMessageRow({ msg, isLast
             {...tip(isSpeaking ? '停止朗读' : '朗读')}
             onClick={() => (isSpeaking ? a.stopSpeak() : a.speakMessage(msg.id, msg.content || ''))}
           >
-            {isSpeaking ? <Square size={12} /> : <Volume2 size={13} />}
+            {isSpeaking ? <CircleStopIcon size={12} /> : <Volume2Icon size={13} />}
           </button>
           {isLast && (
             <span style={{ display: 'inline-flex' }} {...tip('继续生成')}>
-              <button className="chat-msg-action-btn" aria-label="继续生成" onClick={() => a.continueAt(msg.id)} disabled={loading}><Play size={13} /></button>
+              <button className="chat-msg-action-btn" aria-label="继续生成" onClick={() => a.continueAt(msg.id)} disabled={loading}><PlayIcon size={13} /></button>
             </span>
           )}
           <span style={{ display: 'inline-flex' }} {...tip('删除这条回复')}>
-            <button className="chat-msg-action-btn" aria-label="删除这条回复" onClick={() => a.deleteMessage(msg.id)} disabled={loading}><Trash2 size={13} /></button>
+            <button className="chat-msg-action-btn" aria-label="删除这条回复" onClick={() => a.deleteMessage(msg.id)} disabled={loading}><Trash2Icon size={13} /></button>
           </span>
         </>
       )}

@@ -631,7 +631,9 @@ html.theme-dark .nav-tip {
 }
 
 .nav-tip-below::before {
-  left: 50%;
+  /* 箭头默认居中；气泡盒子被视口内收修正后，JS 会写 --tip-arrow-x 把箭头
+     拉回锚点中心（不补偿的话尖尖会指着旁边的按钮） */
+  left: calc(50% + var(--tip-arrow-x, 0px));
   top: -4px;
   transform: translateX(-50%) rotate(45deg);
   border-top: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
@@ -651,7 +653,8 @@ html.theme-dark .nav-tip {
 }
 
 .nav-tip-above::before {
-  left: 50%;
+  /* 同 .nav-tip-below：内收修正后由 --tip-arrow-x 拉回锚点中心 */
+  left: calc(50% + var(--tip-arrow-x, 0px));
   top: auto;
   bottom: -4px;
   transform: translateX(-50%) rotate(45deg);

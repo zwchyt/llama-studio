@@ -17,7 +17,10 @@
 import type { RichValue } from '../agent-input/RichInput'
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Bot, Database, Copy, Check, ImageDown, FileDown, Wrench } from 'lucide-react'
+import { Bot, Database, Copy, Check } from 'lucide-react'
+// 顶栏四个按钮也用动态图标：@animateicons 没收录 Database/Wrench/FileDown/ImageDown
+// 这四个原名，改用包内语义/形状最接近的动态版（包内图标自带 hover 动画，无需 ref）
+import { HardDriveIcon, FileImageIcon, DownloadIcon, SettingsIcon } from '@animateicons/react/lucide'
 import {
   BrainIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon,
   CodeIcon, GitBranchIcon, GlobeIcon, LoaderIcon, MessageSquareIcon, PencilIcon,
@@ -714,8 +717,8 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                     iconClassName={condensing ? 'spin' : undefined}
                   >压缩历史</TopbarBtn>
                 )}
-                <TopbarBtn btnRef={promptBtnRef} active={promptModalOpen} onClick={openPromptModal} icon={SlidersHorizontalIcon}>提示词</TopbarBtn>
-                <TopbarBtn btnRef={kbBtnRef} active={kbModalOpen} onClick={openKbModal} icon={Database} title="知识库列表（智能体可检索全部库）">知识库</TopbarBtn>
+                <TopbarBtn btnRef={promptBtnRef} active={promptModalOpen} onClick={openPromptModal} icon={SlidersHorizontalIcon} title="选择与管理提示词模板">提示词</TopbarBtn>
+                <TopbarBtn btnRef={kbBtnRef} active={kbModalOpen} onClick={openKbModal} icon={HardDriveIcon} title="知识库列表（智能体可检索全部库）">知识库</TopbarBtn>
                 {!plainChat && (
                   <TopbarBtn btnRef={trajBtnRef} active={trajOpen} onClick={() => setTrajOpen(v => !v)} icon={RouteIcon}>轨迹</TopbarBtn>
                 )}
@@ -724,9 +727,9 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                 {plainChat && (
                   <>
                     {/* 通用模式没有文件树/变更/终端，浏览器维持顶栏入口即可 */}
-                    <TopbarBtn active={treeOpen && rightPanelMode === 'browser'} onClick={() => toggleRightPanel('browser')} icon={GlobeIcon}>浏览器</TopbarBtn>
-                    <TopbarBtn active={false} onClick={handleExportImage} icon={ImageDown} title="把当前可见的对话导出为 PNG（消息区是虚拟滚动的，只截当前这一屏）">导出图片</TopbarBtn>
-                    <TopbarBtn active={false} onClick={handleExportPdf} icon={FileDown} title="把整段对话导出为 PDF（遍历全部消息，不受虚拟滚动限制）">导出 PDF</TopbarBtn>
+                    <TopbarBtn active={treeOpen && rightPanelMode === 'browser'} onClick={() => toggleRightPanel('browser')} icon={GlobeIcon} title="打开内置浏览器面板">浏览器</TopbarBtn>
+                    <TopbarBtn active={false} onClick={handleExportImage} icon={FileImageIcon} title="把当前可见的对话导出为 PNG（消息区是虚拟滚动的，只截当前这一屏）">导出图片</TopbarBtn>
+                    <TopbarBtn active={false} onClick={handleExportPdf} icon={DownloadIcon} title="把整段对话导出为 PDF（遍历全部消息，不受虚拟滚动限制）">导出 PDF</TopbarBtn>
                   </>
                 )}
               </div>
@@ -734,7 +737,7 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                   必须放在 -right-scroll 之外：那个容器 overflow-x:auto 会把向下展开的菜单裁掉。 */}
               {plainChat && (
                 <div ref={chatToolsMenuRef} className="agent-code-tools-switch">
-                  <TopbarBtn active={chatToolsMenuOpen} onClick={() => setChatToolsMenuOpen(v => !v)} icon={Wrench} title="通用模式下可启用的工具（默认全关）">
+                  <TopbarBtn active={chatToolsMenuOpen} onClick={() => setChatToolsMenuOpen(v => !v)} icon={SettingsIcon} title="通用模式下可启用的工具（默认全关）">
                     工具{chatToolOnCount > 0 ? ` ${chatToolOnCount}` : ''}
                   </TopbarBtn>
                   {chatToolsMenuOpen && (

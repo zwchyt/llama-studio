@@ -843,11 +843,32 @@ html.is-panel-resizing .agent-think-body .table-node {
   cursor: text;
 }
 
-/* contenteditable 没有原生 placeholder：靠 data-empty 属性 + ::before 兜一个 */
+/* contenteditable 没有原生 placeholder：靠 data-empty 属性 + ::before 兜一个。
+   ::before 是行内首内容，空输入框聚焦后光标（offset 0）会画在它后面——
+   看起来「光标跑到提示文字『换行』两个字的右边」。聚焦且为空时不渲染提示，
+   光标独占行首；失焦后提示回来（提示本来就是给没在打字的人看的）。 */
 .chat-input-editor[data-empty="true"]::before {
   content: attr(data-placeholder);
   color: var(--text-muted);
   pointer-events: none;
+}
+
+.chat-input-editor:focus[data-empty="true"]::before {
+  content: none;
+}
+
+/* 文件拖放悬停时的自定义插入指示线：系统"+复制"徽章是 OS 画的去不掉，
+   原生细光标又容易被它挡住——用主题色竖条标记插入点，随 dragover 实时移动，
+   drop / 拖离编辑器文字区时隐藏（fixed 定位，坐标直接用视口 rect）。 */
+.chat-drag-caret {
+  position: fixed;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent, #3b82f6);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent, #3b82f6) 70%, transparent);
+  pointer-events: none;
+  z-index: 9999;
+  display: none;
 }
 
 /* 内联胶囊：夹在文字中间的一颗小标签，点标签编辑/预览、点 × 删除。
@@ -963,7 +984,8 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
 }
 
 /* 胶囊悬停预览卡：portal 到 body（输入区 overflow 会裁），固定定位在胶囊正上方。
-   纯展示，pointer-events: none —— 不做"移进卡片继续看"的悬停桥，省掉一条容易抖的链路。 */
+   pointer-events 开启：内容超长出滚动条时鼠标可以移进卡里上下滚动阅读——
+   配合调用方的悬停桥（离开胶囊延迟关、进卡取消、离卡即关）实现。 */
 .chat-inline-chip-tip {
   position: fixed;
   z-index: var(--z-tooltip);
@@ -972,7 +994,9 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   max-width: min(420px, calc(100vw - 40px));
   max-height: 240px;
   padding: 8px 11px;
-  background: var(--surface);
+  /* 悬停信息卡：比普通面板面压暗一档，避免纯白在浅色主题下刺眼；
+     基于 --surface 混 10% 中性灰，仍继承背景图透写，深色主题只微亮几乎不变。 */
+  background: color-mix(in srgb, var(--surface) 90%, var(--text-muted));
   color: var(--text);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
@@ -981,12 +1005,26 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   line-height: 1.55;
   overflow: auto;
   overscroll-behavior: contain;
-  pointer-events: none;
+  pointer-events: auto;
   word-break: break-word;
 }
 
 .chat-inline-chip-tip--img {
   padding: 4px;
+}
+
+/* 预览卡（输入框胶囊 + 消息气泡胶囊两套共用）里的 Markdown 尾段：消息排版的
+   段落/引用块/列表等块级元素自带 margin-bottom，在卡片底部积出一块空白
+   （>:last-child 归零打不到包裹层里的真末元素，得放宽到任意 last-child）。
+   归零后卡高贴合内容，文字不再上挤下空。只锁在预览卡内，消息正文排版不受影响。 */
+.chat-inline-chip-tip.chat-msg-markdown :last-child {
+  margin-bottom: 0;
+}
+
+/* 同理首元素：markstream 包内样式会给首块级元素带 margin-top，预览卡顶部
+   积出空白。首元素 margin-top 归零，卡内内容顶格显示。 */
+.chat-inline-chip-tip.chat-msg-markdown :first-child {
+  margin-top: 0;
 }
 
 .chat-inline-chip-tip--img img {
@@ -5574,9 +5612,11 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   align-items: center;
   gap: 4px;
   flex-shrink: 1;
-  /* 保底宽度：空间不够时不许把名字压没、只剩一个「×」。约 5~6 个字符 + 关闭钮；
-     再装不下就靠整条 overflow-x 滚动 + 两端渐隐兜底（活动标签完整显示见下方 .active 规则） */
-  min-width: 72px;
+  /* 保底宽度：空间不够时不许把名字压没、只剩一个「×」。约 1~2 个字符 + 关闭钮；
+     56px 恰好低于「引用」这类短标签的自然宽度（≈66px），短标签贴合内容不撑出
+     尾部空白；再装不下就靠整条 overflow-x 滚动 + 两端渐隐兜底（活动标签完整
+     显示见下方 .active 规则） */
+  min-width: 56px;
   max-width: 160px;
   padding: 2px 4px 2px 8px;
   background: var(--bg);
@@ -7140,6 +7180,43 @@ html.theme-dark .chat-inline-chip[data-kind="code"] .chat-inline-chip-icon {
   flex-direction: column;
   gap: 12px;
   overflow-anchor: auto;
+}
+
+/* 聊天区滚动条上下端的三角箭头：点击向上/向下滚动一段（Chromium 专属伪元素，
+   点击行为由浏览器原生处理）。三角用 SVG data-uri 画——scrollbar-button 里
+   放不了 DOM 元素，# 在 data-uri 里必须写成 %23。 */
+.agent-code-view .chat-messages::-webkit-scrollbar-button:single-button:vertical:decrement,
+.agent-code-view .chat-messages::-webkit-scrollbar-button:single-button:vertical:increment {
+  display: block;
+  height: 12px;
+  background-color: transparent;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 8px 6px;
+}
+
+.agent-code-view .chat-messages::-webkit-scrollbar-button:single-button:vertical:decrement {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='6'><path d='M1 5h6L4 1z' fill='%238c8c8c'/></svg>");
+}
+
+.agent-code-view .chat-messages::-webkit-scrollbar-button:single-button:vertical:increment {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='6'><path d='M1 1h6L4 5z' fill='%238c8c8c'/></svg>");
+}
+
+.agent-code-view .chat-messages::-webkit-scrollbar-button:single-button:vertical:decrement:hover {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='6'><path d='M1 5h6L4 1z' fill='%235c5c5c'/></svg>");
+}
+
+.agent-code-view .chat-messages::-webkit-scrollbar-button:single-button:vertical:increment:hover {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='6'><path d='M1 1h6L4 5z' fill='%235c5c5c'/></svg>");
+}
+
+html.theme-dark .agent-code-view .chat-messages::-webkit-scrollbar-button:single-button:vertical:decrement {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='6'><path d='M1 5h6L4 1z' fill='%23a6a6a6'/></svg>");
+}
+
+html.theme-dark .agent-code-view .chat-messages::-webkit-scrollbar-button:single-button:vertical:increment {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='6'><path d='M1 1h6L4 5z' fill='%23a6a6a6'/></svg>");
 }
 
 /* ── Message Rail Navigation ── */
@@ -8772,16 +8849,19 @@ html.theme-dark .agent-code-view .chat-messages .user-msg-chip[data-kind="code"]
   color: #fff;
   box-shadow: 0 2px 8px rgba(166, 30, 28, .30), 0 1px 2px rgba(0, 0, 0, .10);
 }
+
 .agent-code-view .chat-input-tools .chat-stop-btn:hover:not(:disabled) {
   background: #d32f2f;
   border-color: #b32424;
   box-shadow: 0 4px 12px rgba(166, 30, 28, .36), 0 1px 3px rgba(0, 0, 0, .12);
 }
+
 .agent-code-view .chat-input-tools .chat-stop-btn:active:not(:disabled) {
   transform: scale(.96);
   background: #b71c1c;
   box-shadow: 0 1px 3px rgba(166, 30, 28, .24);
 }
+
 /* 深色主题：红底在深背景上已足够醒目，描边改为极淡亮边，避免像亮圈 */
 .theme-dark .agent-code-view .chat-input-tools .chat-stop-btn {
   border-color: rgba(255, 255, 255, .12);
@@ -10578,6 +10658,30 @@ html.theme-dark .user-msg-lightbox {
 .chat-model-item-action:hover {
   background: var(--bg);
   color: var(--text-secondary);
+}
+
+/* 顶栏按钮的图标降级动效：动态图标包（@animateicons）没有 Database / Wrench /
+   FileDown / ImageDown 的动态版，TopbarBtn 检测不到 startAnimation 时挂这个类，
+   用 scale 弹跳给同款 hover 反馈（参数贴近 animateicons 的 scale 曲线）。 */
+@keyframes topbar-icon-bounce {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.18) rotate(-8deg); }
+  70% { transform: scale(0.96); }
+  100% { transform: scale(1); }
+}
+.agent-code-topbar-btn .topbar-icon-bounce {
+  animation: topbar-icon-bounce .32s ease both;
+}
+
+/* 运行中的启停键用红色（--danger）：一眼区分「这个在跑，点是停止」，
+   悬停时红底淡染保持红色语义，不被上面的通用 hover 灰色覆盖 */
+.chat-model-item.running .chat-model-item-action {
+  color: var(--danger);
+}
+
+.chat-model-item.running .chat-model-item-action:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 /* ── 模型下拉底部的「管理外部端点」入口 ─────────────────── */

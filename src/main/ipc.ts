@@ -595,8 +595,8 @@ function killProcessTreeAsync(proc: ChildProcess): Promise<void> {
     return Promise.resolve()
   }
 }
-interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; ttsModelFolders: string[]; asrModelFolders: string[]; ocrModelFolders: string[]; sdModelFolders: string[]; sdVaeFolders: string[]; sdLlmFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; slashCommands?: unknown; engineReleasesCache?: Record<string, ReleaseInfo>; engineReleasesCheckedAt?: number }
-const UI_KEYS = new Set(['splashEnabled', 'soundEnabled', 'notificationSound', 'chatSidebarCollapsed', 'ttsEngine', 'ttsModelPath', 'ttsVocoderPath', 'slashCommands'])
+interface AppSettings { externalModelFolders: string[]; imageModelFolders: string[]; ttsModelFolders: string[]; asrModelFolders: string[]; ocrModelFolders: string[]; sdModelFolders: string[]; sdVaeFolders: string[]; sdLlmFolders: string[]; metricsPolling?: boolean; splashEnabled?: boolean; soundEnabled?: boolean; notificationSound?: string; chatSidebarCollapsed?: boolean; ttsEngine?: string; ttsModelPath?: string; ttsVocoderPath?: string; sttModelPath?: string; sttMmprojPath?: string; sttPrompt?: string; sttResult?: string; slashCommands?: unknown; engineReleasesCache?: Record<string, ReleaseInfo>; engineReleasesCheckedAt?: number }
+const UI_KEYS = new Set(['splashEnabled', 'soundEnabled', 'notificationSound', 'chatSidebarCollapsed', 'ttsEngine', 'ttsModelPath', 'ttsVocoderPath', 'sttModelPath', 'sttMmprojPath', 'sttPrompt', 'sttResult', 'slashCommands'])
 let settingsCache: AppSettings | null = null
 // 隔离模式：settings.json 存在但持续读不出来（被占用/损坏）时置真。
 // 读仍返回默认值供 UI 显示，但拒绝一切写盘——「设置暂时保存不上」永远好过
@@ -625,6 +625,10 @@ function parseSettingsData(data: Record<string, unknown>): AppSettings {
     ttsEngine: typeof data.ttsEngine === 'string' ? data.ttsEngine : 'system',
     ttsModelPath: typeof data.ttsModelPath === 'string' ? data.ttsModelPath : '',
     ttsVocoderPath: typeof data.ttsVocoderPath === 'string' ? data.ttsVocoderPath : '',
+    sttModelPath: typeof data.sttModelPath === 'string' ? data.sttModelPath : '',
+    sttMmprojPath: typeof data.sttMmprojPath === 'string' ? data.sttMmprojPath : '',
+    sttPrompt: typeof data.sttPrompt === 'string' ? data.sttPrompt : '',
+    sttResult: typeof data.sttResult === 'string' ? data.sttResult : '',
     slashCommands: data.slashCommands ?? [],
     engineReleasesCache: typeof data.engineReleasesCache === 'object' && data.engineReleasesCache !== null ? data.engineReleasesCache as Record<string, ReleaseInfo> : undefined,
     engineReleasesCheckedAt: typeof data.engineReleasesCheckedAt === 'number' ? data.engineReleasesCheckedAt as number : undefined
@@ -5012,7 +5016,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle('get-ui-settings', async () => {
     const s = await loadSettings()
-    return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, notificationSound: s.notificationSound ?? 'minimal', chatSidebarCollapsed: s.chatSidebarCollapsed ?? false, ttsEngine: s.ttsEngine ?? 'system', ttsModelPath: s.ttsModelPath ?? '', ttsVocoderPath: s.ttsVocoderPath ?? '', slashCommands: s.slashCommands ?? [] }
+    return { splashEnabled: s.splashEnabled ?? true, soundEnabled: s.soundEnabled ?? true, notificationSound: s.notificationSound ?? 'minimal', chatSidebarCollapsed: s.chatSidebarCollapsed ?? false, ttsEngine: s.ttsEngine ?? 'system', ttsModelPath: s.ttsModelPath ?? '', ttsVocoderPath: s.ttsVocoderPath ?? '', sttModelPath: s.sttModelPath ?? '', sttMmprojPath: s.sttMmprojPath ?? '', sttPrompt: s.sttPrompt ?? '', sttResult: s.sttResult ?? '', slashCommands: s.slashCommands ?? [] }
   })
   ipcMain.handle('set-ui-setting', async (_e, key: string, value: boolean | string) => {
     if (!UI_KEYS.has(key)) return { success: true }

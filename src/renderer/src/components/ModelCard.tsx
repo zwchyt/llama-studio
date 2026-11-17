@@ -387,20 +387,24 @@ export default function ModelCard({ card, style }: Props) {
         </div>
       </div>
       <div className="card-meta">
-        {engineLabel && (
+        {/* 外部端点卡没有本地引擎/模型语义：引擎徽章会误显示「llama.cpp」、
+            文件标签会误显示「无模型」，都只对本地卡展示 */}
+        {!card.template.external && engineLabel && (
           <span className="card-tag card-tag--engine">
             <span className="card-tag-inner">{engineLabel}</span>
           </span>
         )}
-        <span
-          ref={modelTagRef}
-          className={`card-tag card-tag--model${modelTagOverflow ? ' card-tag--slide' : ''}`}
-        >
-          <span className="card-tag-inner">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /></svg>
-            {effectiveParamSet === 'audiocpp' ? '模型由 WebUI 管理' : (!modelExists ? <span style={{ color: 'var(--danger)' }}>文件缺失</span> : (card.template.modelPath?.split(/[/\\]/).pop() || '无模型'))}
+        {!card.template.external && (
+          <span
+            ref={modelTagRef}
+            className={`card-tag card-tag--model${modelTagOverflow ? ' card-tag--slide' : ''}`}
+          >
+            <span className="card-tag-inner">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /></svg>
+              {effectiveParamSet === 'audiocpp' ? '模型由 WebUI 管理' : (!modelExists ? <span style={{ color: 'var(--danger)' }}>文件缺失</span> : (card.template.modelPath?.split(/[/\\]/).pop() || '无模型'))}
+            </span>
           </span>
-        </span>
+        )}
         <span className="card-tag card-tag--status">
           <span className={`status-dot ${card.ready ? 'ready' : isRunning ? 'running' : card.status === 'error' ? 'error' : 'idle'}`} />
           {card.ready ? '就绪' : isRunning ? '启动中' : card.status === 'error' ? '错误' : '未启动'}
@@ -499,7 +503,8 @@ export default function ModelCard({ card, style }: Props) {
             <span className="btn-label">{effectiveParamSet === 'audiocpp' ? '音频工作台' : effectiveParamSet === 'sdcpp' ? '图像生成' : isOcrModel ? 'OCR 识别' : '纯聊天'}</span>
           </button>
         )}
-        {!isRunning && (
+        {/* 外部端点卡的参数在「外部端点」页统一设置，这里不给参数入口 */}
+        {!isRunning && !card.template.external && (
           <button
             className="card-expand-btn"
             onClick={() => setShowParamsModal(true)}
