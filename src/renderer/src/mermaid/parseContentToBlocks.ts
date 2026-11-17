@@ -10,6 +10,8 @@ export type ContentBlock =
   | { kind: 'mermaid'; code: string }
   | { kind: 'chart'; code: string }
   | { kind: 'svg'; code: string; streaming?: boolean }
+  | { kind: 'echarts'; code: string }
+  | { kind: 'vegalite'; code: string }
 
 const MERMAID_KEYWORDS = [
   'flowchart', 'graph', 'sequenceDiagram', 'classDiagram-v2', 'classDiagram',
@@ -27,7 +29,41 @@ const isMermaidKw = (line: string) => kwRe.test(line)
 const MERMAID_FENCE_RE = /^```\s*mermaid\b/i
 const CHART_FENCE_RE = /^```\s*(chart|recharts|json|jsonc)\b/i
 const SVG_FENCE_RE = /^```\s*svg\b/i
+const ECHART_FENCE_RE = /^```\s*echarts\b/i
+const VEGALITE_FENCE_RE = /^```\s*vegalite\b/i
 const FENCE_CLEAN_RE = /```[\s\S]*?```/g
+
+/** 把代码文本解析成顶层对象；失败或非对象返回 null。 */
+const parseJsonObject = (code: string): Record<string, unknown> | null => {
+  try {
+    const v: unknown = JSON.parse(code)
+    return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+}
+
+/** ```echarts / ```vegalite 围栏内容是否是顶层 JSON 对象（非数组/null）。 */
+const looksLikeJsonObject = (code: string): boolean => parseJsonObject(code) !== null
+
+/**
+ * 按「内容」嗅探 JSON 属于哪种图表（模型常把 ```json 当通用围栏，不写专用语言）。
+ * 只在 parseChartSpec 失败后才调用，且要求多个特征同时满足，避免误判普通 JSON。
+ */
+const sniffJsonChart = (code: string): 'echarts' | 'vegalite' | null => {
+  const o = parseJsonObject(code)
+  if (!o) return null
+  // Vega-Lite：$schema 指向 vega-lite，或有 mark + encoding/layer/facet 组合
+  const schema = typeof o.$schema === 'string' ? o.$schema : ''
+  if (/vega-lite/i.test(schema)) return 'vegalite'
+  if (o.mark && (o.encoding || o.layer || o.facet || o.repeat || o.spec)) return 'vegalite'
+  // ECharts：有 series 数组，且带 xAxis/yAxis/tooltip/legend 中的至少两项
+  if (Array.isArray(o.series)) {
+    const ecSignals = ['xAxis', 'yAxis', 'tooltip', 'legend', 'grid', 'radar', 'polar'].filter(k => k in o).length
+    if (ecSignals >= 2) return 'echarts'
+  }
+  return null
+}
 
 /**
  * 把助手消息正文拆成「普通文本」与「Mermaid 图表」块。
@@ -62,6 +98,9 @@ const FENCE_CLEAN_RE = /```[\s\S]*?```/g
  * 之所以要 ```svg 围栏这条路，是因为**内联写的 <svg> 根本渲染不出来**——
  * AgentCodeView 的 sanitize 白名单里没有任何 SVG 标签，会被整段剥掉。
   * 围栏内容由 SvgCard 包成 <img src="data:image/svg+xml,..."> 来渲染。
+  *
+  * ```echarts 围栏同理：围栏未闭合 → 不产出；闭合后必须是合法 JSON 对象
+  * （ECharts option）才产出，否则原样留在文本里当普通代码块。
   */
 export function parseContentToBlocks(content: string, streaming = false): ContentBlock[] {
   if (!content) return []
@@ -103,6 +142,8 @@ export function parseContentToBlocks(content: string, streaming = false): Conten
       const isMermaidFence = MERMAID_FENCE_RE.test(trimmed)
       const isChartFence = CHART_FENCE_RE.test(trimmed)
       const isSvgFence = SVG_FENCE_RE.test(trimmed)
+      const isEchartsFence = ECHART_FENCE_RE.test(trimmed)
+      const isVegaliteFence = VEGALITE_FENCE_RE.test(trimmed)
       const codeBlockEnd = findFenceEnd(i)
 
       // 围栏未闭合（流式中最常见）：
@@ -162,6 +203,15 @@ export function parseContentToBlocks(content: string, streaming = false): Conten
           i = codeBlockEnd + 1
           continue
         }
+        // 不是 ChartSpec：再按内容嗅探 ECharts option / Vega-Lite spec。
+        // 模型常把 ```json 当通用围栏，不写专用语言——这里按内容兜住，避免降级成代码块。
+        const sniffed = sniffJsonChart(chartCode)
+        if (sniffed) {
+          flushText()
+          blocks.push({ kind: sniffed, code: chartCode })
+          i = codeBlockEnd + 1
+          continue
+        }
         // 解析不出合法图表：原样保留为普通代码块
         currentText += lines.slice(i, codeBlockEnd + 1).join('\n') + '\n'
         i = codeBlockEnd + 1
@@ -180,6 +230,36 @@ export function parseContentToBlocks(content: string, streaming = false): Conten
           continue
         }
         // 不是 SVG：原样保留为普通代码块
+        currentText += lines.slice(i, codeBlockEnd + 1).join('\n') + '\n'
+        i = codeBlockEnd + 1
+        continue
+      }
+
+      if (isEchartsFence) {
+        // 与 chart 同规矩：围栏闭合后必须是合法 option（顶层 JSON 对象）才产出，
+        // 否则原样保留为普通代码块，避免误标的 JSON 变成一张空图。
+        const ecCode = lines.slice(i + 1, codeBlockEnd).join('\n').trim()
+        if (looksLikeJsonObject(ecCode)) {
+          flushText()
+          blocks.push({ kind: 'echarts', code: ecCode })
+          i = codeBlockEnd + 1
+          continue
+        }
+        currentText += lines.slice(i, codeBlockEnd + 1).join('\n') + '\n'
+        i = codeBlockEnd + 1
+        continue
+      }
+
+      if (isVegaliteFence) {
+        // 与 chart / echarts 同规矩：围栏闭合后必须是顶层 JSON 对象才产出，
+        // 否则原样保留为普通代码块。用专用 ```vegalite 围栏（不与 ```json/chart 冲突）。
+        const vlCode = lines.slice(i + 1, codeBlockEnd).join('\n').trim()
+        if (looksLikeJsonObject(vlCode)) {
+          flushText()
+          blocks.push({ kind: 'vegalite', code: vlCode })
+          i = codeBlockEnd + 1
+          continue
+        }
         currentText += lines.slice(i, codeBlockEnd + 1).join('\n') + '\n'
         i = codeBlockEnd + 1
         continue

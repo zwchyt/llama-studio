@@ -28,6 +28,8 @@ import { Markdown } from '../../../markdown/markstream'
 import { MermaidCard, parseContentToBlocks } from '../../../mermaid'
 import { ChartCard } from '../../../recharts'
 import { SvgCard } from '../../../svg/SvgCard'
+import { EChartsCard } from '../../../echarts/EChartsCard'
+import { VegaLiteCard } from '../../../vegalite/VegaLiteCard'
 import CodeBlock from '../../CodeBlock'
 import { ToolCallGroup, FileChangeSummary } from '../agent-tools'
 import { fmtCompactTok, fmtThinkDur, formatDuration } from '../utils/format'
@@ -859,6 +861,10 @@ function renderContentBlocks(content: string, streaming: boolean, keyPrefix: str
       node = <ChartCard code={block.code} renderFallback={(c) => <CodeBlock language="" value={c} />} />
     } else if (block.kind === 'svg') {
       node = <SvgCard code={block.code} streaming={block.streaming === true} renderFallback={(c) => <CodeBlock language="" value={c} />} />
+    } else if (block.kind === 'echarts') {
+      node = <EChartsCard code={block.code} renderFallback={(c) => <CodeBlock language="" value={c} />} />
+    } else if (block.kind === 'vegalite') {
+      node = <VegaLiteCard code={block.code} renderFallback={(c) => <CodeBlock language="" value={c} />} />
     } else {
       node = (
         <div className={`chat-msg-bubble chat-msg-markdown${streaming ? ' chat-msg-bubble--streaming' : ''}`}>
@@ -1578,7 +1584,7 @@ export function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']
     )
   }
   if (finalTextIdx >= 0 && finalText != null) {
-    // 最终正文与「链外过程正文」共用同一分块渲染（文本气泡 / Mermaid / Chart / SVG）。
+    // 最终正文与「链外过程正文」共用同一分块渲染（文本气泡 / Mermaid / Chart / SVG / ECharts）。
     // streaming 透传：流式期间不把未闭合的 mermaid/svg 代码当图表渲染（见 parseContentToBlocks：
     // 未闭合围栏会产出 streaming 标记，SvgCard 靠它走 innerHTML 渐进渲染分支）。
     out.push(<React.Fragment key="final-text">{renderContentBlocks(finalText, streaming, `final-${msgId}`)}</React.Fragment>)

@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Download,
+  ImageDown,
   Copy,
   Check,
   Maximize2,
@@ -14,7 +15,7 @@ import {
   ZoomOut,
   RotateCcw,
 } from 'lucide-react'
-import { copyToClipboard, downloadSvg } from './serializeSvg'
+import { copyToClipboard, downloadSvg, downloadDataUrl } from './serializeSvg'
 import { useBubbleTip } from '../components/useBubbleTip'
 import './figure.css'
 
@@ -53,6 +54,12 @@ export type FigureFrameProps = {
    * **必须用 useCallback 保持引用稳定**，否则每次渲染都会重新序列化。
    */
   getSvgSource?: () => string | null
+  /**
+   * 取 PNG data URL（只服务「下载 .png」）。可选：只有 ECharts 这类 canvas 图表
+   * 才提供；SvgCard / ChartCard 不传，工具条就不显示 PNG 按钮。
+   * **必须用 useCallback 保持引用稳定**。
+   */
+  getPngSource?: () => string | null
   /**
    * 取**可读源码**（源码面板与「复制」用）。省略时回落到 getSvgSource。
    * 围栏路径（```chart / ```json）要传模型原文，否则面板里会显示序列化出来的 SVG，
@@ -138,6 +145,7 @@ function ToolButton({
 export function FigureFrame({
   title,
   getSvgSource,
+  getPngSource,
   getSourceText,
   fileName,
   invertible,
@@ -211,6 +219,17 @@ export function FigureFrame({
     const { svg } = readSources()
     if (!svg) return flash('图形尚未就绪，稍后再试')
     downloadSvg(fileName || title || 'figure', svg)
+  }
+
+  const onDownloadPng = () => {
+    let png: string | null = null
+    try {
+      png = getPngSource?.() ?? null
+    } catch {
+      png = null
+    }
+    if (!png) return flash('图形尚未就绪，稍后再试')
+    downloadDataUrl(fileName || title || 'figure', png)
   }
 
   const onCopy = async () => {
@@ -343,6 +362,11 @@ export function FigureFrame({
           <ToolButton label="下载 .svg" onClick={onDownload}>
             <Download size={13} />
           </ToolButton>
+          {getPngSource ? (
+            <ToolButton label="下载 .png" onClick={onDownloadPng}>
+              <ImageDown size={13} />
+            </ToolButton>
+          ) : null}
           <ToolButton label={showSource ? '收起源码' : '查看源码'} active={showSource} onClick={onToggleSource}>
             <CodeXml size={13} />
           </ToolButton>

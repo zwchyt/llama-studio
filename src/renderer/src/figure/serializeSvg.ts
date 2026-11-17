@@ -193,6 +193,20 @@ export function downloadSvg(fileName: string, svgSource: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }
 
+/**
+ * 下载一个现成的 data URL（PNG 等栅格图）。
+ * 与 downloadSvg 的区别：SVG 要补命名空间/转义，走 Blob；data URL 已经是浏览器
+ * 可直接消费的编码，直接赋给 a.href 即可，不必再包一层 Blob。
+ */
+export function downloadDataUrl(fileName: string, dataUrl: string): void {
+  const a = document.createElement('a')
+  a.href = dataUrl
+  a.download = `${safeFileName(fileName)}.png`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
+
 /** 复制到剪贴板；navigator.clipboard 不可用（非安全上下文等）时降级到 execCommand。 */
 export async function copyToClipboard(text: string): Promise<boolean> {
   try {

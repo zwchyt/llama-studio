@@ -38,10 +38,11 @@ export const PI_TOOL_GUIDANCE: string[] = [
 export const PI_CHART_ROUTING: string[] = [
   '## 图表输出（语法查知识库，不要凭记忆写）',
   '- 需要图表时：先 knowledge_list 看有哪些知识库、再用 knowledge_overview 选中存放图表语法文档的库，然后 knowledge_search 检索该图表类型的**示例**（关键词直接用类型名，如 flowchart / sequenceDiagram / gantt / 雷达图 / 折线图 / svg 图标）；检索只在已选库内进行，排名第一块的正文会自动附在目录末尾，拿到示例后**严格照它的语法输出**。',
-  '- 路由：描述「结构 / 关系 / 流程」→ ```mermaid；描述「数值 / 数据」→ ```chart；描述「外观 / 形状」→ ```svg；要「结构化 spec」',
+  '- 路由：描述「结构 / 关系 / 流程」→ ```mermaid；描述「数值 / 数据」→ ```chart；需要「交互 / 复杂类型（地图 / 关系图 / 热力图 / 桑基图）」→ ```echarts（输出 ECharts 的 option JSON；普通数值统计图仍用 ```chart）；需要「统计图表（箱线图 / 置信带 / 回归 / 分面小倍数）」→ ```vegalite（输出 Vega-Lite 的 spec JSON）；描述「外观 / 形状」→ ```svg；要「结构化 spec」',
   '- ```chart / ```svg 的 spec 形状是本项目特有的，**必须以知识库里的示例为准**；若 knowledge_search 不可用（未配置知识库）或检索不到示例：不要猜 spec，改用 markdown 表格或普通代码块，并提示用户把图表语法文档导入资料库。',
   '- ```mermaid 是通用语法，检索不到示例时可用你已知的标准 mermaid 语法。',
   '- 图表直接在对话里输出，不要用 Write / Bash 创建图表文件。',
+  '- ⚠️ 图表围栏（```mermaid / ```chart / ```echarts / ```vegalite / ```svg）必须写在**最终正文回复**里，绝不要写进 thinking / 推理内容中——推理通道的文字只用于思考，不会被渲染成图表，放进去用户只会看到一段代码块。先在推理里想清楚，再把完整围栏输出到正文。',
   '- ⚠️ 绝不输出图表库的组件代码（Recharts / Chart.js / ECharts 的 JSX 或 JS）——那段代码不会被执行，用户只会看到一段文本。',
 ]
 

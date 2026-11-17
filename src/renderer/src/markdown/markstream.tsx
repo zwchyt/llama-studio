@@ -62,6 +62,8 @@ import { InfographicCard } from '../infographic/InfographicCard'
 import { D2Card } from '../d2/D2Card'
 // 直接进具体模块而不是 '../mermaid' barrel：barrel 会顺带拉进 parseContentToBlocks（及其 ChartCard 依赖）
 import { MermaidCard } from '../mermaid/MermaidCard'
+import { EChartsCard } from '../echarts/EChartsCard'
+import { VegaLiteCard } from '../vegalite/VegaLiteCard'
 
 // ── 节点数据类型（对应 stream-markdown-parser 的节点定义，只声明用得到的字段）──
 interface MsCodeBlockNode { code?: string; content?: string; language?: string; loading?: boolean }
@@ -216,6 +218,25 @@ function MsD2({ node }: MsNodeProps<MsCodeBlockNode>) {
   return <D2Card code={code} height={420} renderFallback={(c) => <CodeBlock language="" value={c} />} />
 }
 
+// ── echarts ─────────────────────────────────────────────────
+// 会话正文：与 chart 同套路——统一卡片外壳、流式期间保持代码块、
+// option 写错时卡片降级为源码块。渲染核心在 EChartsCard 内懒加载，不拖慢首屏。
+// 这一路兜住 text 里残留的 ```echarts 围栏（parseContentToBlocks 没提取到的情况）。
+function MsECharts({ node }: MsNodeProps<MsCodeBlockNode>) {
+  const code = pickCode(node)
+  if (node?.loading) return <CodeBlock language="echarts" value={code} isStreaming />
+  return <EChartsCard code={code} renderFallback={(c) => <CodeBlock language="" value={c} />} />
+}
+
+// ── vegalite ─────────────────────────────────────────────────
+// 会话正文：与 echarts 同套路——统一卡片外壳、流式期间保持代码块、
+// spec 写错时卡片降级为源码块。渲染核心在 VegaLiteCard 内懒加载，不拖慢首屏。
+function MsVegaLite({ node }: MsNodeProps<MsCodeBlockNode>) {
+  const code = pickCode(node)
+  if (node?.loading) return <CodeBlock language="vegalite" value={code} isStreaming />
+  return <VegaLiteCard code={code} renderFallback={(c) => <CodeBlock language="" value={c} />} />
+}
+
 // ── 数学公式 ───────────────────────────────────────────────
 // 为什么不用 markstream 自带的 Math 组件：它把 TeX 送进 Web Worker 渲染，而那个 worker 必须由
 // 使用方自己 new 出来再调 setKaTeXWorker() 注入（markstream 不提供默认实例）。没注入时它退回
@@ -357,6 +378,8 @@ setCustomComponents('ls-agent', {
   mermaid: MsMermaidCard,
   infographic: MsInfographic,
   d2: MsD2,
+  echarts: MsECharts,
+  vegalite: MsVegaLite,
   thinking: MsThinking,
   math_block: MsMathBlock,
   math_inline: MsMathInline,

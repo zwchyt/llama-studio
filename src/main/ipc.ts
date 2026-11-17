@@ -351,22 +351,26 @@ const CHAT_STATE_DIR = join(CHATS_DIR, 'state')
 const CHAT_IMAGEGEN_DIR = join(CHAT_STATE_DIR, 'imagegen-history')
 const CHAT_TEMPLATES_DIR = join(APP_ROOT, 'chat-templates')
 const SETTINGS_PATH = join(APP_ROOT, 'settings.json')
-// 图表测试页（Mermaid / Recharts / SVG / Infographic / D2）的预设数据：外置到项目根目录的 chart-presets/ 目录，
+// 图表测试页（Mermaid / Recharts / SVG / Infographic / D2 / ECharts / Vega-Lite）的预设数据：外置到项目根目录的 chart-presets/ 目录，
 // 一个预设一个「原生格式」文件，内容即最终渲染内容，不需要任何转义或包装：
 //   chart-presets/mermaid/      *.mmd  *.mermaid  *.txt  → Mermaid DSL
-//   chart-presets/recharts/     *.json                   → ChartSpec JSON
+//   chart-presets/recharts/     *.json                   → Recharts ChartSpec JSON
 //   chart-presets/svg/          *.svg  *.xml             → SVG 源码
 //   chart-presets/infographic/  *.txt  *.info            → AntV Infographic DSL
 //   chart-presets/d2/           *.d2   *.txt             → D2 源码
+//   chart-presets/echarts/      *.json                   → ECharts Option JSON
+//   chart-presets/vegalite/     *.json                   → Vega-Lite spec JSON
 // 按钮标题 = 文件名（去扩展名；可选的前缀 "01-" / "01_" 只用于排序，不显示）
 const CHART_PRESETS_DIR = join(APP_ROOT, 'chart-presets')
-const CHART_PRESET_GROUPS = ['mermaid', 'recharts', 'svg', 'infographic', 'd2'] as const
+const CHART_PRESET_GROUPS = ['mermaid', 'recharts', 'svg', 'infographic', 'd2', 'echarts', 'vegalite'] as const
 const CHART_PRESET_EXT: Record<typeof CHART_PRESET_GROUPS[number], readonly string[]> = {
   mermaid: ['.mmd', '.mermaid', '.txt'],
   recharts: ['.json'],
   svg: ['.svg', '.xml'],
   infographic: ['.txt', '.info'],
   d2: ['.d2', '.txt'],
+  echarts: ['.json'],
+  vegalite: ['.json'],
 }
 const CHART_PRESET_LABEL: Record<typeof CHART_PRESET_GROUPS[number], string> = {
   mermaid: 'Mermaid DSL',
@@ -374,6 +378,8 @@ const CHART_PRESET_LABEL: Record<typeof CHART_PRESET_GROUPS[number], string> = {
   svg: 'SVG',
   infographic: 'Infographic DSL',
   d2: 'D2 DSL',
+  echarts: 'ECharts Option',
+  vegalite: 'Vega-Lite spec',
 }
 /** 单项搬移：目标已存在则不动；rename 失败（跨设备/被占用）回退「复制 + 删除」 */
 function moveInto(from: string, to: string): void {
@@ -2930,11 +2936,11 @@ export function registerIpcHandlers(): void {
       return { error: e instanceof Error ? e.message : String(e) }
     }
   })
-  // ── 图表测试页预设（Mermaid / Recharts / SVG / Infographic / D2）──
+  // ── 图表测试页预设（Mermaid / Recharts / SVG / Infographic / D2 / ECharts）──
   // 扫描项目根目录 chart-presets/<分组>/ 下的原生文件，内容原样读取（不转义、不包装）。
   // 文件名即按钮标题：去掉扩展名，并去掉可选的 "01-" / "01_" 排序前缀。
-  ipcMain.handle('get-chart-presets', (): { path: string; groups: Record<'mermaid' | 'recharts' | 'svg' | 'infographic' | 'd2', { label: string; code: string }[]>; error?: string } => {
-    const groups: Record<string, { label: string; code: string }[]> = { mermaid: [], recharts: [], svg: [], infographic: [], d2: [] }
+  ipcMain.handle('get-chart-presets', (): { path: string; groups: Record<'mermaid' | 'recharts' | 'svg' | 'infographic' | 'd2' | 'echarts' | 'vegalite', { label: string; code: string }[]>; error?: string } => {
+    const groups: Record<string, { label: string; code: string }[]> = { mermaid: [], recharts: [], svg: [], infographic: [], d2: [], echarts: [], vegalite: [] }
     let error: string | undefined
     for (const key of CHART_PRESET_GROUPS) {
       const dir = join(CHART_PRESETS_DIR, key)
@@ -2958,7 +2964,7 @@ export function registerIpcHandlers(): void {
     }
     return {
       path: CHART_PRESETS_DIR,
-      groups: groups as Record<'mermaid' | 'recharts' | 'svg' | 'infographic' | 'd2', { label: string; code: string }[]>,
+      groups: groups as Record<'mermaid' | 'recharts' | 'svg' | 'infographic' | 'd2' | 'echarts' | 'vegalite', { label: string; code: string }[]>,
       error,
     }
   })

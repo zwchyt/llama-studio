@@ -164,7 +164,7 @@ interface AppStore {
   /** 四引擎自动检测结果：repo → ReleaseInfo（启动 10s 后并行检测写入） */
   engineReleases: Record<string, ReleaseInfo | null>
   paths: { models: string; templates: string; backend: string; chats: string; chatImages: string; chatPdfExports: string; chatTemplates: string } | null
-  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'ocr' | 'benchmark' | 'agent-code' | 'model-tools' | 'knowledge' | 'tts' | 'stt' | 'imagegen' | 'engines' | 'endpoints' | 'folders' | 'token-stats' | 'audiocpp' | 'mermaid-test' | 'recharts-test' | 'svg-test' | 'infographic-test' | 'd2-test'
+  view: 'welcome' | 'cards' | 'settings' | 'hub' | 'models' | 'about' | 'monitoring' | 'llama' | 'agents' | 'chat' | 'ocr' | 'benchmark' | 'agent-code' | 'model-tools' | 'knowledge' | 'tts' | 'stt' | 'imagegen' | 'engines' | 'endpoints' | 'folders' | 'token-stats' | 'audiocpp' | 'mermaid-test' | 'recharts-test' | 'svg-test' | 'infographic-test' | 'd2-test' | 'echarts-test' | 'vegalite-test'
   showCreateModal: boolean
   editingTemplate: Template | null
   updateDismissed: boolean
