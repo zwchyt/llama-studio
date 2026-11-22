@@ -58,6 +58,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
   const isTensorSharp = paramSet === 'tensorsharp'
   const isSdcpp = paramSet === 'sdcpp'
   const isAudiocpp = paramSet === 'audiocpp'
+  const isBasalt = paramSet === 'basalt'
   // “主要设置”tab 只对 llama.cpp 系引擎与 stable-diffusion.cpp 摘取常用核心参数；
   // 其他引擎（TensorSharp / audio.cpp）直接按各自分类展示，避免出现只有零星参数的“主要设置”
   const isLlamaFamily = paramSet === 'llamacpp' || paramSet === 'turboquant' || paramSet === 'beellama'
@@ -107,7 +108,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
 
   // 切换参数集：更新显示 + 切换活跃后端 + 切换后端版本 + 保存到模板。
   // 目标引擎后端未安装时也持久化参数集选择（否则关闭弹窗后切换丢失，与编辑模板界面不同步）
-  const handleParamSetChange = useCallback((next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp') => {
+  const handleParamSetChange = useCallback((next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth') => {
     if (next === paramSet) return
     setParamSet(next)
     // 同步切换活跃后端到对应引擎 + 更新模板后端版本
@@ -239,7 +240,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
     const finalModelPath = card?.template.modelPath
     if (finalModelPath) {
       // stable-diffusion.cpp 的扩散模型用 --diffusion-model（Z-Image 等 GGUF 必须，-m 识别不了）
-      const modelFlag = isTensorSharp ? '--model' : isSdcpp ? '--diffusion-model' : '-m'
+      const modelFlag = isTensorSharp || isBasalt ? '--model' : isSdcpp ? '--diffusion-model' : '-m'
       items.push({ id: 'model', label: modelFlag, value: `"${finalModelPath}"`, fullText: `${modelFlag} "${finalModelPath}"` })
     }
     Object.entries(activeArgs).forEach(([key, val]) => {
@@ -259,7 +260,7 @@ export default function ParamsModal({ templateId, args, onClose, cardName }: Pro
       items.push({ id: portFlag, label: portFlag, value: String(finalPort), fullText: `${portFlag} ${finalPort}` })
     }
     return items
-  }, [activeArgs, card, isTensorSharp, isSdcpp, allowedArgs])
+  }, [activeArgs, card, isTensorSharp, isSdcpp, isBasalt, allowedArgs])
 
   const fullCommand = useMemo(() => {
     let cmd = backendExe

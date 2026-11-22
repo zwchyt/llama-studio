@@ -84,7 +84,9 @@ export function useAgentModelControl() {
     }
     const args: string[] = []
     const tArgs = card.template.args || {}
-    if (card.template.modelPath) args.push('-m', card.template.modelPath)
+    // basalt serve 的模型参数是 --model（其余引擎保持原行为）
+    const isBasalt = (card.template.paramSet ?? targetBackend.kind) === 'basalt'
+    if (card.template.modelPath) args.push(isBasalt ? '--model' : '-m', card.template.modelPath)
     if (commandsSchema) {
       for (const cat of commandsSchema.categories) {
         for (const cmd of cat.commands) {
@@ -114,7 +116,9 @@ export function useAgentModelControl() {
       exe: targetBackend.exe!,
       args,
       openBrowser: false,
-      port
+      port,
+      paramSet: isBasalt ? 'basalt' : undefined,
+      kind: isBasalt ? 'basalt' : undefined
     }), '启动模型失败')
     if (res === null) { useStore.getState().setCardStatus(card.template.id, 'error'); return }
     if (res.success) {

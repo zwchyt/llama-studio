@@ -81,6 +81,8 @@
   --ev-eng-beellama: #d97706;
   --ev-eng-sdcpp: #7c3aed;
   --ev-eng-audiocpp: #2563eb;
+  --ev-eng-basalt: #57534e;
+  --ev-eng-unsloth: #be185d;
   --ev-eng-other: #94a3b8;
 }
 
@@ -91,6 +93,8 @@
 .engines-view .ev-eng--beellama    { --ev-eng: var(--ev-eng-beellama); }
 .engines-view .ev-eng--sdcpp       { --ev-eng: var(--ev-eng-sdcpp); }
 .engines-view .ev-eng--audiocpp    { --ev-eng: var(--ev-eng-audiocpp); }
+.engines-view .ev-eng--basalt      { --ev-eng: var(--ev-eng-basalt); }
+.engines-view .ev-eng--unsloth     { --ev-eng: var(--ev-eng-unsloth); }
 .engines-view .ev-eng--other       { --ev-eng: var(--ev-eng-other); }
 
 /* ── 2. 基础骨架（本页自包含） ──

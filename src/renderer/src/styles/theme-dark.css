@@ -254,10 +254,10 @@ html.theme-dark body {
   border-color: var(--border-stronger);
 }
 
-/* ── 模型卡片：运行中描边为写死的浅灰 #d4d5d3，深底下换成绿色半透描边，
-   与既有的绿色辉光语义一致（语义色，不随主题中性色走） ── */
+/* ── 模型卡片：运行态不再用绿框/绿光强调，与普通卡片同描边；
+   状态由卡内的状态胶囊表达 ── */
 .theme-dark .model-card.running {
-  border-color: rgba(74, 222, 128, .35);
+  border-color: var(--border);
 }
 
 /* ── 模型卡片：彩色字母头像是行内浅色系配色，深底下整体压暗一档防刺眼

@@ -3,7 +3,7 @@ export interface ModelFile {
   path: string
 }
 /** 后端引擎类型：llama.cpp 系列 / TensorSharp 系列 / llama.cpp 分支系列 / stable-diffusion.cpp 图像引擎 / audio.cpp 音频引擎 */
-export type EngineKind = 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'other'
+export type EngineKind = 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth' | 'other'
 export interface BackendVersion {
   name: string
   path: string

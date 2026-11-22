@@ -174,14 +174,15 @@ function findAnyFile(dir: string, names: string[], maxDepth = 4): boolean {
 // 旧命名 TensorSharp.Server 一并保留，避免历史目录无法识别。
 const TENSORSHARP_EXE_NAMES = ['TensorSharp.Server.Host.exe', 'TensorSharp.Server.Host', 'TensorSharp.Server.exe', 'TensorSharp.Server']
 const BACKEND_EXE_NAMES = process.platform === 'win32'
-  ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', ...TENSORSHARP_EXE_NAMES, 'sd-server.exe', 'sd-server', 'audiocpp_server.exe', 'audiocpp_server', 'audiocpp_cli.exe', 'audiocpp_cli']
-  : ['llama-server', 'main', 'server', ...TENSORSHARP_EXE_NAMES, 'sd-server', 'audiocpp_server', 'audiocpp_cli']
+  ? ['llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe', ...TENSORSHARP_EXE_NAMES, 'sd-server.exe', 'sd-server', 'audiocpp_server.exe', 'audiocpp_server', 'audiocpp_cli.exe', 'audiocpp_cli', 'basalt.exe', 'basalt']
+  : ['llama-server', 'main', 'server', ...TENSORSHARP_EXE_NAMES, 'sd-server', 'audiocpp_server', 'audiocpp_cli', 'basalt']
 // 解压后完整性校验用的候选名（跨平台全集，含扩展名与无扩展名两种写法），
 // 与 BACKEND_EXE_NAMES 共用 TENSORSHARP_EXE_NAMES，防止两处清单再次漂移导致「解压成功却判定包不完整」
 const EXTRACT_CHECK_EXE_NAMES = [
   'llama-server.exe', 'llama-server', 'main.exe', 'main', 'server.exe', 'server', 'llama-cli.exe',
   ...TENSORSHARP_EXE_NAMES,
   'sd-server.exe', 'sd-server', 'audiocpp_server.exe', 'audiocpp_server', 'audiocpp_cli.exe', 'audiocpp_cli',
+  'basalt.exe', 'basalt',
 ]
 // 在单个后端目录内查找可执行文件（有限深度递归，跳过 createdump.exe）。
 // 返回相对 basePath 的路径；未找到返回 null。
@@ -321,10 +322,15 @@ const AUDIO_CPP_EXE_NAMES = new Set(['audiocpp_server', 'audiocpp_server.exe', '
 // 按可执行文件名 + 后端目录名推断后端引擎类型：
 // TensorSharp.Server.Host.exe → 'tensorsharp'；llama.cpp 分支（目录名含 turboquant / beellama）→ 对应分支；
 // sd-server/sd-cli → 'sdcpp'；audiocpp_server/cli 或目录名含 audiocpp → 'audiocpp'；llama.cpp 系列 → 'llamacpp'
-function detectEngineKind(exe: string | null, dirHint = ''): EngineKind {
+function detectEngineKind(exe: string | null, dirHint = '', kindHint?: EngineKind): EngineKind {
+  // 安装时由渲染层按仓库显式指定：unsloth 的仓库名与 exe 都和官方 llama.cpp 相同，
+  // 版本目录名也不含 unsloth，只能靠显式类型避免被误判成 llamacpp
+  if (kindHint && kindHint !== 'other') return kindHint
   const n = basename(exe ?? '').toLowerCase()
   const dir = dirHint.toLowerCase()
   if (n.includes('tensorsharp')) return 'tensorsharp'
+  // basalt 主程序在 bin/ 下，名为 basalt（Windows 为 basalt.exe）
+  if (n === 'basalt' || n === 'basalt.exe' || dir.includes('basalt')) return 'basalt'
   // llama.cpp 分支的后端目录名来自发布资产（如 turboquant-plus-tqp-v… / beellama-v0.4.2-…）
   if (dir.includes('turboquant')) return 'turboquant'
   if (dir.includes('beellama')) return 'beellama'
@@ -446,7 +452,8 @@ initTokenLedger(CHAT_STATE_DIR)
 sealOldMonths()
 // 参数集由用户在参数设置里手动切换（paramSet），不自动识别引擎：
 // 'tensorsharp' → commands-tensorsharp.json，'turboquant' → commands-turboquant.json，
-// 'beellama' → commands-beellama.json，'sdcpp' → commands-sdcpp.json，其余 → commands.json
+// 'beellama' → commands-beellama.json，'sdcpp' → commands-sdcpp.json，
+// 'basalt' → commands-basalt.json，'unsloth' → commands-unsloth.json，其余 → commands.json
 function commandsFileName(paramSet: EngineKind): string {
   switch (paramSet) {
     case 'tensorsharp': return 'commands-tensorsharp.json'
@@ -454,6 +461,8 @@ function commandsFileName(paramSet: EngineKind): string {
     case 'beellama': return 'commands-beellama.json'
     case 'sdcpp': return 'commands-sdcpp.json'
     case 'audiocpp': return 'commands-audiocpp.json'
+    case 'basalt': return 'commands-basalt.json'
+    case 'unsloth': return 'commands-unsloth.json'
     default: return 'commands.json'
   }
 }
@@ -465,7 +474,7 @@ function schemaResourcePaths(paramSet: EngineKind): string[] {
   ]
 }
 function normalizeParamSet(paramSet: unknown): EngineKind {
-  return paramSet === 'tensorsharp' || paramSet === 'turboquant' || paramSet === 'beellama' || paramSet === 'sdcpp' || paramSet === 'audiocpp'
+  return paramSet === 'tensorsharp' || paramSet === 'turboquant' || paramSet === 'beellama' || paramSet === 'sdcpp' || paramSet === 'audiocpp' || paramSet === 'basalt' || paramSet === 'unsloth'
     ? paramSet
     : 'llamacpp'
 }
@@ -3043,10 +3052,12 @@ export function registerIpcHandlers(): void {
       }
       // 模型监控面板的速度数据（decode tok/s、prefill tok/s 等）依赖 llama.cpp 的 /metrics 端点；
       // 该端点需 --metrics 启动参数才启用。模板参数默认未开启，这里对 llama.cpp 系列引擎强制注入，
-      // 保证存量模板无需手动改动即可恢复监控数据（TensorSharp / stable-diffusion.cpp / audio.cpp 无此参数，跳过）
-      if (kind !== 'tensorsharp' && kind !== 'sdcpp' && kind !== 'audiocpp' && !safeArgs.includes('--metrics')) {
+      // 保证存量模板无需手动改动即可恢复监控数据（TensorSharp / stable-diffusion.cpp / audio.cpp / basalt 无此参数，跳过）
+      if (kind !== 'tensorsharp' && kind !== 'sdcpp' && kind !== 'audiocpp' && kind !== 'basalt' && !safeArgs.includes('--metrics')) {
         safeArgs.push('--metrics')
       }
+      // basalt 的 HTTP 服务由 serve 子命令提供，形如 basalt serve --model FILE --port N
+      if (kind === 'basalt' && safeArgs[0] !== 'serve') safeArgs.unshift('serve')
       const proc = spawn(exePath, safeArgs, { detached: false, stdio: 'pipe', cwd: dirname(exePath), windowsHide: false })
       modelLogBuffers.delete(opts.id) // 新一轮启动：丢弃上一轮的日志缓存
       let prefillResetTimer: ReturnType<typeof setTimeout> | null = null
@@ -3701,7 +3712,7 @@ export function registerIpcHandlers(): void {
   // 最近一次后端包下载参数：暂停后供「继续」复用；成功/失败/取消后清空。
   // startByte 记录暂停瞬间的真实已下载字节数（文件被预分配为完整大小，
   // 续传必须用真实进度，不能按文件大小推断，否则会误判残留完整文件而删档重下）
-  let lastBackendDlOpts: { url: string; version: string; assetName: string; digest?: string; startByte?: number } | null = null
+  let lastBackendDlOpts: { url: string; version: string; assetName: string; digest?: string; startByte?: number; kind?: EngineKind } | null = null
 
   // ── 共享的后端发布版本检查（llama.cpp 与 TensorSharp 通用，均直连 GitHub）──
   // repo 形如「owner/name」，由渲染进程显式传入；缺省为 llama.cpp。
@@ -3714,6 +3725,8 @@ export function registerIpcHandlers(): void {
     const isTs = repo.toLowerCase().includes('tensorsharp')
     const isSdcpp = repo.toLowerCase().includes('stable-diffusion.cpp')
     const isAudioCpp = repo.toLowerCase().includes('audio.cpp')
+    const isBasalt = repo.toLowerCase().includes('basalt')
+    const isUnsloth = repo.toLowerCase().includes('unsloth')
     // 平台资产筛选器（抽成函数，供 latest 和回退 releases 共用）
     const filterPlatformAssets = (r: any) => r.assets.filter((a: any) => {
       const n = a.name.toLowerCase()
@@ -3750,7 +3763,8 @@ export function registerIpcHandlers(): void {
         }
         if (!n.endsWith('.tar.gz')) return false
         if (isTs) return n.includes('linux-x64') && !n.includes('arm64')
-        if (!n.includes('ubuntu')) return false
+        // basalt / unsloth 的 Linux 包命名为 linux-x64，而非官方的 ubuntu-*，单独放行
+        if (!n.includes('ubuntu') && !((isBasalt || isUnsloth) && n.includes('linux'))) return false
         if (arch === 'arm64' && !n.includes('arm64')) return false
         if (arch === 'x64' && n.includes('arm64')) return false
         return true
@@ -3798,25 +3812,34 @@ export function registerIpcHandlers(): void {
     }
     // 引擎识别（与 detectEngineKind 同语义）：只与同引擎的已装目录比较，避免跨引擎版本串扰
     const repoLower = repo.toLowerCase()
-    const repoKind = repoLower.includes('tensorsharp') ? 'tensorsharp'
-      : repoLower.includes('turboquant') ? 'turboquant'
-        : repoLower.includes('beellama') ? 'beellama'
-          : repoLower.includes('stable-diffusion.cpp') ? 'sdcpp'
-            : repoLower.includes('audio.cpp') ? 'audiocpp'
-              : 'llamacpp'
+    // unsloth 仓库名含 llama.cpp，必须放在默认分支之前单独识别，否则版本比较会串到官方 llama.cpp
+    const repoKind = repoLower.includes('unsloth') ? 'unsloth'
+      : repoLower.includes('basalt') ? 'basalt'
+        : repoLower.includes('tensorsharp') ? 'tensorsharp'
+          : repoLower.includes('turboquant') ? 'turboquant'
+            : repoLower.includes('beellama') ? 'beellama'
+              : repoLower.includes('stable-diffusion.cpp') ? 'sdcpp'
+                : repoLower.includes('audio.cpp') ? 'audiocpp'
+                  : 'llamacpp'
     const latestVer = parseVersion(String(release.tag_name))
     let isNewer = true
     if (existsSync(BACKEND_DIR)) {
       for (const d of readdirSync(BACKEND_DIR, { withFileTypes: true }).filter(d => d.isDirectory())) {
         const dn = d.name.toLowerCase()
-        const dirKind = dn.includes('tensorsharp') ? 'tensorsharp'
-          : dn.includes('turboquant') ? 'turboquant'
-            : dn.includes('beellama') ? 'beellama'
-              // sd 版本目录形如 master-813-bfbef5b-sd-master-bfbef5b-bin-win-cpu-x64
-              : dn.includes('sd-master') || dn.includes('stable-diffusion') ? 'sdcpp'
-                // audio.cpp 版本目录形如 audiocpp-windows-cuda-portable-<hash> 或 audio-v0.7.1-bin-windows-x64-cuda13.3
-                : dn.includes('audiocpp') || dn.includes('audio-') ? 'audiocpp'
-                  : 'llamacpp'
+        // unsloth 的版本目录名不含 unsloth（形如 b12588-...-app-...-windows-x64-cuda13-portable），
+        // 优先用安装时写入的注册表类型，避免与官方 llama.cpp 的版本判断互相串扰
+        const registeredKind = backendRegistryCache?.backends.find(b => b.name === d.name)?.kind
+        const dirKind = registeredKind ?? (
+          dn.includes('basalt') ? 'basalt'
+            : dn.includes('tensorsharp') ? 'tensorsharp'
+              : dn.includes('turboquant') ? 'turboquant'
+                : dn.includes('beellama') ? 'beellama'
+                  // sd 版本目录形如 master-813-bfbef5b-sd-master-bfbef5b-bin-win-cpu-x64
+                  : dn.includes('sd-master') || dn.includes('stable-diffusion') ? 'sdcpp'
+                    // audio.cpp 版本目录形如 audiocpp-windows-cuda-portable-<hash> 或 audio-v0.7.1-bin-windows-x64-cuda13.3
+                    : dn.includes('audiocpp') || dn.includes('audio-') ? 'audiocpp'
+                      : 'llamacpp'
+        )
         if (dirKind !== repoKind) continue
         // 兜底：目录名包含完整 tagName（历史命名差异 / 无法解析版本号的旧目录）
         if (d.name.includes(release.tag_name)) { isNewer = false; break }
@@ -3850,14 +3873,14 @@ export function registerIpcHandlers(): void {
     } catch (err) { return { error: String(err) } }
   })
   // 共享的后端发布包下载 + 解压实现（llama.cpp 与 TensorSharp 通用，直连 GitHub）
-  async function downloadBackendRelease(event: Electron.IpcMainInvokeEvent, opts: { url: string; version: string; assetName: string; digest?: string; startByte?: number }): Promise<{ success: boolean; path?: string; cancelled?: boolean; paused?: boolean; error?: string }> {
+  async function downloadBackendRelease(event: Electron.IpcMainInvokeEvent, opts: { url: string; version: string; assetName: string; digest?: string; startByte?: number; kind?: EngineKind }): Promise<{ success: boolean; path?: string; cancelled?: boolean; paused?: boolean; error?: string }> {
     if (!opts.version || /[\\/:*?"<>|]/.test(opts.version) || opts.version.includes('..')) {
       return { success: false, error: '无效的版本' }
     }
     if (!opts.assetName || opts.assetName.includes('..') || opts.assetName.includes('/') || opts.assetName.includes('\\')) {
       return { success: false, error: '无效的资源名称' }
     }
-    lastBackendDlOpts = { url: opts.url, version: opts.version, assetName: opts.assetName, digest: opts.digest }
+    lastBackendDlOpts = { url: opts.url, version: opts.version, assetName: opts.assetName, digest: opts.digest, kind: opts.kind }
     const archivePath = join(app.getPath('temp'), opts.assetName)
     const extractPath = join(BACKEND_DIR, opts.version)
     if (!isSafePath(BACKEND_DIR, extractPath)) return { success: false, error: '访问被拒绝' }
@@ -3895,13 +3918,18 @@ export function registerIpcHandlers(): void {
         : assetLower.includes('turboquant') ? 'TurboQuant'
           : assetLower.includes('beellama') ? 'BeeLlama'
             : assetLower.includes('audiocpp') || assetLower.includes('audio.cpp') ? 'audio.cpp'
-              : 'llama.cpp'
+              : assetLower.startsWith('basalt-') ? 'Basalt'
+                // unsloth 资产名以 app- 开头且不含仓库名，按显式 kind 标记
+                : opts.kind === 'unsloth' ? 'Unsloth'
+                  : 'llama.cpp'
     const dlEngine = dlLabel === 'stable-diffusion.cpp' ? 'sdcpp'
       : dlLabel === 'TensorSharp' ? 'tensorsharp'
         : dlLabel === 'TurboQuant' ? 'turboquant'
           : dlLabel === 'BeeLlama' ? 'beellama'
             : dlLabel === 'audio.cpp' ? 'audiocpp'
-              : 'llamacpp'
+              : dlLabel === 'Basalt' ? 'basalt'
+                : dlLabel === 'Unsloth' ? 'unsloth'
+                  : 'llamacpp'
     const progressPayload = (phase: string, received: number, total: number, percent: number, speed?: number, note?: string, chunks?: Array<'idle' | 'active' | 'done'>) => ({ percent, phase, received, total, engine: dlEngine, name: opts.assetName, speed, note, chunks })
     // 最近一次进度快照：onStatus（如回退提示）需要用它补全 payload
     let lastR = 0, lastT = 0, lastSpeed = 0
@@ -4084,7 +4112,7 @@ export function registerIpcHandlers(): void {
           name: opts.version,
           basePath: extractPath,
           exe,
-          kind: detectEngineKind(exe, opts.version),
+          kind: detectEngineKind(exe, opts.version, opts.kind),
         })
         if (backendRegistryCache) broadcastBackends(backendRegistryCache.backends)
       } catch (e) {
@@ -4133,7 +4161,7 @@ export function registerIpcHandlers(): void {
       return { success: false, cancelled: dlCancelled, error: cnMsg }
     }
   }
-  ipcMain.handle('download-release', (event, opts: { url: string; version: string; assetName: string; digest?: string }) => downloadBackendRelease(event, opts))
+  ipcMain.handle('download-release', (event, opts: { url: string; version: string; assetName: string; digest?: string; kind?: EngineKind }) => downloadBackendRelease(event, opts))
   // 拉取 stable-diffusion.cpp 上游 CUDA 运行时包的「当前状态」：
   // 找到最近一个附带 cudart 资产的 release，取其发布时间与该资产的 sha256；
   // 另外取仓库默认分支最新提交时间作为兜底信号。结果走 GitHub 缓存（30 分钟 TTL），

@@ -91,12 +91,27 @@ export default function ModelCard({ card, style }: Props) {
   ) {
     const el = ref.current
     if (!el) return
-    const overflow = el.scrollWidth > el.clientWidth + 1
+    // 只要内容比容器宽就算溢出（含轻微溢出），多留一点滚动余量，
+    // 这样只超出几个字的名称 hover 时也能明显看到左右滚动
+    const overflow = el.scrollWidth > el.clientWidth
     setter(overflow)
-    if (overflow) el.style.setProperty(varName, `${el.scrollWidth - el.clientWidth}px`)
+    if (overflow) {
+      const distance = el.scrollWidth - el.clientWidth + 8
+      el.style.setProperty(varName, `${distance}px`)
+      // 匀速：时长按距离算（约 40px/s），并用上下限避免极端值忽快忽慢
+      const duration = Math.min(8, Math.max(1.2, distance / 40))
+      el.style.setProperty(`${varName}-duration`, `${duration.toFixed(2)}s`)
+    }
   }
-  useEffect(() => { checkOverflow(nameRef, setNameOverflow, '--name-slide') }, [card.template.name])
-  useEffect(() => { checkOverflow(modelTagRef, setModelTagOverflow, '--tag-slide') }, [card.template.modelPath])
+  // 放到下一帧再量，避免字体/布局未就绪时误判为不溢出
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => checkOverflow(nameRef, setNameOverflow, '--name-slide'))
+    return () => cancelAnimationFrame(raf)
+  }, [card.template.name])
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => checkOverflow(modelTagRef, setModelTagOverflow, '--tag-slide'))
+    return () => cancelAnimationFrame(raf)
+  }, [card.template.modelPath])
   function handleCopyLogs() {
     const text = (logs ?? []).map(e => e.text).join('\n')
     safeCall(() => navigator.clipboard.writeText(text), '复制失败').then((ok) => {
@@ -192,7 +207,7 @@ export default function ModelCard({ card, style }: Props) {
     // tensor 名不带 model.diffusion_model. 前缀，用 -m 时 sd 识别不了架构）
     // audio.cpp 的模型由服务端自带 WebUI 管理（安装/加载/卸载），启动时无需指定本地模型路径
     if (card.template.modelPath && paramSet !== 'audiocpp') {
-      args.push(paramSet === 'tensorsharp' ? '--model' : paramSet === 'sdcpp' ? '--diffusion-model' : '-m', card.template.modelPath)
+      args.push(paramSet === 'tensorsharp' || paramSet === 'basalt' ? '--model' : paramSet === 'sdcpp' ? '--diffusion-model' : '-m', card.template.modelPath)
     }
     // 参数白名单按卡片自身参数集获取（TensorSharp 与 llama.cpp 的 schema 不同），
     // 不依赖全局 activeBackend 的 schema，否则另一引擎的参数会被静默丢弃
@@ -234,7 +249,7 @@ export default function ModelCard({ card, style }: Props) {
         return
       }
     } else if (card.template.serverPort) {
-      // stable-diffusion.cpp 的 sd-server 端口参数是 --listen-port（默认 1234），llama.cpp 系列是 --port
+      // stable-diffusion.cpp 的 sd-server 端口参数是 --listen-port（默认 1234），其余引擎是 --port
       args.push(paramSet === 'sdcpp' ? '--listen-port' : '--port', String(card.template.serverPort))
     }
     const backendPath = targetBackend.path
@@ -411,24 +426,26 @@ export default function ModelCard({ card, style }: Props) {
         </span>
       </div>
       <div className="card-launch-mode">
-        <button
-          className={`launch-mode-btn ${launchMode === 'chat' ? 'active' : ''}`}
-          onClick={() => setLaunchMode('chat')}
-          disabled={isRunning}
-          onMouseEnter={() => chatIconRef.current?.startAnimation()}
-          onMouseLeave={() => chatIconRef.current?.stopAnimation()}
-        >
-          <GlobeIcon ref={chatIconRef} size={12} className="nav-animate-icon" /> 聊天界面
-        </button>
-        <button
-          className={`launch-mode-btn ${launchMode === 'api' ? 'active' : ''}`}
-          onClick={() => setLaunchMode('api')}
-          disabled={isRunning}
-          onMouseEnter={() => apiIconRef.current?.startAnimation()}
-          onMouseLeave={() => apiIconRef.current?.stopAnimation()}
-        >
-          <ServerIcon ref={apiIconRef} size={12} className="nav-animate-icon" /> 仅 API
-        </button>
+        <div className="launch-mode-group">
+          <button
+            className={`launch-mode-btn ${launchMode === 'chat' ? 'active' : ''}`}
+            onClick={() => setLaunchMode('chat')}
+            disabled={isRunning}
+            onMouseEnter={() => chatIconRef.current?.startAnimation()}
+            onMouseLeave={() => chatIconRef.current?.stopAnimation()}
+          >
+            <GlobeIcon ref={chatIconRef} size={12} className="nav-animate-icon" /> 聊天界面
+          </button>
+          <button
+            className={`launch-mode-btn ${launchMode === 'api' ? 'active' : ''}`}
+            onClick={() => setLaunchMode('api')}
+            disabled={isRunning}
+            onMouseEnter={() => apiIconRef.current?.startAnimation()}
+            onMouseLeave={() => apiIconRef.current?.stopAnimation()}
+          >
+            <ServerIcon ref={apiIconRef} size={12} className="nav-animate-icon" /> 仅 API
+          </button>
+        </div>
         {(isRunning || card.status === 'error') && (
           <button
             ref={logsBtnRef}

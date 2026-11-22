@@ -169,7 +169,7 @@ interface AppStore {
   editingTemplate: Template | null
   updateDismissed: boolean
   checkingUpdate: boolean
-  downloadProgress: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> } | null
+  downloadProgress: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> } | null
   // ── 应用自身更新 ──
   appReleaseInfo: AppUpdateInfo | null
   appUpdateDismissed: boolean

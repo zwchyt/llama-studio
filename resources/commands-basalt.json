@@ -1,0 +1,107 @@
+{
+  "version": "basalt-v2",
+  "categories": [
+    {
+      "name": "服务与模型",
+      "icon": "Server",
+      "commands": [
+        { "arg": "--model", "label": "Model File", "description": ".basalt 模型文件；由卡片模型路径自动注入，无需手动填写", "type": "string", "placeholder": "models/Qwen3.8-FN-NVFP4-DQ6_K.basalt" },
+        { "arg": "--port", "label": "Port", "description": "监听端口，默认 8080；由卡片端口自动注入，无需手动填写", "type": "number", "default": 8080, "min": 1, "max": 65535 },
+        { "arg": "--config", "label": "Config File", "description": "可选 JSON 配置（含 server / engine / models 三段）；命令行参数始终优先于配置文件", "type": "string", "placeholder": "basalt_config.json" },
+        { "arg": "--alias", "label": "Model Alias", "description": "API 对外报告的模型名（默认取模型文件内记录的名字）", "type": "string" },
+        { "arg": "--host", "label": "Host", "description": "监听地址：127.0.0.1 仅本机（默认），0.0.0.0 允许局域网访问（建议同时设置密钥）", "type": "string", "placeholder": "127.0.0.1" },
+        { "arg": "--gpu", "label": "GPUs", "description": "使用的 GPU 编号，逗号分隔（如 0,1）；auto 表示全部 Blackwell 卡，最快的一张为主卡", "type": "string", "placeholder": "0 或 auto" },
+        { "arg": "--parallel", "label": "Parallel Slots", "description": "同时服务的请求数，1~8（默认 1）。开启后 --max-context 由各槽平分", "type": "number", "default": 1, "min": 1, "max": 8 },
+        { "arg": "--slot-full-context", "label": "Full Context per Slot", "description": "与 --parallel 配合：每个槽使用完整上下文，KV 缓存按槽数成倍增加", "type": "boolean", "default": false },
+        { "arg": "--api-key", "label": "API Key", "description": "为 /v1/* 接口设置访问密钥（仅命令行有效，不能写在配置文件里）", "type": "string" },
+        { "arg": "--api-key-file", "label": "API Key File", "description": "从文件首行读取密钥，避免密钥出现在进程列表中（仅命令行有效）", "type": "string" },
+        { "arg": "--allowed-host", "label": "Allowed Host", "description": "额外允许访问的 Host 名，可重复；填 * 关闭 Host 校验", "type": "string" },
+        { "arg": "--cors-origin", "label": "CORS Origin", "description": "允许该来源的网页调用 /v1/*，可重复", "type": "string" },
+        { "arg": "--max-payload-mib", "label": "Max Payload (MiB)", "description": "允许的最大请求体，超过返回 413（默认 256）", "type": "number", "default": 256, "min": 1, "max": 4096 },
+        { "arg": "--lazy", "label": "Lazy Load", "description": "启动时只开 API，首个请求到达时才加载模型", "type": "boolean", "default": false },
+        { "arg": "--idle-unload", "label": "Idle Unload (s)", "description": "空闲多少秒后卸载模型，下次请求重新加载", "type": "number", "min": 0, "max": 86400 },
+        { "arg": "--idle-sleep", "label": "Idle Sleep (s)", "description": "空闲多少秒后让模型睡眠并释放显存（仅 Linux），下次请求秒级唤醒", "type": "number", "min": 0, "max": 86400 },
+        { "arg": "--min-free-vram-mib", "label": "Min Free VRAM (MiB)", "description": "剩余显存低于该值时不加载模型，直接返回 503", "type": "number", "min": 0, "max": 65536 }
+      ]
+    },
+    {
+      "name": "上下文与缓存",
+      "icon": "Layers",
+      "commands": [
+        { "arg": "--max-context", "label": "Max Context", "description": "KV 与状态容量，即上下文长度（引擎默认 8192；多数模型可达 262144 或 1048576）", "type": "number", "default": 131072, "min": 1024, "max": 1048576 },
+        { "arg": "--kv", "label": "KV Storage", "description": "KV 缓存精度：int8 比 fp16 省一半显存；q4_0 / k8v4 更省但精度略低；fp8 用于压缩注意力缓存", "type": "select", "options": ["fp16", "int8", "q4_0", "k8v4", "fp8"], "default": "fp16" },
+        { "arg": "--kv-resident", "label": "KV Resident Cells", "description": "KV 流式化：每层的 QSA 层保留 N 个 cell 在显存，其余放固定内存；0 表示全部放显存（最低 20480）", "type": "number", "default": 0, "min": 0, "max": 1048576 },
+        { "arg": "--rope-scaling", "label": "RoPE Scaling", "description": "把上下文扩展到训练长度之外：linear 位置插值或 yarn；默认取模型文件配置", "type": "select", "options": ["none", "linear", "yarn"], "default": "none" },
+        { "arg": "--rope-scale", "label": "RoPE Scale", "description": "linear / yarn 的扩展倍率，默认取模型文件配置，1 表示关闭", "type": "number", "min": 0, "max": 1000 },
+        { "arg": "--rope-freq-base", "label": "RoPE Freq Base", "description": "原始 ggml 参数：频率基值，0 表示使用模型自带值", "type": "number", "min": 0, "max": 100000000 },
+        { "arg": "--rope-freq-scale", "label": "RoPE Freq Scale", "description": "原始 ggml 参数：角度收缩系数，0 表示 1 / --rope-scale", "type": "number", "min": 0, "max": 100 },
+        { "arg": "--yarn-orig-ctx", "label": "YaRN Orig Context", "description": "YaRN 修正目标训练长度，0 表示使用模型自带值", "type": "number", "min": 0, "max": 1048576 },
+        { "arg": "--yarn-ext-factor", "label": "YaRN Ext Factor", "description": "YaRN 参数，默认 -1 表示自动（yarn 时为 1）", "type": "number", "default": -1, "min": -1, "max": 100 },
+        { "arg": "--prompt-cache", "label": "Prompt Cache", "description": "请求之间保留的对话检查点数量（默认 6，每个约 118MB 内存；0 表示每次从头读取）", "type": "number", "default": 6, "min": 0, "max": 64 },
+        { "arg": "--prompt-cache-every", "label": "Prompt Cache Every", "description": "每新增 N 个 token 也建立一个检查点（默认 16384，0 表示关闭）", "type": "number", "default": 16384, "min": 0, "max": 1048576 },
+        { "arg": "--prompt-cache-root", "label": "Prompt Cache Root", "description": "首轮边界超过 N 个 token 时建立检查点（默认 2048，0 表示从不）", "type": "number", "default": 2048, "min": 0, "max": 1048576 },
+        { "arg": "--conversation-cache-mib", "label": "Conversation Cache (MiB)", "description": "换出会话到内存预算，默认 0 关闭", "type": "number", "default": 0, "min": 0, "max": 1048576 },
+        { "arg": "--conversation-cache-disk-mib", "label": "Conversation Disk Cache (MiB)", "description": "会话落盘预算，重启后可续接；默认 0 关闭", "type": "number", "default": 0, "min": 0, "max": 1048576 },
+        { "arg": "--conversation-cache-min-tokens", "label": "Cache Min Tokens", "description": "仅缓存至少 N 个 token 的会话，默认 0 表示全部缓存", "type": "number", "default": 0, "min": 0, "max": 1048576 },
+        { "arg": "--batch", "label": "Batch Slots", "description": "批处理槽位数，2~8；与 --parallel 类似，但由引擎侧批量解码", "type": "number", "min": 2, "max": 8 },
+        { "arg": "--answer-room", "label": "Answer Room", "description": "为结束思考与作答预留的输出 token：auto 为上限的四分之一（至少 512），或填具体数值", "type": "string", "placeholder": "auto 或 512" }
+      ]
+    },
+    {
+      "name": "采样默认值",
+      "icon": "Sliders",
+      "commands": [
+        { "arg": "--temperature", "label": "Temperature", "description": "请求未指定时的默认采样温度；0 为贪心，越高越随机", "type": "number", "min": 0, "max": 2 },
+        { "arg": "--top-p", "label": "Top-P", "description": "默认核采样阈值，0 < 值 ≤ 1（1 表示关闭）", "type": "number", "min": 0, "max": 1 },
+        { "arg": "--top-k", "label": "Top-K", "description": "默认保留概率最高的 K 个 token（0 表示全部）", "type": "number", "min": 0, "max": 100000 },
+        { "arg": "--min-p", "label": "Min-P", "description": "默认最低概率阈值，0~1（0 表示关闭）", "type": "number", "min": 0, "max": 1 },
+        { "arg": "--presence-penalty", "label": "Presence Penalty", "description": "对窗口内已出现 token 的固定惩罚", "type": "number", "min": -2, "max": 2 },
+        { "arg": "--frequency-penalty", "label": "Frequency Penalty", "description": "随出现次数递增的惩罚", "type": "number", "min": -2, "max": 2 },
+        { "arg": "--repetition-penalty", "label": "Repetition Penalty", "description": "乘法重复惩罚，> 0（1 表示关闭）", "type": "number", "min": 0, "max": 2 },
+        { "arg": "--penalty-last-n", "label": "Penalty Last N", "description": "惩罚回看的窗口长度，最多 4096 个 token", "type": "number", "min": 0, "max": 4096 },
+        { "arg": "--seed", "label": "Seed", "description": "请求未指定时的默认随机种子，固定后结果可复现", "type": "number", "min": -1, "max": 2147483647 }
+      ]
+    },
+    {
+      "name": "推理与工具",
+      "icon": "Brain",
+      "commands": [
+        { "arg": "--reasoning-effort", "label": "Reasoning Effort", "description": "请求未指定思考强度时的默认值；不填则由模型模板决定", "type": "select", "options": ["none", "low", "medium", "high", "xhigh", "max"] },
+        { "arg": "--reasoning-budget-tokens", "label": "Reasoning Budget", "description": "默认思考预算（0 为不开启）；到达预算时结束思考开始作答，应小于 max_tokens", "type": "number", "min": 0, "max": 1048576 },
+        { "arg": "--thinking-loop-tokens", "label": "Thinking Loop Tokens", "description": "思考中同一 token 连续重复达到该次数时强制结束思考（0 为不启用）", "type": "number", "min": 0, "max": 4096 },
+        { "arg": "--no-grammar", "label": "Disable Grammar", "description": "关闭工具调用与 JSON 输出的语法约束（默认开启；strict 请求始终强制开启）", "type": "boolean", "default": false },
+        { "arg": "--spec", "label": "Speculative Tokens", "description": "投机解码每次验证的最大窗口 token 数；0 或 1 关闭，默认由模型的草稿器决定", "type": "number", "min": 0, "max": 64 },
+        { "arg": "--draft-experts", "label": "Draft Experts", "description": "DSpark 草稿器每阶段保留的高频专家数（32/64/96/128，默认 32；0 为全部）", "type": "number", "min": 0, "max": 128 },
+        { "arg": "--suffix-draft", "label": "Suffix Draft", "description": "提示查找草稿：当上下文尾部重复出现时用更早的内容起草（默认 3，0 为仅用 MTP）", "type": "number", "min": 0, "max": 32 },
+        { "arg": "--mtp-window", "label": "MTP Window", "description": "草稿器关注的上下文 cell 数（默认 32768，0 为全部）", "type": "number", "min": 0, "max": 1048576 }
+      ]
+    },
+    {
+      "name": "视觉与图像",
+      "icon": "Eye",
+      "commands": [
+        { "arg": "--vision", "label": "Vision", "description": "图像输入：off 关闭、dynamic 引擎内置（借用专家缓存，不常驻显存）、cpu 慢速但省显存", "type": "select", "options": ["off", "dynamic", "cpu"], "default": "off" },
+        { "arg": "--video-max-tokens", "label": "Video Max Tokens", "description": "单个视频所有帧最多占用的图像 token 数（默认 8192）", "type": "number", "default": 8192, "min": 1024, "max": 1048576 },
+        { "arg": "--image-dir", "label": "Image Dir", "description": "允许本机以外请求引用该目录下的图片，可重复", "type": "string" },
+        { "arg": "--image-url-host", "label": "Image URL Host", "description": "允许本机以外请求引用指定主机的 http(s) 图片地址，可重复", "type": "string", "placeholder": "example.com" }
+      ]
+    },
+    {
+      "name": "GPU 与显存",
+      "icon": "Cpu",
+      "commands": [
+        { "arg": "--expert-cache", "label": "Expert Cache", "description": "常驻显存的专家 blob 数量；auto 表示按剩余显存自动计算", "type": "string", "placeholder": "auto 或具体数值" },
+        { "arg": "--vram-reserve-mib", "label": "VRAM Reserve (MiB)", "description": "为主卡的图、临时缓冲与输出头预留的显存（默认 700，最低 256）", "type": "number", "default": 700, "min": 256, "max": 65536 },
+        { "arg": "--ram-reserve-mib", "label": "RAM Reserve (MiB)", "description": "为系统其余程序预留的内存（默认 2048，0 表示不预留并关闭内存护栏）", "type": "number", "default": 2048, "min": 0, "max": 1048576 },
+        { "arg": "--resident-experts", "label": "Resident Experts", "description": "低内存常驻模式：专家副本放固定内存并尽量锁页，显存留给热专家", "type": "boolean", "default": false },
+        { "arg": "--resident-budget-gib", "label": "Resident Budget (GiB)", "description": "限制常驻内存的专家总量（最热的优先；不填则按可用内存自动）", "type": "number", "min": 1, "max": 2048 },
+        { "arg": "--vram-elastic", "label": "Elastic VRAM", "description": "允许通过 /v1/vram 接口在请求之间把显存让给其他程序再收回", "type": "boolean", "default": false },
+        { "arg": "--mmap-experts", "label": "MMap Experts", "description": "退出默认的常驻内存模式，改回文件映射；冷热运行速度差异较大", "type": "boolean", "default": false },
+        { "arg": "--pool-workers", "label": "CPU Pool Workers", "description": "CPU 专家池的工作线程数；不填则按物理核心数自动", "type": "number", "min": 1, "max": 256 },
+        { "arg": "--pool-affinity", "label": "Pool Affinity", "description": "决定线程池规模的核心范围：all 全部、auto 混合架构自动、p-cores 仅性能核", "type": "select", "options": ["all", "auto", "p-cores"], "default": "auto" },
+        { "arg": "--adapt-every", "label": "Adapt Every", "description": "自适应专家分层每多少解码窗口调整一轮（服务默认 1，0 表示固定不调整）", "type": "number", "min": 0, "max": 1024 },
+        { "arg": "--adapt-swaps", "label": "Adapt Swaps", "description": "每轮最多换入主卡的专家数（默认 96，0 表示关闭）", "type": "number", "min": 0, "max": 1024 }
+      ]
+    }
+  ]
+}

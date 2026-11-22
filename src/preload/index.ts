@@ -35,8 +35,8 @@ const fullApi = {
   },
   removeBackendsUpdatedListener: () => ipcRenderer.removeAllListeners('backends-updated'),
   deleteBackend: (name: string) => ipcRenderer.invoke('delete-backend', name),
-  getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => ipcRenderer.invoke('get-commands', backendName, paramSet),
-  saveBackendCommands: (backendName: string, schema: CommandsSchema, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama') => ipcRenderer.invoke('save-backend-commands', backendName, schema, paramSet),
+  getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth') => ipcRenderer.invoke('get-commands', backendName, paramSet),
+  saveBackendCommands: (backendName: string, schema: CommandsSchema, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth') => ipcRenderer.invoke('save-backend-commands', backendName, schema, paramSet),
   listTemplates: () => ipcRenderer.invoke('list-templates'),
   // ── 外部端点表（endpoints.json）：地址/协议/key/模型名集中一处，卡片只引用 ──
   listModelEndpoints: () => ipcRenderer.invoke('list-model-endpoints'),
@@ -48,7 +48,7 @@ const fullApi = {
   exportTemplate: (template: Template) => ipcRenderer.invoke('export-template', template),
   checkFileExists: (filePath: string) => ipcRenderer.invoke('check-file-exists', filePath),
   pickModelFile: () => ipcRenderer.invoke('pick-model-file'),
-  runModel: (opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp'; kind?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' }) => ipcRenderer.invoke('run-model', opts),
+  runModel: (opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth'; kind?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth' }) => ipcRenderer.invoke('run-model', opts),
   stopModel: (id: string) => ipcRenderer.invoke('stop-model', id),
   // ── 接管本机已运行的服务 / 连接远程端点 ──
   // probe 只读（本机端口或远程 URL 二选一）；attach 只对本机端口有意义（把端口登记进
@@ -67,7 +67,7 @@ const fullApi = {
   },
   removeModelDiagnosisListener: () => ipcRenderer.removeAllListeners('model-diagnosis'),
   checkUpdates: (repo?: string) => ipcRenderer.invoke('check-updates', repo),
-  downloadRelease: (opts: { url: string; version: string; assetName: string; digest?: string }) => ipcRenderer.invoke('download-release', opts),
+  downloadRelease: (opts: { url: string; version: string; assetName: string; digest?: string; kind?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth' }) => ipcRenderer.invoke('download-release', opts),
   installSdCudart: (opts: { url: string; assetName: string; backendName: string; digest?: string }) => ipcRenderer.invoke('install-sd-cudart', opts),
   checkSdCudartInstalled: (backendName: string) => ipcRenderer.invoke('check-sd-cudart-installed', backendName),
   onSdCudartProgress: (cb: (data: { phase: string; percent: number; received?: number; total?: number; speed?: number }) => void) => {
@@ -78,7 +78,7 @@ const fullApi = {
   cancelBackendDownload: () => ipcRenderer.invoke('cancel-backend-download'),
   pauseBackendDownload: () => ipcRenderer.invoke('pause-backend-download'),
   resumeBackendDownload: () => ipcRenderer.invoke('resume-backend-download'),
-  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama' | 'sdcpp'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> }) => void) => {
+  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> }) => void) => {
     ipcRenderer.removeAllListeners('download-progress')
     ipcRenderer.on('download-progress', (_event, data) => callback(data))
   },

@@ -20,6 +20,7 @@ import { createPortal } from 'react-dom'
 import { Image as ImageIcon } from 'lucide-react'
 import { XIcon } from '@animateicons/react/lucide'
 import { useBubbleTip } from '../../useBubbleTip'
+import { claimChipTip } from '../agent-input/RichInput'
 
 /** 预览卡里图片的显示上限（原图按宽高比缩进这个框） */
 const PREVIEW_MAX_W = 280
@@ -69,11 +70,19 @@ export function ImagePill({ name, src, onRemove, removeDisabled, onClick }: {
     return () => { alive = false }
   }, [src])
 
+  // 立即关闭：供互斥桥登记，引用卡 / 输入框卡打开时会调它
+  const closeNow = useCallback(() => {
+    if (timer.current) { window.clearTimeout(timer.current); timer.current = null }
+    setAnchor(null)
+  }, [])
+
   const show = useCallback(() => {
     if (timer.current) { window.clearTimeout(timer.current); timer.current = null }
     const r = pillRef.current?.getBoundingClientRect()
     if (r) setAnchor(r)
-  }, [])
+    // 与引用卡 / 输入框卡共用同一互斥桥：谁打开谁关掉上一张，跨类型移动不叠加
+    claimChipTip(closeNow)
+  }, [closeNow])
 
   const hide = useCallback(() => {
     if (timer.current) window.clearTimeout(timer.current)

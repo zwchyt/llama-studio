@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { shallow } from 'zustand/shallow'
-import { ChevronDown, ChevronRight, Copy, Check, Search, Lock } from 'lucide-react'
+import { ChevronDown, ChevronRight, Copy, Check, Search, Lock, Mountain, Rocket } from 'lucide-react'
 import { CpuIcon, ZapIcon, TimerIcon, SparklesIcon, ImageIcon, AudioLinesIcon } from '@animateicons/react/lucide'
 import type { CommandParam, TemplateArgs, CommandsSchema } from '../../../shared/types'
 import { iconComponents } from '../utils/iconMap'
@@ -24,8 +24,8 @@ interface Props {
   serverPortFallback?: number
   disabled?: boolean
   /** 参数集选择（参数设置里切换）：'llamacpp' → commands.json，'tensorsharp' → commands-tensorsharp.json，llama.cpp 分支 → 各自专属文件 */
-  paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp'
-  onParamSetChange?: (s: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp') => void
+  paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth'
+  onParamSetChange?: (s: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth') => void
 }
 export default function CmdParamsEditor({ templateId, backendName, args, onChange, modelPathFallback, serverPortFallback, disabled: disabledProp, paramSet, onParamSetChange }: Props) {
   const { commandsSchema, updateCard, cards, imageModels, chatTemplates, backends, models } = useStore(s => ({ commandsSchema: s.commandsSchema, updateCard: s.updateCard, cards: s.cards, imageModels: s.imageModels, chatTemplates: s.chatTemplates, backends: s.backends, models: s.models }), shallow)
@@ -49,7 +49,9 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
     turboquant: TimerIcon,
     beellama: SparklesIcon,
     sdcpp: ImageIcon,
-    audiocpp: AudioLinesIcon
+    audiocpp: AudioLinesIcon,
+    basalt: Mountain,
+    unsloth: Rocket
   }
 
   const card = templateId ? cards.find(c => c.template.id === templateId) : null
@@ -61,11 +63,12 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
   const isTensorSharp = effectiveParamSet === 'tensorsharp'
   const isSdcpp = effectiveParamSet === 'sdcpp'
   const isAudiocpp = effectiveParamSet === 'audiocpp'
+  const isBasalt = effectiveParamSet === 'basalt'
   // “主要设置”摘取与默认折叠只对 llama.cpp 系引擎生效（llama.cpp / TurboQuant / BeeLlama 共用核心参数）；
   // 其他引擎（TensorSharp / sd.cpp / audio.cpp）参数体系不同，直接按各自分类全量展示，避免主要设置只剩零星参数
   const isLlamaFamily = effectiveParamSet === 'llamacpp' || effectiveParamSet === 'turboquant' || effectiveParamSet === 'beellama'
   // 预览 exe 跟随参数集：参数集决定命令格式，与实际后端 exe 无关
-  const backendExe = isTensorSharp ? 'TensorSharp.Server.Host.exe' : isSdcpp ? 'sd-server' : isAudiocpp ? 'audiocpp_server.exe' : 'llama-server'
+  const backendExe = isTensorSharp ? 'TensorSharp.Server.Host.exe' : isSdcpp ? 'sd-server' : isAudiocpp ? 'audiocpp_server.exe' : isBasalt ? 'basalt.exe serve' : 'llama-server'
   const activeArgs = args
   // 按参数集拉取专属 schema（llama.cpp → commands.json，TensorSharp → commands-tensorsharp.json）
   const [localSchema, setLocalSchema] = useState<CommandsSchema | null>(null)
@@ -89,7 +92,7 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
     }
     return s
   }, [activeSchema])
-  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp') => {
+  const handleParamSetChange = (next: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth') => {
     if (next === effectiveParamSet) return
     onParamSetChange?.(next)
   }
@@ -126,7 +129,7 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
     const finalModelPath = card?.template.modelPath || modelPathFallback
     if (finalModelPath) {
       // stable-diffusion.cpp 的扩散模型用 --diffusion-model（Z-Image 等 GGUF 必须，-m 识别不了）
-      const modelFlag = isTensorSharp ? '--model' : isSdcpp ? '--diffusion-model' : '-m'
+      const modelFlag = isTensorSharp || isBasalt ? '--model' : isSdcpp ? '--diffusion-model' : '-m'
       items.push({ id: 'model', label: modelFlag, value: `"${finalModelPath}"`, fullText: `${modelFlag} "${finalModelPath}"` })
     }
     Object.entries(activeArgs).forEach(([key, val]) => {
@@ -148,7 +151,7 @@ export default function CmdParamsEditor({ templateId, backendName, args, onChang
       items.push({ id: portFlag, label: portFlag, value: String(finalPort), fullText: `${portFlag} ${finalPort}` })
     }
     return items
-  }, [activeArgs, cards, templateId, modelPathFallback, serverPortFallback, isTensorSharp, isSdcpp, allowedArgs])
+  }, [activeArgs, cards, templateId, modelPathFallback, serverPortFallback, isTensorSharp, isSdcpp, isBasalt, allowedArgs])
 
   const fullCommand = useMemo(() => {
     let cmd = backendExe

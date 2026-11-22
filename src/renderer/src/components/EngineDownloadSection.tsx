@@ -34,7 +34,7 @@ export default function EngineDownloadSection({ repo, engineLabel, description, 
   // 下载状态由 store 的 downloadProgress 驱动（跨导航切换持久）：
   // 本引擎是否正在下载（downloadProgress.engine 由主进程按资产名推断）
   const dlActive = downloadProgress && (downloadProgress.phase === 'downloading' || downloadProgress.phase === 'extracting' || downloadProgress.phase === 'verifying' || downloadProgress.phase === 'paused') ? downloadProgress : null
-  const myEngine = (Object.entries(ENGINE_REPOS).find(([, r]) => r === repo)?.[0] ?? 'llamacpp') as 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp'
+  const myEngine = (Object.entries(ENGINE_REPOS).find(([, r]) => r === repo)?.[0] ?? 'llamacpp') as 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth'
   const thisBusy = !!dlActive && dlActive.engine === myEngine
   const [checking, setChecking] = useState(false)
   const [downloading, setDownloading] = useState(false)
@@ -70,7 +70,9 @@ export default function EngineDownloadSection({ repo, engineLabel, description, 
       // 版本目录名与 llama.cpp / TensorSharp 统一：tag + 资源名去掉扩展名（如 tqp-v0.3.0-turboquant-plus-…-windows-x64-cuda12.4）
       version: `${releaseInfo.tagName}-${asset.name.replace(/\.(zip|tar\.gz)$/, '')}`,
       assetName: asset.name,
-      digest: asset.digest
+      digest: asset.digest,
+      // 显式类型避免 unsloth 的仓库名/exe 与官方 llama.cpp 撞车被误判
+      kind: myEngine
     }), `下载 ${engineLabel} 失败`)
     setDownloading(false)
     if (res && res.paused) return

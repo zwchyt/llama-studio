@@ -548,6 +548,32 @@ export default function EnginesView() {
           </>
         }
       />
+      <EngineDownloadSection
+        repo="jesdga95/basalt"
+        engineLabel="Basalt"
+        description={
+          <>
+            Basalt：本地大模型推理引擎（Qwen / DeepSeek / Hy4-flash 等），提供 OpenAI 与 Anthropic 兼容接口。
+            仅支持 Windows x64 与 Linux x64，且需要 NVIDIA Blackwell 架构显卡（sm_120）与 CUDA 13 运行时；
+            上游未提供 macOS 发布包。发布资产形如 <code>basalt-v0.5.5-windows-x64.zip</code> 与
+            <code>basalt-v0.5.5-linux-x64.tar.gz</code>。模型为 .basalt 格式，在模型管理中直接指向 .basalt 文件即可，
+            应用会自动补齐 serve 子命令、模型路径与端口；也可用 --config 指定 JSON 配置来批量设置上下文与采样。
+            压缩包不含 CUDA 运行时与 Python 环境，需自行安装。
+          </>
+        }
+      />
+      <EngineDownloadSection
+        repo="unslothai/llama.cpp"
+        engineLabel="Unsloth"
+        description={
+          <>
+            Unsloth 维护的 llama.cpp 预编译分支，主程序同样为 <code>llama-server</code>，参数与官方 llama.cpp 兼容，
+            可作为独立引擎与官方版本并行安装、互不干扰。发布资产形如
+            <code>app-b12588-mix-c0c3de8-windows-x64-cuda13-portable.zip</code>，
+            同一版本含 CPU / CUDA 12 / CUDA 13 / Vulkan / ROCm 多种变体，请按平台与显卡选择。
+          </>
+        }
+      />
     </div>
   )
 }

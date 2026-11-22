@@ -103,6 +103,9 @@ export function defaultArgsForParamSet(paramSet: EngineKind, filename = ''): Tem
       return { '--temperature': 0.7, '--repeat-penalty': 1.1, '--max-tokens': 20000 }
     case 'sdcpp':
       return { '--steps': 20, '--cfg-scale': 7 }
+    case 'basalt':
+      // basalt serve 的基础参数：上下文与 KV 精度是常用项，端口与模型由应用注入
+      return { '--max-context': 131072, '--kv': 'fp16', '--parallel': 1, '--gpu': '0' }
 case 'audiocpp':
       // audiocpp_server 为音频推理服务（自带 WebUI，模型安装/加载/生成均在页内完成，
       // 无聊天 UI），必须 --ui 启动；端口参数由 --port 管理（模板默认 8088）

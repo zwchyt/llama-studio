@@ -53,8 +53,8 @@ interface LlamaCppApi {
   onBackendsUpdated: (cb: (backends: BackendVersion[]) => void) => void
   removeBackendsUpdatedListener: () => void
   deleteBackend: (name: string) => Promise<{ success: boolean; error?: string }>
-  getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp') => Promise<CommandsSchema | null>
-  saveBackendCommands: (backendName: string, schema: object, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp') => Promise<{ success: boolean; error?: string }>
+  getCommands: (backendName: string, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth') => Promise<CommandsSchema | null>
+  saveBackendCommands: (backendName: string, schema: object, paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth') => Promise<{ success: boolean; error?: string }>
   listTemplates: () => Promise<Template[]>
   listModelEndpoints: () => Promise<ModelEndpoint[]>
   saveModelEndpoint: (endpoint: ModelEndpoint) => Promise<{ success: boolean; id?: string; error?: string }>
@@ -68,7 +68,7 @@ interface LlamaCppApi {
   selectDirectory: () => Promise<{ path: string | null }>
   selectFiles: () => Promise<{ paths: string[] }>
   listDrives: () => Promise<{ drives: string[] }>
-  runModel: (opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp'; kind?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' }) => Promise<{ success: boolean; pid?: number; error?: string }>
+  runModel: (opts: { id: string; backendPath: string; exe: string; args: string[]; openBrowser: boolean; port: number; paramSet?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth'; kind?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth' }) => Promise<{ success: boolean; pid?: number; error?: string }>
   stopModel: (id: string) => Promise<{ success: boolean; detached?: boolean; error?: string }>
   probeEndpoint: (target: ProbeTarget) => Promise<EndpointProbe>
   attachEndpoint: (id: string, port: number) => Promise<EndpointAttachResult>
@@ -78,7 +78,7 @@ interface LlamaCppApi {
   onModelDiagnosis: (cb: (data: { id: string; code: number | null; severity: 'info' | 'warning' | 'critical'; title: string; cause: string; recommendations: string[]; evidence: string; logExcerpt?: { lines: string[]; start: number; errorLine: number } }) => void) => void
   removeModelDiagnosisListener: () => void
   checkUpdates: (repo?: string) => Promise<ReleaseInfo>
-  downloadRelease: (opts: { url: string; version: string; assetName: string; digest?: string }) => Promise<{ success: boolean; path?: string; cancelled?: boolean; paused?: boolean; error?: string }>
+  downloadRelease: (opts: { url: string; version: string; assetName: string; digest?: string; kind?: 'llamacpp' | 'tensorsharp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth' }) => Promise<{ success: boolean; path?: string; cancelled?: boolean; paused?: boolean; error?: string }>
   installSdCudart: (opts: { url: string; assetName: string; backendName: string; digest?: string }) => Promise<{ success: boolean; installed?: string[]; verified?: boolean; found?: string[]; missing?: string[]; error?: string }>
   checkSdCudartInstalled: (backendName: string) => Promise<SdCudartStatus>
   onSdCudartProgress: (cb: (data: { phase: string; percent: number; received?: number; total?: number; speed?: number }) => void) => void
@@ -86,7 +86,7 @@ interface LlamaCppApi {
   cancelBackendDownload: () => Promise<{ success: boolean }>
   pauseBackendDownload: () => Promise<{ success: boolean; error?: string }>
   resumeBackendDownload: () => Promise<{ success: boolean; path?: string; cancelled?: boolean; paused?: boolean; error?: string }>
-  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> }) => void) => void
+  onDownloadProgress: (callback: (data: { percent: number; phase: string; received?: number; total?: number; engine?: 'tensorsharp' | 'llamacpp' | 'turboquant' | 'beellama' | 'sdcpp' | 'audiocpp' | 'basalt' | 'unsloth'; name?: string; speed?: number; note?: string; chunks?: Array<'idle' | 'active' | 'done'> }) => void) => void
   removeDownloadListener: () => void
   getEngineReleasesCache: () => Promise<{ cache: Record<string, ReleaseInfo> | null; checkedAt: number | null }>
   setEngineReleasesCache: (cache: Record<string, ReleaseInfo> | null, checkedAt: number | null) => Promise<{ success: boolean }>
