@@ -447,7 +447,7 @@ export interface AgentMessage {
 // 工具批之后接什么（思考链 or 下一批工具）完全由模型真实行为决定。
 export type AgentSegment =
   | { kind: 'think'; content: string; durationMs?: number }
-  | { kind: 'text'; content: string }
+  | { kind: 'text'; content: string; final?: boolean }
   | { kind: 'tools'; toolCalls: NonNullable<AgentMessage['toolCalls']>; durationMs?: number }
 
 /** 纯聊天模式允许启用的工具：就是原生聊天界面那四个（与 ChatView 的 TOOL_ORDER 一致）。

@@ -715,12 +715,13 @@ export function AgentCodeViewLayout({ view }: { view: AgentCodeViewLayoutProps }
                     onClick={() => setCondenseOpen(v => !v)}
                     icon={condensing ? LoaderIcon : BrainIcon}
                     iconClassName={condensing ? 'spin' : undefined}
+                    title="压缩会话历史为摘要，释放上下文空间（可手动提前压缩）"
                   >压缩历史</TopbarBtn>
                 )}
                 <TopbarBtn btnRef={promptBtnRef} active={promptModalOpen} onClick={openPromptModal} icon={SlidersHorizontalIcon} title="选择与管理提示词模板">提示词</TopbarBtn>
                 <TopbarBtn btnRef={kbBtnRef} active={kbModalOpen} onClick={openKbModal} icon={HardDriveIcon} title="知识库列表（智能体可检索全部库）">知识库</TopbarBtn>
                 {!plainChat && (
-                  <TopbarBtn btnRef={trajBtnRef} active={trajOpen} onClick={() => setTrajOpen(v => !v)} icon={RouteIcon}>轨迹</TopbarBtn>
+                  <TopbarBtn btnRef={trajBtnRef} active={trajOpen} onClick={() => setTrajOpen(v => !v)} icon={RouteIcon} title="查看本会话的事件轨迹台账（只读）">轨迹</TopbarBtn>
                 )}
                 {/* 变更 / 浏览器 / 终端与文件树已整合到顶栏右缘「»」展开按钮的四视图菜单 */}
                 {/* 导出只在通用模式出现（编码模式的消息带工具卡与文件改动，截图意义不大） */}

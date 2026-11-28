@@ -801,10 +801,37 @@ function AppMain() {
   // 晚一步。在这里用 useThemeStore 判的话，has-bg 会先翻、主题后翻，切换时先闪一帧
   // 「深色 + 半透」（暗→亮）或「浅色 + 无图」（亮→暗）—— 这正是之前看到的两段跳。
   // 交给 CSS 就与主题类同一帧生效，天然原子。
+  // 菜单实心度主公式 = 设置值 + 30（滑块越高越实），但低设置时面板本身更实，
+  // 菜单会反过来比面板还透、文字与底层重叠；用「面板 + 10」兜底保证菜单始终更实一档，
+  // 100 封顶。只算一次，两处共用。
+  const panelFill = 100 - Math.round(backgroundStrength * 0.9)
+  const menuFill = Math.min(100, Math.max(backgroundStrength + 30, panelFill + 10))
   const bgVars = backgroundUrl ? ({
-    '--app-bg-fill': `${100 - Math.round(backgroundStrength * 0.9)}%`,
-    '--app-bg-veil-o': `${(((100 - backgroundStrength) / 100) * 0.5).toFixed(3)}`
+    '--app-bg-fill': `${panelFill}%`,
+    '--app-bg-veil-o': `${(((100 - backgroundStrength) / 100) * 0.5).toFixed(3)}`,
+    '--app-menu-fill': `${menuFill}%`
   } as React.CSSProperties) : undefined
+  // portal 到 body 的菜单不在 .app 内，拿不到上面的内联变量；把实心度镜像到 body，
+  // 让这些菜单按同一条强度公式取色（CSS 侧只对点名的菜单类生效）。
+  useEffect(() => {
+    const body = document.body
+    const fill = backgroundUrl ? `${panelFill}%` : ''
+    const menuFillCss = backgroundUrl ? `${menuFill}%` : ''
+    if (fill) {
+      body.style.setProperty('--app-bg-fill', fill)
+      body.style.setProperty('--app-menu-fill', menuFillCss)
+      body.classList.add('has-bg')
+    } else {
+      body.style.removeProperty('--app-bg-fill')
+      body.style.removeProperty('--app-menu-fill')
+      body.classList.remove('has-bg')
+    }
+    return () => {
+      body.style.removeProperty('--app-bg-fill')
+      body.style.removeProperty('--app-menu-fill')
+      body.classList.remove('has-bg')
+    }
+  }, [backgroundUrl, backgroundStrength, panelFill, menuFill])
 
   return (
     <>

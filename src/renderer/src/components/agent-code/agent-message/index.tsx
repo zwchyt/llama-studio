@@ -1487,23 +1487,34 @@ export const AniIconButton = React.forwardRef<HTMLButtonElement, {
 // （原为 AgentCodeView 内部闭包，抽到模块级供 AgentMessageRow 复用，避免两处拷贝漂移）。
 //
 // 时间线布局：一级标题常驻；思考段 + 工具卡组按 segments 原序分批收成二级标题块，
-// 过程正文段拆到链外以普通正文气泡渲染（因此正文会把链切成多段）；最后一个正文段视为
-// 最终结论，独立成泡。工具卡一律收进链内（正文不承载工具卡）。
+// 过程正文段拆到链外以普通正文气泡渲染（因此正文会把链切成多段）；带 final 标记的
+// 正文段视为最终结论，独立成泡。工具卡一律收进链内（正文不承载工具卡）。
+// 旧消息无该标记，回退到「最后一段 + 标题」的位置判断。
 // 附带保证（沿用原平铺修复）：任意顺序的段都按位渲染，不丢内容。
 export function renderSegmentsFor(segments: NonNullable<AgentMessage['segments']>, msgId: string, streaming: boolean, tailToolCalls: NonNullable<AgentMessage['toolCalls']> | undefined, o: RenderSegmentsOpts): React.ReactNode[] {
-  // 流式尾部实时工具卡（尚未切分进 segments）：视为排在时间线最后——它的存在说明
-  // 模型在「最终正文」之后又发起了调用，最后正文段随之降级为过程正文收进容器
+  // 流式尾部实时工具卡（尚未切分进 segments）：它的存在说明模型在最终正文后又发起了调用
   const hasTailTools = !!tailToolCalls && tailToolCalls.length > 0
   const lastSeg = segments[segments.length - 1]
-  // 本消息是否存在思考段：决定流式期间「最后一段正文」能否被当作最终输出提升出链
+  // 本消息是否存在思考段：旧消息回退判断需要
   const sawThink = segments.some(s => s.kind === 'think')
   let finalText: string | null = null
   let finalTextIdx = -1
-  // 收尾说明：连续文本增量会被合并成一个段，所以「过程说明 + 结构化正文」常挤在同一段里
-  // （如「渲染正常 ✅ 已加好。」后接「## 改动说明」）。把第一个 Markdown 标题之前的收尾说明
-  // 降级为过程正文收进链内，从标题起才是真正的最终输出。
+  // 收尾说明：标题之前的文字降级为过程正文（仅旧消息回退路径使用）
   let finalLeadText: string | null = null
-  if (!hasTailTools && lastSeg && lastSeg.kind === 'text' && lastSeg.content.trim() !== '') {
+  // 新消息：边界由段上的 final 标记给出，不靠文字猜测
+  const usesFinalMark = segments.some(s => s.kind === 'text' && s.final !== undefined)
+  if (usesFinalMark) {
+    for (let i = 0; i < segments.length; i++) {
+      const s = segments[i]!
+      if (s.kind === 'text' && s.final === true && s.content.trim() !== '') {
+        if (!hasTailTools) {
+          finalTextIdx = i
+          finalText = s.content
+        }
+        break
+      }
+    }
+  } else if (!hasTailTools && lastSeg && lastSeg.kind === 'text' && lastSeg.content.trim() !== '') {
     const raw = lastSeg.content
     const m = /(?:^|\n)#{1,6}[ \t]/.exec(raw)
     // 流式期间的提升门槛：交错推理（思考→正文→思考）场景下，生长中的过程正文随时是

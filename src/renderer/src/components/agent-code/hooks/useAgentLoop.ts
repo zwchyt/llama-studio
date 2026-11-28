@@ -446,11 +446,20 @@ export function useAgentLoop({
     // 思考段计时：startMs = 标签开时刻；durationMs 在标签闭合/中断收尾时定格，
     // 供链内每个思考段上方的独立时间标签展示（Thought: 515ms）。
     type ThinkLiveSeg = { kind: 'think'; content: string; startMs?: number; durationMs?: number }
+    type TextLiveSeg = { kind: 'text'; content: string; final?: boolean }
     // tools 段带 startMs（本批首个工具声明时刻）与 durationMs（本批全部完成时定格）：
     // 定格值随 segments 持久化，完成态静态渲染（无 frozenToolsRef 累积）也能还原工具时长，
     // 避免「流式数字 → 完成数字」回退跳变。
-    type LiveSeg = { kind: 'tools'; ids: string[]; startMs: number; durationMs?: number } | ThinkLiveSeg | { kind: 'text'; content: string }
+    type LiveSeg = { kind: 'tools'; ids: string[]; startMs: number; durationMs?: number } | ThinkLiveSeg | TextLiveSeg
     const liveSegs: LiveSeg[] = []
+    // 最终正文段：正文通道（思考/工具之后）的首个 text 段标记为 final，后续增量追加到它；
+    // 出现新思考或工具调用说明那段只是过程正文，立即降级，由下一段正文接任。
+    let finalSeg: TextLiveSeg | null = null
+    const demoteFinal = (): void => {
+      if (!finalSeg) return
+      finalSeg.final = false
+      finalSeg = null
+    }
     // 当前打开的思考段引用：用引用而非「最后一个段」定位——thinking_end 可能迟到于
     // 工具声明（工具段已插入），close 时按引用定格，不受中间插入影响
     // （此前按 last 定格：首段思考后紧跟工具时永远定不到格，首个思考过程无时间统计的根因）。
@@ -472,12 +481,13 @@ export function useAgentLoop({
         }
         : s.kind === 'think'
           ? { kind: 'think', content: s.content, ...(s.durationMs != null ? { durationMs: s.durationMs } : {}) }
-          : { kind: 'text', content: s.content })
+          : { kind: 'text', content: s.content, ...(s.final !== undefined ? { final: s.final } : {}) })
     // 结构化事件驱动（经 piAgentAdapter 已把 <think> 标签从传输层剥离）：
     // thinking_* 直接操作 think 段，text_delta 为纯文本增量；思考段仍按原语义在
     // content/streamedText 里重构成成对 <think>...</think>（兼容 parseThinkSegments）。
     const openThinking = (): void => {
       if (thinkOpen) return
+      demoteFinal()
       const seg: ThinkLiveSeg = { kind: 'think', content: '', startMs: Date.now() }
       liveSegs.push(seg)
       curThinkSeg = seg
@@ -509,12 +519,16 @@ export function useAgentLoop({
       // 思考闭合：思考结束（后续若无新思考增量，思考块收起不转圈）
       setThinkDone(true)
     }
-    // 纯文本增量：不解析 <think> 标签；若思考仍开启先闭合思考段，文本落到思考链之后
+    // 纯文本增量：正文通道的增量直接落到 final 段；不解析 <think> 标签
     const appendTextDelta = (delta: string): void => {
       if (thinkOpen) closeThinking()
-      const last = liveSegs[liveSegs.length - 1]
-      if (last && last.kind === 'text') last.content += delta
-      else liveSegs.push({ kind: 'text', content: delta })
+      if (finalSeg) {
+        finalSeg.content += delta
+      } else {
+        const seg: TextLiveSeg = { kind: 'text', content: delta, final: true }
+        liveSegs.push(seg)
+        finalSeg = seg
+      }
       streamedText += delta
       // 正文出现：思考已结束（Reasonix 同款语义：text 增量闭合推理）
       setThinkDone(true)
@@ -605,6 +619,8 @@ export function useAgentLoop({
         // 工具声明 = 思考链阶段到此为止：立即定格未闭合的思考段（pi 的 thinking_end
         // 可能迟到于工具声明；否则工具执行期间头部思考总时间因未定格而消失/回退）
         closeOpenThink()
+        // 工具出现在正文之后：那段正文只是过程说明，降级回链内
+        demoteFinal()
         // 幂等合并：toolcall_start（参数流式开始）先创建卡（args 空 → 显示「参数生成中」），
         // toolcall_end（参数完整）再更新 args；同一工具只保留一张卡、一个工具段。
         let tIdx = toolCalls.findIndex(t => t.id === tc.id)

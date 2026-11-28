@@ -136,7 +136,10 @@ html:not(.theme-dark) .app.has-bg :is(.agent-code-chat-item,
   .agent-code-add-sess-btn,
   .agent-code-sidebar-filter,
   .agent-code-session-new-btn,
-  .chat-msg-avatar) {
+  .chat-msg-avatar,
+  .agent-code-panel-tab,
+  .agent-code-panel-tab-add,
+  .agent-code-preview-tab) {
   --surface-hover: color-mix(in srgb, var(--surface-hover-solid) var(--app-bg-fill), transparent);
 }
 
@@ -152,8 +155,9 @@ html:not(.theme-dark) .app.has-bg :is(.agent-code-chat-item,
    页面内的装饰性块（.welcome-chip / .hub-empty-chip / .welcome-icon-wrap …）**不要**加：
    它们属于页面面的一部分，本来就该跟着一起透。
    漏一个的后果不是"背景图被挡住"，而是反过来——那层变半透明、图从它里面透出来，
-   看着像图层错位。唯一例外是 .agent-code-scroll-bottom-btn：它按需求跟随背景强度、
-   再多透 10 个百分点，单独在下面处理，不在这份钉回实心的名单里。
+   看着像图层错位。例外之一是 .agent-code-scroll-bottom-btn：它按需求跟随背景强度、
+   再多透 10 个百分点（单独在下面处理）；例外之二是 .agent-code-add-workspace-menu，
+   它是右侧面板「+」下拉菜单，按需求跟随背景强度，扫描时不要把它补回名单。
    自检办法：扫一遍全 CSS 里「position: fixed/absolute + background: var(--surface)」的规则，
    逐条对照本名单。伪元素（如 .delete-popover::before）不用单列——--surface 从宿主继承。 */
 .app.has-bg :is(
@@ -163,15 +167,15 @@ html:not(.theme-dark) .app.has-bg :is(.agent-code-chat-item,
   .chat-model-logo-menu, .chat-model-picker, .chat-think-level-menu, .chat-search-menu,
   /* Agent Code 的菜单 / 浮层 / 气泡 / 悬浮按钮 */
   .agent-code-tools-menu, .agent-code-proj-menu, .agent-task-card, .agent-file-picker,
-  .agent-code-add-workspace-menu, .agent-sel-popover, .agent-msg-search,
-  .agent-chat-rail-preview, .agent-git-jump,
+  .agent-sel-popover, .agent-msg-search,
+  .agent-chat-rail-preview,
   .agent-ref-chip-tip, .chat-input-fold-chip-tip,
   /* 图片胶囊的悬停预览卡 */
   .agent-img-pill-preview,
   /* 对话框：挂在固定遮罩里，自身没有 position */
   .modal, .msg-full, .att-preview,
   /* 下拉菜单 / 右键菜单 / 确认气泡 / 提示气泡 */
-  .dropdown-menu, .chat-msg-context-menu, .file-tree-ctx-menu,
+  .dropdown-menu, .chat-msg-context-menu,
   .delete-popover, .update-banner .ub-menu, .kb-del-pop, .settings-view .st-bg-del,
   .ac-tip, .file-tree-img-tooltip) {
   --surface: var(--surface-solid);
@@ -184,4 +188,15 @@ html:not(.theme-dark) .app.has-bg :is(.agent-code-chat-item,
 html:not(.theme-dark) .app.has-bg .agent-code-scroll-bottom-btn {
   --surface: color-mix(in srgb, var(--surface-solid) max(30%, calc(var(--app-bg-fill) - 10%)), transparent);
   --surface-hover: color-mix(in srgb, var(--surface-hover-solid) max(30%, calc(var(--app-bg-fill) - 10%)), transparent);
+}
+
+/* ── 菜单弹层：实心度 = 设置值 + 30，且不低于面板 + 10 ──
+   滑块越高菜单越实（50 → 80）；低设置时面板本身更实，用「面板 + 10」兜底，
+   避免菜单反而更透、文字与底层重叠。100 封顶。
+   变量由 App.tsx 算好并同时写到 .app 与 body——portal 到 body 的菜单不在 .app 内。 */
+html:not(.theme-dark) .app.has-bg :is(.agent-code-add-workspace-menu, .file-tree-ctx-menu) {
+  --surface: color-mix(in srgb, var(--surface-solid) var(--app-menu-fill), transparent);
+}
+html:not(.theme-dark) body.has-bg > :is(.file-tree-ctx-menu, .agent-git-jump) {
+  --surface: color-mix(in srgb, var(--surface-solid) var(--app-menu-fill), transparent);
 }

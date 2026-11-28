@@ -140,6 +140,8 @@ export function AgentPreviewSlot({
   // treeOnly 只决定面板挂不挂 panel-resizable 类（那条规则改的是预览组的伸缩方式，
   // 见 agent-code.css）；两种情况面板宽度都由 --agent-right-width 定，左缘手柄通用。
   const treeOnly = openPanels.every(v => v === 'files')
+  // 五个工作区全开时「+」已无可添加项，按钮和菜单都不渲染，避免点出空菜单
+  const allPanelsOpen = openPanels.length > 0 && PANEL_ORDER.every(v => openPanels.includes(v))
 
   // ── 收起动画对齐左栏：两层修正 ——
   //    1) 位移：collapsed 态的 margin-right 需等于面板自身宽度（--agent-right-collapse-offset）。
@@ -382,7 +384,7 @@ export function AgentPreviewSlot({
                   </div>
                 )
               })}
-              {openPanels.length > 0 && (
+              {openPanels.length > 0 && !allPanelsOpen && (
                 <button
                   ref={addBtnRef}
                   className={`agent-code-panel-tab-add${addMenuOpen ? ' active' : ''}`}
@@ -397,7 +399,7 @@ export function AgentPreviewSlot({
               )}
             </div>
             {/* 下拉菜单渲染在 .agent-code-panel-tabs 外部，避免被 overflow-x: auto 裁剪 */}
-            {addMenuOpen && addMenuPos && (
+            {addMenuOpen && addMenuPos && !allPanelsOpen && (
               <div ref={addMenuRef} className="agent-code-add-workspace-menu" style={{ left: addMenuPos.left }}>
                 {PANEL_ORDER.filter(v => !openPanels.includes(v)).map(v => {
                   const Icon = PANEL_ICON[v]
